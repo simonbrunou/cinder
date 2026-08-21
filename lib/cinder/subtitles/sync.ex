@@ -3,7 +3,7 @@ defmodule Cinder.Subtitles.Sync do
 
   require Logger
 
-  alias Cinder.Library.{PathPolicy, Sidecars}
+  alias Cinder.Library.{Filesystem, PathPolicy, Sidecars}
   alias Cinder.Repo
   alias Cinder.Settings
   alias Cinder.Subtitles.{Manifest, Moviehash}
@@ -1044,10 +1044,10 @@ defmodule Cinder.Subtitles.Sync do
     expected_identity = List.to_tuple(identity)
 
     with_bound(backup, [:read, :raw, :binary], fn bound ->
-      with true <- bound.identity == expected_identity || {:error, :unexpected_backup},
+      with true <- Filesystem.identity?(bound, expected_identity) || {:error, :unexpected_backup},
            {:ok, content} <- File.read(bound.path),
            :ok <- retire_backup_content(bound, content, sync) do
-        verify_bound_source_identity(backup, expected_identity)
+        verify_bound_source_identity(backup, bound.identity)
       end
     end)
   end
@@ -1248,7 +1248,7 @@ defmodule Cinder.Subtitles.Sync do
             verify_existing_backup(backup, expected_source)
 
           Map.has_key?(item, :backup_tombstone) and is_map(item.backup_tombstone) ->
-            reactivate_backup_container(backup, expected_source, item.backup_tombstone)
+            reactivate_backup_container(backup, expected_source, item.backup_tombstone, item)
 
           true ->
             {:error, :unexpected_backup}
@@ -1272,21 +1272,22 @@ defmodule Cinder.Subtitles.Sync do
     end
   end
 
-  defp reactivate_backup_container(backup, expected_source, %{identity: identity})
+  defp reactivate_backup_container(backup, expected_source, %{identity: identity}, item)
        when is_list(identity) and length(identity) == 3 do
     expected_identity = List.to_tuple(identity)
 
     with_bound(backup, [:read, :raw, :binary], fn bound ->
-      with true <- bound.identity == expected_identity || {:error, :unexpected_backup},
+      with true <- Filesystem.identity?(bound, expected_identity) || {:error, :unexpected_backup},
            {:ok, current} <- File.read(bound.path),
            :ok <- reactivate_backup_bytes(bound, current, expected_source),
+           :ok <- Manifest.put_backup_tombstone(item.video_path, item.language, bound.identity),
            :ok <- verify_bound_source_identity(backup, bound.identity) do
         {:ok, true}
       end
     end)
   end
 
-  defp reactivate_backup_container(_backup, _expected_source, _tombstone),
+  defp reactivate_backup_container(_backup, _expected_source, _tombstone, _item),
     do: {:error, :invalid_backup_tombstone}
 
   defp reactivate_backup_bytes(_bound, expected_source, expected_source), do: :ok

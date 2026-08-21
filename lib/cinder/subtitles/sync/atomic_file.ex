@@ -42,7 +42,7 @@ defmodule Cinder.Subtitles.Sync.AtomicFile do
   end
 
   defp create_authorized_workspace(target, directory, staged_path, content, expected_current) do
-    case fs().mkdir_exclusive(directory, 0o700) do
+    case mkdir_workspace(directory, target) do
       :ok ->
         with_bound(directory, [:read, :raw, :binary], fn directory_bound ->
           {:directory_bound_result,
@@ -58,6 +58,14 @@ defmodule Cinder.Subtitles.Sync.AtomicFile do
       {:error, _reason} = error ->
         error
     end
+  end
+
+  defp mkdir_workspace(directory, target) do
+    filesystem = fs()
+
+    if function_exported?(filesystem, :mkdir_exclusive_near, 3),
+      do: filesystem.mkdir_exclusive_near(directory, target, 0o700),
+      else: filesystem.mkdir_exclusive(directory, 0o700)
   end
 
   @spec cleanup_pending(String.t(), String.t(), String.t(), String.t()) ::

@@ -179,6 +179,31 @@ defmodule Cinder.Subtitles.SyncTest do
     assert Manifest.sync(Manifest.read(video), "en") == nil
   end
 
+  test "reactivates a verified legacy mergerfs backup and rebinds its identity", %{
+    video: video,
+    tmp_dir: tmp
+  } do
+    path = managed_srt!(video)
+    original = File.read!(path)
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+    assert :ok = Sync.reset(hd(Sync.discover(video)))
+
+    backup = Sync.backup_path(path)
+    legacy_identity = [38, 0, 123_456]
+    assert :ok = Manifest.put_backup_tombstone(video, "en", legacy_identity)
+    helper = legacy_identity_helper!(tmp, Path.basename(backup), legacy_identity)
+    Application.put_env(:cinder, :rooted_filesystem_helper, helper)
+
+    assert {:ok, :corrected, _} = Sync.manual(hd(Sync.discover(video)), 2_000, 1.0)
+    assert File.read!(backup) == original
+
+    assert {:ok, bound} = Disk.open_bound(backup, [:read, :raw, :binary])
+    assert %{identity: identity} = Manifest.backup_tombstone(Manifest.read(video), "en")
+    assert identity == Tuple.to_list(bound.identity)
+    assert :ok = Disk.close_bound(bound)
+  end
+
   test "reset retry reconciles a workspace orphaned after exchange", %{video: video} do
     path = managed_srt!(video)
     original = File.read!(path)
@@ -491,7 +516,7 @@ defmodule Cinder.Subtitles.SyncTest do
       import os
       import sys
 
-      if sys.argv[1] != "mkdir":
+      if sys.argv[1] not in ("mkdir", "mkdir_near"):
           os.execv(sys.executable, [sys.executable, #{inspect(real_helper)}] + sys.argv[1:])
 
       directory = os.path.join(sys.argv[2], sys.argv[3])
@@ -504,7 +529,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     Application.put_env(:cinder, :rooted_filesystem_helper, helper)
 
-    assert {:error, {:effect_committed, "mkdir", _reason}} =
+    assert {:error, {:effect_committed, "mkdir_near", _reason}} =
              AtomicFile.write(path, shifted_subtitle(original), original, operation_id)
 
     assert File.read!(staged) == "attacker-owned"
@@ -1718,6 +1743,28 @@ defmodule Cinder.Subtitles.SyncTest do
     assert :ok = Manifest.put_backup_tombstone(video, "en", bound.identity)
     assert :ok = Disk.close_bound(bound)
     backup
+  end
+
+  defp legacy_identity_helper!(tmp, path_fragment, identity) do
+    helper = Path.join(tmp, "legacy_identity_helper.py")
+    real_helper = Path.expand("../../../priv/rooted_fs.py", __DIR__)
+
+    File.write!(helper, """
+    import json
+    import os
+    import sys
+
+    if sys.argv[1] != "hold" or #{inspect(path_fragment)} not in sys.argv[3]:
+        os.execv(sys.executable, [sys.executable, #{inspect(real_helper)}] + sys.argv[1:])
+
+    path = os.path.join(sys.argv[2], sys.argv[3])
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    print(json.dumps({"ok": {"fd": fd, "union_identity": #{Jason.encode!(identity)}}}), flush=True)
+    sys.stdin.buffer.read()
+    os.close(fd)
+    """)
+
+    helper
   end
 
   defp shifted_subtitle(content) do

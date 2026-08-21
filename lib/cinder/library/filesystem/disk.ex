@@ -31,7 +31,7 @@ defmodule Cinder.Library.Filesystem.Disk do
     "EROFS" => :erofs,
     "EXDEV" => :exdev
   }
-  @rooted_effect_operations ~w(chmod exchange rename unlink rmdir mkdir)
+  @rooted_effect_operations ~w(chmod exchange rename unlink rmdir mkdir mkdir_near)
 
   @impl true
   def dir?(path), do: File.dir?(path)
@@ -58,6 +58,22 @@ defmodule Cinder.Library.Filesystem.Disk do
     case rooted_location(dir) do
       {:ok, root, relative} -> run_rooted("mkdir", [root, relative, Integer.to_string(mode, 8)])
       :outside_roots -> with :ok <- File.mkdir(dir), do: File.chmod(dir, mode)
+    end
+  end
+
+  @doc false
+  def mkdir_exclusive_near(dir, anchor, mode) do
+    case {rooted_location(dir), rooted_location(anchor)} do
+      {{:ok, root, relative}, {:ok, root, anchor_relative}} ->
+        run_rooted("mkdir_near", [
+          root,
+          relative,
+          anchor_relative,
+          Integer.to_string(mode, 8)
+        ])
+
+      _ ->
+        mkdir_exclusive(dir, mode)
     end
   end
 
@@ -469,7 +485,7 @@ defmodule Cinder.Library.Filesystem.Disk do
 
   defp decode_rooted_hold(port, output, source_path) do
     case Jason.decode(String.trim(output)) do
-      {:ok, %{"ok" => %{"fd" => fd}}} when is_integer(fd) and fd >= 0 ->
+      {:ok, %{"ok" => %{"fd" => fd} = rooted}} when is_integer(fd) and fd >= 0 ->
         {:os_pid, os_pid} = Port.info(port, :os_pid)
         descriptor_path = "/proc/#{os_pid}/fd/#{fd}"
 
@@ -480,13 +496,18 @@ defmodule Cinder.Library.Filesystem.Disk do
                io: {:rooted, port},
                path: descriptor_path,
                source_path: source_path,
-               identity: identity(stat)
+               identity: identity(stat),
+               union_identity: rooted_identity(rooted["union_identity"])
              }}
 
           {:error, reason} ->
             close_rooted_port(port)
             {:error, reason}
         end
+
+      {:ok, %{"error" => %{"phase" => "post_effect"} = error}} ->
+        close_rooted_port(port)
+        {:error, {:effect_committed, "hold", error}}
 
       {:ok, %{"error" => error}} ->
         close_rooted_port(port)
@@ -497,6 +518,13 @@ defmodule Cinder.Library.Filesystem.Disk do
         {:error, {:rooted_helper_malformed, "hold", output}}
     end
   end
+
+  defp rooted_identity([major, minor, inode])
+       when is_integer(major) and major >= 0 and is_integer(minor) and minor >= 0 and
+              is_integer(inode) and inode >= 0,
+       do: {major, minor, inode}
+
+  defp rooted_identity(_identity), do: nil
 
   defp close_rooted_port(port) do
     if Port.info(port) do
