@@ -26,6 +26,11 @@ defmodule Cinder.LibraryTest do
 
   setup :verify_on_exit!
 
+  setup do
+    stub(Cinder.Library.FilesystemMock, :chmod, fn _path, _mode -> :ok end)
+    :ok
+  end
+
   @lib "/tmp/cinder-test-library"
   @tv_lib "/tmp/cinder-test-tv-library"
   @gb 1_000_000_000
@@ -382,6 +387,22 @@ defmodule Cinder.LibraryTest do
              }
 
       assert Repo.aggregate(ImportStage, :count) == 2
+    end
+
+    test "a directory permission failure prevents staging" do
+      fixture = anime_fixture("many-to-many-mapping")
+      grab = anime_grab(fixture)
+      virtual = stub_anime_filesystem(fixture)
+
+      stub(Cinder.Library.FilesystemMock, :chmod, fn _path, _mode -> {:error, :eacces} end)
+
+      assert {:error, :eacces} =
+               Library.stage_anime_episodes(grab, anime_preflight(fixture))
+
+      [dest] = Enum.map(fixture["expected"]["destinations"], &Path.join(@tv_lib, &1))
+      refute Map.has_key?(Agent.get(virtual, & &1.files), dest)
+      assert Agent.get(virtual, & &1.links) == []
+      assert Repo.aggregate(ImportStage, :count) == 0
     end
 
     test "a second-season staging failure rolls the first season back" do

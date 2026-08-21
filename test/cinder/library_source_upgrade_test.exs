@@ -14,6 +14,8 @@ defmodule Cinder.LibrarySourceUpgradeTest do
   @tv_lib "/tmp/cinder-test-tv-library"
 
   setup do
+    stub(Cinder.Library.FilesystemMock, :chmod, fn _path, _mode -> :ok end)
+
     prev_tv = Application.get_env(:cinder, :tv_preferred_sources)
     Application.put_env(:cinder, :tv_preferred_sources, ["bluray", "webdl"])
 

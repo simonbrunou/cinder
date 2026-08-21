@@ -307,16 +307,22 @@ defmodule Cinder.Library.PathPolicyTest do
     end
 
     @tag :tmp_dir
-    test "regular movie imports remain idempotent when the destination is already a hardlink", %{
+    test "regular movie imports normalize created directories without chmodding the hardlink", %{
       tmp_dir: tmp
     } do
-      %{downloads: downloads} = configure_roots(tmp)
+      %{downloads: downloads, movies: movies} = configure_roots(tmp)
+      File.chmod!(movies, 0o700)
       source = Path.join(downloads, "Movie.2024.mkv")
       File.write!(source, "video")
+      File.chmod!(source, 0o664)
       movie = %Movie{title: "Movie", year: 2024, tmdb_id: 42, file_path: source}
 
       assert {:ok, %{dest: dest} = stage1} = Library.stage_movie(movie)
       assert :ok = commit!(stage1)
+
+      assert Bitwise.band(File.stat!(Path.dirname(dest)).mode, 0o777) == 0o755
+      assert Bitwise.band(File.stat!(movies).mode, 0o777) == 0o700
+      assert Bitwise.band(File.stat!(dest).mode, 0o777) == 0o664
 
       assert {:ok, %{dest: ^dest} = stage2} = Library.stage_movie(movie)
       assert :ok = commit!(stage2)
