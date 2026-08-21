@@ -485,7 +485,7 @@ defmodule Cinder.Library.Filesystem.Disk do
 
   defp decode_rooted_hold(port, output, source_path) do
     case Jason.decode(String.trim(output)) do
-      {:ok, %{"ok" => %{"fd" => fd}}} when is_integer(fd) and fd >= 0 ->
+      {:ok, %{"ok" => %{"fd" => fd} = rooted}} when is_integer(fd) and fd >= 0 ->
         {:os_pid, os_pid} = Port.info(port, :os_pid)
         descriptor_path = "/proc/#{os_pid}/fd/#{fd}"
 
@@ -496,7 +496,8 @@ defmodule Cinder.Library.Filesystem.Disk do
                io: {:rooted, port},
                path: descriptor_path,
                source_path: source_path,
-               identity: identity(stat)
+               identity: identity(stat),
+               union_identity: rooted_identity(rooted["union_identity"])
              }}
 
           {:error, reason} ->
@@ -513,6 +514,13 @@ defmodule Cinder.Library.Filesystem.Disk do
         {:error, {:rooted_helper_malformed, "hold", output}}
     end
   end
+
+  defp rooted_identity([major, minor, inode])
+       when is_integer(major) and major >= 0 and is_integer(minor) and minor >= 0 and
+              is_integer(inode) and inode >= 0,
+       do: {major, minor, inode}
+
+  defp rooted_identity(_identity), do: nil
 
   defp close_rooted_port(port) do
     if Port.info(port) do

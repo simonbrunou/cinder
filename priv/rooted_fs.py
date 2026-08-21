@@ -25,6 +25,7 @@ SYS_RENAMEAT2 = {"x86_64": 316, "amd64": 316, "aarch64": 276, "arm64": 276}.get(
 )
 MERGERFS_FULLPATH = "user.mergerfs.fullpath"
 MERGERFS_BASEPATH = "user.mergerfs.basepath"
+MERGERFS_ALLPATHS = "user.mergerfs.allpaths"
 
 
 class OpenHow(ctypes.Structure):
@@ -118,8 +119,11 @@ def hold_open(root, relative, mode):
     if mode not in modes:
         raise OSError(errno.EINVAL, "invalid open mode")
     if mergerfs_mount(root):
-        fd = hold_open_mergerfs(root, relative, modes[mode], mode)
-        emit({"ok": {"fd": fd}})
+        fd, union_identity = hold_open_mergerfs(root, relative, modes[mode], mode)
+        result = {"fd": fd}
+        if union_identity is not None:
+            result["union_identity"] = union_identity
+        emit({"ok": result})
         sys.stdin.buffer.read()
         os.close(fd)
         return
@@ -135,11 +139,12 @@ def hold_open(root, relative, mode):
 
 
 def hold_open_mergerfs(root, relative, flags, mode):
+    union_identity = None
     if mode == "write":
         parent, name = open_parent(root, relative)
         try:
             try:
-                basepath, backing_relative = mergerfs_backing_location(parent, name)
+                basepath, backing_relative, union_identity = mergerfs_backing_file(parent, name)
             except OSError as exc:
                 if exc.errno != errno.ENOENT:
                     raise
@@ -165,20 +170,18 @@ def hold_open_mergerfs(root, relative, flags, mode):
     else:
         parent, name = open_parent(root, relative)
         try:
-            basepath, backing_relative = mergerfs_backing_location(parent, name)
+            basepath, backing_relative, union_identity = mergerfs_backing_file(parent, name)
         finally:
             os.close(parent)
 
     root_fd = open_root(basepath)
     try:
-        return open_beneath(
-            root_fd,
-            backing_relative,
-            flags,
-            0o600 if mode in ("create", "write") else 0,
+        fd = open_beneath(
+            root_fd, backing_relative, flags, 0o600 if mode in ("create", "write") else 0
         )
     finally:
         os.close(root_fd)
+    return fd, union_identity
 
 
 def rename_exchange(src_parent, src_name, dst_parent, dst_name):
@@ -225,6 +228,16 @@ def mergerfs_backing_location(parent, name):
     fd = os.open(name, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
     try:
         return mergerfs_backing_location_fd(fd)
+    finally:
+        os.close(fd)
+
+
+def mergerfs_backing_file(parent, name):
+    fd = os.open(name, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
+    try:
+        basepath, relative = mergerfs_backing_location_fd(fd)
+        stat = os.fstat(fd)
+        return basepath, relative, [stat.st_dev, stat.st_rdev, stat.st_ino]
     finally:
         os.close(fd)
 
@@ -297,18 +310,41 @@ def mergerfs_near_relative(root, anchor_relative, relative):
     return basepath, posixpath.join(*prefix, checked_relative(relative))
 
 
-def wait_for_path(root, relative):
+def check_logical_absence(root, relative):
+    parent, name = open_parent(root, relative)
+    try:
+        try:
+            os.stat(name, dir_fd=parent, follow_symlinks=False)
+        except OSError as exc:
+            if exc.errno == errno.ENOENT:
+                return
+            raise
+        raise OSError(errno.EEXIST, "logical mergerfs path already exists")
+    finally:
+        os.close(parent)
+
+
+def mergerfs_allpaths(fd):
+    paths = os.getxattr(fd, MERGERFS_ALLPATHS).split(b"\0")
+    return [posixpath.normpath(os.fsdecode(path)) for path in paths if path]
+
+
+def wait_for_unique_path(root, relative, expected_path):
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         root_fd = open_root(root)
         try:
-            fd = open_beneath(root_fd, relative, O_PATH | O_NOFOLLOW)
+            fd = open_beneath(root_fd, relative, os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
         except OSError as exc:
             if exc.errno != errno.ENOENT:
                 raise
         else:
-            os.close(fd)
-            return
+            try:
+                if mergerfs_allpaths(fd) == [posixpath.normpath(expected_path)]:
+                    return
+                raise OSError(errno.EEXIST, "logical mergerfs path spans backing branches")
+            finally:
+                os.close(fd)
         finally:
             os.close(root_fd)
         time.sleep(0.05)
@@ -410,6 +446,7 @@ def mkdir_near(args):
         mkdir([args[0], args[1], args[3]])
         return
 
+    check_logical_absence(args[0], args[1])
     basepath, backing_relative = mergerfs_near_relative(args[0], args[2], args[1])
     parent_name = posixpath.dirname(backing_relative) or "."
     basename = posixpath.basename(backing_relative)
@@ -429,7 +466,9 @@ def mkdir_near(args):
             os.umask(old_umask)
         try:
             sync_parents(parent)
-            wait_for_path(args[0], args[1])
+            wait_for_unique_path(
+                args[0], args[1], posixpath.join(basepath, backing_relative)
+            )
         except OSError as exc:
             fail("mkdir_near", "post_effect", exc)
             return

@@ -41,4 +41,8 @@ defmodule Cinder.Library.Filesystem do
   @callback exchange(source :: String.t(), dest :: String.t()) :: :ok | {:error, term()}
   @callback moviehash_data(path :: String.t()) ::
               {:ok, {non_neg_integer(), binary(), binary()}} | :too_small | {:error, term()}
+
+  @spec identity?(map(), term()) :: boolean()
+  def identity?(bound, expected),
+    do: bound.identity == expected or Map.get(bound, :union_identity) == expected
 end
