@@ -3,8 +3,7 @@ defmodule Cinder.Subtitles.Sync do
   require Logger
 
   alias Cinder.Library.{Filesystem, PathPolicy, Sidecars}
-  alias Cinder.Repo
-  alias Cinder.Settings
+  alias Cinder.{Repo, Settings}
   alias Cinder.Subtitles.{Manifest, Moviehash}
 
   alias Cinder.Subtitles.Sync.{
@@ -854,6 +853,7 @@ defmodule Cinder.Subtitles.Sync do
   defp retire_reset_backup(backup, sync, tombstone) do
     cond do
       immutable_backup_expected?(sync) -> retire_owned_backup(backup, sync, tombstone)
+      regular_file?(backup) and is_map(tombstone) -> retire_owned_backup(backup, sync, tombstone)
       regular_file?(backup) -> {:error, :unexpected_backup}
       true -> :ok
     end

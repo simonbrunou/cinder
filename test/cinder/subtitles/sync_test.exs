@@ -179,6 +179,40 @@ defmodule Cinder.Subtitles.SyncTest do
     assert Manifest.sync(Manifest.read(video), "en") == nil
   end
 
+  test "legacy embedded migration retires a proven duplicate backup", %{video: video} do
+    path = managed_srt!(video)
+    original = File.read!(path)
+    backup = owned_backup!(video, path, original)
+
+    assert :ok =
+             Manifest.put_sync(video, "en", %{
+               status: "aligned",
+               method: "embedded",
+               moviehash: moviehash!(video),
+               source_sha256: digest(original),
+               applied_sha256: digest(original),
+               offset_ms: 0,
+               rate: 1.0,
+               score: 30.0,
+               reason: nil
+             })
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, input, output ->
+      assert File.read!(input) == original
+      File.write!(output, original)
+      {:ok, %{score: 30.0, offset_ms: 0, rate: 1.0}}
+    end)
+
+    assert [%{method: "audio", status: :aligned}] = Sync.analyze_video(video)
+    assert File.read!(path) == original
+    assert File.read!(backup) == ""
+
+    assert %{method: "audio", status: "aligned", version: 1} =
+             Manifest.sync(Manifest.read(video), "en")
+  end
+
   test "reactivates a verified legacy mergerfs backup and rebinds its identity", %{
     video: video,
     tmp_dir: tmp
