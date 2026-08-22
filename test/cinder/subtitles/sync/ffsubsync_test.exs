@@ -32,16 +32,15 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
     Application.put_env(:cinder, :ffsubsync_bin, bin)
     Application.put_env(:cinder, :timeout_bin, fake_timeout_bin(tmp, timeout_argv))
 
-    assert {:ok, %{offset_ms: 27_300, rate: 0.999, score: 42.5, split_count: 1}} =
+    assert {:ok, %{offset_ms: 27_300, rate: 0.999, score: 42.5}} =
              Ffsubsync.sync(reference, input, output)
 
     args = File.read!(argv) |> String.split("\n", trim: true)
     assert args |> Enum.chunk_every(2, 1) |> Enum.any?(&(&1 == ["-i", input]))
     assert args |> Enum.chunk_every(2, 1) |> Enum.any?(&(&1 == ["-o", output]))
     assert "--skip-sync-on-low-quality" in args
-    assert "--gss" in args
+    refute "--gss" in args
     assert "--min-score" in args
-    assert Enum.chunk_every(args, 2, 1) |> Enum.any?(&(&1 == ["--split-penalty", "7"]))
 
     assert Enum.chunk_every(args, 2, 1)
            |> Enum.any?(&(&1 == ["--max-offset-seconds", "90"]))
@@ -167,8 +166,7 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
             "framerate scale factor: 0.999\\nlow-quality alignment; leaving subtitles unmodified\\n"
 
         _ ->
-          "score: 42.500\\noffset seconds: 27.300\\nframerate scale factor: 0.999\\n" <>
-            "split alignment: 2 segment(s), 1 split(s)\\n"
+          "score: 42.500\\noffset seconds: 27.300\\nframerate scale factor: 0.999\\n"
       end
 
     File.write!(

@@ -1130,8 +1130,7 @@ defmodule Cinder.Subtitles.Sync do
   end
 
   defp insignificant_correction?(metrics) do
-    Map.get(metrics, :split_count, 0) == 0 and
-      abs(Map.get(metrics, :offset_ms, 0)) <= 100 and
+    abs(Map.get(metrics, :offset_ms, 0)) <= 100 and
       abs(Map.get(metrics, :rate, 1.0) - 1.0) <= 0.0005
   end
 
