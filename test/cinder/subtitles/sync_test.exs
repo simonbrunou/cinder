@@ -607,7 +607,7 @@ defmodule Cinder.Subtitles.SyncTest do
     assert File.read!(path) =~ "00:00:02,000 --> 00:00:04,000"
   end
 
-  test "selects the broadest non-forced embedded reference then falls back to audio", %{
+  test "selects the broadest same-language embedded reference then falls back to audio", %{
     video: video
   } do
     path = managed_srt!(video)
@@ -622,7 +622,7 @@ defmodule Cinder.Subtitles.SyncTest do
        ]}
     end)
 
-    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 3 ->
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 2 ->
       {:ok, subtitle(".srt")}
     end)
 
@@ -650,7 +650,63 @@ defmodule Cinder.Subtitles.SyncTest do
     assert %{method: "audio", status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
   end
 
-  test "tries the next non-forced embedded track when the broadest one cannot be extracted", %{
+  test "uses audio when embedded tracks do not match the sidecar language", %{video: video} do
+    path = managed_srt!(video, "fr")
+    original = File.read!(path)
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok, [%{index: 2, language: "en", forced?: false, default?: true, packet_count: 20}]}
+    end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn reference, input, output ->
+      assert File.read!(reference) == File.read!(video)
+      assert File.read!(input) == original
+      File.write!(output, original)
+      {:review, %{reason: :low_confidence, score: 1.0, offset_ms: 0, rate: 1.0}}
+    end)
+
+    assert [%{method: "audio", status: :review}] = Sync.analyze_video(video)
+    assert File.read!(path) == original
+  end
+
+  test "restores legacy embedded corrections before language-matched reanalysis", %{video: video} do
+    path = managed_srt!(video, "fr")
+    original = File.read!(path)
+    corrected = shifted_subtitle(original)
+    backup = owned_backup!(video, path, original, "fr")
+    File.write!(path, corrected)
+
+    assert :ok =
+             Manifest.put_sync(video, "fr", %{
+               status: "aligned",
+               method: "embedded",
+               moviehash: "stale-moviehash",
+               source_sha256: digest(original),
+               applied_sha256: digest(corrected),
+               offset_ms: 1_000,
+               rate: 1.0,
+               score: 30.0,
+               reason: nil
+             })
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok, [%{index: 2, language: "en", forced?: false, default?: true, packet_count: 20}]}
+    end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn reference, input, output ->
+      assert File.read!(reference) == File.read!(video)
+      assert File.read!(input) == original
+      File.write!(output, original)
+      {:review, %{reason: :low_confidence, score: 1.0, offset_ms: 0, rate: 1.0}}
+    end)
+
+    assert [%{method: "audio", status: :review}] = Sync.analyze_video(video)
+    assert File.read!(path) == original
+    assert File.read!(backup) == ""
+    assert %{method: "audio", status: "review"} = Manifest.sync(Manifest.read(video), "fr")
+  end
+
+  test "tries the next same-language track when the broadest one cannot be extracted", %{
     video: video
   } do
     _path = managed_srt!(video)
@@ -660,7 +716,7 @@ defmodule Cinder.Subtitles.SyncTest do
       {:ok,
        [
          %{index: 2, language: "en", forced?: false, default?: true, packet_count: 30},
-         %{index: 3, language: "fr", forced?: false, default?: false, packet_count: 20}
+         %{index: 3, language: "en", forced?: false, default?: false, packet_count: 20}
        ]}
     end)
 
@@ -1719,8 +1775,8 @@ defmodule Cinder.Subtitles.SyncTest do
     assert File.read!(destination) == "destination"
   end
 
-  defp managed_srt!(video) do
-    path = sidecar(video, "en", ".srt")
+  defp managed_srt!(video, language \\ "en") do
+    path = sidecar(video, language, ".srt")
     content = subtitle(".srt")
     File.write!(path, content)
 
@@ -1728,7 +1784,7 @@ defmodule Cinder.Subtitles.SyncTest do
              Manifest.put(
                video,
                moviehash!(video),
-               "en",
+               language,
                "opensubtitles_hash",
                path,
                digest(content)
@@ -1737,10 +1793,10 @@ defmodule Cinder.Subtitles.SyncTest do
     path
   end
 
-  defp owned_backup!(video, sidecar, content) do
+  defp owned_backup!(video, sidecar, content, language \\ "en") do
     backup = Sync.backup_path(sidecar)
     assert {:ok, bound} = Disk.create_bound(backup, content)
-    assert :ok = Manifest.put_backup_tombstone(video, "en", bound.identity)
+    assert :ok = Manifest.put_backup_tombstone(video, language, bound.identity)
     assert :ok = Disk.close_bound(bound)
     backup
   end
