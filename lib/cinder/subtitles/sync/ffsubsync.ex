@@ -54,12 +54,11 @@ defmodule Cinder.Subtitles.Sync.Ffsubsync do
       "--min-score",
       "10",
       "--quality-max-offset-seconds",
-      "35",
+      "90",
       "--max-offset-seconds",
-      "35",
+      "90",
       "--max-framerate-deviation",
       "0.05",
-      "--gss",
       "--output-encoding",
       "same"
     ]

@@ -16,6 +16,7 @@ defmodule Cinder.Subtitles.Sync do
   }
 
   @managed_origins ~w(opensubtitles_hash opensubtitles_id)
+  @sync_version 2
   @type item :: map()
   @doc "Manifest-managed OpenSubtitles sidecars belonging to one video."
   @spec discover(String.t()) :: [item()]
@@ -97,21 +98,19 @@ defmodule Cinder.Subtitles.Sync do
   defp analysis_needed?(%{sync: %{status: status}}), do: status not in ["aligned", "review"]
   defp analysis_needed?(_item), do: true
 
-  defp prepare_item(item, moviehash),
-    do: item |> reset_legacy_embedded(moviehash) |> prepare_replacement(moviehash)
+  defp prepare_item(item, hash), do: item |> reset_obsolete(hash) |> prepare_replacement(hash)
 
-  defp reset_legacy_embedded(%{sync: %{method: "embedded"} = sync} = item, moviehash) do
-    if sync[:version] == 1 do
-      item
-    else
-      with :ok <- reset_resolved(item, moviehash),
-           {:ok, fresh} <- resolve(item.video_path, item.id),
-           do: fresh,
-           else: (_ -> Map.put(item, :auto_review_reason, :legacy_embedded_reset_failed))
-    end
+  defp reset_obsolete(%{sync: %{version: @sync_version}} = item, _moviehash), do: item
+
+  defp reset_obsolete(%{sync: %{method: method}} = item, moviehash)
+       when method in ~w(audio embedded) do
+    with :ok <- reset_resolved(item, moviehash),
+         {:ok, fresh} <- resolve(item.video_path, item.id),
+         do: fresh,
+         else: (_ -> Map.put(item, :auto_review_reason, :obsolete_automatic_reset_failed))
   end
 
-  defp reset_legacy_embedded(item, _moviehash), do: item
+  defp reset_obsolete(item, _moviehash), do: item
 
   defp moviehash_unavailable(video_path) do
     Enum.map(discover(video_path), fn item ->
@@ -1202,7 +1201,7 @@ defmodule Cinder.Subtitles.Sync do
 
   defp metadata(status, method, moviehash, source, applied, metrics) do
     %{
-      version: 1,
+      version: @sync_version,
       status: status,
       method: method,
       moviehash: moviehash,

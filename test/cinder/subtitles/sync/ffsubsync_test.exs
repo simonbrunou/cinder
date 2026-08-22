@@ -39,9 +39,15 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
     assert args |> Enum.chunk_every(2, 1) |> Enum.any?(&(&1 == ["-i", input]))
     assert args |> Enum.chunk_every(2, 1) |> Enum.any?(&(&1 == ["-o", output]))
     assert "--skip-sync-on-low-quality" in args
-    assert "--gss" in args
+    refute "--gss" in args
     assert "--min-score" in args
-    assert "--quality-max-offset-seconds" in args
+
+    assert Enum.chunk_every(args, 2, 1)
+           |> Enum.any?(&(&1 == ["--max-offset-seconds", "90"]))
+
+    assert Enum.chunk_every(args, 2, 1)
+           |> Enum.any?(&(&1 == ["--quality-max-offset-seconds", "90"]))
+
     assert Path.extname(output) == Path.extname(input)
     assert File.read!(output) == "subtitle"
     refute File.exists?(Path.join(tmp, "pwned.ass"))
