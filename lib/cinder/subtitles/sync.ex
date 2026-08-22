@@ -1,18 +1,23 @@
 defmodule Cinder.Subtitles.Sync do
   @moduledoc "Synchronizes Cinder-managed adjacent subtitle sidecars."
-
   require Logger
 
   alias Cinder.Library.{Filesystem, PathPolicy, Sidecars}
   alias Cinder.Repo
   alias Cinder.Settings
   alias Cinder.Subtitles.{Manifest, Moviehash}
-  alias Cinder.Subtitles.Sync.{AtomicFile, EngineWorkspace, ReplacementCleanup, Scope, Timing}
+
+  alias Cinder.Subtitles.Sync.{
+    AtomicFile,
+    EngineWorkspace,
+    Reference,
+    ReplacementCleanup,
+    Scope,
+    Timing
+  }
 
   @managed_origins ~w(opensubtitles_hash opensubtitles_id)
-
   @type item :: map()
-
   @doc "Manifest-managed OpenSubtitles sidecars belonging to one video."
   @spec discover(String.t()) :: [item()]
   def discover(video_path) do
@@ -77,20 +82,37 @@ defmodule Cinder.Subtitles.Sync do
     do: Enum.map(discover(video_path), &result(&1, :failed, nil, %{reason: reason}))
 
   defp do_analyze_video(video_path, moviehash) do
-    items = Enum.map(discover(video_path), &prepare_replacement(&1, moviehash))
+    items = Enum.map(discover(video_path), &prepare_item(&1, moviehash))
 
-    {reference, reference_source} =
-      if Enum.any?(items, &analysis_needed?/1),
-        do: embedded_reference(video_path),
-        else: {:audio, nil}
+    resolver =
+      Reference.resolver(if(Enum.any?(items, &analysis_needed?/1), do: media_info()), video_path)
 
-    Enum.map(items, &analyze_item(&1, moviehash, reference, reference_source))
+    Enum.map(items, fn item ->
+      {reference, reference_source} = resolver.(item.language)
+
+      analyze_item(item, moviehash, reference, reference_source)
+    end)
   end
 
   defp analysis_needed?(%{auto_review_reason: _reason}), do: false
   defp analysis_needed?(%{sync: %{status: status}}), do: status not in ["aligned", "review"]
-
   defp analysis_needed?(_item), do: true
+
+  defp prepare_item(item, moviehash),
+    do: item |> reset_legacy_embedded(moviehash) |> prepare_replacement(moviehash)
+
+  defp reset_legacy_embedded(%{sync: %{method: "embedded"} = sync} = item, moviehash) do
+    if sync[:version] == 1 do
+      item
+    else
+      with :ok <- reset_resolved(item, moviehash),
+           {:ok, fresh} <- resolve(item.video_path, item.id),
+           do: fresh,
+           else: (_ -> Map.put(item, :auto_review_reason, :legacy_embedded_reset_failed))
+    end
+  end
+
+  defp reset_legacy_embedded(item, _moviehash), do: item
 
   defp moviehash_unavailable(video_path) do
     Enum.map(discover(video_path), fn item ->
@@ -812,7 +834,7 @@ defmodule Cinder.Subtitles.Sync do
 
   defp reconcile_reset_entry({_language, _track}, _video_path, _moviehash), do: {:cont, :ok}
 
-  defp reset_item(%{sync: nil}), do: {:error, :not_synchronized}
+  defp reset_item(%{sync: nil}), do: :ok
 
   defp reset_item(item) do
     with :ok <- Manifest.begin_reset_cleanup(item.video_path, item.language, item.sync),
@@ -1108,29 +1130,6 @@ defmodule Cinder.Subtitles.Sync do
       current_hash == item.sync.applied_sha256
   end
 
-  defp embedded_reference(video_path) do
-    with media_info when not is_nil(media_info) <- media_info(),
-         {:ok, tracks} <- media_info.subtitle_tracks(video_path) do
-      find_embedded_reference(media_info, video_path, tracks)
-    else
-      _ -> {:audio, nil}
-    end
-  end
-
-  defp find_embedded_reference(media_info, video_path, tracks) do
-    tracks
-    |> Enum.reject(&Map.get(&1, :forced?, false))
-    |> Enum.sort_by(&Map.get(&1, :packet_count, 0), :desc)
-    |> Enum.find_value({:audio, nil}, &extract_reference(media_info, video_path, &1))
-  end
-
-  defp extract_reference(media_info, video_path, track) do
-    case media_info.extract_subtitle(video_path, track.index) do
-      {:ok, content} when is_binary(content) -> {:embedded, {:content, content}}
-      _ -> nil
-    end
-  end
-
   defp insignificant_correction?(metrics) do
     abs(Map.get(metrics, :offset_ms, 0)) <= 100 and
       abs(Map.get(metrics, :rate, 1.0) - 1.0) <= 0.0005
@@ -1203,6 +1202,7 @@ defmodule Cinder.Subtitles.Sync do
 
   defp metadata(status, method, moviehash, source, applied, metrics) do
     %{
+      version: 1,
       status: status,
       method: method,
       moviehash: moviehash,

@@ -457,6 +457,7 @@ defmodule Cinder.Subtitles.Manifest do
         score: value(sync, :score),
         reason: value(sync, :reason)
       }
+      |> maybe_put_version(sync)
       |> maybe_put_expected_sha256(sync)
       |> maybe_put_operation_id(sync)
 
@@ -466,6 +467,16 @@ defmodule Cinder.Subtitles.Manifest do
   end
 
   defp normalize_sync(_sync), do: :error
+
+  defp maybe_put_version(normalized, sync) do
+    case value(sync, :version) do
+      version when is_integer(version) and version > 0 ->
+        Map.put(normalized, :version, version)
+
+      _ ->
+        normalized
+    end
+  end
 
   defp maybe_put_expected_sha256(normalized, sync) do
     case value(sync, :expected_sha256) do
