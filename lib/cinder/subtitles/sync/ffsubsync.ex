@@ -54,12 +54,14 @@ defmodule Cinder.Subtitles.Sync.Ffsubsync do
       "--min-score",
       "10",
       "--quality-max-offset-seconds",
-      "35",
+      "90",
       "--max-offset-seconds",
-      "35",
+      "90",
       "--max-framerate-deviation",
       "0.05",
       "--gss",
+      "--split-penalty",
+      "7",
       "--output-encoding",
       "same"
     ]
@@ -72,7 +74,9 @@ defmodule Cinder.Subtitles.Sync.Ffsubsync do
          {:ok, rate} <-
            metric(log, ~r/framerate scale factor:\s*(\d+(?:\.\d+)?)/i),
          true <- rate > 0 do
-      metrics = %{score: score, offset_ms: round(offset_seconds * 1_000), rate: rate}
+      metrics =
+        %{score: score, offset_ms: round(offset_seconds * 1_000), rate: rate}
+        |> put_split_count(log)
 
       cond do
         score < 10 or String.contains?(String.downcase(log), "low-quality") ->
@@ -93,6 +97,13 @@ defmodule Cinder.Subtitles.Sync.Ffsubsync do
     case Regex.run(regex, log, capture: :all_but_first) do
       [value] -> {:ok, String.to_float(normalize_float(value))}
       _ -> :error
+    end
+  end
+
+  defp put_split_count(metrics, log) do
+    case Regex.run(~r/(\d+)\s+split\(s\)/i, log, capture: :all_but_first) do
+      [count] -> Map.put(metrics, :split_count, String.to_integer(count))
+      _ -> metrics
     end
   end
 

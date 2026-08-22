@@ -5,6 +5,7 @@ defmodule Cinder.Subtitles.Sync.Engine do
           required(:offset_ms) => integer(),
           required(:rate) => float(),
           optional(:score) => number(),
+          optional(:split_count) => non_neg_integer(),
           optional(:reason) => atom()
         }
 

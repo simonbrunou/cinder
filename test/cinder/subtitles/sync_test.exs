@@ -153,6 +153,24 @@ defmodule Cinder.Subtitles.SyncTest do
     refute File.exists?(Sync.backup_path(path))
   end
 
+  test "a piecewise correction is applied even when its representative offset is small", %{
+    video: video
+  } do
+    path = managed_srt!(video)
+    original = File.read!(path)
+    adjusted = shifted_subtitle(original)
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, _input, output ->
+      File.write!(output, adjusted)
+      {:ok, %{score: 30.0, offset_ms: 0, rate: 1.0, split_count: 1}}
+    end)
+
+    assert [%{status: :corrected}] = Sync.analyze_video(video)
+    assert File.read!(path) == adjusted
+    assert File.read!(Sync.backup_path(path)) == original
+  end
+
   test "manual correction keeps one immutable backup, reapplies from it, and reset restores it",
        %{
          video: video
@@ -209,7 +227,45 @@ defmodule Cinder.Subtitles.SyncTest do
     assert File.read!(path) == original
     assert File.read!(backup) == ""
 
-    assert %{method: "audio", status: "aligned", version: 1} =
+    assert %{method: "audio", status: "aligned", version: 2} =
+             Manifest.sync(Manifest.read(video), "en")
+  end
+
+  test "version one automatic corrections are restored before piecewise reanalysis", %{
+    video: video
+  } do
+    path = managed_srt!(video)
+    original = File.read!(path)
+    corrected = shifted_subtitle(original)
+    _backup = owned_backup!(video, path, original)
+    File.write!(path, corrected)
+
+    assert :ok =
+             Manifest.put_sync(video, "en", %{
+               version: 1,
+               status: "aligned",
+               method: "audio",
+               moviehash: moviehash!(video),
+               source_sha256: digest(original),
+               applied_sha256: digest(corrected),
+               offset_ms: 1_000,
+               rate: 1.0,
+               score: 30.0,
+               reason: nil
+             })
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, input, output ->
+      assert File.read!(input) == original
+      File.write!(output, original)
+      {:ok, %{score: 30.0, offset_ms: 0, rate: 1.0}}
+    end)
+
+    assert [%{method: "audio", status: :aligned}] = Sync.analyze_video(video)
+    assert File.read!(path) == original
+
+    assert %{method: "audio", status: "aligned", version: 2} =
              Manifest.sync(Manifest.read(video), "en")
   end
 
