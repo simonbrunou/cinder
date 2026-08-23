@@ -30,30 +30,38 @@ done
 
 mkdir -p "$(dirname "$events_file")" "$(dirname "$last_message")" "$(dirname "$thread_file")"
 : >"$events_file"
+: >"$last_message"
 
-args=(
+global_args=(--ask-for-approval never)
+if [[ -n "${CINDER_CODEX_MODEL:-}" ]]; then
+  global_args+=(--model "$CINDER_CODEX_MODEL")
+fi
+
+exec_args=(
   exec
   -C "$worktree"
   --sandbox workspace-write
-  --ask-for-approval never
   --color never
   --json
   --output-last-message "$last_message"
 )
 
-if [[ -n "${CINDER_CODEX_MODEL:-}" ]]; then
-  args+=(--model "$CINDER_CODEX_MODEL")
-fi
-
 expected_thread=""
 if [[ -s "$thread_file" ]]; then
   expected_thread=$(tr -d '[:space:]' <"$thread_file")
-  args+=(resume "$expected_thread" -)
+  exec_args+=(resume "$expected_thread" -)
 else
-  args+=(-)
+  exec_args+=(-)
 fi
 
-codex "${args[@]}" <"$prompt_file" | tee "$events_file"
+# Codex can emit thread.started and then fail. Preserve that thread id before
+# propagating the command failure so an operational retry resumes the same work.
+set +e
+codex "${global_args[@]}" "${exec_args[@]}" <"$prompt_file" | tee "$events_file"
+pipeline_status=$?
+codex_status=${PIPESTATUS[0]}
+tee_status=${PIPESTATUS[1]}
+set -e
 
 actual_thread=$(python3 - "$events_file" <<'PY'
 import json
@@ -71,10 +79,18 @@ for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
 PY
 )
 
-[[ -n "$actual_thread" ]] || {
+if [[ -z "$actual_thread" ]]; then
+  if (( codex_status != 0 )); then
+    echo "Codex exited with status $codex_status before emitting thread.started" >&2
+    exit "$codex_status"
+  fi
+  if (( tee_status != 0 )); then
+    echo "failed to capture Codex events (tee status $tee_status)" >&2
+    exit "$tee_status"
+  fi
   echo "Codex output contained no thread.started thread_id" >&2
   exit 1
-}
+fi
 
 if [[ -n "$expected_thread" && "$actual_thread" != "$expected_thread" ]]; then
   echo "refusing silent Codex resume drift: expected thread $expected_thread, got $actual_thread" >&2
@@ -82,6 +98,18 @@ if [[ -n "$expected_thread" && "$actual_thread" != "$expected_thread" ]]; then
 fi
 
 printf '%s\n' "$actual_thread" >"$thread_file"
+
+if (( tee_status != 0 )); then
+  echo "failed to capture Codex events (tee status $tee_status)" >&2
+  exit "$tee_status"
+fi
+if (( codex_status != 0 )); then
+  echo "Codex exited with status $codex_status; resumable thread saved to $thread_file" >&2
+  exit "$codex_status"
+fi
+if (( pipeline_status != 0 )); then
+  exit "$pipeline_status"
+fi
 
 [[ -s "$last_message" ]] || {
   echo "Codex produced no last-message artifact: $last_message" >&2
