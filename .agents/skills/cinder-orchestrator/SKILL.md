@@ -14,7 +14,7 @@ When facts conflict, use this order:
 3. decisions explicitly approved by the operator for the current run
 4. Hermes long-term memory
 
-Never let remembered code structure override current `main`. Do not create `.hermes.md`: Hermes gives it higher context priority and it would shadow Cinder's canonical `AGENTS.md` contract.
+Never let remembered code structure override the current intended base. Do not create `.hermes.md`: Hermes gives it higher context priority and it would shadow Cinder's canonical `AGENTS.md` contract.
 
 ## Roles
 
@@ -30,7 +30,7 @@ Use this workflow for a feature or refactor that changes architecture, data mode
 
 ## Run state
 
-Keep orchestration state outside the repository:
+Keep orchestration state outside the repository. Run-wide state and PR-unit state are separate:
 
 ```text
 ${XDG_STATE_HOME:-$HOME/.local/state}/cinder-agent/<run-id>/
@@ -41,13 +41,22 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/cinder-agent/<run-id>/
   plan.md
   status.md
   claude-recon-session.txt
-  codex-thread.txt
-  codex-events.jsonl
-  codex-last.md
-  review.md
+  units/
+    <unit-id>/
+      base-sha.txt
+      codex-prompt.md
+      codex-thread.txt
+      codex-events.jsonl
+      codex-last.md
+      review-prompt.md
+      review.md
+      claude-review.json
+      claude-review-session.txt
 ```
 
-Use `<run-id> = YYYYMMDD-HHMM-<short-slug>`. These files are coordination artifacts, not product documentation. After plan approval, the implementation PR must add the approved design/plan under Cinder's normal `docs/specs/` and `docs/plans/` locations when the change warrants durable docs.
+Use `<run-id> = YYYYMMDD-HHMM-<short-slug>` and a stable `<unit-id>` such as `01-book-domain`. A new PR unit always gets a new unit directory and therefore a fresh Codex thread. Never reuse a thread file or review artifacts across PR units.
+
+These files are coordination artifacts, not product documentation. After plan approval, implementation must add the approved design/plan under Cinder's normal `docs/specs/` and `docs/plans/` locations when the change warrants durable docs.
 
 Never store secrets, API tokens, credentials, or copied environment files in run state.
 
@@ -89,12 +98,14 @@ If the operator changes scope, update decisions and have Claude revise the desig
 
 For each approved PR-sized unit:
 
-1. Create a dedicated worktree from the current intended base with `scripts/new-worktree.sh`. Prefer `origin/main`; only use a stacked branch when the approved plan truly requires it.
-2. Copy the exact approved unit, constraints, and acceptance criteria into an implementation prompt. Include paths to the approved run-state design/plan as reference text in the prompt; do not rely on Codex having seen previous conversations.
-3. Run Codex with `scripts/codex-implement.sh` in `workspace-write`, approval policy `never`, and **without `--ephemeral`** so the thread can be resumed for fixes.
-4. Codex may edit, run checks, and commit in the worktree. It must not push, open a PR, merge, or change product scope. If it discovers a design issue, it stops with a concise blocker instead of inventing a new architecture.
-5. Codex must follow `AGENTS.md`, run targeted checks during work, then full `mix test`, and run `graphify update .` after source changes before completion.
-6. Persist the returned Codex thread id. The helper verifies that a resumed run did not silently start a different thread.
+1. Create a fresh `units/<unit-id>/` directory. Never carry `codex-thread.txt` or other implementation artifacts forward from another unit.
+2. Create a dedicated worktree from the current intended base with `scripts/new-worktree.sh`. Prefer `origin/main`; only use a stacked base when the approved plan truly requires it.
+3. **Before Codex changes anything**, save the worktree's starting commit with `git -C "$WORKTREE" rev-parse HEAD > "$UNIT_DIR/base-sha.txt"`. This exact SHA is the review base for the unit, including stacked work.
+4. Copy the exact approved unit, constraints, and acceptance criteria into `"$UNIT_DIR/codex-prompt.md"`. Include the relevant approved design/plan text; do not rely on Codex having seen previous conversations.
+5. Run Codex with `scripts/codex-implement.sh` in `workspace-write`, approval policy `never`, and **without `--ephemeral`** so the unit's thread can be resumed for fixes. Pass only paths under this unit directory for events, last-message, and thread state.
+6. Codex may edit, run checks, and commit in the worktree. It must not push, open a PR, merge, or change product scope. If it discovers a design issue, it stops with a concise blocker instead of inventing a new architecture.
+7. Codex must follow `AGENTS.md`, run targeted checks during work, then full `mix test`, and run `graphify update .` after source changes before completion.
+8. Persist the returned Codex thread id in the unit directory. The helper verifies that a resumed run did not silently start a different thread and preserves a newly emitted thread id even when Codex subsequently exits with an operational failure.
 
 The orchestrator performs networked SCM actions after the local implementation is complete: push the branch, create/update the PR, and observe CI. Keep those actions outside Codex's writable sandbox.
 
@@ -102,7 +113,9 @@ The orchestrator performs networked SCM actions after the local implementation i
 
 Every implementation PR gets a **fresh Claude session**. Never resume the architecture/design session for review; reviewer independence matters.
 
-The review prompt must compare the full diff against:
+The review handoff must include the exact SHA from `"$UNIT_DIR/base-sha.txt"`. Claude reviews `base-sha..HEAD`; it must not infer the base from an upstream branch, which may be ambiguous for stacked units.
+
+The review prompt must compare that exact full diff against:
 
 - `AGENTS.md`;
 - the approved design and plan;
@@ -116,16 +129,16 @@ At minimum route reviews as follows when applicable:
 - release-name parsing/matching → `release-parser-reviewer`
 - dependency/version changes → dependency/version checker skills
 
-Claude is read-only. Save high-confidence findings in `review.md`. A clean review should be explicit.
+Claude is read-only. Save high-confidence findings in the unit's `review.md`. A clean review should be explicit.
 
 ## Phase 6 — fix/re-review loop
 
 If review or CI finds defects:
 
-1. Resume the same Codex implementation thread in the same worktree.
+1. Resume **that unit's** Codex implementation thread in the same worktree.
 2. Provide the exact findings plus the unchanged approved constraints.
 3. Codex fixes, adds regression coverage where appropriate, commits, and reruns the required gates.
-4. Run a **new fresh Claude review** of the updated diff.
+4. Run a **new fresh Claude review** of the updated `base-sha..HEAD` diff.
 
 Maximum: 3 review/fix cycles for one PR. If the loop repeats, the implementation is drifting or the design is wrong. Stop and surface a compact summary of attempts and the unresolved issue instead of burning context indefinitely.
 
