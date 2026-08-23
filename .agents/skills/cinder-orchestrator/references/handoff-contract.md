@@ -8,10 +8,20 @@ This file is loaded by `cinder-orchestrator`. It standardizes what each speciali
 STATE_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/cinder-agent"
 RUN_ID="$(date +%Y%m%d-%H%M)-<slug>"
 RUN_DIR="$STATE_ROOT/$RUN_ID"
-mkdir -p "$RUN_DIR"
+mkdir -p "$RUN_DIR/units"
 ```
 
 Use absolute paths in handoffs. Never put credentials or `.env` contents in the run directory.
+
+Each implementation PR gets its own unit directory:
+
+```bash
+UNIT_ID="<01-short-name>"
+UNIT_DIR="$RUN_DIR/units/$UNIT_ID"
+mkdir "$UNIT_DIR"   # fail if this unit already has state; do not reuse another unit's thread
+```
+
+Never share `codex-thread.txt`, Codex event logs, or review artifacts between units.
 
 ## Reconnaissance prompt — Claude Code, fresh/read-only
 
@@ -98,6 +108,16 @@ Split the returned Markdown into `design.md` and `plan.md` if useful; exact form
 
 ## Implementation prompt — Codex, fresh per PR unit
 
+Before dispatch, create the unit's worktree from its intended base. Immediately after worktree creation and **before Codex runs**, record the exact starting commit:
+
+```bash
+git -C "$WORKTREE" rev-parse HEAD > "$UNIT_DIR/base-sha.txt"
+```
+
+This SHA is immutable orchestration state for the unit. A stacked PR therefore reviews against its actual prerequisite commit rather than guessing from branch/upstream configuration.
+
+Write `"$UNIT_DIR/codex-prompt.md"`:
+
 ```text
 You are the implementation specialist for one bounded Cinder PR.
 
@@ -131,18 +151,28 @@ DONE WHEN
 At the end, summarize commits, tests run, and any residual risk. If blocked, state the smallest decision needed.
 ```
 
-Invoke:
+Invoke with state paths scoped to this unit:
 
 ```bash
 bash .agents/skills/cinder-orchestrator/scripts/codex-implement.sh \
-  "$WORKTREE" "$RUN_DIR/codex-prompt.md" \
-  "$RUN_DIR/codex-events.jsonl" "$RUN_DIR/codex-last.md" \
-  "$RUN_DIR/codex-thread.txt"
+  "$WORKTREE" "$UNIT_DIR/codex-prompt.md" \
+  "$UNIT_DIR/codex-events.jsonl" "$UNIT_DIR/codex-last.md" \
+  "$UNIT_DIR/codex-thread.txt"
 ```
+
+The helper starts a fresh thread when `codex-thread.txt` does not exist, resumes exactly that thread when it does, validates resume identity, and persists a `thread.started` id before propagating a later Codex command failure.
 
 ## Review prompt — Claude Code, always fresh/read-only
 
 Never resume the architecture session for review.
+
+Read the unit's exact base SHA:
+
+```bash
+BASE_SHA="$(cat "$UNIT_DIR/base-sha.txt")"
+```
+
+Write `"$UNIT_DIR/review-prompt.md"`:
 
 ```text
 You are the independent reviewer for a Cinder implementation PR. Read only; do not edit files or create commits.
@@ -150,8 +180,11 @@ You are the independent reviewer for a Cinder implementation PR. Read only; do n
 APPROVED DESIGN / PLAN UNIT
 <approved text>
 
+INTENDED BASE COMMIT
+<exact SHA from the unit's base-sha.txt>
+
 TASK
-Review the complete diff from its merge-base with the intended base branch. Validate it against current AGENTS.md, the approved design/plan, surrounding implementation and tests.
+Review the complete diff from the exact intended base commit above to HEAD (equivalent to `git diff <base-sha>..HEAD`). Do not infer the merge-base from an upstream branch. Validate the diff against current AGENTS.md, the approved design/plan, surrounding implementation and tests.
 
 Read and apply any relevant reviewer contracts under `.agents/skills/*/SKILL.md`. In particular:
 - approval/request/role changes: approval-gate-reviewer;
@@ -174,12 +207,14 @@ Invoke with a new Claude session (no resume argument):
 
 ```bash
 bash .agents/skills/cinder-orchestrator/scripts/claude-readonly.sh \
-  "$WORKTREE" "$RUN_DIR/review-prompt.md" \
-  "$RUN_DIR/claude-review.json" "$RUN_DIR/review.md" \
-  "$RUN_DIR/claude-review-session.txt"
+  "$WORKTREE" "$UNIT_DIR/review-prompt.md" \
+  "$UNIT_DIR/claude-review.json" "$UNIT_DIR/review.md" \
+  "$UNIT_DIR/claude-review-session.txt"
 ```
 
 ## Fix prompt — resume the same Codex implementation thread
+
+Write a unit-scoped fix prompt:
 
 ```text
 Continue the SAME approved Cinder plan unit. Independent review/CI found the issues below:
@@ -191,7 +226,7 @@ Fix only these defects and any directly required regression coverage. The approv
 Run targeted checks, then full `mix test`, and `graphify update .` after source changes. Commit the fixes. Do not push or merge.
 ```
 
-Run `codex-implement.sh` again; because `codex-thread.txt` exists, the helper resumes the exact thread and verifies that the returned `thread_id` matches.
+Run `codex-implement.sh` again with the **same `$UNIT_DIR/codex-thread.txt`** and the same worktree. Never point a later PR unit at this thread file. After fixes, review the updated diff against the unchanged `$UNIT_DIR/base-sha.txt` in a fresh Claude session.
 
 ## Operator handoff template
 
