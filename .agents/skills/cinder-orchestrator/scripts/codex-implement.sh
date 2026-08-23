@@ -58,10 +58,10 @@ fi
 # propagating the command failure so an operational retry resumes the same work.
 set +e
 codex "${global_args[@]}" "${exec_args[@]}" <"$prompt_file" | tee "$events_file"
-pipeline_status=$?
-codex_status=${PIPESTATUS[0]}
-tee_status=${PIPESTATUS[1]}
+statuses=("${PIPESTATUS[@]}")
 set -e
+codex_status=${statuses[0]:-1}
+tee_status=${statuses[1]:-1}
 
 actual_thread=$(python3 - "$events_file" <<'PY'
 import json
@@ -106,9 +106,6 @@ fi
 if (( codex_status != 0 )); then
   echo "Codex exited with status $codex_status; resumable thread saved to $thread_file" >&2
   exit "$codex_status"
-fi
-if (( pipeline_status != 0 )); then
-  exit "$pipeline_status"
 fi
 
 [[ -s "$last_message" ]] || {
