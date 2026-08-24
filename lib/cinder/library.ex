@@ -46,14 +46,14 @@ defmodule Cinder.Library do
   @copy_fallback_errnos [:exdev, :eperm, :eopnotsupp, :enotsup]
   @standard_tv_bridged_schemes ~w(scene aired)
 
-  # The video library kinds Cinder manages. `Cinder.MediaKind` is the full media-kind registry;
+  # The video library kinds Cinder manages. `Cinder.LibraryKind` is the full library-kind registry;
   # per-kind video derivations (Plex sections, size bands, release policy, reconciler, disk
   # telemetry, and the setup gate) intentionally hang off this narrower list. The registry is a
   # pure literal read at boot and config-eval time, so it must not touch Application env or Repo.
 
   @doc "The video library kinds Cinder manages (e.g. `:movies`, `:tv`)."
   @spec kinds() :: [atom()]
-  def kinds, do: Cinder.MediaKind.video()
+  def kinds, do: Cinder.LibraryKind.video()
 
   @doc "Whether `path` has a video extension supported by the library importer."
   def video_file?(path),

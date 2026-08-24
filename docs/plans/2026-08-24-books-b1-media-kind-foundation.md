@@ -1,13 +1,14 @@
-# Books B1 — media-kind capability registry and profile foundation
+# Books B1 — library-kind capability registry and profile foundation
 
 **Date:** 2026-08-24
 **Roadmap item:** [`readarr-replacement-roadmap`](2026-08-20-readarr-replacement-roadmap.md), B1
 **Contract:** [`books parity contract`](../specs/2026-08-20-books-parity-contract.md)
 **Branch:** `feat/books-b1-media-kind-foundation`
+**Council review:** n/a
 
 ## Goal
 
-Make `:ebooks` and `:audiobooks` first-class media kinds that carry **no** video assumptions, so
+Make `:books` and `:audiobooks` first-class library kinds that carry **no** video assumptions, so
 B2+ can build the books catalog without forking movie/TV behavior. Existing movie/TV behavior must
 stay byte-for-byte identical at every external boundary.
 
@@ -17,8 +18,8 @@ stay byte-for-byte identical at every external boundary.
 false today. A survey of `lib/` found that adding two atoms to `Library.kinds/0` would, with no
 further edits:
 
-- generate 18 video-shaped settings keys (`ebooks_preferred_resolutions`, `ebooks_min_size`,
-  `ebooks_anime_library_path`, `ebooks_upgrade_cutoff`, …) plus two Plex section fields;
+- generate 18 video-shaped settings keys (`books_preferred_resolutions`, `books_min_size`,
+  `books_anime_library_path`, `books_upgrade_cutoff`, …) plus two Plex section fields;
 - render the full resolution/Blu-ray-source/blocked-term release form for books in `/settings`;
 - make both book roots **mandatory** in first-run setup (`setup_live.ex:20`) and red on `/status`
   (`health.ex:101`);
@@ -30,12 +31,13 @@ further edits:
   `library_live.ex:255`;
 - be rejected by the SQLite `media_profiles_kind_valid` CHECK before any of that.
 
-So B1 is not "add two atoms". It is: **split "media kind" from "video library kind"**, and give
-books only the capabilities they explicitly declare.
+So B1 is not "add two atoms". It is: **split "library kind" from "video library kind"**, and
+give books only the capabilities they explicitly declare. This registry does not claim the frozen
+contract's `media_kind` term: B2 owns that edition/file axis with `:ebook`/`:audiobook` values.
 
 ## Design
 
-### 1. `Cinder.MediaKind` — the registry
+### 1. `Cinder.LibraryKind` — the registry
 
 One module, one literal map, two capabilities. Nothing speculative: every field below has a
 consumer in this diff.
@@ -44,7 +46,7 @@ consumer in this diff.
 @kinds %{
   movies:     %{video?: true,  handlings: [:standard, :anime], label: "Movies"},
   tv:         %{video?: true,  handlings: [:standard, :anime], label: "TV"},
-  ebooks:     %{video?: false, handlings: [:standard],         label: "Ebooks"},
+  books:      %{video?: false, handlings: [:standard],         label: "Books"},
   audiobooks: %{video?: false, handlings: [:standard],         label: "Audiobooks"}
 }
 ```
@@ -53,24 +55,24 @@ Public API: `all/0`, `video/0`, `video?/1`, `handlings/1`, `handling?/2`, `label
 Pure literal — read at config-eval time, so it must not touch Application env or Repo (same
 constraint the current `@kinds` carries).
 
-`Cinder.Library.kinds/0` keeps returning `[:movies, :tv]`, now delegating to `MediaKind.video/0`.
+`Cinder.Library.kinds/0` keeps returning `[:movies, :tv]`, now delegating to `LibraryKind.video/0`.
 **This is the whole trick:** every existing per-kind derivation (Plex sections, size bands,
 release policy, reconciler, disk telemetry, setup gate) iterates `Library.kinds/0` and therefore
 stays byte-for-byte identical. Books opt in explicitly, one site at a time.
 
-`@kind_labels` in `Cinder.Settings.Registry` is deleted in favour of `MediaKind.label/1`; the
+`@kind_labels` in `Cinder.Settings.Registry` is deleted in favour of `LibraryKind.label/1`; the
 `String.capitalize/1` fallback goes with it (it would have produced the untranslatable
-`"Ebooks"`/`"Anime_audiobooks"` strings `dashboard_live.ex:309` and `health.ex:102` render today).
+`"Books"`/`"Anime_audiobooks"` strings `dashboard_live.ex:309` and `health.ex:102` render today).
 
 ### 2. Profiles gain book kinds, `:standard` only
 
-- `Profile.kind` enum: `[:movies, :tv, :ebooks, :audiobooks]`.
-- Changeset validates `handling` against `MediaKind.handlings(kind)` — an `:anime` ebook profile
+- `Profile.kind` enum: `[:movies, :tv, :books, :audiobooks]`.
+- Changeset validates `handling` against `LibraryKind.handlings(kind)` — an `:anime` book profile
   is a changeset error, not a raise (`profiles_live.ex:243` currently offers Anime for any kind).
 - Changeset gains `check_constraint(:kind, name: :media_profiles_kind_valid)` so an enum/DB
   mismatch surfaces as a field error rather than an `Exqlite.Error`.
-- `Profiles.list_profiles/1` accepts `MediaKind.all/0` instead of a hard-coded `[:movies, :tv]`.
-- `profiles_live.ex` kind selector/labels come from `MediaKind` (removes the `FunctionClauseError`
+- `Profiles.list_profiles/1` accepts `LibraryKind.all/0` instead of a hard-coded `[:movies, :tv]`.
+- `profiles_live.ex` kind selector/labels come from `LibraryKind` (removes the `FunctionClauseError`
   at `:270`).
 
 Fail-closed checks that must stay closed and get a regression test each:
@@ -86,7 +88,7 @@ SQLite cannot alter a CHECK in place. Follow the proven recipe in
 `PRAGMA foreign_keys = OFF`, `BEGIN IMMEDIATE`, create-copy-drop-rename, restore indexes,
 `verify_foreign_keys!`, commit). Two constraint changes:
 
-- `media_profiles_kind_valid`: `kind IN ('movies','tv','ebooks','audiobooks')`.
+- `media_profiles_kind_valid`: `kind IN ('movies','tv','books','audiobooks')`.
 - new `media_profiles_handling_valid_for_kind`:
   `kind IN ('movies','tv') OR handling = 'standard'`.
 
@@ -95,15 +97,15 @@ re-created verbatim. `movies`/`series`/`requests` FKs point at the table by name
 must not orphan them — `verify_foreign_keys!` is the gate.
 
 **No seed rows for book kinds.** Nothing consumes a book profile until B3; a seeded `Standard`
-ebooks profile would be scaffolding for later. Books get their profile when an operator creates
+books profile would be scaffolding for later. Books get their profile when an operator creates
 one.
 
 ### 4. Settings: root keys for all kinds, video keys for video kinds
 
 `Cinder.Settings.Registry`:
 
-- `flat_keys/0` → `library_path` for `MediaKind.all/0`; `anime_library_path` only for kinds whose
-  `handlings` include `:anime`; the seven `@band_suffixes` only for `MediaKind.video/0`.
+- `flat_keys/0` → `library_path` for `LibraryKind.all/0`; `anime_library_path` only for kinds whose
+  `handlings` include `:anime`; the seven `@band_suffixes` only for `LibraryKind.video/0`.
 - `plex_section_fields/0` → unchanged (`Library.kinds/0`, i.e. video only).
 - `library_kinds/0` → all kinds, each `%{kind:, label:, video?:}`. `video?` is what lets
   `setup_live.ex` keep requiring only movie/TV roots and lets `settings_components.ex` render the
@@ -111,7 +113,7 @@ one.
 
 `Cinder.Settings`:
 
-- `legacy_library_destinations/0` iterates `MediaKind.all/0` and only looks up an Anime root for
+- `legacy_library_destinations/0` iterates `LibraryKind.all/0` and only looks up an Anime root for
   kinds that have one. Book roots therefore enter `library_destinations/0` and `library_roots/0`
   (needed by B4 import containment and by disk telemetry) with **zero** change while both book
   roots are unset.
@@ -150,25 +152,25 @@ one.
 
 ### RED
 
-`test/cinder/media_kind_test.exs` — new:
+`test/cinder/library_kind_test.exs` — new:
 
-1. `all/0` is exactly `[:movies, :tv, :ebooks, :audiobooks]`; `video/0` is exactly `[:movies, :tv]`.
-2. `Library.kinds/0 == MediaKind.video/0` (the regression fence: books must never leak into it).
-3. `handlings/1` — books are `[:standard]`; `handling?(:ebooks, :anime)` is false.
+1. `all/0` is exactly `[:movies, :tv, :books, :audiobooks]`; `video/0` is exactly `[:movies, :tv]`.
+2. `Library.kinds/0 == LibraryKind.video/0` (the regression fence: books must never leak into it).
+3. `handlings/1` — books are `[:standard]`; `handling?(:books, :anime)` is false.
 4. `label/1` covers every kind with no capitalize fallback.
 
 Extensions to existing suites, each written to fail first:
 
-5. `profile_test` / `profiles_test`: an `:ebooks` profile with `handling: :standard` inserts; with
+5. `profile_test` / `profiles_test`: a `:books` profile with `handling: :standard` inserts; with
    `:anime` it returns `{:error, changeset}` with an error on `:handling` (never a raise);
-   `list_profiles(:ebooks)` returns it.
-6. `settings_test`: `flat_keys/0` contains `ebooks_library_path` and **not**
-   `ebooks_min_size`, `ebooks_preferred_resolutions`, `ebooks_anime_library_path`,
-   `ebooks_upgrade_cutoff`, `ebooks_plex_section`. Add both book roots to `@env_keys`.
-7. `settings_test`: with an `ebooks_library_path` set, `library_roots/0` includes it and
+   `list_profiles(:books)` returns it.
+6. `settings_test`: `flat_keys/0` contains `books_library_path` and **not**
+   `books_min_size`, `books_preferred_resolutions`, `books_anime_library_path`,
+   `books_upgrade_cutoff`, `books_plex_section`. Add both book roots to `@env_keys`.
+7. `settings_test`: with a `books_library_path` set, `library_roots/0` includes it and
    `video_library_roots/0` does not.
-8. `health_test`: unset book roots produce no rows; a configured `ebooks_library_path` produces
-   one `Library (Ebooks)` row.
+8. `health_test`: unset book roots produce no rows; a configured `books_library_path` produces
+   one `Library (Books)` row.
 9. `setup_live_test`: the required-service set is unchanged by the two new kinds.
 10. Request fail-closed: creating a request whose `proposed_profile_id` is a book profile aborts.
 
@@ -176,7 +178,7 @@ Extensions to existing suites, each written to fail first:
 
 Smallest change that satisfies the above, in this order (each step ends `mix test` green):
 
-1. `lib/cinder/media_kind.ex` + `Library.kinds/0` delegation + registry label swap.
+1. `lib/cinder/library_kind.ex` + `Library.kinds/0` delegation + registry label swap.
 2. Migration + `Profile`/`Profiles`/`profiles_live` book kinds.
 3. Settings registry key derivation + `legacy_library_destinations` + validation skips +
    `video_library_roots/0`.
@@ -194,15 +196,15 @@ Smallest change that satisfies the above, in this order (each step ends `mix tes
 
 ## Done when
 
-- [ ] `MediaKind.all/0` has four kinds; `Library.kinds/0` still has two, fenced by a test.
-- [ ] An `:ebooks` profile can be created with `:standard` and is refused with `:anime` at both
+- [ ] `LibraryKind.all/0` has four kinds; `Library.kinds/0` still has two, fenced by a test.
+- [ ] A `:books` profile can be created with `:standard` and is refused with `:anime` at both
       the changeset and the DB CHECK.
 - [ ] Configuring a book root generates no resolution, size-band, Anime-root, Plex-section,
       subtitle-root, ffprobe, or media-server-scan behavior.
 - [ ] An install with no book roots has an identical `/status` panel, setup gate,
       `library_roots/0`, `legacy_library_destinations/0`, Plex section set, and disk telemetry to
       `main`.
-- [ ] The settings form gains exactly two new inputs — the Ebooks and Audiobooks library roots,
+- [ ] The settings form gains exactly two new inputs — the Books and Audiobooks library roots,
       each with its test button — and nothing else. No book row appears under Releases, no book
       Anime root, no book Plex section. (The root inputs must appear: they are the only way to
       configure books, so "identical settings form" was the wrong bar.)
@@ -229,4 +231,3 @@ reported "violations" were this plan being wrong, and the Done-when above is cor
    while unset" holds under the old implementation too. It now also configures a book root, with
    an Anime key planted in env, and asserts exactly one Standard destination appears and no Anime
    one. All three new tests were mutation-checked: reverting each implementation fails them.
-

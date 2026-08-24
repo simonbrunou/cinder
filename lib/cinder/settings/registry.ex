@@ -6,13 +6,13 @@ defmodule Cinder.Settings.Registry do
   Carved out of `Cinder.Settings` as plain code motion (mirrors the `Cinder.Settings.Crypto`
   split) so the overlay engine in `Cinder.Settings` stops coupling to a wall of module
   attributes and consumes these functions instead. Every function here is pure — a read over the
-  compile-time registry (or `Cinder.MediaKind`) — and the same values are re-exported
+  compile-time registry (or `Cinder.LibraryKind`) — and the same values are re-exported
   unchanged through `Cinder.Settings` via `defdelegate`, so `CinderWeb.SettingsLabels`,
   `settings_test`, and the LiveView see byte-for-byte identical shapes.
   """
 
   alias Cinder.Acquisition.Parser
-  alias Cinder.MediaKind
+  alias Cinder.LibraryKind
 
   @migration_sources [
     %{
@@ -630,7 +630,7 @@ defmodule Cinder.Settings.Registry do
         field: :"#{kind}_section",
         secret: false,
         group: :media_server,
-        label: "Plex #{MediaKind.label(kind)} library section (numeric id)",
+        label: "Plex #{LibraryKind.label(kind)} library section (numeric id)",
         placeholder: ""
       }
     end
@@ -648,18 +648,18 @@ defmodule Cinder.Settings.Registry do
   def library_kinds,
     do:
       Enum.map(
-        MediaKind.all(),
-        &%{kind: &1, label: MediaKind.label(&1), video?: MediaKind.video?(&1)}
+        LibraryKind.all(),
+        &%{kind: &1, label: LibraryKind.label(&1), video?: LibraryKind.video?(&1)}
       )
 
   @doc "Every flat `:cinder` env key overlaid from the settings store."
   def flat_keys do
     library_keys =
-      for kind <- MediaKind.all(),
+      for kind <- LibraryKind.all(),
           suffix <-
             ["library_path"] ++
-              if(MediaKind.handling?(kind, :anime), do: ["anime_library_path"], else: []) ++
-              if(MediaKind.video?(kind), do: @band_suffixes, else: []) do
+              if(LibraryKind.handling?(kind, :anime), do: ["anime_library_path"], else: []) ++
+              if(LibraryKind.video?(kind), do: @band_suffixes, else: []) do
         "#{kind}_#{suffix}"
       end
 

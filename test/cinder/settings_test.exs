@@ -62,8 +62,8 @@ defmodule Cinder.SettingsTest do
     :tv_preferred_terms,
     :tv_blocked_terms,
     :tv_upgrade_cutoff,
-    :ebooks_library_path,
-    :ebooks_anime_library_path,
+    :books_library_path,
+    :books_anime_library_path,
     :audiobooks_library_path,
     :import_roots,
     :explicit_import_roots,
@@ -110,30 +110,30 @@ defmodule Cinder.SettingsTest do
     test "book kinds register roots without video policy keys" do
       keys = Settings.flat_keys()
 
-      assert "ebooks_library_path" in keys
+      assert "books_library_path" in keys
       assert "audiobooks_library_path" in keys
 
       for key <- ~w(
-        ebooks_min_size
-        ebooks_max_size
-        ebooks_preferred_resolutions
-        ebooks_preferred_sources
-        ebooks_preferred_terms
-        ebooks_blocked_terms
-        ebooks_anime_library_path
-        ebooks_upgrade_cutoff
-        ebooks_plex_section
+        books_min_size
+        books_max_size
+        books_preferred_resolutions
+        books_preferred_sources
+        books_preferred_terms
+        books_blocked_terms
+        books_anime_library_path
+        books_upgrade_cutoff
+        books_plex_section
       ) do
         refute key in keys
       end
     end
 
     test "book roots are managed library destinations but not video roots" do
-      Settings.put("ebooks_library_path", "/srv/media/ebooks")
+      Settings.put("books_library_path", "/srv/media/books")
 
-      assert Application.get_env(:cinder, :ebooks_library_path) == "/srv/media/ebooks"
-      assert "/srv/media/ebooks" in Settings.library_roots()
-      refute "/srv/media/ebooks" in Settings.video_library_roots()
+      assert Application.get_env(:cinder, :books_library_path) == "/srv/media/books"
+      assert "/srv/media/books" in Settings.library_roots()
+      refute "/srv/media/books" in Settings.video_library_roots()
     end
 
     test "legacy destinations are unchanged while book roots are unset" do
@@ -141,7 +141,7 @@ defmodule Cinder.SettingsTest do
       Application.put_env(:cinder, :movies_anime_library_path, "/media/anime-movies")
       Application.put_env(:cinder, :tv_library_path, "/media/tv")
       Application.put_env(:cinder, :tv_anime_library_path, "/media/anime-tv")
-      Application.delete_env(:cinder, :ebooks_library_path)
+      Application.delete_env(:cinder, :books_library_path)
       Application.delete_env(:cinder, :audiobooks_library_path)
 
       video_destinations = [
@@ -155,12 +155,12 @@ defmodule Cinder.SettingsTest do
 
       # Configuring a book root adds exactly one Standard destination — and no Anime one, even
       # with an Anime key planted in env, because books declare no `:anime` handling.
-      Application.put_env(:cinder, :ebooks_library_path, "/media/ebooks")
-      Application.put_env(:cinder, :ebooks_anime_library_path, "/media/anime-ebooks")
+      Application.put_env(:cinder, :books_library_path, "/media/books")
+      Application.put_env(:cinder, :books_anime_library_path, "/media/anime-books")
 
       assert Settings.legacy_library_destinations() ==
                video_destinations ++
-                 [%{kind: :ebooks, profile: :standard, profile_id: nil, path: "/media/ebooks"}]
+                 [%{kind: :books, profile: :standard, profile_id: nil, path: "/media/books"}]
     end
 
     test "household timezone controls the local eligibility date and rejects unknown zones" do
@@ -929,14 +929,14 @@ defmodule Cinder.SettingsTest do
                  Settings.save_form(%{
                    "movies_library_path" => root,
                    "tv_anime_library_path" => root,
-                   "ebooks_library_path" => root,
+                   "books_library_path" => root,
                    "media_server_type" => "jellyfin"
                  })
 
         assert Enum.sort(invalid) ==
-                 ["ebooks_library_path", "movies_library_path", "tv_anime_library_path"]
+                 ["books_library_path", "movies_library_path", "tv_anime_library_path"]
 
-        assert Settings.get("ebooks_library_path") == nil
+        assert Settings.get("books_library_path") == nil
         assert Settings.get("movies_library_path") == nil
         assert Settings.get("tv_anime_library_path") == nil
       end

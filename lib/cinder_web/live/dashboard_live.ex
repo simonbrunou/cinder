@@ -303,6 +303,8 @@ defmodule CinderWeb.DashboardLive do
 
   defp disk_root_label(:movies), do: gettext("Movies")
   defp disk_root_label(:tv), do: gettext("TV")
+  defp disk_root_label(:books), do: gettext("Books")
+  defp disk_root_label(:audiobooks), do: gettext("Audiobooks")
   defp disk_root_label(:anime_movies), do: gettext("Anime movies")
   defp disk_root_label(:anime_tv), do: gettext("Anime TV")
   # :database (the DB-volume row) falls through to the capitalize fallback → "Database".

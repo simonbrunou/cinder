@@ -51,19 +51,19 @@ defmodule Cinder.Catalog.ProfilesTest do
 
   test "book profiles accept only standard handling and can be listed" do
     assert {:ok, ebook} =
-             Catalog.create_profile(%{name: "Ereader", kind: :ebooks, handling: :standard})
+             Catalog.create_profile(%{name: "Ereader", kind: :books, handling: :standard})
 
-    assert Catalog.list_profiles(:ebooks) == [ebook]
+    assert Catalog.list_profiles(:books) == [ebook]
 
     assert {:error, changeset} =
-             Catalog.create_profile(%{name: "Anime", kind: :ebooks, handling: :anime})
+             Catalog.create_profile(%{name: "Anime", kind: :books, handling: :anime})
 
     assert errors_on(changeset).handling != []
   end
 
   test "requests cannot reference a book profile" do
     assert {:ok, ebook} =
-             Catalog.create_profile(%{name: "Ereader", kind: :ebooks, handling: :standard})
+             Catalog.create_profile(%{name: "Ereader", kind: :books, handling: :standard})
 
     assert_raise Exqlite.Error, ~r/requests_profile_integrity/, fn ->
       SQL.query!(
@@ -81,17 +81,17 @@ defmodule Cinder.Catalog.ProfilesTest do
 
   test "an unreferenced book profile stays deletable even as the kind's only one" do
     assert {:ok, ebook} =
-             Catalog.create_profile(%{name: "Ereader", kind: :ebooks, handling: :standard})
+             Catalog.create_profile(%{name: "Ereader", kind: :books, handling: :standard})
 
     # Books are seeded with no profile, so zero is their valid state — the last-profile guard
     # that protects movie/TV routing must not strand an accidental book profile forever.
     assert {:ok, _deleted} = Catalog.delete_profile(ebook)
-    assert Catalog.list_profiles(:ebooks) == []
+    assert Catalog.list_profiles(:books) == []
   end
 
   test "movies cannot reference a book profile after the profile table rebuild" do
     assert {:ok, ebook} =
-             Catalog.create_profile(%{name: "Ereader", kind: :ebooks, handling: :standard})
+             Catalog.create_profile(%{name: "Ereader", kind: :books, handling: :standard})
 
     assert_raise Exqlite.Error, ~r/movies_profile_integrity/, fn ->
       SQL.query!(

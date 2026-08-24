@@ -6,18 +6,18 @@ defmodule Cinder.Catalog.Profiles do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Movie, Profile, Season, Series}
   alias Cinder.Library.PathPolicy
-  alias Cinder.MediaKind
+  alias Cinder.LibraryKind
   alias Cinder.Repo
   alias Cinder.Requests.Request
   alias Cinder.Settings
 
-  @media_kinds MediaKind.all()
+  @library_kinds LibraryKind.all()
 
   def list_profiles do
     Repo.all(from p in Profile, order_by: [asc: p.kind, asc: fragment("lower(?)", p.name)])
   end
 
-  def list_profiles(kind) when kind in @media_kinds do
+  def list_profiles(kind) when kind in @library_kinds do
     Repo.all(from p in Profile, where: p.kind == ^kind, order_by: fragment("lower(?)", p.name))
   end
 
@@ -66,7 +66,7 @@ defmodule Cinder.Catalog.Profiles do
       # Movies and TV are seeded with Standard + Anime and the library cannot route without one,
       # so their last profile is undeletable. Book kinds are seeded with none — zero is their
       # valid state, so an accidentally created book profile must stay deletable.
-      MediaKind.video?(profile.kind) and
+      LibraryKind.video?(profile.kind) and
           Repo.aggregate(from(p in Profile, where: p.kind == ^profile.kind), :count) <= 1 ->
         {:error, :last_profile}
 

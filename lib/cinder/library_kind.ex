@@ -1,11 +1,14 @@
-defmodule Cinder.MediaKind do
+defmodule Cinder.LibraryKind do
   @moduledoc """
-  The media kinds Cinder manages, and what each one is capable of.
+  The library kinds Cinder manages, and what each one is capable of.
 
   `Cinder.Library.kinds/0` is the *video* subset of this registry. That split is the point:
   every per-kind video derivation (Plex sections, size bands, release policy, media-server
   reconciliation, disk telemetry, the setup gate) hangs off the narrower list, so a book kind
   inherits nothing it has not explicitly opted into.
+
+  This is not the books contract's `media_kind` axis (`:ebook`/`:audiobook` on editions and
+  files); B2 owns that concept.
 
   Ordered keyword list, not a map: the order is the UI order, and `all/0` derives from it so a
   new kind cannot be added to the registry and forgotten in the list. Pure literal — read at
@@ -15,15 +18,15 @@ defmodule Cinder.MediaKind do
   @kinds [
     movies: %{video?: true, handlings: [:standard, :anime], label: "Movies"},
     tv: %{video?: true, handlings: [:standard, :anime], label: "TV"},
-    ebooks: %{video?: false, handlings: [:standard], label: "Ebooks"},
+    books: %{video?: false, handlings: [:standard], label: "Books"},
     audiobooks: %{video?: false, handlings: [:standard], label: "Audiobooks"}
   ]
 
-  @doc "Every media kind Cinder manages, in display order."
+  @doc "Every library kind Cinder manages, in display order."
   @spec all() :: [atom()]
   def all, do: Keyword.keys(@kinds)
 
-  @doc "The media kinds whose assets are video files."
+  @doc "The library kinds whose assets are video files."
   @spec video() :: [atom()]
   def video, do: Enum.filter(all(), &video?/1)
 

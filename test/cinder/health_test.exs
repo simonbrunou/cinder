@@ -6,7 +6,7 @@ defmodule Cinder.HealthTest do
   setup :verify_on_exit!
 
   setup do
-    roots = [:ebooks_library_path, :audiobooks_library_path]
+    roots = [:books_library_path, :audiobooks_library_path]
     saved = Map.new(roots, &{&1, Application.get_env(:cinder, &1)})
     Enum.each(roots, &Application.delete_env(:cinder, &1))
 
@@ -47,12 +47,12 @@ defmodule Cinder.HealthTest do
     stub_check_all_services()
     without_books = Cinder.Health.check_all()
 
-    refute Enum.any?(without_books, &(&1.label in ["Library (Ebooks)", "Library (Audiobooks)"]))
+    refute Enum.any?(without_books, &(&1.label in ["Library (Books)", "Library (Audiobooks)"]))
 
-    Application.put_env(:cinder, :ebooks_library_path, "/media/ebooks")
+    Application.put_env(:cinder, :books_library_path, "/media/books")
 
     assert Cinder.Health.check_all() ==
-             without_books ++ [%{label: "Library (Ebooks)", status: :ok}]
+             without_books ++ [%{label: "Library (Books)", status: :ok}]
   end
 
   test "check_all/0 turns a raising impl into an error row instead of crashing" do

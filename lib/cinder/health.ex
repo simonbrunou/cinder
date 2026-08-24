@@ -7,7 +7,7 @@ defmodule Cinder.Health do
   silently and only show up in the logs.
   """
   alias Cinder.Download
-  alias Cinder.MediaKind
+  alias Cinder.LibraryKind
 
   @doc """
   Checks every configured external service. Returns a list of
@@ -105,11 +105,11 @@ defmodule Cinder.Health do
       end
 
     book_checks =
-      for kind <- MediaKind.all(),
-          not MediaKind.video?(kind),
+      for kind <- LibraryKind.all(),
+          not LibraryKind.video?(kind),
           status = check_service({:library, kind}),
           status != {:error, :not_configured} do
-        %{label: "Library (#{MediaKind.label(kind)})", status: status}
+        %{label: "Library (#{LibraryKind.label(kind)})", status: status}
       end
 
     video_checks ++ book_checks

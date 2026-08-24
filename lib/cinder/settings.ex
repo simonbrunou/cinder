@@ -17,7 +17,7 @@ defmodule Cinder.Settings do
   alias Cinder.Acquisition.{AnimePreferences, Parser, Scorer}
   alias Cinder.Catalog.Profile
   alias Cinder.Library.MediaServer.{Jellyfin, Plex}
-  alias Cinder.MediaKind
+  alias Cinder.LibraryKind
   alias Cinder.Repo
   alias Cinder.Settings.Crypto
   alias Cinder.Settings.Registry
@@ -314,7 +314,7 @@ defmodule Cinder.Settings do
   @spec video_library_roots() :: [String.t()]
   def video_library_roots do
     library_destinations()
-    |> Enum.filter(&MediaKind.video?(&1.kind))
+    |> Enum.filter(&LibraryKind.video?(&1.kind))
     |> Enum.map(&Path.expand(&1.path))
     |> Enum.uniq()
   end
@@ -345,11 +345,11 @@ defmodule Cinder.Settings do
   @doc "Boot-configured Standard and Anime destinations, without profile-store reads."
   @spec legacy_library_destinations() :: [map()]
   def legacy_library_destinations do
-    Enum.flat_map(MediaKind.all(), fn kind ->
+    Enum.flat_map(LibraryKind.all(), fn kind ->
       standard = configured_library_path(kind, :standard)
 
       anime =
-        if MediaKind.handling?(kind, :anime), do: configured_library_path(kind, :anime)
+        if LibraryKind.handling?(kind, :anime), do: configured_library_path(kind, :anime)
 
       [%{kind: kind, profile: :standard, profile_id: nil, path: standard}] ++
         if(anime in [nil, standard],
@@ -554,12 +554,12 @@ defmodule Cinder.Settings do
   end
 
   defp library_path_keys do
-    Enum.flat_map(MediaKind.all(), &library_path_keys/1)
+    Enum.flat_map(LibraryKind.all(), &library_path_keys/1)
   end
 
   defp library_path_keys(kind) do
     [library_path_key(kind)] ++
-      if MediaKind.handling?(kind, :anime), do: [anime_library_path_key(kind)], else: []
+      if LibraryKind.handling?(kind, :anime), do: [anime_library_path_key(kind)], else: []
   end
 
   defp effective_field_value(%{module: module, field: field}) do
@@ -673,7 +673,7 @@ defmodule Cinder.Settings do
   defp invalid_timezone_values(_params), do: []
 
   defp invalid_library_roots(params) do
-    for kind <- MediaKind.all(),
+    for kind <- LibraryKind.all(),
         key <- library_path_keys(kind),
         Map.has_key?(params, key),
         value = String.trim(params[key] || ""),
@@ -688,7 +688,7 @@ defmodule Cinder.Settings do
   defp invalid_import_roots(_params), do: []
 
   defp invalid_band_values(params) do
-    for kind <- MediaKind.video(),
+    for kind <- LibraryKind.video(),
         key <- [min_size_key(kind), max_size_key(kind)],
         value = String.trim(params[key] || ""),
         value != "",
@@ -699,7 +699,7 @@ defmodule Cinder.Settings do
   end
 
   defp invalid_cutoff_values(params) do
-    for kind <- MediaKind.video(),
+    for kind <- LibraryKind.video(),
         key = upgrade_cutoff_key(kind),
         Map.has_key?(params, key),
         cutoff = params[key] |> String.trim() |> String.downcase(),
@@ -986,7 +986,7 @@ defmodule Cinder.Settings do
   # A DB value overlays the bootstrap; a cleared root reverts to it (base/1 snapshots the
   # pre-overlay env once).
   defp apply_library_config(rows) do
-    for kind <- MediaKind.all(), do: apply_kind_config(rows, kind)
+    for kind <- LibraryKind.all(), do: apply_kind_config(rows, kind)
     :ok
   end
 
@@ -1027,7 +1027,7 @@ defmodule Cinder.Settings do
 
     Application.put_env(:cinder, root_env, root)
 
-    if MediaKind.video?(kind), do: apply_video_kind_config(rows, kind)
+    if LibraryKind.video?(kind), do: apply_video_kind_config(rows, kind)
   end
 
   defp apply_video_kind_config(rows, kind) do
