@@ -27,8 +27,10 @@ defmodule Cinder.Books.Metadata.Hardcover do
     with {:ok, hits} <- search_hits(query) do
       candidates =
         hits
-        |> Enum.map(& &1["work_id"])
-        |> Enum.reject(&is_nil/1)
+        |> Enum.flat_map(fn
+          %{"work_id" => work_id} -> work_id |> id() |> List.wrap()
+          _malformed -> []
+        end)
         |> Enum.uniq()
         |> Enum.take(@max_search_fetches)
         |> Enum.flat_map(&fetch_candidate/1)
@@ -40,7 +42,7 @@ defmodule Cinder.Books.Metadata.Hardcover do
   # One hit that cannot be fetched drops out of the candidate list; the resolver judges what is
   # left rather than failing the whole search over one bad id.
   defp fetch_candidate(work_id) do
-    case get_work(to_string(work_id)) do
+    case get_work(work_id) do
       {:ok, work} -> [candidate(work)]
       {:error, _reason} -> []
     end
@@ -76,6 +78,7 @@ defmodule Cinder.Books.Metadata.Hardcover do
       foreign_id: work.foreign_id,
       title: work.title,
       contributors: work.contributors,
+      contributors_incomplete: work.contributors_incomplete,
       first_published_year: work.first_published_on && work.first_published_on.year,
       edition_count: length(work.editions)
     }
@@ -87,7 +90,8 @@ defmodule Cinder.Books.Metadata.Hardcover do
         {:error, :unexpected_response}
 
       foreign_id ->
-        authors = body |> Map.get("authors") |> List.wrap() |> Enum.flat_map(&normalize_author/1)
+        credited = body |> Map.get("authors") |> List.wrap()
+        authors = Enum.flat_map(credited, &normalize_author/1)
 
         {:ok,
          %{
@@ -97,7 +101,11 @@ defmodule Cinder.Books.Metadata.Hardcover do
            first_published_on: date(body["release_date"]),
            overview: nil,
            contributors: authors,
-           contributors_incomplete: authors == [],
+           # Two ways to be incomplete, and the second is the one that is easy to miss: nobody
+           # credited at all, *or* a payload naming two people where only one carried a usable
+           # id. Testing only for an empty list reports a partial drop as complete, and this flag
+           # is the only signal an operator gets that a contributor is missing.
+           contributors_incomplete: authors == [] or length(authors) != length(credited),
            editions:
              body |> Map.get("editions") |> List.wrap() |> Enum.flat_map(&normalize_edition/1),
            series: body |> Map.get("series") |> List.wrap() |> Enum.flat_map(&normalize_series/1)
@@ -167,7 +175,7 @@ defmodule Cinder.Books.Metadata.Hardcover do
   # format — so the format string decides and the flag is a fallback. Print bindings map to no
   # Cinder media kind and are dropped: `book_editions.media_kind` allows ebook/audiobook only.
   defp media_kind(entry) do
-    format = entry["format"] |> to_string() |> String.downcase()
+    format = format_key(entry["format"])
 
     cond do
       String.contains?(format, "audio") -> :audiobook
@@ -176,6 +184,11 @@ defmodule Cinder.Books.Metadata.Hardcover do
       true -> nil
     end
   end
+
+  # A format that is not a string tells us nothing, and `to_string/1` raises on a map or a list —
+  # on the refresher's tick path, where `isolate/2` rescues without parking.
+  defp format_key(format) when is_binary(format), do: String.downcase(format)
+  defp format_key(_format), do: ""
 
   # The proxy stamps "YYYY-MM-DD HH:MM:SS"; only the date half is catalog data.
   defp date(value) when is_binary(value) do

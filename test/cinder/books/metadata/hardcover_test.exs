@@ -136,6 +136,26 @@ defmodule Cinder.Books.Metadata.HardcoverTest do
     assert Enum.map(work.editions, & &1.foreign_id) == ["6150", "6151"]
   end
 
+  test "a partial contributor drop is flagged, not reported as a complete work" do
+    # The list is non-empty, so testing it for emptiness would call this work complete and the
+    # missing contributor would be invisible — `contributors_incomplete` is the only signal an
+    # operator gets. A total drop is the easy case and both rules agree on it; this is the one
+    # that separates them.
+    Req.Test.stub(Cinder.HardcoverStub, fn conn ->
+      Req.Test.json(conn, %{
+        @work
+        | "authors" => [
+            %{"foreign_id" => %{"bad" => true}, "name" => "Toni Morrison"},
+            %{"foreign_id" => 99, "name" => "Second Author"}
+          ]
+      })
+    end)
+
+    assert {:ok, work} = Hardcover.get_work("736076")
+    assert Enum.map(work.contributors, & &1.name) == ["Second Author"]
+    assert work.contributors_incomplete
+  end
+
   test "a numeric series position survives as written rather than being dropped" do
     Req.Test.stub(Cinder.HardcoverStub, fn conn ->
       Req.Test.json(conn, %{

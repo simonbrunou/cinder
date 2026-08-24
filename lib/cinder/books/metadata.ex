@@ -24,6 +24,7 @@ defmodule Cinder.Books.Metadata do
           foreign_id: String.t(),
           title: String.t(),
           contributors: [contributor()],
+          contributors_incomplete: boolean(),
           first_published_year: pos_integer() | nil,
           edition_count: non_neg_integer()
         }

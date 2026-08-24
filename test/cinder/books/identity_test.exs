@@ -138,12 +138,43 @@ defmodule Cinder.Books.IdentityTest do
     assert {:ok, %{provider: :openlibrary}} = Identity.resolve("The Three-Body Problem Cixin Liu")
   end
 
+  test "an author-only query resolves nothing, even when every title folds away" do
+    # Folding strips non-ASCII, so a Japanese title folds to "" — and so does a query that named
+    # only an author. Without the empty-key rejection these matched each other and the
+    # edition-count tie-break silently returned the biggest: a first-result selection by another
+    # name, on an input weaker than the bare title the contract already rejects.
+    murakami = [
+      %{candidate(:openlibrary, "ノルウェイの森", ["Haruki Murakami"]) | foreign_id: "OL1W"},
+      %{
+        candidate(:openlibrary, "海辺のカフカ", ["Haruki Murakami"])
+        | foreign_id: "OL2W",
+          edition_count: 12
+      }
+    ]
+
+    expect(PrimaryMetadataMock, :search, fn _query -> {:ok, murakami} end)
+    expect(SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
+
+    assert {:unresolved, :no_reliable_match} = Identity.resolve("Haruki Murakami")
+  end
+
+  test "a query that is an author plus only format noise resolves nothing" do
+    expect(PrimaryMetadataMock, :search, fn _query ->
+      {:ok, [%{candidate(:openlibrary, "", ["Neil Gaiman"]) | foreign_id: "OL9W"}]}
+    end)
+
+    expect(SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
+
+    assert {:unresolved, :no_reliable_match} = Identity.resolve("Neil Gaiman audiobook")
+  end
+
   defp candidate(provider, title, contributors) do
     %{
       provider: provider,
       foreign_id: "id",
       title: title,
       contributors: Enum.map(contributors, &%{foreign_id: &1, name: &1, role: "author"}),
+      contributors_incomplete: false,
       first_published_year: nil,
       edition_count: 1
     }

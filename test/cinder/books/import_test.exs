@@ -124,6 +124,44 @@ defmodule Cinder.Books.ImportTest do
     assert Repo.one(from e in Edition, select: e.publisher) == "Vintage"
   end
 
+  test "a payload crediting nobody does not wipe the credits already stored" do
+    assert {:ok, work} = Books.import_resolution(resolution())
+    assert Repo.aggregate(Credit, :count) == 2
+
+    # Open Library omits author_key for works with no linked author record, and author merges
+    # change that over time — so an empty list means "the provider said nothing", exactly as a
+    # nil scalar does. Replacing wholesale would let one such response erase every credit.
+    silent = put_in(resolution()[:work][:contributors], [])
+
+    assert {:ok, ^work} = Books.import_resolution(silent)
+    assert Repo.aggregate(Credit, :count) == 2
+    assert Repo.aggregate(Author, :count) == 2
+  end
+
+  test "a payload listing no series does not wipe the memberships already stored" do
+    assert {:ok, work} = Books.import_resolution(resolution())
+    assert Repo.aggregate(SeriesMembership, :count) == 1
+
+    assert {:ok, ^work} = Books.import_resolution(put_in(resolution()[:work][:series], []))
+    assert Repo.aggregate(SeriesMembership, :count) == 1
+  end
+
+  test "a contributor repeated by the provider is deduplicated without claiming one went missing" do
+    duplicated =
+      put_in(resolution()[:work][:contributors], [
+        %{foreign_id: "OL30084A", name: "Toni Morrison", role: "author"},
+        %{foreign_id: "OL30084A", name: "Toni Morrison", role: "author"}
+      ])
+
+    assert {:ok, work} = Books.import_resolution(duplicated)
+    work = Books.get_work(work.id)
+
+    assert Enum.map(work.credits, & &1.author.name) == ["Toni Morrison"]
+    # A repeat is not a drop. Measuring against the post-dedup length would flag this work for
+    # operator review over nothing.
+    refute work.contributors_incomplete
+  end
+
   test "a print-only payload lands the work with no editions rather than a mis-kinded one" do
     assert {:ok, work} = Books.import_resolution(put_in(resolution()[:work][:editions], []))
     assert Books.get_work(work.id).editions == []

@@ -33,13 +33,14 @@ defmodule Cinder.Books.Metadata.OpenLibraryTest do
                foreign_id: "OL50548W",
                title: "Beloved",
                contributors: [%{foreign_id: "OL30084A", name: "Toni Morrison", role: "author"}],
+               contributors_incomplete: false,
                first_published_year: 1987,
                edition_count: 107
              }
            ]
   end
 
-  test "a name with no matching author key is dropped, not invented" do
+  test "a name with no matching author key is dropped and the work says so" do
     stub_search(%{
       "key" => "/works/OL1W",
       "title" => "Work",
@@ -47,7 +48,10 @@ defmodule Cinder.Books.Metadata.OpenLibraryTest do
       "author_key" => ["OL1A"]
     })
 
-    assert {:ok, [%{contributors: [%{name: "Named"}]}]} = OpenLibrary.search("Work Named")
+    # A *partial* drop is the case worth fencing: the list is non-empty, so testing it for
+    # emptiness would report the work as complete and the missing contributor would be invisible.
+    assert {:ok, [%{contributors: [%{name: "Named"}], contributors_incomplete: true}]} =
+             OpenLibrary.search("Work Named")
   end
 
   test "a non-integer edition_count becomes 0 rather than reaching the resolver's sort" do
@@ -72,8 +76,43 @@ defmodule Cinder.Books.Metadata.OpenLibraryTest do
       "author_key" => ["OL0A", "OL1A"]
     })
 
-    assert {:ok, [%{contributors: [%{name: "Named", foreign_id: "OL1A"}]}]} =
+    assert {:ok,
+            [
+              %{
+                contributors: [%{name: "Named", foreign_id: "OL1A"}],
+                contributors_incomplete: true
+              }
+            ]} =
              OpenLibrary.search("Work Named")
+  end
+
+  test "a non-string physical_format is not a media kind, and does not raise" do
+    Req.Test.stub(Cinder.OpenLibraryStub, fn conn ->
+      case conn.request_path do
+        "/search.json" ->
+          Req.Test.json(conn, %{
+            "docs" => [
+              %{
+                "key" => "/works/OL1W",
+                "title" => "Work",
+                "author_name" => ["Named"],
+                "author_key" => ["OL1A"]
+              }
+            ]
+          })
+
+        "/works/OL1W/editions.json" ->
+          Req.Test.json(conn, %{
+            "entries" => [
+              %{"key" => "/books/OL2M", "title" => "Work", "physical_format" => %{"x" => 1}},
+              %{"key" => "/books/OL3M", "title" => "Work", "physical_format" => ["Ebook"]},
+              %{"key" => "/books/OL4M", "title" => "Work", "physical_format" => "Ebook"}
+            ]
+          })
+      end
+    end)
+
+    assert {:ok, %{editions: [%{foreign_id: "OL4M"}]}} = OpenLibrary.get_work("OL1W")
   end
 
   test "get_work/1 fetches the work and keeps only digital editions" do

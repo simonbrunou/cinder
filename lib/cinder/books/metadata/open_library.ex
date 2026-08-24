@@ -46,7 +46,7 @@ defmodule Cinder.Books.Metadata.OpenLibrary do
          first_published_on: year_date(candidate.first_published_year),
          overview: nil,
          contributors: candidate.contributors,
-         contributors_incomplete: candidate.contributors == [],
+         contributors_incomplete: candidate.contributors_incomplete,
          editions: editions,
          series: []
        }}
@@ -84,12 +84,20 @@ defmodule Cinder.Books.Metadata.OpenLibrary do
   # A doc with no work key or no title identifies nothing and is dropped rather than repaired.
   defp normalize_candidate(%{"key" => "/works/" <> foreign_id, "title" => title} = doc)
        when is_binary(title) do
+    contributors = contributors(doc)
+
     [
       %{
         provider: provider(),
         foreign_id: foreign_id,
         title: title,
-        contributors: contributors(doc),
+        contributors: contributors,
+        # Two ways to be incomplete, and the second is the one that is easy to miss: nobody
+        # credited at all, *or* a name the provider sent that had no matching key and was
+        # dropped. Testing only for an empty list reports a partial drop as complete, and this
+        # flag is the only signal an operator gets that a contributor is missing.
+        contributors_incomplete:
+          contributors == [] or length(contributors) != length(List.wrap(doc["author_name"])),
         first_published_year: doc["first_publish_year"],
         edition_count: edition_count(doc["edition_count"])
       }
@@ -147,7 +155,7 @@ defmodule Cinder.Books.Metadata.OpenLibrary do
   # `physical_format` is free text and mostly describes print, which has no Cinder media kind.
   # Anything not recognisably digital is skipped rather than guessed at.
   defp media_kind(format) do
-    format = format |> to_string() |> String.downcase()
+    format = format_key(format)
 
     cond do
       String.contains?(format, "audio") -> :audiobook
@@ -155,6 +163,11 @@ defmodule Cinder.Books.Metadata.OpenLibrary do
       true -> nil
     end
   end
+
+  # A format that is not a string tells us nothing, and `to_string/1` raises on a map or a list —
+  # on the refresher's tick path, where `isolate/2` rescues without parking.
+  defp format_key(format) when is_binary(format), do: String.downcase(format)
+  defp format_key(_format), do: ""
 
   defp language(entry) do
     entry["languages"]

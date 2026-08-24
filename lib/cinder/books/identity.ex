@@ -20,14 +20,16 @@ defmodule Cinder.Books.Identity do
   2. Subtract the matched contributor tokens from the query; whatever is left is the title the
      caller meant. It must equal the candidate title exactly, after folding case, diacritics,
      punctuation, a leading article, and format noise.
-  3. Survivors are ordered by the provider's own edition count, then by foreign id so the choice
+  3. A remainder that folds away to nothing is rejected outright — see `score/2`.
+  4. Survivors are ordered by the provider's own edition count, then by foreign id so the choice
      is deterministic rather than dependent on result order.
 
-  There is no separate `:ambiguous` outcome, because steps 1 and 2 make it unreachable: every
-  survivor already carries the same folded title *and* a matching contributor, so a tie is two
-  provider rows for one work (Open Library has several), never two different works. The genuinely
-  ambiguous inputs the contract worries about — a bare title, a wrong author, an omnibus against
-  its parts — are rejected at step 1 or 2 and come back `{:unresolved, :no_reliable_match}`.
+  There is no separate `:ambiguous` outcome. In practice a survivor set larger than one is Open
+  Library's several rows for a single work — the corpus's `chronicles-of-narnia` is exactly that,
+  and the edition-count order resolves it correctly. The inputs the contract actually worries
+  about — a bare title, an author with no title, a wrong author, an omnibus against its parts —
+  are rejected at steps 1–3 and come back `{:unresolved, :no_reliable_match}`, which is the
+  outcome the contract prefers anyway.
 
   Measured against the frozen fixtures this clears the contract's bar — 36 of 40 resolved against
   a >= 90% threshold, with the three cases the contract requires to stay unresolved staying
@@ -167,7 +169,15 @@ defmodule Cinder.Books.Identity do
         end
       end)
 
-    if matched != [] and title_key(remainder) == title_key(tokens(candidate.title)) do
+    title = title_key(remainder)
+
+    # `title != ""` is load-bearing, not defensive. Folding strips non-ASCII, so a title written
+    # entirely in Japanese/Chinese/Cyrillic folds to "" — and so does a query that named only an
+    # author. Without this, "Haruki Murakami" matched every one of his non-Latin-titled works and
+    # the edition-count order silently returned the biggest: a first-result selection by another
+    # name, on an input weaker than the bare title the contract already rejects. A title we cannot
+    # fold is a title we cannot compare, so it is unresolved rather than assumed.
+    if matched != [] and title != "" and title == title_key(tokens(candidate.title)) do
       [{candidate, Enum.reverse(matched)}]
     else
       []

@@ -164,14 +164,22 @@ defmodule Cinder.Books do
 
   # A contributor with no provider id cannot be identified across refreshes, and the contract
   # forbids inventing one. Drop it and let `contributors_incomplete` carry the signal.
+  # `dropped?` is measured before deduplicating: Open Library's parallel author arrays repeat a
+  # key for works with duplicated author entries, and a repeat is not a missing contributor.
+  # Comparing against the post-dedup length would flag those works for operator review over
+  # nothing.
   defp identified_contributors(contributors) do
-    identified =
-      contributors
-      |> Enum.filter(&present?(&1.foreign_id))
-      |> Enum.uniq_by(&{&1.foreign_id, &1.role})
+    identified = Enum.filter(contributors, &present?(&1.foreign_id))
 
-    {identified, length(identified) != length(contributors)}
+    {Enum.uniq_by(identified, &{&1.foreign_id, &1.role}),
+     length(identified) != length(contributors)}
   end
+
+  # An empty list is "the provider said nothing", not "the provider said none" — the same rule
+  # `drop_nils/1` applies to scalars. Open Library omits `author_key` for works with no linked
+  # author record, and author merges change that over time, so replacing wholesale would let one
+  # such response wipe every stored credit.
+  defp put_credits(_work, [], _provider), do: :ok
 
   defp put_credits(work, contributors, provider) do
     Repo.delete_all(from c in Credit, where: c.work_id == ^work.id)
@@ -200,6 +208,11 @@ defmodule Cinder.Books do
       |> or_rollback()
     end)
   end
+
+  # Same rule as `put_credits/3`, and it matters more here: `OpenLibrary.get_work/1` always
+  # reports `series: []` because the search document carries none, so without this every refresh
+  # of an OL-identified work would clear memberships another provider had established.
+  defp put_series(_work, [], _provider), do: :ok
 
   defp put_series(work, series, provider) do
     Repo.delete_all(from m in SeriesMembership, where: m.work_id == ^work.id)
