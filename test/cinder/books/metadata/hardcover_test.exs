@@ -111,11 +111,51 @@ defmodule Cinder.Books.Metadata.HardcoverTest do
     assert {:error, :not_configured} = Hardcover.get_work("736076")
   end
 
+  test "a payload whose ids are not ids is refused or dropped, never coerced" do
+    # `to_string/1` raises on a map. Everything here runs inside the refresher's `isolate/2`,
+    # which only logs what it rescues, so a raise would recur on every 12h tick forever.
+    Req.Test.stub(Cinder.HardcoverStub, fn conn ->
+      Req.Test.json(conn, %{@work | "foreign_id" => %{"nested" => true}})
+    end)
+
+    assert {:error, :unexpected_response} = Hardcover.get_work("736076")
+
+    Req.Test.stub(Cinder.HardcoverStub, fn conn ->
+      Req.Test.json(conn, %{
+        @work
+        | "authors" => [%{"foreign_id" => ["list"], "name" => "Toni Morrison"}],
+          "editions" => [
+            %{"foreign_id" => %{}, "title" => "Beloved", "format" => "ebook"} | @work["editions"]
+          ]
+      })
+    end)
+
+    assert {:ok, work} = Hardcover.get_work("736076")
+    assert work.contributors == []
+    assert work.contributors_incomplete
+    assert Enum.map(work.editions, & &1.foreign_id) == ["6150", "6151"]
+  end
+
+  test "a numeric series position survives as written rather than being dropped" do
+    Req.Test.stub(Cinder.HardcoverStub, fn conn ->
+      Req.Test.json(conn, %{
+        @work
+        | "series" => [%{"foreign_id" => 1, "title" => "Beloved Trilogy", "position" => 1.5}]
+      })
+    end)
+
+    assert {:ok, %{series: [%{name: "Beloved Trilogy", position: "1.5"}]}} =
+             Hardcover.get_work("736076")
+  end
+
   test "a non-200 and a malformed body each fail without a partial work" do
     Req.Test.stub(Cinder.HardcoverStub, fn conn -> Plug.Conn.send_resp(conn, 502, "bad") end)
     assert {:error, {:hardcover_status, 502}} = Hardcover.get_work("736076")
 
     Req.Test.stub(Cinder.HardcoverStub, fn conn -> Req.Test.json(conn, %{"title" => "no id"}) end)
+    assert {:error, :unexpected_response} = Hardcover.get_work("736076")
+
+    Req.Test.stub(Cinder.HardcoverStub, fn conn -> Req.Test.json(conn, ["not a work"]) end)
     assert {:error, :unexpected_response} = Hardcover.get_work("736076")
   end
 end

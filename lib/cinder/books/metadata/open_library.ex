@@ -91,12 +91,17 @@ defmodule Cinder.Books.Metadata.OpenLibrary do
         title: title,
         contributors: contributors(doc),
         first_published_year: doc["first_publish_year"],
-        edition_count: doc["edition_count"] || 0
+        edition_count: edition_count(doc["edition_count"])
       }
     ]
   end
 
   defp normalize_candidate(_doc), do: []
+
+  # The resolver negates this to sort. A non-integer would raise there, inside the refresher's
+  # `isolate/2`, which only logs what it rescues — so a bad payload would recur every tick.
+  defp edition_count(value) when is_integer(value) and value >= 0, do: value
+  defp edition_count(_value), do: 0
 
   # author_name and author_key are positional parallel lists. A name with no key cannot be
   # identified, so it is dropped and surfaces as `contributors_incomplete` on the work.
@@ -104,7 +109,13 @@ defmodule Cinder.Books.Metadata.OpenLibrary do
     doc["author_name"]
     |> List.wrap()
     |> Enum.zip(List.wrap(doc["author_key"]))
-    |> Enum.map(fn {name, key} -> %{foreign_id: key, name: name, role: "author"} end)
+    |> Enum.flat_map(fn
+      {name, key} when is_binary(name) and is_binary(key) ->
+        [%{foreign_id: key, name: name, role: "author"}]
+
+      _malformed ->
+        []
+    end)
   end
 
   defp normalize_edition(%{"key" => "/books/" <> foreign_id, "title" => title} = entry)

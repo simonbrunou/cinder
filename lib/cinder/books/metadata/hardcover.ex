@@ -49,9 +49,8 @@ defmodule Cinder.Books.Metadata.Hardcover do
   @impl true
   def get_work(foreign_id) when is_binary(foreign_id) do
     case request(url: "/work/#{foreign_id}") do
-      {:ok, %{status: 200, body: %{"foreign_id" => _, "title" => title} = body}}
-      when is_binary(title) ->
-        {:ok, normalize_work(body)}
+      {:ok, %{status: 200, body: %{} = body}} ->
+        normalize_work(body)
 
       {:ok, %{status: 200}} ->
         {:error, :unexpected_response}
@@ -82,38 +81,67 @@ defmodule Cinder.Books.Metadata.Hardcover do
     }
   end
 
-  defp normalize_work(body) do
-    authors = body |> Map.get("authors") |> List.wrap() |> Enum.flat_map(&normalize_author/1)
+  defp normalize_work(%{"foreign_id" => raw_id, "title" => title} = body) when is_binary(title) do
+    case id(raw_id) do
+      nil ->
+        {:error, :unexpected_response}
 
-    %{
-      provider: provider(),
-      foreign_id: to_string(body["foreign_id"]),
-      title: body["title"],
-      first_published_on: date(body["release_date"]),
-      overview: nil,
-      contributors: authors,
-      contributors_incomplete: authors == [],
-      editions: body |> Map.get("editions") |> List.wrap() |> Enum.flat_map(&normalize_edition/1),
-      series: body |> Map.get("series") |> List.wrap() |> Enum.flat_map(&normalize_series/1)
-    }
+      foreign_id ->
+        authors = body |> Map.get("authors") |> List.wrap() |> Enum.flat_map(&normalize_author/1)
+
+        {:ok,
+         %{
+           provider: provider(),
+           foreign_id: foreign_id,
+           title: title,
+           first_published_on: date(body["release_date"]),
+           overview: nil,
+           contributors: authors,
+           contributors_incomplete: authors == [],
+           editions:
+             body |> Map.get("editions") |> List.wrap() |> Enum.flat_map(&normalize_edition/1),
+           series: body |> Map.get("series") |> List.wrap() |> Enum.flat_map(&normalize_series/1)
+         }}
+    end
   end
 
-  defp normalize_author(%{"foreign_id" => id, "name" => name})
-       when is_binary(name) and not is_nil(id),
-       do: [%{foreign_id: to_string(id), name: name, role: "author"}]
+  defp normalize_work(_body), do: {:error, :unexpected_response}
+
+  # A provider id is a string or a number; anything else identifies nothing and is dropped rather
+  # than coerced. `to_string/1` raises on a map or a list, and everything here runs inside the
+  # refresher's `isolate/2`, which only logs what it rescues — a raise there recurs every tick.
+  defp id(value) when is_binary(value), do: presence(value)
+  defp id(value) when is_integer(value), do: Integer.to_string(value)
+  defp id(_value), do: nil
+
+  # A series position is lossless by contract: "1", "1.5" and "Book Two" all survive as written,
+  # including when the proxy sends a number rather than a string.
+  defp position(value) when is_binary(value), do: presence(value)
+  defp position(value) when is_number(value), do: to_string(value)
+  defp position(_value), do: nil
+
+  defp normalize_author(%{"foreign_id" => raw_id, "name" => name}) when is_binary(name) do
+    case id(raw_id) do
+      nil -> []
+      foreign_id -> [%{foreign_id: foreign_id, name: name, role: "author"}]
+    end
+  end
 
   defp normalize_author(_author), do: []
 
-  defp normalize_edition(%{"foreign_id" => id, "title" => title} = entry)
+  defp normalize_edition(%{"foreign_id" => raw_id, "title" => title} = entry)
        when is_binary(title) do
-    case media_kind(entry) do
-      nil ->
+    case {id(raw_id), media_kind(entry)} do
+      {nil, _kind} ->
         []
 
-      kind ->
+      {_foreign_id, nil} ->
+        []
+
+      {foreign_id, kind} ->
         [
           %{
-            foreign_id: to_string(id),
+            foreign_id: foreign_id,
             media_kind: kind,
             title: title,
             language: presence(entry["language"]),
@@ -131,7 +159,7 @@ defmodule Cinder.Books.Metadata.Hardcover do
   defp normalize_edition(_entry), do: []
 
   defp normalize_series(%{"title" => title} = entry) when is_binary(title),
-    do: [%{name: title, position: entry["position"] && to_string(entry["position"])}]
+    do: [%{name: title, position: position(entry["position"])}]
 
   defp normalize_series(_entry), do: []
 

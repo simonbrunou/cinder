@@ -50,6 +50,32 @@ defmodule Cinder.Books.Metadata.OpenLibraryTest do
     assert {:ok, [%{contributors: [%{name: "Named"}]}]} = OpenLibrary.search("Work Named")
   end
 
+  test "a non-integer edition_count becomes 0 rather than reaching the resolver's sort" do
+    # `Identity.select/2` negates edition_count to order survivors; a string would raise there,
+    # inside the refresher's `isolate/2`, which only logs what it rescues.
+    stub_search(%{
+      "key" => "/works/OL1W",
+      "title" => "Work",
+      "author_name" => ["Named"],
+      "author_key" => ["OL1A"],
+      "edition_count" => "107"
+    })
+
+    assert {:ok, [%{edition_count: 0}]} = OpenLibrary.search("Work Named")
+  end
+
+  test "a non-string author name or key is dropped rather than folded" do
+    stub_search(%{
+      "key" => "/works/OL1W",
+      "title" => "Work",
+      "author_name" => [%{"nested" => true}, "Named"],
+      "author_key" => ["OL0A", "OL1A"]
+    })
+
+    assert {:ok, [%{contributors: [%{name: "Named", foreign_id: "OL1A"}]}]} =
+             OpenLibrary.search("Work Named")
+  end
+
   test "get_work/1 fetches the work and keeps only digital editions" do
     Req.Test.stub(Cinder.OpenLibraryStub, fn conn ->
       case conn.request_path do
