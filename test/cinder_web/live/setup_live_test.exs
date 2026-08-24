@@ -72,6 +72,24 @@ defmodule CinderWeb.SetupLiveTest do
     # But the wizard still shows the library paths it needs to validate.
     assert html =~ ~s(name="movies_library_path")
     assert html =~ ~s(name="movies_anime_library_path")
+    assert html =~ ~s(name="ebooks_library_path")
+    assert html =~ ~s(name="audiobooks_library_path")
+    refute html =~ ~s(name="ebooks_anime_library_path")
+  end
+
+  test "book roots are testable but do not expand the required-service set", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+    stub_all_services_ok()
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+
+    assert has_element?(lv, "button[phx-value-service=ebooks_library]", "Test Ebooks library")
+    refute has_element?(lv, "#setup-checklist", "Ebooks")
+    refute has_element?(lv, "#setup-checklist", "Audiobooks")
+
+    lv |> form("#setup-form", @valid_params) |> render_submit()
+    assert has_element?(lv, "#finish-setup:not([disabled])")
   end
 
   test "the wizard gives required sections an ordered path from a clear starting point", %{

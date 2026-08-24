@@ -46,16 +46,14 @@ defmodule Cinder.Library do
   @copy_fallback_errnos [:exdev, :eperm, :eopnotsupp, :enotsup]
   @standard_tv_bridged_schemes ~w(scene aired)
 
-  # The library kinds Cinder manages. The single source of truth — config keys
-  # (`:"#{kind}_library_path"`, the per-kind Plex section, the size band), the
-  # settings UI, health checks, and the media-server scan all derive from it, so a
-  # new media type (e.g. `:books`) is one entry here, not a fork. Pure literal:
-  # read at boot and at config-eval time, so it must not touch Application env or Repo.
-  @kinds [:movies, :tv]
+  # The video library kinds Cinder manages. `Cinder.MediaKind` is the full media-kind registry;
+  # per-kind video derivations (Plex sections, size bands, release policy, reconciler, disk
+  # telemetry, and the setup gate) intentionally hang off this narrower list. The registry is a
+  # pure literal read at boot and config-eval time, so it must not touch Application env or Repo.
 
-  @doc "The library kinds Cinder manages (e.g. `:movies`, `:tv`)."
+  @doc "The video library kinds Cinder manages (e.g. `:movies`, `:tv`)."
   @spec kinds() :: [atom()]
-  def kinds, do: @kinds
+  def kinds, do: Cinder.MediaKind.video()
 
   @doc "Whether `path` has a video extension supported by the library importer."
   def video_file?(path),

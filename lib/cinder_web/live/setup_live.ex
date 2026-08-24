@@ -17,11 +17,10 @@ defmodule CinderWeb.SetupLive do
   @base_required_services ["tmdb", "indexer", "media_server"]
   @download_services ["torrent", "usenet"]
 
-  # The required set is the base services plus one writable-root check per library kind
-  # (`movies_library`, `tv_library`, …), derived from Settings.library_kinds/0.
+  # The required set is the base services plus one writable-root check per video library kind.
   defp required_services do
     @base_required_services ++
-      for(%{kind: kind} <- Settings.library_kinds(), do: "#{kind}_library")
+      for(%{kind: kind, video?: true} <- Settings.library_kinds(), do: "#{kind}_library")
   end
 
   @impl true

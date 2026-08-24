@@ -1,9 +1,10 @@
 defmodule CinderWeb.ProfilesLive do
-  @moduledoc "Admin management for named movie and TV media profiles."
+  @moduledoc "Admin management for named media profiles."
   use CinderWeb, :live_view
 
   alias Cinder.Catalog
   alias Cinder.Catalog.Profile
+  alias Cinder.MediaKind
 
   @impl true
   def mount(_params, _session, socket) do
@@ -234,13 +235,13 @@ defmodule CinderWeb.ProfilesLive do
                 field={@form[:kind]}
                 type="select"
                 label={gettext("Media kind")}
-                options={[{gettext("Movies"), "movies"}, {gettext("TV"), "tv"}]}
+                options={kind_options()}
               />
               <.input
                 field={@form[:handling]}
                 type="select"
                 label={gettext("Handling")}
-                options={[{gettext("Standard"), "standard"}, {gettext("Anime"), "anime"}]}
+                options={handling_options(@form)}
               />
               <.input
                 field={@form[:library_path]}
@@ -269,6 +270,21 @@ defmodule CinderWeb.ProfilesLive do
 
   defp profile_kind_label(:movies), do: gettext("Movies")
   defp profile_kind_label(:tv), do: gettext("TV")
+  defp profile_kind_label(:ebooks), do: gettext("Ebooks")
+  defp profile_kind_label(:audiobooks), do: gettext("Audiobooks")
+
   defp handling_label(:anime), do: gettext("Anime")
   defp handling_label(_standard), do: gettext("Standard")
+
+  defp kind_options,
+    do: Enum.map(MediaKind.all(), &{profile_kind_label(&1), Atom.to_string(&1)})
+
+  # The handling select narrows to what the selected kind supports: books are Standard-only, so
+  # offering Anime there would only produce a changeset error the operator has to discover.
+  defp handling_options(form) do
+    case Ecto.Changeset.get_field(form.source, :kind) do
+      nil -> []
+      kind -> Enum.map(MediaKind.handlings(kind), &{handling_label(&1), Atom.to_string(&1)})
+    end
+  end
 end

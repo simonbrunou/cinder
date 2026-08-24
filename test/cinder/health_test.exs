@@ -1,17 +1,36 @@
 defmodule Cinder.HealthTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   import Mox
 
   setup :verify_on_exit!
 
-  test "check_all/0 returns labeled rows for metadata, indexer, download clients, media server, libraries" do
+  setup do
+    roots = [:ebooks_library_path, :audiobooks_library_path]
+    saved = Map.new(roots, &{&1, Application.get_env(:cinder, &1)})
+    Enum.each(roots, &Application.delete_env(:cinder, &1))
+
+    on_exit(fn ->
+      Enum.each(saved, fn
+        {key, nil} -> Application.delete_env(:cinder, key)
+        {key, value} -> Application.put_env(:cinder, key, value)
+      end)
+    end)
+
+    :ok
+  end
+
+  defp stub_check_all_services do
     stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
     stub(Cinder.Acquisition.IndexerMock, :health, fn -> :ok end)
     stub(Cinder.Download.ClientMock, :health, fn -> {:error, :econnrefused} end)
     stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)
     stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+  end
+
+  test "check_all/0 returns labeled rows for metadata, indexer, download clients, media server, libraries" do
+    stub_check_all_services()
 
     assert [
              %{label: "Metadata (TMDB)", status: :ok},
@@ -22,6 +41,18 @@ defmodule Cinder.HealthTest do
              %{label: "Library (movies)", status: :ok},
              %{label: "Library (tv)", status: :ok}
            ] = Cinder.Health.check_all()
+  end
+
+  test "book library rows are omitted until their roots are configured" do
+    stub_check_all_services()
+    without_books = Cinder.Health.check_all()
+
+    refute Enum.any?(without_books, &(&1.label in ["Library (Ebooks)", "Library (Audiobooks)"]))
+
+    Application.put_env(:cinder, :ebooks_library_path, "/media/ebooks")
+
+    assert Cinder.Health.check_all() ==
+             without_books ++ [%{label: "Library (Ebooks)", status: :ok}]
   end
 
   test "check_all/0 turns a raising impl into an error row instead of crashing" do

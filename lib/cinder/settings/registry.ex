@@ -6,12 +6,13 @@ defmodule Cinder.Settings.Registry do
   Carved out of `Cinder.Settings` as plain code motion (mirrors the `Cinder.Settings.Crypto`
   split) so the overlay engine in `Cinder.Settings` stops coupling to a wall of module
   attributes and consumes these functions instead. Every function here is pure — a read over the
-  compile-time registry (or `Cinder.Library.kinds/0`) — and the same values are re-exported
+  compile-time registry (or `Cinder.MediaKind`) — and the same values are re-exported
   unchanged through `Cinder.Settings` via `defdelegate`, so `CinderWeb.SettingsLabels`,
   `settings_test`, and the LiveView see byte-for-byte identical shapes.
   """
 
   alias Cinder.Acquisition.Parser
+  alias Cinder.MediaKind
 
   @migration_sources [
     %{
@@ -554,10 +555,6 @@ defmodule Cinder.Settings.Registry do
     %{key: "anime_group_fallback_delay", type: :hours}
   ]
 
-  # Display labels for the library kinds. `Cinder.Library.kinds/0` stays a pure context list;
-  # the UI labels live here alongside the other settings-group labels.
-  @kind_labels %{movies: "Movies", tv: "TV"}
-
   # The band suffixes each kind owns. min/max_size have a config.exs bootstrap (the shipped
   # default bands; a stored 0 opts out to unbounded); the release lists and cutoff stay DB-only
   # (unset ⇒ scorer/hunter default). The root path (`#{kind}_library_path`) also has an env
@@ -633,14 +630,11 @@ defmodule Cinder.Settings.Registry do
         field: :"#{kind}_section",
         secret: false,
         group: :media_server,
-        label: "Plex #{kind_label(kind)} library section (numeric id)",
+        label: "Plex #{MediaKind.label(kind)} library section (numeric id)",
         placeholder: ""
       }
     end
   end
-
-  defp kind_label(kind),
-    do: Map.get(@kind_labels, kind, kind |> to_string() |> String.capitalize())
 
   @doc "The download-client enable toggles."
   def toggles, do: @toggles
@@ -650,14 +644,22 @@ defmodule Cinder.Settings.Registry do
 
   def anime_fields, do: @anime_fields
 
-  @doc "The library kinds with display labels, for the settings/setup UI (`[%{kind:, label:}]`)."
-  def library_kinds, do: Enum.map(Cinder.Library.kinds(), &%{kind: &1, label: kind_label(&1)})
+  @doc "Every media kind with its display label and video capability, for the settings/setup UI."
+  def library_kinds,
+    do:
+      Enum.map(
+        MediaKind.all(),
+        &%{kind: &1, label: MediaKind.label(&1), video?: MediaKind.video?(&1)}
+      )
 
   @doc "Every flat `:cinder` env key overlaid from the settings store."
   def flat_keys do
     library_keys =
-      for kind <- Cinder.Library.kinds(),
-          suffix <- ["library_path", "anime_library_path" | @band_suffixes] do
+      for kind <- MediaKind.all(),
+          suffix <-
+            ["library_path"] ++
+              if(MediaKind.handling?(kind, :anime), do: ["anime_library_path"], else: []) ++
+              if(MediaKind.video?(kind), do: @band_suffixes, else: []) do
         "#{kind}_#{suffix}"
       end
 
