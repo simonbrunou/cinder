@@ -168,6 +168,36 @@ defmodule Cinder.Books.IdentityTest do
     assert {:unresolved, :no_reliable_match} = Identity.resolve("Neil Gaiman audiobook")
   end
 
+  test "a common word in a title is not treated as a format annotation" do
+    # "book" was in the noise list, to absorb "e-book" (which folds to two tokens). Stripping it
+    # from both sides made "The Book Thief" and "The Thief" the same title, so a request for one
+    # resolved confidently to the other — a wrong-work selection, not merely a missed match.
+    expect(PrimaryMetadataMock, :search, fn _query ->
+      {:ok, [candidate(:openlibrary, "The Thief", ["Markus Zusak"])]}
+    end)
+
+    expect(SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
+
+    assert {:unresolved, :no_reliable_match} =
+             Identity.resolve("The Book Thief Markus Zusak")
+  end
+
+  test "a title made only of annotation words still resolves" do
+    # Rejecting an empty folded title must not fold a real title away first. *Omnibus* and
+    # *Book* are both real titles; `drop_article/1` already refuses to strip a lone article for
+    # the same reason.
+    for title <- ["Omnibus", "Book", "Audio"] do
+      expect(PrimaryMetadataMock, :search, fn _query ->
+        {:ok, [candidate(:openlibrary, title, ["A Author"])]}
+      end)
+
+      expect(PrimaryMetadataMock, :get_work, fn "id" -> {:ok, work("id")} end)
+
+      assert {:ok, %{provider: :openlibrary}} = Identity.resolve("#{title} A Author"),
+             "#{title} should resolve"
+    end
+  end
+
   defp candidate(provider, title, contributors) do
     %{
       provider: provider,

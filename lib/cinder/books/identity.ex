@@ -47,8 +47,14 @@ defmodule Cinder.Books.Identity do
           | {:unresolved, atom()}
           | {:error, :providers_unavailable}
 
-  # Words a release or a requester adds that never belong to the work title itself.
-  @noise ~w(omnibus ebook e book audiobook audio unabridged abridged edition editions)
+  # Format annotations a release or a requester adds that never belong to the work title itself.
+  #
+  # `book` is deliberately NOT here, though it was: it was added to absorb "e-book", which folds
+  # to two tokens. But `book` is an ordinary title word, and stripping it from both sides made
+  # "The Book Thief" and "The Thief" the same title — a request for one resolved confidently to
+  # the other. A stray "e-book" in a query now just fails to match, which is a rejection rather
+  # than a wrong work; every entry here has to be a word no title would carry on its own.
+  @noise ~w(omnibus ebook audiobook audio unabridged abridged edition editions)
   @articles ~w(the a an le la les el los der die das)
 
   @doc """
@@ -211,9 +217,18 @@ defmodule Cinder.Books.Identity do
   # Library's "Little Prince" are the same work, and "... omnibus" is a requester's annotation.
   defp title_key(words) do
     words
-    |> Enum.reject(&(&1 in @noise))
+    |> drop_noise()
     |> drop_article()
     |> Enum.join(" ")
+  end
+
+  # Never strip a title down to nothing — the same rule `drop_article/1` follows. *Omnibus* is a
+  # real title, and folding it away would make it unresolvable rather than merely annotated.
+  defp drop_noise(words) do
+    case Enum.reject(words, &(&1 in @noise)) do
+      [] -> words
+      kept -> kept
+    end
   end
 
   defp drop_article([article | rest]) when rest != [],

@@ -129,9 +129,19 @@ defmodule Cinder.Books do
 
   **Only fields the provider actually returned are written.** A payload missing `overview` leaves
   an existing overview alone instead of nilling it, which is what makes a partial or degraded
-  provider response safe to import. Credits and series memberships are the exception: they are
-  replaced wholesale, so a work's contributor list is always exactly what the last successful
-  import said rather than an accreted union of every provider that ever ran.
+  provider response safe to import.
+
+  Credits and series memberships follow the same rule at list granularity: a **non-empty** list
+  replaces the stored rows wholesale, so they are exactly what the last successful import said
+  rather than an accreted union of every provider that ever ran — while an **empty** list is read
+  as "the provider said nothing" and leaves the stored rows alone. `OpenLibrary.get_work/1`
+  reports `series: []` unconditionally and drops contributors whenever Open Library omits
+  `author_key`, so without that reading a routine refresh would erase both.
+
+  The cost is that an empty list and "genuinely none" are currently the same thing, so nothing can
+  clear a credit or membership once stored. No caller needs to yet. When one does, the fix is for
+  an adapter to distinguish the two — `series: nil` for "this provider does not report series"
+  against `series: []` for "this work has none" — rather than to bring the wholesale wipe back.
 
   A contributor the provider named but did not identify is dropped, not invented, and the work is
   flagged `contributors_incomplete`.
