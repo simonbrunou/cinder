@@ -7,10 +7,33 @@ unless Code.ensure_loaded?(Cinder.Repo.Migrations.CreateNamedMediaProfiles) do
   )
 end
 
+unless Code.ensure_loaded?(Cinder.Repo.Migrations.AddBookProfileKinds) do
+  Code.require_file(
+    Path.expand(
+      "../../../../priv/repo/migrations/20260824064512_add_book_profile_kinds.exs",
+      __DIR__
+    )
+  )
+end
+
+unless Code.ensure_loaded?(Cinder.Repo.Migrations.CreateBooksCatalogAndTargets) do
+  Code.require_file(
+    Path.expand(
+      "../../../../priv/repo/migrations/20260824101744_create_books_catalog_and_targets.exs",
+      __DIR__
+    )
+  )
+end
+
 defmodule Cinder.Repo.Migrations.CreateNamedMediaProfilesTest do
   use ExUnit.Case, async: false
 
-  alias Cinder.Repo.Migrations.CreateNamedMediaProfiles
+  alias Cinder.Repo.Migrations.{
+    AddBookProfileKinds,
+    CreateBooksCatalogAndTargets,
+    CreateNamedMediaProfiles
+  }
+
   alias Ecto.Adapters.SQL
 
   defmodule Repo do
@@ -125,6 +148,38 @@ defmodule Cinder.Repo.Migrations.CreateNamedMediaProfilesTest do
       WHERE kind = 'movies' AND name = 'Standard'
       """)
     end
+
+    :ok = Ecto.Migrator.up(Repo, 20_260_824_064_512, AddBookProfileKinds, log: false)
+
+    :ok =
+      Ecto.Migrator.up(Repo, 20_260_824_101_744, CreateBooksCatalogAndTargets, log: false)
+
+    query!("""
+    INSERT INTO media_profiles (name, kind, handling, inserted_at, updated_at)
+    VALUES
+      ('Referenced ebook', 'ebook', 'standard', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+      ('Unreferenced ebook', 'ebook', 'standard', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    """)
+
+    query!("""
+    INSERT INTO book_works (id, title, inserted_at, updated_at)
+    VALUES (1, 'Referenced work', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    """)
+
+    query!("""
+    INSERT INTO book_targets (work_id, media_kind, profile_id, inserted_at, updated_at)
+    SELECT 1, 'ebook', id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+    FROM media_profiles WHERE name = 'Referenced ebook'
+    """)
+
+    assert_raise Exqlite.Error, ~r/media_profiles_references_integrity/, fn ->
+      query!("UPDATE media_profiles SET kind = 'audiobook' WHERE name = 'Referenced ebook'")
+    end
+
+    assert %{num_rows: 1} =
+             query!(
+               "UPDATE media_profiles SET kind = 'audiobook' WHERE name = 'Unreferenced ebook'"
+             )
 
     assert %{num_rows: 1} =
              query!("INSERT INTO movies (id, media_profile, profile_id) VALUES (3, 'auto', NULL)")

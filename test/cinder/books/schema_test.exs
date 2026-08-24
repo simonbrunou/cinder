@@ -222,7 +222,7 @@ defmodule Cinder.Books.SchemaTest do
              |> Repo.insert()
 
     assert {:error, changeset} = Catalog.update_profile(profile, %{kind: :audiobook})
-    assert errors_on(changeset).handling != []
+    assert "referenced profile may only be renamed" in errors_on(changeset).base
     assert Repo.reload!(profile).kind == :ebook
     assert Repo.reload!(target).profile_id == profile.id
   end

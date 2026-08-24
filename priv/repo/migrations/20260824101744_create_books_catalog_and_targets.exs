@@ -30,6 +30,8 @@ defmodule Cinder.Repo.Migrations.CreateBooksCatalogAndTargets do
       timestamps(type: :utc_datetime)
     end
 
+    create index(:book_editions, [:work_id])
+
     create table(:book_identifiers) do
       add :author_id, references(:book_authors, on_delete: :delete_all),
         check: %{
@@ -46,6 +48,9 @@ defmodule Cinder.Repo.Migrations.CreateBooksCatalogAndTargets do
     end
 
     create unique_index(:book_identifiers, [:provider, :kind, :foreign_id])
+    create index(:book_identifiers, [:author_id])
+    create index(:book_identifiers, [:work_id])
+    create index(:book_identifiers, [:edition_id])
 
     create table(:book_credits) do
       add :author_id, references(:book_authors, on_delete: :delete_all), null: false
@@ -66,6 +71,7 @@ defmodule Cinder.Repo.Migrations.CreateBooksCatalogAndTargets do
 
     create unique_index(:book_credits, [:work_id, :author_id, :role])
     create unique_index(:book_credits, [:edition_id, :author_id, :role])
+    create index(:book_credits, [:author_id])
 
     # ponytail: Flat rows until series need pages/provider identity; then promote to book_series.
     create table(:book_series_memberships) do
@@ -75,6 +81,8 @@ defmodule Cinder.Repo.Migrations.CreateBooksCatalogAndTargets do
       add :provider, :string, null: false
       timestamps(type: :utc_datetime)
     end
+
+    create index(:book_series_memberships, [:work_id])
 
     create table(:book_targets) do
       add :work_id, references(:book_works, on_delete: :delete_all), null: false
@@ -100,6 +108,7 @@ defmodule Cinder.Repo.Migrations.CreateBooksCatalogAndTargets do
     end
 
     create unique_index(:book_targets, [:work_id, :media_kind])
+    create index(:book_targets, [:profile_id])
 
     for event <- ["INSERT", "UPDATE OF profile_id, media_kind"] do
       suffix = if event == "INSERT", do: "insert", else: "update"
