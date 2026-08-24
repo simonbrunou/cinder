@@ -231,6 +231,20 @@ defmodule Cinder.Books.IdentityTest do
              Identity.resolve("The Lord of the Rings J. R. R. Tolkien omnibus")
   end
 
+  test "an article plus an annotation is not a title that matches everything" do
+    # A prior revision stripped annotations from the title too, and guarded only against
+    # stripping it to []. "The Omnibus" survived that guard as the bare article "the" — as did
+    # "The Audio" and "The Edition" — so they all keyed alike and a query for one returned
+    # another. Stripping the query side only removes the shared bucket entirely.
+    expect(PrimaryMetadataMock, :search, fn _query ->
+      {:ok, [candidate(:openlibrary, "The Audio", ["A Author"])]}
+    end)
+
+    expect(SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
+
+    assert {:unresolved, :no_reliable_match} = Identity.resolve("The Omnibus A Author")
+  end
+
   test "a title made only of annotation words still resolves" do
     # Rejecting an empty folded title must not fold a real title away first. *Omnibus* and
     # *Book* are both real titles; `drop_article/1` already refuses to strip a lone article for
