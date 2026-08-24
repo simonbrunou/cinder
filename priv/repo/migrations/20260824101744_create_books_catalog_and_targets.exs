@@ -20,7 +20,14 @@ defmodule Cinder.Repo.Migrations.CreateBooksCatalogAndTargets do
 
     create table(:book_editions) do
       add :work_id, references(:book_works, on_delete: :delete_all), null: false
-      add :media_kind, :string, null: false
+
+      add :media_kind, :string,
+        null: false,
+        check: %{
+          name: "book_editions_media_kind_valid",
+          expr: "media_kind IN ('ebook', 'audiobook')"
+        }
+
       add :title, :string, null: false
       add :language, :string
       add :format, :string
@@ -82,7 +89,7 @@ defmodule Cinder.Repo.Migrations.CreateBooksCatalogAndTargets do
       timestamps(type: :utc_datetime)
     end
 
-    create index(:book_series_memberships, [:work_id])
+    create unique_index(:book_series_memberships, [:work_id, :name, :provider])
 
     create table(:book_targets) do
       add :work_id, references(:book_works, on_delete: :delete_all), null: false
@@ -103,13 +110,21 @@ defmodule Cinder.Repo.Migrations.CreateBooksCatalogAndTargets do
         }
 
       add :profile_id, references(:media_profiles, on_delete: :restrict)
-      add :hold_reason, :string
+
+      add :hold_reason, :string,
+        check: %{
+          name: "book_targets_hold_reason_valid",
+          expr: "(status = 'held') = (hold_reason IS NOT NULL)"
+        }
+
       timestamps(type: :utc_datetime)
     end
 
     create unique_index(:book_targets, [:work_id, :media_kind])
     create index(:book_targets, [:profile_id])
 
+    # A future media_profiles rebuild reusing 064512's broad trigger capture must add these two
+    # names to its expected list: their SQL contains `FROM media_profiles`.
     for event <- ["INSERT", "UPDATE OF profile_id, media_kind"] do
       suffix = if event == "INSERT", do: "insert", else: "update"
       name = "book_targets_profile_integrity_#{suffix}"

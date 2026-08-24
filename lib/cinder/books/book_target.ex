@@ -7,7 +7,7 @@ defmodule Cinder.Books.BookTarget do
   alias Cinder.Catalog.Profile
   alias Cinder.LibraryKind
 
-  @book_media_kinds LibraryKind.all() -- LibraryKind.video()
+  @book_media_kinds LibraryKind.books()
   @statuses [:unmonitored, :monitored, :available, :held]
 
   schema "book_targets" do
@@ -22,9 +22,8 @@ defmodule Cinder.Books.BookTarget do
 
   def create_changeset(target, attrs) do
     target
-    |> cast(attrs, [:media_kind, :status, :profile_id, :hold_reason])
+    |> cast(attrs, [:media_kind, :profile_id])
     |> validate_required([:work_id, :media_kind, :status])
-    |> validate_hold_reason()
     |> add_constraints()
     |> unique_constraint([:work_id, :media_kind])
   end
@@ -52,6 +51,7 @@ defmodule Cinder.Books.BookTarget do
     changeset
     |> check_constraint(:status, name: :book_targets_status_valid)
     |> check_constraint(:media_kind, name: :book_targets_media_kind_valid)
+    |> check_constraint(:hold_reason, name: :book_targets_hold_reason_valid)
     |> check_constraint(:profile_id, name: :book_targets_profile_integrity)
     |> foreign_key_constraint(:work_id)
     |> foreign_key_constraint(:profile_id)

@@ -18,6 +18,7 @@ defmodule Cinder.Books.SeriesMembership do
     membership
     |> cast(attrs, [:name, :position, :provider])
     |> validate_required([:work_id, :name, :provider])
+    |> unique_constraint([:work_id, :name, :provider])
     |> foreign_key_constraint(:work_id)
   end
 end

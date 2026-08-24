@@ -29,6 +29,6 @@ defmodule Cinder.Books.Work do
       :overview,
       :contributors_incomplete
     ])
-    |> validate_required([:title])
+    |> validate_required([:title, :contributors_incomplete])
   end
 end

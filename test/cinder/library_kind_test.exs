@@ -7,6 +7,7 @@ defmodule Cinder.LibraryKindTest do
   test "lists every media kind and keeps video kinds narrow" do
     assert LibraryKind.all() == [:movies, :tv, :ebook, :audiobook]
     assert LibraryKind.video() == [:movies, :tv]
+    assert LibraryKind.books() == [:ebook, :audiobook]
     assert LibraryKind.video?(:movies)
     refute LibraryKind.video?(:ebook)
   end

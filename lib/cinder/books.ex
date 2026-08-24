@@ -17,7 +17,7 @@ defmodule Cinder.Books do
   alias Cinder.LibraryKind
   alias Cinder.Repo
 
-  @book_media_kinds LibraryKind.all() -- LibraryKind.video()
+  @book_media_kinds LibraryKind.books()
   @targets_topic "book_targets"
   @work_preloads [
     :identifiers,

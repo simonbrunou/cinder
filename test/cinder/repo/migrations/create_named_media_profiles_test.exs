@@ -166,6 +166,29 @@ defmodule Cinder.Repo.Migrations.CreateNamedMediaProfilesTest do
     VALUES (1, 'Referenced work', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     """)
 
+    assert_raise Exqlite.Error, ~r/book_editions_media_kind_valid/, fn ->
+      query!("""
+      INSERT INTO book_editions (work_id, media_kind, title, inserted_at, updated_at)
+      VALUES (1, 'comic', 'Invalid edition', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      """)
+    end
+
+    assert_raise Exqlite.Error, ~r/book_targets_hold_reason_valid/, fn ->
+      query!("""
+      INSERT INTO book_targets (
+        work_id, media_kind, status, hold_reason, inserted_at, updated_at
+      ) VALUES (1, 'ebook', 'monitored', 'unexpected', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      """)
+    end
+
+    assert_raise Exqlite.Error, ~r/book_targets_hold_reason_valid/, fn ->
+      query!("""
+      INSERT INTO book_targets (
+        work_id, media_kind, status, hold_reason, inserted_at, updated_at
+      ) VALUES (1, 'ebook', 'held', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      """)
+    end
+
     query!("""
     INSERT INTO book_targets (work_id, media_kind, profile_id, inserted_at, updated_at)
     SELECT 1, 'ebook', id, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP

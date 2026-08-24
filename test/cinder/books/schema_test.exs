@@ -89,6 +89,22 @@ defmodule Cinder.Books.SchemaTest do
     assert "has already been taken" in errors_on(changeset).provider
   end
 
+  test "ISBN identifiers belong to editions, while work providers stay open" do
+    work = work_fixture()
+    edition = edition_fixture(work)
+
+    assert {:error, changeset} =
+             Books.put_identifier(work, identifier("isbn", "isbn13", unique_id()))
+
+    assert "can't be blank" in errors_on(changeset).edition_id
+
+    assert {:ok, _identifier} =
+             Books.put_identifier(edition, identifier("isbn", "isbn13", unique_id()))
+
+    assert {:ok, _identifier} =
+             Books.put_identifier(work, identifier("openlibrary", "work", unique_id()))
+  end
+
   test "credits preserve provider role and order on works and editions" do
     author = author_fixture()
     work = work_fixture()
@@ -142,6 +158,18 @@ defmodule Cinder.Books.SchemaTest do
            |> Enum.sort() == ["City Watch", "Discworld"]
   end
 
+  test "series memberships are unique per work, name, and provider" do
+    work = work_fixture()
+    attrs = %{name: "Discworld", position: "1", provider: "openlibrary"}
+
+    assert {:ok, _membership} = Books.put_series_membership(work, attrs)
+    assert {:error, changeset} = Books.put_series_membership(work, attrs)
+    assert "has already been taken" in errors_on(changeset).work_id
+
+    assert {:ok, _membership} =
+             Books.put_series_membership(work, %{attrs | provider: "hardcover"})
+  end
+
   test "contributors_incomplete defaults to false and is castable" do
     work = work_fixture()
     assert work.contributors_incomplete == false
@@ -155,6 +183,17 @@ defmodule Cinder.Books.SchemaTest do
 
     assert updated.id == work.id
     assert updated.contributors_incomplete == true
+  end
+
+  test "contributors_incomplete rejects nil as a changeset error" do
+    assert {:error, changeset} =
+             Books.upsert_work(%{
+               title: "Incomplete contributors",
+               contributors_incomplete: nil,
+               identifier: identifier("openlibrary", "work", unique_id())
+             })
+
+    assert "can't be blank" in errors_on(changeset).contributors_incomplete
   end
 
   test "targets are unique per work and media kind while both kinds remain independent" do
@@ -178,6 +217,20 @@ defmodule Cinder.Books.SchemaTest do
     assert Enum.map(Books.list_targets(audiobook_only), & &1.media_kind) == [:audiobook]
     assert Enum.map(Books.list_targets(both), & &1.media_kind) == [:audiobook, :ebook]
     assert Books.list_targets(neither) == []
+  end
+
+  test "target creation ignores transition state" do
+    work = work_fixture()
+
+    changeset =
+      %BookTarget{work_id: work.id}
+      |> BookTarget.create_changeset(%{
+        media_kind: :ebook,
+        status: :held,
+        hold_reason: "manual"
+      })
+
+    assert changeset.changes == %{media_kind: :ebook}
   end
 
   test "a target rejects a profile for the wrong media kind as a changeset error" do

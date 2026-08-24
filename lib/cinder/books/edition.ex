@@ -6,7 +6,7 @@ defmodule Cinder.Books.Edition do
   alias Cinder.Books.{Credit, Identifier, Work}
   alias Cinder.LibraryKind
 
-  @book_media_kinds LibraryKind.all() -- LibraryKind.video()
+  @book_media_kinds LibraryKind.books()
 
   schema "book_editions" do
     belongs_to :work, Work
@@ -35,6 +35,7 @@ defmodule Cinder.Books.Edition do
       :abridged
     ])
     |> validate_required([:work_id, :media_kind, :title])
+    |> check_constraint(:media_kind, name: :book_editions_media_kind_valid)
     |> foreign_key_constraint(:work_id)
   end
 end
