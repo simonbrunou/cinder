@@ -231,17 +231,17 @@ defmodule Cinder.Books.IdentityTest do
              Identity.resolve("The Lord of the Rings J. R. R. Tolkien omnibus")
   end
 
-  test "a run of annotation words at the edge is trimmed by one, not eaten through" do
-    # Recursing ate into the title: "Omnibus Ebook Reader" trimmed all the way to "reader", so the
-    # work actually called *Ebook Reader* was rejected and a different work called *Reader* was
-    # returned in its place — wrong work AND right work discarded, from one query.
-    named = %{candidate(:openlibrary, "Ebook Reader", ["A Author"]) | foreign_id: "named"}
-    other = %{candidate(:openlibrary, "Reader", ["A Author"]) | foreign_id: "other"}
+  test "an annotation word starting a title is not trimmed off the front of it" do
+    # Trimming the leading edge made "Ebook Reader" resolve to a different work called "Reader" —
+    # a leading annotation word is far likelier to be the title's own first word than a
+    # requester's note, so only the trailing edge is trimmed.
+    expect(PrimaryMetadataMock, :search, fn _query ->
+      {:ok, [candidate(:openlibrary, "Reader", ["A Author"])]}
+    end)
 
-    expect(PrimaryMetadataMock, :search, fn _query -> {:ok, [other, named]} end)
-    expect(PrimaryMetadataMock, :get_work, fn "named" -> {:ok, work("named")} end)
+    expect(SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
 
-    assert {:ok, %{provider: :openlibrary}} = Identity.resolve("Omnibus Ebook Reader A Author")
+    assert {:unresolved, :no_reliable_match} = Identity.resolve("Ebook Reader A Author")
   end
 
   test "a title that folds to its Latin residue is unresolved, not a coin flip" do
@@ -307,8 +307,8 @@ defmodule Cinder.Books.IdentityTest do
     end
   end
 
-  test "a trailing or leading annotation is still trimmed" do
-    for query <- ["Dune Frank Herbert audiobook", "audiobook Dune Frank Herbert"] do
+  test "a trailing annotation is still trimmed" do
+    for query <- ["Dune Frank Herbert audiobook", "Dune Frank Herbert omnibus"] do
       expect(PrimaryMetadataMock, :search, fn _query ->
         {:ok, [candidate(:openlibrary, "Dune", ["Frank Herbert"])]}
       end)

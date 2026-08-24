@@ -22,12 +22,13 @@ defmodule Cinder.Books.Identity do
      and a leading article — exactly (strength 0), or once the requester's format annotations
      come off (strength 1).
 
-     **Annotations come off the query only, never off the provider's title, and only from its
-     leading and trailing edges.** Stripping both sides is what let "The Audio Book" resolve to a
-     different work called "The Book"; stripping mid-string did the same for "The Audiobook
-     Murders" and "The Murders". An annotation is something a requester appends, so only the
-     edges can hold one. An exact match outranks an annotation-stripped one, so when both works
-     are candidates the requester gets the one they actually named.
+     **One annotation comes off the query only, never off the provider's title, and only from
+     the trailing edge.** Stripping both sides let "The Audio Book" resolve to a different work
+     called "The Book"; stripping mid-string did the same for "The Audiobook Murders" and "The
+     Murders"; stripping the *leading* edge did it for "Ebook Reader" and "Reader". An annotation
+     is something a requester appends, so only the tail can hold one. An exact match outranks an
+     annotation-trimmed one, so when both works are candidates the requester gets the one they
+     actually named.
   3. A candidate is rejected when folding to ASCII would discard letters from either side — a
      non-Latin title keeps only its Latin residue, and two different works can share it. See
      `lossy_fold?/1`.
@@ -211,28 +212,28 @@ defmodule Cinder.Books.Identity do
     {remainder, Enum.reverse(matched)}
   end
 
-  # An annotation is *appended or prepended* to a query — "... omnibus", "audiobook: ..." — never
-  # embedded in the middle of a title. Trimming only the edges is what separates the two, and it
-  # is why "The Audiobook Murders" no longer resolves to a different work called "The Murders".
+  # One trailing annotation word — "The Lord of the Rings ... omnibus", "Dune ... audiobook".
   #
-  # It also makes the trim candidate-independent. The previous rule stripped a word whenever the
-  # candidate's own title lacked it, so every candidate reshaped the query in its own favour and
-  # "the title the requester meant" was not one string but one per candidate. Now they are all
-  # judged against the same two.
+  # Trailing only, because that is the shape a requester's annotation actually takes. A leading
+  # one is far likelier to be the title's own first word: trimming the front made "Ebook Reader"
+  # resolve to a different work called "Reader", and "The Omnibus of Crime" to "Of Crime". The
+  # corpus needs only the trailing form (`lord-of-the-rings`).
   #
-  # Never trims to nothing: *Omnibus* is a real title, and the strength-0 pass matches it anyway.
+  # One word, not a run, exactly as `drop_article/1` drops at most one article — recursing ate
+  # into the title itself for the same reason.
+  #
+  # Never trims to nothing, and never consults the candidate: an earlier rule stripped a word
+  # whenever *that* candidate's title lacked it, so every candidate reshaped the query in its own
+  # favour and "the title the requester meant" was one string per candidate rather than one.
   defp trim_annotations(words) do
-    words |> trim_one() |> Enum.reverse() |> trim_one() |> Enum.reverse()
-  end
+    case Enum.reverse(words) do
+      [last | rest] when rest != [] ->
+        if last in @annotations, do: Enum.reverse(rest), else: words
 
-  # One word per edge, exactly as `drop_article/1` drops at most one article. Recursing ate into
-  # the title itself: "Omnibus Ebook Reader" trimmed to "reader", so the work actually called
-  # *Ebook Reader* was rejected while a different work called *Reader* was returned in its place.
-  defp trim_one([word | rest]) when rest != [] do
-    if word in @annotations, do: rest, else: [word | rest]
+      _single_or_empty ->
+        words
+    end
   end
-
-  defp trim_one(words), do: words
 
   # Fold to comparable tokens: NFD-decompose so "Misérables" matches "Miserables", drop everything
   # that isn't a letter or digit, and split. (`Cinder.Acquisition` folds release titles the same

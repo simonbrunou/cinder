@@ -76,10 +76,9 @@ exact fetch. Anything else is searched, and that is where the judgment lives —
    contributor evidence → never eligible. This alone kills every first-fuzzy-result failure.
 3. Subtract the matched contributor tokens; the remainder is the target title. Compare it to the
    candidate title after stripping a leading article — exactly, or once the requester's format
-   annotations (`omnibus`, `ebook`, `audiobook`) come off. **Annotations come off the query only,
-   never the provider's title, and only from its leading and trailing edges** — an annotation is
-   something a requester appends, so only an edge can hold one. An exact match outranks an
-   annotation-stripped one.
+   annotation (`omnibus`, `ebook`, `audiobook`) comes off. **One annotation, off the query only,
+   never off the provider's title, and only from the trailing edge** — an annotation is something
+   a requester appends, so only the tail can hold one. An exact match outranks a trimmed one.
 4. A candidate is rejected when folding to ASCII would discard letters from either side, not just
    when it discards all of them. A non-Latin title keeps only its Latin residue, so
    "ノルウェイの森 1" and "海辺のカフカ 1" both key to "1" — and edition count handed back
@@ -88,14 +87,25 @@ exact fetch. Anything else is searched, and that is where the judgment lives —
 5. Survivors order by match strength, then edition count, then foreign id, so the choice is
    deterministic. No survivor → `{:unresolved, :no_reliable_match}`.
 
-Both halves of that rule were paid for. Stripping *both sides* made "The Book Thief" resolve to
-"The Thief", and `audio` / `edition` / `abridged` would each have done the same ("The Audio Book"
-→ "The Book", "First Edition" → "First") — so the list is down to three, and only `omnibus` has
-corpus support. Stripping *mid-string* then did it again with the shorter list ("The Audiobook
-Murders" → "The Murders"), which is why the trim is edge-only. Edge-only also makes it
-candidate-independent: the earlier rule stripped a word whenever the candidate's own title lacked
-it, so each candidate reshaped the query in its own favour rather than all being judged against
-one string.
+Every clause of that sentence was paid for by a review round finding a query for one work
+resolving to a *different* work:
+
+| stripping | collision it produced |
+|---|---|
+| both sides | "The Book Thief" → "The Thief" |
+| a long word list | "The Audio Book" → "The Book", "First Edition" → "First" |
+| mid-string | "The Audiobook Murders" → "The Murders" |
+| the leading edge | "Ebook Reader" → "Reader" |
+| a run, not one word | "Omnibus Ebook Reader" → "Reader", right work rejected |
+| keyed on the candidate | each candidate reshaped the query in its own favour |
+
+Six rounds, each closing the reported instance while the class survived to the next. What finally
+closed it is `Cinder.Books.IdentityCollisionTest`: ~1000 ordered pairs drawn from a bank of titles
+built to exercise each fold — article, diacritic, punctuation, apostrophe, annotation, non-Latin
+script — asserting that a query for one never resolves to another. It reproduces all six rounds
+from the bank alone, and it found the leading-edge one itself. The frozen corpus structurally
+cannot: `corpus-v1.json` holds no CJK, Cyrillic or Greek, and its only near-collisions are the
+folds that are supposed to match.
 
 Walk providers in configured order; the first reliable result wins. All providers erroring is
 `{:error, :providers_unavailable}` — distinct from "searched and found nothing", because the
