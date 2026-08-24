@@ -160,7 +160,7 @@ defmodule Cinder.SettingsTest do
 
       assert Settings.legacy_library_destinations() ==
                video_destinations ++
-                 [%{kind: :books, profile: :standard, profile_id: nil, path: "/media/books"}]
+                 [%{kind: :ebook, profile: :standard, profile_id: nil, path: "/media/books"}]
     end
 
     test "household timezone controls the local eligibility date and rejects unknown zones" do

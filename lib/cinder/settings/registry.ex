@@ -557,8 +557,8 @@ defmodule Cinder.Settings.Registry do
 
   # The band suffixes each kind owns. min/max_size have a config.exs bootstrap (the shipped
   # default bands; a stored 0 opts out to unbounded); the release lists and cutoff stay DB-only
-  # (unset ⇒ scorer/hunter default). The root path (`#{kind}_library_path`) also has an env
-  # bootstrap.
+  # (unset ⇒ scorer/hunter default). The root-role path (`#{root_role}_library_path`) also has an
+  # env bootstrap.
   @band_suffixes [
     "min_size",
     "max_size",
@@ -656,19 +656,25 @@ defmodule Cinder.Settings.Registry do
   def flat_keys do
     library_keys =
       for kind <- LibraryKind.all(),
-          suffix <-
-            ["library_path"] ++
-              if(LibraryKind.handling?(kind, :anime), do: ["anime_library_path"], else: []) ++
-              if(LibraryKind.video?(kind), do: @band_suffixes, else: []) do
-        "#{kind}_#{suffix}"
+          key <-
+            [library_path_key(kind)] ++
+              if(LibraryKind.handling?(kind, :anime),
+                do: [anime_library_path_key(kind)],
+                else: []
+              ) ++
+              if(LibraryKind.video?(kind),
+                do: Enum.map(@band_suffixes, &"#{kind}_#{&1}"),
+                else: []
+              ) do
+        key
       end
 
     library_keys ++ Enum.map(@path_mapping_fields, & &1.key)
   end
 
   # Per-kind settings-key derivations for the UI (the form field `name`s).
-  def library_path_key(kind), do: "#{kind}_library_path"
-  def anime_library_path_key(kind), do: "#{kind}_anime_library_path"
+  def library_path_key(kind), do: "#{LibraryKind.root_role(kind)}_library_path"
+  def anime_library_path_key(kind), do: "#{LibraryKind.root_role(kind)}_anime_library_path"
   def min_size_key(kind), do: "#{kind}_min_size"
   def max_size_key(kind), do: "#{kind}_max_size"
   def preferred_resolutions_key(kind), do: "#{kind}_preferred_resolutions"

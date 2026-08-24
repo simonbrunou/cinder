@@ -65,7 +65,7 @@ defmodule Cinder.Health do
   end
 
   def check_service({:library, kind}) do
-    case Application.get_env(:cinder, :"#{kind}_library_path") do
+    case Application.get_env(:cinder, :"#{LibraryKind.root_role(kind)}_library_path") do
       blank when blank in [nil, ""] -> {:error, :not_configured}
       path -> library_writable(path)
     end

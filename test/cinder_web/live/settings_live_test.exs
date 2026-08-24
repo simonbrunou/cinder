@@ -39,7 +39,7 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#movies_anime_library_path-help", "Leave blank")
     assert has_element?(lv, "#books_library_path[name=books_library_path]")
     assert has_element?(lv, "#audiobooks_library_path[name=audiobooks_library_path]")
-    assert has_element?(lv, "button[phx-value-service=books_library]", "Test Books library")
+    assert has_element?(lv, "button[phx-value-service=ebook_library]", "Test Ebooks library")
     refute has_element?(lv, "#books_anime_library_path")
     refute has_element?(lv, "#books_min_size")
     refute has_element?(lv, "#books_preferred_resolutions")

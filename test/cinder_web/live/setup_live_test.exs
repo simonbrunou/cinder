@@ -84,8 +84,8 @@ defmodule CinderWeb.SetupLiveTest do
 
     {:ok, lv, _html} = live(conn, ~p"/setup")
 
-    assert has_element?(lv, "button[phx-value-service=books_library]", "Test Books library")
-    refute has_element?(lv, "#setup-checklist", "Books")
+    assert has_element?(lv, "button[phx-value-service=ebook_library]", "Test Ebooks library")
+    refute has_element?(lv, "#setup-checklist", "Ebooks")
     refute has_element?(lv, "#setup-checklist", "Audiobooks")
 
     lv |> form("#setup-form", @valid_params) |> render_submit()

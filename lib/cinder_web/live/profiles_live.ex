@@ -270,8 +270,8 @@ defmodule CinderWeb.ProfilesLive do
 
   defp profile_kind_label(:movies), do: gettext("Movies")
   defp profile_kind_label(:tv), do: gettext("TV")
-  defp profile_kind_label(:books), do: gettext("Books")
-  defp profile_kind_label(:audiobooks), do: gettext("Audiobooks")
+  defp profile_kind_label(:ebook), do: gettext("Ebooks")
+  defp profile_kind_label(:audiobook), do: gettext("Audiobooks")
 
   defp handling_label(:anime), do: gettext("Anime")
   defp handling_label(_standard), do: gettext("Standard")
@@ -279,7 +279,7 @@ defmodule CinderWeb.ProfilesLive do
   defp kind_options,
     do: Enum.map(LibraryKind.all(), &{profile_kind_label(&1), Atom.to_string(&1)})
 
-  # The handling select narrows to what the selected kind supports: books are Standard-only, so
+  # The handling select narrows to what the selected kind supports: book media is Standard-only, so
   # offering Anime there would only produce a changeset error the operator has to discover.
   defp handling_options(form) do
     case Ecto.Changeset.get_field(form.source, :kind) do

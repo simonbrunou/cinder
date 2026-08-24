@@ -95,7 +95,7 @@ defmodule Cinder.Repo.Migrations.AddBookProfileKinds do
     """
   end
 
-  defp kinds(true), do: "'movies', 'tv', 'books', 'audiobooks'"
+  defp kinds(true), do: "'movies', 'tv', 'ebook', 'audiobook'"
   defp kinds(false), do: "'movies', 'tv'"
 
   defp handling_for_kind_check(false), do: ""
@@ -152,7 +152,7 @@ defmodule Cinder.Repo.Migrations.AddBookProfileKinds do
   defp ensure_no_book_profiles! do
     case query!("""
          SELECT kind, name FROM media_profiles
-         WHERE kind IN ('books', 'audiobooks')
+         WHERE kind IN ('ebook', 'audiobook')
          LIMIT 1
          """).rows do
       [] ->

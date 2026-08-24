@@ -10,7 +10,7 @@ defmodule CinderWeb.SettingsComponents do
 
   import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1, icon: 1, input: 1]
 
-  alias Cinder.Settings
+  alias Cinder.{LibraryKind, Settings}
   alias CinderWeb.SettingsLabels
 
   @doc """
@@ -178,7 +178,10 @@ defmodule CinderWeb.SettingsComponents do
                 id={Settings.library_path_key(kind)}
                 name={Settings.library_path_key(kind)}
                 value={@form.values[Settings.library_path_key(kind)]}
-                placeholder={@form.placeholders[Settings.library_path_key(kind)] || "/media/#{kind}"}
+                placeholder={
+                  @form.placeholders[Settings.library_path_key(kind)] ||
+                    "/media/#{LibraryKind.root_role(kind)}"
+                }
                 autocomplete="off"
                 aria-invalid={invalid?(@form, Settings.library_path_key(kind)) && "true"}
                 aria-describedby={

@@ -43,11 +43,11 @@ defmodule CinderWeb.SettingsLabels do
       # library kinds — Settings.library_kinds/0 — and the "<kind> library" test-badge labels
       gettext_noop("Movies"),
       gettext_noop("TV"),
-      gettext_noop("Books"),
+      gettext_noop("Ebooks"),
       gettext_noop("Audiobooks"),
       gettext_noop("Movies library"),
       gettext_noop("TV library"),
-      gettext_noop("Books library"),
+      gettext_noop("Ebooks library"),
       gettext_noop("Audiobooks library"),
       # static config-field labels — Settings.config_fields/0
       gettext_noop("TMDB API read token (v4 bearer)"),

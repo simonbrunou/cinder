@@ -1,14 +1,16 @@
 defmodule Cinder.LibraryKind do
   @moduledoc """
-  The library kinds Cinder manages, and what each one is capable of.
+  The media kinds Cinder manages, and what each one is capable of.
 
   `Cinder.Library.kinds/0` is the *video* subset of this registry. That split is the point:
   every per-kind video derivation (Plex sections, size bands, release policy, media-server
   reconciliation, disk telemetry, the setup gate) hangs off the narrower list, so a book kind
   inherits nothing it has not explicitly opted into.
 
-  This is not the books contract's `media_kind` axis (`:ebook`/`:audiobook` on editions and
-  files); B2 owns that concept.
+  The registry key is the books contract's media-kind axis: B2 edition/file `media_kind` values
+  use these same atoms, so there is one media-kind axis rather than a parallel library-kind
+  vocabulary. `root_role/1` is the contract's separate filesystem-role axis. The two axes
+  coincide for video, but diverge for ebooks: media kind `:ebook` uses root role `:books`.
 
   Ordered keyword list, not a map: the order is the UI order, and `all/0` derives from it so a
   new kind cannot be added to the registry and forgotten in the list. Pure literal — read at
@@ -16,17 +18,22 @@ defmodule Cinder.LibraryKind do
   """
 
   @kinds [
-    movies: %{video?: true, handlings: [:standard, :anime], label: "Movies"},
-    tv: %{video?: true, handlings: [:standard, :anime], label: "TV"},
-    books: %{video?: false, handlings: [:standard], label: "Books"},
-    audiobooks: %{video?: false, handlings: [:standard], label: "Audiobooks"}
+    movies: %{video?: true, handlings: [:standard, :anime], label: "Movies", root_role: :movies},
+    tv: %{video?: true, handlings: [:standard, :anime], label: "TV", root_role: :tv},
+    ebook: %{video?: false, handlings: [:standard], label: "Ebooks", root_role: :books},
+    audiobook: %{
+      video?: false,
+      handlings: [:standard],
+      label: "Audiobooks",
+      root_role: :audiobooks
+    }
   ]
 
-  @doc "Every library kind Cinder manages, in display order."
+  @doc "Every media kind Cinder manages, in display order."
   @spec all() :: [atom()]
   def all, do: Keyword.keys(@kinds)
 
-  @doc "The library kinds whose assets are video files."
+  @doc "The media kinds whose assets are video files."
   @spec video() :: [atom()]
   def video, do: Enum.filter(all(), &video?/1)
 
@@ -34,7 +41,7 @@ defmodule Cinder.LibraryKind do
   @spec video?(atom()) :: boolean()
   def video?(kind), do: fetch!(kind).video?
 
-  @doc "The handling modes `kind` supports (books are `:standard` only)."
+  @doc "The handling modes `kind` supports (book media is `:standard` only)."
   @spec handlings(atom()) :: [atom()]
   def handlings(kind), do: fetch!(kind).handlings
 
@@ -45,6 +52,10 @@ defmodule Cinder.LibraryKind do
   @doc "The display label for `kind`."
   @spec label(atom()) :: String.t()
   def label(kind), do: fetch!(kind).label
+
+  @doc "The filesystem-root role for `kind`."
+  @spec root_role(atom()) :: atom()
+  def root_role(kind), do: fetch!(kind).root_role
 
   defp fetch!(kind), do: Keyword.fetch!(@kinds, kind)
 end
