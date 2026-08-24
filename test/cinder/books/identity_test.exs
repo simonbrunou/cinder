@@ -231,6 +231,39 @@ defmodule Cinder.Books.IdentityTest do
              Identity.resolve("The Lord of the Rings J. R. R. Tolkien omnibus")
   end
 
+  test "an annotation word mid-title is part of the title, not an annotation" do
+    # An annotation is something a requester appends or prepends. Stripping one from anywhere in
+    # the query let "The Audiobook Murders" resolve to a different work called "The Murders" —
+    # the same collision as "The Audio Book"/"The Book", surviving a narrower word list because
+    # the mechanism, not the vocabulary, was the problem. Only the edges can hold an annotation.
+    for {query, other_work} <- [
+          {"The Audiobook Murders A Author", "The Murders"},
+          {"An Ebook Primer A Author", "A Primer"},
+          {"The Omnibus of Crime A Author", "Of Crime"}
+        ] do
+      expect(PrimaryMetadataMock, :search, fn _query ->
+        {:ok, [candidate(:openlibrary, other_work, ["A Author"])]}
+      end)
+
+      expect(SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
+
+      assert {:unresolved, :no_reliable_match} = Identity.resolve(query),
+             "#{query} must not resolve to #{other_work}"
+    end
+  end
+
+  test "a trailing or leading annotation is still trimmed" do
+    for query <- ["Dune Frank Herbert audiobook", "audiobook Dune Frank Herbert"] do
+      expect(PrimaryMetadataMock, :search, fn _query ->
+        {:ok, [candidate(:openlibrary, "Dune", ["Frank Herbert"])]}
+      end)
+
+      expect(PrimaryMetadataMock, :get_work, fn "id" -> {:ok, work("id")} end)
+
+      assert {:ok, %{provider: :openlibrary}} = Identity.resolve(query), "#{query} should resolve"
+    end
+  end
+
   test "an article plus an annotation is not a title that matches everything" do
     # A prior revision stripped annotations from the title too, and guarded only against
     # stripping it to []. "The Omnibus" survived that guard as the bare article "the" — as did

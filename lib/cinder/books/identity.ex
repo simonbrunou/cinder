@@ -22,11 +22,12 @@ defmodule Cinder.Books.Identity do
      and a leading article — exactly (strength 0), or once the requester's format annotations
      come off (strength 1).
 
-     **Annotations come off the query only, never off the provider's title**, and only when the
-     title does not itself carry the word. Stripping both sides is what let "The Audio Book"
-     resolve to a different work called "The Book". An exact match outranks an
-     annotation-stripped one, so when both works are candidates the requester gets the one they
-     actually named.
+     **Annotations come off the query only, never off the provider's title, and only from its
+     leading and trailing edges.** Stripping both sides is what let "The Audio Book" resolve to a
+     different work called "The Book"; stripping mid-string did the same for "The Audiobook
+     Murders" and "The Murders". An annotation is something a requester appends, so only the
+     edges can hold one. An exact match outranks an annotation-stripped one, so when both works
+     are candidates the requester gets the one they actually named.
   3. A candidate whose title folds away to nothing is rejected outright — see `score/2`.
   4. Survivors are ordered by match strength, then by the provider's own edition count, then by
      foreign id so the choice is deterministic rather than dependent on result order.
@@ -185,8 +186,7 @@ defmodule Cinder.Books.Identity do
         end
       end)
 
-    title_words = tokens(candidate.title)
-    title = title_key(title_words)
+    title = title_key(tokens(candidate.title))
     matched = Enum.reverse(matched)
 
     # `title != ""` is load-bearing, not defensive. Folding strips non-ASCII, so a title written
@@ -198,16 +198,30 @@ defmodule Cinder.Books.Identity do
     cond do
       matched == [] or title == "" -> []
       title_key(remainder) == title -> [{candidate, matched, 0}]
-      title_key(strip_annotations(remainder, title_words)) == title -> [{candidate, matched, 1}]
+      title_key(trim_annotations(remainder)) == title -> [{candidate, matched, 1}]
       true -> []
     end
   end
 
-  # An annotation is a format word the *requester* added: in the query, absent from the provider's
-  # title. A word the title itself carries is part of that title and is never stripped.
-  defp strip_annotations(words, title_words) do
-    Enum.reject(words, &(&1 in @annotations and &1 not in title_words))
+  # An annotation is *appended or prepended* to a query — "... omnibus", "audiobook: ..." — never
+  # embedded in the middle of a title. Trimming only the edges is what separates the two, and it
+  # is why "The Audiobook Murders" no longer resolves to a different work called "The Murders".
+  #
+  # It also makes the trim candidate-independent. The previous rule stripped a word whenever the
+  # candidate's own title lacked it, so every candidate reshaped the query in its own favour and
+  # "the title the requester meant" was not one string but one per candidate. Now they are all
+  # judged against the same two.
+  #
+  # Never trims to nothing: *Omnibus* is a real title, and the strength-0 pass matches it anyway.
+  defp trim_annotations(words) do
+    words |> trim_leading() |> Enum.reverse() |> trim_leading() |> Enum.reverse()
   end
+
+  defp trim_leading([word | rest]) when rest != [] do
+    if word in @annotations, do: trim_leading(rest), else: [word | rest]
+  end
+
+  defp trim_leading(words), do: words
 
   # Fold to comparable tokens: NFD-decompose so "Misérables" matches "Miserables", drop everything
   # that isn't a letter or digit, and split. (`Cinder.Acquisition` folds release titles the same

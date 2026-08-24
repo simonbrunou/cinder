@@ -77,16 +77,21 @@ exact fetch. Anything else is searched, and that is where the judgment lives —
 3. Subtract the matched contributor tokens; the remainder is the target title. Compare it to the
    candidate title after stripping a leading article — exactly, or once the requester's format
    annotations (`omnibus`, `ebook`, `audiobook`) come off. **Annotations come off the query only,
-   never the provider's title**, and only when the title does not carry the word itself; an exact
-   match outranks an annotation-stripped one.
+   never the provider's title, and only from its leading and trailing edges** — an annotation is
+   something a requester appends, so only an edge can hold one. An exact match outranks an
+   annotation-stripped one.
 4. A candidate whose title folds away to nothing is rejected.
 5. Survivors order by match strength, then edition count, then foreign id, so the choice is
    deterministic. No survivor → `{:unresolved, :no_reliable_match}`.
 
-The annotation list is short on purpose: every entry is a chance to collide two different works.
-Stripping both sides made "The Book Thief" resolve to "The Thief", and `audio` / `edition` /
-`abridged` would each have done the same ("The Audio Book" → "The Book", "First Edition" →
-"First"). Only `omnibus` has corpus support; the other two are unambiguous.
+Both halves of that rule were paid for. Stripping *both sides* made "The Book Thief" resolve to
+"The Thief", and `audio` / `edition` / `abridged` would each have done the same ("The Audio Book"
+→ "The Book", "First Edition" → "First") — so the list is down to three, and only `omnibus` has
+corpus support. Stripping *mid-string* then did it again with the shorter list ("The Audiobook
+Murders" → "The Murders"), which is why the trim is edge-only. Edge-only also makes it
+candidate-independent: the earlier rule stripped a word whenever the candidate's own title lacked
+it, so each candidate reshaped the query in its own favour rather than all being judged against
+one string.
 
 Walk providers in configured order; the first reliable result wins. All providers erroring is
 `{:error, :providers_unavailable}` — distinct from "searched and found nothing", because the
