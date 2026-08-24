@@ -125,12 +125,21 @@ defmodule Cinder.SettingsTest do
           #{kind}_preferred_terms
           #{kind}_blocked_terms
           #{kind}_upgrade_cutoff
-          #{kind}_plex_section
           #{root}_anime_library_path
         ) do
           refute key in keys
         end
       end
+
+      # Plex sections are NOT flat keys — they live in config_fields/0, so refuting them above
+      # would pass no matter what plex_section_fields/0 generated. Assert against the registry
+      # that actually carries them, with the video kinds as the positive control.
+      config_keys = Enum.map(Settings.config_fields(), & &1.key)
+
+      assert "movies_plex_section" in config_keys
+      assert "tv_plex_section" in config_keys
+      refute "ebook_plex_section" in config_keys
+      refute "audiobook_plex_section" in config_keys
     end
 
     test "book roots are managed library destinations but not video roots" do
@@ -138,7 +147,13 @@ defmodule Cinder.SettingsTest do
 
       assert Application.get_env(:cinder, :books_library_path) == "/srv/media/books"
       assert "/srv/media/books" in Settings.library_roots()
-      refute "/srv/media/books" in Settings.video_library_roots()
+
+      # Positive control: video_library_roots/0 is populated here, so the refute below is a
+      # real exclusion rather than an assertion about an empty list.
+      video_roots = Settings.video_library_roots()
+
+      assert Enum.any?(video_roots)
+      refute "/srv/media/books" in video_roots
     end
 
     test "legacy destinations are unchanged while book roots are unset" do

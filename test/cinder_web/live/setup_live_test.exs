@@ -85,6 +85,10 @@ defmodule CinderWeb.SetupLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/setup")
 
     assert has_element?(lv, "button[phx-value-service=ebook_library]", "Test Ebooks library")
+
+    # Positive control: the checklist exists and lists the required video roots, so the refutes
+    # below prove books are absent from it rather than that the selector matched nothing.
+    assert has_element?(lv, "#setup-checklist", "Movies")
     refute has_element?(lv, "#setup-checklist", "Ebooks")
     refute has_element?(lv, "#setup-checklist", "Audiobooks")
 

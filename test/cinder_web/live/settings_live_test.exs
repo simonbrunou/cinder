@@ -40,6 +40,9 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#books_library_path[name=books_library_path]")
     assert has_element?(lv, "#audiobooks_library_path[name=audiobooks_library_path]")
     assert has_element?(lv, "button[phx-value-service=ebook_library]", "Test Ebooks library")
+    # Positive control: Plex section inputs do render here, so the refutes below are live.
+    assert has_element?(lv, "#movies_plex_section")
+
     # Anime root is root-role spelled; the video-policy and Plex fields are media-kind spelled.
     refute has_element?(lv, "#books_anime_library_path")
     refute has_element?(lv, "#audiobooks_anime_library_path")
