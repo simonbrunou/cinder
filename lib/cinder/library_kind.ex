@@ -37,6 +37,10 @@ defmodule Cinder.LibraryKind do
   @spec video() :: [atom()]
   def video, do: Enum.filter(all(), &video?/1)
 
+  @doc "The non-video media kinds managed through the books catalog."
+  @spec books() :: [atom()]
+  def books, do: Enum.reject(all(), &video?/1)
+
   @doc "Whether `kind`'s assets are video files."
   @spec video?(atom()) :: boolean()
   def video?(kind), do: fetch!(kind).video?

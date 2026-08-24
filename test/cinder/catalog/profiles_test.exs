@@ -1,6 +1,8 @@
 defmodule Cinder.Catalog.ProfilesTest do
   use Cinder.DataCase, async: false
 
+  alias Cinder.Books
+  alias Cinder.Books.BookTarget
   alias Cinder.Catalog
   alias Cinder.Catalog.{Movie, Profile, Series}
   alias Cinder.Requests
@@ -87,6 +89,35 @@ defmodule Cinder.Catalog.ProfilesTest do
     # that protects movie/TV routing must not strand an accidental book profile forever.
     assert {:ok, _deleted} = Catalog.delete_profile(ebook)
     assert Catalog.list_profiles(:ebook) == []
+  end
+
+  test "a book-referenced ebook profile cannot change library path" do
+    assert {:ok, ebook} =
+             Catalog.create_profile(%{
+               name: "Ereader",
+               kind: :ebook,
+               handling: :standard,
+               library_path: "/srv/media/ebooks"
+             })
+
+    assert {:ok, work} =
+             Books.upsert_work(%{
+               title: "Referenced work",
+               identifier: %{provider: "openlibrary", kind: "work", foreign_id: "referenced-work"}
+             })
+
+    assert {:ok, target} = Books.ensure_target(work, :ebook)
+
+    assert {:ok, _target} =
+             target
+             |> BookTarget.create_changeset(%{profile_id: ebook.id})
+             |> Repo.update()
+
+    assert {:error, changeset} =
+             Catalog.update_profile(ebook, %{library_path: "/srv/media/other-ebooks"})
+
+    assert "referenced profile may only be renamed" in errors_on(changeset).base
+    assert Repo.reload!(ebook).library_path == "/srv/media/ebooks"
   end
 
   test "movies cannot reference an ebook profile after the profile table rebuild" do
