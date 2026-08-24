@@ -88,9 +88,15 @@ defmodule CinderWeb.SetupLiveTest do
 
     # Positive control: the checklist exists and lists the required video roots, so the refutes
     # below prove books are absent from it rather than that the selector matched nothing.
-    assert has_element?(lv, "#setup-checklist", "Movies")
-    refute has_element?(lv, "#setup-checklist", "Ebooks")
-    refute has_element?(lv, "#setup-checklist", "Audiobooks")
+    assert has_element?(lv, "#setup-checklist", "Movies library path")
+    assert has_element?(lv, "#setup-checklist", "TV library path")
+
+    # Refute the SINGULAR stem. `service_label/1` has explicit clauses only for the video
+    # services, so a book row would fall through to its titlecase fallback and render
+    # "Ebook Library" — refuting the plural "Ebooks" matches nothing either way and fences
+    # nothing. The stem matches whatever spelling the label ends up with.
+    refute has_element?(lv, "#setup-checklist", "Ebook")
+    refute has_element?(lv, "#setup-checklist", "Audiobook")
 
     lv |> form("#setup-form", @valid_params) |> render_submit()
     assert has_element?(lv, "#finish-setup:not([disabled])")
