@@ -529,11 +529,11 @@ defmodule Cinder.Subtitles.Manifest do
   defp path_policy, do: Application.get_env(:cinder, :path_policy, PathPolicy)
 
   defp safe_destination(path),
-    do: path_policy().destination(path, Settings.library_roots(), filesystem: fs())
+    do: path_policy().destination(path, Settings.video_library_roots(), filesystem: fs())
 
   defp safe_remove(path) do
     with :ok <-
-           path_policy().deletable_file(path, Settings.library_roots(), filesystem: fs()),
+           path_policy().deletable_file(path, Settings.video_library_roots(), filesystem: fs()),
          do: fs().rm(path)
   end
 end

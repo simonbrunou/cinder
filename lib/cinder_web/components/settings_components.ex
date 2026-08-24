@@ -10,7 +10,7 @@ defmodule CinderWeb.SettingsComponents do
 
   import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1, icon: 1, input: 1]
 
-  alias Cinder.Settings
+  alias Cinder.{LibraryKind, Settings}
   alias CinderWeb.SettingsLabels
 
   @doc """
@@ -164,7 +164,7 @@ defmodule CinderWeb.SettingsComponents do
           </div>
 
           <div
-            :for={%{kind: kind, label: kind_label} <- Settings.library_kinds()}
+            :for={%{kind: kind, label: kind_label, video?: video?} <- Settings.library_kinds()}
             class="space-y-2"
           >
             <div class="form-control">
@@ -178,7 +178,10 @@ defmodule CinderWeb.SettingsComponents do
                 id={Settings.library_path_key(kind)}
                 name={Settings.library_path_key(kind)}
                 value={@form.values[Settings.library_path_key(kind)]}
-                placeholder={@form.placeholders[Settings.library_path_key(kind)] || "/media/#{kind}"}
+                placeholder={
+                  @form.placeholders[Settings.library_path_key(kind)] ||
+                    "/media/#{LibraryKind.root_role(kind)}"
+                }
                 autocomplete="off"
                 aria-invalid={invalid?(@form, Settings.library_path_key(kind)) && "true"}
                 aria-describedby={
@@ -197,7 +200,7 @@ defmodule CinderWeb.SettingsComponents do
               />
             </div>
 
-            <div class="form-control">
+            <div :if={video?} class="form-control">
               <label class="label" for={Settings.anime_library_path_key(kind)}>
                 <span class="label-text">
                   {gettext("Anime %{kind} library folder (optional)",
@@ -289,7 +292,10 @@ defmodule CinderWeb.SettingsComponents do
         </div>
 
         <div :if={group == :releases} class="space-y-3">
-          <div :for={%{kind: kind, label: kind_label} <- Settings.library_kinds()} class="space-y-2">
+          <div
+            :for={%{kind: kind, label: kind_label, video?: true} <- Settings.library_kinds()}
+            class="space-y-2"
+          >
             <p class="text-sm font-medium">{SettingsLabels.t(kind_label)}</p>
             <div class="form-control">
               <label class="label" for={Settings.min_size_key(kind)}>
@@ -869,9 +875,12 @@ defmodule CinderWeb.SettingsComponents do
   end
 
   defp invalid_release_field_message(key) do
-    if Enum.any?(Settings.library_kinds(), &(key == Settings.upgrade_cutoff_key(&1.kind))),
-      do: gettext("Choose a cutoff included in the preferred resolutions list."),
-      else: gettext("Enter a number of GB (0 = no limit), or leave blank for the default.")
+    if Enum.any?(
+         Settings.library_kinds(),
+         &(&1.video? and key == Settings.upgrade_cutoff_key(&1.kind))
+       ),
+       do: gettext("Choose a cutoff included in the preferred resolutions list."),
+       else: gettext("Enter a number of GB (0 = no limit), or leave blank for the default.")
   end
 
   defp invalid_field_label(key) when key == "import_roots",
@@ -886,32 +895,41 @@ defmodule CinderWeb.SettingsComponents do
   defp invalid_field_label("household_timezone"), do: gettext("Household timezone")
 
   defp invalid_field_label(key) do
-    Enum.find_value(Settings.library_kinds(), fn %{kind: kind, label: label} ->
-      cond do
-        key == Settings.library_path_key(kind) ->
-          gettext("%{kind} library folder", kind: SettingsLabels.t(label))
+    Enum.find_value(Settings.library_kinds(), &invalid_kind_field_label(key, &1)) ||
+      SettingsLabels.t(Settings.field_label(key))
+  end
 
-        key == Settings.anime_library_path_key(kind) ->
-          gettext("Anime %{kind} library folder", kind: SettingsLabels.t(label))
+  defp invalid_kind_field_label(key, %{kind: kind, label: label, video?: false}) do
+    if key == Settings.library_path_key(kind),
+      do: gettext("%{kind} library folder", kind: SettingsLabels.t(label))
+  end
 
-        key == Settings.min_size_key(kind) ->
-          gettext("%{kind}: Min size (GB)", kind: SettingsLabels.t(label))
+  defp invalid_kind_field_label(key, %{kind: kind, label: label, video?: true}) do
+    cond do
+      key == Settings.library_path_key(kind) ->
+        gettext("%{kind} library folder", kind: SettingsLabels.t(label))
 
-        key == Settings.max_size_key(kind) ->
-          gettext("%{kind}: Max size (GB)", kind: SettingsLabels.t(label))
+      key == Settings.anime_library_path_key(kind) ->
+        gettext("Anime %{kind} library folder", kind: SettingsLabels.t(label))
 
-        key == Settings.upgrade_cutoff_key(kind) ->
-          gettext("%{kind}: Automatic upgrade cutoff", kind: SettingsLabels.t(label))
+      key == Settings.min_size_key(kind) ->
+        gettext("%{kind}: Min size (GB)", kind: SettingsLabels.t(label))
 
-        true ->
-          nil
-      end
-    end) || SettingsLabels.t(Settings.field_label(key))
+      key == Settings.max_size_key(kind) ->
+        gettext("%{kind}: Max size (GB)", kind: SettingsLabels.t(label))
+
+      key == Settings.upgrade_cutoff_key(kind) ->
+        gettext("%{kind}: Automatic upgrade cutoff", kind: SettingsLabels.t(label))
+
+      true ->
+        nil
+    end
   end
 
   defp library_path_key?(key) do
-    Enum.any?(Settings.library_kinds(), fn %{kind: kind} ->
-      key in [Settings.library_path_key(kind), Settings.anime_library_path_key(kind)]
+    Enum.any?(Settings.library_kinds(), fn %{kind: kind, video?: video?} ->
+      key == Settings.library_path_key(kind) or
+        (video? and key == Settings.anime_library_path_key(kind))
     end)
   end
 

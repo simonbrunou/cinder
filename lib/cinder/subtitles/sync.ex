@@ -1428,14 +1428,14 @@ defmodule Cinder.Subtitles.Sync do
   defp safe_source(path) do
     path_policy().source_file(
       path,
-      Settings.library_roots(),
+      Settings.video_library_roots(),
       [String.downcase(Path.extname(path))],
       filesystem: fs()
     )
   end
 
   defp safe_destination(path),
-    do: path_policy().destination(path, Settings.library_roots(), filesystem: fs())
+    do: path_policy().destination(path, Settings.video_library_roots(), filesystem: fs())
 
   defp current_moviehash(video_path) do
     case Moviehash.of_file(video_path) do

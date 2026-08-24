@@ -37,6 +37,27 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ ~s(name="movies_library_path")
     assert html =~ ~s(name="movies_anime_library_path")
     assert has_element?(lv, "#movies_anime_library_path-help", "Leave blank")
+    assert has_element?(lv, "#books_library_path[name=books_library_path]")
+    assert has_element?(lv, "#audiobooks_library_path[name=audiobooks_library_path]")
+    assert has_element?(lv, "button[phx-value-service=ebook_library]", "Test Ebooks library")
+    # Positive control: Plex section inputs do render here, so the refutes below are live.
+    assert has_element?(lv, "#movies_plex_section")
+
+    # Anime root is root-role spelled; the video-policy and Plex fields are media-kind spelled.
+    refute has_element?(lv, "#books_anime_library_path")
+    refute has_element?(lv, "#audiobooks_anime_library_path")
+
+    for kind <- ~w(ebook audiobook) do
+      refute has_element?(lv, "##{kind}_min_size")
+      refute has_element?(lv, "##{kind}_max_size")
+      refute has_element?(lv, "##{kind}_preferred_resolutions")
+      refute has_element?(lv, "##{kind}_preferred_sources")
+      refute has_element?(lv, "##{kind}_preferred_terms")
+      refute has_element?(lv, "##{kind}_blocked_terms")
+      refute has_element?(lv, "##{kind}_upgrade_cutoff")
+      refute has_element?(lv, "##{kind}_plex_section")
+    end
+
     assert html =~ ~s(name="import_roots")
     assert html =~ ~s(name="default_request_quota")
     assert has_element?(lv, "#movies_preferred_terms[name=movies_preferred_terms]")

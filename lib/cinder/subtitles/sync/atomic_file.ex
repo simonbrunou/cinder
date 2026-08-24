@@ -678,7 +678,7 @@ defmodule Cinder.Subtitles.Sync.AtomicFile do
     do: finish_atomic_operation({:not_exchanged, error}, directory, path, staged)
 
   defp safe_destination(path),
-    do: path_policy().destination(path, Settings.library_roots(), filesystem: fs())
+    do: path_policy().destination(path, Settings.video_library_roots(), filesystem: fs())
 
   defp reversal_operation_id(target, expected_sha256, content_sha256) do
     :crypto.hash(:sha256, [target, 0, expected_sha256, 0, content_sha256])

@@ -17,6 +17,7 @@ defmodule Cinder.Settings do
   alias Cinder.Acquisition.{AnimePreferences, Parser, Scorer}
   alias Cinder.Catalog.Profile
   alias Cinder.Library.MediaServer.{Jellyfin, Plex}
+  alias Cinder.LibraryKind
   alias Cinder.Repo
   alias Cinder.Settings.Crypto
   alias Cinder.Settings.Registry
@@ -309,11 +310,26 @@ defmodule Cinder.Settings do
     |> Enum.uniq()
   end
 
+  @doc "Expanded video library roots permitted as managed destinations."
+  @spec video_library_roots() :: [String.t()]
+  def video_library_roots do
+    library_destinations()
+    |> Enum.filter(&LibraryKind.video?(&1.kind))
+    |> Enum.map(&Path.expand(&1.path))
+    |> Enum.uniq()
+  end
+
   defp configured_library_path(kind, :anime),
-    do: :cinder |> Application.get_env(:"#{kind}_anime_library_path") |> Util.blank_to_nil()
+    do:
+      :cinder
+      |> Application.get_env(:"#{LibraryKind.root_role(kind)}_anime_library_path")
+      |> Util.blank_to_nil()
 
   defp configured_library_path(kind, :standard),
-    do: :cinder |> Application.get_env(:"#{kind}_library_path") |> Util.blank_to_nil()
+    do:
+      :cinder
+      |> Application.get_env(:"#{LibraryKind.root_role(kind)}_library_path")
+      |> Util.blank_to_nil()
 
   defp fallback_library_path(kind, profile),
     do: configured_library_path(kind, profile) || configured_library_path(kind, :standard)
@@ -335,9 +351,11 @@ defmodule Cinder.Settings do
   @doc "Boot-configured Standard and Anime destinations, without profile-store reads."
   @spec legacy_library_destinations() :: [map()]
   def legacy_library_destinations do
-    Enum.flat_map(Cinder.Library.kinds(), fn kind ->
+    Enum.flat_map(LibraryKind.all(), fn kind ->
       standard = configured_library_path(kind, :standard)
-      anime = configured_library_path(kind, :anime)
+
+      anime =
+        if LibraryKind.handling?(kind, :anime), do: configured_library_path(kind, :anime)
 
       [%{kind: kind, profile: :standard, profile_id: nil, path: standard}] ++
         if(anime in [nil, standard],
@@ -542,7 +560,12 @@ defmodule Cinder.Settings do
   end
 
   defp library_path_keys do
-    Enum.flat_map(Cinder.Library.kinds(), &[library_path_key(&1), anime_library_path_key(&1)])
+    Enum.flat_map(LibraryKind.all(), &library_path_keys/1)
+  end
+
+  defp library_path_keys(kind) do
+    [library_path_key(kind)] ++
+      if LibraryKind.handling?(kind, :anime), do: [anime_library_path_key(kind)], else: []
   end
 
   defp effective_field_value(%{module: module, field: field}) do
@@ -656,8 +679,8 @@ defmodule Cinder.Settings do
   defp invalid_timezone_values(_params), do: []
 
   defp invalid_library_roots(params) do
-    for kind <- Cinder.Library.kinds(),
-        key <- [library_path_key(kind), anime_library_path_key(kind)],
+    for kind <- LibraryKind.all(),
+        key <- library_path_keys(kind),
         Map.has_key?(params, key),
         value = String.trim(params[key] || ""),
         value != "" and Path.expand(value) == "/",
@@ -671,7 +694,7 @@ defmodule Cinder.Settings do
   defp invalid_import_roots(_params), do: []
 
   defp invalid_band_values(params) do
-    for kind <- Cinder.Library.kinds(),
+    for kind <- LibraryKind.video(),
         key <- [min_size_key(kind), max_size_key(kind)],
         value = String.trim(params[key] || ""),
         value != "",
@@ -682,7 +705,7 @@ defmodule Cinder.Settings do
   end
 
   defp invalid_cutoff_values(params) do
-    for kind <- Cinder.Library.kinds(),
+    for kind <- LibraryKind.video(),
         key = upgrade_cutoff_key(kind),
         Map.has_key?(params, key),
         cutoff = params[key] |> String.trim() |> String.downcase(),
@@ -806,7 +829,7 @@ defmodule Cinder.Settings do
     apply_library_config(rows)
     apply_path_mapping_config(rows)
     # apply_import_roots (the read-scope :import_roots key) must run here: its
-    # inferred_import_roots/0 fallback reads the :"#{kind}_library_path" env keys that
+    # inferred_import_roots/0 fallback reads the :"#{root_role}_library_path" env keys that
     # apply_library_config just wrote above — position-enforced only, a future reorder must not
     # move this ahead of apply_library_config.
     apply_import_roots(rows)
@@ -965,13 +988,11 @@ defmodule Cinder.Settings do
     Application.put_env(:cinder, :media_server, impl)
   end
 
-  # Per-kind library config, applied uniformly for every Cinder.Library kind: the import root
-  # (a flat :cinder env key WITH an env bootstrap) plus the DB-only release rules. A DB value
-  # overlays the bootstrap; a cleared setting reverts to it (base/1 snapshots the pre-overlay env
-  # once).
-  # One loop — a new kind needs no new apply_* function.
+  # Every media kind gets a standard root; only video kinds get Anime roots and release rules.
+  # A DB value overlays the bootstrap; a cleared root reverts to it (base/1 snapshots the
+  # pre-overlay env once).
   defp apply_library_config(rows) do
-    for kind <- Cinder.Library.kinds(), do: apply_kind_config(rows, kind)
+    for kind <- LibraryKind.all(), do: apply_kind_config(rows, kind)
     :ok
   end
 
@@ -1001,16 +1022,25 @@ defmodule Cinder.Settings do
   end
 
   defp apply_kind_config(rows, kind) do
-    root_env = :"#{kind}_library_path"
-    anime_root_env = :"#{kind}_anime_library_path"
+    root_role = LibraryKind.root_role(kind)
+    root_env = :"#{root_role}_library_path"
 
     # Capture the bootstrap snapshot EAGERLY, before the `||` — otherwise the `||` short-circuits
     # past base_path/1 whenever a value is set, so base/1 first records the env lazily during a
     # *delete*, snapshotting the already-overlaid value instead of the true pre-overlay bootstrap
     # (a cleared setting would then revert to the overlaid value, not the env default).
     fallback = base_path(root_env)
-    root = decoded_for(rows, "#{kind}_library_path") || fallback
-    anime_root = decoded_for(rows, "#{kind}_anime_library_path")
+    root = decoded_for(rows, "#{root_role}_library_path") || fallback
+
+    Application.put_env(:cinder, root_env, root)
+
+    if LibraryKind.video?(kind), do: apply_video_kind_config(rows, kind)
+  end
+
+  defp apply_video_kind_config(rows, kind) do
+    root_role = LibraryKind.root_role(kind)
+    anime_root_env = :"#{root_role}_anime_library_path"
+    anime_root = decoded_for(rows, "#{root_role}_anime_library_path")
     min_size = band_size(rows, "#{kind}_min_size")
     max_size = band_size(rows, "#{kind}_max_size")
     preferred = parse_csv_list(decoded_for(rows, "#{kind}_preferred_resolutions"))
@@ -1024,7 +1054,6 @@ defmodule Cinder.Settings do
       |> then(&if(is_binary(&1), do: String.downcase(String.trim(&1)), else: nil))
       |> then(&if(&1 in Parser.resolutions(), do: &1, else: nil))
 
-    Application.put_env(:cinder, root_env, root)
     Application.put_env(:cinder, anime_root_env, anime_root)
     Application.put_env(:cinder, :"#{kind}_min_size", min_size)
     Application.put_env(:cinder, :"#{kind}_max_size", max_size)
@@ -1181,7 +1210,7 @@ defmodule Cinder.Settings do
   defp inferred_import_roots do
     roots =
       Cinder.Library.kinds()
-      |> Enum.map(&Application.get_env(:cinder, :"#{&1}_library_path"))
+      |> Enum.map(&Application.get_env(:cinder, :"#{LibraryKind.root_role(&1)}_library_path"))
       |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
       |> Enum.map(&Path.expand/1)
 

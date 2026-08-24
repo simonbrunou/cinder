@@ -177,6 +177,27 @@ A single requested work is the safe default. Author monitoring is an admin-only 
 - Invalid target/profile combinations fail closed in changesets and context functions.
 - `mix test` is green.
 
+### Amendments during execution (2026-08-24)
+
+Two items in the Work list above moved out of B1. Both are recorded here rather than silently
+dropped; see [`the B1 plan`](2026-08-24-books-b1-media-kind-foundation.md) for the reasoning.
+
+- **`lib/cinder/books/book_target.ex` and its guarded transition move to B2.** The parity contract
+  locks monitoring at `(work, media_kind)`, and `works` does not exist until B2. A `book_targets`
+  table with no work to point at is scaffolding B2 would rewrite, and its guarded transition could
+  not be exercised. B1 ships the media-kind, profile, settings, and health foundation; B2 adds the
+  catalog and the target lifecycle together.
+- **Poller orchestration is not extracted.** B1 asked for a decision; the decision is no.
+  `Download.Poller` and `Download.TvPoller` are race-sensitive and have no book caller until B4.
+  Refactoring two working modules with zero third consumer to justify it trades real risk for no
+  gain. Revisit in B4, when the third consumer actually exists.
+
+One correction was also found in B1's own plan and is worth carrying forward: rebuilding
+`media_profiles` in SQLite requires dropping and recreating **all seven** triggers whose bodies
+reference it, not just the one attached to it. The `movies`, `series`, and `requests`
+profile-integrity triggers break at `ALTER TABLE ... RENAME TO` otherwise. Any later milestone
+that rebuilds a table referenced by a trigger inherits this hazard.
+
 ---
 
 ## B2 — Books catalog, metadata adapters, and identity resolution
@@ -204,6 +225,8 @@ A single requested work is the safe default. Author monitoring is an admin-only 
 - Create: `lib/cinder/books/identity.ex`
 - Create: `lib/cinder/books/refresher.ex`
 - Create: `priv/repo/migrations/<timestamp>_create_books_catalog.exs`
+- Create: `lib/cinder/books/book_target.ex` (deferred from B1 — needs `works` to reference)
+- Create: `lib/cinder/books/book_target_transition.ex` (deferred from B1)
 - Create: `test/cinder/books/metadata_contract_test.exs`
 - Create: `test/cinder/books/identity_test.exs`
 - Create: `test/cinder/books/refresher_test.exs`
@@ -211,6 +234,7 @@ A single requested work is the safe default. Author monitoring is an admin-only 
 ### Done when
 
 - The labeled B0 corpus resolves to the expected work/edition or an explicit ambiguity.
+- A book target's lifecycle states (`unmonitored`, `monitored`, `available`, `held`) and their guarded transition land with the catalog, and a work can monitor e-book, audiobook, both, or neither independently.
 - Repeated imports are idempotent across provider aliases and ISBN variants.
 - A provider outage retains the last valid snapshot and never strips acquisition identity.
 - Manual corrections survive refresh.

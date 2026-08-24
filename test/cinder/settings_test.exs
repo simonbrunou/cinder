@@ -62,6 +62,9 @@ defmodule Cinder.SettingsTest do
     :tv_preferred_terms,
     :tv_blocked_terms,
     :tv_upgrade_cutoff,
+    :books_library_path,
+    :books_anime_library_path,
+    :audiobooks_library_path,
     :import_roots,
     :explicit_import_roots,
     :move_on_import,
@@ -104,6 +107,82 @@ defmodule Cinder.SettingsTest do
   end
 
   describe "storage" do
+    test "book kinds register roots without video policy keys" do
+      keys = Settings.flat_keys()
+
+      assert "books_library_path" in keys
+      assert "audiobooks_library_path" in keys
+
+      # Video-policy and Plex keys derive from the media kind, the Anime root from the root
+      # role — so each negative must be spelled the way its own derivation would spell it, or
+      # it refutes a string no implementation can emit and fences nothing.
+      for kind <- ~w(ebook audiobook), root <- ~w(books audiobooks) do
+        for key <- ~w(
+          #{kind}_min_size
+          #{kind}_max_size
+          #{kind}_preferred_resolutions
+          #{kind}_preferred_sources
+          #{kind}_preferred_terms
+          #{kind}_blocked_terms
+          #{kind}_upgrade_cutoff
+          #{root}_anime_library_path
+        ) do
+          refute key in keys
+        end
+      end
+
+      # Plex sections are NOT flat keys — they live in config_fields/0, so refuting them above
+      # would pass no matter what plex_section_fields/0 generated. Assert against the registry
+      # that actually carries them, with the video kinds as the positive control.
+      config_keys = Enum.map(Settings.config_fields(), & &1.key)
+
+      assert "movies_plex_section" in config_keys
+      assert "tv_plex_section" in config_keys
+      refute "ebook_plex_section" in config_keys
+      refute "audiobook_plex_section" in config_keys
+    end
+
+    test "book roots are managed library destinations but not video roots" do
+      Settings.put("books_library_path", "/srv/media/books")
+
+      assert Application.get_env(:cinder, :books_library_path) == "/srv/media/books"
+      assert "/srv/media/books" in Settings.library_roots()
+
+      # Positive control: video_library_roots/0 is populated here, so the refute below is a
+      # real exclusion rather than an assertion about an empty list.
+      video_roots = Settings.video_library_roots()
+
+      assert Enum.any?(video_roots)
+      refute "/srv/media/books" in video_roots
+    end
+
+    test "legacy destinations are unchanged while book roots are unset" do
+      Application.put_env(:cinder, :movies_library_path, "/media/movies")
+      Application.put_env(:cinder, :movies_anime_library_path, "/media/anime-movies")
+      Application.put_env(:cinder, :tv_library_path, "/media/tv")
+      Application.put_env(:cinder, :tv_anime_library_path, "/media/anime-tv")
+      Application.delete_env(:cinder, :books_library_path)
+      Application.delete_env(:cinder, :audiobooks_library_path)
+
+      video_destinations = [
+        %{kind: :movies, profile: :standard, profile_id: nil, path: "/media/movies"},
+        %{kind: :movies, profile: :anime, profile_id: nil, path: "/media/anime-movies"},
+        %{kind: :tv, profile: :standard, profile_id: nil, path: "/media/tv"},
+        %{kind: :tv, profile: :anime, profile_id: nil, path: "/media/anime-tv"}
+      ]
+
+      assert Settings.legacy_library_destinations() == video_destinations
+
+      # Configuring a book root adds exactly one Standard destination — and no Anime one, even
+      # with an Anime key planted in env, because books declare no `:anime` handling.
+      Application.put_env(:cinder, :books_library_path, "/media/books")
+      Application.put_env(:cinder, :books_anime_library_path, "/media/anime-books")
+
+      assert Settings.legacy_library_destinations() ==
+               video_destinations ++
+                 [%{kind: :ebook, profile: :standard, profile_id: nil, path: "/media/books"}]
+    end
+
     test "household timezone controls the local eligibility date and rejects unknown zones" do
       instant = ~U[2026-01-01 23:30:00Z]
 
@@ -870,10 +949,14 @@ defmodule Cinder.SettingsTest do
                  Settings.save_form(%{
                    "movies_library_path" => root,
                    "tv_anime_library_path" => root,
+                   "books_library_path" => root,
                    "media_server_type" => "jellyfin"
                  })
 
-        assert Enum.sort(invalid) == ["movies_library_path", "tv_anime_library_path"]
+        assert Enum.sort(invalid) ==
+                 ["books_library_path", "movies_library_path", "tv_anime_library_path"]
+
+        assert Settings.get("books_library_path") == nil
         assert Settings.get("movies_library_path") == nil
         assert Settings.get("tv_anime_library_path") == nil
       end

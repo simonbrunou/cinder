@@ -7,6 +7,7 @@ defmodule Cinder.Health do
   silently and only show up in the logs.
   """
   alias Cinder.Download
+  alias Cinder.LibraryKind
 
   @doc """
   Checks every configured external service. Returns a list of
@@ -64,7 +65,7 @@ defmodule Cinder.Health do
   end
 
   def check_service({:library, kind}) do
-    case Application.get_env(:cinder, :"#{kind}_library_path") do
+    case Application.get_env(:cinder, :"#{LibraryKind.root_role(kind)}_library_path") do
       blank when blank in [nil, ""] -> {:error, :not_configured}
       path -> library_writable(path)
     end
@@ -98,9 +99,20 @@ defmodule Cinder.Health do
   # One row per library kind (Movies, TV, …); reuses the writable-path probe so a missing or
   # unwritable root shows red on /status — the visible signal that an import is holding.
   defp library_checks do
-    for kind <- Cinder.Library.kinds() do
-      %{label: "Library (#{kind})", status: check_service({:library, kind})}
-    end
+    video_checks =
+      for kind <- Cinder.Library.kinds() do
+        %{label: "Library (#{kind})", status: check_service({:library, kind})}
+      end
+
+    book_checks =
+      for kind <- LibraryKind.all(),
+          not LibraryKind.video?(kind),
+          status = check_service({:library, kind}),
+          status != {:error, :not_configured} do
+        %{label: "Library (#{LibraryKind.label(kind)})", status: status}
+      end
+
+    video_checks ++ book_checks
   end
 
   # Subtitles is off-by-default (no api_key ⇒ :not_configured) — omit the row entirely rather

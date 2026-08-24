@@ -5,6 +5,7 @@ defmodule Cinder.Catalog.ProfilesTest do
   alias Cinder.Catalog.{Movie, Profile, Series}
   alias Cinder.Requests
   alias Cinder.Requests.Request
+  alias Ecto.Adapters.SQL
 
   import Cinder.AccountsFixtures
   import Cinder.CatalogFixtures
@@ -46,6 +47,63 @@ defmodule Cinder.Catalog.ProfilesTest do
              })
 
     assert "has already been taken" in errors_on(duplicate_root).library_path
+  end
+
+  test "ebook profiles accept only standard handling and can be listed" do
+    assert {:ok, ebook} =
+             Catalog.create_profile(%{name: "Ereader", kind: :ebook, handling: :standard})
+
+    assert Catalog.list_profiles(:ebook) == [ebook]
+
+    assert {:error, changeset} =
+             Catalog.create_profile(%{name: "Anime", kind: :ebook, handling: :anime})
+
+    assert errors_on(changeset).handling != []
+  end
+
+  test "requests cannot reference an ebook profile" do
+    assert {:ok, ebook} =
+             Catalog.create_profile(%{name: "Ereader", kind: :ebook, handling: :standard})
+
+    assert_raise Exqlite.Error, ~r/requests_profile_integrity/, fn ->
+      SQL.query!(
+        Repo,
+        """
+        INSERT INTO requests (
+          user_id, target_type, target_id, status, proposed_media_profile,
+          proposed_profile_id, inserted_at, updated_at
+        ) VALUES (?, 'movie', 90000, 'pending', 'standard', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        [user_fixture().id, ebook.id]
+      )
+    end
+  end
+
+  test "an unreferenced ebook profile stays deletable even as the kind's only one" do
+    assert {:ok, ebook} =
+             Catalog.create_profile(%{name: "Ereader", kind: :ebook, handling: :standard})
+
+    # Ebooks are seeded with no profile, so zero is their valid state — the last-profile guard
+    # that protects movie/TV routing must not strand an accidental book profile forever.
+    assert {:ok, _deleted} = Catalog.delete_profile(ebook)
+    assert Catalog.list_profiles(:ebook) == []
+  end
+
+  test "movies cannot reference an ebook profile after the profile table rebuild" do
+    assert {:ok, ebook} =
+             Catalog.create_profile(%{name: "Ereader", kind: :ebook, handling: :standard})
+
+    assert_raise Exqlite.Error, ~r/movies_profile_integrity/, fn ->
+      SQL.query!(
+        Repo,
+        """
+        INSERT INTO movies (
+          tmdb_id, title, media_profile, profile_id, inserted_at, updated_at
+        ) VALUES (90000, 'Wrong kind', 'standard', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        """,
+        [ebook.id]
+      )
+    end
   end
 
   test "assigns matching profiles and synchronizes legacy handling in one update" do

@@ -72,6 +72,34 @@ defmodule CinderWeb.SetupLiveTest do
     # But the wizard still shows the library paths it needs to validate.
     assert html =~ ~s(name="movies_library_path")
     assert html =~ ~s(name="movies_anime_library_path")
+    assert html =~ ~s(name="books_library_path")
+    assert html =~ ~s(name="audiobooks_library_path")
+    refute html =~ ~s(name="books_anime_library_path")
+  end
+
+  test "book roots are testable but do not expand the required-service set", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+    stub_all_services_ok()
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+
+    assert has_element?(lv, "button[phx-value-service=ebook_library]", "Test Ebooks library")
+
+    # Positive control: the checklist exists and lists the required video roots, so the refutes
+    # below prove books are absent from it rather than that the selector matched nothing.
+    assert has_element?(lv, "#setup-checklist", "Movies library path")
+    assert has_element?(lv, "#setup-checklist", "TV library path")
+
+    # Refute the SINGULAR stem. `service_label/1` has explicit clauses only for the video
+    # services, so a book row would fall through to its titlecase fallback and render
+    # "Ebook Library" — refuting the plural "Ebooks" matches nothing either way and fences
+    # nothing. The stem matches whatever spelling the label ends up with.
+    refute has_element?(lv, "#setup-checklist", "Ebook")
+    refute has_element?(lv, "#setup-checklist", "Audiobook")
+
+    lv |> form("#setup-form", @valid_params) |> render_submit()
+    assert has_element?(lv, "#finish-setup:not([disabled])")
   end
 
   test "the wizard gives required sections an ordered path from a clear starting point", %{
