@@ -231,6 +231,61 @@ defmodule Cinder.Books.IdentityTest do
              Identity.resolve("The Lord of the Rings J. R. R. Tolkien omnibus")
   end
 
+  test "a run of annotation words at the edge is trimmed by one, not eaten through" do
+    # Recursing ate into the title: "Omnibus Ebook Reader" trimmed all the way to "reader", so the
+    # work actually called *Ebook Reader* was rejected and a different work called *Reader* was
+    # returned in its place — wrong work AND right work discarded, from one query.
+    named = %{candidate(:openlibrary, "Ebook Reader", ["A Author"]) | foreign_id: "named"}
+    other = %{candidate(:openlibrary, "Reader", ["A Author"]) | foreign_id: "other"}
+
+    expect(PrimaryMetadataMock, :search, fn _query -> {:ok, [other, named]} end)
+    expect(PrimaryMetadataMock, :get_work, fn "named" -> {:ok, work("named")} end)
+
+    assert {:ok, %{provider: :openlibrary}} = Identity.resolve("Omnibus Ebook Reader A Author")
+  end
+
+  test "a title that folds to its Latin residue is unresolved, not a coin flip" do
+    # Folding discards non-Latin script instead of failing on it, so "ノルウェイの森 1" and
+    # "海辺のカフカ 1" both key to "1" — and edition count handed back whichever was more popular,
+    # with full confidence. The `title != ""` rule only catches a total loss; a partial one is no
+    # more trustworthy. Volume-numbered manga and light-novel rows are the realistic population.
+    norwegian = %{
+      candidate(:openlibrary, "ノルウェイの森 1", ["Haruki Murakami"])
+      | foreign_id: "norwegian",
+        edition_count: 50
+    }
+
+    kafka = %{
+      candidate(:openlibrary, "海辺のカフカ 1", ["Haruki Murakami"])
+      | foreign_id: "kafka",
+        edition_count: 3
+    }
+
+    expect(PrimaryMetadataMock, :search, fn _query -> {:ok, [norwegian, kafka]} end)
+    expect(SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
+
+    assert {:unresolved, :no_reliable_match} =
+             Identity.resolve("海辺のカフカ 1 Haruki Murakami")
+  end
+
+  test "a diacritic is folded, not treated as a lossy script" do
+    # The lossy-fold rejection must not swallow the accent handling it sits next to: combining
+    # marks are exactly what the fold is meant to drop.
+    for {title, author, query} <- [
+          {"Les Misérables", "Victor Hugo", "Les Miserables Victor Hugo"},
+          {"Cien años de soledad", "Gabriel García Márquez",
+           "Cien anos de soledad Gabriel Garcia Marquez"}
+        ] do
+      expect(PrimaryMetadataMock, :search, fn _query ->
+        {:ok, [candidate(:openlibrary, title, [author])]}
+      end)
+
+      expect(PrimaryMetadataMock, :get_work, fn "id" -> {:ok, work("id")} end)
+
+      assert {:ok, %{provider: :openlibrary}} = Identity.resolve(query), "#{title} should resolve"
+    end
+  end
+
   test "an annotation word mid-title is part of the title, not an annotation" do
     # An annotation is something a requester appends or prepends. Stripping one from anywhere in
     # the query let "The Audiobook Murders" resolve to a different work called "The Murders" —

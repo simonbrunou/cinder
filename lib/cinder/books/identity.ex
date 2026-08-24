@@ -28,7 +28,9 @@ defmodule Cinder.Books.Identity do
      Murders" and "The Murders". An annotation is something a requester appends, so only the
      edges can hold one. An exact match outranks an annotation-stripped one, so when both works
      are candidates the requester gets the one they actually named.
-  3. A candidate whose title folds away to nothing is rejected outright — see `score/2`.
+  3. A candidate is rejected when folding to ASCII would discard letters from either side — a
+     non-Latin title keeps only its Latin residue, and two different works can share it. See
+     `lossy_fold?/1`.
   4. Survivors are ordered by match strength, then by the provider's own edition count, then by
      foreign id so the choice is deterministic rather than dependent on result order.
 
@@ -150,9 +152,10 @@ defmodule Cinder.Books.Identity do
           {:ok, Metadata.candidate(), map()} | :none
   def select(candidates, query) do
     query_tokens = tokens(query)
+    lossy_query? = lossy_fold?(query)
 
     candidates
-    |> Enum.flat_map(&score(&1, query_tokens))
+    |> Enum.flat_map(&score(&1, query_tokens, lossy_query?))
     |> Enum.sort_by(fn {candidate, _matched, strength} ->
       {strength, -candidate.edition_count, candidate.foreign_id}
     end)
@@ -172,9 +175,28 @@ defmodule Cinder.Books.Identity do
 
   # Eligible when at least one contributor's tokens are all present in the query AND the query
   # minus those tokens is the candidate title — exactly, or once annotations come off.
-  defp score(candidate, query_tokens) do
+  defp score(candidate, query_tokens, lossy_query?) do
+    {remainder, matched} = subtract_contributors(candidate.contributors, query_tokens)
+    title = title_key(tokens(candidate.title))
+
+    # `title != ""` is load-bearing, not defensive. Folding strips non-ASCII, so a title written
+    # entirely in Japanese/Chinese/Cyrillic folds to "" — and so does a query that named only an
+    # author. Without this, "Haruki Murakami" matched every one of his non-Latin-titled works and
+    # the edition-count order silently returned the biggest: a first-result selection by another
+    # name, on an input weaker than the bare title the contract already rejects. A title we cannot
+    # fold is a title we cannot compare, so it is unresolved rather than assumed.
+    cond do
+      matched == [] or title == "" -> []
+      lossy_query? or lossy_fold?(candidate.title) -> []
+      title_key(remainder) == title -> [{candidate, matched, 0}]
+      title_key(trim_annotations(remainder)) == title -> [{candidate, matched, 1}]
+      true -> []
+    end
+  end
+
+  defp subtract_contributors(contributors, query_tokens) do
     {remainder, matched} =
-      Enum.reduce(candidate.contributors, {query_tokens, []}, fn contributor, {rest, matched} ->
+      Enum.reduce(contributors, {query_tokens, []}, fn contributor, {rest, matched} ->
         name = tokens(contributor.name)
 
         # `--` removes one occurrence per token, so a query naming two people who share a surname
@@ -186,21 +208,7 @@ defmodule Cinder.Books.Identity do
         end
       end)
 
-    title = title_key(tokens(candidate.title))
-    matched = Enum.reverse(matched)
-
-    # `title != ""` is load-bearing, not defensive. Folding strips non-ASCII, so a title written
-    # entirely in Japanese/Chinese/Cyrillic folds to "" — and so does a query that named only an
-    # author. Without this, "Haruki Murakami" matched every one of his non-Latin-titled works and
-    # the edition-count order silently returned the biggest: a first-result selection by another
-    # name, on an input weaker than the bare title the contract already rejects. A title we cannot
-    # fold is a title we cannot compare, so it is unresolved rather than assumed.
-    cond do
-      matched == [] or title == "" -> []
-      title_key(remainder) == title -> [{candidate, matched, 0}]
-      title_key(trim_annotations(remainder)) == title -> [{candidate, matched, 1}]
-      true -> []
-    end
+    {remainder, Enum.reverse(matched)}
   end
 
   # An annotation is *appended or prepended* to a query — "... omnibus", "audiobook: ..." — never
@@ -214,14 +222,17 @@ defmodule Cinder.Books.Identity do
   #
   # Never trims to nothing: *Omnibus* is a real title, and the strength-0 pass matches it anyway.
   defp trim_annotations(words) do
-    words |> trim_leading() |> Enum.reverse() |> trim_leading() |> Enum.reverse()
+    words |> trim_one() |> Enum.reverse() |> trim_one() |> Enum.reverse()
   end
 
-  defp trim_leading([word | rest]) when rest != [] do
-    if word in @annotations, do: trim_leading(rest), else: [word | rest]
+  # One word per edge, exactly as `drop_article/1` drops at most one article. Recursing ate into
+  # the title itself: "Omnibus Ebook Reader" trimmed to "reader", so the work actually called
+  # *Ebook Reader* was rejected while a different work called *Reader* was returned in its place.
+  defp trim_one([word | rest]) when rest != [] do
+    if word in @annotations, do: rest, else: [word | rest]
   end
 
-  defp trim_leading(words), do: words
+  defp trim_one(words), do: words
 
   # Fold to comparable tokens: NFD-decompose so "Misérables" matches "Miserables", drop everything
   # that isn't a letter or digit, and split. (`Cinder.Acquisition` folds release titles the same
@@ -233,6 +244,20 @@ defmodule Cinder.Books.Identity do
     |> String.replace(~r/['’]/u, "")
     |> String.replace(~r/[^\x00-\x7f]/u, "")
     |> String.split(~r/[^a-z0-9]+/, trim: true)
+  end
+
+  # Folding to ASCII *discards* non-Latin script rather than failing on it, so a title that is
+  # only partly non-ASCII keeps just its Latin residue — "ノルウェイの森 1" and "海辺のカフカ 1"
+  # both key to "1", and a query for one returned the other with strategy `:title_and_contributor`
+  # and full confidence. Volume-numbered manga and light-novel rows are the realistic population.
+  #
+  # The `title == ""` check in `score/3` only catches a *total* loss; a partial one is no more
+  # trustworthy, so both are unresolved. Combining marks are excluded because they are exactly
+  # what the fold is meant to drop — "Les Misérables" is not lossy, "Straße" and "Война и мир"
+  # are. A properly Unicode-aware fold is the fix if the household ever needs these titles; a
+  # confident wrong work is not an acceptable placeholder for one.
+  defp lossy_fold?(string) do
+    string |> nfd() |> String.match?(~r/[^\x00-\x7f\x{0300}-\x{036F}]/u)
   end
 
   # NFD first, and not just for the diacritic fold: the regexes below raise on malformed UTF-8,

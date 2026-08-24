@@ -80,7 +80,11 @@ exact fetch. Anything else is searched, and that is where the judgment lives —
    never the provider's title, and only from its leading and trailing edges** — an annotation is
    something a requester appends, so only an edge can hold one. An exact match outranks an
    annotation-stripped one.
-4. A candidate whose title folds away to nothing is rejected.
+4. A candidate is rejected when folding to ASCII would discard letters from either side, not just
+   when it discards all of them. A non-Latin title keeps only its Latin residue, so
+   "ノルウェイの森 1" and "海辺のカフカ 1" both key to "1" — and edition count handed back
+   whichever was more popular, with full confidence. Diacritics still fold: combining marks are
+   what the fold is *for*, so "Les Misérables" is fine and "Война и мир" is not.
 5. Survivors order by match strength, then edition count, then foreign id, so the choice is
    deterministic. No survivor → `{:unresolved, :no_reliable_match}`.
 
