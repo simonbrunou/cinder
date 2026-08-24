@@ -107,6 +107,15 @@ from the bank alone, and it found the leading-edge one itself. The frozen corpus
 cannot: `corpus-v1.json` holds no CJK, Cyrillic or Greek, and its only near-collisions are the
 folds that are supposed to match.
 
+**One collision is retained, and the fence asserts it rather than omitting it.** A title that
+genuinely ends in an annotation word is indistinguishable from that title with a requester's
+annotation appended — "The Complete Omnibus" against "The Complete" plus "omnibus" — and nothing
+in a query separates the two readings. Dropping the trailing trim to avoid it would cost
+`lord-of-the-rings` and put the corpus at 35/40, under the contract's bar. So it is kept, bounded
+(strength precedence returns the named work whenever the provider also returned it, even against
+99× the editions), and pinned to an exact expected set: narrowing the trim makes the residual
+vanish and widening it makes the residual grow, and the test fails either way.
+
 Walk providers in configured order; the first reliable result wins. All providers erroring is
 `{:error, :providers_unavailable}` — distinct from "searched and found nothing", because the
 refresher must treat them differently.

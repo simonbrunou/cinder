@@ -47,6 +47,13 @@ defmodule Cinder.Books.IdentityCollisionTest do
     {["A Life"], :resolvable},
     # a title that is nothing but annotation/article words
     {["Omnibus", "The Omnibus"], :resolvable},
+    # titles that genuinely END in an annotation word — the one trim still in play
+    {["The Complete Omnibus"], :resolvable},
+    {["The Complete"], :resolvable},
+    {["Digital Audiobook"], :resolvable},
+    {["Digital"], :resolvable},
+    # a run of them, so widening the trim past one word shows up as a new collision
+    {["Reader Ebook Omnibus"], :resolvable},
     {["The Audio"], :resolvable},
     # non-Latin scripts, including the part-Latin residue case
     {["ノルウェイの森 1"], :lossy},
@@ -77,13 +84,22 @@ defmodule Cinder.Books.IdentityCollisionTest do
           match?({:ok, _, _}, result),
           do: {query_title, other_title}
 
-    assert collisions == [], """
+    unexpected = Enum.reject(collisions, fn {q, o} -> annotation_suffix?(q, o) end)
+
+    assert unexpected == [], """
     a query resolved to a different work:
-    #{Enum.map_join(collisions, "\n", fn {q, o} -> "  #{inspect(q)} -> #{inspect(o)}" end)}
+    #{Enum.map_join(unexpected, "\n", fn {q, o} -> "  #{inspect(q)} -> #{inspect(o)}" end)}
     """
 
+    # The retained collisions are asserted to exist, not merely tolerated: if the trailing trim is
+    # ever dropped this goes empty and the test says so, rather than quietly passing.
+    assert Enum.sort(collisions) == [
+             {"Digital Audiobook", "Digital"},
+             {"The Complete Omnibus", "The Complete"}
+           ]
+
     # Non-vacuous: state the sweep size, so a bank that stopped enumerating would be visible.
-    assert length(pairs) > 900
+    assert length(pairs) > 1000
   end
 
   test "a title whose fold loses letters is unresolvable even against itself" do
@@ -105,6 +121,32 @@ defmodule Cinder.Books.IdentityCollisionTest do
                Identity.select([candidate(stored_title, 1)], "#{query_title} #{@author}"),
              "#{inspect(query_title)} should resolve to #{inspect(stored_title)}"
     end
+  end
+
+  test "the retained collision needs the provider to have withheld the named work" do
+    # What bounds the residual above: it only fires when the work the requester named is not in
+    # the candidate list at all. When it is, strength precedence returns it — here over a wrong
+    # work holding 99x the editions.
+    named = candidate("The Complete Omnibus", 1)
+    other = %{candidate("The Complete", 99) | foreign_id: "other"}
+
+    assert {:ok, %{title: "The Complete Omnibus"}, _} =
+             Identity.select([other, named], "The Complete Omnibus #{@author}")
+
+    assert {:ok, %{title: "The Complete Omnibus"}, _} =
+             Identity.select([named, other], "The Complete Omnibus #{@author}")
+  end
+
+  # A title ending in an annotation word is indistinguishable from the same title with a
+  # requester's annotation appended — "The Complete Omnibus" against "The Complete" plus
+  # "omnibus". Nothing in a query can separate the two readings, and dropping the trailing trim to
+  # avoid it would cost `lord-of-the-rings` and put the corpus at 35/40, under the contract's 90%.
+  # So it is retained deliberately, bounded by the precedence test above, and pinned here so it
+  # cannot grow.
+  defp annotation_suffix?(query_title, other_title) do
+    Enum.any?(~w(omnibus ebook audiobook), fn word ->
+      String.downcase(query_title) == String.downcase(other_title) <> " " <> word
+    end)
   end
 
   defp candidate(title, edition_count) do
