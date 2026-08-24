@@ -99,6 +99,18 @@ config :cinder,
 # The real TMDB client's own test routes Req through a Req.Test stub (no network).
 config :cinder, Cinder.Catalog.TMDB.HTTP, req_options: [plug: {Req.Test, Cinder.TMDBStub}]
 
+# Books metadata is an ordered *pair* — the point of the pair is that the two disagree — so the
+# test wiring needs two distinct mocks, not one.
+config :cinder, Cinder.Books.Metadata,
+  providers: [Cinder.Books.PrimaryMetadataMock, Cinder.Books.SecondaryMetadataMock]
+
+config :cinder, Cinder.Books.Metadata.OpenLibrary,
+  req_options: [plug: {Req.Test, Cinder.OpenLibraryStub}, retry: false]
+
+config :cinder, Cinder.Books.Metadata.Hardcover,
+  base_url: "http://bookinfo.test",
+  req_options: [plug: {Req.Test, Cinder.HardcoverStub}, retry: false]
+
 config :cinder, Cinder.Acquisition.Indexer.Prowlarr,
   base_url: "http://prowlarr:9696",
   req_options: [plug: {Req.Test, Cinder.ProwlarrStub}, retry: false],

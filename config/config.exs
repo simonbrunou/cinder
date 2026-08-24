@@ -86,6 +86,10 @@ config :cinder,
 
 # Default; setting PLEX_URL (see runtime.exs) switches this to Plex.
 config :cinder, media_server: Cinder.Library.MediaServer.Jellyfin
+
+config :cinder, Cinder.Books.Metadata,
+  providers: [Cinder.Books.Metadata.OpenLibrary, Cinder.Books.Metadata.Hardcover]
+
 config :cinder, notifier: Cinder.Notifier.Dispatcher
 config :cinder, subtitles_provider: Cinder.Subtitles.Provider.OpenSubtitles
 config :cinder, subtitles_translator: Cinder.Subtitles.Translator.LibreTranslate

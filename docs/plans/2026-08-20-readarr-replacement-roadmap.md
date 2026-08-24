@@ -239,6 +239,22 @@ that rebuilds a table referenced by a trigger inherits this hazard.
 - A provider outage retains the last valid snapshot and never strips acquisition identity.
 - Manual corrections survive refresh.
 
+### Shipped as two slices
+
+B2a (#353) landed the catalog schemas and `book_targets`; B2b landed `Cinder.Books.Metadata`, the
+Open Library and Hardcover adapters, `Cinder.Books.Identity`, and `Cinder.Books.Refresher`. Two
+corrections to this milestone's plan, both recorded in
+[`the B2b plan`](2026-08-24-books-b2b-metadata-and-identity.md):
+
+- **No Google Books adapter, in either slice.** The parity contract supersedes "optional Google
+  Books fallback": keyless evaluation returned 40/40 HTTP 429, so it has no acceptance criterion.
+- **"Manual corrections survive refresh" moves to B3.** B2a shipped no operator-override columns
+  and nothing in B2 can create a manual correction, so the criterion would be vacuous here. What
+  B2b does enforce is that a refresh only writes fields the provider actually returned.
+
+Two items deferred *out* of B2b for want of a caller: author aliases (they need local author
+search, which is B3) and a provider-side ISBN fetch (an edition-level signal for B5/B6).
+
 ---
 
 ## B3 — Discover, request, approval, and book library UI

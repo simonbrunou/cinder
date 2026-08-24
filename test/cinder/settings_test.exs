@@ -32,6 +32,8 @@ defmodule Cinder.SettingsTest do
     Cinder.Mailer,
     Cinder.Subtitles.Provider.OpenSubtitles,
     Cinder.Subtitles.Translator.LibreTranslate,
+    Cinder.Books.Metadata.OpenLibrary,
+    Cinder.Books.Metadata.Hardcover,
     Cinder.Accounts.OIDC,
     Cinder.Catalog.UpgradeHunter,
     :media_server,
