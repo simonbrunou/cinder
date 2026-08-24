@@ -18,11 +18,18 @@ defmodule Cinder.Books.Identity do
      alone rules out every first-fuzzy-result failure, the one outcome the contract forbids
      outright.
   2. Subtract the matched contributor tokens from the query; whatever is left is the title the
-     caller meant. It must equal the candidate title exactly, after folding case, diacritics,
-     punctuation, a leading article, and format noise.
-  3. A remainder that folds away to nothing is rejected outright — see `score/2`.
-  4. Survivors are ordered by the provider's own edition count, then by foreign id so the choice
-     is deterministic rather than dependent on result order.
+     caller meant. It must equal the candidate title after folding case, diacritics, punctuation
+     and a leading article — exactly (strength 0), or once the requester's format annotations
+     come off (strength 1).
+
+     **Annotations come off the query only, never off the provider's title**, and only when the
+     title does not itself carry the word. Stripping both sides is what let "The Audio Book"
+     resolve to a different work called "The Book". An exact match outranks an
+     annotation-stripped one, so when both works are candidates the requester gets the one they
+     actually named.
+  3. A candidate whose title folds away to nothing is rejected outright — see `score/2`.
+  4. Survivors are ordered by match strength, then by the provider's own edition count, then by
+     foreign id so the choice is deterministic rather than dependent on result order.
 
   There is no separate `:ambiguous` outcome. In practice a survivor set larger than one is Open
   Library's several rows for a single work — the corpus's `chronicles-of-narnia` is exactly that,
@@ -47,14 +54,17 @@ defmodule Cinder.Books.Identity do
           | {:unresolved, atom()}
           | {:error, :providers_unavailable}
 
-  # Format annotations a release or a requester adds that never belong to the work title itself.
+  # Format annotations a requester appends to a query. The bar for membership is high — a word
+  # here has to be one no book would carry as an ordinary title word — because every entry is a
+  # chance to collide two different works. `book` taught that lesson (it was here to absorb
+  # "e-book", and it made "The Book Thief" and "The Thief" identical); `audio`, `edition`,
+  # `editions`, `abridged` and `unabridged` came out for the same reason before they could, each
+  # of them folding a real title into a different work's:
   #
-  # `book` is deliberately NOT here, though it was: it was added to absorb "e-book", which folds
-  # to two tokens. But `book` is an ordinary title word, and stripping it from both sides made
-  # "The Book Thief" and "The Thief" the same title — a request for one resolved confidently to
-  # the other. A stray "e-book" in a query now just fails to match, which is a rejection rather
-  # than a wrong work; every entry here has to be a word no title would carry on its own.
-  @noise ~w(omnibus ebook audiobook audio unabridged abridged edition editions)
+  #     "The Audio Book" → "The Book",  "First Edition" → "First",  "An Abridged Life" → "A Life"
+  #
+  # Only `omnibus` has corpus support (`lord-of-the-rings`); the other two are unambiguous.
+  @annotations ~w(omnibus ebook audiobook)
   @articles ~w(the a an le la les el los der die das)
 
   @doc """
@@ -142,15 +152,15 @@ defmodule Cinder.Books.Identity do
 
     candidates
     |> Enum.flat_map(&score(&1, query_tokens))
-    |> Enum.sort_by(fn {candidate, _matched} ->
-      {-candidate.edition_count, candidate.foreign_id}
+    |> Enum.sort_by(fn {candidate, _matched, strength} ->
+      {strength, -candidate.edition_count, candidate.foreign_id}
     end)
     |> best(length(candidates))
   end
 
   defp best([], _considered), do: :none
 
-  defp best([{candidate, matched} | _rest], considered) do
+  defp best([{candidate, matched, _strength} | _rest], considered) do
     {:ok, candidate,
      %{
        strategy: :title_and_contributor,
@@ -160,7 +170,7 @@ defmodule Cinder.Books.Identity do
   end
 
   # Eligible when at least one contributor's tokens are all present in the query AND the query
-  # minus those tokens is exactly the candidate title.
+  # minus those tokens is the candidate title — exactly, or once annotations come off.
   defp score(candidate, query_tokens) do
     {remainder, matched} =
       Enum.reduce(candidate.contributors, {query_tokens, []}, fn contributor, {rest, matched} ->
@@ -175,7 +185,9 @@ defmodule Cinder.Books.Identity do
         end
       end)
 
-    title = title_key(remainder)
+    title_words = tokens(candidate.title)
+    title = title_key(title_words)
+    matched = Enum.reverse(matched)
 
     # `title != ""` is load-bearing, not defensive. Folding strips non-ASCII, so a title written
     # entirely in Japanese/Chinese/Cyrillic folds to "" — and so does a query that named only an
@@ -183,11 +195,18 @@ defmodule Cinder.Books.Identity do
     # the edition-count order silently returned the biggest: a first-result selection by another
     # name, on an input weaker than the bare title the contract already rejects. A title we cannot
     # fold is a title we cannot compare, so it is unresolved rather than assumed.
-    if matched != [] and title != "" and title == title_key(tokens(candidate.title)) do
-      [{candidate, Enum.reverse(matched)}]
-    else
-      []
+    cond do
+      matched == [] or title == "" -> []
+      title_key(remainder) == title -> [{candidate, matched, 0}]
+      title_key(strip_annotations(remainder, title_words)) == title -> [{candidate, matched, 1}]
+      true -> []
     end
+  end
+
+  # An annotation is a format word the *requester* added: in the query, absent from the provider's
+  # title. A word the title itself carries is part of that title and is never stripped.
+  defp strip_annotations(words, title_words) do
+    Enum.reject(words, &(&1 in @annotations and &1 not in title_words))
   end
 
   # Fold to comparable tokens: NFD-decompose so "Misérables" matches "Miserables", drop everything
@@ -213,23 +232,9 @@ defmodule Cinder.Books.Identity do
     end
   end
 
-  # Drop a leading article and format noise before comparing — "The Little Prince" and Open
-  # Library's "Little Prince" are the same work, and "... omnibus" is a requester's annotation.
-  defp title_key(words) do
-    words
-    |> drop_noise()
-    |> drop_article()
-    |> Enum.join(" ")
-  end
-
-  # Never strip a title down to nothing — the same rule `drop_article/1` follows. *Omnibus* is a
-  # real title, and folding it away would make it unresolvable rather than merely annotated.
-  defp drop_noise(words) do
-    case Enum.reject(words, &(&1 in @noise)) do
-      [] -> words
-      kept -> kept
-    end
-  end
+  # Drop a leading article before comparing — "The Little Prince" and Open Library's
+  # "Little Prince" are the same work.
+  defp title_key(words), do: words |> drop_article() |> Enum.join(" ")
 
   defp drop_article([article | rest]) when rest != [],
     do: if(article in @articles, do: rest, else: [article | rest])

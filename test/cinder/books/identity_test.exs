@@ -182,11 +182,60 @@ defmodule Cinder.Books.IdentityTest do
              Identity.resolve("The Book Thief Markus Zusak")
   end
 
+  test "an annotation word inside a real title does not fold it into a different work" do
+    # Stripping annotations from *both* sides made these pairs identical, so a request for one
+    # resolved confidently to the other. Annotations now come off the query only, and only when
+    # the provider's title does not itself carry the word.
+    for {query, other_work} <- [
+          {"The Audio Book A Author", "The Book"},
+          {"First Edition A Author", "First"},
+          {"An Abridged Life A Author", "A Life"}
+        ] do
+      expect(PrimaryMetadataMock, :search, fn _query ->
+        {:ok, [candidate(:openlibrary, other_work, ["A Author"])]}
+      end)
+
+      expect(SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
+
+      assert {:unresolved, :no_reliable_match} = Identity.resolve(query),
+             "#{query} must not resolve to #{other_work}"
+    end
+  end
+
+  test "the work the requester actually named outranks the annotation reading of it" do
+    # "omnibus" is a real annotation — `lord-of-the-rings` in the corpus depends on it — so with
+    # only "Reader" in front of it the matcher reads the query that way. But when the work the
+    # requester named is also a candidate, exactness wins over edition count, by 99x here.
+    named = %{candidate(:openlibrary, "Omnibus Reader", ["A Author"]) | foreign_id: "named"}
+
+    other = %{
+      candidate(:openlibrary, "Reader", ["A Author"])
+      | foreign_id: "other",
+        edition_count: 99
+    }
+
+    expect(PrimaryMetadataMock, :search, fn _query -> {:ok, [other, named]} end)
+    expect(PrimaryMetadataMock, :get_work, fn "named" -> {:ok, work("named")} end)
+
+    assert {:ok, %{provider: :openlibrary}} = Identity.resolve("Omnibus Reader A Author")
+  end
+
+  test "an annotation the provider's title does not carry is still stripped" do
+    expect(PrimaryMetadataMock, :search, fn _query ->
+      {:ok, [candidate(:openlibrary, "The Lord of the Rings", ["J. R. R. Tolkien"])]}
+    end)
+
+    expect(PrimaryMetadataMock, :get_work, fn "id" -> {:ok, work("id")} end)
+
+    assert {:ok, %{provider: :openlibrary}} =
+             Identity.resolve("The Lord of the Rings J. R. R. Tolkien omnibus")
+  end
+
   test "a title made only of annotation words still resolves" do
     # Rejecting an empty folded title must not fold a real title away first. *Omnibus* and
     # *Book* are both real titles; `drop_article/1` already refuses to strip a lone article for
     # the same reason.
-    for title <- ["Omnibus", "Book", "Audio"] do
+    for title <- ["Omnibus", "Book", "Audio", "Audiobook"] do
       expect(PrimaryMetadataMock, :search, fn _query ->
         {:ok, [candidate(:openlibrary, title, ["A Author"])]}
       end)

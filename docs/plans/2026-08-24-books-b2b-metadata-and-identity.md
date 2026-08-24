@@ -75,9 +75,18 @@ exact fetch. Anything else is searched, and that is where the judgment lives —
    **token set** rather than a substring — "Cixin Liu" and "Liu Cixin" are the same person. No
    contributor evidence → never eligible. This alone kills every first-fuzzy-result failure.
 3. Subtract the matched contributor tokens; the remainder is the target title. Compare it to the
-   candidate title after stripping a leading article and format noise (`omnibus`, `unabridged`, …).
-4. Survivors order by edition count, then foreign id, so the choice is deterministic. No survivor
-   → `{:unresolved, :no_reliable_match}`.
+   candidate title after stripping a leading article — exactly, or once the requester's format
+   annotations (`omnibus`, `ebook`, `audiobook`) come off. **Annotations come off the query only,
+   never the provider's title**, and only when the title does not carry the word itself; an exact
+   match outranks an annotation-stripped one.
+4. A candidate whose title folds away to nothing is rejected.
+5. Survivors order by match strength, then edition count, then foreign id, so the choice is
+   deterministic. No survivor → `{:unresolved, :no_reliable_match}`.
+
+The annotation list is short on purpose: every entry is a chance to collide two different works.
+Stripping both sides made "The Book Thief" resolve to "The Thief", and `audio` / `edition` /
+`abridged` would each have done the same ("The Audio Book" → "The Book", "First Edition" →
+"First"). Only `omnibus` has corpus support; the other two are unambiguous.
 
 Walk providers in configured order; the first reliable result wins. All providers erroring is
 `{:error, :providers_unavailable}` — distinct from "searched and found nothing", because the
