@@ -128,6 +128,35 @@ defmodule Cinder.Books.IdentityTest do
     assert {:unresolved, :no_reliable_match} = Identity.resolve(<<"Belo", 0xFF, "ved">>)
   end
 
+  test "the order a provider lists its contributors in does not decide the outcome" do
+    # A work credited to both "Murakami" and "Haruki Murakami" resolved or not purely on which
+    # came first: the short form consumed the surname the long one needed. A miss rather than a
+    # wrong work on its own — but it knocks the correct candidate out while a wrong one is still
+    # standing, which is how several of this module's wrong-work bugs reached the caller.
+    for names <- [["Haruki Murakami", "Murakami"], ["Murakami", "Haruki Murakami"]] do
+      expect(PrimaryMetadataMock, :search, fn _query ->
+        {:ok, [candidate(:openlibrary, "Norwegian Wood", names)]}
+      end)
+
+      expect(PrimaryMetadataMock, :get_work, fn "id" -> {:ok, work("id")} end)
+
+      assert {:ok, %{provider: :openlibrary}} =
+               Identity.resolve("Norwegian Wood Haruki Murakami"),
+             "order #{inspect(names)} should resolve"
+    end
+  end
+
+  test "two contributors sharing a surname do not consume each other" do
+    expect(PrimaryMetadataMock, :search, fn _query ->
+      {:ok, [candidate(:openlibrary, "The Expanse", ["Daniel Abraham", "Ty Abraham"])]}
+    end)
+
+    expect(PrimaryMetadataMock, :get_work, fn "id" -> {:ok, work("id")} end)
+
+    assert {:ok, %{provider: :openlibrary}} =
+             Identity.resolve("The Expanse Daniel Abraham Ty Abraham")
+  end
+
   test "name order does not decide identity" do
     expect(PrimaryMetadataMock, :search, fn _query ->
       {:ok, [candidate(:openlibrary, "The Three-Body Problem", ["Liu Cixin"])]}

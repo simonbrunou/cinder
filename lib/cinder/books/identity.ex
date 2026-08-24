@@ -195,11 +195,19 @@ defmodule Cinder.Books.Identity do
     end
   end
 
+  # Longest name first, so the outcome does not depend on the order the provider happened to list
+  # its contributors in. A work credited to both "Murakami" and "Haruki Murakami" resolved or not
+  # purely on which came first: the short form consumed the surname the long form needed, leaving
+  # a remainder that no longer matched. A miss rather than a wrong work on its own — but it
+  # knocks the *correct* candidate out while a wrong one is still standing, which is how several
+  # of this module's wrong-work bugs actually reached the caller. Longest-first is also the more
+  # specific match, so it is the right tie-break independent of determinism.
   defp subtract_contributors(contributors, query_tokens) do
     {remainder, matched} =
-      Enum.reduce(contributors, {query_tokens, []}, fn contributor, {rest, matched} ->
-        name = tokens(contributor.name)
-
+      contributors
+      |> Enum.map(&{&1, tokens(&1.name)})
+      |> Enum.sort_by(fn {_contributor, name} -> -length(name) end)
+      |> Enum.reduce({query_tokens, []}, fn {contributor, name}, {rest, matched} ->
         # `--` removes one occurrence per token, so a query naming two people who share a surname
         # does not let one name consume the other's.
         if name != [] and name -- rest == [] do
