@@ -123,6 +123,53 @@ defmodule Cinder.Books.IdentityCollisionTest do
     end
   end
 
+  test "no permutation of a provider's contributor list changes the result" do
+    # `subtract_contributors/2` consumes query tokens greedily, so the order contributors arrive
+    # in used to decide the outcome — a short spelling ate the surname a longer one needed.
+    # Sorting longest-first fixed the selection; sorting by name as well fixed the *evidence*,
+    # which two equal-length spellings of one person still varied ("Le Guin Ursula" beside
+    # "Ursula Le Guin"). Both matter: the evidence is part of the resolution a caller persists.
+    #
+    # Exhaustive over a small token universe rather than by example, because example-picking is
+    # exactly what let five earlier rounds of this class through.
+    words = ~w(a b c)
+    names = words ++ for(x <- words, y <- words, x != y, do: "#{x} #{y}")
+
+    outcomes =
+      for title <- ["t", "t a"],
+          first <- names,
+          second <- names,
+          first != second,
+          query <- ["#{title} a b", "#{title} a c", "#{title} b c"] do
+        forward = Identity.select([candidate_with(title, [first, second])], query)
+        reversed = Identity.select([candidate_with(title, [second, first])], query)
+        {query, title, [first, second], normalize(forward), normalize(reversed)}
+      end
+
+    divergent = Enum.filter(outcomes, fn {_q, _t, _n, a, b} -> a != b end)
+
+    assert divergent == [], """
+    contributor order changed the result:
+    #{Enum.map_join(divergent, "\n", fn {q, _t, n, a, b} -> "  #{inspect(q)} #{inspect(n)}: #{inspect(a)} vs #{inspect(b)}" end)}
+    """
+
+    # Non-vacuous on two counts: the sweep is large, and some of it actually resolves.
+    assert length(outcomes) > 400
+    assert Enum.count(outcomes, fn {_q, _t, _n, a, _b} -> a != :none end) > 20
+  end
+
+  defp candidate_with(title, names) do
+    %{
+      candidate(title, 1)
+      | contributors: Enum.map(names, &%{foreign_id: &1, name: &1, role: "author"})
+    }
+  end
+
+  defp normalize({:ok, work, evidence}),
+    do: {work.foreign_id, Enum.sort(evidence.contributors_matched)}
+
+  defp normalize(other), do: other
+
   test "the retained collision needs the provider to have withheld the named work" do
     # What bounds the residual above: it only fires when the work the requester named is not in
     # the candidate list at all. When it is, strength precedence returns it — here over a wrong
