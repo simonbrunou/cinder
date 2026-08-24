@@ -113,18 +113,23 @@ defmodule Cinder.SettingsTest do
       assert "books_library_path" in keys
       assert "audiobooks_library_path" in keys
 
-      for key <- ~w(
-        books_min_size
-        books_max_size
-        books_preferred_resolutions
-        books_preferred_sources
-        books_preferred_terms
-        books_blocked_terms
-        books_anime_library_path
-        books_upgrade_cutoff
-        books_plex_section
-      ) do
-        refute key in keys
+      # Video-policy and Plex keys derive from the media kind, the Anime root from the root
+      # role — so each negative must be spelled the way its own derivation would spell it, or
+      # it refutes a string no implementation can emit and fences nothing.
+      for kind <- ~w(ebook audiobook), root <- ~w(books audiobooks) do
+        for key <- ~w(
+          #{kind}_min_size
+          #{kind}_max_size
+          #{kind}_preferred_resolutions
+          #{kind}_preferred_sources
+          #{kind}_preferred_terms
+          #{kind}_blocked_terms
+          #{kind}_upgrade_cutoff
+          #{kind}_plex_section
+          #{root}_anime_library_path
+        ) do
+          refute key in keys
+        end
       end
     end
 
