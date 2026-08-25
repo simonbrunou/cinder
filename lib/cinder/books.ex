@@ -106,9 +106,13 @@ defmodule Cinder.Books do
   The approval choke-point: ensures `work` has a `media_kind` target, attaches `profile`, and
   arms it — in one guarded write, so one broadcast.
 
-  Only `:unmonitored` advances to `:monitored`. `:available` must not be downgraded and `:held`
-  is operator-cleared by contract, so a second requester approving the same work takes the
-  profile and leaves the status alone.
+  Only `:unmonitored` advances to `:monitored`. `:available` must not be downgraded, so a second
+  requester approving an already-satisfied work takes the profile and leaves the status alone.
+
+  A `:held` target is refused outright with `{:error, :target_held}`. Holding is the contract's
+  operator-visible identity/disk/import conflict and is operator-cleared, so silently approving
+  onto one would flip the request to approved and tell the requester Cinder is looking for a
+  copy while nothing ever searches. The admin has to clear the hold first.
 
   Pass `publish: false` when calling inside a transaction and broadcast
   `{:book_target_updated, target}` yourself after commit.
@@ -123,18 +127,24 @@ defmodule Cinder.Books do
   def monitor_target(%Work{} = work, media_kind, %Profile{kind: kind} = profile, opts)
       when kind == media_kind do
     with {:ok, target} <- ensure_target(work, media_kind) do
-      next = if target.status == :unmonitored, do: :monitored, else: target.status
-
-      transition_target(
-        target,
-        %{status: next, profile_id: profile.id},
-        Keyword.put(opts, :expect, target.status)
-      )
+      arm(target, profile, opts)
     end
   end
 
   def monitor_target(%Work{}, _media_kind, %Profile{}, _opts),
     do: {:error, :invalid_media_profile}
+
+  defp arm(%BookTarget{status: :held}, _profile, _opts), do: {:error, :target_held}
+
+  defp arm(%BookTarget{status: status} = target, profile, opts) do
+    next = if status == :unmonitored, do: :monitored, else: status
+
+    transition_target(
+      target,
+      %{status: next, profile_id: profile.id},
+      Keyword.put(opts, :expect, status)
+    )
+  end
 
   @doc "Subscribes the caller to `{:book_target_updated, target}` broadcasts."
   def subscribe_targets, do: Phoenix.PubSub.subscribe(Cinder.PubSub, @targets_topic)

@@ -70,10 +70,15 @@ def monitor_target(%Work{} = work, media_kind, %Profile{} = profile, opts \\ [])
 ```
 
 It ensures the `(work, media_kind)` target exists, then makes **one** guarded transition carrying
-both the profile and the next status. `:unmonitored` becomes `:monitored`; `:monitored`,
-`:available`, and `:held` keep their status and only take the profile. A second requester must not
-re-arm a held target or downgrade an available one — the contract makes `:held` operator-cleared
-only.
+both the profile and the next status. `:unmonitored` becomes `:monitored`; `:monitored` and
+`:available` keep their status and only take the profile, because a second requester must not
+downgrade an already-satisfied target.
+
+`:held` is refused outright with `{:error, :target_held}`. Not re-arming it is not enough:
+approving *onto* a held target would flip the request to `:approved` and mail the requester that
+Cinder is looking for a copy while the hold means nothing ever searches. The contract makes
+`:held` an operator-visible conflict that only an operator clears, so the approval has to fail
+and say why.
 
 `BookTarget.transition_changeset/2` therefore casts `:profile_id` as well. `publish: false` mirrors
 `Catalog.assign_profile/3`: the approval runs inside a transaction and the
@@ -135,8 +140,8 @@ approval queue's profile picker; it gets the same book clause.
    across a re-request.
 6. Approving with a `:tv` profile, or with no eBook profile configured, returns
    `{:error, :invalid_media_profile}` and creates no target.
-7. Approving a work whose target is `:held` leaves it `:held`; approving one that is `:available`
-   leaves it `:available`. Both take the profile.
+7. Approving a work whose target is `:held` fails with `{:error, :target_held}` and creates no
+   request; approving one that is `:available` leaves it `:available` and takes the profile.
 8. A book request carrying a book profile survives the integrity trigger; one carrying a
    mismatched-kind profile is rejected by it. Re-kinding a referenced profile aborts.
 9. `for_api/1`, `export_for_user/1`, and `POST /api/v1/requests` round-trip `media_kind`.
@@ -156,6 +161,7 @@ Migration, schema, `Books.monitor_target/4`, `Requests` book clauses, API + help
 2. An admin's own book request auto-approves under the existing `auto_approve_all` rules and
    lands one `:monitored` target.
 3. One work can hold an independent eBook and audiobook request and target.
-4. Approval never re-arms `:held` nor downgrades `:available`.
+4. Approval never downgrades `:available`, and refuses outright on `:held` rather than approving
+   a request nothing will act on.
 5. A book request cannot reference a movie/TV profile, at the changeset **and** the trigger level.
 6. `mix test` is green.

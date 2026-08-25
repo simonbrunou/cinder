@@ -133,7 +133,7 @@ defmodule Cinder.Requests.BookRequestTest do
       assert profile_id == profile.id
     end
 
-    test "a held target is never re-armed", %{work: work} do
+    test "a held target refuses the approval instead of lying about it", %{work: work} do
       {:ok, target} = Books.ensure_target(work, :ebook)
 
       {:ok, _} =
@@ -142,10 +142,33 @@ defmodule Cinder.Requests.BookRequestTest do
         )
 
       admin = admin_fixture()
-      assert {:ok, _} = Requests.create_request(admin, attrs(work, :ebook))
+
+      # Approving would otherwise flip the request and mail "Cinder will watch for a copy"
+      # while the target stays held and nothing ever searches.
+      assert {:error, :target_held} = Requests.create_request(admin, attrs(work, :ebook))
+      assert Repo.aggregate(Request, :count) == 0
 
       assert [%BookTarget{status: :held, hold_reason: "identity conflict"}] =
                Books.list_targets(work)
+    end
+
+    test "a held target also blocks an admin approving a pending request", %{
+      work: work,
+      ebook_profile: profile
+    } do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, request} = Requests.create_request(user, attrs(work, :ebook))
+
+      {:ok, target} = Books.ensure_target(work, :ebook)
+
+      {:ok, _} =
+        Books.transition_target(target, %{status: :held, hold_reason: "disk conflict"},
+          expect: :unmonitored
+        )
+
+      assert {:error, :target_held} = Requests.approve_request(request, admin, profile)
+      assert %{status: :pending} = Repo.reload!(request)
     end
   end
 
@@ -313,6 +336,12 @@ defmodule Cinder.Requests.BookRequestTest do
           title = CinderWeb.LiveHelpers.request_title(request, "en")
 
           assert title != work.title, "LiveHelpers.request_title/2 renders #{kind} bare"
+
+          # `format_label/1`'s docstring promises it matches the msgid the UI renders; without
+          # this, a kind whose label and msgid disagree passes every other assertion here.
+          assert title =~ LibraryKind.format_label(kind),
+                 "#{kind}'s format_label/1 disagrees with the msgid request_title/2 renders"
+
           {kind, title}
         end)
 
