@@ -106,6 +106,46 @@ defmodule Cinder.Notifier.EmailTest do
       end)
     end
 
+    # The third literally-enumerating surface, fenced through its public seam because
+    # `request_title/1` is private. `Cinder.Requests.BookRequestTest` fences the other two.
+    # A book kind added to the registry without a clause here silently drops the format from
+    # every approval and denial email.
+    test "every book kind gets its own approval subject" do
+      configure_smtp!()
+
+      subjects =
+        Enum.map(Cinder.LibraryKind.books(), fn kind ->
+          user = confirmed_user()
+
+          request = %{
+            title: "Dune",
+            year: 1965,
+            target_type: "book",
+            season_number: nil,
+            media_kind: kind,
+            user_id: user.id,
+            approved_by_id: nil,
+            user: user
+          }
+
+          assert :ok = Email.notify({:request_approved, request})
+
+          subject =
+            receive do
+              {:email, email} -> email.subject
+            after
+              200 -> flunk("no approval email for #{kind}")
+            end
+
+          refute subject == "Your request for Dune (1965) was approved",
+                 "the #{kind} approval subject drops the format"
+
+          subject
+        end)
+
+      assert Enum.uniq(subjects) == subjects
+    end
+
     test "skips the requester's own auto-approval as redundant" do
       configure_smtp!()
       admin = confirmed_user(role: :admin)

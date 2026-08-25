@@ -198,7 +198,7 @@ defmodule Cinder.Notifier.DiscordTest do
     assert :ok = Discord.notify({:request_approved, request})
 
     assert_receive {:posted, %{"embeds" => [embed]}}
-    assert embed["description"] == "Dune (1965) — Audiobook — for kimwatches"
+    assert embed["description"] == "Dune (1965) — audiobook — for kimwatches"
   end
 
   test "request_denied posts a red embed naming the requester and reason (no email)" do

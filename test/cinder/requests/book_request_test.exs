@@ -298,20 +298,32 @@ defmodule Cinder.Requests.BookRequestTest do
     # kind added to `LibraryKind.books/0` would raise in one and render bare in the other. This
     # fails at test time instead.
     test "every book kind has a format label and a distinct request title", %{work: work} do
-      for kind <- LibraryKind.books() do
-        assert is_binary(LibraryKind.format_label(kind))
+      titles =
+        Map.new(LibraryKind.books(), fn kind ->
+          assert is_binary(LibraryKind.format_label(kind))
 
-        request = %Request{
-          target_type: "book",
-          target_id: work.id,
-          media_kind: kind,
-          title: work.title,
-          year: 1999
-        }
+          request = %Request{
+            target_type: "book",
+            target_id: work.id,
+            media_kind: kind,
+            title: work.title,
+            year: 1999
+          }
 
-        assert CinderWeb.LiveHelpers.request_title(request, "en") != work.title,
-               "LiveHelpers.request_title/2 renders #{kind} bare"
-      end
+          title = CinderWeb.LiveHelpers.request_title(request, "en")
+
+          assert title != work.title, "LiveHelpers.request_title/2 renders #{kind} bare"
+          {kind, title}
+        end)
+
+      # Distinct from the bare title is not enough: two kinds sharing a clause would pass that.
+      assert titles |> Map.values() |> Enum.uniq() |> length() == map_size(titles)
+
+      assert LibraryKind.books()
+             |> Enum.map(&LibraryKind.format_label/1)
+             |> Enum.uniq()
+             |> length() ==
+               length(LibraryKind.books())
     end
 
     test "the delete audit records which format was removed", %{work: work} do
