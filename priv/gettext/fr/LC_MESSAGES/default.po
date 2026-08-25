@@ -497,7 +497,7 @@ msgstr "Refus…"
 
 #: lib/cinder_web/components/layouts.ex:103
 #: lib/cinder_web/live/book_discovery_live.ex:231
-#: lib/cinder_web/live/discover_live.ex:433
+#: lib/cinder_web/live/discover_live.ex:437
 #: lib/cinder_web/live/entity_discovery_live.ex:134
 #: lib/cinder_web/live/entity_discovery_live.ex:189
 #: lib/cinder_web/live/movie_discovery_live.ex:266
@@ -733,8 +733,8 @@ msgid "Movie pipeline"
 msgstr "Pipeline des films"
 
 #: lib/cinder_web/live/dashboard_live.ex:315
-#: lib/cinder_web/live/discover_live.ex:469
-#: lib/cinder_web/live/discover_live.ex:623
+#: lib/cinder_web/live/discover_live.ex:473
+#: lib/cinder_web/live/discover_live.ex:627
 #: lib/cinder_web/live/library_live.ex:318
 #: lib/cinder_web/live/library_live.ex:371
 #: lib/cinder_web/live/profiles_live.ex:271
@@ -792,7 +792,7 @@ msgstr "Aucun épisode pour le moment."
 msgid "No match"
 msgstr "Aucune correspondance"
 
-#: lib/cinder_web/live/discover_live.ex:653
+#: lib/cinder_web/live/discover_live.ex:657
 #: lib/cinder_web/live/library_live.ex:375
 #: lib/cinder_web/live/library_live.ex:477
 #, elixir-autogen
@@ -1055,13 +1055,13 @@ msgstr "Enregistrement…"
 
 #: lib/cinder_web/components/core_components.ex:753
 #: lib/cinder_web/components/core_components.ex:794
-#: lib/cinder_web/live/discover_live.ex:659
-#: lib/cinder_web/live/discover_live.ex:665
+#: lib/cinder_web/live/discover_live.ex:663
+#: lib/cinder_web/live/discover_live.ex:669
 #, elixir-autogen
 msgid "Search failed"
 msgstr "Échec de la recherche"
 
-#: lib/cinder_web/live/discover_live.ex:487
+#: lib/cinder_web/live/discover_live.ex:491
 #, elixir-autogen
 msgid "Search results"
 msgstr "Résultats de recherche"
@@ -1174,7 +1174,7 @@ msgstr "Une erreur est survenue !"
 msgid "Specials"
 msgstr "Épisodes spéciaux"
 
-#: lib/cinder_web/live/discover_live.ex:660
+#: lib/cinder_web/live/discover_live.ex:664
 #, elixir-autogen
 msgid "TMDB didn't respond. Try again."
 msgstr "TMDB n'a pas répondu. Réessayez."
@@ -1193,8 +1193,8 @@ msgstr "Échec de la recherche TMDB. Réessayez."
 
 #: lib/cinder_web/components/core_components.ex:998
 #: lib/cinder_web/live/dashboard_live.ex:316
-#: lib/cinder_web/live/discover_live.ex:470
-#: lib/cinder_web/live/discover_live.ex:623
+#: lib/cinder_web/live/discover_live.ex:474
+#: lib/cinder_web/live/discover_live.ex:627
 #: lib/cinder_web/live/profiles_live.ex:272
 #: lib/cinder_web/live/series_detail_components.ex:756
 #: lib/cinder_web/settings_labels.ex:46
@@ -3363,7 +3363,7 @@ msgstr "Titre (A–Z)"
 msgid "Year (newest first)"
 msgstr "Année (plus récent d'abord)"
 
-#: lib/cinder_web/live/discover_live.ex:468
+#: lib/cinder_web/live/discover_live.ex:472
 #, elixir-autogen
 msgid "All"
 msgstr "Tous"
@@ -3373,7 +3373,7 @@ msgstr "Tous"
 msgid "Couldn't retry that movie."
 msgstr "Impossible de réessayer ce film."
 
-#: lib/cinder_web/live/discover_live.ex:463
+#: lib/cinder_web/live/discover_live.ex:467
 #, elixir-autogen
 msgid "Filter by type"
 msgstr "Filtrer par type"
@@ -3398,7 +3398,7 @@ msgstr "Sélectionner toutes les demandes en attente"
 msgid "…"
 msgstr "…"
 
-#: lib/cinder_web/live/discover_live.ex:519
+#: lib/cinder_web/live/discover_live.ex:523
 #, elixir-autogen
 msgid "Trending this week"
 msgstr "Tendances de la semaine"
@@ -3428,7 +3428,7 @@ msgstr "Collection"
 msgid "Collection not found."
 msgstr "Collection introuvable."
 
-#: lib/cinder_web/live/discover_live.ex:472
+#: lib/cinder_web/live/discover_live.ex:476
 #, elixir-autogen
 msgid "Collections"
 msgstr "Collections"
@@ -3468,7 +3468,7 @@ msgstr "Aucun crédit trouvé"
 msgid "No movies found"
 msgstr "Aucun film trouvé"
 
-#: lib/cinder_web/live/discover_live.ex:471
+#: lib/cinder_web/live/discover_live.ex:475
 #, elixir-autogen
 msgid "People"
 msgstr "Personnes"
@@ -3702,7 +3702,7 @@ msgstr "Aventure"
 msgid "Animation"
 msgstr "Animation"
 
-#: lib/cinder_web/live/discover_live.ex:615
+#: lib/cinder_web/live/discover_live.ex:619
 #, elixir-autogen
 msgid "Browse by genre"
 msgstr "Parcourir par genre"
@@ -3778,7 +3778,7 @@ msgstr "Musique"
 msgid "Mystery"
 msgstr "Mystère"
 
-#: lib/cinder_web/live/discover_live.ex:567
+#: lib/cinder_web/live/discover_live.ex:571
 #, elixir-autogen
 msgid "Now playing"
 msgstr "À l'affiche"
@@ -3788,7 +3788,7 @@ msgstr "À l'affiche"
 msgid "Pending accounts"
 msgstr "Comptes en attente"
 
-#: lib/cinder_web/live/discover_live.ex:535
+#: lib/cinder_web/live/discover_live.ex:539
 #, elixir-autogen
 msgid "Popular movies"
 msgstr "Films populaires"
@@ -3818,7 +3818,7 @@ msgstr "Téléfilm"
 msgid "Thriller"
 msgstr "Thriller"
 
-#: lib/cinder_web/live/discover_live.ex:551
+#: lib/cinder_web/live/discover_live.ex:555
 #, elixir-autogen
 msgid "Top rated movies"
 msgstr "Films les mieux notés"
@@ -4301,7 +4301,7 @@ msgstr ""
 msgid "Action & Adventure"
 msgstr "Action & Aventure"
 
-#: lib/cinder_web/live/discover_live.ex:620
+#: lib/cinder_web/live/discover_live.ex:624
 #, elixir-autogen
 msgid "Genre media type"
 msgstr "Type de média"
@@ -4323,7 +4323,7 @@ msgstr "Jeunesse"
 msgid "News"
 msgstr "Actualités"
 
-#: lib/cinder_web/live/discover_live.ex:583
+#: lib/cinder_web/live/discover_live.ex:587
 #, elixir-autogen
 msgid "Popular TV"
 msgstr "Séries populaires"
@@ -4348,7 +4348,7 @@ msgstr "Feuilleton"
 msgid "Talk"
 msgstr "Talk-show"
 
-#: lib/cinder_web/live/discover_live.ex:599
+#: lib/cinder_web/live/discover_live.ex:603
 #, elixir-autogen
 msgid "Top rated TV"
 msgstr "Séries les mieux notées"
@@ -5895,18 +5895,18 @@ msgstr "Relancer les recherches de titres échouées"
 msgid "ffprobe media analysis tool"
 msgstr "Outil d’analyse multimédia ffprobe"
 
-#: lib/cinder_web/live/discover_live.ex:676
+#: lib/cinder_web/live/discover_live.ex:680
 #, elixir-autogen
 msgid "Add your API key in Settings →"
 msgstr "Ajoutez votre clé API dans les paramètres →"
 
-#: lib/cinder_web/live/discover_live.ex:675
+#: lib/cinder_web/live/discover_live.ex:679
 #, elixir-autogen
 msgid "Add your API key in Setup →"
 msgstr "Ajoutez votre clé API dans la configuration →"
 
 #: lib/cinder_web/live/discover_live.ex:224
-#: lib/cinder_web/live/discover_live.ex:666
+#: lib/cinder_web/live/discover_live.ex:670
 #, elixir-autogen
 msgid "TMDB isn't configured yet."
 msgstr "TMDB n'est pas encore configuré."
@@ -6748,13 +6748,13 @@ msgstr "Livre audio"
 msgid "Audiobook requests aren't available yet."
 msgstr "Les demandes de livres audio ne sont pas encore disponibles."
 
-#: lib/cinder_web/live/discover_live.ex:473
-#: lib/cinder_web/live/discover_live.ex:500
+#: lib/cinder_web/live/discover_live.ex:477
+#: lib/cinder_web/live/discover_live.ex:504
 #, elixir-autogen, elixir-format
 msgid "Books"
 msgstr "Livres"
 
-#: lib/cinder_web/live/discover_live.ex:511
+#: lib/cinder_web/live/discover_live.ex:515
 #, elixir-autogen, elixir-format
 msgid "Books are temporarily unavailable"
 msgstr "Les livres sont temporairement indisponibles"
@@ -6789,12 +6789,12 @@ msgstr "Langues : %{languages}"
 msgid "Loading book…"
 msgstr "Chargement du livre…"
 
-#: lib/cinder_web/live/discover_live.ex:513
+#: lib/cinder_web/live/discover_live.ex:517
 #, elixir-autogen, elixir-format
 msgid "Movie and TV results are still available. Try the book search again later."
 msgstr "Les résultats films et séries restent disponibles. Réessayez la recherche de livres plus tard."
 
-#: lib/cinder_web/live/discover_live.ex:654
+#: lib/cinder_web/live/discover_live.ex:658
 #, elixir-autogen, elixir-format
 msgid "No movies, shows, or books matched that search."
 msgstr "Aucun film, série ou livre ne correspond à cette recherche."
@@ -6809,17 +6809,17 @@ msgstr "Demander le livre audio"
 msgid "Request eBook"
 msgstr "Demander l’eBook"
 
-#: lib/cinder_web/live/discover_live.ex:438
+#: lib/cinder_web/live/discover_live.ex:442
 #, elixir-autogen, elixir-format
 msgid "Search movies, TV, and books"
 msgstr "Rechercher films, séries et livres"
 
-#: lib/cinder_web/live/discover_live.ex:434
+#: lib/cinder_web/live/discover_live.ex:438
 #, elixir-autogen, elixir-format
 msgid "Search movies, TV, and books. Request what you want."
 msgstr "Recherchez films, séries et livres. Demandez ce que vous voulez."
 
-#: lib/cinder_web/live/discover_live.ex:446
+#: lib/cinder_web/live/discover_live.ex:450
 #, elixir-autogen, elixir-format
 msgid "Search movies, TV, and books…"
 msgstr "Rechercher films, séries et livres…"

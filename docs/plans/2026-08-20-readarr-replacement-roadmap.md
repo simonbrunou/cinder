@@ -347,8 +347,6 @@ all-fetches-failed search as no results instead of an outage (#365, a B2b adapte
 
 ---
 
----
-
 ## B4 — E-book search, scoring, download, validation, and publication
 
 **Estimate:** 10–15 developer-days

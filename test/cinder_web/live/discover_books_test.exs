@@ -154,6 +154,30 @@ defmodule CinderWeb.DiscoverBooksTest do
     assert has_element?(lv, "#books-search-error")
   end
 
+  # The books notice is filter-gated; the empty state was not. With books down and a video-only
+  # filter active, the notice was hidden and "No matches" suppressed — the page went blank.
+  test "a video-only filter over a books outage still says No matches", %{conn: conn} do
+    expect(PrimaryMetadataMock, :search, fn "beloved" -> {:error, :timeout} end)
+    expect(SecondaryMetadataMock, :search, fn "beloved" -> {:error, :timeout} end)
+
+    # TV-only results: the chip row needs *some* result to render, and filtering to Movies then
+    # leaves both grids empty while books are down.
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, _ ->
+      {:ok, [%{tmdb_id: 1399, title: "Beloved Show", year: 2011, poster_path: "/p.jpg"}]}
+    end)
+
+    {:ok, lv, _html} = live(conn, ~p"/")
+    lv |> form("#search-form", %{"query" => "beloved"}) |> render_change()
+    render_async(lv)
+
+    assert has_element?(lv, "#books-search-error")
+
+    html = lv |> element(~s(button[phx-value-type="movie"])) |> render_click()
+
+    refute html =~ "books-search-error"
+    assert html =~ "No matches"
+  end
+
   test "a stale books result is discarded" do
     socket = %Phoenix.LiveView.Socket{
       assigns: %{query: "new query", book_results: [candidate(:openlibrary, "new", "New")]}

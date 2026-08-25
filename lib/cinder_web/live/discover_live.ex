@@ -412,6 +412,10 @@ defmodule CinderWeb.DiscoverLive do
       assign(assigns,
         filtered_results: filter_results(assigns.results, assigns.filter),
         filtered_book_results: filter_book_results(assigns.book_results, assigns.filter),
+        # One term for "the books section is on screen at all", so the books notice and the
+        # empty state cannot disagree. They did: the notice was filter-gated while the empty
+        # state was not, and a video-only filter over a books outage rendered neither.
+        books_showing?: assigns.filter in [:all, :book],
         popular: popular,
         top_rated: top_rated,
         now_playing: now_playing,
@@ -502,7 +506,7 @@ defmodule CinderWeb.DiscoverLive do
       </section>
 
       <section
-        :if={@books_state == :error and @filter in [:all, :book]}
+        :if={@books_state == :error and @books_showing?}
         id="books-search-error"
         class="mb-10 rounded-box bg-base-200 p-4 text-sm text-base-content/70"
         aria-labelledby="books-search-error-heading"
@@ -647,7 +651,7 @@ defmodule CinderWeb.DiscoverLive do
       <.empty_state
         :if={
           @query != "" and @filtered_results == [] and @filtered_book_results == [] and
-            @books_state in [:idle, :ready] and is_nil(@search_error)
+            (@books_state in [:idle, :ready] or not @books_showing?) and is_nil(@search_error)
         }
         icon="hero-magnifying-glass"
         title={gettext("No matches")}
