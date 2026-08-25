@@ -144,7 +144,14 @@ defmodule CinderWeb.RequestHelpers do
   def assign_request_state(socket) do
     user = socket.assigns.current_scope.user
     requests = Requests.list_for_user(user)
-    request_status = latest_status_by(requests, & &1.target_id)
+
+    # Movie requests only. `request_status` keys the MOVIE badge by tmdb_id, and `target_id` is
+    # per-target-type: a season request carries a series tmdb_id (see `series_request_status`
+    # below) and a book request carries a local `book_works.id`. Keying across all of them lets
+    # an unrelated request badge — and suppress the Add form on — a movie card that happens to
+    # share the number.
+    movie_requests = Enum.filter(requests, &(&1.target_type == "movie"))
+    request_status = latest_status_by(movie_requests, & &1.target_id)
 
     # TV cards mirror the movie badge, but a series' state is per-season: key the newest season
     # request by the series tmdb_id (a season request's target_id), and treat a series as

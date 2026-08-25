@@ -351,6 +351,34 @@ defmodule CinderWeb.DiscoverLiveTest do
     assert has_element?(lv, ~s(#results a[href="/series/tmdb/1399"]))
   end
 
+  test "a book request never badges the movie card that shares its id", %{conn: _conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(Phoenix.ConnTest.build_conn(), user)
+
+    # `request_status` keys the movie badge by tmdb_id; a book's target_id is a local
+    # book_works.id, so the two id spaces collide.
+    {:ok, work} =
+      Cinder.Books.upsert_work(%{
+        title: "Colliding Work",
+        identifier: %{provider: "openlibrary", kind: "work", foreign_id: "collide-1"}
+      })
+
+    {:ok, _} =
+      Requests.create_request(user, %{
+        target_type: "book",
+        target_id: work.id,
+        media_kind: :ebook
+      })
+
+    stub_movies([%{@inception | tmdb_id: work.id}])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
+
+    assert has_element?(lv, "#results", "Inception")
+    refute has_element?(lv, "#results", "Pending")
+  end
+
   test "a single query returns movies AND TV together in one grid", %{conn: conn} do
     stub_movies([@inception])
     stub_tv([@got])
