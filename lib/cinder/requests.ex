@@ -216,6 +216,26 @@ defmodule Cinder.Requests do
     end
   end
 
+  # A discovery surface holds a provider resolution, not a work id, so it hands the resolution
+  # over and this folds it into the catalog here — *after* `create_for_current_user/2`'s quota
+  # check, and nowhere else. Importing on the caller's side instead would let a user who is over
+  # quota grow `book_works` and its editions without bound on every refused press, which is
+  # exactly why the movie path creates its row inside this module too.
+  #
+  # `import_resolution/1` is idempotent, so a re-request of a known work updates in place.
+  defp snapshot_request(%{target_type: "book", resolution: resolution} = attrs) do
+    case Books.import_resolution(resolution) do
+      {:ok, %Work{} = work} ->
+        attrs
+        |> Map.delete(:resolution)
+        |> Map.put(:target_id, work.id)
+        |> snapshot_request()
+
+      {:error, _reason} ->
+        {:error, :unknown_work}
+    end
+  end
+
   # A book's title comes from Cinder's own catalog, not a provider: `target_id` is a
   # `book_works.id` that B2's identity resolution already wrote. A missing work fails closed
   # rather than inserting a title-less request the approval queue could not render.

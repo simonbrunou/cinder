@@ -186,11 +186,18 @@ defmodule CinderWeb.DiscoverLive do
 
   # ponytail: repeated queries reach providers; add a bounded search cache only when repeats are
   # measurably common enough to justify invalidation and memory limits.
+  # One in-flight search per socket. The async name is constant and the superseded task is
+  # cancelled rather than orphaned: `phx-debounce` is client-side only, so without this a client
+  # typing (or scripting) faster than the providers answer accumulates 15s fetches nothing will
+  # ever read. The query rides in the *result* instead of the name so the stale guard survives.
   defp maybe_search_books(socket, query) do
-    if String.length(String.trim(query)) >= 3 do
+    socket = cancel_async(socket, :books)
+    trimmed = String.trim(query)
+
+    if String.length(trimmed) >= 3 do
       socket
       |> assign(book_results: [], book_states: %{}, books_state: :loading)
-      |> start_async({:books, query}, fn -> Books.search(String.trim(query)) end)
+      |> start_async(:books, fn -> {query, Books.search(trimmed)} end)
     else
       assign(socket, book_results: [], book_states: %{}, books_state: :idle)
     end
@@ -251,24 +258,24 @@ defmodule CinderWeb.DiscoverLive do
   def handle_info(_message, socket), do: {:noreply, socket}
 
   @impl true
-  def handle_async({:books, query}, _result, %{assigns: %{query: current}} = socket)
+  def handle_async(:books, {:ok, {query, _result}}, %{assigns: %{query: current}} = socket)
       when query != current do
     {:noreply, socket}
   end
 
-  def handle_async({:books, _query}, {:ok, {:ok, results}}, socket) do
+  def handle_async(:books, {:ok, {_query, {:ok, results}}}, socket) do
     {:noreply,
      socket
      |> assign(book_results: results, books_state: :ready)
      |> assign_book_states()}
   end
 
-  def handle_async({:books, _query}, {:ok, {:error, reason}}, socket) do
+  def handle_async(:books, {:ok, {_query, {:error, reason}}}, socket) do
     Logger.warning("Books search failed: #{inspect(reason)}")
     {:noreply, assign(socket, book_results: [], book_states: %{}, books_state: :error)}
   end
 
-  def handle_async({:books, _query}, {:exit, reason}, socket) do
+  def handle_async(:books, {:exit, reason}, socket) do
     Logger.warning("Books search crashed: #{inspect(reason)}")
     {:noreply, assign(socket, book_results: [], book_states: %{}, books_state: :error)}
   end

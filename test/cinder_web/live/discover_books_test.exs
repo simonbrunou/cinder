@@ -161,8 +161,8 @@ defmodule CinderWeb.DiscoverBooksTest do
 
     assert {:noreply, ^socket} =
              DiscoverLive.handle_async(
-               {:books, "old query"},
-               {:ok, {:ok, [candidate(:openlibrary, "old", "Old")]}},
+               :books,
+               {:ok, {"old query", {:ok, [candidate(:openlibrary, "old", "Old")]}}},
                socket
              )
   end

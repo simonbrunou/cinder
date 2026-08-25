@@ -17,8 +17,8 @@ defmodule CinderWeb.BookDiscoveryLive do
 
   @impl true
   def mount(%{"provider" => raw_provider, "foreign_id" => foreign_id}, _session, socket) do
-    case provider(raw_provider) do
-      nil ->
+    case opaque_id?(foreign_id) && provider(raw_provider) do
+      provider when provider in [nil, false] ->
         raise Ecto.NoResultsError, queryable: Work
 
       provider ->
@@ -49,6 +49,12 @@ defmodule CinderWeb.BookDiscoveryLive do
       if to_string(provider) == name, do: provider
     end)
   end
+
+  # Plug has already percent-decoded this segment, and an adapter interpolates it straight into a
+  # provider request path (`Hardcover.get_work/1` builds `"/work/\#{foreign_id}"`). A decoded "/"
+  # climbs out of that path and sends the configured bearer key to whatever the proxy resolves it
+  # to, so a non-opaque id is a 404 here rather than an outbound request shaped by user input.
+  defp opaque_id?(id), do: id != "" and not String.contains?(id, ["/", "\\"])
 
   defp maybe_resolve(socket) do
     if connected?(socket), do: resolve(socket), else: socket
@@ -85,15 +91,15 @@ defmodule CinderWeb.BookDiscoveryLive do
 
       {:noreply,
        start_async(socket, {:request, media_kind, title}, fn ->
-         with {:ok, work} <- Books.import_resolution(resolution) do
-           Requests.create_request(user, %{
-             target_type: "book",
-             target_id: work.id,
-             media_kind: media_kind,
-             proposed_profile_id: profile.id,
-             proposed_media_profile: :standard
-           })
-         end
+         # The resolution goes over, not an imported work id: `Requests` owns the catalog write
+         # so that a refused request — over quota, or any other gate — leaves nothing behind.
+         Requests.create_request(user, %{
+           target_type: "book",
+           resolution: resolution,
+           media_kind: media_kind,
+           proposed_profile_id: profile.id,
+           proposed_media_profile: :standard
+         })
        end)}
     else
       _invalid_or_unavailable -> {:noreply, socket}
