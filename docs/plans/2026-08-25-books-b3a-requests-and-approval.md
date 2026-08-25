@@ -74,7 +74,8 @@ both the profile and the next status. `:unmonitored` becomes `:monitored`; `:mon
 `:available` keep their status and only take the profile, because a second requester must not
 downgrade an already-satisfied target.
 
-`:held` is refused outright with `{:error, :target_held}`. Not re-arming it is not enough:
+`:held` is refused outright with `{:error, :target_held}`, surfaced as its own flash rather than
+the generic "try again" (retrying cannot succeed until an operator acts). Not re-arming it is not enough:
 approving *onto* a held target would flip the request to `:approved` and mail the requester that
 Cinder is looking for a copy while the hold means nothing ever searches. The contract makes
 `:held` an operator-visible conflict that only an operator clears, so the approval has to fail
@@ -111,6 +112,15 @@ without it would silently validate a book request against TV profiles.
 
 `CinderWeb.RequestHelpers.profile_kind/1` has the same `else: :tv` default and feeds the admin
 approval queue's profile picker; it gets the same book clause.
+
+### 3b. Accepted: a refused auto-approval drops the ask
+
+Under `auto_approve_all`, a request for a `:held` target fails before any row is written, so the
+ask is not parked as `:pending` for an admin to see later. The alternative — falling back to
+`:pending` — only moves the failure, because approving that row would hit the same hold; it would
+sit in the queue un-approvable with no more information than the requester already got. Since the
+refusal is now explicit in the UI rather than a generic error, the requester knows why and that
+retrying is pointless. Revisit if B5's hold-clearing surface makes a parked row actionable.
 
 ## Deliberately not in this slice
 

@@ -147,6 +147,52 @@ defmodule CinderWeb.RequestsLiveTest do
     assert profile_id == profile.id
   end
 
+  test "approving a held book target says so instead of 'try again'", %{conn: conn} do
+    user = user_fixture()
+    id = Integer.to_string(System.unique_integer([:positive]))
+
+    {:ok, profile} =
+      Cinder.Catalog.create_profile(%{name: "Ebooks #{id}", kind: :ebook, handling: :standard})
+
+    {:ok, work} =
+      Cinder.Books.upsert_work(%{
+        title: "Held Book #{id}",
+        identifier: %{provider: "openlibrary", kind: "work", foreign_id: id}
+      })
+
+    {:ok, req} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "book",
+        target_id: work.id,
+        media_kind: :ebook
+      })
+
+    {:ok, target} = Cinder.Books.ensure_target(work, :ebook)
+
+    {:ok, _} =
+      Cinder.Books.transition_target(target, %{status: :held, hold_reason: "identity conflict"},
+        expect: :unmonitored
+      )
+
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+
+    lv
+    |> form("#approval-profile-form-#{req.id}", %{
+      "_id" => to_string(req.id),
+      "profile_id" => to_string(profile.id)
+    })
+    |> render_change()
+
+    lv |> element("button[phx-click='approve'][phx-value-id='#{req.id}']") |> render_click()
+    render_async(lv)
+
+    # Retrying can never succeed until an operator clears the hold, so the copy must not
+    # suggest it.
+    assert render(lv) =~ "on hold"
+    refute render(lv) =~ "Please try again"
+    assert %{status: :pending} = Cinder.Repo.reload(req)
+  end
+
   test "bulk approval uses each row's confirmed profile", %{conn: conn} do
     user = user_fixture()
 

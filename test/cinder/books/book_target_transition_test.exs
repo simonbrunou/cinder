@@ -50,13 +50,16 @@ defmodule Cinder.Books.BookTargetTransitionTest do
 
     assert %BookTarget{status: :unmonitored, profile_id: nil} = Repo.get!(BookTarget, target.id)
 
-    assert_raise Exqlite.Error, ~r/book_targets_profile_integrity/, fn ->
-      Books.transition_target(
-        target,
-        %{status: :monitored, profile_id: wrong_kind_profile.id},
-        expect: :unmonitored
-      )
-    end
+    # The DB fence surfaces as an explained refusal, not a raise, so a future caller that skips
+    # monitor_target/4's up-front check still gets a handleable error.
+    assert {:error, :invalid_media_profile} =
+             Books.transition_target(
+               target,
+               %{status: :monitored, profile_id: wrong_kind_profile.id},
+               expect: :unmonitored
+             )
+
+    assert %BookTarget{status: :unmonitored, profile_id: nil} = Repo.get!(BookTarget, target.id)
   end
 
   test "monitor_target arms an unmonitored target and attaches its profile" do

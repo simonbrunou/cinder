@@ -19,7 +19,23 @@ defmodule Cinder.Books.BookTargetTransition do
     end
   end
 
+  # `update_all` skips Ecto's `to_constraints`, so `book_targets_profile_integrity` surfaces as a
+  # raw Exqlite.Error rather than `{:error, changeset}`. `Books.monitor_target/4` checks the kind
+  # up front, but `Books.transition_target/3` is public: rescue on the constraint's own message
+  # (not the exception class, which also covers a transient busy) so any caller gets the same
+  # explained refusal instead of a raise.
   defp guarded_update(id, changes, expected) do
+    do_guarded_update(id, changes, expected)
+  rescue
+    error in Exqlite.Error ->
+      if error.message =~ "book_targets_profile_integrity" do
+        {:error, :invalid_media_profile}
+      else
+        reraise error, __STACKTRACE__
+      end
+  end
+
+  defp do_guarded_update(id, changes, expected) do
     Repo.transaction(fn ->
       case Repo.update_all(
              from(t in BookTarget,

@@ -8,6 +8,7 @@ defmodule Cinder.Requests do
   alias Cinder.Books.Work
   alias Cinder.Catalog
   alias Cinder.Catalog.Profile
+  alias Cinder.LibraryKind
   alias Cinder.Notifier
   alias Cinder.Repo
   alias Cinder.Requests.Request
@@ -901,7 +902,14 @@ defmodule Cinder.Requests do
   # itself — the (work, media_kind) axis does.
   defp request_kind(%{target_type: "movie"}), do: :movies
   defp request_kind(%{target_type: type}) when type in ["series", "season", "episode"], do: :tv
-  defp request_kind(%{target_type: "book"} = target), do: Map.get(target, :media_kind)
+  # Validated, not merely fetched: this feeds `Catalog.list_profiles/1`, whose head guards on
+  # the kind atoms, so a string from a form or a hand-built attrs map would raise instead of
+  # yielding the `{:error, :invalid_media_profile}` every other bad-profile input gets.
+  defp request_kind(%{target_type: "book"} = target) do
+    kind = Map.get(target, :media_kind)
+    if kind in LibraryKind.books(), do: kind
+  end
+
   defp request_kind(_target), do: nil
 
   defp current_profile(%Profile{id: id}, expected_kind) do
