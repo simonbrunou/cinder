@@ -28,6 +28,7 @@ defmodule CinderWeb.SettingsLabels do
       gettext_noop("Library paths"),
       gettext_noop("Release size bands"),
       gettext_noop("Subtitles"),
+      gettext_noop("Books metadata"),
       gettext_noop("Notifications"),
       gettext_noop("Accounts"),
       # download-client toggles — Settings.toggles/0
@@ -102,6 +103,9 @@ defmodule CinderWeb.SettingsLabels do
       gettext_noop("Subtitle languages (comma-separated, e.g. en,fr)"),
       gettext_noop("LibreTranslate URL"),
       gettext_noop("LibreTranslate API key"),
+      gettext_noop("Open Library URL"),
+      gettext_noop("Hardcover metadata proxy URL"),
+      gettext_noop("Hardcover metadata proxy API key"),
       gettext_noop("OpenID Connect issuer URL"),
       gettext_noop("OpenID Connect client ID"),
       gettext_noop("OpenID Connect client secret"),

@@ -54,3 +54,9 @@ graphify-out/
 
 # Isolated feature worktrees
 .worktrees/
+
+# Local database backups. *.db above does not cover these: the app writes .sqlite3,
+# and a backup carries users, session tokens and Cloak-encrypted settings.
+backups/
+*.sqlite3
+*.sqlite3-*

@@ -391,6 +391,33 @@ defmodule Cinder.Settings.Registry do
       placeholder: ""
     },
     %{
+      key: "openlibrary_url",
+      module: Cinder.Books.Metadata.OpenLibrary,
+      field: :base_url,
+      secret: false,
+      group: :books,
+      label: "Open Library URL",
+      placeholder: "https://openlibrary.org"
+    },
+    %{
+      key: "hardcover_url",
+      module: Cinder.Books.Metadata.Hardcover,
+      field: :base_url,
+      secret: false,
+      group: :books,
+      label: "Hardcover metadata proxy URL",
+      placeholder: "https://api.bookinfo.pro"
+    },
+    %{
+      key: "hardcover_api_key",
+      module: Cinder.Books.Metadata.Hardcover,
+      field: :api_key,
+      secret: true,
+      group: :books,
+      label: "Hardcover metadata proxy API key",
+      placeholder: ""
+    },
+    %{
       key: "oidc_issuer_url",
       module: Cinder.Accounts.OIDC,
       field: :issuer_url,
@@ -578,6 +605,7 @@ defmodule Cinder.Settings.Registry do
     library: "Library paths",
     releases: "Release size bands",
     subtitles: "Subtitles",
+    books: "Books metadata",
     notifications: "Notifications",
     accounts: "Accounts"
   ]

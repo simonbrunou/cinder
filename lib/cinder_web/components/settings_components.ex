@@ -636,6 +636,12 @@ defmodule CinderWeb.SettingsComponents do
         "Optional. Connect OpenSubtitles to download missing subtitles; LibreTranslate can translate them when configured."
       )
 
+  defp setup_section_description(:books),
+    do:
+      gettext(
+        "Optional. Open Library identifies books and is used by default; a Hardcover-compatible proxy fills the gaps it leaves, if you run one."
+      )
+
   defp setup_section_description(:notifications),
     do:
       gettext(
@@ -685,6 +691,9 @@ defmodule CinderWeb.SettingsComponents do
        "https://opensubtitles.stoplight.io/docs/opensubtitles-api/e3750fd63a100-getting-started"},
       {gettext("LibreTranslate"), "https://github.com/LibreTranslate/LibreTranslate"}
     ]
+
+  defp setup_section_resources(:books),
+    do: [{gettext("Open Library"), "https://openlibrary.org/developers/api"}]
 
   defp setup_section_resources(:notifications),
     do: [
