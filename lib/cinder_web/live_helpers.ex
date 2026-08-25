@@ -60,6 +60,22 @@ defmodule CinderWeb.LiveHelpers do
   end
 
   @doc """
+  Folds a book's request status and its `book_targets` status into one badge state. Single source
+  of truth for every book-badge surface: Discover's cards and the work page read the same two
+  inputs, and deriving them separately is how the two drift into disagreeing about one work.
+
+  The target outranks the request once it exists — an approved request whose target has since gone
+  `:available` is available, not merely approved.
+  """
+  @spec book_badge_state(atom() | nil, atom() | nil) :: atom()
+  def book_badge_state(_request, :available), do: :available
+  def book_badge_state(:pending, _target), do: :pending
+  def book_badge_state(_request, :monitored), do: :approved
+  def book_badge_state(:approved, _target), do: :approved
+  def book_badge_state(:denied, _target), do: :denied
+  def book_badge_state(_request, _target), do: :none
+
+  @doc """
   The status atom for a `<.status_badge kind={:movie}>` — `:verification_hold` when the movie
   is parked mid post-download verification (`verification_hold_origin` set), `:anime_hold`
   when a pre-download movie is held at search time on unsatisfiable Anime preferences

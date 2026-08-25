@@ -1,23 +1,27 @@
 defmodule CinderWeb.DiscoverLive do
   @moduledoc """
-  Unified Discover surface, mounted at `/`. One search returns movies AND TV in a
-  single mixed poster grid: movie cards request inline (Add → `Cinder.Requests`),
-  TV cards link to the season picker (`/series/tmdb/:tmdb_id`). Live via the
-  `movies` + `requests` topics.
+  Unified Discover surface, mounted at `/`. One search returns movies and TV in a mixed poster
+  grid plus books in their own text-card section. Movie cards request inline, TV cards link to
+  the season picker, and book cards link to their provider-backed discovery page.
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.BookComponents
   import CinderWeb.DiscoverComponents
+  import CinderWeb.LiveHelpers, only: [book_badge_state: 2, latest_status_by: 2]
   import CinderWeb.RequestHelpers
 
   alias Cinder.Acquisition.Language
+  alias Cinder.Books
   alias Cinder.Catalog
   alias Cinder.Catalog.Genres
+  alias Cinder.LibraryKind
   alias Cinder.Settings
 
   require Logger
 
   @picks Language.preferences()
+  @book_kinds LibraryKind.books()
 
   @impl true
   def mount(_params, _session, socket) do
@@ -33,6 +37,9 @@ defmodule CinderWeb.DiscoverLive do
       |> assign(
         query: "",
         results: [],
+        book_results: [],
+        books_state: :idle,
+        book_states: %{},
         search_error: nil,
         tmdb_config_path: nil,
         filter: :all,
@@ -76,19 +83,21 @@ defmodule CinderWeb.DiscoverLive do
   def handle_event("search", %{"query" => query}, socket) do
     locale = socket.assigns.locale
 
-    case Catalog.search_discover(query, locale) do
-      {:ok, results} ->
-        {:noreply,
-         assign(socket,
-           query: query,
-           results: results,
-           search_error: nil,
-           tmdb_config_path: nil
-         )}
+    socket =
+      case Catalog.search_discover(query, locale) do
+        {:ok, results} ->
+          assign(socket,
+            query: query,
+            results: results,
+            search_error: nil,
+            tmdb_config_path: nil
+          )
 
-      {:error, _reason} ->
-        {:noreply, put_search_error(socket, query)}
-    end
+        {:error, _reason} ->
+          put_search_error(socket, query)
+      end
+
+    {:noreply, maybe_search_books(socket, query)}
   end
 
   def handle_event("add", %{"tmdb_id" => tmdb_id} = params, socket) when is_binary(tmdb_id) do
@@ -129,6 +138,7 @@ defmodule CinderWeb.DiscoverLive do
         "tv" -> :tv
         "person" -> :person
         "collection" -> :collection
+        "book" -> :book
         "all" -> :all
         _ -> socket.assigns.filter
       end
@@ -170,6 +180,18 @@ defmodule CinderWeb.DiscoverLive do
   # The event payload is client-controlled; ignore any malformed/forged frame.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
+  # ponytail: repeated queries reach providers; add a bounded search cache only when repeats are
+  # measurably common enough to justify invalidation and memory limits.
+  defp maybe_search_books(socket, query) do
+    if String.length(String.trim(query)) >= 3 do
+      socket
+      |> assign(book_results: [], book_states: %{}, books_state: :loading)
+      |> start_async({:books, query}, fn -> Books.search(String.trim(query)) end)
+    else
+      assign(socket, book_results: [], book_states: %{}, books_state: :idle)
+    end
+  end
+
   defp put_search_error(socket, query) do
     if tmdb_configured?() do
       socket
@@ -208,7 +230,7 @@ defmodule CinderWeb.DiscoverLive do
 
   def handle_info({event, _request}, socket)
       when event in [:request_created, :request_approved, :request_denied, :request_deleted] do
-    {:noreply, assign_request_state(socket)}
+    {:noreply, socket |> assign_request_state() |> assign_book_states()}
   end
 
   # A season completing (episode import) or a series being removed can flip a TV card's badge.
@@ -221,6 +243,28 @@ defmodule CinderWeb.DiscoverLive do
   def handle_info(_message, socket), do: {:noreply, socket}
 
   @impl true
+  def handle_async({:books, query}, _result, %{assigns: %{query: current}} = socket)
+      when query != current do
+    {:noreply, socket}
+  end
+
+  def handle_async({:books, _query}, {:ok, {:ok, results}}, socket) do
+    {:noreply,
+     socket
+     |> assign(book_results: results, books_state: :ready)
+     |> assign_book_states()}
+  end
+
+  def handle_async({:books, _query}, {:ok, {:error, reason}}, socket) do
+    Logger.warning("Books search failed: #{inspect(reason)}")
+    {:noreply, assign(socket, book_results: [], book_states: %{}, books_state: :error)}
+  end
+
+  def handle_async({:books, _query}, {:exit, reason}, socket) do
+    Logger.warning("Books search crashed: #{inspect(reason)}")
+    {:noreply, assign(socket, book_results: [], book_states: %{}, books_state: :error)}
+  end
+
   def handle_async(:trending, {:ok, {:ok, results}}, socket) do
     {:noreply, assign(socket, trending: results)}
   end
@@ -286,6 +330,34 @@ defmodule CinderWeb.DiscoverLive do
   defp genre_list(:tv), do: Genres.tv_list()
   defp genre_list(_movie), do: Genres.list()
 
+  defp assign_book_states(%{assigns: %{book_results: []}} = socket),
+    do: assign(socket, book_states: %{})
+
+  defp assign_book_states(socket) do
+    references = Enum.map(socket.assigns.book_results, &{&1.provider, &1.foreign_id})
+    work_ids = Books.work_ids_by_reference(references)
+    target_states = work_ids |> Map.values() |> Books.target_statuses()
+
+    request_states =
+      socket.assigns.current_scope.user
+      |> Cinder.Requests.list_for_user()
+      |> Enum.filter(&(&1.target_type == "book"))
+      |> latest_status_by(&{&1.target_id, &1.media_kind})
+
+    states =
+      for book <- socket.assigns.book_results,
+          kind <- @book_kinds,
+          work_id = work_ids[{to_string(book.provider), book.foreign_id}],
+          state =
+            book_badge_state(request_states[{work_id, kind}], target_states[{work_id, kind}]),
+          state != :none,
+          into: %{} do
+        {{to_string(book.provider), book.foreign_id, kind}, state}
+      end
+
+    assign(socket, book_states: states)
+  end
+
   # ponytail: only four valid values; default "original" on anything else (client-controlled).
   defp normalize_language(lang) when lang in @picks, do: lang
   defp normalize_language(_), do: "original"
@@ -314,6 +386,7 @@ defmodule CinderWeb.DiscoverLive do
     assigns =
       assign(assigns,
         filtered_results: filter_results(assigns.results, assigns.filter),
+        filtered_book_results: filter_book_results(assigns.book_results, assigns.filter),
         popular: popular,
         top_rated: top_rated,
         now_playing: now_playing,
@@ -333,11 +406,11 @@ defmodule CinderWeb.DiscoverLive do
     >
       <.header>
         {gettext("Discover")}
-        <:subtitle>{gettext("Search movies and TV. Request what you want to watch.")}</:subtitle>
+        <:subtitle>{gettext("Search movies, TV, and books. Request what you want.")}</:subtitle>
       </.header>
 
       <form id="search-form" phx-change="search" phx-submit="search" class="relative mb-8">
-        <label for="query" class="sr-only">{gettext("Search movies and TV")}</label>
+        <label for="query" class="sr-only">{gettext("Search movies, TV, and books")}</label>
         <input
           type="text"
           id="query"
@@ -345,7 +418,7 @@ defmodule CinderWeb.DiscoverLive do
           value={@query}
           phx-debounce="300"
           autocomplete="off"
-          placeholder={gettext("Search movies and TV…")}
+          placeholder={gettext("Search movies, TV, and books…")}
           class="input input-lg w-full min-h-11 pr-12"
         />
         <%!-- Spinner during the (synchronous) TMDB roundtrip — the form carries the phx
@@ -359,7 +432,7 @@ defmodule CinderWeb.DiscoverLive do
       </form>
 
       <div
-        :if={@results != []}
+        :if={@results != [] or @book_results != []}
         class="mb-4 flex flex-wrap gap-2"
         role="group"
         aria-label={gettext("Filter by type")}
@@ -371,13 +444,15 @@ defmodule CinderWeb.DiscoverLive do
               {gettext("Movies"), :movie},
               {gettext("TV"), :tv},
               {gettext("People"), :person},
-              {gettext("Collections"), :collection}
+              {gettext("Collections"), :collection},
+              {gettext("Books"), :book}
             ]
           }
           phx-click="filter"
           phx-value-type={value}
           variant={if @filter == value, do: "primary", else: "ghost"}
           size="sm"
+          aria-pressed={to_string(@filter == value)}
         >
           {label}
         </.button>
@@ -394,6 +469,23 @@ defmodule CinderWeb.DiscoverLive do
           available_series={@available_series}
           movie_profiles={@movie_profiles}
         />
+      </section>
+
+      <section :if={@filtered_book_results != []} class="mb-10" aria-labelledby="books-heading">
+        <h2 id="books-heading" class="mb-4 text-lg font-semibold">{gettext("Books")}</h2>
+        <.book_cards id="book-results" results={@filtered_book_results} states={@book_states} />
+      </section>
+
+      <section
+        :if={@books_state == :error and @filter in [:all, :book]}
+        id="books-search-error"
+        class="mb-10 rounded-box bg-base-200 p-4 text-sm text-base-content/70"
+        aria-labelledby="books-search-error-heading"
+      >
+        <h2 id="books-search-error-heading" class="font-semibold text-base-content">
+          {gettext("Books are temporarily unavailable")}
+        </h2>
+        <p>{gettext("Movie and TV results are still available. Try the book search again later.")}</p>
       </section>
 
       <section :if={@query == "" and @trending != []} class="mb-10">
@@ -528,10 +620,13 @@ defmodule CinderWeb.DiscoverLive do
       </section>
 
       <.empty_state
-        :if={@query != "" and @filtered_results == [] and is_nil(@search_error)}
+        :if={
+          @query != "" and @filtered_results == [] and @filtered_book_results == [] and
+            @books_state in [:idle, :ready] and is_nil(@search_error)
+        }
         icon="hero-magnifying-glass"
         title={gettext("No matches")}
-        message={gettext("No movies or shows matched that search.")}
+        message={gettext("No movies, shows, or books matched that search.")}
       />
       <.empty_state
         :if={@search_error == :unreachable}
@@ -563,6 +658,9 @@ defmodule CinderWeb.DiscoverLive do
 
   defp filter_results(results, :all), do: results
   defp filter_results(results, type), do: Enum.filter(results, &(&1.type == type))
+
+  defp filter_book_results(results, filter) when filter in [:all, :book], do: results
+  defp filter_book_results(_results, _filter), do: []
 
   # Drop any result whose {type, tmdb_id} already appears in an earlier rail, so a title
   # renders exactly once across the landing page (movies to avoid a duplicate Add-form id,

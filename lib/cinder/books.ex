@@ -1,7 +1,14 @@
 defmodule Cinder.Books do
-  @moduledoc "The provider-neutral books catalog and per-media-kind monitoring targets."
+  @moduledoc """
+  The provider-neutral books catalog and per-media-kind monitoring targets.
+
+  Discovery search is separate from `Cinder.Books.Identity.resolve/1`: identity authorizes a
+  grab by returning one work or refusing, while a search grid must expose the candidates.
+  """
 
   import Ecto.Query
+
+  require Logger
 
   alias Cinder.Books.{
     Author,
@@ -10,6 +17,7 @@ defmodule Cinder.Books do
     Credit,
     Edition,
     Identifier,
+    Metadata,
     SeriesMembership,
     Work
   }
@@ -27,6 +35,57 @@ defmodule Cinder.Books do
     credits: [:author],
     editions: [:identifiers, credits: [:author]]
   ]
+
+  @doc """
+  Searches the configured metadata providers in order, stopping at the first non-empty answer.
+
+  Results are not merged across providers: each owns its relevance order, and interleaving them
+  would invent an unvalidated third ranking.
+  """
+  @spec search(String.t()) :: {:ok, [Metadata.candidate()]} | {:error, :providers_unavailable}
+  def search(query), do: search_providers(Metadata.providers(), query, false)
+
+  @spec work_ids_by_reference([{atom() | String.t(), String.t()}]) ::
+          %{{String.t(), String.t()} => integer()}
+  def work_ids_by_reference([]), do: %{}
+
+  def work_ids_by_reference(references) do
+    filter =
+      Enum.reduce(references, dynamic(false), fn {provider, foreign_id}, filter ->
+        provider = to_string(provider)
+
+        dynamic(
+          [identifier],
+          ^filter or
+            (identifier.provider == ^provider and identifier.foreign_id == ^foreign_id)
+        )
+      end)
+
+    Repo.all(
+      from identifier in Identifier,
+        where: identifier.kind == "work",
+        where: ^filter,
+        select: {{identifier.provider, identifier.foreign_id}, identifier.work_id}
+    )
+    |> Map.new()
+  end
+
+  defp search_providers([], _query, true), do: {:ok, []}
+  defp search_providers([], _query, false), do: {:error, :providers_unavailable}
+
+  defp search_providers([provider_module | rest], query, answered?) do
+    case provider_module.search(query) do
+      {:ok, []} ->
+        search_providers(rest, query, true)
+
+      {:ok, candidates} ->
+        {:ok, candidates}
+
+      {:error, reason} ->
+        Logger.info("books search: #{inspect(provider_module)} unavailable: #{inspect(reason)}")
+        search_providers(rest, query, answered?)
+    end
+  end
 
   def upsert_author(attrs),
     do: upsert_by_identifier(Author, :author_id, %Author{}, attrs, &Author.changeset/2)
@@ -83,6 +142,22 @@ defmodule Cinder.Books do
 
   def list_targets(%Work{id: id}) do
     Repo.all(from t in BookTarget, where: t.work_id == ^id, order_by: [asc: t.media_kind])
+  end
+
+  @doc """
+  Target statuses for `work_ids`, keyed `{work_id, media_kind}` — the badge lookup, without the
+  full work preload a badge has no use for.
+  """
+  @spec target_statuses([integer()]) :: %{{integer(), atom()} => atom()}
+  def target_statuses([]), do: %{}
+
+  def target_statuses(work_ids) do
+    Repo.all(
+      from t in BookTarget,
+        where: t.work_id in ^work_ids,
+        select: {{t.work_id, t.media_kind}, t.status}
+    )
+    |> Map.new()
   end
 
   def ensure_target(%Work{id: id}, media_kind) when media_kind in @book_media_kinds do
