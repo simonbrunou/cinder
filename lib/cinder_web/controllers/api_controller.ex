@@ -283,6 +283,10 @@ defmodule CinderWeb.ApiController do
   defp api_error(conn, :quota_exceeded), do: json_error(conn, :conflict, "quota_exceeded")
   defp api_error(conn, :not_pending), do: json_error(conn, :conflict, "not_pending")
 
+  # A conflict, not a bad request: the payload is fine and will be accepted once an operator
+  # clears the hold. 422 would tell an automation to fix its request and retry forever.
+  defp api_error(conn, :target_held), do: json_error(conn, :conflict, "target_held")
+
   defp api_error(conn, :admin_unavailable),
     do: json_error(conn, :service_unavailable, "admin_unavailable")
 

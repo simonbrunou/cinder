@@ -305,6 +305,48 @@ defmodule CinderWeb.DashboardLiveTest do
       assert render(lv) =~ "42%"
     end
 
+    test "a held book target says so on the dashboard too", %{conn: conn} do
+      requester = Cinder.AccountsFixtures.user_fixture()
+      id = Integer.to_string(System.unique_integer([:positive]))
+
+      {:ok, profile} =
+        Catalog.create_profile(%{name: "Ebooks #{id}", kind: :ebook, handling: :standard})
+
+      {:ok, work} =
+        Cinder.Books.upsert_work(%{
+          title: "Held Book #{id}",
+          identifier: %{provider: "openlibrary", kind: "work", foreign_id: id}
+        })
+
+      {:ok, req} =
+        Cinder.Requests.create_request(requester, %{
+          target_type: "book",
+          target_id: work.id,
+          media_kind: :ebook
+        })
+
+      {:ok, target} = Cinder.Books.ensure_target(work, :ebook)
+
+      {:ok, _} =
+        Cinder.Books.transition_target(target, %{status: :held, hold_reason: "identity conflict"},
+          expect: :unmonitored
+        )
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      lv
+      |> form("#dashboard-approval-form-#{req.id}", %{
+        "_id" => to_string(req.id),
+        "profile_id" => to_string(profile.id)
+      })
+      |> render_submit()
+
+      render_async(lv)
+
+      assert render(lv) =~ "on hold"
+      assert Cinder.Repo.get(Cinder.Requests.Request, req.id).status == :pending
+    end
+
     test "approving from the dashboard behaves identically to /requests", %{conn: conn} do
       requester = Cinder.AccountsFixtures.user_fixture()
       req = pending_movie_request(requester)

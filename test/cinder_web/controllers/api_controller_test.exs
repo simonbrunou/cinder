@@ -231,6 +231,36 @@ defmodule CinderWeb.ApiControllerTest do
       assert [%{status: :monitored, media_kind: :ebook}] = Cinder.Books.list_targets(work)
     end
 
+    test "a held target is a conflict, not a retryable 422", %{
+      conn: conn,
+      key: key,
+      work: work,
+      ebook_profile: profile
+    } do
+      _admin = admin_fixture()
+      {:ok, target} = Cinder.Books.ensure_target(work, :ebook)
+
+      {:ok, _} =
+        Cinder.Books.transition_target(target, %{status: :held, hold_reason: "identity conflict"},
+          expect: :unmonitored
+        )
+
+      # 422 would tell an automation its payload was wrong and invite a retry loop; the payload
+      # is fine and will be accepted once an operator clears the hold.
+      body =
+        conn
+        |> post_json(key, ~p"/api/v1/requests", %{
+          target_type: "book",
+          target_id: work.id,
+          media_kind: "ebook",
+          profile_id: profile.id
+        })
+        |> json_response(409)
+
+      assert body["error"] == "target_held"
+      assert Repo.aggregate(Request, :count) == 0
+    end
+
     test "a book request without a media kind is rejected", %{conn: conn, key: key, work: work} do
       _admin = admin_fixture()
 

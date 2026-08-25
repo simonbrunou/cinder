@@ -51,7 +51,9 @@ defmodule Cinder.Books.BookTargetTransitionTest do
     assert %BookTarget{status: :unmonitored, profile_id: nil} = Repo.get!(BookTarget, target.id)
 
     # The DB fence surfaces as an explained refusal, not a raise, so a future caller that skips
-    # monitor_target/4's up-front check still gets a handleable error.
+    # monitor_target/4's up-front check gets an error it can report. Inside an outer transaction
+    # the abort has already poisoned the connection, so the only safe response there is to roll
+    # back — see the caller contract on guarded_update/3.
     assert {:error, :invalid_media_profile} =
              Books.transition_target(
                target,

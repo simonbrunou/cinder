@@ -22,8 +22,13 @@ defmodule Cinder.Books.BookTargetTransition do
   # `update_all` skips Ecto's `to_constraints`, so `book_targets_profile_integrity` surfaces as a
   # raw Exqlite.Error rather than `{:error, changeset}`. `Books.monitor_target/4` checks the kind
   # up front, but `Books.transition_target/3` is public: rescue on the constraint's own message
-  # (not the exception class, which also covers a transient busy) so any caller gets the same
-  # explained refusal instead of a raise.
+  # (not the exception class, which also covers a transient busy) so a caller gets an explained
+  # refusal instead of a raise.
+  #
+  # Caller contract, same as `:stale_status`: inside an outer `Repo.transaction`, the abort has
+  # already poisoned the connection, so the only safe response to this error is to roll that
+  # transaction back. It is handleable in place only when the caller owns no enclosing
+  # transaction.
   defp guarded_update(id, changes, expected) do
     do_guarded_update(id, changes, expected)
   rescue

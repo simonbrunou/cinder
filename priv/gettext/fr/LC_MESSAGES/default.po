@@ -6718,5 +6718,4 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "That title is on hold. Clear the hold before approving it."
 msgstr ""
-"Ce titre est en attente de vérification. Levez cette mise en attente avant de "
-"l'approuver."
+"Ce titre est en suspens. Levez la mise en suspens avant de l'approuver."
