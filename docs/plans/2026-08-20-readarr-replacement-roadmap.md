@@ -316,6 +316,37 @@ belong to the search surface), and operator metadata overrides — B2b moved "ma
 survive refresh" here, but nothing in B3a creates a manual correction either, so the criterion
 moves again to B3b with the detail page that does.
 
+### Amendments during execution (2026-08-25)
+
+B3b shipped Discover, `/book/:provider/:foreign_id`, and the shared request components. See
+[`the B3b plan`](2026-08-25-books-b3b-discovery-and-request-ui.md). Corrections to this
+milestone's entry:
+
+- **`book_detail_live.ex` was not created; `book_discovery_live.ex` was.** The roadmap's name
+  describes the admin pipeline view of a work Cinder already tracks — the books analogue of
+  `/movies/:id`. That view has nothing to render until B4 gives it files and a running target, so
+  B3b built the *discovery* analogue of `/movie/tmdb/:tmdb_id` instead and left `/books/:id`
+  unclaimed for B4.
+- **Discovery needed a new `Books.search/1`, not `Identity.resolve/1`.** Resolve collapses
+  candidates to one work in order to authorize a grab; a search grid exists to show the operator
+  the ambiguity. The two cannot be the same function.
+- **`library_live.ex` was not modified.** Nothing can appear in a books library listing until B4
+  imports a `book_files` row.
+- **The two orphans stay parked.** Author aliases and local author search move to B5, where
+  author monitoring gives them a caller. Operator metadata overrides move again — B3b's work page
+  is read-only, so it does not create a manual correction either. They belong to whichever
+  milestone first ships an edit control.
+
+B4 inherits two obligations from B3b: `:held` book targets currently fall through to the request
+status on both badge surfaces, because nothing creates a hold yet — B4 owns the states that
+produce one and the copy that explains it; and `/books/:id` is still free for the pipeline view.
+
+Two defects surfaced by B3b's review are filed rather than fixed: a double-fired request creating
+duplicate approved rows (#364, pre-existing across all target types) and Hardcover reporting an
+all-fetches-failed search as no results instead of an outage (#365, a B2b adapter bug).
+
+---
+
 ---
 
 ## B4 — E-book search, scoring, download, validation, and publication
