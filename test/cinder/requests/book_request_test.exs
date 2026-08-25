@@ -277,6 +277,32 @@ defmodule Cinder.Requests.BookRequestTest do
     end
   end
 
+  describe "the two book formats stay distinguishable" do
+    test "the shared request title names the format", %{work: work} do
+      user = user_fixture()
+      {:ok, ebook} = Requests.create_request(user, attrs(work, :ebook))
+      {:ok, audiobook} = Requests.create_request(user, attrs(work, :audiobook))
+
+      ebook_title = CinderWeb.LiveHelpers.request_title(ebook, "en")
+      audiobook_title = CinderWeb.LiveHelpers.request_title(audiobook, "en")
+
+      assert ebook_title =~ work.title
+      assert audiobook_title =~ work.title
+      refute ebook_title == audiobook_title
+    end
+
+    test "the delete audit records which format was removed", %{work: work} do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, request} = Requests.create_request(user, attrs(work, :audiobook))
+
+      assert {:ok, _} = Requests.delete_request(request, admin)
+
+      assert %{detail: %{"media_kind" => "audiobook"}} =
+               Repo.one(Cinder.Audit.AdminAudit)
+    end
+  end
+
   describe "the changeset's media-kind rule" do
     test "a book request without a media kind is rejected" do
       changeset =

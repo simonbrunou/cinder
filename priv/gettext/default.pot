@@ -1576,11 +1576,6 @@ msgstr ""
 msgid "Delete this download? Its episodes are unlinked."
 msgstr ""
 
-#: lib/cinder_web/live/requests_live.ex:478
-#, elixir-autogen
-msgid "Deleting a request does not remove any movie or series it already created; that catalog row stays. If this request was denied or approved, the same title can be requested again afterwards."
-msgstr ""
-
 #: lib/cinder_web/live/dashboard_live.ex:536
 #: lib/cinder_web/live/requests_live.ex:434
 #, elixir-autogen
@@ -2035,22 +2030,22 @@ msgstr ""
 msgid "Grabbing…"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:213
+#: lib/cinder_web/live_helpers.ex:222
 #, elixir-autogen
 msgid "%b %-d"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:216
+#: lib/cinder_web/live_helpers.ex:225
 #, elixir-autogen
 msgid "%b %-d, %Y"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:281
+#: lib/cinder_web/live_helpers.ex:290
 #, elixir-autogen
 msgid "Apr"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:285
+#: lib/cinder_web/live_helpers.ex:294
 #, elixir-autogen
 msgid "Aug"
 msgstr ""
@@ -2077,37 +2072,37 @@ msgstr ""
 msgid "Couldn't reset the password."
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:289
+#: lib/cinder_web/live_helpers.ex:298
 #, elixir-autogen
 msgid "Dec"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:279
+#: lib/cinder_web/live_helpers.ex:288
 #, elixir-autogen
 msgid "Feb"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:278
+#: lib/cinder_web/live_helpers.ex:287
 #, elixir-autogen
 msgid "Jan"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:284
+#: lib/cinder_web/live_helpers.ex:293
 #, elixir-autogen
 msgid "Jul"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:283
+#: lib/cinder_web/live_helpers.ex:292
 #, elixir-autogen
 msgid "Jun"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:280
+#: lib/cinder_web/live_helpers.ex:289
 #, elixir-autogen
 msgid "Mar"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:282
+#: lib/cinder_web/live_helpers.ex:291
 #, elixir-autogen
 msgid "May"
 msgstr ""
@@ -2117,12 +2112,12 @@ msgstr ""
 msgid "No requestable seasons"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:288
+#: lib/cinder_web/live_helpers.ex:297
 #, elixir-autogen
 msgid "Nov"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:287
+#: lib/cinder_web/live_helpers.ex:296
 #, elixir-autogen
 msgid "Oct"
 msgstr ""
@@ -2132,7 +2127,7 @@ msgstr ""
 msgid "Search all missing episodes in %{season}"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:286
+#: lib/cinder_web/live_helpers.ex:295
 #, elixir-autogen
 msgid "Sep"
 msgstr ""
@@ -2758,7 +2753,7 @@ msgstr ""
 msgid "Verification will retry shortly."
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:154
+#: lib/cinder_web/live_helpers.ex:163
 #, elixir-autogen
 msgid "Couldn't match to an episode: %{paths}"
 msgstr ""
@@ -2782,17 +2777,17 @@ msgstr ""
 msgid "Import will retry shortly."
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:157
+#: lib/cinder_web/live_helpers.ex:166
 #, elixir-autogen
 msgid "Matched an episode outside this release: %{paths}"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:160
+#: lib/cinder_web/live_helpers.ex:169
 #, elixir-autogen
 msgid "More than one file matched the same episode: %{paths}"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:166
+#: lib/cinder_web/live_helpers.ex:175
 #, elixir-autogen
 msgid "No file found for episode id(s): %{ids}"
 msgstr ""
@@ -2807,7 +2802,7 @@ msgstr ""
 msgid "The import could not be retried."
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:178
+#: lib/cinder_web/live_helpers.ex:187
 #, elixir-autogen
 msgid "This release needs manual attention."
 msgstr ""
@@ -2817,12 +2812,12 @@ msgstr ""
 msgid "View in Activity"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:184
+#: lib/cinder_web/live_helpers.ex:193
 #, elixir-autogen
 msgid "unknown"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:181
+#: lib/cinder_web/live_helpers.ex:190
 #, elixir-autogen
 msgid "unknown file"
 msgstr ""
@@ -2847,12 +2842,12 @@ msgstr ""
 msgid "Needs preferences"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:201
+#: lib/cinder_web/live_helpers.ex:210
 #, elixir-autogen
 msgid "Requiring embedded subtitles needs subtitle languages: configure them in Settings."
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:206
+#: lib/cinder_web/live_helpers.ex:215
 #, elixir-autogen
 msgid "The Anime release preferences can't be satisfied for this title."
 msgstr ""
@@ -2883,7 +2878,7 @@ msgstr ""
 msgid "Audio: %{pick}"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:194
+#: lib/cinder_web/live_helpers.ex:203
 #, elixir-autogen
 msgid "Dual audio needs this title's original language, which is unknown: on its detail page, choose an Audio pick other than \"%{dual}\", or fix the title's original-language metadata."
 msgstr ""
@@ -3094,7 +3089,7 @@ msgstr ""
 msgid "Couldn't reach TMDB. Nothing was saved. Try again."
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:173
+#: lib/cinder_web/live_helpers.ex:182
 #, elixir-autogen
 msgid "The library's episodes no longer match what this grab reserved; affected episode id(s): %{ids}"
 msgstr ""
@@ -3151,7 +3146,7 @@ msgstr ""
 msgid "Next: %{when}"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:137
+#: lib/cinder_web/live_helpers.ex:146
 #, elixir-autogen
 msgid "No release matched your size/quality rules yet. Open it to retry or adjust."
 msgstr ""
@@ -3166,12 +3161,12 @@ msgstr ""
 msgid "Series metadata refresh"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:143
+#: lib/cinder_web/live_helpers.ex:152
 #, elixir-autogen
 msgid "The download finished but couldn't be imported. Open it to retry."
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:140
+#: lib/cinder_web/live_helpers.ex:149
 #, elixir-autogen
 msgid "The indexer couldn't be reached after repeated tries. Open it to retry."
 msgstr ""
@@ -3206,7 +3201,7 @@ msgstr ""
 msgid "“%{title}” needs attention."
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:134
+#: lib/cinder_web/live_helpers.ex:143
 #, elixir-autogen
 msgid "Searching indexers (attempt %{n})"
 msgstr ""
@@ -3831,16 +3826,16 @@ msgstr ""
 msgid "Unavailable"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:154
-#: lib/cinder/notifier/email.ex:221
-#: lib/cinder/notifier/email.ex:228
+#: lib/cinder/notifier/email.ex:167
 #: lib/cinder/notifier/email.ex:234
+#: lib/cinder/notifier/email.ex:241
+#: lib/cinder/notifier/email.ex:254
 #, elixir-autogen
 msgid "%{title} Season %{season}"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:124
-#: lib/cinder/notifier/email.ex:147
+#: lib/cinder/notifier/email.ex:137
+#: lib/cinder/notifier/email.ex:160
 #, elixir-autogen
 msgid "%{title} is ready to watch"
 msgstr ""
@@ -3855,7 +3850,7 @@ msgstr ""
 msgid "Email me when a request is approved or ready to watch"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:69
+#: lib/cinder/notifier/email.ex:88
 #, elixir-autogen
 msgid "Good news — your request for %{title} was approved and will start downloading soon."
 msgstr ""
@@ -3890,27 +3885,27 @@ msgstr ""
 msgid "SMTP: use implicit TLS/SSL (usually port 465; leave off for STARTTLS on 587)"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:156
+#: lib/cinder/notifier/email.ex:169
 #, elixir-autogen
 msgid "We couldn't find %{title}"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:133
+#: lib/cinder/notifier/email.ex:146
 #, elixir-autogen
 msgid "We couldn't get %{title}"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:157
+#: lib/cinder/notifier/email.ex:170
 #, elixir-autogen
 msgid "We're sorry — we couldn't find a release for %{title} after several attempts. An admin may need to take a look."
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:134
+#: lib/cinder/notifier/email.ex:147
 #, elixir-autogen
 msgid "We're sorry — your request for %{title} could not be completed (%{reason}) and has been parked. An admin may need to take a look."
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:125
+#: lib/cinder/notifier/email.ex:138
 #, elixir-autogen
 msgid "Your request for %{title} is ready to watch."
 msgstr ""
@@ -3920,7 +3915,7 @@ msgstr ""
 msgid "Your request for %{title} was approved"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:148
+#: lib/cinder/notifier/email.ex:161
 #, elixir-autogen
 msgid "Your requested season is ready to watch: %{title}."
 msgstr ""
@@ -4339,17 +4334,17 @@ msgstr ""
 msgid "Request all seasons"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:118
+#: lib/cinder/notifier/email.ex:131
 #, elixir-autogen
 msgid "We're sorry — your request for %{title} was declined."
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:110
+#: lib/cinder/notifier/email.ex:123
 #, elixir-autogen
 msgid "We're sorry — your request for %{title} was declined. Reason: %{reason}"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:86
+#: lib/cinder/notifier/email.ex:99
 #, elixir-autogen
 msgid "Your request for %{title} was declined"
 msgstr ""
@@ -4375,7 +4370,7 @@ msgid_plural "Stopped at your request limit; %{count} seasons not submitted."
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live_helpers.ex:297
+#: lib/cinder_web/live_helpers.ex:306
 #, elixir-autogen
 msgid "%{count} unmatched video was kept in the download source for review."
 msgid_plural "%{count} unmatched videos were kept in the download source for review."
@@ -4729,21 +4724,21 @@ msgid_plural "%{available} of %{count} episodes available"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live_helpers.ex:257
+#: lib/cinder_web/live_helpers.ex:266
 #, elixir-autogen
 msgid "%{count} day ago"
 msgid_plural "%{count} days ago"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live_helpers.ex:253
+#: lib/cinder_web/live_helpers.ex:262
 #, elixir-autogen
 msgid "%{count} hour ago"
 msgid_plural "%{count} hours ago"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live_helpers.ex:249
+#: lib/cinder_web/live_helpers.ex:258
 #, elixir-autogen
 msgid "%{count} minute ago"
 msgid_plural "%{count} minutes ago"
@@ -4785,7 +4780,7 @@ msgstr ""
 msgid "Top cast"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:245
+#: lib/cinder_web/live_helpers.ex:254
 #, elixir-autogen
 msgid "just now"
 msgstr ""
@@ -4895,7 +4890,7 @@ msgstr ""
 msgid "Find a better match: expand the seasons you can search"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:100
+#: lib/cinder/notifier/email.ex:113
 #, elixir-autogen
 msgid "Good news — the issue you reported for %{title} has been resolved. Please take another look."
 msgstr ""
@@ -5054,7 +5049,7 @@ msgstr ""
 msgid "That report was already handled."
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:99
+#: lib/cinder/notifier/email.ex:112
 #, elixir-autogen
 msgid "The issue you reported for %{title} is resolved"
 msgstr ""
@@ -5357,7 +5352,7 @@ msgstr ""
 msgid "Seeing a second account for someone who already has one? Their original was never linked to the media server: use Reset password on it below, then have them link their media server account from Account settings."
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:324
+#: lib/cinder_web/live_helpers.ex:333
 #, elixir-autogen
 msgid "Discard %{count} unmatched video? It is not kept and cannot be recovered here."
 msgid_plural "Discard all %{count} unmatched videos? They are not kept and cannot be recovered here."
@@ -6372,4 +6367,26 @@ msgstr ""
 #: lib/cinder_web/components/settings_components.ex:641
 #, elixir-autogen, elixir-format
 msgid "Optional. Open Library identifies books and is used by default; a Hardcover-compatible proxy fills the gaps it leaves, if you run one."
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:248
+#: lib/cinder_web/live_helpers.ex:132
+#, elixir-autogen, elixir-format
+msgid "%{title} (audiobook)"
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:245
+#: lib/cinder_web/live_helpers.ex:129
+#, elixir-autogen, elixir-format
+msgid "%{title} (eBook)"
+msgstr ""
+
+#: lib/cinder_web/live/requests_live.ex:478
+#, elixir-autogen, elixir-format
+msgid "Deleting a request does not remove anything it already created: a movie, a series, or a monitored book target all stay. If this request was denied or approved, the same title can be requested again afterwards."
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:81
+#, elixir-autogen, elixir-format
+msgid "Good news — your request for %{title} was approved. Cinder will watch for a copy."
 msgstr ""

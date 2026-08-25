@@ -476,7 +476,7 @@ defmodule CinderWeb.RequestsLive do
           >
             <:caveat>
               {gettext(
-                "Deleting a request does not remove any movie or series it already created; that catalog row stays. If this request was denied or approved, the same title can be requested again afterwards."
+                "Deleting a request does not remove anything it already created: a movie, a series, or a monitored book target all stay. If this request was denied or approved, the same title can be requested again afterwards."
               )}
             </:caveat>
           </.confirm_action>

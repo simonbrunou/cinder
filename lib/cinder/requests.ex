@@ -526,6 +526,7 @@ defmodule Cinder.Requests do
             status: fresh.status,
             target_type: fresh.target_type,
             target_id: fresh.target_id,
+            media_kind: fresh.media_kind,
             title: fresh.title
           })
 

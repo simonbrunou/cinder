@@ -204,6 +204,10 @@ defmodule Cinder.Notifier.Discord do
        when not is_nil(number),
        do: "#{title_year(request)} — Season #{number}"
 
+  # Same reason as the season clause: one work can carry both book formats.
+  defp request_line(%{target_type: "book", media_kind: kind} = request) when not is_nil(kind),
+    do: "#{title_year(request)} — #{kind}"
+
   defp request_line(request), do: title_year(request)
 
   # An issue report carries no `year`, so it renders its bare title + season + category (no
