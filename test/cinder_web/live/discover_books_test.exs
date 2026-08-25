@@ -6,6 +6,7 @@ defmodule CinderWeb.DiscoverBooksTest do
 
   alias Cinder.Books
   alias Cinder.Books.{PrimaryMetadataMock, SecondaryMetadataMock}
+  alias Cinder.Catalog
   alias Cinder.Requests
   alias CinderWeb.DiscoverLive
 
@@ -62,6 +63,40 @@ defmodule CinderWeb.DiscoverBooksTest do
 
     assert has_element?(lv, "#book-results", "eBook")
     assert has_element?(lv, "#book-results", "Pending")
+  end
+
+  test "a book target approval updates the card badge without a reload", %{
+    conn: conn,
+    user: user
+  } do
+    candidate = candidate(:openlibrary, "OL50548W", "Beloved")
+    expect(PrimaryMetadataMock, :search, fn "beloved" -> {:ok, [candidate]} end)
+
+    {:ok, work} =
+      Books.upsert_work(%{
+        title: "Beloved",
+        identifier: %{provider: "openlibrary", kind: "work", foreign_id: "OL50548W"}
+      })
+
+    assert {:ok, _} =
+             Requests.create_request(user, %{
+               target_type: "book",
+               target_id: work.id,
+               media_kind: :ebook
+             })
+
+    {:ok, lv, _html} = live(conn, ~p"/")
+    lv |> form("#search-form", %{"query" => "beloved"}) |> render_change()
+    render_async(lv)
+    assert has_element?(lv, "#book-results", "Pending")
+
+    # The target moves with no request event behind it — an admin approving from another
+    # session, and from B4 an import. Discover must hear it on the targets topic.
+    {:ok, profile} = Catalog.create_profile(%{name: "eBooks", kind: :ebook, handling: :standard})
+    assert {:ok, _target} = Books.monitor_target(work, :ebook, profile)
+
+    assert render(lv) =~ "Approved"
+    refute has_element?(lv, "#book-results", "Pending")
   end
 
   test "book and video filters isolate their own result sections", %{conn: conn} do

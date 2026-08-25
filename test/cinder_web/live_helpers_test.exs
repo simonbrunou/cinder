@@ -59,6 +59,14 @@ defmodule CinderWeb.LiveHelpersTest do
       assert book_badge_state(nil, :available) == :available
       assert book_badge_state(:approved, :monitored) == :approved
       assert book_badge_state(nil, :monitored) == :approved
+      # A second requester whose own row is still pending against a work someone else already
+      # had approved is waiting on nothing — "Pending" would send them to chase an admin.
+      assert book_badge_state(:pending, :monitored) == :approved
+    end
+
+    test "a held target falls through to the request until B4 owns the state" do
+      assert book_badge_state(:pending, :held) == :pending
+      assert book_badge_state(nil, :held) == :none
     end
 
     test "falls back to the request when the target says nothing yet" do

@@ -30,6 +30,10 @@ defmodule CinderWeb.DiscoverLive do
       Catalog.subscribe()
       Catalog.subscribe_series()
       Cinder.Requests.subscribe()
+      # A book target moves without a request event behind it (an admin approving elsewhere, and
+      # from B4 an import flipping :monitored → :available). Without this the card badge and the
+      # work page — which do share one fold — still drift apart on a live page.
+      Books.subscribe_targets()
     end
 
     socket =
@@ -231,6 +235,10 @@ defmodule CinderWeb.DiscoverLive do
   def handle_info({event, _request}, socket)
       when event in [:request_created, :request_approved, :request_denied, :request_deleted] do
     {:noreply, socket |> assign_request_state() |> assign_book_states()}
+  end
+
+  def handle_info({:book_target_updated, _target}, socket) do
+    {:noreply, assign_book_states(socket)}
   end
 
   # A season completing (episode import) or a series being removed can flip a TV card's badge.
