@@ -10,7 +10,7 @@ defmodule Cinder.Subtitles.Sweeper do
   `config :cinder, #{inspect(__MODULE__)}, interval: <ms>`.
   """
   alias Cinder.{Catalog, Subtitles}
-  alias Cinder.Catalog.Episode
+  alias Cinder.Catalog.{Episode, Movie}
 
   @default_interval :timer.hours(12)
   use Cinder.Download.PollerSkeleton, log_prefix: "sweeper", stateful: false
@@ -25,9 +25,7 @@ defmodule Cinder.Subtitles.Sweeper do
 
   defp sweep do
     units =
-      Enum.map(Catalog.list_available_movies_with_file(), fn m ->
-        {"movie #{m.id}", fn -> Subtitles.movie_criteria(m) end, m.file_path, :movies}
-      end) ++
+      Enum.flat_map(Catalog.list_available_movies_with_file(), &movie_units/1) ++
         Enum.flat_map(Catalog.list_episodes_with_file(), &episode_units/1)
 
     # reduce_while so a quota hit halts the whole tick — see fetch_unit/2. Returns :ok either way.
@@ -47,6 +45,12 @@ defmodule Cinder.Subtitles.Sweeper do
   defp episode_units(episode) do
     Enum.map(Episode.file_paths(episode), fn path ->
       {"episode #{episode.id}", fn -> Subtitles.episode_criteria(episode) end, path, :tv}
+    end)
+  end
+
+  defp movie_units(%Movie{} = movie) do
+    Enum.map(Movie.file_paths(movie), fn path ->
+      {"movie #{movie.id}", fn -> Subtitles.movie_criteria(movie) end, path, :movies}
     end)
   end
 end

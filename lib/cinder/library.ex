@@ -168,7 +168,7 @@ defmodule Cinder.Library do
 
   defp put_movie_after_commit([first | rest], movie) do
     first = put_in(first, [:rollback, :after_commit], {:movie, movie})
-    [first | Enum.map(rest, &put_in(&1, [:rollback, :after_commit], nil))]
+    [first | Enum.map(rest, &put_in(&1, [:rollback, :after_commit], {:movie_part, movie}))]
   end
 
   defp movie_stage_result([stage], _quality), do: stage
@@ -260,6 +260,16 @@ defmodule Cinder.Library do
   defp run_after_commit(%{after_commit: {:movie, movie}}, dest, quality) do
     refresh(:movies, dest)
 
+    PostImport.fetch_subtitles(
+      fn -> Cinder.Subtitles.movie_criteria(movie) end,
+      dest,
+      :movies,
+      quality.sidecar_subtitles
+    )
+  end
+
+  # Part stages skip the scan because the media-server scan is library-kind-wide.
+  defp run_after_commit(%{after_commit: {:movie_part, movie}}, dest, quality) do
     PostImport.fetch_subtitles(
       fn -> Cinder.Subtitles.movie_criteria(movie) end,
       dest,

@@ -328,6 +328,85 @@ defmodule Cinder.LibrarySubtitlesTest do
            end)
   end
 
+  test "multipart folder movie import fetches subtitles for each part with one movie scan" do
+    parent = self()
+
+    movie = %Movie{
+      title: "Movie",
+      year: 1995,
+      tmdb_id: 949,
+      imdb_id: "tt0113277",
+      file_path: "/dl/Movie"
+    }
+
+    cd1 = "/dl/Movie/Movie.cd1.mkv"
+    cd2 = "/dl/Movie/Movie.cd2.mkv"
+    dest1 = "#{@lib}/Movie (1995) {tmdb-949}/Movie (1995) {tmdb-949}-cd1.mkv"
+    dest2 = "#{@lib}/Movie (1995) {tmdb-949}/Movie (1995) {tmdb-949}-cd2.mkv"
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl/Movie" ->
+      {:ok, [{cd2, 4 * @gb}, {cd1, 3 * @gb}]}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn
+      ^cd1 ->
+        {:ok, %File.Stat{size: 3 * @gb, inode: 11, major_device: 1}}
+
+      ^cd2 ->
+        {:ok, %File.Stat{size: 4 * @gb, inode: 12, major_device: 1}}
+
+      path ->
+        cond do
+          String.contains?(path, ".cinder-stage-") ->
+            {:ok, %File.Stat{size: 1 * @gb, inode: 20, major_device: 1}}
+
+          String.ends_with?(path, ".en.srt") ->
+            send(parent, {:subtitle_path, path})
+            {:error, :enoent}
+
+          true ->
+            {:error, :enoent}
+        end
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn path ->
+      send(parent, {:subtitle_path, path})
+      :too_small
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _source, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rename, fn _source, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
+
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies ->
+      send(parent, :movie_scan)
+      :ok
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, 2, fn %{
+                                                           imdb_id: "tt0113277",
+                                                           languages: ["en"]
+                                                         } ->
+      send(parent, :subtitle_search)
+      {:error, :down}
+    end)
+
+    assert {:ok, %{dest: ^dest1, part_file_paths: [^dest2]} = stage} = Library.stage_movie(movie)
+    assert :ok = commit!(stage)
+
+    assert_receive :movie_scan
+    assert_receive :subtitle_search, 2_000
+    assert_receive :subtitle_search, 2_000
+    await_subtitle_tasks()
+
+    assert_receive {:subtitle_path, ^dest1}
+    assert_receive {:subtitle_path, ^dest2}
+    refute_received :movie_scan
+  end
+
   test "folder episode import passes linked sidecars to the TV subtitle task", %{subtitle_fs: fs} do
     parent = self()
     series = %Series{title: "Show", year: 2008, tmdb_id: 1}
