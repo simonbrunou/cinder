@@ -16,13 +16,19 @@ defmodule CinderWeb.RequestHelpers do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Catalog
+  alias Cinder.LibraryKind
   alias Cinder.Requests
+
+  # Every managed media kind, not just the video pair: `profile_kind/1` resolves a book request to
+  # `:ebook`/`:audiobook`, and a narrower guard here would silently drop the admin's pick and make
+  # a pending book request unapprovable from `/requests`.
+  @kinds LibraryKind.all()
 
   def normalize_profile(nil, _kind), do: {:ok, nil}
   def normalize_profile("auto", _kind), do: {:ok, nil}
 
   def normalize_profile(legacy, kind)
-      when legacy in ["standard", "anime"] and kind in [:movies, :tv] do
+      when legacy in ["standard", "anime"] and kind in @kinds do
     handling = String.to_existing_atom(legacy)
 
     case default_for_handling(Catalog.list_profiles(kind), handling) do
@@ -31,7 +37,7 @@ defmodule CinderWeb.RequestHelpers do
     end
   end
 
-  def normalize_profile(raw, kind) when is_binary(raw) and kind in [:movies, :tv] do
+  def normalize_profile(raw, kind) when is_binary(raw) and kind in @kinds do
     with {id, ""} <- Integer.parse(raw),
          %{kind: ^kind} = profile <- Catalog.get_profile(id) do
       {:ok, profile}

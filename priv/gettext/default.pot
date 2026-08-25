@@ -31,13 +31,13 @@ msgstr ""
 msgid "%{n}/%{m} monitored"
 msgstr ""
 
-#: lib/cinder_web/live/my_requests_live.ex:170
-#: lib/cinder_web/request_helpers.ex:94
+#: lib/cinder_web/live/my_requests_live.ex:171
+#: lib/cinder_web/request_helpers.ex:100
 #, elixir-autogen
 msgid "%{title} added."
 msgstr ""
 
-#: lib/cinder_web/request_helpers.ex:116
+#: lib/cinder_web/request_helpers.ex:122
 #, elixir-autogen
 msgid "%{title} is already requested."
 msgstr ""
@@ -732,7 +732,7 @@ msgid "Movies available"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:109
-#: lib/cinder_web/live/my_requests_live.ex:303
+#: lib/cinder_web/live/my_requests_live.ex:312
 #: lib/cinder_web/user_auth.ex:415
 #, elixir-autogen
 msgid "My requests"
@@ -806,7 +806,7 @@ msgstr ""
 msgid "No requests"
 msgstr ""
 
-#: lib/cinder_web/live/my_requests_live.ex:310
+#: lib/cinder_web/live/my_requests_live.ex:319
 #, elixir-autogen
 msgid "No requests yet"
 msgstr ""
@@ -1062,7 +1062,7 @@ msgstr ""
 msgid "Search results"
 msgstr ""
 
-#: lib/cinder_web/live/my_requests_live.ex:311
+#: lib/cinder_web/live/my_requests_live.ex:320
 #, elixir-autogen
 msgid "Search the catalog to request a title."
 msgstr ""
@@ -1226,7 +1226,7 @@ msgstr ""
 msgid "Too many attempts. Try again in a minute."
 msgstr ""
 
-#: lib/cinder_web/live/my_requests_live.ex:304
+#: lib/cinder_web/live/my_requests_live.ex:313
 #, elixir-autogen
 msgid "Track what you've asked for."
 msgstr ""
@@ -1345,10 +1345,10 @@ msgstr ""
 msgid "You must re-authenticate to access this page."
 msgstr ""
 
-#: lib/cinder_web/live/my_requests_live.ex:183
+#: lib/cinder_web/live/my_requests_live.ex:184
 #: lib/cinder_web/live/series_discovery_live.ex:169
 #: lib/cinder_web/live/series_discovery_live.ex:259
-#: lib/cinder_web/request_helpers.ex:109
+#: lib/cinder_web/request_helpers.ex:115
 #, elixir-autogen
 msgid "You've reached your request limit. Wait for approvals to clear."
 msgstr ""
@@ -1435,8 +1435,8 @@ msgstr[1] ""
 msgid "%{count} selected"
 msgstr ""
 
-#: lib/cinder_web/live/my_requests_live.ex:176
-#: lib/cinder_web/request_helpers.ex:101
+#: lib/cinder_web/live/my_requests_live.ex:177
+#: lib/cinder_web/request_helpers.ex:107
 #, elixir-autogen
 msgid "%{title} requested. Awaiting approval."
 msgstr ""
@@ -1544,9 +1544,9 @@ msgstr ""
 #: lib/cinder_web/live/entity_discovery_live.ex:116
 #: lib/cinder_web/live/movie_discovery_live.ex:212
 #: lib/cinder_web/live/my_requests_live.ex:142
-#: lib/cinder_web/live/my_requests_live.ex:187
-#: lib/cinder_web/request_helpers.ex:121
-#: lib/cinder_web/request_helpers.ex:129
+#: lib/cinder_web/live/my_requests_live.ex:188
+#: lib/cinder_web/request_helpers.ex:127
+#: lib/cinder_web/request_helpers.ex:135
 #, elixir-autogen
 msgid "Couldn't request %{title}. Try again."
 msgstr ""
@@ -1754,7 +1754,7 @@ msgstr ""
 msgid "Prowlarr URL"
 msgstr ""
 
-#: lib/cinder_web/live/my_requests_live.ex:387
+#: lib/cinder_web/live/my_requests_live.ex:396
 #, elixir-autogen
 msgid "Reason:"
 msgstr ""
@@ -3536,14 +3536,14 @@ msgid "Plex web URL"
 msgstr ""
 
 #: lib/cinder_web/live/movie_discovery_live.ex:336
-#: lib/cinder_web/live/my_requests_live.ex:352
+#: lib/cinder_web/live/my_requests_live.ex:361
 #: lib/cinder_web/live/series_discovery_live.ex:468
 #, elixir-autogen
 msgid "Open in %{server}"
 msgstr ""
 
 #: lib/cinder_web/live/movie_discovery_live.ex:340
-#: lib/cinder_web/live/my_requests_live.ex:356
+#: lib/cinder_web/live/my_requests_live.ex:365
 #: lib/cinder_web/live/series_discovery_live.ex:472
 #, elixir-autogen
 msgid "(opens in a new tab)"
@@ -3635,13 +3635,13 @@ msgstr ""
 msgid "Browse by genre"
 msgstr ""
 
-#: lib/cinder_web/live/my_requests_live.ex:367
-#: lib/cinder_web/live/my_requests_live.ex:419
+#: lib/cinder_web/live/my_requests_live.ex:376
+#: lib/cinder_web/live/my_requests_live.ex:428
 #, elixir-autogen
 msgid "Cancel request"
 msgstr ""
 
-#: lib/cinder_web/live/my_requests_live.ex:424
+#: lib/cinder_web/live/my_requests_live.ex:433
 #, elixir-autogen
 msgid "Cancel this request? You can request it again later."
 msgstr ""
@@ -4319,12 +4319,12 @@ msgstr ""
 msgid "Notifications (optional)"
 msgstr ""
 
-#: lib/cinder_web/live/my_requests_live.ex:377
+#: lib/cinder_web/live/my_requests_live.ex:386
 #, elixir-autogen
 msgid "Request %{title} again"
 msgstr ""
 
-#: lib/cinder_web/live/my_requests_live.ex:379
+#: lib/cinder_web/live/my_requests_live.ex:388
 #, elixir-autogen
 msgid "Request again"
 msgstr ""
@@ -4722,7 +4722,7 @@ msgstr ""
 msgid "%{code}: %{title} (TMDB %{id})"
 msgstr ""
 
-#: lib/cinder_web/live/my_requests_live.ex:275
+#: lib/cinder_web/live/my_requests_live.ex:284
 #, elixir-autogen
 msgid "%{available} of %{count} episode available"
 msgid_plural "%{available} of %{count} episodes available"
@@ -4774,7 +4774,7 @@ msgstr ""
 msgid "Part of %{name}"
 msgstr ""
 
-#: lib/cinder_web/live/my_requests_live.ex:411
+#: lib/cinder_web/live/my_requests_live.ex:420
 #, elixir-autogen
 msgid "Requested %{time_ago}"
 msgstr ""
@@ -4956,13 +4956,13 @@ msgid "Problems requesters flagged on available titles."
 msgstr ""
 
 #: lib/cinder_web/live/movie_discovery_live.ex:356
-#: lib/cinder_web/live/my_requests_live.ex:438
+#: lib/cinder_web/live/my_requests_live.ex:447
 #, elixir-autogen
 msgid "Report an issue"
 msgstr ""
 
 #: lib/cinder_web/live/movie_discovery_live.ex:353
-#: lib/cinder_web/live/my_requests_live.ex:436
+#: lib/cinder_web/live/my_requests_live.ex:445
 #, elixir-autogen
 msgid "Report an issue with %{title}"
 msgstr ""

@@ -104,6 +104,49 @@ defmodule CinderWeb.RequestsLiveTest do
     assert Cinder.Catalog.get_movie_by_tmdb_id(604).profile_id == standard.id
   end
 
+  test "a pending book request is approvable with its own book profile", %{conn: conn} do
+    user = user_fixture()
+    id = Integer.to_string(System.unique_integer([:positive]))
+
+    {:ok, profile} =
+      Cinder.Catalog.create_profile(%{name: "Ebooks #{id}", kind: :ebook, handling: :standard})
+
+    {:ok, work} =
+      Cinder.Books.upsert_work(%{
+        title: "Approvable Book #{id}",
+        identifier: %{provider: "openlibrary", kind: "work", foreign_id: id}
+      })
+
+    {:ok, req} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "book",
+        target_id: work.id,
+        media_kind: :ebook
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+
+    # The picker offers the book profile, not the TV ones.
+    assert has_element?(lv, "#approval-profile-#{req.id} option[value='#{profile.id}']")
+
+    lv
+    |> form("#approval-profile-form-#{req.id}", %{
+      "_id" => to_string(req.id),
+      "profile_id" => to_string(profile.id)
+    })
+    |> render_change()
+
+    lv |> element("button[phx-click='approve'][phx-value-id='#{req.id}']") |> render_click()
+    render_async(lv)
+
+    assert %{status: :approved} = Cinder.Repo.reload(req)
+
+    assert [%{media_kind: :ebook, status: :monitored, profile_id: profile_id}] =
+             Cinder.Books.list_targets(work)
+
+    assert profile_id == profile.id
+  end
+
   test "bulk approval uses each row's confirmed profile", %{conn: conn} do
     user = user_fixture()
 

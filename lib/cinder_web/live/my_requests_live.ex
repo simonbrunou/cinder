@@ -156,6 +156,7 @@ defmodule CinderWeb.MyRequestsLive do
       target_type: r.target_type,
       target_id: r.target_id,
       season_number: r.season_number,
+      media_kind: r.media_kind,
       title: r.title,
       year: r.year,
       poster_path: r.poster_path,
@@ -224,6 +225,10 @@ defmodule CinderWeb.MyRequestsLive do
     end
   end
 
+  # Same collision hazard as `row_available?/3`, plus books have no media-server item until B7.
+  defp title_web_link(%{target_type: "book"}, _movie, _series_by_tmdb, _media_server_link),
+    do: nil
+
   defp title_web_link(request, movie, series_by_tmdb, media_server_link) do
     item_id =
       if request.target_type == "movie" do
@@ -256,6 +261,10 @@ defmodule CinderWeb.MyRequestsLive do
   defp season_progress(_r, _progress), do: nil
 
   # Whether the whole row's content has landed — a fully-available season, or an available movie.
+  # A book row never is: `movies_by_tmdb` is keyed by TMDB id and a book's `target_id` is a local
+  # `book_works.id`, so the catch-all below would report a colliding movie's availability.
+  defp row_available?(%{target_type: "book"}, _movie, _available_seasons), do: false
+
   defp row_available?(%{target_type: "season"} = r, _movie, available_seasons),
     do: effective_status(r, available_seasons) == :available
 
