@@ -102,6 +102,28 @@ defmodule Cinder.Books.Metadata.HardcoverTest do
     assert {:ok, [%{foreign_id: "736076"}]} = Hardcover.search("Beloved Toni Morrison")
   end
 
+  test "a search where all hits fail to fetch returns an error" do
+    Req.Test.stub(Cinder.HardcoverStub, fn conn ->
+      case conn.request_path do
+        "/search" -> Req.Test.json(conn, [%{"work_id" => 1}, %{"work_id" => 2}])
+        "/work/1" -> Plug.Conn.send_resp(conn, 500, "boom")
+        "/work/2" -> Plug.Conn.send_resp(conn, 500, "boom")
+      end
+    end)
+
+    assert {:error, :all_fetches_failed} = Hardcover.search("Beloved Toni Morrison")
+  end
+
+  test "a search with no hits returns {:ok, []}" do
+    Req.Test.stub(Cinder.HardcoverStub, fn conn ->
+      case conn.request_path do
+        "/search" -> Req.Test.json(conn, [])
+      end
+    end)
+
+    assert {:ok, []} = Hardcover.search("Nonexistent Title")
+  end
+
   test "an unconfigured proxy is not an outage: every call says so explicitly" do
     config = Application.get_env(:cinder, Hardcover)
     on_exit(fn -> Application.put_env(:cinder, Hardcover, config) end)

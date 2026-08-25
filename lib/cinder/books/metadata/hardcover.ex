@@ -25,7 +25,7 @@ defmodule Cinder.Books.Metadata.Hardcover do
   @impl true
   def search(query) when is_binary(query) do
     with {:ok, hits} <- search_hits(query) do
-      candidates =
+      work_ids =
         hits
         |> Enum.flat_map(fn
           %{"work_id" => work_id} -> work_id |> id() |> List.wrap()
@@ -33,9 +33,12 @@ defmodule Cinder.Books.Metadata.Hardcover do
         end)
         |> Enum.uniq()
         |> Enum.take(@max_search_fetches)
-        |> Enum.flat_map(&fetch_candidate/1)
 
-      {:ok, candidates}
+      case {work_ids, Enum.flat_map(work_ids, &fetch_candidate/1)} do
+        {[], _candidates} -> {:ok, []}
+        {_ids, []} -> {:error, :all_fetches_failed}
+        {_ids, candidates} -> {:ok, candidates}
+      end
     end
   end
 
