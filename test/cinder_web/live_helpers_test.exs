@@ -49,4 +49,33 @@ defmodule CinderWeb.LiveHelpersTest do
       assert relative_time(DateTime.add(@now, 90, :second), @now) == "just now"
     end
   end
+
+  describe "book_badge_state/2" do
+    # The target outranks the request: nothing reaches :available until B4 imports a file, so
+    # without this table the precedence rule ships with no coverage at all.
+    test "an existing target outranks the request that created it" do
+      assert book_badge_state(:approved, :available) == :available
+      assert book_badge_state(:pending, :available) == :available
+      assert book_badge_state(nil, :available) == :available
+      assert book_badge_state(:approved, :monitored) == :approved
+      assert book_badge_state(nil, :monitored) == :approved
+      # A second requester whose own row is still pending against a work someone else already
+      # had approved is waiting on nothing — "Pending" would send them to chase an admin.
+      assert book_badge_state(:pending, :monitored) == :approved
+    end
+
+    test "a held target falls through to the request until B4 owns the state" do
+      assert book_badge_state(:pending, :held) == :pending
+      assert book_badge_state(nil, :held) == :none
+    end
+
+    test "falls back to the request when the target says nothing yet" do
+      assert book_badge_state(:pending, nil) == :pending
+      assert book_badge_state(:pending, :unmonitored) == :pending
+      assert book_badge_state(:approved, nil) == :approved
+      assert book_badge_state(:denied, nil) == :denied
+      assert book_badge_state(nil, nil) == :none
+      assert book_badge_state(nil, :unmonitored) == :none
+    end
+  end
 end

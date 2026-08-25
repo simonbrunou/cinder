@@ -43,6 +43,9 @@ defmodule CinderWeb.DiscoverLiveTest do
 
     stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _ -> {:ok, []} end)
 
+    stub(Cinder.Books.PrimaryMetadataMock, :search, fn _ -> {:ok, []} end)
+    stub(Cinder.Books.SecondaryMetadataMock, :search, fn _ -> {:ok, []} end)
+
     stub(Cinder.Catalog.TMDBMock, :get_series, fn id ->
       {:ok,
        %{
@@ -299,7 +302,7 @@ defmodule CinderWeb.DiscoverLiveTest do
 
   test "first load shows an accessible search field", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/")
-    assert has_element?(lv, "label[for='query']", "Search movies and TV")
+    assert has_element?(lv, "label[for='query']", "Search movies, TV, and books")
     assert has_element?(lv, "input#query")
   end
 

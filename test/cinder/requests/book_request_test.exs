@@ -4,7 +4,7 @@ defmodule Cinder.Requests.BookRequestTest do
   import Cinder.AccountsFixtures
 
   alias Cinder.Books
-  alias Cinder.Books.BookTarget
+  alias Cinder.Books.{BookTarget, Edition, Identifier, Work}
   alias Cinder.Catalog
   alias Cinder.LibraryKind
   alias Cinder.Requests
@@ -394,6 +394,72 @@ defmodule Cinder.Requests.BookRequestTest do
     end
   end
 
+  describe "the resolution entry point gates the catalog write" do
+    test "an over-quota request imports nothing", %{work: existing} do
+      admin = admin_fixture()
+      user = user_fixture()
+      {:ok, user} = Cinder.Accounts.update_user_quota(admin, user, 1)
+
+      assert {:ok, %{status: :pending}} = Requests.create_request(user, attrs(existing, :ebook))
+
+      before = {Repo.aggregate(Work, :count), Repo.aggregate(Edition, :count)}
+
+      assert {:error, :quota_exceeded} =
+               Requests.create_request(user, %{
+                 target_type: "book",
+                 resolution: resolution("OL-NEW"),
+                 media_kind: :ebook
+               })
+
+      # The refused press must leave no work and no editions behind. Importing on the caller's
+      # side instead would let an over-quota user grow the catalog on every rejected attempt.
+      assert {Repo.aggregate(Work, :count), Repo.aggregate(Edition, :count)} == before
+      refute Repo.get_by(Identifier, provider: "openlibrary", foreign_id: "OL-NEW")
+    end
+
+    test "an accepted request imports the work and points the request at it" do
+      user = user_fixture()
+
+      assert {:ok, request} =
+               Requests.create_request(user, %{
+                 target_type: "book",
+                 resolution: resolution("OL-FRESH"),
+                 media_kind: :ebook
+               })
+
+      assert %Identifier{work_id: work_id} =
+               Repo.get_by(Identifier, provider: "openlibrary", foreign_id: "OL-FRESH")
+
+      assert request.target_id == work_id
+      assert request.title == "Beloved"
+      assert request.year == 1987
+      assert Repo.aggregate(BookTarget, :count) == 0
+    end
+
+    test "re-requesting a resolved work updates in place rather than duplicating" do
+      one = user_fixture()
+      two = user_fixture()
+
+      assert {:ok, _} =
+               Requests.create_request(one, %{
+                 target_type: "book",
+                 resolution: resolution("OL-SHARED"),
+                 media_kind: :ebook
+               })
+
+      count = Repo.aggregate(Work, :count)
+
+      assert {:ok, _} =
+               Requests.create_request(two, %{
+                 target_type: "book",
+                 resolution: resolution("OL-SHARED"),
+                 media_kind: :ebook
+               })
+
+      assert Repo.aggregate(Work, :count) == count
+    end
+  end
+
   defp attrs(work, media_kind),
     do: %{target_type: "book", target_id: work.id, media_kind: media_kind}
 
@@ -408,5 +474,35 @@ defmodule Cinder.Requests.BookRequestTest do
       })
 
     work
+  end
+
+  defp resolution(foreign_id) do
+    %{
+      provider: :openlibrary,
+      work: %{
+        provider: :openlibrary,
+        foreign_id: foreign_id,
+        title: "Beloved",
+        first_published_on: ~D[1987-09-16],
+        overview: "A ghost story.",
+        contributors: [%{foreign_id: "OL30084A", name: "Toni Morrison", role: "author"}],
+        contributors_incomplete: false,
+        editions: [
+          %{
+            foreign_id: foreign_id <> "-M",
+            media_kind: :ebook,
+            title: "Beloved",
+            language: "eng",
+            format: nil,
+            publisher: nil,
+            release_date: nil,
+            abridged: nil,
+            isbn13: nil,
+            asin: nil
+          }
+        ],
+        series: []
+      }
+    }
   end
 end
