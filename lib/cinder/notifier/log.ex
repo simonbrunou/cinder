@@ -3,19 +3,20 @@ defmodule Cinder.Notifier.Log do
   @behaviour Cinder.Notifier
 
   alias Cinder.Catalog.Episode
+  alias Cinder.LibraryKind
   require Logger
 
   @impl true
   def notify({:request_approved, request}),
-    do: log("request approved: #{request.title} (user ##{request.user_id})")
+    do: log("request approved: #{subject(request)} (user ##{request.user_id})")
 
   def notify({:request_created, request}),
-    do: log("request pending approval: #{request.title} (user ##{request.user_id})")
+    do: log("request pending approval: #{subject(request)} (user ##{request.user_id})")
 
   # Ids + title only (title is TMDB metadata, not PII). The admin's free-text denial reason is
   # deliberately NOT logged — it can carry anything an admin typed.
   def notify({:request_denied, request, _reason}),
-    do: log("request denied: #{request.title} (user ##{request.user_id})")
+    do: log("request denied: #{subject(request)} (user ##{request.user_id})")
 
   def notify({:user_registered, %{id: id}}) when is_integer(id),
     do: log("user_registered user ##{id}")
@@ -74,6 +75,17 @@ defmodule Cinder.Notifier.Log do
   end
 
   defp episodes_summary(episodes), do: "#{length(episodes)} episode(s)"
+
+  # A request's own :title column holds only the work/series name, so two rows that differ only
+  # in season or book format would log identically.
+  defp subject(%{target_type: "book", media_kind: kind} = request) when not is_nil(kind),
+    do: "#{request.title} (#{LibraryKind.format_label(kind)})"
+
+  defp subject(%{target_type: "season", season_number: number} = request)
+       when not is_nil(number),
+       do: "#{request.title} (season #{number})"
+
+  defp subject(request), do: request.title
 
   defp log(msg), do: Logger.info("[notifier] " <> msg)
 end

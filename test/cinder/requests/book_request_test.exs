@@ -6,6 +6,7 @@ defmodule Cinder.Requests.BookRequestTest do
   alias Cinder.Books
   alias Cinder.Books.BookTarget
   alias Cinder.Catalog
+  alias Cinder.LibraryKind
   alias Cinder.Requests
   alias Cinder.Requests.Request
 
@@ -289,6 +290,28 @@ defmodule Cinder.Requests.BookRequestTest do
       assert ebook_title =~ work.title
       assert audiobook_title =~ work.title
       refute ebook_title == audiobook_title
+    end
+
+    # The class fence, not one instance of it. `format_label/1` is the single source of the
+    # user-visible spelling for the Discord and log transports, and `request_title/2` is the
+    # single source for every UI surface. Both enumerate the book kinds literally, so a third
+    # kind added to `LibraryKind.books/0` would raise in one and render bare in the other. This
+    # fails at test time instead.
+    test "every book kind has a format label and a distinct request title", %{work: work} do
+      for kind <- LibraryKind.books() do
+        assert is_binary(LibraryKind.format_label(kind))
+
+        request = %Request{
+          target_type: "book",
+          target_id: work.id,
+          media_kind: kind,
+          title: work.title,
+          year: 1999
+        }
+
+        assert CinderWeb.LiveHelpers.request_title(request, "en") != work.title,
+               "LiveHelpers.request_title/2 renders #{kind} bare"
+      end
     end
 
     test "the delete audit records which format was removed", %{work: work} do

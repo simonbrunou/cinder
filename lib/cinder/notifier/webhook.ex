@@ -27,7 +27,18 @@ defmodule Cinder.Notifier.Webhook do
   # The payload allowlist. Anything not named here stays out of the body, which keeps requester
   # emails and user free-text (an issue report's `detail`) off a third-party endpoint the same
   # way the Discord embeds do (#184).
-  @subject_keys [:id, :title, :year, :season_number, :episode_number, :user_id, :category]
+  # `media_kind` is the books axis's `season_number`: the field that distinguishes two otherwise
+  # identical requests for one work, and metadata rather than PII.
+  @subject_keys [
+    :id,
+    :title,
+    :year,
+    :season_number,
+    :episode_number,
+    :media_kind,
+    :user_id,
+    :category
+  ]
 
   @impl true
   def notify(event) do

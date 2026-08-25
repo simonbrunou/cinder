@@ -57,6 +57,19 @@ defmodule Cinder.LibraryKind do
   @spec label(atom()) :: String.t()
   def label(kind), do: fetch!(kind).label
 
+  @doc """
+  The singular, human-facing name for one book asset — what a request row or a notification
+  calls a single copy, as opposed to `label/1`'s plural collection name ("Ebooks").
+
+  Book kinds only: a video kind has no singular format word, and no caller wants one. Defined
+  here rather than in each notifier so the user-visible spelling is not derived from the enum
+  atom's own name. Adding a book kind without a clause raises, and
+  `Cinder.Requests.BookRequestTest` fences that across every kind in `books/0`.
+  """
+  @spec format_label(atom()) :: String.t()
+  def format_label(:ebook), do: "eBook"
+  def format_label(:audiobook), do: "Audiobook"
+
   @doc "The filesystem-root role for `kind`."
   @spec root_role(atom()) :: atom()
   def root_role(kind), do: fetch!(kind).root_role
