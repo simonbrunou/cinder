@@ -138,7 +138,7 @@ defmodule CinderWeb.RequestHelpers do
   end
 
   @doc """
-  The user's request status per target (latest wins) plus the global movie pipeline
+  The user's request status per movie (latest wins) plus the global movie pipeline
   status per tmdb_id; together they drive the per-title movie badge.
   """
   def assign_request_state(socket) do
