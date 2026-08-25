@@ -28,8 +28,13 @@ defmodule Cinder.Books.BookTarget do
     |> unique_constraint([:work_id, :media_kind])
   end
 
+  @doc """
+  The guarded-write changeset. Carries `:profile_id` alongside the status so an approval can
+  attach the profile and arm the target in one write — two writes would mean two broadcasts and
+  a window where a target is monitored with no profile to score against.
+  """
   def transition_changeset(target, attrs) do
-    changeset = cast(target, attrs, [:status, :hold_reason])
+    changeset = cast(target, attrs, [:status, :hold_reason, :profile_id])
 
     changeset =
       case {target.status, get_change(changeset, :status),

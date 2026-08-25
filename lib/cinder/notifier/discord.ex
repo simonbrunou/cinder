@@ -14,6 +14,7 @@ defmodule Cinder.Notifier.Discord do
   alias Cinder.Accounts.User
   alias Cinder.Catalog.Episode
   alias Cinder.HTTPPolicy
+  alias Cinder.LibraryKind
   alias Cinder.Util
   require Logger
 
@@ -203,6 +204,10 @@ defmodule Cinder.Notifier.Discord do
   defp request_line(%{target_type: "season", season_number: number} = request)
        when not is_nil(number),
        do: "#{title_year(request)} — Season #{number}"
+
+  # Same reason as the season clause: one work can carry both book formats.
+  defp request_line(%{target_type: "book", media_kind: kind} = request) when not is_nil(kind),
+    do: "#{title_year(request)} — #{LibraryKind.format_label(kind)}"
 
   defp request_line(request), do: title_year(request)
 

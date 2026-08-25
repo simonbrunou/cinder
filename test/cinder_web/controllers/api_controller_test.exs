@@ -168,6 +168,148 @@ defmodule CinderWeb.ApiControllerTest do
     end
   end
 
+  describe "POST /api/v1/requests for a book" do
+    setup do
+      {:ok, profile} =
+        Catalog.create_profile(%{name: "Ebooks", kind: :ebook, handling: :standard})
+
+      id = Integer.to_string(System.unique_integer([:positive]))
+
+      {:ok, work} =
+        Cinder.Books.upsert_work(%{
+          title: "Work #{id}",
+          identifier: %{provider: "openlibrary", kind: "work", foreign_id: id}
+        })
+
+      %{work: work, ebook_profile: profile}
+    end
+
+    test "creates a pending book request and no target", %{
+      conn: conn,
+      key: key,
+      work: work
+    } do
+      _admin = admin_fixture()
+      requester = user_fixture()
+
+      body =
+        conn
+        |> post_json(key, ~p"/api/v1/requests", %{
+          requester_id: requester.id,
+          target_type: "book",
+          target_id: work.id,
+          media_kind: "ebook"
+        })
+        |> json_response(201)
+
+      assert %{"status" => "pending", "target_type" => "book", "media_kind" => "ebook"} = body
+      assert body["title"] == work.title
+      assert Repo.aggregate(Cinder.Books.BookTarget, :count) == 0
+    end
+
+    test "an admin request auto-approves into a monitored target", %{
+      conn: conn,
+      key: key,
+      work: work,
+      ebook_profile: profile
+    } do
+      _admin = admin_fixture()
+
+      body =
+        conn
+        |> post_json(key, ~p"/api/v1/requests", %{
+          target_type: "book",
+          target_id: work.id,
+          media_kind: "ebook",
+          profile_id: profile.id
+        })
+        |> json_response(201)
+
+      assert body["status"] == "approved"
+      assert body["profile"]["kind"] == "ebook"
+
+      assert [%{status: :monitored, media_kind: :ebook}] = Cinder.Books.list_targets(work)
+    end
+
+    test "a held target is a conflict, not a retryable 422", %{
+      conn: conn,
+      key: key,
+      work: work,
+      ebook_profile: profile
+    } do
+      _admin = admin_fixture()
+      {:ok, target} = Cinder.Books.ensure_target(work, :ebook)
+
+      {:ok, _} =
+        Cinder.Books.transition_target(target, %{status: :held, hold_reason: "identity conflict"},
+          expect: :unmonitored
+        )
+
+      # 422 would tell an automation its payload was wrong and invite a retry loop; the payload
+      # is fine and will be accepted once an operator clears the hold.
+      body =
+        conn
+        |> post_json(key, ~p"/api/v1/requests", %{
+          target_type: "book",
+          target_id: work.id,
+          media_kind: "ebook",
+          profile_id: profile.id
+        })
+        |> json_response(409)
+
+      assert body["error"] == "target_held"
+      assert Repo.aggregate(Request, :count) == 0
+    end
+
+    test "a book request without a media kind is rejected", %{conn: conn, key: key, work: work} do
+      _admin = admin_fixture()
+
+      conn
+      |> post_json(key, ~p"/api/v1/requests", %{target_type: "book", target_id: work.id})
+      |> json_response(422)
+    end
+
+    test "an unknown media kind is rejected", %{conn: conn, key: key, work: work} do
+      _admin = admin_fixture()
+
+      conn
+      |> post_json(key, ~p"/api/v1/requests", %{
+        target_type: "book",
+        target_id: work.id,
+        media_kind: "comics"
+      })
+      |> json_response(422)
+    end
+
+    test "a TV profile is rejected for a book request", %{conn: conn, key: key, work: work} do
+      _admin = admin_fixture()
+      tv = Enum.find(Catalog.list_profiles(:tv), &(&1.handling == :standard))
+
+      conn
+      |> post_json(key, ~p"/api/v1/requests", %{
+        target_type: "book",
+        target_id: work.id,
+        media_kind: "ebook",
+        profile_id: tv.id
+      })
+      |> json_response(422)
+
+      assert Repo.aggregate(Request, :count) == 0
+    end
+
+    test "a movie request carrying a media kind is rejected", %{conn: conn, key: key} do
+      _admin = admin_fixture()
+
+      conn
+      |> post_json(key, ~p"/api/v1/requests", %{
+        target_type: "movie",
+        target_id: 603,
+        media_kind: "ebook"
+      })
+      |> json_response(422)
+    end
+  end
+
   describe "POST /api/v1/requests" do
     test "creates for an active requester through the approval gate", %{conn: conn, key: key} do
       _admin = admin_fixture()

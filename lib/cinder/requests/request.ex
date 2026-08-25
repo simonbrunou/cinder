@@ -4,17 +4,22 @@ defmodule Cinder.Requests.Request do
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog.Profile
+  alias Cinder.LibraryKind
 
   @statuses [:pending, :approved, :denied]
   # The polymorphic request target. Movies are the only writer today; series/episode are
   # reserved for the TV requester flow (M5+). An allowlist keeps a typo'd discriminator out of
   # the DB before a second writer (or its dispatch) exists to trip over it.
-  @target_types ["movie", "series", "season", "episode"]
+  @target_types ["movie", "series", "season", "episode", "book"]
+  @book_media_kinds LibraryKind.books()
 
   schema "requests" do
     field :target_type, :string
     field :target_id, :integer
     field :season_number, :integer
+    # The books contract monitors at (work, media_kind), so a book request must name which of
+    # the two kinds it wants. Exactly the "book" target type carries one.
+    field :media_kind, Ecto.Enum, values: @book_media_kinds
     field :title, :string
     field :localizations, :map, default: %{}
     field :year, :integer
@@ -37,6 +42,7 @@ defmodule Cinder.Requests.Request do
       :target_type,
       :target_id,
       :season_number,
+      :media_kind,
       :title,
       :localizations,
       :year,
@@ -50,6 +56,7 @@ defmodule Cinder.Requests.Request do
     ])
     |> validate_required([:user_id, :target_type, :target_id, :status])
     |> validate_inclusion(:target_type, @target_types)
+    |> validate_media_kind()
     |> validate_inclusion(:preferred_language, Language.preferences())
     |> check_constraint(:proposed_profile_id, name: :requests_profile_integrity)
     # The constraint name must match the SQLite index name exactly as reported by exqlite
@@ -59,6 +66,17 @@ defmodule Cinder.Requests.Request do
     |> unique_constraint([:user_id, :target_type, :target_id],
       name: :requests_pending_unique
     )
+  end
+
+  # Symmetric, and changeset-only: `target_type`'s own allowlist is too, and adding a table
+  # CHECK to `requests` would mean a full SQLite rebuild for a rule no other writer can break.
+  defp validate_media_kind(changeset) do
+    case {get_field(changeset, :target_type), get_field(changeset, :media_kind)} do
+      {"book", nil} -> add_error(changeset, :media_kind, "can't be blank for a book request")
+      {"book", _kind} -> changeset
+      {_type, nil} -> changeset
+      {_type, _kind} -> add_error(changeset, :media_kind, "is only valid for a book request")
+    end
   end
 
   def profile_changeset(request, attrs) do

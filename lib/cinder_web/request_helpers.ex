@@ -16,13 +16,19 @@ defmodule CinderWeb.RequestHelpers do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Catalog
+  alias Cinder.LibraryKind
   alias Cinder.Requests
+
+  # Every managed media kind, not just the video pair: `profile_kind/1` resolves a book request to
+  # `:ebook`/`:audiobook`, and a narrower guard here would silently drop the admin's pick and make
+  # a pending book request unapprovable from `/requests`.
+  @kinds LibraryKind.all()
 
   def normalize_profile(nil, _kind), do: {:ok, nil}
   def normalize_profile("auto", _kind), do: {:ok, nil}
 
   def normalize_profile(legacy, kind)
-      when legacy in ["standard", "anime"] and kind in [:movies, :tv] do
+      when legacy in ["standard", "anime"] and kind in @kinds do
     handling = String.to_existing_atom(legacy)
 
     case default_for_handling(Catalog.list_profiles(kind), handling) do
@@ -31,7 +37,7 @@ defmodule CinderWeb.RequestHelpers do
     end
   end
 
-  def normalize_profile(raw, kind) when is_binary(raw) and kind in [:movies, :tv] do
+  def normalize_profile(raw, kind) when is_binary(raw) and kind in @kinds do
     with {id, ""} <- Integer.parse(raw),
          %{kind: ^kind} = profile <- Catalog.get_profile(id) do
       {:ok, profile}
@@ -43,6 +49,7 @@ defmodule CinderWeb.RequestHelpers do
   def normalize_profile(_raw, _kind), do: {:error, :invalid_media_profile}
 
   def profile_kind(%{target_type: "movie"}), do: :movies
+  def profile_kind(%{target_type: "book"} = request), do: Map.get(request, :media_kind)
   def profile_kind(_request), do: :tv
 
   def profiles_for(profiles, request) do
@@ -131,13 +138,20 @@ defmodule CinderWeb.RequestHelpers do
   end
 
   @doc """
-  The user's request status per target (latest wins) plus the global movie pipeline
+  The user's request status per movie (latest wins) plus the global movie pipeline
   status per tmdb_id; together they drive the per-title movie badge.
   """
   def assign_request_state(socket) do
     user = socket.assigns.current_scope.user
     requests = Requests.list_for_user(user)
-    request_status = latest_status_by(requests, & &1.target_id)
+
+    # Movie requests only. `request_status` keys the MOVIE badge by tmdb_id, and `target_id` is
+    # per-target-type: a season request carries a series tmdb_id (see `series_request_status`
+    # below) and a book request carries a local `book_works.id`. Keying across all of them lets
+    # an unrelated request badge — and suppress the Add form on — a movie card that happens to
+    # share the number.
+    movie_requests = Enum.filter(requests, &(&1.target_type == "movie"))
+    request_status = latest_status_by(movie_requests, & &1.target_id)
 
     # TV cards mirror the movie badge, but a series' state is per-season: key the newest season
     # request by the series tmdb_id (a season request's target_id), and treat a series as

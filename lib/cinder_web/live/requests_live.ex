@@ -220,6 +220,17 @@ defmodule CinderWeb.RequestsLive do
   def handle_async({:approve, _id}, {:ok, {:error, :not_pending}}, socket),
     do: {:noreply, put_flash(socket, :error, gettext("That request was already decided."))}
 
+  # A hold is an operator-visible conflict only an operator clears, so "try again" would be a
+  # lie — retrying cannot succeed until someone acts on the hold.
+  def handle_async({:approve, _id}, {:ok, {:error, :target_held}}, socket),
+    do:
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         gettext("That title is on hold. Clear the hold before approving it.")
+       )}
+
   def handle_async({:approve, _id}, _error_or_exit, socket),
     do:
       {:noreply,
@@ -476,7 +487,7 @@ defmodule CinderWeb.RequestsLive do
           >
             <:caveat>
               {gettext(
-                "Deleting a request does not remove any movie or series it already created; that catalog row stays. If this request was denied or approved, the same title can be requested again afterwards."
+                "Deleting a request does not remove anything it already created: a movie, a series, or a monitored book target all stay. If this request was denied or approved, the same title can be requested again afterwards."
               )}
             </:caveat>
           </.confirm_action>

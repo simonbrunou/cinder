@@ -122,6 +122,15 @@ defmodule CinderWeb.LiveHelpers do
         number: r.season_number
       )
 
+  # Same argument as the season clause: a book request's own :title column holds only the work
+  # title, and one work can carry an independent eBook and audiobook request, so rendering it
+  # bare makes the two rows identical in the queue an admin approves from.
+  def request_title(%{target_type: "book", media_kind: :ebook} = r, locale),
+    do: gettext("%{title} (eBook)", title: Catalog.localized_title(r, locale))
+
+  def request_title(%{target_type: "book", media_kind: :audiobook} = r, locale),
+    do: gettext("%{title} (audiobook)", title: Catalog.localized_title(r, locale))
+
   def request_title(r, locale), do: Catalog.localized_title(r, locale)
 
   @doc """

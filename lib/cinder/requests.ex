@@ -4,8 +4,11 @@ defmodule Cinder.Requests do
   require Logger
   alias Cinder.Accounts.User
   alias Cinder.Audit
+  alias Cinder.Books
+  alias Cinder.Books.Work
   alias Cinder.Catalog
   alias Cinder.Catalog.Profile
+  alias Cinder.LibraryKind
   alias Cinder.Notifier
   alias Cinder.Repo
   alias Cinder.Requests.Request
@@ -24,7 +27,7 @@ defmodule Cinder.Requests do
   end
 
   def assign_profile(%Request{} = request, %Profile{id: id}) do
-    expected_kind = if request.target_type == "movie", do: :movies, else: :tv
+    expected_kind = request_kind(request)
 
     case Catalog.get_profile(id) do
       %Profile{kind: ^expected_kind} = profile ->
@@ -103,6 +106,7 @@ defmodule Cinder.Requests do
       target_type: request.target_type,
       target_id: request.target_id,
       season_number: request.season_number,
+      media_kind: request.media_kind,
       title: request.title,
       year: request.year,
       profile: profile_identity(request.proposed_profile),
@@ -137,6 +141,7 @@ defmodule Cinder.Requests do
         target_type: r.target_type,
         target_id: r.target_id,
         season_number: r.season_number,
+        media_kind: r.media_kind,
         title: r.title,
         year: r.year,
         denial_reason: r.denial_reason,
@@ -201,11 +206,30 @@ defmodule Cinder.Requests do
     if current.role != :admin and over_quota?(current) do
       {:error, :quota_exceeded}
     else
-      create_request_for(
-        current,
-        snapshot_request(attrs),
-        current.role == :admin or Settings.auto_approve_all?()
-      )
+      with {:ok, attrs} <- snapshot_request(attrs) do
+        create_request_for(
+          current,
+          attrs,
+          current.role == :admin or Settings.auto_approve_all?()
+        )
+      end
+    end
+  end
+
+  # A book's title comes from Cinder's own catalog, not a provider: `target_id` is a
+  # `book_works.id` that B2's identity resolution already wrote. A missing work fails closed
+  # rather than inserting a title-less request the approval queue could not render.
+  defp snapshot_request(%{target_type: "book", target_id: work_id} = attrs) do
+    case Repo.get(Work, work_id) do
+      %Work{} = work ->
+        {:ok,
+         attrs
+         |> Map.put(:title, work.title)
+         |> Map.put(:year, year_of(work.first_published_on))
+         |> Map.put(:localizations, %{})}
+
+      nil ->
+        {:error, :unknown_work}
     end
   end
 
@@ -219,14 +243,18 @@ defmodule Cinder.Requests do
 
     case result do
       {:ok, info} ->
-        attrs
-        |> Map.put(:title, info.title)
-        |> Map.put(:localizations, Map.get(info, :localizations, %{}))
+        {:ok,
+         attrs
+         |> Map.put(:title, info.title)
+         |> Map.put(:localizations, Map.get(info, :localizations, %{}))}
 
       {:error, _} ->
-        Map.put(attrs, :localizations, %{})
+        {:ok, Map.put(attrs, :localizations, %{})}
     end
   end
+
+  defp year_of(%Date{year: year}), do: year
+  defp year_of(nil), do: nil
 
   defp create_request_for(user, attrs, true) do
     approver_id = if user.role == :admin, do: user.id, else: nil
@@ -319,12 +347,29 @@ defmodule Cinder.Requests do
   end
 
   def approve_request(
-        %Request{status: :pending, target_type: target_type} = request,
+        %Request{status: :pending, target_type: "book", media_kind: media_kind} = request,
+        %User{} = admin,
+        %Profile{kind: media_kind} = profile
+      )
+      when not is_nil(media_kind) do
+    with {:ok, profile} <- current_profile(profile, media_kind),
+         %Work{} = work <- Repo.get(Work, request.target_id) do
+      request
+      |> approve_book(admin, work, profile)
+      |> Util.tap_ok(&announce_approved/1)
+    else
+      nil -> {:error, :unknown_work}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def approve_request(
+        %Request{status: :pending} = request,
         %User{} = admin,
         profile
       )
       when profile in [:standard, :anime] do
-    with {:ok, named} <- profile_for_handling(target_type, profile) do
+    with {:ok, named} <- profile_for_handling(request, profile) do
       approve_request(request, admin, named)
     end
   end
@@ -333,6 +378,28 @@ defmodule Cinder.Requests do
     do: {:error, :invalid_media_profile}
 
   def approve_request(%Request{}, _admin, _profile), do: {:error, :not_pending}
+
+  # No provider round-trip and no catalog row to create: the work already exists, so flipping the
+  # request and arming its target is one transaction. The target broadcast is post-commit.
+  defp approve_book(request, admin, work, profile) do
+    Repo.transaction(fn ->
+      with {:ok, approved} <- flip_pending(request, approval_attrs(admin, profile)),
+           {:ok, target} <-
+             Books.monitor_target(work, request.media_kind, profile, publish: false) do
+        {approved, target}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, {approved, target}} ->
+        Books.broadcast({:book_target_updated, target})
+        {:ok, approved}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
 
   defp approve_prepared_movie(request, admin, prepared, profile) do
     Repo.transaction(fn ->
@@ -460,6 +527,7 @@ defmodule Cinder.Requests do
             status: fresh.status,
             target_type: fresh.target_type,
             target_id: fresh.target_id,
+            media_kind: fresh.media_kind,
             title: fresh.title
           })
 
@@ -528,6 +596,19 @@ defmodule Cinder.Requests do
     count
   end
 
+  defp create_approved(user, %{target_type: "book"} = attrs, approver_id) do
+    # Unlike a movie, a book target is useless without a profile — B4 has nothing to score
+    # against — so an auto-approval with no proposed profile falls back to the lowest-id
+    # `:standard` profile of that media kind, and fails closed when none is configured.
+    with {:ok, profile} <- approved_book_profile(attrs),
+         %Work{} = work <- Repo.get(Work, attrs.target_id) do
+      insert_approved_book(user, attrs, approver_id, work, profile)
+    else
+      nil -> {:error, :unknown_work}
+      {:error, _reason} = error -> error
+    end
+  end
+
   defp create_approved(user, %{target_type: "season"} = attrs, approver_id) do
     preferred = attrs[:preferred_language] || "original"
     named = proposed_profile(attrs)
@@ -552,6 +633,45 @@ defmodule Cinder.Requests do
            ) do
       insert_approved_movie(user, attrs, approver_id, prepared, named)
       |> Util.tap_ok(&announce_approved/1)
+    end
+  end
+
+  defp approved_book_profile(attrs) do
+    case proposed_profile(attrs) do
+      %Profile{} = profile -> {:ok, profile}
+      nil -> profile_for_handling(attrs, :standard)
+    end
+  end
+
+  defp insert_approved_book(user, attrs, approver_id, work, profile) do
+    Repo.transaction(fn ->
+      with {:ok, request} <-
+             %Request{}
+             |> Request.create_changeset(
+               Map.merge(attrs, %{
+                 user_id: user.id,
+                 status: :approved,
+                 approved_by_id: approver_id,
+                 proposed_profile_id: profile.id,
+                 proposed_media_profile: profile.handling
+               })
+             )
+             |> Repo.insert(),
+           {:ok, target} <-
+             Books.monitor_target(work, attrs.media_kind, profile, publish: false) do
+        {request, target}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, {approved, target}} ->
+        Books.broadcast({:book_target_updated, target})
+        announce_approved(approved)
+        {:ok, approved}
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
@@ -727,14 +847,14 @@ defmodule Cinder.Requests do
     )
   end
 
-  defp normalize_request_profile(%{target_type: target_type} = attrs) do
+  defp normalize_request_profile(%{target_type: _type} = attrs) do
     profile_id = Map.get(attrs, :proposed_profile_id)
     handling = Map.get(attrs, :proposed_media_profile)
 
     cond do
       is_integer(profile_id) and profile_id > 0 ->
         with %Profile{} = profile <- Catalog.get_profile(profile_id),
-             true <- profile.kind == request_kind(target_type),
+             true <- profile.kind == request_kind(attrs),
              true <- handling in [nil, profile.handling] do
           {:ok,
            attrs
@@ -745,7 +865,7 @@ defmodule Cinder.Requests do
         end
 
       is_nil(profile_id) and handling in [:standard, :anime] ->
-        with {:ok, profile} <- profile_for_handling(target_type, handling) do
+        with {:ok, profile} <- profile_for_handling(attrs, handling) do
           {:ok, Map.put(attrs, :proposed_profile_id, profile.id)}
         end
 
@@ -759,8 +879,8 @@ defmodule Cinder.Requests do
 
   defp normalize_request_profile(_attrs), do: {:error, :invalid_media_profile}
 
-  defp profile_for_handling(target_type, handling) do
-    case request_kind(target_type) do
+  defp profile_for_handling(target, handling) do
+    case request_kind(target) do
       nil ->
         {:error, :invalid_media_profile}
 
@@ -778,9 +898,19 @@ defmodule Cinder.Requests do
     |> Enum.min_by(& &1.id, fn -> nil end)
   end
 
-  defp request_kind("movie"), do: :movies
-  defp request_kind(type) when type in ["series", "season", "episode"], do: :tv
-  defp request_kind(_type), do: nil
+  # Takes the request/attrs map, not the target type alone: `"book"` names no profile kind by
+  # itself — the (work, media_kind) axis does.
+  defp request_kind(%{target_type: "movie"}), do: :movies
+  defp request_kind(%{target_type: type}) when type in ["series", "season", "episode"], do: :tv
+  # Validated, not merely fetched: this feeds `Catalog.list_profiles/1`, whose head guards on
+  # the kind atoms, so a string from a form or a hand-built attrs map would raise instead of
+  # yielding the `{:error, :invalid_media_profile}` every other bad-profile input gets.
+  defp request_kind(%{target_type: "book"} = target) do
+    kind = Map.get(target, :media_kind)
+    if kind in LibraryKind.books(), do: kind
+  end
+
+  defp request_kind(_target), do: nil
 
   defp current_profile(%Profile{id: id}, expected_kind) do
     case Catalog.get_profile(id) do

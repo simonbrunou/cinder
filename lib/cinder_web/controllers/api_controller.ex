@@ -25,6 +25,7 @@ defmodule CinderWeb.ApiController do
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Issues
+  alias Cinder.LibraryKind
   alias Cinder.Requests
 
   @default_limit 50
@@ -35,7 +36,7 @@ defmodule CinderWeb.ApiController do
   # stack trace in the log.
   @max_offset 1_000_000
   @max_id 9_223_372_036_854_775_807
-  @create_keys ~w(media_profile preferred_language profile_id requester_id season_number target_id target_type)
+  @create_keys ~w(media_kind media_profile preferred_language profile_id requester_id season_number target_id target_type)
 
   def status(conn, _params) do
     counts = Catalog.movie_status_counts()
@@ -119,15 +120,18 @@ defmodule CinderWeb.ApiController do
          {:ok, target_type} <- target_type(params["target_type"]),
          {:ok, target_id} <- body_id(params["target_id"]),
          {:ok, season_number} <- season_number(target_type, params["season_number"]),
+         {:ok, media_kind} <- media_kind(target_type, params["media_kind"]),
          {:ok, requester_id} <- optional_id(params["requester_id"]),
          {:ok, preferred_language} <- preferred_language(params["preferred_language"]),
-         {:ok, profile_attrs} <- profile_attrs(params, target_type) do
+         {:ok, profile_attrs} <-
+           profile_attrs(params, %{target_type: target_type, media_kind: media_kind}) do
       attrs =
         Map.merge(
           %{
             target_type: target_type,
             target_id: target_id,
             season_number: season_number,
+            media_kind: media_kind,
             preferred_language: preferred_language
           },
           profile_attrs
@@ -146,7 +150,7 @@ defmodule CinderWeb.ApiController do
       else: {:error, :invalid_payload}
   end
 
-  defp target_type(type) when type in ["movie", "season"], do: {:ok, type}
+  defp target_type(type) when type in ["movie", "season", "book"], do: {:ok, type}
   defp target_type(_type), do: {:error, :invalid_payload}
 
   defp body_id(id) when is_integer(id) and id > 0 and id <= @max_id, do: {:ok, id}
@@ -164,13 +168,25 @@ defmodule CinderWeb.ApiController do
 
   defp route_id(_id), do: {:error, :invalid_id}
 
-  defp season_number("movie", nil), do: {:ok, nil}
+  defp season_number(type, nil) when type in ["movie", "book"], do: {:ok, nil}
 
   defp season_number("season", number)
        when is_integer(number) and number >= 0 and number <= 10_000,
        do: {:ok, number}
 
   defp season_number(_target_type, _number), do: {:error, :invalid_payload}
+
+  # A book request is `target_id = book_works.id` plus the media kind it wants; the two book
+  # kinds are independently monitored, so the payload has to say which one.
+  defp media_kind("book", kind) when is_binary(kind) do
+    case Enum.find(LibraryKind.books(), &(Atom.to_string(&1) == kind)) do
+      nil -> {:error, :invalid_payload}
+      media_kind -> {:ok, media_kind}
+    end
+  end
+
+  defp media_kind(type, nil) when type in ["movie", "season"], do: {:ok, nil}
+  defp media_kind(_target_type, _kind), do: {:error, :invalid_payload}
 
   defp preferred_language(nil), do: {:ok, nil}
 
@@ -187,13 +203,13 @@ defmodule CinderWeb.ApiController do
   defp proposed_profile("anime"), do: {:ok, :anime}
   defp proposed_profile(_profile), do: {:error, :invalid_payload}
 
-  defp profile_attrs(params, target_type) do
+  defp profile_attrs(params, target) do
     case {Map.fetch(params, "profile_id"), Map.fetch(params, "media_profile")} do
       {{:ok, _}, {:ok, _}} ->
         {:error, :invalid_payload}
 
       {{:ok, id}, :error} ->
-        with {:ok, profile} <- named_profile(id, target_type) do
+        with {:ok, profile} <- named_profile(id, target) do
           {:ok, %{proposed_profile_id: profile.id, proposed_media_profile: profile.handling}}
         end
 
@@ -213,7 +229,7 @@ defmodule CinderWeb.ApiController do
         {:error, :invalid_payload}
 
       {{:ok, id}, :error} ->
-        named_profile(id, request.target_type)
+        named_profile(id, request)
 
       {:error, {:ok, legacy}} ->
         proposed_profile(legacy)
@@ -221,21 +237,26 @@ defmodule CinderWeb.ApiController do
       {:error, :error} ->
         case Map.get(request, :proposed_profile_id) do
           nil -> {:ok, request.proposed_media_profile || :standard}
-          id -> named_profile(id, request.target_type)
+          id -> named_profile(id, request)
         end
     end
   end
 
-  defp named_profile(id, target_type) do
-    kind = if target_type == "movie", do: :movies, else: :tv
-
-    with {:ok, id} <- body_id(id),
+  # `target` is the request row or the create attrs — either way it carries the target type and,
+  # for a book, the media kind that names the profile kind.
+  defp named_profile(id, target) do
+    with kind when not is_nil(kind) <- profile_kind(target),
+         {:ok, id} <- body_id(id),
          %{kind: ^kind} = profile <- Catalog.get_profile(id) do
       {:ok, profile}
     else
       _ -> {:error, :invalid_media_profile}
     end
   end
+
+  defp profile_kind(%{target_type: "movie"}), do: :movies
+  defp profile_kind(%{target_type: "book"} = target), do: Map.get(target, :media_kind)
+  defp profile_kind(_target), do: :tv
 
   defp denial_reason(reason) when is_binary(reason) do
     case String.trim(reason) do
@@ -261,6 +282,10 @@ defmodule CinderWeb.ApiController do
 
   defp api_error(conn, :quota_exceeded), do: json_error(conn, :conflict, "quota_exceeded")
   defp api_error(conn, :not_pending), do: json_error(conn, :conflict, "not_pending")
+
+  # A conflict, not a bad request: the payload is fine and will be accepted once an operator
+  # clears the hold. 422 would tell an automation to fix its request and retry forever.
+  defp api_error(conn, :target_held), do: json_error(conn, :conflict, "target_held")
 
   defp api_error(conn, :admin_unavailable),
     do: json_error(conn, :service_unavailable, "admin_unavailable")

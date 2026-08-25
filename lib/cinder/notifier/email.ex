@@ -66,16 +66,29 @@ defmodule Cinder.Notifier.Email do
       title = request_title(request)
 
       {gettext("Your request for %{title} was approved", title: title),
-       gettext(
-         "Good news — your request for %{title} was approved and will start downloading soon.",
-         title: title
-       )}
+       approved_body(request, title)}
     end)
   end
 
   # %Ecto.Association.NotLoaded{} (a malformed caller) degrades to a no-op, not a raise —
   # matching Discord's own defensive fallback for the same field.
   defp notify_request_approved(_request), do: :ok
+
+  # Approving a book only starts monitoring its target — book acquisition does not exist yet
+  # (roadmap B4), so promising a download would be a lie.
+  defp approved_body(%{target_type: "book"}, title),
+    do:
+      gettext(
+        "Good news — your request for %{title} was approved. Cinder will watch for a copy.",
+        title: title
+      )
+
+  defp approved_body(_request, title),
+    do:
+      gettext(
+        "Good news — your request for %{title} was approved and will start downloading soon.",
+        title: title
+      )
 
   # The requester submitted and walked away; this is the message that tells them an admin
   # declined it — in their locale, with the admin's free-text reason when one was given.
@@ -226,6 +239,13 @@ defmodule Cinder.Notifier.Email do
   defp request_title(%{target_type: "season", season_number: number} = request)
        when not is_nil(number),
        do: gettext("%{title} Season %{season}", title: title_year(request), season: number)
+
+  # Same reason as the season clause: one work can carry both book formats.
+  defp request_title(%{target_type: "book", media_kind: :ebook} = request),
+    do: gettext("%{title} (eBook)", title: title_year(request))
+
+  defp request_title(%{target_type: "book", media_kind: :audiobook} = request),
+    do: gettext("%{title} (audiobook)", title: title_year(request))
 
   defp request_title(request), do: title_year(request)
 

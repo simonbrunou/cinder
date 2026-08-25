@@ -181,6 +181,26 @@ defmodule Cinder.Notifier.DiscordTest do
     refute embed["description"] =~ "kim@example.com"
   end
 
+  test "request_approved for a book names the format, not just the work" do
+    expect_post()
+
+    request = %{
+      title: "Dune",
+      year: 1965,
+      poster_path: nil,
+      user_id: 3,
+      user: %User{id: 3, email: "kim@example.com", plex_username: "kimwatches"},
+      target_type: "book",
+      season_number: nil,
+      media_kind: :audiobook
+    }
+
+    assert :ok = Discord.notify({:request_approved, request})
+
+    assert_receive {:posted, %{"embeds" => [embed]}}
+    assert embed["description"] == "Dune (1965) — audiobook — for kimwatches"
+  end
+
   test "request_denied posts a red embed naming the requester and reason (no email)" do
     expect_post()
 

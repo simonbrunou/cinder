@@ -232,6 +232,81 @@ defmodule CinderWeb.MyRequestsLiveTest do
     assert Enum.any?(requests, &(&1.id == req.id and &1.status == :denied))
   end
 
+  describe "a book row is not a movie row" do
+    setup do
+      id = Integer.to_string(System.unique_integer([:positive]))
+
+      {:ok, work} =
+        Cinder.Books.upsert_work(%{
+          title: "Denied Book #{id}",
+          identifier: %{provider: "openlibrary", kind: "work", foreign_id: id}
+        })
+
+      %{work: work}
+    end
+
+    test "Request again on a denied book request carries its media kind", %{
+      conn: conn,
+      work: work
+    } do
+      user = Cinder.AccountsFixtures.user_fixture()
+      admin = Cinder.AccountsFixtures.admin_fixture()
+
+      {:ok, req} =
+        Requests.create_request(user, %{
+          target_type: "book",
+          target_id: work.id,
+          media_kind: :ebook
+        })
+
+      {:ok, _} = Requests.deny_request(req, admin, "not now")
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      lv |> element("#request-again-#{req.id}") |> render_click()
+      render_async(lv)
+
+      assert Enum.any?(
+               Requests.list_for_user(user),
+               &(&1.status == :pending and &1.target_id == work.id and &1.media_kind == :ebook)
+             )
+    end
+
+    test "an available movie sharing the work's id does not make the book row available", %{
+      conn: conn,
+      work: work
+    } do
+      user = Cinder.AccountsFixtures.user_fixture()
+
+      # `movies_by_tmdb` is keyed by TMDB id; a book's target_id is a local book_works.id, so the
+      # two id spaces can collide.
+      Cinder.Repo.insert!(%Cinder.Catalog.Movie{
+        tmdb_id: work.id,
+        title: "Colliding Movie",
+        status: :available,
+        media_server_item_id: "collision"
+      })
+
+      {:ok, _} =
+        Requests.create_request(user, %{
+          target_type: "book",
+          target_id: work.id,
+          media_kind: :ebook
+        })
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      assert has_element?(lv, "#my-requests", "Denied Book")
+
+      # Availability gates "Report an issue", and Cinder.Issues has no book snapshot, so the
+      # button would raise on click.
+      req = hd(Requests.list_for_user(user))
+      refute has_element?(lv, "#report-issue-#{req.id}")
+    end
+  end
+
   test "a pending request offers no Request again action", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
 
