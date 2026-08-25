@@ -167,6 +167,30 @@ defmodule CinderWeb.DiscoverBooksTest do
              )
   end
 
+  # `cancel_async/3` neither demonitors nor drops the private entry, so a superseded task's DOWN
+  # still arrives. The branch that only cancels — the query fell back under the floor — has no
+  # follow-on `start_async` to prune it by ref, so without the dedicated reason this reports an
+  # outage the user never had.
+  test "a superseded search is swallowed, but a real crash still reports the outage" do
+    socket = %Phoenix.LiveView.Socket{
+      assigns: %{
+        __changed__: %{},
+        query: "ha",
+        book_results: [],
+        book_states: %{},
+        books_state: :idle
+      }
+    }
+
+    assert {:noreply, ^socket} =
+             DiscoverLive.handle_async(:books, {:exit, {:shutdown, :superseded}}, socket)
+
+    assert {:noreply, crashed} =
+             DiscoverLive.handle_async(:books, {:exit, {:shutdown, :boom}}, socket)
+
+    assert crashed.assigns.books_state == :error
+  end
+
   test "a two-character query does not search books", %{conn: conn} do
     parent = self()
 

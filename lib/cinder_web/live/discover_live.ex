@@ -23,6 +23,14 @@ defmodule CinderWeb.DiscoverLive do
   @picks Language.preferences()
   @book_kinds LibraryKind.books()
 
+  # `cancel_async/3` unlinks and kills, but it neither demonitors nor drops the private entry, so
+  # the task's DOWN still arrives as an `{:exit, reason}` result. A follow-on `start_async` under
+  # the same name replaces the stored ref and LiveView prunes the stale message — but the branch
+  # that only cancels (query fell below the floor) has nothing to replace it, so the DOWN lands on
+  # `handle_async/3` and would report a books outage the user never had. One attribute for both
+  # the reason and the clause that swallows it, so the two cannot drift apart.
+  @superseded {:shutdown, :superseded}
+
   @impl true
   def mount(_params, _session, socket) do
     # ponytail: subscribe-before-read closes the read/subscribe gap.
@@ -191,7 +199,7 @@ defmodule CinderWeb.DiscoverLive do
   # typing (or scripting) faster than the providers answer accumulates 15s fetches nothing will
   # ever read. The query rides in the *result* instead of the name so the stale guard survives.
   defp maybe_search_books(socket, query) do
-    socket = cancel_async(socket, :books)
+    socket = cancel_async(socket, :books, @superseded)
     trimmed = String.trim(query)
 
     if String.length(trimmed) >= 3 do
@@ -274,6 +282,8 @@ defmodule CinderWeb.DiscoverLive do
     Logger.warning("Books search failed: #{inspect(reason)}")
     {:noreply, assign(socket, book_results: [], book_states: %{}, books_state: :error)}
   end
+
+  def handle_async(:books, {:exit, @superseded}, socket), do: {:noreply, socket}
 
   def handle_async(:books, {:exit, reason}, socket) do
     Logger.warning("Books search crashed: #{inspect(reason)}")

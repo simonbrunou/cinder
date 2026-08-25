@@ -37,14 +37,23 @@ defmodule CinderWeb.BookDiscoveryLiveTest do
     # Plug percent-decodes the segment before it reaches us, and `Hardcover.get_work/1`
     # interpolates it straight into "/work/\#{foreign_id}" — a decoded "/" would climb out of
     # that path and carry the configured bearer key with it.
-    test "a foreign id that is not opaque returns 404 instead of reaching a provider", %{
-      conn: conn
-    } do
-      expect(PrimaryMetadataMock, :get_work, 0, fn _id -> {:ok, work()} end)
-
+    test "a foreign id that is not opaque returns 404", %{conn: conn} do
       for path <- ["/book/openlibrary/..%2F..%2Fadmin%2Fkeys", "/book/openlibrary/a%5Cb"] do
         assert_error_sent 404, fn -> get(conn, path) end
       end
+    end
+
+    # The 404 above is a dead mount, which never reaches `start_async` — so it would hold even
+    # with the guard removed. This is the half that actually pins it: a live mount resolves a
+    # good id and must not resolve a traversing one.
+    test "a live mount resolves an opaque id and refuses a traversing one", %{conn: conn} do
+      expect(PrimaryMetadataMock, :get_work, 1, fn "OL50548W" -> {:ok, work()} end)
+
+      {:ok, lv, _html} = live(conn, ~p"/book/openlibrary/OL50548W")
+      render_async(lv)
+      assert has_element?(lv, "#book-work")
+
+      assert_raise Ecto.NoResultsError, fn -> live(conn, "/book/openlibrary/..%2F..%2Fadmin") end
     end
 
     test "a provider failure renders an honest inline retry state", %{conn: conn} do
