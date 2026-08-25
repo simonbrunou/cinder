@@ -297,6 +297,25 @@ search, which is B3) and a provider-side ISBN fetch (an edition-level signal for
 - Concurrent approve/deny remains race-safe.
 - Request badges update live and all administrative controls remain role-gated.
 
+### Shipped as two slices
+
+B3a landed the request data model, the approval path, and `/api/v1`; B3b owns Discover, the work
+detail route, and the shared request components. See
+[`the B3a plan`](2026-08-25-books-b3a-requests-and-approval.md). One correction to this
+milestone's plan:
+
+- **The "stable book target key" is `target_type: "book"` plus `target_id: <book_works.id>` and a
+  new `media_kind` column** — not a provider-specific string in a new field. The roadmap's warning
+  was about overloading the integer TMDB field with an Open Library key; Cinder's own work id is
+  an integer, and B2 already stores the provider identity in `book_identifiers`. The genuinely new
+  axis is `media_kind`, without which `requests_pending_unique` would collide an eBook and an
+  audiobook request for one work.
+
+Two items deferred *out* of B3a for want of a caller: author aliases and local author search (they
+belong to the search surface), and operator metadata overrides — B2b moved "manual corrections
+survive refresh" here, but nothing in B3a creates a manual correction either, so the criterion
+moves again to B3b with the detail page that does.
+
 ---
 
 ## B4 — E-book search, scoring, download, validation, and publication

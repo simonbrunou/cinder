@@ -32,12 +32,12 @@ msgid "%{n}/%{m} monitored"
 msgstr ""
 
 #: lib/cinder_web/live/my_requests_live.ex:170
-#: lib/cinder_web/request_helpers.ex:93
+#: lib/cinder_web/request_helpers.ex:94
 #, elixir-autogen
 msgid "%{title} added."
 msgstr ""
 
-#: lib/cinder_web/request_helpers.ex:115
+#: lib/cinder_web/request_helpers.ex:116
 #, elixir-autogen
 msgid "%{title} is already requested."
 msgstr ""
@@ -1348,7 +1348,7 @@ msgstr ""
 #: lib/cinder_web/live/my_requests_live.ex:183
 #: lib/cinder_web/live/series_discovery_live.ex:169
 #: lib/cinder_web/live/series_discovery_live.ex:259
-#: lib/cinder_web/request_helpers.ex:108
+#: lib/cinder_web/request_helpers.ex:109
 #, elixir-autogen
 msgid "You've reached your request limit. Wait for approvals to clear."
 msgstr ""
@@ -1436,7 +1436,7 @@ msgid "%{count} selected"
 msgstr ""
 
 #: lib/cinder_web/live/my_requests_live.ex:176
-#: lib/cinder_web/request_helpers.ex:100
+#: lib/cinder_web/request_helpers.ex:101
 #, elixir-autogen
 msgid "%{title} requested. Awaiting approval."
 msgstr ""
@@ -1545,8 +1545,8 @@ msgstr ""
 #: lib/cinder_web/live/movie_discovery_live.ex:212
 #: lib/cinder_web/live/my_requests_live.ex:142
 #: lib/cinder_web/live/my_requests_live.ex:187
-#: lib/cinder_web/request_helpers.ex:120
-#: lib/cinder_web/request_helpers.ex:128
+#: lib/cinder_web/request_helpers.ex:121
+#: lib/cinder_web/request_helpers.ex:129
 #, elixir-autogen
 msgid "Couldn't request %{title}. Try again."
 msgstr ""

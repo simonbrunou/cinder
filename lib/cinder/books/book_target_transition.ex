@@ -7,12 +7,12 @@ defmodule Cinder.Books.BookTargetTransition do
   alias Cinder.Books.BookTarget
   alias Cinder.Repo
 
-  def guarded(%BookTarget{} = target, attrs, expected) do
+  def guarded(%BookTarget{} = target, attrs, expected, opts \\ []) do
     case BookTarget.transition_changeset(target, attrs) do
       %{valid?: true} = changeset ->
         target.id
         |> guarded_update(changeset.changes, expected)
-        |> publish()
+        |> publish(Keyword.get(opts, :publish, true))
 
       %{valid?: false} = changeset ->
         {:error, changeset}
@@ -36,10 +36,12 @@ defmodule Cinder.Books.BookTargetTransition do
     end)
   end
 
-  defp publish({:ok, target}) do
+  # `publish: false` is for a caller inside a transaction — a mid-transaction broadcast would
+  # announce a write a rollback can still undo. That caller broadcasts after commit.
+  defp publish({:ok, target}, true) do
     Books.broadcast({:book_target_updated, target})
     {:ok, target}
   end
 
-  defp publish({:error, reason}), do: {:error, reason}
+  defp publish(result, _publish?), do: result
 end
