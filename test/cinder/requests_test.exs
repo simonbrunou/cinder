@@ -311,13 +311,21 @@ defmodule Cinder.RequestsTest do
     assert {:error, _} = Requests.create_request(user, @attrs)
   end
 
+  test "a double-fired auto-approved request creates one approved row" do
+    admin = admin_fixture()
+
+    assert {:ok, %{status: :approved}} = Requests.create_request(admin, @attrs)
+    assert {:error, changeset} = Requests.create_request(admin, @attrs)
+    assert "has already been taken" in errors_on(changeset).user_id
+    assert [%{status: :approved}] = Requests.list_for_user(admin)
+  end
+
   test "a user can re-request the same target after it was denied" do
     user = user_fixture()
     admin = admin_fixture()
     {:ok, req} = Requests.create_request(user, @attrs)
     {:ok, _} = Requests.deny_request(req, admin, "not this time")
-    # The partial unique index only blocks duplicates WHERE status='pending',
-    # so a denied row must not prevent a fresh pending request.
+    # The partial unique index ignores denied rows, so one must not block a fresh request.
     assert {:ok, %{status: :pending}} = Requests.create_request(user, @attrs)
   end
 
@@ -685,7 +693,7 @@ defmodule Cinder.RequestsTest do
       assert audit.entity_id == req.id
     end
 
-    test "deleting a non-pending request leaves any spawned catalog row in place (orphan)" do
+    test "deleting an approved request leaves its catalog row and permits a fresh request" do
       # An admin's own request auto-approves AND creates the movie row.
       admin = admin_fixture()
       {:ok, req} = Requests.create_request(admin, @attrs)
@@ -696,6 +704,7 @@ defmodule Cinder.RequestsTest do
 
       # No FK request -> movie: the catalog row survives the request deletion.
       assert [%Movie{tmdb_id: 603}] = Catalog.list_by_status(:requested)
+      assert {:ok, %{status: :approved}} = Requests.create_request(admin, @attrs)
     end
 
     test "deleting a denied request re-opens requests_pending_unique (title requestable again)" do

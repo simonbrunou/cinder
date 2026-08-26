@@ -60,9 +60,10 @@ defmodule Cinder.Requests.Request do
     |> validate_inclusion(:preferred_language, Language.preferences())
     |> check_constraint(:proposed_profile_id, name: :requests_profile_integrity)
     # The constraint name must match the SQLite index name exactly as reported by exqlite
-    # on a UNIQUE violation. The partial index is named :requests_pending_unique in the
-    # migration; exqlite reports that name directly so we use it here. Using a wrong name
-    # would cause a duplicate-pending violation to raise instead of returning {:error, changeset}.
+    # on a UNIQUE violation. The partial index keeps its historical :requests_pending_unique
+    # name even though it covers pending and approved rows; exqlite reports that name directly.
+    # Using a wrong name would make a duplicate-active violation raise instead of returning
+    # {:error, changeset}.
     |> unique_constraint([:user_id, :target_type, :target_id],
       name: :requests_pending_unique
     )
@@ -98,8 +99,7 @@ defmodule Cinder.Requests.Request do
     |> validate_required([:status])
     |> foreign_key_constraint(:proposed_profile_id)
     # reopen_request/2 moves a denied row back to :pending, which can collide on the partial
-    # requests_pending_unique index; map that to {:error, changeset} rather than raising. Harmless
-    # for approve/deny, which move to non-pending statuses the partial index ignores.
+    # requests_pending_unique index; map that to {:error, changeset} rather than raising.
     |> unique_constraint([:user_id, :target_type, :target_id], name: :requests_pending_unique)
   end
 end
