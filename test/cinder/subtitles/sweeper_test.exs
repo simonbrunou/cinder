@@ -8,6 +8,7 @@ defmodule Cinder.Subtitles.SweeperTest do
   import Mox
   import Cinder.CatalogFixtures
 
+  alias Cinder.Catalog
   alias Cinder.Catalog.Identity
   alias Cinder.Subtitles.Sweeper
 
@@ -74,6 +75,35 @@ defmodule Cinder.Subtitles.SweeperTest do
     {:ok, pid} = start_supervised({Sweeper, name: :sweeper_test})
     assert :ok = Sweeper.poll(pid)
     assert_receive {:subtitle_scan, :movies}
+  end
+
+  test "movie sweep checks every path in a movie stack" do
+    parent = self()
+    primary = "/lib/M/M.mkv"
+    part = "/lib/M/M-cd2.mkv"
+    primary_sidecar = Path.rootname(primary) <> ".en.srt"
+    part_sidecar = Path.rootname(part) <> ".en.srt"
+    movie = movie_fixture(status: :available, file_path: primary, imdb_id: "tt1", tmdb_id: 1)
+    assert {:ok, _movie} = Catalog.transition(movie, %{part_file_paths: [part]})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+    expect(Cinder.Library.FilesystemMock, :lstat, 2, fn path ->
+      send(parent, {:subtitle_path, path})
+      {:error, :enoent}
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, 2, fn %{imdb_id: "tt1", languages: ["en"]} ->
+      send(parent, :subtitle_search)
+      {:ok, []}
+    end)
+
+    {:ok, pid} = start_supervised({Sweeper, name: :sweeper_movie_stack_test})
+    assert :ok = Sweeper.poll(pid)
+    assert_receive {:subtitle_path, ^primary_sidecar}
+    assert_receive {:subtitle_path, ^part_sidecar}
+    assert_receive :subtitle_search
+    assert_receive :subtitle_search
   end
 
   test "poll/1 stops the tick when a download hits the daily quota (406)" do
