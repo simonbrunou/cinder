@@ -1163,7 +1163,7 @@ defmodule Cinder.Settings do
 
   defp parse_gb(value) do
     case Float.parse(String.trim(value)) do
-      {gb, _rest} when gb > 0 -> round(gb * @bytes_per_gb)
+      {gb, ""} when gb > 0 -> round(gb * @bytes_per_gb)
       _ -> nil
     end
   end

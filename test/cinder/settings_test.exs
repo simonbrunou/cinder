@@ -1280,6 +1280,14 @@ defmodule Cinder.SettingsTest do
 
       assert Settings.get("movies_max_size") == nil
 
+      for value <- ["4abc", "1.5 GB"] do
+        assert {:error, ["movies_max_size"]} =
+                 Settings.save_form(%{
+                   "movies_max_size" => value,
+                   "media_server_type" => "jellyfin"
+                 })
+      end
+
       # An explicit 0 is the documented unbounded opt-out, so it saves; negatives still reject.
       assert :ok =
                Settings.save_form(%{"tv_min_size" => "0", "media_server_type" => "jellyfin"})
