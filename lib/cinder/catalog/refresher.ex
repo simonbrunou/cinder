@@ -1,6 +1,7 @@
 defmodule Cinder.Catalog.Refresher do
   @moduledoc """
-  Periodically re-fetches every monitored series from TMDB and reconciles its tree via
+  Periodically re-fetches every globally monitored series, plus any unmonitored series with a
+  directly monitored episode, from TMDB and reconciles its tree via
   `Cinder.Catalog.refresh_series/1`, so a late-filled `air_date` or a newly-announced
   episode/season becomes visible to the TV poller's wanted-episodes sweep. Runs on a long interval
   (12h by default) — household-scale TMDB load is trivial. `:start_poller`-gated like the pollers,
@@ -12,7 +13,7 @@ defmodule Cinder.Catalog.Refresher do
   import Ecto.Query
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Movie, Series}
+  alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Locales
   alias Cinder.Repo
   alias Cinder.Requests.Request
@@ -27,7 +28,7 @@ defmodule Cinder.Catalog.Refresher do
     first_interval: :timer.minutes(1)
 
   defp do_poll do
-    for series <- Catalog.list_series(), series.monitored do
+    for series <- series_requiring_refresh() do
       isolate("series #{series.id}", fn -> refresh_one(series) end)
     end
 
@@ -45,6 +46,22 @@ defmodule Cinder.Catalog.Refresher do
     isolate("copy request localizations", &copy_request_localizations/0)
 
     :ok
+  end
+
+  defp series_requiring_refresh do
+    monitored_episode =
+      from e in Episode,
+        join: season in Season,
+        on: season.id == e.season_id,
+        where: season.series_id == parent_as(:series).id and e.monitored,
+        select: 1
+
+    Repo.all(
+      from series in Series,
+        as: :series,
+        where: series.monitored or exists(subquery(monitored_episode)),
+        order_by: [desc: series.id]
+    )
   end
 
   # Empty (or NULL) localizations map, matched in SQL — stored as JSON text, so an empty map is the

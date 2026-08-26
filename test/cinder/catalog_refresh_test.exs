@@ -657,6 +657,30 @@ defmodule Cinder.CatalogRefreshTest do
     assert Repo.get!(Episode, keep.id).title == "Kept"
   end
 
+  test "a replacement at the same slot preserves a direct episode monitor" do
+    s = series(:none)
+    sn = season_fixture(s, %{season_number: 1, monitored: false})
+
+    old =
+      episode(sn, %{
+        tmdb_episode_id: 560,
+        episode_number: 1,
+        monitored: true,
+        air_date: nil
+      })
+
+    stub_tmdb(s, [
+      {1, [%{tmdb_episode_id: 561, episode_number: 1, title: "Replacement", air_date: @past}]}
+    ])
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+    refute Repo.get(Episode, old.id)
+
+    replacement = Repo.get_by!(Episode, tmdb_episode_id: 561)
+    assert replacement.monitored
+    assert replacement.id in Enum.map(Catalog.wanted_episodes(), & &1.id)
+  end
+
   test "preserves a vanished row that owns a file" do
     s = series(:all)
     sn = season(s, 1)
