@@ -842,11 +842,25 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
       watch_grabs()
 
-      # Deliberately no indexer stub: with the fix, this episode is filtered out before any
-      # search is issued, so an unstubbed Mox call here would raise (surfaced through the
-      # sweep's own isolate/2, but the missing grab is what actually proves it).
+      # The indexer stubs REPORT rather than being left unstubbed: `isolate/2` rescues any
+      # raise, so an unstubbed Mox call on the pre-fix path is swallowed before
+      # `ClientMock.add/2` could ever run -- `refute_grabbed/0` alone would then pass on the
+      # broken behaviour too. Refuting the search messages is what actually reproduces #356.
+      test_pid = self()
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb_id, _title, _season ->
+        send(test_pid, :searched)
+        {:ok, []}
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts ->
+        send(test_pid, :searched)
+        {:ok, []}
+      end)
+
       poll()
 
+      refute_received :searched
       refute_grabbed()
       assert Repo.get!(Episode, extra.id).grab_id == nil
     end
