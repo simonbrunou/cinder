@@ -17,6 +17,7 @@ O_PATH = getattr(os, "O_PATH", 0o10000000)
 O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0o00400000)
 O_DIRECTORY = getattr(os, "O_DIRECTORY", 0o00200000)
 O_CLOEXEC = getattr(os, "O_CLOEXEC", 0o02000000)
+RESOLVE_NO_XDEV = 0x01
 RESOLVE_NO_MAGICLINKS = 0x02
 RESOLVE_NO_SYMLINKS = 0x04
 RESOLVE_BENEATH = 0x08
@@ -85,12 +86,12 @@ def open_root(root):
         os.close(slash_fd)
 
 
-def open_beneath(root_fd, relative, flags, mode=0):
+def open_beneath(root_fd, relative, flags, mode=0, resolve=0):
     relative = checked_relative(relative)
     how = OpenHow(
         flags=flags | O_CLOEXEC,
         mode=mode,
-        resolve=RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS,
+        resolve=RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS | resolve,
     )
     result = LIBC.syscall(
         SYS_OPENAT2,
@@ -162,9 +163,14 @@ def hold_open_mergerfs(root, relative, flags, mode):
     try:
         basepath, backing_relative = mergerfs_backing_location_fd(union_fd)
         logical_identity = file_identity(union_fd)
-        union_identity = legacy_union_identity(root, union_fd)
+        union_identity = legacy_union_identity(mergerfs_mountpoint(root), union_fd)
         backing_flags = flags & ~(os.O_CREAT | os.O_EXCL | os.O_TRUNC)
-        backing_fd = open_at_root(basepath, backing_relative, backing_flags)
+        backing_fd = open_at_root(
+            basepath,
+            backing_relative,
+            backing_flags,
+            resolve=RESOLVE_NO_XDEV,
+        )
         try:
             verify_mergerfs_mapping(
                 root,
@@ -187,15 +193,20 @@ def hold_open_mergerfs(root, relative, flags, mode):
 def open_mergerfs_path(root, relative):
     root_fd = open_root(root)
     try:
-        return open_beneath(root_fd, relative, os.O_RDONLY | O_NOFOLLOW)
+        return open_beneath(
+            root_fd,
+            relative,
+            os.O_RDONLY | O_NOFOLLOW,
+            resolve=RESOLVE_NO_XDEV,
+        )
     finally:
         os.close(root_fd)
 
 
-def open_at_root(root, relative, flags, mode=0):
+def open_at_root(root, relative, flags, mode=0, resolve=0):
     root_fd = open_root(root)
     try:
-        return open_beneath(root_fd, relative, flags, mode)
+        return open_beneath(root_fd, relative, flags, mode, resolve)
     finally:
         os.close(root_fd)
 
@@ -205,13 +216,11 @@ def file_identity(fd):
     return [stat.st_dev, stat.st_rdev, stat.st_ino]
 
 
-def legacy_union_identity(root, fd):
-    if not stat.S_ISREG(os.fstat(fd).st_mode):
+def legacy_union_identity(mountpoint, fd):
+    if mountpoint is None or not stat.S_ISREG(os.fstat(fd).st_mode):
         return None
     try:
-        inodecalc = os.fsdecode(
-            os.getxattr(posixpath.join(root, ".mergerfs"), MERGERFS_INODECALC)
-        )
+        inodecalc = os.fsdecode(mergerfs_control_xattr(mountpoint, MERGERFS_INODECALC))
     except OSError:
         return None
     if inodecalc in {
@@ -239,7 +248,12 @@ def verify_mergerfs_mapping(
     finally:
         os.close(current_union)
 
-    current_backing = open_at_root(basepath, backing_relative, O_PATH | O_NOFOLLOW)
+    current_backing = open_at_root(
+        basepath,
+        backing_relative,
+        O_PATH | O_NOFOLLOW,
+        resolve=RESOLVE_NO_XDEV,
+    )
     try:
         if file_identity(current_backing) != file_identity(backing_fd):
             raise OSError(errno.ESTALE, "mergerfs backing file changed")
@@ -257,7 +271,13 @@ def create_mergerfs_file(root, relative, flags):
     finally:
         os.close(parent_fd)
     backing_relative = posixpath.join(backing_parent, basename)
-    fd = open_at_root(basepath, backing_relative, flags | os.O_CREAT | os.O_EXCL, 0o600)
+    fd = open_at_root(
+        basepath,
+        backing_relative,
+        flags | os.O_CREAT | os.O_EXCL,
+        0o600,
+        RESOLVE_NO_XDEV,
+    )
     identity = file_identity(fd)
     try:
         wait_for_unique_path(
@@ -305,32 +325,43 @@ def mountinfo_unescape(value):
     )
 
 
+def mount_id(fd):
+    with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as fdinfo:
+        for line in fdinfo:
+            field, separator, value = line.partition(":")
+            if field == "mnt_id" and separator:
+                return value.strip()
+    raise OSError(errno.EIO, "open descriptor has no mount identity")
+
+
 def mergerfs_mountpoint(path):
-    """Longest mountpoint containing path, but only when that mount is mergerfs."""
-    path = posixpath.normpath(path)
-    match = None
+    """Mountpoint of path's opened mount, but only when it is mergerfs."""
+    fd = open_root(path)
+    try:
+        expected_id = mount_id(fd)
+    finally:
+        os.close(fd)
+
     with open("/proc/self/mountinfo", encoding="utf-8") as mountinfo:
         for line in mountinfo:
             fields = line.split()
+            if fields[0] != expected_id:
+                continue
             separator = fields.index("-")
-            mountpoint = mountinfo_unescape(fields[4])
-            if path == mountpoint or path.startswith(mountpoint.rstrip("/") + "/"):
-                candidate = (len(mountpoint), fields[separator + 1] == "fuse.mergerfs", mountpoint)
-                if match is None or candidate[0] > match[0]:
-                    match = candidate
-    if match is None or not match[1]:
-        return None
-    return posixpath.normpath(match[2])
+            if fields[separator + 1] == "fuse.mergerfs":
+                return posixpath.normpath(mountinfo_unescape(fields[4]))
+            return None
+    return None
 
 
 def mergerfs_mount(path):
     return mergerfs_mountpoint(path) is not None
 
 
-def mergerfs_backing_location(parent, name):
-    fd = os.open(name, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
+def mergerfs_control_xattr(mountpoint, name):
+    fd = open_mergerfs_path(mountpoint, ".mergerfs")
     try:
-        return mergerfs_backing_location_fd(fd)
+        return os.getxattr(fd, name)
     finally:
         os.close(fd)
 
@@ -349,9 +380,19 @@ def mergerfs_backing_location_fd(fd):
     return basepath, checked_relative(posixpath.relpath(fullpath, basepath))
 
 
-def exchange_mergerfs(src_parent, src_name, dst_parent, dst_name):
-    src_base, src_relative = mergerfs_backing_location(src_parent, src_name)
-    dst_base, dst_relative = mergerfs_backing_location(dst_parent, dst_name)
+def exchange_mergerfs(src_root, src_relative, dst_root, dst_relative):
+    src_fd = open_mergerfs_path(src_root, src_relative)
+    try:
+        src_base, src_relative = mergerfs_backing_location_fd(src_fd)
+    finally:
+        os.close(src_fd)
+
+    dst_fd = open_mergerfs_path(dst_root, dst_relative)
+    try:
+        dst_base, dst_relative = mergerfs_backing_location_fd(dst_fd)
+    finally:
+        os.close(dst_fd)
+
     src_dir = posixpath.dirname(src_relative) or "."
     dst_dir = posixpath.dirname(dst_relative) or "."
     if src_base != dst_base:
@@ -360,10 +401,16 @@ def exchange_mergerfs(src_parent, src_name, dst_parent, dst_name):
     root_fd = open_root(src_base)
     try:
         src_backing_parent = open_beneath(
-            root_fd, src_dir, os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW
+            root_fd,
+            src_dir,
+            os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW,
+            resolve=RESOLVE_NO_XDEV,
         )
         dst_backing_parent = open_beneath(
-            root_fd, dst_dir, os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW
+            root_fd,
+            dst_dir,
+            os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW,
+            resolve=RESOLVE_NO_XDEV,
         )
     finally:
         os.close(root_fd)
@@ -388,11 +435,11 @@ def exchange_mergerfs(src_parent, src_name, dst_parent, dst_name):
 
 
 def mergerfs_near_relative(root, anchor_relative, relative):
-    anchor_parent, anchor_name = open_parent(root, anchor_relative)
+    anchor_fd = open_mergerfs_path(root, anchor_relative)
     try:
-        basepath, backing_anchor = mergerfs_backing_location(anchor_parent, anchor_name)
+        basepath, backing_anchor = mergerfs_backing_location_fd(anchor_fd)
     finally:
-        os.close(anchor_parent)
+        os.close(anchor_fd)
 
     logical_parts = checked_relative(anchor_relative).split("/")
     backing_parts = checked_relative(backing_anchor).split("/")
@@ -404,24 +451,20 @@ def mergerfs_near_relative(root, anchor_relative, relative):
 
 
 def check_logical_absence(root, relative):
-    parent, name = open_parent(root, relative)
     try:
-        try:
-            fd = os.open(name, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
-        except OSError as exc:
-            if exc.errno == errno.ENOENT:
-                return
-            raise
-        try:
-            if len(mergerfs_allpaths(fd)) > 1:
-                raise EffectCommittedError(
-                    errno.EEXIST, "logical mergerfs path spans backing branches"
-                )
-        finally:
-            os.close(fd)
-        raise OSError(errno.EEXIST, "logical mergerfs path already exists")
+        fd = open_mergerfs_path(root, relative)
+    except OSError as exc:
+        if exc.errno == errno.ENOENT:
+            return
+        raise
+    try:
+        if len(mergerfs_allpaths(fd)) > 1:
+            raise EffectCommittedError(
+                errno.EEXIST, "logical mergerfs path spans backing branches"
+            )
     finally:
-        os.close(parent)
+        os.close(fd)
+    raise OSError(errno.EEXIST, "logical mergerfs path already exists")
 
 
 def mergerfs_allpaths(fd):
@@ -429,13 +472,14 @@ def mergerfs_allpaths(fd):
     return [posixpath.normpath(os.fsdecode(path)) for path in paths if path]
 
 
-def tombstone_identity(path):
+def tombstone_identity(branch, backing_relative):
     """Identity of a backing container, refusing anything but a lone zero-byte file."""
-    parent, name = open_parent(posixpath.dirname(path), posixpath.basename(path))
-    try:
-        fd = os.open(name, O_PATH | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
-    finally:
-        os.close(parent)
+    fd = open_at_root(
+        branch,
+        backing_relative,
+        O_PATH | O_NOFOLLOW,
+        resolve=RESOLVE_NO_XDEV,
+    )
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
@@ -461,7 +505,7 @@ def verify_quarantined_tombstone(fd, expected):
         raise OSError(errno.ESTALE, "quarantined container is no longer the surveyed file")
 
 
-def quarantine_duplicate(path, expected):
+def quarantine_duplicate(branch, backing_relative, expected):
     """Rename a proven duplicate aside, re-prove it, then unlink it.
 
     The rename is RENAME_NOREPLACE so a concurrently created pathname is never
@@ -472,7 +516,14 @@ def quarantine_duplicate(path, expected):
     container that was replaced, filled, or hardlinked is restored to its
     original name instead of destroyed.
     """
-    parent, name = open_parent(posixpath.dirname(path), posixpath.basename(path))
+    parent_relative = posixpath.dirname(backing_relative) or "."
+    name = posixpath.basename(backing_relative)
+    parent = open_at_root(
+        branch,
+        parent_relative,
+        os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW,
+        resolve=RESOLVE_NO_XDEV,
+    )
     try:
         private = f".{name}.cinder-duplicate-{secrets.token_hex(16)}"
         rename_noreplace(parent, name, private)
@@ -499,6 +550,7 @@ def remove_proven_tombstone(parent, private, fd, expected):
     128-bit unguessable private name plus RENAME_NOREPLACE, not the descriptor.
     """
     verify_quarantined_tombstone(fd, expected)
+    # ponytail: external writers appending after this proof require cooperative locking.
     # A failed unlink committed nothing, so let it propagate as a plain OSError:
     # the caller restores the original name rather than stranding a hidden
     # .cinder-duplicate-* orphan that mergerfs would surface in the union.
@@ -526,9 +578,10 @@ def restore_quarantined_duplicate(parent, private, name, cause):
 def reconcile_duplicates(args):
     """Remove proven, owned, zero-byte duplicate containers of one logical path.
 
-    Every backing container must be a lone zero-byte regular file and exactly
-    one of them must carry the caller's manifest-recorded identity. Anything
-    nonzero, hardlinked, ambiguous, or unowned raises before a byte is touched.
+    Every backing container must be a lone zero-byte regular file. The kept
+    container must either carry the caller's physical identity or be the current
+    mergerfs selection for a verified legacy union identity. Anything nonzero,
+    hardlinked, ambiguous, or unowned raises before a byte is touched.
     """
     root, relative = args[0], args[1]
     expected = [int(args[2]), int(args[3]), int(args[4])]
@@ -544,6 +597,9 @@ def reconcile_duplicates(args):
     fd = open_mergerfs_path(root, relative)
     try:
         paths = mergerfs_allpaths(fd)
+        legacy_location = None
+        if legacy_union_identity(mountpoint, fd) == expected:
+            legacy_location = mergerfs_backing_location_fd(fd)
     finally:
         os.close(fd)
 
@@ -557,23 +613,50 @@ def reconcile_duplicates(args):
 
     if len(paths) < 2:
         raise OSError(errno.EINVAL, "logical path does not span backing branches")
+    if len(paths) != len(set(paths)):
+        raise OSError(errno.EINVAL, "logical path repeats a backing container")
 
-    kept = []
-    duplicates = []
+    legacy_kept = None
+    if legacy_location is not None:
+        legacy_base, legacy_relative = legacy_location
+        if legacy_relative != backing_relative:
+            raise OSError(errno.EXDEV, "selected backing path does not match logical path")
+        legacy_kept = posixpath.join(legacy_base, legacy_relative)
+        verify_backing_container(legacy_kept, backing_relative, branches)
+        if paths.count(legacy_kept) != 1:
+            raise OSError(errno.ESTALE, "selected backing container is not unique")
+
+    containers = []
     for path in paths:
-        verify_backing_container(path, backing_relative, branches)
-        identity = tombstone_identity(path)
-        if identity == expected:
-            kept.append(path)
-        else:
-            duplicates.append((path, identity))
+        branch = verify_backing_container(path, backing_relative, branches)
+        containers.append((path, branch, tombstone_identity(branch, backing_relative)))
 
-    if len(kept) != 1:
+    identities = {tuple(identity) for _path, _branch, identity in containers}
+    if len(containers) != len(identities):
+        raise OSError(errno.ESTALE, "backing containers alias the same file")
+
+    physical_kept = [path for path, _branch, identity in containers if identity == expected]
+    if len(physical_kept) == 1:
+        kept = physical_kept[0]
+    elif not physical_kept and legacy_kept is not None:
+        kept = legacy_kept
+    else:
         raise OSError(errno.ESTALE, "owned backup container is not unique")
 
-    for index, (path, identity) in enumerate(duplicates):
+    kept_branch = next(branch for path, branch, _identity in containers if path == kept)
+    duplicates = [
+        (path, branch, identity)
+        for path, branch, identity in containers
+        if path != kept
+    ]
+
+    for index, (_path, branch, identity) in enumerate(duplicates):
         try:
-            quarantine_duplicate(path, identity)
+            if kept == legacy_kept:
+                verify_legacy_selection(root, relative, mountpoint, expected, kept)
+            elif tombstone_identity(kept_branch, backing_relative) != expected:
+                raise OSError(errno.ESTALE, "owned backup container changed")
+            quarantine_duplicate(branch, backing_relative, identity)
         except OSError as exc:
             if index and not isinstance(exc, EffectCommittedError):
                 raise EffectCommittedError(
@@ -588,16 +671,14 @@ def mergerfs_branches(mountpoint):
     """Configured backing branches, read from the mount's own control file.
 
     branches/srcmounts are runtime CONFIG keys: mergerfs serves them only from
-    <mountpoint>/.mergerfs, never from an arbitrary file descriptor. Reading
-    them off the target file returns ENODATA on a real mount -- and worse, on a
-    non-mergerfs submount beneath the root it would return caller-writable
-    metadata. legacy_union_identity reads inodecalc the same way.
+    <mountpoint>/.mergerfs. The control file is opened without crossing mounts;
+    reading the keys from a target file or nested mount would trust
+    caller-writable metadata. legacy_union_identity reads inodecalc the same way.
     """
-    control = posixpath.join(mountpoint, ".mergerfs")
     try:
-        raw = os.fsdecode(os.getxattr(control, MERGERFS_BRANCHES))
+        raw = os.fsdecode(mergerfs_control_xattr(mountpoint, MERGERFS_BRANCHES))
     except OSError:
-        raw = os.fsdecode(os.getxattr(control, MERGERFS_SRCMOUNTS))
+        raw = os.fsdecode(mergerfs_control_xattr(mountpoint, MERGERFS_SRCMOUNTS))
 
     branches = []
     for entry in raw.split(":"):
@@ -618,28 +699,43 @@ def verify_backing_container(path, backing_relative, branches):
     if not posixpath.isabs(path):
         raise OSError(errno.EINVAL, "backing container path is not absolute")
 
-    suffix = "/" + backing_relative
     for branch in branches:
-        if path == branch + suffix:
-            return
+        if path == posixpath.join(branch, backing_relative):
+            return branch
 
     raise OSError(errno.EXDEV, "backing container is not inside a configured branch")
+
+
+def verify_legacy_selection(root, relative, mountpoint, expected, kept):
+    fd = open_mergerfs_path(root, relative)
+    try:
+        if legacy_union_identity(mountpoint, fd) != expected:
+            raise OSError(errno.ESTALE, "legacy mergerfs identity changed")
+        basepath, backing_relative = mergerfs_backing_location_fd(fd)
+        if posixpath.join(basepath, backing_relative) != kept:
+            raise OSError(errno.ESTALE, "mergerfs selected backing container changed")
+    finally:
+        os.close(fd)
 
 
 def wait_for_unique_path(root, relative, basepath, backing_relative, expected_identity):
     expected_path = posixpath.join(basepath, backing_relative)
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        root_fd = open_root(root)
         try:
-            fd = open_beneath(root_fd, relative, os.O_RDONLY | O_NOFOLLOW)
+            fd = open_mergerfs_path(root, relative)
         except OSError as exc:
             if exc.errno != errno.ENOENT:
                 raise
         else:
             try:
                 if mergerfs_allpaths(fd) == [posixpath.normpath(expected_path)]:
-                    current = open_at_root(basepath, backing_relative, O_PATH | O_NOFOLLOW)
+                    current = open_at_root(
+                        basepath,
+                        backing_relative,
+                        O_PATH | O_NOFOLLOW,
+                        resolve=RESOLVE_NO_XDEV,
+                    )
                     try:
                         if file_identity(current) == expected_identity:
                             return
@@ -649,8 +745,6 @@ def wait_for_unique_path(root, relative, basepath, backing_relative, expected_id
                 raise OSError(errno.EEXIST, "logical mergerfs path spans backing branches")
             finally:
                 os.close(fd)
-        finally:
-            os.close(root_fd)
         time.sleep(0.05)
     raise OSError(errno.EIO, "mergerfs path remained stale")
 
@@ -678,7 +772,7 @@ def exchange(args):
                 or not mergerfs_mount(args[2])
             ):
                 raise
-            if not exchange_mergerfs(src_parent, src_name, dst_parent, dst_name):
+            if not exchange_mergerfs(args[0], args[1], args[2], args[3]):
                 return
             emit({"ok": "exchange"})
             return
@@ -757,7 +851,10 @@ def mkdir_near(args):
     root_fd = open_root(basepath)
     try:
         parent = open_beneath(
-            root_fd, parent_name, os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW
+            root_fd,
+            parent_name,
+            os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW,
+            resolve=RESOLVE_NO_XDEV,
         )
     finally:
         os.close(root_fd)

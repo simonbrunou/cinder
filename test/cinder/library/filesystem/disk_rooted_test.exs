@@ -307,9 +307,19 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     assert File.exists?(owned)
   end
 
-  # The one destructive window in the operation: between the survey that proved
-  # the duplicate empty and the unlink that removes it. A writer that fills the
-  # container in that window must get it back, not lose it.
+  @tag :tmp_dir
+  test "duplicate allpaths entries are refused before any removal", %{root: root, tmp: tmp} do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp, repeat_duplicate: true)
+
+    assert {:error, :einval} = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.exists?(owned)
+    assert File.exists?(duplicate)
+  end
+
+  # A mutation completed after quarantine but before the final proof must be
+  # detected and restored. External writers that append after the proof require
+  # cooperative locking and are outside this helper's guarantee.
   @tag :tmp_dir
   test "a duplicate filled after quarantine is restored with its bytes intact", %{
     root: root,
@@ -343,6 +353,41 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     assert File.exists?(outsider)
     assert File.exists?(owned)
     assert File.exists?(duplicate)
+  end
+
+  @tag :tmp_dir
+  test "a mergerfs logical open cannot cross into a nested mount" do
+    helper = Path.expand("../../../../priv/rooted_fs.py", __DIR__)
+
+    script = """
+    import errno
+    import os
+    import sys
+
+    namespace = {"__name__": "rooted_fs_test", "__file__": sys.argv[1]}
+    with open(sys.argv[1], encoding="utf-8") as source:
+        exec(compile(source.read(), sys.argv[1], "exec"), namespace)
+
+    same_mount = namespace["open_mergerfs_path"]("/proc", "version")
+    os.close(same_mount)
+
+    for opener in (
+        lambda: namespace["open_mergerfs_path"]("/", "proc/version"),
+        lambda: namespace["open_at_root"](
+            "/", "proc/version", namespace["O_PATH"], resolve=namespace["RESOLVE_NO_XDEV"]
+        ),
+    ):
+        try:
+            crossed = opener()
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+        else:
+            os.close(crossed)
+            raise RuntimeError("protected open crossed a nested mount")
+    """
+
+    assert {"", 0} = System.cmd("python3", ["-c", script, helper], stderr_to_stdout: true)
   end
 
   # A container reachable under a second name is not wholly ours to remove:
@@ -381,11 +426,15 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
 
     Enum.each([path, owned, duplicate], &File.write!(&1, ""))
 
+    if Keyword.get(opts, :mergerfs, true), do: File.write!(Path.join(root, ".mergerfs"), "")
+
     stat = File.stat!(owned)
     identity = {stat.major_device, stat.minor_device, stat.inode}
 
-    helper =
-      mergerfs_shim!(tmp, [owned, duplicate], [branch_a, branch_b], root, opts)
+    containers =
+      if opts[:repeat_duplicate], do: [owned, duplicate, duplicate], else: [owned, duplicate]
+
+    helper = mergerfs_shim!(tmp, containers, [branch_a, branch_b], root, opts)
 
     Application.put_env(:cinder, :rooted_filesystem_helper, helper)
 
@@ -415,7 +464,9 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
             if existing:
                 return b"\\0".join(os.fsencode(c) for c in existing)
         if name in ("user.mergerfs.branches", "user.mergerfs.srcmounts"):
-            if os.path.basename(os.fspath(path)) != ".mergerfs":
+            if not isinstance(path, int) or os.path.basename(
+                os.readlink(f"/proc/self/fd/{path}")
+            ) != ".mergerfs":
                 raise OSError(61, "ENODATA")
             return os.fsencode(":".join(BRANCHES))
         return real_getxattr(path, name, **kwargs)
@@ -432,9 +483,8 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     namespace["mergerfs_mountpoint"] = lambda path: MOUNTPOINT
     namespace["mergerfs_mount"] = lambda path: MOUNTPOINT is not None
 
-    # Simulate a writer that fills the container in the window between the
-    # survey that proved it empty and the unlink that would remove it, by
-    # writing immediately after the quarantine rename lands.
+    # Simulate a writer that fills the container after the quarantine rename
+    # but before the helper's final held-descriptor proof.
     if FILL_AFTER_QUARANTINE is not None:
         real_rename_noreplace = namespace["rename_noreplace"]
         renames = []

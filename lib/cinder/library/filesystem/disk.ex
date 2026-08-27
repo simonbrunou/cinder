@@ -86,9 +86,10 @@ defmodule Cinder.Library.Filesystem.Disk do
   A mergerfs logical path can name a zero-byte container on more than one
   backing branch, which makes exclusive creation fail with a post-effect
   `EEXIST` that no retry can clear. The helper only removes a duplicate when
-  every container is a zero-byte regular file and exactly one of them carries
-  `identity` — the caller's manifest-recorded backup identity. Anything
-  nonzero, ambiguous, or unowned is refused before a byte is touched.
+  every container is a zero-byte regular file and either exactly one carries
+  `identity` or mergerfs maps a verified legacy union identity to exactly one
+  current backing container. Anything nonzero, ambiguous, or unowned is
+  refused before a byte is touched.
   """
   @spec reconcile_duplicate_containers(String.t(), {integer(), integer(), integer()}) ::
           :ok | {:error, term()}
