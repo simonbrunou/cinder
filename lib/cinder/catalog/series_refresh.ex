@@ -172,7 +172,7 @@ defmodule Cinder.Catalog.SeriesRefresh do
     # Stable-id matching is complete and every movable row is parked, so a cross-season or
     # same-season move cannot be mistaken for a vanished episode. Retire only rows with no managed
     # state before PASS 2, freeing their old slots for genuine renumber targets.
-    retire_vanished(by_tmdb, fetched_tmdb_ids)
+    retired_monitoring_by_slot = retire_vanished(by_tmdb, fetched_tmdb_ids)
 
     # PASS 2 — finalize each matched row to its final (season_id, episode_number). All matched slots
     # are now free, so matched-vs-matched never collides. The only residual is a target slot still
@@ -186,7 +186,12 @@ defmodule Cinder.Catalog.SeriesRefresh do
     # `monitored` flag as the source of truth: a per-season request sets monitor_strategy: :none
     # on the series but flips the requested season's monitored flag to true, so season.monitored
     # correctly reflects "do we want this season" while series.monitor_strategy does not.
-    Enum.each(new, fn {fe, season} -> insert_episode(season, fe) end)
+    Enum.each(new, fn {fe, season} ->
+      monitor_override =
+        Map.fetch(retired_monitoring_by_slot, {season.id, fe.episode_number})
+
+      insert_episode(season, fe, monitor_override)
+    end)
   end
 
   # Vacate a matched row's real slot before the finalize pass: -id never collides with a positive
@@ -228,7 +233,7 @@ defmodule Cinder.Catalog.SeriesRefresh do
     |> retire_unmanaged()
   end
 
-  defp retire_unmanaged([]), do: :ok
+  defp retire_unmanaged([]), do: %{}
 
   defp retire_unmanaged(vanished) do
     ids = Enum.map(vanished, & &1.id)
@@ -249,16 +254,20 @@ defmodule Cinder.Catalog.SeriesRefresh do
       )
       |> MapSet.new()
 
-    retired_ids =
+    retired =
       for episode <- vanished,
           Episode.file_paths(episode) == [],
           is_nil(episode.grab_id),
           episode.classification_source != "manual",
           not MapSet.member?(protected_ids, episode.id),
-          do: episode.id
+          do: episode
 
+    retired_ids = Enum.map(retired, & &1.id)
     Repo.delete_all(from e in Episode, where: e.id in ^retired_ids)
-    :ok
+
+    Map.new(retired, fn episode ->
+      {{episode.season_id, episode.episode_number}, episode.monitored}
+    end)
   end
 
   defp ensure_season(_series, existing, number) when is_map_key(existing, number),
@@ -331,8 +340,14 @@ defmodule Cinder.Catalog.SeriesRefresh do
     end
   end
 
-  defp insert_episode(%Season{} = season, fe) do
+  defp insert_episode(%Season{} = season, fe, monitor_override) do
     {classification, label} = Identity.classify_tmdb_episode(season.season_number, fe.title)
+
+    monitored =
+      case monitor_override do
+        {:ok, monitored?} -> monitored?
+        :error -> season.monitored and classification == :regular
+      end
 
     %Episode{}
     |> Episode.refresh_changeset(%{
@@ -345,7 +360,9 @@ defmodule Cinder.Catalog.SeriesRefresh do
       classification: classification,
       classification_source: "tmdb",
       classification_label: label,
-      monitored: season.monitored and classification == :regular
+      # A row can be replaced by TMDB with a new provider id at the same slot. Carry its leaf state
+      # through retire-and-insert; only genuinely new slots inherit the season policy.
+      monitored: monitored
     })
     |> Repo.insert()
     |> log_reconcile_error("insert episode tmdb_ep #{fe.tmdb_episode_id}")

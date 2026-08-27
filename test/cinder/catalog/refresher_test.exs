@@ -36,7 +36,7 @@ defmodule Cinder.Catalog.RefresherTest do
     :ok
   end
 
-  test "poll refreshes every monitored series and skips unmonitored ones" do
+  test "poll refreshes globally monitored series and skips fully unmonitored ones" do
     monitored =
       Repo.insert!(%Series{tmdb_id: 8001, title: "M", monitored: true, monitor_strategy: :all})
 
@@ -50,18 +50,24 @@ defmodule Cinder.Catalog.RefresherTest do
       localizations: %{"fr" => %{"title" => "U"}}
     })
 
-    # Only 8001 is fetched; a stray get_series(8002) would fail verify_on_exit! (no expectation).
-    expect(Cinder.Catalog.TMDBMock, :get_series, fn 8001 ->
-      {:ok,
-       %{
-         tmdb_id: 8001,
-         tvdb_id: nil,
-         title: "M",
-         year: nil,
-         poster_path: nil,
-         original_language: nil,
-         seasons: [%{season_number: 1}]
-       }}
+    owner = self()
+
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn
+      8001 ->
+        {:ok,
+         %{
+           tmdb_id: 8001,
+           tvdb_id: nil,
+           title: "M",
+           year: nil,
+           poster_path: nil,
+           original_language: nil,
+           seasons: [%{season_number: 1}]
+         }}
+
+      8002 ->
+        send(owner, {:unexpected_refresh, 8002})
+        {:error, :unexpected_refresh}
     end)
 
     expect(Cinder.Catalog.TMDBMock, :get_season, fn 8001, 1, "en" ->
@@ -74,6 +80,157 @@ defmodule Cinder.Catalog.RefresherTest do
 
     start_supervised!({Refresher, interval: 60_000})
     assert :ok = Refresher.poll()
+    refute_receive {:unexpected_refresh, 8002}
+  end
+
+  test "poll refreshes a directly monitored episode under an unmonitored series" do
+    series =
+      Repo.insert!(%Series{
+        tmdb_id: 8003,
+        title: "Direct",
+        monitored: false,
+        monitor_strategy: :none,
+        localizations: %{"fr" => %{"title" => "Direct"}}
+      })
+
+    season =
+      Repo.insert!(%Season{series_id: series.id, season_number: 1, monitored: false})
+
+    episode =
+      Repo.insert!(%Episode{
+        season_id: season.id,
+        tmdb_episode_id: 80_031,
+        episode_number: 1,
+        title: "TBA",
+        air_date: nil,
+        monitored: true
+      })
+
+    skipped_series =
+      Repo.insert!(%Series{
+        tmdb_id: 8004,
+        title: "Skipped",
+        monitored: false,
+        monitor_strategy: :none,
+        localizations: %{"fr" => %{"title" => "Skipped"}}
+      })
+
+    skipped_season =
+      Repo.insert!(%Season{
+        series_id: skipped_series.id,
+        season_number: 1,
+        monitored: false
+      })
+
+    Repo.insert!(%Episode{
+      season_id: skipped_season.id,
+      tmdb_episode_id: 80_041,
+      episode_number: 1,
+      monitored: false
+    })
+
+    owner = self()
+
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn
+      8003 ->
+        {:ok,
+         %{
+           tmdb_id: 8003,
+           tvdb_id: nil,
+           title: "Direct",
+           year: nil,
+           poster_path: nil,
+           original_language: nil,
+           seasons: [%{season_number: 1}]
+         }}
+
+      8004 ->
+        send(owner, {:unexpected_refresh, 8004})
+        {:error, :unexpected_refresh}
+    end)
+
+    refute Enum.any?(Catalog.wanted_episodes(), &(&1.id == episode.id))
+
+    expect(Cinder.Catalog.TMDBMock, :get_season, fn 8003, 1, "en" ->
+      {:ok,
+       %{
+         season_number: 1,
+         episodes: [
+           %{
+             tmdb_episode_id: 80_031,
+             episode_number: 1,
+             title: "Aired",
+             air_date: ~D[2020-01-01]
+           }
+         ]
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn 8003, 1, "fr" ->
+      {:ok, %{season_number: 1, episodes: []}}
+    end)
+
+    start_supervised!({Refresher, interval: 60_000})
+    assert :ok = Refresher.poll()
+
+    assert Repo.reload!(episode).air_date == ~D[2020-01-01]
+    assert Enum.any?(Catalog.wanted_episodes(), &(&1.id == episode.id))
+    refute Repo.reload!(series).monitored
+    refute_receive {:unexpected_refresh, 8004}
+  end
+
+  test "poll refreshes an empty directly monitored season under an unmonitored series" do
+    series =
+      Repo.insert!(%Series{
+        tmdb_id: 8005,
+        title: "Empty season",
+        monitored: false,
+        monitor_strategy: :none,
+        localizations: %{"fr" => %{"title" => "Empty season"}}
+      })
+
+    season =
+      Repo.insert!(%Season{series_id: series.id, season_number: 1, monitored: true})
+
+    expect(Cinder.Catalog.TMDBMock, :get_series, fn 8005 ->
+      {:ok,
+       %{
+         tmdb_id: 8005,
+         tvdb_id: nil,
+         title: "Empty season",
+         year: nil,
+         poster_path: nil,
+         original_language: nil,
+         seasons: [%{season_number: 1}]
+       }}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_season, fn 8005, 1, "en" ->
+      {:ok,
+       %{
+         season_number: 1,
+         episodes: [
+           %{
+             tmdb_episode_id: 80_051,
+             episode_number: 1,
+             title: "New",
+             air_date: ~D[2020-01-01]
+           }
+         ]
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn 8005, 1, "fr" ->
+      {:ok, %{season_number: 1, episodes: []}}
+    end)
+
+    start_supervised!({Refresher, interval: 60_000})
+    assert :ok = Refresher.poll()
+
+    episode = Repo.get_by!(Episode, season_id: season.id, tmdb_episode_id: 80_051)
+    assert episode.monitored
+    assert episode.id in Enum.map(Catalog.wanted_episodes(), & &1.id)
+    refute Repo.reload!(series).monitored
   end
 
   test "an error refreshing one series does not abort the tick" do
