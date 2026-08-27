@@ -19,6 +19,12 @@ defmodule Cinder.Subtitles.Sync.Worker do
   @default_interval :timer.hours(12)
   @empty_counts %{aligned: 0, corrected: 0, review: 0, failed: 0}
 
+  # How long background work waits for an outstanding explicit scan to produce its units. The
+  # hold exists so an operator's click keeps the next slot; it is bounded so a scan that hangs
+  # (rather than raises — run_scan/2 only rescues) degrades to plain background processing
+  # instead of parking the queue forever.
+  @explicit_scan_hold :timer.seconds(30)
+
   def start_link(opts) do
     {name, opts} = Keyword.pop(opts, :name, __MODULE__)
     GenServer.start_link(__MODULE__, opts, name: name)
@@ -91,6 +97,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
       scan: Keyword.get(opts, :scan, &Sync.units/1),
       analyze: Keyword.get(opts, :analyze, &Sync.analyze_video/1),
       interval: Keyword.get(opts, :interval, @default_interval),
+      hold: Keyword.get(opts, :explicit_scan_hold, @explicit_scan_hold),
       counts: @empty_counts,
       recent: [],
       managed_video_paths: MapSet.new()
@@ -127,6 +134,10 @@ defmodule Cinder.Subtitles.Sync.Worker do
     {:noreply, start_scan(state, :library)}
   end
 
+  # The hold window for an explicit scan elapsed: re-evaluate so background work can proceed if
+  # that scan is still outstanding. A no-op when the scan already returned.
+  def handle_info(:release_hold, state), do: {:noreply, start_next(state)}
+
   def handle_info(
         {reference, {:scan_ok, units}},
         %{scan_task: %{ref: reference, scope: scope}} = state
@@ -146,6 +157,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
       state
       |> Map.put(:scan_task, nil)
       |> finish_scan_failure(reason)
+      |> start_next()
       |> start_pending_scan()
 
     {:noreply, state}
@@ -171,6 +183,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
       state
       |> Map.put(:scan_task, nil)
       |> finish_scan_failure(reason)
+      |> start_next()
       |> start_pending_scan()
 
     {:noreply, state}
@@ -259,15 +272,38 @@ defmodule Cinder.Subtitles.Sync.Worker do
          }}
 
       {:empty, _priority} ->
-        case :queue.out(state.queue) do
-          {{:value, unit}, queue} ->
-            {unit, %{state | queue: queue, queued: MapSet.delete(state.queued, unit.video_path)}}
-
-          {:empty, _queue} ->
-            :empty
-        end
+        next_background_unit(state)
     end
   end
+
+  # An explicit request is only known to the queue once its scan returns. Starting background work
+  # in that window would hand the operator's slot to an unrelated title, so background work waits
+  # for the outstanding explicit scan to land. A scan failure or crash clears scan_task, and the
+  # wait is capped at @explicit_scan_hold so a scan that hangs cannot park the queue indefinitely.
+  defp next_background_unit(state) do
+    if explicit_scan_outstanding?(state) do
+      :empty
+    else
+      case :queue.out(state.queue) do
+        {{:value, unit}, queue} ->
+          {unit, %{state | queue: queue, queued: MapSet.delete(state.queued, unit.video_path)}}
+
+        {:empty, _queue} ->
+          :empty
+      end
+    end
+  end
+
+  defp explicit_scan_outstanding?(state) do
+    (scanning_explicitly?(state.scan_task) and not hold_expired?(state.scan_task, state.hold)) or
+      Enum.any?(state.pending_scans, &(mode(&1) == :priority))
+  end
+
+  defp scanning_explicitly?(%{scope: scope}), do: mode(scope) == :priority
+  defp scanning_explicitly?(nil), do: false
+
+  defp hold_expired?(%{started_at: started_at}, hold),
+    do: System.monotonic_time(:millisecond) - started_at >= hold
 
   defp start_scan(%{scan_task: nil} = state, scope) do
     task =
@@ -275,7 +311,18 @@ defmodule Cinder.Subtitles.Sync.Worker do
         run_scan(state.scan, scope)
       end)
 
-    %{state | scan_task: %{ref: task.ref, scope: scope}}
+    # A held-back background queue only re-evaluates on events, so an explicit scan schedules its
+    # own wake-up to release the hold if it neither returns nor crashes within the window.
+    if mode(scope) == :priority, do: Process.send_after(self(), :release_hold, state.hold)
+
+    %{
+      state
+      | scan_task: %{
+          ref: task.ref,
+          scope: scope,
+          started_at: System.monotonic_time(:millisecond)
+        }
+    }
   end
 
   defp start_scan(state, scope) do

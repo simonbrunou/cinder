@@ -201,9 +201,16 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
 
     target = %{video_path: "/library/target.mkv", label: "Target"}
 
+    # The target sits at the BACK of the background queue, behind filler. Only promotion can make
+    # it run next; pre-fix code would run the filler first.
+    filler = for i <- 1..5, do: %{video_path: "/library/filler-#{i}.mkv", label: "Filler #{i}"}
+
+    # Two distinct scopes resolving to the same video defeat same-scope scan coalescing, so the
+    # priority queue's own deduplication is what has to keep the unit single.
     scan = fn
-      :library -> [%{video_path: "/library/head.mkv", label: "Head"}, target]
+      :library -> [%{video_path: "/library/head.mkv", label: "Head"} | filler] ++ [target]
       {:movie, 3} -> [target]
+      {:episode, 9} -> [target]
     end
 
     analyze = fn video ->
@@ -221,29 +228,127 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
 
     assert :ok = Worker.enqueue_library(worker)
     assert_receive {:started, "/library/head.mkv", first}
-    assert_eventually(fn -> Worker.status().queued == 1 end)
+    # head is in flight; filler + target wait.
+    assert_eventually(fn -> Worker.status().queued == 6 end)
 
+    # Three explicit requests for the same video across two different scopes.
     assert :ok = Worker.enqueue_movie(3, worker)
-    assert_eventually(fn -> Worker.status().queued == 1 end)
     assert :ok = Worker.enqueue_movie(3, worker)
-    assert_eventually(fn -> Worker.status().queued == 1 end)
+    assert :ok = Worker.enqueue_episode(9, worker)
 
-    # A later library scan must not re-add the already-prioritized target. It does re-add the
-    # in-flight head as a follow-up pass, which is existing behavior, so the queue goes to 2.
-    assert :ok = Worker.enqueue_library(worker)
-    assert_eventually(fn -> Worker.status().queued == 2 end)
+    # Promotion moves the unit between queues; it must never duplicate it.
+    assert_eventually(fn -> Worker.status().queued == 6 end)
+    Process.sleep(50)
+    assert Worker.status().queued == 6
 
     send(first, :release)
-    # The prioritized target runs before the freshly queued background follow-up.
+    # The promoted target jumps the five filler units.
     assert_receive {:started, "/library/target.mkv", promoted}
     send(promoted, :release)
-    assert_receive {:started, "/library/head.mkv", follow_up}
-    send(follow_up, :release)
 
-    assert_eventually(fn -> Worker.status().state == :idle end)
-    # Three explicit enqueues of the same target produced exactly one analysis.
+    # It ran once: the next unit is filler, not the target again.
+    assert_receive {:started, "/library/filler-1.mkv", next}
+    send(next, :release)
     refute_receive {:started, "/library/target.mkv", _}, 100
-    assert Worker.status().counts.aligned == 3
+  end
+
+  test "background work waits for an outstanding explicit scan instead of taking its slot" do
+    owner = self()
+
+    scan = fn {:series, 5} ->
+      send(owner, {:scan_started, self()})
+
+      receive do
+        :release_scan -> [%{video_path: "/library/explicit.mkv", label: "Explicit"}]
+      end
+    end
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+
+      receive do
+        :release -> [%{status: :aligned, label: video}]
+      end
+    end
+
+    worker =
+      start_supervised!(
+        {Worker, initial_scan: false, interval: :timer.hours(1), scan: scan, analyze: analyze}
+      )
+
+    # The operator clicks first; the scan that will produce the explicit unit is still running.
+    assert :ok = Worker.enqueue_series(5, worker)
+    assert_receive {:scan_started, scanner}
+
+    # Background work arriving inside that window must not claim the idle slot.
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    refute_receive {:started, "/library/bg.mkv", _}, 100
+
+    send(scanner, :release_scan)
+    assert_receive {:started, "/library/explicit.mkv", explicit}
+    send(explicit, :release)
+
+    assert_receive {:started, "/library/bg.mkv", background}
+    send(background, :release)
+  end
+
+  test "a hung explicit scan cannot park background work forever" do
+    owner = self()
+
+    scan = fn {:series, 5} ->
+      send(owner, :scan_started)
+      Process.sleep(:infinity)
+    end
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+      [%{status: :aligned, label: video}]
+    end
+
+    worker =
+      start_supervised!(
+        {Worker,
+         initial_scan: false,
+         interval: :timer.hours(1),
+         scan: scan,
+         analyze: analyze,
+         explicit_scan_hold: 50}
+      )
+
+    # This scan never returns and never raises, so only the bounded hold can release the queue.
+    assert :ok = Worker.enqueue_series(5, worker)
+    assert_receive :scan_started
+
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    refute_receive {:started, "/library/bg.mkv", _}, 20
+
+    assert_receive {:started, "/library/bg.mkv", _}, 1000
+  end
+
+  test "a failed explicit scan releases background work that was waiting for it" do
+    owner = self()
+
+    scan = fn {:series, 5} -> raise "catalog unavailable" end
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+      [%{status: :aligned, label: video}]
+    end
+
+    worker =
+      start_supervised!(
+        {Worker, initial_scan: false, interval: :timer.hours(1), scan: scan, analyze: analyze}
+      )
+
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    assert_receive {:started, "/library/bg.mkv", _}
+
+    # A scan that never yields units must not strand the background queue behind it.
+    assert :ok = Worker.enqueue_series(5, worker)
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg2.mkv", label: "BG2"}], worker)
+
+    assert_receive {:started, "/library/bg2.mkv", _}, 1000
+    assert_eventually(fn -> Worker.status().counts.failed == 1 end)
   end
 
   test "priority work drains before background work regardless of arrival order" do
