@@ -150,6 +150,139 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert :ok = Worker.enqueue_after_download("/library/downloaded.mkv")
   end
 
+  test "an explicit request promotes queued work ahead of the background library backlog" do
+    owner = self()
+
+    backlog =
+      for index <- 1..50,
+          do: %{video_path: "/library/backlog-#{index}.mkv", label: "Backlog #{index}"}
+
+    target = %{video_path: "/library/backlog-40.mkv", label: "S01E01 · Target"}
+
+    scan = fn
+      :library -> backlog
+      {:series, 7} -> [target]
+    end
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+
+      receive do
+        :release -> [%{status: :aligned, label: video}]
+      end
+    end
+
+    worker =
+      start_supervised!(
+        {Worker, initial_scan: false, interval: :timer.hours(1), scan: scan, analyze: analyze}
+      )
+
+    assert :ok = Worker.enqueue_library(worker)
+    assert_receive {:started, "/library/backlog-1.mkv", first}
+    assert_eventually(fn -> Worker.status().queued == 49 end)
+
+    assert :ok = Worker.enqueue_series(7, worker)
+    # Promotion never interrupts the in-flight unit.
+    refute_receive {:started, "/library/backlog-40.mkv", _}, 100
+    # Promotion moves the unit rather than duplicating it.
+    assert_eventually(fn -> Worker.status().queued == 49 end)
+
+    send(first, :release)
+    assert_receive {:started, "/library/backlog-40.mkv", promoted}
+    send(promoted, :release)
+
+    # The backlog then resumes in order, with the promoted unit not repeated.
+    assert_receive {:started, "/library/backlog-2.mkv", third}
+    send(third, :release)
+  end
+
+  test "repeated explicit requests stay idempotent and the promoted unit runs once" do
+    owner = self()
+
+    target = %{video_path: "/library/target.mkv", label: "Target"}
+
+    scan = fn
+      :library -> [%{video_path: "/library/head.mkv", label: "Head"}, target]
+      {:movie, 3} -> [target]
+    end
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+
+      receive do
+        :release -> [%{status: :aligned, label: video}]
+      end
+    end
+
+    worker =
+      start_supervised!(
+        {Worker, initial_scan: false, interval: :timer.hours(1), scan: scan, analyze: analyze}
+      )
+
+    assert :ok = Worker.enqueue_library(worker)
+    assert_receive {:started, "/library/head.mkv", first}
+    assert_eventually(fn -> Worker.status().queued == 1 end)
+
+    assert :ok = Worker.enqueue_movie(3, worker)
+    assert_eventually(fn -> Worker.status().queued == 1 end)
+    assert :ok = Worker.enqueue_movie(3, worker)
+    assert_eventually(fn -> Worker.status().queued == 1 end)
+
+    # A later library scan must not re-add the already-prioritized target. It does re-add the
+    # in-flight head as a follow-up pass, which is existing behavior, so the queue goes to 2.
+    assert :ok = Worker.enqueue_library(worker)
+    assert_eventually(fn -> Worker.status().queued == 2 end)
+
+    send(first, :release)
+    # The prioritized target runs before the freshly queued background follow-up.
+    assert_receive {:started, "/library/target.mkv", promoted}
+    send(promoted, :release)
+    assert_receive {:started, "/library/head.mkv", follow_up}
+    send(follow_up, :release)
+
+    assert_eventually(fn -> Worker.status().state == :idle end)
+    # Three explicit enqueues of the same target produced exactly one analysis.
+    refute_receive {:started, "/library/target.mkv", _}, 100
+    assert Worker.status().counts.aligned == 3
+  end
+
+  test "priority work drains before background work regardless of arrival order" do
+    owner = self()
+
+    scan = fn
+      :library -> [%{video_path: "/library/background.mkv", label: "Background"}]
+      {:episode, 9} -> [%{video_path: "/library/explicit.mkv", label: "Explicit"}]
+    end
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+
+      receive do
+        :release -> [%{status: :aligned, label: video}]
+      end
+    end
+
+    worker =
+      start_supervised!(
+        {Worker, initial_scan: false, interval: :timer.hours(1), scan: scan, analyze: analyze}
+      )
+
+    blocker = %{video_path: "/library/blocker.mkv", label: "Blocker"}
+    assert :ok = Worker.enqueue_units([blocker], worker)
+    assert_receive {:started, "/library/blocker.mkv", first}
+
+    assert :ok = Worker.enqueue_library(worker)
+    assert_eventually(fn -> Worker.status().queued == 1 end)
+    assert :ok = Worker.enqueue_episode(9, worker)
+    assert_eventually(fn -> Worker.status().queued == 2 end)
+
+    send(first, :release)
+    assert_receive {:started, "/library/explicit.mkv", explicit}
+    send(explicit, :release)
+    assert_receive {:started, "/library/background.mkv", background}
+    send(background, :release)
+  end
+
   defp assert_eventually(fun, attempts \\ 20)
   defp assert_eventually(fun, 0), do: assert(fun.())
 
