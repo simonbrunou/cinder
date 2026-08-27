@@ -1,7 +1,7 @@
 defmodule Cinder.Catalog.Refresher do
   @moduledoc """
   Periodically re-fetches every globally monitored series, plus any unmonitored series with a
-  directly monitored episode, from TMDB and reconciles its tree via
+  directly monitored season or episode, from TMDB and reconciles its tree via
   `Cinder.Catalog.refresh_series/1`, so a late-filled `air_date` or a newly-announced
   episode/season becomes visible to the TV poller's wanted-episodes sweep. Runs on a long interval
   (12h by default) — household-scale TMDB load is trivial. `:start_poller`-gated like the pollers,
@@ -49,6 +49,11 @@ defmodule Cinder.Catalog.Refresher do
   end
 
   defp series_requiring_refresh do
+    monitored_season =
+      from season in Season,
+        where: season.series_id == parent_as(:series).id and season.monitored,
+        select: 1
+
     monitored_episode =
       from e in Episode,
         join: season in Season,
@@ -59,7 +64,9 @@ defmodule Cinder.Catalog.Refresher do
     Repo.all(
       from series in Series,
         as: :series,
-        where: series.monitored or exists(subquery(monitored_episode)),
+        where:
+          series.monitored or exists(subquery(monitored_season)) or
+            exists(subquery(monitored_episode)),
         order_by: [desc: series.id]
     )
   end
