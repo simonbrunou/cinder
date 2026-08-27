@@ -99,6 +99,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
       interval: Keyword.get(opts, :interval, @default_interval),
       hold: Keyword.get(opts, :explicit_scan_hold, @explicit_scan_hold),
       hold_until: nil,
+      hold_gen: 0,
       counts: @empty_counts,
       recent: [],
       managed_video_paths: MapSet.new()
@@ -137,20 +138,22 @@ defmodule Cinder.Subtitles.Sync.Worker do
   end
 
   # The hold window elapsed: re-evaluate so background work can proceed. A timer that lands a hair
-  # early would otherwise be consumed while the hold is still active, with nothing left to wake the
-  # queue, so reschedule for the remaining time rather than dropping the wake-up.
-  def handle_info(:release_hold, %{hold_until: nil} = state), do: {:noreply, state}
-
-  def handle_info(:release_hold, state) do
-    remaining = state.hold_until - System.monotonic_time(:millisecond)
+  # early is rescheduled for the remaining time rather than dropped, or nothing would be left to
+  # wake the queue. The generation tag means only the current hold's timer is ever live: a timer
+  # from a superseded hold is discarded instead of accumulating alongside the new one.
+  def handle_info({:release_hold, gen}, %{hold_gen: gen, hold_until: hold_until} = state)
+      when not is_nil(hold_until) do
+    remaining = hold_until - System.monotonic_time(:millisecond)
 
     if remaining > 0 do
-      Process.send_after(self(), :release_hold, remaining)
+      Process.send_after(self(), {:release_hold, gen}, remaining)
       {:noreply, state}
     else
       {:noreply, start_next(state)}
     end
   end
+
+  def handle_info({:release_hold, _gen}, state), do: {:noreply, state}
 
   def handle_info(
         {reference, {:scan_ok, units}},
@@ -335,9 +338,19 @@ defmodule Cinder.Subtitles.Sync.Worker do
   # The hold starts when the operator asks, not when the scan happens to be dequeued, so an
   # explicit scope waiting behind a slow or hung library scan is covered by the same deadline.
   defp hold_explicitly(state, scope) do
+    # sync_hold/1 first: an expired deadline whose release message has not been processed yet must
+    # not suppress a fresh hold for this request.
+    state = sync_hold(state)
+
     if mode(scope) == :priority and is_nil(state.hold_until) do
-      Process.send_after(self(), :release_hold, state.hold)
-      %{state | hold_until: System.monotonic_time(:millisecond) + state.hold}
+      gen = state.hold_gen + 1
+      Process.send_after(self(), {:release_hold, gen}, state.hold)
+
+      %{
+        state
+        | hold_until: System.monotonic_time(:millisecond) + state.hold,
+          hold_gen: gen
+      }
     else
       state
     end

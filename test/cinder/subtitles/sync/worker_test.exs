@@ -241,6 +241,13 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     Process.sleep(50)
     assert Worker.status().queued == 6
 
+    # A later library scan must not re-add a path that is already waiting in the priority queue.
+    # Without the `prioritized` guard in add_units/3 the same video would be analyzed twice.
+    assert :ok = Worker.enqueue_library(worker)
+    assert_eventually(fn -> Worker.status().queued == 7 end)
+    Process.sleep(50)
+    assert Worker.status().queued == 7
+
     send(first, :release)
     # The promoted target jumps the five filler units.
     assert_receive {:started, "/library/target.mkv", promoted}
@@ -359,6 +366,9 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert :ok = Worker.enqueue_series(5, worker)
 
     assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    # Prove the hold was actually applied to the pending scope, otherwise this test would pass
+    # even if a pending explicit scope received no hold at all.
+    refute_receive {:started, "/library/bg.mkv", _}, 20
     assert_receive {:started, "/library/bg.mkv", _}, 1000
   end
 
@@ -503,6 +513,83 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     # That fresh hold is itself bounded, so background work still resumes.
     assert_receive {:started, "/library/bg2.mkv", bg2}, 1000
     send(bg2, :release)
+  end
+
+  test "a crashed explicit scan releases background work that was waiting for it" do
+    owner = self()
+
+    # Exiting rather than raising: run_scan/2 rescues raises, so only a process exit reaches the
+    # scan-task :DOWN handler. That handler must restart the queue too.
+    scan = fn {:series, 5} ->
+      send(owner, {:scan_started, self()})
+
+      receive do
+        :release_scan -> Process.exit(self(), :kill)
+      end
+    end
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+      [%{status: :aligned, label: video}]
+    end
+
+    worker =
+      start_supervised!(
+        {Worker, initial_scan: false, interval: :timer.hours(1), scan: scan, analyze: analyze}
+      )
+
+    assert :ok = Worker.enqueue_series(5, worker)
+    assert_receive {:scan_started, scanner}
+
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    refute_receive {:started, "/library/bg.mkv", _}, 50
+
+    send(scanner, :release_scan)
+    assert_receive {:started, "/library/bg.mkv", _}, 1000
+    assert Process.alive?(worker)
+  end
+
+  test "a stale deadline does not leak when the background queue is empty at expiry" do
+    owner = self()
+
+    scan = fn {:movie, id} ->
+      send(owner, {:scan_started, id})
+      Process.sleep(:infinity)
+    end
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+
+      receive do
+        :release -> [%{status: :aligned, label: video}]
+      end
+    end
+
+    worker =
+      start_supervised!(
+        {Worker,
+         initial_scan: false,
+         interval: :timer.hours(1),
+         scan: scan,
+         analyze: analyze,
+         explicit_scan_hold: 50}
+      )
+
+    # The hold expires with NOTHING queued, so the only chance to clear the deadline is a
+    # start_next/1 that dequeues nothing at all. No sleep here: the point is that the request
+    # below arrives while the expired deadline is still sitting in state, before its release
+    # message has been processed.
+    assert :ok = Worker.enqueue_movie(1, worker)
+    assert_receive {:scan_started, 1}
+
+    # A later explicit request must still arm a fresh hold rather than inherit that dead deadline.
+    Process.sleep(60)
+    assert :ok = Worker.enqueue_movie(2, worker)
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    refute_receive {:started, "/library/bg.mkv", _}, 20
+
+    assert_receive {:started, "/library/bg.mkv", bg}, 1000
+    send(bg, :release)
   end
 
   test "priority work drains before background work regardless of arrival order" do
