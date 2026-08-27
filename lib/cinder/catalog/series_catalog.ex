@@ -1046,6 +1046,11 @@ defmodule Cinder.Catalog.SeriesCatalog do
   Episodes a season-level manual search may replace or fill: ungrabbed available episodes
   (monitored or not) plus the normal wanted set. Unlike `wanted_episodes/0`, this is operator-only
   input and is never consumed by the automatic sweep.
+
+  Deliberately does NOT apply the Anime Season-0 story-special/recap classification restriction
+  (`episode_kind_wanted?/3`) that gates automatic search and the upgrade hunter — an operator
+  working a season panel can still target an unclassified special or a pure `:extra` explicitly.
+  The restriction is a policy default for unattended sweeps, not an operator-facing lock (#356).
   """
   def manual_search_episodes(series_id, season_number) do
     episodes =
@@ -1299,9 +1304,18 @@ defmodule Cinder.Catalog.SeriesCatalog do
     common? and episode_kind_wanted?(episode, season, profile)
   end
 
-  # The season/classification half of `episode_searchable?/3`'s eligibility, split out to keep
-  # the caller's own complexity flat. Mirrors `wanted_kind_dynamic/0`'s SQL predicate exactly.
-  defp episode_kind_wanted?(episode, season, profile) do
+  @doc """
+  The season/classification half of automatic eligibility, shared by every non-manual path:
+  a regular episode (`season > 0`, `episode > 0`) is always in; a Season 0 row needs its media
+  profile's own extra gate — Anime restricts to classified `:story_special` / `:recap` (an
+  unclassified special or a pure `:extra` never auto-searches, #356), Standard admits any
+  numbered S00 row an operator explicitly monitored. Mirrors `wanted_kind_dynamic/0`'s SQL
+  predicate exactly, and is reused by `Cinder.Catalog.UpgradeHunter`'s anime candidate
+  selection so the upgrade sweep can't re-open a door `wanted_episodes/0` keeps shut. Manual
+  search (`manual_search_episodes/2`) deliberately does NOT call this — an operator working a
+  season panel may want to search/replace an episode the automatic sweeps would skip.
+  """
+  def episode_kind_wanted?(episode, season, profile) do
     regular? = season.season_number > 0 and episode.episode_number > 0
     special? = profile.effective == :anime and episode.classification in [:story_special, :recap]
 

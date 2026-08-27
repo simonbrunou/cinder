@@ -672,4 +672,27 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert ep.season.series.id == series.id
     end
   end
+
+  describe "manual_search_episodes/2 (#356)" do
+    test "surfaces an unclassified Anime S00 special with a file, unlike the automatic sweeps" do
+      series = series_fixture(%{media_profile: :anime, monitor_strategy: :all})
+      specials = season_fixture(series, %{season_number: 0})
+
+      extra =
+        episode(specials, %{
+          classification: :extra,
+          monitored: true,
+          file_path: "/lib/Show/S00E01.mkv"
+        })
+
+      # The automatic paths exclude it...
+      refute extra.id in Enum.map(Catalog.wanted_episodes(), & &1.id)
+      profile = Catalog.media_profile_summary(series)
+      refute Catalog.episode_kind_wanted?(extra, specials, profile)
+
+      # ...but an operator working the season panel can still target it explicitly (#356:
+      # manual search stays operator-overridable, unlike the upgrade hunter).
+      assert extra.id in Enum.map(Catalog.manual_search_episodes(series.id, 0), & &1.id)
+    end
+  end
 end

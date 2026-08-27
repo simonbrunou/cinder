@@ -231,14 +231,23 @@ defmodule Cinder.Catalog.UpgradeHunter do
       [%Episode{season: %{series: series}} | _] ->
         stamp(Episode, Enum.map(episodes, & &1.id))
 
+        # Converge the anime upgrade sweep onto the same kind predicate the wanted query uses.
+        # `holdings/0` filters on monitored + file + no grab only, so an unclassified special
+        # or a pure `:extra` that somehow holds a file (adoption, manual import) could still be
+        # re-searched and upgraded through a path the Anime profile policy excludes (#356).
+        # Note this applies the predicate whole, not just its Season-0 clause: a season > 0 row
+        # numbered <= 0 is dropped here too, exactly as `wanted_episodes/0` already drops it.
+        profile = Catalog.media_profile_summary(series)
+        searchable = Enum.filter(episodes, &Catalog.episode_kind_wanted?(&1, &1.season, profile))
+
         eligible =
-          episodes
+          searchable
           |> Enum.chunk_by(& &1.season_id)
           |> Enum.reject(&Enum.all?(&1, fn episode -> Upgrade.cutoff_met?(episode, :tv) end))
           |> List.flatten()
 
         if eligible != [] do
-          search_anime_series(series, episodes, MapSet.new(eligible, & &1.id))
+          search_anime_series(series, searchable, MapSet.new(eligible, & &1.id))
         end
 
       [] ->
@@ -359,6 +368,9 @@ defmodule Cinder.Catalog.UpgradeHunter do
     maybe_grab_episode_release(release, covered, eligible, nil)
   end
 
+  # `eligible_ids` already excludes cutoff-met episodes; membership alone is the classification
+  # gate too, since `hunt_anime_series/1` never puts a story-special/recap-ineligible Season-0
+  # episode into `eligible_ids` in the first place (#356).
   defp anime_upgrade_candidate?(release, episodes_by_id, eligible_ids) do
     Enum.any?(release.resolved_episode_ids || [], fn episode_id ->
       MapSet.member?(eligible_ids, episode_id) and

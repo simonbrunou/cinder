@@ -808,4 +808,91 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       for ep <- episodes, do: assert(Repo.get!(Episode, ep.id).grab_id == nil)
     end
   end
+
+  # #356: the wanted-episode query already restricts Anime Season 0 to classified
+  # story-special/recap episodes (`episode_kind_wanted?/3`). The upgrade hunter's anime path
+  # reaches held episodes through `holdings/0` (monitored + file + no grab), which carries no
+  # classification filter at all — so an unclassified special or a pure `:extra` that somehow
+  # holds a file (adoption, manual import) must be excluded here too, or the sweep re-opens a
+  # door the profile policy was supposed to keep shut.
+  describe "anime Season 0 classification eligibility (#356)" do
+    setup do
+      series =
+        series_fixture(%{
+          tvdb_id: 5150,
+          title: "Show",
+          monitor_strategy: :all,
+          media_profile: :anime
+        })
+
+      specials = season_fixture(series, %{season_number: 0})
+      %{series: series, specials: specials}
+    end
+
+    test "does not search or upgrade an unclassified S0 special holding a file", ctx do
+      extra =
+        episode_fixture(ctx.specials, %{
+          episode_number: 1,
+          classification: :extra,
+          monitored: true,
+          file_path: "/lib/Show/S00E01.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000
+        })
+
+      watch_grabs()
+
+      # The indexer stubs REPORT rather than being left unstubbed: `isolate/2` rescues any
+      # raise, so an unstubbed Mox call on the pre-fix path is swallowed before
+      # `ClientMock.add/2` could ever run -- `refute_grabbed/0` alone would then pass on the
+      # broken behaviour too. Refuting the search messages is what actually reproduces #356.
+      test_pid = self()
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb_id, _title, _season ->
+        send(test_pid, :searched)
+        {:ok, []}
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts ->
+        send(test_pid, :searched)
+        {:ok, []}
+      end)
+
+      poll()
+
+      refute_received :searched
+      refute_grabbed()
+      assert Repo.get!(Episode, extra.id).grab_id == nil
+    end
+
+    test "still searches and upgrades a story-special/recap S0 episode holding a file", ctx do
+      recap =
+        episode_fixture(ctx.specials, %{
+          episode_number: 2,
+          classification: :recap,
+          monitored: true,
+          file_path: "/lib/Show/S00E02.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000
+        })
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 5150, "Show", 0 ->
+        {:ok, [release("[Group] Show S00E02 [1080p]")]}
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+        {:ok, []}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+        {:ok, "anime-special-upgrade"}
+      end)
+
+      poll()
+
+      episode = Repo.get!(Episode, recap.id)
+      assert episode.grab_id
+      assert episode.file_path == "/lib/Show/S00E02.mkv"
+    end
+  end
 end
