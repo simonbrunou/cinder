@@ -711,6 +711,32 @@ defmodule Cinder.CatalogRefreshTest do
     assert replacement.id in Enum.map(Catalog.wanted_episodes(), & &1.id)
   end
 
+  test "a same-slot replacement preserves a disabled leaf under a monitored season" do
+    s = series(:none)
+    sn = season_fixture(s, %{season_number: 1, monitored: true})
+
+    old =
+      episode(sn, %{
+        tmdb_episode_id: 580,
+        episode_number: 1,
+        monitored: false,
+        air_date: @past
+      })
+
+    refute old.id in Enum.map(Catalog.wanted_episodes(), & &1.id)
+
+    stub_tmdb(s, [
+      {1, [%{tmdb_episode_id: 581, episode_number: 1, title: "Replacement", air_date: @past}]}
+    ])
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+    refute Repo.get(Episode, old.id)
+
+    replacement = Repo.get_by!(Episode, tmdb_episode_id: 581)
+    refute replacement.monitored
+    refute replacement.id in Enum.map(Catalog.wanted_episodes(), & &1.id)
+  end
+
   test "preserves a vanished row that owns a file" do
     s = series(:all)
     sn = season(s, 1)

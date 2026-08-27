@@ -172,7 +172,7 @@ defmodule Cinder.Catalog.SeriesRefresh do
     # Stable-id matching is complete and every movable row is parked, so a cross-season or
     # same-season move cannot be mistaken for a vanished episode. Retire only rows with no managed
     # state before PASS 2, freeing their old slots for genuine renumber targets.
-    retired_monitored_slots = retire_vanished(by_tmdb, fetched_tmdb_ids)
+    retired_monitoring_by_slot = retire_vanished(by_tmdb, fetched_tmdb_ids)
 
     # PASS 2 — finalize each matched row to its final (season_id, episode_number). All matched slots
     # are now free, so matched-vs-matched never collides. The only residual is a target slot still
@@ -187,10 +187,10 @@ defmodule Cinder.Catalog.SeriesRefresh do
     # on the series but flips the requested season's monitored flag to true, so season.monitored
     # correctly reflects "do we want this season" while series.monitor_strategy does not.
     Enum.each(new, fn {fe, season} ->
-      monitored_replacement? =
-        MapSet.member?(retired_monitored_slots, {season.id, fe.episode_number})
+      monitor_override =
+        Map.fetch(retired_monitoring_by_slot, {season.id, fe.episode_number})
 
-      insert_episode(season, fe, monitored_replacement?)
+      insert_episode(season, fe, monitor_override)
     end)
   end
 
@@ -233,7 +233,7 @@ defmodule Cinder.Catalog.SeriesRefresh do
     |> retire_unmanaged()
   end
 
-  defp retire_unmanaged([]), do: MapSet.new()
+  defp retire_unmanaged([]), do: %{}
 
   defp retire_unmanaged(vanished) do
     ids = Enum.map(vanished, & &1.id)
@@ -265,9 +265,9 @@ defmodule Cinder.Catalog.SeriesRefresh do
     retired_ids = Enum.map(retired, & &1.id)
     Repo.delete_all(from e in Episode, where: e.id in ^retired_ids)
 
-    for episode <- retired, episode.monitored, into: MapSet.new() do
-      {episode.season_id, episode.episode_number}
-    end
+    Map.new(retired, fn episode ->
+      {{episode.season_id, episode.episode_number}, episode.monitored}
+    end)
   end
 
   defp ensure_season(_series, existing, number) when is_map_key(existing, number),
@@ -340,8 +340,14 @@ defmodule Cinder.Catalog.SeriesRefresh do
     end
   end
 
-  defp insert_episode(%Season{} = season, fe, monitored_replacement?) do
+  defp insert_episode(%Season{} = season, fe, monitor_override) do
     {classification, label} = Identity.classify_tmdb_episode(season.season_number, fe.title)
+
+    monitored =
+      case monitor_override do
+        {:ok, monitored?} -> monitored?
+        :error -> season.monitored and classification == :regular
+      end
 
     %Episode{}
     |> Episode.refresh_changeset(%{
@@ -354,9 +360,9 @@ defmodule Cinder.Catalog.SeriesRefresh do
       classification: classification,
       classification_source: "tmdb",
       classification_label: label,
-      # A monitored row can be replaced by TMDB with a new provider id at the same slot. Carry the
-      # leaf state through retire-and-insert, matching the in-place path's monitor preservation.
-      monitored: monitored_replacement? or (season.monitored and classification == :regular)
+      # A row can be replaced by TMDB with a new provider id at the same slot. Carry its leaf state
+      # through retire-and-insert; only genuinely new slots inherit the season policy.
+      monitored: monitored
     })
     |> Repo.insert()
     |> log_reconcile_error("insert episode tmdb_ep #{fe.tmdb_episode_id}")
