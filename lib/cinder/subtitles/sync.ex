@@ -8,6 +8,7 @@ defmodule Cinder.Subtitles.Sync do
 
   alias Cinder.Subtitles.Sync.{
     AtomicFile,
+    Backup,
     EngineWorkspace,
     Reference,
     ReplacementCleanup,
@@ -347,7 +348,8 @@ defmodule Cinder.Subtitles.Sync do
     end
   end
 
-  defp with_bound(path, modes, callback) do
+  @doc false
+  def with_bound(path, modes, callback) do
     case fs().open_bound(path, modes) do
       {:ok, bound} -> finish_bound(bound, callback)
       {:error, _reason} = error -> error
@@ -433,7 +435,7 @@ defmodule Cinder.Subtitles.Sync do
   defp apply_correction(item, moviehash, method, source, adjusted, metrics) do
     metadata = metadata("aligned", method, moviehash, source, adjusted, metrics)
 
-    case ensure_backup(item, source) do
+    case Backup.ensure(item, source) do
       {:ok, backup_created?} ->
         begin_automatic_correction(
           item,
@@ -677,7 +679,7 @@ defmodule Cinder.Subtitles.Sync do
         rate: rate
       })
 
-    case ensure_backup(item, source) do
+    case Backup.ensure(item, source) do
       {:ok, backup_created?} ->
         begin_manual_correction(item, current, adjusted, backup_created?, metadata)
 
@@ -1053,12 +1055,13 @@ defmodule Cinder.Subtitles.Sync do
     end
   end
 
-  defp immutable_backup_expected?(%{source_sha256: source, applied_sha256: applied})
-       when is_binary(source) and byte_size(source) == 64 and is_binary(applied) and
-              byte_size(applied) == 64,
-       do: source != applied
+  @doc false
+  def immutable_backup_expected?(%{source_sha256: source, applied_sha256: applied})
+      when is_binary(source) and byte_size(source) == 64 and is_binary(applied) and
+             byte_size(applied) == 64,
+      do: source != applied
 
-  defp immutable_backup_expected?(_sync), do: false
+  def immutable_backup_expected?(_sync), do: false
 
   defp retire_owned_backup(backup, sync, %{identity: identity})
        when is_list(identity) and length(identity) == 3 do
@@ -1228,120 +1231,11 @@ defmodule Cinder.Subtitles.Sync do
     }
   end
 
-  defp ensure_backup(item, expected_source) do
-    backup = backup_path(item.sidecar_path)
-
-    with {:ok, backup} <- safe_destination(backup) do
-      create_or_verify_backup(backup, expected_source, item)
-    end
-  end
-
-  defp create_or_verify_backup(backup, expected_source, item) do
-    case fs().create_bound(backup, expected_source) do
-      {:ok, bound} ->
-        register_created_backup(item, bound)
-
-      {:error, :eexist} ->
-        existing_backup(backup, expected_source, item)
-
-      # A mergerfs logical path whose containers span backing branches fails
-      # exclusive creation with a post-effect EEXIST instead of a plain :eexist,
-      # so the reactivation path below was unreachable and the track stayed
-      # failed until an operator deleted the duplicates by hand. Reconcile the
-      # duplicates only when they are proven owned zero-byte tombstones, then
-      # take the same guarded reactivation path.
-      {:error, {:effect_committed, _operation, %{"reason" => "EEXIST"}}} ->
-        reconcile_duplicate_backups(backup, expected_source, item)
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp existing_backup(backup, expected_source, item) do
-    cond do
-      immutable_backup_expected?(item.sync) ->
-        verify_existing_backup(backup, expected_source)
-
-      Map.has_key?(item, :backup_tombstone) and is_map(item.backup_tombstone) ->
-        reactivate_backup_container(backup, expected_source, item.backup_tombstone, item)
-
-      true ->
-        {:error, :unexpected_backup}
-    end
-  end
-
-  defp reconcile_duplicate_backups(
-         backup,
-         expected_source,
-         %{backup_tombstone: %{identity: identity}} = item
-       )
-       when is_list(identity) and length(identity) == 3 do
-    with :ok <- reconcile_duplicate_containers(backup, List.to_tuple(identity)),
-         do: existing_backup(backup, expected_source, item)
-  end
-
-  defp reconcile_duplicate_backups(_backup, _expected_source, _item),
-    do: {:error, :duplicate_backup_containers}
-
-  defp reconcile_duplicate_containers(backup, identity) do
-    filesystem = fs()
-
-    if function_exported?(filesystem, :reconcile_duplicate_containers, 2),
-      do: filesystem.reconcile_duplicate_containers(backup, identity),
-      else: {:error, :duplicate_backup_containers}
-  end
-
-  defp register_created_backup(item, bound) do
-    manifest_result =
-      Manifest.put_backup_tombstone(item.video_path, item.language, bound.identity)
-
-    close_result = fs().close_bound(bound)
-
-    case {manifest_result, close_result} do
-      {:ok, :ok} -> {:ok, true}
-      {{:error, reason}, _close} -> {:error, {:backup_provenance_manifest_failed, reason}}
-      {:ok, {:error, reason}} -> {:error, {:backup_descriptor_close_failed, reason}}
-    end
-  end
-
-  defp reactivate_backup_container(backup, expected_source, %{identity: identity}, item)
-       when is_list(identity) and length(identity) == 3 do
-    expected_identity = List.to_tuple(identity)
-
-    with_bound(backup, [:read, :raw, :binary], fn bound ->
-      with true <- Filesystem.identity?(bound, expected_identity) || {:error, :unexpected_backup},
-           {:ok, current} <- File.read(bound.path),
-           :ok <- reactivate_backup_bytes(bound, current, expected_source),
-           :ok <- Manifest.put_backup_tombstone(item.video_path, item.language, bound.identity),
-           :ok <- verify_bound_source_identity(backup, bound.identity) do
-        {:ok, true}
-      end
-    end)
-  end
-
-  defp reactivate_backup_container(_backup, _expected_source, _tombstone, _item),
-    do: {:error, :invalid_backup_tombstone}
-
-  defp reactivate_backup_bytes(_bound, expected_source, expected_source), do: :ok
-
-  defp reactivate_backup_bytes(bound, "", expected_source),
-    do: fs().write_bound(bound, expected_source)
-
-  defp reactivate_backup_bytes(_bound, _current, _expected), do: {:error, :backup_mismatch}
-
-  defp verify_bound_source_identity(path, expected_identity) do
+  @doc false
+  def verify_bound_source_identity(path, expected_identity) do
     with_bound(path, [:read, :raw, :binary], fn rebound ->
       if rebound.identity == expected_identity, do: :ok, else: {:error, :concurrent_change}
     end)
-  end
-
-  defp verify_existing_backup(backup, expected_source) do
-    case safe_read(backup) do
-      {:ok, ^expected_source} -> {:ok, false}
-      {:ok, _other} -> {:error, :backup_mismatch}
-      {:error, _reason} = error -> error
-    end
   end
 
   defp manifest_failure(item, previous, adjusted, backup_created?, method, reason) do
@@ -1426,7 +1320,8 @@ defmodule Cinder.Subtitles.Sync do
   defp operation_id,
     do: Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
 
-  defp safe_read(path) do
+  @doc false
+  def safe_read(path) do
     with {:ok, path} <- safe_source(path), do: fs().read(path)
   end
 
@@ -1468,7 +1363,8 @@ defmodule Cinder.Subtitles.Sync do
     )
   end
 
-  defp safe_destination(path),
+  @doc false
+  def safe_destination(path),
     do: path_policy().destination(path, Settings.video_library_roots(), filesystem: fs())
 
   defp current_moviehash(video_path) do
@@ -1527,6 +1423,7 @@ defmodule Cinder.Subtitles.Sync do
     do: Application.get_env(:cinder, :subtitle_sync_engine, Cinder.Subtitles.Sync.Ffsubsync)
 
   defp media_info, do: Application.get_env(:cinder, :media_info)
-  defp fs, do: Application.fetch_env!(:cinder, :filesystem)
+  @doc false
+  def fs, do: Application.fetch_env!(:cinder, :filesystem)
   defp path_policy, do: Application.get_env(:cinder, :path_policy, PathPolicy)
 end
