@@ -231,14 +231,21 @@ defmodule Cinder.Catalog.UpgradeHunter do
       [%Episode{season: %{series: series}} | _] ->
         stamp(Episode, Enum.map(episodes, & &1.id))
 
+        # Same Season-0 classification gate `wanted_episodes/0` / `episode_searchable?/3` apply:
+        # an unclassified special or a pure `:extra` that somehow holds a file (adoption, manual
+        # import) must not drive a search or be offered as an upgrade target (#356). Regular
+        # (season > 0) episodes are untouched — the gate is Season-0-only.
+        profile = Catalog.media_profile_summary(series)
+        searchable = Enum.filter(episodes, &Catalog.episode_kind_wanted?(&1, &1.season, profile))
+
         eligible =
-          episodes
+          searchable
           |> Enum.chunk_by(& &1.season_id)
           |> Enum.reject(&Enum.all?(&1, fn episode -> Upgrade.cutoff_met?(episode, :tv) end))
           |> List.flatten()
 
         if eligible != [] do
-          search_anime_series(series, episodes, MapSet.new(eligible, & &1.id))
+          search_anime_series(series, searchable, MapSet.new(eligible, & &1.id))
         end
 
       [] ->
@@ -359,6 +366,9 @@ defmodule Cinder.Catalog.UpgradeHunter do
     maybe_grab_episode_release(release, covered, eligible, nil)
   end
 
+  # `eligible_ids` already excludes cutoff-met episodes; membership alone is the classification
+  # gate too, since `hunt_anime_series/1` never puts a story-special/recap-ineligible Season-0
+  # episode into `eligible_ids` in the first place (#356).
   defp anime_upgrade_candidate?(release, episodes_by_id, eligible_ids) do
     Enum.any?(release.resolved_episode_ids || [], fn episode_id ->
       MapSet.member?(eligible_ids, episode_id) and

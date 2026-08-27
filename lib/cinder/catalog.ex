@@ -1418,6 +1418,7 @@ defmodule Cinder.Catalog do
   defdelegate rehunt_parked_episodes(cutoff), to: SeriesCatalog
   defdelegate search_season_now(season), to: SeriesCatalog
   defdelegate episode_searchable?(episode, profile), to: SeriesCatalog
+  defdelegate episode_kind_wanted?(episode, season, profile), to: SeriesCatalog
   defdelegate upcoming_episodes(), to: SeriesCatalog
   defdelegate refresh_series(series), to: SeriesRefresh
   defdelegate finish_grab(grab), to: Grabs
