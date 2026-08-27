@@ -22,6 +22,7 @@ defmodule Cinder.Library.Filesystem.Disk do
     "EIO" => :eio,
     "EISDIR" => :eisdir,
     "ELOOP" => :eloop,
+    "EMLINK" => :emlink,
     "ENAMETOOLONG" => :enametoolong,
     "ENOENT" => :enoent,
     "ENOSPC" => :enospc,

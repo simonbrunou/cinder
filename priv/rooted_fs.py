@@ -29,6 +29,7 @@ SYS_RENAMEAT2 = {"x86_64": 316, "amd64": 316, "aarch64": 276, "arm64": 276}.get(
 MERGERFS_FULLPATH = "user.mergerfs.fullpath"
 MERGERFS_BASEPATH = "user.mergerfs.basepath"
 MERGERFS_ALLPATHS = "user.mergerfs.allpaths"
+MERGERFS_SRCMOUNTS = "user.mergerfs.srcmounts"
 MERGERFS_INODECALC = "user.mergerfs.inodecalc"
 
 
@@ -421,7 +422,7 @@ def mergerfs_allpaths(fd):
 
 
 def tombstone_identity(path):
-    """Identity of a backing container, refusing anything but a zero-byte regular file."""
+    """Identity of a backing container, refusing anything but a lone zero-byte file."""
     parent, name = open_parent(posixpath.dirname(path), posixpath.basename(path))
     try:
         fd = os.open(name, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
@@ -433,69 +434,109 @@ def tombstone_identity(path):
             raise OSError(errno.EEXIST, "duplicate backup container is not a regular file")
         if info.st_size != 0:
             raise OSError(errno.ENOTEMPTY, "duplicate backup container is not a tombstone")
+        # A hardlinked container is reachable under a pathname we did not prove,
+        # so removing this link would not be removing the whole file.
+        if info.st_nlink != 1:
+            raise OSError(errno.EMLINK, "duplicate backup container is hardlinked")
         return [info.st_dev, info.st_rdev, info.st_ino]
     finally:
         os.close(fd)
 
 
-def verify_quarantined_tombstone(parent, name, expected):
-    fd = os.open(name, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
-    try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size != 0:
-            raise OSError(errno.ENOTEMPTY, "quarantined container is no longer an empty tombstone")
-        if [info.st_dev, info.st_rdev, info.st_ino] != expected:
-            raise OSError(errno.ESTALE, "quarantined container is no longer the surveyed file")
-    finally:
-        os.close(fd)
+def verify_quarantined_tombstone(fd, expected):
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_size != 0:
+        raise OSError(errno.ENOTEMPTY, "quarantined container is no longer an empty tombstone")
+    if info.st_nlink != 1:
+        raise OSError(errno.EMLINK, "quarantined container is hardlinked")
+    if [info.st_dev, info.st_rdev, info.st_ino] != expected:
+        raise OSError(errno.ESTALE, "quarantined container is no longer the surveyed file")
 
 
 def quarantine_duplicate(path, expected):
     """Rename a proven duplicate aside, re-prove it, then unlink it.
 
     The rename is RENAME_NOREPLACE so a concurrently created pathname is never
-    clobbered, and the post-rename recheck re-proves both the inode identity and
-    the zero-byte size, so a container that was replaced or gained bytes between
-    the survey and the removal is restored instead of destroyed.
+    clobbered. The descriptor opened after the rename is held across both the
+    proof and the unlink, and the size is re-proved through that same
+    descriptor immediately before removal, so a writer that appends between the
+    proof and the unlink is caught rather than silently losing its bytes. A
+    container that was replaced, filled, or hardlinked is restored to its
+    original name instead of destroyed.
     """
     parent, name = open_parent(posixpath.dirname(path), posixpath.basename(path))
     try:
         private = f".{name}.cinder-duplicate-{secrets.token_hex(16)}"
         rename_noreplace(parent, name, private)
         try:
-            verify_quarantined_tombstone(parent, private, expected)
-        except OSError as exc:
+            fd = os.open(private, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
             try:
-                rename_noreplace(parent, private, name)
-            except OSError as restore:
-                raise EffectCommittedError(
-                    restore.errno or errno.EIO, "duplicate quarantine could not be restored"
-                ) from restore
-            raise exc
-        try:
-            os.unlink(private, dir_fd=parent)
-            os.fsync(parent)
+                remove_proven_tombstone(parent, private, fd, expected)
+            finally:
+                os.close(fd)
         except OSError as exc:
-            raise EffectCommittedError(
-                exc.errno or errno.EIO, "duplicate quarantine could not be removed"
-            ) from exc
+            if isinstance(exc, EffectCommittedError):
+                raise
+            restore_quarantined_duplicate(parent, private, name, exc)
     finally:
         os.close(parent)
+
+
+def remove_proven_tombstone(parent, private, fd, expected):
+    """Unlink a quarantined tombstone, proving it through the held descriptor.
+
+    The proof reads the inode the descriptor already pins, so nothing can swap
+    the file between the check and the unlink; a writer that appended through
+    its own descriptor is caught here and the container is restored instead.
+    """
+    verify_quarantined_tombstone(fd, expected)
+    try:
+        os.unlink(private, dir_fd=parent)
+    except OSError as exc:
+        raise EffectCommittedError(
+            exc.errno or errno.EIO, "duplicate quarantine could not be removed"
+        ) from exc
+    try:
+        os.fsync(parent)
+    except OSError as exc:
+        raise EffectCommittedError(
+            exc.errno or errno.EIO, "duplicate removal could not be synced"
+        ) from exc
+
+
+def restore_quarantined_duplicate(parent, private, name, cause):
+    """Put an unproven quarantined container back under its original name."""
+    try:
+        rename_noreplace(parent, private, name)
+        os.fsync(parent)
+    except OSError as restore:
+        raise EffectCommittedError(
+            restore.errno or errno.EIO, "duplicate quarantine could not be restored"
+        ) from restore
+    raise cause
 
 
 def reconcile_duplicates(args):
     """Remove proven, owned, zero-byte duplicate containers of one logical path.
 
-    Every backing container must be a zero-byte regular file and exactly one of
-    them must carry the caller's manifest-recorded identity. Anything nonzero,
-    ambiguous, or unowned raises before a single byte is touched.
+    Every backing container must be a lone zero-byte regular file and exactly
+    one of them must carry the caller's manifest-recorded identity. Anything
+    nonzero, hardlinked, ambiguous, or unowned raises before a byte is touched.
     """
     root, relative = args[0], args[1]
     expected = [int(args[2]), int(args[3]), int(args[4])]
 
+    # user.mergerfs.allpaths is only authoritative on a real mergerfs mount.
+    # Anywhere else it is ordinary, caller-writable metadata, and trusting it
+    # would let a forged xattr name arbitrary files -- including files outside
+    # the configured roots -- as deletable "duplicates".
+    if not mergerfs_mount(root):
+        raise OSError(errno.EINVAL, "logical path is not on a mergerfs mount")
+
     fd = open_mergerfs_path(root, relative)
     try:
         paths = mergerfs_allpaths(fd)
+        branches = mergerfs_branches(fd)
     finally:
         os.close(fd)
 
@@ -505,6 +546,7 @@ def reconcile_duplicates(args):
     kept = []
     duplicates = []
     for path in paths:
+        verify_backing_container(path, relative, branches)
         identity = tombstone_identity(path)
         if identity == expected:
             kept.append(path)
@@ -525,6 +567,30 @@ def reconcile_duplicates(args):
             raise
 
     emit({"ok": "reconcile_duplicates"})
+
+
+def mergerfs_branches(fd):
+    """Configured backing branches of the mount, as absolute normalized paths."""
+    raw = os.fsdecode(os.getxattr(fd, MERGERFS_SRCMOUNTS))
+    return [posixpath.normpath(branch) for branch in raw.split(":") if branch]
+
+
+def verify_backing_container(path, relative, branches):
+    """Prove a listed container really is this logical path inside a branch.
+
+    mergerfs maps a logical path onto <branch>/<relative>, so a container that
+    does not sit at that exact position under a configured branch is not a
+    backing copy of this file and must never be removed.
+    """
+    if not posixpath.isabs(path):
+        raise OSError(errno.EINVAL, "backing container path is not absolute")
+
+    suffix = "/" + checked_relative(relative)
+    for branch in branches:
+        if path == branch + suffix:
+            return
+
+    raise OSError(errno.EXDEV, "backing container is not inside a configured branch")
 
 
 def wait_for_unique_path(root, relative, basepath, backing_relative, expected_identity):

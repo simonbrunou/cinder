@@ -307,12 +307,66 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     assert File.exists?(owned)
   end
 
+  # The one destructive window in the operation: between the survey that proved
+  # the duplicate empty and the unlink that removes it. A writer that fills the
+  # container in that window must get it back, not lose it.
+  @tag :tmp_dir
+  test "a duplicate filled after quarantine is restored with its bytes intact", %{
+    root: root,
+    tmp: tmp
+  } do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp, fill_after_quarantine: "RESCUED")
+
+    assert {:error, :enotempty} = Disk.reconcile_duplicate_containers(path, identity)
+
+    assert File.read!(duplicate) == "RESCUED"
+    assert File.exists?(owned)
+    assert Path.wildcard(Path.join(Path.dirname(duplicate), ".*cinder-duplicate-*")) == []
+  end
+
+  # user.mergerfs.allpaths is only authoritative on a real mergerfs mount;
+  # anywhere else it is ordinary caller-writable metadata. Without the mount
+  # proof, a forged xattr naming a file outside the library would delete it.
+  @tag :tmp_dir
+  test "a forged allpaths xattr off a mergerfs mount cannot delete anything", %{
+    root: root,
+    tmp: tmp
+  } do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp, mergerfs: false)
+
+    outsider = Path.join(tmp, "outside-the-library")
+    File.write!(outsider, "")
+
+    assert {:error, :einval} = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.exists?(outsider)
+    assert File.exists?(owned)
+    assert File.exists?(duplicate)
+  end
+
+  # A container reachable under a second name is not wholly ours to remove:
+  # unlinking this link would leave the bytes live under the other one.
+  @tag :tmp_dir
+  test "a hardlinked duplicate container is refused", %{root: root, tmp: tmp} do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp)
+
+    link = Path.join(tmp, "second-name")
+    File.ln!(duplicate, link)
+
+    assert {:error, :emlink} = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.exists?(duplicate)
+    assert File.exists?(link)
+    assert File.exists?(owned)
+  end
+
   # A real mergerfs mount is not available in the test environment, so the shim
   # forces mergerfs_mount() to true and answers user.mergerfs.allpaths for the
   # logical backup path with the two branch containers. Everything else -- the
   # zero-byte and identity proofs, the RENAME_NOREPLACE quarantine, the recheck
   # and the unlink -- is the real helper running against real files.
-  defp duplicate_tombstones!(root, tmp) do
+  defp duplicate_tombstones!(root, tmp, opts \\ []) do
     relative = "Movie/.subtitle.srt.cinder-sync-original"
     path = Path.join(root, relative)
     branch_a = Path.join(tmp, "branch-a")
@@ -329,13 +383,18 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
 
     stat = File.stat!(owned)
     identity = {stat.major_device, stat.minor_device, stat.inode}
-    helper = mergerfs_shim!(tmp, [owned, duplicate])
+
+    helper =
+      mergerfs_shim!(tmp, [owned, duplicate], [branch_a, branch_b], opts)
+
     Application.put_env(:cinder, :rooted_filesystem_helper, helper)
 
     %{path: path, owned: owned, duplicate: duplicate, identity: identity}
   end
 
-  defp mergerfs_shim!(tmp, containers) do
+  defp mergerfs_shim!(tmp, containers, branches, opts) do
+    fill_after_quarantine = opts[:fill_after_quarantine]
+    mergerfs = Keyword.get(opts, :mergerfs, true)
     helper = Path.join(tmp, "mergerfs_shim.py")
     real_helper = Path.expand("../../../../priv/rooted_fs.py", __DIR__)
 
@@ -344,7 +403,9 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     import sys
 
     CONTAINERS = #{inspect(containers)}
+    BRANCHES = #{inspect(branches)}
     REAL_HELPER = #{inspect(real_helper)}
+    FILL_AFTER_QUARANTINE = #{if fill_after_quarantine, do: inspect(fill_after_quarantine), else: "None"}
 
     real_getxattr = os.getxattr
 
@@ -353,6 +414,8 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
             existing = [c for c in CONTAINERS if os.path.lexists(c)]
             if existing:
                 return b"\\0".join(os.fsencode(c) for c in existing)
+        if name == "user.mergerfs.srcmounts":
+            return os.fsencode(":".join(BRANCHES))
         return real_getxattr(path, name, **kwargs)
 
     os.getxattr = getxattr
@@ -363,7 +426,27 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     with open(REAL_HELPER, encoding="utf-8") as source:
         exec(compile(source.read(), REAL_HELPER, "exec"), namespace)
 
-    namespace["mergerfs_mount"] = lambda path: True
+    namespace["mergerfs_mount"] = lambda path: #{if mergerfs, do: "True", else: "False"}
+
+    # Simulate a writer that fills the container in the window between the
+    # survey that proved it empty and the unlink that would remove it, by
+    # writing immediately after the quarantine rename lands.
+    if FILL_AFTER_QUARANTINE is not None:
+        real_rename_noreplace = namespace["rename_noreplace"]
+        renames = []
+
+        def rename_noreplace(parent, source, destination):
+            real_rename_noreplace(parent, source, destination)
+            renames.append(destination)
+            if len(renames) == 1:
+                fd = os.open(destination, os.O_WRONLY, dir_fd=parent)
+                try:
+                    os.write(fd, os.fsencode(FILL_AFTER_QUARANTINE))
+                finally:
+                    os.close(fd)
+
+        namespace["rename_noreplace"] = rename_noreplace
+
     sys.argv = [REAL_HELPER] + sys.argv[1:]
     operation = sys.argv[1] if len(sys.argv) > 1 else "unknown"
 

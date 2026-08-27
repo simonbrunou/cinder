@@ -1944,17 +1944,21 @@ defmodule Cinder.Subtitles.SyncTest do
     assert %{identity: identity} = Manifest.backup_tombstone(Manifest.read(video), "en")
     assert Manifest.sync(Manifest.read(video), "en") == nil
 
-    duplicate = Path.join(tmp, "branch-b/" <> Path.basename(backup))
+    root = Application.fetch_env!(:cinder, :movies_library_path)
+    relative = Path.relative_to(backup, root)
+    branch = Path.join(tmp, "branch-b")
+    duplicate = Path.join(branch, relative)
     File.mkdir_p!(Path.dirname(duplicate))
     File.write!(duplicate, "")
 
-    helper = mergerfs_duplicate_helper!(tmp, backup, [backup, duplicate])
+    helper = mergerfs_duplicate_helper!(tmp, backup, [backup, duplicate], [root, branch])
+
     Application.put_env(:cinder, :rooted_filesystem_helper, helper)
 
     %{path: path, backup: backup, duplicate: duplicate, original: original, identity: identity}
   end
 
-  defp mergerfs_duplicate_helper!(tmp, logical, containers) do
+  defp mergerfs_duplicate_helper!(tmp, logical, containers, branches) do
     helper = Path.join(tmp, "mergerfs_duplicate_helper.py")
     real_helper = Path.expand("../../../priv/rooted_fs.py", __DIR__)
 
@@ -1964,15 +1968,28 @@ defmodule Cinder.Subtitles.SyncTest do
 
     LOGICAL = #{inspect(logical)}
     CONTAINERS = #{inspect(containers)}
+    BRANCHES = #{inspect(branches)}
     REAL_HELPER = #{inspect(real_helper)}
 
     real_getxattr = os.getxattr
+
+    def targeted():
+        return any(os.path.basename(LOGICAL) in arg for arg in sys.argv[2:])
 
     def getxattr(path, name, **kwargs):
         if name == "user.mergerfs.allpaths":
             existing = [c for c in CONTAINERS if os.path.lexists(c)]
             if existing:
                 return b"\\0".join(os.fsencode(c) for c in existing)
+        if name == "user.mergerfs.srcmounts":
+            return os.fsencode(":".join(BRANCHES))
+        # The surviving container IS the logical path here, so the mount maps
+        # onto itself: this keeps the real mergerfs reactivation path (backing
+        # location lookup + mapping verification) exercised after reconciling.
+        if name == "user.mergerfs.fullpath" and targeted():
+            return os.fsencode(LOGICAL)
+        if name == "user.mergerfs.basepath" and targeted():
+            return os.fsencode(BRANCHES[0])
         return real_getxattr(path, name, **kwargs)
 
     os.getxattr = getxattr
@@ -1985,16 +2002,10 @@ defmodule Cinder.Subtitles.SyncTest do
 
     real_mount = namespace["mergerfs_mount"]
 
-    # Scope the mergerfs illusion to the duplicated backup path only: every
-    # other path in the suite keeps real (non-mergerfs) behaviour, and once the
-    # duplicate is reconciled away the path stops being mergerfs too, so the
-    # retry runs the ordinary rooted reactivation.
-    def mergerfs_mount(path):
-        duplicated = len([c for c in CONTAINERS if os.path.lexists(c)]) > 1
-        targeted = any(os.path.basename(LOGICAL) in arg for arg in sys.argv[2:])
-        return (duplicated and targeted) or real_mount(path)
-
-    namespace["mergerfs_mount"] = mergerfs_mount
+    # Scope the mergerfs illusion to the backup path, and keep it mergerfs after
+    # the duplicate is gone so the post-reconciliation reactivation still runs
+    # through hold_open_mergerfs rather than the ordinary rooted open.
+    namespace["mergerfs_mount"] = lambda path: targeted() or real_mount(path)
 
     sys.argv = [REAL_HELPER] + sys.argv[1:]
     operation = sys.argv[1] if len(sys.argv) > 1 else "unknown"
