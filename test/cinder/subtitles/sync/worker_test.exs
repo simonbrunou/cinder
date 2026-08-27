@@ -325,6 +325,43 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert_receive {:started, "/library/bg.mkv", _}, 1000
   end
 
+  test "an explicit scope waiting behind a hung library scan still releases background work" do
+    owner = self()
+
+    scan = fn
+      :library ->
+        send(owner, :library_scan_started)
+        Process.sleep(:infinity)
+
+      {:series, 5} ->
+        [%{video_path: "/library/explicit.mkv", label: "Explicit"}]
+    end
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+      [%{status: :aligned, label: video}]
+    end
+
+    worker =
+      start_supervised!(
+        {Worker,
+         initial_scan: false,
+         interval: :timer.hours(1),
+         scan: scan,
+         analyze: analyze,
+         explicit_scan_hold: 50}
+      )
+
+    # The library scan hangs, so the explicit scope sits in pending_scans and its units never
+    # materialize. The hold must still expire rather than stranding the background queue.
+    assert :ok = Worker.enqueue_library(worker)
+    assert_receive :library_scan_started
+    assert :ok = Worker.enqueue_series(5, worker)
+
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    assert_receive {:started, "/library/bg.mkv", _}, 1000
+  end
+
   test "a failed explicit scan releases background work that was waiting for it" do
     owner = self()
 
