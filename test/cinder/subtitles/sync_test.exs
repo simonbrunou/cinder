@@ -321,7 +321,9 @@ defmodule Cinder.Subtitles.SyncTest do
     assert :ok = Manifest.clear_backup_tombstone(video, "en")
     current = File.read!(path)
 
-    assert {:error, :duplicate_backup_containers} =
+    # Without a recorded tombstone nothing proves the duplicates are ours, so
+    # the original post-effect EEXIST surfaces unchanged instead of a new atom.
+    assert {:error, {:effect_committed, "hold", %{"reason" => "EEXIST"}}} =
              Sync.manual(hd(Sync.discover(video)), 2_000, 1.0)
 
     assert File.exists?(duplicate)
@@ -1981,7 +1983,9 @@ defmodule Cinder.Subtitles.SyncTest do
             existing = [c for c in CONTAINERS if os.path.lexists(c)]
             if existing:
                 return b"\\0".join(os.fsencode(c) for c in existing)
-        if name == "user.mergerfs.srcmounts":
+        if name in ("user.mergerfs.branches", "user.mergerfs.srcmounts"):
+            if os.path.basename(os.fspath(path)) != ".mergerfs":
+                raise OSError(61, "ENODATA")
             return os.fsencode(":".join(BRANCHES))
         # The surviving container IS the logical path here, so the mount maps
         # onto itself: this keeps the real mergerfs reactivation path (backing
@@ -2005,6 +2009,10 @@ defmodule Cinder.Subtitles.SyncTest do
     # Scope the mergerfs illusion to the backup path, and keep it mergerfs after
     # the duplicate is gone so the post-reconciliation reactivation still runs
     # through hold_open_mergerfs rather than the ordinary rooted open.
+    real_mountpoint = namespace["mergerfs_mountpoint"]
+    namespace["mergerfs_mountpoint"] = (
+        lambda path: BRANCHES[0] if targeted() else real_mountpoint(path)
+    )
     namespace["mergerfs_mount"] = lambda path: targeted() or real_mount(path)
 
     sys.argv = [REAL_HELPER] + sys.argv[1:]

@@ -385,14 +385,14 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     identity = {stat.major_device, stat.minor_device, stat.inode}
 
     helper =
-      mergerfs_shim!(tmp, [owned, duplicate], [branch_a, branch_b], opts)
+      mergerfs_shim!(tmp, [owned, duplicate], [branch_a, branch_b], root, opts)
 
     Application.put_env(:cinder, :rooted_filesystem_helper, helper)
 
     %{path: path, owned: owned, duplicate: duplicate, identity: identity}
   end
 
-  defp mergerfs_shim!(tmp, containers, branches, opts) do
+  defp mergerfs_shim!(tmp, containers, branches, mountpoint, opts) do
     fill_after_quarantine = opts[:fill_after_quarantine]
     mergerfs = Keyword.get(opts, :mergerfs, true)
     helper = Path.join(tmp, "mergerfs_shim.py")
@@ -414,7 +414,9 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
             existing = [c for c in CONTAINERS if os.path.lexists(c)]
             if existing:
                 return b"\\0".join(os.fsencode(c) for c in existing)
-        if name == "user.mergerfs.srcmounts":
+        if name in ("user.mergerfs.branches", "user.mergerfs.srcmounts"):
+            if os.path.basename(os.fspath(path)) != ".mergerfs":
+                raise OSError(61, "ENODATA")
             return os.fsencode(":".join(BRANCHES))
         return real_getxattr(path, name, **kwargs)
 
@@ -426,7 +428,9 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     with open(REAL_HELPER, encoding="utf-8") as source:
         exec(compile(source.read(), REAL_HELPER, "exec"), namespace)
 
-    namespace["mergerfs_mount"] = lambda path: #{if mergerfs, do: "True", else: "False"}
+    MOUNTPOINT = #{inspect(mountpoint)} if #{if mergerfs, do: "True", else: "False"} else None
+    namespace["mergerfs_mountpoint"] = lambda path: MOUNTPOINT
+    namespace["mergerfs_mount"] = lambda path: MOUNTPOINT is not None
 
     # Simulate a writer that fills the container in the window between the
     # survey that proved it empty and the unlink that would remove it, by

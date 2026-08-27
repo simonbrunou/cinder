@@ -37,8 +37,12 @@ defmodule Cinder.Subtitles.Sync.Backup do
       # failed until an operator deleted the duplicates by hand. Reconcile the
       # duplicates only when they are proven owned zero-byte tombstones, then
       # take the same guarded reactivation path.
-      {:error, {:effect_committed, _operation, %{"reason" => "EEXIST"}}} ->
-        reconcile_duplicates(backup, expected_source, item)
+      # Two producers reach here: check_logical_absence, which observes
+      # duplicates without creating anything, and wait_for_unique_path, which
+      # leaks a fresh zero-byte container. Reconciliation handles both -- the
+      # leak simply becomes one more proven duplicate.
+      {:error, {:effect_committed, _operation, %{"reason" => "EEXIST"}}} = error ->
+        reconcile_duplicates(backup, expected_source, item, error)
 
       {:error, reason} ->
         {:error, reason}
@@ -61,24 +65,32 @@ defmodule Cinder.Subtitles.Sync.Backup do
   defp reconcile_duplicates(
          backup,
          expected_source,
-         %{backup_tombstone: %{identity: identity}} = item
+         %{backup_tombstone: %{identity: identity}} = item,
+         error
        )
        when is_list(identity) and length(identity) == 3 do
-    with :ok <- reconcile_duplicate_containers(backup, List.to_tuple(identity)),
-         do: existing(backup, expected_source, item)
+    case reconcile_duplicate_containers(backup, List.to_tuple(identity)) do
+      :ok -> existing(backup, expected_source, item)
+      {:error, :unsupported_filesystem} -> error
+      {:error, _reason} = refused -> refused
+    end
   end
 
-  defp reconcile_duplicates(_backup, _expected_source, _item),
-    do: {:error, :duplicate_backup_containers}
+  # Without a recorded tombstone nothing proves the duplicates are ours, so
+  # surface the original post-effect error rather than minting a new atom.
+  defp reconcile_duplicates(_backup, _expected_source, _item, error), do: error
 
   # Only the rooted disk implementation can prove and remove duplicate backing
   # containers; any other filesystem stays fail-closed.
   defp reconcile_duplicate_containers(backup, identity) do
     filesystem = Sync.fs()
 
-    if function_exported?(filesystem, :reconcile_duplicate_containers, 2),
-      do: filesystem.reconcile_duplicate_containers(backup, identity),
-      else: {:error, :duplicate_backup_containers}
+    # Code.ensure_loaded? matters: under interactive mix the module may not be
+    # loaded yet, and a bare function_exported? would silently fail-closed.
+    if Code.ensure_loaded?(filesystem) and
+         function_exported?(filesystem, :reconcile_duplicate_containers, 2),
+       do: filesystem.reconcile_duplicate_containers(backup, identity),
+       else: {:error, :unsupported_filesystem}
   end
 
   defp register_created(item, bound) do

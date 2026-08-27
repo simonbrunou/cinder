@@ -30,6 +30,7 @@ MERGERFS_FULLPATH = "user.mergerfs.fullpath"
 MERGERFS_BASEPATH = "user.mergerfs.basepath"
 MERGERFS_ALLPATHS = "user.mergerfs.allpaths"
 MERGERFS_SRCMOUNTS = "user.mergerfs.srcmounts"
+MERGERFS_BRANCHES = "user.mergerfs.branches"
 MERGERFS_INODECALC = "user.mergerfs.inodecalc"
 
 
@@ -304,7 +305,8 @@ def mountinfo_unescape(value):
     )
 
 
-def mergerfs_mount(path):
+def mergerfs_mountpoint(path):
+    """Longest mountpoint containing path, but only when that mount is mergerfs."""
     path = posixpath.normpath(path)
     match = None
     with open("/proc/self/mountinfo", encoding="utf-8") as mountinfo:
@@ -313,10 +315,16 @@ def mergerfs_mount(path):
             separator = fields.index("-")
             mountpoint = mountinfo_unescape(fields[4])
             if path == mountpoint or path.startswith(mountpoint.rstrip("/") + "/"):
-                candidate = (len(mountpoint), fields[separator + 1] == "fuse.mergerfs")
+                candidate = (len(mountpoint), fields[separator + 1] == "fuse.mergerfs", mountpoint)
                 if match is None or candidate[0] > match[0]:
                     match = candidate
-    return match is not None and match[1]
+    if match is None or not match[1]:
+        return None
+    return posixpath.normpath(match[2])
+
+
+def mergerfs_mount(path):
+    return mergerfs_mountpoint(path) is not None
 
 
 def mergerfs_backing_location(parent, name):
@@ -425,7 +433,7 @@ def tombstone_identity(path):
     """Identity of a backing container, refusing anything but a lone zero-byte file."""
     parent, name = open_parent(posixpath.dirname(path), posixpath.basename(path))
     try:
-        fd = os.open(name, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
+        fd = os.open(name, O_PATH | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
     finally:
         os.close(parent)
     try:
@@ -469,7 +477,7 @@ def quarantine_duplicate(path, expected):
         private = f".{name}.cinder-duplicate-{secrets.token_hex(16)}"
         rename_noreplace(parent, name, private)
         try:
-            fd = os.open(private, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
+            fd = os.open(private, O_PATH | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
             try:
                 remove_proven_tombstone(parent, private, fd, expected)
             finally:
@@ -485,17 +493,16 @@ def quarantine_duplicate(path, expected):
 def remove_proven_tombstone(parent, private, fd, expected):
     """Unlink a quarantined tombstone, proving it through the held descriptor.
 
-    The proof reads the inode the descriptor already pins, so nothing can swap
-    the file between the check and the unlink; a writer that appended through
-    its own descriptor is caught here and the container is restored instead.
+    The proof reads the inode the descriptor already pins, so a writer that
+    appended through its own descriptor is caught here. The unlink itself
+    resolves the NAME (Linux has no funlinkat), so what makes it safe is the
+    128-bit unguessable private name plus RENAME_NOREPLACE, not the descriptor.
     """
     verify_quarantined_tombstone(fd, expected)
-    try:
-        os.unlink(private, dir_fd=parent)
-    except OSError as exc:
-        raise EffectCommittedError(
-            exc.errno or errno.EIO, "duplicate quarantine could not be removed"
-        ) from exc
+    # A failed unlink committed nothing, so let it propagate as a plain OSError:
+    # the caller restores the original name rather than stranding a hidden
+    # .cinder-duplicate-* orphan that mergerfs would surface in the union.
+    os.unlink(private, dir_fd=parent)
     try:
         os.fsync(parent)
     except OSError as exc:
@@ -530,15 +537,23 @@ def reconcile_duplicates(args):
     # Anywhere else it is ordinary, caller-writable metadata, and trusting it
     # would let a forged xattr name arbitrary files -- including files outside
     # the configured roots -- as deletable "duplicates".
-    if not mergerfs_mount(root):
+    mountpoint = mergerfs_mountpoint(root)
+    if mountpoint is None:
         raise OSError(errno.EINVAL, "logical path is not on a mergerfs mount")
 
     fd = open_mergerfs_path(root, relative)
     try:
         paths = mergerfs_allpaths(fd)
-        branches = mergerfs_branches(fd)
     finally:
         os.close(fd)
+
+    branches = mergerfs_branches(mountpoint)
+    # Branches mirror the MOUNT, and the library root may be a subdirectory of
+    # it, so a container sits at <branch>/<root-relative-to-mount>/<relative>.
+    below_mount = posixpath.relpath(posixpath.normpath(root), mountpoint)
+    backing_relative = checked_relative(relative)
+    if below_mount != ".":
+        backing_relative = posixpath.join(checked_relative(below_mount), backing_relative)
 
     if len(paths) < 2:
         raise OSError(errno.EINVAL, "logical path does not span backing branches")
@@ -546,7 +561,7 @@ def reconcile_duplicates(args):
     kept = []
     duplicates = []
     for path in paths:
-        verify_backing_container(path, relative, branches)
+        verify_backing_container(path, backing_relative, branches)
         identity = tombstone_identity(path)
         if identity == expected:
             kept.append(path)
@@ -569,13 +584,31 @@ def reconcile_duplicates(args):
     emit({"ok": "reconcile_duplicates"})
 
 
-def mergerfs_branches(fd):
-    """Configured backing branches of the mount, as absolute normalized paths."""
-    raw = os.fsdecode(os.getxattr(fd, MERGERFS_SRCMOUNTS))
-    return [posixpath.normpath(branch) for branch in raw.split(":") if branch]
+def mergerfs_branches(mountpoint):
+    """Configured backing branches, read from the mount's own control file.
+
+    branches/srcmounts are runtime CONFIG keys: mergerfs serves them only from
+    <mountpoint>/.mergerfs, never from an arbitrary file descriptor. Reading
+    them off the target file returns ENODATA on a real mount -- and worse, on a
+    non-mergerfs submount beneath the root it would return caller-writable
+    metadata. legacy_union_identity reads inodecalc the same way.
+    """
+    control = posixpath.join(mountpoint, ".mergerfs")
+    try:
+        raw = os.fsdecode(os.getxattr(control, MERGERFS_BRANCHES))
+    except OSError:
+        raw = os.fsdecode(os.getxattr(control, MERGERFS_SRCMOUNTS))
+
+    branches = []
+    for entry in raw.split(":"):
+        # user.mergerfs.branches yields "path=MODE"; srcmounts yields bare paths.
+        entry = entry.split("=", 1)[0]
+        if entry:
+            branches.append(posixpath.normpath(entry))
+    return branches
 
 
-def verify_backing_container(path, relative, branches):
+def verify_backing_container(path, backing_relative, branches):
     """Prove a listed container really is this logical path inside a branch.
 
     mergerfs maps a logical path onto <branch>/<relative>, so a container that
@@ -585,7 +618,7 @@ def verify_backing_container(path, relative, branches):
     if not posixpath.isabs(path):
         raise OSError(errno.EINVAL, "backing container path is not absolute")
 
-    suffix = "/" + checked_relative(relative)
+    suffix = "/" + backing_relative
     for branch in branches:
         if path == branch + suffix:
             return
