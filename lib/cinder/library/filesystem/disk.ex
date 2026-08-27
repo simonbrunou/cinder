@@ -22,16 +22,19 @@ defmodule Cinder.Library.Filesystem.Disk do
     "EIO" => :eio,
     "EISDIR" => :eisdir,
     "ELOOP" => :eloop,
+    "EMLINK" => :emlink,
     "ENAMETOOLONG" => :enametoolong,
+    "ENODATA" => :enodata,
     "ENOENT" => :enoent,
     "ENOSPC" => :enospc,
     "ENOTDIR" => :enotdir,
     "ENOTEMPTY" => :enotempty,
     "EPERM" => :eperm,
     "EROFS" => :erofs,
+    "ESTALE" => :estale,
     "EXDEV" => :exdev
   }
-  @rooted_effect_operations ~w(chmod exchange rename unlink rmdir mkdir mkdir_near)
+  @rooted_effect_operations ~w(chmod exchange rename unlink rmdir mkdir mkdir_near reconcile_duplicates)
 
   @impl true
   def dir?(path), do: File.dir?(path)
@@ -74,6 +77,35 @@ defmodule Cinder.Library.Filesystem.Disk do
 
       _ ->
         mkdir_exclusive(dir, mode)
+    end
+  end
+
+  @doc """
+  Removes proven, owned, zero-byte duplicate containers of one logical path.
+
+  A mergerfs logical path can name a zero-byte container on more than one
+  backing branch, which makes exclusive creation fail with a post-effect
+  `EEXIST` that no retry can clear. The helper only removes a duplicate when
+  every container is a zero-byte regular file and either exactly one carries
+  `identity` or mergerfs maps a verified legacy union identity to exactly one
+  current backing container. Anything nonzero, ambiguous, or unowned is
+  refused before a byte is touched.
+  """
+  @spec reconcile_duplicate_containers(String.t(), {integer(), integer(), integer()}) ::
+          :ok | {:error, term()}
+  def reconcile_duplicate_containers(path, {major, minor, inode}) do
+    case rooted_location(path) do
+      {:ok, root, relative} ->
+        run_rooted("reconcile_duplicates", [
+          root,
+          relative,
+          Integer.to_string(major),
+          Integer.to_string(minor),
+          Integer.to_string(inode)
+        ])
+
+      :outside_roots ->
+        {:error, :outside_roots}
     end
   end
 

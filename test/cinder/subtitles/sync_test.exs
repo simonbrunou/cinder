@@ -276,6 +276,103 @@ defmodule Cinder.Subtitles.SyncTest do
     assert :ok = Disk.close_bound(bound)
   end
 
+  test "reconciles duplicate mergerfs backup tombstones and completes reanalysis", %{
+    video: video,
+    tmp_dir: tmp
+  } do
+    %{path: path, backup: backup, duplicate: duplicate, original: original} =
+      duplicate_tombstones!(video, tmp)
+
+    assert {:ok, :corrected, _} = Sync.manual(hd(Sync.discover(video)), 2_000, 1.0)
+
+    assert File.read!(backup) == original
+    refute File.exists?(duplicate)
+    refute File.read!(path) == original
+
+    assert {:ok, bound} = Disk.open_bound(backup, [:read, :raw, :binary])
+    assert %{identity: identity} = Manifest.backup_tombstone(Manifest.read(video), "en")
+    assert identity == Tuple.to_list(bound.identity)
+    assert :ok = Disk.close_bound(bound)
+  end
+
+  test "reconciles duplicate tombstones recorded with a legacy mergerfs identity", %{
+    video: video,
+    tmp_dir: tmp
+  } do
+    legacy_identity = [38, 0, 123_456]
+
+    %{path: path, backup: backup, duplicate: duplicate, original: original} =
+      duplicate_tombstones!(video, tmp, legacy_identity: legacy_identity)
+
+    assert %{identity: ^legacy_identity} =
+             Manifest.backup_tombstone(Manifest.read(video), "en")
+
+    assert {:ok, :corrected, _} = Sync.manual(hd(Sync.discover(video)), 2_000, 1.0)
+
+    assert File.read!(backup) == original
+    refute File.exists?(duplicate)
+    refute File.read!(path) == original
+
+    assert {:ok, bound} = Disk.open_bound(backup, [:read, :raw, :binary])
+    assert %{identity: identity} = Manifest.backup_tombstone(Manifest.read(video), "en")
+    assert identity == Tuple.to_list(bound.identity)
+    assert :ok = Disk.close_bound(bound)
+  end
+
+  test "legacy reconciliation refuses backing paths that alias one physical file", %{
+    video: video,
+    tmp_dir: tmp
+  } do
+    legacy_identity = [38, 0, 123_456]
+
+    %{backup: backup, duplicate: duplicate} =
+      duplicate_tombstones!(video, tmp,
+        legacy_identity: legacy_identity,
+        alias_identity: true
+      )
+
+    assert {:error, :estale} = Sync.manual(hd(Sync.discover(video)), 2_000, 1.0)
+    assert File.exists?(backup)
+    assert File.exists?(duplicate)
+  end
+
+  test "a nonzero duplicate mergerfs backup container stays fail-closed", %{
+    video: video,
+    tmp_dir: tmp
+  } do
+    %{path: path, backup: backup, duplicate: duplicate} = duplicate_tombstones!(video, tmp)
+
+    File.write!(duplicate, "unrelated payload")
+    current = File.read!(path)
+
+    assert {:error, :enotempty} = Sync.manual(hd(Sync.discover(video)), 2_000, 1.0)
+
+    assert File.read!(duplicate) == "unrelated payload"
+    assert File.read!(backup) == ""
+    assert File.read!(path) == current
+    assert Manifest.sync(Manifest.read(video), "en") == nil
+  end
+
+  test "duplicate mergerfs containers without a manifest tombstone stay fail-closed", %{
+    video: video,
+    tmp_dir: tmp
+  } do
+    %{path: path, backup: backup, duplicate: duplicate} = duplicate_tombstones!(video, tmp)
+
+    assert :ok = Manifest.clear_backup_tombstone(video, "en")
+    current = File.read!(path)
+
+    # Without a recorded tombstone nothing proves the duplicates are ours, so
+    # the original post-effect EEXIST surfaces unchanged instead of a new atom.
+    assert {:error, {:effect_committed, "hold", %{"reason" => "EEXIST"}}} =
+             Sync.manual(hd(Sync.discover(video)), 2_000, 1.0)
+
+    assert File.exists?(duplicate)
+    assert File.read!(backup) == ""
+    assert File.read!(path) == current
+    assert Manifest.sync(Manifest.read(video), "en") == nil
+  end
+
   test "reset retry reconciles a workspace orphaned after exchange", %{video: video} do
     path = managed_srt!(video)
     original = File.read!(path)
@@ -1873,6 +1970,147 @@ defmodule Cinder.Subtitles.SyncTest do
     backup
   end
 
+  # Reproduces the production state behind issue #350: a corrected-then-reset
+  # track whose manifest holds an owned backup tombstone with sync: nil, while
+  # the logical backup path is a zero-byte container on two mergerfs branches.
+  # The shim supplies the mergerfs surface (mount detection + allpaths) that the
+  # test environment cannot; the proofs and effects are the real helper.
+  defp duplicate_tombstones!(video, tmp, opts \\ []) do
+    path = managed_srt!(video)
+    original = File.read!(path)
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+    assert :ok = Sync.reset(hd(Sync.discover(video)))
+
+    backup = Sync.backup_path(path)
+    assert File.read!(backup) == ""
+    assert %{identity: identity} = Manifest.backup_tombstone(Manifest.read(video), "en")
+    assert Manifest.sync(Manifest.read(video), "en") == nil
+
+    legacy_identity = opts[:legacy_identity]
+
+    if legacy_identity do
+      assert :ok = Manifest.put_backup_tombstone(video, "en", legacy_identity)
+    end
+
+    root = Application.fetch_env!(:cinder, :movies_library_path)
+    File.write!(Path.join(root, ".mergerfs"), "")
+    relative = Path.relative_to(backup, root)
+    branch = Path.join(tmp, "branch-b")
+    duplicate = Path.join(branch, relative)
+    File.mkdir_p!(Path.dirname(duplicate))
+    File.write!(duplicate, "")
+
+    helper =
+      mergerfs_duplicate_helper!(
+        tmp,
+        backup,
+        [backup, duplicate],
+        [root, branch],
+        legacy_identity,
+        opts[:alias_identity] || false
+      )
+
+    Application.put_env(:cinder, :rooted_filesystem_helper, helper)
+
+    %{path: path, backup: backup, duplicate: duplicate, original: original, identity: identity}
+  end
+
+  defp mergerfs_duplicate_helper!(
+         tmp,
+         logical,
+         containers,
+         branches,
+         legacy_identity,
+         alias_identity
+       ) do
+    helper = Path.join(tmp, "mergerfs_duplicate_helper.py")
+    real_helper = Path.expand("../../../priv/rooted_fs.py", __DIR__)
+
+    File.write!(helper, """
+    import os
+    import sys
+
+    LOGICAL = #{inspect(logical)}
+    CONTAINERS = #{inspect(containers)}
+    BRANCHES = #{inspect(branches)}
+    LEGACY_IDENTITY = #{if legacy_identity, do: Jason.encode!(legacy_identity), else: "None"}
+    ALIAS_IDENTITY = #{if alias_identity, do: "True", else: "False"}
+    REAL_HELPER = #{inspect(real_helper)}
+
+    real_getxattr = os.getxattr
+
+    def targeted():
+        return any(os.path.basename(LOGICAL) in arg for arg in sys.argv[2:])
+
+    def getxattr(path, name, **kwargs):
+        if name == "user.mergerfs.allpaths":
+            existing = [c for c in CONTAINERS if os.path.lexists(c)]
+            if existing:
+                return b"\\0".join(os.fsencode(c) for c in existing)
+        if name in ("user.mergerfs.branches", "user.mergerfs.srcmounts"):
+            if not isinstance(path, int) or os.path.basename(
+                os.readlink(f"/proc/self/fd/{path}")
+            ) != ".mergerfs":
+                raise OSError(61, "ENODATA")
+            return os.fsencode(":".join(BRANCHES))
+        # The surviving container IS the logical path here, so the mount maps
+        # onto itself: this keeps the real mergerfs reactivation path (backing
+        # location lookup + mapping verification) exercised after reconciling.
+        if name == "user.mergerfs.fullpath" and targeted():
+            return os.fsencode(LOGICAL)
+        if name == "user.mergerfs.basepath" and targeted():
+            return os.fsencode(BRANCHES[0])
+        return real_getxattr(path, name, **kwargs)
+
+    os.getxattr = getxattr
+
+    # exec into a namespace we own so the helper's own functions resolve
+    # mergerfs_mount through this dict; runpy would hand back a detached copy.
+    namespace = {"__name__": "rooted_fs_shim", "__file__": REAL_HELPER}
+    with open(REAL_HELPER, encoding="utf-8") as source:
+        exec(compile(source.read(), REAL_HELPER, "exec"), namespace)
+
+    if LEGACY_IDENTITY is not None:
+        namespace["legacy_union_identity"] = lambda mountpoint, fd: LEGACY_IDENTITY
+
+    if ALIAS_IDENTITY:
+        real_tombstone_identity = namespace["tombstone_identity"]
+        aliased_identity = [None]
+
+        def tombstone_identity(branch, relative):
+            identity = real_tombstone_identity(branch, relative)
+            if aliased_identity[0] is None:
+                aliased_identity[0] = identity
+            return aliased_identity[0]
+
+        namespace["tombstone_identity"] = tombstone_identity
+
+    real_mount = namespace["mergerfs_mount"]
+
+    # Scope the mergerfs illusion to the backup path, and keep it mergerfs after
+    # the duplicate is gone so the post-reconciliation reactivation still runs
+    # through hold_open_mergerfs rather than the ordinary rooted open.
+    real_mountpoint = namespace["mergerfs_mountpoint"]
+    namespace["mergerfs_mountpoint"] = (
+        lambda path: BRANCHES[0] if targeted() else real_mountpoint(path)
+    )
+    namespace["mergerfs_mount"] = lambda path: targeted() or real_mount(path)
+
+    sys.argv = [REAL_HELPER] + sys.argv[1:]
+    operation = sys.argv[1] if len(sys.argv) > 1 else "unknown"
+
+    try:
+        namespace["main"]()
+    except OSError as exc:
+        committed = isinstance(exc, namespace["EffectCommittedError"])
+        namespace["fail"](operation, "post_effect" if committed else "pre_effect", exc)
+        sys.exit(1)
+    """)
+
+    helper
+  end
+
   defp legacy_identity_helper!(tmp, path_fragment, identity) do
     helper = Path.join(tmp, "legacy_identity_helper.py")
     real_helper = Path.expand("../../../priv/rooted_fs.py", __DIR__)
@@ -1882,7 +2120,11 @@ defmodule Cinder.Subtitles.SyncTest do
     import os
     import sys
 
-    if sys.argv[1] != "hold" or #{inspect(path_fragment)} not in sys.argv[3]:
+    if (
+        sys.argv[1] != "hold"
+        or #{inspect(path_fragment)} not in sys.argv[3]
+        or sys.argv[4] == "create"
+    ):
         os.execv(sys.executable, [sys.executable, #{inspect(real_helper)}] + sys.argv[1:])
 
     path = os.path.join(sys.argv[2], sys.argv[3])

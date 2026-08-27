@@ -261,6 +261,260 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     assert File.read!(outside_path) == "outside"
   end
 
+  @tag :tmp_dir
+  test "duplicate zero-byte tombstones proven owned are reconciled to the owned container", %{
+    root: root,
+    tmp: tmp
+  } do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp)
+
+    assert :ok = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.exists?(owned)
+    refute File.exists?(duplicate)
+    assert Path.wildcard(Path.join(Path.dirname(duplicate), ".*cinder-duplicate-*")) == []
+  end
+
+  @tag :tmp_dir
+  test "a nonzero duplicate container is refused and left untouched", %{root: root, tmp: tmp} do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp)
+
+    File.write!(duplicate, "unrelated payload")
+
+    assert {:error, :enotempty} = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.read!(duplicate) == "unrelated payload"
+    assert File.exists?(owned)
+  end
+
+  @tag :tmp_dir
+  test "duplicates that do not include the owned identity are refused", %{root: root, tmp: tmp} do
+    %{path: path, owned: owned, duplicate: duplicate} = duplicate_tombstones!(root, tmp)
+
+    assert {:error, :estale} = Disk.reconcile_duplicate_containers(path, {38, 0, 123_456})
+    assert File.exists?(owned)
+    assert File.exists?(duplicate)
+  end
+
+  @tag :tmp_dir
+  test "a single-branch logical path is refused as nothing to reconcile", %{root: root, tmp: tmp} do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp)
+
+    File.rm!(duplicate)
+
+    assert {:error, :einval} = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.exists?(owned)
+  end
+
+  @tag :tmp_dir
+  test "duplicate allpaths entries are refused before any removal", %{root: root, tmp: tmp} do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp, repeat_duplicate: true)
+
+    assert {:error, :einval} = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.exists?(owned)
+    assert File.exists?(duplicate)
+  end
+
+  # A mutation completed after quarantine but before the final proof must be
+  # detected and restored. External writers that append after the proof require
+  # cooperative locking and are outside this helper's guarantee.
+  @tag :tmp_dir
+  test "a duplicate filled after quarantine is restored with its bytes intact", %{
+    root: root,
+    tmp: tmp
+  } do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp, fill_after_quarantine: "RESCUED")
+
+    assert {:error, :enotempty} = Disk.reconcile_duplicate_containers(path, identity)
+
+    assert File.read!(duplicate) == "RESCUED"
+    assert File.exists?(owned)
+    assert Path.wildcard(Path.join(Path.dirname(duplicate), ".*cinder-duplicate-*")) == []
+  end
+
+  # user.mergerfs.allpaths is only authoritative on a real mergerfs mount;
+  # anywhere else it is ordinary caller-writable metadata. Without the mount
+  # proof, a forged xattr naming a file outside the library would delete it.
+  @tag :tmp_dir
+  test "a forged allpaths xattr off a mergerfs mount cannot delete anything", %{
+    root: root,
+    tmp: tmp
+  } do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp, mergerfs: false)
+
+    outsider = Path.join(tmp, "outside-the-library")
+    File.write!(outsider, "")
+
+    assert {:error, :einval} = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.exists?(outsider)
+    assert File.exists?(owned)
+    assert File.exists?(duplicate)
+  end
+
+  @tag :tmp_dir
+  test "a mergerfs logical open cannot cross into a nested mount" do
+    helper = Path.expand("../../../../priv/rooted_fs.py", __DIR__)
+
+    script = """
+    import errno
+    import os
+    import sys
+
+    namespace = {"__name__": "rooted_fs_test", "__file__": sys.argv[1]}
+    with open(sys.argv[1], encoding="utf-8") as source:
+        exec(compile(source.read(), sys.argv[1], "exec"), namespace)
+
+    same_mount = namespace["open_mergerfs_path"]("/proc", "version")
+    os.close(same_mount)
+
+    for opener in (
+        lambda: namespace["open_mergerfs_path"]("/", "proc/version"),
+        lambda: namespace["open_at_root"](
+            "/", "proc/version", namespace["O_PATH"], resolve=namespace["RESOLVE_NO_XDEV"]
+        ),
+    ):
+        try:
+            crossed = opener()
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+        else:
+            os.close(crossed)
+            raise RuntimeError("protected open crossed a nested mount")
+    """
+
+    assert {"", 0} = System.cmd("python3", ["-c", script, helper], stderr_to_stdout: true)
+  end
+
+  # A container reachable under a second name is not wholly ours to remove:
+  # unlinking this link would leave the bytes live under the other one.
+  @tag :tmp_dir
+  test "a hardlinked duplicate container is refused", %{root: root, tmp: tmp} do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp)
+
+    link = Path.join(tmp, "second-name")
+    File.ln!(duplicate, link)
+
+    assert {:error, :emlink} = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.exists?(duplicate)
+    assert File.exists?(link)
+    assert File.exists?(owned)
+  end
+
+  # A real mergerfs mount is not available in the test environment, so the shim
+  # forces mergerfs_mount() to true and answers user.mergerfs.allpaths for the
+  # logical backup path with the two branch containers. Everything else -- the
+  # zero-byte and identity proofs, the RENAME_NOREPLACE quarantine, the recheck
+  # and the unlink -- is the real helper running against real files.
+  defp duplicate_tombstones!(root, tmp, opts \\ []) do
+    relative = "Movie/.subtitle.srt.cinder-sync-original"
+    path = Path.join(root, relative)
+    branch_a = Path.join(tmp, "branch-a")
+    branch_b = Path.join(tmp, "branch-b")
+    owned = Path.join(branch_a, relative)
+    duplicate = Path.join(branch_b, relative)
+
+    Enum.each(
+      [Path.dirname(path), Path.dirname(owned), Path.dirname(duplicate)],
+      &File.mkdir_p!/1
+    )
+
+    Enum.each([path, owned, duplicate], &File.write!(&1, ""))
+
+    if Keyword.get(opts, :mergerfs, true), do: File.write!(Path.join(root, ".mergerfs"), "")
+
+    stat = File.stat!(owned)
+    identity = {stat.major_device, stat.minor_device, stat.inode}
+
+    containers =
+      if opts[:repeat_duplicate], do: [owned, duplicate, duplicate], else: [owned, duplicate]
+
+    helper = mergerfs_shim!(tmp, containers, [branch_a, branch_b], root, opts)
+
+    Application.put_env(:cinder, :rooted_filesystem_helper, helper)
+
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity}
+  end
+
+  defp mergerfs_shim!(tmp, containers, branches, mountpoint, opts) do
+    fill_after_quarantine = opts[:fill_after_quarantine]
+    mergerfs = Keyword.get(opts, :mergerfs, true)
+    helper = Path.join(tmp, "mergerfs_shim.py")
+    real_helper = Path.expand("../../../../priv/rooted_fs.py", __DIR__)
+
+    File.write!(helper, """
+    import os
+    import sys
+
+    CONTAINERS = #{inspect(containers)}
+    BRANCHES = #{inspect(branches)}
+    REAL_HELPER = #{inspect(real_helper)}
+    FILL_AFTER_QUARANTINE = #{if fill_after_quarantine, do: inspect(fill_after_quarantine), else: "None"}
+
+    real_getxattr = os.getxattr
+
+    def getxattr(path, name, **kwargs):
+        if name == "user.mergerfs.allpaths":
+            existing = [c for c in CONTAINERS if os.path.lexists(c)]
+            if existing:
+                return b"\\0".join(os.fsencode(c) for c in existing)
+        if name in ("user.mergerfs.branches", "user.mergerfs.srcmounts"):
+            if not isinstance(path, int) or os.path.basename(
+                os.readlink(f"/proc/self/fd/{path}")
+            ) != ".mergerfs":
+                raise OSError(61, "ENODATA")
+            return os.fsencode(":".join(BRANCHES))
+        return real_getxattr(path, name, **kwargs)
+
+    os.getxattr = getxattr
+
+    # exec into a namespace we own so the helper's own functions resolve
+    # mergerfs_mount through this dict; runpy would hand back a detached copy.
+    namespace = {"__name__": "rooted_fs_shim", "__file__": REAL_HELPER}
+    with open(REAL_HELPER, encoding="utf-8") as source:
+        exec(compile(source.read(), REAL_HELPER, "exec"), namespace)
+
+    MOUNTPOINT = #{inspect(mountpoint)} if #{if mergerfs, do: "True", else: "False"} else None
+    namespace["mergerfs_mountpoint"] = lambda path: MOUNTPOINT
+    namespace["mergerfs_mount"] = lambda path: MOUNTPOINT is not None
+
+    # Simulate a writer that fills the container after the quarantine rename
+    # but before the helper's final held-descriptor proof.
+    if FILL_AFTER_QUARANTINE is not None:
+        real_rename_noreplace = namespace["rename_noreplace"]
+        renames = []
+
+        def rename_noreplace(parent, source, destination):
+            real_rename_noreplace(parent, source, destination)
+            renames.append(destination)
+            if len(renames) == 1:
+                fd = os.open(destination, os.O_WRONLY, dir_fd=parent)
+                try:
+                    os.write(fd, os.fsencode(FILL_AFTER_QUARANTINE))
+                finally:
+                    os.close(fd)
+
+        namespace["rename_noreplace"] = rename_noreplace
+
+    sys.argv = [REAL_HELPER] + sys.argv[1:]
+    operation = sys.argv[1] if len(sys.argv) > 1 else "unknown"
+
+    try:
+        namespace["main"]()
+    except OSError as exc:
+        committed = isinstance(exc, namespace["EffectCommittedError"])
+        namespace["fail"](operation, "post_effect" if committed else "pre_effect", exc)
+        sys.exit(1)
+    """)
+
+    helper
+  end
+
   defp barrier!(operation, contains) do
     Application.put_env(:cinder, :filesystem_barrier, %{
       owner: self(),
