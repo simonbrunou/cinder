@@ -136,9 +136,21 @@ defmodule Cinder.Subtitles.Sync.Worker do
     {:noreply, start_scan(state, :library)}
   end
 
-  # The hold window for an explicit scan elapsed: re-evaluate so background work can proceed if
-  # that scan is still outstanding. A no-op when the scan already returned.
-  def handle_info(:release_hold, state), do: {:noreply, start_next(state)}
+  # The hold window elapsed: re-evaluate so background work can proceed. A timer that lands a hair
+  # early would otherwise be consumed while the hold is still active, with nothing left to wake the
+  # queue, so reschedule for the remaining time rather than dropping the wake-up.
+  def handle_info(:release_hold, %{hold_until: nil} = state), do: {:noreply, state}
+
+  def handle_info(:release_hold, state) do
+    remaining = state.hold_until - System.monotonic_time(:millisecond)
+
+    if remaining > 0 do
+      Process.send_after(self(), :release_hold, remaining)
+      {:noreply, state}
+    else
+      {:noreply, start_next(state)}
+    end
+  end
 
   def handle_info(
         {reference, {:scan_ok, units}},
@@ -247,6 +259,8 @@ defmodule Cinder.Subtitles.Sync.Worker do
   end
 
   defp start_next(%{task: nil} = state) do
+    state = sync_hold(state)
+
     case next_unit(state) do
       {unit, state} ->
         task =
@@ -261,19 +275,16 @@ defmodule Cinder.Subtitles.Sync.Worker do
     end
   end
 
-  defp start_next(state), do: publish(state)
+  defp start_next(state), do: publish(sync_hold(state))
 
   defp next_unit(state) do
     case :queue.out(state.priority) do
       {{:value, unit}, priority} ->
-        # The operator's work is running, so the hold has served its purpose. Any explicit scope
-        # still outstanding re-arms it on its own enqueue.
         {unit,
          %{
            state
            | priority: priority,
-             prioritized: MapSet.delete(state.prioritized, unit.video_path),
-             hold_until: nil
+             prioritized: MapSet.delete(state.prioritized, unit.video_path)
          }}
 
       {:empty, _priority} ->
@@ -289,10 +300,6 @@ defmodule Cinder.Subtitles.Sync.Worker do
     if explicit_scan_outstanding?(state) do
       :empty
     else
-      # No explicit scan is pending any more, so the deadline has done its job and must be cleared
-      # or it would suppress the hold for every later request.
-      state = %{state | hold_until: nil}
-
       case :queue.out(state.queue) do
         {{:value, unit}, queue} ->
           {unit, %{state | queue: queue, queued: MapSet.delete(state.queued, unit.video_path)}}
@@ -304,11 +311,22 @@ defmodule Cinder.Subtitles.Sync.Worker do
   end
 
   defp explicit_scan_outstanding?(%{hold_until: nil}), do: false
+  defp explicit_scan_outstanding?(state), do: explicit_pending?(state)
 
-  defp explicit_scan_outstanding?(state) do
-    (scanning_explicitly?(state.scan_task) or
-       Enum.any?(state.pending_scans, &(mode(&1) == :priority))) and
-      System.monotonic_time(:millisecond) < state.hold_until
+  defp explicit_pending?(state) do
+    scanning_explicitly?(state.scan_task) or
+      Enum.any?(state.pending_scans, &(mode(&1) == :priority))
+  end
+
+  # Single owner of the deadline's lifetime. Once no explicit scan is outstanding, or the window
+  # has elapsed, the hold has done its job: clearing it lets a later request arm a fresh window
+  # instead of inheriting a stale one, and lets background work resume after a hung scan.
+  defp sync_hold(%{hold_until: nil} = state), do: state
+
+  defp sync_hold(state) do
+    if explicit_pending?(state) and System.monotonic_time(:millisecond) < state.hold_until,
+      do: state,
+      else: %{state | hold_until: nil}
   end
 
   defp scanning_explicitly?(%{scope: scope}), do: mode(scope) == :priority

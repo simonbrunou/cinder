@@ -365,7 +365,13 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
   test "a failed explicit scan releases background work that was waiting for it" do
     owner = self()
 
-    scan = fn {:series, 5} -> raise "catalog unavailable" end
+    scan = fn {:series, 5} ->
+      send(owner, {:scan_started, self()})
+
+      receive do
+        :release_scan -> raise "catalog unavailable"
+      end
+    end
 
     analyze = fn video ->
       send(owner, {:started, video, self()})
@@ -380,12 +386,123 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
     assert_receive {:started, "/library/bg.mkv", _}
 
-    # A scan that never yields units must not strand the background queue behind it.
+    # Rendezvous with the scan so the hold is provably active before the background unit is
+    # enqueued — otherwise this could pass on message ordering alone rather than on the fix.
     assert :ok = Worker.enqueue_series(5, worker)
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg2.mkv", label: "BG2"}], worker)
+    assert_receive {:scan_started, scanner}
 
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg2.mkv", label: "BG2"}], worker)
+    refute_receive {:started, "/library/bg2.mkv", _}, 50
+
+    # The scan raises rather than yielding units; the queue must not stay stranded behind it.
+    send(scanner, :release_scan)
     assert_receive {:started, "/library/bg2.mkv", _}, 1000
     assert_eventually(fn -> Worker.status().counts.failed == 1 end)
+  end
+
+  test "a second explicit request keeps its hold after the first one starts running" do
+    owner = self()
+
+    scan = fn
+      {:movie, 1} ->
+        [%{video_path: "/library/first.mkv", label: "First"}]
+
+      {:series, 2} ->
+        # Still outstanding when the first explicit unit starts: this is what the hold protects.
+        send(owner, {:scan_started, self()})
+
+        receive do
+          :release_scan -> [%{video_path: "/library/second.mkv", label: "Second"}]
+        end
+    end
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+
+      receive do
+        :release -> [%{status: :aligned, label: video}]
+      end
+    end
+
+    worker =
+      start_supervised!(
+        {Worker,
+         initial_scan: false,
+         interval: :timer.hours(1),
+         scan: scan,
+         analyze: analyze,
+         explicit_scan_hold: 5000}
+      )
+
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    assert_receive {:started, "/library/bg.mkv", blocker}
+
+    # First explicit request resolves immediately and lands in the priority queue.
+    assert :ok = Worker.enqueue_movie(1, worker)
+    assert_eventually(fn -> Worker.status().queued == 1 end)
+
+    # Second explicit request's scan blocks, so its units do not exist yet.
+    assert :ok = Worker.enqueue_series(2, worker)
+    assert_receive {:scan_started, scanner}
+
+    # Starting the first explicit unit must not drop the hold the second one still needs.
+    send(blocker, :release)
+    assert_receive {:started, "/library/first.mkv", first}
+
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg2.mkv", label: "BG2"}], worker)
+    send(first, :release)
+    refute_receive {:started, "/library/bg2.mkv", _}, 50
+
+    send(scanner, :release_scan)
+    assert_receive {:started, "/library/second.mkv", second}
+    send(second, :release)
+
+    assert_receive {:started, "/library/bg2.mkv", bg2}
+    send(bg2, :release)
+  end
+
+  test "an expired hold is cleared so a later explicit request arms a fresh one" do
+    owner = self()
+
+    scan = fn {:movie, id} ->
+      send(owner, {:scan_started, id})
+      Process.sleep(:infinity)
+    end
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+
+      receive do
+        :release -> [%{status: :aligned, label: video}]
+      end
+    end
+
+    worker =
+      start_supervised!(
+        {Worker,
+         initial_scan: false,
+         interval: :timer.hours(1),
+         scan: scan,
+         analyze: analyze,
+         explicit_scan_hold: 50}
+      )
+
+    # First explicit request hangs, so its hold expires and background work proceeds.
+    assert :ok = Worker.enqueue_movie(1, worker)
+    assert_receive {:scan_started, 1}
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    assert_receive {:started, "/library/bg.mkv", bg}, 1000
+    send(bg, :release)
+
+    # A later explicit request must arm a FRESH hold. If the expired deadline were left in place,
+    # hold_explicitly/2 would decline to re-arm and this background unit would start immediately.
+    assert :ok = Worker.enqueue_movie(2, worker)
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg2.mkv", label: "BG2"}], worker)
+    refute_receive {:started, "/library/bg2.mkv", _}, 20
+
+    # That fresh hold is itself bounded, so background work still resumes.
+    assert_receive {:started, "/library/bg2.mkv", bg2}, 1000
+    send(bg2, :release)
   end
 
   test "priority work drains before background work regardless of arrival order" do
