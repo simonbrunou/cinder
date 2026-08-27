@@ -231,10 +231,12 @@ defmodule Cinder.Catalog.UpgradeHunter do
       [%Episode{season: %{series: series}} | _] ->
         stamp(Episode, Enum.map(episodes, & &1.id))
 
-        # Same Season-0 classification gate `wanted_episodes/0` / `episode_searchable?/3` apply:
-        # an unclassified special or a pure `:extra` that somehow holds a file (adoption, manual
-        # import) must not drive a search or be offered as an upgrade target (#356). Regular
-        # (season > 0) episodes are untouched — the gate is Season-0-only.
+        # Converge the anime upgrade sweep onto the same kind predicate the wanted query uses.
+        # `holdings/0` filters on monitored + file + no grab only, so an unclassified special
+        # or a pure `:extra` that somehow holds a file (adoption, manual import) could still be
+        # re-searched and upgraded through a path the Anime profile policy excludes (#356).
+        # Note this applies the predicate whole, not just its Season-0 clause: a season > 0 row
+        # numbered <= 0 is dropped here too, exactly as `wanted_episodes/0` already drops it.
         profile = Catalog.media_profile_summary(series)
         searchable = Enum.filter(episodes, &Catalog.episode_kind_wanted?(&1, &1.season, profile))
 
