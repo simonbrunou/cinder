@@ -261,6 +261,123 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     assert File.read!(outside_path) == "outside"
   end
 
+  @tag :tmp_dir
+  test "duplicate zero-byte tombstones proven owned are reconciled to the owned container", %{
+    root: root,
+    tmp: tmp
+  } do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp)
+
+    assert :ok = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.exists?(owned)
+    refute File.exists?(duplicate)
+    assert Path.wildcard(Path.join(Path.dirname(duplicate), ".*cinder-duplicate-*")) == []
+  end
+
+  @tag :tmp_dir
+  test "a nonzero duplicate container is refused and left untouched", %{root: root, tmp: tmp} do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp)
+
+    File.write!(duplicate, "unrelated payload")
+
+    assert {:error, :enotempty} = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.read!(duplicate) == "unrelated payload"
+    assert File.exists?(owned)
+  end
+
+  @tag :tmp_dir
+  test "duplicates that do not include the owned identity are refused", %{root: root, tmp: tmp} do
+    %{path: path, owned: owned, duplicate: duplicate} = duplicate_tombstones!(root, tmp)
+
+    assert {:error, :estale} = Disk.reconcile_duplicate_containers(path, {38, 0, 123_456})
+    assert File.exists?(owned)
+    assert File.exists?(duplicate)
+  end
+
+  @tag :tmp_dir
+  test "a single-branch logical path is refused as nothing to reconcile", %{root: root, tmp: tmp} do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp)
+
+    File.rm!(duplicate)
+
+    assert {:error, :einval} = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.exists?(owned)
+  end
+
+  # A real mergerfs mount is not available in the test environment, so the shim
+  # forces mergerfs_mount() to true and answers user.mergerfs.allpaths for the
+  # logical backup path with the two branch containers. Everything else -- the
+  # zero-byte and identity proofs, the RENAME_NOREPLACE quarantine, the recheck
+  # and the unlink -- is the real helper running against real files.
+  defp duplicate_tombstones!(root, tmp) do
+    relative = "Movie/.subtitle.srt.cinder-sync-original"
+    path = Path.join(root, relative)
+    branch_a = Path.join(tmp, "branch-a")
+    branch_b = Path.join(tmp, "branch-b")
+    owned = Path.join(branch_a, relative)
+    duplicate = Path.join(branch_b, relative)
+
+    Enum.each(
+      [Path.dirname(path), Path.dirname(owned), Path.dirname(duplicate)],
+      &File.mkdir_p!/1
+    )
+
+    Enum.each([path, owned, duplicate], &File.write!(&1, ""))
+
+    stat = File.stat!(owned)
+    identity = {stat.major_device, stat.minor_device, stat.inode}
+    helper = mergerfs_shim!(tmp, [owned, duplicate])
+    Application.put_env(:cinder, :rooted_filesystem_helper, helper)
+
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity}
+  end
+
+  defp mergerfs_shim!(tmp, containers) do
+    helper = Path.join(tmp, "mergerfs_shim.py")
+    real_helper = Path.expand("../../../../priv/rooted_fs.py", __DIR__)
+
+    File.write!(helper, """
+    import os
+    import sys
+
+    CONTAINERS = #{inspect(containers)}
+    REAL_HELPER = #{inspect(real_helper)}
+
+    real_getxattr = os.getxattr
+
+    def getxattr(path, name, **kwargs):
+        if name == "user.mergerfs.allpaths":
+            existing = [c for c in CONTAINERS if os.path.lexists(c)]
+            if existing:
+                return b"\\0".join(os.fsencode(c) for c in existing)
+        return real_getxattr(path, name, **kwargs)
+
+    os.getxattr = getxattr
+
+    # exec into a namespace we own so the helper's own functions resolve
+    # mergerfs_mount through this dict; runpy would hand back a detached copy.
+    namespace = {"__name__": "rooted_fs_shim", "__file__": REAL_HELPER}
+    with open(REAL_HELPER, encoding="utf-8") as source:
+        exec(compile(source.read(), REAL_HELPER, "exec"), namespace)
+
+    namespace["mergerfs_mount"] = lambda path: True
+    sys.argv = [REAL_HELPER] + sys.argv[1:]
+    operation = sys.argv[1] if len(sys.argv) > 1 else "unknown"
+
+    try:
+        namespace["main"]()
+    except OSError as exc:
+        committed = isinstance(exc, namespace["EffectCommittedError"])
+        namespace["fail"](operation, "post_effect" if committed else "pre_effect", exc)
+        sys.exit(1)
+    """)
+
+    helper
+  end
+
   defp barrier!(operation, contains) do
     Application.put_env(:cinder, :filesystem_barrier, %{
       owner: self(),

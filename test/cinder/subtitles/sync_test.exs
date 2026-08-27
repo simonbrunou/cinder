@@ -276,6 +276,60 @@ defmodule Cinder.Subtitles.SyncTest do
     assert :ok = Disk.close_bound(bound)
   end
 
+  test "reconciles duplicate mergerfs backup tombstones and completes reanalysis", %{
+    video: video,
+    tmp_dir: tmp
+  } do
+    %{path: path, backup: backup, duplicate: duplicate, original: original} =
+      duplicate_tombstones!(video, tmp)
+
+    assert {:ok, :corrected, _} = Sync.manual(hd(Sync.discover(video)), 2_000, 1.0)
+
+    assert File.read!(backup) == original
+    refute File.exists?(duplicate)
+    refute File.read!(path) == original
+
+    assert {:ok, bound} = Disk.open_bound(backup, [:read, :raw, :binary])
+    assert %{identity: identity} = Manifest.backup_tombstone(Manifest.read(video), "en")
+    assert identity == Tuple.to_list(bound.identity)
+    assert :ok = Disk.close_bound(bound)
+  end
+
+  test "a nonzero duplicate mergerfs backup container stays fail-closed", %{
+    video: video,
+    tmp_dir: tmp
+  } do
+    %{path: path, backup: backup, duplicate: duplicate} = duplicate_tombstones!(video, tmp)
+
+    File.write!(duplicate, "unrelated payload")
+    current = File.read!(path)
+
+    assert {:error, :enotempty} = Sync.manual(hd(Sync.discover(video)), 2_000, 1.0)
+
+    assert File.read!(duplicate) == "unrelated payload"
+    assert File.read!(backup) == ""
+    assert File.read!(path) == current
+    assert Manifest.sync(Manifest.read(video), "en") == nil
+  end
+
+  test "duplicate mergerfs containers without a manifest tombstone stay fail-closed", %{
+    video: video,
+    tmp_dir: tmp
+  } do
+    %{path: path, backup: backup, duplicate: duplicate} = duplicate_tombstones!(video, tmp)
+
+    assert :ok = Manifest.clear_backup_tombstone(video, "en")
+    current = File.read!(path)
+
+    assert {:error, :duplicate_backup_containers} =
+             Sync.manual(hd(Sync.discover(video)), 2_000, 1.0)
+
+    assert File.exists?(duplicate)
+    assert File.read!(backup) == ""
+    assert File.read!(path) == current
+    assert Manifest.sync(Manifest.read(video), "en") == nil
+  end
+
   test "reset retry reconciles a workspace orphaned after exchange", %{video: video} do
     path = managed_srt!(video)
     original = File.read!(path)
@@ -1871,6 +1925,89 @@ defmodule Cinder.Subtitles.SyncTest do
     assert :ok = Manifest.put_backup_tombstone(video, language, bound.identity)
     assert :ok = Disk.close_bound(bound)
     backup
+  end
+
+  # Reproduces the production state behind issue #350: a corrected-then-reset
+  # track whose manifest holds an owned backup tombstone with sync: nil, while
+  # the logical backup path is a zero-byte container on two mergerfs branches.
+  # The shim supplies the mergerfs surface (mount detection + allpaths) that the
+  # test environment cannot; the proofs and effects are the real helper.
+  defp duplicate_tombstones!(video, tmp) do
+    path = managed_srt!(video)
+    original = File.read!(path)
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+    assert :ok = Sync.reset(hd(Sync.discover(video)))
+
+    backup = Sync.backup_path(path)
+    assert File.read!(backup) == ""
+    assert %{identity: identity} = Manifest.backup_tombstone(Manifest.read(video), "en")
+    assert Manifest.sync(Manifest.read(video), "en") == nil
+
+    duplicate = Path.join(tmp, "branch-b/" <> Path.basename(backup))
+    File.mkdir_p!(Path.dirname(duplicate))
+    File.write!(duplicate, "")
+
+    helper = mergerfs_duplicate_helper!(tmp, backup, [backup, duplicate])
+    Application.put_env(:cinder, :rooted_filesystem_helper, helper)
+
+    %{path: path, backup: backup, duplicate: duplicate, original: original, identity: identity}
+  end
+
+  defp mergerfs_duplicate_helper!(tmp, logical, containers) do
+    helper = Path.join(tmp, "mergerfs_duplicate_helper.py")
+    real_helper = Path.expand("../../../priv/rooted_fs.py", __DIR__)
+
+    File.write!(helper, """
+    import os
+    import sys
+
+    LOGICAL = #{inspect(logical)}
+    CONTAINERS = #{inspect(containers)}
+    REAL_HELPER = #{inspect(real_helper)}
+
+    real_getxattr = os.getxattr
+
+    def getxattr(path, name, **kwargs):
+        if name == "user.mergerfs.allpaths":
+            existing = [c for c in CONTAINERS if os.path.lexists(c)]
+            if existing:
+                return b"\\0".join(os.fsencode(c) for c in existing)
+        return real_getxattr(path, name, **kwargs)
+
+    os.getxattr = getxattr
+
+    # exec into a namespace we own so the helper's own functions resolve
+    # mergerfs_mount through this dict; runpy would hand back a detached copy.
+    namespace = {"__name__": "rooted_fs_shim", "__file__": REAL_HELPER}
+    with open(REAL_HELPER, encoding="utf-8") as source:
+        exec(compile(source.read(), REAL_HELPER, "exec"), namespace)
+
+    real_mount = namespace["mergerfs_mount"]
+
+    # Scope the mergerfs illusion to the duplicated backup path only: every
+    # other path in the suite keeps real (non-mergerfs) behaviour, and once the
+    # duplicate is reconciled away the path stops being mergerfs too, so the
+    # retry runs the ordinary rooted reactivation.
+    def mergerfs_mount(path):
+        duplicated = len([c for c in CONTAINERS if os.path.lexists(c)]) > 1
+        targeted = any(os.path.basename(LOGICAL) in arg for arg in sys.argv[2:])
+        return (duplicated and targeted) or real_mount(path)
+
+    namespace["mergerfs_mount"] = mergerfs_mount
+
+    sys.argv = [REAL_HELPER] + sys.argv[1:]
+    operation = sys.argv[1] if len(sys.argv) > 1 else "unknown"
+
+    try:
+        namespace["main"]()
+    except OSError as exc:
+        committed = isinstance(exc, namespace["EffectCommittedError"])
+        namespace["fail"](operation, "post_effect" if committed else "pre_effect", exc)
+        sys.exit(1)
+    """)
+
+    helper
   end
 
   defp legacy_identity_helper!(tmp, path_fragment, identity) do

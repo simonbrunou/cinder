@@ -420,6 +420,113 @@ def mergerfs_allpaths(fd):
     return [posixpath.normpath(os.fsdecode(path)) for path in paths if path]
 
 
+def tombstone_identity(path):
+    """Identity of a backing container, refusing anything but a zero-byte regular file."""
+    parent, name = open_parent(posixpath.dirname(path), posixpath.basename(path))
+    try:
+        fd = os.open(name, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
+    finally:
+        os.close(parent)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise OSError(errno.EEXIST, "duplicate backup container is not a regular file")
+        if info.st_size != 0:
+            raise OSError(errno.ENOTEMPTY, "duplicate backup container is not a tombstone")
+        return [info.st_dev, info.st_rdev, info.st_ino]
+    finally:
+        os.close(fd)
+
+
+def verify_quarantined_tombstone(parent, name, expected):
+    fd = os.open(name, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size != 0:
+            raise OSError(errno.ENOTEMPTY, "quarantined container is no longer an empty tombstone")
+        if [info.st_dev, info.st_rdev, info.st_ino] != expected:
+            raise OSError(errno.ESTALE, "quarantined container is no longer the surveyed file")
+    finally:
+        os.close(fd)
+
+
+def quarantine_duplicate(path, expected):
+    """Rename a proven duplicate aside, re-prove it, then unlink it.
+
+    The rename is RENAME_NOREPLACE so a concurrently created pathname is never
+    clobbered, and the post-rename recheck re-proves both the inode identity and
+    the zero-byte size, so a container that was replaced or gained bytes between
+    the survey and the removal is restored instead of destroyed.
+    """
+    parent, name = open_parent(posixpath.dirname(path), posixpath.basename(path))
+    try:
+        private = f".{name}.cinder-duplicate-{secrets.token_hex(16)}"
+        rename_noreplace(parent, name, private)
+        try:
+            verify_quarantined_tombstone(parent, private, expected)
+        except OSError as exc:
+            try:
+                rename_noreplace(parent, private, name)
+            except OSError as restore:
+                raise EffectCommittedError(
+                    restore.errno or errno.EIO, "duplicate quarantine could not be restored"
+                ) from restore
+            raise exc
+        try:
+            os.unlink(private, dir_fd=parent)
+            os.fsync(parent)
+        except OSError as exc:
+            raise EffectCommittedError(
+                exc.errno or errno.EIO, "duplicate quarantine could not be removed"
+            ) from exc
+    finally:
+        os.close(parent)
+
+
+def reconcile_duplicates(args):
+    """Remove proven, owned, zero-byte duplicate containers of one logical path.
+
+    Every backing container must be a zero-byte regular file and exactly one of
+    them must carry the caller's manifest-recorded identity. Anything nonzero,
+    ambiguous, or unowned raises before a single byte is touched.
+    """
+    root, relative = args[0], args[1]
+    expected = [int(args[2]), int(args[3]), int(args[4])]
+
+    fd = open_mergerfs_path(root, relative)
+    try:
+        paths = mergerfs_allpaths(fd)
+    finally:
+        os.close(fd)
+
+    if len(paths) < 2:
+        raise OSError(errno.EINVAL, "logical path does not span backing branches")
+
+    kept = []
+    duplicates = []
+    for path in paths:
+        identity = tombstone_identity(path)
+        if identity == expected:
+            kept.append(path)
+        else:
+            duplicates.append((path, identity))
+
+    if len(kept) != 1:
+        raise OSError(errno.ESTALE, "owned backup container is not unique")
+
+    for index, (path, identity) in enumerate(duplicates):
+        try:
+            quarantine_duplicate(path, identity)
+        except OSError as exc:
+            if index and not isinstance(exc, EffectCommittedError):
+                raise EffectCommittedError(
+                    exc.errno or errno.EIO, "duplicate reconciliation partially applied"
+                ) from exc
+            raise
+
+    emit({"ok": "reconcile_duplicates"})
+
+
 def wait_for_unique_path(root, relative, basepath, backing_relative, expected_identity):
     expected_path = posixpath.join(basepath, backing_relative)
     deadline = time.monotonic() + 5
@@ -634,6 +741,8 @@ def main():
         mkdir(args)
     elif operation == "mkdir_near" and len(args) == 4:
         mkdir_near(args)
+    elif operation == "reconcile_duplicates" and len(args) == 5:
+        reconcile_duplicates(args)
     elif operation == "chmod" and len(args) == 3:
         chmod(args)
     elif operation == "sync_parent" and len(args) == 2:

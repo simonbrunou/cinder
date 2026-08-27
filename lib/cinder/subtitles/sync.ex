@@ -1242,20 +1242,54 @@ defmodule Cinder.Subtitles.Sync do
         register_created_backup(item, bound)
 
       {:error, :eexist} ->
-        cond do
-          immutable_backup_expected?(item.sync) ->
-            verify_existing_backup(backup, expected_source)
+        existing_backup(backup, expected_source, item)
 
-          Map.has_key?(item, :backup_tombstone) and is_map(item.backup_tombstone) ->
-            reactivate_backup_container(backup, expected_source, item.backup_tombstone, item)
-
-          true ->
-            {:error, :unexpected_backup}
-        end
+      # A mergerfs logical path whose containers span backing branches fails
+      # exclusive creation with a post-effect EEXIST instead of a plain :eexist,
+      # so the reactivation path below was unreachable and the track stayed
+      # failed until an operator deleted the duplicates by hand. Reconcile the
+      # duplicates only when they are proven owned zero-byte tombstones, then
+      # take the same guarded reactivation path.
+      {:error, {:effect_committed, _operation, %{"reason" => "EEXIST"}}} ->
+        reconcile_duplicate_backups(backup, expected_source, item)
 
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  defp existing_backup(backup, expected_source, item) do
+    cond do
+      immutable_backup_expected?(item.sync) ->
+        verify_existing_backup(backup, expected_source)
+
+      Map.has_key?(item, :backup_tombstone) and is_map(item.backup_tombstone) ->
+        reactivate_backup_container(backup, expected_source, item.backup_tombstone, item)
+
+      true ->
+        {:error, :unexpected_backup}
+    end
+  end
+
+  defp reconcile_duplicate_backups(
+         backup,
+         expected_source,
+         %{backup_tombstone: %{identity: identity}} = item
+       )
+       when is_list(identity) and length(identity) == 3 do
+    with :ok <- reconcile_duplicate_containers(backup, List.to_tuple(identity)),
+         do: existing_backup(backup, expected_source, item)
+  end
+
+  defp reconcile_duplicate_backups(_backup, _expected_source, _item),
+    do: {:error, :duplicate_backup_containers}
+
+  defp reconcile_duplicate_containers(backup, identity) do
+    filesystem = fs()
+
+    if function_exported?(filesystem, :reconcile_duplicate_containers, 2),
+      do: filesystem.reconcile_duplicate_containers(backup, identity),
+      else: {:error, :duplicate_backup_containers}
   end
 
   defp register_created_backup(item, bound) do
