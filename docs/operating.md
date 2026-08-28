@@ -385,8 +385,8 @@ import:
   release landed, without needing a re-import.
 
 Sidecars are named `<video basename>.<lang>.srt` — e.g. `Movie (2020) {tmdb-1}.en.srt`,
-`Show (Year) - S01E02.fr.srt` — the convention both Jellyfin and Plex auto-detect next to the video
-file, with no library scan configuration required.
+`Show (Year) {tmdb-2} - S01E02.fr.srt` — the convention both Jellyfin and Plex auto-detect next to
+the video file, with no library scan configuration required.
 
 Cinder also aligns its managed sidecars without exposing half-written files. If `/media` is a
 mergerfs mount, bind every backing branch into the Cinder container read-write at the same absolute
