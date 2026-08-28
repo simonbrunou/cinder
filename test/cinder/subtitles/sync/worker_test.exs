@@ -173,6 +173,11 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert :ok = Worker.enqueue_units([:invalid, %{label: "missing path"}], worker)
     assert :ok = Worker.enqueue_units(:not_a_list, worker)
 
+    # enqueue_after_download/2 casts, so a crash there is silent: flush the mailbox with a call.
+    GenServer.cast(worker, {:enqueue_units, [:invalid, %{label: "missing path"}]})
+    GenServer.cast(worker, {:enqueue_units, :not_a_list})
+    assert :ok = Worker.enqueue_units([], worker)
+
     assert Process.alive?(worker)
 
     assert %{state: :running, queued: 1, current: %{video_path: "/library/a.mkv"}} =
