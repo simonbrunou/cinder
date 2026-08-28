@@ -217,15 +217,14 @@ defmodule Cinder.Subtitles.Sync.Worker do
   # the worker down and discard it until the next periodic scan.
   defp enqueue_valid_units(units, state) do
     units
-    |> List.wrap()
     |> keep_valid_units()
     |> add_units(state, :background)
     |> start_next()
   end
 
-  # Walked by hand rather than with Enum: is_list/1 accepts an improper list, so List.wrap/1 hands
-  # one such as [unit | :junk] straight through and Enum would crash on its tail. Stopping at any
-  # non-list tail keeps the valid prefix and drops the junk.
+  # Walked by hand rather than with Enum: is_list/1 accepts an improper list, so Enum would crash
+  # on the tail of one such as [unit | :junk]. Stopping at any non-list tail keeps the valid prefix
+  # and drops the junk; the same clause absorbs a payload that is not a list at all.
   defp keep_valid_units([unit | rest]) do
     if valid_unit?(unit),
       do: [unit | keep_valid_units(rest)],
