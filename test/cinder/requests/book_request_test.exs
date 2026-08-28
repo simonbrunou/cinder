@@ -222,7 +222,49 @@ defmodule Cinder.Requests.BookRequestTest do
       assert Repo.aggregate(Request, :count) == 0
       assert Repo.aggregate(BookTarget, :count) == 0
     end
+
+    # Issue #362: the approval reads the profile, then `flip_pending/2` writes
+    # `proposed_profile_id` with `update_all`, which skips Ecto's `to_constraints`. A second
+    # admin re-kinding the profile in that window makes `requests_profile_integrity` ABORT, and
+    # the caller must see a refusal rather than a raw Exqlite.Error 500. The telemetry hook is
+    # the only deterministic way to land inside that window.
+    test "a profile re-kinded between the profile read and the write is refused, not raised", %{
+      work: work,
+      ebook_profile: profile
+    } do
+      user = user_fixture()
+      admin = admin_fixture()
+
+      {:ok, request} = Requests.create_request(user, attrs(work, :ebook))
+
+      handler = "rekind-#{System.unique_integer([:positive])}"
+      on_exit(fn -> :telemetry.detach(handler) end)
+
+      :telemetry.attach(
+        handler,
+        [:cinder, :repo, :query],
+        &__MODULE__.rekind_on_work_read/4,
+        %{handler: handler, profile: profile}
+      )
+
+      assert {:error, :invalid_media_profile} = Requests.approve_request(request, admin, profile)
+
+      assert %Request{status: :pending, proposed_profile_id: nil} = Repo.reload!(request)
+      assert Repo.aggregate(BookTarget, :count) == 0
+    end
   end
+
+  # `Repo.get(Work, ...)` is the last read before `approve_book/4` opens its transaction, so
+  # re-kinding here is exactly the race the approval cannot re-validate away.
+  def rekind_on_work_read(_event, _measurements, %{source: "book_works"}, %{
+        handler: handler,
+        profile: profile
+      }) do
+    :telemetry.detach(handler)
+    {:ok, _} = Catalog.update_profile(profile, %{kind: :audiobook})
+  end
+
+  def rekind_on_work_read(_event, _measurements, _metadata, _config), do: :ok
 
   describe "the DB says the same thing the changeset does" do
     test "the requests profile-integrity trigger accepts a matching book profile", %{

@@ -473,7 +473,25 @@ defmodule Cinder.Requests do
   # async approve vs a concurrent deny) can't silently reverse each other's committed
   # decision. Validates via the changeset, then writes with one atomic update_all (no
   # read-then-write upgrade window for SQLite to reject).
+  #
+  # `update_all` also skips Ecto's `to_constraints`, so the approval's `proposed_profile_id`
+  # write surfaces `requests_profile_integrity` as a raw Exqlite.Error rather than
+  # `{:error, changeset}`. Every caller re-reads the profile first, but a second admin can
+  # re-kind it between that read and this write: rescue on the constraint's own message (not the
+  # exception class, which also covers a transient busy) so the approval queue reports a refusal
+  # instead of a 500. The abort rolls the transaction back either way — no bad row is written.
   defp flip_pending(%Request{} = request, attrs) do
+    do_flip_pending(request, attrs)
+  rescue
+    error in Exqlite.Error ->
+      if error.message =~ "requests_profile_integrity" do
+        {:error, :invalid_media_profile}
+      else
+        reraise error, __STACKTRACE__
+      end
+  end
+
+  defp do_flip_pending(request, attrs) do
     changeset = Request.status_changeset(request, attrs)
 
     with %{valid?: true, changes: changes} <- changeset,
