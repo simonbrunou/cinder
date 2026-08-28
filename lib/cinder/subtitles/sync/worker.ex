@@ -120,8 +120,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
   end
 
   def handle_call({:enqueue_units, units}, _from, state) do
-    state = units |> add_units(state, :background) |> start_next()
-    {:reply, :ok, state}
+    {:reply, :ok, enqueue_valid_units(units, state)}
   end
 
   @impl true
@@ -129,7 +128,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
     do: {:noreply, state |> hold_explicitly(scope) |> start_scan(scope)}
 
   def handle_cast({:enqueue_units, units}, state),
-    do: {:noreply, units |> add_units(state, :background) |> start_next()}
+    do: {:noreply, enqueue_valid_units(units, state)}
 
   @impl true
   def handle_info(:scan, state) do
@@ -211,6 +210,17 @@ defmodule Cinder.Subtitles.Sync.Worker do
   defp enqueue(scope, server) do
     GenServer.cast(server, {:enqueue, scope})
     :ok
+  end
+
+  # Enqueued units are caller-supplied, so they are held to the same shape as scan-produced ones
+  # (validate_scan_units/1). Dropping a malformed unit keeps the queue: raising here would take
+  # the worker down and discard it until the next periodic scan.
+  defp enqueue_valid_units(units, state) do
+    units
+    |> List.wrap()
+    |> Enum.filter(&valid_unit?/1)
+    |> add_units(state, :background)
+    |> start_next()
   end
 
   defp mode(:library), do: :background

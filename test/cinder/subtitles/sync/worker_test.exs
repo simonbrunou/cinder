@@ -145,6 +145,44 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert inspect(reason) =~ "invalid_scan_result"
   end
 
+  test "malformed enqueued units are dropped without crashing the worker or its queue" do
+    owner = self()
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+
+      receive do
+        :release -> [%{status: :aligned, label: video}]
+      end
+    end
+
+    worker =
+      start_supervised!(
+        {Worker, initial_scan: false, interval: :timer.hours(1), analyze: analyze}
+      )
+
+    queued = [
+      %{video_path: "/library/a.mkv", label: "A"},
+      %{video_path: "/library/b.mkv", label: "B"}
+    ]
+
+    assert :ok = Worker.enqueue_units(queued, worker)
+    assert_receive {:started, "/library/a.mkv", first}
+    assert Worker.status().queued == 1
+
+    assert :ok = Worker.enqueue_units([:invalid, %{label: "missing path"}], worker)
+    assert :ok = Worker.enqueue_units(:not_a_list, worker)
+
+    assert Process.alive?(worker)
+
+    assert %{state: :running, queued: 1, current: %{video_path: "/library/a.mkv"}} =
+             Worker.status()
+
+    send(first, :release)
+    assert_receive {:started, "/library/b.mkv", second}
+    send(second, :release)
+  end
+
   test "post-download enqueue is best effort when no named worker is alive" do
     refute Process.whereis(Worker)
     assert :ok = Worker.enqueue_after_download("/library/downloaded.mkv")
