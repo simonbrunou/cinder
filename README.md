@@ -49,15 +49,15 @@ closed: it cannot create the first account.
 
 Once a media server is configured with `PLEX_URL`/`PLEX_TOKEN` (or the equivalent `/settings`
 fields), a **"Sign in with Plex"** button appears on the log-in page. Only Plex accounts with
-access to that server (owner or shared user) may sign in; the first Plex login always creates a
-new regular-user account — there is no automatic email-based login into an existing account. To
-attach Plex to an existing account (e.g. your admin), log in normally and link it from Account
-settings.
+access to that server (owner or shared user) may sign in; a Plex account Cinder has never seen
+gets a new regular-user account — Cinder never logs into an existing account by email, only by a
+linked Plex id. To attach Plex to an existing account (e.g. your admin), log in normally and link
+it from Account settings, or import the account from `/users` before its first sign-in.
 
 Jellyfin works the same way: configure `JELLYFIN_URL` (or the `/settings` field) and a **"Sign in
 with Jellyfin"** username/password form appears on the log-in page, checked against your own
 server's `Users/AuthenticateByName` — so only accounts that server already knows can sign in. The
-same rule holds: the first Jellyfin login always creates a new regular-user account, never an
+same rule holds: a Jellyfin account Cinder has never seen gets a new regular-user account, never an
 email-based login into an existing one, and linking Jellyfin to an existing account is an explicit
 action from Account settings. Jellyfin exposes no email address, so a created account gets a
 placeholder one you can change from Account settings. Emby speaks the same endpoint and should
@@ -67,9 +67,11 @@ work if you point the URL at one; it is untested.
 > port 4000 to an untrusted network — run Cinder behind a reverse proxy (with TLS) or a VPN. See
 > [`docs/operating.md`](docs/operating.md).
 
-> 🔗 **Hardlinks.** Cinder hardlinks finished downloads into your library, so the library and your
-> download client's completed-downloads directory must be on the **same filesystem**. The compose
-> file keeps both under one `/media` mount — details in the operating guide.
+> 🔗 **Hardlinks.** Cinder hardlinks finished downloads into your library, so keep the library and
+> your download client's completed-downloads directory on the **same filesystem**. Across
+> filesystems (or on one that can't hardlink at all) it falls back to an atomic copy, which costs a
+> second full copy of every import. The compose file keeps both under one `/media` mount — details
+> in the operating guide.
 
 ## Configuration
 
@@ -86,11 +88,11 @@ rest with a key derived from `SECRET_KEY_BASE`.
 | `CINDER_BOOTSTRAP_TOKEN` | **first claim only** | — | One-time credential required while no account exists. Generate with `openssl rand -hex 32`, use it to create the first admin, then remove it from the deployment. |
 | `DATABASE_PATH` | **yes** | — | Path to the SQLite database file (compose: `/data/cinder.db`). |
 | `PHX_SERVER` | set `true` | — | Start the web server in the release. |
-| `PHX_HOST` | no | `localhost` | Public hostname; used in generated URLs + HSTS. |
+| `PHX_HOST` | no | `localhost` | Public hostname; used in generated URLs. |
 | `PORT` | no | `4000` | HTTP listen port. |
 | `POOL_SIZE` | no | `5` | SQLite connection-pool size. |
 | `RELEASE_NAME` | auto | — | Set by the release; its presence triggers DB migrations on boot. |
-| `CINDER_BASIC_AUTH_USER` / `CINDER_BASIC_AUTH_PASSWORD` | no | — | Set **both** to require HTTP Basic auth in front of the whole app — an optional outer gate while no admin exists yet, or a second layer when you can't front Cinder with a proxy/VPN. Unset ⇒ no gate. |
+| `CINDER_BASIC_AUTH_USER` / `CINDER_BASIC_AUTH_PASSWORD` | no | — | Set **both** to require HTTP Basic auth in front of every browser route and the `/api/v1` scope (`/healthz` and static assets stay open) — an optional outer gate while no admin exists yet, or a second layer when you can't front Cinder with a proxy/VPN. Unset ⇒ no gate. |
 
 ### In-app service configuration (set in the wizard / `/settings`)
 
@@ -98,13 +100,13 @@ rest with a key derived from `SECRET_KEY_BASE`.
 |---|---|
 | TMDB | API read token (v4 bearer) |
 | Indexer | Prowlarr URL + API key |
-| Download | One torrent client (qBittorrent or Transmission) and one Usenet client (SABnzbd or NZBGet), credentials and per-client path mappings; optional completed-torrent ratio / seed-time cleanup limits |
+| Download | At most one torrent client (qBittorrent or Transmission) and one Usenet client (SABnzbd or NZBGet) — either protocol can be set to Disabled — credentials and per-client path mappings; optional completed-torrent ratio / seed-time cleanup limits |
 | Media server | Jellyfin URL + API key **or** Plex URL + token + a per-library section (Movies, TV); media-server type; an optional **web URL** per server (see below) |
 | Library paths | Required standard roots (`movies_library_path`, `tv_library_path`) plus admin-managed named movie/TV profiles at `/settings/profiles`; each profile chooses Standard or Anime handling and may set its own root, with a blank root falling back to the matching existing root |
-| Release size bands | Per-kind min/max size (decimal GB), preferred resolutions and sources, preferred/blocked title terms, and an optional automatic-upgrade resolution cutoff. TV sizes are per episode (a season pack of N is allowed N× the max). Ships with defaults — movies 0.3–15 GB, TV 0.05–4 GB per episode; blank = default, an explicit `0` = no limit |
+| Release size bands | Per-kind min/max size (decimal GB), preferred resolutions and sources, preferred/blocked title terms, and an optional automatic-upgrade resolution cutoff. TV sizes are per episode: a release is banded against the still-wanted episodes it covers, so one covering N of them is allowed N× the max (a whole-season pack is re-banded against the season's full episode count only as a last-resort retry, when nothing else fit). Ships with defaults — movies 0.3–15 GB, TV 0.05–4 GB per episode; blank = default, an explicit `0` = no limit |
 | Subtitles | OpenSubtitles API key + username + password, LibreTranslate URL + API key (optional fallback translation), preferred subtitle languages (csv) — fetched automatically after each import and swept every 12 h; Cinder-downloaded sidecars are also checked serially by pinned, local CPU-only FFsubsync 0.5.1, with low-confidence/different-cut results left unchanged for review in Activity |
-| Notifications | Discord webhook URL — posts an embed on availability and failures, on a request approval, and on the two things that need an admin: a new request awaiting approval and a new account awaiting activation (unset ⇒ log-only). Plus a **generic webhook URL** + optional `Authorization` header value: the same events POSTed as JSON (`{"event": "movie_available", …}`) to anything that speaks HTTP — ntfy, Gotify, Apprise, n8n, Home Assistant. There is no payload template; reshape it in the receiver |
-| Behaviour toggles | `auto_approve_all` (trusted households: every request grabs immediately), `move_on_import` (move instead of hardlink), media-server type (Jellyfin/Plex) |
+| Notifications | Discord webhook URL — posts an embed on availability and failures, on a request approval, and on the two things that need an admin: a new request awaiting approval and a new account awaiting activation (unset ⇒ nothing is posted to Discord; with no transport configured at all, events are log-only). Plus a **generic webhook URL** + optional `Authorization` header value: the same events POSTed as JSON (`{"event": "movie_available", …}`) to anything that speaks HTTP — ntfy, Gotify, Apprise, n8n, Home Assistant. There is no payload template; reshape it in the receiver |
+| Behaviour toggles | `auto_approve_all` (trusted households: every request grabs immediately), `move_on_import` (after a **Usenet** import, best-effort deletion of the source download; torrents are always kept for seeding), media-server type (Jellyfin/Plex) |
 | Anime releases | Embedded-subtitle mode (allow/prefer/require), preferred/blocked release-group lists, preferred-group fallback delay (hours) — global, applies to every title switched to the Anime profile (audio mode is per-title — see the Audio picker below); `ffprobe_bin` (the `ffprobe` binary path/name used for post-download verification) |
 
 **Jellyfin/Plex web URL** is separate from the Jellyfin/Plex URL above on purpose. The latter is
@@ -123,7 +125,8 @@ Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PR
 `OPENSUBTITLES_API_KEY`, `LIBRETRANSLATE_URL`, `LIBRETRANSLATE_API_KEY`, `SUBTITLE_LANGUAGES`, …) for an unattended first boot, but the in-app
 value wins once set. Named profile roots, legacy Anime library destinations, the size bands, and
 the Anime release settings (including `ffprobe_bin`) have no env bootstrap — configure them in
-`/settings` or `/settings/profiles`.
+`/settings` or `/settings/profiles`. Two LibreTranslate tuning knobs go the other way and are
+env-only, with no in-app field: `LIBRETRANSLATE_BATCH_SIZE` and `LIBRETRANSLATE_TIMEOUT`.
 
 ### Household API
 
@@ -155,8 +158,9 @@ Four contexts mirror the pipeline: **Catalog** (TMDB discovery + movie/series re
 SABnzbd/NZBGet clients + a polling
 GenServer), **Library** (hardlink + rename into the Jellyfin/Plex layout, then scan). Background
 pollers advance each request through its state machine and broadcast over PubSub so the LiveView
-dashboard updates live. Every state change goes through a single context choke-point, which — on
-SQLite WAL — keeps a web write racing the poller correct rather than flaky.
+dashboard updates live. Every state change is written inside the Catalog context, through
+transition choke-points whose guarded form compare-and-sets against the status the caller last
+saw — which, on SQLite WAL, keeps a web write racing the poller correct rather than flaky.
 
 **TV** works the same way as movies for users: any authenticated user searches for a TV show and
 **requests a season**; a non-admin's request is pending until an admin approves (or denies), and
@@ -170,11 +174,12 @@ Season 0 episodes: an aired special is searched only when an admin explicitly mo
 matching `S00Exx` file imports under `Season 00`. A periodic TMDB refresh
 keeps season/episode data current (so a newly-aired or late-dated episode becomes search-eligible
 on its own), and a `/calendar` view lists upcoming monitored episodes. Episodes land under the
-selected TV destination in the `Show (Year)/Season NN/Show (Year) - SxxEyy.ext` layout
-Jellyfin/Plex expect.
+selected TV destination in the `Show (Year) {tmdb-id}/Season NN/Show (Year) {tmdb-id} - SxxEyy.ext`
+layout Jellyfin/Plex expect.
 
 **Anime** is a per-title handling engine selected by a named movie/TV profile (`Auto` remains
-available on existing titles and stays Standard unless an operator selects a profile). An Anime
+available on existing titles: it searches as Standard, and retries through the Anime engine only
+when a Standard search finds no match on a Japanese-animation title). An Anime
 profile gets alias- and absolute/scene-number-aware release search (native,
 romaji, and licensed titles; releases like `One Piece 1122v2` resolve without TMDB season math) and
 searches Season 0 specials only when they're classified story-special/recap and monitored. A
