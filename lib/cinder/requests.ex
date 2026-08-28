@@ -482,10 +482,10 @@ defmodule Cinder.Requests do
   # instead of a 500.
   #
   # Caller contract: SQLite's `RAISE(ABORT, ...)` reverts only the offending statement, so inside
-  # an outer `Repo.transaction` the abort has already poisoned the connection — the only safe
-  # response to this error is to roll that transaction back, as every approve path does. It is
-  # handleable in place only when the caller owns no enclosing transaction, as `deny_request/3`
-  # does; continuing inside one would commit.
+  # an outer `Repo.transaction` the transaction stays open and its earlier writes would still
+  # commit — the only safe response to this error is to roll that transaction back, as every
+  # approve path does. It is handleable in place only when the caller owns no enclosing
+  # transaction, as `deny_request/3` does; continuing inside one would commit.
   defp flip_pending(%Request{} = request, attrs) do
     do_flip_pending(request, attrs)
   rescue
