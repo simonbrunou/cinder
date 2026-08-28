@@ -4,6 +4,11 @@ defmodule Cinder.Subtitles.Sync.Worker do
 
   The queue itself is intentionally ephemeral: initial and periodic catalog scans re-derive work
   from manifests and the filesystem after every restart.
+
+  Work is held in two queues. Routine library scans append to the background queue; an explicit
+  operator request for a movie, series, season or episode goes to the priority queue, promoting
+  any matching unit already waiting in the background queue. The in-flight analysis is never
+  interrupted — promotion only decides what runs next.
   """
   use GenServer
 
@@ -14,6 +19,12 @@ defmodule Cinder.Subtitles.Sync.Worker do
   @default_interval :timer.hours(12)
   @empty_counts %{aligned: 0, corrected: 0, review: 0, failed: 0}
 
+  # How long background work waits for an outstanding explicit scan to produce its units. The
+  # hold exists so an operator's click keeps the next slot; it is bounded so a scan that hangs
+  # (rather than raises — run_scan/2 only rescues) degrades to plain background processing
+  # instead of parking the queue forever.
+  @explicit_scan_hold :timer.seconds(30)
+
   def start_link(opts) do
     {name, opts} = Keyword.pop(opts, :name, __MODULE__)
     GenServer.start_link(__MODULE__, opts, name: name)
@@ -23,7 +34,13 @@ defmodule Cinder.Subtitles.Sync.Worker do
   def status do
     :persistent_term.get(
       @status_key,
-      snapshot(%{current: nil, queue: :queue.new(), counts: @empty_counts, recent: []})
+      snapshot(%{
+        current: nil,
+        queue: :queue.new(),
+        priority: :queue.new(),
+        counts: @empty_counts,
+        recent: []
+      })
     )
   end
 
@@ -70,6 +87,8 @@ defmodule Cinder.Subtitles.Sync.Worker do
     state = %{
       queue: :queue.new(),
       queued: MapSet.new(),
+      priority: :queue.new(),
+      prioritized: MapSet.new(),
       current: nil,
       task: nil,
       scan_task: nil,
@@ -78,6 +97,9 @@ defmodule Cinder.Subtitles.Sync.Worker do
       scan: Keyword.get(opts, :scan, &Sync.units/1),
       analyze: Keyword.get(opts, :analyze, &Sync.analyze_video/1),
       interval: Keyword.get(opts, :interval, @default_interval),
+      hold: Keyword.get(opts, :explicit_scan_hold, @explicit_scan_hold),
+      hold_until: nil,
+      hold_gen: 0,
       counts: @empty_counts,
       recent: [],
       managed_video_paths: MapSet.new()
@@ -98,15 +120,16 @@ defmodule Cinder.Subtitles.Sync.Worker do
   end
 
   def handle_call({:enqueue_units, units}, _from, state) do
-    state = units |> add_units(state) |> start_next()
+    state = units |> add_units(state, :background) |> start_next()
     {:reply, :ok, state}
   end
 
   @impl true
-  def handle_cast({:enqueue, scope}, state), do: {:noreply, start_scan(state, scope)}
+  def handle_cast({:enqueue, scope}, state),
+    do: {:noreply, state |> hold_explicitly(scope) |> start_scan(scope)}
 
   def handle_cast({:enqueue_units, units}, state),
-    do: {:noreply, units |> add_units(state) |> start_next()}
+    do: {:noreply, units |> add_units(state, :background) |> start_next()}
 
   @impl true
   def handle_info(:scan, state) do
@@ -114,11 +137,32 @@ defmodule Cinder.Subtitles.Sync.Worker do
     {:noreply, start_scan(state, :library)}
   end
 
-  def handle_info({reference, {:scan_ok, units}}, %{scan_task: %{ref: reference}} = state) do
+  # The hold window elapsed: re-evaluate so background work can proceed. A timer that lands a hair
+  # early is rescheduled for the remaining time rather than dropped, or nothing would be left to
+  # wake the queue. The generation tag means only the current hold's timer is ever live: a timer
+  # from a superseded hold is discarded instead of accumulating alongside the new one.
+  def handle_info({:release_hold, gen}, %{hold_gen: gen, hold_until: hold_until} = state)
+      when not is_nil(hold_until) do
+    remaining = hold_until - System.monotonic_time(:millisecond)
+
+    if remaining > 0 do
+      Process.send_after(self(), {:release_hold, gen}, remaining)
+      {:noreply, state}
+    else
+      {:noreply, start_next(state)}
+    end
+  end
+
+  def handle_info({:release_hold, _gen}, state), do: {:noreply, state}
+
+  def handle_info(
+        {reference, {:scan_ok, units}},
+        %{scan_task: %{ref: reference, scope: scope}} = state
+      ) do
     Process.demonitor(reference, [:flush])
 
     state = Map.put(state, :scan_task, nil)
-    state = units |> add_units(state) |> start_next() |> start_pending_scan()
+    state = units |> add_units(state, mode(scope)) |> start_next() |> start_pending_scan()
 
     {:noreply, state}
   end
@@ -130,6 +174,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
       state
       |> Map.put(:scan_task, nil)
       |> finish_scan_failure(reason)
+      |> start_next()
       |> start_pending_scan()
 
     {:noreply, state}
@@ -155,6 +200,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
       state
       |> Map.put(:scan_task, nil)
       |> finish_scan_failure(reason)
+      |> start_next()
       |> start_pending_scan()
 
     {:noreply, state}
@@ -167,12 +213,15 @@ defmodule Cinder.Subtitles.Sync.Worker do
     :ok
   end
 
-  defp add_units(units, state) do
+  defp mode(:library), do: :background
+  defp mode(_scope), do: :priority
+
+  defp add_units(units, state, :background) do
     {queue, queued} =
       Enum.reduce(units, {state.queue, state.queued}, fn unit, {queue, queued} ->
         path = unit.video_path
 
-        if MapSet.member?(queued, path) do
+        if MapSet.member?(queued, path) or MapSet.member?(state.prioritized, path) do
           {queue, queued}
         else
           {:queue.in(unit, queue), MapSet.put(queued, path)}
@@ -182,28 +231,130 @@ defmodule Cinder.Subtitles.Sync.Worker do
     publish(%{state | queue: queue, queued: queued})
   end
 
+  defp add_units(units, state, :priority) do
+    acc = {state.priority, state.prioritized, MapSet.new()}
+    {priority, prioritized, promoted} = Enum.reduce(units, acc, &prioritize(&1, &2, state.queued))
+
+    publish(%{
+      state
+      | priority: priority,
+        prioritized: prioritized,
+        queue: drop_promoted(state.queue, promoted),
+        queued: MapSet.difference(state.queued, promoted)
+    })
+  end
+
+  defp prioritize(unit, {priority, prioritized, promoted}, queued) do
+    path = unit.video_path
+
+    if MapSet.member?(prioritized, path) do
+      {priority, prioritized, promoted}
+    else
+      promoted = if MapSet.member?(queued, path), do: MapSet.put(promoted, path), else: promoted
+      {:queue.in(unit, priority), MapSet.put(prioritized, path), promoted}
+    end
+  end
+
+  defp drop_promoted(queue, promoted) do
+    if MapSet.size(promoted) == 0,
+      do: queue,
+      else: :queue.filter(&(not MapSet.member?(promoted, &1.video_path)), queue)
+  end
+
   defp start_next(%{task: nil} = state) do
-    case :queue.out(state.queue) do
-      {{:value, unit}, queue} ->
+    state = sync_hold(state)
+
+    case next_unit(state) do
+      {unit, state} ->
         task =
           Task.Supervisor.async_nolink(state.task_supervisor, fn ->
             state.analyze.(unit.video_path)
           end)
 
-        publish(%{
-          state
-          | queue: queue,
-            queued: MapSet.delete(state.queued, unit.video_path),
-            current: unit,
-            task: task
-        })
+        publish(%{state | current: unit, task: task})
 
-      {:empty, _queue} ->
+      :empty ->
         publish(state)
     end
   end
 
-  defp start_next(state), do: publish(state)
+  defp start_next(state), do: publish(sync_hold(state))
+
+  defp next_unit(state) do
+    case :queue.out(state.priority) do
+      {{:value, unit}, priority} ->
+        {unit,
+         %{
+           state
+           | priority: priority,
+             prioritized: MapSet.delete(state.prioritized, unit.video_path)
+         }}
+
+      {:empty, _priority} ->
+        next_background_unit(state)
+    end
+  end
+
+  # An explicit request is only known to the queue once its scan returns. Starting background work
+  # in that window would hand the operator's slot to an unrelated title, so background work waits
+  # for the outstanding explicit scan to land. A scan failure or crash clears scan_task, and the
+  # wait is capped at @explicit_scan_hold so a scan that hangs cannot park the queue indefinitely.
+  defp next_background_unit(state) do
+    if explicit_scan_outstanding?(state) do
+      :empty
+    else
+      case :queue.out(state.queue) do
+        {{:value, unit}, queue} ->
+          {unit, %{state | queue: queue, queued: MapSet.delete(state.queued, unit.video_path)}}
+
+        {:empty, _queue} ->
+          :empty
+      end
+    end
+  end
+
+  defp explicit_scan_outstanding?(%{hold_until: nil}), do: false
+  defp explicit_scan_outstanding?(state), do: explicit_pending?(state)
+
+  defp explicit_pending?(state) do
+    scanning_explicitly?(state.scan_task) or
+      Enum.any?(state.pending_scans, &(mode(&1) == :priority))
+  end
+
+  # Single owner of the deadline's lifetime. Once no explicit scan is outstanding, or the window
+  # has elapsed, the hold has done its job: clearing it lets a later request arm a fresh window
+  # instead of inheriting a stale one, and lets background work resume after a hung scan.
+  defp sync_hold(%{hold_until: nil} = state), do: state
+
+  defp sync_hold(state) do
+    if explicit_pending?(state) and System.monotonic_time(:millisecond) < state.hold_until,
+      do: state,
+      else: %{state | hold_until: nil}
+  end
+
+  defp scanning_explicitly?(%{scope: scope}), do: mode(scope) == :priority
+  defp scanning_explicitly?(nil), do: false
+
+  # The hold starts when the operator asks, not when the scan happens to be dequeued, so an
+  # explicit scope waiting behind a slow or hung library scan is covered by the same deadline.
+  defp hold_explicitly(state, scope) do
+    # sync_hold/1 first: an expired deadline whose release message has not been processed yet must
+    # not suppress a fresh hold for this request.
+    state = sync_hold(state)
+
+    if mode(scope) == :priority and is_nil(state.hold_until) do
+      gen = state.hold_gen + 1
+      Process.send_after(self(), {:release_hold, gen}, state.hold)
+
+      %{
+        state
+        | hold_until: System.monotonic_time(:millisecond) + state.hold,
+          hold_gen: gen
+      }
+    else
+      state
+    end
+  end
 
   defp start_scan(%{scan_task: nil} = state, scope) do
     task =
@@ -304,7 +455,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
   defp snapshot(state) do
     %{
       state: if(state.current, do: :running, else: :idle),
-      queued: :queue.len(state.queue),
+      queued: :queue.len(state.priority) + :queue.len(state.queue),
       current: state.current,
       counts: state.counts,
       recent: state.recent,
