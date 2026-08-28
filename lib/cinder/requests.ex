@@ -479,7 +479,13 @@ defmodule Cinder.Requests do
   # `{:error, changeset}`. Every caller re-reads the profile first, but a second admin can
   # re-kind it between that read and this write: rescue on the constraint's own message (not the
   # exception class, which also covers a transient busy) so the approval queue reports a refusal
-  # instead of a 500. The abort rolls the transaction back either way — no bad row is written.
+  # instead of a 500.
+  #
+  # Caller contract: SQLite's `RAISE(ABORT, ...)` reverts only the offending statement, so inside
+  # an outer `Repo.transaction` the abort has already poisoned the connection — the only safe
+  # response to this error is to roll that transaction back, as every approve path does. It is
+  # handleable in place only when the caller owns no enclosing transaction, as `deny_request/3`
+  # does; continuing inside one would commit.
   defp flip_pending(%Request{} = request, attrs) do
     do_flip_pending(request, attrs)
   rescue

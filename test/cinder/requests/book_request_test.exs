@@ -243,28 +243,36 @@ defmodule Cinder.Requests.BookRequestTest do
       :telemetry.attach(
         handler,
         [:cinder, :repo, :query],
-        &__MODULE__.rekind_on_work_read/4,
-        %{handler: handler, profile: profile}
+        &__MODULE__.rekind_on_profile_read/4,
+        %{handler: handler, profile: profile, test: self()}
       )
 
       assert {:error, :invalid_media_profile} = Requests.approve_request(request, admin, profile)
+
+      # `:telemetry` swallows and logs handler exceptions, so without this the re-kind silently
+      # not happening would degrade the test into a restatement of the plain wrong-kind refusal.
+      assert_received :rekinded
 
       assert %Request{status: :pending, proposed_profile_id: nil} = Repo.reload!(request)
       assert Repo.aggregate(BookTarget, :count) == 0
     end
   end
 
-  # `Repo.get(Work, ...)` is the last read before `approve_book/4` opens its transaction, so
-  # re-kinding here is exactly the race the approval cannot re-validate away.
-  def rekind_on_work_read(_event, _measurements, %{source: "book_works"}, %{
+  # `Catalog.get_profile/1` inside `current_profile/2` is the approval's first `media_profiles`
+  # read, and it is the read the TOCTOU window is defined against: firing here puts the re-kind
+  # provably after the check and before `flip_pending/2`'s write, which is the race the approval
+  # cannot re-validate away.
+  def rekind_on_profile_read(_event, _measurements, %{source: "media_profiles"}, %{
         handler: handler,
-        profile: profile
+        profile: profile,
+        test: test
       }) do
     :telemetry.detach(handler)
     {:ok, _} = Catalog.update_profile(profile, %{kind: :audiobook})
+    send(test, :rekinded)
   end
 
-  def rekind_on_work_read(_event, _measurements, _metadata, _config), do: :ok
+  def rekind_on_profile_read(_event, _measurements, _metadata, _config), do: :ok
 
   describe "the DB says the same thing the changeset does" do
     test "the requests profile-integrity trigger accepts a matching book profile", %{
