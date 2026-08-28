@@ -218,10 +218,21 @@ defmodule Cinder.Subtitles.Sync.Worker do
   defp enqueue_valid_units(units, state) do
     units
     |> List.wrap()
-    |> Enum.filter(&valid_unit?/1)
+    |> keep_valid_units()
     |> add_units(state, :background)
     |> start_next()
   end
+
+  # Walked by hand rather than with Enum: is_list/1 accepts an improper list, so List.wrap/1 hands
+  # one such as [unit | :junk] straight through and Enum would crash on its tail. Stopping at any
+  # non-list tail keeps the valid prefix and drops the junk.
+  defp keep_valid_units([unit | rest]) do
+    if valid_unit?(unit),
+      do: [unit | keep_valid_units(rest)],
+      else: keep_valid_units(rest)
+  end
+
+  defp keep_valid_units(_tail), do: []
 
   defp mode(:library), do: :background
   defp mode(_scope), do: :priority

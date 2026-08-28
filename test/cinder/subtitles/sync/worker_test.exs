@@ -176,11 +176,25 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     # enqueue_after_download/2 casts, so a crash there is silent: flush the mailbox with a call.
     GenServer.cast(worker, {:enqueue_units, [:invalid, %{label: "missing path"}]})
     GenServer.cast(worker, {:enqueue_units, :not_a_list})
+
+    # An improper list survives List.wrap/1 unchanged, so the traversal has to tolerate one: the
+    # valid prefix is kept and the junk tail dropped, on both the call and the (silent) cast path.
+    assert :ok =
+             Worker.enqueue_units(
+               [%{video_path: "/library/c.mkv", label: "C"} | :invalid],
+               worker
+             )
+
+    GenServer.cast(
+      worker,
+      {:enqueue_units, [%{video_path: "/library/d.mkv", label: "D"} | :invalid]}
+    )
+
     assert :ok = Worker.enqueue_units([], worker)
 
     assert Process.alive?(worker)
 
-    assert %{state: :running, queued: 1, current: %{video_path: "/library/a.mkv"}} =
+    assert %{state: :running, queued: 3, current: %{video_path: "/library/a.mkv"}} =
              Worker.status()
 
     send(first, :release)
