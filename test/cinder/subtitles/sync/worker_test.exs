@@ -680,7 +680,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
       send(owner, {:started, video, self()})
 
       receive do
-        :release -> [%{label: video}]
+        :release -> [%{label: video}, %{status: :review, label: video, reason: "misaligned"}]
       end
     end
 
@@ -695,8 +695,9 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert_receive {:started, "/library/a.mkv", task}
     send(task, :release)
 
-    assert_receive {:subtitle_sync_status,
-                    %{state: :idle, recent: [%{label: "/library/a.mkv"}], review_items: []}}
+    assert_receive {:subtitle_sync_status, %{state: :idle, recent: [_, _]} = snapshot}
+    assert [%{label: "/library/a.mkv"}, %{status: :review}] = snapshot.recent
+    assert [%{status: :review, label: "/library/a.mkv"}] = snapshot.review_items
 
     assert Process.alive?(worker)
   end
