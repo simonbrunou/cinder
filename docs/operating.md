@@ -550,8 +550,13 @@ Both the audio/subtitle checks above and the pre-existing language check (see "A
 verification") need **`ffprobe`** (part of FFmpeg, shipped in the Docker image). Its binary
 name/path is the `ffprobe_bin` setting in `/settings` (default: `ffprobe` on `PATH`; no environment
 bootstrap — set it in `/settings`). Availability shows up as a **Media info (ffprobe)** row in
-`/dashboard` service health and via **Test connection** in `/settings`. Without it, Cinder
-skips both checks and imports permissively — a missing probe never blocks an import.
+`/dashboard` service health and via **Test connection** in `/settings`. Without it the two checks
+degrade **differently**: the name-based language check skips and imports permissively (see
+"Audio-language verification"), but an Anime title whose grab froze a required audio or
+embedded-subtitle language can no longer be judged either way, so it holds as **Needs
+verification** after bounded retries instead of importing (see the "can't reach a verdict" bullet
+under "Needs verification"). A missing probe blocks nothing on the standard path; on the Anime
+policy path it parks the item until you install `ffprobe` and click **Retry verification**.
 
 ## Named media profiles and library roots
 
