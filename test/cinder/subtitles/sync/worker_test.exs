@@ -673,6 +673,34 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     send(background, :release)
   end
 
+  test "a result without :status still publishes a snapshot instead of crashing the worker" do
+    owner = self()
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+
+      receive do
+        :release -> [%{label: video}]
+      end
+    end
+
+    worker =
+      start_supervised!(
+        {Worker, initial_scan: false, interval: :timer.hours(1), analyze: analyze}
+      )
+
+    Worker.subscribe()
+
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
+    assert_receive {:started, "/library/a.mkv", task}
+    send(task, :release)
+
+    assert_receive {:subtitle_sync_status,
+                    %{state: :idle, recent: [%{label: "/library/a.mkv"}], review_items: []}}
+
+    assert Process.alive?(worker)
+  end
+
   defp assert_eventually(fun, attempts \\ 20)
   defp assert_eventually(fun, 0), do: assert(fun.())
 

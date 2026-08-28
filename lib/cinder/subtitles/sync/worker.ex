@@ -461,7 +461,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
       current: state.current,
       counts: state.counts,
       recent: state.recent,
-      review_items: Enum.filter(state.recent, &(&1.status in [:review, :failed]))
+      review_items: Enum.filter(state.recent, &(Map.get(&1, :status) in [:review, :failed]))
     }
   end
 
