@@ -515,6 +515,50 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     send(bg2, :release)
   end
 
+  test "a library request racing an expired hold preserves the queue wake-up" do
+    owner = self()
+
+    scan = fn
+      {:series, 5} ->
+        send(owner, :explicit_scan_started)
+        Process.sleep(:infinity)
+
+      :library ->
+        []
+    end
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+      [%{status: :aligned, label: video}]
+    end
+
+    worker =
+      start_supervised!(
+        {Worker,
+         initial_scan: false,
+         interval: :timer.hours(1),
+         scan: scan,
+         analyze: analyze,
+         explicit_scan_hold: 500}
+      )
+
+    assert :ok = Worker.enqueue_series(5, worker)
+    assert_receive :explicit_scan_started
+
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    refute_receive {:started, "/library/bg.mkv", _}, 20
+
+    # Freeze the GenServer before expiry, queue the library cast first, then let the hold timer
+    # arrive. On resume the cast observes an expired deadline whose release message is already
+    # next in the mailbox — the precise ordering that used to clear and lose the only wake-up.
+    assert :ok = :sys.suspend(worker)
+    assert :ok = Worker.enqueue_library(worker)
+    Process.sleep(550)
+    assert :ok = :sys.resume(worker)
+
+    assert_receive {:started, "/library/bg.mkv", _}, 1000
+  end
+
   test "a crashed explicit scan releases background work that was waiting for it" do
     owner = self()
 
