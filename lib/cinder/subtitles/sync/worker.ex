@@ -337,12 +337,14 @@ defmodule Cinder.Subtitles.Sync.Worker do
 
   # The hold starts when the operator asks, not when the scan happens to be dequeued, so an
   # explicit scope waiting behind a slow or hung library scan is covered by the same deadline.
-  defp hold_explicitly(state, scope) do
+  defp hold_explicitly(state, :library), do: state
+
+  defp hold_explicitly(state, _scope) do
     # sync_hold/1 first: an expired deadline whose release message has not been processed yet must
     # not suppress a fresh hold for this request.
     state = sync_hold(state)
 
-    if mode(scope) == :priority and is_nil(state.hold_until) do
+    if is_nil(state.hold_until) do
       gen = state.hold_gen + 1
       Process.send_after(self(), {:release_hold, gen}, state.hold)
 
