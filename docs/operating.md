@@ -208,9 +208,9 @@ Keep both on the **same filesystem** when you can — it's faster and uses no ex
 file keeps both under one `/media` mount (`/media/movies`, `/media/tv`, `/media/downloads`). The copy
 fallback only matters when you can't:
 
-- **Extra disk.** A copy keeps **both** the download and the library file. Unless `move_on_import` is
-  enabled (it deletes the source after a successful import), a cross-filesystem import permanently
-  consumes **2×** the file's size.
+- **Extra disk.** A copy keeps **both** the download and the library file, so a cross-filesystem
+  import permanently consumes **2×** the file's size. `move_on_import` reclaims that, but only for
+  **Usenet** imports — it deletes the source after a successful import and never touches a torrent.
 - **Time.** A copy takes time proportional to the file size and runs inside the poller tick, so a
   large file (or a serially-copied season pack) briefly serializes other pipeline work. Fine at
   single-household scale.
@@ -385,8 +385,8 @@ import:
   release landed, without needing a re-import.
 
 Sidecars are named `<video basename>.<lang>.srt` — e.g. `Movie (2020) {tmdb-1}.en.srt`,
-`Show (Year) - S01E02.fr.srt` — the convention both Jellyfin and Plex auto-detect next to the video
-file, with no library scan configuration required.
+`Show (Year) {tmdb-2} - S01E02.fr.srt` — the convention both Jellyfin and Plex auto-detect next to
+the video file, with no library scan configuration required.
 
 Cinder also aligns its managed sidecars without exposing half-written files. If `/media` is a
 mergerfs mount, bind every backing branch into the Cinder container read-write at the same absolute
@@ -480,10 +480,11 @@ hides or disables manual search.
 ## Anime
 
 Anime is a **per-title opt-in profile** — `Auto`, `Standard`, or `Anime` — on any movie or series.
-`Auto` (the default) behaves exactly like `Standard` until a title is explicitly confirmed as
-Anime: set it directly from the movie/series detail page, or propose it when requesting a title and
-let an admin confirm it on approval. Nothing about where a file lands or how Jellyfin/Plex see it
-changes — only how Cinder searches for and verifies it.
+`Auto` (the default) searches as `Standard`, and retries through the Anime engine only when a
+Standard search finds no match on a Japanese-animation title. Confirm a title as Anime outright to
+skip that Standard pass: set it directly from the movie/series detail page, or propose it when
+requesting a title and let an admin confirm it on approval. Nothing about where a file lands or
+how Jellyfin/Plex see it changes — only how Cinder searches for and verifies it.
 
 Once a title is Anime, release search understands native/romaji/licensed title aliases and
 absolute/scene episode numbering, so a release like `One Piece 1122v2` resolves to the right episode
