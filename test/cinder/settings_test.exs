@@ -638,6 +638,27 @@ defmodule Cinder.SettingsTest do
   end
 
   describe "load_into_env/0 overlay" do
+    test "LibreTranslate tuning env bootstrap is parsed before settings load" do
+      env_names = ["LIBRETRANSLATE_BATCH_SIZE", "LIBRETRANSLATE_TIMEOUT"]
+      original = Map.new(env_names, &{&1, System.get_env(&1)})
+
+      on_exit(fn ->
+        Enum.each(original, fn
+          {name, nil} -> System.delete_env(name)
+          {name, value} -> System.put_env(name, value)
+        end)
+      end)
+
+      System.put_env("LIBRETRANSLATE_BATCH_SIZE", "25")
+      System.put_env("LIBRETRANSLATE_TIMEOUT", "90000")
+
+      config = Config.Reader.read!("config/runtime.exs", env: :test)
+      libretranslate = config[:cinder][Cinder.Subtitles.Translator.LibreTranslate]
+
+      assert libretranslate[:batch_size] == 25
+      assert libretranslate[:receive_timeout] == 90_000
+    end
+
     test "anime defaults are typed and DB rows overlay then clear to the bootstrap" do
       assert Settings.anime_defaults() == %{
                subtitle_languages: [],
@@ -775,6 +796,20 @@ defmodule Cinder.SettingsTest do
 
       assert Enum.sort(invalid) ==
                ["libretranslate_batch_size", "libretranslate_timeout"]
+    end
+
+    test "absent bootstrap config fields stay absent" do
+      module = Cinder.Mailer
+
+      erase_base_snapshot(module)
+      Application.put_env(:cinder, module, adapter: Swoosh.Adapters.Test)
+
+      assert Settings.load_into_env() == :ok
+
+      config = Application.fetch_env!(:cinder, module)
+      refute Keyword.has_key?(config, :port)
+      refute Keyword.has_key?(config, :username)
+      refute Keyword.has_key?(config, :password)
     end
 
     test "media_server_type selects the impl; absent leaves the bootstrap untouched" do

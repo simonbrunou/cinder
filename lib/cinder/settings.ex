@@ -867,11 +867,6 @@ defmodule Cinder.Settings do
     config_fields()
     |> Enum.group_by(& &1.module)
     |> Enum.each(fn {module, fields} ->
-      bootstrap =
-        Enum.reduce(fields, base(module), fn field, config ->
-          Keyword.update(config, field.field, nil, &coerce_field_value(field, &1))
-        end)
-
       db_values =
         fields
         |> Enum.map(fn f -> {f.field, field_value(rows, f)} end)
@@ -880,7 +875,7 @@ defmodule Cinder.Settings do
       # Always re-apply base ⊕ db (not just when db is non-empty): merging onto the
       # captured bootstrap is what lets a removed/blanked setting revert to the env
       # default instead of stranding the last overlaid value.
-      Application.put_env(:cinder, module, Keyword.merge(bootstrap, db_values))
+      Application.put_env(:cinder, module, Keyword.merge(base(module), db_values))
     end)
   end
 

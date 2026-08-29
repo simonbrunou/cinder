@@ -67,12 +67,21 @@ if api_key = System.get_env("OPENSUBTITLES_API_KEY") do
     languages: System.get_env("SUBTITLE_LANGUAGES")
 end
 
+parse_pos_int = fn name ->
+  with value when is_binary(value) <- System.get_env(name),
+       {n, ""} when n > 0 <- Integer.parse(value) do
+    n
+  else
+    _ -> nil
+  end
+end
+
 libretranslate_config =
   [
     base_url: System.get_env("LIBRETRANSLATE_URL"),
     api_key: System.get_env("LIBRETRANSLATE_API_KEY"),
-    batch_size: System.get_env("LIBRETRANSLATE_BATCH_SIZE"),
-    receive_timeout: System.get_env("LIBRETRANSLATE_TIMEOUT")
+    batch_size: parse_pos_int.("LIBRETRANSLATE_BATCH_SIZE"),
+    receive_timeout: parse_pos_int.("LIBRETRANSLATE_TIMEOUT")
   ]
   |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
