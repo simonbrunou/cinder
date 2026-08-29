@@ -12,6 +12,8 @@ defmodule Cinder.Subtitles.Sync.Worker do
   """
   use GenServer
 
+  require Logger
+
   alias Cinder.Subtitles.Sync
 
   @status_key {__MODULE__, :status}
@@ -214,24 +216,41 @@ defmodule Cinder.Subtitles.Sync.Worker do
 
   # Enqueued units are caller-supplied, so they are held to the same shape as scan-produced ones
   # (validate_scan_units/1). Dropping a malformed unit keeps the queue: raising here would take
-  # the worker down and discard it until the next periodic scan.
+  # the worker down and discard it until the next periodic scan. The scan path records its
+  # rejection as a failed unit; here the caller is answered with :ok either way, so the log is
+  # the only trace that something was thrown away.
   defp enqueue_valid_units(units, state) do
-    units
-    |> keep_valid_units()
+    {valid, dropped} = split_valid_units(units)
+    log_dropped_units(dropped)
+
+    valid
     |> add_units(state, :background)
     |> start_next()
   end
 
   # Walked by hand rather than with Enum: is_list/1 accepts an improper list, so Enum would crash
   # on the tail of one such as [unit | :junk]. Stopping at any non-list tail keeps the valid prefix
-  # and drops the junk; the same clause absorbs a payload that is not a list at all.
-  defp keep_valid_units([unit | rest]) do
+  # and drops the junk; the same clause absorbs a payload that is not a list at all. Body-recursive
+  # is fine here: an enqueue carries a handful of units, not unbounded input.
+  defp split_valid_units([unit | rest]) do
+    {valid, dropped} = split_valid_units(rest)
+
     if valid_unit?(unit),
-      do: [unit | keep_valid_units(rest)],
-      else: keep_valid_units(rest)
+      do: {[unit | valid], dropped},
+      else: {valid, [unit | dropped]}
   end
 
-  defp keep_valid_units(_tail), do: []
+  defp split_valid_units([]), do: {[], []}
+  defp split_valid_units(tail), do: {[], [tail]}
+
+  defp log_dropped_units([]), do: :ok
+
+  defp log_dropped_units(dropped) do
+    Logger.warning(
+      "dropped #{length(dropped)} malformed subtitle sync unit(s): " <>
+        inspect(dropped, limit: 3, printable_limit: 80)
+    )
+  end
 
   defp mode(:library), do: :background
   defp mode(_scope), do: :priority
