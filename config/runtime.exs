@@ -67,24 +67,17 @@ if api_key = System.get_env("OPENSUBTITLES_API_KEY") do
     languages: System.get_env("SUBTITLE_LANGUAGES")
 end
 
-if url = System.get_env("LIBRETRANSLATE_URL") do
-  # Optional tuning knobs (nil → module defaults: 50 cues/batch, 60_000 ms).
-  # CPU LibreTranslate throughput varies per box, so batch size is worth tuning
-  # empirically without a code change.
-  parse_pos_int = fn name ->
-    with value when is_binary(value) <- System.get_env(name),
-         {n, ""} when n > 0 <- Integer.parse(value) do
-      n
-    else
-      _ -> nil
-    end
-  end
-
-  config :cinder, Cinder.Subtitles.Translator.LibreTranslate,
-    base_url: url,
+libretranslate_config =
+  [
+    base_url: System.get_env("LIBRETRANSLATE_URL"),
     api_key: System.get_env("LIBRETRANSLATE_API_KEY"),
-    batch_size: parse_pos_int.("LIBRETRANSLATE_BATCH_SIZE"),
-    receive_timeout: parse_pos_int.("LIBRETRANSLATE_TIMEOUT")
+    batch_size: System.get_env("LIBRETRANSLATE_BATCH_SIZE"),
+    receive_timeout: System.get_env("LIBRETRANSLATE_TIMEOUT")
+  ]
+  |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+
+if libretranslate_config != [] do
+  config :cinder, Cinder.Subtitles.Translator.LibreTranslate, libretranslate_config
 end
 
 # Real Jellyfin connection, read in every environment. Unset in test/CI, where

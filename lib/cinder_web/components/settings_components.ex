@@ -877,6 +877,10 @@ defmodule CinderWeb.SettingsComponents do
        when key in ["torrent_cleanup_ratio", "torrent_cleanup_seed_hours"],
        do: gettext("Enter a positive number, or leave blank to disable.")
 
+  defp invalid_field_message(key)
+       when key in ["libretranslate_batch_size", "libretranslate_timeout"],
+       do: gettext("Enter a positive whole number, or leave blank for the default.")
+
   defp invalid_field_message(key) when is_binary(key) do
     if library_path_key?(key),
       do: gettext("The top-level folder (/) is not allowed."),

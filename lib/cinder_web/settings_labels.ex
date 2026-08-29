@@ -103,6 +103,8 @@ defmodule CinderWeb.SettingsLabels do
       gettext_noop("Subtitle languages (comma-separated, e.g. en,fr)"),
       gettext_noop("LibreTranslate URL"),
       gettext_noop("LibreTranslate API key"),
+      gettext_noop("LibreTranslate batch size (cues)"),
+      gettext_noop("LibreTranslate timeout (milliseconds)"),
       gettext_noop("Open Library URL"),
       gettext_noop("Hardcover metadata proxy URL"),
       gettext_noop("Hardcover metadata proxy API key"),

@@ -69,6 +69,8 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#radarr_url")
     assert has_element?(lv, "#sonarr_url")
     assert has_element?(lv, "#sabnzbd_local_path_prefix")
+    assert has_element?(lv, "#libretranslate_batch_size[name=libretranslate_batch_size]")
+    assert has_element?(lv, "#libretranslate_timeout[name=libretranslate_timeout]")
     assert has_element?(lv, "p", "Path prefix as the download client reports it")
     assert has_element?(lv, "p", "The same directory as Cinder sees it")
     # The remove-after-import toggle lives on /settings (Library section).

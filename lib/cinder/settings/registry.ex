@@ -391,6 +391,28 @@ defmodule Cinder.Settings.Registry do
       placeholder: ""
     },
     %{
+      key: "libretranslate_batch_size",
+      module: Cinder.Subtitles.Translator.LibreTranslate,
+      field: :batch_size,
+      secret: false,
+      group: :subtitles,
+      label: "LibreTranslate batch size (cues)",
+      placeholder: "50",
+      inputmode: "numeric",
+      type: :positive_integer
+    },
+    %{
+      key: "libretranslate_timeout",
+      module: Cinder.Subtitles.Translator.LibreTranslate,
+      field: :receive_timeout,
+      secret: false,
+      group: :subtitles,
+      label: "LibreTranslate timeout (milliseconds)",
+      placeholder: "60000",
+      inputmode: "numeric",
+      type: :positive_integer
+    },
+    %{
       key: "openlibrary_url",
       module: Cinder.Books.Metadata.OpenLibrary,
       field: :base_url,

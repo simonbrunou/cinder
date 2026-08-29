@@ -639,13 +639,22 @@ defmodule Cinder.Settings do
   end
 
   defp invalid_values(params) do
-    invalid_band_values(params) ++
+    invalid_positive_integer_config_values(params) ++
+      invalid_band_values(params) ++
       invalid_cutoff_values(params) ++
       invalid_import_roots(params) ++
       invalid_library_roots(params) ++
       invalid_timezone_values(params) ++
       invalid_anime_values(params) ++
       invalid_download_choices(params) ++ invalid_torrent_cleanup(params)
+  end
+
+  defp invalid_positive_integer_config_values(params) do
+    for %{key: key, type: :positive_integer} <- config_fields(),
+        value = String.trim(params[key] || ""),
+        value != "",
+        is_nil(positive_integer(value)),
+        do: key
   end
 
   defp invalid_download_choices(params) do
@@ -858,6 +867,11 @@ defmodule Cinder.Settings do
     config_fields()
     |> Enum.group_by(& &1.module)
     |> Enum.each(fn {module, fields} ->
+      bootstrap =
+        Enum.reduce(fields, base(module), fn field, config ->
+          Keyword.update(config, field.field, nil, &coerce_field_value(field, &1))
+        end)
+
       db_values =
         fields
         |> Enum.map(fn f -> {f.field, field_value(rows, f)} end)
@@ -866,7 +880,7 @@ defmodule Cinder.Settings do
       # Always re-apply base ⊕ db (not just when db is non-empty): merging onto the
       # captured bootstrap is what lets a removed/blanked setting revert to the env
       # default instead of stranding the last overlaid value.
-      Application.put_env(:cinder, module, Keyword.merge(base(module), db_values))
+      Application.put_env(:cinder, module, Keyword.merge(bootstrap, db_values))
     end)
   end
 
@@ -1284,7 +1298,10 @@ defmodule Cinder.Settings do
 
   defp rows_by_key, do: all() |> Map.new(&{&1.key, &1})
 
-  defp field_value(rows, field), do: decoded_for(rows, field.key)
+  defp field_value(rows, field), do: coerce_field_value(field, decoded_for(rows, field.key))
+
+  defp coerce_field_value(%{type: :positive_integer}, value), do: positive_integer(value)
+  defp coerce_field_value(_field, value), do: value
 
   defp decoded_for(rows, key) do
     case Map.get(rows, key) do

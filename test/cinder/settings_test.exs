@@ -748,6 +748,35 @@ defmodule Cinder.SettingsTest do
                original
     end
 
+    test "saved LibreTranslate tuning applies when its URL has no env bootstrap" do
+      module = Cinder.Subtitles.Translator.LibreTranslate
+      original = Application.get_env(:cinder, module)
+
+      erase_base_snapshot(module)
+      Application.put_env(:cinder, module, Keyword.delete(original, :base_url))
+
+      assert :ok =
+               Settings.save_form(%{
+                 "libretranslate_url" => "https://translate.example",
+                 "libretranslate_batch_size" => "25",
+                 "libretranslate_timeout" => "90000"
+               })
+
+      config = Application.get_env(:cinder, module)
+      assert config[:base_url] == "https://translate.example"
+      assert config[:batch_size] == 25
+      assert config[:receive_timeout] == 90_000
+
+      assert {:error, invalid} =
+               Settings.save_form(%{
+                 "libretranslate_batch_size" => "0",
+                 "libretranslate_timeout" => "later"
+               })
+
+      assert Enum.sort(invalid) ==
+               ["libretranslate_batch_size", "libretranslate_timeout"]
+    end
+
     test "media_server_type selects the impl; absent leaves the bootstrap untouched" do
       assert Settings.load_into_env() == :ok
       # No setting + no PLEX_URL → the Mox mock from config/test.exs survives.
