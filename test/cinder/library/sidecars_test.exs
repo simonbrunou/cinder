@@ -88,38 +88,6 @@ defmodule Cinder.Library.SidecarsTest do
     assert Sidecars.link(src, dest) == ["en"]
   end
 
-  test "link/2 atomically copies a sidecar when hardlinking crosses filesystems" do
-    parent = self()
-    dir = "/dl/Movie (2020)"
-    src = "#{dir}/Movie (2020).mkv"
-    dest = "/tmp/cinder-test-library/Movie (2020)/Movie (2020).mkv"
-    sub_src = "#{dir}/Movie (2020).en.srt"
-    sub_dest = "/tmp/cinder-test-library/Movie (2020)/Movie (2020).en.srt"
-
-    stub(FilesystemMock, :dir?, fn _dir -> true end)
-
-    stub(FilesystemMock, :find_files, fn
-      ^dir -> {:ok, [{src, 900}, {sub_src, 10}]}
-      _dest_dir -> {:ok, []}
-    end)
-
-    stub(FilesystemMock, :ln, fn ^sub_src, _dest -> {:error, :exdev} end)
-
-    stub(FilesystemMock, :cp, fn ^sub_src, tmp ->
-      send(parent, {:copied, tmp})
-      :ok
-    end)
-
-    stub(FilesystemMock, :rename, fn tmp, ^sub_dest ->
-      send(parent, {:renamed, tmp})
-      :ok
-    end)
-
-    assert Sidecars.link(src, dest) == ["en"]
-    assert_receive {:copied, tmp}
-    assert_receive {:renamed, ^tmp}
-  end
-
   test "files/1 requires a separator boundary so an unpadded E10 sidecar isn't matched to E1" do
     dir = "/dl/Show S01"
     src = "#{dir}/Show.S01E1.mkv"
@@ -185,7 +153,15 @@ defmodule Cinder.Library.SidecarsTest do
 
   describe "real path-policy sinks" do
     setup do
-      keys = [:filesystem, :path_policy, :import_roots, :movies_library_path, :tv_library_path]
+      keys = [
+        :filesystem,
+        :filesystem_failure,
+        :path_policy,
+        :import_roots,
+        :movies_library_path,
+        :tv_library_path
+      ]
+
       saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
 
       Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
@@ -201,6 +177,48 @@ defmodule Cinder.Library.SidecarsTest do
       end)
 
       :ok
+    end
+
+    @tag :tmp_dir
+    test "cross-filesystem fallback copies a sidecar through the real path policy", %{
+      tmp_dir: tmp
+    } do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_sidecar_links(sidecar)
+
+      assert Sidecars.link(video, dest) == ["en"]
+      assert File.read!(sidecar_dest) == "subtitle"
+    end
+
+    @tag :tmp_dir
+    test "copy fallback preserves a sidecar created before landing", %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "download")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_sidecar_links(sidecar)
+      barrier(:cp, ".cinder-tmp-")
+
+      task = Task.async(fn -> Sidecars.link(video, dest) end)
+      {pid, ref, _path} = await_barrier(:cp)
+      File.write!(sidecar_dest, "manual")
+      send(pid, {ref, :continue})
+
+      log = capture_log(fn -> assert Task.await(task) == [] end)
+
+      assert log =~ "sidecar link rejected: :eexist"
+      assert File.read!(sidecar_dest) == "manual"
     end
 
     @tag :tmp_dir
@@ -288,6 +306,14 @@ defmodule Cinder.Library.SidecarsTest do
       owner: self(),
       operation: operation,
       contains: contains
+    })
+  end
+
+  defp fail_sidecar_links(sidecar) do
+    Application.put_env(:cinder, :filesystem_failure, %{
+      operation: :ln,
+      source_contains: sidecar,
+      reason: :exdev
     })
   end
 

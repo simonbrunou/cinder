@@ -1,7 +1,7 @@
 defmodule Cinder.Library.Sidecars do
   @moduledoc """
   Loose subtitle files (`.srt`/`.ass`/…) that ship alongside a downloaded video. On import we
-  hardlink or atomically copy each belonging sidecar next to the imported video (renamed to the media-server's
+  hardlink or copy each belonging sidecar next to the imported video (renamed to the media-server's
   `<video>.<lang>[.forced].<ext>` convention) so Jellyfin/Plex pick them up, and report their
   languages for storage. Filesystem access goes through `Cinder.Library.Filesystem`.
   """
@@ -140,8 +140,31 @@ defmodule Cinder.Library.Sidecars do
   end
 
   defp copy(src, dest) do
-    with {:ok, root} <- Settings.library_root_for_path(dest),
-         do: Library.replace(src, dest, root, @sub_exts)
+    with {:ok, root} <- Settings.library_root_for_path(dest) do
+      dir = Path.dirname(dest)
+      Library.sweep_temps(dir, root)
+      tmp = Path.join(dir, ".cinder-tmp-#{System.unique_integer([:positive])}")
+
+      result =
+        with {:ok, ^tmp} <- safe_destination(tmp, root),
+             :ok <- Library.link_or_copy(src, tmp, root, @sub_exts),
+             {:ok, ^tmp} <- safe_destination(tmp, root),
+             {:ok, ^dest} <- safe_destination(dest, root),
+             do: land_noreplace(tmp, dest)
+
+      _ = safe_remove(tmp, root)
+      result
+    end
+  end
+
+  defp land_noreplace(tmp, dest) do
+    case fs().ln(tmp, dest) do
+      {:error, errno} when Library.copy_fallback_errno?(errno) ->
+        fs().cp_exclusive(tmp, dest, fn _stat -> :ok end)
+
+      result ->
+        result
+    end
   end
 
   defp safe_sidecars(paths, roots) do
@@ -156,6 +179,14 @@ defmodule Cinder.Library.Sidecars do
   end
 
   defp source_roots, do: Enum.uniq(Settings.import_roots() ++ Settings.library_roots())
+
+  defp safe_destination(path, root),
+    do: path_policy().destination(path, root, filesystem: fs())
+
+  defp safe_remove(path, root) do
+    with :ok <- path_policy().deletable_file(path, [root], filesystem: fs()),
+         do: fs().rm(path)
+  end
 
   defp fs, do: Application.get_env(:cinder, :filesystem)
   defp path_policy, do: Application.get_env(:cinder, :path_policy, PathPolicy)

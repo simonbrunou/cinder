@@ -438,8 +438,7 @@ defmodule Cinder.Library do
   # Atomic replace of an existing dest with source's content: sweep stale temps (a host crash between
   # link/copy and rename can leak one), link-or-copy source -> unique temp in the dest dir, then rename
   # over dest. The temp lives on the dest filesystem, so the rename is same-fs and atomic even when the
-  # source content had to be copied across filesystems. Public (not private): also called from
-  # `Cinder.Library.StageEngine`.
+  # source content had to be copied across filesystems; also called from `Cinder.Library.StageEngine`.
   @doc false
   def replace(source, dest, root, source_extensions \\ @video_exts) do
     dir = Path.dirname(dest)
@@ -491,7 +490,8 @@ defmodule Cinder.Library do
     end
   end
 
-  defp sweep_temps(dir, root) do
+  @doc false
+  def sweep_temps(dir, root) do
     case path_policy().walk(dir, roots: [root], filesystem: fs()) do
       {:ok, files} ->
         for {p, _size} <- files,
