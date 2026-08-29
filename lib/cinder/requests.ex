@@ -473,7 +473,42 @@ defmodule Cinder.Requests do
   # async approve vs a concurrent deny) can't silently reverse each other's committed
   # decision. Validates via the changeset, then writes with one atomic update_all (no
   # read-then-write upgrade window for SQLite to reject).
+  #
+  # `update_all` also skips Ecto's `to_constraints`, so the approval's `proposed_profile_id`
+  # write surfaces `requests_profile_integrity` as a raw Exqlite.Error rather than
+  # `{:error, changeset}`. Every caller re-reads the profile first, but a second admin can
+  # re-kind it between that read and this write: rescue on the constraint's own message (not the
+  # exception class, which also covers a transient busy) so the approval queue reports a refusal
+  # instead of a 500.
+  #
+  # Caller contract, enforced here rather than asked of callers: SQLite's `RAISE(ABORT, ...)`
+  # reverts only the offending statement, so inside an outer `Repo.transaction` the transaction
+  # stays open and its earlier writes would still commit. So the refusal rolls that transaction
+  # back itself — `Repo.rollback/1` throws, so `Repo.transaction` still returns
+  # `{:error, :invalid_media_profile}` and the three approve paths see exactly what they saw when
+  # they matched the tuple themselves; a future caller cannot handle it in place and commit.
+  # Outside a transaction (`deny_request/3`) there is nothing to roll back and the tuple is
+  # returned directly.
+  #
+  # The `requests_profile_integrity` literal is also spelled out in the migrations that create the
+  # trigger and in `Request`'s `check_constraint/3` calls, with no shared constant to bind them
+  # (migrations are frozen history). The re-kind race test in
+  # `test/cinder/requests/book_request_test.exs` is what catches a drift in that name from this
+  # end: it asserts the aborted write carried this exact string.
   defp flip_pending(%Request{} = request, attrs) do
+    do_flip_pending(request, attrs)
+  rescue
+    error in Exqlite.Error ->
+      if error.message =~ "requests_profile_integrity" do
+        if Repo.in_transaction?(),
+          do: Repo.rollback(:invalid_media_profile),
+          else: {:error, :invalid_media_profile}
+      else
+        reraise error, __STACKTRACE__
+      end
+  end
+
+  defp do_flip_pending(request, attrs) do
     changeset = Request.status_changeset(request, attrs)
 
     with %{valid?: true, changes: changes} <- changeset,
