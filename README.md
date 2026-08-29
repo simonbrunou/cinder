@@ -1,7 +1,11 @@
-# Cinder
+<p align="center">
+  <img src="docs/images/cinder-header.svg" alt="Cinder — self-hosted media management for one household" width="100%" />
+</p>
 
-[![CI](https://github.com/simonbrunou/cinder/actions/workflows/ci.yml/badge.svg)](https://github.com/simonbrunou/cinder/actions/workflows/ci.yml)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/simonbrunou/cinder/actions/workflows/ci.yml"><img src="https://github.com/simonbrunou/cinder/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3" /></a>
+</p>
 
 Cinder is a single-household, self-hosted replacement for the **Sonarr + Radarr + Seerr** loop:
 request a movie or TV show → find the best release → download it → import it into **Jellyfin or

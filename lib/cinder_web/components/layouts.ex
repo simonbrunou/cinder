@@ -70,9 +70,7 @@ defmodule CinderWeb.Layouts do
           >
             <.icon name="hero-bars-3" class="size-6" />
           </label>
-          <span class="font-display text-lg font-bold tracking-wide">
-            CIN<span class="text-primary">DER</span>
-          </span>
+          <.brand icon_class="size-7" wordmark_class="text-lg" />
         </header>
 
         <main
@@ -90,9 +88,7 @@ defmodule CinderWeb.Layouts do
             href={if @admin?, do: ~p"/dashboard", else: ~p"/"}
             class="mb-2 flex items-center gap-2 px-2"
           >
-            <span class="font-display text-xl font-bold tracking-wide">
-              CIN<span class="text-primary">DER</span>
-            </span>
+            <.brand icon_class="size-8" wordmark_class="text-xl" />
           </a>
 
           <nav aria-label={gettext("Primary")} class="flex min-h-0 flex-1 flex-col gap-2">
@@ -207,8 +203,8 @@ defmodule CinderWeb.Layouts do
       id="main"
       class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-10"
     >
-      <div class="mb-6 text-center font-display text-2xl font-bold tracking-wide">
-        CIN<span class="text-primary">DER</span>
+      <div class="mb-6 flex justify-center">
+        <.brand icon_class="size-12" wordmark_class="text-2xl" />
       </div>
       {render_slot(@inner_block)}
       <div class="mt-6 flex justify-center">
@@ -217,6 +213,33 @@ defmodule CinderWeb.Layouts do
     </main>
 
     <.flash_group flash={@flash} />
+    """
+  end
+
+  attr :icon_class, :string, required: true
+  attr :wordmark_class, :string, required: true
+
+  defp brand(assigns) do
+    ~H"""
+    <span class="inline-flex items-center gap-2">
+      <span class={[@icon_class, "relative shrink-0"]} aria-hidden="true">
+        <img
+          src={~p"/images/logo-reverse.svg"}
+          width="64"
+          height="64"
+          class="size-full [[data-theme=light]_&]:hidden"
+          alt=""
+        />
+        <img
+          src={~p"/images/logo.svg"}
+          width="64"
+          height="64"
+          class="hidden size-full [[data-theme=light]_&]:block"
+          alt=""
+        />
+      </span>
+      <span class={[@wordmark_class, "font-display font-bold tracking-[0.18em]"]}>CINDER</span>
+    </span>
     """
   end
 

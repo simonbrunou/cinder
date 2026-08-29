@@ -5,7 +5,22 @@ defmodule CinderWeb.SharedComponentsTest do
   import Phoenix.Component
 
   alias CinderWeb.CoreComponents
+  alias CinderWeb.Layouts
   alias CinderWeb.SettingsComponents
+
+  test "app shell renders the Ember Loop brand lockup" do
+    html =
+      render_component(&Layouts.app/1, %{
+        flash: %{},
+        current_scope: nil,
+        current_path: "/",
+        inner_block: [%{__slot__: :inner_block, inner_block: fn _, _ -> "Content" end}]
+      })
+
+    assert html =~ "/images/logo-reverse.svg"
+    assert html =~ "/images/logo.svg"
+    assert html =~ "CINDER"
+  end
 
   test "settings validation copy is translated without exposing internal keys" do
     Gettext.put_locale(CinderWeb.Gettext, "fr")
