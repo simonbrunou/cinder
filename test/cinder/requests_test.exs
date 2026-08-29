@@ -225,6 +225,43 @@ defmodule Cinder.RequestsTest do
     assert Repo.aggregate(TitleAlias, :count) == 0
   end
 
+  test "an approver deleted after approval starts is refused, not raised" do
+    Mox.set_mox_global()
+    parent = self()
+    user = user_fixture()
+    actor = admin_fixture()
+    approver = admin_fixture()
+    {:ok, request} = Requests.create_request(user, @attrs)
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
+      send(parent, {:movie_preparing, self()})
+
+      receive do
+        :continue ->
+          {:ok,
+           %{
+             tmdb_id: id,
+             imdb_id: nil,
+             title: "The Matrix",
+             year: 1999,
+             poster_path: "/p.jpg",
+             original_language: "en"
+           }}
+      end
+    end)
+
+    task = Task.async(fn -> Requests.approve_request(request, approver, :standard) end)
+    Sandbox.allow(Cinder.Repo, self(), task.pid)
+    assert_receive {:movie_preparing, provider_task}
+
+    assert {:ok, _, _} = Cinder.Accounts.delete_user(actor, approver)
+    send(provider_task, :continue)
+
+    assert {:error, :unauthorized} = Task.await(task)
+    assert Repo.reload!(request).status == :pending
+    assert Catalog.get_movie_by_tmdb_id(@attrs.target_id) == nil
+  end
+
   test "an admin request auto-approves and creates the movie" do
     admin = admin_fixture()
     assert {:ok, req} = Requests.create_request(admin, @attrs)
