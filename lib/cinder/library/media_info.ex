@@ -5,12 +5,16 @@ defmodule Cinder.Library.MediaInfo do
   the audio language; the file's actual audio streams can't.
 
   Reached only through this behaviour, resolved from `config :cinder, :media_info` at runtime.
-  Enabled by default in prod (`config/config.exs` → `Ffprobe`; the Docker image ships `ffmpeg`), and
-  it degrades safely: if `ffprobe` isn't on `PATH` the probe errors and the importer imports anyway,
-  and the check parks only a *confirmed* mismatch (`Cinder.Acquisition.Language.audio_satisfies?/2`
-  is conservative — an unknown language or unrecognised audio code never parks). Set
-  `config :cinder, media_info: nil` to disable it entirely. `config/test.exs` disables it; the
-  media_info tests opt in with a Mox mock per-test.
+  Enabled by default in prod (`config/config.exs` → `Ffprobe`; the Docker image ships `ffmpeg`).
+  When `ffprobe` isn't on `PATH` the two probes degrade differently: `probe/1` errors and the
+  name-based audio check imports anyway, parking only a *confirmed* mismatch
+  (`Cinder.Acquisition.Language.audio_satisfies?/2` is conservative — an unknown language or
+  unrecognised audio code never parks); `probe_policy/1` errors reach
+  `Cinder.Library.PolicyVerifier` as `{:unavailable, _}` and hold the item as "needs verification"
+  when the frozen release-policy snapshot names a required audio or embedded-subtitle language.
+  Set `config :cinder, media_info: nil` to disable it entirely — same split, the verifier reports
+  `:media_info_not_configured` rather than skipping a hard requirement. `config/test.exs` disables
+  it; the media_info tests opt in with a Mox mock per-test.
   """
 
   @type subtitle_track :: %{
