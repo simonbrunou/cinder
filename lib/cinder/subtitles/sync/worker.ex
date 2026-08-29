@@ -182,7 +182,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
 
   def handle_info({reference, results}, %{task: %{ref: reference}} = state) do
     Process.demonitor(reference, [:flush])
-    state = state |> finish(tag_results(results, state.current)) |> start_next()
+    state = state |> finish(results) |> start_next()
     {:noreply, state}
   end
 
@@ -401,7 +401,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
   defp start_pending_scan(state), do: state
 
   defp finish(state, results) do
-    results = if is_list(results), do: results, else: []
+    results = results |> well_formed() |> tag_results(state.current)
 
     managed_video_paths =
       if results == [],
@@ -410,13 +410,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
 
     counts =
       Enum.reduce(results, state.counts, fn result, counts ->
-        case Map.get(result, :status) do
-          status when status in [:aligned, :corrected, :review, :failed] ->
-            Map.update!(counts, status, &(&1 + 1))
-
-          _ ->
-            counts
-        end
+        Map.update!(counts, result.status, &(&1 + 1))
       end)
 
     recent = Enum.take(results ++ state.recent, 20)
@@ -431,7 +425,16 @@ defmodule Cinder.Subtitles.Sync.Worker do
     }
   end
 
-  defp tag_results(results, %{scopes: scopes}) when is_list(results),
+  # The analyzer is a seam, so a malformed result is dropped here rather than carried: `counts` and
+  # `recent` are folded from the same list and must never drift, since the subtitle-sync view
+  # derives its cursor into `recent` from the counts sum.
+  defp well_formed(results) when is_list(results), do: Enum.filter(results, &well_formed?/1)
+  defp well_formed(_results), do: []
+
+  defp well_formed?(%{status: status}), do: status in [:aligned, :corrected, :review, :failed]
+  defp well_formed?(_result), do: false
+
+  defp tag_results(results, %{scopes: scopes}),
     do: Enum.map(results, &Map.put(&1, :scopes, scopes))
 
   defp tag_results(results, _unit), do: results

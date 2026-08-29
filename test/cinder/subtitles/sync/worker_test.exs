@@ -673,6 +673,78 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     send(background, :release)
   end
 
+  test "a result without :status is dropped instead of crashing the worker (issue #374)" do
+    owner = self()
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+
+      receive do
+        :release -> [%{label: video}, %{status: :review, label: video, reason: "misaligned"}]
+      end
+    end
+
+    worker =
+      start_supervised!(
+        {Worker, initial_scan: false, interval: :timer.hours(1), analyze: analyze}
+      )
+
+    Worker.subscribe()
+
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
+    assert_receive {:started, "/library/a.mkv", task}
+    send(task, :release)
+
+    assert_receive {:subtitle_sync_status, %{state: :idle, recent: [_ | _]} = snapshot}
+    assert Process.alive?(worker)
+
+    # The status-less map is dropped at the boundary, so the genuine :review result is the only
+    # thing counted and the only thing kept.
+    assert Worker.status().counts == %{aligned: 0, corrected: 0, review: 1, failed: 0}
+    assert [%{status: :review, label: "/library/a.mkv"}] = snapshot.recent
+    assert [%{status: :review, label: "/library/a.mkv"}] = snapshot.review_items
+    assert_counts_match_recent(snapshot)
+  end
+
+  test "a non-map result is dropped instead of crashing the worker (issue #374)" do
+    owner = self()
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+
+      receive do
+        :release -> [:junk, %{status: :aligned, label: video}]
+      end
+    end
+
+    worker =
+      start_supervised!(
+        {Worker, initial_scan: false, interval: :timer.hours(1), analyze: analyze}
+      )
+
+    Worker.subscribe()
+
+    # A unit carrying scopes routes the results through tag_results/2, which maps Map.put/3 over
+    # them — the non-map raises there, before the counts fold is ever reached.
+    scopes = MapSet.new([{:movie, 1}])
+    unit = %{video_path: "/library/a.mkv", label: "A", scopes: scopes}
+    assert :ok = Worker.enqueue_units([unit], worker)
+    assert_receive {:started, "/library/a.mkv", task}
+    send(task, :release)
+
+    assert_receive {:subtitle_sync_status, %{state: :idle, recent: [_ | _]} = snapshot}
+    assert Process.alive?(worker)
+
+    assert Worker.status().counts == %{aligned: 1, corrected: 0, review: 0, failed: 0}
+    assert [%{status: :aligned, label: "/library/a.mkv", scopes: ^scopes}] = snapshot.recent
+    assert snapshot.review_items == []
+    assert_counts_match_recent(snapshot)
+  end
+
+  # The LiveView derives its cursor into `recent` from the counts sum, so the two must never drift.
+  defp assert_counts_match_recent(snapshot),
+    do: assert(Enum.sum(Map.values(snapshot.counts)) == length(snapshot.recent))
+
   defp assert_eventually(fun, attempts \\ 20)
   defp assert_eventually(fun, 0), do: assert(fun.())
 
