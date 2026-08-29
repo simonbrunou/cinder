@@ -363,6 +363,34 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     assert_eventually(fn -> render(view) =~ "Aligned via manual" end)
   end
 
+  test "status-less worker results do not mask an adjacent real result", %{
+    conn: conn,
+    movies: movies
+  } do
+    {movie, _video, _sidecar, item} = managed_movie!(movies, "Statusless")
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
+    assert render(view) =~ "Not analyzed"
+
+    result = %{
+      id: item.id,
+      video_path: item.video_path,
+      status: :aligned,
+      method: "audio",
+      offset_ms: 0,
+      rate: 1.0,
+      reason: nil
+    }
+
+    status =
+      [result]
+      |> status_with_results()
+      |> Map.update!(:recent, &[%{label: "status-less"} | &1])
+
+    send(view.pid, {:subtitle_sync_status, status})
+    assert_eventually(fn -> render(view) =~ "Aligned via audio" end)
+  end
+
   test "historic worker results are ignored until an identical analysis runs again", %{
     conn: conn,
     movies: movies

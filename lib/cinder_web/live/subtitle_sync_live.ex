@@ -496,13 +496,13 @@ defmodule CinderWeb.SubtitleSyncLive do
   end
 
   defp new_worker_results(status, seen_count) do
-    count = worker_result_count(status)
-    delta = count - seen_count
+    recent = Enum.filter(status.recent, &Map.has_key?(status.counts, Map.get(&1, :status)))
+    delta = worker_result_count(status) - seen_count
 
     cond do
       delta <= 0 -> {%{}, false}
-      delta > length(status.recent) -> {%{}, true}
-      true -> {status.recent |> Enum.take(delta) |> latest_results(), false}
+      delta > length(recent) -> {%{}, true}
+      true -> {recent |> Enum.take(delta) |> latest_results(), false}
     end
   end
 
