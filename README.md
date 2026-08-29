@@ -189,7 +189,9 @@ completed download's actual audio/subtitles are verified against them before imp
 and blocklisting a release that provably violates the policy. `ffprobe` is optional but
 recommended; without it, a title that requires no particular audio or embedded-subtitle language
 still imports, while one that does is held after bounded retries — neither imported nor
-blocklisted, since the requirement can't be proven either way.
+blocklisted, since the requirement can't be proven either way. A held item surfaces as **Needs
+verification** (the movie's detail page; `/activity` for a TV grab): install `ffprobe`, then click
+**Retry verification**.
 
 Named profiles at `/settings/profiles` can route movie and TV titles into separate roots. Leave a
 profile root blank to keep using the matching existing Standard/Anime root.
