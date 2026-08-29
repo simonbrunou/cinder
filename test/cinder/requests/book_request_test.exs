@@ -238,7 +238,12 @@ defmodule Cinder.Requests.BookRequestTest do
       {:ok, request} = Requests.create_request(user, attrs(work, :ebook))
 
       handler = "rekind-#{System.unique_integer([:positive])}"
-      on_exit(fn -> :telemetry.detach(handler) end)
+      abort_handler = "abort-#{System.unique_integer([:positive])}"
+
+      on_exit(fn ->
+        :telemetry.detach(handler)
+        :telemetry.detach(abort_handler)
+      end)
 
       :telemetry.attach(
         handler,
@@ -247,32 +252,32 @@ defmodule Cinder.Requests.BookRequestTest do
         %{handler: handler, profile: profile, test: self()}
       )
 
+      :telemetry.attach(
+        abort_handler,
+        [:cinder, :repo, :query],
+        &__MODULE__.report_aborted_request_write/4,
+        %{test: self()}
+      )
+
       assert {:error, :invalid_media_profile} = Requests.approve_request(request, admin, profile)
 
       # `:telemetry` swallows and logs handler exceptions, so without this the re-kind silently
       # not happening would degrade the test into a restatement of the plain wrong-kind refusal.
       assert_received :rekinded
 
+      # The re-kind is pinned to the *first* `media_profiles` read, so an added preload upstream
+      # could move the window ahead of `current_profile/2`'s check and leave this test passing on
+      # the ordinary wrong-kind refusal instead of the race. This says which refusal it was: the
+      # `requests` write reached the DB and the trigger aborted it. It is also the far end of the
+      # constraint-name coupling — renaming the trigger without updating `flip_pending/2`'s rescue
+      # fails here.
+      assert_received {:aborted_request_write, message}
+      assert message =~ "requests_profile_integrity"
+
       assert %Request{status: :pending, proposed_profile_id: nil} = Repo.reload!(request)
       assert Repo.aggregate(BookTarget, :count) == 0
     end
   end
-
-  # `Catalog.get_profile/1` inside `current_profile/2` is the approval's first `media_profiles`
-  # read, and it is the read the TOCTOU window is defined against: firing here puts the re-kind
-  # provably after the check and before `flip_pending/2`'s write, which is the race the approval
-  # cannot re-validate away.
-  def rekind_on_profile_read(_event, _measurements, %{source: "media_profiles"}, %{
-        handler: handler,
-        profile: profile,
-        test: test
-      }) do
-    :telemetry.detach(handler)
-    {:ok, _} = Catalog.update_profile(profile, %{kind: :audiobook})
-    send(test, :rekinded)
-  end
-
-  def rekind_on_profile_read(_event, _measurements, _metadata, _config), do: :ok
 
   describe "the DB says the same thing the changeset does" do
     test "the requests profile-integrity trigger accepts a matching book profile", %{
@@ -509,6 +514,35 @@ defmodule Cinder.Requests.BookRequestTest do
       assert Repo.aggregate(Work, :count) == count
     end
   end
+
+  # `Catalog.get_profile/1` inside `current_profile/2` is the approval's first `media_profiles`
+  # read, and it is the read the TOCTOU window is defined against: firing here puts the re-kind
+  # provably after the check and before `flip_pending/2`'s write, which is the race the approval
+  # cannot re-validate away.
+  def rekind_on_profile_read(_event, _measurements, %{source: "media_profiles"}, %{
+        handler: handler,
+        profile: profile,
+        test: test
+      }) do
+    :telemetry.detach(handler)
+    {:ok, _} = Catalog.update_profile(profile, %{kind: :audiobook})
+    send(test, :rekinded)
+  end
+
+  def rekind_on_profile_read(_event, _measurements, _metadata, _config), do: :ok
+
+  # Reports the trigger firing on the `requests` write itself, so the test can tell the raced
+  # refusal apart from the plain wrong-kind one that never reaches the DB.
+  def report_aborted_request_write(
+        _event,
+        _measurements,
+        %{source: "requests", result: {:error, %Exqlite.Error{message: message}}},
+        %{test: test}
+      ) do
+    send(test, {:aborted_request_write, message})
+  end
+
+  def report_aborted_request_write(_event, _measurements, _metadata, _config), do: :ok
 
   defp attrs(work, media_kind),
     do: %{target_type: "book", target_id: work.id, media_kind: media_kind}

@@ -481,17 +481,28 @@ defmodule Cinder.Requests do
   # exception class, which also covers a transient busy) so the approval queue reports a refusal
   # instead of a 500.
   #
-  # Caller contract: SQLite's `RAISE(ABORT, ...)` reverts only the offending statement, so inside
-  # an outer `Repo.transaction` the transaction stays open and its earlier writes would still
-  # commit — the only safe response to this error is to roll that transaction back, as every
-  # approve path does. It is handleable in place only when the caller owns no enclosing
-  # transaction, as `deny_request/3` does; continuing inside one would commit.
+  # Caller contract, enforced here rather than asked of callers: SQLite's `RAISE(ABORT, ...)`
+  # reverts only the offending statement, so inside an outer `Repo.transaction` the transaction
+  # stays open and its earlier writes would still commit. So the refusal rolls that transaction
+  # back itself — `Repo.rollback/1` throws, so `Repo.transaction` still returns
+  # `{:error, :invalid_media_profile}` and the three approve paths see exactly what they saw when
+  # they matched the tuple themselves; a future caller cannot handle it in place and commit.
+  # Outside a transaction (`deny_request/3`) there is nothing to roll back and the tuple is
+  # returned directly.
+  #
+  # The `requests_profile_integrity` literal is also spelled out in the migrations that create the
+  # trigger and in `Request`'s `check_constraint/3` calls, with no shared constant to bind them
+  # (migrations are frozen history). The re-kind race test in
+  # `test/cinder/requests/book_request_test.exs` is what catches a drift in that name from this
+  # end: it asserts the aborted write carried this exact string.
   defp flip_pending(%Request{} = request, attrs) do
     do_flip_pending(request, attrs)
   rescue
     error in Exqlite.Error ->
       if error.message =~ "requests_profile_integrity" do
-        {:error, :invalid_media_profile}
+        if Repo.in_transaction?(),
+          do: Repo.rollback(:invalid_media_profile),
+          else: {:error, :invalid_media_profile}
       else
         reraise error, __STACKTRACE__
       end
