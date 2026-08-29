@@ -32,6 +32,10 @@ defmodule CinderWeb.SettingsComponents do
       |> Kernel.++(Enum.map(Settings.download_client_choices(), & &1.key))
       |> MapSet.new()
 
+    # The registry already records each config field's group; consult it before falling back, so a
+    # new validated field opens its own section instead of wrongly opening :releases.
+    config_groups = Map.new(Settings.config_fields(), &{&1.key, &1.group})
+
     keys
     |> Enum.map(fn key ->
       cond do
@@ -40,7 +44,7 @@ defmodule CinderWeb.SettingsComponents do
         library_path_key?(key) -> :library
         MapSet.member?(anime_keys, key) -> :anime
         MapSet.member?(download_keys, key) -> :download
-        true -> :releases
+        true -> Map.get(config_groups, key, :releases)
       end
     end)
     |> MapSet.new()
