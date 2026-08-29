@@ -1,15 +1,18 @@
 defmodule Cinder.Library.Sidecars do
   @moduledoc """
   Loose subtitle files (`.srt`/`.ass`/…) that ship alongside a downloaded video. On import we
-  hardlink each belonging sidecar next to the imported video (renamed to the media-server's
+  hardlink or atomically copy each belonging sidecar next to the imported video (renamed to the media-server's
   `<video>.<lang>[.forced].<ext>` convention) so Jellyfin/Plex pick them up, and report their
   languages for storage. Filesystem access goes through `Cinder.Library.Filesystem`.
   """
   require Logger
 
   alias Cinder.Acquisition.Parser
+  alias Cinder.Library
   alias Cinder.Library.PathPolicy
   alias Cinder.Settings
+
+  require Library
 
   @sub_exts ~w(.srt .ass .ssa .sub .vtt)
   @flags ~w(forced sdh cc hi)
@@ -95,7 +98,7 @@ defmodule Cinder.Library.Sidecars do
     end)
   end
 
-  @doc "Hardlinks belonging sidecars next to `dest_video`; returns linked languages (best-effort)."
+  @doc "Places belonging sidecars next to `dest_video`; returns linked languages (best-effort)."
   def link(source_video, dest_video) do
     dest_stem = Path.rootname(dest_video)
 
@@ -120,13 +123,25 @@ defmodule Cinder.Library.Sidecars do
            path_policy().source_file(src, source_roots(), @sub_exts, filesystem: fs()),
          {:ok, dest} <-
            path_policy().destination(dest, Settings.library_roots(), filesystem: fs()),
-         :ok <- fs().ln(src, dest) do
+         :ok <- link_or_copy(src, dest) do
       :ok
     else
       {:error, reason} ->
         Logger.warning("sidecar link rejected: #{inspect(reason)}")
         :error
     end
+  end
+
+  defp link_or_copy(src, dest) do
+    case fs().ln(src, dest) do
+      {:error, errno} when Library.copy_fallback_errno?(errno) -> copy(src, dest)
+      result -> result
+    end
+  end
+
+  defp copy(src, dest) do
+    with {:ok, root} <- Settings.library_root_for_path(dest),
+         do: Library.replace(src, dest, root, @sub_exts)
   end
 
   defp safe_sidecars(paths, roots) do

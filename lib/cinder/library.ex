@@ -43,7 +43,7 @@ defmodule Cinder.Library do
   # firing (issue #59). `:eperm` can also be a genuine permission error, but then the copy fails the
   # same way (`cp` can't open the dest) and the item still parks — a wasted copy attempt, not a
   # wrong import. Every other errno (`:enoent`, `:enospc`, …) is a real failure and propagates.
-  @copy_fallback_errnos [:exdev, :eperm, :eopnotsupp, :enotsup]
+  defguard copy_fallback_errno?(errno) when errno in [:exdev, :eperm, :eopnotsupp, :enotsup]
   @standard_tv_bridged_schemes ~w(scene aired)
 
   # The video library kinds Cinder manages. `Cinder.LibraryKind` is the full library-kind registry;
@@ -441,14 +441,14 @@ defmodule Cinder.Library do
   # source content had to be copied across filesystems. Public (not private): also called from
   # `Cinder.Library.StageEngine`.
   @doc false
-  def replace(source, dest, root) do
+  def replace(source, dest, root, source_extensions \\ @video_exts) do
     dir = Path.dirname(dest)
     sweep_temps(dir, root)
     tmp = Path.join(dir, ".cinder-tmp-#{System.unique_integer([:positive])}")
 
     with {:ok, ^dest} <- safe_destination(dest, root),
          {:ok, ^tmp} <- safe_destination(tmp, root),
-         :ok <- link_or_copy(source, tmp, root),
+         :ok <- link_or_copy(source, tmp, root, source_extensions),
          {:ok, ^tmp} <- safe_destination(tmp, root),
          {:ok, ^dest} <- safe_destination(dest, root),
          :ok <- fs().rename(tmp, dest) do
@@ -461,28 +461,28 @@ defmodule Cinder.Library do
   end
 
   # Hardlink source -> target, falling back to a byte copy only when the dest filesystem can't be
-  # hardlinked to (@copy_fallback_errnos: cross-mount `:exdev`, or no hardlink support at all →
+  # hardlinked to (`copy_fallback_errno?/1`: cross-mount `:exdev`, or no hardlink support at all →
   # `:eperm`/`:eopnotsupp`/`:enotsup`). Every other ln error (`:eacces`, `:enoent`, `:enospc`, …) is a
   # real failure and propagates unchanged — a copy would fail the same way. Both the fresh placement
   # and the upgrade-replace path route the copy through here, so the :info fallback log lives at this
   # single choke-point and covers every fallback (per docs/operating.md). Public (not private):
   # also called from `Cinder.Library.StageEngine`.
   @doc false
-  def link_or_copy(source, target, root) do
-    with {:ok, source} <- safe_source_file(source),
+  def link_or_copy(source, target, root, source_extensions \\ @video_exts) do
+    with {:ok, source} <- safe_source_file(source, source_extensions),
          {:ok, target} <- safe_destination(target, root) do
-      do_link_or_copy(source, target, root)
+      do_link_or_copy(source, target, root, source_extensions)
     end
   end
 
-  defp do_link_or_copy(source, target, root) do
+  defp do_link_or_copy(source, target, root, source_extensions) do
     case fs().ln(source, target) do
-      {:error, errno} when errno in @copy_fallback_errnos ->
+      {:error, errno} when copy_fallback_errno?(errno) ->
         Logger.info(
           "hardlink unsupported (#{errno}); copying #{source} into #{Path.dirname(target)}"
         )
 
-        with {:ok, ^source} <- safe_source_file(source),
+        with {:ok, ^source} <- safe_source_file(source, source_extensions),
              {:ok, ^target} <- safe_destination(target, root),
              do: fs().cp(source, target)
 
@@ -1469,10 +1469,10 @@ defmodule Cinder.Library do
 
   # Public (not private): also called from `Cinder.Library.AnimeInventory`.
   @doc false
-  def safe_source_file(path) do
+  def safe_source_file(path, extensions \\ @video_exts) do
     case Settings.import_roots() do
       [] -> {:error, :download_roots_not_configured}
-      roots -> path_policy().source_file(path, roots, @video_exts, filesystem: fs())
+      roots -> path_policy().source_file(path, roots, extensions, filesystem: fs())
     end
   end
 

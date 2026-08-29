@@ -88,6 +88,38 @@ defmodule Cinder.Library.SidecarsTest do
     assert Sidecars.link(src, dest) == ["en"]
   end
 
+  test "link/2 atomically copies a sidecar when hardlinking crosses filesystems" do
+    parent = self()
+    dir = "/dl/Movie (2020)"
+    src = "#{dir}/Movie (2020).mkv"
+    dest = "/tmp/cinder-test-library/Movie (2020)/Movie (2020).mkv"
+    sub_src = "#{dir}/Movie (2020).en.srt"
+    sub_dest = "/tmp/cinder-test-library/Movie (2020)/Movie (2020).en.srt"
+
+    stub(FilesystemMock, :dir?, fn _dir -> true end)
+
+    stub(FilesystemMock, :find_files, fn
+      ^dir -> {:ok, [{src, 900}, {sub_src, 10}]}
+      _dest_dir -> {:ok, []}
+    end)
+
+    stub(FilesystemMock, :ln, fn ^sub_src, _dest -> {:error, :exdev} end)
+
+    stub(FilesystemMock, :cp, fn ^sub_src, tmp ->
+      send(parent, {:copied, tmp})
+      :ok
+    end)
+
+    stub(FilesystemMock, :rename, fn tmp, ^sub_dest ->
+      send(parent, {:renamed, tmp})
+      :ok
+    end)
+
+    assert Sidecars.link(src, dest) == ["en"]
+    assert_receive {:copied, tmp}
+    assert_receive {:renamed, ^tmp}
+  end
+
   test "files/1 requires a separator boundary so an unpadded E10 sidecar isn't matched to E1" do
     dir = "/dl/Show S01"
     src = "#{dir}/Show.S01E1.mkv"
