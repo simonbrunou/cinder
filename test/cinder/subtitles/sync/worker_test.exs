@@ -1,6 +1,8 @@
 defmodule Cinder.Subtitles.Sync.WorkerTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Cinder.Subtitles.Sync.Worker
 
   setup do
@@ -145,61 +147,123 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert inspect(reason) =~ "invalid_scan_result"
   end
 
-  test "malformed enqueued units are dropped without crashing the worker or its queue" do
+  test "malformed enqueued units are dropped without wedging the queue" do
     owner = self()
+    worker = start_blocking_worker(owner)
 
-    analyze = fn video ->
-      send(owner, {:started, video, self()})
-
-      receive do
-        :release -> [%{status: :aligned, label: video}]
-      end
-    end
-
-    worker =
-      start_supervised!(
-        {Worker, initial_scan: false, interval: :timer.hours(1), analyze: analyze}
-      )
-
-    queued = [
-      %{video_path: "/library/a.mkv", label: "A"},
-      %{video_path: "/library/b.mkv", label: "B"}
-    ]
-
-    assert :ok = Worker.enqueue_units(queued, worker)
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
     assert_receive {:started, "/library/a.mkv", first}
-    assert Worker.status().queued == 1
 
     assert :ok = Worker.enqueue_units([:invalid, %{label: "missing path"}], worker)
-    assert :ok = Worker.enqueue_units(:not_a_list, worker)
-
-    # enqueue_after_download/2 casts, so a crash there is silent: flush the mailbox with a call.
-    GenServer.cast(worker, {:enqueue_units, [:invalid, %{label: "missing path"}]})
-    GenServer.cast(worker, {:enqueue_units, :not_a_list})
-
-    # An improper list survives List.wrap/1 unchanged, so the traversal has to tolerate one: the
-    # valid prefix is kept and the junk tail dropped, on both the call and the (silent) cast path.
-    assert :ok =
-             Worker.enqueue_units(
-               [%{video_path: "/library/c.mkv", label: "C"} | :invalid],
-               worker
-             )
-
-    GenServer.cast(
-      worker,
-      {:enqueue_units, [%{video_path: "/library/d.mkv", label: "D"} | :invalid]}
-    )
-
-    assert :ok = Worker.enqueue_units([], worker)
 
     assert Process.alive?(worker)
 
-    assert %{state: :running, queued: 3, current: %{video_path: "/library/a.mkv"}} =
+    assert %{state: :running, queued: 0, current: %{video_path: "/library/a.mkv"}} =
              Worker.status()
 
+    # The queue still drains afterwards rather than being left wedged behind the junk.
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/b.mkv", label: "B"}], worker)
     send(first, :release)
     assert_receive {:started, "/library/b.mkv", second}
     send(second, :release)
+  end
+
+  test "a non-list enqueue payload is tolerated" do
+    owner = self()
+    worker = start_blocking_worker(owner)
+
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
+    assert_receive {:started, "/library/a.mkv", first}
+
+    assert :ok = Worker.enqueue_units(:not_a_list, worker)
+    assert :ok = Worker.enqueue_units([], worker)
+
+    assert Process.alive?(worker)
+    assert Worker.status().queued == 0
+
+    send(first, :release)
+  end
+
+  test "an improper enqueued list keeps its valid prefix and drops the junk tail" do
+    owner = self()
+    worker = start_blocking_worker(owner)
+
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
+    assert_receive {:started, "/library/a.mkv", first}
+
+    # An improper list reaches the traversal intact, so Enum-based validation crashes on its
+    # tail: the valid prefix has to survive and only the junk tail be dropped.
+    assert :ok =
+             Worker.enqueue_units([%{video_path: "/library/c.mkv", label: "C"} | :junk], worker)
+
+    assert Process.alive?(worker)
+    assert Worker.status().queued == 1
+
+    send(first, :release)
+    assert_receive {:started, "/library/c.mkv", second}
+    send(second, :release)
+  end
+
+  test "the enqueue cast path is fenced against malformed units too" do
+    owner = self()
+    worker = start_blocking_worker(owner)
+
+    assert :ok = Worker.enqueue_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
+    assert_receive {:started, "/library/a.mkv", first}
+
+    # enqueue_after_download/2 casts, so a crash on this path is silent.
+    GenServer.cast(worker, {:enqueue_units, [:invalid, %{label: "missing path"}]})
+    GenServer.cast(worker, {:enqueue_units, :not_a_list})
+
+    GenServer.cast(
+      worker,
+      {:enqueue_units, [%{video_path: "/library/d.mkv", label: "D"} | :junk]}
+    )
+
+    # Flush the mailbox with a call, so a cast that took the worker down surfaces here.
+    assert :ok = Worker.enqueue_units([], worker)
+
+    assert Process.alive?(worker)
+    assert Worker.status().queued == 1
+
+    send(first, :release)
+    assert_receive {:started, "/library/d.mkv", second}
+    send(second, :release)
+  end
+
+  test "dropped enqueue units are logged once with their count" do
+    owner = self()
+    worker = start_blocking_worker(owner)
+
+    junk = [:invalid, %{label: "missing path"}, 1, "two", %{video_path: ""}]
+
+    log =
+      capture_log(fn ->
+        assert :ok =
+                 Worker.enqueue_units(
+                   junk ++ [%{video_path: "/library/a.mkv", label: "A"}],
+                   worker
+                 )
+      end)
+
+    # One line per enqueue call carrying the count, not one line per dropped unit.
+    assert [_] = Regex.scan(~r/malformed subtitle sync unit/, log)
+    assert log =~ "dropped 5 malformed subtitle sync unit(s)"
+    assert log =~ ":invalid"
+    # The junk is inspected under a bound rather than dumped into the log whole.
+    assert log =~ "..."
+
+    # The valid unit sharing the payload is still enqueued, and a clean enqueue stays quiet.
+    assert_receive {:started, "/library/a.mkv", first}
+
+    clean =
+      capture_log(fn ->
+        assert :ok = Worker.enqueue_units([%{video_path: "/library/b.mkv", label: "B"}], worker)
+      end)
+
+    refute clean =~ "malformed subtitle sync units"
+
+    send(first, :release)
   end
 
   test "post-download enqueue is best effort when no named worker is alive" do
@@ -728,6 +792,18 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     send(explicit, :release)
     assert_receive {:started, "/library/background.mkv", background}
     send(background, :release)
+  end
+
+  defp start_blocking_worker(owner) do
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+
+      receive do
+        :release -> [%{status: :aligned, label: video}]
+      end
+    end
+
+    start_supervised!({Worker, initial_scan: false, interval: :timer.hours(1), analyze: analyze})
   end
 
   defp assert_eventually(fun, attempts \\ 20)
