@@ -7,9 +7,12 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   FlagDefault means "eligible for automatic selection", not "this one plays" (issue #197).
 
   Returns `{:ok, %{audio: codes, subtitles: codes, default_audio: code | nil}}` or
-  `{:error, reason}` when `ffprobe` is missing or exits non-zero — the importer treats an error
-  (or empty lists) as "can't verify" and imports anyway, so a host without `ffprobe` degrades
-  rather than blocking imports.
+  `{:error, reason}` when `ffprobe` is missing or exits non-zero. The two probes degrade
+  differently on that error: a `probe/1` error (or empty lists) is "can't verify" and the
+  name-based audio check imports anyway, so a host without `ffprobe` never blocks that path;
+  a `probe_policy/1` error becomes `{:unavailable, _}` in `Cinder.Library.PolicyVerifier` and
+  holds the item as "needs verification" whenever the frozen release-policy snapshot names a
+  required audio or embedded-subtitle language.
 
   The binary is `ffprobe` on `PATH` by default; override with `config :cinder, :ffprobe_bin`.
   """
