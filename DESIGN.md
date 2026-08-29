@@ -70,8 +70,22 @@ separate grey tokens.
   via `.font-display`; card titles `text-sm font-semibold leading-tight`; body default; subtitles
   / secondary `text-sm` at reduced opacity; badges and chips `text-xs`-ish via `badge-sm`; menu
   section headers `menu-title`.
-- **Wordmark:** `CIN` + `DER`, the second half in `text-primary` (ember), `.font-display`,
-  `tracking-wide`, uppercase.
+- **Wordmark:** uppercase `CINDER` in `.font-display`, bold with generous tracking. The word stays
+  in `base-content`; the adjacent Ember Loop mark carries the accent.
+
+## Brand mark
+
+The **Ember Loop** is an open ember-orange `C` around a centered play cue, with one detached round
+ember in the opening. The loop represents Cinder's request-to-library pipeline; the play cue names
+the media category; the single ember gives the otherwise precise geometry warmth. It is an
+evolution of Cinder's original arc-C and spark, not a separate visual language.
+
+- `priv/static/images/logo.svg` is the transparent mark for light surfaces.
+- `priv/static/images/logo-reverse.svg` is the transparent mark for dark surfaces.
+- `priv/static/images/icon.svg` is the source of truth for the dark app/PWA icon and its raster
+  exports.
+- Keep exactly one round ember. Do not replace it with a star, add particles, animate the static
+  silhouette, or apply gradients/glow.
 
 ## Radii / border / depth
 
@@ -154,7 +168,7 @@ Functional only; no bounce, no spring, no decorative motion.
 - **App shell (signed in):** daisyUI `drawer lg:drawer-open`. On `lg+` a persistent left sidebar
   (`aside`, `w-64`, `bg-base-200`, `border-r border-base-300/60`); below `lg` it collapses behind
   a top `navbar` (`bg-base-100`, hamburger + wordmark) with an overlay drawer.
-- **Sidebar:** brand wordmark; a `menu` grouped by `menu-title` sections — **Everyone** (Discover,
+- **Sidebar:** Ember Loop mark + wordmark; a `menu` grouped by `menu-title` sections — **Everyone** (Discover,
   My requests) and, role-gated, **Admin** (Dashboard, Requests, Library, Activity, Calendar,
   Settings, Users). Active item = `menu-active font-medium text-primary` + `aria-current="page"`.
   Footer pins the theme toggle + locale switcher (a `join` of `btn-xs` locale links), the current

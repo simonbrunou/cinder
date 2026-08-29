@@ -21,9 +21,8 @@ defmodule CinderWeb.NoHardcodedStringsTest do
   # sigil are also out of scope. The HEEx formatter and house style keep those forms from arising.
   @translatable_attrs ~w(placeholder title aria-label alt label message hint subtitle)
 
-  # Product/brand names and bare fragments that are identical in every locale, so a bare literal
-  # is intentional. "CIN"/"DER" are the CINDER wordmark split across two spans for colour styling.
-  @allow MapSet.new(~w(Cinder CINDER CIN DER TMDB Jellyfin Plex Prowlarr qBittorrent SABnzbd))
+  # Product/brand names that are identical in every locale, so a bare literal is intentional.
+  @allow MapSet.new(~w(Cinder CINDER TMDB Jellyfin Plex Prowlarr qBittorrent SABnzbd))
 
   test "no bare put_flash literal (use gettext)" do
     offenders =

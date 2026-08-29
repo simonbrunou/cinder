@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">Cinder</title>
+  <desc id="desc">Self-hosted media management for one household.</desc>
+  <rect width="1280" height="640" fill="#0B0C10"/>
+  <path d="M1180-90A410 410 0 1 0 1180 730" fill="none" stroke="#1A1B20" stroke-width="128" stroke-linecap="round"/>
+  <circle cx="1236" cy="-58" r="38" fill="#1A1B20"/>
+  <g transform="translate(126 158) scale(5)">
+    <path d="M43 17A19 19 0 1 0 43 47" fill="none" stroke="#F38042" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="53" cy="18" r="3.5" fill="#F38042"/>
+    <path d="M28 22.8c-1.3-.8-3 .1-3 1.7v15c0 1.6 1.7 2.5 3 1.7l12-7.5c1.2-.8 1.2-2.6 0-3.4Z" fill="#F2F1EF"/>
+  </g>
+  <text x="500" y="306" fill="#F2F1EF" font-family="Inter Tight, Inter, Arial, sans-serif" font-size="104" font-weight="750" letter-spacing="22">CINDER</text>
+  <text x="505" y="380" fill="#A7A7AB" font-family="Inter, Arial, sans-serif" font-size="28" font-weight="500">Self-hosted media management for one household</text>
+  <rect x="505" y="414" width="138" height="7" rx="3.5" fill="#F38042"/>
+</svg>
