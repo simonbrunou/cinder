@@ -64,6 +64,10 @@ defmodule Cinder.Acquisition.BookParser do
 
   @format_anchor ~r/\b(?:epub|azw3|azw|mobi|pdf|djvu|fb2|lit|cbr|cbz|rtf)\b/i
 
+  # The most words a trailing BARE tag run can hold before it is prose, not tags — see
+  # `after_last_bracket/1`.
+  @max_bare_tag_words 3
+
   # A retail release came from the publisher's own file rather than a scan or a conversion.
   @retail ~r/\bretail\b/i
 
@@ -252,7 +256,11 @@ defmodule Cinder.Acquisition.BookParser do
   # region and the trailing scan has nothing left to contribute.
   defp trailing_region(name, bracketed) do
     if Regex.match?(@format_anchor, bracketed) do
-      ""
+      # The format was a bracketed tag, so the anchor scan would put the whole TITLE in the tag
+      # region ("[EPUB] ... The English Patient" -> ENGLISH). But text after the LAST bracket is
+      # still tag territory — "Les Miserables (epub) FRENCH" is a real shape, and skipping it
+      # turned a correctly-tagged French release into a language mismatch.
+      after_last_bracket(name)
     else
       Regex.split(@format_anchor, name, parts: 2) |> after_anchor(name)
     end
@@ -265,4 +273,24 @@ defmodule Cinder.Acquisition.BookParser do
     do: if(String.length(head) * 3 >= String.length(name), do: tail, else: "")
 
   defp after_anchor([_no_anchor], _name), do: ""
+
+  # Everything past the final closing bracket — but only when that tail is a run of TAGS, not a
+  # sentence. "[EPUB] Michael Ondaatje - The English Patient" puts the whole title after the
+  # bracket, and scanning it reads "English" as the audio language: the exact bug this split
+  # exists to prevent. "Les Miserables (epub) FRENCH" is the shape this is for, and a real bare
+  # tag run is short.
+  defp after_last_bracket(name) do
+    case Regex.scan(~r/[\]\)\}]/, name, return: :index) do
+      [] ->
+        ""
+
+      matches ->
+        {at, len} = matches |> List.last() |> hd()
+        tail = binary_part(name, at + len, byte_size(name) - at - len)
+
+        if length(String.split(tail, ~r/[^A-Za-z]+/, trim: true)) <= @max_bare_tag_words,
+          do: tail,
+          else: ""
+    end
+  end
 end

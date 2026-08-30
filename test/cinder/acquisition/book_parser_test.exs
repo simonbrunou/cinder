@@ -92,6 +92,13 @@ defmodule Cinder.Acquisition.BookParserTest do
       assert %{language: nil} = BookParser.parse("EPUB - Alan Furst - The Polish Officer")
     end
 
+    test "a bare language tag after a bracketed format is still read" do
+      # Skipping the post-bracket tail entirely turned a correctly-tagged French release into a
+      # language mismatch.
+      assert %{language: "FRENCH"} =
+               BookParser.parse("Victor Hugo - Les Miserables (epub) FRENCH")
+    end
+
     test "a genuine trailing language tag is still read" do
       assert %{language: "FRENCH"} =
                BookParser.parse("Victor Hugo - Les Miserables (epub) [FRENCH]")

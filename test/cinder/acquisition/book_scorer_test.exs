@@ -55,6 +55,51 @@ defmodule Cinder.Acquisition.BookScorerTest do
     end
   end
 
+  describe "bracket and colon bypasses" do
+    # Each of these erased a sequel name and accepted a different book. They are grouped because
+    # they are one mistake in two places: treating unknown text as noise because of where it sits.
+    test "a one-word sequel in a trailing bracket is not a tracker tag" do
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("Frank Herbert - Dune (epub) (Messiah)"), @dune)
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("Frank Herbert - Dune (epub) [Messiah]"), @dune)
+    end
+
+    test "a real tracker handle after the format is still dropped" do
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("Frank Herbert - Dune (epub) [MyAnonaMouse]"), @dune)
+    end
+
+    test "a subtitle that restates the requested title is a sequel, not a subtitle" do
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(
+                 release("Frank Herbert - Dune: Children of Dune (epub)"),
+                 @dune
+               )
+    end
+
+    test "a genuine descriptive subtitle is still forgiven" do
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release("Frank Herbert - Dune: The Story of Paul (epub)"),
+                 @dune
+               )
+    end
+  end
+
+  describe "works whose titles are collection words" do
+    test "a 'Complete Works' request accepts its own release" do
+      work = %{title: "Complete Works", authors: ["William Shakespeare"]}
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release("William Shakespeare - Complete Works (epub)"),
+                 work
+               )
+    end
+  end
+
   describe "contradictory formats" do
     # The contract fails closed on "unknown OR CONTRADICTORY formats". An accepted format beside a
     # rejected one may be a bundle or a mis-tagged scan, and nothing in the name says which.
@@ -495,9 +540,11 @@ defmodule Cinder.Acquisition.BookScorerTest do
     end
 
     test "prefers the smaller file among otherwise equal candidates" do
+      # Distinguished by tracker tag, not by a bare letter: a one-letter bracket group is not a
+      # recognizable tracker handle, and unknown bracket content is title evidence now.
       releases = [
-        release("Toni Morrison - Beloved (epub) [a]", size: 40_000_000),
-        release("Toni Morrison - Beloved (epub) [b]", size: 3_000_000)
+        release("Toni Morrison - Beloved (epub) [Tracker1]", size: 40_000_000),
+        release("Toni Morrison - Beloved (epub) [Tracker2]", size: 3_000_000)
       ]
 
       %{accepted: [{best, _evidence} | _rest]} = BookScorer.evaluate_all(releases, @beloved)

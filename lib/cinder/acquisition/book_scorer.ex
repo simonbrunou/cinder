@@ -94,7 +94,7 @@ defmodule Cinder.Acquisition.BookScorer do
   # these is asking for something that legitimately reads as a collection, so the marker stops
   # being evidence against the release. Multi-word patterns ("complete series", "Books 1-5") are
   # deliberately absent: no single work is titled that.
-  @collection_words ~w(omnibus anthology collection boxset boxsets)
+  @collection_words ~w(omnibus anthology collection collections boxset boxsets complete)
 
   # Leftover words that are release metadata rather than part of a work's identity. Kept small and
   # literal: every entry here is a word this scorer will ignore when deciding whether a release
@@ -386,12 +386,27 @@ defmodule Cinder.Acquisition.BookScorer do
       inner_tokens != [] and Enum.all?(inner_tokens, &metadata_token?(&1, work)) ->
         {[" " | kept], true}
 
-      metadata_seen? and length(inner_tokens) <= 1 ->
+      metadata_seen? and tracker_tag?(inner) ->
         {[" " | kept], metadata_seen?}
 
       true ->
         {[" " <> inner <> " " | kept], metadata_seen?}
     end
+  end
+
+  # A trailing tracker/scene tag after the format group. "Any single unknown token" was too loose:
+  # a one-word SEQUEL name is also a single unknown token, so "Dune (epub) (Messiah)" erased to
+  # "Dune" and was accepted for a request for Dune — the same bracket bypass one layer along.
+  #
+  # A tracker tag is a handle, not a word: it carries internal capitalization or digits
+  # ("MyAnonaMouse", "BitBook", "AudioBook42"), whereas a sequel name is an ordinary capitalized
+  # word. This cannot be perfect, and it fails CLOSED — an unrecognized tag leaves a token in the
+  # remainder and the release is rejected for review rather than mistaken for another book.
+  defp tracker_tag?(inner) do
+    word = String.trim(inner)
+
+    Regex.match?(~r/^[A-Za-z0-9]+$/, word) and
+      (Regex.match?(~r/[a-z][A-Z]/, word) or Regex.match?(~r/\d/, word))
   end
 
   # A release may name the work's subtitle when the request did not: "Sapiens" and
@@ -417,7 +432,7 @@ defmodule Cinder.Acquisition.BookScorer do
         wanted -- head_tokens == [] and
           Enum.all?(head_tokens -- wanted, &metadata_token?(&1, work)) and
           leftovers != [] and
-          descriptive_subtitle?(subtitle)
+          descriptive_subtitle?(subtitle, wanted)
 
       _no_colon ->
         false
@@ -432,10 +447,17 @@ defmodule Cinder.Acquisition.BookScorer do
   # provider's own alternate/full titles, which arrive with edition identity in B4b; until then a
   # release like "Dune: House Atreides" (three tokens, no function word) fails closed, which is
   # the direction the contract requires when identity is ambiguous.
-  defp descriptive_subtitle?(subtitle) do
+  defp descriptive_subtitle?(subtitle, wanted) do
     subtitle_tokens = tokens(subtitle)
 
-    length(subtitle_tokens) >= 3 and Enum.any?(subtitle_tokens, &(&1 in @function_words))
+    # A subtitle DESCRIBES the work; it does not name it again. "Dune: Children of Dune" restates
+    # the requested title inside the tail, which is how a sequel is written, not how a subtitle is
+    # — and three tokens plus a function word cannot tell the two apart on shape alone.
+    restates_title? = wanted != [] and wanted -- subtitle_tokens == []
+
+    length(subtitle_tokens) >= 3 and
+      Enum.any?(subtitle_tokens, &(&1 in @function_words)) and
+      not restates_title?
   end
 
   # A language name or code is release metadata, not part of any work's identity: "[ENGLISH]",
