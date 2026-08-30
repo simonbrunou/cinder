@@ -92,6 +92,23 @@ defmodule Cinder.Acquisition.BookParserTest do
       assert %{language: nil} = BookParser.parse("EPUB - Alan Furst - The Polish Officer")
     end
 
+    test "a short format-first title does not become its own language" do
+      # A word-count bound let three title words through: "[EPUB] The Japanese Lover" was tagged
+      # JAPANESE. Whether the words ARE tags is the question, not how many there are.
+      for name <- [
+            "[EPUB] The Japanese Lover",
+            "[EPUB] The English Patient",
+            "(MOBI) The Persian Boy"
+          ] do
+        assert %{language: nil} = BookParser.parse(name), "leaked a language from #{name}"
+      end
+    end
+
+    test "a bare language tag BETWEEN two bracket groups is read" do
+      assert %{language: "FRENCH"} =
+               BookParser.parse("Victor Hugo - Les Miserables (epub) FRENCH [retail]")
+    end
+
     test "a bare language tag after a bracketed format is still read" do
       # Skipping the post-bracket tail entirely turned a correctly-tagged French release into a
       # language mismatch.

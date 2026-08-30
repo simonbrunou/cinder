@@ -64,10 +64,6 @@ defmodule Cinder.Acquisition.BookParser do
 
   @format_anchor ~r/\b(?:epub|azw3|azw|mobi|pdf|djvu|fb2|lit|cbr|cbz|rtf)\b/i
 
-  # The most words a trailing BARE tag run can hold before it is prose, not tags — see
-  # `after_last_bracket/1`.
-  @max_bare_tag_words 3
-
   # A retail release came from the publisher's own file rather than a scan or a conversion.
   @retail ~r/\bretail\b/i
 
@@ -274,23 +270,26 @@ defmodule Cinder.Acquisition.BookParser do
 
   defp after_anchor([_no_anchor], _name), do: ""
 
-  # Everything past the final closing bracket — but only when that tail is a run of TAGS, not a
-  # sentence. "[EPUB] Michael Ondaatje - The English Patient" puts the whole title after the
-  # bracket, and scanning it reads "English" as the audio language: the exact bug this split
-  # exists to prevent. "Les Miserables (epub) FRENCH" is the shape this is for, and a real bare
-  # tag run is short.
+  # The bare (unbracketed) runs BETWEEN and AFTER bracket groups — "Les Miserables (epub) FRENCH",
+  # "... (epub) FRENCH [retail]". Each run is kept only when every word in it is a recognized tag.
+  #
+  # Word COUNT was the wrong test: it let "[EPUB] The Japanese Lover" through (three title words
+  # after a leading format tag, read as JAPANESE), and it dropped a real tag sitting between two
+  # bracket groups. Whether the words ARE tags is the question, and `tag_word?/1` already answers
+  # it for the format scan. A title word is not a tag, so a title never enters the region — which
+  # is the whole point of the split.
   defp after_last_bracket(name) do
-    case Regex.scan(~r/[\]\)\}]/, name, return: :index) do
-      [] ->
-        ""
+    ~r/[\[\(\{][^\]\)\}]*[\]\)\}]/
+    |> Regex.split(name, trim: true)
+    |> Enum.filter(&bare_tag_run?/1)
+    |> Enum.join(" ")
+  end
 
-      matches ->
-        {at, len} = matches |> List.last() |> hd()
-        tail = binary_part(name, at + len, byte_size(name) - at - len)
+  # Every alphabetic word in the run is a known tag word. An empty run (pure punctuation) carries
+  # nothing and is harmless either way.
+  defp bare_tag_run?(run) do
+    words = String.split(run, ~r/[^A-Za-z]+/, trim: true)
 
-        if length(String.split(tail, ~r/[^A-Za-z]+/, trim: true)) <= @max_bare_tag_words,
-          do: tail,
-          else: ""
-    end
+    words != [] and Enum.all?(words, &tag_word?/1)
   end
 end
