@@ -520,7 +520,7 @@ defmodule Cinder.Subtitles.SyncTest do
     assert File.read!(Sync.backup_path(path)) == subtitle(".srt")
 
     send(pid, {ref, :continue})
-    assert {:ok, :corrected, _} = Task.await(task)
+    assert {:ok, :corrected, _} = Task.await(task, 15_000)
     assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
   end
 
@@ -761,7 +761,7 @@ defmodule Cinder.Subtitles.SyncTest do
     File.write!(video, "x" <> String.duplicate("v", 131_071))
     send(pid, {ref, :continue})
 
-    assert {:error, :video_changed} = Task.await(task)
+    assert {:error, :video_changed} = Task.await(task, 15_000)
     assert File.read!(path) == original
     assert Manifest.sync(Manifest.read(video), "en") == nil
   end
@@ -1148,7 +1148,7 @@ defmodule Cinder.Subtitles.SyncTest do
     File.ln_s!(outside, path)
     send(pid, {ref, :continue})
 
-    assert [%{status: :failed}] = Task.await(task)
+    assert [%{status: :failed}] = Task.await(task, 15_000)
     assert File.read!(outside) == subtitle(".srt")
     refute File.exists?(Sync.backup_path(path))
 
@@ -1298,7 +1298,7 @@ defmodule Cinder.Subtitles.SyncTest do
     File.write!(path, external)
     send(engine, :release)
 
-    assert [%{status: :failed, reason: :concurrent_change}] = Task.await(task)
+    assert [%{status: :failed, reason: :concurrent_change}] = Task.await(task, 15_000)
     assert File.read!(path) == external
     refute File.exists?(Sync.backup_path(path))
     assert Manifest.sync(Manifest.read(video), "en") == nil
@@ -1324,7 +1324,7 @@ defmodule Cinder.Subtitles.SyncTest do
     File.write!(path, external)
     send(pid, {ref, :continue})
 
-    assert {:error, :externally_modified} = Task.await(task)
+    assert {:error, :externally_modified} = Task.await(task, 15_000)
     assert File.read!(path) == external
     refute File.exists?(Sync.backup_path(path))
     assert Manifest.sync(Manifest.read(video), "en") == nil
@@ -1351,7 +1351,7 @@ defmodule Cinder.Subtitles.SyncTest do
     File.write!(path, external)
     send(pid, {ref, :continue})
 
-    assert {:error, :concurrent_change} = Task.await(task)
+    assert {:error, :concurrent_change} = Task.await(task, 15_000)
     assert File.read!(path) == external
     assert File.read!(Sync.backup_path(path)) == original
     assert Manifest.sync(Manifest.read(video), "en") == nil
@@ -1381,7 +1381,7 @@ defmodule Cinder.Subtitles.SyncTest do
     File.rename!(replacement, path)
     send(pid, {ref, :continue})
 
-    assert {:error, :concurrent_change} = Task.await(task)
+    assert {:error, :concurrent_change} = Task.await(task, 15_000)
     assert File.read!(path) == external
     assert File.read!(Sync.backup_path(path)) == original
     assert Manifest.sync(Manifest.read(video), "en") == nil
@@ -1754,7 +1754,7 @@ defmodule Cinder.Subtitles.SyncTest do
     on_exit(fn -> Application.delete_env(:cinder, :filesystem_failure) end)
 
     send(pid, {ref, :continue})
-    assert {:error, {:manifest, :eio}} = Task.await(task)
+    assert {:error, {:manifest, :eio}} = Task.await(task, 15_000)
     assert File.read!(path) == original
     assert File.read!(Sync.backup_path(path)) == ""
     assert Manifest.sync(Manifest.read(video), "en") == nil
@@ -1788,7 +1788,7 @@ defmodule Cinder.Subtitles.SyncTest do
     ])
 
     send(pid, {ref, :continue})
-    assert {:error, {:manifest_and_rollback_failed, :eio, :enospc}} = Task.await(task)
+    assert {:error, {:manifest_and_rollback_failed, :eio, :enospc}} = Task.await(task, 15_000)
     assert File.read!(path) == original
     assert File.read!(Sync.backup_path(path)) == original
     assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
@@ -1823,7 +1823,7 @@ defmodule Cinder.Subtitles.SyncTest do
     send(pid, {ref, :continue})
 
     assert {:error, {:manifest_and_rollback_failed, :eio, :concurrent_change}} =
-             Task.await(task)
+             Task.await(task, 15_000)
 
     assert File.read!(path) == external
     assert File.read!(Sync.backup_path(path)) == original
@@ -1856,7 +1856,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     send(pid, {ref, :continue})
-    assert {:error, {:manifest, :eio}} = Task.await(task)
+    assert {:error, {:manifest, :eio}} = Task.await(task, 15_000)
     assert File.read!(path) == previous
     assert Manifest.sync(Manifest.read(video), "en") == previous_metadata
   end
@@ -1894,7 +1894,7 @@ defmodule Cinder.Subtitles.SyncTest do
     send(pid, {ref, :continue})
 
     assert {:error, {:manifest_and_rollback_failed, :eio, :eacces}} =
-             Task.await(task)
+             Task.await(task, 15_000)
 
     refute File.read!(path) == original
     assert File.read!(Sync.backup_path(path)) == original
@@ -1924,7 +1924,7 @@ defmodule Cinder.Subtitles.SyncTest do
     File.ln_s!(outside, temporary)
     send(pid, {ref, :continue})
 
-    assert {:error, _reason} = Task.await(task)
+    assert {:error, _reason} = Task.await(task, 15_000)
     assert File.read!(outside) == "outside"
   end
 
