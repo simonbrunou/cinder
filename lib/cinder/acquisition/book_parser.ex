@@ -199,6 +199,7 @@ defmodule Cinder.Acquisition.BookParser do
     Regex.match?(@format_anchor, word) or Regex.match?(@retail, word) or
       Regex.match?(@abridged, word) or String.match?(word, ~r/^(?:un)?abridged$/i) or
       word =~ ~r/^(?:ebook|book|retail|scan|ocr|v\d+)$/i or
+      Regex.match?(@multi, word) or word =~ ~r/^multilingual$/i or
       Enum.any?(@languages, fn {regex, _tag} -> Regex.match?(regex, word) end) or
       String.length(word) <= 2
   end

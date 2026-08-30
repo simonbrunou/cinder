@@ -104,6 +104,16 @@ defmodule Cinder.Acquisition.BookParserTest do
       end
     end
 
+    test "a bare MULTI tag reads the same as a bracketed one" do
+      for name <- [
+            "Toni Morrison - Beloved (epub) MULTI",
+            "Toni Morrison - Beloved (epub) MULTILINGUAL",
+            "Toni Morrison - Beloved (epub) [MULTI]"
+          ] do
+        assert %{language: "MULTI"} = BookParser.parse(name), "missed MULTI in #{name}"
+      end
+    end
+
     test "a bare language tag BETWEEN two bracket groups is read" do
       assert %{language: "FRENCH"} =
                BookParser.parse("Victor Hugo - Les Miserables (epub) FRENCH [retail]")
