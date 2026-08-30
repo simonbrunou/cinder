@@ -69,6 +69,8 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#radarr_url")
     assert has_element?(lv, "#sonarr_url")
     assert has_element?(lv, "#sabnzbd_local_path_prefix")
+    assert has_element?(lv, "#libretranslate_batch_size[name=libretranslate_batch_size]")
+    assert has_element?(lv, "#libretranslate_timeout[name=libretranslate_timeout]")
     assert has_element?(lv, "p", "Path prefix as the download client reports it")
     assert has_element?(lv, "p", "The same directory as Cinder sees it")
     # The remove-after-import toggle lives on /settings (Library section).
@@ -308,6 +310,29 @@ defmodule CinderWeb.SettingsLiveTest do
     |> render_submit()
 
     assert has_element?(lv, "#settings-group-releases[open]")
+  end
+
+  test "opens the subtitles group for an invalid LibreTranslate tuning value", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv
+    |> form("#settings-form", %{
+      "libretranslate_batch_size" => "0",
+      "media_server_type" => "jellyfin"
+    })
+    |> render_submit()
+
+    assert has_element?(lv, "#settings-group-subtitles[open]")
+    refute has_element?(lv, "#settings-group-releases[open]")
+    assert has_element?(lv, "#libretranslate_batch_size[aria-invalid=true]")
+
+    # Both the group and the message come from the registry `type:`, not the key name, so a future
+    # positive-integer field is covered without touching this component.
+    assert has_element?(
+             lv,
+             "#libretranslate_batch_size-error",
+             "Enter a positive whole number, or leave blank for the default."
+           )
   end
 
   test "opens the download group for an invalid torrent cleanup limit", %{conn: conn} do

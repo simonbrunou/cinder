@@ -639,13 +639,22 @@ defmodule Cinder.Settings do
   end
 
   defp invalid_values(params) do
-    invalid_band_values(params) ++
+    invalid_positive_integer_config_values(params) ++
+      invalid_band_values(params) ++
       invalid_cutoff_values(params) ++
       invalid_import_roots(params) ++
       invalid_library_roots(params) ++
       invalid_timezone_values(params) ++
       invalid_anime_values(params) ++
       invalid_download_choices(params) ++ invalid_torrent_cleanup(params)
+  end
+
+  defp invalid_positive_integer_config_values(params) do
+    for %{key: key, type: :positive_integer} <- config_fields(),
+        value = String.trim(params[key] || ""),
+        value != "",
+        is_nil(positive_integer(value)),
+        do: key
   end
 
   defp invalid_download_choices(params) do
@@ -1284,7 +1293,10 @@ defmodule Cinder.Settings do
 
   defp rows_by_key, do: all() |> Map.new(&{&1.key, &1})
 
-  defp field_value(rows, field), do: decoded_for(rows, field.key)
+  defp field_value(rows, field), do: coerce_field_value(field, decoded_for(rows, field.key))
+
+  defp coerce_field_value(%{type: :positive_integer}, value), do: positive_integer(value)
+  defp coerce_field_value(_field, value), do: value
 
   defp decoded_for(rows, key) do
     case Map.get(rows, key) do

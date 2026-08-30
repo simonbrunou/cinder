@@ -67,24 +67,34 @@ if api_key = System.get_env("OPENSUBTITLES_API_KEY") do
     languages: System.get_env("SUBTITLE_LANGUAGES")
 end
 
-if url = System.get_env("LIBRETRANSLATE_URL") do
-  # Optional tuning knobs (nil → module defaults: 50 cues/batch, 60_000 ms).
-  # CPU LibreTranslate throughput varies per box, so batch size is worth tuning
-  # empirically without a code change.
-  parse_pos_int = fn name ->
-    with value when is_binary(value) <- System.get_env(name),
-         {n, ""} when n > 0 <- Integer.parse(value) do
-      n
-    else
-      _ -> nil
-    end
+parse_pos_int = fn name ->
+  with value when is_binary(value) <- System.get_env(name),
+       {n, ""} when n > 0 <- Integer.parse(value) do
+    n
+  else
+    _ -> nil
   end
+end
 
-  config :cinder, Cinder.Subtitles.Translator.LibreTranslate,
-    base_url: url,
-    api_key: System.get_env("LIBRETRANSLATE_API_KEY"),
+# The tuning knobs bootstrap independently of LIBRETRANSLATE_URL so they still apply when the URL
+# comes from /settings — that is the whole point of #386. The API key stays gated on the URL as it
+# always was: alone it configures nothing the translator can use (it gates on base_url), and being
+# a secret it would otherwise show as "set via environment" for a translator that cannot run.
+libretranslate_config =
+  [
     batch_size: parse_pos_int.("LIBRETRANSLATE_BATCH_SIZE"),
     receive_timeout: parse_pos_int.("LIBRETRANSLATE_TIMEOUT")
+  ] ++
+    if url = System.get_env("LIBRETRANSLATE_URL") do
+      [base_url: url, api_key: System.get_env("LIBRETRANSLATE_API_KEY")]
+    else
+      []
+    end
+
+libretranslate_config = Enum.reject(libretranslate_config, fn {_key, value} -> is_nil(value) end)
+
+if libretranslate_config != [] do
+  config :cinder, Cinder.Subtitles.Translator.LibreTranslate, libretranslate_config
 end
 
 # Real Jellyfin connection, read in every environment. Unset in test/CI, where

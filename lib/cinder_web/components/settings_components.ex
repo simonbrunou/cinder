@@ -32,6 +32,10 @@ defmodule CinderWeb.SettingsComponents do
       |> Kernel.++(Enum.map(Settings.download_client_choices(), & &1.key))
       |> MapSet.new()
 
+    # The registry already records each config field's group; consult it before falling back, so a
+    # new validated field opens its own section instead of wrongly opening :releases.
+    config_groups = Map.new(Settings.config_fields(), &{&1.key, &1.group})
+
     keys
     |> Enum.map(fn key ->
       cond do
@@ -40,7 +44,7 @@ defmodule CinderWeb.SettingsComponents do
         library_path_key?(key) -> :library
         MapSet.member?(anime_keys, key) -> :anime
         MapSet.member?(download_keys, key) -> :download
-        true -> :releases
+        true -> Map.get(config_groups, key, :releases)
       end
     end)
     |> MapSet.new()
@@ -878,10 +882,22 @@ defmodule CinderWeb.SettingsComponents do
        do: gettext("Enter a positive number, or leave blank to disable.")
 
   defp invalid_field_message(key) when is_binary(key) do
-    if library_path_key?(key),
-      do: gettext("The top-level folder (/) is not allowed."),
-      else: invalid_release_field_message(key)
+    cond do
+      library_path_key?(key) ->
+        gettext("The top-level folder (/) is not allowed.")
+
+      # Keyed off the registry `type:`, not the key name, so any future positive-integer field
+      # gets the right message instead of falling through to the generic one.
+      positive_integer_config_key?(key) ->
+        gettext("Enter a positive whole number, or leave blank for the default.")
+
+      true ->
+        invalid_release_field_message(key)
+    end
   end
+
+  defp positive_integer_config_key?(key),
+    do: Enum.any?(Settings.config_fields(), &(&1.key == key and &1[:type] == :positive_integer))
 
   defp invalid_release_field_message(key) do
     if Enum.any?(
