@@ -290,6 +290,10 @@ defmodule CinderWeb.ApiController do
   defp api_error(conn, :admin_unavailable),
     do: json_error(conn, :service_unavailable, "admin_unavailable")
 
+  # The approver's account vanished mid-approval: a conflict with the current state, not a
+  # malformed request, and retrying the same call cannot succeed.
+  defp api_error(conn, :approver_deleted), do: json_error(conn, :conflict, "approver_deleted")
+
   defp api_error(conn, %Ecto.Changeset{} = changeset) do
     if unique_error?(changeset),
       do: json_error(conn, :conflict, "request_already_pending"),

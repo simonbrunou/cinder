@@ -481,6 +481,13 @@ defmodule Cinder.Requests do
   # exception class, which also covers a transient busy) so the approval queue reports a refusal
   # instead of a 500.
   #
+  # The same write can race deletion of its `approved_by_id` user. SQLite's FK message names no
+  # column, so this narrows by checking the approver row is gone. That is a strong hint, not proof
+  # of causation — `requests` also FKs `proposed_profile_id`, so a profile FK failure that happens
+  # to coincide with a deleted approver would be reported as `:approver_deleted`. Practically
+  # unreachable (the #379 trigger fires first for the profile race) and not worth code, but do not
+  # read this arm as "the approver caused it". Unrelated FK errors still surface.
+  #
   # Caller contract, enforced here rather than asked of callers: SQLite's `RAISE(ABORT, ...)`
   # reverts only the offending statement, so inside an outer `Repo.transaction` the transaction
   # stays open and its earlier writes would still commit. So the refusal rolls that transaction
@@ -499,13 +506,22 @@ defmodule Cinder.Requests do
     do_flip_pending(request, attrs)
   rescue
     error in Exqlite.Error ->
-      if error.message =~ "requests_profile_integrity" do
-        if Repo.in_transaction?(),
-          do: Repo.rollback(:invalid_media_profile),
-          else: {:error, :invalid_media_profile}
-      else
-        reraise error, __STACKTRACE__
+      cond do
+        error.message =~ "requests_profile_integrity" ->
+          refuse_flip(:invalid_media_profile)
+
+        error.message == "FOREIGN KEY constraint failed" and
+          not is_nil(attrs[:approved_by_id]) and
+            is_nil(Repo.get(User, attrs[:approved_by_id])) ->
+          refuse_flip(:approver_deleted)
+
+        true ->
+          reraise error, __STACKTRACE__
       end
+  end
+
+  defp refuse_flip(reason) do
+    if Repo.in_transaction?(), do: Repo.rollback(reason), else: {:error, reason}
   end
 
   defp do_flip_pending(request, attrs) do
