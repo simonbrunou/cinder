@@ -270,6 +270,48 @@ defmodule Cinder.Acquisition.BooksTest do
 
       refute_received {:query, "9999999999999"}
     end
+
+    test "a persisted work's series membership reaches the scorer" do
+      # candidates/2 is the whole point of carrying series through normalize/1: without it the
+      # scorer's series allowance is dead code in production, because only hand-built maps in
+      # tests ever supplied a :series key.
+      {:ok, author} =
+        Cinder.Books.upsert_author(%{
+          name: "Brandon Sanderson",
+          identifier: %{provider: "openlibrary", kind: "author", foreign_id: "OL1394861A"}
+        })
+
+      {:ok, work} =
+        Cinder.Books.upsert_work(%{
+          title: "The Way of Kings",
+          contributors_incomplete: false,
+          identifier: %{provider: "openlibrary", kind: "work", foreign_id: "OL15358691W"}
+        })
+
+      {:ok, _credit} = Cinder.Books.put_credit(work, %{author_id: author.id, role: "author"})
+
+      {:ok, _membership} =
+        Cinder.Books.put_series_membership(work, %{
+          name: "The Stormlight Archive",
+          position: "1",
+          provider: "openlibrary"
+        })
+
+      loaded = Cinder.Books.get_work(work.id)
+
+      series_named = %{
+        title: "Brandon Sanderson - The Stormlight Archive 01 - The Way of Kings (epub)",
+        size: 2_000_000,
+        download_url: "http://indexer.test/1",
+        protocol: :torrent
+      }
+
+      expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:ok, [series_named]} end)
+      expect(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
+
+      assert {:ok, %{accepted: [{accepted, _evidence}], rejected: []}} = Books.candidates(loaded)
+      assert accepted.title == series_named.title
+    end
   end
 
   test "no automatic selection function is exported in this slice" do

@@ -212,6 +212,32 @@ defmodule Cinder.Acquisition.BookScorerTest do
     end
   end
 
+  describe "unfoldable titles" do
+    # Folding to ASCII DISCARDS non-Latin script, so two different works can share their Latin
+    # residue. `Cinder.Books.Identity` refuses these for the same reason; the scorer must not be
+    # the weaker gate.
+    test "a non-Latin title is refused rather than compared on its Latin residue" do
+      work = %{title: "ノルウェイの森 1", authors: ["Haruki Murakami"]}
+
+      assert {:reject, :title_unfoldable} =
+               BookScorer.evaluate(release("Haruki Murakami - 海辺のカフカ 1 (epub)"), work)
+    end
+
+    test "a non-Latin release name cannot satisfy a Latin-titled work" do
+      work = %{title: "Norwegian Wood", authors: ["Haruki Murakami"]}
+
+      assert {:reject, :title_unfoldable} =
+               BookScorer.evaluate(release("Haruki Murakami - 海辺のカフカ (epub)"), work)
+    end
+
+    test "diacritics are not lossy — accented Latin still compares" do
+      work = %{title: "Les Misérables", authors: ["Victor Hugo"]}
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("Victor Hugo - Les Miserables (epub)"), work)
+    end
+  end
+
   describe "collection ambiguity" do
     test "an omnibus containing the requested title is refused with its own reason" do
       work = %{title: "The Way of Kings", authors: ["Brandon Sanderson"]}
@@ -373,6 +399,32 @@ defmodule Cinder.Acquisition.BookScorerTest do
       %{accepted: [{best, _evidence} | _rest]} = BookScorer.evaluate_all(releases, @beloved)
 
       assert best.size == 3_000_000
+    end
+
+    test "an untagged release outranks a foreign-tagged one when no language is asked for" do
+      # Being tagged at all must not be a promotion: an untagged book release is overwhelmingly
+      # English, so a [FRENCH] copy sorting first handed the household the wrong language.
+      releases = [
+        release("Toni Morrison - Beloved [FRENCH] (epub)"),
+        release("Toni Morrison - Beloved (epub)")
+      ]
+
+      %{accepted: accepted} = BookScorer.evaluate_all(releases, @beloved)
+
+      assert ["Toni Morrison - Beloved (epub)", "Toni Morrison - Beloved [FRENCH] (epub)"] =
+               Enum.map(accepted, fn {release, _evidence} -> release.title end)
+    end
+
+    test "the requested language outranks an untagged release when one IS asked for" do
+      releases = [
+        release("Toni Morrison - Beloved (epub)"),
+        release("Toni Morrison - Beloved [FRENCH] (epub)")
+      ]
+
+      %{accepted: accepted} = BookScorer.evaluate_all(releases, @beloved, language: "fr")
+
+      assert ["Toni Morrison - Beloved [FRENCH] (epub)", "Toni Morrison - Beloved (epub)"] =
+               Enum.map(accepted, fn {release, _evidence} -> release.title end)
     end
 
     test "returns empty lists for no input" do

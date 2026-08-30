@@ -79,9 +79,15 @@ defmodule Cinder.Acquisition.BookParser do
     ~r/\bomnibus\b/i,
     ~r/\banthology\b/i,
     ~r/\bcollection\b/i,
-    ~r/\bboxs?et\b/i,
+    # "box set" and "box-set" are the dominant WRITTEN forms; `\bboxs?et\b` alone matched only the
+    # closed-up spelling.
+    ~r/\bbox[\s._-]?sets?\b/i,
     ~r/\bcomplete\s+(?:series|works|collection|trilogy|saga)\b/i,
+    # A bare numeric range with no "books"/"vols" prefix — "The Stormlight Archive 1-3" — is the
+    # same pack, written the way most uploaders actually write it. Bounded to 1-2 digits per side
+    # so a year range or an ISBN fragment cannot read as a volume span.
     ~r/\b(?:books?|vols?|volumes?)[\s._#-]*\d+\s*(?:-|–|to|thru|through)\s*\d+\b/i,
+    ~r/\s\d{1,2}\s*(?:-|–)\s*\d{1,2}\b/,
     ~r/#\s*\d+\s*(?:-|–)\s*\d+\b/
   ]
 
@@ -152,12 +158,36 @@ defmodule Cinder.Acquisition.BookParser do
       |> Regex.scan(name, capture: :all_but_first)
       |> Enum.map_join(" ", &hd/1)
 
-    trailing =
-      case Regex.split(@format_anchor, name, parts: 2) do
-        [_head, tail] -> tail
-        [_no_anchor] -> ""
-      end
-
-    bracketed <> " " <> trailing
+    bracketed <> " " <> trailing_region(name, bracketed)
   end
+
+  # Everything after the first format token — the region where a bare (unbracketed) tag like
+  # "... EPUB FRENCH" lives.
+  #
+  # Skipped entirely when the format was already written as a bracketed tag, because a
+  # format-FIRST name ("[EPUB] Michael Ondaatje - The English Patient") would otherwise put the
+  # whole title in the tag region and read its words as language tags:
+  #
+  #     "[EPUB] ... The English Patient"  -> ENGLISH
+  #     "(EPUB) ... The Japanese Lover"   -> JAPANESE
+  #     "[MOBI] ... The Persian Boy"      -> PERSIAN
+  #
+  # which is exactly the invented `:language_mismatch` this module's `@moduledoc` says the tag
+  # region exists to prevent. If the format is bracketed, `bracketed` already covers the tag
+  # region and the trailing scan has nothing left to contribute.
+  defp trailing_region(name, bracketed) do
+    if Regex.match?(@format_anchor, bracketed) do
+      ""
+    else
+      Regex.split(@format_anchor, name, parts: 2) |> after_anchor(name)
+    end
+  end
+
+  # An anchor in the leading third of the name is a format PREFIX ("EPUB - Author - Title"), not a
+  # tag terminating the title, so the "tail" is the title itself. Only a late anchor really marks
+  # where the tags begin.
+  defp after_anchor([head, tail], name),
+    do: if(String.length(head) * 3 >= String.length(name), do: tail, else: "")
+
+  defp after_anchor([_no_anchor], _name), do: ""
 end

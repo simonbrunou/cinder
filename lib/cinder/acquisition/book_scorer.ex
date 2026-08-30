@@ -120,6 +120,7 @@ defmodule Cinder.Acquisition.BookScorer do
           | :collection_ambiguous
           | :language_mismatch
           | :wrong_protocol
+          | :title_unfoldable
           | :size_out_of_band
           | :blocked_term
 
@@ -194,16 +195,18 @@ defmodule Cinder.Acquisition.BookScorer do
       accepted:
         accepted
         |> Enum.map(fn {release, {:accept, evidence}} -> {release, evidence} end)
-        |> Enum.sort_by(fn {release, evidence} -> rank(release, evidence) end),
+        |> Enum.sort_by(fn {release, evidence} ->
+          rank(release, evidence, Keyword.get(opts, :language))
+        end),
       rejected: Enum.map(rejected, fn {release, {:reject, reason}} -> {release, reason} end)
     }
   end
 
   # Ascending sort, so every component is written "smaller is better".
-  defp rank(%BookRelease{} = release, evidence) do
+  defp rank(%BookRelease{} = release, evidence, wanted_language) do
     {
       Enum.find_index(@accepted_formats, &(&1 == evidence.format)),
-      if(evidence.language, do: 0, else: 1),
+      language_rank(evidence.language, wanted_language),
       if(evidence.retail?, do: 0, else: 1),
       release.size || @max_size,
       published_rank(release.published_at),
@@ -213,6 +216,25 @@ defmodule Cinder.Acquisition.BookScorer do
 
   # Newest first, with unknown dates last rather than first — an indexer that reports no date must
   # not outrank one that does.
+  # Language EXACTNESS, not mere presence. Ranking `language != nil` ahead of `nil` sorted a
+  # [FRENCH] release above the untagged English one on an install that asked for nothing — and an
+  # untagged book release is overwhelmingly English, so being tagged at all must not be a
+  # promotion. With no language requested: untagged first, MULTI next, explicitly foreign last.
+  # With one requested: exact match first, MULTI next, untagged after, contradicting last (that
+  # last case is only reachable through `evaluate_all/3`, since `check_language/2` rejects it).
+  defp language_rank(nil, nil), do: 0
+  defp language_rank("MULTI", nil), do: 1
+  defp language_rank(_tagged, nil), do: 2
+
+  defp language_rank(language, wanted) do
+    cond do
+      language == tag_for(wanted) -> 0
+      language == "MULTI" -> 1
+      is_nil(language) -> 2
+      true -> 3
+    end
+  end
+
   defp published_rank(nil), do: 0
   defp published_rank(%DateTime{} = published_at), do: -DateTime.to_unix(published_at)
 
@@ -269,13 +291,38 @@ defmodule Cinder.Acquisition.BookScorer do
     leftovers = Enum.reject(core -- wanted, &metadata_token?(&1, work))
 
     cond do
-      wanted == [] -> {:reject, :title_mismatch}
-      wanted -- core != [] -> {:reject, :title_mismatch}
-      leftovers == [] -> :ok
-      subtitle_only?(release_title, wanted, leftovers, work) -> :ok
-      true -> {:reject, :title_mismatch}
+      # Folding to ASCII DISCARDS non-Latin script rather than failing on it, so a title that is
+      # only partly non-ASCII keeps just its Latin residue: "ノルウェイの森 1" and "海辺のカフカ 1"
+      # both key to ["1"]. `Cinder.Books.Identity` refuses these for the same reason and names the
+      # bug it caused there — a confident wrong work. Its own reason, because "mismatch" would
+      # tell the operator the release is wrong when the truth is that we cannot compare the two.
+      lossy_fold?(Map.fetch!(work, :title)) or lossy_fold?(release_title) ->
+        {:reject, :title_unfoldable}
+
+      wanted == [] ->
+        {:reject, :title_mismatch}
+
+      wanted -- core != [] ->
+        {:reject, :title_mismatch}
+
+      leftovers == [] ->
+        :ok
+
+      subtitle_only?(release_title, wanted, leftovers, work) ->
+        :ok
+
+      true ->
+        {:reject, :title_mismatch}
     end
   end
+
+  # Combining marks are excluded because they are exactly what the fold is meant to drop —
+  # "Les Misérables" is not lossy, "Война и мир" is. Ported from `Cinder.Books.Identity`, which
+  # documents the failure at length.
+  defp lossy_fold?(nil), do: false
+
+  defp lossy_fold?(string),
+    do: string |> nfd() |> String.match?(~r/[^\x00-\x7f\x{0300}-\x{036F}]/u)
 
   # Everything a release name carries that is not part of any work's identity: bracketed groups
   # (year, format, tracker, translator), a trailing scene `-GROUP` tag, and series-position idioms

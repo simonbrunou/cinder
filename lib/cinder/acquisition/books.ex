@@ -176,7 +176,8 @@ defmodule Cinder.Acquisition.Books do
     %{
       title: work.title,
       authors: author_names(work),
-      isbns: isbns(work)
+      isbns: isbns(work),
+      series: series_names(work)
     }
   end
 
@@ -184,9 +185,19 @@ defmodule Cinder.Acquisition.Books do
     %{
       title: title,
       authors: Map.get(work, :authors) || [],
-      isbns: Map.get(work, :isbns) || []
+      isbns: Map.get(work, :isbns) || [],
+      series: Map.get(work, :series) || []
     }
   end
+
+  # The series this work belongs to, for `BookScorer`'s title remainder — a release naming
+  # "The Stormlight Archive 01 - The Way of Kings" is not naming a different work. Unpreloaded
+  # degrades to `[]`, matching `author_names/1` and `isbns/1`: the scorer then fails closed on a
+  # series-named release rather than raising.
+  defp series_names(%Work{series_memberships: memberships}) when is_list(memberships),
+    do: memberships |> Enum.map(& &1.name) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+  defp series_names(%Work{}), do: []
 
   defp author_names(%Work{credits: credits}) when is_list(credits) do
     credits

@@ -40,6 +40,31 @@ defmodule Cinder.Acquisition.BookParserTest do
     end
   end
 
+  describe "format-first names (the tag region must not swallow the title)" do
+    # A name that leads with its format tag used to make the whole release name the "tag region",
+    # so an ordinary title word that is also a language became the parsed audio language and the
+    # scorer invented a `:language_mismatch` against it.
+    test "a bracketed leading format tag does not turn title words into languages" do
+      for name <- [
+            "[EPUB] Michael Ondaatje - The English Patient",
+            "(EPUB) Isabel Allende - The Japanese Lover",
+            "[MOBI] Mary Renault - The Persian Boy",
+            "[EPUB] Donald E. Westlake - The Italian Job"
+          ] do
+        assert %{language: nil} = BookParser.parse(name), "leaked a language from #{name}"
+      end
+    end
+
+    test "an unbracketed leading format tag does not either" do
+      assert %{language: nil} = BookParser.parse("EPUB - Alan Furst - The Polish Officer")
+    end
+
+    test "a genuine trailing language tag is still read" do
+      assert %{language: "FRENCH"} =
+               BookParser.parse("Victor Hugo - Les Miserables (epub) [FRENCH]")
+    end
+  end
+
   describe "language" do
     test "reads a language marker from a bracketed tag" do
       assert %{language: "FRENCH"} =
@@ -87,6 +112,16 @@ defmodule Cinder.Acquisition.BookParserTest do
 
       assert %{collection?: true} = BookParser.parse("Author - Series #1-5 (epub)")
       assert %{collection?: true} = BookParser.parse("Author - Complete Works (epub)")
+    end
+
+    test "spaced and hyphenated box-set spellings are collections too" do
+      assert %{collection?: true} = BookParser.parse("Sanderson - Stormlight Box Set (epub)")
+      assert %{collection?: true} = BookParser.parse("Sanderson - Stormlight Box-Set (epub)")
+    end
+
+    test "a bare numeric range with no book/volume word is still a collection" do
+      assert %{collection?: true} =
+               BookParser.parse("Sanderson - The Stormlight Archive 1-3 (epub)")
     end
 
     test "a single numbered volume is not a collection" do
