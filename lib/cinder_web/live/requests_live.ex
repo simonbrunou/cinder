@@ -231,6 +231,17 @@ defmodule CinderWeb.RequestsLive do
          gettext("That title is on hold. Clear the hold before approving it.")
        )}
 
+  # The approver's account was deleted mid-approval, so "try again" would be a lie — the same FK
+  # failure reproduces until someone signs in as a live admin.
+  def handle_async({:approve, _id}, {:ok, {:error, :approver_deleted}}, socket),
+    do:
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         gettext("Your admin account was deleted. Sign in again to approve requests.")
+       )}
+
   def handle_async({:approve, _id}, _error_or_exit, socket),
     do:
       {:noreply,

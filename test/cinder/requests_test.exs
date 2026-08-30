@@ -247,6 +247,10 @@ defmodule Cinder.RequestsTest do
              poster_path: "/p.jpg",
              original_language: "en"
            }}
+      after
+        # Without this, a failed assertion before `:continue` hangs the stub and surfaces as a
+        # Task.await timeout instead of the real failure.
+        5_000 -> {:error, :test_stub_never_released}
       end
     end)
 
@@ -257,9 +261,25 @@ defmodule Cinder.RequestsTest do
     assert {:ok, _, _} = Cinder.Accounts.delete_user(actor, approver)
     send(provider_task, :continue)
 
-    assert {:error, :unauthorized} = Task.await(task)
+    assert {:error, :approver_deleted} = Task.await(task)
     assert Repo.reload!(request).status == :pending
     assert Catalog.get_movie_by_tmdb_id(@attrs.target_id) == nil
+  end
+
+  # deny_request/3 is the one flip_pending/2 caller that runs outside a transaction, so it takes
+  # refuse_flip/1's `{:error, reason}` branch rather than the Repo.rollback/1 one.
+  test "a denial whose admin was deleted mid-flight is refused, not raised" do
+    user = user_fixture()
+    actor = admin_fixture()
+    approver = admin_fixture()
+    {:ok, request} = Requests.create_request(user, @attrs)
+
+    assert {:ok, _, _} = Cinder.Accounts.delete_user(actor, approver)
+
+    assert {:error, :approver_deleted} =
+             Requests.deny_request(request, approver, "no thanks")
+
+    assert Repo.reload!(request).status == :pending
   end
 
   test "an admin request auto-approves and creates the movie" do
