@@ -32,13 +32,28 @@ defmodule Cinder.Acquisition.BookScorer do
   of the author's name must appear in the release name, and every token of the work title must
   too.
 
-  Title containment is not symmetric with `Books.Identity`'s equality test, and cannot be: a
-  release name legitimately carries a series name, a year, a format and a group around the title,
-  so requiring equality would reject nearly everything. Containment alone would accept an omnibus
-  that contains the requested title among others — which is why `collection?` exists and is
-  refused separately as `:collection_ambiguous` rather than being folded into the title test. That
-  keeps the contract's "omnibus/anthology ambiguity must produce an explained rejection" as its
-  own visible reason.
+  The title test is **containment plus a bounded remainder**, and the remainder half is the part
+  that matters. Plain containment — "every token of the wanted title appears in the release name" —
+  accepts every sequel and superset the series has:
+
+      wanted "Dune"             accepts "Frank Herbert - Dune Messiah (epub)"
+      wanted "The Way of Kings" accepts "Brandon Sanderson - The Way of Kings Prime (epub)"
+      wanted "It"               accepts "Stephen King - It Chapter Two Companion (epub)"
+
+  Each of those is a different book by the same author, which is precisely the wrong-work import
+  the contract forbids ("fuzzy title matching ... cannot authorize a grab when identities
+  conflict"). Equality is not usable either, because a release name legitimately carries a year,
+  a format, a group and a series around the title.
+
+  So: bracketed and parenthesised groups are dropped as metadata, the matched author's tokens are
+  subtracted, and of what remains, every wanted token must be present **and every leftover token
+  must be recognizable metadata** — a year, a format, an edition annotation, or a token of a
+  series this work belongs to. An unrecognized leftover word means the release names something
+  the request did not, so it is a different work and is rejected.
+
+  This is deliberately biased toward false negatives. A rejected good release costs the operator
+  a manual pick and says exactly why; an accepted wrong one puts the wrong book in the library.
+  B4a is manual-selection-only, so the cheap side of that trade is the safe one.
 
   ## Size band
 
@@ -57,6 +72,7 @@ defmodule Cinder.Acquisition.BookScorer do
   order is total and does not depend on indexer result order.
   """
 
+  alias Cinder.Acquisition.BookParser
   alias Cinder.Acquisition.BookRelease
   alias Cinder.Acquisition.Parser
 
@@ -67,6 +83,19 @@ defmodule Cinder.Acquisition.BookScorer do
   @max_size 200 * 1024 * 1024
 
   @articles ~w(the a an le la les el los der die das)
+
+  # Leftover words that are release metadata rather than part of a work's identity. Kept small and
+  # literal: every entry here is a word this scorer will ignore when deciding whether a release
+  # names a DIFFERENT book, so a loose entry ("book", "novel") would re-admit the sequels the
+  # remainder test exists to reject.
+  @edition_annotations ~w(
+    retail ebook epub azw3 azw mobi pdf djvu fb2 lit cbz cbr rtf
+    edition ed unabridged abridged illustrated annotated revised reprint
+    v1 v2 v3 vol volume by
+  )
+
+  # The parser's own format vocabulary, so a format token can never read as a title word.
+  @format_tokens BookParser.known_formats() |> Enum.map(&Atom.to_string/1)
 
   @type evidence :: %{
           format: atom(),
@@ -116,8 +145,8 @@ defmodule Cinder.Acquisition.BookScorer do
     with :ok <- check_blocked(release, Keyword.get(opts, :blocked_terms) || []),
          {:ok, format} <- check_format(release),
          :ok <- check_author(release, Map.get(work, :authors) || []),
-         :ok <- check_title(release, Map.fetch!(work, :title)),
          :ok <- check_collection(release),
+         :ok <- check_title(release, work),
          :ok <- check_language(release, Keyword.get(opts, :language)),
          :ok <- check_size(release) do
       {:accept,
@@ -216,13 +245,98 @@ defmodule Cinder.Acquisition.BookScorer do
     author_tokens != [] and author_tokens -- release_tokens == []
   end
 
-  defp check_title(%BookRelease{title: release_title}, work_title) do
-    wanted = work_title |> tokens() |> drop_article()
-    present = tokens(release_title)
+  defp check_title(%BookRelease{title: release_title}, work) do
+    wanted = work |> Map.fetch!(:title) |> tokens() |> drop_article()
 
-    if wanted != [] and wanted -- present == [],
-      do: :ok,
-      else: {:reject, :title_mismatch}
+    core =
+      release_title
+      |> strip_noise()
+      |> tokens()
+      |> subtract_matched_author(Map.get(work, :authors) || [])
+      |> drop_article()
+
+    leftovers = Enum.reject(core -- wanted, &metadata_token?(&1, work))
+
+    cond do
+      wanted == [] -> {:reject, :title_mismatch}
+      wanted -- core != [] -> {:reject, :title_mismatch}
+      leftovers == [] -> :ok
+      subtitle_only?(release_title, wanted, leftovers, work) -> :ok
+      true -> {:reject, :title_mismatch}
+    end
+  end
+
+  # Everything a release name carries that is not part of any work's identity: bracketed groups
+  # (year, format, tracker, translator), a trailing scene `-GROUP` tag, and series-position idioms
+  # ("Book 1", "Vol. 2", "#3", a bare "01" between separators).
+  defp strip_noise(nil), do: ""
+
+  defp strip_noise(title) do
+    title
+    |> String.replace(~r/[\[\(\{][^\]\)\}]*[\]\)\}]?/, " ")
+    |> String.replace(~r/-[A-Za-z0-9]+$/, " ")
+    |> String.replace(~r/\b(?:book|bk|vol|volume|part|pt|no|nr)\b[ .#]*\d{1,3}\b/i, " ")
+    |> String.replace(~r/#\d{1,3}\b/, " ")
+    |> String.replace(~r/(?<=[-–—:.,]|\s)\d{1,3}(?=\s*[-–—:.,]|\s|$)/, " ")
+  end
+
+  # A release may name the work's subtitle when the request did not: "Sapiens" and
+  # "Sapiens: A Brief History of Humankind" are one work, and providers disagree about whether the
+  # subtitle belongs in the title field. Forgiven only when every wanted token sits in the segment
+  # BEFORE the first colon — so the extra words are the subtitle of the work that was asked for,
+  # not a different work whose name merely contains it. "Dune Messiah" has no colon and is still
+  # rejected; a leading "Series: Title" release keeps its own leftovers under scrutiny because
+  # the wanted tokens are then not in the head.
+  defp subtitle_only?(release_title, wanted, leftovers, work) do
+    case String.split(strip_noise(release_title), ~r/:/, parts: 2) do
+      [head, _subtitle] ->
+        head_tokens =
+          head
+          |> tokens()
+          |> subtract_matched_author(Map.get(work, :authors) || [])
+          |> drop_article()
+
+        wanted -- head_tokens == [] and
+          Enum.all?(head_tokens -- wanted, &metadata_token?(&1, work)) and
+          leftovers != []
+
+      _no_colon ->
+        false
+    end
+  end
+
+  # Remove the tokens of the one author that matched, so the byline does not read as title words.
+  # Longest name first, for the reason `Cinder.Books.Identity.subtract_contributors/2` documents:
+  # a short spelling can otherwise consume a surname the long spelling needed.
+  defp subtract_matched_author(release_tokens, authors) do
+    authors
+    |> Enum.map(&tokens/1)
+    |> Enum.sort_by(&{-length(&1), &1})
+    |> Enum.find(fn author_tokens ->
+      author_tokens != [] and author_tokens -- release_tokens == []
+    end)
+    |> case do
+      nil -> release_tokens
+      author_tokens -> release_tokens -- author_tokens
+    end
+  end
+
+  # A leftover token that does not name a different work: a year, a format the parser knows, an
+  # edition annotation, or a word from a series this work belongs to. `series` is whatever the
+  # caller loaded (`Cinder.Books.Work`'s `series_memberships`); absent, series-named releases
+  # simply fail closed like any other unrecognized word.
+  defp metadata_token?(token, work) do
+    token in @edition_annotations or
+      Regex.match?(~r/^(?:19|20)\d{2}$/, token) or
+      token in @format_tokens or
+      token in series_tokens(work)
+  end
+
+  defp series_tokens(work) do
+    work
+    |> Map.get(:series)
+    |> List.wrap()
+    |> Enum.flat_map(&tokens/1)
   end
 
   defp check_collection(%BookRelease{collection?: true}), do: {:reject, :collection_ambiguous}

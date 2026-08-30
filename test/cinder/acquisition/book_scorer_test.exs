@@ -7,6 +7,7 @@ defmodule Cinder.Acquisition.BookScorerTest do
   # one vocabulary (see test/support/fixtures/books/corpus-v1.json).
   @beloved %{title: "Beloved", authors: ["Toni Morrison"]}
   @dispossessed %{title: "The Dispossessed", authors: ["Ursula K. Le Guin"]}
+  @dune %{title: "Dune", authors: ["Frank Herbert"]}
 
   defp release(title, attrs \\ []) do
     BookRelease.new(
@@ -102,6 +103,92 @@ defmodule Cinder.Acquisition.BookScorerTest do
                BookScorer.evaluate(
                  release("Ursula K. Le Guin - Dispossessed (epub)"),
                  @dispossessed
+               )
+    end
+
+    # The wrong-work family that plain title CONTAINMENT accepts. Each of these carries every token
+    # of the requested title and is a different book, so they are the reason `check_title/2` bounds
+    # the remainder instead of only testing containment. Found by probing the first implementation,
+    # which accepted all four.
+    test "rejects a sequel whose name contains the requested title" do
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("Frank Herbert - Dune Messiah (epub)"), @dune)
+    end
+
+    test "rejects a companion work whose name contains the requested title" do
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("Frank Herbert - The Dune Encyclopedia (epub)"), @dune)
+    end
+
+    test "rejects a superset title that only appends one word" do
+      work = %{title: "The Way of Kings", authors: ["Brandon Sanderson"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(
+                 release("Brandon Sanderson - The Way of Kings Prime (epub)"),
+                 work
+               )
+    end
+
+    test "rejects a different work whose name embeds a short requested title" do
+      work = %{title: "It", authors: ["Stephen King"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(
+                 release("Stephen King - It Chapter Two Companion (epub)"),
+                 work
+               )
+    end
+
+    # The other half of the trade: the remainder bound must not reject the shapes real indexers
+    # actually publish. Each of these was rejected by the first bounded implementation.
+    test "accepts a dot-separated scene name with a year and a group tag" do
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release("Frank.Herbert-Dune.2019.Retail.EPUB.eBook-BitBook"),
+                 @dune
+               )
+    end
+
+    test "accepts a release naming the work's subtitle when the request did not" do
+      work = %{title: "Sapiens", authors: ["Yuval Noah Harari"]}
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release("Yuval Noah Harari - Sapiens: A Brief History of Humankind (epub)"),
+                 work
+               )
+    end
+
+    test "accepts a series-numbered release when the work carries that series" do
+      work = %{
+        title: "The Way of Kings",
+        authors: ["Brandon Sanderson"],
+        series: ["The Stormlight Archive"]
+      }
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release(
+                   "Brandon Sanderson - The Stormlight Archive 01 - The Way of Kings (epub)"
+                 ),
+                 work
+               )
+    end
+
+    test "a loaded series does not admit a different book in the same series" do
+      work = %{
+        title: "The Way of Kings",
+        authors: ["Brandon Sanderson"],
+        series: ["The Stormlight Archive"]
+      }
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(
+                 release(
+                   "Brandon Sanderson - The Stormlight Archive 02 - Words of Radiance (epub)"
+                 ),
+                 work
                )
     end
   end
