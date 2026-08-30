@@ -91,11 +91,38 @@ defmodule Cinder.Acquisition.BookScorerTest do
     end
 
     test "tolerates series, year, and group noise around the title" do
+      # The series must be LOADED for its name to be discountable — an unrecognized bracket group
+      # is title evidence, not noise. `Books.normalize/1` supplies this from series_memberships.
+      work = Map.put(@dispossessed, :series, ["Hainish Cycle"])
+
       assert {:accept, _evidence} =
                BookScorer.evaluate(
                  release("Ursula K. Le Guin - The Dispossessed (Hainish Cycle) (1974) (epub)"),
-                 @dispossessed
+                 work
                )
+    end
+
+    test "an unknown bracketed group is title evidence, not noise" do
+      # Dropping every bracketed group unconditionally made brackets a bypass: "Dune (Messiah)"
+      # erased to "Dune" and was accepted for a request for Dune.
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("Frank Herbert - Dune (Messiah) (epub)"), @dune)
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("Frank Herbert - Dune [Messiah] (epub)"), @dune)
+    end
+
+    test "a trailing tracker tag after the format is still dropped" do
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release("Toni Morrison - Beloved (epub) [MyAnonaMouse]"),
+                 @beloved
+               )
+    end
+
+    test "a colon does not license a sequel name as a subtitle" do
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("Frank Herbert - Dune: Messiah (epub)"), @dune)
     end
 
     test "tolerates a missing leading article" do
@@ -298,11 +325,44 @@ defmodule Cinder.Acquisition.BookScorerTest do
                BookScorer.evaluate(release("Toni Morrison - Beloved [FRENCH] (epub)"), @beloved)
     end
 
-    test "an untagged release satisfies a requested language" do
+    test "an untagged release satisfies an ENGLISH request only" do
+      # Untagged means English by scene convention, so it satisfies English and nothing else.
+      # Passing every request handed a household asking for French an almost-certainly-English
+      # file — the same fail-open `Cinder.Acquisition.Language` closed for video.
       assert {:accept, _evidence} =
                BookScorer.evaluate(release("Toni Morrison - Beloved (epub)"), @beloved,
                  language: "en"
                )
+
+      assert {:reject, :language_mismatch} =
+               BookScorer.evaluate(release("Toni Morrison - Beloved (epub)"), @beloved,
+                 language: "fr"
+               )
+    end
+
+    test "a three-letter ISO 639-2 code matches the parser's tag" do
+      # Open Library publishes `/languages/eng`, so a caller passing `edition.language` straight
+      # through supplies "eng" — which upcased to "ENG" and matched no tag the parser emits,
+      # rejecting a correctly-tagged English release as the wrong language.
+      for code <- ["eng", "en"] do
+        assert {:accept, %{language: "ENGLISH"}} =
+                 BookScorer.evaluate(
+                   release("Toni Morrison - Beloved [ENGLISH] (epub)"),
+                   @beloved,
+                   language: code
+                 ),
+               "#{code} did not match ENGLISH"
+      end
+
+      for code <- ["fre", "fra", "fr"] do
+        assert {:accept, %{language: "FRENCH"}} =
+                 BookScorer.evaluate(
+                   release("Toni Morrison - Beloved [FRENCH] (epub)"),
+                   @beloved,
+                   language: code
+                 ),
+               "#{code} did not match FRENCH"
+      end
     end
 
     test "a contradicting language is rejected" do
@@ -324,6 +384,30 @@ defmodule Cinder.Acquisition.BookScorerTest do
                BookScorer.evaluate(release("Toni Morrison - Beloved (epub) [MULTI]"), @beloved,
                  language: "fr"
                )
+    end
+  end
+
+  describe "abridgement" do
+    # An abridged text is a DIFFERENT text. The contract groups abridged/unabridged ambiguity with
+    # omnibus and anthology and requires an explained rejection.
+    test "an abridged release is refused with its own reason" do
+      assert {:reject, :abridged_edition} =
+               BookScorer.evaluate(release("Toni Morrison - Beloved Abridged (epub)"), @beloved)
+
+      assert {:reject, :abridged_edition} =
+               BookScorer.evaluate(release("Toni Morrison - Beloved (Abridged) (epub)"), @beloved)
+    end
+
+    test "'unabridged' is not read as 'abridged'" do
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("Toni Morrison - Beloved Unabridged (epub)"), @beloved)
+    end
+
+    test "a request that explicitly wants the abridged edition accepts one" do
+      work = Map.put(@beloved, :abridged, true)
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("Toni Morrison - Beloved Abridged (epub)"), work)
     end
   end
 
@@ -415,16 +499,21 @@ defmodule Cinder.Acquisition.BookScorerTest do
                Enum.map(accepted, fn {release, _evidence} -> release.title end)
     end
 
-    test "the requested language outranks an untagged release when one IS asked for" do
+    test "a non-English request drops the untagged release rather than ranking it" do
+      # An untagged release is English by convention, so it satisfies an English request and
+      # nothing else — it is rejected here, not merely out-ranked.
       releases = [
         release("Toni Morrison - Beloved (epub)"),
         release("Toni Morrison - Beloved [FRENCH] (epub)")
       ]
 
-      %{accepted: accepted} = BookScorer.evaluate_all(releases, @beloved, language: "fr")
+      %{accepted: accepted, rejected: rejected} =
+        BookScorer.evaluate_all(releases, @beloved, language: "fr")
 
-      assert ["Toni Morrison - Beloved [FRENCH] (epub)", "Toni Morrison - Beloved (epub)"] =
+      assert ["Toni Morrison - Beloved [FRENCH] (epub)"] =
                Enum.map(accepted, fn {release, _evidence} -> release.title end)
+
+      assert [{_release, :language_mismatch}] = rejected
     end
 
     test "returns empty lists for no input" do

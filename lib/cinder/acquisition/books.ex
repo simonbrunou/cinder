@@ -199,11 +199,19 @@ defmodule Cinder.Acquisition.Books do
 
   defp series_names(%Work{}), do: []
 
+  # AUTHOR credits only. Promoting every credit made a translator or editor satisfy the scorer's
+  # author gate, which is the contract's role-aware credit model collapsing into "anyone named on
+  # the book" — a translator's name appears on many unrelated works. Both adapters set
+  # `role: "author"` explicitly (`OpenLibrary`/`Hardcover`), so this drops nothing real.
+  #
+  # A work whose credits are all non-author degrades to `[]`, and `BookScorer.check_author/2`
+  # then rejects every release rather than accepting on title alone — fail-closed, matching what
+  # `Cinder.Books.Identity` does with no contributor evidence.
   defp author_names(%Work{credits: credits}) when is_list(credits) do
     credits
     |> Enum.flat_map(fn
-      %{author: %{name: name}} when is_binary(name) -> [name]
-      _no_author -> []
+      %{role: "author", author: %{name: name}} when is_binary(name) -> [name]
+      _not_an_author -> []
     end)
     |> Enum.uniq()
   end
@@ -213,15 +221,23 @@ defmodule Cinder.Acquisition.Books do
   # ISBN-13 before ISBN-10 (a modern indexer's release names carry the 13), newest edition first.
   # Only `:ebook` editions: an audiobook edition's ISBN names a recording, and a release matching
   # it is not an e-book.
+  #
+  # "Newest" is `release_date`, NOT the row id: import order is provider response order, not
+  # publication order, so sorting by id meant `@max_isbn_queries` could cut the newest edition and
+  # keep three older printings. Undated editions sort last (a missing date is not evidence of
+  # recency), with the id as a stable tie-break so the plan is deterministic.
   defp isbns(%Work{editions: editions}) when is_list(editions) do
     editions
     |> Enum.filter(&match?(%Edition{media_kind: :ebook}, &1))
-    |> Enum.sort_by(& &1.id, :desc)
+    |> Enum.sort_by(&{release_date_rank(&1.release_date), -&1.id})
     |> Enum.flat_map(&edition_isbns/1)
     |> Enum.uniq()
   end
 
   defp isbns(%Work{}), do: []
+
+  defp release_date_rank(nil), do: {1, 0}
+  defp release_date_rank(%Date{} = date), do: {0, -Date.to_gregorian_days(date)}
 
   defp edition_isbns(%Edition{identifiers: identifiers}) when is_list(identifiers) do
     identifiers

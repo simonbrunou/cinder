@@ -1,7 +1,7 @@
 defmodule Cinder.Acquisition.BookParserTest do
   use ExUnit.Case, async: true
 
-  alias Cinder.Acquisition.BookParser
+  alias Cinder.Acquisition.{BookParser, BookScorer}
 
   describe "formats" do
     test "extracts a single format from a parenthesised tag" do
@@ -37,6 +37,18 @@ defmodule Cinder.Acquisition.BookParserTest do
     test "a non-binary name parses to the empty result rather than raising" do
       assert %{formats: [], language: nil, retail?: false, collection?: false} =
                BookParser.parse(nil)
+    end
+  end
+
+  describe "comic containers" do
+    test "CBR and CBZ are distinct formats" do
+      assert %{formats: [:cbr]} = BookParser.parse("Author - Title (cbr)")
+      assert %{formats: [:cbz]} = BookParser.parse("Author - Title (cbz)")
+    end
+
+    test "both are outside the e-book profile" do
+      refute :cbr in BookScorer.accepted_formats()
+      refute :cbz in BookScorer.accepted_formats()
     end
   end
 

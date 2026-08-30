@@ -8,6 +8,18 @@ defmodule Cinder.Acquisition.BooksTest do
 
   setup :verify_on_exit!
 
+  # Drains `count` {:query, _} messages in arrival order. `assert_received` matches selectively,
+  # so it cannot witness ordering; receiving a bare pattern in sequence can.
+  defp received_queries(count) do
+    Enum.map(1..count, fn _index ->
+      receive do
+        {:query, query} -> query
+      after
+        0 -> flunk("expected #{count} queries")
+      end
+    end)
+  end
+
   @work %{title: "The Dispossessed", authors: ["Ursula K. Le Guin"]}
 
   defp indexer_result(title, attrs \\ %{}) do
@@ -56,9 +68,14 @@ defmodule Cinder.Acquisition.BooksTest do
 
       assert {:ok, [], true} = Books.search(work)
 
-      assert_received {:query, "9780060512750"}
-      assert_received {:query, "0060512750"}
-      assert_received {:query, "The Dispossessed Ursula K. Le Guin"}
+      # Collected in mailbox order and compared as a LIST: independent assert_received/1 calls
+      # search the mailbox selectively, so they pass even when the queries ran in another order —
+      # which is the only thing this test exists to prove.
+      assert [
+               "9780060512750",
+               "0060512750",
+               "The Dispossessed Ursula K. Le Guin"
+             ] == received_queries(3)
     end
 
     test "caps ISBN probes so a work with many editions cannot fan out" do
@@ -269,6 +286,97 @@ defmodule Cinder.Acquisition.BooksTest do
       assert {:ok, [], true} = Books.search(loaded)
 
       refute_received {:query, "9999999999999"}
+    end
+
+    test "a translator credit does not satisfy the author gate" do
+      # Promoting every credit made "anyone named on the book" an author — and a translator's name
+      # appears on many unrelated works, so it is not identity evidence for THIS one.
+      {:ok, translator} =
+        Cinder.Books.upsert_author(%{
+          name: "Gregory Rabassa",
+          identifier: %{provider: "openlibrary", kind: "author", foreign_id: "OL233456A"}
+        })
+
+      {:ok, work} =
+        Cinder.Books.upsert_work(%{
+          title: "Hopscotch",
+          contributors_incomplete: false,
+          identifier: %{provider: "openlibrary", kind: "work", foreign_id: "OL99999W"}
+        })
+
+      {:ok, _credit} =
+        Cinder.Books.put_credit(work, %{author_id: translator.id, role: "translator"})
+
+      loaded = Cinder.Books.get_work(work.id)
+
+      translator_named = %{
+        title: "Gregory Rabassa - Hopscotch (epub)",
+        size: 2_000_000,
+        download_url: "http://indexer.test/9",
+        protocol: :torrent
+      }
+
+      expect(IndexerMock, :search_book, fn _author, _title, _opts ->
+        {:ok, [translator_named]}
+      end)
+
+      expect(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
+
+      assert {:ok, %{accepted: [], rejected: [{_release, :author_mismatch}]}} =
+               Books.candidates(loaded)
+    end
+
+    test "ISBN probes follow publication date, not insert order" do
+      # The three-ISBN cap makes edition ORDER load-bearing: sorting by row id meant a work whose
+      # newest edition was imported first lost it to three older printings.
+      test_pid = self()
+
+      {:ok, work} =
+        Cinder.Books.upsert_work(%{
+          title: "Beloved",
+          contributors_incomplete: false,
+          identifier: %{provider: "openlibrary", kind: "work", foreign_id: "OL50548W"}
+        })
+
+      # Inserted oldest-last so insert order is the OPPOSITE of publication order.
+      for {foreign_id, isbn, date} <- [
+            {"OL10M", "9780000000010", ~D[1987-09-01]},
+            {"OL20M", "9780000000020", ~D[2004-06-01]},
+            {"OL30M", "9780000000030", ~D[2019-03-01]},
+            {"OL40M", "9780000000040", nil}
+          ] do
+        {:ok, edition} =
+          Cinder.Books.upsert_edition(%{
+            work_id: work.id,
+            media_kind: :ebook,
+            title: "Beloved",
+            release_date: date,
+            identifier: %{provider: "openlibrary", kind: "edition", foreign_id: foreign_id}
+          })
+
+        {:ok, _isbn} =
+          Cinder.Books.put_identifier(edition, %{
+            provider: "isbn",
+            kind: "edition",
+            foreign_id: isbn
+          })
+      end
+
+      loaded = Cinder.Books.get_work(work.id)
+
+      expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:ok, []} end)
+
+      expect(IndexerMock, :search_book_query, 4, fn query, _opts ->
+        send(test_pid, {:query, query})
+        {:ok, []}
+      end)
+
+      assert {:ok, [], true} = Books.search(loaded)
+
+      # Newest three by release_date, newest first. The UNDATED edition sorts last and never gets
+      # a probe, even though it was inserted most recently.
+      assert ["9780000000030", "9780000000020", "9780000000010"] =
+               Enum.take(received_queries(4), 3)
     end
 
     test "a persisted work's series membership reaches the scorer" do

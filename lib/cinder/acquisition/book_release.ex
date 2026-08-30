@@ -31,7 +31,8 @@ defmodule Cinder.Acquisition.BookRelease do
           formats: [atom()] | nil,
           language: String.t() | nil,
           retail?: boolean() | nil,
-          collection?: boolean() | nil
+          collection?: boolean() | nil,
+          abridged?: boolean() | nil
         }
 
   defstruct [
@@ -47,7 +48,8 @@ defmodule Cinder.Acquisition.BookRelease do
     :formats,
     :language,
     :retail?,
-    :collection?
+    :collection?,
+    :abridged?
   ]
 
   @doc """

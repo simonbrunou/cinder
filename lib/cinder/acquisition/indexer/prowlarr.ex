@@ -140,11 +140,12 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
 
   defp categories(opts), do: Keyword.put_new(opts, :categories, [@ebook_category])
 
-  # `}` closes a brace token, and the capture group is `[^{]+` — an embedded `}` would end the
-  # token early and leave the rest of the value as bare query text, silently searching for
-  # something other than what the caller asked. Dropping it is lossy but honest: no book title or
-  # author name carries a meaningful `}`, whereas a truncated token changes which field the
-  # remainder lands in.
+  # Both braces are removed before interpolation. Prowlarr's `BookRegex` captures with `[^{]+`,
+  # which stops at a `{` — so an embedded `{` would open a second token and let a crafted value
+  # choose its own field (`author`/`title`/`publisher`/`year`), while an embedded `}` ends the
+  # token early and leaves the rest as bare query text. Either way the search stops meaning what
+  # the caller asked. Dropping both is lossy but honest: no book title or author name carries a
+  # meaningful brace.
   defp book_query(nil, title), do: "{Title:#{brace_safe(title)}}"
 
   defp book_query(author, title),

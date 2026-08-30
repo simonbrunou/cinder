@@ -57,7 +57,8 @@ defmodule Cinder.Acquisition.BookParser do
     {~r/\bdjvu\b/i, :djvu},
     {~r/\bfb2\b/i, :fb2},
     {~r/\blit\b/i, :lit},
-    {~r/\bcb[rz]\b/i, :cbz},
+    {~r/\bcbz\b/i, :cbz},
+    {~r/\bcbr\b/i, :cbr},
     {~r/\brtf\b/i, :rtf}
   ]
 
@@ -65,6 +66,10 @@ defmodule Cinder.Acquisition.BookParser do
 
   # A retail release came from the publisher's own file rather than a scan or a conversion.
   @retail ~r/\bretail\b/i
+
+  # An abridged text is a DIFFERENT text, not a worse copy of the same one. "unabridged" is
+  # checked first because it contains "abridged" as a substring — the `\b` alone would match it.
+  @abridged ~r/(?<!un)\babridged\b/i
 
   # Markers that say the release is more than the one work asked for. The contract requires
   # omnibus/anthology ambiguity to produce an explained rejection rather than a silent fallback,
@@ -106,18 +111,21 @@ defmodule Cinder.Acquisition.BookParser do
           formats: [atom()],
           language: String.t() | nil,
           retail?: boolean(),
-          collection?: boolean()
+          collection?: boolean(),
+          abridged?: boolean()
         }
   def parse(name) when is_binary(name) do
     %{
       formats: formats(name),
       language: language(name),
       retail?: Regex.match?(@retail, name),
-      collection?: Enum.any?(@collection, &Regex.match?(&1, name))
+      collection?: Enum.any?(@collection, &Regex.match?(&1, name)),
+      abridged?: Regex.match?(@abridged, name)
     }
   end
 
-  def parse(_name), do: %{formats: [], language: nil, retail?: false, collection?: false}
+  def parse(_name),
+    do: %{formats: [], language: nil, retail?: false, collection?: false, abridged?: false}
 
   @doc "Every format token the parser recognizes, in preference-neutral recognizer order."
   @spec known_formats() :: [atom()]

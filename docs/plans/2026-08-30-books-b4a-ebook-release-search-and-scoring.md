@@ -88,9 +88,19 @@ Pure, best-effort, `nil` for anything unrecognized. Extracts:
   or invent a preference the release does not state.
 - `language` — reuses `Parser.language_tags/0`, so books and video cannot drift apart on what
   "FRENCH" means.
-- `year`, `authors_segment`/`title_segment` from the `Author - Title` convention book releases
-  overwhelmingly follow.
 - `retail?` — a scene marker worth ranking on, not gating.
+- `collection?` / `abridged?` — the omnibus and abridgement facts the contract requires an
+  explained rejection for.
+
+**Dropped during execution: `year`, `authors_segment`/`title_segment`.** The plan assumed the
+`Author - Title` convention was reliable enough to split a release name into segments and then
+match each side. It is not: the corpus carries `Title - Author`, `Title by Author`,
+`Author.Title.YEAR.Retail.EPUB-GROUP`, and bracketed-prefix forms, and a *wrong* split is worse
+than no split — it hands the author gate a title and the title gate an author, turning a clean
+rejection into a confident mismatch. `BookScorer` instead works on the whole name as a token set
+and subtracts the matched author, which needs no segmentation and no year. `year` survives only
+as a discountable metadata token in the title remainder, which is all the scorer ever asked of
+it.
 
 ### 5. `Cinder.Acquisition.BookScorer`
 
@@ -149,7 +159,8 @@ the gate, expressed as absence of code rather than a disabled flag.
 
 - `Prowlarr.search_book/3` issues `type=book` with the brace tokens and `categories=7020`, and
   `search_book_query/2` issues `type=search`; both normalize like the existing searches.
-- The parser extracts multi-format sets, language, and year from realistic book release names.
+- The parser extracts multi-format sets, language, retail, collection, and abridgement facts from
+  realistic book release names. (Year and author/title segmentation were dropped — see §4.)
 - The scorer rejects wrong author, wrong title, wrong language, unknown format, rejected format,
   out-of-band size, and blocked terms — each with its own atom.
 - `Books.search/2` plans queries in evidence order, is capped, dedupes, merges provenance, and
