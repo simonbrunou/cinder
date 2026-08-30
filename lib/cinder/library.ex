@@ -41,8 +41,8 @@ defmodule Cinder.Library do
   # `:enotsup` = a single mount whose filesystem has no hardlink support at all (FAT/exFAT on USB
   # drives, SMB/CIFS without Unix extensions, some FUSE), where `link()` fails without `:exdev` ever
   # firing (issue #59). `:eperm` can also be a genuine permission error, but then the copy fails the
-  # same way (`cp` can't open the dest) and the item still parks — a wasted copy attempt, not a
-  # wrong import. Every other errno (`:enoent`, `:enospc`, …) is a real failure and propagates.
+  # same way (`cp` can't open the dest) and the item still parks — a wasted copy attempt, not a wrong
+  # import. Every other errno propagates. A guard so `Cinder.Library.Sidecars` shares this one list.
   defguard copy_fallback_errno?(errno) when errno in [:exdev, :eperm, :eopnotsupp, :enotsup]
   @standard_tv_bridged_schemes ~w(scene aired)
 
@@ -438,16 +438,17 @@ defmodule Cinder.Library do
   # Atomic replace of an existing dest with source's content: sweep stale temps (a host crash between
   # link/copy and rename can leak one), link-or-copy source -> unique temp in the dest dir, then rename
   # over dest. The temp lives on the dest filesystem, so the rename is same-fs and atomic even when the
-  # source content had to be copied across filesystems; also called from `Cinder.Library.StageEngine`.
+  # source content had to be copied across filesystems. Public (not private): also called from
+  # `Cinder.Library.StageEngine`.
   @doc false
-  def replace(source, dest, root, source_extensions \\ @video_exts) do
+  def replace(source, dest, root) do
     dir = Path.dirname(dest)
     sweep_temps(dir, root)
     tmp = Path.join(dir, ".cinder-tmp-#{System.unique_integer([:positive])}")
 
     with {:ok, ^dest} <- safe_destination(dest, root),
          {:ok, ^tmp} <- safe_destination(tmp, root),
-         :ok <- link_or_copy(source, tmp, root, source_extensions),
+         :ok <- link_or_copy(source, tmp, root),
          {:ok, ^tmp} <- safe_destination(tmp, root),
          {:ok, ^dest} <- safe_destination(dest, root),
          :ok <- fs().rename(tmp, dest) do
@@ -467,21 +468,21 @@ defmodule Cinder.Library do
   # single choke-point and covers every fallback (per docs/operating.md). Public (not private):
   # also called from `Cinder.Library.StageEngine`.
   @doc false
-  def link_or_copy(source, target, root, source_extensions \\ @video_exts) do
-    with {:ok, source} <- safe_source_file(source, source_extensions),
+  def link_or_copy(source, target, root) do
+    with {:ok, source} <- safe_source_file(source),
          {:ok, target} <- safe_destination(target, root) do
-      do_link_or_copy(source, target, root, source_extensions)
+      do_link_or_copy(source, target, root)
     end
   end
 
-  defp do_link_or_copy(source, target, root, source_extensions) do
+  defp do_link_or_copy(source, target, root) do
     case fs().ln(source, target) do
       {:error, errno} when copy_fallback_errno?(errno) ->
         Logger.info(
           "hardlink unsupported (#{errno}); copying #{source} into #{Path.dirname(target)}"
         )
 
-        with {:ok, ^source} <- safe_source_file(source, source_extensions),
+        with {:ok, ^source} <- safe_source_file(source),
              {:ok, ^target} <- safe_destination(target, root),
              do: fs().cp(source, target)
 
@@ -490,8 +491,7 @@ defmodule Cinder.Library do
     end
   end
 
-  @doc false
-  def sweep_temps(dir, root) do
+  defp sweep_temps(dir, root) do
     case path_policy().walk(dir, roots: [root], filesystem: fs()) do
       {:ok, files} ->
         for {p, _size} <- files,
@@ -1469,10 +1469,10 @@ defmodule Cinder.Library do
 
   # Public (not private): also called from `Cinder.Library.AnimeInventory`.
   @doc false
-  def safe_source_file(path, extensions \\ @video_exts) do
+  def safe_source_file(path) do
     case Settings.import_roots() do
       [] -> {:error, :download_roots_not_configured}
-      roots -> path_policy().source_file(path, roots, extensions, filesystem: fs())
+      roots -> path_policy().source_file(path, roots, @video_exts, filesystem: fs())
     end
   end
 

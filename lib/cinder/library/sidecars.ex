@@ -139,15 +139,24 @@ defmodule Cinder.Library.Sidecars do
     end
   end
 
+  # Copy the sidecar bytes into a temp on the destination filesystem, then land it. Landing is
+  # no-replace on purpose: the hardlink path this falls back from could never clobber, and a
+  # sidecar that loses a race with a manually-added subtitle must lose it quietly.
+  #
+  # The temp is the durability seam. `Library`'s video path can land with `cp_exclusive` because a
+  # journal recovers a half-written destination; sidecars have no journal, so writing bytes
+  # straight to the final path would leave a truncated `.srt` that every later retry then skips
+  # with `:eexist`. Copying into `.cinder-tmp-*` first means an interrupted copy only ever leaves
+  # a temp, which the next import's `sweep_temps` reclaims.
   defp copy(src, dest) do
     with {:ok, root} <- Settings.library_root_for_path(dest) do
       dir = Path.dirname(dest)
-      Library.sweep_temps(dir, root)
+      sweep_temps(dir, root)
       tmp = Path.join(dir, ".cinder-tmp-#{System.unique_integer([:positive])}")
 
       result =
         with {:ok, ^tmp} <- safe_destination(tmp, root),
-             :ok <- Library.link_or_copy(src, tmp, root, @sub_exts),
+             :ok <- fs().cp(src, tmp),
              {:ok, ^tmp} <- safe_destination(tmp, root),
              {:ok, ^dest} <- safe_destination(dest, root),
              do: land_noreplace(tmp, dest)
@@ -157,6 +166,11 @@ defmodule Cinder.Library.Sidecars do
     end
   end
 
+  # `link(2)` is the no-replace primitive. On a mount with no hardlink support at all the temp
+  # can't be linked either, so fall back to an exclusive copy — which is safe *here* precisely
+  # because the source is the completed temp, not the original: a failed exclusive copy leaves a
+  # partial destination only if the destination did not already exist, and the temp it copies from
+  # is whole.
   defp land_noreplace(tmp, dest) do
     case fs().ln(tmp, dest) do
       {:error, errno} when Library.copy_fallback_errno?(errno) ->
@@ -182,6 +196,19 @@ defmodule Cinder.Library.Sidecars do
 
   defp safe_destination(path, root),
     do: path_policy().destination(path, root, filesystem: fs())
+
+  # Reclaims temps left by an interrupted copy, so a crashed import can't strand bytes here.
+  defp sweep_temps(dir, root) do
+    case path_policy().walk(dir, roots: [root], filesystem: fs()) do
+      {:ok, files} ->
+        for {path, _size} <- files,
+            String.contains?(Path.basename(path), ".cinder-tmp-"),
+            do: safe_remove(path, root)
+
+      _ ->
+        :ok
+    end
+  end
 
   defp safe_remove(path, root) do
     with :ok <- path_policy().deletable_file(path, [root], filesystem: fs()),
