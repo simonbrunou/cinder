@@ -325,6 +325,14 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#settings-group-subtitles[open]")
     refute has_element?(lv, "#settings-group-releases[open]")
     assert has_element?(lv, "#libretranslate_batch_size[aria-invalid=true]")
+
+    # Both the group and the message come from the registry `type:`, not the key name, so a future
+    # positive-integer field is covered without touching this component.
+    assert has_element?(
+             lv,
+             "#libretranslate_batch_size-error",
+             "Enter a positive whole number, or leave blank for the default."
+           )
   end
 
   test "opens the download group for an invalid torrent cleanup limit", %{conn: conn} do

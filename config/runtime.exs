@@ -76,14 +76,22 @@ parse_pos_int = fn name ->
   end
 end
 
+# The tuning knobs bootstrap independently of LIBRETRANSLATE_URL so they still apply when the URL
+# comes from /settings — that is the whole point of #386. The API key stays gated on the URL as it
+# always was: alone it configures nothing the translator can use (it gates on base_url), and being
+# a secret it would otherwise show as "set via environment" for a translator that cannot run.
 libretranslate_config =
   [
-    base_url: System.get_env("LIBRETRANSLATE_URL"),
-    api_key: System.get_env("LIBRETRANSLATE_API_KEY"),
     batch_size: parse_pos_int.("LIBRETRANSLATE_BATCH_SIZE"),
     receive_timeout: parse_pos_int.("LIBRETRANSLATE_TIMEOUT")
-  ]
-  |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  ] ++
+    if url = System.get_env("LIBRETRANSLATE_URL") do
+      [base_url: url, api_key: System.get_env("LIBRETRANSLATE_API_KEY")]
+    else
+      []
+    end
+
+libretranslate_config = Enum.reject(libretranslate_config, fn {_key, value} -> is_nil(value) end)
 
 if libretranslate_config != [] do
   config :cinder, Cinder.Subtitles.Translator.LibreTranslate, libretranslate_config
