@@ -193,6 +193,25 @@ defmodule Cinder.Acquisition.BookScorerTest do
     end
   end
 
+  describe "protocol" do
+    test "rejects a release whose protocol has no configured client" do
+      release = release("Toni Morrison - Beloved (epub)", protocol: :usenet)
+
+      assert {:reject, :wrong_protocol} =
+               BookScorer.evaluate(release, @beloved, protocols: [:torrent])
+    end
+
+    test "accepts the same release when its protocol is configured" do
+      release = release("Toni Morrison - Beloved (epub)", protocol: :usenet)
+      assert {:accept, _evidence} = BookScorer.evaluate(release, @beloved, protocols: [:usenet])
+    end
+
+    test "no protocols option means no gate" do
+      release = release("Toni Morrison - Beloved (epub)", protocol: :usenet)
+      assert {:accept, _evidence} = BookScorer.evaluate(release, @beloved)
+    end
+  end
+
   describe "collection ambiguity" do
     test "an omnibus containing the requested title is refused with its own reason" do
       work = %{title: "The Way of Kings", authors: ["Brandon Sanderson"]}
@@ -212,6 +231,36 @@ defmodule Cinder.Acquisition.BookScorerTest do
       assert {:accept, _evidence} =
                BookScorer.evaluate(
                  release("Brandon Sanderson - The Way of Kings (epub)"),
+                 work
+               )
+    end
+
+    # A work whose OWN title carries a collection word is an ordinary request, not an ambiguity.
+    # An unconditional reject made every one of these permanently unrequestable, with a reason that
+    # blamed the release for saying what the work is called.
+    test "a work whose own title is an anthology can still be requested" do
+      work = %{title: "The Norton Anthology of Poetry", authors: ["Margaret Ferguson"]}
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release("Margaret Ferguson - The Norton Anthology of Poetry (epub)"),
+                 work
+               )
+    end
+
+    test "a work whose own title contains 'Collection' can still be requested" do
+      work = %{title: "Collection Agency", authors: ["Some Author"]}
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("Some Author - Collection Agency (epub)"), work)
+    end
+
+    test "a pack still refuses when the request never mentioned a collection" do
+      work = %{title: "The Way of Kings", authors: ["Brandon Sanderson"]}
+
+      assert {:reject, :collection_ambiguous} =
+               BookScorer.evaluate(
+                 release("Brandon Sanderson - The Way of Kings (Stormlight Omnibus) (epub)"),
                  work
                )
     end

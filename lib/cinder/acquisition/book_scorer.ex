@@ -84,6 +84,12 @@ defmodule Cinder.Acquisition.BookScorer do
 
   @articles ~w(the a an le la les el los der die das)
 
+  # The single words in `BookParser`'s collection patterns. A work whose own title contains one of
+  # these is asking for something that legitimately reads as a collection, so the marker stops
+  # being evidence against the release. Multi-word patterns ("complete series", "Books 1-5") are
+  # deliberately absent: no single work is titled that.
+  @collection_words ~w(omnibus anthology collection boxset boxsets)
+
   # Leftover words that are release metadata rather than part of a work's identity. Kept small and
   # literal: every entry here is a word this scorer will ignore when deciding whether a release
   # names a DIFFERENT book, so a loose entry ("book", "novel") would re-admit the sequels the
@@ -113,6 +119,7 @@ defmodule Cinder.Acquisition.BookScorer do
           | :title_mismatch
           | :collection_ambiguous
           | :language_mismatch
+          | :wrong_protocol
           | :size_out_of_band
           | :blocked_term
 
@@ -135,6 +142,9 @@ defmodule Cinder.Acquisition.BookScorer do
       reasoning `Cinder.Acquisition.Language` documents applies. An explicitly *different*
       language is rejected.
     * `:blocked_terms` — case-insensitive substrings that reject the release outright.
+    * `:protocols` — the protocols with a configured download client (`[:torrent]`, `[:usenet]`,
+      or both). A release on any other protocol is rejected `:wrong_protocol` rather than offered
+      as a candidate that cannot be grabbed. Omitted ⇒ every protocol is acceptable.
 
   Rules are checked cheapest-and-most-decisive first, so the reason a caller renders is the most
   informative one available rather than whichever check happened to run first.
@@ -144,8 +154,9 @@ defmodule Cinder.Acquisition.BookScorer do
   def evaluate(%BookRelease{} = release, work, opts \\ []) do
     with :ok <- check_blocked(release, Keyword.get(opts, :blocked_terms) || []),
          {:ok, format} <- check_format(release),
+         :ok <- check_protocol(release, Keyword.get(opts, :protocols)),
          :ok <- check_author(release, Map.get(work, :authors) || []),
-         :ok <- check_collection(release),
+         :ok <- check_collection(release, work),
          :ok <- check_title(release, work),
          :ok <- check_language(release, Keyword.get(opts, :language)),
          :ok <- check_size(release) do
@@ -339,8 +350,34 @@ defmodule Cinder.Acquisition.BookScorer do
     |> Enum.flat_map(&tokens/1)
   end
 
-  defp check_collection(%BookRelease{collection?: true}), do: {:reject, :collection_ambiguous}
-  defp check_collection(%BookRelease{}), do: :ok
+  # A collection marker is evidence of ambiguity only when the REQUEST did not ask for one. Works
+  # whose own titles carry these words exist and are ordinary requests — "The Norton Anthology of
+  # Poetry", "The Complete Sherlock Holmes", "Collection Agency" — and an unconditional reject made
+  # every one of them permanently unrequestable, with a reason that blamed the release for saying
+  # what the work is called. So the marker is ignored when the wanted title carries the same word,
+  # and still refuses a pack that volunteers one the request never mentioned.
+  defp check_collection(%BookRelease{collection?: true, title: title}, work) do
+    wanted = work |> Map.fetch!(:title) |> tokens() |> MapSet.new()
+
+    if title |> tokens() |> Enum.any?(&(&1 in @collection_words and &1 in wanted)),
+      do: :ok,
+      else: {:reject, :collection_ambiguous}
+  end
+
+  defp check_collection(%BookRelease{}, _work), do: :ok
+
+  # The graceful-degradation guard `Cinder.Acquisition` applies on every video path: a release whose
+  # protocol has no configured download client can never be grabbed, so offering it as a candidate
+  # would strand the operator at the moment they picked it. `nil` protocols ⇒ no gate, matching
+  # `Cinder.Acquisition.release_verdict/3`, which also skips the check for an untagged release.
+  defp check_protocol(_release, nil), do: :ok
+  defp check_protocol(%BookRelease{protocol: nil}, _protocols), do: :ok
+
+  defp check_protocol(%BookRelease{protocol: protocol}, protocols) when is_list(protocols) do
+    if protocol in protocols, do: :ok, else: {:reject, :wrong_protocol}
+  end
+
+  defp check_protocol(%BookRelease{}, _protocols), do: :ok
 
   # No requested language ⇒ no gate. An untagged release passes a gate that IS set: a book release
   # rarely marks its language at all, and the marker's absence is not evidence of a wrong one.
