@@ -13,6 +13,8 @@ defmodule Cinder.Library.StageEngine do
   alias Cinder.Library
   alias Cinder.Library.ImportStage
 
+  require Library
+
   # link(2) errnos that mean "this dest can't be hardlinked to" — fall back to an atomic byte copy
   # rather than parking. `:exdev` = source and dest on different mounts. `:eperm`/`:eopnotsupp`/
   # `:enotsup` = a single mount whose filesystem has no hardlink support at all (FAT/exFAT on USB
@@ -20,9 +22,6 @@ defmodule Cinder.Library.StageEngine do
   # firing (issue #59). `:eperm` can also be a genuine permission error, but then the copy fails the
   # same way (`cp` can't open the dest) and the item still parks — a wasted copy attempt, not a
   # wrong import. Every other errno (`:enoent`, `:enospc`, …) is a real failure and propagates.
-  # Duplicated from `Cinder.Library`'s own copy (used there by `link_or_copy/3`) — tiny enough to
-  # keep as two independent copies rather than share a module for it.
-  @copy_fallback_errnos [:exdev, :eperm, :eopnotsupp, :enotsup]
   @exclusive_copy_fallback_errnos [:eperm, :eopnotsupp, :enotsup]
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
 
@@ -45,7 +44,7 @@ defmodule Cinder.Library.StageEngine do
       :ok ->
         {:ok, new_q, true}
 
-      {:error, errno} when errno in @copy_fallback_errnos ->
+      {:error, errno} when Library.copy_fallback_errno?(errno) ->
         # Fresh placement onto a filesystem that can't hardlink this source (cross-mount `:exdev`, or a
         # no-hardlink-support mount → `:eperm`/`:eopnotsupp`/`:enotsup`): copy the bytes in atomically
         # via replace/2 (link-or-copy into a unique temp on the dest fs, then rename). This is the

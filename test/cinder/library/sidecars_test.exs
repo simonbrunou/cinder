@@ -153,7 +153,16 @@ defmodule Cinder.Library.SidecarsTest do
 
   describe "real path-policy sinks" do
     setup do
-      keys = [:filesystem, :path_policy, :import_roots, :movies_library_path, :tv_library_path]
+      keys = [
+        :filesystem,
+        :filesystem_failure,
+        :filesystem_failures,
+        :path_policy,
+        :import_roots,
+        :movies_library_path,
+        :tv_library_path
+      ]
+
       saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
 
       Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
@@ -169,6 +178,94 @@ defmodule Cinder.Library.SidecarsTest do
       end)
 
       :ok
+    end
+
+    @tag :tmp_dir
+    test "cross-filesystem fallback copies a sidecar through the real path policy", %{
+      tmp_dir: tmp
+    } do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_sidecar_links(sidecar)
+
+      assert Sidecars.link(video, dest) == ["en"]
+      assert File.read!(sidecar_dest) == "subtitle"
+    end
+
+    @tag :tmp_dir
+    test "a mount with no hardlink support lands the sidecar through the exclusive copy", %{
+      tmp_dir: tmp
+    } do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      # No `source_contains` scope: FAT/exFAT/CIFS can't hardlink *anything*, so the temp-to-dest
+      # link fails too — the branch the :exdev test never reaches.
+      fail_all_links(:eopnotsupp)
+
+      assert Sidecars.link(video, dest) == ["en"]
+      assert File.read!(sidecar_dest) == "subtitle"
+      assert Path.wildcard(Path.join(Path.dirname(sidecar_dest), ".cinder-tmp-*")) == []
+    end
+
+    @tag :tmp_dir
+    test "an interrupted no-hardlink landing leaves no truncated sidecar behind", %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_all_links(:eopnotsupp)
+      # A pre-existing destination is the one case `cp_exclusive` refuses, standing in for any
+      # failed landing on a no-hardlink mount.
+      File.write!(sidecar_dest, "manual")
+
+      log = capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+
+      assert log =~ "sidecar link rejected: :eexist"
+
+      # The existing file is untouched and no staging temp survives — a failed landing never leaves
+      # a truncated .srt that later imports would :eexist-skip forever.
+      assert File.read!(sidecar_dest) == "manual"
+      assert Path.wildcard(Path.join(Path.dirname(sidecar_dest), ".cinder-tmp-*")) == []
+    end
+
+    @tag :tmp_dir
+    test "copy fallback preserves a sidecar created before landing", %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "download")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_sidecar_links(sidecar)
+      barrier(:cp, ".cinder-tmp-")
+
+      task = Task.async(fn -> Sidecars.link(video, dest) end)
+      {pid, ref, _path} = await_barrier(:cp)
+      File.write!(sidecar_dest, "manual")
+      send(pid, {ref, :continue})
+
+      log = capture_log(fn -> assert Task.await(task) == [] end)
+
+      assert log =~ "sidecar link rejected: :eexist"
+      assert File.read!(sidecar_dest) == "manual"
     end
 
     @tag :tmp_dir
@@ -256,6 +353,24 @@ defmodule Cinder.Library.SidecarsTest do
       owner: self(),
       operation: operation,
       contains: contains
+    })
+  end
+
+  defp fail_sidecar_links(sidecar) do
+    Application.put_env(:cinder, :filesystem_failure, %{
+      operation: :ln,
+      source_contains: sidecar,
+      reason: :exdev
+    })
+  end
+
+  # An unscoped `ln` failure: every hardlink fails, source-to-dest and temp-to-dest alike, the way
+  # a FAT/exFAT/CIFS mount behaves.
+  defp fail_all_links(reason) do
+    Application.put_env(:cinder, :filesystem_failure, %{
+      operation: :ln,
+      source_contains: "",
+      reason: reason
     })
   end
 

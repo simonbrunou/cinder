@@ -41,9 +41,9 @@ defmodule Cinder.Library do
   # `:enotsup` = a single mount whose filesystem has no hardlink support at all (FAT/exFAT on USB
   # drives, SMB/CIFS without Unix extensions, some FUSE), where `link()` fails without `:exdev` ever
   # firing (issue #59). `:eperm` can also be a genuine permission error, but then the copy fails the
-  # same way (`cp` can't open the dest) and the item still parks — a wasted copy attempt, not a
-  # wrong import. Every other errno (`:enoent`, `:enospc`, …) is a real failure and propagates.
-  @copy_fallback_errnos [:exdev, :eperm, :eopnotsupp, :enotsup]
+  # same way (`cp` can't open the dest) and the item still parks — a wasted copy attempt, not a wrong
+  # import. Every other errno propagates. A guard so `Cinder.Library.Sidecars` shares this one list.
+  defguard copy_fallback_errno?(errno) when errno in [:exdev, :eperm, :eopnotsupp, :enotsup]
   @standard_tv_bridged_schemes ~w(scene aired)
 
   # The video library kinds Cinder manages. `Cinder.LibraryKind` is the full library-kind registry;
@@ -461,7 +461,7 @@ defmodule Cinder.Library do
   end
 
   # Hardlink source -> target, falling back to a byte copy only when the dest filesystem can't be
-  # hardlinked to (@copy_fallback_errnos: cross-mount `:exdev`, or no hardlink support at all →
+  # hardlinked to (`copy_fallback_errno?/1`: cross-mount `:exdev`, or no hardlink support at all →
   # `:eperm`/`:eopnotsupp`/`:enotsup`). Every other ln error (`:eacces`, `:enoent`, `:enospc`, …) is a
   # real failure and propagates unchanged — a copy would fail the same way. Both the fresh placement
   # and the upgrade-replace path route the copy through here, so the :info fallback log lives at this
@@ -477,7 +477,7 @@ defmodule Cinder.Library do
 
   defp do_link_or_copy(source, target, root) do
     case fs().ln(source, target) do
-      {:error, errno} when errno in @copy_fallback_errnos ->
+      {:error, errno} when copy_fallback_errno?(errno) ->
         Logger.info(
           "hardlink unsupported (#{errno}); copying #{source} into #{Path.dirname(target)}"
         )

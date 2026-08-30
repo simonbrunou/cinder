@@ -77,9 +77,9 @@ work if you point the URL at one; it is untested.
 > 🔗 **Hardlinks.** Cinder hardlinks finished downloads into your library, so keep the library and
 > your download client's completed-downloads directory on the **same filesystem**. Across
 > filesystems (or on one that can't hardlink at all) the media file falls back to an atomic copy,
-> which costs a second full copy of every import; loose subtitle sidecars are hardlink-only, and
-> are logged and skipped when the link fails. The compose file keeps both under one `/media`
-> mount — details in the operating guide.
+> which costs a second full copy of every import; loose subtitle sidecars fall back to copying too,
+> and are logged and skipped only when placement still fails. The compose file keeps both under one
+> `/media` mount — details in the operating guide.
 
 ## Configuration
 
