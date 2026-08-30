@@ -13,6 +13,9 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   `search_tv/3` is the TV sibling: `type=tvsearch`, unioning a `{TvdbId:...}{Season:...}`
   token query with a free-text title + `{Season:...}` query (see `search_tv/3` for why
   the id query alone is not enough), reusing the same normalization.
+
+  `search_book/3` and `search_book_query/2` are the books siblings (`type=book` / `type=search`),
+  scoped to the e-book category by default.
   """
   @behaviour Cinder.Acquisition.Indexer
 
@@ -21,6 +24,16 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
 
   @default_base_url "http://localhost:9696"
   @max_response_bytes 4 * 1024 * 1024
+
+  # Newznab/Torznab standard category for Books/EBook. Deliberately NOT the 7000 Books parent,
+  # which also carries magazines (7010), comics (7030) and technical manuals (7040) — the roadmap
+  # requires starting from e-book category evidence rather than an unrestricted parent. A module
+  # attribute for the same reason `Cinder.Acquisition.Anime` hardcodes 5070: no operator has asked
+  # for a per-install override, and an unused settings key is a support burden.
+  @ebook_category 7020
+
+  @doc "The Newznab category the book searches are scoped to."
+  def ebook_category, do: @ebook_category
 
   @impl true
   def search(imdb_id) do
@@ -88,6 +101,57 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
 
   @impl true
   def search_tv_query(query, opts), do: search_query(query, "tvsearch", opts)
+
+  @doc """
+  Structured book search (`type=book`).
+
+  Prowlarr re-parses `{Author:...}`/`{Title:...}` brace tokens out of `query` into the Newznab
+  `author`/`title` request fields, exactly as it does for `{ImdbId:...}` on the movie path — see
+  `NewznabRequest.QueryToParams`'s `BookRegex`, which routes them to `BookSearchCriteria`. So the
+  structured search is still one `query` string, and an indexer that ignores the fields falls back
+  to matching the same text.
+
+  Results are tagged `:id_scoped`: the author/title pair is the strongest identity a book search
+  has (there is no book equivalent of a TVDB id in the Newznab book criteria), and it is scoped
+  rather than free text.
+  """
+  @impl true
+  def search_book(author, title, opts) do
+    case search_query(book_query(author, title), "book", categories(opts)) do
+      {:ok, releases} -> {:ok, tag_query_origin(releases, :id_scoped)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc """
+  Free-text book search (`type=search`).
+
+  Used for the ISBN probe and the `"Title Author"` fallback, neither of which maps onto the
+  structured book fields — an ISBN is not a title, and sending it as one asks the indexer to
+  match it against release names as a title string. Results are tagged `:free_text`.
+  """
+  @impl true
+  def search_book_query(query, opts) do
+    case search_query(query, "search", categories(opts)) do
+      {:ok, releases} -> {:ok, tag_query_origin(releases, :free_text)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp categories(opts), do: Keyword.put_new(opts, :categories, [@ebook_category])
+
+  # Both braces are removed before interpolation. Prowlarr's `BookRegex` captures with `[^{]+`,
+  # which stops at a `{` — so an embedded `{` would open a second token and let a crafted value
+  # choose its own field (`author`/`title`/`publisher`/`year`), while an embedded `}` ends the
+  # token early and leaves the rest as bare query text. Either way the search stops meaning what
+  # the caller asked. Dropping both is lossy but honest: no book title or author name carries a
+  # meaningful brace.
+  defp book_query(nil, title), do: "{Title:#{brace_safe(title)}}"
+
+  defp book_query(author, title),
+    do: "{Author:#{brace_safe(author)}} {Title:#{brace_safe(title)}}"
+
+  defp brace_safe(value), do: String.replace(value, ["{", "}"], "")
 
   # Prowlarr parses brace tokens out of the query (same syntax as the movie
   # `{ImdbId:...}` path). Prefer the TVDB id; fall back to a free-text title scoped

@@ -394,6 +394,27 @@ all-fetches-failed search as no results instead of an outage (#365, a B2b adapte
 
 **Product gate:** Book MVP.
 
+### Shipped as two slices
+
+B4a landed the decision layer: book indexer queries, the release parser, and the scorer. B4b owns
+the download intent, the poller, archive validation, and publication. See
+[`the B4a plan`](2026-08-30-books-b4a-ebook-release-search-and-scoring.md).
+
+Two notes from executing B4a:
+
+- **Automatic selection is gated by the absence of a function, not a flag.** This milestone's
+  "enable automatic choice only after corpus precision meets the B0 threshold" is enforced by
+  `Cinder.Acquisition.Books` exporting no `best_book_release/2`: there is no boolean a caller can
+  flip to reach automatic grabbing, and the slice that adds it is the one that must show the
+  measurement.
+- **The book scorer fails closed where the video scorer fails open.** `Cinder.Acquisition.Scorer`
+  deliberately lets an untagged source through ("a parser miss must never strand a grab"), because
+  an untagged video release is still playable. A book release of unknown format may be a PDF scan
+  or a DRM'd AZW, indistinguishable from an EPUB by size — so unknown format is a rejection
+  (`:format_unknown`), matching the contract's "unknown or contradictory formats fail closed to
+  manual review". This is the one place the books pipeline deliberately contradicts its video
+  sibling's rule.
+
 ---
 
 ## B5 — Monitoring, wanted state, author policies, and operations

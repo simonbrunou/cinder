@@ -50,6 +50,7 @@ defmodule Cinder.Books.Identity do
   require Logger
 
   alias Cinder.Books.Metadata
+  alias Cinder.Books.TitleFold
 
   @type resolution :: %{work: Metadata.work(), provider: atom(), evidence: map()}
 
@@ -69,7 +70,6 @@ defmodule Cinder.Books.Identity do
   #
   # Only `omnibus` has corpus support (`lord-of-the-rings`); the other two are unambiguous.
   @annotations ~w(omnibus ebook audiobook)
-  @articles ~w(the a an le la les el los der die das)
 
   @doc """
   Resolves `query` against the configured providers.
@@ -249,49 +249,14 @@ defmodule Cinder.Books.Identity do
     end
   end
 
-  # Fold to comparable tokens: NFD-decompose so "Misérables" matches "Miserables", drop everything
-  # that isn't a letter or digit, and split. (`Cinder.Acquisition` folds release titles the same
-  # way; that copy is private and tuned for scene naming, so books keeps its own.)
-  defp tokens(string) do
-    string
-    |> nfd()
-    |> String.downcase()
-    |> String.replace(~r/['’]/u, "")
-    |> String.replace(~r/[^\x00-\x7f]/u, "")
-    |> String.split(~r/[^a-z0-9]+/, trim: true)
-  end
+  # The fold, its lossy guard, and the article rule live in `Cinder.Books.TitleFold` — the scorer
+  # asks the same question of release names, and a second copy is how it once ended up with the
+  # fold but not the guard. See that module.
+  defp tokens(string), do: TitleFold.tokens(string)
 
-  # Folding to ASCII *discards* non-Latin script rather than failing on it, so a title that is
-  # only partly non-ASCII keeps just its Latin residue — "ノルウェイの森 1" and "海辺のカフカ 1"
-  # both key to "1", and a query for one returned the other with strategy `:title_and_contributor`
-  # and full confidence. Volume-numbered manga and light-novel rows are the realistic population.
-  #
-  # The `title == ""` check in `score/3` only catches a *total* loss; a partial one is no more
-  # trustworthy, so both are unresolved. Combining marks are excluded because they are exactly
-  # what the fold is meant to drop — "Les Misérables" is not lossy, "Straße" and "Война и мир"
-  # are. A properly Unicode-aware fold is the fix if the household ever needs these titles; a
-  # confident wrong work is not an acceptable placeholder for one.
-  defp lossy_fold?(string) do
-    string |> nfd() |> String.match?(~r/[^\x00-\x7f\x{0300}-\x{036F}]/u)
-  end
-
-  # NFD first, and not just for the diacritic fold: the regexes below raise on malformed UTF-8,
-  # and a garbled query must never raise out of a resolver the refresher calls in a loop.
-  # :unicode.characters_to_nfd_binary hands back the decodable prefix as {:error | :incomplete,
-  # ok_part, rest}, which is the most of the input that can be matched on at all.
-  defp nfd(string) do
-    case :unicode.characters_to_nfd_binary(string) do
-      binary when is_binary(binary) -> binary
-      {_kind, ok_part, _rest} -> ok_part
-    end
-  end
+  defp lossy_fold?(string), do: TitleFold.lossy?(string)
 
   # Drop a leading article before comparing — "The Little Prince" and Open Library's
   # "Little Prince" are the same work.
-  defp title_key(words), do: words |> drop_article() |> Enum.join(" ")
-
-  defp drop_article([article | rest]) when rest != [],
-    do: if(article in @articles, do: rest, else: [article | rest])
-
-  defp drop_article(words), do: words
+  defp title_key(words), do: words |> TitleFold.drop_article() |> Enum.join(" ")
 end
