@@ -131,12 +131,76 @@ defmodule Cinder.Acquisition.BookParser do
   @spec known_formats() :: [atom()]
   def known_formats, do: Enum.map(@formats, fn {_regex, format} -> format end) |> Enum.uniq()
 
+  # Formats are read from the TAG REGION, not the whole name — the same discipline `language/1`
+  # follows, and for the same reason. A book ABOUT a format carries the word in its title:
+  # "Matt Garrish - EPUB 3 Best Practices" was parsed `formats: [:epub]` on the strength of its
+  # own title, so an untagged release of it claimed to be an EPUB. Worse, `@edition_annotations`
+  # then discounted "epub" as metadata in the title remainder, so the book could not be matched
+  # even when the request named it exactly.
+  #
+  # A bare extension suffix ("Author - Title.epub") has no bracket to sit in, so the trailing
+  # region covers it; `tag_region/1` treats an anchor in the leading third as a prefix, which is
+  # what keeps "[EPUB] Author - Title" working.
   defp formats(name) do
+    region = format_region(name)
+
     @formats
     |> Enum.flat_map(fn {regex, format} ->
-      if Regex.match?(regex, name), do: [format], else: []
+      if Regex.match?(regex, region), do: [format], else: []
     end)
     |> Enum.uniq()
+  end
+
+  # `tag_region/1` starts AFTER the format anchor, because for a language the format word itself
+  # carries nothing. Formats need the anchor included, so this is the tag region plus the anchored
+  # token: bracketed groups, and the tail from the first format token onwards ("Beloved.epub",
+  # "... EPUB-GROUP"). A leading format prefix ("[EPUB] Author - Title") is already covered by the
+  # bracketed half, so it is not scanned twice.
+  defp format_region(name) do
+    bracketed = bracketed_region(name)
+
+    bracketed <> " " <> anchored_region(name)
+  end
+
+  # From the first format token to the end — but ONLY when everything following it is itself
+  # metadata. A format tag is the last thing a release name says, or is followed by other tags
+  # ("Beloved.epub", "...Retail.EPUB.eBook-BitBook"). A format word trailed by ordinary words is
+  # the TITLE talking about a format — "Matt Garrish - EPUB 3 Best Practices" — and reading it as
+  # a tag both invents a format the release never claimed and makes the book unmatchable, since
+  # the scorer discounts format words as metadata in the title remainder.
+  defp anchored_region(name) do
+    case Regex.run(@format_anchor, name, return: :index) do
+      [{start, length} | _rest] ->
+        region = binary_part(name, start, byte_size(name) - start)
+        tail = binary_part(name, start + length, byte_size(name) - start - length)
+
+        if tag_tail?(tail), do: region, else: ""
+
+      nil ->
+        ""
+    end
+  end
+
+  # Every word after the format token is a tag, a group/tracker name, or punctuation — never
+  # ordinary prose. Numbers count as tags ("EPUB 3" is the exception this exists to catch, but a
+  # bare year or volume number after a tag is normal), so the discriminator is alphabetic words
+  # that are not themselves recognized metadata.
+  defp tag_tail?(tail) do
+    # A trailing scene group ("-BitBook", "-GRP") is an arbitrary name by definition, so it can
+    # never be on a known-word list. It is recognized by POSITION instead — last, after a
+    # hyphen — and dropped before the remaining words are checked.
+    tail
+    |> String.replace(~r/-[A-Za-z0-9]+\s*$/, " ")
+    |> String.split(~r/[^A-Za-z]+/, trim: true)
+    |> Enum.all?(&tag_word?/1)
+  end
+
+  defp tag_word?(word) do
+    Regex.match?(@format_anchor, word) or Regex.match?(@retail, word) or
+      Regex.match?(@abridged, word) or String.match?(word, ~r/^(?:un)?abridged$/i) or
+      word =~ ~r/^(?:ebook|book|retail|scan|ocr|v\d+)$/i or
+      Enum.any?(@languages, fn {regex, _tag} -> Regex.match?(regex, word) end) or
+      String.length(word) <= 2
   end
 
   defp language(name) do
@@ -161,12 +225,15 @@ defmodule Cinder.Acquisition.BookParser do
   # a name with no tag region at all is all title, and reading a language out of a title is the
   # failure this whole split exists to prevent.
   defp tag_region(name) do
-    bracketed =
-      ~r/[\[\(\{]([^\]\)\}]*)[\]\)\}]/
-      |> Regex.scan(name, capture: :all_but_first)
-      |> Enum.map_join(" ", &hd/1)
+    bracketed = bracketed_region(name)
 
     bracketed <> " " <> trailing_region(name, bracketed)
+  end
+
+  defp bracketed_region(name) do
+    ~r/[\[\(\{]([^\]\)\}]*)[\]\)\}]/
+    |> Regex.scan(name, capture: :all_but_first)
+    |> Enum.map_join(" ", &hd/1)
   end
 
   # Everything after the first format token — the region where a bare (unbracketed) tag like

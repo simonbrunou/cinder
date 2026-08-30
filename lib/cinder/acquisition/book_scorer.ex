@@ -133,6 +133,7 @@ defmodule Cinder.Acquisition.BookScorer do
           | :wrong_protocol
           | :title_unfoldable
           | :abridged_edition
+          | :format_contradictory
           | :size_out_of_band
           | :blocked_term
 
@@ -266,13 +267,22 @@ defmodule Cinder.Acquisition.BookScorer do
     normalized != "" and String.contains?(down, normalized)
   end
 
+  # The contract fails closed on "unknown OR CONTRADICTORY formats". A multi-format bundle of
+  # ACCEPTED formats is not a contradiction — "(epub, azw3)" is one release offering two readable
+  # copies, and taking the preferred one is right. But an accepted format advertised alongside a
+  # REJECTED one is a contradiction: "[EPUB/PDF]" may be a bundle, or a PDF scan whose uploader
+  # tagged it EPUB, and nothing in the name says which. Size cannot separate them either. Taking
+  # the EPUB on faith is exactly the guessed import the contract forbids, so it is refused for
+  # operator review with its own reason.
   defp check_format(%BookRelease{formats: formats}) do
     formats = formats || []
+    {accepted, rejected} = Enum.split_with(formats, &(&1 in @accepted_formats))
 
-    case Enum.find(@accepted_formats, &(&1 in formats)) do
-      nil when formats == [] -> {:reject, :format_unknown}
-      nil -> {:reject, :format_rejected}
-      format -> {:ok, format}
+    cond do
+      formats == [] -> {:reject, :format_unknown}
+      accepted == [] -> {:reject, :format_rejected}
+      rejected != [] -> {:reject, :format_contradictory}
+      true -> {:ok, Enum.find(@accepted_formats, &(&1 in accepted))}
     end
   end
 

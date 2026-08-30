@@ -55,6 +55,26 @@ defmodule Cinder.Acquisition.BookScorerTest do
     end
   end
 
+  describe "contradictory formats" do
+    # The contract fails closed on "unknown OR CONTRADICTORY formats". An accepted format beside a
+    # rejected one may be a bundle or a mis-tagged scan, and nothing in the name says which.
+    test "an accepted format advertised beside a rejected one is refused" do
+      assert {:reject, :format_contradictory} =
+               BookScorer.evaluate(release("Toni Morrison - Beloved (epub) (pdf)"), @beloved)
+
+      assert {:reject, :format_contradictory} =
+               BookScorer.evaluate(release("Toni Morrison - Beloved [EPUB/PDF]"), @beloved)
+    end
+
+    test "two ACCEPTED formats are a bundle, not a contradiction" do
+      assert {:accept, %{format: :epub}} =
+               BookScorer.evaluate(release("Toni Morrison - Beloved (epub, azw3)"), @beloved)
+
+      assert {:accept, %{format: :epub}} =
+               BookScorer.evaluate(release("Toni Morrison - Beloved (epub) (mobi)"), @beloved)
+    end
+  end
+
   describe "author evidence" do
     test "requires the author's tokens to be present" do
       assert {:reject, :author_mismatch} =

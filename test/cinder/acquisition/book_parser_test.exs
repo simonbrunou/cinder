@@ -40,6 +40,27 @@ defmodule Cinder.Acquisition.BookParserTest do
     end
   end
 
+  describe "a format word in the TITLE is not a format tag" do
+    # A book about a format carries the word in its own title. Reading it as a tag invents a
+    # format the release never claimed AND makes the book unmatchable, because the scorer
+    # discounts format words as metadata in the title remainder.
+    test "a title naming a format claims no format" do
+      assert %{formats: []} = BookParser.parse("Matt Garrish - EPUB 3 Best Practices")
+      assert %{formats: []} = BookParser.parse("Jane Doe - PDF Forms Explained")
+    end
+
+    test "the same book WITH a real tag still parses the tag" do
+      assert %{formats: [:epub]} = BookParser.parse("Matt Garrish - EPUB 3 Best Practices (epub)")
+    end
+
+    test "a real trailing tag run is still a tag region" do
+      assert %{formats: [:epub]} =
+               BookParser.parse("Frank.Herbert-Dune.2019.Retail.EPUB.eBook-BitBook")
+
+      assert %{formats: [:epub]} = BookParser.parse("Toni Morrison - Beloved.epub")
+    end
+  end
+
   describe "comic containers" do
     test "CBR and CBZ are distinct formats" do
       assert %{formats: [:cbr]} = BookParser.parse("Author - Title (cbr)")
