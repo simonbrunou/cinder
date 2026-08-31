@@ -95,19 +95,20 @@ defmodule Cinder.Download.BookPoller do
       # nothing to import. Treated as a failed download rather than an import failure — the same
       # call the movie poller makes.
       {:ok, %{state: :completed}} ->
-        fail_download(grab, :missing_content_path)
+        retry_or_fail(grab, :missing_content_path)
 
       {:ok, %{state: :error} = status} ->
-        fail_download(grab, Map.get(status, :reason) || :download_failed)
+        retry_or_fail(grab, Map.get(status, :reason) || :download_failed)
 
       {:ok, status} ->
         track_or_reap(grab, status)
 
       # The job is gone from the client — a household member deleted it, or the client's history
-      # rolled over. NOT transient: no future tick can find it, and with no search pass in this
-      # slice the target would sit `:monitored` holding a grab forever, refusing any new grab.
+      # rolled over. Terminal, not transient: no future tick can find it, and with no search pass
+      # in this slice the target would sit `:monitored` holding a grab forever, refusing any new
+      # grab. Bounded rather than immediate, though — see `retry_or_fail/2`.
       {:error, :not_found} ->
-        fail_download(grab, :download_missing)
+        retry_or_fail(grab, :download_missing)
 
       # A genuine transient client/network error must not drop a live download: leave the grab
       # alone and re-derive next tick.
@@ -198,6 +199,39 @@ defmodule Cinder.Download.BookPoller do
          StallReaper.reap?(grab.updated_at, download_progress_at, status, DateTime.utc_now()),
        do: fail_download(grab, :stalled),
        else: :ok
+  end
+
+  # The download-phase failure budget, on the same `import_attempts` column the import phase uses.
+  # One counter across both phases is the movie poller's own arrangement (`poller.ex:216-221`), and
+  # the two cannot interleave here: a grab is in the download phase only while `content_path` is
+  # nil, and `Books.Grabs.mark_downloaded/2` resets the counter on the edge between them — the
+  # download→import reset `Catalog.Grabs` documents at the same boundary.
+  #
+  # Bounded rather than immediate because every verdict routed here is derived from a SUCCESSFUL
+  # client response, not from a transport failure: all four adapters return `{:error, :not_found}`
+  # for an empty 200 queue/history lookup, which is exactly what a client reports for the moment a
+  # job moves between queue and history. Acting on the first sighting made a routine blip
+  # destructive — `fail_download/2` removes the remote job with `delete_files: true` — and held a
+  # target whose bytes were fine. All three video sites bound the same verdicts
+  # (`Poller.fail_download/2`, `Poller.retry_or_revert/2`, `TvPoller.retry_or_park/2`).
+  #
+  # `:blocked_content` and `:stalled` deliberately do NOT come through here: the first is a
+  # deterministic fact about the file list the client already gave us, and the second has a
+  # multi-hour window built into it. Both siblings act on those immediately too.
+  defp retry_or_fail(%BookGrab{} = grab, reason) do
+    attempts = (grab.import_attempts || 0) + 1
+
+    if attempts >= @max_attempts do
+      fail_download(grab, reason)
+    else
+      Logger.info(
+        "book grab #{grab.id} download failing (attempt #{attempts}/#{@max_attempts}): " <>
+          "#{inspect(reason)}"
+      )
+
+      Books.Grabs.bump_attempts(grab, attempts)
+      :ok
+    end
   end
 
   # The client says this download is dead. Hold the target FIRST, then drop the grab, then ask

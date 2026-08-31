@@ -83,16 +83,33 @@ defmodule Cinder.Download.BookPollerTest do
       assert Repo.all(BookGrab) == []
     end
 
+    test "one miss does not destroy a live download", ctx do
+      %{grab: grab, target: target} = downloading(ctx, "book.epub")
+
+      # Every adapter derives `:not_found` from a SUCCESSFUL empty queue/history lookup, which is
+      # what a client reports for the moment a job moves between the two. Acting on the first
+      # sighting made that blip destructive: `fail_download/2` removes the remote job with
+      # `delete_files: true`.
+      #
+      # No `remove` expectation: reaching the client would fail this test.
+      expect(Cinder.Download.ClientMock, :status, fn "remote-1" -> {:error, :not_found} end)
+
+      capture_log(fn -> poll!() end)
+
+      assert Repo.reload!(target).status == :monitored
+      assert Repo.reload!(grab).import_attempts == 1
+    end
+
     test "a download the client no longer knows about is not left in flight forever", ctx do
       %{target: target} = downloading(ctx, "book.epub")
 
-      # The household deleted the job at the client, or its history rolled over. Nothing about
-      # this is transient — no later tick can find it — and with no search pass in this slice the
-      # target would hold its grab forever and refuse any new one.
-      expect(Cinder.Download.ClientMock, :status, fn "remote-1" -> {:error, :not_found} end)
+      # The household deleted the job at the client, or its history rolled over. Sustained, this
+      # is terminal — no later tick can find it, and with no search pass in this slice the target
+      # would hold its grab forever and refuse any new one. It takes the shared budget first.
+      stub(Cinder.Download.ClientMock, :status, fn "remote-1" -> {:error, :not_found} end)
       expect(Cinder.Download.ClientMock, :remove, fn "remote-1", _opts -> :ok end)
 
-      poll!()
+      capture_log(fn -> for _tick <- 1..10, do: poll!() end)
 
       target = Repo.reload!(target)
       assert target.status == :held
@@ -119,13 +136,13 @@ defmodule Cinder.Download.BookPollerTest do
     test "a dead download parks the target as held with the client's reason", ctx do
       %{target: target, grab: grab} = downloading(ctx, "book.epub")
 
-      expect(Cinder.Download.ClientMock, :status, fn "remote-1" ->
+      stub(Cinder.Download.ClientMock, :status, fn "remote-1" ->
         {:ok, %{state: :error, progress: 0.1, reason: "unpacking failed"}}
       end)
 
       expect(Cinder.Download.ClientMock, :remove, fn "remote-1", _opts -> :ok end)
 
-      capture_log(fn -> poll!() end)
+      capture_log(fn -> for _tick <- 1..10, do: poll!() end)
 
       target = Repo.reload!(target)
       assert target.status == :held
@@ -249,13 +266,19 @@ defmodule Cinder.Download.BookPollerTest do
     test "a completed download with no content path holds", ctx do
       %{target: target} = downloading(ctx, "book.epub")
 
-      expect(Cinder.Download.ClientMock, :status, fn "remote-1" ->
+      # A client that says "done" but names no payload may just not have published the path yet,
+      # so this takes the download budget before it becomes terminal.
+      stub(Cinder.Download.ClientMock, :status, fn "remote-1" ->
         {:ok, %{state: :completed, progress: 1.0, content_path: nil}}
       end)
 
-      capture_log(fn -> poll!() end)
+      expect(Cinder.Download.ClientMock, :remove, fn "remote-1", _opts -> :ok end)
 
-      assert Repo.reload!(target).status == :held
+      capture_log(fn -> for _tick <- 1..10, do: poll!() end)
+
+      target = Repo.reload!(target)
+      assert target.status == :held
+      assert target.hold_reason == "missing_content_path"
     end
   end
 
