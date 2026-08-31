@@ -141,6 +141,19 @@ defmodule Cinder.Download.BookIntentTest do
       refute intent.release["download_url"]
       assert is_binary(intent.release["download_url_ciphertext"])
     end
+
+    test "a release with no download URL is refused before any client call" do
+      target = monitored_target()
+
+      # No ClientMock expectation: reaching the client at all would fail this test. A book
+      # release that survived scoring can still carry a nil URL (an indexer result missing its
+      # link), and `reserve_intent/1`'s binary-URL guard is what stops it becoming a reservation.
+      urlless = %BookRelease{release() | download_url: nil}
+
+      assert {:error, :unsupported_download_url} = Download.grab_book_target(target, urlless)
+      assert Repo.all(Intent) == []
+      assert Repo.all(BookGrab) == []
+    end
   end
 
   defp release do
