@@ -26,6 +26,7 @@ defmodule Cinder.Download.Cleaner do
   """
   import Ecto.Query
 
+  alias Cinder.Books.BookGrab
   alias Cinder.Catalog.{Grab, Movie}
   alias Cinder.Download
   alias Cinder.Download.Intent
@@ -86,13 +87,23 @@ defmodule Cinder.Download.Cleaner do
     )
   end
 
-  # A movie or grab still pointing at the download owns it even with no intent row left — the
-  # intent is deleted once the pipeline has taken ownership, so this is the second half of "ours".
+  # A movie, grab, or book grab still pointing at the download owns it even with no intent row
+  # left — the intent is deleted once the pipeline has taken ownership, so this is the second half
+  # of "ours".
+  #
+  # `book_grabs` matters here for the same reason `grabs` does, and more sharply: a book intent is
+  # completed at SUBMISSION time (`reconcile_book_target/1` hands ownership to the grab as soon as
+  # the remote id exists), so from that moment the only thing claiming a live book download is its
+  # `book_grabs` row. Omitting it made every in-flight book download an orphan the next tick, and
+  # `reapable?/1` removes a `:downloading` orphan with `delete_files: true`.
   defp claimed_ids(ids) do
     movie_ids = Repo.all(from m in Movie, where: m.download_id in ^ids, select: m.download_id)
     grab_ids = Repo.all(from g in Grab, where: g.download_id in ^ids, select: g.download_id)
 
-    MapSet.new(movie_ids ++ grab_ids)
+    book_ids =
+      Repo.all(from g in BookGrab, where: g.download_id in ^ids, select: g.download_id)
+
+    MapSet.new(movie_ids ++ grab_ids ++ book_ids)
   end
 
   defp reap(client, entry) do

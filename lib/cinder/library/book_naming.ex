@@ -45,14 +45,16 @@ defmodule Cinder.Library.BookNaming do
   # `Path.basename/1` already drops any directory part, so a release-supplied `../../etc/passwd`
   # cannot survive as a path. It does NOT drop a bare `..`, and a dots-only name would become a
   # segment that climbs out of the library root, so the same `sanitize/1` runs on the basename
-  # too. A name that sanitizes away entirely keeps its extension and gets a neutral stem rather
-  # than collapsing into the parent directory. Belt and braces: `PathPolicy.destination/3` vets
+  # too. A name that sanitizes away entirely — or down to a LEADING DOT, which would publish a
+  # hidden file the consumer's scanner skips (`???.epub` sanitizes to `.epub`) — keeps its
+  # extension and gets a neutral stem instead. Belt and braces: `PathPolicy.destination/3` vets
   # the joined path again before anything is written.
   defp file_name(source) do
     basename = Path.basename(source)
 
     case sanitize(basename) do
       "" -> "book" <> fallback_extension(basename)
+      "." <> _rest -> "book" <> fallback_extension(basename)
       name -> name
     end
   end

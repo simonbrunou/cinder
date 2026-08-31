@@ -120,6 +120,17 @@ defmodule Cinder.Library.BookNamingTest do
       assert String.starts_with?(dest, @root <> "/")
     end
 
+    test "a name that sanitizes to a leading dot does not become a hidden file" do
+      # `?` is legal on Linux, so `???.epub` is a real file that passes the extension gate and
+      # reaches here. It sanitizes to `.epub` — non-empty, so the empty-name fallback did not
+      # fire, and the book published as a dotfile that Booklore/Calibre scanners skip: the target
+      # goes :available with a library file the consumer cannot see.
+      work = work("The Dispossessed", ["Ursula K. Le Guin"])
+
+      assert BookNaming.book_dest(work, "/d/???.epub", @root) ==
+               "/library/books/Ursula K. Le Guin/The Dispossessed/book.epub"
+    end
+
     test "an all-illegal title falls back rather than collapsing the path" do
       work = work("///", ["Ursula K. Le Guin"])
 

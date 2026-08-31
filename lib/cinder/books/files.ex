@@ -53,7 +53,25 @@ defmodule Cinder.Books.Files do
     |> Repo.insert()
     |> case do
       {:ok, file} -> {:ok, file}
-      {:error, changeset} -> {:error, insert_reason(changeset)}
+      {:error, changeset} -> insert_conflict(target, attrs, changeset)
+    end
+  end
+
+  # A duplicate `book_files.path` is only a conflict when the row belongs to a DIFFERENT target.
+  #
+  # When it is this target's own row, the import already succeeded and is being replayed — a
+  # crash or a swallowed error between the commit and the grab delete leaves the grab with its
+  # `content_path`, and the next tick re-imports the same source to the same destination.
+  # Returning `:book_file_exists` there parked a target that is genuinely `:available`, with its
+  # file on disk and in the catalog, at `:held`. Treating the replay as success is what makes the
+  # import idempotent one layer above `StageEngine`'s same-inode branch.
+  defp insert_conflict(target, attrs, changeset) do
+    with true <- Keyword.has_key?(changeset.errors, :path),
+         %BookFile{book_target_id: owner} = existing <- Repo.get_by(BookFile, path: attrs.path),
+         true <- owner == target.id do
+      {:ok, existing}
+    else
+      _different_owner_or_other_error -> {:error, insert_reason(changeset)}
     end
   end
 
@@ -61,15 +79,30 @@ defmodule Cinder.Books.Files do
     if Keyword.has_key?(errors, :path), do: :book_file_exists, else: changeset
   end
 
-  # The guarded target write, inline rather than through `Books.transition_target/3`: that
-  # function broadcasts on success, and a broadcast inside this transaction would announce a state
-  # a rollback can still undo. `publish/2` below sends it once, after commit.
+  # The guarded target write, inline rather than through `Books.transition_target/3`.
+  #
+  # Two reasons, and the second is load-bearing. First, that function broadcasts on success, and a
+  # broadcast inside this transaction would announce a state a rollback can still undo —
+  # `publish/2` below sends it once, after commit. Second, and why `publish: false` is not enough:
+  # `BookTargetTransition.guarded/4` implements its guard with `Repo.rollback(:stale_status)`
+  # inside its own `Repo.transaction`, which aborts the ENCLOSING transaction too (its own
+  # comments say exactly this — "the only safe response to this error is to roll that transaction
+  # back"). Calling it here turns a status mismatch into a poisoned connection rather than a
+  # handleable error, and this function must be able to accept a second status.
+  #
+  # `:available` is accepted alongside `:monitored` so an import REPLAY (see `insert_conflict/3`)
+  # converges: the target is already in the state this write wants, and demanding `:monitored`
+  # there is what turned a replay into a `:held` demotion. An unmonitored or held target still
+  # refuses — those are an operator's more recent decision.
+  #
+  # The `book_targets_profile_integrity` trigger cannot fire here: it guards `profile_id` and
+  # `media_kind`, and neither is in the `set`.
   defp arm_target(%BookTarget{id: id}) do
     now = DateTime.utc_now(:second)
 
     case Repo.update_all(
            from(t in BookTarget,
-             where: t.id == ^id and t.status == :monitored,
+             where: t.id == ^id and t.status in [:monitored, :available],
              select: t
            ),
            set: [status: :available, hold_reason: nil, updated_at: now]

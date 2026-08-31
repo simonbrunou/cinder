@@ -177,7 +177,14 @@ defmodule Cinder.Download.BookPollerTest do
       # Automatic upgrades and conversion are parked for the first release: the existing bytes win.
       assert File.read!(dest) == "the operator's own copy"
       assert Repo.reload!(target).status == :available
-      assert Repo.get_by!(BookFile, book_target_id: target.id).path == dest
+
+      file = Repo.get_by!(BookFile, book_target_id: target.id)
+      assert file.path == dest
+
+      # The recorded size describes the file that is ACTUALLY at the destination, not the source
+      # that was refused. Recording the source's size here would have the catalog claim a size
+      # the published file does not have.
+      assert file.size == byte_size("the operator's own copy")
     end
 
     test "a path another target already claims is refused without destroying the file", ctx do
@@ -213,6 +220,42 @@ defmodule Cinder.Download.BookPollerTest do
       second = Repo.reload!(second)
       assert second.status == :held
       assert second.hold_reason == "book_file_exists"
+    end
+
+    test "a replayed import converges instead of demoting an available target", ctx do
+      %{target: target, books: books, release_dir: release_dir, grab: grab} =
+        downloading(ctx, "The Dispossessed.epub")
+
+      complete_download(release_dir)
+      poll!()
+
+      dest =
+        Path.join([books, "Ursula K. Le Guin", "The Dispossessed", "The Dispossessed.epub"])
+
+      assert Repo.reload!(target).status == :available
+      assert %BookFile{id: file_id} = Repo.get_by!(BookFile, book_target_id: target.id)
+
+      # Simulate a crash (or a swallowed Repo error) between the committed catalog write and the
+      # grab delete: the import succeeded, but the grab survives with its content_path, so the
+      # next tick re-imports the same source to the same destination.
+      {:ok, _replayed} =
+        Books.Grabs.create(target.id, grab.download_id, :torrent, grab.release_title)
+
+      complete_download(release_dir)
+      poll!()
+
+      # The replay is a no-op, NOT a `book_file_exists` conflict: the row that "conflicts" is this
+      # target's own. Demoting a target whose file is on disk and in the catalog to :held was the
+      # bug.
+      target = Repo.reload!(target)
+      assert target.status == :available
+      assert is_nil(target.hold_reason)
+
+      assert [%BookFile{id: ^file_id}] = Repo.all(BookFile)
+      assert File.read!(dest) == "book bytes"
+
+      # The grab is consumed, so the replay does not loop forever.
+      assert Repo.all(BookGrab) == []
     end
   end
 

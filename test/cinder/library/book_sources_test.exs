@@ -177,6 +177,19 @@ defmodule Cinder.Library.BookSourcesTest do
       assert {:error, :unsafe_source} = BookSources.resolve(link)
     end
 
+    test "a payload with two different books sharing one name is refused", %{downloads: downloads} do
+      # Both files fold to the stem "foundation", which the multi-format collapse used to treat
+      # as one book in two formats — but both are `.epub`, so one of two genuinely different
+      # files would have been published, chosen by walk order.
+      dir = Path.join(downloads, "Foundation.Pack")
+      File.mkdir_p!(Path.join(dir, "Retail"))
+      File.mkdir_p!(Path.join(dir, "Proof"))
+      File.write!(Path.join([dir, "Retail", "Foundation.epub"]), "retail")
+      File.write!(Path.join([dir, "Proof", "Foundation.epub"]), "proof")
+
+      assert {:error, :ambiguous_book_files} = BookSources.resolve(dir)
+    end
+
     test "a path outside the import roots is refused", %{tmp_dir: tmp} do
       outside = Path.join(tmp, "elsewhere.epub")
       File.write!(outside, "book")

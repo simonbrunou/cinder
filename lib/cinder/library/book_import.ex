@@ -71,8 +71,25 @@ defmodule Cinder.Library.BookImport do
     # `safe_destination/2` inside the staging call still vets the full path afterwards, so this
     # cannot create a directory outside the library root that staging would then accept.
     with :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, rollback, _placed?} <- StageEngine.stage_book_place(source, dest, root) do
+         {:ok, rollback, placed?} <- StageEngine.stage_book_place(source, dest, root),
+         {:ok, size} <- recorded_size(placed?, size, dest) do
       record(grab, target, dest, format, size, rollback)
+    end
+  end
+
+  # The size of the file that is actually AT the destination.
+  #
+  # `placed?: false` means the destination already held a different file and the contract's
+  # "no automatic upgrade or conversion" rule kept it. Recording the source's size there would
+  # describe bytes that were never published — the row would claim a size the file on disk does
+  # not have. Re-stat the destination instead; the source's size is only right when the source
+  # is what landed.
+  defp recorded_size(true, source_size, _dest), do: {:ok, source_size}
+
+  defp recorded_size(false, _source_size, dest) do
+    case fs().lstat(dest) do
+      {:ok, %{size: size}} -> {:ok, size}
+      {:error, reason} -> {:error, reason}
     end
   end
 

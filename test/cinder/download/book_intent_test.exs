@@ -108,14 +108,20 @@ defmodule Cinder.Download.BookIntentTest do
 
       # The second target's submission resolves to the SAME remote id — the client deduped it.
       # Adopting it would have two targets importing from one payload.
+      #
+      # No `remove` expectation, deliberately: the refusal must NOT touch the client. That remote
+      # job is the first target's live download, and removing it (the client's `remove` deletes
+      # files) would destroy a download this intent never owned. An unexpected `remove` call
+      # raises here, which is the assertion.
       expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
       expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "shared-remote"} end)
-      expect(Cinder.Download.ClientMock, :remove, fn "shared-remote", _opts -> :ok end)
 
-      assert {:error, :stale_target} = Download.grab_book_target(second, release())
+      assert {:error, :download_intent_busy} = Download.grab_book_target(second, release())
 
-      assert [%BookGrab{book_target_id: owner}] = Repo.all(BookGrab)
+      # The first target keeps its grab, and the losing intent left nothing behind.
+      assert [%BookGrab{book_target_id: owner, download_id: "shared-remote"}] = Repo.all(BookGrab)
       assert owner == first.id
+      assert Repo.all(Intent) == []
     end
   end
 

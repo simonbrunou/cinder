@@ -93,10 +93,22 @@ defmodule Cinder.Library.BookSources do
 
   defp pick([]), do: {:error, :no_book_file}
 
+  # The multi-candidate collapse exists for ONE case: the same book offered in several formats
+  # (`Title.epub` + `Title.mobi`), where taking the preferred format is right.
+  #
+  # Both conditions are required. A shared stem alone is not enough, because `Library.safe_walk/1`
+  # recurses: `Retail/Foundation.epub` and `Proof/Foundation.epub` share a stem while being two
+  # different files, and picking one by `format_rank/1` would break the tie arbitrarily on walk
+  # order — the silent wrong answer this module refuses to produce. Requiring the formats to be
+  # distinct as well means a duplicated format is always `:ambiguous_book_files`.
   defp pick(candidates) do
-    case Enum.uniq(Enum.map(candidates, &stem/1)) do
-      [_one] -> candidates |> Enum.min_by(&format_rank/1) |> validated()
-      _several -> {:error, :ambiguous_book_files}
+    stems = candidates |> Enum.map(&stem/1) |> Enum.uniq()
+    formats = candidates |> Enum.map(&format/1) |> Enum.uniq()
+
+    if length(stems) == 1 and length(formats) == length(candidates) do
+      candidates |> Enum.min_by(&format_rank/1) |> validated()
+    else
+      {:error, :ambiguous_book_files}
     end
   end
 

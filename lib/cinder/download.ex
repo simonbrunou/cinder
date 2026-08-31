@@ -751,9 +751,15 @@ defmodule Cinder.Download do
         complete_intent(intent, grab)
 
       %BookGrab{} ->
-        # The remote job belongs to a DIFFERENT target's grab. Never adopt it: two targets would
+        # The remote job belongs to a DIFFERENT target's grab. Never adopt it — two targets would
         # then import from one payload and the loser would report a file it does not own.
-        cleanup_failed_ownership(intent, :stale_target)
+        #
+        # Delete this intent WITHOUT touching the client: `cleanup_failed_ownership/2` would run
+        # `client.remove(remote_id, delete_files: true)` on a download the other target owns and
+        # is still using, destroying its bytes. This intent never created that job (it found it
+        # already claimed), so it has nothing of its own to clean up.
+        delete_intent(intent)
+        {:error, :download_intent_busy}
 
       nil ->
         create_book_grab(intent)
@@ -767,9 +773,12 @@ defmodule Cinder.Download do
 
       # Lost the insert race, or an operator grabbed a different release for this target between
       # this intent's reservation and now. Either way the target already has its one in-flight
-      # download; this intent's remote job is a duplicate and must be removed, not orphaned.
+      # download, and that download's remote job is the SAME id this intent holds (the race is on
+      # the grab row, not the client), so removing it would destroy the winner's download. Drop
+      # the intent and let the winning grab own the job.
       {:error, :book_grab_exists} ->
-        cleanup_failed_ownership(intent, :download_intent_busy)
+        delete_intent(intent)
+        {:error, :download_intent_busy}
 
       {:error, _changeset} ->
         cleanup_failed_ownership(intent, :stale_target)
