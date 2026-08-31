@@ -118,6 +118,7 @@ defmodule Cinder.Application do
       [
         Cinder.Download.Poller,
         Cinder.Download.TvPoller,
+        Cinder.Download.BookPoller,
         Cinder.Catalog.Refresher,
         Cinder.Books.Refresher,
         Cinder.Catalog.Rehunter,

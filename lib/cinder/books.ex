@@ -144,6 +144,11 @@ defmodule Cinder.Books do
     Repo.all(from t in BookTarget, where: t.work_id == ^id, order_by: [asc: t.media_kind])
   end
 
+  @doc "One target by id, with its work and author credits preloaded, or nil."
+  @spec get_target(integer()) :: BookTarget.t() | nil
+  def get_target(id),
+    do: Repo.one(from t in BookTarget, where: t.id == ^id, preload: [work: [credits: :author]])
+
   @doc """
   Target statuses for `work_ids`, keyed `{work_id, media_kind}` — the badge lookup, without the
   full work preload a badge has no use for.

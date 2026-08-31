@@ -398,7 +398,8 @@ all-fetches-failed search as no results instead of an outage (#365, a B2b adapte
 
 B4a landed the decision layer: book indexer queries, the release parser, and the scorer. B4b owns
 the download intent, the poller, archive validation, and publication. See
-[`the B4a plan`](2026-08-30-books-b4a-ebook-release-search-and-scoring.md).
+[`the B4a plan`](2026-08-30-books-b4a-ebook-release-search-and-scoring.md) and
+[`the B4b plan`](2026-08-31-books-b4b-ebook-download-and-publication.md).
 
 Two notes from executing B4a:
 
@@ -414,6 +415,20 @@ Two notes from executing B4a:
   (`:format_unknown`), matching the contract's "unknown or contradictory formats fail closed to
   manual review". This is the one place the books pipeline deliberately contradicts its video
   sibling's rule.
+
+Two scope decisions from executing B4b:
+
+- **A book target has no `:downloading` status.** The parity contract locks `book_targets.status`
+  to `unmonitored | monitored | available | held`, so transient download state lives in a separate
+  `book_grabs` row and the target stays `:monitored` for the duration. Widening the contract's
+  status vocabulary to mirror the movie lifecycle would have been a silent change to a locked
+  boundary.
+- **Archives fail closed rather than being extracted.** B4 asks for bounded entry count, expanded
+  size, and traversal/symlink defense on archives. Doing that safely needs a real extractor
+  (`.rar` shells out to `unrar`; zip needs zip-bomb and traversal defenses) with its own tests, so
+  `.rar`/`.zip`/`.7z` currently get an exact `:unsupported_archive` refusal — what
+  `Cinder.Library.MovieSources` already does. `.epub` is itself a zip but is imported opaquely, so
+  nothing is ever expanded. Archive extraction remains open for a later slice.
 
 ---
 

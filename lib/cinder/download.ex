@@ -13,8 +13,9 @@ defmodule Cinder.Download do
   import Ecto.Query
 
   require Logger
-  alias Cinder.{Acquisition, Catalog, Library, Notifier, Repo, Settings, Vault}
-  alias Cinder.Acquisition.{AnimePreferences, Release}
+  alias Cinder.{Acquisition, Books, Catalog, Library, Notifier, Repo, Settings, Vault}
+  alias Cinder.Acquisition.{AnimePreferences, BookRelease, Release}
+  alias Cinder.Books.{BookGrab, BookTarget}
   alias Cinder.Catalog.{Grab, MediaProfile, Movie}
   alias Cinder.Download.{Intent, IntentEpisode}
 
@@ -176,6 +177,43 @@ defmodule Cinder.Download do
     end
   end
 
+  @doc """
+  Durably submits an operator-chosen book release for `target` and creates its grab.
+
+  A `%BookRelease{}` is converted to the `%Release{}` the intent journal and every download client
+  already speak: the client only ever needs a title, a URL and a protocol, and giving the
+  behaviour a second release struct would fork four adapters to carry fields none of them read.
+  The book-specific evidence stays in the books tables, not in the downloader.
+
+  No anime policy marker: `ensure_policy_marker/2` resolves an Anime handling profile, and
+  `Cinder.LibraryKind` gives book kinds `handlings: [:standard]` only. Passing a book target
+  through it would ask the video policy engine a question with no meaning here.
+  """
+  def grab_book_target(%BookTarget{} = target, %BookRelease{} = release) do
+    case Repo.get_by(Intent, kind: :book_target, target_id: target.id) do
+      nil ->
+        reserve_and_reconcile(:book_target, target.id, [], book_release(release))
+
+      %Intent{status: :cleanup_pending} ->
+        {:error, :download_intent_busy}
+
+      intent ->
+        reconcile_matching_intent(intent, book_release(release), [])
+    end
+  end
+
+  # A book release carries no mapping or policy snapshot: both are video-pipeline evidence (an
+  # episode-numbering decision and an Anime language policy). Left nil, `Intent`'s validators
+  # accept them and the reservation's equality checks pass unchanged.
+  defp book_release(%BookRelease{} = release) do
+    %Release{
+      title: release.title,
+      download_url: release.download_url,
+      download_url_origin: release.download_url_origin,
+      protocol: release.protocol
+    }
+  end
+
   defp reconcile_matching_intent(intent, release, episode_ids, opts \\ []) do
     if same_release?(intent, release) and same_episode_assignment?(intent, episode_ids) and
          operator_initiated?(intent) == Keyword.get(opts, :operator_initiated, false) and
@@ -189,7 +227,9 @@ defmodule Cinder.Download do
       decrypt_download_url(intent.release) == {:ok, release.download_url}
   end
 
-  defp same_episode_assignment?(%Intent{kind: :movie}, []), do: true
+  defp same_episode_assignment?(%Intent{kind: kind}, []) when kind in [:movie, :book_target],
+    do: true
+
   defp same_episode_assignment?(intent, ids), do: Enum.sort(intent.episode_ids) == Enum.sort(ids)
 
   defp reserve_and_reconcile(kind, target_id, episode_ids, release, opts \\ []) do
@@ -328,6 +368,10 @@ defmodule Cinder.Download do
   end
 
   defp do_reconcile_valid_intent(%Intent{kind: :movie} = intent), do: reconcile_movie(intent)
+
+  defp do_reconcile_valid_intent(%Intent{kind: :book_target} = intent),
+    do: reconcile_book_target(intent)
+
   defp do_reconcile_valid_intent(%Intent{} = intent), do: reconcile_episodes(intent)
 
   defp reject_invalid_episode_intent(%Intent{remote_id: nil} = intent, reason) do
@@ -644,6 +688,19 @@ defmodule Cinder.Download do
     if Repo.get(Movie, movie_id), do: :stale_target, else: :stale_entry
   end
 
+  # `:download_intent_busy` when the target is still monitored: the only way a monitored target
+  # is ineligible is that it already holds a grab, and "busy" is what a caller can act on — a
+  # manual-search panel wants to say "a download is already in flight", not "stale target".
+  # A non-monitored target genuinely moved (unmonitored, held, or made available), and a missing
+  # row is a stale entry.
+  defp ineligible_reason(%Intent{kind: :book_target, target_id: target_id}) do
+    case Repo.get(BookTarget, target_id) do
+      nil -> :stale_entry
+      %BookTarget{status: :monitored} -> :download_intent_busy
+      %BookTarget{} -> :stale_target
+    end
+  end
+
   defp ineligible_reason(%Intent{}), do: :stale_target
 
   defp submission_target_active?(%Intent{kind: :movie, target_id: movie_id}) do
@@ -653,6 +710,17 @@ defmodule Cinder.Download do
 
       nil ->
         false
+    end
+  end
+
+  # A book target is submittable only while `:monitored` and holding no grab. The grab check is
+  # what stops a reserved-but-unsubmitted intent from adding a second download after an operator
+  # grabbed something else for the same target; `:monitored` is what stops one whose target was
+  # unmonitored, held, or already made available mid-flight.
+  defp submission_target_active?(%Intent{kind: :book_target, target_id: target_id}) do
+    case Repo.get(BookTarget, target_id) do
+      %BookTarget{status: :monitored} -> is_nil(Books.Grabs.for_target(target_id))
+      _held_unmonitored_available_or_missing -> false
     end
   end
 
@@ -673,6 +741,40 @@ defmodule Cinder.Download do
 
   defp arbitrate_at_import?(%Intent{release: release}),
     do: is_map(release) and release["arbitrate_at_import"] == true
+
+  # A book target's owner row is its grab, created here on first reconcile. The grab's unique
+  # `book_target_id` index is the double-grab fence: a second tick racing this one loses the
+  # insert and adopts the winner's row rather than submitting a second download.
+  defp reconcile_book_target(%Intent{remote_id: remote_id, target_id: target_id} = intent) do
+    case Books.Grabs.by_download(remote_id, intent.protocol) do
+      %BookGrab{book_target_id: ^target_id} = grab ->
+        complete_intent(intent, grab)
+
+      %BookGrab{} ->
+        # The remote job belongs to a DIFFERENT target's grab. Never adopt it: two targets would
+        # then import from one payload and the loser would report a file it does not own.
+        cleanup_failed_ownership(intent, :stale_target)
+
+      nil ->
+        create_book_grab(intent)
+    end
+  end
+
+  defp create_book_grab(%Intent{remote_id: remote_id, target_id: target_id} = intent) do
+    case Books.Grabs.create(target_id, remote_id, intent.protocol, intent.release["title"]) do
+      {:ok, grab} ->
+        complete_intent(intent, grab)
+
+      # Lost the insert race, or an operator grabbed a different release for this target between
+      # this intent's reservation and now. Either way the target already has its one in-flight
+      # download; this intent's remote job is a duplicate and must be removed, not orphaned.
+      {:error, :book_grab_exists} ->
+        cleanup_failed_ownership(intent, :download_intent_busy)
+
+      {:error, _changeset} ->
+        cleanup_failed_ownership(intent, :stale_target)
+    end
+  end
 
   defp reconcile_movie(%Intent{remote_id: remote_id, target_id: movie_id} = intent) do
     case Repo.get(Movie, movie_id) do

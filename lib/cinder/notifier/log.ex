@@ -40,6 +40,9 @@ defmodule Cinder.Notifier.Log do
 
   def notify({:movie_available, movie}), do: log("movie available: #{movie.title}")
 
+  def notify({:book_available, target}),
+    do: log("book available: #{book_title(target)} (#{target.media_kind})")
+
   def notify({:movie_failed, movie, reason}),
     do: log("movie failed: #{movie.title} (#{inspect(reason)})")
 
@@ -86,6 +89,11 @@ defmodule Cinder.Notifier.Log do
        do: "#{request.title} (season #{number})"
 
   defp subject(request), do: request.title
+
+  # The target's own work title, defensively: the poller reloads the target before notifying, but
+  # a work deleted in that window would otherwise raise inside a notification.
+  defp book_title(%{work: %{title: title}}) when is_binary(title), do: title
+  defp book_title(%{id: id}), do: "book target ##{id}"
 
   defp log(msg), do: Logger.info("[notifier] " <> msg)
 end
