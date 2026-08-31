@@ -28,6 +28,7 @@ defmodule Cinder.Library.BookImport do
 
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget}
+  alias Cinder.Download
   alias Cinder.Library
   alias Cinder.Library.{BookNaming, BookSources, StageEngine}
   alias Cinder.Settings
@@ -120,8 +121,7 @@ defmodule Cinder.Library.BookImport do
   defp commit(grab, file, rollback) do
     case StageEngine.commit(rollback) do
       :ok ->
-        Books.Grabs.delete(grab)
-        {:ok, file}
+        finish(grab, file)
 
       # The file row is committed and the bytes are at the destination; only the journal's
       # bookkeeping failed. Reporting an error here would re-import a file the catalog already
@@ -132,9 +132,18 @@ defmodule Cinder.Library.BookImport do
           "book file #{file.id} imported but its stage did not commit: #{inspect(reason)}"
         )
 
-        Books.Grabs.delete(grab)
-        {:ok, file}
+        finish(grab, file)
     end
+  end
+
+  # Post-commit, best-effort, in this order: honour `move_on_import` (usenet only — the movie
+  # path's rule, so a seeding torrent is never touched), then drop the grab. `remove_after_import/3`
+  # never raises and always returns `:ok`, so a client that has already evicted the job cannot
+  # strand the grab row.
+  defp finish(grab, file) do
+    Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
+    Books.Grabs.delete(grab)
+    {:ok, file}
   end
 
   defp rollback(rollback, reason) do

@@ -127,7 +127,7 @@ defmodule Cinder.Library.StageEngine do
                stage_new(source, dest, root, %{}, BookSources.accepted_extensions()),
              do: {:ok, rollback, placed?}
 
-      # Something already occupies the destination, and it is kept either way:
+      # A REGULAR FILE already occupies the destination, and it is kept either way:
       #
       # - same inode+device ⇒ this exact file is already published (a re-run after a crash between
       #   placement and the catalog write), so the import is idempotent;
@@ -137,9 +137,16 @@ defmodule Cinder.Library.StageEngine do
       #
       # Both journal a no-op so the caller's commit/rollback path is uniform, and both report
       # `placed?: false` — no fresh bytes landed.
-      {:ok, _existing} ->
+      {:ok, %File.Stat{type: :regular}} ->
         with {:ok, _quality, rollback, placed?} <- stage_noop(dest, root, %{}),
              do: {:ok, rollback, placed?}
+
+      # Anything else at the destination — a directory, a symlink, a device node — is not a book
+      # this import can adopt. Recording it would put a `book_files` row (and an `:available`
+      # target) behind a path that is not a readable book, and the consumer would find a
+      # directory where the catalog promised a file. Refuse and let the target hold.
+      {:ok, %File.Stat{type: type}} ->
+        {:error, {:unexpected_destination_type, type}}
 
       {:error, _reason} = error ->
         error

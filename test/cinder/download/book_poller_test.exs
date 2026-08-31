@@ -187,6 +187,24 @@ defmodule Cinder.Download.BookPollerTest do
       assert file.size == byte_size("the operator's own copy")
     end
 
+    test "a directory at the destination is refused, not recorded as a book", ctx do
+      %{target: target, books: books, release_dir: release_dir} =
+        downloading(ctx, "The Dispossessed.epub")
+
+      # Something already occupies the exact destination path, but it is a DIRECTORY. Adopting it
+      # would publish an `:available` target whose file row points at something the consumer
+      # cannot read.
+      dest_dir = Path.join([books, "Ursula K. Le Guin", "The Dispossessed"])
+      File.mkdir_p!(Path.join(dest_dir, "The Dispossessed.epub"))
+
+      complete_download(release_dir)
+      poll!()
+
+      assert Repo.all(BookFile) == []
+      assert File.dir?(Path.join(dest_dir, "The Dispossessed.epub"))
+      assert Repo.reload!(target).status == :monitored
+    end
+
     test "a path another target already claims is refused without destroying the file", ctx do
       # Two distinct works whose author/title fold to the SAME destination path. The second
       # import must lose the `book_files.path` unique index and roll its stage back — and that
