@@ -25,6 +25,9 @@ defmodule Cinder.Library.Filesystem do
   @callback rmdir(dir :: String.t()) :: :ok | {:error, term()}
   @callback rm_rf(path :: String.t()) :: {:ok, [String.t()]} | {:error, File.posix(), String.t()}
   @callback read(path :: String.t()) :: {:ok, binary()} | {:error, term()}
+  @doc "Reads at most `bytes` from the START of a file — for format-signature checks."
+  @callback read_prefix(path :: String.t(), bytes :: pos_integer()) ::
+              {:ok, binary()} | {:error, term()}
   @callback write(path :: String.t(), content :: iodata()) :: :ok | {:error, term()}
   @callback chmod(path :: String.t(), mode :: non_neg_integer()) :: :ok | {:error, term()}
   @callback write_exclusive(path :: String.t(), content :: iodata()) :: :ok | {:error, term()}

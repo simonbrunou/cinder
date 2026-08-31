@@ -69,9 +69,14 @@ defmodule Cinder.Library.BookImport do
 
     # The author/title folders are Cinder's to create, and `StageEngine` assumes the destination
     # directory exists (the movie and episode paths `mkdir_p` before staging for the same reason).
-    # `safe_destination/2` inside the staging call still vets the full path afterwards, so this
-    # cannot create a directory outside the library root that staging would then accept.
-    with :ok <- fs().mkdir_p(Path.dirname(dest)),
+    #
+    # The containment check has to come BEFORE the mkdir, not just inside the staging call after
+    # it: if `books/Author` is a symlink pointing outside the library, `mkdir_p` would create
+    # `outside/Title` and only then would staging reject the path — the refusal would be correct
+    # but a directory outside the root would already exist. `PathPolicy.destination/3` lstats
+    # every component, so a symlinked ancestor fails here and nothing is created.
+    with {:ok, _vetted} <- BookSources.safe_destination(Path.dirname(dest), root),
+         :ok <- fs().mkdir_p(Path.dirname(dest)),
          {:ok, rollback, placed?} <- StageEngine.stage_book_place(source, dest, root),
          {:ok, size} <- recorded_size(placed?, size, dest) do
       record(grab, target, dest, format, size, rollback)
@@ -136,13 +141,20 @@ defmodule Cinder.Library.BookImport do
     end
   end
 
-  # Post-commit, best-effort, in this order: honour `move_on_import` (usenet only — the movie
-  # path's rule, so a seeding torrent is never touched), then drop the grab. `remove_after_import/3`
-  # never raises and always returns `:ok`, so a client that has already evicted the job cannot
-  # strand the grab row.
+  # Post-commit, best-effort. ORDER MATTERS: delete the grab first, then honour `move_on_import`.
+  #
+  # The reverse order has a crash window that demotes a valid import. `remove_after_import/3`
+  # deletes the source payload; a crash between that and the grab delete leaves an `:available`
+  # target, a good `book_files` row, and a surviving grab whose `content_path` no longer exists.
+  # The next tick re-imports it, fails `:enoent` ten times, and holds a target that is genuinely
+  # available. Deleting the grab first inverts the failure: a crash then leaves the source on
+  # disk, which the download client's own retention handles and no Cinder state contradicts.
+  #
+  # `move_on_import` is usenet-only inside `remove_after_import/3` (the movie path's rule), so a
+  # seeding torrent is never touched, and it never raises.
   defp finish(grab, file) do
-    Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
     Books.Grabs.delete(grab)
+    Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
     {:ok, file}
   end
 

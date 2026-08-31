@@ -52,6 +52,10 @@ defmodule Cinder.Books.BookGrab do
     |> check_constraint(:download_protocol, name: :book_grabs_download_protocol_valid)
     |> foreign_key_constraint(:book_target_id)
     |> unique_constraint(:book_target_id)
+    |> unique_constraint([:download_id, :download_protocol],
+      name: :book_grabs_download_id_download_protocol_index,
+      error_key: :download_id
+    )
   end
 
   # Mirrors `Cinder.Catalog.Grab`: the progress clock advances on real forward motion or on the

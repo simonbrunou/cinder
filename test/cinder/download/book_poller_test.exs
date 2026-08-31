@@ -22,6 +22,13 @@ defmodule Cinder.Download.BookPollerTest do
   setup :set_mox_global
   setup :verify_on_exit!
 
+  setup do
+    # The in-flight content gate asks the client what files the job will deliver. Default to a
+    # clean payload; the blocked-content test overrides this with its own expectation.
+    stub(Cinder.Download.ClientMock, :files, fn _id -> {:ok, ["The Dispossessed.epub"]} end)
+    :ok
+  end
+
   @moduletag :tmp_dir
 
   describe "advance_downloading" do
@@ -43,10 +50,34 @@ defmodule Cinder.Download.BookPollerTest do
 
       assert file.path == expected
       assert file.format == :epub
-      assert File.read!(expected) == "book bytes"
+      assert File.read!(expected) == epub_bytes()
 
       # The grab is the transient row: it exists only while a download is in flight.
       refute Repo.get(BookGrab, grab.id)
+    end
+
+    test "a payload carrying blocked content is refused mid-download", ctx do
+      %{target: target} = downloading(ctx, "book.epub")
+
+      # The client reports the job will deliver an executable alongside the book. Vetting has to
+      # happen HERE, during the download: `BookSources` silently filters non-book files at import
+      # time, so the book would otherwise publish and the blocked payload never be reported.
+      stub(Cinder.Download.ClientMock, :files, fn _id ->
+        {:ok, ["The Dispossessed.epub", "setup.exe"]}
+      end)
+
+      expect(Cinder.Download.ClientMock, :status, fn "remote-1" ->
+        {:ok, %{state: :downloading, progress: 0.5, speed: 1_000}}
+      end)
+
+      expect(Cinder.Download.ClientMock, :remove, fn "remote-1", _opts -> :ok end)
+
+      poll!()
+
+      target = Repo.reload!(target)
+      assert target.status == :held
+      assert target.hold_reason == "blocked_content"
+      assert Repo.all(BookGrab) == []
     end
 
     test "progress is recorded while the download is still running", ctx do
@@ -168,14 +199,14 @@ defmodule Cinder.Download.BookPollerTest do
       dest_dir = Path.join([books, "Ursula K. Le Guin", "The Dispossessed"])
       File.mkdir_p!(dest_dir)
       dest = Path.join(dest_dir, "The Dispossessed.epub")
-      File.write!(dest, "the operator's own copy")
+      File.write!(dest, epub_bytes() <> "operator")
 
       complete_download(release_dir)
 
       poll!()
 
       # Automatic upgrades and conversion are parked for the first release: the existing bytes win.
-      assert File.read!(dest) == "the operator's own copy"
+      assert File.read!(dest) == epub_bytes() <> "operator"
       assert Repo.reload!(target).status == :available
 
       file = Repo.get_by!(BookFile, book_target_id: target.id)
@@ -184,7 +215,7 @@ defmodule Cinder.Download.BookPollerTest do
       # The recorded size describes the file that is ACTUALLY at the destination, not the source
       # that was refused. Recording the source's size here would have the catalog claim a size
       # the published file does not have.
-      assert file.size == byte_size("the operator's own copy")
+      assert file.size == byte_size(epub_bytes() <> "operator")
     end
 
     test "a directory at the destination is refused, not recorded as a book", ctx do
@@ -203,6 +234,26 @@ defmodule Cinder.Download.BookPollerTest do
       assert Repo.all(BookFile) == []
       assert File.dir?(Path.join(dest_dir, "The Dispossessed.epub"))
       assert Repo.reload!(target).status == :monitored
+
+      # Ten more ticks: the attempt budget runs out and the target must HOLD with a readable
+      # reason. Regression — the refusal reason is a TUPLE, and formatting it with `to_string/1`
+      # raised `Protocol.UndefinedError` inside the hold. `isolate/2` swallowed that raise, so the
+      # grab neither held nor cleared and every later tick re-raised forever. A single-tick
+      # assertion cannot see this: an isolated raise leaves exactly the same state as a refusal.
+      #
+      # `stub`, not `expect`: once the hold lands the grab is deleted, so the remaining ticks find
+      # no work and never reach the client. Counting calls would assert the loop's shape rather
+      # than its outcome.
+      stub(Cinder.Download.ClientMock, :status, fn "remote-1" ->
+        {:ok, %{state: :completed, progress: 1.0, content_path: release_dir}}
+      end)
+
+      for _tick <- 1..10, do: poll!()
+
+      target = Repo.reload!(target)
+      assert target.status == :held
+      assert target.hold_reason =~ "unexpected_destination_type"
+      assert Repo.all(BookGrab) == []
     end
 
     test "a path another target already claims is refused without destroying the file", ctx do
@@ -218,19 +269,19 @@ defmodule Cinder.Download.BookPollerTest do
       dest =
         Path.join([books, "Ursula K. Le Guin", "The Dispossessed", "The Dispossessed.epub"])
 
-      assert File.read!(dest) == "book bytes"
+      assert File.read!(dest) == epub_bytes()
       assert Repo.reload!(first).status == :available
 
       # A second target for an identically-named work by the same author.
       %{target: second, release_dir: second_dir} =
         downloading(ctx, "The Dispossessed.epub", "remote-2")
 
-      File.write!(Path.join(second_dir, "The Dispossessed.epub"), "a different edition")
+      File.write!(Path.join(second_dir, "The Dispossessed.epub"), epub_bytes())
       complete_download(second_dir, "remote-2")
       poll!()
 
       # The first target's file is untouched, and still the only row for that path.
-      assert File.read!(dest) == "book bytes"
+      assert File.read!(dest) == epub_bytes()
       assert [%BookFile{book_target_id: owner}] = Repo.all(BookFile)
       assert owner == first.id
 
@@ -270,7 +321,7 @@ defmodule Cinder.Download.BookPollerTest do
       assert is_nil(target.hold_reason)
 
       assert [%BookFile{id: ^file_id}] = Repo.all(BookFile)
-      assert File.read!(dest) == "book bytes"
+      assert File.read!(dest) == epub_bytes()
 
       # The grab is consumed, so the replay does not loop forever.
       assert Repo.all(BookGrab) == []
@@ -319,7 +370,7 @@ defmodule Cinder.Download.BookPollerTest do
   defp build_target(%{downloads: downloads, books: books}, _ctx, filename, remote_id) do
     release_dir = Path.join(downloads, "release-#{remote_id}")
     File.mkdir_p!(release_dir)
-    File.write!(Path.join(release_dir, filename), "book bytes")
+    File.write!(Path.join(release_dir, filename), epub_bytes())
 
     profile = ebook_profile(books)
 
@@ -356,6 +407,9 @@ defmodule Cinder.Download.BookPollerTest do
         profile
     end
   end
+
+  # A genuine ZIP local-file header — what BookSources' signature check requires of an EPUB.
+  defp epub_bytes, do: <<"PK", 3, 4>> <> String.duplicate("\0", 96)
 
   defp real_book_library(tmp) do
     downloads = Path.join(tmp, "downloads")

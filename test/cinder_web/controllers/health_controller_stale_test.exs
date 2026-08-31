@@ -7,7 +7,7 @@ defmodule CinderWeb.HealthControllerStaleTest do
   """
   use CinderWeb.ConnCase, async: false
 
-  alias Cinder.Download.{Poller, TvPoller}
+  alias Cinder.Download.{BookPoller, Poller, TvPoller}
 
   setup do
     original_start_poller = Application.get_env(:cinder, :start_poller, true)
@@ -23,7 +23,7 @@ defmodule CinderWeb.HealthControllerStaleTest do
   end
 
   defp erase_stamps do
-    for module <- [Poller, TvPoller], key <- [:last_run, :started_at] do
+    for module <- [Poller, TvPoller, BookPoller], key <- [:last_run, :started_at] do
       :persistent_term.erase({module, key})
     end
   end
@@ -31,6 +31,7 @@ defmodule CinderWeb.HealthControllerStaleTest do
   test "returns 200 when every enabled poller has ticked recently", %{conn: conn} do
     :persistent_term.put({Poller, :last_run}, DateTime.utc_now())
     :persistent_term.put({TvPoller, :last_run}, DateTime.utc_now())
+    :persistent_term.put({BookPoller, :last_run}, DateTime.utc_now())
 
     conn = get(conn, ~p"/healthz")
 
@@ -43,6 +44,7 @@ defmodule CinderWeb.HealthControllerStaleTest do
     now = DateTime.utc_now()
     :persistent_term.put({Poller, :started_at}, now)
     :persistent_term.put({TvPoller, :started_at}, now)
+    :persistent_term.put({BookPoller, :started_at}, now)
 
     conn = get(conn, ~p"/healthz")
 
@@ -62,7 +64,9 @@ defmodule CinderWeb.HealthControllerStaleTest do
   } do
     :persistent_term.put({Poller, :started_at}, DateTime.add(DateTime.utc_now(), -1_000, :second))
     :persistent_term.put({TvPoller, :started_at}, DateTime.utc_now())
+    :persistent_term.put({BookPoller, :started_at}, DateTime.utc_now())
     :persistent_term.put({TvPoller, :last_run}, DateTime.utc_now())
+    :persistent_term.put({BookPoller, :last_run}, DateTime.utc_now())
 
     conn = get(conn, ~p"/healthz")
 
@@ -75,6 +79,7 @@ defmodule CinderWeb.HealthControllerStaleTest do
     stale_at = DateTime.add(DateTime.utc_now(), -1_000, :second)
     :persistent_term.put({Poller, :last_run}, stale_at)
     :persistent_term.put({TvPoller, :last_run}, DateTime.utc_now())
+    :persistent_term.put({BookPoller, :last_run}, DateTime.utc_now())
 
     conn = get(conn, ~p"/healthz")
 

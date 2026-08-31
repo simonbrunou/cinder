@@ -762,7 +762,13 @@ defmodule Cinder.Download do
         {:error, :download_intent_busy}
 
       nil ->
-        create_book_grab(intent)
+        # Revalidate before taking ownership. The eligibility check at submission time is not
+        # enough: an intent can persist its remote id, crash before reconciling, and be picked up
+        # after an operator unmonitored or held the target — creating a grab for a target nobody
+        # is waiting on. `submission_target_active?/1` re-reads it now.
+        if submission_target_active?(intent),
+          do: create_book_grab(intent),
+          else: cleanup_ineligible_intent(intent)
     end
   end
 

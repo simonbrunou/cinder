@@ -59,6 +59,18 @@ defmodule Cinder.Library.BookSources do
   def safe_source(path), do: Cinder.Library.safe_source_file(path, accepted_extensions())
 
   @doc """
+  Vets the destination DIRECTORY of a book import before it is created.
+
+  Separate from the containment check inside staging, and earlier than it: if `books/Author` is a
+  symlink pointing outside the library, `mkdir_p` would create `outside/Title` and only then would
+  staging reject the path. The refusal would be correct but the outside-root directory would
+  already exist.
+  """
+  @spec safe_destination(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  def safe_destination(path, root),
+    do: Cinder.Library.path_policy().destination(path, root, filesystem: fs())
+
+  @doc """
   Resolves `path` — a completed download's file or directory — to `{:ok, source, format}`.
 
   `format` is the accepted format atom, so the caller records what it actually imported rather
@@ -113,8 +125,37 @@ defmodule Cinder.Library.BookSources do
   end
 
   defp validated(path) do
-    with {:ok, source} <- safe_source(path), do: {:ok, source, format(source)}
+    with {:ok, source} <- safe_source(path),
+         format = format(source),
+         :ok <- verify_magic(source, format) do
+      {:ok, source, format}
+    end
   end
+
+  # The extension says what the file CLAIMS to be; the first bytes say what it is. Without this
+  # the allow-list was a filename-suffix check: an ELF or PE renamed `book.epub` passed every
+  # containment and extension gate, published into the library, and marked the target available.
+  #
+  # Positive identification, not executable-blocklisting: each accepted format has a documented
+  # signature, so anything that is not recognisably that format is refused rather than trying to
+  # enumerate every hostile file type. EPUB is a ZIP (`PK\x03\x04`); MOBI/AZW3 carry `BOOKMOBI`
+  # and `TPZ3`/`MOBI` type-creator fields at byte 60 of the PalmDB header.
+  defp verify_magic(path, format) do
+    case fs().read_prefix(path, 68) do
+      {:ok, prefix} -> if magic?(prefix, format), do: :ok, else: {:error, :format_mismatch}
+      # A file whose first bytes cannot be read is not one to publish on trust.
+      {:error, _reason} -> {:error, :format_mismatch}
+    end
+  end
+
+  defp magic?(<<"PK", 3, 4, _rest::binary>>, :epub), do: true
+
+  defp magic?(<<_head::binary-size(60), "BOOKMOBI", _rest::binary>>, format)
+       when format in [:mobi, :azw3],
+       do: true
+
+  defp magic?(<<_head::binary-size(60), "TPZ3", _rest::binary>>, :azw3), do: true
+  defp magic?(_prefix, _format), do: false
 
   # The format preference order is the scorer's, by index — one definition of "epub beats mobi"
   # rather than a second list here that could drift from the one releases are scored on.
@@ -131,6 +172,8 @@ defmodule Cinder.Library.BookSources do
 
   defp accepted_file?(path),
     do: String.downcase(Path.extname(path)) in accepted_extensions()
+
+  defp fs, do: Application.fetch_env!(:cinder, :filesystem)
 
   # Normalized so `Title.epub` and `Title.mobi` collapse to one book while `Book One.epub` and
   # `Book Two.epub` stay two. Separators and case are noise; the words are not.

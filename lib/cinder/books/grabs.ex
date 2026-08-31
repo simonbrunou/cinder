@@ -15,9 +15,10 @@ defmodule Cinder.Books.Grabs do
   @doc """
   Creates the in-flight grab row for a target.
 
-  Returns `{:error, :book_grab_exists}` when the target already has one — the unique
-  `book_target_id` index is what makes a repeated poll tick unable to double-grab, so a conflict
-  is an expected outcome to report, not an exception to raise.
+  Returns `{:error, :book_grab_exists}` when the target already has one, or when the remote
+  download is already owned by another target's grab — the two unique indexes are what make a
+  repeated poll tick unable to double-grab and two targets unable to adopt one remote job, so a
+  conflict is an expected outcome to report, not an exception to raise.
   """
   @spec create(integer(), String.t(), atom(), String.t() | nil) ::
           {:ok, BookGrab.t()} | {:error, :book_grab_exists | Ecto.Changeset.t()}
@@ -39,7 +40,9 @@ defmodule Cinder.Books.Grabs do
   end
 
   defp conflict_reason(%Ecto.Changeset{errors: errors} = changeset) do
-    if Keyword.has_key?(errors, :book_target_id), do: :book_grab_exists, else: changeset
+    if Keyword.has_key?(errors, :book_target_id) or Keyword.has_key?(errors, :download_id),
+      do: :book_grab_exists,
+      else: changeset
   end
 
   @doc "The grab for a target, or nil."

@@ -32,6 +32,13 @@ defmodule Cinder.Repo.Migrations.CreateBookGrabsAndFiles do
     # double-grab: the second insert fails rather than producing a second client submission.
     create unique_index(:book_grabs, [:book_target_id])
 
+    # One OWNER per remote download. The target index above does not cover this: two different
+    # targets submitting the same release get the same infohash back from the client, both see no
+    # grab for their own target, and both insert — then both import the same payload and the
+    # loser records a file it does not own. `by_download/2` is a read and cannot fence a race, so
+    # the exclusion has to be in the schema.
+    create unique_index(:book_grabs, [:download_id, :download_protocol])
+
     # One imported asset. `edition_id` is nullable ON PURPOSE: the contract's File boundary belongs
     # to an edition, but it also forbids resolving identity from "a title, ISBN, ASIN, path, or
     # filename alone", and a release name usually cannot name an edition. A null is the contract's

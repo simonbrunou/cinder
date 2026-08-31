@@ -113,6 +113,8 @@ defmodule Cinder.Test.BarrierFilesystem do
   defdelegate rm_rf(path), to: Disk
   @impl true
   defdelegate read(path), to: Disk
+  @impl true
+  defdelegate read_prefix(path, bytes), to: Disk
 
   @impl true
   def write(path, content) do
