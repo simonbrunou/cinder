@@ -190,6 +190,28 @@ defmodule Cinder.Requests do
     )
   end
 
+  @doc """
+  Users with an approved request for this book (by `Cinder.Books.Work` id + media kind) — the
+  books analog of `approved_requesters_for_movie/1`.
+
+  `media_kind` is part of the key rather than decoration: one work carries an `:ebook` and an
+  `:audiobook` target independently, and the household member who asked for the audiobook has not
+  been served by the e-book landing.
+  """
+  @spec approved_requesters_for_book(integer(), atom()) :: [User.t()]
+  def approved_requesters_for_book(work_id, media_kind) do
+    Repo.all(
+      from r in Request,
+        join: u in assoc(r, :user),
+        where:
+          r.target_type == "book" and r.target_id == ^work_id and
+            r.media_kind == ^media_kind and r.status == :approved,
+        distinct: true,
+        order_by: [asc: u.id],
+        select: u
+    )
+  end
+
   def create_request(%User{} = user, attrs) do
     with {:ok, attrs} <- normalize_request_profile(attrs) do
       case Repo.get(User, user.id) do
