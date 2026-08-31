@@ -33,15 +33,22 @@ defmodule Cinder.Download.BookPoller do
 
   use Cinder.Download.PollerSkeleton, log_prefix: "book poller"
 
-  # An import failure that retrying cannot fix: the payload is what it is. Park the target `:held`
-  # immediately with the exact reason rather than burning the attempt budget re-reading the same
-  # bytes. This is the contract's "preserve the failed artifact in a safe parked state with an
-  # exact reason; never import a guessed match" — the download itself is left on disk untouched.
+  # An import failure that retrying cannot fix: the payload is what it is, the destination is
+  # taken, or the library is unconfigured. Park the target `:held` immediately with the exact
+  # reason rather than burning the attempt budget re-reading the same bytes. This is the
+  # contract's "preserve the failed artifact in a safe parked state with an exact reason; never
+  # import a guessed match" — the download itself is left on disk untouched.
+  #
+  # `:book_file_exists` belongs here rather than in the retry budget: another target already
+  # claims that destination path, and no number of retries changes which work owns it. Retrying
+  # would burn ten ticks and then hold with the same reason, hiding a genuine catalog conflict
+  # (usually two works that fold to one author/title folder) behind a delay.
   @permanent_import_errors [
     :no_book_file,
     :ambiguous_book_files,
     :unsupported_archive,
     :unsafe_source,
+    :book_file_exists,
     :library_not_configured,
     :download_roots_not_configured
   ]

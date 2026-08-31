@@ -179,6 +179,41 @@ defmodule Cinder.Download.BookPollerTest do
       assert Repo.reload!(target).status == :available
       assert Repo.get_by!(BookFile, book_target_id: target.id).path == dest
     end
+
+    test "a path another target already claims is refused without destroying the file", ctx do
+      # Two distinct works whose author/title fold to the SAME destination path. The second
+      # import must lose the `book_files.path` unique index and roll its stage back — and that
+      # rollback must not delete the first target's published file.
+      %{target: first, books: books, release_dir: first_dir} =
+        downloading(ctx, "The Dispossessed.epub")
+
+      complete_download(first_dir)
+      poll!()
+
+      dest =
+        Path.join([books, "Ursula K. Le Guin", "The Dispossessed", "The Dispossessed.epub"])
+
+      assert File.read!(dest) == "book bytes"
+      assert Repo.reload!(first).status == :available
+
+      # A second target for an identically-named work by the same author.
+      %{target: second, release_dir: second_dir} =
+        downloading(ctx, "The Dispossessed.epub", "remote-2")
+
+      File.write!(Path.join(second_dir, "The Dispossessed.epub"), "a different edition")
+      complete_download(second_dir, "remote-2")
+      poll!()
+
+      # The first target's file is untouched, and still the only row for that path.
+      assert File.read!(dest) == "book bytes"
+      assert [%BookFile{book_target_id: owner}] = Repo.all(BookFile)
+      assert owner == first.id
+
+      # The second target parked visibly rather than silently reporting success.
+      second = Repo.reload!(second)
+      assert second.status == :held
+      assert second.hold_reason == "book_file_exists"
+    end
   end
 
   describe "grab uniqueness" do
@@ -199,30 +234,37 @@ defmodule Cinder.Download.BookPollerTest do
     stop_supervised!(BookPoller)
   end
 
-  defp complete_download(release_dir) do
-    expect(Cinder.Download.ClientMock, :status, fn "remote-1" ->
+  defp complete_download(release_dir, remote_id \\ "remote-1") do
+    expect(Cinder.Download.ClientMock, :status, fn ^remote_id ->
       {:ok, %{state: :completed, progress: 1.0, content_path: release_dir}}
     end)
   end
 
-  defp downloading(%{tmp_dir: tmp}, filename) do
-    %{downloads: downloads, books: books} = real_book_library(tmp)
+  defp downloading(ctx, filename, remote_id \\ "remote-1")
 
-    release_dir = Path.join(downloads, "release")
+  defp downloading(%{tmp_dir: tmp} = ctx, filename, "remote-1") do
+    build_target(real_book_library(tmp), ctx, filename, "remote-1")
+  end
+
+  # A second target in an ALREADY-configured library: `real_book_library/1` rewrites the app env
+  # and registers its own `on_exit`, so calling it twice in one test would stack restores. The
+  # roots are re-derived from the same tmp_dir, and the existing profile is reused — a library
+  # path is unique across profiles, and two targets sharing one root is the case under test.
+  defp downloading(%{tmp_dir: tmp} = ctx, filename, remote_id) do
+    roots = %{downloads: Path.join(tmp, "downloads"), books: Path.join(tmp, "books")}
+    build_target(roots, ctx, filename, remote_id)
+  end
+
+  defp build_target(%{downloads: downloads, books: books}, _ctx, filename, remote_id) do
+    release_dir = Path.join(downloads, "release-#{remote_id}")
     File.mkdir_p!(release_dir)
     File.write!(Path.join(release_dir, filename), "book bytes")
 
-    {:ok, profile} =
-      Catalog.create_profile(%{
-        name: "Ebooks #{System.unique_integer([:positive])}",
-        kind: :ebook,
-        handling: :standard,
-        library_path: books
-      })
+    profile = ebook_profile(books)
 
     work = work_fixture("The Dispossessed", "Ursula K. Le Guin")
     {:ok, target} = Books.monitor_target(work, :ebook, profile)
-    {:ok, grab} = Books.Grabs.create(target.id, "remote-1", :torrent, "The Dispossessed EPUB")
+    {:ok, grab} = Books.Grabs.create(target.id, remote_id, :torrent, "The Dispossessed EPUB")
 
     %{
       grab: grab,
@@ -232,6 +274,26 @@ defmodule Cinder.Download.BookPollerTest do
       downloads: downloads,
       release_dir: release_dir
     }
+  end
+
+  # One `:ebook` profile per library root: `media_profiles.library_path` is unique, so a second
+  # target in the same test reuses the first profile rather than creating a colliding one.
+  defp ebook_profile(books) do
+    case Enum.find(Catalog.list_profiles(:ebook), &(&1.library_path == books)) do
+      %Catalog.Profile{} = existing ->
+        existing
+
+      nil ->
+        {:ok, profile} =
+          Catalog.create_profile(%{
+            name: "Ebooks #{System.unique_integer([:positive])}",
+            kind: :ebook,
+            handling: :standard,
+            library_path: books
+          })
+
+        profile
+    end
   end
 
   defp real_book_library(tmp) do
