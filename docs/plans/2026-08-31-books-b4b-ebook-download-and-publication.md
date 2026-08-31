@@ -137,6 +137,10 @@ Book status and derived state stay behind the books choke-points, matching AGENT
 - `book_targets.status` → `Books.transition_target/3` (guarded, `expect:`-style, one post-commit
   broadcast) — already exists.
 - `book_grabs` → `Cinder.Books.Grabs`; `book_files` → `Cinder.Books.Files`.
+- Parking a target `:held` with a reason → `Books.hold_target/2`. Both halves of the pipeline reach
+  it (`Cinder.Download` on a permanently rejected submission, `BookPoller` on a dead download or a
+  refused payload), so the reason a household member reads renders the same way whichever half
+  gave up, and no failure path can invent its own.
 
 `Cinder.Download.BookPoller` and `Cinder.Library.BookImport` hold **no `Repo` mutations of their
 own**, exactly as `download/poller.ex` and `library/*` hold none today.
@@ -153,3 +157,31 @@ own**, exactly as `download/poller.ex` and `library/*` hold none today.
 - The books pipeline still exports no automatic selection: no `best_book_release/2`, and the book
   poller has no search pass.
 - `mix test` is green.
+
+## Amendments from review
+
+Recorded here rather than silently folded in, because several contradict what the first pass
+shipped.
+
+- **Every terminal verdict is bounded, and every give-up holds the target.** The dominant bug class
+  in this slice is a failure that leaves a target `:monitored` with nothing in flight: with no
+  search pass, that state is indistinguishable from "nobody picked a release yet" and nothing looks
+  at it again. Two paths still did it — `Download.abandon_reserved/2` on a permanently rejected
+  submission, and the download phase acting on a single `{:error, :not_found}`. Both clients derive
+  `:not_found` from a *successful* empty queue/history lookup, so a routine blip was destroying live
+  downloads with `delete_files: true`. The download phase now takes the shared `import_attempts`
+  budget, matching all three video sites.
+- **`grab_book_target/2` is `:ebook` only.** Nothing under it is audiobook-aware, so an audiobook
+  target would have published an EPUB into the audiobook root. `{:error, :unsupported_media_kind}`
+  until B7.
+- **EPUB validation checks the OCF container, not just the ZIP header.** `PK\x03\x04` says "some
+  ZIP", and `.zip` is a format this pipeline refuses outright — a renamed archive was publishing as
+  an available book. The mandatory uncompressed `mimetype`/`application/epub+zip` first entry sits
+  inside the prefix already read for MOBI.
+- **Parity gates the first pass missed:** `StallReaper.enabled?()` (books ignored the operator
+  switch), the reap clock (read pre-write, so a >24h outage reaped a healthy download),
+  `Disk.import_space_available?/2` (a full disk burned the budget and parked the target), and the
+  `ContentPolicy` detail (dropped, so a hold named no file).
+- **`:held` reaches the UI.** `LiveHelpers.book_badge_state/2` deferred `:held` to B4 in as many
+  words; this is B4, five paths now produce one, and a held target read "Approved" forever.
+  `Notifier.Email` likewise dropped `:book_available`, so the requester never heard.
