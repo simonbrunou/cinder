@@ -188,8 +188,14 @@ defmodule Cinder.Download do
   No anime policy marker: `ensure_policy_marker/2` resolves an Anime handling profile, and
   `Cinder.LibraryKind` gives book kinds `handlings: [:standard]` only. Passing a book target
   through it would ask the video policy engine a question with no meaning here.
+
+  `:ebook` only. `:audiobook` is a live media kind with its own library root, and nothing
+  downstream of here is audiobook-aware: `BookSources` accepts `.epub`/`.azw3`/`.mobi`, so an
+  audiobook target handed an e-book release would publish an EPUB into the audiobook root and
+  report the audiobook available. Audiobooks are B7; until then this refuses rather than
+  half-works.
   """
-  def grab_book_target(%BookTarget{} = target, %BookRelease{} = release) do
+  def grab_book_target(%BookTarget{media_kind: :ebook} = target, %BookRelease{} = release) do
     case Repo.get_by(Intent, kind: :book_target, target_id: target.id) do
       nil ->
         reserve_and_reconcile(:book_target, target.id, [], book_release(release))
@@ -201,6 +207,8 @@ defmodule Cinder.Download do
         reconcile_matching_intent(intent, book_release(release), [])
     end
   end
+
+  def grab_book_target(%BookTarget{}, %BookRelease{}), do: {:error, :unsupported_media_kind}
 
   # A book release carries no mapping or policy snapshot: both are video-pipeline evidence (an
   # episode-numbering decision and an Anime language policy). Left nil, `Intent`'s validators
@@ -667,9 +675,34 @@ defmodule Cinder.Download do
   defp retry_due?(%Intent{next_attempt_at: next}),
     do: DateTime.compare(next, DateTime.utc_now()) in [:lt, :eq]
 
+  # A permanently rejected submission (a torrent the client cannot parse, a URL it refuses, a
+  # release whose stored ciphertext no longer decrypts) drops the reservation and reports the
+  # reason to the caller.
+  #
+  # For a book that report is not enough, and the difference is the missing search sweep. A movie
+  # or episode left in its pre-grab state is re-derived by its poller's next search pass; a book
+  # target has no such pass, so a deleted intent with no grab leaves a `:monitored` row that is
+  # byte-identical to "nobody picked a release yet" — and `reconcile_pending_intents/1`, which the
+  # book poller runs every tick, discards this return value, so the failure would be invisible as
+  # well as permanent. Hold it with the reason instead.
+  defp abandon_reserved(%Intent{kind: :book_target, target_id: target_id} = intent, reason) do
+    Logger.warning("book target #{target_id} submission rejected: #{inspect(reason)}")
+    hold_book_target(target_id, reason)
+    delete_intent(intent)
+    {:error, reason}
+  end
+
   defp abandon_reserved(intent, reason) do
     delete_intent(intent)
     {:error, reason}
+  end
+
+  defp hold_book_target(target_id, reason) do
+    case Repo.get(BookTarget, target_id) do
+      %BookTarget{} = target -> Books.hold_target(target, reason)
+      # Deleted mid-flight: nothing to park, and nothing left to be silent about.
+      nil -> :ok
+    end
   end
 
   defp cleanup_ineligible_intent(intent) do

@@ -78,7 +78,7 @@ defmodule Cinder.Library.BookNaming do
   def author_folder(%Work{} = work) do
     case sanitize(primary_author(work)) do
       "" -> @unknown_author
-      name -> name
+      name -> visible(name)
     end
   end
 
@@ -87,9 +87,21 @@ defmodule Cinder.Library.BookNaming do
   def title_folder(%{title: title}) do
     case sanitize(title) do
       "" -> "Untitled"
-      folder -> folder
+      folder -> visible(folder)
     end
   end
+
+  # The same rule `file_name/1` applies to the basename, applied to the folders it sits under: a
+  # component beginning with a dot is hidden, and Booklore/Calibre skip dot-directories while
+  # walking the library. Reachable from ordinary catalog data, not just hostile input — `sanitize/1`
+  # strips `/`, so the work `.hack//Legend of the Twilight` yields the folder
+  # `.hackLegend of the Twilight`. The import would succeed, the target would arm `:available`,
+  # and the book would be invisible with nothing reporting why.
+  #
+  # Prefixed rather than replaced: unlike a filename, a folder name is the only place the author
+  # or title is recorded on disk, so it is worth keeping legible.
+  defp visible("." <> _rest = name), do: "_" <> name
+  defp visible(name), do: name
 
   # The lowest-positioned `author` credit — the contract's credits are ordered and role-bearing,
   # and a co-authored work has to land in ONE folder deterministically. Position ties break on the

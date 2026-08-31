@@ -76,7 +76,10 @@ defmodule Cinder.Download.BookPollerTest do
 
       target = Repo.reload!(target)
       assert target.status == :held
-      assert target.hold_reason == "blocked_content"
+      # The verdict's detail names the offending file. `ContentPolicy.detail/1` sanitizes it for
+      # exactly this surface, and without it an operator is told "blocked_content" about a payload
+      # they cannot inspect — the grab that carried the download id is deleted by the same hold.
+      assert target.hold_reason == "blocked_content: download contains setup.exe"
       assert Repo.all(BookGrab) == []
     end
 
@@ -126,7 +129,9 @@ defmodule Cinder.Download.BookPollerTest do
 
       target = Repo.reload!(target)
       assert target.status == :held
-      assert target.hold_reason =~ "unpacking failed"
+      # Rendered, not inspected: a client's own error text is what a household member reads off
+      # the target, and `inspect/1` would show it quoted.
+      assert target.hold_reason == "unpacking failed"
       refute Repo.get(BookGrab, grab.id)
     end
 
@@ -140,6 +145,70 @@ defmodule Cinder.Download.BookPollerTest do
       # No park, no import: an unreachable client is not evidence about the download.
       assert Repo.reload!(target).status == :monitored
       assert Repo.get(BookGrab, grab.id)
+    end
+
+    test "a stalled download is left alone while the stall reaper is switched off", ctx do
+      %{grab: grab, target: target} = downloading(ctx, "book.epub")
+
+      # Zero speed, zero seeders, no progress for 40 minutes — past `no_seeders_timeout`. The
+      # operator has reaping switched off (the shipped default is on; `config/test.exs` turns it
+      # off), so nothing may be reaped. `StallReaper.reap?/4` is a pure predicate that knows
+      # nothing about the config, so calling it unguarded ignored that switch for books alone.
+      #
+      # No `remove` expectation: reaching the client would fail this test.
+      stall(grab, minutes: 40)
+
+      expect(Cinder.Download.ClientMock, :status, fn "remote-1" ->
+        {:ok, %{state: :downloading, progress: 0.5, speed: 0, seeders: 0}}
+      end)
+
+      poll!()
+
+      assert Repo.reload!(target).status == :monitored
+      assert Repo.get(BookGrab, grab.id)
+    end
+
+    test "a stalled download is reaped once the stall reaper is switched on", ctx do
+      %{grab: grab, target: target} = downloading(ctx, "book.epub")
+
+      stall_reaper(enabled: true)
+      stall(grab, minutes: 40)
+
+      expect(Cinder.Download.ClientMock, :status, fn "remote-1" ->
+        {:ok, %{state: :downloading, progress: 0.5, speed: 0, seeders: 0}}
+      end)
+
+      expect(Cinder.Download.ClientMock, :remove, fn "remote-1", _opts -> :ok end)
+
+      capture_log(fn -> poll!() end)
+
+      target = Repo.reload!(target)
+      assert target.status == :held
+      assert target.hold_reason == "stalled"
+      assert Repo.all(BookGrab) == []
+    end
+
+    test "a download that resumed after a long outage is not reaped by the absolute cap", ctx do
+      %{grab: grab, target: target} = downloading(ctx, "book.epub")
+
+      # The app was down for two days while the download kept going. The progress clock on the row
+      # is stale by definition, so reading it BEFORE recording this tick's status reaps a healthy
+      # job: `max_downloading_timeout` defaults to 24h. Recording first — what `Poller` and
+      # `TvPoller` both do — advances the clock on this tick's real forward motion, and the cap
+      # then reads the honest value.
+      #
+      # No `remove` expectation: reaping this download would fail the test.
+      stall_reaper(enabled: true)
+      stall(grab, minutes: 48 * 60)
+
+      expect(Cinder.Download.ClientMock, :status, fn "remote-1" ->
+        {:ok, %{state: :downloading, progress: 0.5, speed: 1_000, seeders: 12}}
+      end)
+
+      poll!()
+
+      assert Repo.reload!(target).status == :monitored
+      assert Repo.reload!(grab).download_progress == 0.5
     end
   end
 
@@ -361,6 +430,23 @@ defmodule Cinder.Download.BookPollerTest do
     start_supervised!({BookPoller, interval: 60_000})
     assert :ok = BookPoller.poll()
     stop_supervised!(BookPoller)
+  end
+
+  # Ages both clocks the reaper reads: `updated_at` drives the seed-aware zero-speed window and
+  # `download_progress_at` the protocol-agnostic absolute cap. Written directly because the
+  # context deliberately has no "pretend this grab is old" API.
+  defp stall(grab, minutes: minutes) do
+    then = DateTime.add(DateTime.utc_now(:second), -minutes * 60, :second)
+
+    Repo.update_all(from(g in BookGrab, where: g.id == ^grab.id),
+      set: [updated_at: then, download_progress_at: then]
+    )
+  end
+
+  defp stall_reaper(opts) do
+    saved = Application.get_env(:cinder, Cinder.Download.StallReaper, [])
+    Application.put_env(:cinder, Cinder.Download.StallReaper, Keyword.merge(saved, opts))
+    on_exit(fn -> Application.put_env(:cinder, Cinder.Download.StallReaper, saved) end)
   end
 
   defp complete_download(release_dir, remote_id \\ "remote-1") do

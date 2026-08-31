@@ -132,48 +132,72 @@ defmodule Cinder.Download.BookPoller do
     end
   end
 
-  # An in-flight download gets the same two safety gates the movie and TV pollers apply:
+  # An in-flight download gets the same two safety gates the movie and TV pollers apply, wired the
+  # same way they wire them:
   #
   # - `ContentPolicy.vet/2` inspects the file names the client will deliver and refuses a payload
   #   carrying blocked content (an executable alongside the book). Doing this DURING the download
   #   is the point — `BookSources` would silently filter that executable at import time and
   #   publish the book anyway, so the blocked-content verdict the B4b plan requires would never
   #   be reached. It is best-effort by contract: a client that cannot answer yet returns `{:ok,
-  #   []}` and any error is "no opinion".
+  #   []}` and any error is "no opinion". The verdict's `detail` names the offending file and is
+  #   carried into the hold reason — `ContentPolicy.detail/1` sanitizes it for exactly that.
   # - `StallReaper.reap?/4` ends a job that reports `:downloading` forever with no speed and no
   #   progress, which is exactly what `BookGrab.download_progress_at` is maintained for.
   defp track_or_reap(grab, status) do
-    cond do
-      blocked_content(grab) == :blocked ->
-        fail_download(grab, :blocked_content)
-
-      stalled?(grab, status) ->
-        fail_download(grab, :stalled)
-
-      true ->
-        track(grab, status)
+    case blocked_content(grab) do
+      {:blocked, detail} -> fail_download(grab, {:blocked_content, detail})
+      :ok -> track_and_reap(grab, status)
     end
   end
 
   defp blocked_content(%BookGrab{download_id: id, download_protocol: protocol}) do
     case Download.client_for(protocol) do
-      {:ok, client} -> if ContentPolicy.vet(client, id) == :ok, do: :ok, else: :blocked
+      {:ok, client} -> ContentPolicy.vet(client, id)
       :error -> :ok
     end
   end
 
-  defp stalled?(grab, status) do
-    StallReaper.reap?(grab.updated_at, grab.download_progress_at, status, DateTime.utc_now())
+  # Metrics first, reap second, on the clock the write returns — `track_and_reap/2` in
+  # `Download.Poller` and `Download.TvPoller`, matched deliberately.
+  #
+  # Reaping on the struct as loaded at tick start kills healthy downloads: after the app is down
+  # longer than `max_downloading_timeout` (24h by default) the row's `download_progress_at` is
+  # stale by definition, and checking it BEFORE recording this tick's genuine progress reaps a
+  # job that is downloading fine. `Books.Grabs.track/2` advances the clock only on real forward
+  # motion, so the post-write value is the honest one.
+  defp track_and_reap(grab, status) do
+    case Books.Grabs.track(grab, track_attrs(status)) do
+      {:ok, tracked} ->
+        maybe_reap(grab, tracked.download_progress_at, status)
+
+      # Never silent: a rejected metrics write freezes the progress clock, and a frozen clock is
+      # what the absolute cap reads.
+      {:error, reason} ->
+        Logger.warning("book grab #{grab.id} progress not recorded: #{inspect(reason)}")
+        :ok
+    end
   end
 
-  defp track(grab, status) do
-    Books.Grabs.track(grab, %{
+  defp track_attrs(status) do
+    %{
       download_progress: Map.get(status, :progress),
       download_speed: Map.get(status, :speed),
       download_eta: Map.get(status, :eta)
-    })
+    }
+  end
 
-    :ok
+  # `StallReaper.enabled?()` is the operator switch, and it is checked here for the same reason
+  # both siblings check it: `reap?/4` is a pure predicate that knows nothing about the config, so
+  # calling it unguarded reaped book downloads on an install that had turned reaping off.
+  #
+  # The seed window keeps the tick-start `updated_at` and the absolute cap uses the post-write
+  # progress clock — `TvPoller.maybe_reap/3`'s split, unchanged.
+  defp maybe_reap(grab, download_progress_at, status) do
+    if StallReaper.enabled?() and
+         StallReaper.reap?(grab.updated_at, download_progress_at, status, DateTime.utc_now()),
+       do: fail_download(grab, :stalled),
+       else: :ok
   end
 
   # The client says this download is dead. Hold the target FIRST, then drop the grab, then ask
@@ -206,9 +230,7 @@ defmodule Cinder.Download.BookPoller do
   # (the remote download is dead and was removed), so there is nothing left to re-derive and a
   # lost race is simply someone else's more recent decision.
   defp hold_orphaned_target(%BookTarget{} = target, reason) do
-    case Books.transition_target(target, %{status: :held, hold_reason: hold_reason(reason)},
-           expect: :monitored
-         ) do
+    case Books.hold_target(target, reason) do
       {:ok, _held} ->
         :ok
 
@@ -288,9 +310,7 @@ defmodule Cinder.Download.BookPoller do
   defp hold(grab, target, reason) do
     Logger.warning("book target #{target.id} held: #{inspect(reason)}")
 
-    case Books.transition_target(target, %{status: :held, hold_reason: hold_reason(reason)},
-           expect: :monitored
-         ) do
+    case Books.hold_target(target, reason) do
       {:ok, _held} ->
         Books.Grabs.delete(grab)
 
@@ -302,13 +322,6 @@ defmodule Cinder.Download.BookPoller do
 
     :ok
   end
-
-  # `inspect/1`, never `to_string/1`: a reason may be a tuple (`{:unexpected_destination_type,
-  # :directory}`), and `String.Chars` is undefined for tuples — so `to_string/1` raised inside the
-  # hold, `isolate/2` swallowed it, and the grab neither held nor cleared. It then re-raised on
-  # every subsequent tick, forever.
-  defp hold_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
-  defp hold_reason(reason), do: inspect(reason)
 
   defp reload(%BookTarget{id: id}), do: Books.get_target(id) || %BookTarget{id: id}
 end

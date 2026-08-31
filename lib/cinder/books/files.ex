@@ -15,11 +15,6 @@ defmodule Cinder.Books.Files do
   alias Cinder.Library.ImportStage
   alias Cinder.Repo
 
-  @doc "The recorded files of a target, oldest first."
-  @spec for_target(integer()) :: [BookFile.t()]
-  def for_target(book_target_id),
-    do: Repo.all(from f in BookFile, where: f.book_target_id == ^book_target_id, order_by: f.id)
-
   @doc """
   Records an imported asset and moves its target to `:available` in one transaction.
 

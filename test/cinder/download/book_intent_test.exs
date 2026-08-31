@@ -123,6 +123,42 @@ defmodule Cinder.Download.BookIntentTest do
       assert owner == first.id
       assert Repo.all(Intent) == []
     end
+
+    test "a permanently rejected submission holds the target instead of losing the failure" do
+      target = monitored_target()
+
+      # The client parses the release and refuses it outright — a dead magnet, an unparseable
+      # .torrent. `abandon_reserved/2` drops the reservation, and for a movie or an episode that
+      # is enough because the next search pass re-derives the work. Books have no search pass, so
+      # a `:monitored` target with no grab and no intent is indistinguishable from one nobody has
+      # picked a release for — and `reconcile_pending_intents/1`, which the poller runs every
+      # tick, discards this return value, so the failure would be silent as well as permanent.
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:error, :bad_torrent} end)
+
+      assert {:error, :bad_torrent} = Download.grab_book_target(target, release())
+
+      target = Repo.reload!(target)
+      assert target.status == :held
+      assert target.hold_reason == "bad_torrent"
+
+      assert Repo.all(Intent) == []
+      assert Repo.all(BookGrab) == []
+    end
+
+    test "an audiobook target is refused before any reservation" do
+      target = monitored_target()
+      {:ok, audiobook} = Books.ensure_target(Books.get_work(target.work_id), :audiobook)
+
+      # No ClientMock expectation: reaching the downloader at all fails this test. Nothing below
+      # `grab_book_target/2` is audiobook-aware — `BookSources` accepts `.epub`/`.azw3`/`.mobi`
+      # only — so an e-book release here would publish an EPUB into the audiobook root and report
+      # the audiobook available.
+      assert {:error, :unsupported_media_kind} = Download.grab_book_target(audiobook, release())
+
+      assert Repo.all(Intent) == []
+      assert Repo.all(BookGrab) == []
+    end
   end
 
   describe "intent shape" do

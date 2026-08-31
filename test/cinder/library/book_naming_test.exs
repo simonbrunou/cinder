@@ -137,6 +137,24 @@ defmodule Cinder.Library.BookNamingTest do
       assert BookNaming.book_dest(work, "/d/book.epub", @root) ==
                "/library/books/Ursula K. Le Guin/Untitled/book.epub"
     end
+
+    test "a title that sanitizes to a leading dot does not become a hidden folder" do
+      # Reachable from ordinary catalog data, not just hostile input: `sanitize/1` strips `/`, so
+      # a real work title folds to a dot-directory. The file lands, the target arms :available,
+      # and Booklore/Calibre skip the folder while walking — an invisible library with nothing
+      # reporting why. `file_name/1` already refuses this for the basename.
+      work = work(".hack//Legend of the Twilight", ["Tatsuya Hamazaki"])
+
+      assert BookNaming.book_dest(work, "/d/twilight.epub", @root) ==
+               "/library/books/Tatsuya Hamazaki/_.hackLegend of the Twilight/twilight.epub"
+    end
+
+    test "an author that sanitizes to a leading dot does not become a hidden folder" do
+      work = work("Beowulf", [".hack Collective"])
+
+      assert BookNaming.book_dest(work, "/d/beowulf.epub", @root) ==
+               "/library/books/_.hack Collective/Beowulf/beowulf.epub"
+    end
   end
 
   defp work(title, author_names) do
