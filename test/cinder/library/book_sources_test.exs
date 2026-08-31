@@ -241,10 +241,24 @@ defmodule Cinder.Library.BookSourcesTest do
 
       assert {:error, :format_mismatch} = BookSources.resolve(path)
     end
+
+    test "a plain ZIP renamed .epub is refused", %{downloads: downloads} do
+      # `PK\x03\x04` only says "some ZIP", and `.zip` is a format this module refuses outright.
+      # Without the OCF container marker a renamed archive cleared every gate and published as an
+      # available book no reader can open.
+      path = Path.join(downloads, "book.epub")
+      File.write!(path, <<"PK", 3, 4>> <> String.duplicate("\0", 96))
+
+      assert {:error, :format_mismatch} = BookSources.resolve(path)
+    end
   end
 
-  # A minimal but genuine ZIP local-file header — what every EPUB starts with.
-  defp epub_bytes, do: <<"PK", 3, 4>> <> String.duplicate("\0", 96)
+  # A conforming EPUB OCF container prefix: a 30-byte stored-entry local file header (no extra
+  # field), then the mandatory first entry `mimetype` and its `application/epub+zip` content.
+  defp epub_bytes do
+    <<"PK", 3, 4, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 20, 0, 0, 0, 8, 0, 0,
+      0>> <> "mimetype" <> "application/epub+zip"
+  end
 
   # PalmDB header: the type/creator field `BOOKMOBI` sits at byte 60.
   defp mobi_bytes,

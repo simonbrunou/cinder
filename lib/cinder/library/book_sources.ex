@@ -138,8 +138,20 @@ defmodule Cinder.Library.BookSources do
   #
   # Positive identification, not executable-blocklisting: each accepted format has a documented
   # signature, so anything that is not recognisably that format is refused rather than trying to
-  # enumerate every hostile file type. EPUB is a ZIP (`PK\x03\x04`); MOBI/AZW3 carry `BOOKMOBI`
-  # and `TPZ3`/`MOBI` type-creator fields at byte 60 of the PalmDB header.
+  # enumerate every hostile file type. MOBI/AZW3 carry `BOOKMOBI` and `TPZ3`/`MOBI` type-creator
+  # fields at byte 60 of the PalmDB header.
+  #
+  # EPUB needs more than `PK\x03\x04`. That signature says "some ZIP", and `.zip` is a format this
+  # module refuses outright — so a renamed archive walked through the extension gate, the
+  # signature gate, and published as an available book that no reader can open. OCF pins the rest
+  # of it: the first entry of an EPUB container MUST be a `mimetype` file, stored uncompressed
+  # with no extra field, whose content is `application/epub+zip`. A conforming container therefore
+  # carries that exact 28-byte run at offset 30, right after the 30-byte local file header — well
+  # inside the prefix already being read for MOBI.
+  #
+  # The cost is that a non-conforming EPUB (a repacker that compressed `mimetype`) is refused. That
+  # is a visible `:format_mismatch` hold naming the file, not a silent wrong answer, and it is the
+  # trade this module's own "never pick, refuse" rule asks for.
   defp verify_magic(path, format) do
     case fs().read_prefix(path, 68) do
       {:ok, prefix} -> if magic?(prefix, format), do: :ok, else: {:error, :format_mismatch}
@@ -148,7 +160,11 @@ defmodule Cinder.Library.BookSources do
     end
   end
 
-  defp magic?(<<"PK", 3, 4, _rest::binary>>, :epub), do: true
+  defp magic?(
+         <<"PK", 3, 4, _header::binary-size(26), "mimetypeapplication/epub+zip", _rest::binary>>,
+         :epub
+       ),
+       do: true
 
   defp magic?(<<_head::binary-size(60), "BOOKMOBI", _rest::binary>>, format)
        when format in [:mobi, :azw3],

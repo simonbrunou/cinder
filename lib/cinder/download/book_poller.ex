@@ -23,6 +23,7 @@ defmodule Cinder.Download.BookPoller do
 
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget}
+  alias Cinder.Disk
   alias Cinder.Download
   alias Cinder.Download.{ContentPolicy, StallReaper}
   alias Cinder.Library
@@ -291,7 +292,34 @@ defmodule Cinder.Download.BookPoller do
 
   # --- import phase ---
 
+  # Pre-import disk guard on the books library root, matching `Poller.import_one/1` and
+  # `TvPoller.import_grab/1`. Hold without bumping the attempt budget: the download is finished
+  # and waiting, and a full disk is fixable, so burning ten ticks on it and then parking the
+  # target `:held` turns "free some space" into "notice the hold and re-grab". Throttled so a
+  # persistently full disk does not flood the log every tick.
   defp import_one(%BookGrab{book_target: %BookTarget{} = target} = grab) do
+    if Disk.import_space_available?(target.media_kind, target),
+      do: do_import_one(grab, target),
+      else: warn_disk_full(target)
+  end
+
+  # A grab whose target is gone. `book_grabs.book_target_id` cascades on delete, so this is
+  # belt-and-braces rather than a reachable state; dropping the row is the only sane response.
+  defp import_one(%BookGrab{} = grab) do
+    Logger.warning("book grab #{grab.id} has no target; dropping")
+    Books.Grabs.delete(grab)
+    :ok
+  end
+
+  defp warn_disk_full(%BookTarget{} = target) do
+    warn_throttled(
+      {:disk_import, target.id},
+      "book target #{target.id} import held: books library root is nearly full; " <>
+        "will retry when space frees"
+    )
+  end
+
+  defp do_import_one(%BookGrab{} = grab, %BookTarget{} = target) do
     case BookImport.import_grab(grab) do
       {:ok, file} ->
         Logger.info("book target #{target.id} imported #{file.path}")
@@ -310,12 +338,6 @@ defmodule Cinder.Download.BookPoller do
       {:error, reason} ->
         retry_or_hold(grab, target, reason)
     end
-  end
-
-  defp import_one(%BookGrab{} = grab) do
-    Logger.warning("book grab #{grab.id} has no target; dropping")
-    Books.Grabs.delete(grab)
-    :ok
   end
 
   # A transient failure (a busy filesystem, a full disk, a locked stage) gets the shared attempt

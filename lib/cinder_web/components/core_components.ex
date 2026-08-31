@@ -779,6 +779,12 @@ defmodule CinderWeb.CoreComponents do
   defp badge_spec(:request, :available),
     do: {gettext("Available"), "badge-success", "hero-check-circle"}
 
+  # A book target the acquisition pipeline parked with an exact `hold_reason` — a dead download, a
+  # refused payload, a rejected submission. Never auto-grabbed again, so it needs an operator, and
+  # it must not keep reading "Approved".
+  defp badge_spec(:request, :held),
+    do: {gettext("Needs attention"), "badge-error", "hero-exclamation-triangle"}
+
   # episode derived-state
   defp badge_spec(:episode, :available),
     do: {gettext("Available"), "badge-success", "hero-check-circle"}

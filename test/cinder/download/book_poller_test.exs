@@ -280,6 +280,29 @@ defmodule Cinder.Download.BookPollerTest do
       assert target.status == :held
       assert target.hold_reason == "missing_content_path"
     end
+
+    test "import holds (no attempt bump, no park) when the books root is nearly full", ctx do
+      %{grab: grab, target: target, books: books, release_dir: release_dir} =
+        downloading(ctx, "The Dispossessed.epub")
+
+      # A full disk is fixable and the download is already sitting there, so this must NOT burn the
+      # import budget: ten ticks of it would park the target `:held` and turn "free some space"
+      # into "notice the hold and re-grab". Both video pollers gate their import the same way.
+      complete_download(release_dir)
+      set_disk_stub!({:ok, %{free_bytes: 500_000_000, total_bytes: 100_000_000_000}})
+
+      log = capture_log(fn -> poll!() end)
+
+      assert log =~ "nearly full"
+      assert Repo.reload!(target).status == :monitored
+
+      grab = Repo.reload!(grab)
+      assert grab.import_attempts == 0
+      assert grab.content_path == release_dir
+
+      assert Repo.all(BookFile) == []
+      assert File.ls!(books) == []
+    end
   end
 
   describe "idempotency" do
@@ -447,6 +470,18 @@ defmodule Cinder.Download.BookPollerTest do
     end
   end
 
+  # Drives the free-disk prober (`Cinder.Test.StubDisk`) for a test's duration; restored on exit.
+  defp set_disk_stub!(result) do
+    saved = Application.get_env(:cinder, :disk_stats_stub)
+    Application.put_env(:cinder, :disk_stats_stub, result)
+
+    on_exit(fn ->
+      if is_nil(saved),
+        do: Application.delete_env(:cinder, :disk_stats_stub),
+        else: Application.put_env(:cinder, :disk_stats_stub, saved)
+    end)
+  end
+
   # --- fixtures ---
 
   defp poll! do
@@ -534,8 +569,12 @@ defmodule Cinder.Download.BookPollerTest do
     end
   end
 
-  # A genuine ZIP local-file header — what BookSources' signature check requires of an EPUB.
-  defp epub_bytes, do: <<"PK", 3, 4>> <> String.duplicate("\0", 96)
+  # A conforming EPUB OCF container prefix — what `BookSources`' signature check requires: a
+  # 30-byte stored-entry local file header, then the mandatory `mimetype` entry and its content.
+  defp epub_bytes do
+    <<"PK", 3, 4, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 20, 0, 0, 0, 8, 0, 0,
+      0>> <> "mimetype" <> "application/epub+zip"
+  end
 
   defp real_book_library(tmp) do
     downloads = Path.join(tmp, "downloads")
