@@ -52,8 +52,10 @@ context to every task. Per-feature design and plan docs live under `docs/specs/`
   release verification, adoption, deletion, TMDB refresh). Each emits one broadcast, *after*
   commit. This is **not** "no direct `Repo` writes" — creation, deletion, monitor flags,
   language, counters and the refresh are all sanctioned direct writes. Derive the current write
-  sites rather than reconstructing them from memory:
-  `rg -l 'Repo\.(insert|update|delete|update_all)' lib/cinder/catalog.ex lib/cinder/catalog/`.
+  sites rather than reconstructing them from memory: search for
+  `Repo\.(insert|update|delete|update_all)` across `lib/cinder/catalog.ex` and
+  `lib/cinder/catalog/`. Use whatever search your client gives you — some agents route `rg`/`grep`
+  to a dedicated search tool and will refuse the raw shell command.
   Naming `catalog.ex` explicitly matters because the choke-points themselves live there.
   The callers stay clean: `lib/cinder/download/*`, `acquisition.ex` and
   `lib/cinder/library/*` (bar `import_stage.ex`, which owns `import_stages`) hold no `Repo`

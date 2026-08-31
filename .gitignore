@@ -52,6 +52,10 @@ result
 # graphify tool output (stale-prone, regenerated locally)
 graphify-out/
 
+# ElixirLS compiles the project into its own build dir on the first language-server
+# request. Not _build, not shared with `mix`, and regenerated on demand.
+.elixir_ls/
+
 # Isolated feature worktrees
 .worktrees/
 
