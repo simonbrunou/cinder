@@ -103,8 +103,14 @@ defmodule Cinder.Download.BookPoller do
       {:ok, status} ->
         track_or_reap(grab, status)
 
-      # A transient client/network error must not drop a live download: leave the grab alone and
-      # re-derive next tick.
+      # The job is gone from the client — a household member deleted it, or the client's history
+      # rolled over. NOT transient: no future tick can find it, and with no search pass in this
+      # slice the target would sit `:monitored` holding a grab forever, refusing any new grab.
+      {:error, :not_found} ->
+        fail_download(grab, :download_missing)
+
+      # A genuine transient client/network error must not drop a live download: leave the grab
+      # alone and re-derive next tick.
       {:error, reason} ->
         Logger.info("book grab #{grab.id} status unavailable: #{inspect(reason)}")
         :ok

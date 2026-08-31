@@ -80,6 +80,23 @@ defmodule Cinder.Download.BookPollerTest do
       assert Repo.all(BookGrab) == []
     end
 
+    test "a download the client no longer knows about is not left in flight forever", ctx do
+      %{target: target} = downloading(ctx, "book.epub")
+
+      # The household deleted the job at the client, or its history rolled over. Nothing about
+      # this is transient — no later tick can find it — and with no search pass in this slice the
+      # target would hold its grab forever and refuse any new one.
+      expect(Cinder.Download.ClientMock, :status, fn "remote-1" -> {:error, :not_found} end)
+      expect(Cinder.Download.ClientMock, :remove, fn "remote-1", _opts -> :ok end)
+
+      poll!()
+
+      target = Repo.reload!(target)
+      assert target.status == :held
+      assert target.hold_reason == "download_missing"
+      assert Repo.all(BookGrab) == []
+    end
+
     test "progress is recorded while the download is still running", ctx do
       %{grab: grab, target: target} = downloading(ctx, "book.epub")
 
