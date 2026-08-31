@@ -27,6 +27,13 @@ The two sanctioned exceptions, both owning their own table and nothing derived:
 
 If your write is neither of those, move it behind a Catalog choke-point instead.
 
+If a new slice genuinely needs a **new** sanctioned direct-write site — a module owning its
+own table and nothing derived, the way `import_stage.ex` owns `import_stages` — that is a
+legitimate outcome, not a violation. Two conditions: call it out explicitly in the plan
+rather than slipping it in, and when it lands add it to the exception list above *and* to
+the corresponding paragraph in `AGENTS.md`. A rule that has silently gone stale is worse
+than no rule, because it trains you to dismiss it.
+
 This is **not** a blanket "no direct `Repo` writes" rule — creation, deletion, monitor
 flags, language, counters and the TMDB refresh are all sanctioned direct writes *inside
 Catalog*. Derive the current write sites rather than trusting this list: search for
