@@ -124,13 +124,14 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     assert has_element?(view, "#flash-error")
   end
 
-  # Regression: `migration_source_keys` (the "scan_migration" guard) is derived from the FULL
-  # registry, which already includes :readarr even though `MigrationAdoption.plan/4` has no
-  # book-specific classification clause yet (that lands in B6b). A devtools-crafted event (no
-  # button exists for it yet) must fail closed with the operator-visible scan-failed flash, not
-  # crash the LiveView and not silently render an empty-but-successful preview (which would be
-  # indistinguishable from "this library has nothing to adopt").
-  test "scan_migration for a configured-but-not-yet-implemented source (readarr) fails closed with the scan-failed flash instead of crashing or showing an empty preview",
+  # `migration_source_keys` (the "scan_migration" guard) is derived from the FULL registry,
+  # which has included :readarr since B6a. B6a-era coverage here asserted that a devtools-crafted
+  # event for it failed closed (no `plan/4` clause existed yet); B6b adds
+  # `Cinder.Library.MigrationAdoption.Readarr`, so the same event now completes a real, if empty,
+  # preview — proving the guard reaches an actually-implemented source, not a still-unwired one.
+  # No button exists for it yet regardless (B6c adds the third `<.button>`), so this stays a
+  # devtools-crafted event rather than a click.
+  test "scan_migration for :readarr completes a real (if empty) preview instead of the old catch-all error",
        %{conn: conn} do
     expect(Cinder.Library.ReadarrMigrationSourceMock, :snapshot, fn ->
       {:ok,
@@ -142,9 +143,9 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     render_async(view)
 
     assert Process.alive?(view.pid)
-    assert has_element?(view, "#flash-error")
-    refute render(view) =~ "Ready: 0"
-    refute has_element?(view, "#migration-summary")
+    refute has_element?(view, "#flash-error")
+    assert has_element?(view, "#migration-summary", "Readarr migration preview")
+    assert render(view) =~ "Ready: 0"
   end
 
   test "operator assigns a TVDB split file as a part of one combined TMDB episode", %{conn: conn} do
