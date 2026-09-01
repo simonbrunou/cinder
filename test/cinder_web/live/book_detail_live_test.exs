@@ -439,7 +439,65 @@ defmodule CinderWeb.BookDetailLiveTest do
 
       assert Repo.aggregate(BookTarget, :count) == before_count + 1
       assert Books.author_policy(author.id) == :all
+      assert render(lv) =~ "1 eBook is now monitored"
       refute has_element?(lv, "#author-policy-#{author.id}", "Confirm")
+
+      # Confirming already recorded the policy — the "Preview again" escape hatch
+      # (`remaining_note/1`'s own promise) is now available without toggling back to Selected.
+      assert has_element?(lv, "#author-policy-#{author.id}", "Preview again")
+
+      expect(PrimaryMetadataMock, :bibliography, fn _foreign_id ->
+        {:ok, [candidate("OLNEXTW")]}
+      end)
+
+      expect(PrimaryMetadataMock, :get_work, fn "OLNEXTW" -> {:ok, provider_work("OLNEXTW")} end)
+
+      lv
+      |> element("#author-policy-#{author.id} button", "Preview again")
+      |> render_click()
+
+      render_async(lv)
+      assert has_element?(lv, "#author-policy-#{author.id}", "1 new eBook would be monitored")
+    end
+
+    test "a candidate independently monitored before Confirm is reported as short of the
+          preview",
+         %{conn: conn} do
+      {_target, work} = ebook_target()
+      %{author: author} = hd(work.credits)
+
+      stub(PrimaryMetadataMock, :provider, fn -> :openlibrary end)
+
+      expect(PrimaryMetadataMock, :bibliography, fn _foreign_id ->
+        {:ok, [candidate("OLRACEW")]}
+      end)
+
+      expect(PrimaryMetadataMock, :get_work, fn "OLRACEW" -> {:ok, provider_work("OLRACEW")} end)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{work.id}")
+
+      lv
+      |> form("#author-policy-form-#{author.id}", %{"policy" => "all"})
+      |> render_change()
+
+      render_async(lv)
+
+      # The race, before Confirm is ever clicked: something else monitors the same candidate
+      # under a different profile.
+      {:ok, race_profile} =
+        Catalog.create_profile(%{name: "Raced eBooks", kind: :ebook, handling: :standard})
+
+      {:ok, raced_work} =
+        Books.import_resolution(%{provider: :openlibrary, work: provider_work("OLRACEW")})
+
+      {:ok, raced_target} = Books.monitor_target(raced_work, :ebook, race_profile)
+
+      lv
+      |> element("#author-policy-#{author.id} button", "Confirm")
+      |> render_click()
+
+      assert render(lv) =~ "0 of 1 previewed works are now monitored"
+      assert Repo.get!(BookTarget, raced_target.id).profile_id == race_profile.id
     end
 
     test "an ambiguous candidate is never offered as eligible", %{conn: conn} do

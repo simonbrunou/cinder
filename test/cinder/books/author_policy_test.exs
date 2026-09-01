@@ -54,6 +54,19 @@ defmodule Cinder.Books.AuthorPolicyTest do
     test "no stored row reads back as :specific", %{author: author} do
       assert Books.author_policy(author.id) == :specific
     end
+
+    test "every write broadcasts {:book_author_policy_updated, author_id}, like every other
+          write in this module",
+         %{author: author, profile: profile} do
+      Books.subscribe_targets()
+
+      author_id = author.id
+      {:ok, _} = Books.set_author_policy(author, :all, profile)
+      assert_receive {:book_author_policy_updated, ^author_id}
+
+      {:ok, _} = Books.set_author_policy(author, :specific, nil)
+      assert_receive {:book_author_policy_updated, ^author_id}
+    end
   end
 
   describe "preview_author_policy/2" do
@@ -165,6 +178,32 @@ defmodule Cinder.Books.AuthorPolicyTest do
       assert {:ok, 0} = Books.apply_author_policy(author, :all, profile, [])
       assert Repo.aggregate(BookTarget, :count) == 0
       assert Books.author_policy(author.id) == :all
+    end
+
+    test "a candidate independently monitored between preview and confirm keeps its own profile
+          and status, and is not counted as created",
+         %{author: author, profile: profile} do
+      expect(PrimaryMetadataMock, :bibliography, fn "A1" -> {:ok, [candidate("OLRACEW")]} end)
+      expect(PrimaryMetadataMock, :get_work, fn "OLRACEW" -> {:ok, provider_work("OLRACEW")} end)
+
+      assert {:ok, %{eligible: [resolution]}} = Books.preview_author_policy(author, :all)
+
+      # The race: something else — a direct per-work approval, a different admin's confirm, a
+      # prior refresher tick — monitors the very same work under a DIFFERENT profile before this
+      # held preview is ever confirmed.
+      {:ok, race_profile} =
+        Catalog.create_profile(%{name: "Raced eBooks", kind: :ebook, handling: :standard})
+
+      {:ok, work} = Books.import_resolution(resolution)
+      {:ok, raced_target} = Books.monitor_target(work, :ebook, race_profile)
+
+      # The stale confirm must not overwrite what the race already set — not silently, and not
+      # counted as a creation it did not actually perform.
+      assert {:ok, 0} = Books.apply_author_policy(author, :all, profile, [resolution])
+
+      reloaded = Repo.get!(BookTarget, raced_target.id)
+      assert reloaded.status == :monitored
+      assert reloaded.profile_id == race_profile.id
     end
   end
 

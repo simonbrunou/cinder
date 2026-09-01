@@ -181,6 +181,25 @@ defmodule CinderWeb.BookDetailLive do
     end
   end
 
+  # Explicit "Preview again" for an already-active `:future`/`:all` policy — the escape hatch
+  # `remaining_note/1`'s own copy promises ("run Preview again after confirming to see more") but
+  # the `<select>` alone can't provide: a browser never fires `phx-change` when the user picks
+  # the option already selected, and `apply_policy_selection/4`'s own differs-check would no-op a
+  # forged repeat of the same value anyway. Reads the CURRENT stored policy, not a client-supplied
+  # one, so this can never be used to preview a policy other than the one already confirmed.
+  def handle_event("repreview_author_policy", %{"author_id" => raw_id}, socket)
+      when is_binary(raw_id) do
+    with {id, ""} <- Integer.parse(raw_id),
+         %Author{} = author <- credited_author(socket.assigns.work, id),
+         policy when policy in [:future, :all] <- Map.get(socket.assigns.author_policies, id),
+         %BookTarget{} = ebook_target <- target_for(socket.assigns.work, :ebook) do
+      profile = Catalog.get_profile(ebook_target.profile_id)
+      {:noreply, start_policy_preview(socket, author, policy, profile)}
+    else
+      _invalid -> {:noreply, socket}
+    end
+  end
+
   # Confirms a held preview. `author_id` is only ever a key `start_policy_preview/4` itself put
   # into `@policy_previews`, scoped to this work's credited authors — the map membership check is
   # the trust boundary, not a re-derived `%Author{}`. A preview still `:loading`/`:error` (no
@@ -190,10 +209,14 @@ defmodule CinderWeb.BookDetailLive do
     with {id, ""} <- Integer.parse(raw_id),
          %{policy: policy, profile: profile, result: %{eligible: eligible}} <-
            Map.get(socket.assigns.policy_previews, id) do
-      {:ok, _created_count} =
-        Books.apply_author_policy(%Author{id: id}, policy, profile, eligible)
+      {:ok, created_count} = Books.apply_author_policy(%Author{id: id}, policy, profile, eligible)
 
-      {:noreply, confirm_policy(socket, id, policy)}
+      socket =
+        socket
+        |> confirm_policy(id, policy)
+        |> put_flash(:info, confirm_flash_text(created_count, length(eligible)))
+
+      {:noreply, socket}
     else
       _invalid -> {:noreply, socket}
     end
@@ -235,6 +258,21 @@ defmodule CinderWeb.BookDetailLive do
   # safe whether or not this view lost that earlier race.
   def handle_info({:book_grab_deleted, target_id}, socket) do
     {:noreply, assign(socket, :grabs, Map.delete(socket.assigns.grabs, target_id))}
+  end
+
+  # A second admin tab (on this work, or any other work sharing the credited author) changing
+  # the same author's policy — keeps `@author_policies` (and therefore the `<select>`) current
+  # without a full remount. Scoped to authors this work actually credits, mirroring `@grabs`'s
+  # own `Map.has_key?/2` guard.
+  def handle_info({:book_author_policy_updated, author_id}, socket) do
+    if Map.has_key?(socket.assigns.author_policies, author_id) do
+      policies =
+        Map.put(socket.assigns.author_policies, author_id, Books.author_policy(author_id))
+
+      {:noreply, assign(socket, :author_policies, policies)}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
@@ -394,6 +432,14 @@ defmodule CinderWeb.BookDetailLive do
   defp policy_param(:future), do: "future"
   defp policy_param(:all), do: "all"
 
+  defp repreviewable?(author_id, author_policies, policy_previews) do
+    Map.get(author_policies, author_id, :specific) in [:future, :all] and
+      not loading?(Map.get(policy_previews, author_id))
+  end
+
+  defp loading?(%{state: :loading}), do: true
+  defp loading?(_other), do: false
+
   defp preview_summary_text(0), do: gettext("Nothing new to monitor.")
 
   defp preview_summary_text(count),
@@ -419,6 +465,26 @@ defmodule CinderWeb.BookDetailLive do
       "Showing %{examined} of %{total} not-yet-monitored works; run Preview again after confirming to see more.",
       examined: examined,
       total: examined + remaining
+    )
+  end
+
+  # `created_count` can be lower than `previewed_count` when a candidate was independently
+  # claimed (a direct approval, a different admin's confirm, a refresher tick) in the gap between
+  # preview and this confirm (see `Books.apply_author_policy/4`) — say so rather than reporting a
+  # number the operator has no way to reconcile against what the preview promised.
+  defp confirm_flash_text(created_count, previewed_count) when created_count == previewed_count do
+    ngettext(
+      "%{count} eBook is now monitored.",
+      "%{count} eBooks are now monitored.",
+      created_count
+    )
+  end
+
+  defp confirm_flash_text(created_count, previewed_count) do
+    gettext(
+      "%{created} of %{previewed} previewed works are now monitored; the rest were already claimed by another action in the meantime.",
+      created: created_count,
+      previewed: previewed_count
     )
   end
 
@@ -464,6 +530,17 @@ defmodule CinderWeb.BookDetailLive do
               class="select select-sm w-full"
             />
           </form>
+
+          <.button
+            :if={repreviewable?(author.id, @author_policies, @policy_previews)}
+            type="button"
+            variant="ghost"
+            size="sm"
+            phx-click="repreview_author_policy"
+            phx-value-author_id={author.id}
+          >
+            {gettext("Preview again")}
+          </.button>
 
           <div :if={preview = Map.get(@policy_previews, author.id)} class="mt-1 text-sm">
             <p :if={preview.state == :loading} class="text-base-content/60">

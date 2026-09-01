@@ -492,11 +492,16 @@ defmodule Cinder.Books do
   contract's "not a permanent implicit request for every bibliography item" wording literally —
   see `preview_author_policy/2` and `apply_author_policy/4` for the read/confirm pair that
   actually backfills targets.
+
+  Broadcasts `{:book_author_policy_updated, author_id}` post-write, like every other write in
+  this module — a second admin tab on `/books/:id` (for this work or any other work sharing the
+  credited author) picks up the new stored policy without a full remount.
   """
   @spec set_author_policy(Author.t(), :specific | :future | :all, Profile.t() | nil) ::
           {:ok, BookAuthorPolicy.t() | nil} | {:error, Ecto.Changeset.t()}
   def set_author_policy(%Author{id: author_id}, :specific, _profile) do
     Repo.delete_all(from p in BookAuthorPolicy, where: p.author_id == ^author_id)
+    broadcast({:book_author_policy_updated, author_id})
     {:ok, nil}
   end
 
@@ -504,12 +509,22 @@ defmodule Cinder.Books do
       when policy in [:future, :all] do
     attrs = %{author_id: author_id, policy: policy, profile_id: profile_id}
 
-    case Repo.get_by(BookAuthorPolicy, author_id: author_id) do
-      nil -> %BookAuthorPolicy{}
-      existing -> existing
+    result =
+      case Repo.get_by(BookAuthorPolicy, author_id: author_id) do
+        nil -> %BookAuthorPolicy{}
+        existing -> existing
+      end
+      |> BookAuthorPolicy.changeset(attrs)
+      |> Repo.insert_or_update()
+
+    case result do
+      {:ok, _policy} = ok ->
+        broadcast({:book_author_policy_updated, author_id})
+        ok
+
+      error ->
+        error
     end
-    |> BookAuthorPolicy.changeset(attrs)
-    |> Repo.insert_or_update()
   end
 
   @doc "The stored policy for `author_id`, or `:specific` (no row) if none was ever set."
@@ -578,10 +593,17 @@ defmodule Cinder.Books do
   not double it.
 
   Per candidate: `import_resolution/1` (idempotent) folds the already-resolved work into the
-  catalog, then `monitor_target/4` arms its `:ebook` target — never `:audiobook`, see the
-  roadmap's "what stays out." One candidate's failure does not abort the batch. Returns
-  `{:ok, created_count}`; `created_count` is always `length(eligible_candidates)` unless a
-  candidate genuinely failed to import/arm.
+  catalog, then arms its `:ebook` target — never `:audiobook`, see the roadmap's "what stays
+  out." **Re-verifies eligibility at write time, not just at preview time**: preview and confirm
+  are not atomic with each other, so the gap between them is a real window for the target to have
+  been claimed by something else — a direct per-work approval, a different admin's confirm of the
+  same author, or a prior `Cinder.Books.BibliographyRefresher` tick. A target still `:unmonitored`
+  is armed (the guarded `:unmonitored -> :monitored` transition, not the approval choke-point's
+  own `arm/3`, which is `:monitored`/`:available`-write-back-compatible on purpose for the
+  re-approval case and would otherwise silently overwrite a profile someone else deliberately
+  set); anything else is skipped — no write, not counted — rather than clobbered. One candidate's
+  failure or skip does not abort the batch. Returns `{:ok, created_count}`; `created_count` is
+  `length(eligible_candidates)` only when nothing raced.
   """
   @spec apply_author_policy(Author.t(), :future | :all, Profile.t(), [Identity.resolution()]) ::
           {:ok, non_neg_integer()}
@@ -679,7 +701,7 @@ defmodule Cinder.Books do
   # `start_async`, not a poller tick.
   defp import_and_monitor(resolution, profile) do
     with {:ok, work} <- import_resolution(resolution) do
-      monitor_target(work, :ebook, profile)
+      arm_new_policy_target(work, profile)
     end
   rescue
     e ->
@@ -696,6 +718,34 @@ defmodule Cinder.Books do
 
       {:error, :exception}
   end
+
+  # Arms a bulk-policy candidate only while its target is still exclusively unclaimed —
+  # `:unmonitored`, meaning nothing has monitored it since `preview_author_policy/2` computed
+  # `eligible`. Deliberately does NOT reuse `monitor_target/4`'s `arm/3`: that function is
+  # `:monitored`/`:available`-write-back-compatible on purpose, for the *approval* choke-point's
+  # "a second requester approving an already-satisfied work takes the profile" case — reusing it
+  # here would let a stale bulk-policy confirm silently overwrite the profile a direct approval,
+  # a different admin's confirm, or a prior `Cinder.Books.BibliographyRefresher` tick already set
+  # in the gap between preview and confirm (preview and confirm are not atomic with each other).
+  # `transition_target/3`'s guard is the actual race-closer, not just a defensive read: it is an
+  # atomic `UPDATE ... WHERE status = 'unmonitored'`, so a concurrent claim landing between
+  # `ensure_target/2`'s read and this write loses the guard (`{:error, :stale_status}`) instead of
+  # being silently clobbered.
+  defp arm_new_policy_target(%Work{} = work, %Profile{kind: :ebook} = profile) do
+    with {:ok, target} <- ensure_target(work, :ebook) do
+      case target do
+        %BookTarget{status: :unmonitored} ->
+          transition_target(target, %{status: :monitored, profile_id: profile.id},
+            expect: :unmonitored
+          )
+
+        %BookTarget{} ->
+          {:error, :already_claimed}
+      end
+    end
+  end
+
+  defp arm_new_policy_target(%Work{}, %Profile{}), do: {:error, :invalid_media_profile}
 
   @doc """
   Folds a `Cinder.Books.Identity` resolution into the catalog in one transaction: the work and its
