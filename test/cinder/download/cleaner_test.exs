@@ -182,6 +182,52 @@ defmodule Cinder.Download.CleanerTest do
     assert :ok = Cleaner.poll()
   end
 
+  test "a download id claimed on one protocol does not shield the same id's orphan on another" do
+    # #397: `download_id` is client-local (a qBittorrent infohash, a SABnzbd nzo_id, an NZBGet
+    # integer) with no cross-client uniqueness guarantee. A torrent grab owning "cross-protocol"
+    # must not make an unrelated usenet entry with the same id read as claimed, and vice versa.
+    Repo.insert!(%Grab{
+      download_id: "cross-protocol",
+      download_protocol: :torrent,
+      release_title: "R"
+    })
+
+    expect(ClientMock, :list_managed, fn ->
+      {:ok, [entry(%{id: "cross-protocol", state: :downloading})]}
+    end)
+
+    stub(SabnzbdClientMock, :list_managed, fn ->
+      {:ok, [entry(%{id: "cross-protocol", state: :downloading})]}
+    end)
+
+    # No `remove` expectation for the torrent client: the grab owns it there.
+    expect(SabnzbdClientMock, :remove, fn "cross-protocol", opts ->
+      assert Keyword.fetch!(opts, :delete_files)
+      :ok
+    end)
+
+    assert :ok = Cleaner.poll()
+  end
+
+  test "a movie with no recorded protocol (a pre-download_protocol row) is claimed only on torrent" do
+    # `movies.download_protocol` is nullable — rows from before the column existed. Every other
+    # read site (`Download.client_for/1`) resolves that nil to :torrent, and the sweep's ownership
+    # check must match: claim it on the torrent sweep, but NOT blanket-claim it on usenet too
+    # (that would just reopen #397 for legacy rows).
+    movie = movie_fixture(%{status: :downloading, download_id: "legacy"})
+    assert movie.download_protocol == nil
+
+    expect(ClientMock, :list_managed, fn -> {:ok, [entry(%{id: "legacy"})]} end)
+
+    stub(SabnzbdClientMock, :list_managed, fn ->
+      {:ok, [entry(%{id: "legacy", state: :downloading})]}
+    end)
+
+    expect(SabnzbdClientMock, :remove, fn "legacy", _opts -> :ok end)
+
+    assert :ok = Cleaner.poll()
+  end
+
   test "sweeps usenet through its own client" do
     expect(ClientMock, :list_managed, fn -> {:ok, []} end)
 
