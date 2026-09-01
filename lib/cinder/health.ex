@@ -6,6 +6,7 @@ defmodule Cinder.Health do
   panel uses this to surface an unwired/unreachable dependency instead of leaving it to stall
   silently and only show up in the logs.
   """
+  alias Cinder.Books.Metadata
   alias Cinder.Download
   alias Cinder.LibraryKind
 
@@ -16,6 +17,7 @@ defmodule Cinder.Health do
   """
   def check_all do
     [tmdb_check(), indexer_check()] ++
+      books_metadata_checks() ++
       download_checks() ++
       [media_server_check()] ++
       library_checks() ++ media_info_check() ++ subtitles_check() ++ secrets_check()
@@ -25,7 +27,7 @@ defmodule Cinder.Health do
   Checks a single service against its currently-applied config, returning
   `:ok | {:warning, term()} | {:error, term()}`. Used by the settings "Test connection" buttons.
   `service` is `:tmdb | :indexer | :media_server | :discord | :subtitles | :media_info |
-  {:download, protocol}`.
+  {:download, protocol} | {:books_metadata, provider}`.
   """
   def check_service(:tmdb), do: run(Application.fetch_env!(:cinder, :tmdb))
   def check_service(:indexer), do: run(Application.fetch_env!(:cinder, :indexer))
@@ -64,6 +66,13 @@ defmodule Cinder.Health do
     end
   end
 
+  def check_service({:books_metadata, provider}) do
+    case Enum.find(Metadata.providers(), &(&1.provider() == provider)) do
+      nil -> {:error, :not_configured}
+      mod -> run(mod)
+    end
+  end
+
   def check_service({:library, kind}) do
     case Application.get_env(:cinder, :"#{LibraryKind.root_role(kind)}_library_path") do
       blank when blank in [nil, ""] -> {:error, :not_configured}
@@ -81,6 +90,15 @@ defmodule Cinder.Health do
   defp indexer_check do
     mod = Application.fetch_env!(:cinder, :indexer)
     check("Indexer (#{short(mod)})", mod)
+  end
+
+  # One row per configured metadata provider (Open Library, Hardcover, …) — the genuinely
+  # missing health surface per the B5c plan (book-root/publisher health already exists below,
+  # via `library_checks/0`).
+  defp books_metadata_checks do
+    for mod <- Metadata.providers() do
+      check("Metadata (#{short(mod)})", mod)
+    end
   end
 
   defp media_server_check do

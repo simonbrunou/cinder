@@ -64,6 +64,24 @@ defmodule Cinder.Notifier.DiscordTest do
     assert embed["color"] == 0xE74C3C
   end
 
+  test "book_target_held posts an orange embed with the media kind and reason" do
+    expect_post()
+
+    target = %{
+      work: %{title: "The Dispossessed"},
+      media_kind: :ebook,
+      hold_reason: "download_failed"
+    }
+
+    assert :ok = Discord.notify({:book_target_held, target})
+
+    assert_receive {:posted, %{"embeds" => [embed]}}
+    assert embed["title"] == "⏸️ Book target held"
+    assert embed["description"] =~ "The Dispossessed"
+    assert embed["description"] =~ "download_failed"
+    assert embed["color"] == 0xF39C12
+  end
+
   test "maintenance_completed posts a green embed with the operation name" do
     expect_post()
     assert :ok = Discord.notify({:maintenance_completed, :movie_pipeline})

@@ -22,6 +22,8 @@ defmodule Cinder.Notifier.Discord do
   @red 0xE74C3C
   # Neither success nor failure: something is sitting in a queue waiting for an admin to act.
   @blue 0x3498DB
+  # A hold needs operator attention but isn't a failure (@red) — Flat UI's "orange."
+  @orange 0xF39C12
   @image_base "https://image.tmdb.org/t/p/w342"
   @maintenance_names %{
     movie_pipeline: "Movie pipeline",
@@ -131,6 +133,15 @@ defmodule Cinder.Notifier.Discord do
       title: "📚 Now available",
       description: "#{book_title(target)} (#{LibraryKind.format_label(target.media_kind)})",
       color: @green
+    }
+
+  defp embed({:book_target_held, target}),
+    do: %{
+      title: "⏸️ Book target held",
+      description:
+        "#{book_title(target)} (#{LibraryKind.format_label(target.media_kind)}) — " <>
+          target.hold_reason,
+      color: @orange
     }
 
   defp embed({:movie_upgrade_failed, movie, reason}),

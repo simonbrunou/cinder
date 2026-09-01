@@ -43,6 +43,9 @@ defmodule Cinder.Notifier.Log do
   def notify({:book_available, target}),
     do: log("book available: #{book_title(target)} (#{target.media_kind})")
 
+  def notify({:book_target_held, target}),
+    do: log("book target held: #{book_title(target)} (#{target.hold_reason})")
+
   def notify({:movie_failed, movie, reason}),
     do: log("movie failed: #{movie.title} (#{inspect(reason)})")
 

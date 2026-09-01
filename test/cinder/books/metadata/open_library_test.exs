@@ -246,6 +246,18 @@ defmodule Cinder.Books.Metadata.OpenLibraryTest do
     assert {:error, _reason} = OpenLibrary.search("anything")
   end
 
+  test "health/0 is :ok on a 200 and surfaces a non-200 status" do
+    Req.Test.stub(Cinder.OpenLibraryStub, fn conn ->
+      assert conn.request_path == "/search.json"
+      Req.Test.json(conn, %{"docs" => []})
+    end)
+
+    assert :ok = OpenLibrary.health()
+
+    Req.Test.stub(Cinder.OpenLibraryStub, fn conn -> Plug.Conn.send_resp(conn, 503, "down") end)
+    assert {:error, {:openlibrary_status, 503}} = OpenLibrary.health()
+  end
+
   defp stub_search(doc) do
     Req.Test.stub(Cinder.OpenLibraryStub, fn conn -> Req.Test.json(conn, %{"docs" => [doc]}) end)
   end

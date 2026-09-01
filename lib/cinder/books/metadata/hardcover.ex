@@ -94,6 +94,23 @@ defmodule Cinder.Books.Metadata.Hardcover do
     end
   end
 
+  @impl true
+  # Bounded, unauthenticated probe — mirrors OpenLibrary's. `request/1` itself already resolves
+  # to `{:error, :not_configured}` when no `base_url` is set, so an unconfigured Hardcover shows
+  # a clean row instead of a raised/opaque error.
+  def health do
+    case request(
+           url: "/search",
+           params: [q: "health"],
+           receive_timeout: 3_000,
+           connect_options: [timeout: 3_000]
+         ) do
+      {:error, :not_configured} = err -> err
+      {:ok, %{status: status}} when status in 200..299 -> :ok
+      other -> error(other)
+    end
+  end
+
   defp search_hits(query) do
     case request(url: "/search", params: [q: query]) do
       {:ok, %{status: 200, body: hits}} when is_list(hits) -> {:ok, hits}

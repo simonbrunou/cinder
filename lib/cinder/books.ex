@@ -30,6 +30,7 @@ defmodule Cinder.Books do
   alias Cinder.Catalog.Profile
   alias Cinder.HTTPPolicy
   alias Cinder.LibraryKind
+  alias Cinder.Notifier
   alias Cinder.Repo
 
   @book_media_kinds LibraryKind.books()
@@ -269,6 +270,7 @@ defmodule Cinder.Books do
 
   defp tap_block_release({:ok, held} = ok, release_title, reason) do
     maybe_block_release(held, release_title, reason)
+    Notifier.notify({:book_target_held, held})
     ok
   end
 

@@ -57,6 +57,22 @@ defmodule Cinder.Books.RetryBlocklistTest do
     assert Books.blocked_release_titles(target.id) == ["First Bad Release"]
   end
 
+  test "a held target notifies exactly once; re-observing the same hold notifies zero more" do
+    Cinder.TestNotifier.subscribe()
+    target = ebook_target()
+
+    assert {:ok, held} = Books.hold_target(target, :download_failed, "First Bad Release", true)
+    assert_receive {:notify, {:book_target_held, %BookTarget{id: id}}}
+    assert id == held.id
+
+    # The guarded :monitored precondition is the dedup — a re-observed (duplicate poller tick)
+    # hold on the already-held target returns {:error, :stale_status} and never reaches notify.
+    assert {:error, _reason} =
+             Books.hold_target(held, :download_failed, "Second Bad Release", true)
+
+    refute_receive {:notify, {:book_target_held, _}}
+  end
+
   test "hold_target/4 with no release title writes no blocklist row" do
     target = ebook_target()
     {:ok, _held} = Books.hold_target(target, :some_reason)

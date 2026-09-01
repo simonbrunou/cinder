@@ -23,6 +23,8 @@ defmodule Cinder.HealthTest do
   defp stub_check_all_services do
     stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
     stub(Cinder.Acquisition.IndexerMock, :health, fn -> :ok end)
+    stub(Cinder.Books.PrimaryMetadataMock, :health, fn -> :ok end)
+    stub(Cinder.Books.SecondaryMetadataMock, :health, fn -> :ok end)
     stub(Cinder.Download.ClientMock, :health, fn -> {:error, :econnrefused} end)
     stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)
     stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)
@@ -35,12 +37,45 @@ defmodule Cinder.HealthTest do
     assert [
              %{label: "Metadata (TMDB)", status: :ok},
              %{label: "Indexer (IndexerMock)", status: :ok},
+             %{label: "Metadata (PrimaryMetadataMock)", status: :ok},
+             %{label: "Metadata (SecondaryMetadataMock)", status: :ok},
              %{label: "Download (torrent · ClientMock)", status: {:error, :econnrefused}},
              %{label: "Download (usenet · SabnzbdClientMock)", status: :ok},
              %{label: "Media server (MediaServerMock)", status: :ok},
              %{label: "Library (movies)", status: :ok},
              %{label: "Library (tv)", status: :ok}
            ] = Cinder.Health.check_all()
+  end
+
+  test "a books metadata provider failure reports on its own row without affecting the others" do
+    stub_check_all_services()
+    stub(Cinder.Books.PrimaryMetadataMock, :health, fn -> {:error, :timeout} end)
+
+    rows = Cinder.Health.check_all()
+
+    assert Enum.find(rows, &(&1.label == "Metadata (PrimaryMetadataMock)")).status ==
+             {:error, :timeout}
+
+    assert Enum.find(rows, &(&1.label == "Metadata (SecondaryMetadataMock)")).status == :ok
+    assert Enum.find(rows, &(&1.label == "Metadata (TMDB)")).status == :ok
+  end
+
+  test "check_service({:books_metadata, provider}) probes the matching configured provider" do
+    stub(Cinder.Books.PrimaryMetadataMock, :provider, fn -> :openlibrary end)
+    stub(Cinder.Books.SecondaryMetadataMock, :provider, fn -> :hardcover end)
+    stub(Cinder.Books.PrimaryMetadataMock, :health, fn -> :ok end)
+    stub(Cinder.Books.SecondaryMetadataMock, :health, fn -> {:error, :timeout} end)
+
+    assert Cinder.Health.check_service({:books_metadata, :openlibrary}) == :ok
+    assert Cinder.Health.check_service({:books_metadata, :hardcover}) == {:error, :timeout}
+  end
+
+  test "check_service({:books_metadata, provider}) is not_configured for an unrecognized provider" do
+    stub(Cinder.Books.PrimaryMetadataMock, :provider, fn -> :openlibrary end)
+    stub(Cinder.Books.SecondaryMetadataMock, :provider, fn -> :hardcover end)
+
+    assert Cinder.Health.check_service({:books_metadata, :nonexistent}) ==
+             {:error, :not_configured}
   end
 
   test "book library rows are omitted until their roots are configured" do

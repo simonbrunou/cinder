@@ -21,6 +21,17 @@ defmodule Cinder.Notifier.LogTest do
     refute log =~ "kim@example.com"
   end
 
+  test "book_target_held logs the title and the sanitized hold reason" do
+    target = %{work: %{title: "The Dispossessed"}, hold_reason: "download_failed"}
+
+    log =
+      capture_log(fn ->
+        assert :ok = Log.notify({:book_target_held, target})
+      end)
+
+    assert log =~ "[notifier] book target held: The Dispossessed (download_failed)"
+  end
+
   test "request_denied logs the title and user id, never the free-text reason" do
     request = %{title: "The Matrix", user_id: 7}
 

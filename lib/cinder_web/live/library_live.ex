@@ -2,9 +2,9 @@ defmodule CinderWeb.LibraryLive do
   @moduledoc """
   Admin managed-catalog at `/library`: every movie (cancel / delete; drill into
   `/movies/:id` for edit and pipeline actions), every added series (cancel / delete; drill into
-  `/series/:id` for per-episode monitoring), and every book target (read-only; drill into
-  `/books/:id` for pipeline actions — search, grab, hold clearing, language). Merges the old
-  `/movies` page and the Discover "Added series" block.
+  `/series/:id` for per-episode monitoring), and every book target (inline Pause/Resume, plus a
+  `?status=wanted|held` filter; drill into `/books/:id` for retry, blocklist, search/grab, and
+  language). Merges the old `/movies` page and the Discover "Added series" block.
 
   One type at a time, picked by the `?type=` query param (`tv`/`books`, else movies) and read in
   `mount/3` via `parse_tab/1`'s allowlist — same discipline as `parse_sort/1` below, never
@@ -24,7 +24,8 @@ defmodule CinderWeb.LibraryLive do
   history entries — Back from `/movies/:id` still returns to the sorted list.
 
   Admin-gated by the `:admin` live_session; every mutation routes through the existing
-  `Catalog` functions — no pipeline or gate change (the books tab has none: it writes nothing).
+  `Catalog`/`Books` functions. The books tab writes only `Books.pause_target/1` and
+  `resume_target/1` — heavier decisions (retry, blocklist, grab) stay on `/books/:id`.
   Live via the `movies` + `series` topics unconditionally, matching how both tabs' counts are
   always visible in the nav regardless of which is active. The books topic is the one exception —
   subscribed only when `@tab == :books`, not unconditionally like the other two: unlike
@@ -50,6 +51,7 @@ defmodule CinderWeb.LibraryLive do
   @impl true
   def mount(params, _session, socket) do
     tab = parse_tab(params["type"])
+    status = parse_status(params["status"])
 
     if connected?(socket) do
       Catalog.subscribe()
@@ -62,6 +64,7 @@ defmodule CinderWeb.LibraryLive do
      |> assign(
        movies: Catalog.list_movies(),
        tab: tab,
+       status: status,
        filter: "",
        confirming: nil,
        delete_files: false
@@ -154,6 +157,58 @@ defmodule CinderWeb.LibraryLive do
     )
   end
 
+  # --- books ---
+  # `Books.pause_target/1` is the choke-point: it refuses `{:error, :grab_in_progress}` if a
+  # `book_grabs` row exists, closing the race the render-side `Grabs.for_target/1` guard (in the
+  # template) only narrows. That refusal gets its own specific flash rather than the generic one.
+  def handle_event("pause_target", %{"id" => id}, socket) when is_binary(id) do
+    case find_book(socket, id) do
+      nil ->
+        {:noreply, socket}
+
+      target ->
+        case Books.pause_target(target) do
+          {:ok, _paused} ->
+            {:noreply,
+             socket
+             |> assign_books()
+             |> put_flash(:info, gettext("Book target paused."))}
+
+          {:error, :grab_in_progress} ->
+            {:noreply,
+             put_flash(
+               socket,
+               :error,
+               gettext(
+                 "This target has a download in progress. Wait for it to finish before pausing."
+               )
+             )}
+
+          {:error, _reason} ->
+            {:noreply, put_flash(socket, :error, gettext("Couldn't pause that book target."))}
+        end
+    end
+  end
+
+  def handle_event("resume_target", %{"id" => id}, socket) when is_binary(id) do
+    case find_book(socket, id) do
+      nil ->
+        {:noreply, socket}
+
+      target ->
+        case Books.resume_target(target) do
+          {:ok, _resumed} ->
+            {:noreply,
+             socket
+             |> assign_books()
+             |> put_flash(:info, gettext("Book target resumed."))}
+
+          {:error, _reason} ->
+            {:noreply, put_flash(socket, :error, gettext("Couldn't resume that book target."))}
+        end
+    end
+  end
+
   # --- shared ---
   # Narrows the rendered grid only — never written back onto @movies/@series, which stay the
   # authority for the PubSub handlers and the cancel/delete lookups. Drops any open confirm:
@@ -211,6 +266,11 @@ defmodule CinderWeb.LibraryLive do
   # `phx-value-id` carrying a map raises Protocol.UndefinedError. Its callers are guarded
   # `is_binary(id)` besides, so the conversion had nothing left to do.
   defp find_movie(socket, id), do: find_by_id(socket.assigns.movies, id)
+
+  # Same guard/lookup discipline as `find_movie/2` — the canonical `@books` list, not the
+  # filtered `@visible`, so a target hidden by the current `?status=`/text filter is still a
+  # valid write target (matches `find_movie/2` searching `@movies`, not `@visible` movies).
+  defp find_book(socket, id), do: find_by_id(socket.assigns.books, id)
 
   # The series list and its size map always move together — every `episodes.imported_size` writer
   # broadcasts `{:series_updated, _}` on the topic this view subscribes to, so refreshing one
@@ -282,6 +342,11 @@ defmodule CinderWeb.LibraryLive do
     Enum.filter(targets, &String.contains?(String.downcase(&1.work.title), needle))
   end
 
+  # `?status=` narrowing, applied after the text filter and before sort (same composition as
+  # `book_visible/2` itself). `nil` (no/unknown `?status=`) is unfiltered — today's behavior.
+  defp book_status_visible(targets, nil), do: targets
+  defp book_status_visible(targets, status), do: Enum.filter(targets, &(&1.status == status))
+
   # Same four sort keys as `sort_items/4`, mapped onto a target's own fields — see the moduledoc.
   defp sort_book_items(targets, :title, _sizes),
     do: Enum.sort_by(targets, &{fold_title(&1.work.title), -&1.id})
@@ -315,6 +380,12 @@ defmodule CinderWeb.LibraryLive do
   defp parse_tab("tv"), do: :tv
   defp parse_tab("books"), do: :books
   defp parse_tab(_), do: :movies
+
+  # Same allowlist discipline again — never `String.to_atom/1` on the client-supplied `?status=`
+  # param. Unknown or absent → nil, the unfiltered default (unchanged pre-B5c behavior).
+  defp parse_status("wanted"), do: :monitored
+  defp parse_status("held"), do: :held
+  defp parse_status(_), do: nil
 
   # A function, not a module attribute: the labels are translated at runtime, per locale.
   defp sort_options do
@@ -363,6 +434,7 @@ defmodule CinderWeb.LibraryLive do
   defp visible_for_tab(%{tab: :books} = assigns) do
     assigns.books
     |> book_visible(assigns.filter)
+    |> book_status_visible(assigns.status)
     |> sort_book_items(assigns.sort, assigns.book_sizes)
   end
 
@@ -427,6 +499,25 @@ defmodule CinderWeb.LibraryLive do
           class={["tab min-h-11", @tab == :books && "tab-active"]}
         >
           {gettext("Books")} ({length(@books)})
+        </.link>
+        <.link
+          id="library-books-wanted"
+          navigate={~p"/library?type=books&status=wanted"}
+          aria-current={@tab == :books && @status == :monitored && "page"}
+          class={[
+            "tab min-h-11 tab-sm",
+            @tab == :books && @status == :monitored && "tab-active"
+          ]}
+        >
+          {gettext("Wanted")}
+        </.link>
+        <.link
+          id="library-books-held"
+          navigate={~p"/library?type=books&status=held"}
+          aria-current={@tab == :books && @status == :held && "page"}
+          class={["tab min-h-11 tab-sm", @tab == :books && @status == :held && "tab-active"]}
+        >
+          {gettext("Held")}
         </.link>
       </nav>
 
@@ -708,6 +799,33 @@ defmodule CinderWeb.LibraryLive do
                 kind={t.media_kind}
                 state={book_badge_state(nil, t.status)}
               />
+
+              <%!-- Cheap/reversible only: a `:held` row's Retry/Clear-blocklist stay on
+                    `/books/:id`, where the hold reason is already rendered. `Grabs.for_target/1`
+                    here is UX only — hiding a button that would visibly fail — the actual safety
+                    boundary is `Books.pause_target/1`'s own `:grab_in_progress` refusal. --%>
+              <div :if={t.status in [:monitored, :unmonitored]} class="flex flex-wrap gap-2">
+                <.button
+                  :if={t.status == :monitored and Books.Grabs.for_target(t.id) == nil}
+                  type="button"
+                  variant="warning"
+                  size="sm"
+                  phx-click="pause_target"
+                  phx-value-id={t.id}
+                >
+                  {gettext("Pause")}
+                </.button>
+                <.button
+                  :if={t.status == :unmonitored}
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  phx-click="resume_target"
+                  phx-value-id={t.id}
+                >
+                  {gettext("Resume")}
+                </.button>
+              </div>
             </div>
           </article>
         </div>

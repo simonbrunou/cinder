@@ -29,6 +29,8 @@ defmodule CinderWeb.DashboardLiveTest do
   setup do
     # Dashboard runs Health.check_all/0 in a start_async task (separate process) → global mocks.
     stub(Cinder.Acquisition.IndexerMock, :health, fn -> :ok end)
+    stub(Cinder.Books.PrimaryMetadataMock, :health, fn -> :ok end)
+    stub(Cinder.Books.SecondaryMetadataMock, :health, fn -> :ok end)
     stub(Cinder.Download.ClientMock, :health, fn -> :ok end)
     stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)
     stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)

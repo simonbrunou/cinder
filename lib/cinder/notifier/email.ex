@@ -39,6 +39,7 @@ defmodule Cinder.Notifier.Email do
   def notify({:movie_failed, movie, reason}), do: notify_movie(movie, {:failed, reason})
   def notify({:season_available, season}), do: notify_season(season)
   def notify({:book_available, target}), do: notify_book(target)
+  def notify({:book_target_held, target}), do: notify_book_held(target)
   def notify({:episodes_search_exhausted, episodes}), do: notify_episodes_exhausted(episodes)
   def notify(_other), do: :ok
 
@@ -181,6 +182,27 @@ defmodule Cinder.Notifier.Email do
   end
 
   defp notify_book(_target), do: :ok
+
+  # Mirrors `notify_movie/2`'s `{:failed, reason}` branch, reusing its exact copy: "could not be
+  # completed" reads fine for a held book too, and reusing the msgid needs no new French string.
+  # `target.hold_reason` is already sanitized/bounded (`Books.hold_reason/1`), so it is safe to
+  # interpolate directly here (never inspected remote text).
+  defp notify_book_held(%{work_id: work_id, media_kind: media_kind} = target)
+       when is_integer(work_id) and is_atom(media_kind) do
+    each_requester(Requests.approved_requesters_for_book(work_id, media_kind), fn ->
+      title = book_title(target)
+
+      {gettext("We couldn't get %{title}", title: title),
+       gettext(
+         "We're sorry — your request for %{title} could not be completed (%{reason}) and has " <>
+           "been parked. An admin may need to take a look.",
+         title: title,
+         reason: target.hold_reason
+       )}
+    end)
+  end
+
+  defp notify_book_held(_target), do: :ok
 
   # Defensive, matching Discord's own fallback for the same field: the poller reloads the target
   # before notifying, but a work deleted in that window must not raise inside a transport.
