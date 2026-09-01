@@ -51,7 +51,8 @@ config :cinder, jellyfin_auth: Cinder.Accounts.JellyfinAuth.HTTP
 config :cinder,
   migration_sources: %{
     radarr: Cinder.Library.MigrationSource.Radarr,
-    sonarr: Cinder.Library.MigrationSource.Sonarr
+    sonarr: Cinder.Library.MigrationSource.Sonarr,
+    readarr: Cinder.Library.MigrationSource.Readarr
   }
 
 config :cinder,

@@ -30,8 +30,19 @@ defmodule Cinder.Settings.Registry do
       port: 8989,
       remote: "/tv",
       local: "/media/tv"
+    },
+    %{
+      key: "readarr",
+      name: "Readarr",
+      module: Cinder.Library.MigrationSource.Readarr,
+      port: 8787,
+      remote: "/library/ebooks",
+      local: "/media/books"
     }
   ]
+
+  @doc "The configured migration sources: key, display name, adapter module, and default path prefixes."
+  def migration_sources, do: @migration_sources
 
   @migration_config_fields (for source <- @migration_sources,
                                 {suffix, field, label, secret, placeholder, help} <- [

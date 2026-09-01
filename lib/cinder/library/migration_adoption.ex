@@ -11,7 +11,7 @@ defmodule Cinder.Library.MigrationAdoption do
 
   @statuses [:ready, :needs_decision, :blocked, :already_managed]
 
-  def preview(source) when source in [:radarr, :sonarr] do
+  def preview(source) do
     with {:ok, module} <- source_module(source),
          {:ok, snapshot} <- module.snapshot() do
       lookups = lookups(snapshot)
@@ -36,9 +36,7 @@ defmodule Cinder.Library.MigrationAdoption do
     end
   end
 
-  def preview(_source), do: {:error, :unknown_migration_source}
-
-  def adopt(source, commands) when source in [:radarr, :sonarr] and is_list(commands) do
+  def adopt(source, commands) when is_list(commands) do
     case adoption_candidates(source, commands) do
       {:ok, by_key} ->
         {selected, unavailable} = selected_candidates(commands, by_key)

@@ -74,7 +74,8 @@ config :cinder,
   subtitles_translator: Cinder.Subtitles.TranslatorMock,
   migration_sources: %{
     radarr: Cinder.Library.RadarrMigrationSourceMock,
-    sonarr: Cinder.Library.SonarrMigrationSourceMock
+    sonarr: Cinder.Library.SonarrMigrationSourceMock,
+    readarr: Cinder.Library.ReadarrMigrationSourceMock
   },
   bootstrap_token: "test-bootstrap-token",
   secure_cookies: false,
@@ -125,6 +126,11 @@ config :cinder, Cinder.Library.MigrationSource.Sonarr,
   base_url: "http://sonarr:8989",
   api_key: "test-key",
   req_options: [plug: {Req.Test, Cinder.SonarrStub}, retry: false]
+
+config :cinder, Cinder.Library.MigrationSource.Readarr,
+  base_url: "http://bookshelf:8787",
+  api_key: "test-key",
+  req_options: [plug: {Req.Test, Cinder.ReadarrStub}, retry: false]
 
 config :cinder, Cinder.Download.Client.QBittorrent,
   base_url: "http://localhost:8080",

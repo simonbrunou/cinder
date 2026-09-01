@@ -52,6 +52,7 @@ defmodule Cinder.Settings do
 
   defdelegate groups(), to: Registry
   defdelegate config_fields(), to: Registry
+  defdelegate migration_sources(), to: Registry
   defdelegate config_fields(group), to: Registry
   defdelegate path_mapping_fields(), to: Registry
   defdelegate download_fields(), to: Registry

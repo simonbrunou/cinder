@@ -8,6 +8,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
 
   alias Cinder.Catalog.Episode
   alias Cinder.Library.Adoption
+  alias Cinder.Settings
 
   # Migration buckets can hold thousands of rows; render a bounded page per bucket and keep the
   # selection/decision state server-side (keyed by stable candidate id), independent of what the
@@ -26,6 +27,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
        form: to_form(%{}, as: :adoption),
        mode: :filesystem,
        migration_source: nil,
+       migration_source_keys: Settings.migration_sources() |> Enum.map(& &1.key),
        migration_buckets: @empty_buckets,
        selected_ready: MapSet.new(),
        decisions: %{},
@@ -59,22 +61,28 @@ defmodule CinderWeb.LibraryAdoptionLive do
        |> assign(adoption_failures: [], mode: :filesystem, migration_source: nil)
        |> start_scan()}
 
+  # Source key set is runtime-configured (`Cinder.Settings.Registry.migration_sources/0`), so it
+  # cannot be checked in a function guard (guards only allow compile-time lists) — the membership
+  # check moves into the body; an unconfigured source falls through to the catch-all clause below.
   def handle_event(
         "scan_migration",
         %{"source" => source},
         %{assigns: %{scanning?: false, adopting?: false}} = socket
-      )
-      when source in ["radarr", "sonarr"] do
-    source = String.to_existing_atom(source)
+      ) do
+    if source in socket.assigns.migration_source_keys do
+      source = String.to_existing_atom(source)
 
-    {:noreply,
-     socket
-     |> assign(
-       adoption_failures: [],
-       mode: {:migration, source},
-       migration_source: source
-     )
-     |> start_scan()}
+      {:noreply,
+       socket
+       |> assign(
+         adoption_failures: [],
+         mode: {:migration, source},
+         migration_source: source
+       )
+       |> start_scan()}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_event(

@@ -34,7 +34,7 @@ defmodule Cinder.Health do
   def check_service(:media_server), do: run(Application.fetch_env!(:cinder, :media_server))
   def check_service(:discord), do: run(Cinder.Notifier.Discord)
 
-  def check_service({:migration_source, source}) when source in [:radarr, :sonarr] do
+  def check_service({:migration_source, source}) do
     case Application.fetch_env!(:cinder, :migration_sources) do
       %{^source => mod} -> run(mod)
       _sources -> {:error, :not_configured}

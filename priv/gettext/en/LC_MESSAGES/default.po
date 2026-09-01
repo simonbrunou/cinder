@@ -4540,6 +4540,26 @@ msgstr ""
 msgid "Sonarr remote path prefix"
 msgstr ""
 
+#: lib/cinder_web/settings_labels.ex:65
+#, elixir-autogen
+msgid "Readarr URL"
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:66
+#, elixir-autogen
+msgid "Readarr API key"
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:67
+#, elixir-autogen
+msgid "Readarr remote path prefix"
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:68
+#, elixir-autogen
+msgid "Readarr local path prefix"
+msgstr ""
+
 #: lib/cinder_web/live/library_adoption_live.ex:988
 #, elixir-autogen
 msgid "Sonarr split several TVDB episodes into files that map to one TMDB episode. Choose how to treat each extra file."

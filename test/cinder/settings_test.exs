@@ -353,6 +353,10 @@ defmodule Cinder.SettingsTest do
                  "sonarr_api_key" => "sonarr-secret",
                  "sonarr_remote_path_prefix" => "/tv",
                  "sonarr_local_path_prefix" => "/media/tv",
+                 "readarr_url" => "http://bookshelf.internal:8787",
+                 "readarr_api_key" => "readarr-secret",
+                 "readarr_remote_path_prefix" => "/library/ebooks",
+                 "readarr_local_path_prefix" => "/media/books",
                  "media_server_type" => "jellyfin"
                })
 
@@ -374,7 +378,16 @@ defmodule Cinder.SettingsTest do
                  local_path_prefix: "/media/tv"
                ]
 
-      for key <- ["radarr_api_key", "sonarr_api_key"] do
+      assert Application.get_env(:cinder, Cinder.Library.MigrationSource.Readarr)
+             |> Keyword.take([:base_url, :api_key, :remote_path_prefix, :local_path_prefix]) ==
+               [
+                 base_url: "http://bookshelf.internal:8787",
+                 api_key: "readarr-secret",
+                 remote_path_prefix: "/library/ebooks",
+                 local_path_prefix: "/media/books"
+               ]
+
+      for key <- ["radarr_api_key", "sonarr_api_key", "readarr_api_key"] do
         row = Repo.get_by!(Setting, key: key)
         assert row.is_secret
         refute row.value =~ "secret"
