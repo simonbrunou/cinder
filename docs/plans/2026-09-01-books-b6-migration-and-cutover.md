@@ -108,11 +108,15 @@ Create:
 - `lib/cinder/library/migration_source/readarr.ex` — `@behaviour Cinder.Library.MigrationSource`.
   `snapshot/0` issues sequential `GET`s (mirrors `radarr.ex`'s simplicity, not `sonarr.ex`'s
   per-series concurrency — Bookshelf's `/api/v1/author`, `/book`, `/edition`, `/bookfile`,
-  `/qualityprofile`, `/rootfolder`, `/config/mediamanagement`, `/config/naming` are each one flat
-  list endpoint, no per-item fan-out) through the same `HTTPPolicy`/`@max_response_bytes` guard
-  rail as the other two adapters, and `PathMapping.translate/3` for `remote_path_prefix`/
-  `local_path_prefix`. `health/0` fetches `/api/v1/system/status` only.
-- `test/cinder/library/migration_source/readarr_test.exs` — stubs all eight endpoints via
+  `/qualityprofile`, `/rootfolder`, `/config/naming` are each one flat list endpoint, no
+  per-item fan-out) through the same `HTTPPolicy`/`@max_response_bytes` guard rail as the other
+  two adapters, and `PathMapping.translate/3` for `remote_path_prefix`/`local_path_prefix`.
+  `health/0` fetches `/api/v1/system/status` only. (`/api/v1/config/mediamanagement` was fetched
+  in an earlier draft but fed no field of the contract below — a B6a implementation review
+  caught it as a wasted round trip that also widened the snapshot's failure surface for nothing;
+  dropped. A future slice that needs its hardlink/free-space facts adds the fetch when it adds
+  the consumer.)
+- `test/cinder/library/migration_source/readarr_test.exs` — stubs all seven endpoints via
   `Req.Test` against `test/support/fixtures/books/bookshelf-api-v1.json` (the committed B0
   fixture, loaded and re-served response-by-response — not hand-written JSON, per the task's
   fixture-reuse requirement) and asserts the normalized snapshot shape from §B6b.1.

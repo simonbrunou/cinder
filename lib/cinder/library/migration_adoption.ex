@@ -125,6 +125,12 @@ defmodule Cinder.Library.MigrationAdoption do
   defp plan(:sonarr, snapshot, reconciled, lookups, managed),
     do: plan_episodes(snapshot, reconciled, lookups, managed)
 
+  # A source configured in the registry but not yet wired into plan/4 (currently :readarr —
+  # B6a adds dispatch and the snapshot contract, but book-specific candidate classification
+  # doesn't exist until B6b) degrades to an empty preview rather than raising. Mirrors the
+  # adopt/2 catch-all below.
+  defp plan(_source, _snapshot, _reconciled, _lookups, _managed), do: []
+
   defp plan_movies(snapshot, reconciled, managed) do
     files = files_by_id(snapshot.files, :movie)
     resolved = Map.new(reconciled.movies, &{&1.provider_id, &1})
@@ -682,6 +688,13 @@ defmodule Cinder.Library.MigrationAdoption do
     end)
   end
 
+  # `adopt/2` is reachable for any source once its list of commands passes `is_list/1` — including
+  # a source `plan/4` never produces candidates for, via the direct `candidate:`-embedded command
+  # shape `candidates_from_commands/1` accepts without calling `preview/1` first. Every candidate is
+  # treated as stale (not adopted, reported via `stale_keys`) rather than raising. Mirrors `plan/4`'s
+  # own catch-all above.
+  defp revalidate_catalog(_source, selected), do: {[], selected}
+
   defp targeted_cinder_series_index(selected) do
     selected
     |> Enum.map(fn {candidate, _choice} ->
@@ -757,6 +770,11 @@ defmodule Cinder.Library.MigrationAdoption do
       adopt_series_items(acc, items)
     end)
   end
+
+  # `revalidate_catalog/2`'s catch-all always empties `selected` for an unimplemented source, so
+  # this never actually adopts anything in practice — kept as an explicit no-op (not a crash) for
+  # any direct caller that reaches here regardless.
+  defp adopt_selected(summary, _source, _selected), do: summary
 
   defp adopt_movie_candidate(summary, candidate) do
     case Catalog.find_or_create_at_available(movie_attrs(candidate.details), candidate.path) do

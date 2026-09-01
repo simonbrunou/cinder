@@ -16,6 +16,11 @@ defmodule CinderWeb.LibraryAdoptionLive do
   @page_size 50
   @empty_buckets %{ready: [], needs_decision: [], blocked: [], already_managed: []}
   @first_pages %{ready: 1, needs_decision: 1, blocked: 1, already_managed: 1}
+  # Compile-time source-key set for the `scan_migration` guard below. `Registry.migration_sources/0`
+  # is a compile-time literal, so — unlike a value read from `socket.assigns` at runtime, which a
+  # guard can never reference — this can be, and is, checked with a real guard clause: a new
+  # registry entry needs no second hand-edit here.
+  @migration_source_keys Settings.migration_sources() |> Enum.map(& &1.key)
 
   @impl true
   def mount(_params, _session, socket) do
@@ -27,7 +32,6 @@ defmodule CinderWeb.LibraryAdoptionLive do
        form: to_form(%{}, as: :adoption),
        mode: :filesystem,
        migration_source: nil,
-       migration_source_keys: Settings.migration_sources() |> Enum.map(& &1.key),
        migration_buckets: @empty_buckets,
        selected_ready: MapSet.new(),
        decisions: %{},
@@ -61,28 +65,22 @@ defmodule CinderWeb.LibraryAdoptionLive do
        |> assign(adoption_failures: [], mode: :filesystem, migration_source: nil)
        |> start_scan()}
 
-  # Source key set is runtime-configured (`Cinder.Settings.Registry.migration_sources/0`), so it
-  # cannot be checked in a function guard (guards only allow compile-time lists) — the membership
-  # check moves into the body; an unconfigured source falls through to the catch-all clause below.
   def handle_event(
         "scan_migration",
         %{"source" => source},
         %{assigns: %{scanning?: false, adopting?: false}} = socket
-      ) do
-    if source in socket.assigns.migration_source_keys do
-      source = String.to_existing_atom(source)
+      )
+      when source in @migration_source_keys do
+    source = String.to_existing_atom(source)
 
-      {:noreply,
-       socket
-       |> assign(
-         adoption_failures: [],
-         mode: {:migration, source},
-         migration_source: source
-       )
-       |> start_scan()}
-    else
-      {:noreply, socket}
-    end
+    {:noreply,
+     socket
+     |> assign(
+       adoption_failures: [],
+       mode: {:migration, source},
+       migration_source: source
+     )
+     |> start_scan()}
   end
 
   def handle_event(
@@ -511,6 +509,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
 
   defp source_label(:radarr), do: gettext("Radarr")
   defp source_label(:sonarr), do: gettext("Sonarr")
+  defp source_label(:readarr), do: gettext("Readarr")
 
   defp migration_title(candidate) do
     case Map.get(candidate, :year) do

@@ -4520,6 +4520,12 @@ msgstr ""
 msgid "Sonarr"
 msgstr ""
 
+#: lib/cinder_web/components/settings_components.ex:717
+#: lib/cinder_web/live/library_adoption_live.ex:512
+#, elixir-autogen
+msgid "Readarr"
+msgstr ""
+
 #: lib/cinder_web/settings_labels.ex:62
 #, elixir-autogen
 msgid "Sonarr API key"
@@ -5497,6 +5503,11 @@ msgstr ""
 msgid "Optional. Send approval, availability, and failure alerts through Discord, a generic webhook, or email (SMTP). You can configure this later."
 msgstr ""
 
+#: lib/cinder_web/components/settings_components.ex:674
+#, elixir-autogen
+msgid "Bookshelf documentation"
+msgstr ""
+
 #: lib/cinder_web/components/settings_components.ex:672
 #, elixir-autogen
 msgid "Radarr documentation"
@@ -5540,7 +5551,7 @@ msgstr ""
 
 #: lib/cinder_web/components/settings_components.ex:609
 #, elixir-autogen
-msgid "Already use Radarr or Sonarr? Add them here only if you want Cinder to use their library data when adopting existing media. In each app, find the API key under Settings > General. Otherwise leave this optional section blank."
+msgid "Already use Radarr, Sonarr, or a Readarr-compatible book manager (e.g. Bookshelf)? Add them here only if you want Cinder to use their library data when adopting existing media. In each app, find the API key under Settings > General. Otherwise leave this optional section blank."
 msgstr ""
 
 #: lib/cinder_web/components/settings_components.ex:621

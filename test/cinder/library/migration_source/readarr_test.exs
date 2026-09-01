@@ -56,9 +56,6 @@ defmodule Cinder.Library.MigrationSource.ReadarrTest do
         "/api/v1/rootfolder" ->
           Req.Test.json(conn, @fixture["rootfolder"])
 
-        "/api/v1/config/mediamanagement" ->
-          Req.Test.json(conn, @fixture["config/mediamanagement"])
-
         "/api/v1/config/naming" ->
           Req.Test.json(conn, @fixture["config/naming"])
       end
@@ -306,9 +303,6 @@ defmodule Cinder.Library.MigrationSource.ReadarrTest do
 
         "/api/v1/rootfolder" ->
           Req.Test.json(conn, [])
-
-        "/api/v1/config/mediamanagement" ->
-          Req.Test.json(conn, %{})
 
         "/api/v1/config/naming" ->
           Req.Test.json(conn, %{})

@@ -33,8 +33,6 @@ defmodule Cinder.Library.MigrationSource.Readarr do
            request(config, url: "/api/v1/qualityprofile"),
          {:ok, %{status: 200, body: roots}} when is_list(roots) <-
            request(config, url: "/api/v1/rootfolder"),
-         {:ok, %{status: 200, body: media_management}} when is_map(media_management) <-
-           request(config, url: "/api/v1/config/mediamanagement"),
          {:ok, %{status: 200, body: naming}} when is_map(naming) <-
            request(config, url: "/api/v1/config/naming"),
          {:ok, normalized_authors} <- normalize_authors(authors),
@@ -214,6 +212,10 @@ defmodule Cinder.Library.MigrationSource.Readarr do
 
   defp quality_format(_raw), do: nil
 
+  # Unlike the author/work/edition/file normalizers above — which halt the whole snapshot on a
+  # malformed row because they carry catalog identity — profiles/roots are read-only, informational
+  # (§B6b.1) and never matched against. A row that doesn't fit the expected shape is filtered out
+  # rather than failing the entire snapshot over data nothing acts on yet.
   defp normalize_profiles(profiles) do
     for %{"id" => provider_id, "name" => name} <- profiles,
         is_integer(provider_id) and provider_id > 0 and is_binary(name) do
