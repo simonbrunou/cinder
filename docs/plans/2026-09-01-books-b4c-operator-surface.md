@@ -632,3 +632,26 @@ Recorded here rather than silently folded in, per the B4a/B4b convention.
   rejected every one as `:title_mismatch`, since the numeric suffix is an unrecognized leftover
   token. Tests that exercise real scoring pass a fixed `title:` instead; tests that don't touch the
   scorer keep the unique-suffixed default.
+- **`hold_reason` renders a raw atom, by pre-existing design — not a gap in the exhaustiveness
+  guarantee.** `book_detail_live_test.exs` asserts the flash for a permanently rejected submission
+  contains `"bad_torrent"`, because `Cinder.Books.hold_target/2` stringifies an atom reason
+  (`books.ex:214`, `Atom.to_string/1` — untouched by this slice). That is a *different* code path
+  from the manual-search panel's "a rejection never renders as its own atom name" guarantee: the
+  panel's reasons are `BookScorer.reasons/0`'s closed, adversarially-reachable set (an indexer
+  result names the rejection), and are deliberately never shown as raw atoms. A `hold_reason` is an
+  internal fact the pipeline itself produced (a client error atom, a content-policy verdict) —
+  non-attacker-controlled and already the codebase's convention for the field elsewhere (`books.ex`
+  itself: "the reason a household member reads renders the same way whichever half gave up"). The
+  two are not in tension; a later reader should not "fix" `hold_reason` to match the panel's
+  dictionary — they answer different questions.
+- **`:unmonitored` renders an empty badge on this page — unreachable today, and B5's obligation
+  once it stops being unreachable.** `book_badge_state(nil, :unmonitored)` falls through to
+  `:none`, whose badge renders nothing. This slice never observes it: a `book_targets` row is only
+  ever created at approval, already armed to `:monitored` in the same call
+  (`Books.monitor_target/4`), and a target with no row at all renders "Not yet approved" — a
+  different, handled case. But B5 owns the "unmonitor" control the roadmap names, and the first
+  write that sets an existing, still-linked target back to `:unmonitored` will render a blank badge
+  with no fallback text on `/books/:id`, `BookDiscoveryLive`, and `DiscoverLive` alike — all three
+  share `book_badge_state/2`. Not fixed here: it has no caller that can reach the state yet, and the
+  fix belongs in the shared helper, not in any one surface. Recorded as an explicit obligation on
+  B5, the same way B3b handed `:held` and this route forward to B4.
