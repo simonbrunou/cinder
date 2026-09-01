@@ -591,4 +591,26 @@ defmodule Cinder.Acquisition.BookScorerTest do
   test "accepted_formats/0 is the parity contract's e-book profile, EPUB first" do
     assert BookScorer.accepted_formats() == [:epub, :azw3, :mobi]
   end
+
+  test "reasons/0 is every reject reason evaluate/3 can return, with no duplicates" do
+    reasons = BookScorer.reasons()
+
+    assert Enum.sort(reasons) ==
+             Enum.sort([
+               :format_unknown,
+               :format_rejected,
+               :author_mismatch,
+               :title_mismatch,
+               :collection_ambiguous,
+               :language_mismatch,
+               :wrong_protocol,
+               :title_unfoldable,
+               :abridged_edition,
+               :format_contradictory,
+               :size_out_of_band,
+               :blocked_term
+             ])
+
+    assert Enum.uniq(reasons) == reasons
+  end
 end

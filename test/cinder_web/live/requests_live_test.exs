@@ -147,6 +147,44 @@ defmodule CinderWeb.RequestsLiveTest do
     assert profile_id == profile.id
   end
 
+  test "an approved book request row links to its work's pipeline view; a pending one doesn't",
+       %{conn: conn} do
+    user = user_fixture()
+    id = Integer.to_string(System.unique_integer([:positive]))
+
+    {:ok, profile} =
+      Cinder.Catalog.create_profile(%{name: "Ebooks #{id}", kind: :ebook, handling: :standard})
+
+    {:ok, work} =
+      Cinder.Books.upsert_work(%{
+        title: "Linkable Book #{id}",
+        identifier: %{provider: "openlibrary", kind: "work", foreign_id: id}
+      })
+
+    {:ok, req} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "book",
+        target_id: work.id,
+        media_kind: :ebook
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+
+    refute has_element?(lv, "a[href='/books/#{work.id}']")
+
+    lv
+    |> form("#approval-profile-form-#{req.id}", %{
+      "_id" => to_string(req.id),
+      "profile_id" => to_string(profile.id)
+    })
+    |> render_change()
+
+    lv |> element("button[phx-click='approve'][phx-value-id='#{req.id}']") |> render_click()
+    render_async(lv)
+
+    assert has_element?(lv, "a.link-hover[href='/books/#{work.id}']", "Linkable Book #{id}")
+  end
+
   test "approving a held book target says so instead of 'try again'", %{conn: conn} do
     user = user_fixture()
     id = Integer.to_string(System.unique_integer([:positive]))

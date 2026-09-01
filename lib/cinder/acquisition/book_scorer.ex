@@ -146,6 +146,34 @@ defmodule Cinder.Acquisition.BookScorer do
   def size_band, do: {@min_size, @max_size}
 
   @doc """
+  Every rejection reason `evaluate/3` can return, as a literal list co-located with `@type
+  reason`.
+
+  The type itself is not runtime-introspectable, and a caller that renders a reason for an
+  operator (a manual-search panel) needs the closed set at runtime to prove its copy is
+  exhaustive. Kept as a literal rather than derived from the typespec so a reason added to
+  `evaluate/3` and forgotten here is a one-line diff away from being caught, not a silent drift
+  between this list and the type.
+  """
+  @spec reasons() :: [reason()]
+  def reasons do
+    [
+      :format_unknown,
+      :format_rejected,
+      :author_mismatch,
+      :title_mismatch,
+      :collection_ambiguous,
+      :language_mismatch,
+      :wrong_protocol,
+      :title_unfoldable,
+      :abridged_edition,
+      :format_contradictory,
+      :size_out_of_band,
+      :blocked_term
+    ]
+  end
+
+  @doc """
   Judges `release` against `work`.
 
   `work` is a map with `:title` and `:authors` (a list of display names — normally the work's

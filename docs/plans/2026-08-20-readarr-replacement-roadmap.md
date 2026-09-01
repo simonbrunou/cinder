@@ -394,12 +394,15 @@ all-fetches-failed search as no results instead of an outage (#365, a B2b adapte
 
 **Product gate:** Book MVP.
 
-### Shipped as two slices
+### Shipped as three slices
 
-B4a landed the decision layer: book indexer queries, the release parser, and the scorer. B4b owns
-the download intent, the poller, archive validation, and publication. See
-[`the B4a plan`](2026-08-30-books-b4a-ebook-release-search-and-scoring.md) and
-[`the B4b plan`](2026-08-31-books-b4b-ebook-download-and-publication.md).
+B4a landed the decision layer: book indexer queries, the release parser, and the scorer. B4b
+owns the download intent, the poller, archive validation, and publication. B4c owns the operator
+surface: the `/books/:id` admin pipeline view, manual release search, and the Grab wiring that
+finally gives `grab_book_target/2` a production caller. See
+[`the B4a plan`](2026-08-30-books-b4a-ebook-release-search-and-scoring.md),
+[`the B4b plan`](2026-08-31-books-b4b-ebook-download-and-publication.md), and
+[`the B4c plan`](2026-09-01-books-b4c-operator-surface.md).
 
 Two notes from executing B4a:
 
@@ -429,6 +432,23 @@ Two scope decisions from executing B4b:
   `.rar`/`.zip`/`.7z` currently get an exact `:unsupported_archive` refusal — what
   `Cinder.Library.MovieSources` already does. `.epub` is itself a zip but is imported opaquely, so
   nothing is ever expanded. Archive extraction remains open for a later slice.
+
+Two notes from executing B4c:
+
+- **The `/library` books tab is deferred to B5, not shipped with B4.** The roadmap's Done-when
+  ("shown as Available") reads as though it names a library listing, but it does not require one:
+  `book_badge_state/2` already renders `:available` on both surfaces that showed book state before
+  B4c (`DiscoverLive`, `BookDiscoveryLive`, both B3b), and B4c's own `/books/:id` page shows the
+  same badge. `library_live.ex` is ~500 lines of movies/TV-specific tab state with no clean seam
+  for a third kind — a change of the same order as B2a/B2b, not a few appended lines — so it stays
+  its own future slice, most naturally under B5's operational-surfaces work.
+- **`Cinder.Books.Grabs.track/2` shipped in B4b broadcasting nothing.** Its video sibling,
+  `Cinder.Catalog.Grabs.update_grab_download_metrics/2`, broadcasts on every real progress write
+  so `/movies/:id` and `/series/:id` render a live percentage bar; the book poller's equivalent
+  write had no such broadcast, so B4c could not have shown live download progress without either a
+  second live-update convention (a client-side poll, rejected — see the B4c plan's "Amendments
+  from review") or fixing the gap at its source. B4c adds the missing post-write broadcast to
+  `Grabs.track/2`, guarded the same way its sibling is: only on an actual change.
 
 ---
 
