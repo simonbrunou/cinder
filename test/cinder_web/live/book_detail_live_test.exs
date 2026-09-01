@@ -224,6 +224,91 @@ defmodule CinderWeb.BookDetailLiveTest do
       assert render(lv) =~ "submit this release"
       assert has_element?(lv, "#book-target-state-ebook", "Approved")
     end
+
+    test "a target's preferred_language gates a wrong-language release, through the real search",
+         %{conn: conn} do
+      {target, _work} = ebook_target(title: "The Dispossessed")
+      {:ok, target} = Books.set_target_language(target, "fr")
+
+      stub_indexer([
+        indexer_result("Ursula K. Le Guin - The Dispossessed (French) (EPUB)"),
+        indexer_result("Ursula K. Le Guin - The Dispossessed (EPUB)")
+      ])
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      lv |> element("button[phx-value-target_id='#{target.id}']") |> render_click()
+      render_async(lv)
+
+      panel = "#ms-book-#{target.id}"
+      assert has_element?(lv, panel, "Ursula K. Le Guin - The Dispossessed (French) (EPUB)")
+      assert has_element?(lv, panel, "language doesn't match")
+    end
+
+    test "no preferred_language accepts a release in any language, through the real search",
+         %{conn: conn} do
+      {target, _work} = ebook_target(title: "The Dispossessed")
+      refute target.preferred_language
+
+      stub_indexer([
+        indexer_result("Ursula K. Le Guin - The Dispossessed (French) (EPUB)"),
+        indexer_result("Ursula K. Le Guin - The Dispossessed (EPUB)")
+      ])
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      lv |> element("button[phx-value-target_id='#{target.id}']") |> render_click()
+      render_async(lv)
+
+      panel = "#ms-book-#{target.id}"
+      assert has_element?(lv, panel, "Ursula K. Le Guin - The Dispossessed (French) (EPUB)")
+      assert has_element?(lv, panel, "Ursula K. Le Guin - The Dispossessed (EPUB)")
+      refute has_element?(lv, panel, "language doesn't match")
+    end
+  end
+
+  describe "language preference" do
+    test "picking a language from the select persists it and re-renders without reload", %{
+      conn: conn
+    } do
+      {target, _work} = ebook_target()
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      lv
+      |> form("#book-target-language-ebook", %{"language" => "fr"})
+      |> render_change()
+
+      assert Books.get_target(target.id).preferred_language == "fr"
+      assert has_element?(lv, ~s(#book-target-language-ebook option[value="fr"][selected]))
+    end
+
+    test "a non-string language payload is ignored, not a crash", %{conn: conn} do
+      {target, _work} = ebook_target()
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      render_change(lv, "set_language", %{
+        "target_id" => to_string(target.id),
+        "language" => ["fr"]
+      })
+
+      assert Books.get_target(target.id).preferred_language == nil
+    end
+
+    test "a target_id from another work is refused", %{conn: conn} do
+      {target, _work} = ebook_target()
+      {other_target, _other_work} = ebook_target()
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      render_change(lv, "set_language", %{
+        "target_id" => to_string(other_target.id),
+        "language" => "fr"
+      })
+
+      assert Books.get_target(other_target.id).preferred_language == nil
+    end
   end
 
   describe "live updates" do

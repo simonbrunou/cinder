@@ -16,6 +16,7 @@ defmodule Cinder.Books.BookTarget do
     field :status, Ecto.Enum, values: @statuses, default: :unmonitored
     belongs_to :profile, Profile
     field :hold_reason, :string
+    field :preferred_language, :string
 
     timestamps(type: :utc_datetime)
   end
@@ -27,6 +28,15 @@ defmodule Cinder.Books.BookTarget do
     |> add_constraints()
     |> unique_constraint([:work_id, :media_kind])
   end
+
+  @doc """
+  Changeset for the admin's language pick — independent of the status pipeline, unlike
+  `transition_changeset/2`: never touches `:status` and carries no precondition, so it's safe to
+  call regardless of where the target is in its lifecycle. A raw code or `nil` (no preference);
+  `Cinder.Acquisition.BookScorer.tag_for/1` is the resolver, so this validates nothing beyond
+  "a string or absent" — a closed list here would duplicate that resolver's own alias table.
+  """
+  def language_changeset(target, attrs), do: cast(target, attrs, [:preferred_language])
 
   @doc """
   The guarded-write changeset. Carries `:profile_id` alongside the status so an approval can

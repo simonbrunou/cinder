@@ -62,10 +62,13 @@ defmodule CinderWeb.BookManualSearchComponent do
   defp preseeded?(assigns), do: Map.has_key?(assigns, :results) and not is_nil(assigns[:results])
 
   defp start_search(socket) do
-    work = socket.assigns.work
+    %{work: work, target: target} = socket.assigns
 
     start_async(socket, :search, fn ->
-      Books.candidates(work, protocols: Download.available_protocols())
+      Books.candidates(work,
+        protocols: Download.available_protocols(),
+        language: target.preferred_language
+      )
     end)
   end
 
