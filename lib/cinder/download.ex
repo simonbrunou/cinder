@@ -746,7 +746,7 @@ defmodule Cinder.Download do
          reason
        ) do
     Logger.warning("book target #{target_id} submission rejected: #{inspect(reason)}")
-    hold_book_target(target_id, reason, release["title"])
+    hold_book_target(target_id, reason, release["title"], replace?(intent))
     delete_intent(intent)
     {:error, reason}
   end
@@ -756,11 +756,14 @@ defmodule Cinder.Download do
     {:error, reason}
   end
 
-  defp hold_book_target(target_id, reason, release_title) do
+  defp hold_book_target(target_id, reason, release_title, replace?) do
     case Repo.get(BookTarget, target_id) do
-      %BookTarget{} = target -> Books.hold_target(target, reason, release_title, false)
+      %BookTarget{} = target ->
+        Books.hold_target(target, reason, release_title, false, replace: replace?)
+
       # Deleted mid-flight: nothing to park, and nothing left to be silent about.
-      nil -> :ok
+      nil ->
+        :ok
     end
   end
 
@@ -780,20 +783,24 @@ defmodule Cinder.Download do
     if Repo.get(Movie, movie_id), do: :stale_target, else: :stale_entry
   end
 
-  # `:download_intent_busy` when the target is still monitored: the only way a monitored target
-  # is ineligible is that it already holds a grab, and "busy" is what a caller can act on — a
-  # manual-search panel wants to say "a download is already in flight", not "stale target".
-  # A non-monitored target genuinely moved (unmonitored, held, or made available), and a missing
-  # row is a stale entry.
-  defp ineligible_reason(%Intent{kind: :book_target, target_id: target_id}) do
+  # `:download_intent_busy` when the target is still eligible to hold a submission (`:monitored`
+  # for a fresh grab, or `:available` for a replace-flagged one — the only way either is
+  # ineligible is that it already holds a grab, and "busy" is what a caller can act on. A
+  # non-eligible target genuinely moved (unmonitored, held, or made available without a replace
+  # flag), and a missing row is a stale entry.
+  defp ineligible_reason(%Intent{kind: :book_target, target_id: target_id} = intent) do
     case Repo.get(BookTarget, target_id) do
       nil -> :stale_entry
       %BookTarget{status: :monitored} -> :download_intent_busy
+      %BookTarget{status: :available} -> ineligible_available_reason(intent)
       %BookTarget{} -> :stale_target
     end
   end
 
   defp ineligible_reason(%Intent{}), do: :stale_target
+
+  defp ineligible_available_reason(intent),
+    do: if(replace?(intent), do: :download_intent_busy, else: :stale_target)
 
   defp submission_target_active?(%Intent{kind: :movie, target_id: movie_id}) do
     case Repo.get(Movie, movie_id) do
@@ -805,14 +812,23 @@ defmodule Cinder.Download do
     end
   end
 
-  # A book target is submittable only while `:monitored` and holding no grab. The grab check is
-  # what stops a reserved-but-unsubmitted intent from adding a second download after an operator
-  # grabbed something else for the same target; `:monitored` is what stops one whose target was
-  # unmonitored, held, or already made available mid-flight.
-  defp submission_target_active?(%Intent{kind: :book_target, target_id: target_id}) do
+  # A book target is submittable while `:monitored` and holding no grab — or, for a
+  # replace-flagged intent, while `:available` and holding no grab: a "Find a better match" grab
+  # never moves its target out of `:available` for its whole download/import cycle (grabs never
+  # touch `book_targets.status`), so gating on `:monitored` alone made a replace submission
+  # unreachable in production — `create_book_grab/1` was never called. A non-replace intent still
+  # refuses on `:available`: a fresh grab is only ever created for a `:monitored` target, so
+  # seeing one already `:available` mid-flight is someone else's more recent decision.
+  defp submission_target_active?(%Intent{kind: :book_target, target_id: target_id} = intent) do
     case Repo.get(BookTarget, target_id) do
-      %BookTarget{status: :monitored} -> is_nil(Books.Grabs.for_target(target_id))
-      _held_unmonitored_available_or_missing -> false
+      %BookTarget{status: :monitored} ->
+        is_nil(Books.Grabs.for_target(target_id))
+
+      %BookTarget{status: :available} ->
+        replace?(intent) and is_nil(Books.Grabs.for_target(target_id))
+
+      _held_unmonitored_or_missing ->
+        false
     end
   end
 

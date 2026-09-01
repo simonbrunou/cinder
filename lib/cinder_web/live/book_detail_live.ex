@@ -42,7 +42,8 @@ defmodule CinderWeb.BookDetailLive do
       {:ok,
        socket
        |> assign(work: work, book_kinds: @book_kinds, searching?: nil)
-       |> assign_grabs()}
+       |> assign_grabs()
+       |> assign_blocklists()}
     else
       _ ->
         {:ok,
@@ -59,6 +60,21 @@ defmodule CinderWeb.BookDetailLive do
       end)
 
     assign(socket, :grabs, grabs)
+  end
+
+  # A live `Books.blocked_release_titles/1` call directly inside the render's `:for` (keyed off
+  # `@work`) does not re-run on its own: `Phoenix.LiveView.Utils.assign/3` only marks `@work`
+  # changed when the reloaded struct actually differs, and clearing a blocklist changes nothing
+  # about the target/work rows themselves. An `@blocklists` assign — updated directly wherever
+  # the blocklist actually changes — mirrors `@grabs`'s own pattern and gives the Clear-blocklist
+  # button's visibility a value that genuinely changes when cleared.
+  defp assign_blocklists(socket) do
+    blocklists =
+      Map.new(socket.assigns.work.targets, fn target ->
+        {target.id, Books.blocked_release_titles(target.id)}
+      end)
+
+    assign(socket, :blocklists, blocklists)
   end
 
   @impl true
@@ -110,17 +126,22 @@ defmodule CinderWeb.BookDetailLive do
     end
   end
 
-  # A plain read+delete — changes nothing `book_state_badge` or the language form render from,
-  # so no reload of `@work` is needed.
+  # Updates `@blocklists` directly rather than reloading `@work`: the button's visibility is
+  # gated on `Map.get(@blocklists, target.id, [])`, a dedicated assign that genuinely changes
+  # value when cleared — a bare `{:noreply, socket}`, or even reassigning `@work` to an
+  # unaffected (structurally identical) struct, leaves LiveView's change tracking believing
+  # nothing relevant changed (`Phoenix.LiveView.Utils.assign/3` only marks a key changed when the
+  # new value actually differs), so the just-cleared button would stay on screen.
   def handle_event("clear_blocklist", %{"target_id" => raw_id}, socket)
       when is_binary(raw_id) do
     with {id, ""} <- Integer.parse(raw_id),
          %BookTarget{work_id: work_id} = target <- Books.get_target(id),
          true <- work_id == socket.assigns.work.id do
       Books.clear_blocklist(target.id)
+      {:noreply, assign(socket, :blocklists, Map.put(socket.assigns.blocklists, target.id, []))}
+    else
+      _invalid -> {:noreply, socket}
     end
-
-    {:noreply, socket}
   end
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
@@ -170,7 +191,7 @@ defmodule CinderWeb.BookDetailLive do
   defp reload(socket) do
     case Books.get_work(socket.assigns.work.id) do
       nil -> socket
-      work -> socket |> assign(:work, work) |> assign_grabs()
+      work -> socket |> assign(:work, work) |> assign_grabs() |> assign_blocklists()
     end
   end
 
@@ -323,7 +344,7 @@ defmodule CinderWeb.BookDetailLive do
             <.button
               :if={
                 target.media_kind == :ebook and target.status == :held and
-                  Books.blocked_release_titles(target.id) != []
+                  Map.get(@blocklists, target.id, []) != []
               }
               type="button"
               variant="ghost"

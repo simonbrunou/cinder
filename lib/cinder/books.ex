@@ -222,6 +222,15 @@ defmodule Cinder.Books do
   Guarded on `:monitored`: anything else is a more recent decision than this one — an operator
   unmonitored it, someone already held it, or an import landed — and it stands.
 
+  `opts[:replace]` (default `false`) widens the guard to `[:monitored, :available]`. A "Find a
+  better match" grab's target is `:available` for its whole download/import cycle — grabs never
+  touch `book_targets.status` (see `pause_target/1`'s doc) — so a replace grab's own failure
+  paths (`Download.abandon_reserved/2`, `BookPoller.hold_orphaned_target/4`,
+  `BookPoller.hold/3`) must be able to park an `:available` target, not just a `:monitored` one.
+  A plain (non-replace) grab's target is `:monitored` for its entire cycle by construction — a
+  fresh grab is only ever created for a `:monitored` target — so the guard still refuses to hold
+  one that reached `:available` some other way.
+
   `release_title` (default `nil`) is the release that caused the hold, if one exists (a
   submission rejection or a download/import failure always has one; an orphaned-target hold does
   not). Only on `{:ok, held}`, and only when present, a best-effort `BookBlockedRelease` row
@@ -232,13 +241,22 @@ defmodule Cinder.Books do
   (`Cinder.Books.Rehunter`) — a fact the caller states explicitly, since `hold_reason` is free
   text with no closed vocabulary to infer it from.
   """
-  @spec hold_target(BookTarget.t(), term(), String.t() | nil, boolean()) ::
+  @spec hold_target(BookTarget.t(), term(), String.t() | nil, boolean(), keyword()) ::
           {:ok, BookTarget.t()} | {:error, term()}
-  def hold_target(%BookTarget{} = target, reason, release_title \\ nil, transient \\ false) do
+  def hold_target(
+        %BookTarget{} = target,
+        reason,
+        release_title \\ nil,
+        transient \\ false,
+        opts \\ []
+      ) do
+    expected =
+      if Keyword.get(opts, :replace, false), do: [:monitored, :available], else: :monitored
+
     target
     |> transition_target(
       %{status: :held, hold_reason: hold_reason(reason), hold_transient: transient},
-      expect: :monitored
+      expect: expected
     )
     |> tap_block_release(release_title, reason)
   end

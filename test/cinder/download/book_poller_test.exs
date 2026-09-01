@@ -784,6 +784,54 @@ defmodule Cinder.Download.BookPollerTest do
       assert File.exists?(new_dest)
       assert File.read!(new_dest) == epub_bytes() <> "better"
     end
+
+    # The bug this defends against: `Books.hold_target/4` used to guard `expect: :monitored`
+    # unconditionally, but a replace grab's target stays `:available` for its whole
+    # download/import cycle (grabs never touch `book_targets.status`). Every failure path for a
+    # replace grab therefore got `{:error, :stale_status}` back, and `BookPoller.hold/3`'s
+    # `{:error, _reason} -> Books.Grabs.delete(grab)` clause deleted the grab anyway — silently
+    # discarding the failure: no hold, no hold_reason, and, since the blocklist write is gated on
+    # `{:ok, held}`, no blocklist row, so the same bad release would be re-offered by the very
+    # next search.
+    test "a replace grab that fails permanently parks the target :held and blocklists the release",
+         ctx do
+      %{target: target, books: books, release_dir: release_dir} =
+        downloading(ctx, "The Dispossessed.epub")
+
+      complete_download(release_dir)
+      poll!()
+
+      old_dest =
+        Path.join([books, "Ursula K. Le Guin", "The Dispossessed", "The Dispossessed.epub"])
+
+      assert File.exists?(old_dest)
+
+      # An ambiguous multi-book payload — a permanent import error (`:ambiguous_book_files`),
+      # reached through the REPLACE path this time.
+      new_release_dir = Path.join(ctx.tmp_dir, "downloads/release-remote-2")
+      File.mkdir_p!(new_release_dir)
+      File.write!(Path.join(new_release_dir, "Book One.epub"), epub_bytes())
+      File.write!(Path.join(new_release_dir, "Book Two.epub"), "a different book")
+
+      {:ok, _replace_grab} =
+        Books.Grabs.create(target.id, "remote-2", :torrent, "Ambiguous Retail Release",
+          replace: true
+        )
+
+      complete_download(new_release_dir, "remote-2")
+      capture_log(fn -> poll!() end)
+
+      reloaded = Repo.reload!(target)
+      assert reloaded.status == :held
+      assert reloaded.hold_reason =~ "ambiguous_book_files"
+      assert Books.blocked_release_titles(target.id) == ["Ambiguous Retail Release"]
+
+      # The ORIGINAL file is untouched: the import errors before `Files.record_import/3` is ever
+      # reached (`BookSources.resolve/1` fails first), so `maybe_supersede/3` never ran.
+      assert File.read!(old_dest) == epub_bytes()
+      assert [%BookFile{path: ^old_dest}] = Repo.all(BookFile)
+      assert Repo.all(BookGrab) == []
+    end
   end
 
   describe "grab uniqueness" do

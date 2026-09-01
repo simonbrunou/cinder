@@ -20,6 +20,32 @@ defmodule Cinder.Books.RetryBlocklistTest do
     assert length(rows) == 1
   end
 
+  test "opts[:replace] widens the guard to :available, since a replace grab's target stays
+        :available for its whole cycle" do
+    target = ebook_target()
+
+    {:ok, _file} =
+      Books.Files.record_import(target, %{
+        path: "/tmp/replace-guard-#{target.id}.epub",
+        size: 1000,
+        format: :epub
+      })
+
+    available = Books.get_target(target.id)
+    assert available.status == :available
+
+    # The plausible bug this defends against: without the `replace:` opt, EVERY failure path for
+    # a replace grab (the target never leaves :available for its whole download/import cycle)
+    # would hit this exact guard and lose the hold entirely.
+    assert {:error, :stale_status} =
+             Books.hold_target(available, :no_book_file, "Worse Release", false)
+
+    assert {:ok, %BookTarget{status: :held, hold_reason: "no_book_file"}} =
+             Books.hold_target(available, :no_book_file, "Worse Release", false, replace: true)
+
+    assert Books.blocked_release_titles(target.id) == ["Worse Release"]
+  end
+
   test "a second hold on an already-held target writes no blocklist row" do
     target = ebook_target()
     {:ok, held} = Books.hold_target(target, :download_failed, "First Bad Release", true)

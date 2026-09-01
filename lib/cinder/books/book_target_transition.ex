@@ -44,7 +44,7 @@ defmodule Cinder.Books.BookTargetTransition do
     Repo.transaction(fn ->
       case Repo.update_all(
              from(t in BookTarget,
-               where: t.id == ^id and t.status == ^expected,
+               where: t.id == ^id and t.status in ^List.wrap(expected),
                select: t
              ),
              set:

@@ -611,7 +611,7 @@ msgid "Invalid email or password"
 msgstr "E-mail ou mot de passe invalide"
 
 #: lib/cinder_web/components/layouts.ex:345
-#: lib/cinder_web/live/book_detail_live.ex:305
+#: lib/cinder_web/live/book_detail_live.ex:326
 #: lib/cinder_web/live/movie_detail_live.ex:568
 #: lib/cinder_web/live/user_live/settings.ex:30
 #, elixir-autogen
@@ -981,7 +981,7 @@ msgid "Requesting…"
 msgstr "Demande…"
 
 #: lib/cinder_web/components/layouts.ex:120
-#: lib/cinder_web/live/book_detail_live.ex:243
+#: lib/cinder_web/live/book_detail_live.ex:264
 #: lib/cinder_web/live/requests_live.ex:357
 #: lib/cinder_web/live/settings_live.ex:198
 #: lib/cinder_web/user_auth.ex:419
@@ -1000,7 +1000,7 @@ msgid "Resetting…"
 msgstr "Réinitialisation…"
 
 #: lib/cinder_web/live/activity_live.ex:502
-#: lib/cinder_web/live/book_detail_live.ex:320
+#: lib/cinder_web/live/book_detail_live.ex:341
 #: lib/cinder_web/live/movie_detail_live.ex:515
 #: lib/cinder_web/live/series_detail_components.ex:331
 #, elixir-autogen
@@ -2003,7 +2003,7 @@ msgstr "Annuler la mise à niveau"
 msgid "Couldn't grab that release."
 msgstr "Impossible de récupérer cette version."
 
-#: lib/cinder_web/live/book_detail_live.ex:356
+#: lib/cinder_web/live/book_detail_live.ex:377
 #: lib/cinder_web/live/movie_detail_live.ex:527
 #: lib/cinder_web/live/series_detail_components.ex:75
 #: lib/cinder_web/live/series_detail_components.ex:518
@@ -2011,7 +2011,7 @@ msgstr "Impossible de récupérer cette version."
 msgid "Find a better match"
 msgstr "Trouver une meilleure version"
 
-#: lib/cinder_web/live/book_detail_live.ex:178
+#: lib/cinder_web/live/book_detail_live.ex:199
 #: lib/cinder_web/live/movie_detail_live.ex:242
 #: lib/cinder_web/live/series_detail_live.ex:589
 #, elixir-autogen
@@ -6749,7 +6749,7 @@ msgstr[0] "1 édition eBook"
 msgstr[1] "%{count} éditions eBook"
 
 #: lib/cinder_web/components/book_components.ex:75
-#: lib/cinder_web/live/book_detail_live.ex:211
+#: lib/cinder_web/live/book_detail_live.ex:232
 #: lib/cinder_web/live/library_live.ex:337
 #, elixir-autogen, elixir-format
 msgid "Audiobook"
@@ -6854,7 +6854,7 @@ msgid "We couldn’t load this book right now."
 msgstr "Impossible de charger ce livre pour le moment."
 
 #: lib/cinder_web/components/book_components.ex:74
-#: lib/cinder_web/live/book_detail_live.ex:210
+#: lib/cinder_web/live/book_detail_live.ex:231
 #: lib/cinder_web/live/library_live.ex:336
 #, elixir-autogen, elixir-format
 msgid "eBook"
@@ -6907,17 +6907,17 @@ msgstr "Votre demande pour %{title} est disponible à la lecture."
 msgid "book target #%{id}"
 msgstr "livre n°%{id}"
 
-#: lib/cinder_web/live/book_detail_live.ex:195
+#: lib/cinder_web/live/book_detail_live.ex:216
 #, elixir-autogen, elixir-format
 msgid "Couldn't submit this release. Try again."
 msgstr "Impossible de soumettre cette version. Réessayez."
 
-#: lib/cinder_web/live/book_detail_live.ex:266
+#: lib/cinder_web/live/book_detail_live.ex:287
 #, elixir-autogen, elixir-format
 msgid "Not yet approved."
 msgstr "Pas encore approuvé."
 
-#: lib/cinder_web/live/book_detail_live.ex:345
+#: lib/cinder_web/live/book_detail_live.ex:366
 #, elixir-autogen, elixir-format
 msgid "Search for a release"
 msgstr "Rechercher une version"
@@ -6927,12 +6927,12 @@ msgstr "Rechercher une version"
 msgid "Some indexers could not be reached; results may be incomplete."
 msgstr "Certains indexeurs n'ont pas pu être contactés ; les résultats peuvent être incomplets."
 
-#: lib/cinder_web/live/book_detail_live.ex:50
+#: lib/cinder_web/live/book_detail_live.ex:51
 #, elixir-autogen, elixir-format
 msgid "That book couldn't be found."
 msgstr "Ce livre est introuvable."
 
-#: lib/cinder_web/live/book_detail_live.ex:181
+#: lib/cinder_web/live/book_detail_live.ex:202
 #, elixir-autogen, elixir-format
 msgid "This target already has a download in progress."
 msgstr "Ce livre a déjà un téléchargement en cours."
@@ -6993,7 +6993,7 @@ msgstr "le titre ne correspond pas"
 msgid "unrecognized format"
 msgstr "format non reconnu"
 
-#: lib/cinder_web/live/book_detail_live.ex:221
+#: lib/cinder_web/live/book_detail_live.ex:242
 #, elixir-autogen, elixir-format
 msgid "No preference"
 msgstr "Aucune préférence"
@@ -7035,12 +7035,12 @@ msgstr "Visibilité de la bibliothèque"
 msgid "None found."
 msgstr "Aucun trouvé."
 
-#: lib/cinder_web/live/book_detail_live.ex:334
+#: lib/cinder_web/live/book_detail_live.ex:355
 #, elixir-autogen, elixir-format
 msgid "Clear blocklist"
 msgstr "Effacer la liste des versions bloquées"
 
-#: lib/cinder_web/live/book_detail_live.ex:106
+#: lib/cinder_web/live/book_detail_live.ex:122
 #, elixir-autogen, elixir-format
 msgid "Couldn't retry this target. Try again."
 msgstr "Impossible de réessayer cette cible. Réessayez."

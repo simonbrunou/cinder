@@ -134,6 +134,26 @@ defmodule CinderWeb.BookDetailLiveTest do
       assert has_element?(lv, "button[phx-value-target_id='#{target.id}']", "Retry")
     end
 
+    test "a held target with a blocklisted release shows Clear blocklist, and clicking it
+          removes the button immediately",
+         %{conn: conn} do
+      {target, _work} = ebook_target()
+      {:ok, held} = Books.hold_target(target, :download_failed, "Bad Release", true)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{held.work_id}")
+
+      assert has_element?(lv, "button[phx-value-target_id='#{target.id}']", "Clear blocklist")
+
+      render_click(lv, "clear_blocklist", %{"target_id" => Integer.to_string(target.id)})
+
+      # The bug this defends against: the button's visibility used to be gated on a live
+      # `Books.blocked_release_titles/1` read inside a `:for` keyed off `@work`, an assign the
+      # handler never touched — LiveView's change tracking then reused the prior render and the
+      # button stayed on screen even though the underlying blocklist was already empty.
+      refute has_element?(lv, "button[phx-value-target_id='#{target.id}']", "Clear blocklist")
+      assert Books.blocked_release_titles(target.id) == []
+    end
+
     test "a target already downloading offers no second search button", %{conn: conn} do
       {target, _work} = ebook_target()
       {:ok, _grab} = Books.Grabs.create(target.id, "remote-1", :torrent, "Some Release")

@@ -270,7 +270,8 @@ defmodule Cinder.Download.BookPoller do
       grab.book_target,
       reason,
       grab.release_title,
-      transient_download?(reason)
+      transient_download?(reason),
+      grab.replace
     )
 
     {:ok, intent_ids} = Download.fence_book_cleanup(grab)
@@ -285,8 +286,8 @@ defmodule Cinder.Download.BookPoller do
   defp transient_download?({:blocked_content, _detail}), do: false
   defp transient_download?(_reason), do: true
 
-  defp hold_orphaned_target(%BookTarget{} = target, reason, release_title, transient) do
-    case Books.hold_target(target, reason, release_title, transient) do
+  defp hold_orphaned_target(%BookTarget{} = target, reason, release_title, transient, replace?) do
+    case Books.hold_target(target, reason, release_title, transient, replace: replace?) do
       {:ok, _held} ->
         :ok
 
@@ -305,7 +306,8 @@ defmodule Cinder.Download.BookPoller do
   # wins, so a lost race leaves it for the next tick to re-derive. Here `fail_download/2` is
   # already committed to dropping the grab regardless of this outcome, so a lost race (an
   # operator deleting the target concurrently) is simply someone else's more recent decision.
-  defp hold_orphaned_target(_missing_target, _reason, _release_title, _transient), do: :ok
+  defp hold_orphaned_target(_missing_target, _reason, _release_title, _transient, _replace?),
+    do: :ok
 
   # --- import phase ---
 
@@ -408,12 +410,13 @@ defmodule Cinder.Download.BookPoller do
 
     transient = reason not in @permanent_import_errors
 
-    case Books.hold_target(target, reason, grab.release_title, transient) do
+    case Books.hold_target(target, reason, grab.release_title, transient, replace: grab.replace) do
       {:ok, _held} ->
         Books.Grabs.delete(grab)
 
-      # The target is no longer `:monitored` — an operator unmonitored or held it, or another
-      # unit made it available. Its state stands; drop the grab so this does not re-run forever.
+      # The target is no longer eligible for this hold (`:monitored`/`:available` per
+      # `grab.replace` — an operator unmonitored or held it, or another unit made it available).
+      # Its state stands; drop the grab so this does not re-run forever.
       {:error, _reason} ->
         Books.Grabs.delete(grab)
     end
