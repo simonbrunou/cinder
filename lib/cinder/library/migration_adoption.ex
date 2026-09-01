@@ -18,22 +18,28 @@ defmodule Cinder.Library.MigrationAdoption do
       reconciled = MigrationReconciler.reconcile(snapshot, lookups)
       managed = managed_state()
 
-      candidates =
-        source
-        |> plan(snapshot, reconciled, lookups, managed)
-        |> Kernel.++(diagnostic_candidates(snapshot, source))
-        |> Enum.sort_by(& &1.key)
-        |> Enum.with_index(1)
-        |> Enum.map(fn {candidate, id} -> Map.put(candidate, :id, id) end)
-
-      {:ok,
-       %{
-         source: source,
-         candidates: candidates,
-         counts: counts(candidates),
-         series_counts: series_counts(candidates)
-       }}
+      case plan(source, snapshot, reconciled, lookups, managed) do
+        {:error, _reason} = error -> error
+        planned when is_list(planned) -> preview_result(source, snapshot, planned)
+      end
     end
+  end
+
+  defp preview_result(source, snapshot, planned) do
+    candidates =
+      planned
+      |> Kernel.++(diagnostic_candidates(snapshot, source))
+      |> Enum.sort_by(& &1.key)
+      |> Enum.with_index(1)
+      |> Enum.map(fn {candidate, id} -> Map.put(candidate, :id, id) end)
+
+    {:ok,
+     %{
+       source: source,
+       candidates: candidates,
+       counts: counts(candidates),
+       series_counts: series_counts(candidates)
+     }}
   end
 
   def adopt(source, commands) when is_list(commands) do
@@ -127,9 +133,15 @@ defmodule Cinder.Library.MigrationAdoption do
 
   # A source configured in the registry but not yet wired into plan/4 (currently :readarr —
   # B6a adds dispatch and the snapshot contract, but book-specific candidate classification
-  # doesn't exist until B6b) degrades to an empty preview rather than raising. Mirrors the
-  # adopt/2 catch-all below.
-  defp plan(_source, _snapshot, _reconciled, _lookups, _managed), do: []
+  # doesn't exist until B6b) fails closed with an explicit error rather than raising OR
+  # returning an empty-but-successful preview — an empty `{:ok, %{candidates: []}}` is
+  # indistinguishable from "this library genuinely has nothing to adopt", which is the wrong
+  # signal for "not implemented yet". `preview/1` propagates this straight through; the
+  # LiveView's existing scan-failed flash (already exercised by the not-configured case)
+  # handles it with no new code. B6b's real `:readarr` clause takes precedence over this
+  # catch-all automatically once added, with no other change required here.
+  defp plan(_source, _snapshot, _reconciled, _lookups, _managed),
+    do: {:error, :unsupported_source}
 
   defp plan_movies(snapshot, reconciled, managed) do
     files = files_by_id(snapshot.files, :movie)

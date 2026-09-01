@@ -127,8 +127,10 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
   # Regression: `migration_source_keys` (the "scan_migration" guard) is derived from the FULL
   # registry, which already includes :readarr even though `MigrationAdoption.plan/4` has no
   # book-specific classification clause yet (that lands in B6b). A devtools-crafted event (no
-  # button exists for it yet) must degrade to a clean empty preview, not crash the LiveView.
-  test "scan_migration for a configured-but-not-yet-implemented source (readarr) degrades to an empty preview instead of crashing",
+  # button exists for it yet) must fail closed with the operator-visible scan-failed flash, not
+  # crash the LiveView and not silently render an empty-but-successful preview (which would be
+  # indistinguishable from "this library has nothing to adopt").
+  test "scan_migration for a configured-but-not-yet-implemented source (readarr) fails closed with the scan-failed flash instead of crashing or showing an empty preview",
        %{conn: conn} do
     expect(Cinder.Library.ReadarrMigrationSourceMock, :snapshot, fn ->
       {:ok,
@@ -140,8 +142,9 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     render_async(view)
 
     assert Process.alive?(view.pid)
-    assert render(view) =~ "Ready: 0"
-    refute has_element?(view, "#flash-error")
+    assert has_element?(view, "#flash-error")
+    refute render(view) =~ "Ready: 0"
+    refute has_element?(view, "#migration-summary")
   end
 
   test "operator assigns a TVDB split file as a part of one combined TMDB episode", %{conn: conn} do
