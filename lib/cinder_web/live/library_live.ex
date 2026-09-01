@@ -1,15 +1,18 @@
 defmodule CinderWeb.LibraryLive do
   @moduledoc """
   Admin managed-catalog at `/library`: every movie (cancel / delete; drill into
-  `/movies/:id` for edit and pipeline actions) and every added series (cancel / delete; drill into
-  `/series/:id` for per-episode monitoring). Merges the old `/movies` page and the Discover
-  "Added series" block.
+  `/movies/:id` for edit and pipeline actions), every added series (cancel / delete; drill into
+  `/series/:id` for per-episode monitoring), and every book target (read-only; drill into
+  `/books/:id` for pipeline actions — search, grab, hold clearing, language). Merges the old
+  `/movies` page and the Discover "Added series" block.
 
-  One type at a time, picked by the `?type=` query param (`tv`, else movies) and read in
-  `mount/3` — the tab links are `navigate`, not `patch`, so switching scrolls back to the top
-  and drops the filter with the remount instead of needing reset code. A title filter narrows
-  the visible grid; `@movies`/`@series` stay canonical (the PubSub handlers, `find_movie/2` and
-  `run_series_op/3` all resolve against them) and filtering *and sorting* happen at render.
+  One type at a time, picked by the `?type=` query param (`tv`/`books`, else movies) and read in
+  `mount/3` via `parse_tab/1`'s allowlist — same discipline as `parse_sort/1` below, never
+  `String.to_atom/1` on a client-supplied param. The tab links are `navigate`, not `patch`, so
+  switching scrolls back to the top and drops the filter with the remount instead of needing
+  reset code. A title filter narrows the visible grid; `@movies`/`@series`/`@books` stay canonical
+  (the PubSub handlers, `find_movie/2` and `run_series_op/3` all resolve against them) and
+  filtering *and sorting* happen at render.
 
   Sorting is deliberately not a query `order_by`: `upsert_by_id/2` mutates `@movies` in place on
   every broadcast, so a database order would be a lie the first time an update changes a sorted
@@ -21,31 +24,50 @@ defmodule CinderWeb.LibraryLive do
   history entries — Back from `/movies/:id` still returns to the sorted list.
 
   Admin-gated by the `:admin` live_session; every mutation routes through the existing
-  `Catalog` functions — no pipeline or gate change. Live via the `movies` + `series` topics.
+  `Catalog` functions — no pipeline or gate change (the books tab has none: it writes nothing).
+  Live via the `movies` + `series` topics unconditionally, matching how both tabs' counts are
+  always visible in the nav regardless of which is active. The books topic is the one exception —
+  subscribed only when `@tab == :books`, not unconditionally like the other two: unlike
+  movies/series, a book target's own broadcasts (`{:book_target_updated, _}`,
+  `{:book_grab_deleted, _}` — see `Cinder.Books.Grabs.delete/1`) are frequent, pipeline-internal
+  events with no in-place-mutation handler here (no `upsert_by_id/2` equivalent for a single
+  target), so staying subscribed while sitting on a different tab would mean re-querying
+  `Books.list_targets/0` in full for updates nothing on screen reflects. The `@books` list and its
+  nav count are still loaded on every mount regardless of tab (cheap, no join), same as
+  `@movies`/`@series`; only the live-update subscription and the size aggregate are tab-gated,
+  the latter mirroring `assign_series/1`'s own existing `series_sizes` gate exactly. A catch-all
+  `handle_info/2` clause absorbs every book broadcast this view doesn't otherwise act on.
   """
   use CinderWeb, :live_view
 
   import CinderWeb.LiveHelpers
+  import CinderWeb.BookComponents, only: [book_state_badge: 1]
 
+  alias Cinder.Books
+  alias Cinder.Books.BookTarget
   alias Cinder.Catalog
 
   @impl true
   def mount(params, _session, socket) do
+    tab = parse_tab(params["type"])
+
     if connected?(socket) do
       Catalog.subscribe()
       Catalog.subscribe_series()
+      if tab == :books, do: Books.subscribe_targets()
     end
 
     {:ok,
      socket
      |> assign(
        movies: Catalog.list_movies(),
-       tab: if(params["type"] == "tv", do: :tv, else: :movies),
+       tab: tab,
        filter: "",
        confirming: nil,
        delete_files: false
      )
-     |> assign_series()}
+     |> assign_series()
+     |> assign_books()}
   end
 
   @impl true
@@ -175,6 +197,13 @@ defmodule CinderWeb.LibraryLive do
 
   def handle_info({:series_deleted, _id}, socket), do: {:noreply, assign_series(socket)}
 
+  # The only book broadcast this view acts on — a target's status/language changed, which the
+  # rendered badge (and possibly the size aggregate, if it just reached `:available`) reflects.
+  # `{:book_grab_updated, _}`/`{:book_grab_deleted, _}` — nothing here renders in-flight grab
+  # state, so both fall through to the catch-all below, same as every other message this view
+  # has no clause for.
+  def handle_info({:book_target_updated, _target}, socket), do: {:noreply, assign_books(socket)}
+
   def handle_info(_message, socket), do: {:noreply, socket}
 
   # `id` straight through, like `run_series_op/5` — `find_by_id/2` already does the `to_string/1`
@@ -197,6 +226,15 @@ defmodule CinderWeb.LibraryLive do
   defp assign_series(socket) do
     sizes = if socket.assigns.tab == :tv, do: Catalog.series_library_sizes(), else: %{}
     assign(socket, series: Catalog.list_series(), series_sizes: sizes)
+  end
+
+  # `@books` loads on every mount regardless of tab (cheap: no join, same as `@movies`/`@series`)
+  # so the nav count is always right even without a live subscription to that tab's topic — see
+  # the moduledoc. The size aggregate is gated on the tab exactly like `assign_series/1`'s own
+  # `series_sizes` gate, for the same reason: nothing reads it off-tab.
+  defp assign_books(socket) do
+    sizes = if socket.assigns.tab == :books, do: Books.target_sizes(), else: %{}
+    assign(socket, books: Books.list_targets(), book_sizes: sizes)
   end
 
   # Render-time narrowing of the active tab's list. Case-insensitive substring on the
@@ -233,11 +271,50 @@ defmodule CinderWeb.LibraryLive do
   defp item_size(%{imported_size: size}, _sizes), do: size
   defp item_size(%{id: id}, sizes), do: sizes[id]
 
+  # Books' own filter/sort/size, additive alongside the movie/series functions above rather than
+  # extended clauses on them: a `%BookTarget{}` has no `.title`/`.localizations` (its work does)
+  # and no `.year` (its work's `first_published_on` does), so `media_title/2`/`&1.year` would
+  # simply fail against it — the two families never share a struct shape to genuinely unify.
+  defp book_visible(targets, ""), do: targets
+
+  defp book_visible(targets, filter) do
+    needle = String.downcase(filter)
+    Enum.filter(targets, &String.contains?(String.downcase(&1.work.title), needle))
+  end
+
+  # Same four sort keys as `sort_items/4`, mapped onto a target's own fields — see the moduledoc.
+  defp sort_book_items(targets, :title, _sizes),
+    do: Enum.sort_by(targets, &{fold_title(&1.work.title), -&1.id})
+
+  defp sort_book_items(targets, :size, sizes),
+    do: Enum.sort_by(targets, &desc_key(book_item_size(&1, sizes), &1.id))
+
+  defp sort_book_items(targets, :year, _sizes),
+    do: Enum.sort_by(targets, &desc_key(book_year(&1), &1.id))
+
+  defp sort_book_items(targets, _added, _sizes), do: targets
+
+  defp book_year(%{work: %{first_published_on: %Date{} = date}}), do: date.year
+  defp book_year(_target), do: nil
+
+  # Bytes on disk, shown and sorted only once a target has something to show: `:available` is the
+  # target-level analogue of a movie's `file_path` guard above — a `:monitored`/`:held` target has
+  # no file yet, and `target_sizes/0`'s map simply has no key for it either way.
+  defp book_item_size(%BookTarget{status: :available, id: id}, sizes), do: sizes[id]
+  defp book_item_size(%BookTarget{}, _sizes), do: nil
+
   # Allowlist, never `String.to_atom/1` on a client-supplied param. Unknown → the default.
   defp parse_sort("title"), do: :title
   defp parse_sort("size"), do: :size
   defp parse_sort("year"), do: :year
   defp parse_sort(_), do: :added
+
+  # Same allowlist discipline as `parse_sort/1` just above — never `String.to_atom/1` on the
+  # client-supplied `?type=` param. Unknown or absent → the default `:movies`, matching the
+  # pre-existing two-way `if params["type"] == "tv"` this replaces.
+  defp parse_tab("tv"), do: :tv
+  defp parse_tab("books"), do: :books
+  defp parse_tab(_), do: :movies
 
   # A function, not a module attribute: the labels are translated at runtime, per locale.
   defp sort_options do
@@ -253,7 +330,13 @@ defmodule CinderWeb.LibraryLive do
   # dropped `type=tv` would leave the URL saying Movies while the TV tab renders, and the next
   # reconnect — a fresh `mount/3` against that URL — would silently flip the operator's tab.
   defp library_path(:tv, sort), do: ~p"/library?type=tv&sort=#{sort}"
+  defp library_path(:books, sort), do: ~p"/library?type=books&sort=#{sort}"
   defp library_path(:movies, sort), do: ~p"/library?sort=#{sort}"
+
+  defp kind_label(:ebook), do: gettext("eBook")
+  defp kind_label(:audiobook), do: gettext("Audiobook")
+
+  defp contributor_names(work), do: Enum.map_join(work.credits, ", ", & &1.author.name)
 
   # /library is admin-gated by its route, so no in-handler role re-check (Discover needed
   # one because it lived on a non-admin route).
@@ -274,18 +357,30 @@ defmodule CinderWeb.LibraryLive do
     end
   end
 
+  # Branches instead of extending the two-arg `visible/3`/`sort_items/4` pipe uniformly across
+  # all three tabs — see `book_visible/2`'s own comment for why a `%BookTarget{}` can't share
+  # that pipe's shape.
+  defp visible_for_tab(%{tab: :books} = assigns) do
+    assigns.books
+    |> book_visible(assigns.filter)
+    |> sort_book_items(assigns.sort, assigns.book_sizes)
+  end
+
+  defp visible_for_tab(%{tab: :tv} = assigns) do
+    assigns.series
+    |> visible(assigns.filter, assigns.locale)
+    |> sort_items(assigns.sort, assigns.series_sizes, assigns.locale)
+  end
+
+  defp visible_for_tab(assigns) do
+    assigns.movies
+    |> visible(assigns.filter, assigns.locale)
+    |> sort_items(assigns.sort, assigns.series_sizes, assigns.locale)
+  end
+
   @impl true
   def render(assigns) do
-    items = if assigns.tab == :tv, do: assigns.series, else: assigns.movies
-
-    assigns =
-      assign(
-        assigns,
-        :visible,
-        items
-        |> visible(assigns.filter, assigns.locale)
-        |> sort_items(assigns.sort, assigns.series_sizes, assigns.locale)
-      )
+    assigns = assign(assigns, :visible, visible_for_tab(assigns))
 
     ~H"""
     <Layouts.app
@@ -297,7 +392,7 @@ defmodule CinderWeb.LibraryLive do
     >
       <.header>
         {gettext("Library")}
-        <:subtitle>{gettext("Manage movies and added series.")}</:subtitle>
+        <:subtitle>{gettext("Manage movies, added series, and book targets.")}</:subtitle>
         <:actions>
           <.link id="adopt-library-link" navigate={~p"/library/adopt"} class="btn btn-primary">
             {gettext("Adopt existing library")}
@@ -324,6 +419,14 @@ defmodule CinderWeb.LibraryLive do
           class={["tab min-h-11", @tab == :tv && "tab-active"]}
         >
           {gettext("Series")} ({length(@series)})
+        </.link>
+        <.link
+          id="library-tab-books"
+          navigate={library_path(:books, @sort)}
+          aria-current={@tab == :books && "page"}
+          class={["tab min-h-11", @tab == :books && "tab-active"]}
+        >
+          {gettext("Books")} ({length(@books)})
         </.link>
       </nav>
 
@@ -559,6 +662,54 @@ defmodule CinderWeb.LibraryLive do
               <:caveat>{gettext("Delete this series and its seasons/episodes?")}</:caveat>
             </.confirm_action>
           </div>
+        </div>
+      </section>
+
+      <section :if={@tab == :books}>
+        <h2 class="sr-only">{gettext("Books")}</h2>
+        <.empty_state
+          :if={@visible == []}
+          icon="hero-book-open"
+          title={if @filter == "", do: gettext("No books yet"), else: gettext("No matches")}
+          message={if @filter == "", do: gettext("Approved books appear here."), else: nil}
+        />
+        <%!-- book_cards/1's own grid — sm:grid-cols-2 lg:grid-cols-3, not the 5-column poster
+              grid above: these are text cards (no cover art; see book_components.ex), so they
+              need the wider columns that grid already uses everywhere else books render. --%>
+        <div :if={@visible != []} id="books-list" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <article
+            :for={t <- @visible}
+            id={"book-target-row-#{t.id}"}
+            class="card bg-base-200 shadow-sm"
+          >
+            <div class="card-body gap-3 p-4">
+              <h3 class="card-title text-base leading-tight">
+                <.link navigate={~p"/books/#{t.work_id}"} class="link link-hover">
+                  {t.work.title}
+                </.link>
+              </h3>
+
+              <p :if={t.work.credits != []} class="text-sm text-base-content/70">
+                {contributor_names(t.work)}
+              </p>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="badge badge-sm badge-ghost">{kind_label(t.media_kind)}</span>
+                <span
+                  :if={humanize_bytes(book_item_size(t, @book_sizes))}
+                  class="text-xs tabular-nums text-base-content/60"
+                >
+                  {humanize_bytes(book_item_size(t, @book_sizes))}
+                </span>
+              </div>
+
+              <.book_state_badge
+                id={"library-book-state-#{t.id}"}
+                kind={t.media_kind}
+                state={book_badge_state(nil, t.status)}
+              />
+            </div>
+          </article>
         </div>
       </section>
     </Layouts.app>

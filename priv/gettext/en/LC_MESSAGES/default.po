@@ -73,7 +73,7 @@ msgstr ""
 msgid "Add"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:478
+#: lib/cinder_web/live/library_live.ex:581
 #, elixir-autogen
 msgid "Add a show from Discover."
 msgstr ""
@@ -102,13 +102,13 @@ msgstr ""
 msgid "Already registered?"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:557
+#: lib/cinder_web/live/library_live.ex:660
 #: lib/cinder_web/live/series_detail_components.ex:101
 #, elixir-autogen
 msgid "Also delete files from disk"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:464
+#: lib/cinder_web/live/library_live.ex:567
 #: lib/cinder_web/live/movie_detail_live.ex:314
 #, elixir-autogen
 msgid "Also delete the file from disk"
@@ -186,8 +186,8 @@ msgstr ""
 #: lib/cinder_web/components/core_components.ex:287
 #: lib/cinder_web/components/core_components.ex:936
 #: lib/cinder_web/components/issue_components.ex:47
-#: lib/cinder_web/live/library_live.ex:429
-#: lib/cinder_web/live/library_live.ex:526
+#: lib/cinder_web/live/library_live.ex:532
+#: lib/cinder_web/live/library_live.ex:629
 #: lib/cinder_web/live/movie_detail_live.ex:271
 #: lib/cinder_web/live/movie_detail_live.ex:442
 #: lib/cinder_web/live/series_detail_components.ex:254
@@ -199,17 +199,17 @@ msgstr ""
 msgid "Cancel"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:542
+#: lib/cinder_web/live/library_live.ex:645
 #, elixir-autogen
 msgid "Cancel & unmonitor"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:545
+#: lib/cinder_web/live/library_live.ex:648
 #, elixir-autogen
 msgid "Cancel & unmonitor this series?"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:449
+#: lib/cinder_web/live/library_live.ex:552
 #: lib/cinder_web/live/movie_detail_live.ex:299
 #, elixir-autogen
 msgid "Cancel movie"
@@ -221,7 +221,7 @@ msgstr ""
 msgid "Cancel series"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:452
+#: lib/cinder_web/live/library_live.ex:555
 #: lib/cinder_web/live/movie_detail_live.ex:302
 #, elixir-autogen
 msgid "Cancel this movie and remove its download?"
@@ -286,13 +286,13 @@ msgstr ""
 msgid "Couldn't approve that request."
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:83
+#: lib/cinder_web/live/library_live.ex:105
 #: lib/cinder_web/live/movie_detail_live.ex:104
 #, elixir-autogen
 msgid "Couldn't cancel that movie."
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:120
+#: lib/cinder_web/live/library_live.ex:142
 #: lib/cinder_web/live/series_detail_live.ex:151
 #, elixir-autogen
 msgid "Couldn't cancel the series."
@@ -308,7 +308,7 @@ msgstr ""
 msgid "Couldn't complete that action."
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:102
+#: lib/cinder_web/live/library_live.ex:124
 #: lib/cinder_web/live/movie_detail_live.ex:124
 #, elixir-autogen
 msgid "Couldn't delete that movie."
@@ -335,7 +335,7 @@ msgstr ""
 msgid "Couldn't delete the season's files (see server logs)."
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:131
+#: lib/cinder_web/live/library_live.ex:153
 #: lib/cinder_web/live/series_detail_live.ex:171
 #, elixir-autogen
 msgid "Couldn't delete the series."
@@ -381,10 +381,10 @@ msgstr ""
 
 #: lib/cinder_web/live/activity_live.ex:607
 #: lib/cinder_web/live/activity_live.ex:844
-#: lib/cinder_web/live/library_live.ex:439
-#: lib/cinder_web/live/library_live.ex:461
-#: lib/cinder_web/live/library_live.ex:533
-#: lib/cinder_web/live/library_live.ex:554
+#: lib/cinder_web/live/library_live.ex:542
+#: lib/cinder_web/live/library_live.ex:564
+#: lib/cinder_web/live/library_live.ex:636
+#: lib/cinder_web/live/library_live.ex:657
 #: lib/cinder_web/live/movie_detail_live.ex:280
 #: lib/cinder_web/live/movie_detail_live.ex:311
 #: lib/cinder_web/live/movie_detail_live.ex:494
@@ -435,13 +435,13 @@ msgstr ""
 msgid "Delete series"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:466
+#: lib/cinder_web/live/library_live.ex:569
 #: lib/cinder_web/live/movie_detail_live.ex:316
 #, elixir-autogen
 msgid "Delete this movie's record?"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:559
+#: lib/cinder_web/live/library_live.ex:662
 #: lib/cinder_web/live/series_detail_components.ex:103
 #, elixir-autogen
 msgid "Delete this series and its seasons/episodes?"
@@ -604,8 +604,8 @@ msgid "Language"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:133
-#: lib/cinder_web/live/library_live.ex:299
-#: lib/cinder_web/live/library_live.ex:311
+#: lib/cinder_web/live/library_live.ex:394
+#: lib/cinder_web/live/library_live.ex:406
 #: lib/cinder_web/live/movie_detail_live.ex:260
 #: lib/cinder_web/live/series_detail_components.ex:43
 #: lib/cinder_web/user_auth.ex:422
@@ -699,13 +699,13 @@ msgstr ""
 msgid "Monitored episodes in the next 90 days will appear here."
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:71
+#: lib/cinder_web/live/library_live.ex:93
 #: lib/cinder_web/live/movie_detail_live.ex:92
 #, elixir-autogen
 msgid "Movie cancelled."
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:96
+#: lib/cinder_web/live/library_live.ex:118
 #: lib/cinder_web/live/movie_detail_live.ex:117
 #: lib/cinder_web/live/movie_detail_live.ex:233
 #, elixir-autogen
@@ -721,8 +721,8 @@ msgstr ""
 #: lib/cinder_web/live/dashboard_live.ex:315
 #: lib/cinder_web/live/discover_live.ex:473
 #: lib/cinder_web/live/discover_live.ex:627
-#: lib/cinder_web/live/library_live.ex:318
-#: lib/cinder_web/live/library_live.ex:371
+#: lib/cinder_web/live/library_live.ex:413
+#: lib/cinder_web/live/library_live.ex:474
 #: lib/cinder_web/live/profiles_live.ex:271
 #: lib/cinder_web/settings_labels.ex:45
 #, elixir-autogen
@@ -779,14 +779,15 @@ msgid "No match"
 msgstr ""
 
 #: lib/cinder_web/live/discover_live.ex:657
-#: lib/cinder_web/live/library_live.ex:375
-#: lib/cinder_web/live/library_live.ex:477
+#: lib/cinder_web/live/library_live.ex:478
+#: lib/cinder_web/live/library_live.ex:580
+#: lib/cinder_web/live/library_live.ex:673
 #, elixir-autogen
 msgid "No matches"
 msgstr ""
 
 #: lib/cinder_web/live/activity_live.ex:455
-#: lib/cinder_web/live/library_live.ex:375
+#: lib/cinder_web/live/library_live.ex:478
 #, elixir-autogen
 msgid "No movies yet"
 msgstr ""
@@ -814,7 +815,7 @@ msgstr ""
 msgid "No seasons found"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:477
+#: lib/cinder_web/live/library_live.ex:580
 #, elixir-autogen
 msgid "No series added yet"
 msgstr ""
@@ -947,7 +948,7 @@ msgstr ""
 msgid "Requested"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:376
+#: lib/cinder_web/live/library_live.ex:479
 #, elixir-autogen
 msgid "Requested movies appear here."
 msgstr ""
@@ -1080,19 +1081,19 @@ msgstr ""
 
 #: lib/cinder_web/live/book_discovery_live.ex:288
 #: lib/cinder_web/live/library_adoption_live.ex:422
-#: lib/cinder_web/live/library_live.ex:326
-#: lib/cinder_web/live/library_live.ex:473
+#: lib/cinder_web/live/library_live.ex:421
+#: lib/cinder_web/live/library_live.ex:576
 #, elixir-autogen
 msgid "Series"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:119
+#: lib/cinder_web/live/library_live.ex:141
 #: lib/cinder_web/live/series_detail_live.ex:144
 #, elixir-autogen
 msgid "Series cancelled."
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:130
+#: lib/cinder_web/live/library_live.ex:152
 #: lib/cinder_web/live/series_detail_live.ex:164
 #: lib/cinder_web/live/series_detail_live.ex:612
 #, elixir-autogen
@@ -1202,7 +1203,7 @@ msgstr ""
 msgid "That episode has no file."
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:77
+#: lib/cinder_web/live/library_live.ex:99
 #: lib/cinder_web/live/movie_detail_live.ex:98
 #, elixir-autogen
 msgid "That movie can't be cancelled."
@@ -2277,11 +2278,6 @@ msgstr ""
 msgid "Couldn't update the language."
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:300
-#, elixir-autogen
-msgid "Manage movies and added series."
-msgstr ""
-
 #: lib/cinder_web/components/core_components.ex:730
 #, elixir-autogen
 msgid "%{hours}h %{minutes}m remaining"
@@ -3258,37 +3254,37 @@ msgstr ""
 msgid "collides with native %{codes}"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:348
+#: lib/cinder_web/live/library_live.ex:451
 #, elixir-autogen
 msgid "Filter by title…"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:340
+#: lib/cinder_web/live/library_live.ex:443
 #, elixir-autogen
 msgid "Filter by title"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:245
+#: lib/cinder_web/live/library_live.ex:322
 #, elixir-autogen
 msgid "Recently added"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:247
+#: lib/cinder_web/live/library_live.ex:324
 #, elixir-autogen
 msgid "Size (largest first)"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:362
+#: lib/cinder_web/live/library_live.ex:465
 #, elixir-autogen
 msgid "Sort by"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:246
+#: lib/cinder_web/live/library_live.ex:323
 #, elixir-autogen
 msgid "Title (A–Z)"
 msgstr ""
 
-#: lib/cinder_web/live/library_live.ex:248
+#: lib/cinder_web/live/library_live.ex:325
 #, elixir-autogen
 msgid "Year (newest first)"
 msgstr ""
@@ -3925,7 +3921,7 @@ msgid "Adopt %{title}"
 msgstr ""
 
 #: lib/cinder_web/live/library_adoption_live.ex:578
-#: lib/cinder_web/live/library_live.ex:303
+#: lib/cinder_web/live/library_live.ex:398
 #, elixir-autogen
 msgid "Adopt existing library"
 msgstr ""
@@ -6430,6 +6426,7 @@ msgstr[1] ""
 
 #: lib/cinder_web/components/book_components.ex:75
 #: lib/cinder_web/live/book_detail_live.ex:177
+#: lib/cinder_web/live/library_live.ex:337
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Audiobook"
 msgstr ""
@@ -6441,6 +6438,8 @@ msgstr ""
 
 #: lib/cinder_web/live/discover_live.ex:477
 #: lib/cinder_web/live/discover_live.ex:504
+#: lib/cinder_web/live/library_live.ex:429
+#: lib/cinder_web/live/library_live.ex:669
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Books"
 msgstr ""
@@ -6532,6 +6531,7 @@ msgstr ""
 
 #: lib/cinder_web/components/book_components.ex:74
 #: lib/cinder_web/live/book_detail_live.ex:176
+#: lib/cinder_web/live/library_live.ex:336
 #, elixir-autogen, elixir-format
 msgid "eBook"
 msgstr ""
@@ -6670,4 +6670,19 @@ msgstr ""
 #: lib/cinder_web/live/book_detail_live.ex:187
 #, elixir-autogen, elixir-format
 msgid "No preference"
+msgstr ""
+
+#: lib/cinder_web/live/library_live.ex:674
+#, elixir-autogen, elixir-format
+msgid "Approved books appear here."
+msgstr ""
+
+#: lib/cinder_web/live/library_live.ex:395
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Manage movies, added series, and book targets."
+msgstr ""
+
+#: lib/cinder_web/live/library_live.ex:673
+#, elixir-autogen, elixir-format
+msgid "No books yet"
 msgstr ""
