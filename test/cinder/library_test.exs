@@ -892,6 +892,28 @@ defmodule Cinder.LibraryTest do
     assert :ok = commit!(stage)
   end
 
+  # #399: `sanitize/1` strips filesystem-illegal characters including `/`, so a title merely
+  # containing a slash can produce a leading dot that was not one before this strip —
+  # `.hack//Legend of the Twilight` sanitizes to `.hackLegend of the Twilight`. Unguarded, that
+  # folder (and file, since movie_dest reuses the same string for both) would be invisible to a
+  # media server that skips dot-directories while scanning, with nothing reporting why.
+  test "a title beginning with a dot is prefixed so the folder is not hidden" do
+    movie = %Movie{
+      title: ".hack//Legend of the Twilight",
+      year: 2003,
+      tmdb_id: 12_345,
+      file_path: "/dl/x.mkv"
+    }
+
+    name = "_.hackLegend of the Twilight (2003) {tmdb-12345}"
+    dest = "#{@lib}/#{name}/#{name}.mkv"
+
+    Cinder.LibraryStubs.stub_import_ok(1)
+
+    assert {:ok, %{dest: ^dest} = stage} = Library.stage_movie(movie)
+    assert :ok = commit!(stage)
+  end
+
   test "TV: import_episodes takes the identical :exdev → copy path and imports the episode" do
     Cinder.LibraryStubs.stub_import_exdev(3 * @gb)
 
@@ -899,6 +921,20 @@ defmodule Cinder.LibraryTest do
              Library.import_episodes("/dl/Show.S01E03.1080p.mkv", [ep(7, 3)])
 
     assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
+  end
+
+  # #399: episode_dest reuses the same guarded string for the show FOLDER and the episode
+  # FILENAME prefix — a series title hazard hides both at once, same shape as the movie case.
+  test "TV: a series title beginning with a dot is prefixed so the show folder is not hidden" do
+    Cinder.LibraryStubs.stub_import_exdev(3 * @gb)
+
+    assert {:ok, [{7, dest, _q}], []} =
+             Library.import_episodes("/dl/Show.S01E03.1080p.mkv", [
+               ep(7, 3, 1, title: ".hack//Legend of the Twilight", year: 2003, tmdb_id: 99)
+             ])
+
+    name = "_.hackLegend of the Twilight (2003) {tmdb-99}"
+    assert dest == "#{@tv_lib}/#{name}/Season 01/#{name} - S01E03.mkv"
   end
 
   test "TV: an explicit Anime series stages under the Anime TV destination" do

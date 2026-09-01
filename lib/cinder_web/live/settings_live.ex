@@ -16,7 +16,7 @@ defmodule CinderWeb.SettingsLive do
   import CinderWeb.SettingsComponents
   import CinderWeb.LiveHelpers
 
-  alias Cinder.{ApiKey, DatabaseBackup, Health, Settings}
+  alias Cinder.{ApiKey, Catalog, DatabaseBackup, Health, Settings}
   alias Cinder.Catalog.UpgradeHunter
   alias CinderWeb.SettingsLabels
 
@@ -31,6 +31,10 @@ defmodule CinderWeb.SettingsLive do
        auto_approve_all: Settings.auto_approve_all?(),
        upgrade_hunt: UpgradeHunter.enabled?(),
        api_key_set: ApiKey.configured?(),
+       # #399: read-only, computed fresh from the already-stored file_path columns (no
+       # filesystem walk) — see Catalog.dot_folder_files/0's doc for why this is cheap enough
+       # to run on every mount.
+       dot_folder_files: Catalog.dot_folder_files(),
        # The plaintext key, held for this render only. It is never stored (only its hash is),
        # so once this socket state is replaced it is gone for good.
        new_api_key: nil
@@ -236,6 +240,30 @@ defmodule CinderWeb.SettingsLive do
             )}
           </p>
         </form>
+      </div>
+
+      <div class="rounded-box bg-base-200 p-4 mt-8">
+        <h2 class="text-lg font-semibold mb-3">{gettext("Library visibility")}</h2>
+        <p class="text-sm opacity-70">
+          {gettext(
+            "Jellyfin and Plex skip any folder whose name starts with a dot while scanning. New imports no longer produce one, but a title imported before this fix can still be sitting under one, invisible to your media server with nothing else reporting why. This list is read-only; renaming a folder and fixing the affected title's path is a manual step."
+          )}
+        </p>
+        <p :if={@dot_folder_files == []} class="text-sm mt-3 opacity-70">
+          {gettext("None found.")}
+        </p>
+        <div :if={@dot_folder_files != []} class="mt-3">
+          <p class="text-sm font-semibold">
+            {ngettext(
+              "1 file is hidden from your media server:",
+              "%{count} files are hidden from your media server:",
+              length(@dot_folder_files)
+            )}
+          </p>
+          <ul class="text-sm mt-2 font-mono space-y-1">
+            <li :for={file <- @dot_folder_files}>{file.title} — {file.file_path}</li>
+          </ul>
+        </div>
       </div>
 
       <div class="rounded-box bg-base-200 p-4 mt-8">

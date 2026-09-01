@@ -905,4 +905,56 @@ defmodule Cinder.CatalogTest do
       assert Catalog.localized_overview(nil, "fr") == nil
     end
   end
+
+  describe "dot_folder_files/0" do
+    # #399: /settings surfaces titles already imported under a dot-folder so an operator can
+    # act by hand — nothing here migrates a row or touches disk, so it only needs to prove the
+    # read correctly identifies dot-prefixed movie AND episode paths, leaves clean ones alone,
+    # and never trips on a movie/episode with no file at all.
+    test "reports a movie and an episode whose stored file_path has a dot-prefixed component" do
+      movie_fixture(%{
+        title: ".hack//Legend of the Twilight",
+        status: :available,
+        file_path: "/lib/.hackLegend of the Twilight (2003) {tmdb-1}/x.mkv"
+      })
+
+      series = series_fixture(title: "Show")
+      season = season_fixture(series, season_number: 1)
+      episode = episode_fixture(season, episode_number: 3)
+
+      {:ok, _} =
+        Catalog.transition_episode(episode, %{file_path: "/lib/.Show (2008) {tmdb-1}/x.mkv"})
+
+      movie_fixture(%{
+        title: "Clean Title",
+        status: :available,
+        file_path: "/lib/Clean Title (2020) {tmdb-2}/x.mkv"
+      })
+
+      results = Catalog.dot_folder_files()
+      assert length(results) == 2
+
+      assert %{kind: :movie, title: ".hack//Legend of the Twilight"} =
+               Enum.find(results, &(&1.kind == :movie))
+
+      assert %{kind: :episode, title: "Show S01E03"} =
+               Enum.find(results, &(&1.kind == :episode))
+    end
+
+    test "ignores movies/episodes with no file and clean, non-dotted paths" do
+      movie_fixture(%{title: "Requested", status: :requested})
+
+      movie_fixture(%{
+        title: "Clean",
+        status: :available,
+        file_path: "/lib/Clean (2020) {tmdb-3}/x.mkv"
+      })
+
+      series = series_fixture(title: "No File Show")
+      season = season_fixture(series, season_number: 1)
+      episode_fixture(season, episode_number: 1)
+
+      assert Catalog.dot_folder_files() == []
+    end
+  end
 end
