@@ -1,6 +1,7 @@
 # Books B4c — the admin pipeline view, manual search, and Grab
 
-**Status:** planned 2026-09-01, revised after review. Base: `origin/main` (post-B4b).
+**Status:** planned 2026-09-01, revised after two review rounds. Base: `origin/main` @ `9f33e7d2`
+(post-B4b).
 **Milestone:** the third and final slice of
 [B4](2026-08-20-readarr-replacement-roadmap.md#b4--e-book-search-scoring-download-validation-and-publication).
 
@@ -57,7 +58,7 @@ nothing is monitored.
 **Target status badge: reuse, not new markup.** Every target `/books/:id` ever renders already has
 `status` in `[:monitored, :available, :held]` — `Books.ensure_target/2` defaults a fresh row to
 `:unmonitored`, but `monitor_target/4` immediately arms it in the same call, and this slice ships
-no "unmonitor" control ([§10](#10-what-stays-out)), so `:unmonitored` is never an observed state
+no "pause/resume" control ([§10](#10-what-stays-out)), so `:unmonitored` is never an observed state
 here. That means the exact status vocabulary `CinderWeb.LiveHelpers.book_badge_state/2` already
 maps (`:monitored → :approved`, `:available → :available`, `:held → :held`) covers every case, so
 each target section renders `<CinderWeb.BookComponents.book_state_badge kind={target.media_kind}
@@ -84,7 +85,7 @@ Each clause has a specific reason, not a generic "looks right" gate:
 
 When a grab exists, the page renders an **in-flight download section** in place of the search
 panel — see [§8](#8-live-updates) for what it reuses. This also means the write-side double-grab
-guard (`book_grabs_book_target_id` unique index, and `reconcile_matching_intent/4`'s
+guard (`book_grabs_book_target_id_index` unique index, and `reconcile_matching_intent/4`'s
 release-equality check returning `{:error, :download_intent_busy}` for a second, different
 release) is never the thing standing between an operator and a confusing error: the UI removes the
 second Grab button before the guard would ever fire.
@@ -163,7 +164,11 @@ def mount(%{"id" => id}, _session, socket) do
        %Work{} = work <- Books.get_work(id) do
     # ...
   else
-    _ -> {:ok, socket |> put_flash(:error, gettext("That book couldn't be found.")) |> push_navigate(to: ~p"/")}
+    _ ->
+      {:ok,
+       socket
+       |> put_flash(:error, gettext("That book couldn't be found."))
+       |> push_navigate(to: ~p"/requests")}
   end
 end
 ```
@@ -257,30 +262,35 @@ Both lists render, always — this is the point of `evaluate_all/3` returning tw
 one filtered one, and the roadmap's "rejected with deterministic reasons" is explicitly an
 operator-facing legibility requirement, not a debugging log.
 
-**The rejection-copy dictionary is derived from the scorer's own type, not transcribed by hand.**
-`Cinder.Acquisition.BookScorer` already declares the closed set:
+**The rejection-copy dictionary is derived from one canonical list, not transcribed by hand.**
+`Cinder.Acquisition.BookScorer` collapses what would otherwise be two hand-maintained copies of
+the same 12 atoms — the closed `@type reason` union and a runtime-introspectable accessor — onto
+one `@reasons` module attribute the type is itself generated from:
 
 ```elixir
-@type reason ::
-        :format_unknown
-        | :format_rejected
-        | :author_mismatch
-        | :title_mismatch
-        | :collection_ambiguous
-        | :language_mismatch
-        | :wrong_protocol
-        | :title_unfoldable
-        | :abridged_edition
-        | :format_contradictory
-        | :size_out_of_band
-        | :blocked_term
+@reasons [
+  :format_unknown,
+  :format_rejected,
+  :author_mismatch,
+  :title_mismatch,
+  :collection_ambiguous,
+  :language_mismatch,
+  :wrong_protocol,
+  :title_unfoldable,
+  :abridged_edition,
+  :format_contradictory,
+  :size_out_of_band,
+  :blocked_term
+]
+
+@type reason :: unquote(Enum.reduce(@reasons, &{:|, [], [&1, &2]}))
 ```
 
-A `@type` is not runtime-introspectable, so this slice adds `BookScorer.reasons/0` — one function,
-mirroring the two introspection functions the module already exports (`accepted_formats/0`,
-`size_band/0`) — returning the same 12 atoms as a literal list co-located with the typespec, so a
-future reason added to `evaluate/3` and forgotten in the list is a one-line diff away from being
-caught, not a silent drift between a doc comment and a dictionary living in a different file.
+A `@type` is not runtime-introspectable even when generated this way, so `BookScorer.reasons/0`
+(mirroring the module's existing `accepted_formats/0`/`size_band/0` introspection functions)
+returns `@reasons` directly. A reason added to `evaluate/3` and forgotten in `@reasons` now
+changes both the type `evaluate/3`'s own `@spec` is checked against and what `reasons/0` returns
+— one place to add it, not two kept in sync by hand.
 
 `BookManualSearchComponent` gets one `gettext`'d clause per atom in `BookScorer.reasons/0` — no
 stringify fallback (`to_string(reason)`/`inspect(reason)`) rendered to a user anywhere:
@@ -304,8 +314,8 @@ An atom outside this set can only reach the render function if `BookScorer` grow
 this table is not updated in the same change — the failure mode the review flagged as
 unacceptable. Rather than a silent stringify fallback OR an unhandled `FunctionClauseError`
 crashing the whole LiveView over one release row, the render function's **last** clause is an
-explicit, logged, non-leaking fallback: `Logger.warning("book scorer: unrecognized rejection
-reason #{inspect(reason)}")` then `gettext("rejected")` — visible to whoever ships the next scorer
+explicit, logged, non-leaking fallback: `Logger.warning("book manual search: unrecognized
+rejection reason #{inspect(reason)}")` then `gettext("rejected")` — visible to whoever ships the
 change, never a raw atom rendered to an operator. [§11](#11-test-plan) makes the "every real reason
 has real copy, and copy is never the atom's own name" property a test, driven off
 `BookScorer.reasons/0` so it cannot go stale either.
@@ -362,11 +372,17 @@ button), so `handle_info({:manual_grab, :book, target, release}, socket)` on `Bo
 mirrors it exactly:
 
 ```elixir
-def handle_info({:manual_grab, :book, target, release}, socket) do
-  {level, msg} = book_grab_flash(Download.grab_book_target(target, release))
+def handle_info({:manual_grab, :book, %BookTarget{id: target_id} = target, release}, socket) do
+  outcome = Download.grab_book_target(target, release)
+  socket = socket |> assign(:searching?, nil) |> reload()
+  {level, msg} = book_grab_flash(outcome, socket, target_id)
   {:noreply, put_flash(socket, level, msg)}
 end
 ```
+
+`reload/1` re-reads the work (and its grabs) before `book_grab_flash/3` runs, not after: the
+catch-all error clause below reads the target's *post-grab* state, so the reload has to have
+already happened.
 
 Outcome rendering — every reachable atom, not a catch-all (atoms confirmed against
 `test/cinder/download/book_intent_test.exs`):
@@ -462,9 +478,11 @@ gating code, the existing `live_session` entry is sufficient.
 ### 10. What stays out
 
 - **Automatic selection stays unreachable.** B4c adds a UI *caller* for `candidates/2`; it adds no
-  new production code path to `Cinder.Acquisition.Books` or `Cinder.Acquisition.BookScorer`.
-  There is still no `best_book_release/2`, and `BookPoller` still runs its two passes with no
-  search pass (`download/book_poller.ex:66-73`) — nothing in this slice changes that file.
+  new *automatic-selection* code path to `Cinder.Acquisition.Books` or
+  `Cinder.Acquisition.BookScorer` (it does add `BookScorer.reasons/0`, an introspection accessor
+  with no selection logic — see [§6](#6-the-acceptedrejected-split)). There is still no
+  `best_book_release/2`, and `BookPoller` still runs its two passes with no search pass
+  (`download/book_poller.ex:66-73`) — nothing in this slice changes that file.
 - **Audiobooks** render read-only in the per-work pipeline view ([§1](#1-scope)): a status badge,
   a hold reason if held, no search entry point, no Grab. `grab_book_target/2`'s
   `{:error, :unsupported_media_kind}` clause exists for exactly this target shape and is never
@@ -472,7 +490,8 @@ gating code, the existing `live_session` entry is sufficient.
 - **`/activity` stays movies/TV-only** ([§2](#2-reachability-how-an-admin-reaches-booksid)) — no
   `book_grabs` feed is added there.
 - **B5's Wanted/Missing, author monitoring policies, retry, and blocklist-clearing** are untouched
-  — this slice ships no "unmonitor", "retry", or "clear hold" control. A `:held` target shows its
+  — this slice ships no "pause/resume", "retry", or "clear hold" control. A `:held` target shows
+  its
   `hold_reason` and nothing else actionable.
 - **B6 adoption/migration** is untouched; nothing here reads or writes Bookshelf-sourced data.
 - **The two B3b orphans stay parked.** Author aliases and operator metadata overrides were handed
@@ -501,7 +520,7 @@ Mox mock, per AGENTS.md.
 
 - Gating: a non-admin session redirected from `/books/:id` with the standard flash.
 - Param safety: a non-integer `:id`, and an integer `:id` with no `book_works` row, both redirect
-  to `/` with the "couldn't be found" flash rather than crashing.
+  to `/requests` with the "couldn't be found" flash rather than crashing.
 - Renders a work with no targets at all (pending/denied request) — no pipeline section, no crash.
 - Renders a `:monitored` `:ebook` target with the search panel available, and an `:audiobook`
   target (if present) read-only with no search affordance.
@@ -633,25 +652,113 @@ Recorded here rather than silently folded in, per the B4a/B4b convention.
   token. Tests that exercise real scoring pass a fixed `title:` instead; tests that don't touch the
   scorer keep the unique-suffixed default.
 - **`hold_reason` renders a raw atom, by pre-existing design — not a gap in the exhaustiveness
-  guarantee.** `book_detail_live_test.exs` asserts the flash for a permanently rejected submission
-  contains `"bad_torrent"`, because `Cinder.Books.hold_target/2` stringifies an atom reason
-  (`books.ex:214`, `Atom.to_string/1` — untouched by this slice). That is a *different* code path
-  from the manual-search panel's "a rejection never renders as its own atom name" guarantee: the
-  panel's reasons are `BookScorer.reasons/0`'s closed, adversarially-reachable set (an indexer
-  result names the rejection), and are deliberately never shown as raw atoms. A `hold_reason` is an
-  internal fact the pipeline itself produced (a client error atom, a content-policy verdict) —
+  guarantee.** `Cinder.Books.hold_target/2` stringifies an atom reason (`books.ex:214`,
+  `Atom.to_string/1` — untouched by this slice), and the flash for a permanently rejected
+  submission shows it verbatim. That is a *different* code path from the manual-search panel's "a
+  rejection never renders as its own atom name" guarantee: the panel's reasons are
+  `BookScorer.reasons/0`'s closed, adversarially-reachable set (an indexer result names the
+  rejection), and are deliberately never shown as raw atoms. A `hold_reason` is an internal fact
+  the pipeline itself produced (a client error atom, a content-policy verdict) —
   non-attacker-controlled and already the codebase's convention for the field elsewhere (`books.ex`
   itself: "the reason a household member reads renders the same way whichever half gave up"). The
   two are not in tension; a later reader should not "fix" `hold_reason` to match the panel's
-  dictionary — they answer different questions.
+  dictionary — they answer different questions. (`book_detail_live_test.exs`'s permanent-failure
+  test asserts against the target's own freshly-read `hold_reason`, not a literal atom string, so
+  the test does not itself encode which atom `grab_book_target/2` happens to return.)
 - **`:unmonitored` renders an empty badge on this page — unreachable today, and B5's obligation
   once it stops being unreachable.** `book_badge_state(nil, :unmonitored)` falls through to
   `:none`, whose badge renders nothing. This slice never observes it: a `book_targets` row is only
   ever created at approval, already armed to `:monitored` in the same call
   (`Books.monitor_target/4`), and a target with no row at all renders "Not yet approved" — a
-  different, handled case. But B5 owns the "unmonitor" control the roadmap names, and the first
+  different, handled case. But B5 owns the "pause/resume" control the roadmap names, and the
+  first
   write that sets an existing, still-linked target back to `:unmonitored` will render a blank badge
   with no fallback text on `/books/:id`, `BookDiscoveryLive`, and `DiscoverLive` alike — all three
   share `book_badge_state/2`. Not fixed here: it has no caller that can reach the state yet, and the
   fix belongs in the shared helper, not in any one surface. Recorded as an explicit obligation on
   B5, the same way B3b handed `:held` and this route forward to B4.
+
+### Second review round
+
+Eight independent fresh-context reviews, three real defects and a set of should-fixes. Recorded
+in the same voice, per the B4a/B4b convention of not silently folding a correction in.
+
+- **BLOCKER, fixed: `BookManualSearchComponent`'s `"grab"` handler crashed on a `:results` that was
+  never assigned.** `handle_event("grab", …)` dereferenced `socket.assigns.results.accepted`
+  unconditionally, but `:results` was only ever set by `handle_async` or a preseed — a "grab"
+  event arriving while `state` was `:loading` or `:error` raised `KeyError` and took the parent
+  LiveView down with it, directly contradicting the component's own "ignore anything unmatched
+  rather than crash" comment two lines below. `update/2` now assigns a safe empty default
+  (`assign_new(:results, fn -> %{accepted: [], rejected: [], complete?: true} end)`) on the very
+  first render, mirroring `ManualSearchComponent`'s own `results: []` default — the sibling never
+  had this bug because it always initializes `results` alongside `state: :loading`, and this
+  component didn't. A direct-invocation test (`handle_event("grab", …)` on a bare `:loading`
+  socket) proves the fix; §11 undersold this as a should-fix originally and it was not one.
+- **`Cinder.Books.Grabs.track/2`'s parity claim with `Cinder.Catalog.Grabs.update_grab_download_metrics/2`
+  was false as written, fixed to be true.** The doc comment claimed the same guard without it: the
+  video sibling refuses a write that would land on an already-`:downloading`-false grab
+  (`is_nil(content_path)`, `{:error, :stale_grab}` on a miss) and drops a regressed
+  `download_progress` from the write (`keep_progress_high_water/2`) rather than letting a client's
+  brief under-report walk the operator-visible bar backwards; `track/2` had neither. Both gaps
+  predate this slice (inherited from B4b's original `track/2`), but the new broadcast is what makes
+  them user-visible for the first time — a progress bar that visibly regresses, and a metrics write
+  silently landing on a grab the import phase already claimed. `track/2` now mirrors both guards
+  exactly, bypassing `BookGrab.changeset/2` for a guarded `Repo.update_all` the same way
+  `mark_downloaded/2` already does in this file, and replicates the "advance
+  `download_progress_at` only on real forward motion" rule inline (the schema's own
+  `advance_download_progress_at` no longer runs for this write, since `update_all` skips
+  changesets). `@spec track/2`'s return type changed from `{:error, Ecto.Changeset.t()}` to
+  `{:error, :stale_grab}` to match; `BookPoller.track_and_reap/2`'s `{:error, reason}` branch only
+  logs `inspect(reason)`, so this is not a breaking change to its caller. Three new tests in
+  `grabs_test.exs` cover the staleness refusal, the regression drop, and that a regression-only
+  call (nothing else changed) still writes and broadcasts nothing.
+- **The plan quoted a `@spec` for `grab_book_target/2` that did not exist.** §7's fenced block
+  presented one as read verbatim from `download.ex`, and no function in that module carried a
+  `@spec` at all — the file's own established convention is `@doc`-only. Resolved by adding the
+  real spec rather than deleting the quote, so the quote is no longer aspirational; this is a
+  one-off addition to the file's convention, not "joining" an existing pattern of specs the way
+  the plan implied when it said "the surrounding functions in that module carry specs" — they do
+  not, and that specific justification does not hold even though the outcome (a true quote) is
+  right.
+- **`BookScorer`'s `@type reason` and `reasons/0` were two hand-maintained copies of the same 12
+  atoms, not one.** §6 said the opposite ("`reasons/0`... co-located with `@type reason`" implying
+  one source) while the code carried two independent literals. Collapsed onto one `@reasons`
+  module attribute the type is generated from (`@type reason ::
+  unquote(Enum.reduce(@reasons, &{:|, [], [&1, &2]}))`), so a reason added to one and forgotten in
+  the other is now structurally impossible rather than merely discouraged. The test that used to
+  compare `reasons/0` against a *third* hand-copied list (proving nothing about `evaluate/3`'s
+  real behavior, despite its own name claiming otherwise) is replaced with one that calls
+  `evaluate/3` through a real, previously-verified fixture for every one of the 12 reasons and
+  checks the fixture set is exactly `reasons/0` — an actual reachability proof, not a list
+  comparison, in both directions.
+- **Should-fixes, all applied:** `update/2`'s preseed branch now `cancel_async(:search)`s before
+  assigning, closing a latent race where a caller that starts a connected search and then supplies
+  `results:` could have the stale task's late completion clobber the preseed (unreachable from the
+  current sole caller, matches `ManualSearchComponent`'s own `maybe_cancel_stale_search/2`
+  idiom). `book_manual_search_component_test.exs` gained direct-invocation coverage for `:loading`
+  and `:error` rendering and for `handle_async`'s three outcomes, none of which any test exercised
+  before (every existing test drove the pre-seed path only). `book_detail_live_test.exs` gained a
+  malformed-`target_id` test for the `manual_search` event, the same client-controlled-input
+  contract already tested at mount.
+- **Nits taken:** the not-found redirect now goes to `/requests` (this page's own back-link target)
+  instead of `/`, matching every sibling detail view's convention of redirecting to its own list
+  page rather than the global root. The permanent-failure test now asserts against the target's
+  real, freshly-read `hold_reason` instead of the literal atom string `"bad_torrent"`. Fixed three
+  factual errors this doc itself had accumulated: the quoted `Logger.warning` prefix
+  (`"book scorer: ..."` in the doc, `"book manual search: ..."` in the code), the unique index's
+  real name (`book_grabs_book_target_id_index`, not `book_grabs_book_target_id`), and "the
+  'unmonitor' control the roadmap names" — the roadmap's own B5 Work list says "pause/resume", a
+  term this doc had never actually seen in the roadmap text. The status line now pins the base SHA
+  (`9f33e7d2`), matching B4a/B4b. Two other quoted code blocks (§6's `@type reason`, §7's
+  `handle_info` clause) had also drifted from the real, evolving implementation during this round
+  and are corrected in place — the same class of problem the `@spec` finding named, applied
+  proactively rather than waiting for a ninth review to find them.
+- **Not done, and why:** no test for the catch-all `handle_event/3`/`handle_info/2` fallback
+  clauses (neither sibling detail view tests its own, and it would assert nothing beyond "no
+  crash" on input no UI in this codebase sends); no test for `reload/1`'s `nil` branch (no code
+  path deletes a `Work`); the discarded `{:exit, _reason}` in `handle_async` is left as-is (matches
+  the sibling exactly). The `:unmonitored` blank-badge case is confirmed unreachable — both
+  production callers of `Books.monitor_target/4` wrap it with `flip_pending`/the request-approval
+  write in one `Repo.transaction` with `Repo.rollback` (`requests.ex:426-435`), so a failed
+  `arm/2` rolls the `ensure_target/2` insert back — and stays recorded as a B5 obligation only, not
+  fixed here.

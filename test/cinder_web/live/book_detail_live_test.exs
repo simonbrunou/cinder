@@ -24,12 +24,12 @@ defmodule CinderWeb.BookDetailLiveTest do
   end
 
   describe "mount param safety" do
-    test "a non-integer id redirects home instead of crashing", %{conn: conn} do
-      assert {:error, {:live_redirect, %{to: "/"}}} = live(conn, "/books/not-a-number")
+    test "a non-integer id redirects to /requests instead of crashing", %{conn: conn} do
+      assert {:error, {:live_redirect, %{to: "/requests"}}} = live(conn, "/books/not-a-number")
     end
 
-    test "a nonexistent work id redirects home", %{conn: conn} do
-      assert {:error, {:live_redirect, %{to: "/"}}} = live(conn, ~p"/books/999999999")
+    test "a nonexistent work id redirects to /requests", %{conn: conn} do
+      assert {:error, {:live_redirect, %{to: "/requests"}}} = live(conn, ~p"/books/999999999")
     end
   end
 
@@ -109,6 +109,18 @@ defmodule CinderWeb.BookDetailLiveTest do
       refute has_element?(lv, "button[phx-value-target_id='#{target.id}']")
       assert has_element?(lv, "#book-target-ebook", "Downloading")
     end
+
+    test "a malformed target_id on the manual_search event is ignored, not a crash", %{
+      conn: conn
+    } do
+      {target, _work} = ebook_target()
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      render_click(lv, "manual_search", %{"target_id" => "not-a-number"})
+
+      refute has_element?(lv, "#ms-book-#{target.id}")
+    end
   end
 
   describe "manual search and grab" do
@@ -157,7 +169,10 @@ defmodule CinderWeb.BookDetailLiveTest do
       panel = "#ms-book-#{target.id}"
       lv |> element("#{panel} button[phx-value-index='0']", "Grab") |> render_click()
 
-      assert render(lv) =~ "bad_torrent"
+      html = render(lv)
+      held = Books.get_target(target.id)
+      assert held.status == :held
+      assert html =~ held.hold_reason
       assert has_element?(lv, "#book-target-state-ebook", "Needs attention")
       refute Books.Grabs.for_target(target.id)
     end

@@ -30,13 +30,21 @@ defmodule CinderWeb.BookManualSearchComponent do
 
   @impl true
   def update(assigns, socket) do
-    socket = assign(socket, assigns)
+    socket =
+      socket
+      |> assign(assigns)
+      # A "grab" event racing an in-flight/failed search must never dereference an unset
+      # `:results` — this is present from the very first render, never only once `handle_async`
+      # or a preseed sets it, mirroring `ManualSearchComponent`'s own `results: []` default.
+      |> assign_new(:results, fn -> %{accepted: [], rejected: [], complete?: true} end)
 
     socket =
       cond do
-        # Test / pre-seeded path: results supplied directly, skip the async fetch.
+        # Test / pre-seeded path: results supplied directly, skip the async fetch. Cancels any
+        # in-flight search first — a caller that starts a connected search and then supplies
+        # `results:` must not have the earlier task's late completion clobber the preseed.
         preseeded?(assigns) ->
-          assign(socket, :state, :loaded)
+          socket |> cancel_async(:search) |> assign(:state, :loaded)
 
         not is_nil(socket.assigns[:state]) ->
           socket

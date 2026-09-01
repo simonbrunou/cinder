@@ -449,6 +449,15 @@ Two notes from executing B4c:
   second live-update convention (a client-side poll, rejected — see the B4c plan's "Amendments
   from review") or fixing the gap at its source. B4c adds the missing post-write broadcast to
   `Grabs.track/2`, guarded the same way its sibling is: only on an actual change.
+- **B5 inherits a blank-badge obligation on `:unmonitored`.** `CinderWeb.LiveHelpers.book_badge_state/2`
+  — shared by `/books/:id`, `BookDiscoveryLive`, and `DiscoverLive` — falls through to `:none` for
+  a `:unmonitored` target, whose badge renders nothing. Unreachable through B4c: both production
+  callers of `Books.monitor_target/4` wrap the arm in one `Repo.transaction` that rolls back
+  `ensure_target/2`'s insert on a failed arm, so no caller can leave a `:unmonitored` row linked to
+  an approved request today. It stops being unreachable the moment B5 ships the "pause/resume"
+  control named below, and the fix belongs in the shared helper, not in any one of its three
+  callers — B5 must add the fallback text before shipping pause/resume, the same way B3b handed
+  `:held` and `/books/:id` itself forward to B4.
 
 ---
 

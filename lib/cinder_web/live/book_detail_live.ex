@@ -44,7 +44,7 @@ defmodule CinderWeb.BookDetailLive do
         {:ok,
          socket
          |> put_flash(:error, gettext("That book couldn't be found."))
-         |> push_navigate(to: ~p"/")}
+         |> push_navigate(to: ~p"/requests")}
     end
   end
 

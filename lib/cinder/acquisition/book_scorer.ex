@@ -123,19 +123,28 @@ defmodule Cinder.Acquisition.BookScorer do
           query_origins: [atom()] | nil
         }
 
-  @type reason ::
-          :format_unknown
-          | :format_rejected
-          | :author_mismatch
-          | :title_mismatch
-          | :collection_ambiguous
-          | :language_mismatch
-          | :wrong_protocol
-          | :title_unfoldable
-          | :abridged_edition
-          | :format_contradictory
-          | :size_out_of_band
-          | :blocked_term
+  # The single source of truth for every rejection reason `evaluate/3` can return. `@type reason`
+  # below is generated from this list (not the reverse — a typespec is not runtime-introspectable),
+  # so there is exactly one place to add a reason, not two kept in sync by hand: a branch added to
+  # `evaluate/3` and forgotten here changes both the type `evaluate/3`'s own `@spec` is checked
+  # against and what `reasons/0` returns, so `book_manual_search_component_test.exs`'s
+  # exhaustiveness test (driven off `reasons/0`) cannot silently miss it.
+  @reasons [
+    :format_unknown,
+    :format_rejected,
+    :author_mismatch,
+    :title_mismatch,
+    :collection_ambiguous,
+    :language_mismatch,
+    :wrong_protocol,
+    :title_unfoldable,
+    :abridged_edition,
+    :format_contradictory,
+    :size_out_of_band,
+    :blocked_term
+  ]
+
+  @type reason :: unquote(Enum.reduce(@reasons, &{:|, [], [&1, &2]}))
 
   @doc "The e-book formats the profile accepts, most preferred first."
   @spec accepted_formats() :: [atom()]
@@ -146,32 +155,15 @@ defmodule Cinder.Acquisition.BookScorer do
   def size_band, do: {@min_size, @max_size}
 
   @doc """
-  Every rejection reason `evaluate/3` can return, as a literal list co-located with `@type
-  reason`.
+  Every rejection reason `evaluate/3` can return — `@reasons`, the module attribute `@type
+  reason` is itself generated from, made callable at runtime.
 
-  The type itself is not runtime-introspectable, and a caller that renders a reason for an
-  operator (a manual-search panel) needs the closed set at runtime to prove its copy is
-  exhaustive. Kept as a literal rather than derived from the typespec so a reason added to
-  `evaluate/3` and forgotten here is a one-line diff away from being caught, not a silent drift
-  between this list and the type.
+  A caller that renders a reason for an operator (the manual-search panel) needs the closed set
+  at runtime to prove its copy is exhaustive; a typespec alone cannot answer that without
+  `Code.Typespec` reflection.
   """
   @spec reasons() :: [reason()]
-  def reasons do
-    [
-      :format_unknown,
-      :format_rejected,
-      :author_mismatch,
-      :title_mismatch,
-      :collection_ambiguous,
-      :language_mismatch,
-      :wrong_protocol,
-      :title_unfoldable,
-      :abridged_edition,
-      :format_contradictory,
-      :size_out_of_band,
-      :blocked_term
-    ]
-  end
+  def reasons, do: @reasons
 
   @doc """
   Judges `release` against `work`.

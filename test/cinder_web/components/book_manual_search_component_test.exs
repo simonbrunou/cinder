@@ -49,6 +49,7 @@ defmodule CinderWeb.BookManualSearchComponentTest do
   alias Cinder.Acquisition.{BookRelease, BookScorer}
   alias Cinder.Books.BookTarget
   alias CinderWeb.BookManualSearchComponent
+  alias Phoenix.LiveView.Socket
 
   # A pre-seeded `results:` assign makes `update/2` skip the async indexer fetch, so the panel can
   # be rendered and asserted without a host LiveView or Mox — mirrors
@@ -180,5 +181,69 @@ defmodule CinderWeb.BookManualSearchComponentTest do
     lv |> element("button[phx-value-index='0']", "Grab") |> render_click()
 
     assert_receive {:grabbed, %BookRelease{download_url: "url-a"}}
+  end
+
+  test "a grab event while still loading is a no-op, not a crash" do
+    # The bug this proves fixed: `handle_event("grab", …)` used to dereference
+    # `socket.assigns.results.accepted` unconditionally, and `:results` was only ever assigned by
+    # `handle_async` or a preseed — so a "grab" arriving while `state` was `:loading` or `:error`
+    # raised `KeyError` and took the parent LiveView down with it.
+    socket = %Socket{
+      assigns: %{
+        __changed__: %{},
+        state: :loading,
+        results: %{accepted: [], rejected: [], complete?: true},
+        target: %BookTarget{id: 1, media_kind: :ebook, status: :monitored}
+      }
+    }
+
+    assert {:noreply, ^socket} =
+             BookManualSearchComponent.handle_event("grab", %{"index" => "0"}, socket)
+
+    refute_received {:manual_grab, _mode, _target, _release}
+  end
+
+  test ":loading renders a spinner, and :error renders the retry copy — not just :loaded" do
+    loading_html =
+      render_component(BookManualSearchComponent, %{
+        id: "ms",
+        target: %BookTarget{id: 1, media_kind: :ebook, status: :monitored},
+        work: %{title: "Title", authors: ["Author"]},
+        state: :loading
+      })
+
+    assert loading_html =~ "Searching releases"
+    refute loading_html =~ "No releases found."
+
+    error_html =
+      render_component(BookManualSearchComponent, %{
+        id: "ms",
+        target: %BookTarget{id: 1, media_kind: :ebook, status: :monitored},
+        work: %{title: "Title", authors: ["Author"]},
+        state: :error
+      })
+
+    assert error_html =~ "reach the indexer"
+  end
+
+  test "handle_async transitions :loading to :loaded on success and :error on failure/exit" do
+    socket = %Socket{assigns: %{__changed__: %{}, state: :loading, results: %{}}}
+    result = %{accepted: [], rejected: [], complete?: true}
+
+    assert {:noreply, ok_socket} =
+             BookManualSearchComponent.handle_async(:search, {:ok, {:ok, result}}, socket)
+
+    assert ok_socket.assigns.state == :loaded
+    assert ok_socket.assigns.results == result
+
+    assert {:noreply, error_socket} =
+             BookManualSearchComponent.handle_async(:search, {:ok, {:error, :timeout}}, socket)
+
+    assert error_socket.assigns.state == :error
+
+    assert {:noreply, exit_socket} =
+             BookManualSearchComponent.handle_async(:search, {:exit, :killed}, socket)
+
+    assert exit_socket.assigns.state == :error
   end
 end

@@ -63,6 +63,45 @@ defmodule Cinder.Books.GrabsTest do
     assert_receive {:book_grab_updated, %Cinder.Books.BookGrab{download_speed: 999}}
   end
 
+  test "a grab already marked downloaded refuses the write and broadcasts nothing", %{grab: grab} do
+    {:ok, downloaded} = Grabs.mark_downloaded(grab, "/tmp/book-#{grab.id}.epub")
+    Books.subscribe_targets()
+
+    assert {:error, :stale_grab} =
+             Grabs.track(downloaded, %{download_progress: 0.9, download_speed: 1_000})
+
+    # The write never landed: re-reading confirms nothing about the completed grab changed.
+    refute Cinder.Repo.get!(Cinder.Books.BookGrab, grab.id).download_progress == 0.9
+    refute_receive {:book_grab_updated, _grab}, 50
+  end
+
+  test "a regressed download_progress is dropped, not recorded — the bar never walks backwards",
+       %{grab: grab} do
+    {:ok, first} = Grabs.track(grab, %{download_progress: 0.7, download_speed: 100})
+    Books.subscribe_targets()
+
+    # A single tick that under-reports progress but genuinely changed speed: the regression is
+    # dropped from the write while the real change still lands and still broadcasts.
+    assert {:ok, updated} = Grabs.track(first, %{download_progress: 0.3, download_speed: 250})
+
+    assert updated.download_progress == 0.7
+    assert updated.download_speed == 250
+
+    assert_receive {:book_grab_updated,
+                    %Cinder.Books.BookGrab{download_progress: 0.7, download_speed: 250}}
+  end
+
+  test "a download_progress-only regression with nothing else changed writes and broadcasts nothing",
+       %{grab: grab} do
+    {:ok, first} = Grabs.track(grab, %{download_progress: 0.7, download_speed: 100})
+    Books.subscribe_targets()
+
+    assert {:ok, ^first} =
+             Grabs.track(first, %{download_progress: 0.3, download_speed: 100})
+
+    refute_receive {:book_grab_updated, _grab}, 50
+  end
+
   defp identifier(provider, kind, foreign_id),
     do: %{provider: provider, kind: kind, foreign_id: foreign_id}
 

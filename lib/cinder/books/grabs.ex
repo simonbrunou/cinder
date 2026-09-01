@@ -114,27 +114,49 @@ defmodule Cinder.Books.Grabs do
   Stores the transfer metrics reported by the download client, and broadcasts `{:book_grab_updated,
   grab}` when they actually changed.
 
-  Guarded the same way `Cinder.Catalog.Grabs.update_grab_download_metrics/2` guards its own
-  broadcast: a poller tick that re-reports an identical snapshot (no real progress since the last
-  tick) writes and broadcasts nothing, so an open `/books/:id` is not re-rendered on a no-op.
+  Guarded the same way `Cinder.Catalog.Grabs.update_grab_download_metrics/2` guards its own write
+  and broadcast:
+
+    * the write only lands while `content_path` is still unset — a metrics report for a grab the
+      import phase already claimed (`mark_downloaded/2` beat this tick to it) is stale and
+      refused with `{:error, :stale_grab}`, never landed on a completed download;
+    * a regressed `download_progress` is dropped from the write, not recorded — a client that
+      briefly under-reports must never walk the operator-visible bar backwards;
+    * `download_progress_at` advances only on real forward motion (or the completion edge), so a
+      poller tick that re-reports an identical snapshot writes and broadcasts nothing, and an
+      open `/books/:id` is not re-rendered on a no-op.
   """
-  @spec track(BookGrab.t(), map()) :: {:ok, BookGrab.t()} | {:error, Ecto.Changeset.t()}
+  @spec track(BookGrab.t(), map()) :: {:ok, BookGrab.t()} | {:error, :stale_grab}
   def track(%BookGrab{} = grab, attrs) do
     changes = metric_changes(grab, attrs)
 
     if changes == %{} do
-      {:ok, grab}
+      if Repo.exists?(from(g in BookGrab, where: g.id == ^grab.id and is_nil(g.content_path))) do
+        {:ok, grab}
+      else
+        {:error, :stale_grab}
+      end
     else
-      grab
-      |> BookGrab.changeset(changes)
-      |> Repo.update()
-      |> case do
-        {:ok, updated} ->
+      now = DateTime.utc_now(:second)
+
+      changes =
+        if progress_advanced?(grab.download_progress, Map.get(changes, :download_progress)),
+          do: Map.put(changes, :download_progress_at, now),
+          else: changes
+
+      case Repo.update_all(
+             from(g in BookGrab,
+               where: g.id == ^grab.id and is_nil(g.content_path),
+               select: g
+             ),
+             set: Map.to_list(changes) ++ [updated_at: now]
+           ) do
+        {1, [updated]} ->
           Books.broadcast({:book_grab_updated, updated})
           {:ok, updated}
 
-        {:error, _changeset} = error ->
-          error
+        {0, _none} ->
+          {:error, :stale_grab}
       end
     end
   end
@@ -142,9 +164,21 @@ defmodule Cinder.Books.Grabs do
   defp metric_changes(grab, attrs) do
     attrs
     |> Map.take([:download_progress, :download_speed, :download_eta])
+    |> keep_progress_high_water(grab.download_progress)
     |> Enum.reject(fn {field, value} -> Map.get(grab, field) == value end)
     |> Map.new()
   end
+
+  defp keep_progress_high_water(%{download_progress: progress} = attrs, previous)
+       when is_number(progress) and (is_nil(previous) or progress >= previous),
+       do: attrs
+
+  defp keep_progress_high_water(attrs, _previous), do: Map.delete(attrs, :download_progress)
+
+  defp progress_advanced?(previous, current) when is_number(current),
+    do: current > (previous || 0)
+
+  defp progress_advanced?(_previous, _current), do: false
 
   @doc "Bumps the shared download-phase failure budget."
   @spec bump_attempts(BookGrab.t(), non_neg_integer()) ::
