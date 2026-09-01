@@ -963,7 +963,7 @@ msgid "Requesting…"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:120
-#: lib/cinder_web/live/book_detail_live.ex:160
+#: lib/cinder_web/live/book_detail_live.ex:171
 #: lib/cinder_web/live/requests_live.ex:357
 #: lib/cinder_web/live/settings_live.ex:194
 #: lib/cinder_web/user_auth.ex:419
@@ -1975,7 +1975,7 @@ msgstr ""
 msgid "Find a better match"
 msgstr ""
 
-#: lib/cinder_web/live/book_detail_live.ex:115
+#: lib/cinder_web/live/book_detail_live.ex:126
 #: lib/cinder_web/live/movie_detail_live.ex:242
 #: lib/cinder_web/live/series_detail_live.ex:589
 #, elixir-autogen
@@ -6426,7 +6426,7 @@ msgstr[0] ""
 msgstr[1] ""
 
 #: lib/cinder_web/components/book_components.ex:75
-#: lib/cinder_web/live/book_detail_live.ex:145
+#: lib/cinder_web/live/book_detail_live.ex:156
 #, elixir-autogen, elixir-format
 msgid "Audiobook"
 msgstr ""
@@ -6528,7 +6528,7 @@ msgid "We couldn’t load this book right now."
 msgstr ""
 
 #: lib/cinder_web/components/book_components.ex:74
-#: lib/cinder_web/live/book_detail_live.ex:144
+#: lib/cinder_web/live/book_detail_live.ex:155
 #, elixir-autogen, elixir-format
 msgid "eBook"
 msgstr ""
@@ -6578,17 +6578,17 @@ msgstr ""
 msgid "book target #%{id}"
 msgstr ""
 
-#: lib/cinder_web/live/book_detail_live.ex:132
+#: lib/cinder_web/live/book_detail_live.ex:143
 #, elixir-autogen, elixir-format
 msgid "Couldn't submit this release. Try again."
 msgstr ""
 
-#: lib/cinder_web/live/book_detail_live.ex:183
+#: lib/cinder_web/live/book_detail_live.ex:194
 #, elixir-autogen, elixir-format
 msgid "Not yet approved."
 msgstr ""
 
-#: lib/cinder_web/live/book_detail_live.ex:220
+#: lib/cinder_web/live/book_detail_live.ex:231
 #, elixir-autogen, elixir-format
 msgid "Search for a release"
 msgstr ""
@@ -6598,12 +6598,12 @@ msgstr ""
 msgid "Some indexers could not be reached; results may be incomplete."
 msgstr ""
 
-#: lib/cinder_web/live/book_detail_live.ex:46
+#: lib/cinder_web/live/book_detail_live.ex:48
 #, elixir-autogen, elixir-format
 msgid "That book couldn't be found."
 msgstr ""
 
-#: lib/cinder_web/live/book_detail_live.ex:118
+#: lib/cinder_web/live/book_detail_live.ex:129
 #, elixir-autogen, elixir-format
 msgid "This target already has a download in progress."
 msgstr ""
