@@ -58,7 +58,7 @@ defmodule CinderWeb.BookDetailLive do
   end
 
   @impl true
-  def handle_event("manual_search", %{"target_id" => raw_id}, socket) do
+  def handle_event("manual_search", %{"target_id" => raw_id}, socket) when is_binary(raw_id) do
     case Integer.parse(raw_id) do
       {id, ""} ->
         open = if socket.assigns.searching? == id, do: nil, else: id

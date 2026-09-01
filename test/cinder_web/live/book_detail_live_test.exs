@@ -121,6 +121,18 @@ defmodule CinderWeb.BookDetailLiveTest do
 
       refute has_element?(lv, "#ms-book-#{target.id}")
     end
+
+    test "a non-string target_id on the manual_search event is ignored, not a crash", %{
+      conn: conn
+    } do
+      {target, _work} = ebook_target()
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      render_click(lv, "manual_search", %{"target_id" => ["1"]})
+
+      refute has_element?(lv, "#ms-book-#{target.id}")
+    end
   end
 
   describe "manual search and grab" do
