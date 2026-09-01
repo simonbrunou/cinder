@@ -18,6 +18,7 @@ defmodule Cinder.Books.BookTarget do
     field :status, Ecto.Enum, values: @statuses, default: :unmonitored
     belongs_to :profile, Profile
     field :hold_reason, :string
+    field :hold_transient, :boolean
     field :preferred_language, :string
 
     timestamps(type: :utc_datetime)
@@ -53,13 +54,15 @@ defmodule Cinder.Books.BookTarget do
   a window where a target is monitored with no profile to score against.
   """
   def transition_changeset(target, attrs) do
-    changeset = cast(target, attrs, [:status, :hold_reason, :profile_id])
+    changeset = cast(target, attrs, [:status, :hold_reason, :hold_transient, :profile_id])
 
     changeset =
       case {target.status, get_change(changeset, :status),
             Map.has_key?(attrs, :hold_reason) or Map.has_key?(attrs, "hold_reason")} do
         {:held, status, false} when status not in [nil, :held] ->
-          put_change(changeset, :hold_reason, nil)
+          changeset
+          |> put_change(:hold_reason, nil)
+          |> put_change(:hold_transient, nil)
 
         _other ->
           changeset

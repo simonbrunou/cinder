@@ -683,6 +683,109 @@ defmodule Cinder.Download.BookPollerTest do
     end
   end
 
+  describe "\"Find a better match\": replace" do
+    test "a confirmed replace supersedes the old file, ending with exactly one book_files row",
+         ctx do
+      %{target: target, books: books, release_dir: release_dir} =
+        downloading(ctx, "The Dispossessed.epub")
+
+      complete_download(release_dir)
+      poll!()
+
+      old_dest =
+        Path.join([books, "Ursula K. Le Guin", "The Dispossessed", "The Dispossessed.epub"])
+
+      assert File.exists?(old_dest)
+      assert [%BookFile{}] = Repo.all(BookFile)
+
+      new_release_dir = Path.join(ctx.tmp_dir, "downloads/release-remote-2")
+      File.mkdir_p!(new_release_dir)
+
+      File.write!(
+        Path.join(new_release_dir, "The Dispossessed (Retail).epub"),
+        epub_bytes() <> "better"
+      )
+
+      {:ok, _replace_grab} =
+        Books.Grabs.create(target.id, "remote-2", :torrent, "The Dispossessed Retail EPUB",
+          replace: true
+        )
+
+      complete_download(new_release_dir, "remote-2")
+      poll!()
+
+      new_dest =
+        Path.join([
+          books,
+          "Ursula K. Le Guin",
+          "The Dispossessed",
+          "The Dispossessed (Retail).epub"
+        ])
+
+      assert Repo.reload!(target).status == :available
+      assert [%BookFile{path: ^new_dest}] = Repo.all(BookFile)
+      refute File.exists?(old_dest)
+      assert File.read!(new_dest) == epub_bytes() <> "better"
+    end
+
+    # The replay-safety property, driven end-to-end through the real poller/filesystem: a naive
+    # unconditional delete-then-insert on every replace-flagged import would delete the target's
+    # CURRENT, correct file on a crash-and-retry, since by the replay it is the only row present.
+    test "replaying an already-committed replace import is a true no-op — nothing unlinked from disk",
+         ctx do
+      %{target: target, books: books, release_dir: release_dir} =
+        downloading(ctx, "The Dispossessed.epub")
+
+      complete_download(release_dir)
+      poll!()
+
+      new_release_dir = Path.join(ctx.tmp_dir, "downloads/release-remote-2")
+      File.mkdir_p!(new_release_dir)
+
+      File.write!(
+        Path.join(new_release_dir, "The Dispossessed (Retail).epub"),
+        epub_bytes() <> "better"
+      )
+
+      {:ok, replace_grab} =
+        Books.Grabs.create(target.id, "remote-2", :torrent, "The Dispossessed Retail EPUB",
+          replace: true
+        )
+
+      complete_download(new_release_dir, "remote-2")
+      poll!()
+
+      new_dest =
+        Path.join([
+          books,
+          "Ursula K. Le Guin",
+          "The Dispossessed",
+          "The Dispossessed (Retail).epub"
+        ])
+
+      assert [%BookFile{id: file_id, path: ^new_dest}] = Repo.all(BookFile)
+
+      # Simulate the crash: the same remote download is re-grabbed (a fresh grab row, since the
+      # first was already deleted post-commit) with the SAME content, exactly as a replayed
+      # import tick would re-derive it.
+      {:ok, _replayed} =
+        Books.Grabs.create(
+          target.id,
+          replace_grab.download_id,
+          :torrent,
+          replace_grab.release_title,
+          replace: true
+        )
+
+      complete_download(new_release_dir, "remote-2")
+      poll!()
+
+      assert [%BookFile{id: ^file_id, path: ^new_dest}] = Repo.all(BookFile)
+      assert File.exists?(new_dest)
+      assert File.read!(new_dest) == epub_bytes() <> "better"
+    end
+  end
+
   describe "grab uniqueness" do
     test "a target cannot hold two grabs at once", ctx do
       %{target: target} = downloading(ctx, "book.epub")

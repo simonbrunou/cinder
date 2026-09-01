@@ -122,6 +122,7 @@ defmodule Cinder.Application do
         Cinder.Catalog.Refresher,
         Cinder.Books.Refresher,
         Cinder.Catalog.Rehunter,
+        Cinder.Books.Rehunter,
         Cinder.Catalog.UpgradeHunter,
         Cinder.Download.Cleaner,
         Cinder.Subtitles.Sweeper,

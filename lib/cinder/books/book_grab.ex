@@ -29,6 +29,7 @@ defmodule Cinder.Books.BookGrab do
     field :download_speed, :integer
     field :download_eta, :integer
     field :download_progress_at, :utc_datetime
+    field :replace, :boolean, default: false
 
     timestamps(type: :utc_datetime)
   end
@@ -45,7 +46,8 @@ defmodule Cinder.Books.BookGrab do
       :import_attempts,
       :download_progress,
       :download_speed,
-      :download_eta
+      :download_eta,
+      :replace
     ])
     |> advance_download_progress_at(grab)
     |> validate_required([:book_target_id, :download_id, :download_protocol])

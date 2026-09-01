@@ -67,7 +67,8 @@ defmodule CinderWeb.BookManualSearchComponent do
     start_async(socket, :search, fn ->
       Books.candidates(work,
         protocols: Download.available_protocols(),
-        language: target.preferred_language
+        language: target.preferred_language,
+        release_blocklist: Cinder.Books.blocked_release_titles(target.id)
       )
     end)
   end
@@ -152,6 +153,7 @@ defmodule CinderWeb.BookManualSearchComponent do
               phx-click="grab"
               phx-value-index={index}
               phx-disable-with={gettext("Grabbing…")}
+              data-confirm={replace?(@target) && gettext("This replaces the current file: continue?")}
             >
               {gettext("Grab")}
             </.button>
@@ -172,6 +174,9 @@ defmodule CinderWeb.BookManualSearchComponent do
     """
   end
 
+  defp replace?(%{status: :available}), do: true
+  defp replace?(_target), do: false
+
   defp format_label(format) when is_atom(format),
     do: format |> Atom.to_string() |> String.upcase()
 
@@ -191,6 +196,7 @@ defmodule CinderWeb.BookManualSearchComponent do
   defp reject_reason_text(:language_mismatch), do: gettext("language doesn't match")
   defp reject_reason_text(:size_out_of_band), do: gettext("outside expected size")
   defp reject_reason_text(:blocked_term), do: gettext("contains a blocked term")
+  defp reject_reason_text(:blocklisted), do: gettext("already tried and failed")
 
   defp reject_reason_text(:collection_ambiguous),
     do: gettext("omnibus/collection, not this work")

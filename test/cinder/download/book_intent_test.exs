@@ -146,6 +146,36 @@ defmodule Cinder.Download.BookIntentTest do
       assert Repo.all(BookGrab) == []
     end
 
+    test "a permanently rejected submission blocklists its release title" do
+      target = monitored_target()
+
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:error, :bad_torrent} end)
+
+      assert {:error, :bad_torrent} = Download.grab_book_target(target, release())
+
+      assert Books.blocked_release_titles(target.id) == [release().title]
+    end
+
+    test "replace: true is carried onto the created grab" do
+      target = monitored_target()
+
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "remote-1"} end)
+
+      assert {:ok, %BookGrab{replace: true}} =
+               Download.grab_book_target(target, release(), replace: true)
+    end
+
+    test "replace: false (the default) is carried onto the created grab" do
+      target = monitored_target()
+
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "remote-1"} end)
+
+      assert {:ok, %BookGrab{replace: false}} = Download.grab_book_target(target, release())
+    end
+
     test "an audiobook target is refused before any reservation" do
       target = monitored_target()
       {:ok, audiobook} = Books.ensure_target(Books.get_work(target.work_id), :audiobook)

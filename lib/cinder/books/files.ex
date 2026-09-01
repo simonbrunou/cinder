@@ -21,25 +21,56 @@ defmodule Cinder.Books.Files do
   The target write is guarded on it still being `:monitored`, so a target an operator unmonitored
   or held mid-import does not get silently re-armed by a late-landing import; the caller gets
   `{:error, :stale_status}` and the placement is rolled back by its own `ImportStage` journal.
+
+  `opts[:replace]` (default `false`) is a confirmed "Find a better match" import: before the new
+  file is inserted, every OTHER `book_files` row already on the target is deleted so the target
+  ends up with exactly one current file, and the return becomes `{:ok, file, superseded_paths}`
+  so the caller can best-effort unlink the old bytes from disk, post-commit.
+
+  Replay-safe by construction: when the incoming `path` is already one of the target's own rows
+  (a crash/replay re-running an already-committed replace), nothing is deleted — the row stays,
+  and `insert_file/2` hits the same unique-path conflict `insert_conflict/3` already treats as a
+  no-op success. Only a GENUINELY different existing row is ever removed.
   """
   @spec record_import(BookTarget.t(), map(), keyword()) ::
-          {:ok, BookFile.t()} | {:error, :stale_status | :book_file_exists | Ecto.Changeset.t()}
+          {:ok, BookFile.t()}
+          | {:ok, BookFile.t(), [String.t()]}
+          | {:error, :stale_status | :book_file_exists | Ecto.Changeset.t()}
   def record_import(%BookTarget{} = target, attrs, opts \\ []) do
     stage_ids = Keyword.get(opts, :import_stage_ids, [])
+    replace? = Keyword.get(opts, :replace, false)
 
     Repo.transaction(fn ->
-      with {:ok, file} <- insert_file(target, attrs),
+      with {:ok, superseded} <- maybe_supersede(target, attrs, replace?),
+           {:ok, file} <- insert_file(target, attrs),
            {:ok, _armed} <- arm_target(target) do
         # Inside the transaction, and last: `mark_committed!/1` rolls back on a stage that is no
         # longer `:prepared`, so a journal another process already reconciled aborts the catalog
         # write instead of leaving a file row pointing at bytes that got rolled back.
         ImportStage.mark_committed!(stage_ids)
-        file
+        {file, superseded}
       else
         {:error, reason} -> Repo.rollback(reason)
       end
     end)
-    |> publish(target)
+    |> publish(target, replace?)
+  end
+
+  defp maybe_supersede(_target, _attrs, false), do: {:ok, []}
+
+  defp maybe_supersede(%BookTarget{id: id}, %{path: path}, true) do
+    existing = Repo.all(from f in BookFile, where: f.book_target_id == ^id)
+
+    if Enum.any?(existing, &(&1.path == path)) do
+      # The incoming file is already this target's own row — a replay of an already-completed
+      # replace. Deleting nothing here means `insert_file/2` below hits the same unique-path
+      # conflict `insert_conflict/3` already treats as a no-op success, converging exactly like
+      # a plain (non-replace) replay does today.
+      {:ok, []}
+    else
+      Repo.delete_all(from f in BookFile, where: f.book_target_id == ^id)
+      {:ok, Enum.map(existing, & &1.path)}
+    end
   end
 
   defp insert_file(target, attrs) do
@@ -107,14 +138,14 @@ defmodule Cinder.Books.Files do
     end
   end
 
-  defp publish({:ok, file}, %BookTarget{id: id}) do
+  defp publish({:ok, {file, superseded}}, %BookTarget{id: id}, replace?) do
     case Repo.get(BookTarget, id) do
       nil -> :ok
       armed -> Books.broadcast({:book_target_updated, armed})
     end
 
-    {:ok, file}
+    if replace?, do: {:ok, file, superseded}, else: {:ok, file}
   end
 
-  defp publish({:error, reason}, _target), do: {:error, reason}
+  defp publish({:error, reason}, _target, _replace?), do: {:error, reason}
 end

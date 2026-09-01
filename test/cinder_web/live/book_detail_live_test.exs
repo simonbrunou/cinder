@@ -73,7 +73,7 @@ defmodule CinderWeb.BookDetailLiveTest do
       refute has_element?(lv, "button[phx-value-target_id='#{audiobook.id}']")
     end
 
-    test "an available target shows no search panel", %{conn: conn} do
+    test "an available target offers 'Find a better match', not the search button", %{conn: conn} do
       {target, _work} = ebook_target()
 
       {:ok, _file} =
@@ -86,7 +86,18 @@ defmodule CinderWeb.BookDetailLiveTest do
       {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
 
       assert has_element?(lv, "#book-target-state-ebook", "Available")
-      refute has_element?(lv, "button[phx-value-target_id='#{target.id}']")
+
+      refute has_element?(
+               lv,
+               "button[phx-value-target_id='#{target.id}']",
+               "Search for a release"
+             )
+
+      assert has_element?(
+               lv,
+               "button[phx-value-target_id='#{target.id}']",
+               "Find a better match"
+             )
     end
 
     test "a linked but unmonitored target shows an explicit badge, not a blank one", %{
@@ -103,7 +114,9 @@ defmodule CinderWeb.BookDetailLiveTest do
       assert has_element?(lv, "#book-target-state-ebook", "Unmonitored")
     end
 
-    test "a held target shows its hold reason and no search panel", %{conn: conn} do
+    test "a held target shows its hold reason, a Retry button, and no search panel", %{
+      conn: conn
+    } do
       {target, _work} = ebook_target()
       {:ok, held} = Books.hold_target(target, "identity conflict")
 
@@ -111,7 +124,14 @@ defmodule CinderWeb.BookDetailLiveTest do
 
       assert has_element?(lv, "#book-target-state-ebook", "Needs attention")
       assert has_element?(lv, "#book-target-hold-reason-ebook", "identity conflict")
-      refute has_element?(lv, "button[phx-value-target_id='#{target.id}']")
+
+      refute has_element?(
+               lv,
+               "button[phx-value-target_id='#{target.id}']",
+               "Search for a release"
+             )
+
+      assert has_element?(lv, "button[phx-value-target_id='#{target.id}']", "Retry")
     end
 
     test "a target already downloading offers no second search button", %{conn: conn} do

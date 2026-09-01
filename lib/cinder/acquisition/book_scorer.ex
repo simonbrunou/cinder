@@ -141,7 +141,8 @@ defmodule Cinder.Acquisition.BookScorer do
     :abridged_edition,
     :format_contradictory,
     :size_out_of_band,
-    :blocked_term
+    :blocked_term,
+    :blocklisted
   ]
 
   @type reason :: unquote(Enum.reduce(@reasons, &{:|, [], [&1, &2]}))
@@ -176,17 +177,20 @@ defmodule Cinder.Acquisition.BookScorer do
       reasoning `Cinder.Acquisition.Language` documents applies. An explicitly *different*
       language is rejected.
     * `:blocked_terms` — case-insensitive substrings that reject the release outright.
+    * `:release_blocklist` — exact, case-insensitive release titles proven bad for this target
+      (`Cinder.Books.blocked_release_titles/1`) — rejected `:blocklisted` before every other
+      check, so a release Retry or "Find a better match" just parked is never re-offered.
     * `:protocols` — the protocols with a configured download client (`[:torrent]`, `[:usenet]`,
       or both). A release on any other protocol is rejected `:wrong_protocol` rather than offered
       as a candidate that cannot be grabbed. Omitted ⇒ every protocol is acceptable.
-
   Rules are checked cheapest-and-most-decisive first, so the reason a caller renders is the most
   informative one available rather than whichever check happened to run first.
   """
   @spec evaluate(BookRelease.t(), map(), keyword()) ::
           {:accept, evidence()} | {:reject, reason()}
   def evaluate(%BookRelease{} = release, work, opts \\ []) do
-    with :ok <- check_blocked(release, Keyword.get(opts, :blocked_terms) || []),
+    with :ok <- check_not_blocklisted(release, Keyword.get(opts, :release_blocklist) || []),
+         :ok <- check_blocked(release, Keyword.get(opts, :blocked_terms) || []),
          {:ok, format} <- check_format(release),
          :ok <- check_protocol(release, Keyword.get(opts, :protocols)),
          :ok <- check_author(release, Map.get(work, :authors) || []),
@@ -271,6 +275,21 @@ defmodule Cinder.Acquisition.BookScorer do
 
   defp published_rank(nil), do: 0
   defp published_rank(%DateTime{} = published_at), do: -DateTime.to_unix(published_at)
+
+  # Exact, case-insensitive title exclusion — a release just proven bad for THIS target
+  # (Retry or "Find a better match" parking it) must never be re-offered by the very next
+  # search. Checked first, before `check_blocked/2`'s substring scan, mirroring
+  # `Cinder.Acquisition.Scorer.excluded_title?/2`'s ordering for movies/TV: the most specific,
+  # per-target evidence outranks the household-wide substring block.
+  defp check_not_blocklisted(_release, []), do: :ok
+
+  defp check_not_blocklisted(%BookRelease{title: title}, blocklist) do
+    down = String.downcase(title || "")
+
+    if Enum.any?(blocklist, &(String.downcase(&1 || "") == down)),
+      do: {:reject, :blocklisted},
+      else: :ok
+  end
 
   defp check_blocked(_release, []), do: :ok
 

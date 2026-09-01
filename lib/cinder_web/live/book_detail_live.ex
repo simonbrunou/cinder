@@ -92,13 +92,44 @@ defmodule CinderWeb.BookDetailLive do
     {:noreply, socket}
   end
 
+  # A `:held` target's manual re-entry: return it to `:monitored` for a human to pick a
+  # different release. Deliberately does not clear the blocklist itself — see `Books.retry_target/1`.
+  def handle_event("retry_target", %{"target_id" => raw_id}, socket) when is_binary(raw_id) do
+    with {id, ""} <- Integer.parse(raw_id),
+         %BookTarget{work_id: work_id} = target <- Books.get_target(id),
+         true <- work_id == socket.assigns.work.id do
+      case Books.retry_target(target) do
+        {:ok, _updated} ->
+          {:noreply, reload(socket)}
+
+        {:error, _reason} ->
+          {:noreply, put_flash(socket, :error, gettext("Couldn't retry this target. Try again."))}
+      end
+    else
+      _invalid -> {:noreply, socket}
+    end
+  end
+
+  # A plain read+delete — changes nothing `book_state_badge` or the language form render from,
+  # so no reload of `@work` is needed.
+  def handle_event("clear_blocklist", %{"target_id" => raw_id}, socket)
+      when is_binary(raw_id) do
+    with {id, ""} <- Integer.parse(raw_id),
+         %BookTarget{work_id: work_id} = target <- Books.get_target(id),
+         true <- work_id == socket.assigns.work.id do
+      Books.clear_blocklist(target.id)
+    end
+
+    {:noreply, socket}
+  end
+
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   # The manual-search panel forwards a chosen release back here (it owns no writes of its own).
   @impl true
   def handle_info({:manual_grab, :book, %BookTarget{id: target_id} = target, release}, socket) do
-    outcome = Download.grab_book_target(target, release)
+    outcome = Download.grab_book_target(target, release, replace: target.status == :available)
     socket = socket |> assign(:searching?, nil) |> reload()
     {level, msg} = book_grab_flash(outcome, socket, target_id)
     {:noreply, put_flash(socket, level, msg)}
@@ -169,6 +200,9 @@ defmodule CinderWeb.BookDetailLive do
 
   defp searchable?(%BookTarget{media_kind: :ebook, status: :monitored}, nil), do: true
   defp searchable?(_target, _grab), do: false
+
+  defp replaceable?(%BookTarget{media_kind: :ebook, status: :available}, nil), do: true
+  defp replaceable?(_target, _grab), do: false
 
   defp grab_status(%BookGrab{content_path: nil}), do: :downloading
   defp grab_status(%BookGrab{}), do: :downloaded
@@ -276,6 +310,31 @@ defmodule CinderWeb.BookDetailLive do
             </form>
 
             <.button
+              :if={target.media_kind == :ebook and target.status == :held}
+              type="button"
+              variant="neutral"
+              size="sm"
+              phx-click="retry_target"
+              phx-value-target_id={target.id}
+            >
+              {gettext("Retry")}
+            </.button>
+
+            <.button
+              :if={
+                target.media_kind == :ebook and target.status == :held and
+                  Books.blocked_release_titles(target.id) != []
+              }
+              type="button"
+              variant="ghost"
+              size="sm"
+              phx-click="clear_blocklist"
+              phx-value-target_id={target.id}
+            >
+              {gettext("Clear blocklist")}
+            </.button>
+
+            <.button
               :if={searchable?(target, grab)}
               type="button"
               variant="neutral"
@@ -284,6 +343,17 @@ defmodule CinderWeb.BookDetailLive do
               phx-value-target_id={target.id}
             >
               {gettext("Search for a release")}
+            </.button>
+
+            <.button
+              :if={replaceable?(target, grab)}
+              type="button"
+              variant="neutral"
+              size="sm"
+              phx-click="manual_search"
+              phx-value-target_id={target.id}
+            >
+              {gettext("Find a better match")}
             </.button>
 
             <.live_component
