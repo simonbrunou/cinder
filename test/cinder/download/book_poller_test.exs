@@ -16,7 +16,7 @@ defmodule Cinder.Download.BookPollerTest do
   alias Cinder.Books
   alias Cinder.Books.{BookFile, BookGrab}
   alias Cinder.Catalog
-  alias Cinder.Download.BookPoller
+  alias Cinder.Download.{BookPoller, Intent}
   alias Cinder.Repo
 
   setup :set_mox_global
@@ -81,6 +81,51 @@ defmodule Cinder.Download.BookPollerTest do
       # they cannot inspect — the grab that carried the download id is deleted by the same hold.
       assert target.hold_reason == "blocked_content: download contains setup.exe"
       assert Repo.all(BookGrab) == []
+    end
+
+    test "a failed client removal survives as a durable cleanup record, and a later pass drains it",
+         ctx do
+      %{target: target} = downloading(ctx, "book.epub")
+
+      stub(Cinder.Download.ClientMock, :files, fn _id ->
+        {:ok, ["The Dispossessed.epub", "setup.exe"]}
+      end)
+
+      expect(Cinder.Download.ClientMock, :status, fn "remote-1" ->
+        {:ok, %{state: :downloading, progress: 0.5, speed: 1_000}}
+      end)
+
+      # #398: the immediate best-effort removal fails transiently (client restarting, an API
+      # timeout) — the exact failure the durable record has to survive.
+      expect(Cinder.Download.ClientMock, :remove, fn "remote-1", _opts -> {:error, :timeout} end)
+
+      capture_log(fn -> poll!() end)
+
+      target = Repo.reload!(target)
+      assert target.status == :held
+      # The grab — previously the only record of `download_id`/`download_protocol` — is gone,
+      # same as before the fix.
+      assert Repo.all(BookGrab) == []
+
+      # A durable download_intents row now survives the failed removal, carrying exactly what a
+      # retry needs: the remote id and protocol the deleted grab used to be the sole owner of.
+      intent = Repo.get_by!(Intent, kind: :book_target, target_id: target.id)
+      assert intent.status == :cleanup_pending
+      assert intent.remote_id == "remote-1"
+      assert intent.protocol == :torrent
+
+      # Simulate the bounded retry becoming due — BookPoller reconciles pending intents every
+      # tick, but a failed attempt backs off rather than retrying immediately.
+      intent |> Ecto.Changeset.change(next_attempt_at: nil) |> Repo.update!()
+
+      # The later pass succeeds: the remote job is actually removed this time.
+      expect(Cinder.Download.ClientMock, :remove, fn "remote-1", _opts -> :ok end)
+
+      poll!()
+
+      refute Repo.get(Intent, intent.id)
+      # The hold survives untouched — draining the cleanup record is not a target-state change.
+      assert Repo.reload!(target).status == :held
     end
 
     test "one miss does not destroy a live download", ctx do
