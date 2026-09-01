@@ -41,7 +41,22 @@ jobs:
 
       # `mix test` is the project alias: compile --warnings-as-errors,
       # format --check-formatted, credo --strict, ecto create/migrate, test.
-      - run: mix test
+      #
+      # #396: a flake sighting's failure detail is otherwise lost — a local `mix test --failed`
+      # rerun can pass and clear the manifest before anyone captures the diff. `tee` keeps the
+      # full output on disk regardless of exit status (GitHub Actions' default `bash -eo
+      # pipefail` for `run:` steps makes this step still fail/succeed on mix test's own exit
+      # code, not tee's), and the always()-gated upload below preserves it as a downloadable
+      # artifact past whatever the job log's own retention does.
+      - run: mix test 2>&1 | tee mix-test-output.log
+
+      - name: Upload mix test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mix-test-output
+          path: mix-test-output.log
+          retention-days: 14
 
   dependency-audit:
     runs-on: ubuntu-latest
