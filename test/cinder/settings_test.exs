@@ -20,6 +20,7 @@ defmodule Cinder.SettingsTest do
     Cinder.Acquisition.Indexer.Prowlarr,
     Cinder.Library.MigrationSource.Radarr,
     Cinder.Library.MigrationSource.Sonarr,
+    Cinder.Library.MigrationSource.Readarr,
     Cinder.Download.Client.QBittorrent,
     Cinder.Download.Client.Sabnzbd,
     Cinder.Download.Client.Transmission,
