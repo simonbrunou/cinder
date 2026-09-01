@@ -16,8 +16,10 @@ defmodule Cinder.Download.BookPollerTest do
   alias Cinder.Books
   alias Cinder.Books.{BookFile, BookGrab}
   alias Cinder.Catalog
-  alias Cinder.Download.BookPoller
+  alias Cinder.Download
+  alias Cinder.Download.{BookPoller, Intent}
   alias Cinder.Repo
+  alias Ecto.Adapters.SQL.Sandbox
 
   setup :set_mox_global
   setup :verify_on_exit!
@@ -81,6 +83,198 @@ defmodule Cinder.Download.BookPollerTest do
       # they cannot inspect — the grab that carried the download id is deleted by the same hold.
       assert target.hold_reason == "blocked_content: download contains setup.exe"
       assert Repo.all(BookGrab) == []
+    end
+
+    test "a failed client removal survives as a durable cleanup record, and a later pass drains it",
+         ctx do
+      %{target: target} = downloading(ctx, "book.epub")
+
+      stub(Cinder.Download.ClientMock, :files, fn _id ->
+        {:ok, ["The Dispossessed.epub", "setup.exe"]}
+      end)
+
+      expect(Cinder.Download.ClientMock, :status, fn "remote-1" ->
+        {:ok, %{state: :downloading, progress: 0.5, speed: 1_000}}
+      end)
+
+      # #398: the immediate best-effort removal fails transiently (client restarting, an API
+      # timeout) — the exact failure the durable record has to survive.
+      expect(Cinder.Download.ClientMock, :remove, fn "remote-1", _opts -> {:error, :timeout} end)
+
+      capture_log(fn -> poll!() end)
+
+      target = Repo.reload!(target)
+      assert target.status == :held
+      # The grab — previously the only record of `download_id`/`download_protocol` — is gone,
+      # same as before the fix.
+      assert Repo.all(BookGrab) == []
+
+      # A durable download_intents row now survives the failed removal, carrying exactly what a
+      # retry needs: the remote id and protocol the deleted grab used to be the sole owner of.
+      intent = Repo.get_by!(Intent, kind: :book_target, target_id: target.id)
+      assert intent.status == :cleanup_pending
+      assert intent.remote_id == "remote-1"
+      assert intent.protocol == :torrent
+
+      # Simulate the bounded retry becoming due — BookPoller reconciles pending intents every
+      # tick, but a failed attempt backs off rather than retrying immediately.
+      intent |> Ecto.Changeset.change(next_attempt_at: nil) |> Repo.update!()
+
+      # The later pass succeeds: the remote job is actually removed this time.
+      expect(Cinder.Download.ClientMock, :remove, fn "remote-1", _opts -> :ok end)
+
+      poll!()
+
+      refute Repo.get(Intent, intent.id)
+      # The hold survives untouched — draining the cleanup record is not a target-state change.
+      assert Repo.reload!(target).status == :held
+    end
+
+    # PR #411 review: `hold_orphaned_target/2`'s catch-all clause for a vanished target was
+    # accidentally deleted alongside the dead `remove_from_client/1` it sat next to, so
+    # `fail_download/2` raised `FunctionClauseError` for a `nil` `book_target` instead of the
+    # no-op it used to be — aborting BEFORE `fence_book_cleanup/1` ever ran and re-opening the
+    # exact leaked-remote-job bug this PR closes, just via a different trigger.
+    #
+    # `grab.book_target` is `nil` only when the target row is gone by the time
+    # `Books.Grabs.list_downloading/0`'s SEPARATE follow-up preload query runs (it is not a
+    # same-statement join) — reachable in production via a concurrent target deletion landing in
+    # that gap. `book_grabs.book_target_id` cascades on delete
+    # (`references(:book_targets, on_delete: :delete_all)`), so under the Sandbox's single
+    # wrapping transaction (`foreign_keys: :on` is pinned for every env, and toggling the pragma
+    # mid-transaction is a documented SQLite no-op) a plain delete of the target takes the grab
+    # with it — there is no way to leave the grab behind sandboxed.
+    #
+    # A Sandbox-safe alternative was ruled out, not skipped: `hold_orphaned_target/2` and
+    # `fail_download/2` are `defp` — Elixir does not export private functions, so no test can call
+    # them directly — and `advance_downloading/0`'s only route to them is its own internal
+    # `Books.Grabs.list_downloading/0` call, which cannot be stubbed (it is a plain context
+    # function, not a Mox-mocked behaviour, deliberately per AGENTS.md) or fed a pre-built struct.
+    # The OTHER half of this regression — that the durable record still gets fenced regardless of
+    # `book_target` — IS Sandbox-safe and has its own direct, zero-risk test just below
+    # (`Download.fence_book_cleanup/1` never reads `book_target` at all); this test's job is
+    # narrowed to the one claim that genuinely needs a real connection: the dispatch doesn't raise.
+    #
+    # `@tag :unboxed` (`Cinder.DataCase.setup_sandbox/1`) checks out a REAL, non-sandboxed
+    # connection whose writes are actual commits, visible to any other test reading the same
+    # tables — unlike every other (Sandboxed, rolled-back) test in this suite. What makes that
+    # safe here, and the INVARIANT a future reader must preserve before touching any of it:
+    #
+    #   `async: false` on THIS module is load-bearing, not incidental. ExUnit runs every
+    #   `async: true` module to full completion, concurrently among themselves, BEFORE starting
+    #   ANY `async: false` module — which then run one at a time, serially, with no overlap with
+    #   each other or with the (already-finished) `async: true` phase. Because this module is
+    #   `async: false`, this test's real, committed rows can never be visible while an
+    #   `async: true` test (e.g. anything asserting a global `Repo.aggregate(Work/BookGrab/
+    #   BookTarget/.., :count)`) is running — that phase is already over by the time this one
+    #   starts. Flip this module to `async: true` for speed and that guarantee is gone: this
+    #   test's rows would then be a real, live commit visible to whichever `async: true` tests
+    #   happen to be running at the same moment, on a shared on-disk SQLite file.
+    #
+    #   `config/test.exs`'s `pool_size: 1` for `Cinder.Repo` is a second, independent guard — one
+    #   physical connection for the whole suite serializes every write regardless of process
+    #   count — but do not rely on it alone; it says nothing about which ROWS are visible to a
+    #   concurrently-scheduled reader, only that writes cannot literally collide mid-statement.
+    #
+    #   Cleanup runs in a `try/after` INSIDE this test's own process, not `on_exit/1` — `on_exit/1`
+    #   runs in a separate `ExUnit.OnExitHandler` process, and by the time it fires this
+    #   connection's owner (the test process) has already exited, so its queries silently no-op
+    #   with a `DBConnection.OwnershipError` (verified empirically). `try/after` was checked
+    #   reliable on both the pass and the forced-failure path. A unique download id (not the
+    #   file's shared `"remote-1"` default) avoids colliding with concurrently-scheduled tests
+    #   before that cleanup runs.
+    @tag :unboxed
+    test "a target that vanished out from under its grab does not raise, and still fences a durable cleanup record",
+         ctx do
+      # Unique id, not the file's shared "remote-1" default — see the invariant comment above.
+      remote_id = "remote-vanished-target-#{System.unique_integer([:positive])}"
+      %{grab: grab, target: target, work: work} = downloading(ctx, "book.epub", remote_id)
+      profile_id = target.profile_id
+
+      # try/after, not on_exit/1 — see the invariant comment above.
+      try do
+        Repo.query!("PRAGMA foreign_keys = OFF")
+        Repo.delete_all(from t in Cinder.Books.BookTarget, where: t.id == ^target.id)
+        Repo.query!("PRAGMA foreign_keys = ON")
+
+        # Sanity check the fixture actually reproduces the race's end state before exercising it
+        # (scoped to our own id — an unboxed connection sees every real row, not just ours).
+        assert %BookGrab{book_target: nil} =
+                 Enum.find(Books.Grabs.list_downloading(), &(&1.id == grab.id))
+
+        stub(Cinder.Download.ClientMock, :files, fn _id ->
+          {:ok, ["The Dispossessed.epub", "setup.exe"]}
+        end)
+
+        expect(Cinder.Download.ClientMock, :status, fn ^remote_id ->
+          {:ok, %{state: :downloading, progress: 0.5, speed: 1_000}}
+        end)
+
+        expect(Cinder.Download.ClientMock, :remove, fn ^remote_id, _opts -> {:error, :timeout} end)
+
+        # `poll!()` starts BookPoller via `start_supervised!`, a SEPARATE process. Shared Sandbox
+        # mode (`Cinder.DataCase.setup_sandbox/1`'s `shared: true` for `async: false` tests) is
+        # what lets every other test's `poll!()` call skip this — `sandbox: false` here checks out
+        # a raw connection tied ONLY to this process, so the GenServer needs explicit `allow/3`.
+        pid = start_supervised!({BookPoller, interval: 60_000})
+        Sandbox.allow(Repo, self(), pid)
+        log = capture_log(fn -> assert :ok = BookPoller.poll() end)
+        stop_supervised!(BookPoller)
+
+        # `isolate/2` would have swallowed a raise and logged "skipped" — its absence is direct
+        # proof `fail_download/2` ran to completion rather than aborting mid-way.
+        refute log =~ "skipped"
+
+        refute Repo.get(BookGrab, grab.id)
+
+        intent = Repo.get_by!(Intent, kind: :book_target, target_id: target.id)
+        assert intent.status == :cleanup_pending
+        assert intent.remote_id == remote_id
+        assert intent.protocol == :torrent
+      after
+        # `work_fixture/2` (via `downloading/2`) also creates a `book_authors` row and a
+        # `book_credits` link — neither owned by the work, so deleting the work alone would not
+        # cascade them away. Capture the author before the work (and its credit) are gone.
+        author_ids =
+          Repo.all(
+            from c in Cinder.Books.Credit, where: c.work_id == ^work.id, select: c.author_id
+          )
+
+        Repo.delete_all(from g in BookGrab, where: g.id == ^grab.id)
+        Repo.delete_all(from t in Cinder.Books.BookTarget, where: t.id == ^target.id)
+
+        Repo.delete_all(
+          from i in Intent, where: i.kind == :book_target and i.target_id == ^target.id
+        )
+
+        Repo.delete_all(from w in Books.Work, where: w.id == ^work.id)
+        Repo.delete_all(from a in Cinder.Books.Author, where: a.id in ^author_ids)
+        if profile_id, do: Repo.delete_all(from p in Catalog.Profile, where: p.id == ^profile_id)
+      end
+    end
+
+    # Sandbox-safe complement to the `:unboxed` test above: proves the OTHER half of the same
+    # regression — that `Download.fence_book_cleanup/1` fences a durable record regardless of
+    # `book_target` — without needing a real connection at all. `fence_book_cleanup/1` never
+    # reads `grab.book_target` (only `book_target_id`, `download_id`, `download_protocol`,
+    # `release_title`), so a plain struct update reproduces the input shape exactly; no orphaned
+    # DB row is required for THIS half of the claim.
+    test "fence_book_cleanup/1 fences a durable record from a grab whose book_target is nil",
+         ctx do
+      %{grab: grab, target: target} = downloading(ctx, "book.epub", "remote-safe-nil-target")
+      grab = %{grab | book_target: nil}
+
+      assert {:ok, [intent_id]} = Download.fence_book_cleanup(grab)
+
+      intent = Repo.get!(Intent, intent_id)
+      assert intent.kind == :book_target
+      assert intent.target_id == target.id
+      assert intent.status == :cleanup_pending
+      assert intent.remote_id == "remote-safe-nil-target"
+      assert intent.protocol == :torrent
+
+      # The grab is gone (fenced-then-deleted in one transaction) regardless of book_target.
+      refute Repo.get(BookGrab, grab.id)
     end
 
     test "one miss does not destroy a live download", ctx do

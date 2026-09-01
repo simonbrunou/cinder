@@ -235,8 +235,8 @@ defmodule Cinder.Download.BookPoller do
     end
   end
 
-  # The client says this download is dead. Hold the target FIRST, then drop the grab, then ask
-  # the client to remove the job.
+  # The client says this download is dead. Hold the target FIRST, then fence-and-drop the grab,
+  # then ask the client to remove the job.
   #
   # The order is the crash story. Holding first means a crash at any later point leaves a `:held`
   # target an operator can see and act on — the worst case is a stale grab row or an un-removed
@@ -250,20 +250,22 @@ defmodule Cinder.Download.BookPoller do
   # the target to `:monitored` would make a failed download indistinguishable from one nobody has
   # picked a release for yet. The contract's `held` is "operator-visible … conflict; never
   # auto-grab", and it carries the reason.
+  #
+  # #398: the client removal used to be a bare best-effort call with the grab (its only durable
+  # record of `download_id`/`download_protocol`) already deleted — a transient removal failure
+  # leaked the remote job forever. `Download.fence_book_cleanup/1` now persists a
+  # `download_intents` `:cleanup_pending` row and deletes the grab in the SAME transaction (no
+  # crash window between them), and `cleanup_intents/1` makes the immediate best-effort attempt;
+  # a failure there leaves the row for `reconcile_pending_intents/1`'s bounded retry to drain on
+  # a later tick instead of losing it.
   defp fail_download(%BookGrab{} = grab, reason) do
     Logger.warning("book grab #{grab.id} download failed: #{inspect(reason)}")
     hold_orphaned_target(grab.book_target, reason)
-    Books.Grabs.delete(grab)
-    remove_from_client(grab)
+    {:ok, intent_ids} = Download.fence_book_cleanup(grab)
+    Download.cleanup_intents(intent_ids)
     :ok
   end
 
-  # A grab whose target vanished has nothing to hold; the grab row is already gone.
-  #
-  # Distinct from `hold/3` below: there the grab still exists and is deleted only if the hold
-  # wins, so a lost race leaves it for the next tick to re-derive. Here the grab is already gone
-  # (the remote download is dead and was removed), so there is nothing left to re-derive and a
-  # lost race is simply someone else's more recent decision.
   defp hold_orphaned_target(%BookTarget{} = target, reason) do
     case Books.hold_target(target, reason) do
       {:ok, _held} ->
@@ -276,19 +278,15 @@ defmodule Cinder.Download.BookPoller do
     end
   end
 
+  # A grab whose target vanished has nothing to hold — but the grab row (and its
+  # download_id/download_protocol) is still very much alive, so `fail_download/2` must still
+  # fence and drain it; this clause only says the hold itself has nothing to act on.
+  #
+  # Distinct from `hold/3` below: there the grab still exists and is deleted only if the hold
+  # wins, so a lost race leaves it for the next tick to re-derive. Here `fail_download/2` is
+  # already committed to dropping the grab regardless of this outcome, so a lost race (an
+  # operator deleting the target concurrently) is simply someone else's more recent decision.
   defp hold_orphaned_target(_missing_target, _reason), do: :ok
-
-  defp remove_from_client(%BookGrab{download_id: id, download_protocol: protocol}) do
-    with {:ok, client} <- Download.client_for(protocol) do
-      client.remove(id, delete_files: true)
-    end
-
-    :ok
-  rescue
-    error ->
-      Logger.info("book download removal failed: #{inspect(error)}")
-      :ok
-  end
 
   # --- import phase ---
 

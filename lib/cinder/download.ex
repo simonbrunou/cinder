@@ -460,6 +460,36 @@ defmodule Cinder.Download do
     Enum.uniq(pending_ids ++ carrier_ids)
   end
 
+  # Unlike `fence_movie_cleanup/2` and `fence_episode_cleanup/2` — which only fence, leaving the
+  # delete to a caller that already has its own open transaction (`Catalog`, `Catalog.Grabs`) —
+  # this one also deletes the grab. `Cinder.Download.BookPoller` (where the one caller,
+  # `fail_download/2`, lives) is a poller under `lib/cinder/download/`: it holds no `Repo`
+  # mutations of its own (AGENTS.md), so there is no caller-owned transaction to fence inside of.
+  # This opens its own, mirroring `Cinder.Catalog.Grabs.cancel_grab/2`'s fence-then-delete shape
+  # but with both writes made here instead of split across two contexts.
+  #
+  # #398: a failed `client.remove/2` at the end of `BookPoller.fail_download/2` used to discard
+  # its result with nothing durable behind it — the grab row carrying `download_id`,
+  # `download_protocol`, and `content_path` was already gone by then, so a transient removal
+  # failure (client restarting, an API timeout) leaked the remote job and its files forever. The
+  # grab and the fenced intent are now deleted/inserted in the same transaction, so a crash
+  # between them is impossible; the caller runs `cleanup_intents/1` right after commit for the
+  # immediate best-effort attempt, and any failure there leaves the `:cleanup_pending` row for
+  # `reconcile_pending_intents/1`'s bounded retry (every `BookPoller` tick) to keep trying.
+  @doc false
+  def fence_book_cleanup(%BookGrab{} = grab) do
+    Repo.transaction(fn ->
+      intent =
+        case Repo.get_by(Intent, kind: :book_target, target_id: grab.book_target_id) do
+          %Intent{} = existing -> mark_cleanup!(existing, grab.download_id)
+          nil -> insert_book_cleanup!(grab)
+        end
+
+      Books.Grabs.delete(grab)
+      [intent.id]
+    end)
+  end
+
   @doc false
   def cleanup_intents(intent_ids) do
     Enum.each(intent_ids, fn id ->
@@ -507,6 +537,19 @@ defmodule Cinder.Download do
       release: %{"title" => spec.title || ""},
       status: :cleanup_pending,
       remote_id: spec.remote_id
+    })
+  end
+
+  defp insert_book_cleanup!(grab) do
+    insert_cleanup_intent!(%{
+      operation_key: Ecto.UUID.generate(),
+      kind: :book_target,
+      target_id: grab.book_target_id,
+      episode_ids: [],
+      protocol: grab.download_protocol,
+      release: %{"title" => grab.release_title || ""},
+      status: :cleanup_pending,
+      remote_id: grab.download_id
     })
   end
 
