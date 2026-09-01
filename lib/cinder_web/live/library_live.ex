@@ -45,13 +45,12 @@ defmodule CinderWeb.LibraryLive do
   import CinderWeb.BookComponents, only: [book_state_badge: 1]
 
   alias Cinder.Books
-  alias Cinder.Books.BookTarget
+  alias Cinder.Books.{BookTarget, Grabs}
   alias Cinder.Catalog
 
   @impl true
   def mount(params, _session, socket) do
     tab = parse_tab(params["type"])
-    status = parse_status(params["status"])
 
     if connected?(socket) do
       Catalog.subscribe()
@@ -64,7 +63,6 @@ defmodule CinderWeb.LibraryLive do
      |> assign(
        movies: Catalog.list_movies(),
        tab: tab,
-       status: status,
        filter: "",
        confirming: nil,
        delete_files: false
@@ -73,9 +71,15 @@ defmodule CinderWeb.LibraryLive do
      |> assign_books()}
   end
 
+  # `status`, like `sort`, is re-derived from the URL on every call — not just at mount — so a
+  # sort change's `push_patch` (which now carries `status` through, see `handle_event("sort", …)`
+  # below) restores it after a reconnect exactly like `sort` already does; only `?type=` behaves
+  # differently, since a tab switch is a `navigate` (fresh `mount/3`), never a patch.
   @impl true
   def handle_params(params, _uri, socket),
-    do: {:noreply, assign(socket, :sort, parse_sort(params["sort"]))}
+    do:
+      {:noreply,
+       assign(socket, sort: parse_sort(params["sort"]), status: parse_status(params["status"]))}
 
   # --- movies ---
   @impl true
@@ -223,7 +227,7 @@ defmodule CinderWeb.LibraryLive do
     do:
       {:noreply,
        push_patch(socket,
-         to: library_path(socket.assigns.tab, parse_sort(value)),
+         to: library_path(socket.assigns.tab, parse_sort(value), socket.assigns.status),
          replace: true
        )}
 
@@ -252,11 +256,13 @@ defmodule CinderWeb.LibraryLive do
 
   def handle_info({:series_deleted, _id}, socket), do: {:noreply, assign_series(socket)}
 
-  # The only book broadcast this view acts on — a target's status/language changed, which the
-  # rendered badge (and possibly the size aggregate, if it just reached `:available`) reflects.
-  # `{:book_grab_updated, _}`/`{:book_grab_deleted, _}` — nothing here renders in-flight grab
-  # state, so both fall through to the catch-all below, same as every other message this view
-  # has no clause for.
+  # A target's status/language changed, which the rendered badge (and possibly the size
+  # aggregate, if it just reached `:available`) reflects. `@book_grabbing` (the Pause-button
+  # gate) is refreshed here too, since it is recomputed as a whole every `assign_books/1` call —
+  # cheaper than tracking it independently, at the cost of not being pushed live on a bare
+  # `{:book_grab_updated, _}`/`{:book_grab_deleted, _}` (neither changes target status, so
+  # neither reaches this clause); both still fall through to the catch-all below. That gap is
+  # UX-only: `Books.pause_target/1`'s own `:grab_in_progress` refusal is the actual guard.
   def handle_info({:book_target_updated, _target}, socket), do: {:noreply, assign_books(socket)}
 
   def handle_info(_message, socket), do: {:noreply, socket}
@@ -290,11 +296,14 @@ defmodule CinderWeb.LibraryLive do
 
   # `@books` loads on every mount regardless of tab (cheap: no join, same as `@movies`/`@series`)
   # so the nav count is always right even without a live subscription to that tab's topic — see
-  # the moduledoc. The size aggregate is gated on the tab exactly like `assign_series/1`'s own
-  # `series_sizes` gate, for the same reason: nothing reads it off-tab.
+  # the moduledoc. The size aggregate and `@book_grabbing` (batched, not one `Grabs.for_target/1`
+  # call per rendered row) are both gated on the tab exactly like `assign_series/1`'s own
+  # `series_sizes` gate, for the same reason: nothing reads either off-tab.
   defp assign_books(socket) do
-    sizes = if socket.assigns.tab == :books, do: Books.target_sizes(), else: %{}
-    assign(socket, books: Books.list_targets(), book_sizes: sizes)
+    on_books_tab? = socket.assigns.tab == :books
+    sizes = if on_books_tab?, do: Books.target_sizes(), else: %{}
+    grabbing = if on_books_tab?, do: Grabs.target_ids_in_progress(), else: MapSet.new()
+    assign(socket, books: Books.list_targets(), book_sizes: sizes, book_grabbing: grabbing)
   end
 
   # Render-time narrowing of the active tab's list. Case-insensitive substring on the
@@ -404,6 +413,20 @@ defmodule CinderWeb.LibraryLive do
   defp library_path(:books, sort), do: ~p"/library?type=books&sort=#{sort}"
   defp library_path(:movies, sort), do: ~p"/library?sort=#{sort}"
 
+  # Same as `library_path/2`, but also threads the books `?status=` through — used only by the
+  # sort patch (`handle_event("sort", …)`), which must preserve the operator's Wanted/Held
+  # filter across a sort change (the same reason `?sort=` itself lives in the URL, per the
+  # moduledoc). The plain tab-nav links below stay `library_path/2`: a tab switch is a
+  # `navigate` (fresh `mount/3`), where dropping the filter is the existing, intentional reset.
+  defp library_path(:books, sort, status) when not is_nil(status),
+    do: ~p"/library?type=books&sort=#{sort}&status=#{status_param(status)}"
+
+  defp library_path(tab, sort, _status), do: library_path(tab, sort)
+
+  # Inverse of `parse_status/1`, for rebuilding the `?status=` query param from the assign.
+  defp status_param(:monitored), do: "wanted"
+  defp status_param(:held), do: "held"
+
   defp kind_label(:ebook), do: gettext("eBook")
   defp kind_label(:audiobook), do: gettext("Audiobook")
 
@@ -501,21 +524,20 @@ defmodule CinderWeb.LibraryLive do
           {gettext("Books")} ({length(@books)})
         </.link>
         <.link
+          :if={@tab == :books}
           id="library-books-wanted"
           navigate={~p"/library?type=books&status=wanted"}
-          aria-current={@tab == :books && @status == :monitored && "page"}
-          class={[
-            "tab min-h-11 tab-sm",
-            @tab == :books && @status == :monitored && "tab-active"
-          ]}
+          aria-current={@status == :monitored && "page"}
+          class={["tab min-h-11 tab-sm", @status == :monitored && "tab-active"]}
         >
           {gettext("Wanted")}
         </.link>
         <.link
+          :if={@tab == :books}
           id="library-books-held"
           navigate={~p"/library?type=books&status=held"}
-          aria-current={@tab == :books && @status == :held && "page"}
-          class={["tab min-h-11 tab-sm", @tab == :books && @status == :held && "tab-active"]}
+          aria-current={@status == :held && "page"}
+          class={["tab min-h-11 tab-sm", @status == :held && "tab-active"]}
         >
           {gettext("Held")}
         </.link>
@@ -761,8 +783,16 @@ defmodule CinderWeb.LibraryLive do
         <.empty_state
           :if={@visible == []}
           icon="hero-book-open"
-          title={if @filter == "", do: gettext("No books yet"), else: gettext("No matches")}
-          message={if @filter == "", do: gettext("Approved books appear here."), else: nil}
+          title={
+            if @filter == "" and is_nil(@status),
+              do: gettext("No books yet"),
+              else: gettext("No matches")
+          }
+          message={
+            if @filter == "" and is_nil(@status),
+              do: gettext("Approved books appear here."),
+              else: nil
+          }
         />
         <%!-- book_cards/1's own grid — sm:grid-cols-2 lg:grid-cols-3, not the 5-column poster
               grid above: these are text cards (no cover art; see book_components.ex), so they
@@ -801,12 +831,14 @@ defmodule CinderWeb.LibraryLive do
               />
 
               <%!-- Cheap/reversible only: a `:held` row's Retry/Clear-blocklist stay on
-                    `/books/:id`, where the hold reason is already rendered. `Grabs.for_target/1`
-                    here is UX only — hiding a button that would visibly fail — the actual safety
-                    boundary is `Books.pause_target/1`'s own `:grab_in_progress` refusal. --%>
+                    `/books/:id`, where the hold reason is already rendered. `@book_grabbing`
+                    here is UX only — hiding a button that would visibly fail — the actual
+                    safety boundary is `Books.pause_target/1`'s own `:grab_in_progress`
+                    refusal, so a grab created after this batched read still gets refused
+                    server-side rather than accepted. --%>
               <div :if={t.status in [:monitored, :unmonitored]} class="flex flex-wrap gap-2">
                 <.button
-                  :if={t.status == :monitored and Books.Grabs.for_target(t.id) == nil}
+                  :if={t.status == :monitored and not MapSet.member?(@book_grabbing, t.id)}
                   type="button"
                   variant="warning"
                   size="sm"

@@ -60,6 +60,14 @@ defmodule Cinder.Books.Grabs do
   @spec for_target(integer()) :: BookGrab.t() | nil
   def for_target(book_target_id), do: Repo.get_by(BookGrab, book_target_id: book_target_id)
 
+  @doc """
+  `book_target_id`s with a live grab, as a `MapSet` — the `/library` books tab's Pause-button
+  gate, batched into one query instead of one `for_target/1` call per rendered row.
+  """
+  @spec target_ids_in_progress() :: MapSet.t(integer())
+  def target_ids_in_progress,
+    do: Repo.all(from g in BookGrab, select: g.book_target_id) |> MapSet.new()
+
   @doc "The grab carrying `download_id` on `protocol`, or nil."
   @spec by_download(String.t(), atom()) :: BookGrab.t() | nil
   def by_download(download_id, protocol),

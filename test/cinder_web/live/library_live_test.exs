@@ -382,6 +382,43 @@ defmodule CinderWeb.LibraryLiveTest do
       assert render(lv) =~ "Dune"
       assert Books.get_target(target.id).status == :monitored
     end
+
+    test "changing the sort while status-filtered keeps the filter across a reconnect", %{
+      conn: conn
+    } do
+      wanted = book_target!(%{title: "Dune"})
+
+      {:ok, held} =
+        book_target!(%{title: "Foundation"}) |> Books.hold_target("identity conflict")
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books&status=wanted")
+      assert has_element?(lv, "#book-target-row-#{wanted.id}")
+
+      sort_by(lv, "title")
+      assert_patch(lv, ~p"/library?type=books&sort=title&status=wanted")
+
+      # A reconnect is a fresh mount/3 against the browser's CURRENT url — asserting only the
+      # live socket's in-memory assign would miss a URL regression that drops the filter.
+      {:ok, reconnected_lv, _html} =
+        live(conn, ~p"/library?type=books&sort=title&status=wanted")
+
+      assert has_element?(reconnected_lv, "#book-target-row-#{wanted.id}")
+      refute has_element?(reconnected_lv, "#book-target-row-#{held.id}")
+    end
+
+    test "the Wanted/Held quick links only render on the Books tab", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/library")
+      refute has_element?(lv, "#library-books-wanted")
+      refute has_element?(lv, "#library-books-held")
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=tv")
+      refute has_element?(lv, "#library-books-wanted")
+      refute has_element?(lv, "#library-books-held")
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books")
+      assert has_element?(lv, "#library-books-wanted")
+      assert has_element?(lv, "#library-books-held")
+    end
   end
 
   test "non-admins are redirected away from /library", %{conn: _conn} do
