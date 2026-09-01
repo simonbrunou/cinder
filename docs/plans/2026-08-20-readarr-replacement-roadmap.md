@@ -498,6 +498,91 @@ Two notes from executing B4c:
 - Provider deletion or drift never silently deletes local works/files or broadens monitoring.
 - Unattended retries are bounded and visible.
 
+### Shipped as three slices
+
+B5a landed retry, the book release blocklist, pause/resume, "Find a better match" (replace on an
+`:available` target), and the bounded unattended retry sweep `Cinder.Books.Rehunter`. B5b landed
+author monitoring policies — `book_author_policies`, the `bibliography/1` metadata callback,
+preview/confirm on `/books/:id`, and `Cinder.Books.BibliographyRefresher`. B5c landed the
+`?status=wanted|held` filter and inline pause/resume on `/library`, metadata-provider health, and
+the `:book_target_held` notifier event. See
+[`the B5 plan`](2026-09-01-books-b5-monitoring-and-operations.md).
+
+Two roadmap B5 items were already shipped before B5 started, confirmed rather than reimplemented:
+the read-only `/library` books tab (#417) and the `:unmonitored` badge (#410, which discharged the
+blank-badge obligation B4c handed forward above). Book-root health was likewise already covered by
+`Health.library_checks/0`; only metadata-provider health was a genuine gap, and only that is what
+B5c adds.
+
+Four notes from executing B5a:
+
+- **"Find a better match" needed replace semantics no earlier milestone had defined, and the
+  first design was not replay-safe.** `Files.record_import/3` accepts `expect in [:monitored,
+  :available]` specifically so a REPLAY of an already-committed import — a crash or swallowed
+  error between the transaction's commit and `BookPoller` deleting the grab — converges as a
+  no-op rather than demoting the target. An unconditional delete of the target's `book_files` rows
+  before every replace-flagged insert broke that: on replay it would delete the target's own
+  *current, correct* file (nothing else remained to delete) and unlink it from disk post-commit —
+  the one operation meant to give an operator a better copy would, on a crash nobody controls,
+  destroy the only one. The shipped `maybe_supersede/3` recognizes a same-path replay as a no-op
+  instead of deleting unconditionally, converging exactly like the non-replace import path already
+  does.
+- **`pause_target/1` is not a plain guarded transition.** A grab never changes
+  `book_targets.status`, so an unguarded pause mid-download would let `arm_target/1` match zero
+  rows on completion, roll the import back, and still have the poller delete the grab — silently
+  losing an already-downloaded file with nothing left pointing at it. The grab-existence check and
+  the status write now run inside one transaction, refusing with `{:error, :grab_in_progress}`
+  rather than only hiding the button client-side.
+- **`Cinder.Books.Rehunter` matches on a caller-stated `hold_transient` boolean, not on
+  `hold_reason` text.** `hold_reason` is free text — a sanitized client error string, an
+  `inspect`ed tuple — with no closed vocabulary a sweep could safely pattern-match against
+  without either missing a real transient case or, worse, matching a deterministic one by
+  accident. Every call to `Books.hold_target/4` now states `transient` explicitly instead of the
+  sweep inferring it.
+- **A test that stubs application config must restore the previous value, not delete it.**
+  `Books.RehunterTest` used `Application.delete_env/2` in an `on_exit`, which wipes the runtime
+  config for the rest of the BEAM VM's life rather than restoring what `config.exs` loaded at
+  boot — a later `Rehunter` test in the same shuffled run could then read the wrong `enabled?/0`
+  value depending on ordering. Fixed with the capture-and-restore pattern already used elsewhere
+  in the suite. The audit this prompted found the pre-existing sibling `test/cinder/catalog/
+  rehunter_test.exs` carries a related, narrower version of the same anti-pattern (restores
+  `enabled: true` without the `rehunt_after` key it may have overridden) — filed as issue #423
+  rather than fixed inline, since it is pre-existing and out of B5a's own diff.
+
+Two notes from executing B5b:
+
+- **The preview has to be bounded against the metadata provider, and the local filter has to run
+  before the cap, not after.** `Identity.resolve/1` makes a real HTTP request per candidate, and
+  the B0 inventory recorded an author monitoring 842 works — an uncapped preview would fan out
+  into hundreds of provider calls from one `start_async`. Capping the raw bibliography first was
+  tried and rejected: `bibliography/1`'s response order is provider-defined and stable call to
+  call, so a plain positional cap would inspect the same already-monitored prefix on every later
+  preview or refresher tick and never advance. The shipped `preview_author_policy/2` filters out
+  everything already locally monitored with one cheap, no-network `work_ids_by_reference/1` batch
+  lookup first, and only caps what remains — so the window of considered candidates genuinely
+  advances tick over tick with no separate cursor to track.
+- **A bulk policy write must never silently overwrite a profile another action deliberately set.**
+  `Books.monitor_target/4`'s `arm/3` is write-back-compatible on an already-`:monitored`/
+  `:available` target on purpose, for the approval choke-point's re-approval case. Reusing it for
+  an author-policy confirm let a stale preview rewrite `profile_id` on a target claimed by an
+  unrelated approval between preview and confirm, and count that as a newly created target.
+  Author-policy arming now goes through its own guarded write, `expect: :unmonitored` only — a
+  target that moved is left alone rather than reclaimed. `Cinder.Catalog.Profiles.referenced?/1`
+  also had to learn about `book_author_policies`, or a profile a live policy depends on could be
+  silently repurposed (kind/handling changed) out from under it.
+
+B5 crossed no automatic-selection gate: `Cinder.Acquisition.Books.best_book_release/2` still does
+not exist and `BookPoller` still has no search pass, unchanged from B4. A confirmed "all works"
+author policy creates idle `:monitored` rows and downloads exactly nothing automatically — the
+anti-flood property the milestone's objective names holds structurally, not by convention.
+
+One gap carried forward rather than resolved: the parity contract sets a 90% threshold for
+metadata *work-identity* resolution (already met, and it gated B2's provider pair), but defines no
+precision threshold for automatic *release* selection, despite roadmap prose asserting one exists.
+B5 did not need one — its own Work list keeps automatic selection parked regardless of any
+measurement — but a later milestone must not invent a number here without first amending the
+contract.
+
 ---
 
 ## B6 — Readarr migration, adoption preview, and e-book cutover
