@@ -596,6 +596,7 @@ msgid "Invalid email or password"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:345
+#: lib/cinder_web/live/book_detail_live.ex:271
 #: lib/cinder_web/live/movie_detail_live.ex:568
 #: lib/cinder_web/live/user_live/settings.ex:30
 #, elixir-autogen
@@ -964,7 +965,7 @@ msgid "Requesting…"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:120
-#: lib/cinder_web/live/book_detail_live.ex:171
+#: lib/cinder_web/live/book_detail_live.ex:209
 #: lib/cinder_web/live/requests_live.ex:357
 #: lib/cinder_web/live/settings_live.ex:194
 #: lib/cinder_web/user_auth.ex:419
@@ -1899,19 +1900,19 @@ msgstr ""
 msgid "?"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:118
+#: lib/cinder_web/components/book_manual_search_component.ex:121
 #: lib/cinder_web/components/manual_search_component.ex:273
 #, elixir-autogen
 msgid "Couldn't reach the indexer. Try again."
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:153
+#: lib/cinder_web/components/book_manual_search_component.ex:156
 #: lib/cinder_web/components/manual_search_component.ex:301
 #, elixir-autogen
 msgid "Grab"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:127
+#: lib/cinder_web/components/book_manual_search_component.ex:130
 #: lib/cinder_web/components/manual_search_component.ex:276
 #, elixir-autogen
 msgid "No releases found."
@@ -1927,7 +1928,7 @@ msgstr ""
 msgid "Replace the current file for this movie with the selected release?"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:114
+#: lib/cinder_web/components/book_manual_search_component.ex:117
 #: lib/cinder_web/components/manual_search_component.ex:270
 #, elixir-autogen
 msgid "Searching releases…"
@@ -1938,7 +1939,7 @@ msgstr ""
 msgid "blocklisted"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:196
+#: lib/cinder_web/components/book_manual_search_component.ex:199
 #: lib/cinder_web/components/manual_search_component.ex:445
 #, elixir-autogen
 msgid "no client for protocol"
@@ -1977,7 +1978,7 @@ msgstr ""
 msgid "Find a better match"
 msgstr ""
 
-#: lib/cinder_web/live/book_detail_live.ex:126
+#: lib/cinder_web/live/book_detail_live.ex:147
 #: lib/cinder_web/live/movie_detail_live.ex:242
 #: lib/cinder_web/live/series_detail_live.ex:589
 #, elixir-autogen
@@ -2019,7 +2020,7 @@ msgstr ""
 msgid "Searching for this episode…"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:151
+#: lib/cinder_web/components/book_manual_search_component.ex:154
 #: lib/cinder_web/components/manual_search_component.ex:299
 #, elixir-autogen
 msgid "Grabbing…"
@@ -5094,7 +5095,7 @@ msgstr ""
 msgid "Matches this title's audio pick"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:175
+#: lib/cinder_web/components/book_manual_search_component.ex:178
 #: lib/cinder_web/components/manual_search_component.ex:346
 #, elixir-autogen
 msgid "untagged"
@@ -5904,7 +5905,7 @@ msgstr ""
 msgid "cam, telesync"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:190
+#: lib/cinder_web/components/book_manual_search_component.ex:193
 #: lib/cinder_web/components/manual_search_component.ex:442
 #, elixir-autogen
 msgid "contains a blocked term"
@@ -6428,7 +6429,7 @@ msgstr[0] ""
 msgstr[1] ""
 
 #: lib/cinder_web/components/book_components.ex:75
-#: lib/cinder_web/live/book_detail_live.ex:156
+#: lib/cinder_web/live/book_detail_live.ex:177
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Audiobook"
 msgstr ""
@@ -6530,7 +6531,7 @@ msgid "We couldn’t load this book right now."
 msgstr ""
 
 #: lib/cinder_web/components/book_components.ex:74
-#: lib/cinder_web/live/book_detail_live.ex:155
+#: lib/cinder_web/live/book_detail_live.ex:176
 #, elixir-autogen, elixir-format
 msgid "eBook"
 msgstr ""
@@ -6580,88 +6581,93 @@ msgstr ""
 msgid "book target #%{id}"
 msgstr ""
 
-#: lib/cinder_web/live/book_detail_live.ex:143
+#: lib/cinder_web/live/book_detail_live.ex:164
 #, elixir-autogen, elixir-format
 msgid "Couldn't submit this release. Try again."
 msgstr ""
 
-#: lib/cinder_web/live/book_detail_live.ex:194
+#: lib/cinder_web/live/book_detail_live.ex:232
 #, elixir-autogen, elixir-format
 msgid "Not yet approved."
 msgstr ""
 
-#: lib/cinder_web/live/book_detail_live.ex:231
+#: lib/cinder_web/live/book_detail_live.ex:286
 #, elixir-autogen, elixir-format
 msgid "Search for a release"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:123
+#: lib/cinder_web/components/book_manual_search_component.ex:126
 #, elixir-autogen, elixir-format
 msgid "Some indexers could not be reached; results may be incomplete."
 msgstr ""
 
-#: lib/cinder_web/live/book_detail_live.ex:48
+#: lib/cinder_web/live/book_detail_live.ex:50
 #, elixir-autogen, elixir-format
 msgid "That book couldn't be found."
 msgstr ""
 
-#: lib/cinder_web/live/book_detail_live.ex:129
+#: lib/cinder_web/live/book_detail_live.ex:150
 #, elixir-autogen, elixir-format
 msgid "This target already has a download in progress."
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:195
+#: lib/cinder_web/components/book_manual_search_component.ex:198
 #, elixir-autogen, elixir-format
 msgid "abridged edition"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:185
+#: lib/cinder_web/components/book_manual_search_component.ex:188
 #, elixir-autogen, elixir-format
 msgid "author doesn't match"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:184
+#: lib/cinder_web/components/book_manual_search_component.ex:187
 #, elixir-autogen, elixir-format, fuzzy
 msgid "contradictory format claims"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:183
+#: lib/cinder_web/components/book_manual_search_component.ex:186
 #, elixir-autogen, elixir-format
 msgid "format not accepted"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:188
+#: lib/cinder_web/components/book_manual_search_component.ex:191
 #, elixir-autogen, elixir-format
 msgid "language doesn't match"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:193
+#: lib/cinder_web/components/book_manual_search_component.ex:196
 #, elixir-autogen, elixir-format
 msgid "omnibus/collection, not this work"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:189
+#: lib/cinder_web/components/book_manual_search_component.ex:192
 #, elixir-autogen, elixir-format
 msgid "outside expected size"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:203
+#: lib/cinder_web/components/book_manual_search_component.ex:206
 #, elixir-autogen, elixir-format
 msgid "rejected"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:139
+#: lib/cinder_web/components/book_manual_search_component.ex:142
 #, elixir-autogen, elixir-format, fuzzy
 msgid "retail"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:186
-#: lib/cinder_web/components/book_manual_search_component.ex:187
+#: lib/cinder_web/components/book_manual_search_component.ex:189
+#: lib/cinder_web/components/book_manual_search_component.ex:190
 #, elixir-autogen, elixir-format
 msgid "title doesn't match"
 msgstr ""
 
-#: lib/cinder_web/components/book_manual_search_component.ex:182
+#: lib/cinder_web/components/book_manual_search_component.ex:185
 #, elixir-autogen, elixir-format
 msgid "unrecognized format"
+msgstr ""
+
+#: lib/cinder_web/live/book_detail_live.ex:187
+#, elixir-autogen, elixir-format
+msgid "No preference"
 msgstr ""

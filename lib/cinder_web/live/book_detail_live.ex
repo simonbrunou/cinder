@@ -9,21 +9,23 @@ defmodule CinderWeb.BookDetailLive do
 
   The manual-search-and-Grab panel is offered only for a `:monitored` `:ebook` target with no
   `BookGrab` already in flight (an `:audiobook` target, an `:available`/`:held` target, and a
-  target already downloading all render read-only — see the B4c plan). Every write reaches
-  `Cinder.Download.grab_book_target/2`, the only function this LiveView calls that mutates
-  anything; this module holds no `Repo` writes of its own.
+  target already downloading all render read-only — see the B4c plan). Every write reaches either
+  `Cinder.Download.grab_book_target/2` or `Cinder.Books.set_target_language/2` (the ebook-only
+  language picker `Cinder.Acquisition.BookScorer.check_language/2` scores against on the next
+  search — see #404); this module holds no `Repo` writes of its own.
 
   Subscribes to `Cinder.Books.subscribe_targets/0` for `{:book_target_updated, target}`
-  (terminal status transitions), `{:book_grab_updated, grab}` (live download progress), and
-  `{:book_grab_deleted, target_id}` (the corrective for a grab deletion this view's own
-  `reload/1` raced and lost — see `Cinder.Books.Grabs.delete/1`), all broadcast on the same
-  `book_targets` PubSub topic.
+  (terminal status transitions and a language change alike), `{:book_grab_updated, grab}` (live
+  download progress), and `{:book_grab_deleted, target_id}` (the corrective for a grab deletion
+  this view's own `reload/1` raced and lost — see `Cinder.Books.Grabs.delete/1`), all broadcast
+  on the same `book_targets` PubSub topic.
   """
   use CinderWeb, :live_view
 
   import CinderWeb.BookComponents, only: [book_state_badge: 1]
   import CinderWeb.LiveHelpers, only: [book_badge_state: 2]
 
+  alias Cinder.Acquisition.Parser
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget, Work}
   alias Cinder.Download
@@ -69,6 +71,25 @@ defmodule CinderWeb.BookDetailLive do
       _invalid ->
         {:noreply, socket}
     end
+  end
+
+  # An ebook target's own language preference, set from this page independent of any search —
+  # audiobook is guarded out: `searchable?/2` never offers a search for one, so a picker there
+  # would be a control with no observable effect. `raw_language` is always a string (a `<select>`
+  # posts its blank option as `""`, not an absent key), but guarded anyway per #402's audit —
+  # a forged non-string payload falls through to the catch-all instead of reaching `==/2` on a
+  # shape `Books.set_target_language/2` never expected.
+  def handle_event("set_language", %{"target_id" => raw_id, "language" => raw_language}, socket)
+      when is_binary(raw_id) and is_binary(raw_language) do
+    language = if raw_language == "", do: nil, else: raw_language
+
+    with {id, ""} <- Integer.parse(raw_id),
+         %BookTarget{media_kind: :ebook, work_id: work_id} = target <- Books.get_target(id),
+         true <- work_id == socket.assigns.work.id do
+      Books.set_target_language(target, language)
+    end
+
+    {:noreply, socket}
   end
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
@@ -157,6 +178,23 @@ defmodule CinderWeb.BookDetailLive do
 
   defp contributor_names(work), do: Enum.map_join(work.credits, ", ", & &1.author.name)
 
+  # Sourced from `Parser.language_tags/0` rather than a hand-written list, so a language the
+  # picker offers is always one `BookScorer.tag_for/1` can actually resolve — a free-text code
+  # field would let an admin pick a value the scorer can never match, with no obvious reason why.
+  # Labels are the tag titlecased ("FRENCH" -> "French"), not gettext-translated: these are
+  # language names, not UI copy, and every locale already renders them in English here.
+  defp language_options do
+    [{gettext("No preference"), ""} | language_choices()]
+  end
+
+  defp language_choices do
+    Parser.language_tags()
+    |> Enum.map(fn {code, tag} -> {titlecase(tag), code} end)
+    |> Enum.sort()
+  end
+
+  defp titlecase(tag), do: tag |> String.downcase() |> String.capitalize()
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -219,6 +257,23 @@ defmodule CinderWeb.BookDetailLive do
               speed={grab.download_speed}
               eta={grab.download_eta}
             />
+
+            <form
+              :if={kind == :ebook}
+              id={"book-target-language-#{kind}"}
+              phx-change="set_language"
+              class="w-48"
+            >
+              <input type="hidden" name="target_id" value={target.id} />
+              <.input
+                type="select"
+                name="language"
+                label={gettext("Language")}
+                value={target.preferred_language || ""}
+                options={language_options()}
+                class="select select-sm w-full"
+              />
+            </form>
 
             <.button
               :if={searchable?(target, grab)}

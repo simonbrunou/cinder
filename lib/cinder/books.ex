@@ -263,6 +263,33 @@ defmodule Cinder.Books do
     )
   end
 
+  @doc """
+  Sets or clears an admin's language preference on a target, independent of the status pipeline
+  — unlike `transition_target/3`/`arm/3`, this never touches `:status` and carries no `:expect`
+  precondition, so it is safe to call regardless of where the target is in its lifecycle (armed,
+  held, available — an admin may reasonably change their mind about language after the fact).
+  `language` is `nil` for "no preference" or a code `BookTarget.language_changeset/2` recognizes
+  (`Cinder.Acquisition.Parser.language_tags/0`); an unrecognized code — reachable only by a
+  forged caller, since `/books/:id`'s own picker is built from that same table — refuses with
+  `{:error, changeset}` rather than persisting it. Broadcasts `{:book_target_updated, target}`
+  post-commit, matching every other write in this module.
+  """
+  @spec set_target_language(BookTarget.t(), String.t() | nil) ::
+          {:ok, BookTarget.t()} | {:error, Ecto.Changeset.t()}
+  def set_target_language(%BookTarget{} = target, language) do
+    target
+    |> BookTarget.language_changeset(%{preferred_language: language})
+    |> Repo.update()
+    |> case do
+      {:ok, updated} ->
+        broadcast({:book_target_updated, updated})
+        {:ok, updated}
+
+      {:error, _changeset} = error ->
+        error
+    end
+  end
+
   @doc "Subscribes the caller to `{:book_target_updated, target}` broadcasts."
   def subscribe_targets, do: Phoenix.PubSub.subscribe(Cinder.PubSub, @targets_topic)
 
