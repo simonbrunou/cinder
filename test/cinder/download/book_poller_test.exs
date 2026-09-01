@@ -16,6 +16,7 @@ defmodule Cinder.Download.BookPollerTest do
   alias Cinder.Books
   alias Cinder.Books.{BookFile, BookGrab}
   alias Cinder.Catalog
+  alias Cinder.Download
   alias Cinder.Download.{BookPoller, Intent}
   alias Cinder.Repo
   alias Ecto.Adapters.SQL.Sandbox
@@ -142,25 +143,55 @@ defmodule Cinder.Download.BookPollerTest do
     # (`references(:book_targets, on_delete: :delete_all)`), so under the Sandbox's single
     # wrapping transaction (`foreign_keys: :on` is pinned for every env, and toggling the pragma
     # mid-transaction is a documented SQLite no-op) a plain delete of the target takes the grab
-    # with it — there is no way to leave the grab behind sandboxed. `@tag :unboxed` (real,
-    # non-sandboxed connection, `Cinder.DataCase.setup_sandbox/1`) lets the `PRAGMA foreign_keys
-    # = OFF` actually apply, reproducing exactly the state a genuine race leaves: the target
-    # gone, the grab row (and its `download_id`/`download_protocol`) still there, orphaned.
+    # with it — there is no way to leave the grab behind sandboxed.
+    #
+    # A Sandbox-safe alternative was ruled out, not skipped: `hold_orphaned_target/2` and
+    # `fail_download/2` are `defp` — Elixir does not export private functions, so no test can call
+    # them directly — and `advance_downloading/0`'s only route to them is its own internal
+    # `Books.Grabs.list_downloading/0` call, which cannot be stubbed (it is a plain context
+    # function, not a Mox-mocked behaviour, deliberately per AGENTS.md) or fed a pre-built struct.
+    # The OTHER half of this regression — that the durable record still gets fenced regardless of
+    # `book_target` — IS Sandbox-safe and has its own direct, zero-risk test just below
+    # (`Download.fence_book_cleanup/1` never reads `book_target` at all); this test's job is
+    # narrowed to the one claim that genuinely needs a real connection: the dispatch doesn't raise.
+    #
+    # `@tag :unboxed` (`Cinder.DataCase.setup_sandbox/1`) checks out a REAL, non-sandboxed
+    # connection whose writes are actual commits, visible to any other test reading the same
+    # tables — unlike every other (Sandboxed, rolled-back) test in this suite. What makes that
+    # safe here, and the INVARIANT a future reader must preserve before touching any of it:
+    #
+    #   `async: false` on THIS module is load-bearing, not incidental. ExUnit runs every
+    #   `async: true` module to full completion, concurrently among themselves, BEFORE starting
+    #   ANY `async: false` module — which then run one at a time, serially, with no overlap with
+    #   each other or with the (already-finished) `async: true` phase. Because this module is
+    #   `async: false`, this test's real, committed rows can never be visible while an
+    #   `async: true` test (e.g. anything asserting a global `Repo.aggregate(Work/BookGrab/
+    #   BookTarget/.., :count)`) is running — that phase is already over by the time this one
+    #   starts. Flip this module to `async: true` for speed and that guarantee is gone: this
+    #   test's rows would then be a real, live commit visible to whichever `async: true` tests
+    #   happen to be running at the same moment, on a shared on-disk SQLite file.
+    #
+    #   `config/test.exs`'s `pool_size: 1` for `Cinder.Repo` is a second, independent guard — one
+    #   physical connection for the whole suite serializes every write regardless of process
+    #   count — but do not rely on it alone; it says nothing about which ROWS are visible to a
+    #   concurrently-scheduled reader, only that writes cannot literally collide mid-statement.
+    #
+    #   Cleanup runs in a `try/after` INSIDE this test's own process, not `on_exit/1` — `on_exit/1`
+    #   runs in a separate `ExUnit.OnExitHandler` process, and by the time it fires this
+    #   connection's owner (the test process) has already exited, so its queries silently no-op
+    #   with a `DBConnection.OwnershipError` (verified empirically). `try/after` was checked
+    #   reliable on both the pass and the forced-failure path. A unique download id (not the
+    #   file's shared `"remote-1"` default) avoids colliding with concurrently-scheduled tests
+    #   before that cleanup runs.
     @tag :unboxed
     test "a target that vanished out from under its grab does not raise, and still fences a durable cleanup record",
          ctx do
-      # A unique id, not the file's shared "remote-1" default: this connection's writes are
-      # REAL commits (not rolled back like every other, Sandboxed test here), so a collision on
-      # a shared literal id would be a genuine cross-test race, not just Sandbox noise.
+      # Unique id, not the file's shared "remote-1" default — see the invariant comment above.
       remote_id = "remote-vanished-target-#{System.unique_integer([:positive])}"
       %{grab: grab, target: target, work: work} = downloading(ctx, "book.epub", remote_id)
       profile_id = target.profile_id
 
-      # `on_exit/1` runs in a SEPARATE process (`ExUnit.OnExitHandler`) after the test process has
-      # already exited — for an unboxed (`sandbox: false`) connection that ownership dies with the
-      # test process, so `on_exit` cleanup here silently no-ops with a `DBConnection.OwnershipError`
-      # (verified empirically). `try/after` runs the cleanup INSIDE the still-alive test process,
-      # regardless of whether an assertion below fails.
+      # try/after, not on_exit/1 — see the invariant comment above.
       try do
         Repo.query!("PRAGMA foreign_keys = OFF")
         Repo.delete_all(from t in Cinder.Books.BookTarget, where: t.id == ^target.id)
@@ -220,6 +251,30 @@ defmodule Cinder.Download.BookPollerTest do
         Repo.delete_all(from a in Cinder.Books.Author, where: a.id in ^author_ids)
         if profile_id, do: Repo.delete_all(from p in Catalog.Profile, where: p.id == ^profile_id)
       end
+    end
+
+    # Sandbox-safe complement to the `:unboxed` test above: proves the OTHER half of the same
+    # regression — that `Download.fence_book_cleanup/1` fences a durable record regardless of
+    # `book_target` — without needing a real connection at all. `fence_book_cleanup/1` never
+    # reads `grab.book_target` (only `book_target_id`, `download_id`, `download_protocol`,
+    # `release_title`), so a plain struct update reproduces the input shape exactly; no orphaned
+    # DB row is required for THIS half of the claim.
+    test "fence_book_cleanup/1 fences a durable record from a grab whose book_target is nil",
+         ctx do
+      %{grab: grab, target: target} = downloading(ctx, "book.epub", "remote-safe-nil-target")
+      grab = %{grab | book_target: nil}
+
+      assert {:ok, [intent_id]} = Download.fence_book_cleanup(grab)
+
+      intent = Repo.get!(Intent, intent_id)
+      assert intent.kind == :book_target
+      assert intent.target_id == target.id
+      assert intent.status == :cleanup_pending
+      assert intent.remote_id == "remote-safe-nil-target"
+      assert intent.protocol == :torrent
+
+      # The grab is gone (fenced-then-deleted in one transaction) regardless of book_target.
+      refute Repo.get(BookGrab, grab.id)
     end
 
     test "one miss does not destroy a live download", ctx do
