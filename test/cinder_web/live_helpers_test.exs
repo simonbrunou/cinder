@@ -79,7 +79,13 @@ defmodule CinderWeb.LiveHelpersTest do
       assert book_badge_state(:approved, nil) == :approved
       assert book_badge_state(:denied, nil) == :denied
       assert book_badge_state(nil, nil) == :none
-      assert book_badge_state(nil, :unmonitored) == :none
+    end
+
+    # A linked target with no request behind it and still `:unmonitored` must render its own
+    # explicit state — falling to `:none` (no badge at all) is indistinguishable from "there is
+    # nothing here", which is wrong once a target exists.
+    test "a linked, unmonitored target with no request renders explicitly, not blank" do
+      assert book_badge_state(nil, :unmonitored) == :unmonitored
     end
   end
 end

@@ -89,6 +89,20 @@ defmodule CinderWeb.BookDetailLiveTest do
       refute has_element?(lv, "button[phx-value-target_id='#{target.id}']")
     end
 
+    test "a linked but unmonitored target shows an explicit badge, not a blank one", %{
+      conn: conn
+    } do
+      {:ok, work} =
+        Books.upsert_work(%{title: "Paused #{unique_id()}", identifier: identifier()})
+
+      {:ok, target} = Books.ensure_target(work, :ebook)
+      assert target.status == :unmonitored
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{work.id}")
+
+      assert has_element?(lv, "#book-target-state-ebook", "Unmonitored")
+    end
+
     test "a held target shows its hold reason and no search panel", %{conn: conn} do
       {target, _work} = ebook_target()
       {:ok, held} = Books.hold_target(target, "identity conflict")

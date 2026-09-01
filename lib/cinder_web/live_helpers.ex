@@ -76,6 +76,13 @@ defmodule CinderWeb.LiveHelpers do
   left every one of those reading "Approved" forever — the household member is told Cinder is
   fetching their book while nothing is, which is the same invisible-failure the pipeline's own
   hold exists to prevent.
+
+  A linked target with no request backing it (`nil`) and still `:unmonitored` renders explicitly
+  rather than falling to `:none` (no badge at all): nothing produces this combination today — both
+  production callers of `monitor_target/4` monitor the target inside the same transaction that
+  approves its request — but B5's planned pause/resume control will set an *existing*, still-linked
+  target back to `:unmonitored`, and a blank badge on every book-badge surface at once is worse
+  than a plain "Unmonitored" label.
   """
   @spec book_badge_state(atom() | nil, atom() | nil) :: atom()
   def book_badge_state(_request, :available), do: :available
@@ -84,6 +91,7 @@ defmodule CinderWeb.LiveHelpers do
   def book_badge_state(:pending, _target), do: :pending
   def book_badge_state(:approved, _target), do: :approved
   def book_badge_state(:denied, _target), do: :denied
+  def book_badge_state(nil, :unmonitored), do: :unmonitored
   def book_badge_state(_request, _target), do: :none
 
   @doc """
