@@ -311,9 +311,25 @@ defmodule Cinder.Requests do
   # isn't possible under the single-connection Sandbox; the sequential cases cover the logic.)
   defp create_pending(user, attrs) do
     Repo.transaction(
-      fn ->
-        current = Repo.get!(User, user.id)
+      fn -> insert_pending(user, attrs) end,
+      mode: :immediate
+    )
+    |> Util.tap_ok(fn request ->
+      broadcast({:request_created, request})
+      # Only this path notifies. The other two {:request_created, _} broadcasts (an approval
+      # revert and reopen_request/2) are admin-initiated, so telling the admin "someone is
+      # waiting" would just be echoing their own click back at them.
+      # `user` is already in scope, so attributing the event needs no preload.
+      Notifier.notify({:request_created, %{request | user: user}})
+    end)
+  end
 
+  defp insert_pending(user, attrs) do
+    case Repo.get(User, user.id) do
+      nil ->
+        Repo.rollback(:invalid_requester)
+
+      current ->
         with {:ok, request} <-
                %Request{}
                |> Request.create_changeset(
@@ -326,17 +342,7 @@ defmodule Cinder.Requests do
           true -> Repo.rollback(:quota_exceeded)
           {:error, changeset} -> Repo.rollback(changeset)
         end
-      end,
-      mode: :immediate
-    )
-    |> Util.tap_ok(fn request ->
-      broadcast({:request_created, request})
-      # Only this path notifies. The other two {:request_created, _} broadcasts (an approval
-      # revert and reopen_request/2) are admin-initiated, so telling the admin "someone is
-      # waiting" would just be echoing their own click back at them.
-      # `user` is already in scope, so attributing the event needs no preload.
-      Notifier.notify({:request_created, %{request | user: user}})
-    end)
+    end
   end
 
   defp over_quota?(%User{request_quota: nil}), do: false
@@ -546,6 +552,25 @@ defmodule Cinder.Requests do
     if Repo.in_transaction?(), do: Repo.rollback(reason), else: {:error, reason}
   end
 
+  # Rescue seam for the auto-approve insert paths (`insert_approved_book/5`,
+  # `insert_approved_movie/5`, `insert_approved_series/7`): a concurrent deletion of the
+  # requester or approver during the provider round-trips before the write. For an admin
+  # request the deleted row is both, so the approver check goes first; `Repo.get` costs one
+  # query on the rare raise path only. Unrelated `Ecto.ConstraintError`s (a future FK this
+  # module gains) re-raise rather than being swallowed as a false refusal.
+  defp refuse_insert(error, stacktrace, user, approver_id) do
+    cond do
+      not is_nil(approver_id) and is_nil(Repo.get(User, approver_id)) ->
+        {:error, :approver_deleted}
+
+      is_nil(Repo.get(User, user.id)) ->
+        {:error, :invalid_requester}
+
+      true ->
+        reraise error, stacktrace
+    end
+  end
+
   defp do_flip_pending(request, attrs) do
     changeset = Request.status_changeset(request, attrs)
 
@@ -736,6 +761,13 @@ defmodule Cinder.Requests do
     end
   end
 
+  # The insert reaches Ecto's `to_constraints`, but ecto_sqlite3 translates every FK violation
+  # to `[foreign_key: nil]` (no column name from SQLite), and Ecto requires the registered
+  # constraint name to match — a nil name never matches, so `Repo.insert/1` raises
+  # `Ecto.ConstraintError` regardless of a declared `foreign_key_constraint/2`. Same shape as
+  # `flip_pending/2`'s rescue, translated for the insert path: a concurrent deletion of the
+  # requester or (for an admin auto-approval) the approver — the same row for an admin request —
+  # is refused rather than raised.
   defp insert_approved_book(user, attrs, approver_id, work, profile) do
     Repo.transaction(fn ->
       with {:ok, request} <-
@@ -766,6 +798,8 @@ defmodule Cinder.Requests do
       {:error, _reason} = error ->
         error
     end
+  rescue
+    error in Ecto.ConstraintError -> refuse_insert(error, __STACKTRACE__, user, approver_id)
   end
 
   defp insert_approved_movie(user, attrs, approver_id, prepared, profile) do
@@ -791,6 +825,8 @@ defmodule Cinder.Requests do
       end
     end)
     |> finalize_movie_approval(prepared)
+  rescue
+    error in Ecto.ConstraintError -> refuse_insert(error, __STACKTRACE__, user, approver_id)
   end
 
   defp insert_approved_series(
@@ -827,6 +863,8 @@ defmodule Cinder.Requests do
       end
     end)
     |> finalize_series_approval()
+  rescue
+    error in Ecto.ConstraintError -> refuse_insert(error, __STACKTRACE__, user, approver_id)
   end
 
   defp finalize_series_approval({:ok, {approved, series}}) do
