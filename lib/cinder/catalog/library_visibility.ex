@@ -10,13 +10,21 @@ defmodule Cinder.Catalog.LibraryVisibility do
   alias Cinder.Repo
 
   @doc """
-  Movies and episodes whose stored `file_path` has a dot-prefixed path component (#399) —
-  Jellyfin/Plex skip dot-directories while scanning, so a title imported before
+  Every movie/episode file (primary AND part) whose stored path has a dot-prefixed component
+  (#399) — Jellyfin/Plex skip dot-directories while scanning, so a title imported before
   `Cinder.Library.Naming`'s guard existed can sit `:available` and still be invisible with
   nothing reporting why. `/settings` surfaces this list so an operator can decide whether to
   rename the folder by hand; nothing here moves a file or rewrites a row.
 
-  Reads only the already-stored `file_path` columns — no filesystem walk, unlike
+  One row per offending PATH, not per movie/episode: a multi-part row (`part_file_paths`) can in
+  principle have parts under different folders, and an operator deciding what to rename needs
+  every affected file named, not just the first one found. `file_path`/`part_file_paths` are read
+  through `Movie.file_paths/1`/`Episode.file_paths/1` — the same accessor
+  `Cinder.Library.Adoption.managed_paths/0` already uses for "all of this row's real files" — so
+  a `nil` primary with an offending part is still caught, and a clean primary never hides an
+  offending part.
+
+  Reads only the already-stored `file_path`/`part_file_paths` columns — no filesystem walk, unlike
   `Cinder.Library.Adoption.scan/0`. Bounded by catalog size (a household library), so this runs
   fresh on every `/settings` load rather than needing a cache or a scheduled job.
   """
@@ -24,15 +32,17 @@ defmodule Cinder.Catalog.LibraryVisibility do
           %{kind: :movie | :episode, id: integer(), title: String.t(), file_path: String.t()}
         ]
   def dot_folder_files do
-    Enum.filter(dot_folder_movies() ++ dot_folder_episodes(), &dot_folder_path?(&1.file_path))
+    dot_folder_movies() ++ dot_folder_episodes()
   end
 
   defp dot_folder_movies do
-    Repo.all(
-      from m in Movie,
-        where: not is_nil(m.file_path),
-        select: %{kind: :movie, id: m.id, title: m.title, file_path: m.file_path}
-    )
+    Repo.all(from(m in Movie))
+    |> Enum.flat_map(fn movie ->
+      movie
+      |> Movie.file_paths()
+      |> Enum.filter(&dot_folder_path?/1)
+      |> Enum.map(&%{kind: :movie, id: movie.id, title: movie.title, file_path: &1})
+    end)
   end
 
   defp dot_folder_episodes do
@@ -40,24 +50,16 @@ defmodule Cinder.Catalog.LibraryVisibility do
       from e in Episode,
         join: s in assoc(e, :season),
         join: sr in assoc(s, :series),
-        where: not is_nil(e.file_path),
-        select: %{
-          id: e.id,
-          file_path: e.file_path,
-          series_title: sr.title,
-          season_number: s.season_number,
-          episode_number: e.episode_number
-        }
+        select: {e, sr.title, s.season_number}
     )
-    |> Enum.map(fn row ->
-      code = Episode.codes_label(row.season_number, [row.episode_number])
+    |> Enum.flat_map(fn {episode, series_title, season_number} ->
+      code = Episode.codes_label(season_number, [episode.episode_number])
+      title = "#{series_title} #{code}"
 
-      %{
-        kind: :episode,
-        id: row.id,
-        title: "#{row.series_title} #{code}",
-        file_path: row.file_path
-      }
+      episode
+      |> Episode.file_paths()
+      |> Enum.filter(&dot_folder_path?/1)
+      |> Enum.map(&%{kind: :episode, id: episode.id, title: title, file_path: &1})
     end)
   end
 
