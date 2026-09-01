@@ -42,7 +42,8 @@ defmodule CinderWeb.BookDetailLive do
       {:ok,
        socket
        |> assign(work: work, book_kinds: @book_kinds, searching?: nil)
-       |> assign_grabs()}
+       |> assign_grabs()
+       |> assign_blocklists()}
     else
       _ ->
         {:ok,
@@ -59,6 +60,21 @@ defmodule CinderWeb.BookDetailLive do
       end)
 
     assign(socket, :grabs, grabs)
+  end
+
+  # A live `Books.blocked_release_titles/1` call directly inside the render's `:for` (keyed off
+  # `@work`) does not re-run on its own: `Phoenix.LiveView.Utils.assign/3` only marks `@work`
+  # changed when the reloaded struct actually differs, and clearing a blocklist changes nothing
+  # about the target/work rows themselves. An `@blocklists` assign — updated directly wherever
+  # the blocklist actually changes — mirrors `@grabs`'s own pattern and gives the Clear-blocklist
+  # button's visibility a value that genuinely changes when cleared.
+  defp assign_blocklists(socket) do
+    blocklists =
+      Map.new(socket.assigns.work.targets, fn target ->
+        {target.id, Books.blocked_release_titles(target.id)}
+      end)
+
+    assign(socket, :blocklists, blocklists)
   end
 
   @impl true
@@ -92,13 +108,49 @@ defmodule CinderWeb.BookDetailLive do
     {:noreply, socket}
   end
 
+  # A `:held` target's manual re-entry: return it to `:monitored` for a human to pick a
+  # different release. Deliberately does not clear the blocklist itself — see `Books.retry_target/1`.
+  def handle_event("retry_target", %{"target_id" => raw_id}, socket) when is_binary(raw_id) do
+    with {id, ""} <- Integer.parse(raw_id),
+         %BookTarget{work_id: work_id} = target <- Books.get_target(id),
+         true <- work_id == socket.assigns.work.id do
+      case Books.retry_target(target) do
+        {:ok, _updated} ->
+          {:noreply, reload(socket)}
+
+        {:error, _reason} ->
+          {:noreply, put_flash(socket, :error, gettext("Couldn't retry this target. Try again."))}
+      end
+    else
+      _invalid -> {:noreply, socket}
+    end
+  end
+
+  # Updates `@blocklists` directly rather than reloading `@work`: the button's visibility is
+  # gated on `Map.get(@blocklists, target.id, [])`, a dedicated assign that genuinely changes
+  # value when cleared — a bare `{:noreply, socket}`, or even reassigning `@work` to an
+  # unaffected (structurally identical) struct, leaves LiveView's change tracking believing
+  # nothing relevant changed (`Phoenix.LiveView.Utils.assign/3` only marks a key changed when the
+  # new value actually differs), so the just-cleared button would stay on screen.
+  def handle_event("clear_blocklist", %{"target_id" => raw_id}, socket)
+      when is_binary(raw_id) do
+    with {id, ""} <- Integer.parse(raw_id),
+         %BookTarget{work_id: work_id} = target <- Books.get_target(id),
+         true <- work_id == socket.assigns.work.id do
+      Books.clear_blocklist(target.id)
+      {:noreply, assign(socket, :blocklists, Map.put(socket.assigns.blocklists, target.id, []))}
+    else
+      _invalid -> {:noreply, socket}
+    end
+  end
+
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   # The manual-search panel forwards a chosen release back here (it owns no writes of its own).
   @impl true
   def handle_info({:manual_grab, :book, %BookTarget{id: target_id} = target, release}, socket) do
-    outcome = Download.grab_book_target(target, release)
+    outcome = Download.grab_book_target(target, release, replace: target.status == :available)
     socket = socket |> assign(:searching?, nil) |> reload()
     {level, msg} = book_grab_flash(outcome, socket, target_id)
     {:noreply, put_flash(socket, level, msg)}
@@ -139,7 +191,7 @@ defmodule CinderWeb.BookDetailLive do
   defp reload(socket) do
     case Books.get_work(socket.assigns.work.id) do
       nil -> socket
-      work -> socket |> assign(:work, work) |> assign_grabs()
+      work -> socket |> assign(:work, work) |> assign_grabs() |> assign_blocklists()
     end
   end
 
@@ -169,6 +221,9 @@ defmodule CinderWeb.BookDetailLive do
 
   defp searchable?(%BookTarget{media_kind: :ebook, status: :monitored}, nil), do: true
   defp searchable?(_target, _grab), do: false
+
+  defp replaceable?(%BookTarget{media_kind: :ebook, status: :available}, nil), do: true
+  defp replaceable?(_target, _grab), do: false
 
   defp grab_status(%BookGrab{content_path: nil}), do: :downloading
   defp grab_status(%BookGrab{}), do: :downloaded
@@ -276,6 +331,31 @@ defmodule CinderWeb.BookDetailLive do
             </form>
 
             <.button
+              :if={target.media_kind == :ebook and target.status == :held}
+              type="button"
+              variant="neutral"
+              size="sm"
+              phx-click="retry_target"
+              phx-value-target_id={target.id}
+            >
+              {gettext("Retry")}
+            </.button>
+
+            <.button
+              :if={
+                target.media_kind == :ebook and target.status == :held and
+                  Map.get(@blocklists, target.id, []) != []
+              }
+              type="button"
+              variant="ghost"
+              size="sm"
+              phx-click="clear_blocklist"
+              phx-value-target_id={target.id}
+            >
+              {gettext("Clear blocklist")}
+            </.button>
+
+            <.button
               :if={searchable?(target, grab)}
               type="button"
               variant="neutral"
@@ -284,6 +364,17 @@ defmodule CinderWeb.BookDetailLive do
               phx-value-target_id={target.id}
             >
               {gettext("Search for a release")}
+            </.button>
+
+            <.button
+              :if={replaceable?(target, grab)}
+              type="button"
+              variant="neutral"
+              size="sm"
+              phx-click="manual_search"
+              phx-value-target_id={target.id}
+            >
+              {gettext("Find a better match")}
             </.button>
 
             <.live_component

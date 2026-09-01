@@ -265,14 +265,29 @@ defmodule Cinder.Download.BookPoller do
   # a later tick instead of losing it.
   defp fail_download(%BookGrab{} = grab, reason) do
     Logger.warning("book grab #{grab.id} download failed: #{inspect(reason)}")
-    hold_orphaned_target(grab.book_target, reason)
+
+    hold_orphaned_target(
+      grab.book_target,
+      reason,
+      grab.release_title,
+      transient_download?(reason),
+      grab.replace
+    )
+
     {:ok, intent_ids} = Download.fence_book_cleanup(grab)
     Download.cleanup_intents(intent_ids)
     :ok
   end
 
-  defp hold_orphaned_target(%BookTarget{} = target, reason) do
-    case Books.hold_target(target, reason) do
+  # A deterministic fact about the payload (a blocked file) is not transient; every other
+  # download-phase failure routed here — a missing content path, a client-reported download
+  # failure, or a stall — has already survived `@max_attempts` retries and is worth one more
+  # unattended look later (`Cinder.Books.Rehunter`).
+  defp transient_download?({:blocked_content, _detail}), do: false
+  defp transient_download?(_reason), do: true
+
+  defp hold_orphaned_target(%BookTarget{} = target, reason, release_title, transient, replace?) do
+    case Books.hold_target(target, reason, release_title, transient, replace: replace?) do
       {:ok, _held} ->
         :ok
 
@@ -291,7 +306,8 @@ defmodule Cinder.Download.BookPoller do
   # wins, so a lost race leaves it for the next tick to re-derive. Here `fail_download/2` is
   # already committed to dropping the grab regardless of this outcome, so a lost race (an
   # operator deleting the target concurrently) is simply someone else's more recent decision.
-  defp hold_orphaned_target(_missing_target, _reason), do: :ok
+  defp hold_orphaned_target(_missing_target, _reason, _release_title, _transient, _replace?),
+    do: :ok
 
   # --- import phase ---
 
@@ -323,11 +339,13 @@ defmodule Cinder.Download.BookPoller do
   end
 
   defp do_import_one(%BookGrab{} = grab, %BookTarget{} = target) do
-    case BookImport.import_grab(grab) do
+    case BookImport.import_grab(grab, replace: grab.replace) do
       {:ok, file} ->
-        Logger.info("book target #{target.id} imported #{file.path}")
-        Notifier.notify({:book_available, reload(target)})
-        :ok
+        finish_import(target, file)
+
+      {:ok, file, superseded_paths} ->
+        Enum.each(superseded_paths, &unlink_superseded/1)
+        finish_import(target, file)
 
       {:error, reason} when reason in @permanent_import_errors ->
         hold(grab, target, reason)
@@ -340,6 +358,27 @@ defmodule Cinder.Download.BookPoller do
 
       {:error, reason} ->
         retry_or_hold(grab, target, reason)
+    end
+  end
+
+  defp finish_import(target, file) do
+    Logger.info("book target #{target.id} imported #{file.path}")
+    Notifier.notify({:book_available, reload(target)})
+    :ok
+  end
+
+  # Post-commit, best-effort removal of a file "Find a better match" just replaced — mirrors
+  # `Download.remove_after_import/3`'s own "best-effort, after commit, log and continue" contract.
+  # A stale/already-gone path is not an error: `Library.delete_file/1` is idempotent on `:enoent`.
+  defp unlink_superseded(path) do
+    case Library.delete_file(path) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "book replace: couldn't remove superseded file #{path}: #{inspect(reason)}"
+        )
     end
   end
 
@@ -366,15 +405,24 @@ defmodule Cinder.Download.BookPoller do
   # operator had ALREADY applied — unmonitoring a target before the tick ran would still end in
   # `:held`. Only a still-monitored target is ours to park; anything else is the operator's more
   # recent word and the grab is dropped without touching the target.
+  #
+  # `replace: grab.replace` below makes this effectively `expect: [:monitored, :available]` for a
+  # "Find a better match" grab: its target stays `:available` for its whole download/import
+  # cycle (`Books.hold_target/5`'s own doc), so the guard has to accept that status too, not just
+  # `:monitored` — a plain grab's target is never `:available` mid-flight, so nothing changes for
+  # it.
   defp hold(grab, target, reason) do
     Logger.warning("book target #{target.id} held: #{inspect(reason)}")
 
-    case Books.hold_target(target, reason) do
+    transient = reason not in @permanent_import_errors
+
+    case Books.hold_target(target, reason, grab.release_title, transient, replace: grab.replace) do
       {:ok, _held} ->
         Books.Grabs.delete(grab)
 
-      # The target is no longer `:monitored` — an operator unmonitored or held it, or another
-      # unit made it available. Its state stands; drop the grab so this does not re-run forever.
+      # The target is no longer eligible for this hold (`:monitored`/`:available` per
+      # `grab.replace` — an operator unmonitored or held it, or another unit made it available).
+      # Its state stands; drop the grab so this does not re-run forever.
       {:error, _reason} ->
         Books.Grabs.delete(grab)
     end

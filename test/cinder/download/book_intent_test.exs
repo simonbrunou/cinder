@@ -146,6 +146,36 @@ defmodule Cinder.Download.BookIntentTest do
       assert Repo.all(BookGrab) == []
     end
 
+    test "a permanently rejected submission blocklists its release title" do
+      target = monitored_target()
+
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:error, :bad_torrent} end)
+
+      assert {:error, :bad_torrent} = Download.grab_book_target(target, release())
+
+      assert Books.blocked_release_titles(target.id) == [release().title]
+    end
+
+    test "replace: true is carried onto the created grab" do
+      target = monitored_target()
+
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "remote-1"} end)
+
+      assert {:ok, %BookGrab{replace: true}} =
+               Download.grab_book_target(target, release(), replace: true)
+    end
+
+    test "replace: false (the default) is carried onto the created grab" do
+      target = monitored_target()
+
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "remote-1"} end)
+
+      assert {:ok, %BookGrab{replace: false}} = Download.grab_book_target(target, release())
+    end
+
     test "an audiobook target is refused before any reservation" do
       target = monitored_target()
       {:ok, audiobook} = Books.ensure_target(Books.get_work(target.work_id), :audiobook)
@@ -158,6 +188,70 @@ defmodule Cinder.Download.BookIntentTest do
 
       assert Repo.all(Intent) == []
       assert Repo.all(BookGrab) == []
+    end
+  end
+
+  describe "replace: true on an :available target — the actual production precondition" do
+    setup do
+      target = monitored_target()
+
+      {:ok, _file} =
+        Books.Files.record_import(target, %{
+          path: "/tmp/cinder-books-replace-#{target.id}.epub",
+          size: 1234,
+          format: :epub
+        })
+
+      %{target: Repo.reload!(target)}
+    end
+
+    # The bug this defends against: `submission_target_active?/1`'s `:book_target` clause once
+    # required `status == :monitored` unconditionally, so a replace-flagged intent for an
+    # `:available` target (exactly what "Find a better match" always submits) was refused as
+    # `:stale_target` before the client was ever called — the confirm-then-forward Grab button
+    # never worked in production.
+    test "a grab is really created — the client is called and a BookGrab row lands", %{
+      target: target
+    } do
+      assert target.status == :available
+
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "remote-replace"} end)
+
+      assert {:ok, %BookGrab{replace: true, download_id: "remote-replace"} = grab} =
+               Download.grab_book_target(target, release(), replace: true)
+
+      assert grab.book_target_id == target.id
+      assert Repo.all(Intent) == []
+    end
+
+    test "a plain (non-replace) grab is still refused on an :available target", %{
+      target: target
+    } do
+      # No ClientMock expectation: reaching the downloader at all fails this test.
+      assert {:error, :stale_target} = Download.grab_book_target(target, release())
+
+      assert Repo.all(BookGrab) == []
+    end
+
+    test "a second replace submission while one is already in flight is :download_intent_busy,
+          not :stale_target",
+         %{target: target} do
+      stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "remote-replace"} end)
+
+      assert {:ok, %BookGrab{}} = Download.grab_book_target(target, release(), replace: true)
+
+      other = %BookRelease{
+        release()
+        | title: "A Different Release",
+          download_url: "magnet:?xt=other"
+      }
+
+      assert {:error, :download_intent_busy} =
+               Download.grab_book_target(target, other, replace: true)
+
+      assert [%BookGrab{download_id: "remote-replace"}] = Repo.all(BookGrab)
     end
   end
 

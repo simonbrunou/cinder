@@ -130,6 +130,10 @@ config :cinder, Cinder.Download.StallReaper,
 # Re-queues parked titles so a request with no release yet keeps getting hunted.
 config :cinder, Cinder.Catalog.Rehunter, enabled: true, rehunt_after: :timer.hours(24)
 
+# Books sibling: returns a transiently-held book target to :monitored so a manual retry isn't the
+# only way back. Can never trigger a download by itself (no `best_book_release/2` exists).
+config :cinder, Cinder.Books.Rehunter, enabled: true, rehunt_after: :timer.hours(24)
+
 # Reaps Cinder-submitted downloads nothing owns any more. Completed torrents seed indefinitely
 # unless an operator saves an opt-in ratio and/or seed-time limit in Settings.
 config :cinder, Cinder.Download.Cleaner, enabled: true

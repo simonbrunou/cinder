@@ -517,6 +517,42 @@ defmodule Cinder.Acquisition.BookScorerTest do
     end
   end
 
+  describe "release blocklist" do
+    test "rejects a title proven bad for this target even when every other check would accept it" do
+      assert {:reject, :blocklisted} =
+               BookScorer.evaluate(
+                 release("Toni Morrison - Beloved (epub)"),
+                 @beloved,
+                 release_blocklist: ["Toni Morrison - Beloved (epub)"]
+               )
+    end
+
+    test "matches case-insensitively" do
+      assert {:reject, :blocklisted} =
+               BookScorer.evaluate(
+                 release("Toni Morrison - Beloved (epub)"),
+                 @beloved,
+                 release_blocklist: ["TONI MORRISON - BELOVED (EPUB)"]
+               )
+    end
+
+    test "an unrelated blocklist entry does not reject a different title" do
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release("Toni Morrison - Beloved (epub)"),
+                 @beloved,
+                 release_blocklist: ["Some Other Release (epub)"]
+               )
+    end
+
+    test "an empty blocklist rejects nothing" do
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("Toni Morrison - Beloved (epub)"), @beloved,
+                 release_blocklist: []
+               )
+    end
+  end
+
   describe "evaluate_all/3" do
     test "ranks accepted releases and explains every rejection" do
       releases = [
@@ -659,6 +695,13 @@ defmodule Cinder.Acquisition.BookScorerTest do
           release("Toni Morrison - Beloved (epub) [SAMPLE]"),
           @beloved,
           blocked_terms: ["sample"]
+        )
+      end,
+      blocklisted: fn ->
+        BookScorer.evaluate(
+          release("Toni Morrison - Beloved (epub)"),
+          @beloved,
+          release_blocklist: ["toni morrison - beloved (epub)"]
         )
       end
     }

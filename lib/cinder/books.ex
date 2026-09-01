@@ -12,7 +12,9 @@ defmodule Cinder.Books do
 
   alias Cinder.Books.{
     Author,
+    BookBlockedRelease,
     BookFile,
+    BookGrab,
     BookTarget,
     BookTargetTransition,
     Credit,
@@ -219,13 +221,153 @@ defmodule Cinder.Books do
 
   Guarded on `:monitored`: anything else is a more recent decision than this one — an operator
   unmonitored it, someone already held it, or an import landed — and it stands.
+
+  `opts[:replace]` (default `false`) widens the guard to `[:monitored, :available]`. A "Find a
+  better match" grab's target is `:available` for its whole download/import cycle — grabs never
+  touch `book_targets.status` (see `pause_target/1`'s doc) — so a replace grab's own failure
+  paths (`Download.abandon_reserved/2`, `BookPoller.hold_orphaned_target/4`,
+  `BookPoller.hold/3`) must be able to park an `:available` target, not just a `:monitored` one.
+  A plain (non-replace) grab's target is `:monitored` for its entire cycle by construction — a
+  fresh grab is only ever created for a `:monitored` target — so the guard still refuses to hold
+  one that reached `:available` some other way.
+
+  `release_title` (default `nil`) is the release that caused the hold, if one exists (a
+  submission rejection or a download/import failure always has one; an orphaned-target hold does
+  not). Only on `{:ok, held}`, and only when present, a best-effort `BookBlockedRelease` row
+  follows the commit — non-transactional, after commit, log-and-swallow on failure — so the next
+  manual search or "Find a better match" does not re-offer the same dead release.
+
+  `transient` (default `false`) records whether this hold is worth an unattended retry later
+  (`Cinder.Books.Rehunter`) — a fact the caller states explicitly, since `hold_reason` is free
+  text with no closed vocabulary to infer it from.
   """
-  @spec hold_target(BookTarget.t(), term()) :: {:ok, BookTarget.t()} | {:error, term()}
-  def hold_target(%BookTarget{} = target, reason) do
-    transition_target(target, %{status: :held, hold_reason: hold_reason(reason)},
-      expect: :monitored
+  @spec hold_target(BookTarget.t(), term(), String.t() | nil, boolean(), keyword()) ::
+          {:ok, BookTarget.t()} | {:error, term()}
+  def hold_target(
+        %BookTarget{} = target,
+        reason,
+        release_title \\ nil,
+        transient \\ false,
+        opts \\ []
+      ) do
+    expected =
+      if Keyword.get(opts, :replace, false), do: [:monitored, :available], else: :monitored
+
+    target
+    |> transition_target(
+      %{status: :held, hold_reason: hold_reason(reason), hold_transient: transient},
+      expect: expected
+    )
+    |> tap_block_release(release_title, reason)
+  end
+
+  defp tap_block_release({:ok, held} = ok, release_title, reason) do
+    maybe_block_release(held, release_title, reason)
+    ok
+  end
+
+  defp tap_block_release(error, _release_title, _reason), do: error
+
+  defp maybe_block_release(_held, nil, _reason), do: :ok
+
+  defp maybe_block_release(%BookTarget{id: id}, release_title, reason) do
+    attrs = %{book_target_id: id, release_title: release_title, reason: hold_reason(reason)}
+
+    case %BookBlockedRelease{} |> BookBlockedRelease.changeset(attrs) |> Repo.insert() do
+      {:ok, _row} ->
+        :ok
+
+      {:error, changeset} ->
+        Logger.warning(
+          "book block_release failed for #{inspect(attrs)}: #{inspect(changeset.errors)}"
+        )
+
+        :ok
+    end
+  catch
+    kind, value ->
+      Logger.warning("book block_release raised: #{inspect({kind, value})}")
+      :ok
+  end
+
+  @doc "Downcased-or-not release titles blocked for `target_id` (the exact strings stored)."
+  @spec blocked_release_titles(integer()) :: [String.t()]
+  def blocked_release_titles(target_id) do
+    Repo.all(
+      from b in BookBlockedRelease,
+        where: b.book_target_id == ^target_id,
+        select: b.release_title
     )
   end
+
+  @doc """
+  Deletes every blocklist row for `target_id`. No status write, no broadcast — mirrors
+  `Catalog.clear_stalled_blocklist/1`'s "no side effect" contract.
+  """
+  @spec clear_blocklist(integer()) :: :ok
+  def clear_blocklist(target_id) do
+    Repo.delete_all(from b in BookBlockedRelease, where: b.book_target_id == ^target_id)
+    :ok
+  end
+
+  @doc """
+  Returns a `:held` target to `:monitored` for a human to pick a different release.
+
+  Deliberately does NOT clear the blocklist: the dead release staying blocklisted is what stops
+  the very next search from re-offering it.
+  """
+  @spec retry_target(BookTarget.t()) :: {:ok, BookTarget.t()} | {:error, term()}
+  def retry_target(%BookTarget{} = target),
+    do: transition_target(target, %{status: :monitored}, expect: :held)
+
+  @doc """
+  Pauses a `:monitored` target to `:unmonitored`.
+
+  Not a plain guarded transition: a grab never changes `book_targets.status`, so an unguarded
+  transition could pause a target mid-download. If the download then completed,
+  `Files.record_import/3`'s `arm_target/1` guard would match neither `:monitored` nor
+  `:available`, rolling the import back — and `BookPoller.do_import_one/2`'s `:stale_status`
+  clause just deletes the grab and returns `:ok`, silently losing an already-downloaded file.
+
+  The status transition and a `book_grabs` non-existence check run inside one
+  `Repo.transaction/1`, refusing with `{:error, :grab_in_progress}` if a grab for the target
+  exists — closing the race rather than narrowing it.
+  """
+  @spec pause_target(BookTarget.t()) ::
+          {:ok, BookTarget.t()} | {:error, :grab_in_progress | :stale_status}
+  def pause_target(%BookTarget{id: id}) do
+    Repo.transaction(fn ->
+      if Repo.exists?(from g in BookGrab, where: g.book_target_id == ^id),
+        do: Repo.rollback(:grab_in_progress),
+        else: do_pause(id)
+    end)
+    |> publish_pause()
+  end
+
+  defp do_pause(id) do
+    case Repo.update_all(
+           from(t in BookTarget, where: t.id == ^id and t.status == :monitored, select: t),
+           set: [status: :unmonitored, updated_at: DateTime.utc_now(:second)]
+         ) do
+      {1, [updated]} -> updated
+      {0, _none} -> Repo.rollback(:stale_status)
+    end
+  end
+
+  defp publish_pause({:ok, target}) do
+    broadcast({:book_target_updated, target})
+    {:ok, target}
+  end
+
+  defp publish_pause(error), do: error
+
+  @doc """
+  Resumes an `:unmonitored` target to `:monitored`. `profile_id` is untouched — it was set at
+  approval and pausing never clears it, so resume needs no profile re-selection.
+  """
+  @spec resume_target(BookTarget.t()) :: {:ok, BookTarget.t()} | {:error, term()}
+  def resume_target(%BookTarget{} = target),
+    do: transition_target(target, %{status: :monitored}, expect: :unmonitored)
 
   # `inspect/1`, never `to_string/1`: a reason may be a tuple (`{:unexpected_destination_type,
   # :directory}`), and `String.Chars` is undefined for tuples — `to_string/1` raised inside the

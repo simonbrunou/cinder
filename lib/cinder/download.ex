@@ -80,6 +80,14 @@ defmodule Cinder.Download do
         do: Map.put(release_attrs, "arbitrate_at_import", true),
         else: release_attrs
 
+    # A confirmed "Find a better match" grab, carried the same way — the release map is the only
+    # part of an intent's reservation attrs that survives across ticks/crashes, so this has to
+    # live there rather than in a caller-local opt.
+    release_attrs =
+      if Map.get(attrs, :replace, false),
+        do: Map.put(release_attrs, "replace", true),
+        else: release_attrs
+
     intent_attrs = %{
       operation_key: Ecto.UUID.generate(),
       kind: Map.fetch!(attrs, :kind),
@@ -195,20 +203,23 @@ defmodule Cinder.Download do
   report the audiobook available. Audiobooks are B7; until then this refuses rather than
   half-works.
   """
-  def grab_book_target(%BookTarget{media_kind: :ebook} = target, %BookRelease{} = release) do
+  def grab_book_target(target, release, opts \\ [])
+
+  def grab_book_target(%BookTarget{media_kind: :ebook} = target, %BookRelease{} = release, opts) do
     case Repo.get_by(Intent, kind: :book_target, target_id: target.id) do
       nil ->
-        reserve_and_reconcile(:book_target, target.id, [], book_release(release))
+        reserve_and_reconcile(:book_target, target.id, [], book_release(release), opts)
 
       %Intent{status: :cleanup_pending} ->
         {:error, :download_intent_busy}
 
       intent ->
-        reconcile_matching_intent(intent, book_release(release), [])
+        reconcile_matching_intent(intent, book_release(release), [], opts)
     end
   end
 
-  def grab_book_target(%BookTarget{}, %BookRelease{}), do: {:error, :unsupported_media_kind}
+  def grab_book_target(%BookTarget{}, %BookRelease{}, _opts),
+    do: {:error, :unsupported_media_kind}
 
   # A book release carries no mapping or policy snapshot: both are video-pipeline evidence (an
   # episode-numbering decision and an Anime language policy). Left nil, `Intent`'s validators
@@ -225,7 +236,8 @@ defmodule Cinder.Download do
   defp reconcile_matching_intent(intent, release, episode_ids, opts \\ []) do
     if same_release?(intent, release) and same_episode_assignment?(intent, episode_ids) and
          operator_initiated?(intent) == Keyword.get(opts, :operator_initiated, false) and
-         arbitrate_at_import?(intent) == Keyword.get(opts, :arbitrate_at_import, false),
+         arbitrate_at_import?(intent) == Keyword.get(opts, :arbitrate_at_import, false) and
+         replace?(intent) == Keyword.get(opts, :replace, false),
        do: reconcile_intent(intent),
        else: {:error, :download_intent_busy}
   end
@@ -251,7 +263,8 @@ defmodule Cinder.Download do
              mapping_snapshot: release.mapping_snapshot,
              release_policy_snapshot: release.release_policy_snapshot,
              operator_initiated: Keyword.get(opts, :operator_initiated, false),
-             arbitrate_at_import: Keyword.get(opts, :arbitrate_at_import, false)
+             arbitrate_at_import: Keyword.get(opts, :arbitrate_at_import, false),
+             replace: Keyword.get(opts, :replace, false)
            }) do
       reconcile_intent(intent)
     end
@@ -728,9 +741,12 @@ defmodule Cinder.Download do
   # byte-identical to "nobody picked a release yet" — and `reconcile_pending_intents/1`, which the
   # book poller runs every tick, discards this return value, so the failure would be invisible as
   # well as permanent. Hold it with the reason instead.
-  defp abandon_reserved(%Intent{kind: :book_target, target_id: target_id} = intent, reason) do
+  defp abandon_reserved(
+         %Intent{kind: :book_target, target_id: target_id, release: release} = intent,
+         reason
+       ) do
     Logger.warning("book target #{target_id} submission rejected: #{inspect(reason)}")
-    hold_book_target(target_id, reason)
+    hold_book_target(target_id, reason, release["title"], replace?(intent))
     delete_intent(intent)
     {:error, reason}
   end
@@ -740,11 +756,14 @@ defmodule Cinder.Download do
     {:error, reason}
   end
 
-  defp hold_book_target(target_id, reason) do
+  defp hold_book_target(target_id, reason, release_title, replace?) do
     case Repo.get(BookTarget, target_id) do
-      %BookTarget{} = target -> Books.hold_target(target, reason)
+      %BookTarget{} = target ->
+        Books.hold_target(target, reason, release_title, false, replace: replace?)
+
       # Deleted mid-flight: nothing to park, and nothing left to be silent about.
-      nil -> :ok
+      nil ->
+        :ok
     end
   end
 
@@ -764,20 +783,24 @@ defmodule Cinder.Download do
     if Repo.get(Movie, movie_id), do: :stale_target, else: :stale_entry
   end
 
-  # `:download_intent_busy` when the target is still monitored: the only way a monitored target
-  # is ineligible is that it already holds a grab, and "busy" is what a caller can act on — a
-  # manual-search panel wants to say "a download is already in flight", not "stale target".
-  # A non-monitored target genuinely moved (unmonitored, held, or made available), and a missing
-  # row is a stale entry.
-  defp ineligible_reason(%Intent{kind: :book_target, target_id: target_id}) do
+  # `:download_intent_busy` when the target is still eligible to hold a submission (`:monitored`
+  # for a fresh grab, or `:available` for a replace-flagged one — the only way either is
+  # ineligible is that it already holds a grab, and "busy" is what a caller can act on. A
+  # non-eligible target genuinely moved (unmonitored, held, or made available without a replace
+  # flag), and a missing row is a stale entry.
+  defp ineligible_reason(%Intent{kind: :book_target, target_id: target_id} = intent) do
     case Repo.get(BookTarget, target_id) do
       nil -> :stale_entry
       %BookTarget{status: :monitored} -> :download_intent_busy
+      %BookTarget{status: :available} -> ineligible_available_reason(intent)
       %BookTarget{} -> :stale_target
     end
   end
 
   defp ineligible_reason(%Intent{}), do: :stale_target
+
+  defp ineligible_available_reason(intent),
+    do: if(replace?(intent), do: :download_intent_busy, else: :stale_target)
 
   defp submission_target_active?(%Intent{kind: :movie, target_id: movie_id}) do
     case Repo.get(Movie, movie_id) do
@@ -789,14 +812,23 @@ defmodule Cinder.Download do
     end
   end
 
-  # A book target is submittable only while `:monitored` and holding no grab. The grab check is
-  # what stops a reserved-but-unsubmitted intent from adding a second download after an operator
-  # grabbed something else for the same target; `:monitored` is what stops one whose target was
-  # unmonitored, held, or already made available mid-flight.
-  defp submission_target_active?(%Intent{kind: :book_target, target_id: target_id}) do
+  # A book target is submittable while `:monitored` and holding no grab — or, for a
+  # replace-flagged intent, while `:available` and holding no grab: a "Find a better match" grab
+  # never moves its target out of `:available` for its whole download/import cycle (grabs never
+  # touch `book_targets.status`), so gating on `:monitored` alone made a replace submission
+  # unreachable in production — `create_book_grab/1` was never called. A non-replace intent still
+  # refuses on `:available`: a fresh grab is only ever created for a `:monitored` target, so
+  # seeing one already `:available` mid-flight is someone else's more recent decision.
+  defp submission_target_active?(%Intent{kind: :book_target, target_id: target_id} = intent) do
     case Repo.get(BookTarget, target_id) do
-      %BookTarget{status: :monitored} -> is_nil(Books.Grabs.for_target(target_id))
-      _held_unmonitored_available_or_missing -> false
+      %BookTarget{status: :monitored} ->
+        is_nil(Books.Grabs.for_target(target_id))
+
+      %BookTarget{status: :available} ->
+        replace?(intent) and is_nil(Books.Grabs.for_target(target_id))
+
+      _held_unmonitored_or_missing ->
+        false
     end
   end
 
@@ -817,6 +849,9 @@ defmodule Cinder.Download do
 
   defp arbitrate_at_import?(%Intent{release: release}),
     do: is_map(release) and release["arbitrate_at_import"] == true
+
+  defp replace?(%Intent{release: release}),
+    do: is_map(release) and release["replace"] == true
 
   # A book target's owner row is its grab, created here on first reconcile. The grab's unique
   # `book_target_id` index is the double-grab fence: a second tick racing this one loses the
@@ -849,7 +884,9 @@ defmodule Cinder.Download do
   end
 
   defp create_book_grab(%Intent{remote_id: remote_id, target_id: target_id} = intent) do
-    case Books.Grabs.create(target_id, remote_id, intent.protocol, intent.release["title"]) do
+    opts = [replace: replace?(intent)]
+
+    case Books.Grabs.create(target_id, remote_id, intent.protocol, intent.release["title"], opts) do
       {:ok, grab} ->
         complete_intent(intent, grab)
 
