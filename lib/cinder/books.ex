@@ -23,6 +23,7 @@ defmodule Cinder.Books do
   }
 
   alias Cinder.Catalog.Profile
+  alias Cinder.HTTPPolicy
   alias Cinder.LibraryKind
   alias Cinder.Repo
 
@@ -144,6 +145,11 @@ defmodule Cinder.Books do
     Repo.all(from t in BookTarget, where: t.work_id == ^id, order_by: [asc: t.media_kind])
   end
 
+  @doc "One target by id, with its work and author credits preloaded, or nil."
+  @spec get_target(integer()) :: BookTarget.t() | nil
+  def get_target(id),
+    do: Repo.one(from t in BookTarget, where: t.id == ^id, preload: [work: [credits: :author]])
+
   @doc """
   Target statuses for `work_ids`, keyed `{work_id, media_kind}` — the badge lookup, without the
   full work preload a badge has no use for.
@@ -176,6 +182,42 @@ defmodule Cinder.Books do
     {expected, opts} = Keyword.pop!(opts, :expect)
     BookTargetTransition.guarded(target, attrs, expected, opts)
   end
+
+  @doc """
+  Parks `target` `:held` with an operator-readable `reason`.
+
+  The one place the acquisition pipeline gives up on a target. Both halves route through it —
+  `Cinder.Download` when a submission is permanently rejected, `Cinder.Download.BookPoller` when
+  a download dies or a payload is refused — so a failure is never left as a `:monitored` target
+  with nothing in flight. That state is indistinguishable from "nobody has picked a release yet",
+  and this slice has no search sweep to look at it again, so a silent failure would be permanent.
+
+  Guarded on `:monitored`: anything else is a more recent decision than this one — an operator
+  unmonitored it, someone already held it, or an import landed — and it stands.
+  """
+  @spec hold_target(BookTarget.t(), term()) :: {:ok, BookTarget.t()} | {:error, term()}
+  def hold_target(%BookTarget{} = target, reason) do
+    transition_target(target, %{status: :held, hold_reason: hold_reason(reason)},
+      expect: :monitored
+    )
+  end
+
+  # `inspect/1`, never `to_string/1`: a reason may be a tuple (`{:unexpected_destination_type,
+  # :directory}`), and `String.Chars` is undefined for tuples — `to_string/1` raised inside the
+  # hold, the poller's `isolate/2` swallowed it, and the grab neither held nor cleared.
+  #
+  # Remote strings get sanitized rather than inspected. A download client's own error text and a
+  # blocked filename are attacker-influenced and unbounded, and `hold_reason` is both persisted
+  # and read by a household member: `inspect/1` would show them quoted and full-length, while
+  # `sanitize_log/1` strips CRLF and truncates — the same treatment every other remote string in
+  # the pollers already gets.
+  defp hold_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp hold_reason(reason) when is_binary(reason), do: HTTPPolicy.sanitize_log(reason)
+
+  defp hold_reason({code, detail}) when is_atom(code) and is_binary(detail),
+    do: "#{code}: #{HTTPPolicy.sanitize_log(detail)}"
+
+  defp hold_reason(reason), do: inspect(reason)
 
   @doc """
   The approval choke-point: ensures `work` has a `media_kind` target, attaches `profile`, and

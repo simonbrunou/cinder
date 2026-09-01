@@ -7,6 +7,7 @@ defmodule Cinder.Download.CleanerTest do
 
   @moduletag :capture_log
 
+  alias Cinder.Books
   alias Cinder.Catalog.Grab
   alias Cinder.Download.{Cleaner, ClientMock, Intent, SabnzbdClientMock}
 
@@ -154,6 +155,29 @@ defmodule Cinder.Download.CleanerTest do
     Repo.insert!(%Grab{download_id: "grabbed", download_protocol: :torrent, release_title: "R"})
 
     expect(ClientMock, :list_managed, fn -> {:ok, [entry(%{id: "grabbed"})]} end)
+
+    assert :ok = Cleaner.poll()
+  end
+
+  test "leaves a download a book grab still points at" do
+    # Regression: a book intent is completed at SUBMISSION time, so from the moment the download
+    # starts its `book_grabs` row is the ONLY thing claiming it. Before this was taught to the
+    # sweep, every in-flight book download looked orphaned and was removed with `delete_files`
+    # on the next tick. No `remove` expectation: reaching the client at all fails this test.
+    {:ok, work} =
+      Books.upsert_work(%{
+        title: "The Dispossessed",
+        identifier: %{
+          provider: "openlibrary",
+          kind: "work",
+          foreign_id: "OL#{System.unique_integer([:positive])}W"
+        }
+      })
+
+    {:ok, target} = Books.ensure_target(work, :ebook)
+    {:ok, _grab} = Books.Grabs.create(target.id, "book-download", :torrent, "R")
+
+    expect(ClientMock, :list_managed, fn -> {:ok, [entry(%{id: "book-download"})]} end)
 
     assert :ok = Cleaner.poll()
   end

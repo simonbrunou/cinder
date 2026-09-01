@@ -15,7 +15,7 @@ defmodule Cinder.Download.Intent do
 
   schema "download_intents" do
     field :operation_key, :string
-    field :kind, Ecto.Enum, values: [:movie, :episode, :season_pack]
+    field :kind, Ecto.Enum, values: [:movie, :episode, :season_pack, :book_target]
     field :target_id, :integer
     field :episode_ids, {:array, :integer}, default: []
     field :protocol, Ecto.Enum, values: [:torrent, :usenet]

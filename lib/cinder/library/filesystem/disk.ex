@@ -226,6 +226,30 @@ defmodule Cinder.Library.Filesystem.Disk do
     end
   end
 
+  # Bounded prefix read for format-signature checks.
+  #
+  # Deliberately NOT routed through `rooted_location/1` like `read/1` is: that reads the library
+  # roots from the settings store, and this runs against a DOWNLOAD path, which is never inside a
+  # library root — the lookup would be a guaranteed miss that costs a DB round-trip on every
+  # import. Containment is already established before this is reached: `PathPolicy.source_file/4`
+  # has lstat'd every component of the path and refused any symlink, so the path handed here is
+  # proven contained and opening it cannot follow a link out of an import root.
+  @impl true
+  def read_prefix(path, bytes) when is_integer(bytes) and bytes > 0 do
+    with {:ok, io} <- :file.open(path, [:read, :binary, :raw]) do
+      try do
+        case :file.pread(io, 0, bytes) do
+          {:ok, data} -> {:ok, IO.iodata_to_binary(data)}
+          # Shorter than `bytes` is not an error — it just cannot match a signature.
+          :eof -> {:ok, <<>>}
+          {:error, _reason} = error -> error
+        end
+      after
+        :file.close(io)
+      end
+    end
+  end
+
   @impl true
   def write(path, content) do
     case rooted_location(path) do

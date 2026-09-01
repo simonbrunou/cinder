@@ -428,6 +428,46 @@ defmodule Cinder.Notifier.EmailTest do
     end
   end
 
+  describe "book_available" do
+    test "emails every approved requester of that work and media kind" do
+      configure_smtp!()
+      alice = confirmed_user()
+      bob = confirmed_user()
+      insert_approved_request!(alice, "book", 77, media_kind: :ebook)
+      insert_approved_request!(bob, "book", 77, media_kind: :ebook)
+
+      target = %{work_id: 77, media_kind: :ebook, work: %{title: "The Dispossessed"}}
+      assert :ok = Email.notify({:book_available, target})
+
+      assert_email_sent(to: alice.email, subject: "The Dispossessed is ready to read")
+      assert_email_sent(to: bob.email, subject: "The Dispossessed is ready to read")
+    end
+
+    test "does not notify the requester of the other media kind of the same work" do
+      # One work carries an :ebook and an :audiobook target independently. Telling the audiobook
+      # requester their book is ready because the e-book landed is a lie about a different file.
+      configure_smtp!()
+      user = confirmed_user()
+      insert_approved_request!(user, "book", 78, media_kind: :audiobook)
+
+      target = %{work_id: 78, media_kind: :ebook, work: %{title: "The Dispossessed"}}
+      assert :ok = Email.notify({:book_available, target})
+
+      refute_email_sent()
+    end
+
+    test "a work deleted between the import and the notification degrades to a no-op" do
+      configure_smtp!()
+      user = confirmed_user()
+      insert_approved_request!(user, "book", 79, media_kind: :ebook)
+
+      target = %{id: 4, work_id: 79, media_kind: :ebook, work: nil}
+      assert :ok = Email.notify({:book_available, target})
+
+      assert_email_sent(to: user.email, subject: "book target #4 is ready to read")
+    end
+  end
+
   describe "episodes_search_exhausted" do
     test "emails the season's requester" do
       configure_smtp!()

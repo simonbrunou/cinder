@@ -64,9 +64,13 @@ defmodule CinderWeb.LiveHelpersTest do
       assert book_badge_state(:pending, :monitored) == :approved
     end
 
-    test "a held target falls through to the request until B4 owns the state" do
-      assert book_badge_state(:pending, :held) == :pending
-      assert book_badge_state(nil, :held) == :none
+    test "a held target outranks the request that created it" do
+      # B4b's pipeline parks a target `:held` with a `hold_reason` on a dead download, a refused
+      # payload, or a rejected submission. Falling through left every one of those reading
+      # "Approved" forever — told Cinder is fetching a book while nothing is.
+      assert book_badge_state(:approved, :held) == :held
+      assert book_badge_state(:pending, :held) == :held
+      assert book_badge_state(nil, :held) == :held
     end
 
     test "falls back to the request when the target says nothing yet" do

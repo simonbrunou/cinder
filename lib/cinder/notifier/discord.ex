@@ -126,6 +126,13 @@ defmodule Cinder.Notifier.Discord do
 
   defp embed({:movie_failed, movie, reason}), do: failure_embed("Movie failed", movie, reason)
 
+  defp embed({:book_available, target}),
+    do: %{
+      title: "📚 Now available",
+      description: "#{book_title(target)} (#{LibraryKind.format_label(target.media_kind)})",
+      color: @green
+    }
+
   defp embed({:movie_upgrade_failed, movie, reason}),
     do: failure_embed("Upgrade failed", movie, reason)
 
@@ -198,6 +205,11 @@ defmodule Cinder.Notifier.Discord do
 
   defp title_year(%{title: title, year: year}) when not is_nil(year), do: "#{title} (#{year})"
   defp title_year(%{title: title}), do: title
+
+  # Defensive: the poller reloads the target before notifying, but a work deleted in that window
+  # must not raise inside a notification transport.
+  defp book_title(%{work: %{title: title}}) when is_binary(title), do: title
+  defp book_title(%{id: id}), do: "book target ##{id}"
 
   # A season request's own :title column holds only the series name, so rendering it bare would
   # read "Frieren (2023)" for a request that was actually for one season.

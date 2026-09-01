@@ -12,9 +12,9 @@ defmodule CinderWeb.HealthController do
 
   use CinderWeb, :controller
 
-  alias Cinder.Download.{Poller, TvPoller}
+  alias Cinder.Download.{BookPoller, Poller, TvPoller}
 
-  @pollers [Poller, TvPoller]
+  @pollers [Poller, TvPoller, BookPoller]
 
   # A tick is "stale" once its last success is more than this many poll intervals old — generous
   # enough that one slow/errored tick doesn't flap the check, but a genuinely wedged poller

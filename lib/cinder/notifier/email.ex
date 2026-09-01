@@ -38,6 +38,7 @@ defmodule Cinder.Notifier.Email do
   def notify({:movie_available, movie}), do: notify_movie(movie, :available)
   def notify({:movie_failed, movie, reason}), do: notify_movie(movie, {:failed, reason})
   def notify({:season_available, season}), do: notify_season(season)
+  def notify({:book_available, target}), do: notify_book(target)
   def notify({:episodes_search_exhausted, episodes}), do: notify_episodes_exhausted(episodes)
   def notify(_other), do: :ok
 
@@ -161,6 +162,30 @@ defmodule Cinder.Notifier.Email do
        gettext("Your requested season is ready to watch: %{title}.", title: title)}
     end)
   end
+
+  # The books analog of `notify_movie/2`'s `:available` branch. B4b made `:book_available` a real
+  # event, and Discord/Log both took it — but those are household-wide channels. Without this the
+  # person who actually asked for the book is the one who never hears that it arrived, which is
+  # the half of the Seerr promise this transport exists for.
+  #
+  # Keyed on work AND media kind: one work has an `:ebook` and an `:audiobook` target
+  # independently, so the audiobook requester is not served by the e-book landing.
+  defp notify_book(%{work_id: work_id, media_kind: media_kind} = target)
+       when is_integer(work_id) and is_atom(media_kind) do
+    each_requester(Requests.approved_requesters_for_book(work_id, media_kind), fn ->
+      title = book_title(target)
+
+      {gettext("%{title} is ready to read", title: title),
+       gettext("Your request for %{title} is ready to read.", title: title)}
+    end)
+  end
+
+  defp notify_book(_target), do: :ok
+
+  # Defensive, matching Discord's own fallback for the same field: the poller reloads the target
+  # before notifying, but a work deleted in that window must not raise inside a transport.
+  defp book_title(%{work: %{title: title}}) when is_binary(title), do: title
+  defp book_title(%{id: id}), do: gettext("book target #%{id}", id: id)
 
   defp notify_episodes_exhausted([%{season: %{series: series, season_number: number}} | _]) do
     each_requester(Requests.approved_requesters_for_season(series.tmdb_id, number), fn ->

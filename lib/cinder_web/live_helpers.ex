@@ -70,11 +70,16 @@ defmodule CinderWeb.LiveHelpers do
   waiting on nothing, and telling them "Pending" invites them to chase an admin who has no action
   left to take.
 
-  `:held` deliberately falls through to the request status. Nothing creates a held book target
-  before B4, and B4 owns both the states that produce one and the copy that explains it.
+  `:held` outranks the request for the same reason `:available` does, and B4b is when it started
+  to matter: the acquisition pipeline now parks a target `:held` with a `hold_reason` on a dead
+  download, a refused payload, or a rejected submission. Falling through to the request status
+  left every one of those reading "Approved" forever — the household member is told Cinder is
+  fetching their book while nothing is, which is the same invisible-failure the pipeline's own
+  hold exists to prevent.
   """
   @spec book_badge_state(atom() | nil, atom() | nil) :: atom()
   def book_badge_state(_request, :available), do: :available
+  def book_badge_state(_request, :held), do: :held
   def book_badge_state(_request, :monitored), do: :approved
   def book_badge_state(:pending, _target), do: :pending
   def book_badge_state(:approved, _target), do: :approved

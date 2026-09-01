@@ -468,21 +468,21 @@ defmodule Cinder.Library do
   # single choke-point and covers every fallback (per docs/operating.md). Public (not private):
   # also called from `Cinder.Library.StageEngine`.
   @doc false
-  def link_or_copy(source, target, root) do
-    with {:ok, source} <- safe_source_file(source),
+  def link_or_copy(source, target, root, extensions \\ @video_exts) do
+    with {:ok, source} <- safe_source_file(source, extensions),
          {:ok, target} <- safe_destination(target, root) do
-      do_link_or_copy(source, target, root)
+      do_link_or_copy(source, target, root, extensions)
     end
   end
 
-  defp do_link_or_copy(source, target, root) do
+  defp do_link_or_copy(source, target, root, extensions) do
     case fs().ln(source, target) do
       {:error, errno} when copy_fallback_errno?(errno) ->
         Logger.info(
           "hardlink unsupported (#{errno}); copying #{source} into #{Path.dirname(target)}"
         )
 
-        with {:ok, ^source} <- safe_source_file(source),
+        with {:ok, ^source} <- safe_source_file(source, extensions),
              {:ok, ^target} <- safe_destination(target, root),
              do: fs().cp(source, target)
 
@@ -1469,10 +1469,10 @@ defmodule Cinder.Library do
 
   # Public (not private): also called from `Cinder.Library.AnimeInventory`.
   @doc false
-  def safe_source_file(path) do
+  def safe_source_file(path, extensions \\ @video_exts) do
     case Settings.import_roots() do
       [] -> {:error, :download_roots_not_configured}
-      roots -> path_policy().source_file(path, roots, @video_exts, filesystem: fs())
+      roots -> path_policy().source_file(path, roots, extensions, filesystem: fs())
     end
   end
 

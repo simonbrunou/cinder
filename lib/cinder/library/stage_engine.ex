@@ -11,7 +11,7 @@ defmodule Cinder.Library.StageEngine do
   require Logger
 
   alias Cinder.Library
-  alias Cinder.Library.ImportStage
+  alias Cinder.Library.{BookSources, ImportStage}
 
   require Library
 
@@ -95,6 +95,64 @@ defmodule Cinder.Library.StageEngine do
   defp do_resolve(_source, dest, false, false, movie, new_q, _replace?, _root),
     do: Library.keep(dest, movie, new_q)
 
+  @doc """
+  Stages a book file, using the same journal as `stage_place/8` with none of its quality logic.
+
+  Separate from `stage_place/8` rather than a flag on it: that function's source gate is the
+  video extension list, and its collision branches all resolve through `Library.existing_quality/3`
+  and `Library.keep/3`, which read `imported_resolution`-style columns a book target does not
+  have. A book collision needs no comparison at all — the parity contract parks automatic
+  upgrades and format conversion for the first release, so an existing file at the destination is
+  always kept.
+
+  Returns `{:ok, rollback, placed?}`. `placed?` is false when the destination already held a
+  file, so the caller can tell a fresh publication from an adoption.
+  """
+  @spec stage_book_place(String.t(), String.t(), String.t()) ::
+          {:ok, map(), boolean()} | {:error, term()}
+  def stage_book_place(source, dest, root) do
+    with {:ok, source} <- BookSources.safe_source(source),
+         {:ok, dest} <- safe_destination(dest, root),
+         :ok <- normalize_import_directories(dest, root) do
+      ImportStage.with_destination_lock(dest, fn ->
+        stage_book_place_locked(source, dest, root)
+      end)
+    end
+  end
+
+  defp stage_book_place_locked(source, dest, root) do
+    case fs().lstat(dest) do
+      {:error, :enoent} ->
+        with {:ok, _quality, rollback, placed?} <-
+               stage_new(source, dest, root, %{}, BookSources.accepted_extensions()),
+             do: {:ok, rollback, placed?}
+
+      # A REGULAR FILE already occupies the destination, and it is kept either way:
+      #
+      # - same inode+device ⇒ this exact file is already published (a re-run after a crash between
+      #   placement and the catalog write), so the import is idempotent;
+      # - a different file ⇒ the contract parks automatic upgrades and format conversion for the
+      #   first release, so an operator's existing copy is never overwritten on the strength of a
+      #   release name.
+      #
+      # Both journal a no-op so the caller's commit/rollback path is uniform, and both report
+      # `placed?: false` — no fresh bytes landed.
+      {:ok, %File.Stat{type: :regular}} ->
+        with {:ok, _quality, rollback, placed?} <- stage_noop(dest, root, %{}),
+             do: {:ok, rollback, placed?}
+
+      # Anything else at the destination — a directory, a symlink, a device node — is not a book
+      # this import can adopt. Recording it would put a `book_files` row (and an `:available`
+      # target) behind a path that is not a readable book, and the consumer would find a
+      # directory where the catalog promised a file. Refuse and let the target hold.
+      {:ok, %File.Stat{type: type}} ->
+        {:error, {:unexpected_destination_type, type}}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
   @doc false
   def stage_place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
     with {:ok, source} <- safe_source_file(source),
@@ -158,11 +216,11 @@ defmodule Cinder.Library.StageEngine do
   defp existing_quality_for_stage(record, new_q, false, dest),
     do: Library.existing_quality(record, new_q, dest)
 
-  defp stage_new(source, dest, root, quality),
-    do: prepare_durable_stage(source, dest, root, nil, nil, quality)
+  defp stage_new(source, dest, root, quality, extensions \\ @video_exts),
+    do: prepare_durable_stage(source, dest, root, nil, nil, quality, extensions)
 
   defp stage_replacement(source, dest, root, original_stat, quality),
-    do: prepare_durable_stage(source, dest, root, dest, original_stat, quality)
+    do: prepare_durable_stage(source, dest, root, dest, original_stat, quality, @video_exts)
 
   defp stage_noop(dest, root, quality) do
     operation_key = Ecto.UUID.generate()
@@ -183,7 +241,7 @@ defmodule Cinder.Library.StageEngine do
     end)
   end
 
-  defp prepare_durable_stage(source, dest, root, backup_source, backup_stat, quality) do
+  defp prepare_durable_stage(source, dest, root, backup_source, backup_stat, quality, extensions) do
     operation_key = Ecto.UUID.generate()
     candidate = stage_path(dest, operation_key)
     backup = if backup_source, do: rollback_path(dest, operation_key)
@@ -203,7 +261,7 @@ defmodule Cinder.Library.StageEngine do
 
       case create_stage(attrs) do
         {:ok, stage} ->
-          prepare_created_stage(stage, source, backup_source, quality)
+          prepare_created_stage(stage, source, backup_source, quality, extensions)
 
         {:error, _} = error ->
           error
@@ -211,8 +269,8 @@ defmodule Cinder.Library.StageEngine do
     end)
   end
 
-  defp prepare_created_stage(stage, source, backup_source, quality) do
-    case do_prepare_stage(stage, source, backup_source) do
+  defp prepare_created_stage(stage, source, backup_source, quality, extensions) do
+    case do_prepare_stage(stage, source, backup_source, extensions) do
       {:ok, prepared} ->
         {:ok, quality, durable_rollback(prepared), true}
 
@@ -229,10 +287,10 @@ defmodule Cinder.Library.StageEngine do
     end
   end
 
-  defp do_prepare_stage(stage, source, backup_source) do
+  defp do_prepare_stage(stage, source, backup_source, extensions) do
     candidate = stage.candidate
 
-    with :ok <- Library.link_or_copy(source, candidate, stage.root),
+    with :ok <- Library.link_or_copy(source, candidate, stage.root, extensions),
          {:ok, candidate_stat} <- fs().lstat(candidate),
          stage <- ImportStage.update!(stage, identity_attrs(:candidate, candidate_stat)),
          {:ok, stage} <- maybe_move_backup(stage, backup_source),
