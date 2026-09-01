@@ -57,7 +57,12 @@ defmodule Cinder.Download.BookPoller do
     :ambiguous_book_files,
     :unsupported_archive,
     :unsafe_source,
-    :book_file_exists
+    :book_file_exists,
+    :archive_entry_limit,
+    :archive_size_limit,
+    :archive_entry_unsafe,
+    :archive_corrupt,
+    :archive_timeout
   ]
 
   defp do_poll(_state) do

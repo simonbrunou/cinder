@@ -443,11 +443,14 @@ defmodule Cinder.Download.BookPollerTest do
       assert File.ls!(books) == []
     end
 
-    test "an archive-only payload holds rather than being expanded", ctx do
+    test "a still-unsupported archive shape holds rather than being expanded", ctx do
       %{target: target, release_dir: release_dir} = downloading(ctx, "book.epub")
       dir = release_dir
       File.rm!(Path.join(dir, "book.epub"))
-      File.write!(Path.join(dir, "book.rar"), "archive")
+      # `.7z` is the one archive shape `Cinder.Library.BookSources` never even attempts to
+      # extract (see its own "archive extraction" test coverage) — unlike `.zip`/`.rar`, it
+      # cannot depend on whether the test box happens to have the external `unrar` binary.
+      File.write!(Path.join(dir, "book.7z"), "archive")
 
       complete_download(release_dir)
       capture_log(fn -> poll!() end)
@@ -455,6 +458,32 @@ defmodule Cinder.Download.BookPollerTest do
       assert Repo.reload!(target).status == :held
       assert Repo.reload!(target).hold_reason =~ "unsupported_archive"
       assert Repo.all(BookFile) == []
+    end
+
+    test "a zipped release is extracted and published, end to end", ctx do
+      %{target: target, release_dir: release_dir, books: books} =
+        downloading(ctx, "book.epub")
+
+      File.rm!(Path.join(release_dir, "book.epub"))
+
+      :zip.create(String.to_charlist(Path.join(release_dir, "release.zip")), [
+        {~c"The Dispossessed.epub", epub_bytes()}
+      ])
+
+      complete_download(release_dir)
+      poll!()
+
+      target = Repo.reload!(target)
+      assert target.status == :available
+
+      file = Repo.get_by!(BookFile, book_target_id: target.id)
+
+      expected =
+        Path.join([books, "Ursula K. Le Guin", "The Dispossessed", "The Dispossessed.epub"])
+
+      assert file.path == expected
+      assert file.format == :epub
+      assert File.read!(expected) == epub_bytes()
     end
 
     test "a completed download with no content path holds", ctx do

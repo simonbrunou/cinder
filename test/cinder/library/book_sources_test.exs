@@ -125,15 +125,31 @@ defmodule Cinder.Library.BookSourcesTest do
       assert {:error, :no_book_file} = BookSources.resolve(dir)
     end
 
-    for extension <- ~w(.rar .zip .7z .cbz .r00) do
-      test "an archive (#{extension}) fails closed rather than being expanded", %{
+    for extension <- ~w(.7z .r00) do
+      test "an unsupported archive shape (#{extension}) fails closed, never even attempted", %{
         downloads: downloads
       } do
         dir = Path.join(downloads, "Archived#{String.replace(unquote(extension), ".", "")}")
         File.mkdir_p!(dir)
         File.write!(Path.join(dir, "book#{unquote(extension)}"), "archive")
 
+        # `.7z` is never parsed at all; a lone `.r00` with no `.rar` main present alongside it
+        # is not a resolvable split-volume set either way.
         assert {:error, :unsupported_archive} = BookSources.resolve(dir)
+      end
+    end
+
+    for extension <- ~w(.zip .cbz) do
+      test "a malformed #{extension} is extracted-and-refused, not silently expanded", %{
+        downloads: downloads
+      } do
+        dir = Path.join(downloads, "Archived#{String.replace(unquote(extension), ".", "")}")
+        File.mkdir_p!(dir)
+        File.write!(Path.join(dir, "book#{unquote(extension)}"), "not a real archive")
+
+        # These extensions ARE now extracted (see the "archive extraction" describe block below)
+        # - garbage content is refused by the extractor itself, one level deeper than before.
+        assert {:error, :archive_corrupt} = BookSources.resolve(dir)
       end
     end
 
@@ -195,6 +211,150 @@ defmodule Cinder.Library.BookSourcesTest do
       File.write!(outside, "book")
 
       assert {:error, _reason} = BookSources.resolve(outside)
+    end
+  end
+
+  describe "archive extraction" do
+    setup %{tmp_dir: tmp} do
+      original_path = System.get_env("PATH")
+      fakebin = Path.join(tmp, "fakebin")
+      File.mkdir_p!(fakebin)
+
+      on_exit(fn ->
+        if original_path, do: System.put_env("PATH", original_path)
+      end)
+
+      {:ok, fakebin: fakebin, original_path: original_path}
+    end
+
+    test "a lone zip extracts and resolves to the epub inside it", %{downloads: downloads} do
+      dir = Path.join(downloads, "Zipped")
+      File.mkdir_p!(dir)
+
+      :zip.create(String.to_charlist(Path.join(dir, "release.zip")), [
+        {~c"book.epub", epub_bytes()}
+      ])
+
+      assert {:ok, path, :epub} = BookSources.resolve(dir)
+      assert Path.basename(path) == "book.epub"
+      assert File.read!(path) == epub_bytes()
+    end
+
+    test "a lone cbz extracts the same way a zip does", %{downloads: downloads} do
+      dir = Path.join(downloads, "Comic")
+      File.mkdir_p!(dir)
+
+      :zip.create(String.to_charlist(Path.join(dir, "release.cbz")), [
+        {~c"book.epub", epub_bytes()}
+      ])
+
+      assert {:ok, _path, :epub} = BookSources.resolve(dir)
+    end
+
+    test "re-resolving the same folder is idempotent", %{downloads: downloads} do
+      dir = Path.join(downloads, "Zipped")
+      File.mkdir_p!(dir)
+
+      :zip.create(String.to_charlist(Path.join(dir, "release.zip")), [
+        {~c"book.epub", epub_bytes()}
+      ])
+
+      assert {:ok, path, :epub} = BookSources.resolve(dir)
+      assert {:ok, ^path, :epub} = BookSources.resolve(dir)
+    end
+
+    test "a bare zip file (not inside a folder) extracts the same way", %{downloads: downloads} do
+      path = Path.join(downloads, "release.zip")
+      :zip.create(String.to_charlist(path), [{~c"book.epub", epub_bytes()}])
+
+      assert {:ok, extracted, :epub} = BookSources.resolve(path)
+      assert extracted != path
+      assert File.read!(extracted) == epub_bytes()
+    end
+
+    test "a zip whose only content is another zip refuses, never a second extraction", %{
+      downloads: downloads
+    } do
+      dir = Path.join(downloads, "Nested")
+      File.mkdir_p!(dir)
+
+      inner = :zip.create(~c"inner.zip", [{~c"book.epub", epub_bytes()}], [:memory])
+      {:ok, {_name, inner_bytes}} = inner
+
+      :zip.create(String.to_charlist(Path.join(dir, "outer.zip")), [{~c"inner.zip", inner_bytes}])
+
+      assert {:error, :unsupported_archive} = BookSources.resolve(dir)
+    end
+
+    test "two distinct zip archives in one folder refuse, never a size guess", %{
+      downloads: downloads
+    } do
+      dir = Path.join(downloads, "TwoZips")
+      File.mkdir_p!(dir)
+      :zip.create(String.to_charlist(Path.join(dir, "a.zip")), [{~c"a.epub", epub_bytes()}])
+      :zip.create(String.to_charlist(Path.join(dir, "b.zip")), [{~c"b.epub", epub_bytes()}])
+
+      assert {:error, :unsupported_archive} = BookSources.resolve(dir)
+    end
+
+    test "an unrelated file alongside a zip refuses, mixed content is not auto-expanded", %{
+      downloads: downloads
+    } do
+      dir = Path.join(downloads, "MixedZip")
+      File.mkdir_p!(dir)
+
+      :zip.create(String.to_charlist(Path.join(dir, "release.zip")), [
+        {~c"book.epub", epub_bytes()}
+      ])
+
+      File.write!(Path.join(dir, "readme.txt"), "notes")
+
+      assert {:error, :unsupported_archive} = BookSources.resolve(dir)
+    end
+
+    test "a lone rar extracts through the external unrar binary", %{
+      downloads: downloads,
+      fakebin: fakebin,
+      original_path: original_path
+    } do
+      install_fake_unrar(fakebin, original_path, epub_unrar_script(fakebin))
+
+      dir = Path.join(downloads, "Rarred")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "release.rar"), "not really parsed, the fake binary decides")
+
+      assert {:ok, path, :epub} = BookSources.resolve(dir)
+      assert Path.basename(path) == "book.epub"
+    end
+
+    test "a split .rNN set resolves via its .rar main volume", %{
+      downloads: downloads,
+      fakebin: fakebin,
+      original_path: original_path
+    } do
+      install_fake_unrar(fakebin, original_path, epub_unrar_script(fakebin))
+
+      dir = Path.join(downloads, "SplitRar")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "release.rar"), "main volume")
+      File.write!(Path.join(dir, "release.r00"), "volume 2")
+      File.write!(Path.join(dir, "release.r01"), "volume 3")
+
+      assert {:ok, path, :epub} = BookSources.resolve(dir)
+      assert Path.basename(path) == "book.epub"
+    end
+
+    test "unrar being absent degrades a .rar release to :unsupported_archive, not a crash", %{
+      downloads: downloads,
+      fakebin: fakebin
+    } do
+      System.put_env("PATH", fakebin)
+
+      dir = Path.join(downloads, "NoUnrar")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "release.rar"), "archive")
+
+      assert {:error, :unsupported_archive} = BookSources.resolve(dir)
     end
   end
 
@@ -263,4 +423,31 @@ defmodule Cinder.Library.BookSourcesTest do
   # PalmDB header: the type/creator field `BOOKMOBI` sits at byte 60.
   defp mobi_bytes,
     do: String.duplicate("\0", 60) <> "BOOKMOBI" <> String.duplicate("\0", 32)
+
+  # Installs `script` as the `unrar` resolved by `System.find_executable/1` for the rest of the
+  # calling test — the real Rar module's own seam, since `unrar` is closed-source and cannot be
+  # scripted to produce a controlled fixture otherwise. Mirrors
+  # `Cinder.Library.BookArchive.RarTest`'s identical helper.
+  defp install_fake_unrar(fakebin, original_path, script) do
+    path = Path.join(fakebin, "unrar")
+    File.write!(path, script)
+    File.chmod!(path, 0o755)
+    System.put_env("PATH", fakebin <> ":" <> (original_path || ""))
+  end
+
+  # A fake `unrar` that reports one entry, `book.epub`, and "extracts" it by copying a real,
+  # conforming EPUB fixture into the destination — so the resolve-level dispatch tests exercise
+  # the same `verify_magic/2` gate every other candidate goes through, not a bypass.
+  defp epub_unrar_script(fakebin) do
+    fixture = Path.join(fakebin, "epub_fixture.epub")
+    File.write!(fixture, epub_bytes())
+
+    """
+    #!/bin/sh
+    case "$1" in
+      lb) printf 'book.epub\\n'; exit 0 ;;
+      x) cp #{fixture} "$7book.epub"; exit 0 ;;
+    esac
+    """
+  end
 end
