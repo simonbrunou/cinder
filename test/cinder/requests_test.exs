@@ -266,6 +266,103 @@ defmodule Cinder.RequestsTest do
     assert Catalog.get_movie_by_tmdb_id(@attrs.target_id) == nil
   end
 
+  # #393: the auto-approve INSERT path has the same approver-row-vanished exposure as
+  # `flip_pending/2`'s UPDATE path above, but a strictly wider window (three provider round-trips
+  # instead of one) and it raises `Ecto.ConstraintError` rather than a raw `Exqlite.Error` (the
+  # insert reaches `to_constraints`; the update bypasses it via `update_all`).
+  test "an admin deleted mid-request during their own auto-approve is refused, not raised" do
+    Mox.set_mox_global()
+    parent = self()
+    actor = admin_fixture()
+    admin = admin_fixture()
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _id ->
+      send(parent, {:aliases_preparing, self()})
+
+      receive do
+        :continue -> {:ok, []}
+      after
+        5_000 -> {:error, :test_stub_never_released}
+      end
+    end)
+
+    task = Task.async(fn -> Requests.create_request(admin, @attrs) end)
+    Sandbox.allow(Cinder.Repo, self(), task.pid)
+    assert_receive {:aliases_preparing, provider_task}
+
+    assert {:ok, _, _} = Cinder.Accounts.delete_user(actor, admin)
+    send(provider_task, :continue)
+
+    assert {:error, :approver_deleted} = Task.await(task)
+    assert Catalog.get_movie_by_tmdb_id(@attrs.target_id) == nil
+    assert Repo.aggregate(Cinder.Requests.Request, :count) == 0
+  end
+
+  test "a non-admin requester deleted mid-request under auto_approve_all is refused, not raised" do
+    Mox.set_mox_global()
+    parent = self()
+    Cinder.Settings.put("auto_approve_all", "true")
+    admin = admin_fixture()
+    user = user_fixture()
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _id ->
+      send(parent, {:aliases_preparing, self()})
+
+      receive do
+        :continue -> {:ok, []}
+      after
+        5_000 -> {:error, :test_stub_never_released}
+      end
+    end)
+
+    task = Task.async(fn -> Requests.create_request(user, @attrs) end)
+    Sandbox.allow(Cinder.Repo, self(), task.pid)
+    assert_receive {:aliases_preparing, provider_task}
+
+    assert {:ok, _, _} = Cinder.Accounts.delete_user(admin, user)
+    send(provider_task, :continue)
+
+    assert {:error, :invalid_requester} = Task.await(task)
+    assert Catalog.get_movie_by_tmdb_id(@attrs.target_id) == nil
+    assert Repo.aggregate(Cinder.Requests.Request, :count) == 0
+  end
+
+  test "a requester deleted mid-request before a pending insert is refused, not raised" do
+    Mox.set_mox_global()
+    parent = self()
+    admin = admin_fixture()
+    user = user_fixture()
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
+      send(parent, {:movie_preparing, self()})
+
+      receive do
+        :continue ->
+          {:ok,
+           %{
+             tmdb_id: id,
+             imdb_id: nil,
+             title: "The Matrix",
+             year: 1999,
+             poster_path: "/p.jpg",
+             original_language: "en"
+           }}
+      after
+        5_000 -> {:error, :test_stub_never_released}
+      end
+    end)
+
+    task = Task.async(fn -> Requests.create_request(user, @attrs) end)
+    Sandbox.allow(Cinder.Repo, self(), task.pid)
+    assert_receive {:movie_preparing, provider_task}
+
+    assert {:ok, _, _} = Cinder.Accounts.delete_user(admin, user)
+    send(provider_task, :continue)
+
+    assert {:error, :invalid_requester} = Task.await(task)
+    assert Repo.aggregate(Cinder.Requests.Request, :count) == 0
+  end
+
   # deny_request/3 is the one flip_pending/2 caller that runs outside a transaction, so it takes
   # refuse_flip/1's `{:error, reason}` branch rather than the Repo.rollback/1 one.
   test "a denial whose admin was deleted mid-flight is refused, not raised" do
