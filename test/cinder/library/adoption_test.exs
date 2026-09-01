@@ -114,6 +114,46 @@ defmodule Cinder.Library.AdoptionTest do
     refute Enum.any?(candidates, &(managed_tv in &1.paths))
   end
 
+  # #399: managed_paths/0 (adoption.ex) reads Movie.file_paths/1 — a pure accessor over the
+  # STORED file_path, never a name recomputed via Naming — so a title already imported under the
+  # old (unguarded) dot-folder spelling is recognized as managed by its literal on-disk path,
+  # regardless of what Naming.movie_dest would compute for it today. It must never resurface as
+  # an adoption candidate just because its folder happens to start with a dot.
+  test "scan recognizes an already-managed dot-folder movie and never re-offers it as a candidate" do
+    dot_folder = "/tmp/cinder-test-library/.hackLegend of the Twilight (2003) {tmdb-12345}"
+    dot_movie = "#{dot_folder}/.hackLegend of the Twilight (2003) {tmdb-12345}.mkv"
+
+    movie_fixture(%{
+      title: ".hack//Legend of the Twilight",
+      tmdb_id: 12_345,
+      status: :available,
+      file_path: dot_movie
+    })
+
+    stub_roots([{dot_movie, 10}], [])
+
+    assert Adoption.scan() == []
+  end
+
+  # #399: parse_provider_tag/1 (adoption.ex) extracts the `{tmdb-id}` tag from the EXISTING
+  # on-disk folder name via a non-greedy, unanchored-prefix regex — it never regenerates an
+  # expected name via Naming to compare against. An UNMANAGED file sitting in a dot-folder (hand
+  # -placed, or imported before this guard existed) still parses to a normal auto-matched
+  # candidate with the correct tmdb_id; the leading dot rides along harmlessly in the discarded
+  # title capture.
+  test "scan auto-matches an unmanaged dot-folder movie by its tmdb tag, dot-prefix and all" do
+    dot_movie =
+      "/tmp/cinder-test-library/.hackLegend of the Twilight (2003) {tmdb-12345}/.hackLegend of the Twilight (2003) {tmdb-12345}.mkv"
+
+    stub_roots([{dot_movie, 10}], [])
+
+    assert [candidate] = Adoption.scan()
+    assert candidate.kind == :movie
+    assert candidate.status == :auto_matched
+    assert candidate.match.tmdb_id == 12_345
+    assert candidate.path == dot_movie
+  end
+
   test "scan covers a nested Anime root once and adopts its movie with the Anime profile" do
     standard = "/tmp/cinder-test-library/Dune (2021)/Dune (2021).mkv"
     anime_root = "/tmp/cinder-test-library/anime"

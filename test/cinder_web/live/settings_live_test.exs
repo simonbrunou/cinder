@@ -4,6 +4,7 @@ defmodule CinderWeb.SettingsLiveTest do
   use CinderWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import Cinder.CatalogFixtures
   import Mox
 
   alias Cinder.Catalog.UpgradeHunter
@@ -80,6 +81,39 @@ defmodule CinderWeb.SettingsLiveTest do
     refute has_element?(lv, ".setup-section-help")
     refute has_element?(lv, "[data-setup-step]")
     refute has_element?(lv, "[data-setup-optional]")
+  end
+
+  test "the library visibility report is empty when nothing lives under a dot-folder", %{
+    conn: conn
+  } do
+    movie_fixture(%{
+      title: "Clean",
+      status: :available,
+      file_path: "/lib/Clean (2020) {tmdb-1}/x.mkv"
+    })
+
+    {:ok, _lv, html} = live(conn, ~p"/settings")
+
+    assert html =~ "Library visibility"
+    assert html =~ "None found."
+  end
+
+  # #399: read-only report, computed from the stored file_path columns.
+  test "the library visibility report lists a movie already living under a dot-folder", %{
+    conn: conn
+  } do
+    movie_fixture(%{
+      title: ".hack//Legend of the Twilight",
+      status: :available,
+      file_path: "/lib/.hackLegend of the Twilight (2003) {tmdb-1}/x.mkv"
+    })
+
+    {:ok, lv, html} = live(conn, ~p"/settings")
+
+    assert html =~ "Library visibility"
+    assert html =~ "1 file is hidden from your media server"
+    assert has_element?(lv, "li", ".hack//Legend of the Twilight")
+    assert html =~ "/lib/.hackLegend of the Twilight (2003) {tmdb-1}/x.mkv"
   end
 
   test "associates the remove-after-import toggle with its help text", %{conn: conn} do

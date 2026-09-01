@@ -152,6 +152,9 @@ defmodule Cinder.Catalog do
     Repo.all(from m in Movie, order_by: [desc: m.id])
   end
 
+  @doc "Movies and episodes whose stored `file_path` has a dot-prefixed path component (#399)."
+  defdelegate dot_folder_files(), to: Cinder.Catalog.LibraryVisibility
+
   defdelegate reconcile_media_server_items(kind, items),
     to: Cinder.Catalog.MediaServerReconciliation,
     as: :reconcile

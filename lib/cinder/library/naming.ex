@@ -12,7 +12,7 @@ defmodule Cinder.Library.Naming do
 
   @doc "`root/Title (Year) {tmdb-id}/Title (Year) {tmdb-id}.ext` for a movie."
   def movie_dest(%Movie{title: title, year: year, tmdb_id: tmdb_id}, source, root) do
-    name = library_name(sanitize(title), year, tmdb_id)
+    name = library_name(sanitize(title) |> visible(), year, tmdb_id)
     Path.join([root, name, name <> Path.extname(source)])
   end
 
@@ -28,7 +28,13 @@ defmodule Cinder.Library.Naming do
   source file covers — a double-episode file gets one destination that both episodes reference.
   """
   def episode_dest([%Episode{season: season} | _] = episodes, source, root) do
-    show = library_name(sanitize(season.series.title), season.series.year, season.series.tmdb_id)
+    show =
+      library_name(
+        sanitize(season.series.title) |> visible(),
+        season.series.year,
+        season.series.tmdb_id
+      )
+
     code = episode_code(episodes)
 
     Path.join([
@@ -72,4 +78,22 @@ defmodule Cinder.Library.Naming do
   # root (`Path.join([root, "..", …])`). Collapse it to "" so library_name falls back to the
   # tmdb-id folder, same as an all-illegal title.
   defp reject_dot_only(name), do: if(name =~ ~r/\A\.+\z/, do: "", else: name)
+
+  # #399: `sanitize/1` strips filesystem-illegal characters (including `/`) but a title that
+  # merely BEGINS with a dot passes through unchanged — reachable from ordinary provider
+  # metadata, not just hostile input, since stripping `/` can produce a leading dot that wasn't
+  # one before (`.hack//Legend of the Twilight` sanitizes to `.hackLegend of the Twilight`).
+  # `library_name/3` always puts the sanitized title first in the folder/file-stem string it
+  # builds, so guarding it here — applied once, before `library_name/3` — protects both the
+  # folder AND the file basename `movie_dest/3`/`episode_dest/3` derive from the same string.
+  # Jellyfin/Plex skip dot-directories while scanning, so an unguarded title imports successfully,
+  # the catalog records the path, and the file is invisible with nothing reporting why.
+  #
+  # Shared with `Cinder.Library.BookNaming.visible/1` (`defdelegate`, same hazard, same fix) — its
+  # own moduledoc already treats this module's rules as canonical for the video/book split.
+  # Prefixed rather than replaced: unlike a filename, a folder name is the only place the title
+  # is recorded on disk, so it is worth keeping legible.
+  @doc false
+  def visible("." <> _rest = name), do: "_" <> name
+  def visible(name), do: name
 end

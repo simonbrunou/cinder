@@ -28,6 +28,7 @@ defmodule Cinder.Library.BookNaming do
   cannot attribute and B6 cannot adopt.
   """
   alias Cinder.Books.Work
+  alias Cinder.Library.Naming
 
   @illegal ~r/[\/\\:*?"<>|]/
   @unknown_author "Unknown Author"
@@ -100,8 +101,10 @@ defmodule Cinder.Library.BookNaming do
   #
   # Prefixed rather than replaced: unlike a filename, a folder name is the only place the author
   # or title is recorded on disk, so it is worth keeping legible.
-  defp visible("." <> _rest = name), do: "_" <> name
-  defp visible(name), do: name
+  #
+  # #399: `Cinder.Library.Naming` has the identical hazard for movie/episode folders and the
+  # identical fix — shared here rather than duplicated a second time.
+  defdelegate visible(name), to: Naming
 
   # The lowest-positioned `author` credit — the contract's credits are ordered and role-bearing,
   # and a co-authored work has to land in ONE folder deterministically. Position ties break on the

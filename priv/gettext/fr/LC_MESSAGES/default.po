@@ -161,7 +161,7 @@ msgstr "Approbation…"
 msgid "Attempting to reconnect"
 msgstr "Tentative de reconnexion"
 
-#: lib/cinder_web/live/settings_live.ex:204
+#: lib/cinder_web/live/settings_live.ex:208
 #, elixir-autogen
 msgid "Auto-approve all requests (skip the approval queue)"
 msgstr ""
@@ -383,7 +383,7 @@ msgstr "Création…"
 
 #: lib/cinder_web/components/layouts.ex:114
 #: lib/cinder_web/live/dashboard_live.ex:374
-#: lib/cinder_web/live/settings_live.ex:142
+#: lib/cinder_web/live/settings_live.ex:146
 #: lib/cinder_web/user_auth.ex:416
 #, elixir-autogen
 msgid "Dashboard"
@@ -983,7 +983,7 @@ msgstr "Demande…"
 #: lib/cinder_web/components/layouts.ex:120
 #: lib/cinder_web/live/book_detail_live.ex:209
 #: lib/cinder_web/live/requests_live.ex:357
-#: lib/cinder_web/live/settings_live.ex:194
+#: lib/cinder_web/live/settings_live.ex:198
 #: lib/cinder_web/user_auth.ex:419
 #, elixir-autogen
 msgid "Requests"
@@ -1039,7 +1039,7 @@ msgstr "Enregistrer et valider"
 msgid "Save email"
 msgstr "Enregistrer l'e-mail"
 
-#: lib/cinder_web/live/settings_live.ex:189
+#: lib/cinder_web/live/settings_live.ex:193
 #, elixir-autogen
 msgid "Save settings"
 msgstr "Enregistrer les paramètres"
@@ -1047,7 +1047,7 @@ msgstr "Enregistrer les paramètres"
 #: lib/cinder_web/live/profiles_live.ex:260
 #: lib/cinder_web/live/series_detail_components.ex:353
 #: lib/cinder_web/live/series_detail_components.ex:389
-#: lib/cinder_web/live/settings_live.ex:188
+#: lib/cinder_web/live/settings_live.ex:192
 #: lib/cinder_web/live/user_live/settings.ex:37
 #: lib/cinder_web/live/user_live/settings.ex:89
 #: lib/cinder_web/live/users_live.ex:611
@@ -1139,13 +1139,13 @@ msgstr "Configurer Cinder"
 
 #: lib/cinder_web/components/layouts.ex:153
 #: lib/cinder_web/live/profiles_live.ex:143
-#: lib/cinder_web/live/settings_live.ex:133
+#: lib/cinder_web/live/settings_live.ex:137
 #: lib/cinder_web/user_auth.ex:418
 #, elixir-autogen
 msgid "Settings"
 msgstr "Paramètres"
 
-#: lib/cinder_web/live/settings_live.ex:106
+#: lib/cinder_web/live/settings_live.ex:110
 #, elixir-autogen
 msgid "Settings saved."
 msgstr "Paramètres enregistrés."
@@ -3571,7 +3571,7 @@ msgstr "Compte en attente refusé."
 msgid "Pending approval"
 msgstr "En attente d'approbation"
 
-#: lib/cinder_web/live/settings_live.ex:212
+#: lib/cinder_web/live/settings_live.ex:216
 #, elixir-autogen
 msgid "This also auto-approves requests from anyone who self-registers once their account is approved. Keep it off while registration enrollment is public."
 msgstr ""
@@ -4910,7 +4910,7 @@ msgstr[1] ""
 "%{count} secrets enregistrés ne peuvent pas être déchiffrés. La clé de "
 "chiffrement a changé ; ressaisissez-les dans Paramètres."
 
-#: lib/cinder_web/live/settings_live.ex:161
+#: lib/cinder_web/live/settings_live.ex:165
 #, elixir-autogen
 msgid "1 stored secret could not be decrypted. The encryption key changed; re-enter it below."
 msgid_plural "%{count} stored secrets could not be decrypted. The encryption key changed; re-enter them below."
@@ -4921,7 +4921,7 @@ msgstr[1] ""
 "%{count} secrets enregistrés n'ont pas pu être déchiffrés. La clé de "
 "chiffrement a changé ; ressaisissez-les ci-dessous."
 
-#: lib/cinder_web/live/settings_live.ex:168
+#: lib/cinder_web/live/settings_live.ex:172
 #, elixir-autogen
 msgid "Affected: %{fields}"
 msgstr "Concernés : %{fields}"
@@ -5292,55 +5292,55 @@ msgstr "En-tête Authorization du webhook"
 msgid "Webhook URL"
 msgstr "URL du webhook"
 
-#: lib/cinder_web/live/settings_live.ex:242
+#: lib/cinder_web/live/settings_live.ex:270
 #, elixir-autogen
 msgid "API access"
 msgstr "Accès API"
 
-#: lib/cinder_web/live/settings_live.ex:272
+#: lib/cinder_web/live/settings_live.ex:300
 #, elixir-autogen
 msgid "Copy this key now. It will not be shown again."
 msgstr "Copiez cette clé maintenant. Elle ne sera plus affichée."
 
-#: lib/cinder_web/live/settings_live.ex:295
+#: lib/cinder_web/live/settings_live.ex:323
 #, elixir-autogen
 msgid "Generate API key"
 msgstr "Générer une clé API"
 
-#: lib/cinder_web/live/settings_live.ex:278
+#: lib/cinder_web/live/settings_live.ex:306
 #, elixir-autogen
 msgid "No key is set, so the API rejects every request."
 msgstr "Aucune clé n'est définie, l'API rejette donc toutes les requêtes."
 
-#: lib/cinder_web/live/settings_live.ex:294
+#: lib/cinder_web/live/settings_live.ex:322
 #, elixir-autogen
 msgid "Regenerate API key"
 msgstr "Régénérer la clé API"
 
-#: lib/cinder_web/live/settings_live.ex:290
+#: lib/cinder_web/live/settings_live.ex:318
 #, elixir-autogen
 msgid "Regenerate the API key? The current key stops working immediately."
 msgstr ""
 "Régénérer la clé API ? La clé actuelle cesse immédiatement de fonctionner."
 
-#: lib/cinder_web/live/settings_live.ex:308
+#: lib/cinder_web/live/settings_live.ex:336
 #, elixir-autogen
 msgid "Revoke API key"
 msgstr "Révoquer la clé API"
 
-#: lib/cinder_web/live/settings_live.ex:303
+#: lib/cinder_web/live/settings_live.ex:331
 #, elixir-autogen
 msgid "Revoke the API key? Every dashboard widget and bot using it stops working immediately."
 msgstr ""
 "Révoquer la clé API ? Tous les widgets de tableau de bord et bots qui "
 "l'utilisent cessent immédiatement de fonctionner."
 
-#: lib/cinder_web/live/settings_live.ex:257
+#: lib/cinder_web/live/settings_live.ex:285
 #, elixir-autogen
 msgid "Send the key in the %{header} request header."
 msgstr "Envoyez la clé dans l'en-tête de requête %{header}."
 
-#: lib/cinder_web/live/settings_live.ex:260
+#: lib/cinder_web/live/settings_live.ex:288
 #, elixir-autogen
 msgid "These routes also sit behind the optional HTTP Basic gate, so if you enabled it, API clients must send those credentials too."
 msgstr ""
@@ -5572,7 +5572,7 @@ msgstr ""
 msgid "Those files were already decided."
 msgstr "Ces fichiers ont déjà été traités."
 
-#: lib/cinder_web/live/settings_live.ex:234
+#: lib/cinder_web/live/settings_live.ex:238
 #, elixir-autogen
 msgid "A periodic sweep re-searches the library and, when it finds a better release, downloads it and replaces the file you have. Off by default."
 msgstr ""
@@ -5580,12 +5580,12 @@ msgstr ""
 "trouve une meilleure version, la télécharge et remplace le fichier existant. "
 "Désactivé par défaut."
 
-#: lib/cinder_web/live/settings_live.ex:220
+#: lib/cinder_web/live/settings_live.ex:224
 #, elixir-autogen
 msgid "Library upgrades"
 msgstr "Améliorations de la bibliothèque"
 
-#: lib/cinder_web/live/settings_live.ex:230
+#: lib/cinder_web/live/settings_live.ex:234
 #, elixir-autogen
 msgid "Look for better releases of titles already in the library"
 msgstr ""
@@ -5834,7 +5834,7 @@ msgstr ""
 msgid "Download folders"
 msgstr "Dossiers de téléchargement"
 
-#: lib/cinder_web/live/settings_live.ex:135
+#: lib/cinder_web/live/settings_live.ex:139
 #, elixir-autogen
 msgid "External service settings are saved in the database. Passwords and API keys are protected. Save before testing a connection."
 msgstr ""
@@ -6190,7 +6190,7 @@ msgstr ""
 "celles d’une saison TV quand tous les épisodes détenus l’atteignent. La "
 "recherche manuelle reste disponible."
 
-#: lib/cinder_web/live/settings_live.ex:244
+#: lib/cinder_web/live/settings_live.ex:272
 #, elixir-autogen
 msgid "A JSON API for dashboard widgets and trusted automation. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one. Anyone holding the key can read and change the request queue, so treat it as an admin credential."
 msgstr ""
@@ -6232,12 +6232,12 @@ msgstr ""
 msgid "Uses the standard %{kind} folder"
 msgstr "Utilise le dossier standard (%{kind})"
 
-#: lib/cinder_web/live/settings_live.ex:314
+#: lib/cinder_web/live/settings_live.ex:342
 #, elixir-autogen
 msgid "Database backup"
 msgstr "Sauvegarde de la base de données"
 
-#: lib/cinder_web/live/settings_live.ex:316
+#: lib/cinder_web/live/settings_live.ex:344
 #, elixir-autogen
 msgid "Download a consistent snapshot of Cinder's database. Keep your SECRET_KEY_BASE with the backup or encrypted settings cannot be restored. Media files are not included."
 msgstr ""
@@ -6246,7 +6246,7 @@ msgstr ""
 "chiffrés ne pourront pas être restaurés. Les fichiers multimédias ne sont "
 "pas inclus."
 
-#: lib/cinder_web/live/settings_live.ex:333
+#: lib/cinder_web/live/settings_live.ex:361
 #, elixir-autogen
 msgid "Download database backup"
 msgstr "Télécharger la sauvegarde de la base de données"
@@ -6315,7 +6315,7 @@ msgstr ""
 msgid "Sign in with OpenID"
 msgstr "Se connecter avec OpenID"
 
-#: lib/cinder_web/live/settings_live.ex:321
+#: lib/cinder_web/live/settings_live.ex:349
 #, elixir-autogen
 msgid "Automatic verified snapshots run about daily and keep the newest %{count} in %{path}."
 msgstr ""
@@ -6576,7 +6576,7 @@ msgid "Media profile saved."
 msgstr "Profil multimédia enregistré."
 
 #: lib/cinder_web/live/profiles_live.ex:147
-#: lib/cinder_web/live/settings_live.ex:149
+#: lib/cinder_web/live/settings_live.ex:153
 #, elixir-autogen, elixir-format
 msgid "Media profiles"
 msgstr "Profils multimédias"
@@ -7010,3 +7010,25 @@ msgstr "Gérez les films, les séries ajoutées et les cibles de livres."
 #, elixir-autogen, elixir-format
 msgid "No books yet"
 msgstr "Aucun livre pour l'instant"
+
+#: lib/cinder_web/live/settings_live.ex:257
+#, elixir-autogen, elixir-format
+msgid "1 file is hidden from your media server:"
+msgid_plural "%{count} files are hidden from your media server:"
+msgstr[0] "1 fichier est masqué à votre serveur multimédia :"
+msgstr[1] "%{count} fichiers sont masqués à votre serveur multimédia :"
+
+#: lib/cinder_web/live/settings_live.ex:248
+#, elixir-autogen, elixir-format
+msgid "Jellyfin and Plex skip any folder whose name starts with a dot while scanning. New imports no longer produce one, but a title imported before this fix can still be sitting under one, invisible to your media server with nothing else reporting why. This list is read-only; renaming a folder and fixing the affected title's path is a manual step."
+msgstr "Jellyfin et Plex ignorent tout dossier dont le nom commence par un point lors de l'analyse. Les nouveaux imports n'en produisent plus, mais un titre importé avant cette correction peut encore s'y trouver, invisible pour votre serveur multimédia sans que rien n'en indique la raison. Cette liste est en lecture seule ; renommer un dossier et corriger le chemin du titre concerné est une opération manuelle."
+
+#: lib/cinder_web/live/settings_live.ex:246
+#, elixir-autogen, elixir-format
+msgid "Library visibility"
+msgstr "Visibilité de la bibliothèque"
+
+#: lib/cinder_web/live/settings_live.ex:253
+#, elixir-autogen, elixir-format
+msgid "None found."
+msgstr "Aucun trouvé."
