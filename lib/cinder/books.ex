@@ -268,10 +268,11 @@ defmodule Cinder.Books do
   — unlike `transition_target/3`/`arm/3`, this never touches `:status` and carries no `:expect`
   precondition, so it is safe to call regardless of where the target is in its lifecycle (armed,
   held, available — an admin may reasonably change their mind about language after the fact).
-  `language` is `nil` for "no preference" or a raw code `Cinder.Acquisition.BookScorer.tag_for/1`
-  can resolve; validated no further here for the same reason `BookTarget.language_changeset/2`
-  isn't. Broadcasts `{:book_target_updated, target}` post-commit, matching every other write in
-  this module.
+  `language` is `nil` for "no preference" or a code `BookTarget.language_changeset/2` recognizes
+  (`Cinder.Acquisition.Parser.language_tags/0`); an unrecognized code — reachable only by a
+  forged caller, since `/books/:id`'s own picker is built from that same table — refuses with
+  `{:error, changeset}` rather than persisting it. Broadcasts `{:book_target_updated, target}`
+  post-commit, matching every other write in this module.
   """
   @spec set_target_language(BookTarget.t(), String.t() | nil) ::
           {:ok, BookTarget.t()} | {:error, Ecto.Changeset.t()}

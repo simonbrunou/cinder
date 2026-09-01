@@ -31,6 +31,14 @@ defmodule Cinder.Books.TargetLanguageTest do
              Books.set_target_language(held, "de")
   end
 
+  test "refuses an unrecognized code, leaving the target unchanged" do
+    target = ebook_target()
+
+    assert {:error, changeset} = Books.set_target_language(target, "totally-not-a-real-language")
+    assert "is invalid" in errors_on(changeset).preferred_language
+    assert Repo.get!(BookTarget, target.id).preferred_language == nil
+  end
+
   defp ebook_target do
     id = unique_id()
 

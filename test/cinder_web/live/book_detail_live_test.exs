@@ -283,6 +283,19 @@ defmodule CinderWeb.BookDetailLiveTest do
       assert has_element?(lv, ~s(#book-target-language-ebook option[value="fr"][selected]))
     end
 
+    test "an unrecognized language code is refused, not persisted verbatim", %{conn: conn} do
+      {target, _work} = ebook_target()
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      render_change(lv, "set_language", %{
+        "target_id" => to_string(target.id),
+        "language" => "totally-not-a-real-language"
+      })
+
+      assert Books.get_target(target.id).preferred_language == nil
+    end
+
     test "a non-string language payload is ignored, not a crash", %{conn: conn} do
       {target, _work} = ebook_target()
 

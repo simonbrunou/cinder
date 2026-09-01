@@ -3,12 +3,14 @@ defmodule Cinder.Books.BookTarget do
 
   import Ecto.Changeset
 
+  alias Cinder.Acquisition.Parser
   alias Cinder.Books.Work
   alias Cinder.Catalog.Profile
   alias Cinder.LibraryKind
 
   @book_media_kinds LibraryKind.books()
   @statuses [:unmonitored, :monitored, :available, :held]
+  @known_languages Map.keys(Parser.language_tags())
 
   schema "book_targets" do
     belongs_to :work, Work
@@ -32,11 +34,18 @@ defmodule Cinder.Books.BookTarget do
   @doc """
   Changeset for the admin's language pick — independent of the status pipeline, unlike
   `transition_changeset/2`: never touches `:status` and carries no precondition, so it's safe to
-  call regardless of where the target is in its lifecycle. A raw code or `nil` (no preference);
-  `Cinder.Acquisition.BookScorer.tag_for/1` is the resolver, so this validates nothing beyond
-  "a string or absent" — a closed list here would duplicate that resolver's own alias table.
+  call regardless of where the target is in its lifecycle. `nil` (no preference) or a code
+  `Cinder.Acquisition.Parser.language_tags/0` knows — the same table the `/books/:id` picker is
+  built from and `BookScorer.tag_for/1` resolves against — so a value that reaches this changeset
+  by any path other than that picker (a forged LiveView event, an API caller) can't wedge the
+  target into a language `check_language/2` will never match. `validate_inclusion/3` treats `nil`
+  as a member of its own allowed list here, not as "skip validation" — both must be spelled out.
   """
-  def language_changeset(target, attrs), do: cast(target, attrs, [:preferred_language])
+  def language_changeset(target, attrs) do
+    target
+    |> cast(attrs, [:preferred_language])
+    |> validate_inclusion(:preferred_language, [nil | @known_languages])
+  end
 
   @doc """
   The guarded-write changeset. Carries `:profile_id` alongside the status so an approval can
