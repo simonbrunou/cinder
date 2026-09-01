@@ -12,6 +12,7 @@ defmodule Cinder.Books do
 
   alias Cinder.Books.{
     Author,
+    BookFile,
     BookTarget,
     BookTargetTransition,
     Credit,
@@ -143,6 +144,30 @@ defmodule Cinder.Books do
 
   def list_targets(%Work{id: id}) do
     Repo.all(from t in BookTarget, where: t.work_id == ^id, order_by: [asc: t.media_kind])
+  end
+
+  @doc """
+  Every book target, work + credits + author preloaded — the `/library` books tab's row source.
+  Ordered `desc: :id`, matching `Catalog.list_movies/0`'s "recently added" default. No status
+  filter, for the same reason `list_movies/0` has none: a `:monitored`/`:held`/`:unmonitored`
+  target is as much a managed row on that tab as an `:available` one is.
+  """
+  @spec list_targets() :: [BookTarget.t()]
+  def list_targets do
+    Repo.all(from t in BookTarget, order_by: [desc: t.id], preload: [work: [credits: :author]])
+  end
+
+  @doc """
+  Bytes on disk per target, summed across its `book_files` rows and keyed by `book_target_id` —
+  the `/library` books tab's size sort and size display. Mirrors
+  `Catalog.SeriesCatalog.series_library_sizes/0`'s per-key SQL-sum shape: one aggregate query,
+  not N+1 per row.
+  """
+  @spec target_sizes() :: %{integer() => integer()}
+  def target_sizes do
+    from(f in BookFile, group_by: f.book_target_id, select: {f.book_target_id, sum(f.size)})
+    |> Repo.all()
+    |> Map.new()
   end
 
   @doc "One target by id, with its work and author credits preloaded, or nil."

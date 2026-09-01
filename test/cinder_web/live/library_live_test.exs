@@ -4,6 +4,7 @@ defmodule CinderWeb.LibraryLiveTest do
   import Phoenix.LiveViewTest
   import Mox
 
+  alias Cinder.Books
   alias Cinder.Catalog
   alias Cinder.Repo
 
@@ -35,6 +36,50 @@ defmodule CinderWeb.LibraryLiveTest do
         attrs
       )
     )
+  end
+
+  defp book_target!(attrs) do
+    id = System.unique_integer([:positive])
+    media_kind = Map.get(attrs, :media_kind, :ebook)
+
+    {:ok, profile} =
+      Catalog.create_profile(%{name: "Books #{id}", kind: media_kind, handling: :standard})
+
+    work_attrs =
+      Map.merge(
+        %{
+          title: "Book #{id}",
+          identifier: %{provider: "openlibrary", kind: "work", foreign_id: "#{id}"}
+        },
+        Map.take(attrs, [:title, :first_published_on])
+      )
+
+    {:ok, work} = Books.upsert_work(work_attrs)
+
+    {:ok, author} =
+      Books.upsert_author(%{
+        name: "Author #{id}",
+        identifier: %{provider: "openlibrary", kind: "author", foreign_id: "a#{id}"}
+      })
+
+    {:ok, _credit} = Books.put_credit(work, %{author_id: author.id, role: "author", position: 0})
+
+    {:ok, target} = Books.monitor_target(work, media_kind, profile)
+    target
+  end
+
+  defp available_book!(attrs) do
+    target = book_target!(attrs)
+    size = Map.get(attrs, :size, 2_000_000)
+
+    {:ok, _file} =
+      Books.Files.record_import(target, %{
+        path: "/tmp/book-#{target.id}.epub",
+        size: size,
+        format: :epub
+      })
+
+    Books.get_target(target.id)
   end
 
   test "lists movies with cancel/delete quick actions but no inline edit", %{conn: conn} do
@@ -197,6 +242,64 @@ defmodule CinderWeb.LibraryLiveTest do
 
     refute has_element?(lv, "#series-row-#{s.id}")
     assert Catalog.list_series() == []
+  end
+
+  describe "books tab" do
+    test "lists book targets with a drill-down link, a status badge, and no write controls", %{
+      conn: conn
+    } do
+      target = book_target!(%{title: "Dune"})
+
+      {:ok, lv, html} = live(conn, ~p"/library?type=books")
+      assert html =~ "Dune"
+
+      assert has_element?(
+               lv,
+               ~s|#book-target-row-#{target.id} a[href="/books/#{target.work_id}"]|
+             )
+
+      assert has_element?(lv, "#book-target-row-#{target.id} .badge")
+
+      # Read-only, per #405: no cancel/delete/confirm affordance anywhere on this tab.
+      refute has_element?(lv, "#book-target-row-#{target.id} button")
+    end
+
+    test "the Books tab navigates to the Books list and hides movies", %{conn: conn} do
+      movie = movie_fixture(%{title: "Dune"})
+      target = book_target!(%{title: "Foundation"})
+
+      {:ok, lv, html} = live(conn, ~p"/library")
+      assert html =~ ~s|id="movie-#{movie.id}"|
+      refute html =~ ~s|id="book-target-row-#{target.id}"|
+      # The tab count must come from the canonical @books list, not @visible — matches the
+      # movies/series count assertions above, and would fail if it read the filtered view.
+      assert html =~ "Books (1)"
+
+      {:ok, _books_lv, books_html} =
+        lv |> element("#library-tab-books") |> render_click() |> follow_redirect(conn)
+
+      assert books_html =~ ~s|id="book-target-row-#{target.id}"|
+      refute books_html =~ ~s|id="movie-#{movie.id}"|
+    end
+
+    test "an unknown ?type= falls back to Movies instead of crashing", %{conn: conn} do
+      movie = movie_fixture(%{title: "Dune"})
+
+      {:ok, lv, html} = live(conn, ~p"/library?type=' OR 1=1--")
+      assert html =~ ~s|id="movie-#{movie.id}"|
+      assert has_element?(lv, ~s|#library-tab-movies[aria-current="page"]|)
+    end
+
+    test "a {:book_target_updated} broadcast refreshes the books tab live", %{conn: conn} do
+      target = book_target!(%{title: "Dune"})
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books")
+      assert has_element?(lv, "#book-target-row-#{target.id}", "Approved")
+
+      {:ok, _held} = Cinder.Books.hold_target(target, "identity conflict")
+
+      assert has_element?(lv, "#book-target-row-#{target.id}", "Needs attention")
+    end
   end
 
   test "non-admins are redirected away from /library", %{conn: _conn} do
@@ -416,6 +519,64 @@ defmodule CinderWeb.LibraryLiveTest do
         })
 
       assert has_element?(lv, "#series-row-#{series.id} p", "8.6 MB")
+    end
+
+    test "Title (A–Z) reorders the Books tab against the default newest-first", %{conn: conn} do
+      alpha = book_target!(%{title: "Alpha"})
+      zulu = book_target!(%{title: "Zulu"})
+
+      {:ok, lv, html} = live(conn, ~p"/library?type=books")
+
+      assert card_ids(html, "#books-list > article") ==
+               ["book-target-row-#{zulu.id}", "book-target-row-#{alpha.id}"]
+
+      sort_by(lv, "title")
+      assert_patch(lv, ~p"/library?type=books&sort=title")
+
+      assert card_ids(render(lv), "#books-list > article") ==
+               ["book-target-row-#{alpha.id}", "book-target-row-#{zulu.id}"]
+    end
+
+    test "Size on the Books tab totals each target's book_files, largest first", %{conn: conn} do
+      small = available_book!(%{title: "Small", size: 2_000_000})
+      never = book_target!(%{title: "Never"})
+      big = available_book!(%{title: "Big", size: 9_000_000})
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books")
+      sort_by(lv, "size")
+      assert_patch(lv, ~p"/library?type=books&sort=size")
+
+      html = render(lv)
+
+      assert card_ids(html, "#books-list > article") ==
+               [
+                 "book-target-row-#{big.id}",
+                 "book-target-row-#{small.id}",
+                 "book-target-row-#{never.id}"
+               ]
+
+      # Sorting by a number the grid never shows would be a half-feature.
+      assert has_element?(lv, "#book-target-row-#{big.id} span", "8.6 MB")
+      refute has_element?(lv, "#book-target-row-#{never.id} span", "MB")
+    end
+
+    test "Year (newest first) on the Books tab sorts off the work's first_published_on", %{
+      conn: conn
+    } do
+      old = book_target!(%{title: "Old", first_published_on: ~D[1965-01-01]})
+      new = book_target!(%{title: "New", first_published_on: ~D[2020-01-01]})
+      undated = book_target!(%{title: "Undated"})
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books")
+      sort_by(lv, "year")
+      assert_patch(lv, ~p"/library?type=books&sort=year")
+
+      assert card_ids(render(lv), "#books-list > article") ==
+               [
+                 "book-target-row-#{new.id}",
+                 "book-target-row-#{old.id}",
+                 "book-target-row-#{undated.id}"
+               ]
     end
 
     test "an unknown ?sort= falls back to the default instead of crashing", %{conn: conn} do
