@@ -55,7 +55,7 @@ defmodule Cinder.Download.Cleaner do
          {:ok, entries} <- client.list_managed() do
       entries
       |> Enum.filter(&reapable?/1)
-      |> unclaimed()
+      |> unclaimed(protocol)
       |> Enum.each(&reap(client, &1))
     else
       # No client configured for this protocol — nothing to sweep.
@@ -69,11 +69,11 @@ defmodule Cinder.Download.Cleaner do
 
   # Two batched lookups rather than one query per entry: the client list is small (a household
   # queue), but a per-entry query would be a round trip each on every tick.
-  defp unclaimed([]), do: []
+  defp unclaimed([], _protocol), do: []
 
-  defp unclaimed(entries) do
+  defp unclaimed(entries, protocol) do
     keys = claimed_keys(Enum.map(entries, & &1.operation_key))
-    ids = claimed_ids(Enum.map(entries, & &1.id))
+    ids = claimed_ids(Enum.map(entries, & &1.id), protocol)
 
     Enum.reject(
       entries,
@@ -81,6 +81,10 @@ defmodule Cinder.Download.Cleaner do
     )
   end
 
+  # `operation_key` is an `Ecto.UUID.generate/0` value, unique across ALL intents regardless of
+  # protocol (`unique_constraint(:operation_key)` in `Intent.changeset/2` has no protocol scope) —
+  # a cross-protocol collision is a UUID collision, not a reachable case worth a query filter. So
+  # unlike `claimed_ids/2` below, this lookup does not need the sweep's protocol threaded in.
   defp claimed_keys(keys) do
     MapSet.new(
       Repo.all(from i in Intent, where: i.operation_key in ^keys, select: i.operation_key)
@@ -96,12 +100,42 @@ defmodule Cinder.Download.Cleaner do
   # the remote id exists), so from that moment the only thing claiming a live book download is its
   # `book_grabs` row. Omitting it made every in-flight book download an orphan the next tick, and
   # `reapable?/1` removes a `:downloading` orphan with `delete_files: true`.
-  defp claimed_ids(ids) do
-    movie_ids = Repo.all(from m in Movie, where: m.download_id in ^ids, select: m.download_id)
-    grab_ids = Repo.all(from g in Grab, where: g.download_id in ^ids, select: g.download_id)
+  #
+  # Download ids are client-local (a qBittorrent infohash, a SABnzbd `nzo_id`, an NZBGet integer)
+  # with no cross-client uniqueness guarantee, so a bare `download_id in ^ids` match without the
+  # sweep's own protocol would read a live download on one client as claimed by an unrelated
+  # orphan on another. `grabs.download_protocol` and `book_grabs.download_protocol` are `NOT
+  # NULL`; `movies.download_protocol` is nullable (added after movies already had live downloads —
+  # `20260619140000_add_download_protocol_to_movies.exs`) and every other read site
+  # (`Download.client_for/1`, `reconcile_movie/1`) resolves a `nil` movie row as `:torrent`. This
+  # matches that same convention rather than treating a nil protocol as universally claimed, which
+  # would silently re-open the shielding bug for a legacy row on the usenet sweep.
+  defp claimed_ids(ids, protocol) do
+    nil_protocol_is_torrent? = protocol == :torrent
+
+    movie_ids =
+      Repo.all(
+        from m in Movie,
+          where:
+            m.download_id in ^ids and
+              (m.download_protocol == ^protocol or
+                 (^nil_protocol_is_torrent? and is_nil(m.download_protocol))),
+          select: m.download_id
+      )
+
+    grab_ids =
+      Repo.all(
+        from g in Grab,
+          where: g.download_id in ^ids and g.download_protocol == ^protocol,
+          select: g.download_id
+      )
 
     book_ids =
-      Repo.all(from g in BookGrab, where: g.download_id in ^ids, select: g.download_id)
+      Repo.all(
+        from g in BookGrab,
+          where: g.download_id in ^ids and g.download_protocol == ^protocol,
+          select: g.download_id
+      )
 
     MapSet.new(movie_ids ++ grab_ids ++ book_ids)
   end
