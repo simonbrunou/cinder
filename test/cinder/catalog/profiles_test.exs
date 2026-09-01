@@ -120,6 +120,29 @@ defmodule Cinder.Catalog.ProfilesTest do
     assert Repo.reload!(ebook).library_path == "/srv/media/ebooks"
   end
 
+  test "a profile referenced only by a live author policy cannot change kind, and cannot be
+        deleted" do
+    assert {:ok, ebook} =
+             Catalog.create_profile(%{name: "Policy eBooks", kind: :ebook, handling: :standard})
+
+    assert {:ok, author} =
+             Books.upsert_author(%{
+               name: "Policied Author",
+               identifier: %{provider: "openlibrary", kind: "author", foreign_id: "policy-author"}
+             })
+
+    assert {:ok, _policy} = Books.set_author_policy(author, :all, ebook)
+
+    # No `book_targets` row exists at all yet — the reference is the policy row alone. A kind
+    # change here would leave the policy pointing at a profile `Books.monitor_target/4` refuses
+    # every candidate against forever, with nothing logged to say why.
+    assert {:error, changeset} = Catalog.update_profile(ebook, %{kind: :audiobook})
+    assert "referenced profile may only be renamed" in errors_on(changeset).base
+    assert Repo.reload!(ebook).kind == :ebook
+
+    assert {:error, :in_use} = Catalog.delete_profile(ebook)
+  end
+
   test "movies cannot reference an ebook profile after the profile table rebuild" do
     assert {:ok, ebook} =
              Catalog.create_profile(%{name: "Ereader", kind: :ebook, handling: :standard})

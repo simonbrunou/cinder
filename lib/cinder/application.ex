@@ -121,6 +121,7 @@ defmodule Cinder.Application do
         Cinder.Download.BookPoller,
         Cinder.Catalog.Refresher,
         Cinder.Books.Refresher,
+        Cinder.Books.BibliographyRefresher,
         Cinder.Catalog.Rehunter,
         Cinder.Books.Rehunter,
         Cinder.Catalog.UpgradeHunter,

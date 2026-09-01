@@ -20,6 +20,34 @@ defmodule Cinder.Requests.BookRequestTest do
     %{work: work_fixture(), ebook_profile: ebook, audiobook_profile: audiobook}
   end
 
+  # B5b regression: a per-work request+approval must still create exactly one target even when
+  # the work's author has a live `:all` policy row — the policy sweep is a separate,
+  # admin-confirmed action (`Cinder.Books.BibliographyRefresher`) that a request never triggers.
+  describe "an author policy never substitutes for per-work approval" do
+    test "one requested work creates exactly one target even with a live :all author policy", %{
+      work: work,
+      ebook_profile: profile
+    } do
+      admin = admin_fixture()
+
+      {:ok, author} =
+        Books.upsert_author(%{
+          name: "Prolific Author",
+          identifier: %{provider: "openlibrary", kind: "author", foreign_id: "OLAUTHORPOLICY"}
+        })
+
+      {:ok, _credit} =
+        Books.put_credit(work, %{author_id: author.id, role: "author", position: 0})
+
+      {:ok, _policy} = Books.set_author_policy(author, :all, profile)
+
+      assert {:ok, request} = Requests.create_request(admin, attrs(work, :ebook))
+      assert request.status == :approved
+
+      assert [%BookTarget{media_kind: :ebook, status: :monitored}] = Books.list_targets(work)
+    end
+  end
+
   describe "the approval gate" do
     test "a non-admin book request is pending and creates NO target", %{work: work} do
       user = user_fixture()
