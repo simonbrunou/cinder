@@ -107,9 +107,10 @@ defmodule Cinder.Download.Cleaner do
   # orphan on another. `grabs.download_protocol` and `book_grabs.download_protocol` are `NOT
   # NULL`; `movies.download_protocol` is nullable (added after movies already had live downloads —
   # `20260619140000_add_download_protocol_to_movies.exs`) and every other read site
-  # (`Download.client_for/1`, `reconcile_movie/1`) resolves a `nil` movie row as `:torrent`. This
-  # matches that same convention rather than treating a nil protocol as universally claimed, which
-  # would silently re-open the shielding bug for a legacy row on the usenet sweep.
+  # (`Download.client_for/1`, `Download.insert_movie_cleanup!/2`) resolves a `nil` movie row as
+  # `:torrent`. This matches that same convention rather than treating a nil protocol as
+  # universally claimed, which would silently re-open the shielding bug for a legacy row on the
+  # usenet sweep.
   defp claimed_ids(ids, protocol) do
     nil_protocol_is_torrent? = protocol == :torrent
 
