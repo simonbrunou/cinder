@@ -7,6 +7,17 @@ defmodule Cinder.Library.BookArchive.RarTest do
   `unrar` installed at the front of `PATH` — the same seam `System.find_executable/1` itself
   resolves through. `async: false`: `PATH` is a real OS-process-wide environment variable, not
   scoped to one Elixir process.
+
+  ## What this proves, and what it does not
+
+  This suite proves `Cinder.Library.BookArchive.Rar`'s own contract with `unrar`: what it does
+  with a listing, how it reacts to extraction output, how it kills a runaway or hung process,
+  and — critically — that it does not simply trust the real `unrar`'s `-ol-` flag or its path
+  handling (the fake binary here can freely violate both, on demand, in ways the real
+  closed-source binary can't be scripted to). It does NOT prove anything about the real
+  `unrar`'s own behavior against a genuinely malicious `.rar` file — that binary is opaque to
+  this codebase by construction, which is exactly why the extraction pipeline never trusts it
+  unverified.
   """
   use ExUnit.Case, async: false
 
@@ -123,6 +134,62 @@ defmodule Cinder.Library.BookArchive.RarTest do
 
       assert {:error, :archive_entry_unsafe} = Rar.extract("/tmp/evil.rar", dest)
       refute File.exists?(marker)
+    end
+
+    test "a symlink planted by `unrar x` despite `-ol-` is refused, not trusted", %{
+      fakebin: fakebin,
+      original_path: original_path,
+      dest: dest,
+      tmp: tmp
+    } do
+      # `-ol-` is passed to `unrar x` asking it to skip symbolic links, but `unrar` is
+      # closed-source and this module does not trust it to have honoured that flag — this fake
+      # binary plants one anyway, exactly as a real `unrar` bug (or the CVE-2022-30333 class of
+      # listing/extraction divergence) would.
+      outside = Path.join(tmp, "outside_target")
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "secret.txt"), "not meant to be reachable")
+
+      install_fake_unrar(fakebin, original_path, """
+      #!/bin/sh
+      case "$1" in
+        lb) printf 'book.epub\\n'; exit 0 ;;
+        x)
+          dest="$7"
+          printf 'epub bytes' > "${dest}book.epub"
+          ln -s #{outside} "${dest}evil_link"
+          exit 0
+          ;;
+      esac
+      """)
+
+      assert {:error, :archive_entry_unsafe} = Rar.extract("/tmp/evil.rar", dest)
+    end
+
+    test "a symlinked directory planted by `unrar x` is refused, never walked into", %{
+      fakebin: fakebin,
+      original_path: original_path,
+      dest: dest,
+      tmp: tmp
+    } do
+      outside = Path.join(tmp, "outside_dir")
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "secret.txt"), "not meant to be reachable")
+
+      install_fake_unrar(fakebin, original_path, """
+      #!/bin/sh
+      case "$1" in
+        lb) printf 'book.epub\\n'; exit 0 ;;
+        x)
+          dest="$7"
+          printf 'epub bytes' > "${dest}book.epub"
+          ln -s #{outside} "${dest}evil_dir"
+          exit 0
+          ;;
+      esac
+      """)
+
+      assert {:error, :archive_entry_unsafe} = Rar.extract("/tmp/evil.rar", dest)
     end
   end
 

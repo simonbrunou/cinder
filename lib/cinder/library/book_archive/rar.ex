@@ -33,6 +33,19 @@ defmodule Cinder.Library.BookArchive.Rar do
   this module can audit the way `Cinder.Library.BookArchive.Zip`'s moduledoc documents having
   read Erlang's `zip.erl` directly. `-ol-` ("process symbolic links as... skip") is passed to
   `unrar x` as defense in depth at the tool level, on top of the entry-name check.
+
+  Listing and extraction are two separate invocations of that same closed-source binary, so
+  nothing so far actually confirms `unrar x` wrote what `unrar lb` listed, or honoured `-ol-` —
+  a listing/extraction divergence is exactly the shape of CVE-2022-30333. `Cinder.Library.
+  BookArchive.Zip` gets "never anything but a regular file or a directory" structurally, by
+  construction: it cannot write a symlink no matter what an entry claims. This module cannot
+  make that same structural claim about `unrar`, so it is verified instead — after `unrar x`
+  returns and before the scratch directory is ever handed to `resolve_fun`, every path under
+  `dest_dir` is `lstat`'d (never `stat` — a symlink must be seen as itself, not followed to
+  whatever it targets) and the whole archive is refused as `:archive_entry_unsafe` if anything
+  but a regular file or a directory turns up. The walk itself only ever descends into an entry
+  `lstat` confirms is a genuine directory, so a symlinked directory is refused rather than
+  walked into.
   """
 
   alias Cinder.Library.BookArchive.EntryPath
@@ -92,15 +105,47 @@ defmodule Cinder.Library.BookArchive.Rar do
 
     with {:ok, entries} <- list_entries(bin, archive_path),
          :ok <- check_entry_count(entries, max_entries),
-         :ok <- validate_entries(entries, dest_dir) do
-      run_extraction(
-        bin,
-        archive_path,
-        dest_dir,
-        max_expanded_size,
-        poll_interval,
-        max_duration_ms
-      )
+         :ok <- validate_entries(entries, dest_dir),
+         :ok <-
+           run_extraction(
+             bin,
+             archive_path,
+             dest_dir,
+             max_expanded_size,
+             poll_interval,
+             max_duration_ms
+           ) do
+      verify_extracted_regular(dest_dir)
+    end
+  end
+
+  # See the moduledoc's "Entry safety" section: `unrar x`'s own output is not trusted to have
+  # honoured `-ol-`, so every path actually written is `lstat`'d (never `stat`) after the fact
+  # and the whole archive is refused the moment anything but a regular file or a directory
+  # turns up. Recursion only ever descends into an entry `lstat` itself confirms is a genuine
+  # directory, so a symlinked directory is refused here rather than walked into.
+  defp verify_extracted_regular(dir) do
+    case File.ls(dir) do
+      {:ok, names} -> verify_names_regular(dir, names)
+      {:error, _reason} -> {:error, :archive_entry_unsafe}
+    end
+  end
+
+  defp verify_names_regular(dir, names) do
+    Enum.reduce_while(names, :ok, fn name, :ok ->
+      case verify_entry_regular(Path.join(dir, name)) do
+        :ok -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp verify_entry_regular(path) do
+    case File.lstat(path) do
+      {:ok, %File.Stat{type: :directory}} -> verify_extracted_regular(path)
+      {:ok, %File.Stat{type: :regular}} -> :ok
+      {:ok, %File.Stat{}} -> {:error, :archive_entry_unsafe}
+      {:error, _reason} -> {:error, :archive_entry_unsafe}
     end
   end
 
@@ -219,15 +264,24 @@ defmodule Cinder.Library.BookArchive.Rar do
     _kind, _reason -> :ok
   end
 
+  # Never `Path.wildcard` — proven in development that its `**` glob traversal silently follows
+  # a symlinked directory straight through to whatever it targets, which would source this
+  # in-progress budget's numbers from outside `dir` entirely (and, on a mid-extraction poll,
+  # could walk an arbitrarily large or slow tree the ceiling was never meant to measure).
+  # Recursion here only ever descends into an entry `lstat` itself confirms is a genuine
+  # directory, matching `verify_extracted_regular/1`'s own walk below.
   defp dir_size(dir) do
-    dir
-    |> Path.join("**/*")
-    |> Path.wildcard(match_dot: true)
-    |> Enum.reduce(0, fn path, total ->
-      case File.lstat(path) do
-        {:ok, %File.Stat{type: :regular, size: size}} -> total + size
-        _not_a_regular_file_or_vanished -> total
-      end
-    end)
+    case File.ls(dir) do
+      {:ok, names} -> Enum.reduce(names, 0, &(&2 + entry_size(Path.join(dir, &1))))
+      {:error, _reason} -> 0
+    end
+  end
+
+  defp entry_size(path) do
+    case File.lstat(path) do
+      {:ok, %File.Stat{type: :directory}} -> dir_size(path)
+      {:ok, %File.Stat{type: :regular, size: size}} -> size
+      _other_or_vanished -> 0
+    end
   end
 end
