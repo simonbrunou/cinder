@@ -14,8 +14,10 @@ defmodule CinderWeb.BookDetailLive do
   anything; this module holds no `Repo` writes of its own.
 
   Subscribes to `Cinder.Books.subscribe_targets/0` for `{:book_target_updated, target}`
-  (terminal status transitions) and `{:book_grab_updated, grab}` (live download progress), both
-  broadcast on the same `book_targets` PubSub topic.
+  (terminal status transitions), `{:book_grab_updated, grab}` (live download progress), and
+  `{:book_grab_deleted, target_id}` (the corrective for a grab deletion this view's own
+  `reload/1` raced and lost — see `Cinder.Books.Grabs.delete/1`), all broadcast on the same
+  `book_targets` PubSub topic.
   """
   use CinderWeb, :live_view
 
@@ -96,6 +98,15 @@ defmodule CinderWeb.BookDetailLive do
     else
       {:noreply, socket}
     end
+  end
+
+  # The corrective message for the race `Cinder.Books.Grabs.delete/1` documents: this target's
+  # own terminal `:book_target_updated` broadcast can be re-read (via `reload/1` above) before
+  # the grab row backing it is actually deleted, repopulating `@grabs` with a grab about to
+  # vanish. Dropping it here is idempotent — `Map.delete/2` on an absent key is a no-op — so it is
+  # safe whether or not this view lost that earlier race.
+  def handle_info({:book_grab_deleted, target_id}, socket) do
+    {:noreply, assign(socket, :grabs, Map.delete(socket.assigns.grabs, target_id))}
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}

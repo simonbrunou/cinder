@@ -4,11 +4,13 @@ defmodule Cinder.Books.Grabs do
 
   Every mutation of a book grab lives here, mirroring what `Cinder.Catalog.Grabs` does for video
   grabs, so `Cinder.Download.BookPoller` and `Cinder.Download` hold no `Repo` writes of their own
-  (AGENTS.md). Most of these are transient state changes with no broadcast of their own: `create`,
-  `mark_downloaded`, `bump_attempts`, and `delete` all sit alongside a `book_targets` status write
-  elsewhere in the same pipeline step, and it is that target broadcast an open view reacts to.
-  `track/2` is the one exception — a progress tick has no accompanying status change to piggyback
-  on, so it broadcasts for itself; see its own doc.
+  (AGENTS.md). `create`, `mark_downloaded`, and `bump_attempts` are transient state changes with
+  no broadcast of their own: each sits alongside a `book_targets` status write elsewhere in the
+  same pipeline step, and it is that target broadcast an open view reacts to. `track/2` and
+  `delete/1` both broadcast for themselves: a progress tick has no accompanying status change to
+  piggyback on, and a delete can trail its target's own terminal broadcast by enough to lose the
+  race — an open `/books/:id` that already re-read the grab before the delete committed would
+  otherwise never learn it is gone; see each function's own doc.
   """
   import Ecto.Query
 
@@ -195,10 +197,23 @@ defmodule Cinder.Books.Grabs do
     |> Repo.update()
   end
 
-  @doc "Deletes a grab. Idempotent: an already-deleted row is `:ok`."
+  @doc """
+  Deletes a grab, then broadcasts `{:book_grab_deleted, book_target_id}`. Idempotent: an
+  already-deleted row is `:ok`.
+
+  Every call site here writes its target's terminal status (`:available` or `:held`) and
+  broadcasts `{:book_target_updated, target}` *before* calling this — `Cinder.Books.Files.record_import/3`
+  and `Cinder.Books.hold_target/2` each commit and publish on their own. An open `/books/:id` is a
+  different process with no serialization against this subsequent write, so it can re-read
+  `Cinder.Books.Grabs.for_target/1` between that broadcast and this delete and repopulate its
+  in-flight badge with a grab that is about to vanish, with no further poller tick ever coming to
+  correct it. This broadcast is the correction: it fires after the row is gone, so a view that
+  lost the earlier race still gets a second, authoritative message telling it to drop the grab.
+  """
   @spec delete(BookGrab.t()) :: :ok
-  def delete(%BookGrab{id: id}) do
+  def delete(%BookGrab{id: id, book_target_id: book_target_id}) do
     Repo.delete_all(from g in BookGrab, where: g.id == ^id)
+    Books.broadcast({:book_grab_deleted, book_target_id})
     :ok
   end
 end

@@ -1,9 +1,8 @@
 defmodule Cinder.Books.GrabsTest do
   @moduledoc """
-  `track/2`'s broadcast: added in B4c so `/books/:id` can render live download progress, mirroring
-  `Cinder.Catalog.Grabs.update_grab_download_metrics/2`'s own broadcast-only-on-real-change guard.
-  Every other write in this module (`create`, `mark_downloaded`, `bump_attempts`, `delete`)
-  deliberately does not broadcast — see the module doc — so this file only covers `track/2`.
+  `track/2` and `delete/1` are this module's only broadcasting writes — every other write
+  (`create`, `mark_downloaded`, `bump_attempts`) deliberately does not broadcast; see the module
+  doc.
   """
   use Cinder.DataCase, async: false
 
@@ -100,6 +99,40 @@ defmodule Cinder.Books.GrabsTest do
              Grabs.track(first, %{download_progress: 0.3, download_speed: 100})
 
     refute_receive {:book_grab_updated, _grab}, 50
+  end
+
+  describe "delete/1" do
+    test "broadcasts {:book_grab_deleted, target_id} after the row is gone", %{grab: grab} do
+      Books.subscribe_targets()
+
+      assert :ok = Grabs.delete(grab)
+
+      assert_receive {:book_grab_deleted, target_id}
+      assert target_id == grab.book_target_id
+      refute Grabs.for_target(grab.book_target_id)
+    end
+
+    # The trace #403 establishes: a caller's own target-status write and broadcast (e.g.
+    # `Cinder.Books.hold_target/2`) commits and fires strictly before this module's delete ever
+    # runs, so a subscriber can observe the target's terminal broadcast while the grab it is
+    # about to orphan is still readable — proving the ordering deterministically, not by
+    # scheduling luck.
+    test "the target's own terminal broadcast can be observed before delete/1 ever runs", %{
+      grab: grab
+    } do
+      target = Books.get_target(grab.book_target_id)
+      Books.subscribe_targets()
+
+      assert {:ok, held} = Books.hold_target(target, "operator conflict")
+
+      assert_receive {:book_target_updated, ^held}
+      assert %Cinder.Books.BookGrab{} = Grabs.for_target(grab.book_target_id)
+
+      # The corrective this issue adds: deleting the now-orphaned grab broadcasts for itself.
+      assert :ok = Grabs.delete(grab)
+      assert_receive {:book_grab_deleted, target_id}
+      assert target_id == grab.book_target_id
+    end
   end
 
   defp identifier(provider, kind, foreign_id),

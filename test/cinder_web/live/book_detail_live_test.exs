@@ -264,6 +264,34 @@ defmodule CinderWeb.BookDetailLiveTest do
 
       refute render(lv) =~ "unrelated conflict"
     end
+
+    test "a grab's badge does not outlive Grabs.delete/1's own corrective broadcast", %{
+      conn: conn
+    } do
+      {target, _work} = ebook_target()
+      {:ok, grab} = Books.Grabs.create(target.id, "remote-1", :torrent, "Some Release")
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+      assert has_element?(lv, "#book-target-ebook", "Downloading")
+
+      # Reproduces #403's race deterministically rather than by scheduling luck:
+      # `Books.hold_target/2` alone — exactly what `BookPoller.hold/3` calls first — commits the
+      # target's terminal status and broadcasts `{:book_target_updated, held}`, but never touches
+      # the grab. This view reloads on that broadcast and re-reads a grab that is still there.
+      assert {:ok, held} = Books.hold_target(target, "operator conflict")
+      assert held.status == :held
+      assert %BookGrab{} = Books.Grabs.for_target(target.id)
+
+      assert render(lv) =~ "Needs attention"
+      assert has_element?(lv, "#book-target-ebook", "Downloading")
+
+      # The corrective: deleting the grab (as the poller does next, in production) broadcasts
+      # {:book_grab_deleted, target_id} on its own — no further target broadcast is coming, since
+      # the target already reached its terminal state above — and that alone clears the stale
+      # badge.
+      assert :ok = Books.Grabs.delete(grab)
+      refute has_element?(lv, "#book-target-ebook", "Downloading")
+    end
   end
 
   defp stub_indexer(releases) do
