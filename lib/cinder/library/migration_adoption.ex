@@ -11,34 +11,38 @@ defmodule Cinder.Library.MigrationAdoption do
 
   @statuses [:ready, :needs_decision, :blocked, :already_managed]
 
-  def preview(source) when source in [:radarr, :sonarr] do
+  def preview(source) do
     with {:ok, module} <- source_module(source),
          {:ok, snapshot} <- module.snapshot() do
       lookups = lookups(snapshot)
       reconciled = MigrationReconciler.reconcile(snapshot, lookups)
       managed = managed_state()
 
-      candidates =
-        source
-        |> plan(snapshot, reconciled, lookups, managed)
-        |> Kernel.++(diagnostic_candidates(snapshot, source))
-        |> Enum.sort_by(& &1.key)
-        |> Enum.with_index(1)
-        |> Enum.map(fn {candidate, id} -> Map.put(candidate, :id, id) end)
-
-      {:ok,
-       %{
-         source: source,
-         candidates: candidates,
-         counts: counts(candidates),
-         series_counts: series_counts(candidates)
-       }}
+      case plan(source, snapshot, reconciled, lookups, managed) do
+        {:error, _reason} = error -> error
+        planned when is_list(planned) -> preview_result(source, snapshot, planned)
+      end
     end
   end
 
-  def preview(_source), do: {:error, :unknown_migration_source}
+  defp preview_result(source, snapshot, planned) do
+    candidates =
+      planned
+      |> Kernel.++(diagnostic_candidates(snapshot, source))
+      |> Enum.sort_by(& &1.key)
+      |> Enum.with_index(1)
+      |> Enum.map(fn {candidate, id} -> Map.put(candidate, :id, id) end)
 
-  def adopt(source, commands) when source in [:radarr, :sonarr] and is_list(commands) do
+    {:ok,
+     %{
+       source: source,
+       candidates: candidates,
+       counts: counts(candidates),
+       series_counts: series_counts(candidates)
+     }}
+  end
+
+  def adopt(source, commands) when is_list(commands) do
     case adoption_candidates(source, commands) do
       {:ok, by_key} ->
         {selected, unavailable} = selected_candidates(commands, by_key)
@@ -126,6 +130,18 @@ defmodule Cinder.Library.MigrationAdoption do
 
   defp plan(:sonarr, snapshot, reconciled, lookups, managed),
     do: plan_episodes(snapshot, reconciled, lookups, managed)
+
+  # A source configured in the registry but not yet wired into plan/4 (currently :readarr —
+  # B6a adds dispatch and the snapshot contract, but book-specific candidate classification
+  # doesn't exist until B6b) fails closed with an explicit error rather than raising OR
+  # returning an empty-but-successful preview — an empty `{:ok, %{candidates: []}}` is
+  # indistinguishable from "this library genuinely has nothing to adopt", which is the wrong
+  # signal for "not implemented yet". `preview/1` propagates this straight through; the
+  # LiveView's existing scan-failed flash (already exercised by the not-configured case)
+  # handles it with no new code. B6b's real `:readarr` clause takes precedence over this
+  # catch-all automatically once added, with no other change required here.
+  defp plan(_source, _snapshot, _reconciled, _lookups, _managed),
+    do: {:error, :unsupported_source}
 
   defp plan_movies(snapshot, reconciled, managed) do
     files = files_by_id(snapshot.files, :movie)
@@ -684,6 +700,13 @@ defmodule Cinder.Library.MigrationAdoption do
     end)
   end
 
+  # `adopt/2` is reachable for any source once its list of commands passes `is_list/1` — including
+  # a source `plan/4` never produces candidates for, via the direct `candidate:`-embedded command
+  # shape `candidates_from_commands/1` accepts without calling `preview/1` first. Every candidate is
+  # treated as stale (not adopted, reported via `stale_keys`) rather than raising. Mirrors `plan/4`'s
+  # own catch-all above.
+  defp revalidate_catalog(_source, selected), do: {[], selected}
+
   defp targeted_cinder_series_index(selected) do
     selected
     |> Enum.map(fn {candidate, _choice} ->
@@ -759,6 +782,11 @@ defmodule Cinder.Library.MigrationAdoption do
       adopt_series_items(acc, items)
     end)
   end
+
+  # `revalidate_catalog/2`'s catch-all always empties `selected` for an unimplemented source, so
+  # this never actually adopts anything in practice — kept as an explicit no-op (not a crash) for
+  # any direct caller that reaches here regardless.
+  defp adopt_selected(summary, _source, _selected), do: summary
 
   defp adopt_movie_candidate(summary, candidate) do
     case Catalog.find_or_create_at_available(movie_attrs(candidate.details), candidate.path) do

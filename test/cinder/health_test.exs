@@ -139,9 +139,15 @@ defmodule Cinder.HealthTest do
   test "check_service/1 probes each configured migration source" do
     expect(Cinder.Library.RadarrMigrationSourceMock, :health, fn -> :ok end)
     expect(Cinder.Library.SonarrMigrationSourceMock, :health, fn -> {:error, :down} end)
+    expect(Cinder.Library.ReadarrMigrationSourceMock, :health, fn -> :ok end)
 
     assert Cinder.Health.check_service({:migration_source, :radarr}) == :ok
     assert Cinder.Health.check_service({:migration_source, :sonarr}) == {:error, :down}
+    assert Cinder.Health.check_service({:migration_source, :readarr}) == :ok
+  end
+
+  test "check_service/1 returns :not_configured for a source outside the configured map" do
+    assert Cinder.Health.check_service({:migration_source, :unknown}) == {:error, :not_configured}
   end
 
   test "check_service(:discord) validates the webhook (GET) and returns :ok" do

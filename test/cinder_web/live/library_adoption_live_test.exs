@@ -124,6 +124,29 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     assert has_element?(view, "#flash-error")
   end
 
+  # Regression: `migration_source_keys` (the "scan_migration" guard) is derived from the FULL
+  # registry, which already includes :readarr even though `MigrationAdoption.plan/4` has no
+  # book-specific classification clause yet (that lands in B6b). A devtools-crafted event (no
+  # button exists for it yet) must fail closed with the operator-visible scan-failed flash, not
+  # crash the LiveView and not silently render an empty-but-successful preview (which would be
+  # indistinguishable from "this library has nothing to adopt").
+  test "scan_migration for a configured-but-not-yet-implemented source (readarr) fails closed with the scan-failed flash instead of crashing or showing an empty preview",
+       %{conn: conn} do
+    expect(Cinder.Library.ReadarrMigrationSourceMock, :snapshot, fn ->
+      {:ok,
+       %{movies: [], series: [], episodes: [], authors: [], works: [], editions: [], files: []}}
+    end)
+
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    render_click(view, "scan_migration", %{"source" => "readarr"})
+    render_async(view)
+
+    assert Process.alive?(view.pid)
+    assert has_element?(view, "#flash-error")
+    refute render(view) =~ "Ready: 0"
+    refute has_element?(view, "#migration-summary")
+  end
+
   test "operator assigns a TVDB split file as a part of one combined TMDB episode", %{conn: conn} do
     primary =
       "/tmp/cinder-test-tv-library/The Office (2005)/The.Office.S04E15.mkv"

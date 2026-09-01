@@ -607,7 +607,7 @@ defmodule CinderWeb.SettingsComponents do
   defp setup_section_description(:migration),
     do:
       gettext(
-        "Already use Radarr or Sonarr? Add them here only if you want Cinder to use their library data when adopting existing media. In each app, find the API key under Settings > General. Otherwise leave this optional section blank."
+        "Already use Radarr, Sonarr, or a Readarr-compatible book manager (e.g. Bookshelf)? Add them here only if you want Cinder to use their library data when adopting existing media. In each app, find the API key under Settings > General. Otherwise leave this optional section blank."
       )
 
   defp setup_section_description(:download),
@@ -670,7 +670,8 @@ defmodule CinderWeb.SettingsComponents do
   defp setup_section_resources(:migration),
     do: [
       {gettext("Radarr documentation"), "https://wiki.servarr.com/radarr"},
-      {gettext("Sonarr documentation"), "https://wiki.servarr.com/sonarr"}
+      {gettext("Sonarr documentation"), "https://wiki.servarr.com/sonarr"},
+      {gettext("Bookshelf documentation"), "https://github.com/pennydreadful/bookshelf"}
     ]
 
   defp setup_section_resources(:download),
@@ -710,7 +711,11 @@ defmodule CinderWeb.SettingsComponents do
   def services_for(:indexer), do: [{"indexer", "Prowlarr"}]
 
   def services_for(:migration),
-    do: [{"radarr", gettext("Radarr")}, {"sonarr", gettext("Sonarr")}]
+    do: [
+      {"radarr", gettext("Radarr")},
+      {"sonarr", gettext("Sonarr")},
+      {"readarr", gettext("Readarr")}
+    ]
 
   def services_for(:download),
     do: [{"torrent", gettext("Torrent client")}, {"usenet", gettext("Usenet client")}]
@@ -739,6 +744,7 @@ defmodule CinderWeb.SettingsComponents do
   def decode_service("indexer"), do: :indexer
   def decode_service("radarr"), do: {:migration_source, :radarr}
   def decode_service("sonarr"), do: {:migration_source, :sonarr}
+  def decode_service("readarr"), do: {:migration_source, :readarr}
   def decode_service("media_server"), do: :media_server
   def decode_service("torrent"), do: {:download, :torrent}
   def decode_service("usenet"), do: {:download, :usenet}
