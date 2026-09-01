@@ -956,5 +956,72 @@ defmodule Cinder.CatalogTest do
 
       assert Catalog.dot_folder_files() == []
     end
+
+    # #419 post-merge review (Codex P2): the query filtered on `file_path` alone, missing
+    # `part_file_paths` entirely — an episode/movie with an offending PART, primary clean or nil,
+    # was reported clean. Movie.file_paths/1 and Episode.file_paths/1 (the same accessor
+    # Adoption.managed_paths/0 uses for "all of this row's real files") close that: one row per
+    # offending PATH, not per episode, so a multi-part row with more than one bad path is never
+    # collapsed into a single misleading entry.
+    test "reports an episode with a nil primary path but a dot-folder part" do
+      series = series_fixture(title: "Show")
+      season = season_fixture(series, season_number: 1)
+
+      episode_fixture(season,
+        episode_number: 4,
+        file_path: nil,
+        part_file_paths: ["/lib/.Show (2008) {tmdb-1}/x-part-1.mkv"]
+      )
+
+      assert [%{kind: :episode, title: "Show S01E04", file_path: part_path}] =
+               Catalog.dot_folder_files()
+
+      assert part_path == "/lib/.Show (2008) {tmdb-1}/x-part-1.mkv"
+    end
+
+    test "reports an episode with a clean primary path but a dot-folder part" do
+      series = series_fixture(title: "Show")
+      season = season_fixture(series, season_number: 1)
+
+      episode_fixture(season,
+        episode_number: 5,
+        file_path: "/lib/Show (2008) {tmdb-1}/x.mkv",
+        part_file_paths: ["/lib/.Show (2008) {tmdb-1}/x-part-1.mkv"]
+      )
+
+      assert [%{kind: :episode, title: "Show S01E05", file_path: part_path}] =
+               Catalog.dot_folder_files()
+
+      assert part_path == "/lib/.Show (2008) {tmdb-1}/x-part-1.mkv"
+    end
+
+    test "does not report an episode whose primary and parts are all clean" do
+      series = series_fixture(title: "Show")
+      season = season_fixture(series, season_number: 1)
+
+      episode_fixture(season,
+        episode_number: 6,
+        file_path: "/lib/Show (2008) {tmdb-1}/x.mkv",
+        part_file_paths: ["/lib/Show (2008) {tmdb-1}/x-part-1.mkv"]
+      )
+
+      assert Catalog.dot_folder_files() == []
+    end
+
+    test "reports a movie with a clean primary path but a dot-folder part" do
+      movie =
+        movie_fixture(%{
+          title: "Clean",
+          status: :available,
+          file_path: "/lib/Clean (2020) {tmdb-9}/x.mkv"
+        })
+
+      movie
+      |> Ecto.Changeset.change(part_file_paths: ["/lib/.Clean (2020) {tmdb-9}/x-cd2.mkv"])
+      |> Repo.update!()
+
+      assert [%{kind: :movie, title: "Clean", file_path: part_path}] = Catalog.dot_folder_files()
+      assert part_path == "/lib/.Clean (2020) {tmdb-9}/x-cd2.mkv"
+    end
   end
 end
