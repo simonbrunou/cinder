@@ -122,9 +122,11 @@ defmodule Cinder.Books.Grabs do
       refused with `{:error, :stale_grab}`, never landed on a completed download;
     * a regressed `download_progress` is dropped from the write, not recorded — a client that
       briefly under-reports must never walk the operator-visible bar backwards;
-    * `download_progress_at` advances only on real forward motion (or the completion edge), so a
-      poller tick that re-reports an identical snapshot writes and broadcasts nothing, and an
-      open `/books/:id` is not re-rendered on a no-op.
+    * `download_progress_at` advances only on real forward motion, so a poller tick that
+      re-reports an identical snapshot writes and broadcasts nothing, and an open `/books/:id` is
+      not re-rendered on a no-op. (The completion edge — `content_path` going from unset to
+      set — is `mark_downloaded/2`'s to advance, not this function's: `track/2`'s own
+      `is_nil(content_path)` guard above means it never runs again once a grab is downloaded.)
   """
   @spec track(BookGrab.t(), map()) :: {:ok, BookGrab.t()} | {:error, :stale_grab}
   def track(%BookGrab{} = grab, attrs) do

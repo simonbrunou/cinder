@@ -195,8 +195,6 @@ defmodule Cinder.Download do
   report the audiobook available. Audiobooks are B7; until then this refuses rather than
   half-works.
   """
-  @spec grab_book_target(BookTarget.t(), BookRelease.t()) ::
-          {:ok, BookGrab.t()} | {:error, atom() | Ecto.Changeset.t()}
   def grab_book_target(%BookTarget{media_kind: :ebook} = target, %BookRelease{} = release) do
     case Repo.get_by(Intent, kind: :book_target, target_id: target.id) do
       nil ->

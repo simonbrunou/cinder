@@ -346,11 +346,14 @@ Remaining behavior, unchanged from the first draft:
 `Download.grab_book_target/2`, read at `lib/cinder/download.ex:198-211`:
 
 ```elixir
-@spec grab_book_target(BookTarget.t(), BookRelease.t()) ::
-        {:ok, BookGrab.t()} | {:error, atom() | Ecto.Changeset.t()}
 def grab_book_target(%BookTarget{media_kind: :ebook} = target, %BookRelease{} = release)
 def grab_book_target(%BookTarget{}, %BookRelease{}), do: {:error, :unsupported_media_kind}
 ```
+
+No `@spec` — `download.ex` carries none anywhere in its 1,190 lines (a `@doc` only, on every
+public function, is the file's actual convention), so this doc does not invent a lone typespec
+for one function to make a quote easier to write; the return contract is instead the prose and
+the outcome table below, which is exhaustive already.
 
 (Confirmed against `test/cinder/download/book_intent_test.exs`, which asserts
 `{:ok, %BookGrab{}} = Download.grab_book_target(...)` on success — not an `%Intent{}`; the intent
@@ -692,8 +695,21 @@ in the same voice, per the B4a/B4b convention of not silently folding a correcti
   (`assign_new(:results, fn -> %{accepted: [], rejected: [], complete?: true} end)`) on the very
   first render, mirroring `ManualSearchComponent`'s own `results: []` default — the sibling never
   had this bug because it always initializes `results` alongside `state: :loading`, and this
-  component didn't. A direct-invocation test (`handle_event("grab", …)` on a bare `:loading`
-  socket) proves the fix; §11 undersold this as a should-fix originally and it was not one.
+  component didn't. §11 undersold this as a should-fix originally and it was not one.
+
+  The first regression test written for this — a hand-built `%Socket{}` that already carried
+  `:results` in its assigns, with `handle_event/3` called directly — **passed against the unfixed
+  component**, proving nothing: `handle_event/3` is byte-for-byte unchanged by the fix, and the
+  bug was `:results` being *absent*, which only ever happens through the real `update/2` control
+  flow that test bypassed by construction. The corrected version calls the real `update/2` (a
+  disconnected socket with no `transport_pid`, so `connected?/1` is false and `update/2` takes its
+  dead-render branch, which pre-fix touched `:state` and never `:results`) and then
+  `handle_event("grab", …)` on the socket that call actually produces. Verified in both
+  directions: reverting the component to the pre-fix commit and running only this test raises the
+  exact `KeyError` on `socket.assigns.results.accepted` the bug report described, with the file's
+  other 11 tests unaffected; restoring the fix, all 12 pass again. Recording the failed first
+  attempt here rather than only the corrected version, because a clean-looking claim that a test
+  "proves the fix" is exactly the kind of unverified assertion this document exists to not make.
 - **`Cinder.Books.Grabs.track/2`'s parity claim with `Cinder.Catalog.Grabs.update_grab_download_metrics/2`
   was false as written, fixed to be true.** The doc comment claimed the same guard without it: the
   video sibling refuses a write that would land on an already-`:downloading`-false grab
@@ -712,14 +728,22 @@ in the same voice, per the B4a/B4b convention of not silently folding a correcti
   logs `inspect(reason)`, so this is not a breaking change to its caller. Three new tests in
   `grabs_test.exs` cover the staleness refusal, the regression drop, and that a regression-only
   call (nothing else changed) still writes and broadcasts nothing.
-- **The plan quoted a `@spec` for `grab_book_target/2` that did not exist.** §7's fenced block
-  presented one as read verbatim from `download.ex`, and no function in that module carried a
-  `@spec` at all — the file's own established convention is `@doc`-only. Resolved by adding the
-  real spec rather than deleting the quote, so the quote is no longer aspirational; this is a
-  one-off addition to the file's convention, not "joining" an existing pattern of specs the way
-  the plan implied when it said "the surrounding functions in that module carry specs" — they do
-  not, and that specific justification does not hold even though the outcome (a true quote) is
-  right.
+- **Reversed: the `@spec` added to `grab_book_target/2` in this round is removed again.** The prior
+  entry above recorded adding a real `@spec` so §7's quoted block would stop being aspirational.
+  That was the wrong fix, and the instruction to add it was itself wrong — `download.ex` carries
+  no `@spec` anywhere across 1,190 lines; a `@doc`-only convention is the actual, consistent
+  pattern, and one lone typespec would have been a second, undiscussed convention introduced
+  *because* a doc quoted code that didn't exist, not because the module wanted one. Adding it also
+  had a real cost the first pass missed: two new lines shifted every downstream line number in the
+  file, so four citations that were correct — `download.ex:211` (the `:unsupported_media_kind`
+  clause), the `198-211` range on the quoted block, `book_release/1` at `216-223`, and
+  `do_reconcile_valid_intent/1` calling `do_submit_intent/1` at `374-376` — went stale in the same
+  commit that was supposed to close the drift class the `@spec` finding itself named. The `@spec`
+  is gone; §7's fenced block now shows only the two real `def` clauses, with a line stating plainly
+  that this file has no typespecs and that the return contract lives in the prose and the outcome
+  table instead. All four citations were re-verified against the reverted file and are correct
+  again on their own, not merely restored by assumption. The doc describes the code; a plan doc
+  quoting something is never a reason to add it.
 - **`BookScorer`'s `@type reason` and `reasons/0` were two hand-maintained copies of the same 12
   atoms, not one.** §6 said the opposite ("`reasons/0`... co-located with `@type reason`" implying
   one source) while the code carried two independent literals. Collapsed onto one `@reasons`
@@ -762,3 +786,27 @@ in the same voice, per the B4a/B4b convention of not silently folding a correcti
   write in one `Repo.transaction` with `Repo.rollback` (`requests.ex:426-435`), so a failed
   `arm/2` rolls the `ensure_target/2` insert back — and stays recorded as a B5 obligation only, not
   fixed here.
+
+### Third review round
+
+- **The blocker regression test's rewrite and its own before/after proof are recorded above, in
+  place, inside the BLOCKER bullet** — not repeated here — so a reader sees the mistake and the
+  correction together rather than a clean second draft with the false start edited out of history.
+  Also added in the same pass: malformed grab-index coverage (`"-1"`, `"abc"`, `"1.5"`, a missing
+  `"index"` key) against a real `:loaded` socket built the same way (via the real `update/2`, with
+  a preseeded `results:`), where `fetch_release/2`'s guard clauses — and, for the missing-key case,
+  the plain `handle_event/3` catch-all — actually matter. Previously only `"0"` was ever tested.
+- **`Cinder.Books.Grabs.track/2`'s doc corrected: the "completion edge" is not this function's to
+  reach.** It read "advances only on real forward motion (or the completion edge)" — the edge
+  (`content_path` going from unset to set) belongs to `mark_downloaded/2`; `track/2`'s own
+  `is_nil(content_path)` guard means it never runs again once a grab is downloaded, so it could
+  never observe that edge itself. Narrowed to describe only what `track/2` does.
+- **`track/2`'s `download_progress_at` handling: still maintained, just moved.** The guarded
+  `Repo.update_all` this round's fix added bypasses `BookGrab.changeset/2` entirely for this write
+  path, so the schema's own private `advance_download_progress_at/2` no longer runs here — but the
+  same "advance only on real forward motion" rule is not dropped, it is computed inline in
+  `Cinder.Books.Grabs` itself (`progress_advanced?/2`, a second copy of logic the schema still
+  applies for its *other* callers, `create/4` and `bump_attempts/2`, which still go through the
+  changeset). This mirrors the split `Cinder.Catalog.Grab` (schema) and `Cinder.Catalog.Grabs`
+  (context) already have between them — not a new pattern, and not a behavior this slice quietly
+  removed.

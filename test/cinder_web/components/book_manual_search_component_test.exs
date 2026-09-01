@@ -183,24 +183,60 @@ defmodule CinderWeb.BookManualSearchComponentTest do
     assert_receive {:grabbed, %BookRelease{download_url: "url-a"}}
   end
 
-  test "a grab event while still loading is a no-op, not a crash" do
+  test "a grab event through the real update/2 flow, with :results genuinely never assigned, is a no-op — not a crash" do
     # The bug this proves fixed: `handle_event("grab", …)` used to dereference
     # `socket.assigns.results.accepted` unconditionally, and `:results` was only ever assigned by
     # `handle_async` or a preseed — so a "grab" arriving while `state` was `:loading` or `:error`
     # raised `KeyError` and took the parent LiveView down with it.
-    socket = %Socket{
-      assigns: %{
-        __changed__: %{},
-        state: :loading,
-        results: %{accepted: [], rejected: [], complete?: true},
-        target: %BookTarget{id: 1, media_kind: :ebook, status: :monitored}
-      }
+    #
+    # A hand-built socket that already carries `:results` (the first version of this test) never
+    # exercised that: `handle_event/3` itself is byte-for-byte unchanged by the fix — only
+    # `update/2` changed, and only `update/2` decides whether `:results` exists at all. So this
+    # calls the real `update/2` (not a fabricated socket) to reach the genuinely-unset state, the
+    # same way a first, disconnected render or a stalled connected one would in production: no
+    # `transport_pid`, so `connected?/1` is false and `update/2` takes its "not yet connected"
+    # branch, which — pre-fix — touched `:state` and never `:results` at all.
+    assigns = %{
+      id: "ms",
+      target: %BookTarget{id: 1, media_kind: :ebook, status: :monitored},
+      work: %{title: "Title", authors: ["Author"]}
     }
 
-    assert {:noreply, ^socket} =
-             BookManualSearchComponent.handle_event("grab", %{"index" => "0"}, socket)
+    socket = %Socket{assigns: %{__changed__: %{}}}
+
+    assert {:ok, loading} = BookManualSearchComponent.update(assigns, socket)
+    assert loading.assigns.state == :loading
+
+    assert {:noreply, _socket} =
+             BookManualSearchComponent.handle_event("grab", %{"index" => "0"}, loading)
 
     refute_received {:manual_grab, _mode, _target, _release}
+  end
+
+  test "a malformed grab index against a real :loaded socket is ignored, not a crash" do
+    results = %{
+      accepted: [{release("Author - Title (EPUB)"), evidence()}],
+      rejected: [],
+      complete?: true
+    }
+
+    assigns = %{
+      id: "ms",
+      target: %BookTarget{id: 1, media_kind: :ebook, status: :monitored},
+      work: %{title: "Title", authors: ["Author"]},
+      results: results
+    }
+
+    socket = %Socket{assigns: %{__changed__: %{}}}
+    assert {:ok, loaded} = BookManualSearchComponent.update(assigns, socket)
+    assert loaded.assigns.state == :loaded
+
+    for params <- [%{"index" => "-1"}, %{"index" => "abc"}, %{"index" => "1.5"}, %{}] do
+      assert {:noreply, _socket} = BookManualSearchComponent.handle_event("grab", params, loaded),
+             "expected #{inspect(params)} to be a no-op"
+
+      refute_received {:manual_grab, _mode, _target, _release}
+    end
   end
 
   test ":loading renders a spinner, and :error renders the retry copy — not just :loaded" do
