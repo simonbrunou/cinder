@@ -785,6 +785,12 @@ defmodule CinderWeb.CoreComponents do
   defp badge_spec(:request, :held),
     do: {gettext("Needs attention"), "badge-error", "hero-exclamation-triangle"}
 
+  # A linked book target with no live request pointed at it, still `:unmonitored` — B5's
+  # pause/resume control is the only future writer of this combination. Same label/color/icon as
+  # the series/season `kind={:monitored}` false case, so "paused" reads identically everywhere.
+  defp badge_spec(:request, :unmonitored),
+    do: {gettext("Unmonitored"), "badge-ghost", "hero-eye-slash"}
+
   # episode derived-state
   defp badge_spec(:episode, :available),
     do: {gettext("Available"), "badge-success", "hero-check-circle"}
