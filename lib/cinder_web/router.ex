@@ -121,6 +121,7 @@ defmodule CinderWeb.Router do
       live "/library/adopt", LibraryAdoptionLive
       live "/movies/:id", MovieDetailLive
       live "/series/:id", SeriesDetailLive
+      live "/books/:id", BookDetailLive
       live "/calendar", CalendarLive
     end
 

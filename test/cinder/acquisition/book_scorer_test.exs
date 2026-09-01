@@ -591,4 +591,83 @@ defmodule Cinder.Acquisition.BookScorerTest do
   test "accepted_formats/0 is the parity contract's e-book profile, EPUB first" do
     assert BookScorer.accepted_formats() == [:epub, :azw3, :mobi]
   end
+
+  test "reasons/0 has no duplicates" do
+    reasons = BookScorer.reasons()
+    assert Enum.uniq(reasons) == reasons
+  end
+
+  # The claim this file previously made — that comparing `reasons/0` to a hand-copied third list
+  # here proved it was "every reject reason `evaluate/3` can return" — was false: a hardcoded
+  # comparison list can drift from `evaluate/3`'s real behavior exactly like the two lists it
+  # replaced could drift from each other (`@type reason` and `reasons/0` are now generated from
+  # one `@reasons` attribute in `book_scorer.ex`, closing that half of the gap). This proves the
+  # other half: every atom `reasons/0` declares is independently reachable through a real
+  # `evaluate/3` call, via a fixture already exercised by its own dedicated test elsewhere in this
+  # file — and the reverse, that every fixture below still names a real declared reason, so a
+  # reason removed from `@reasons` and forgotten here fails too.
+  test "every BookScorer.reasons/0 atom is genuinely reachable from evaluate/3" do
+    triggers = %{
+      format_unknown: fn ->
+        BookScorer.evaluate(release("Toni Morrison - Beloved"), @beloved)
+      end,
+      format_rejected: fn ->
+        BookScorer.evaluate(release("Toni Morrison - Beloved (pdf)"), @beloved)
+      end,
+      format_contradictory: fn ->
+        BookScorer.evaluate(release("Toni Morrison - Beloved (epub) (pdf)"), @beloved)
+      end,
+      author_mismatch: fn ->
+        BookScorer.evaluate(release("Someone Else - Beloved (epub)"), @beloved)
+      end,
+      title_mismatch: fn ->
+        BookScorer.evaluate(release("Toni Morrison - Song of Solomon (epub)"), @beloved)
+      end,
+      title_unfoldable: fn ->
+        work = %{title: "ノルウェイの森 1", authors: ["Haruki Murakami"]}
+        BookScorer.evaluate(release("Haruki Murakami - 海辺のカフカ 1 (epub)"), work)
+      end,
+      language_mismatch: fn ->
+        BookScorer.evaluate(release("Toni Morrison - Beloved (epub)"), @beloved, language: "fr")
+      end,
+      wrong_protocol: fn ->
+        BookScorer.evaluate(
+          release("Toni Morrison - Beloved (epub)", protocol: :usenet),
+          @beloved,
+          protocols: [:torrent]
+        )
+      end,
+      abridged_edition: fn ->
+        BookScorer.evaluate(release("Toni Morrison - Beloved Abridged (epub)"), @beloved)
+      end,
+      collection_ambiguous: fn ->
+        work = %{title: "The Way of Kings", authors: ["Brandon Sanderson"]}
+
+        BookScorer.evaluate(
+          release(
+            "Brandon Sanderson - Stormlight Archive Books 1-3 " <>
+              "(The Way of Kings, Words of Radiance, Oathbringer) (epub)"
+          ),
+          work
+        )
+      end,
+      size_out_of_band: fn ->
+        BookScorer.evaluate(release("Toni Morrison - Beloved (epub)", size: 1_000), @beloved)
+      end,
+      blocked_term: fn ->
+        BookScorer.evaluate(
+          release("Toni Morrison - Beloved (epub) [SAMPLE]"),
+          @beloved,
+          blocked_terms: ["sample"]
+        )
+      end
+    }
+
+    assert triggers |> Map.keys() |> Enum.sort() == Enum.sort(BookScorer.reasons())
+
+    for reason <- BookScorer.reasons() do
+      assert {:reject, ^reason} = triggers[reason].(),
+             "#{inspect(reason)}'s fixture did not trigger it"
+    end
+  end
 end

@@ -278,6 +278,15 @@ defmodule CinderWeb.RequestsLive do
   # Match a row by its (client-supplied, string) id without raising on garbage input.
   defp find_request(socket, id), do: find_by_id(socket.assigns.requests, id)
 
+  # An approved book request is the only row type this page links out from: it is the only point
+  # where a `book_targets` row is guaranteed to exist (`Books.monitor_target/4` runs inside
+  # `Requests.approve_request/3`), so anything before approval has nowhere at `/books/:id` to go.
+  # Movie/series rows get no equivalent link — there was none to mirror for any target type before
+  # this (`request_title/2` has always rendered as plain text here), and adding one for them is a
+  # separate, unrequested change.
+  defp book_request_link?(%{target_type: "book", status: :approved}), do: true
+  defp book_request_link?(_request), do: false
+
   defp toggle(set, id) do
     if MapSet.member?(set, id), do: MapSet.delete(set, id), else: MapSet.put(set, id)
   end
@@ -408,7 +417,14 @@ defmodule CinderWeb.RequestsLive do
             />
             <div class="min-w-0 flex-1">
               <span class="font-semibold">
-                {request_title(r, @locale)}
+                <.link
+                  :if={book_request_link?(r)}
+                  navigate={~p"/books/#{r.target_id}"}
+                  class="link link-hover"
+                >
+                  {request_title(r, @locale)}
+                </.link>
+                <span :if={!book_request_link?(r)}>{request_title(r, @locale)}</span>
               </span>
               <span :if={r.year} class="opacity-70">({r.year})</span>
               <span class="block truncate text-sm opacity-70">{r.user.email}</span>
