@@ -70,6 +70,19 @@ defmodule Cinder.Books.Metadata.HardcoverTest do
     assert audiobook.asin == nil
   end
 
+  test "bibliography/1 normalizes full work documents directly, one bounded request" do
+    Req.Test.stub(Cinder.HardcoverStub, fn conn ->
+      assert conn.request_path == "/author/3534/works"
+      Req.Test.json(conn, %{"works" => [@work, %{"title" => "Malformed, no foreign_id"}]})
+    end)
+
+    assert {:ok, [candidate]} = Hardcover.bibliography("3534")
+    assert candidate.provider == :hardcover
+    assert candidate.foreign_id == "736076"
+    assert candidate.title == "Beloved"
+    assert candidate.edition_count == 2
+  end
+
   test "search/1 fetches each hit's work document, since search returns bare ids" do
     Req.Test.stub(Cinder.HardcoverStub, fn conn ->
       case conn.request_path do

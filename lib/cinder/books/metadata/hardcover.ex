@@ -9,6 +9,11 @@ defmodule Cinder.Books.Metadata.Hardcover do
   for a search, which is affordable precisely because this adapter is the *secondary*: the
   resolver only reaches it when Open Library had no reliable answer.
 
+  `bibliography/1` (B5, not part of the frozen B0 corpus shape) assumes
+  `GET /author/{foreign_id}/works` returns `{"works": [<work document>, ...]}` — full work
+  documents directly, the same shape `get_work/1` normalizes, so one bounded request needs no
+  per-candidate follow-up fetch the way bare-id `search/1` results do.
+
   The proxy is deployment-specific and has no sensible default. Unconfigured, every call returns
   `{:error, :not_configured}` and the resolver carries on with Open Library alone.
   """
@@ -39,6 +44,30 @@ defmodule Cinder.Books.Metadata.Hardcover do
         {_ids, []} -> {:error, :all_fetches_failed}
         {_ids, candidates} -> {:ok, candidates}
       end
+    end
+  end
+
+  @impl true
+  # The proxy's per-author endpoint returns full work documents directly (unlike `/search`,
+  # which returns bare ids) — one bounded request, no per-candidate follow-up fetch needed.
+  def bibliography(foreign_id) when is_binary(foreign_id) do
+    case request(url: "/author/#{foreign_id}/works") do
+      {:ok, %{status: 200, body: %{"works" => works}}} when is_list(works) ->
+        {:ok, Enum.flat_map(works, &bibliography_candidate/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  # One malformed work document drops out of the bibliography rather than failing the whole call.
+  defp bibliography_candidate(body) do
+    case normalize_work(body) do
+      {:ok, work} -> [candidate(work)]
+      {:error, _reason} -> []
     end
   end
 

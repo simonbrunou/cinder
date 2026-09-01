@@ -20,6 +20,7 @@ defmodule Cinder.Books.Metadata.OpenLibrary do
   @default_base_url "https://openlibrary.org"
   @max_response_bytes 4 * 1024 * 1024
   @search_limit 10
+  @bibliography_limit 100
   @editions_limit 50
   @search_fields "key,title,author_name,author_key,first_publish_year,edition_count"
 
@@ -29,6 +30,17 @@ defmodule Cinder.Books.Metadata.OpenLibrary do
   @impl true
   def search(query) when is_binary(query) do
     with {:ok, docs} <- search_docs(q: query, fields: @search_fields, limit: @search_limit) do
+      {:ok, Enum.flat_map(docs, &normalize_candidate/1)}
+    end
+  end
+
+  @impl true
+  # `author_key` is a documented Open Library search filter — reusing `search_docs/1` and
+  # `normalize_candidate/1` unchanged means a bibliography entry has exactly the same shape (and
+  # the same one-request cost) as a search hit, with no second normalizer to keep in sync.
+  def bibliography(foreign_id) when is_binary(foreign_id) do
+    with {:ok, docs} <-
+           search_docs(author_key: foreign_id, fields: @search_fields, limit: @bibliography_limit) do
       {:ok, Enum.flat_map(docs, &normalize_candidate/1)}
     end
   end

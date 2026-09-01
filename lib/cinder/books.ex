@@ -12,6 +12,7 @@ defmodule Cinder.Books do
 
   alias Cinder.Books.{
     Author,
+    BookAuthorPolicy,
     BookBlockedRelease,
     BookFile,
     BookGrab,
@@ -20,6 +21,7 @@ defmodule Cinder.Books do
     Credit,
     Edition,
     Identifier,
+    Identity,
     Metadata,
     SeriesMembership,
     Work
@@ -32,6 +34,10 @@ defmodule Cinder.Books do
 
   @book_media_kinds LibraryKind.books()
   @targets_topic "book_targets"
+  # Bounds one `preview_author_policy/2` call (or one `BibliographyRefresher` tick for one
+  # policied author) to at most 1 + this many `Identity.resolve/1` HTTP requests. See
+  # `preview_author_policy/2`'s doc for why the cheap local filter runs *before* this cap.
+  @max_bibliography_candidates 50
   @work_preloads [
     :identifiers,
     :series_memberships,
@@ -474,6 +480,221 @@ defmodule Cinder.Books do
         order_by: [asc: w.id],
         preload: [:identifiers]
     )
+  end
+
+  @doc """
+  Sets, changes, or clears `author`'s bulk-monitoring policy (the contract's "Automatic author
+  monitoring" row). `:specific` deletes the stored row — "selected works," the default, meaning a
+  work is monitored only because a request approved it. `:future`/`:all` upserts one row (unique
+  on `author_id`).
+
+  **No monitoring side effect.** Setting a policy alone creates zero targets, matching the
+  contract's "not a permanent implicit request for every bibliography item" wording literally —
+  see `preview_author_policy/2` and `apply_author_policy/4` for the read/confirm pair that
+  actually backfills targets.
+  """
+  @spec set_author_policy(Author.t(), :specific | :future | :all, Profile.t() | nil) ::
+          {:ok, BookAuthorPolicy.t() | nil} | {:error, Ecto.Changeset.t()}
+  def set_author_policy(%Author{id: author_id}, :specific, _profile) do
+    Repo.delete_all(from p in BookAuthorPolicy, where: p.author_id == ^author_id)
+    {:ok, nil}
+  end
+
+  def set_author_policy(%Author{id: author_id}, policy, %Profile{id: profile_id})
+      when policy in [:future, :all] do
+    attrs = %{author_id: author_id, policy: policy, profile_id: profile_id}
+
+    case Repo.get_by(BookAuthorPolicy, author_id: author_id) do
+      nil -> %BookAuthorPolicy{}
+      existing -> existing
+    end
+    |> BookAuthorPolicy.changeset(attrs)
+    |> Repo.insert_or_update()
+  end
+
+  @doc "The stored policy for `author_id`, or `:specific` (no row) if none was ever set."
+  @spec author_policy(integer()) :: :specific | :future | :all
+  def author_policy(author_id) do
+    case Repo.get_by(BookAuthorPolicy, author_id: author_id) do
+      nil -> :specific
+      %BookAuthorPolicy{policy: policy} -> policy
+    end
+  end
+
+  @doc "The cap `preview_author_policy/2` applies — exposed so the UI need not duplicate it."
+  @spec max_bibliography_candidates() :: pos_integer()
+  def max_bibliography_candidates, do: @max_bibliography_candidates
+
+  @doc """
+  Read-only, but not network-free, and not unbounded: previews what confirming `policy` for
+  `author` would monitor right now.
+
+  Resolves the author's own namespaced provider identity, then calls the provider's
+  `bibliography/1` (one HTTP request). **Two passes, cheap-local-filter first, network-bound
+  cap second — order matters.** Capping straight off the raw bibliography, before checking what
+  is already locally known, would inspect the *same* first `#{@max_bibliography_candidates}`
+  candidates forever: `bibliography/1`'s order is provider-defined and stable call to call, so
+  once those are all monitored, every later preview (and every later
+  `Cinder.Books.BibliographyRefresher` tick, which reuses this function) would keep re-resolving
+  them and never reach the rest. Filtering first — dropping any candidate whose local work
+  already has a `:monitored`/`:available`/`:held` `:ebook` target, via one batched
+  `work_ids_by_reference/1` lookup — means the capped window is always what is genuinely new, so
+  it advances on its own from call to call with no separate cursor to maintain.
+
+  Only the capped remainder is walked through `Identity.resolve/1` — a real HTTP request per
+  candidate, which is why the cap exists at all: uncapped, a 200-work bibliography would issue up
+  to 200 further provider requests from one call.
+
+  Returns `{:ok, %{eligible: [Identity.resolution()], ambiguous_count: non_neg_integer(),
+  remaining: non_neg_integer()}}`. `eligible` never includes a candidate `Identity.resolve/1`
+  could not resolve to exactly one work — those are folded into `ambiguous_count` instead,
+  matching the contract's "never guess." `remaining` is how many not-yet-monitored candidates the
+  cap left unexamined this call — 0 unless the bibliography (after local filtering) exceeds
+  #{@max_bibliography_candidates}.
+  """
+  @spec preview_author_policy(Author.t(), :future | :all) ::
+          {:ok,
+           %{
+             eligible: [Identity.resolution()],
+             ambiguous_count: non_neg_integer(),
+             remaining: non_neg_integer()
+           }}
+          | {:error, :no_provider_identity | :providers_unavailable | term()}
+  def preview_author_policy(%Author{} = author, policy) when policy in [:future, :all] do
+    with {:ok, provider_module, foreign_id} <- author_provider_reference(author),
+         {:ok, candidates} <- provider_module.bibliography(foreign_id) do
+      {:ok, partition_bibliography(candidates, policy)}
+    end
+  end
+
+  @doc """
+  Confirms a previewed policy: arms exactly `eligible_candidates` and upserts the policy row.
+
+  Takes the **exact** resolution list the caller already holds from a `preview_author_policy/2`
+  call and never re-fetches the bibliography or re-resolves a candidate — this is what makes
+  "adds exactly the previewed eligible targets" true rather than aspirational, and (reused
+  unchanged by `Cinder.Books.BibliographyRefresher`) what keeps one sweep's network cost at the
+  same one-bibliography-plus-#{@max_bibliography_candidates}-resolves bound as a single preview,
+  not double it.
+
+  Per candidate: `import_resolution/1` (idempotent) folds the already-resolved work into the
+  catalog, then `monitor_target/4` arms its `:ebook` target — never `:audiobook`, see the
+  roadmap's "what stays out." One candidate's failure does not abort the batch. Returns
+  `{:ok, created_count}`; `created_count` is always `length(eligible_candidates)` unless a
+  candidate genuinely failed to import/arm.
+  """
+  @spec apply_author_policy(Author.t(), :future | :all, Profile.t(), [Identity.resolution()]) ::
+          {:ok, non_neg_integer()}
+  def apply_author_policy(%Author{} = author, policy, %Profile{} = profile, eligible_candidates)
+      when policy in [:future, :all] do
+    created_count =
+      Enum.count(eligible_candidates, &match?({:ok, _target}, import_and_monitor(&1, profile)))
+
+    {:ok, _policy_row} = set_author_policy(author, policy, profile)
+    {:ok, created_count}
+  end
+
+  defp author_provider_reference(%Author{id: id}) do
+    Identifier
+    |> where([i], i.author_id == ^id and i.kind == "author")
+    |> Repo.all()
+    |> List.first()
+    |> author_reference_module()
+  end
+
+  defp author_reference_module(nil), do: {:error, :no_provider_identity}
+
+  defp author_reference_module(%Identifier{provider: provider, foreign_id: foreign_id}) do
+    case provider_module_named(provider) do
+      nil -> {:error, :no_provider_identity}
+      module -> {:ok, module, foreign_id}
+    end
+  end
+
+  defp provider_module_named(provider) when is_binary(provider),
+    do: Enum.find(Metadata.providers(), &(to_string(&1.provider()) == provider))
+
+  defp partition_bibliography(candidates, policy) do
+    new_candidates = drop_locally_monitored(candidates)
+    remaining = max(length(new_candidates) - @max_bibliography_candidates, 0)
+    capped = Enum.take(new_candidates, @max_bibliography_candidates)
+    {eligible, ambiguous_count} = resolve_eligible(capped, policy)
+
+    %{eligible: eligible, ambiguous_count: ambiguous_count, remaining: remaining}
+  end
+
+  # The cheap, local, no-network pass — run BEFORE the cap. See `preview_author_policy/2`'s doc.
+  defp drop_locally_monitored(candidates) do
+    refs = Enum.map(candidates, &{&1.provider, &1.foreign_id})
+    work_ids = work_ids_by_reference(refs)
+    statuses = work_ids |> Map.values() |> Enum.uniq() |> target_statuses()
+
+    Enum.reject(candidates, fn candidate ->
+      case Map.get(work_ids, {to_string(candidate.provider), candidate.foreign_id}) do
+        nil -> false
+        work_id -> Map.get(statuses, {work_id, :ebook}) in [:monitored, :available, :held]
+      end
+    end)
+  end
+
+  # The capped, network-bound pass: one `Identity.resolve/1` call per remaining candidate, at
+  # most `@max_bibliography_candidates` of them. A candidate the provider fails to re-serve, or
+  # that resolves ambiguously, is counted but never listed as eligible.
+  defp resolve_eligible(candidates, policy) do
+    {eligible, ambiguous_count} =
+      Enum.reduce(candidates, {[], 0}, fn candidate, {eligible, ambiguous} ->
+        case resolve_bibliography_candidate(candidate, policy) do
+          {:ok, resolution} -> {[resolution | eligible], ambiguous}
+          :rejected -> {eligible, ambiguous}
+          :ambiguous -> {eligible, ambiguous + 1}
+        end
+      end)
+
+    {Enum.reverse(eligible), ambiguous_count}
+  end
+
+  defp resolve_bibliography_candidate(candidate, policy) do
+    reference = Identity.reference_for(candidate.provider, candidate.foreign_id)
+
+    case Identity.resolve(reference) do
+      {:ok, resolution} -> accept_if_wanted(resolution, policy)
+      {:unresolved, _reason} -> :ambiguous
+      {:error, _reason} -> :ambiguous
+    end
+  end
+
+  # Readarr's own "Future Books" semantics: a work whose publication date is unknown or not yet
+  # past — the only reading consistent with "future works" as a *narrower* policy than "all
+  # works." `:all` excludes nothing here.
+  defp accept_if_wanted(%{work: %{first_published_on: date}} = resolution, :future) do
+    if is_nil(date) or Date.compare(date, Date.utc_today()) != :lt,
+      do: {:ok, resolution},
+      else: :rejected
+  end
+
+  defp accept_if_wanted(resolution, :all), do: {:ok, resolution}
+
+  # `isolate`-style: one candidate's exception does not abort the batch. Books has no
+  # `PollerSkeleton` of its own to lean on here — `apply_author_policy/4` runs from a LiveView
+  # `start_async`, not a poller tick.
+  defp import_and_monitor(resolution, profile) do
+    with {:ok, work} <- import_resolution(resolution) do
+      monitor_target(work, :ebook, profile)
+    end
+  rescue
+    e ->
+      Logger.warning(
+        "author policy candidate failed: #{Exception.format(:error, e, __STACKTRACE__)}"
+      )
+
+      {:error, :exception}
+  catch
+    kind, value ->
+      Logger.warning(
+        "author policy candidate failed: #{Exception.format(kind, value, __STACKTRACE__)}"
+      )
+
+      {:error, :exception}
   end
 
   @doc """

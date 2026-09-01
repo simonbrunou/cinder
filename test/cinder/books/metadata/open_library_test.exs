@@ -40,6 +40,31 @@ defmodule Cinder.Books.Metadata.OpenLibraryTest do
            ]
   end
 
+  test "bibliography/1 reuses the search normalizer against the author_key filter" do
+    Req.Test.stub(Cinder.OpenLibraryStub, fn conn ->
+      assert conn.request_path == "/search.json"
+      assert conn.params["author_key"] == "OL30084A"
+      assert conn.params["fields"] =~ "author_key"
+
+      Req.Test.json(conn, %{
+        "docs" => [
+          %{
+            "key" => "/works/OL50548W",
+            "title" => "Beloved",
+            "author_name" => ["Toni Morrison"],
+            "author_key" => ["OL30084A"],
+            "first_publish_year" => 1987,
+            "edition_count" => 107
+          }
+        ]
+      })
+    end)
+
+    assert {:ok, [candidate]} = OpenLibrary.bibliography("OL30084A")
+    assert candidate.foreign_id == "OL50548W"
+    assert candidate.title == "Beloved"
+  end
+
   test "a name with no matching author key is dropped and the work says so" do
     stub_search(%{
       "key" => "/works/OL1W",

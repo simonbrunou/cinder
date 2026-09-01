@@ -68,6 +68,15 @@ defmodule Cinder.Books.Metadata do
   @doc "Free-text search. Returns candidates in the provider's own relevance order."
   @callback search(query :: String.t()) :: {:ok, [candidate()]} | {:error, term()}
 
+  @doc """
+  Every work credited to the author identified by `foreign_id` **on this provider** — the B5
+  author-monitoring-policy preview/refresh source. Reuses `candidate()` unchanged: a bibliography
+  entry is judged and resolved (`Cinder.Books.Identity.resolve/1`) exactly like a search hit, so
+  callers learn no second shape. One bounded HTTP request, under the same
+  bounded-payload/timeout/`HTTPPolicy` discipline as `search/1`/`get_work/1`.
+  """
+  @callback bibliography(foreign_id :: String.t()) :: {:ok, [candidate()]} | {:error, term()}
+
   @doc "One work in full, by this provider's own work id."
   @callback get_work(foreign_id :: String.t()) :: {:ok, work()} | {:error, term()}
 

@@ -7,8 +7,9 @@ defmodule CinderWeb.BookDetailLiveTest do
   alias Cinder.AccountsFixtures
   alias Cinder.Acquisition.IndexerMock
   alias Cinder.Books
-  alias Cinder.Books.{BookGrab, BookTarget}
+  alias Cinder.Books.{BookGrab, BookTarget, PrimaryMetadataMock}
   alias Cinder.Catalog
+  alias Cinder.Repo
 
   setup :register_and_log_in_admin
   setup :set_mox_global
@@ -364,6 +365,155 @@ defmodule CinderWeb.BookDetailLiveTest do
     end
   end
 
+  describe "author monitoring policy" do
+    test "the control is hidden until the work has an approved ebook target", %{conn: conn} do
+      {:ok, work} =
+        Books.upsert_work(%{title: "No target yet #{unique_id()}", identifier: identifier()})
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{work.id}")
+
+      refute has_element?(lv, "#book-author-policies")
+    end
+
+    test "the select reflects the stored policy, and reverting to Selected works applies
+          immediately with no preview",
+         %{conn: conn} do
+      {target, work} = ebook_target()
+      %{author: author} = hd(work.credits)
+      profile = Catalog.get_profile(target.profile_id)
+
+      {:ok, _policy} = Books.set_author_policy(author, :future, profile)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{work.id}")
+
+      assert has_element?(
+               lv,
+               ~s(#author-policy-form-#{author.id} option[value="future"][selected])
+             )
+
+      # No `bibliography`/`get_work` stub is registered — a preview here would raise
+      # `Mox.UnexpectedCallError` rather than silently succeeding.
+      lv
+      |> form("#author-policy-form-#{author.id}", %{"policy" => "specific"})
+      |> render_change()
+
+      assert Books.author_policy(author.id) == :specific
+      refute has_element?(lv, "#author-policy-#{author.id}", "Confirm")
+    end
+
+    test "choosing All works previews the eligible count, and Confirm arms exactly that
+          candidate",
+         %{conn: conn} do
+      {_target, work} = ebook_target()
+      %{author: author} = hd(work.credits)
+
+      stub(PrimaryMetadataMock, :provider, fn -> :openlibrary end)
+
+      expect(PrimaryMetadataMock, :bibliography, fn _foreign_id ->
+        {:ok, [candidate("OLNEWBOOKW")]}
+      end)
+
+      expect(PrimaryMetadataMock, :get_work, fn "OLNEWBOOKW" ->
+        {:ok, provider_work("OLNEWBOOKW")}
+      end)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{work.id}")
+
+      lv
+      |> form("#author-policy-form-#{author.id}", %{"policy" => "all"})
+      |> render_change()
+
+      render_async(lv)
+
+      assert has_element?(
+               lv,
+               "#author-policy-#{author.id}",
+               "1 new eBook would be monitored"
+             )
+
+      before_count = Repo.aggregate(BookTarget, :count)
+
+      lv
+      |> element("#author-policy-#{author.id} button", "Confirm")
+      |> render_click()
+
+      assert Repo.aggregate(BookTarget, :count) == before_count + 1
+      assert Books.author_policy(author.id) == :all
+      refute has_element?(lv, "#author-policy-#{author.id}", "Confirm")
+    end
+
+    test "an ambiguous candidate is never offered as eligible", %{conn: conn} do
+      {_target, work} = ebook_target()
+      %{author: author} = hd(work.credits)
+
+      stub(PrimaryMetadataMock, :provider, fn -> :openlibrary end)
+
+      expect(PrimaryMetadataMock, :bibliography, fn _foreign_id ->
+        {:ok, [candidate("OLBADW")]}
+      end)
+
+      expect(PrimaryMetadataMock, :get_work, fn "OLBADW" -> {:error, :timeout} end)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{work.id}")
+
+      lv
+      |> form("#author-policy-form-#{author.id}", %{"policy" => "all"})
+      |> render_change()
+
+      render_async(lv)
+
+      assert has_element?(lv, "#author-policy-#{author.id}", "Nothing new to monitor")
+      assert has_element?(lv, "#author-policy-#{author.id}", "could not be identified")
+
+      # Confirming at 0 eligible still records the policy but creates nothing — the ambiguous
+      # candidate is never monitored, by construction, since it never entered `eligible`.
+      before_count = Repo.aggregate(BookTarget, :count)
+
+      lv
+      |> element("#author-policy-#{author.id} button", "Confirm")
+      |> render_click()
+
+      assert Repo.aggregate(BookTarget, :count) == before_count
+      assert Books.author_policy(author.id) == :all
+    end
+
+    test "a cross-work author_id or a forged policy value is ignored", %{conn: conn} do
+      {_target, work} = ebook_target()
+      {_other_target, other_work} = ebook_target()
+      %{author: other_author} = hd(other_work.credits)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{work.id}")
+
+      render_change(lv, "set_author_policy", %{
+        "author_id" => to_string(other_author.id),
+        "policy" => "all"
+      })
+
+      assert Books.author_policy(other_author.id) == :specific
+
+      %{author: author} = hd(work.credits)
+
+      render_change(lv, "set_author_policy", %{
+        "author_id" => to_string(author.id),
+        "policy" => "not-a-real-policy"
+      })
+
+      assert Books.author_policy(author.id) == :specific
+    end
+
+    test "confirming with no held preview is ignored, not a crash", %{conn: conn} do
+      {_target, work} = ebook_target()
+      %{author: author} = hd(work.credits)
+      before_count = Repo.aggregate(BookTarget, :count)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{work.id}")
+
+      render_click(lv, "confirm_author_policy", %{"author_id" => to_string(author.id)})
+
+      assert Repo.aggregate(BookTarget, :count) == before_count
+    end
+  end
+
   describe "live updates" do
     test "a {:book_target_updated} broadcast reflects a hold without a manual reload", %{
       conn: conn
@@ -477,6 +627,45 @@ defmodule CinderWeb.BookDetailLiveTest do
 
   defp identifier(id \\ unique_id()),
     do: %{provider: "openlibrary", kind: "work", foreign_id: id}
+
+  defp candidate(foreign_id) do
+    %{
+      provider: :openlibrary,
+      foreign_id: foreign_id,
+      title: "New Book #{foreign_id}",
+      contributors: [%{foreign_id: "a", name: "Author", role: "author"}],
+      contributors_incomplete: false,
+      first_published_year: nil,
+      edition_count: 1
+    }
+  end
+
+  defp provider_work(foreign_id) do
+    %{
+      provider: :openlibrary,
+      foreign_id: foreign_id,
+      title: "New Book #{foreign_id}",
+      first_published_on: ~D[2000-01-01],
+      overview: nil,
+      contributors: [%{foreign_id: "a", name: "Author", role: "author"}],
+      contributors_incomplete: false,
+      editions: [
+        %{
+          foreign_id: foreign_id <> "-ED",
+          media_kind: :ebook,
+          title: "New Book #{foreign_id}",
+          language: "eng",
+          format: nil,
+          publisher: nil,
+          release_date: nil,
+          abridged: nil,
+          isbn13: nil,
+          asin: nil
+        }
+      ],
+      series: []
+    }
+  end
 
   defp unique_id, do: Integer.to_string(System.unique_integer([:positive]))
 end

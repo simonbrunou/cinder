@@ -27,7 +27,9 @@ defmodule CinderWeb.BookDetailLive do
 
   alias Cinder.Acquisition.Parser
   alias Cinder.Books
-  alias Cinder.Books.{BookGrab, BookTarget, Work}
+  alias Cinder.Books.{Author, BookGrab, BookTarget, Work}
+  alias Cinder.Catalog
+  alias Cinder.Catalog.Profile
   alias Cinder.Download
   alias Cinder.LibraryKind
 
@@ -41,9 +43,10 @@ defmodule CinderWeb.BookDetailLive do
 
       {:ok,
        socket
-       |> assign(work: work, book_kinds: @book_kinds, searching?: nil)
+       |> assign(work: work, book_kinds: @book_kinds, searching?: nil, policy_previews: %{})
        |> assign_grabs()
-       |> assign_blocklists()}
+       |> assign_blocklists()
+       |> assign_author_policies()}
     else
       _ ->
         {:ok,
@@ -75,6 +78,19 @@ defmodule CinderWeb.BookDetailLive do
       end)
 
     assign(socket, :blocklists, blocklists)
+  end
+
+  # A live `Books.author_policy/1` call directly inside the render's `:for` has the same staleness
+  # problem `assign_blocklists/1` documents: an `@author_policies` assign, updated directly
+  # wherever a policy actually changes, is what makes the `<select>`'s current value genuinely
+  # change after a set/confirm.
+  defp assign_author_policies(socket) do
+    policies =
+      socket.assigns.work
+      |> credited_authors()
+      |> Map.new(&{&1.id, Books.author_policy(&1.id)})
+
+    assign(socket, :author_policies, policies)
   end
 
   @impl true
@@ -144,6 +160,45 @@ defmodule CinderWeb.BookDetailLive do
     end
   end
 
+  # The author-policy `<select>`. `author_id` is checked against this work's own credited
+  # authors (`credited_author/2`) — the cross-work-id guard #402/#407 fixed for retry/blocklist —
+  # and `raw_policy` is matched against a fixed set of strings (`policy_from_param/1`), never
+  # `String.to_atom/1` on a client value.
+  #
+  # `:specific` applies immediately (it only ever deletes a row — no preview needed, since turning
+  # bulk automation off never removes an already-monitored target). `:future`/`:all` starts a
+  # preview only when it actually differs from what is stored; re-selecting the active policy is
+  # a no-op rather than a redundant re-preview.
+  def handle_event("set_author_policy", %{"author_id" => raw_id, "policy" => raw_policy}, socket)
+      when is_binary(raw_id) and is_binary(raw_policy) do
+    with {id, ""} <- Integer.parse(raw_id),
+         %Author{} = author <- credited_author(socket.assigns.work, id),
+         policy when not is_nil(policy) <- policy_from_param(raw_policy),
+         %BookTarget{} = ebook_target <- target_for(socket.assigns.work, :ebook) do
+      {:noreply, apply_policy_selection(socket, author, policy, ebook_target)}
+    else
+      _invalid -> {:noreply, socket}
+    end
+  end
+
+  # Confirms a held preview. `author_id` is only ever a key `start_policy_preview/4` itself put
+  # into `@policy_previews`, scoped to this work's credited authors — the map membership check is
+  # the trust boundary, not a re-derived `%Author{}`. A preview still `:loading`/`:error` (no
+  # `:result` key yet) fails the match and is ignored rather than confirming nothing.
+  def handle_event("confirm_author_policy", %{"author_id" => raw_id}, socket)
+      when is_binary(raw_id) do
+    with {id, ""} <- Integer.parse(raw_id),
+         %{policy: policy, profile: profile, result: %{eligible: eligible}} <-
+           Map.get(socket.assigns.policy_previews, id) do
+      {:ok, _created_count} =
+        Books.apply_author_policy(%Author{id: id}, policy, profile, eligible)
+
+      {:noreply, confirm_policy(socket, id, policy)}
+    else
+      _invalid -> {:noreply, socket}
+    end
+  end
+
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
@@ -183,6 +238,20 @@ defmodule CinderWeb.BookDetailLive do
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_async({:preview_author_policy, author_id}, {:ok, {:ok, result}}, socket) do
+    {:noreply,
+     update_policy_preview(socket, author_id, &Map.merge(&1, %{state: :loaded, result: result}))}
+  end
+
+  def handle_async({:preview_author_policy, author_id}, {:ok, {:error, _reason}}, socket) do
+    {:noreply, update_policy_preview(socket, author_id, &Map.put(&1, :state, :error))}
+  end
+
+  def handle_async({:preview_author_policy, author_id}, {:exit, _reason}, socket) do
+    {:noreply, update_policy_preview(socket, author_id, &Map.put(&1, :state, :error))}
+  end
 
   # Re-read the work fresh from the DB — used after every write and after a
   # `:book_target_updated` broadcast, so both this target's status/hold_reason and its sibling
@@ -250,6 +319,109 @@ defmodule CinderWeb.BookDetailLive do
 
   defp titlecase(tag), do: tag |> String.downcase() |> String.capitalize()
 
+  defp credited_authors(work), do: work.credits |> Enum.map(& &1.author) |> Enum.uniq_by(& &1.id)
+
+  defp credited_author(work, id), do: work |> credited_authors() |> Enum.find(&(&1.id == id))
+
+  defp policy_from_param("specific"), do: :specific
+  defp policy_from_param("future"), do: :future
+  defp policy_from_param("all"), do: :all
+  defp policy_from_param(_other), do: nil
+
+  defp apply_policy_selection(socket, %Author{id: id} = author, :specific, _ebook_target) do
+    {:ok, nil} = Books.set_author_policy(author, :specific, nil)
+
+    socket
+    |> assign(:author_policies, Map.put(socket.assigns.author_policies, id, :specific))
+    |> clear_policy_preview(id)
+  end
+
+  defp apply_policy_selection(socket, %Author{id: id} = author, policy, ebook_target) do
+    if Map.get(socket.assigns.author_policies, id, :specific) == policy do
+      socket
+    else
+      start_policy_preview(socket, author, policy, Catalog.get_profile(ebook_target.profile_id))
+    end
+  end
+
+  defp start_policy_preview(socket, %Author{id: id} = author, policy, %Profile{} = profile) do
+    preview = %{state: :loading, policy: policy, profile: profile}
+
+    socket
+    |> assign(:policy_previews, Map.put(socket.assigns.policy_previews, id, preview))
+    |> start_async({:preview_author_policy, id}, fn ->
+      Books.preview_author_policy(author, policy)
+    end)
+  end
+
+  # No profile to arm a new target with (should not happen — every rendered ebook target already
+  # has one, see `Cinder.Books.monitor_target/4`) — fail closed rather than preview with nothing
+  # to confirm against.
+  defp start_policy_preview(socket, _author, _policy, nil), do: socket
+
+  defp update_policy_preview(socket, author_id, fun) do
+    case Map.get(socket.assigns.policy_previews, author_id) do
+      nil ->
+        socket
+
+      preview ->
+        assign(
+          socket,
+          :policy_previews,
+          Map.put(socket.assigns.policy_previews, author_id, fun.(preview))
+        )
+    end
+  end
+
+  defp clear_policy_preview(socket, author_id),
+    do: assign(socket, :policy_previews, Map.delete(socket.assigns.policy_previews, author_id))
+
+  defp confirm_policy(socket, author_id, policy) do
+    socket
+    |> assign(:author_policies, Map.put(socket.assigns.author_policies, author_id, policy))
+    |> clear_policy_preview(author_id)
+  end
+
+  defp policy_options do
+    [
+      {gettext("Selected works"), "specific"},
+      {gettext("Future works"), "future"},
+      {gettext("All works"), "all"}
+    ]
+  end
+
+  defp policy_param(:specific), do: "specific"
+  defp policy_param(:future), do: "future"
+  defp policy_param(:all), do: "all"
+
+  defp preview_summary_text(0), do: gettext("Nothing new to monitor.")
+
+  defp preview_summary_text(count),
+    do:
+      ngettext(
+        "%{count} new eBook would be monitored.",
+        "%{count} new eBooks would be monitored.",
+        count
+      )
+
+  defp ambiguous_note(count),
+    do:
+      ngettext(
+        "%{count} work could not be identified: never monitored automatically.",
+        "%{count} works could not be identified: never monitored automatically.",
+        count
+      )
+
+  defp remaining_note(remaining) do
+    examined = Books.max_bibliography_candidates()
+
+    gettext(
+      "Showing %{examined} of %{total} not-yet-monitored works; run Preview again after confirming to see more.",
+      examined: examined,
+      total: examined + remaining
+    )
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -274,6 +446,55 @@ defmodule CinderWeb.BookDetailLive do
       <p :if={@work.credits != []} class="text-sm text-base-content/70">
         {contributor_names(@work)}
       </p>
+
+      <div
+        :if={target_for(@work, :ebook)}
+        id="book-author-policies"
+        class="mt-4 flex flex-col gap-4"
+      >
+        <div :for={author <- credited_authors(@work)} id={"author-policy-#{author.id}"}>
+          <form id={"author-policy-form-#{author.id}"} phx-change="set_author_policy" class="w-64">
+            <input type="hidden" name="author_id" value={author.id} />
+            <.input
+              type="select"
+              name="policy"
+              label={gettext("%{name}'s monitoring", name: author.name)}
+              value={policy_param(Map.get(@author_policies, author.id, :specific))}
+              options={policy_options()}
+              class="select select-sm w-full"
+            />
+          </form>
+
+          <div :if={preview = Map.get(@policy_previews, author.id)} class="mt-1 text-sm">
+            <p :if={preview.state == :loading} class="text-base-content/60">
+              {gettext("Checking the author's bibliography…")}
+            </p>
+
+            <p :if={preview.state == :error} class="text-error">
+              {gettext("Couldn't preview this policy. Try again.")}
+            </p>
+
+            <div :if={preview.state == :loaded} class="flex flex-col items-start gap-1">
+              <p>{preview_summary_text(length(preview.result.eligible))}</p>
+              <p :if={preview.result.ambiguous_count > 0} class="text-base-content/60">
+                {ambiguous_note(preview.result.ambiguous_count)}
+              </p>
+              <p :if={preview.result.remaining > 0} class="text-base-content/60">
+                {remaining_note(preview.result.remaining)}
+              </p>
+              <.button
+                type="button"
+                variant="neutral"
+                size="sm"
+                phx-click="confirm_author_policy"
+                phx-value-author_id={author.id}
+              >
+                {gettext("Confirm")}
+              </.button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div class="mt-6 flex flex-col gap-6">
         <section :for={kind <- @book_kinds} aria-labelledby={"book-target-#{kind}-heading"}>
