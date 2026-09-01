@@ -213,4 +213,22 @@ defmodule Cinder.Books.Metadata.HardcoverTest do
     Req.Test.stub(Cinder.HardcoverStub, fn conn -> Req.Test.json(conn, ["not a work"]) end)
     assert {:error, :unexpected_response} = Hardcover.get_work("736076")
   end
+
+  test "health/0 is :ok on a 200, surfaces a non-200 status, and reports :not_configured when unset" do
+    Req.Test.stub(Cinder.HardcoverStub, fn conn ->
+      assert conn.request_path == "/search"
+      Req.Test.json(conn, [])
+    end)
+
+    assert :ok = Hardcover.health()
+
+    Req.Test.stub(Cinder.HardcoverStub, fn conn -> Plug.Conn.send_resp(conn, 502, "bad") end)
+    assert {:error, {:hardcover_status, 502}} = Hardcover.health()
+
+    config = Application.get_env(:cinder, Hardcover)
+    on_exit(fn -> Application.put_env(:cinder, Hardcover, config) end)
+    Application.put_env(:cinder, Hardcover, Keyword.delete(config, :base_url))
+
+    assert {:error, :not_configured} = Hardcover.health()
+  end
 end

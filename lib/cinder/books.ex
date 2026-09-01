@@ -30,6 +30,7 @@ defmodule Cinder.Books do
   alias Cinder.Catalog.Profile
   alias Cinder.HTTPPolicy
   alias Cinder.LibraryKind
+  alias Cinder.Notifier
   alias Cinder.Repo
 
   @book_media_kinds LibraryKind.books()
@@ -269,6 +270,12 @@ defmodule Cinder.Books do
 
   defp tap_block_release({:ok, held} = ok, release_title, reason) do
     maybe_block_release(held, release_title, reason)
+    # `held` came from `Repo.update_all(select: t)` (see `transition_target/3` →
+    # `BookTargetTransition.guarded/4`) — no `:work` preload, so notifying with it directly
+    # would leave `book_title/1` on every transport falling back to "book target #<id>",
+    # dropping the one fact the notification exists to carry. Reload through the same
+    # `get_target/1` every other reader of a held target uses.
+    Notifier.notify({:book_target_held, get_target(held.id)})
     ok
   end
 

@@ -83,6 +83,9 @@ defmodule Cinder.Books.Metadata do
   @doc "This provider's short name, used to namespace `book_identifiers` rows."
   @callback provider() :: atom()
 
+  @doc "Lightweight reachability check — `:ok` if the provider answers, else `{:error, reason}`."
+  @callback health() :: :ok | {:warning, term()} | {:error, term()}
+
   @doc "The configured providers, in resolution order."
   # fetch_env! at runtime, not compile_env! — the Mox mocks are defined at runtime.
   def providers do

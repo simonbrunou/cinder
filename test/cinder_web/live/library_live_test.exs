@@ -5,6 +5,7 @@ defmodule CinderWeb.LibraryLiveTest do
   import Mox
 
   alias Cinder.Books
+  alias Cinder.Books.Grabs
   alias Cinder.Catalog
   alias Cinder.Repo
 
@@ -245,7 +246,7 @@ defmodule CinderWeb.LibraryLiveTest do
   end
 
   describe "books tab" do
-    test "lists book targets with a drill-down link, a status badge, and no write controls", %{
+    test "lists book targets with a drill-down link and a status badge", %{
       conn: conn
     } do
       target = book_target!(%{title: "Dune"})
@@ -260,8 +261,10 @@ defmodule CinderWeb.LibraryLiveTest do
 
       assert has_element?(lv, "#book-target-row-#{target.id} .badge")
 
-      # Read-only, per #405: no cancel/delete/confirm affordance anywhere on this tab.
-      refute has_element?(lv, "#book-target-row-#{target.id} button")
+      # No cancel/delete affordance anywhere on this tab, per #405 — those stay heavier
+      # decisions than this row offers. Pause/Resume (B5c) are covered separately below.
+      refute has_element?(lv, "#book-target-row-#{target.id} button", "Cancel")
+      refute has_element?(lv, "#book-target-row-#{target.id} button", "Delete")
     end
 
     test "the Books tab navigates to the Books list and hides movies", %{conn: conn} do
@@ -299,6 +302,122 @@ defmodule CinderWeb.LibraryLiveTest do
       {:ok, _held} = Cinder.Books.hold_target(target, "identity conflict")
 
       assert has_element?(lv, "#book-target-row-#{target.id}", "Needs attention")
+    end
+
+    test "the Wanted quick link shows only monitored targets, Held only held, default unfiltered",
+         %{conn: conn} do
+      wanted = book_target!(%{title: "Dune"})
+
+      {:ok, held} =
+        book_target!(%{title: "Foundation"}) |> Books.hold_target("identity conflict")
+
+      available = available_book!(%{title: "Neuromancer"})
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books&status=wanted")
+      assert has_element?(lv, "#book-target-row-#{wanted.id}")
+      refute has_element?(lv, "#book-target-row-#{held.id}")
+      refute has_element?(lv, "#book-target-row-#{available.id}")
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books&status=held")
+      refute has_element?(lv, "#book-target-row-#{wanted.id}")
+      assert has_element?(lv, "#book-target-row-#{held.id}")
+      refute has_element?(lv, "#book-target-row-#{available.id}")
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books")
+      assert has_element?(lv, "#book-target-row-#{wanted.id}")
+      assert has_element?(lv, "#book-target-row-#{held.id}")
+      assert has_element?(lv, "#book-target-row-#{available.id}")
+    end
+
+    test "pausing a monitored target with no grab hides it from the wanted filter; resuming " <>
+           "returns it there",
+         %{conn: conn} do
+      target = book_target!(%{title: "Dune"})
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books&status=wanted")
+      assert has_element?(lv, "#book-target-row-#{target.id}")
+
+      lv |> element("#book-target-row-#{target.id} button", "Pause") |> render_click()
+
+      refute has_element?(lv, "#book-target-row-#{target.id}")
+      assert Books.get_target(target.id).status == :unmonitored
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books")
+      lv |> element("#book-target-row-#{target.id} button", "Resume") |> render_click()
+
+      assert Books.get_target(target.id).status == :monitored
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books&status=wanted")
+      assert has_element?(lv, "#book-target-row-#{target.id}")
+    end
+
+    test "Pause is hidden while a grab is in flight, and pausing anyway is refused with a " <>
+           "specific flash",
+         %{conn: conn} do
+      target = book_target!(%{title: "Dune"})
+      {:ok, _grab} = Grabs.create(target.id, "remote-1", :torrent, "Dune Release")
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books")
+      refute has_element?(lv, "#book-target-row-#{target.id} button", "Pause")
+
+      # A stale/racing request bypassing the hidden button — the context choke-point must still
+      # refuse it, with the specific flash rather than the generic one.
+      html = render_click(lv, "pause_target", %{"id" => to_string(target.id)})
+      assert html =~ "This target has a download in progress"
+      assert Books.get_target(target.id).status == :monitored
+    end
+
+    test "a forged id on a book pause/resume event is ignored rather than crashing the view", %{
+      conn: conn
+    } do
+      target = book_target!(%{title: "Dune"})
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books")
+
+      for event <- ~w(pause_target resume_target),
+          forged <- [%{"forged" => true}, 7, "-1", "not-an-id"] do
+        assert render_click(lv, event, %{"id" => forged})
+      end
+
+      assert Process.alive?(lv.pid)
+      assert render(lv) =~ "Dune"
+      assert Books.get_target(target.id).status == :monitored
+    end
+
+    test "changing the sort while status-filtered keeps the filter across a reconnect", %{
+      conn: conn
+    } do
+      wanted = book_target!(%{title: "Dune"})
+
+      {:ok, held} =
+        book_target!(%{title: "Foundation"}) |> Books.hold_target("identity conflict")
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books&status=wanted")
+      assert has_element?(lv, "#book-target-row-#{wanted.id}")
+
+      sort_by(lv, "title")
+      assert_patch(lv, ~p"/library?type=books&sort=title&status=wanted")
+
+      # A reconnect is a fresh mount/3 against the browser's CURRENT url — asserting only the
+      # live socket's in-memory assign would miss a URL regression that drops the filter.
+      {:ok, reconnected_lv, _html} =
+        live(conn, ~p"/library?type=books&sort=title&status=wanted")
+
+      assert has_element?(reconnected_lv, "#book-target-row-#{wanted.id}")
+      refute has_element?(reconnected_lv, "#book-target-row-#{held.id}")
+    end
+
+    test "the Wanted/Held quick links only render on the Books tab", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/library")
+      refute has_element?(lv, "#library-books-wanted")
+      refute has_element?(lv, "#library-books-held")
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=tv")
+      refute has_element?(lv, "#library-books-wanted")
+      refute has_element?(lv, "#library-books-held")
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books")
+      assert has_element?(lv, "#library-books-wanted")
+      assert has_element?(lv, "#library-books-held")
     end
   end
 

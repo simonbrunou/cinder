@@ -468,6 +468,42 @@ defmodule Cinder.Notifier.EmailTest do
     end
   end
 
+  describe "book_target_held" do
+    test "emails every approved requester of that work and media kind" do
+      configure_smtp!()
+      alice = confirmed_user()
+      insert_approved_request!(alice, "book", 80, media_kind: :ebook)
+
+      target = %{
+        work_id: 80,
+        media_kind: :ebook,
+        work: %{title: "The Dispossessed"},
+        hold_reason: "download_failed"
+      }
+
+      assert :ok = Email.notify({:book_target_held, target})
+
+      assert_email_sent(to: alice.email, subject: "We couldn't get The Dispossessed")
+    end
+
+    test "does not notify the requester of the other media kind of the same work" do
+      configure_smtp!()
+      user = confirmed_user()
+      insert_approved_request!(user, "book", 81, media_kind: :audiobook)
+
+      target = %{
+        work_id: 81,
+        media_kind: :ebook,
+        work: %{title: "The Dispossessed"},
+        hold_reason: "download_failed"
+      }
+
+      assert :ok = Email.notify({:book_target_held, target})
+
+      refute_email_sent()
+    end
+  end
+
   describe "episodes_search_exhausted" do
     test "emails the season's requester" do
       configure_smtp!()

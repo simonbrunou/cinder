@@ -135,6 +135,29 @@ defmodule Cinder.Books.GrabsTest do
     end
   end
 
+  describe "target_ids_in_progress/0" do
+    test "returns the target id of every live grab, and excludes a target with none", %{
+      grab: grab
+    } do
+      id = unique_id()
+
+      {:ok, profile} =
+        Catalog.create_profile(%{name: "Ebooks no-grab #{id}", kind: :ebook, handling: :standard})
+
+      {:ok, work} =
+        Books.upsert_work(%{
+          title: "No Grab #{id}",
+          identifier: identifier("openlibrary", "work", id)
+        })
+
+      {:ok, idle_target} = Books.monitor_target(work, :ebook, profile)
+
+      in_progress = Grabs.target_ids_in_progress()
+      assert grab.book_target_id in in_progress
+      refute idle_target.id in in_progress
+    end
+  end
+
   defp identifier(provider, kind, foreign_id),
     do: %{provider: provider, kind: kind, foreign_id: foreign_id}
 

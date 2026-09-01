@@ -65,6 +65,21 @@ defmodule Cinder.Books.Metadata.OpenLibrary do
     end
   end
 
+  @impl true
+  # Bounded (3s connect + 3s response), unauthenticated: a 1-result search rather than a full
+  # get_work/1 round-trip, so /status's probe costs about as much as one real search request.
+  def health do
+    case request(
+           url: "/search.json",
+           params: [q: "health", limit: 1, fields: "key"],
+           receive_timeout: 3_000,
+           connect_options: [timeout: 3_000]
+         ) do
+      {:ok, %{status: status}} when status in 200..299 -> :ok
+      other -> error(other)
+    end
+  end
+
   defp search_docs(params) do
     case request(url: "/search.json", params: params) do
       {:ok, %{status: 200, body: %{"docs" => docs}}} when is_list(docs) -> {:ok, docs}
