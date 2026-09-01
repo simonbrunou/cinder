@@ -18,6 +18,7 @@ defmodule Cinder.Download.BookPollerTest do
   alias Cinder.Catalog
   alias Cinder.Download.{BookPoller, Intent}
   alias Cinder.Repo
+  alias Ecto.Adapters.SQL.Sandbox
 
   setup :set_mox_global
   setup :verify_on_exit!
@@ -126,6 +127,99 @@ defmodule Cinder.Download.BookPollerTest do
       refute Repo.get(Intent, intent.id)
       # The hold survives untouched — draining the cleanup record is not a target-state change.
       assert Repo.reload!(target).status == :held
+    end
+
+    # PR #411 review: `hold_orphaned_target/2`'s catch-all clause for a vanished target was
+    # accidentally deleted alongside the dead `remove_from_client/1` it sat next to, so
+    # `fail_download/2` raised `FunctionClauseError` for a `nil` `book_target` instead of the
+    # no-op it used to be — aborting BEFORE `fence_book_cleanup/1` ever ran and re-opening the
+    # exact leaked-remote-job bug this PR closes, just via a different trigger.
+    #
+    # `grab.book_target` is `nil` only when the target row is gone by the time
+    # `Books.Grabs.list_downloading/0`'s SEPARATE follow-up preload query runs (it is not a
+    # same-statement join) — reachable in production via a concurrent target deletion landing in
+    # that gap. `book_grabs.book_target_id` cascades on delete
+    # (`references(:book_targets, on_delete: :delete_all)`), so under the Sandbox's single
+    # wrapping transaction (`foreign_keys: :on` is pinned for every env, and toggling the pragma
+    # mid-transaction is a documented SQLite no-op) a plain delete of the target takes the grab
+    # with it — there is no way to leave the grab behind sandboxed. `@tag :unboxed` (real,
+    # non-sandboxed connection, `Cinder.DataCase.setup_sandbox/1`) lets the `PRAGMA foreign_keys
+    # = OFF` actually apply, reproducing exactly the state a genuine race leaves: the target
+    # gone, the grab row (and its `download_id`/`download_protocol`) still there, orphaned.
+    @tag :unboxed
+    test "a target that vanished out from under its grab does not raise, and still fences a durable cleanup record",
+         ctx do
+      # A unique id, not the file's shared "remote-1" default: this connection's writes are
+      # REAL commits (not rolled back like every other, Sandboxed test here), so a collision on
+      # a shared literal id would be a genuine cross-test race, not just Sandbox noise.
+      remote_id = "remote-vanished-target-#{System.unique_integer([:positive])}"
+      %{grab: grab, target: target, work: work} = downloading(ctx, "book.epub", remote_id)
+      profile_id = target.profile_id
+
+      # `on_exit/1` runs in a SEPARATE process (`ExUnit.OnExitHandler`) after the test process has
+      # already exited — for an unboxed (`sandbox: false`) connection that ownership dies with the
+      # test process, so `on_exit` cleanup here silently no-ops with a `DBConnection.OwnershipError`
+      # (verified empirically). `try/after` runs the cleanup INSIDE the still-alive test process,
+      # regardless of whether an assertion below fails.
+      try do
+        Repo.query!("PRAGMA foreign_keys = OFF")
+        Repo.delete_all(from t in Cinder.Books.BookTarget, where: t.id == ^target.id)
+        Repo.query!("PRAGMA foreign_keys = ON")
+
+        # Sanity check the fixture actually reproduces the race's end state before exercising it
+        # (scoped to our own id — an unboxed connection sees every real row, not just ours).
+        assert %BookGrab{book_target: nil} =
+                 Enum.find(Books.Grabs.list_downloading(), &(&1.id == grab.id))
+
+        stub(Cinder.Download.ClientMock, :files, fn _id ->
+          {:ok, ["The Dispossessed.epub", "setup.exe"]}
+        end)
+
+        expect(Cinder.Download.ClientMock, :status, fn ^remote_id ->
+          {:ok, %{state: :downloading, progress: 0.5, speed: 1_000}}
+        end)
+
+        expect(Cinder.Download.ClientMock, :remove, fn ^remote_id, _opts -> {:error, :timeout} end)
+
+        # `poll!()` starts BookPoller via `start_supervised!`, a SEPARATE process. Shared Sandbox
+        # mode (`Cinder.DataCase.setup_sandbox/1`'s `shared: true` for `async: false` tests) is
+        # what lets every other test's `poll!()` call skip this — `sandbox: false` here checks out
+        # a raw connection tied ONLY to this process, so the GenServer needs explicit `allow/3`.
+        pid = start_supervised!({BookPoller, interval: 60_000})
+        Sandbox.allow(Repo, self(), pid)
+        log = capture_log(fn -> assert :ok = BookPoller.poll() end)
+        stop_supervised!(BookPoller)
+
+        # `isolate/2` would have swallowed a raise and logged "skipped" — its absence is direct
+        # proof `fail_download/2` ran to completion rather than aborting mid-way.
+        refute log =~ "skipped"
+
+        refute Repo.get(BookGrab, grab.id)
+
+        intent = Repo.get_by!(Intent, kind: :book_target, target_id: target.id)
+        assert intent.status == :cleanup_pending
+        assert intent.remote_id == remote_id
+        assert intent.protocol == :torrent
+      after
+        # `work_fixture/2` (via `downloading/2`) also creates a `book_authors` row and a
+        # `book_credits` link — neither owned by the work, so deleting the work alone would not
+        # cascade them away. Capture the author before the work (and its credit) are gone.
+        author_ids =
+          Repo.all(
+            from c in Cinder.Books.Credit, where: c.work_id == ^work.id, select: c.author_id
+          )
+
+        Repo.delete_all(from g in BookGrab, where: g.id == ^grab.id)
+        Repo.delete_all(from t in Cinder.Books.BookTarget, where: t.id == ^target.id)
+
+        Repo.delete_all(
+          from i in Intent, where: i.kind == :book_target and i.target_id == ^target.id
+        )
+
+        Repo.delete_all(from w in Books.Work, where: w.id == ^work.id)
+        Repo.delete_all(from a in Cinder.Books.Author, where: a.id in ^author_ids)
+        if profile_id, do: Repo.delete_all(from p in Catalog.Profile, where: p.id == ^profile_id)
+      end
     end
 
     test "one miss does not destroy a live download", ctx do

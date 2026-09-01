@@ -266,12 +266,6 @@ defmodule Cinder.Download.BookPoller do
     :ok
   end
 
-  # A grab whose target vanished has nothing to hold; the grab row is already gone.
-  #
-  # Distinct from `hold/3` below: there the grab still exists and is deleted only if the hold
-  # wins, so a lost race leaves it for the next tick to re-derive. Here the grab is already gone
-  # (the remote download is dead and was removed), so there is nothing left to re-derive and a
-  # lost race is simply someone else's more recent decision.
   defp hold_orphaned_target(%BookTarget{} = target, reason) do
     case Books.hold_target(target, reason) do
       {:ok, _held} ->
@@ -283,6 +277,16 @@ defmodule Cinder.Download.BookPoller do
         :ok
     end
   end
+
+  # A grab whose target vanished has nothing to hold — but the grab row (and its
+  # download_id/download_protocol) is still very much alive, so `fail_download/2` must still
+  # fence and drain it; this clause only says the hold itself has nothing to act on.
+  #
+  # Distinct from `hold/3` below: there the grab still exists and is deleted only if the hold
+  # wins, so a lost race leaves it for the next tick to re-derive. Here `fail_download/2` is
+  # already committed to dropping the grab regardless of this outcome, so a lost race (an
+  # operator deleting the target concurrently) is simply someone else's more recent decision.
+  defp hold_orphaned_target(_missing_target, _reason), do: :ok
 
   # --- import phase ---
 
