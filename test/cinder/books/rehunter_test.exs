@@ -78,8 +78,9 @@ defmodule Cinder.Books.RehunterTest do
   end
 
   test "does nothing at all when disabled" do
+    original = Application.get_env(:cinder, Rehunter, [])
     Application.put_env(:cinder, Rehunter, enabled: false, rehunt_after: @rehunt_after)
-    on_exit(fn -> Application.delete_env(:cinder, Rehunter) end)
+    on_exit(fn -> Application.put_env(:cinder, Rehunter, original) end)
 
     target = ebook_target()
     {:ok, held} = Books.hold_target(target, :download_failed, "Retryable Release", true)

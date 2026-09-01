@@ -405,6 +405,12 @@ defmodule Cinder.Download.BookPoller do
   # operator had ALREADY applied — unmonitoring a target before the tick ran would still end in
   # `:held`. Only a still-monitored target is ours to park; anything else is the operator's more
   # recent word and the grab is dropped without touching the target.
+  #
+  # `replace: grab.replace` below makes this effectively `expect: [:monitored, :available]` for a
+  # "Find a better match" grab: its target stays `:available` for its whole download/import
+  # cycle (`Books.hold_target/5`'s own doc), so the guard has to accept that status too, not just
+  # `:monitored` — a plain grab's target is never `:available` mid-flight, so nothing changes for
+  # it.
   defp hold(grab, target, reason) do
     Logger.warning("book target #{target.id} held: #{inspect(reason)}")
 
