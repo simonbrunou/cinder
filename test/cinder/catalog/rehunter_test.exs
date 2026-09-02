@@ -130,11 +130,12 @@ defmodule Cinder.Catalog.RehunterTest do
   end
 
   test "does nothing at all when disabled" do
+    original = Application.get_env(:cinder, Rehunter, [])
+    Application.put_env(:cinder, Rehunter, enabled: false)
+    on_exit(fn -> Application.put_env(:cinder, Rehunter, original) end)
+
     movie = movie_fixture(%{status: :no_match})
     backdate(Movie, movie.id, @rehunt_after + 1000)
-
-    Application.put_env(:cinder, Rehunter, enabled: false)
-    on_exit(fn -> Application.put_env(:cinder, Rehunter, enabled: true) end)
 
     poll()
 
