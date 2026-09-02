@@ -230,20 +230,25 @@ verification** (the movie's detail page; `/activity` for a TV grab): install `ff
 Named profiles at `/settings/profiles` can route movie and TV titles into separate roots. Leave a
 profile root blank to keep using the matching existing Standard/Anime root.
 
-**Books and audiobooks** work the same request→approve→acquire→publish loop, kept deliberately
-separate from the video pipeline (own contexts, own release parser/scorer, own poller): any
-authenticated user searches a work by title/author and requests it as an **e-book** or an
-**audiobook** — independently, so the same work can be monitored as neither, either, or both.
-Cinder resolves the work's identity through Open Library (primary) and an optional Hardcover key
-(secondary), never guessing when identity is ambiguous. Once approved, the poller searches
-Prowlarr's book/audiobook categories, scores candidates against the accepted format list (EPUB/
-AZW3/MOBI for e-books, M4B/MP3 for audiobooks) and author/title evidence, then imports the result
-— a multi-track audiobook imports atomically as one target — into the `books`/`audiobooks`
-library roots. Booklore reads the `books` root directly; Cinder requests an Audiobookshelf scan
-after every audiobook import and retries automatically on failure, without re-downloading. A
-manual search, retry, and "Find a better match" work the same way they do for movies/TV. An
-existing Readarr-protocol Bookshelf library can be adopted in place (no re-download, no rewrite)
-from `/library/adopt` — see [`docs/readarr-migration.md`](docs/readarr-migration.md).
+**Books and audiobooks** work the same request→approve→publish loop, kept deliberately separate
+from the video pipeline (own contexts, own release parser/scorer, own poller): any authenticated
+user searches a work by title/author and requests it as an **e-book** or an **audiobook** —
+independently, so the same work can be monitored as neither, either, or both. Cinder resolves the
+work's identity through Open Library (primary) and an optional Hardcover key (secondary), never
+guessing when identity is ambiguous.
+
+**There is no automatic release search for books, by design** — the roadmap gates it behind a
+corpus-precision measurement that has not been taken, so `Cinder.Acquisition.Books`/`Audiobooks`
+export no automatic-selection function at all. Instead, an admin opens **manual search** on
+`/books/:id`, where Cinder ranks Prowlarr's book/audiobook candidates against the accepted format
+list (EPUB/AZW3/MOBI for e-books, M4B/MP3 for audiobooks) and author/title evidence for the admin
+to pick from. Once a release is chosen, the pipeline takes over unattended: download, atomic
+import (a multi-track audiobook imports as one target) into the `books`/`audiobooks` library
+roots, retry, and "Find a better match," the same way they work for movies/TV. Booklore reads the
+`books` root directly; Cinder requests an Audiobookshelf scan after every audiobook import and
+retries automatically on failure, without re-downloading. An existing Readarr-protocol Bookshelf
+library can be adopted in place (no re-download, no rewrite) from `/library/adopt` — see
+[`docs/readarr-migration.md`](docs/readarr-migration.md).
 
 ## Development
 

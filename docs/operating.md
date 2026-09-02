@@ -612,14 +612,21 @@ same work can be neither, either, or both.
 
 **Requests stay unavailable until an admin configures at least one profile for that kind** at
 `/settings/profiles` (Books or Audiobooks) — this is separate from, and does not require, the
-library root being set, though in practice you configure both together. Once a profile exists and
-the target is approved, the poller searches Prowlarr's book/audiobook categories and scores
-candidates against:
+library root being set, though in practice you configure both together.
+
+**There is no automatic release search for books, by design.** Unlike movies/TV, `BookPoller`
+runs no search sweep at all — `Cinder.Acquisition.Books`/`Audiobooks` export no automatic-release
+function, a deliberate gate pending a corpus-precision measurement the roadmap has not yet taken.
+Once a target is approved, an admin opens **manual search** on `/books/:id`, where Cinder ranks
+Prowlarr's book/audiobook candidates for the admin to choose from, scoring each against:
 
 - **Accepted formats**: EPUB, AZW3, MOBI for e-books (EPUB preferred); M4B, MP3 for audiobooks
   (M4B preferred). An unrecognized or contradictory format is refused, never guessed.
 - **Author/title evidence** parsed from the release name, matched against the work's resolved
   identity (Open Library primary, Hardcover secondary) — never a bare filename match.
+
+Once the admin picks a release, the pipeline takes over unattended from there: download, import,
+and (for audiobooks) the Audiobookshelf scan below.
 
 A multi-track audiobook (multiple MP3 files, or a disc/part-numbered set) imports **atomically**
 as one target: every track resolves and stages together, or none do. E-book archives (`.zip`/
@@ -650,7 +657,9 @@ unbounded burst of provider requests.
 coming from `pennydreadful/bookshelf` or a compatible fork) is a one-time, in-place, no-rewrite
 adoption from `/library/adopt` — see [`docs/readarr-migration.md`](readarr-migration.md) for the
 full runbook, including the two-instance (e-book + audiobook) case and when it is safe to
-decommission Bookshelf afterward.
+decommission Bookshelf afterward (see
+[`docs/books-dogfood-checklist.md`](books-dogfood-checklist.md) for the sign-off gate before you
+do).
 
 ## Adopting an existing library
 

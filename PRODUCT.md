@@ -22,10 +22,14 @@ exists until the thing they wanted is in Jellyfin.
 Cinder replaces the **Radarr + Sonarr + Seerr** loop, and separately the **Readarr + Bookshelf**
 loop, for one household with a single Phoenix/LiveView app on SQLite — one container, no
 external database. A household member requests a movie, TV season, e-book, or audiobook → an
-admin approves (their own requests auto-approve) → Cinder finds the best release through the
-indexer, hands it to the download client, then places the finished file — hardlinked and renamed
-for video, imported into the `books`/`audiobooks` roots for books — and triggers a scan.
-Background pollers advance each request through its state machine and broadcast live over PubSub.
+admin approves (their own requests auto-approve) → for movies/TV, Cinder automatically finds and
+grabs the best release; for books, an admin picks the release from a ranked manual-search panel,
+since automatic book selection is deliberately gated behind a corpus-precision measurement the
+roadmap has not yet taken. Either way, Cinder hands the release to the download client, then
+places the finished file — hardlinked and renamed for video, imported into the
+`books`/`audiobooks` roots for books — and triggers a scan (or, for audiobooks, an Audiobookshelf
+scan request). Background pollers advance each request through its state machine and broadcast
+live over PubSub.
 
 Success looks like: a stranger installs the container, the first-run wizard validates every
 service before it lets them finish, household members request through a plain search-and-ask
