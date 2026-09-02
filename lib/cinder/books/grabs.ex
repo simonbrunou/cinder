@@ -253,11 +253,32 @@ defmodule Cinder.Books.Grabs do
   in-flight badge with a grab that is about to vanish, with no further poller tick ever coming to
   correct it. This broadcast is the correction: it fires after the row is gone, so a view that
   lost the earlier race still gets a second, authoritative message telling it to drop the grab.
+
+  For a caller with NO enclosing transaction (every call site above), the row is already durably
+  gone by the time this function's own `Repo.delete_all` returns, so broadcasting immediately
+  after is already "after commit." A caller that DOES own an enclosing transaction must use
+  `delete_only/1` instead and broadcast itself once that outer transaction commits — see its doc.
   """
   @spec delete(BookGrab.t()) :: :ok
-  def delete(%BookGrab{id: id, book_target_id: book_target_id}) do
-    Repo.delete_all(from g in BookGrab, where: g.id == ^id)
+  def delete(%BookGrab{book_target_id: book_target_id} = grab) do
+    delete_only(grab)
     Books.broadcast({:book_grab_deleted, book_target_id})
+    :ok
+  end
+
+  @doc """
+  Deletes a grab WITHOUT broadcasting — for `Cinder.Download.fence_book_cleanup/1`, the one
+  caller that deletes the grab inside its OWN enclosing `Repo.transaction` (alongside the
+  durable cleanup fence). Broadcasting here would announce the grab gone before that outer
+  transaction commits — a rolled-back fence would still have told every `/books/:id` the grab
+  was deleted, and even a committed one risks a subscriber re-reading `Cinder.Books.Grabs.for_target/1`
+  in the still-open window and seeing pre-delete state with no correction ever following (AGENTS.md:
+  "one transition, one broadcast, emitted after commit"). The caller broadcasts
+  `{:book_grab_deleted, book_target_id}` itself once `Repo.transaction/1` returns `{:ok, _}`.
+  """
+  @spec delete_only(BookGrab.t()) :: :ok
+  def delete_only(%BookGrab{id: id}) do
+    Repo.delete_all(from g in BookGrab, where: g.id == ^id)
     :ok
   end
 end
