@@ -61,6 +61,7 @@ config :cinder,
   jellyfin_auth: Cinder.Accounts.JellyfinAuthMock,
   oidc_auth: Cinder.Accounts.OIDCMock,
   media_server: Cinder.Library.MediaServerMock,
+  audiobook_server: Cinder.Library.AudiobookServerMock,
   filesystem: Cinder.Library.FilesystemMock,
   path_policy: Cinder.Test.PermissivePathPolicy,
   # Permissive free-disk prober: reports abundant space so the space guards never fire, keeping the
@@ -210,6 +211,12 @@ config :cinder, Cinder.Library.MediaServer.Plex,
   movies_section: "1",
   tv_section: "2",
   req_options: [plug: {Req.Test, Cinder.PlexStub}, retry: false]
+
+config :cinder, Cinder.Library.AudiobookServer.Audiobookshelf,
+  url: "http://localhost:13378",
+  api_key: "test-key",
+  library_id: "lib_test",
+  req_options: [plug: {Req.Test, Cinder.AudiobookshelfStub}, retry: false]
 
 config :cinder, Cinder.Accounts.PlexAuth.HTTP,
   req_options: [plug: {Req.Test, Cinder.PlexTvStub}, retry: false]

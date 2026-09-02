@@ -7,7 +7,13 @@ defmodule Cinder.Download.BookPoller do
      download drops the grab and returns the target to plain `:monitored`, so an operator can
      pick another release.
   2. **import_downloaded** — publishes each completed grab through `Cinder.Library.BookImport`
-     and arms its target `:available`.
+     (or `Cinder.Library.AudiobookImport`) and arms its target `:available`.
+  3. **request_audiobookshelf_scans** — when any `:available` audiobook target has not been told
+     about yet (`audiobookshelf_scanned_at: nil`), requests exactly ONE whole-library rescan
+     through `Cinder.Library.AudiobookServer` — covering every pending target at once, since the
+     API offers no per-book scan — and stamps every one of them on success. A failed scan leaves
+     all of them here to be retried the very next tick, deliberately never a one-shot claim — see
+     `request_audiobookshelf_scans/0`.
 
   **There is no search pass, and that is the milestone gate.** The video pollers sweep
   `:requested` titles into `Cinder.Download.start/1`, which calls the scorer's automatic
@@ -27,7 +33,7 @@ defmodule Cinder.Download.BookPoller do
   alias Cinder.Download
   alias Cinder.Download.{ContentPolicy, StallReaper}
   alias Cinder.Library
-  alias Cinder.Library.{AudiobookImport, BookImport}
+  alias Cinder.Library.{AudiobookImport, AudiobookServer, BookImport}
   alias Cinder.Notifier
 
   @default_interval 5_000
@@ -88,6 +94,7 @@ defmodule Cinder.Download.BookPoller do
 
     advance_downloading()
     import_downloaded()
+    request_audiobookshelf_scans()
     :ok
   end
 
@@ -349,6 +356,56 @@ defmodule Cinder.Download.BookPoller do
       {:disk_import, target.id},
       "book target #{target.id} import held: books library root is nearly full; " <>
         "will retry when space frees"
+    )
+  end
+
+  # --- audiobookshelf scan phase ---
+
+  # Retryable, not one-shot: unlike the video pollers' `StageEngine.claim_post_commit_effects/1`
+  # (which marks a post-commit effect claimed regardless of its own success), this re-derives its
+  # work from `audiobookshelf_scanned_at: nil` every tick, so a scan failure simply leaves the
+  # target here to be retried next tick — the roadmap's "refresh failure is recoverable without
+  # re-downloading" requirement. The already-`:available`, already-on-disk file is never touched
+  # by any of this: the download/import path and this scan-request path share no failure state.
+  #
+  # `AudiobookServer.scan/0` takes no per-book argument — it triggers a WHOLE-LIBRARY rescan, the
+  # only shape Audiobookshelf's API offers. Calling it once per pending target would issue N
+  # sequential, functionally identical HTTP requests in one tick for a backlog of N (exactly the
+  # scenario this mechanism exists for: Audiobookshelf down or slow), each bounded by
+  # `HTTPPolicy`'s own request timeout — stalling this poller's unrelated download/import phases
+  # behind it, since ticks are strictly sequential in one process. One call per tick, covering
+  # every pending target at once, is both correct (a single library scan picks up every new file
+  # regardless of which target it came from) and bounded (one HTTP call per tick, always).
+  defp request_audiobookshelf_scans do
+    case Books.list_pending_audiobook_scans() do
+      [] ->
+        :ok
+
+      pending ->
+        isolate("audiobookshelf scan for #{length(pending)} pending target(s)", fn ->
+          scan_pending(pending)
+        end)
+    end
+  end
+
+  defp scan_pending(pending) do
+    case AudiobookServer.impl().scan() do
+      :ok -> Enum.each(pending, &Books.mark_audiobookshelf_scanned(&1.id))
+      {:error, reason} -> warn_audiobookshelf_scan_failed(reason)
+    end
+  end
+
+  # Not bounded by `@max_attempts`, deliberately, matching `warn_disk_full/1` above: a failed
+  # scan request is a fact about Audiobookshelf's configuration/connectivity, not about the
+  # payload, so there is nothing to hold on and no reason a fixed operator typo (or a down
+  # consumer) should need a re-download to recover from once corrected. Throttled so a
+  # persistently unreachable Audiobookshelf does not flood the log every tick — the bound on
+  # retry *frequency* (never on retry *count*). One throttle key for the whole batch, matching the
+  # one-call-per-tick shape above — there is no longer a per-target call to key it by.
+  defp warn_audiobookshelf_scan_failed(reason) do
+    warn_throttled(
+      :audiobookshelf_scan,
+      "audiobookshelf scan failed: #{inspect(reason)}; will retry next tick"
     )
   end
 

@@ -211,15 +211,25 @@ defmodule Cinder.Books.Files do
   #
   # The `book_targets_profile_integrity` trigger cannot fire here: it guards `profile_id` and
   # `media_kind`, and neither is in the `set`.
-  defp arm_target(%BookTarget{id: id}) do
+  #
+  # `audiobookshelf_scanned_at` is reset to `nil` on every fresh `:available`-transition of an
+  # AUDIOBOOK target only (B7c) — the signal "this target's on-disk content changed and
+  # Audiobookshelf has not been told." This covers both a first import (already nil, so this is a
+  # no-op) and a REPLACE (content genuinely changed under an existing path, so a stale "already
+  # scanned" timestamp must not survive it). An e-book target's `media_kind` never matches, so
+  # its (unused) column stays exactly as it already was — nil forever, nothing to reset.
+  defp arm_target(%BookTarget{id: id, media_kind: media_kind}) do
     now = DateTime.utc_now(:second)
+
+    scan_reset =
+      if media_kind == :audiobook, do: [audiobookshelf_scanned_at: nil], else: []
 
     case Repo.update_all(
            from(t in BookTarget,
              where: t.id == ^id and t.status in [:monitored, :available],
              select: t
            ),
-           set: [status: :available, hold_reason: nil, updated_at: now]
+           set: [status: :available, hold_reason: nil, updated_at: now] ++ scan_reset
          ) do
       {1, [armed]} -> {:ok, armed}
       {0, _none} -> {:error, :stale_status}

@@ -93,6 +93,10 @@ config :cinder,
 # Default; setting PLEX_URL (see runtime.exs) switches this to Plex.
 config :cinder, media_server: Cinder.Library.MediaServer.Jellyfin
 
+# Only one impl (unlike media_server's Jellyfin/Plex choice) — Audiobookshelf is the household's
+# single audiobook consumer, so there is nothing to switch between.
+config :cinder, audiobook_server: Cinder.Library.AudiobookServer.Audiobookshelf
+
 config :cinder, Cinder.Books.Metadata,
   providers: [Cinder.Books.Metadata.OpenLibrary, Cinder.Books.Metadata.Hardcover]
 

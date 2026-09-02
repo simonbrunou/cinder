@@ -125,6 +125,37 @@ defmodule Cinder.Books.FilesTest do
       files = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
       assert [%BookFile{path: ^old_path}] = files
     end
+
+    # SS7c review: an untested correctness property is worse when a doc comment elsewhere claims
+    # it's covered. Proves `arm_target/1`'s `if media_kind == :audiobook` guard genuinely gates on
+    # media_kind rather than merely happening to see the column already `nil` — the column starts
+    # `nil` for a fresh e-book target, but is set here directly to prove a replace never touches
+    # it even when it is NOT already `nil` (production code never sets it for `:ebook`, but the
+    # guard itself, not that fact, is what this test defends).
+    test "a replace on an e-book target never touches audiobookshelf_scanned_at, even if
+          somehow set",
+         %{target: target} do
+      stamp = DateTime.utc_now(:second)
+
+      Repo.update_all(from(t in BookTarget, where: t.id == ^target.id),
+        set: [audiobookshelf_scanned_at: stamp]
+      )
+
+      old_path = "/tmp/book-#{target.id}-old.epub"
+      new_path = "/tmp/book-#{target.id}-new.epub"
+
+      assert {:ok, _old_file} =
+               Books.Files.record_import(target, %{path: old_path, size: 1000, format: :epub})
+
+      assert {:ok, _new_file, _superseded} =
+               Books.Files.record_import(
+                 target,
+                 %{path: new_path, size: 2000, format: :epub},
+                 replace: true
+               )
+
+      assert Repo.reload!(target).audiobookshelf_scanned_at == stamp
+    end
   end
 
   describe "record_import_set/3 — multi-track audiobook import" do
@@ -289,6 +320,27 @@ defmodule Cinder.Books.FilesTest do
       assert {:error, :book_file_exists} = Books.Files.record_import_set(target, attrs)
       assert Repo.all(from f in BookFile, where: f.book_target_id == ^target.id) == []
       assert Books.get_target(target.id).status == :monitored
+    end
+
+    # The B7c property that matters most: a replace's new content must be re-told to
+    # Audiobookshelf, not silently skipped because an EARLIER import of this same target was
+    # already scanned. `arm_target/1` resets the flag on every `:available`-transition, fresh or
+    # replace, for `:audiobook` targets only.
+    test "a replace resets audiobookshelf_scanned_at to nil, telling the poller to re-scan", %{
+      target: target
+    } do
+      old_attrs = [%{path: "/tmp/ab-#{target.id}-01.mp3", size: 1000, format: :mp3}]
+      assert {:ok, _files} = Books.Files.record_import_set(target, old_attrs)
+
+      :ok = Books.mark_audiobookshelf_scanned(target.id)
+      assert %DateTime{} = Repo.reload!(target).audiobookshelf_scanned_at
+
+      new_attrs = [%{path: "/tmp/ab-#{target.id}-02.m4b", size: 5000, format: :m4b}]
+
+      assert {:ok, _new_files, _superseded} =
+               Books.Files.record_import_set(target, new_attrs, replace: true)
+
+      assert Repo.reload!(target).audiobookshelf_scanned_at == nil
     end
   end
 
