@@ -107,8 +107,9 @@ defmodule Cinder.Download.ContentPolicyTest do
     end
 
     test "an operator's upper-case configured extension still matches" do
+      original = Application.get_env(:cinder, ContentPolicy, [])
       Application.put_env(:cinder, ContentPolicy, enabled: true, blocked_extensions: [".EXE"])
-      on_exit(fn -> Application.put_env(:cinder, ContentPolicy, enabled: true) end)
+      on_exit(fn -> Application.put_env(:cinder, ContentPolicy, original) end)
 
       assert {:blocked, _} = ContentPolicy.check(["payload.exe"])
     end
@@ -158,8 +159,9 @@ defmodule Cinder.Download.ContentPolicyTest do
     end
 
     test "does not even ask the client when disabled" do
+      original = Application.get_env(:cinder, ContentPolicy, [])
       Application.put_env(:cinder, ContentPolicy, enabled: false)
-      on_exit(fn -> Application.put_env(:cinder, ContentPolicy, enabled: true) end)
+      on_exit(fn -> Application.put_env(:cinder, ContentPolicy, original) end)
 
       assert :ok = ContentPolicy.vet(ExplodingClient, "id")
     end

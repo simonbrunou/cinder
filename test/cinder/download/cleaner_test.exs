@@ -253,8 +253,9 @@ defmodule Cinder.Download.CleanerTest do
   end
 
   test "does nothing at all when disabled" do
+    original = Application.get_env(:cinder, Cleaner, [])
     Application.put_env(:cinder, Cleaner, enabled: false)
-    on_exit(fn -> Application.put_env(:cinder, Cleaner, enabled: true) end)
+    on_exit(fn -> Application.put_env(:cinder, Cleaner, original) end)
 
     # No list_managed expectation on either client: a disabled sweep must not even ask.
     assert :ok = Cleaner.poll()
