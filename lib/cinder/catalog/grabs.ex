@@ -1333,9 +1333,13 @@ defmodule Cinder.Catalog.Grabs do
     Ecto.StaleEntryError -> {:error, :stale_grab}
   end
 
+  # A live grab can't reach zero episodes (every grab-delete here unlinks episodes in the SAME
+  # transaction) — empty means a concurrent Discard/cancel won; roll back to :stale_grab.
   defp fence_client_intent_ids(grab) do
-    episode_ids = episode_ids_for_grab(grab.id)
-    Download.fence_episode_cleanup(episode_ids, [grab_cleanup_spec(grab, episode_ids)])
+    case episode_ids_for_grab(grab.id) do
+      [] -> Repo.rollback(:stale_grab)
+      ids -> Download.fence_episode_cleanup(ids, [grab_cleanup_spec(grab, ids)])
+    end
   end
 
   defp update_imported_episode!(grab_id, episode_id, dest, quality, timestamp) do

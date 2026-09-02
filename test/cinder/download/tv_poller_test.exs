@@ -3089,6 +3089,31 @@ defmodule Cinder.Download.TvPollerTest do
       assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
     end
 
+    test "a grab discarded mid-vet parks gracefully instead of raising", ctx do
+      # #442 review: a concurrent Discard (Catalog.cancel_grab/1) can commit between the
+      # poller's tick-start read and vetted/3's blocked verdict — the grab (and, via the FK's
+      # ON DELETE SET NULL, its episode link) is already gone by the time
+      # park_grab_and_remove/1's fence would run. Simulated by deleting the grab from inside the
+      # files/1 stub, the exact point ContentPolicy.vet/2's client I/O sits.
+      expect(Cinder.Download.ClientMock, :files, fn "hash-tv-fake" ->
+        Repo.delete!(ctx.grab)
+        {:ok, ["Show.S01E04/Show.S01E04.mkv.lnk"]}
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+
+      log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+      # isolate/2 would log "skipped grab N" for an unrescued raise (an ArgumentError from
+      # hd([]) on the nilified episode link) — its absence proves the stale-grab path was taken
+      # instead. (The tick's unrelated search-wanted pass also logs its own "skipped series" for
+      # this now-ungrabbed, still-monitored episode hitting an unstubbed indexer mock — expected
+      # noise, not what this test is about.)
+      refute log =~ "skipped grab"
+      refute Repo.get(Grab, ctx.grab.id)
+      assert Repo.all(Intent) == []
+    end
+
     # As on the movie side: a fake is small enough to be :completed by the first tick, so the
     # :completed branch has to vet too or the payload reaches the importer.
     test "a fake caught only once COMPLETED is still rejected, never imported", ctx do
