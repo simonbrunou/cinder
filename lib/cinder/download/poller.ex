@@ -569,13 +569,19 @@ defmodule Cinder.Download.Poller do
   # The upgrade path needs its own vetting: a replacement download is chosen the same way a fresh
   # one is, so it can be a fake the same way — and here the stakes are higher, because the movie
   # already HAS a good file. Blocked reverts immediately (no retry budget; the file list is
-  # deterministic), taking the live library file with it untouched, and drops the fake from the
-  # client first so its payload stops arriving.
+  # deterministic), taking the live library file with it untouched.
+  #
+  # #414: the client removal used to be a bare best-effort call fired BEFORE the revert cleared
+  # download_id/download_protocol (the movie's only durable record of the replacement job) — a
+  # transient removal failure leaked the remote job forever. revert_upgrade/2 now routes
+  # `:blocked_content` through `Catalog.revert_upgrade_and_remove/1`, which fences a
+  # `:cleanup_pending` intent and clears the fields in the SAME transaction (no crash window
+  # between them), then makes the immediate best-effort removal attempt after commit; a crash or
+  # failure there just leaves the fenced row for the next tick's `reconcile_pending_intents/1`.
   defp vetted_upgrade(movie, client, continue) do
     case ContentPolicy.vet(client, movie.download_id) do
       {:blocked, detail} ->
         Logger.warning("movie #{movie.id} upgrade rejected: #{detail}")
-        Download.best_effort_remove(client, movie.download_id)
         revert_upgrade(movie, :blocked_content)
 
       :ok ->
@@ -765,17 +771,25 @@ defmodule Cinder.Download.Poller do
          reason in @download_failure_errors,
        do: Catalog.block_release(movie, :upgrade_failed)
 
-    with {:ok, reverted} <-
-           Catalog.transition(
-             movie,
-             %{
-               status: :available,
-               download_id: nil,
-               download_protocol: nil,
-               release_title: nil
-             },
-             expect: movie.status
-           ) do
+    # :blocked_content is the one reason whose movie still carries an active remote job that
+    # needs removing — the others never removed anything from the client, so plain
+    # `Catalog.transition/3` (field-clear only) is enough for them.
+    revert_result =
+      if reason == :blocked_content,
+        do: Catalog.revert_upgrade_and_remove(movie),
+        else:
+          Catalog.transition(
+            movie,
+            %{
+              status: :available,
+              download_id: nil,
+              download_protocol: nil,
+              release_title: nil
+            },
+            expect: movie.status
+          )
+
+    with {:ok, reverted} <- revert_result do
       Logger.warning("movie #{movie.id} upgrade reverted to :available (#{inspect(reason)})")
       Notifier.notify({:movie_upgrade_failed, reverted, reason})
     end
