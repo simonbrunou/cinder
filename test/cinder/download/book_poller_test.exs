@@ -342,6 +342,26 @@ defmodule Cinder.Download.BookPollerTest do
       refute Repo.get(BookGrab, grab.id)
     end
 
+    # #445: `fence_book_cleanup/1`'s delete and durable-cleanup fence commit together, and the
+    # `{:book_grab_deleted, _}` broadcast must fire only after that commit — never from inside
+    # `Books.Grabs.delete/1`'s own bundled broadcast, which would announce the grab gone before a
+    # concurrent `/books/:id` reload's read is guaranteed to see it (or, on a rollback, announce a
+    # deletion that never happened at all — see `Cinder.Books.GrabsTest`'s `delete_only/1` case
+    # for that half of the proof). Asserts the row is confirmed gone in the DB BEFORE the message
+    # arrives, and that no second message follows.
+    test "fence_book_cleanup/1 broadcasts {:book_grab_deleted, target_id} exactly once, after the grab is gone",
+         ctx do
+      %{grab: grab, target: target} = downloading(ctx, "book.epub", "remote-broadcast-order")
+      Books.subscribe_targets()
+
+      assert {:ok, [_intent_id]} = Download.fence_book_cleanup(grab)
+
+      assert_receive {:book_grab_deleted, target_id}
+      assert target_id == target.id
+      refute Repo.get(BookGrab, grab.id)
+      refute_receive {:book_grab_deleted, _}, 50
+    end
+
     test "one miss does not destroy a live download", ctx do
       %{grab: grab, target: target} = downloading(ctx, "book.epub")
 

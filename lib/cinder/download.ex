@@ -565,18 +565,30 @@ defmodule Cinder.Download do
   # between them is impossible; the caller runs `cleanup_intents/1` right after commit for the
   # immediate best-effort attempt, and any failure there leaves the `:cleanup_pending` row for
   # `reconcile_pending_intents/1`'s bounded retry (every `BookPoller` tick) to keep trying.
+  #
+  # #445: `Books.Grabs.delete_only/1` (not `delete/1`) — `delete/1`'s own bundled broadcast fired
+  # from INSIDE this transaction, before it commits, violating "one transition, one broadcast,
+  # emitted after commit." A rolled-back fence (or, under WAL, a `/books/:id` reload racing the
+  # still-open write) would have announced a deletion that never happened, or hadn't happened
+  # yet. `Books.broadcast/1` now runs after `Repo.transaction/1` returns `{:ok, _}`.
   @doc false
   def fence_book_cleanup(%BookGrab{} = grab) do
-    Repo.transaction(fn ->
-      intent =
-        case Repo.get_by(Intent, kind: :book_target, target_id: grab.book_target_id) do
-          %Intent{} = existing -> mark_cleanup!(existing, grab.download_id)
-          nil -> insert_book_cleanup!(grab)
-        end
+    result =
+      Repo.transaction(fn ->
+        intent =
+          case Repo.get_by(Intent, kind: :book_target, target_id: grab.book_target_id) do
+            %Intent{} = existing -> mark_cleanup!(existing, grab.download_id)
+            nil -> insert_book_cleanup!(grab)
+          end
 
-      Books.Grabs.delete(grab)
-      [intent.id]
-    end)
+        Books.Grabs.delete_only(grab)
+        [intent.id]
+      end)
+
+    with {:ok, intent_ids} <- result do
+      Books.broadcast({:book_grab_deleted, grab.book_target_id})
+      {:ok, intent_ids}
+    end
   end
 
   @doc false

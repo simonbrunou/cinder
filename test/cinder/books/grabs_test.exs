@@ -137,6 +137,38 @@ defmodule Cinder.Books.GrabsTest do
     end
   end
 
+  describe "delete_only/1" do
+    # #445: `fence_book_cleanup/1` now uses this instead of `delete/1`, so a caller deleting the
+    # grab inside its OWN transaction can broadcast only after that transaction commits. Proven
+    # here by wrapping it in a transaction that rolls back afterward: if `delete_only/1`
+    # broadcast unconditionally the way `delete/1` does, this would leak a
+    # `{:book_grab_deleted, _}` message for a deletion the rollback just undid.
+    test "inside a transaction that rolls back, leaves no broadcast and the grab intact", %{
+      grab: grab
+    } do
+      Books.subscribe_targets()
+
+      assert {:error, :simulated_failure} =
+               Cinder.Repo.transaction(fn ->
+                 Grabs.delete_only(grab)
+                 Cinder.Repo.rollback(:simulated_failure)
+               end)
+
+      refute_receive {:book_grab_deleted, _}, 50
+      assert Grabs.for_target(grab.book_target_id)
+    end
+
+    test "inside a transaction that commits, the row is gone but nothing broadcasts on its own",
+         %{grab: grab} do
+      Books.subscribe_targets()
+
+      assert {:ok, :ok} = Cinder.Repo.transaction(fn -> Grabs.delete_only(grab) end)
+
+      refute Grabs.for_target(grab.book_target_id)
+      refute_receive {:book_grab_deleted, _}, 50
+    end
+  end
+
   describe "duplicate grab refusal — book_ops_log" do
     test "a duplicate grab attempt is refused and logs exactly one book_ops_log row", %{
       grab: grab
