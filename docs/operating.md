@@ -145,10 +145,19 @@ erasure. The `smtp_username` setting is stored unencrypted in the settings table
 
 Boot-only keys (`SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_*`, `PORT`, `POOL_SIZE`, `RELEASE_NAME`,
 `DNS_CLUSTER_QUERY`) stay in the environment. Everything else — TMDB, indexer, download clients,
-media server, the standard per-kind library roots (`movies_library_path`, `tv_library_path`), the
-per-kind size bands, subtitles, and notifications — is edited at `/settings` and stored in the
-database. **DB values override the env bootstrap; clearing a setting reverts to the env
-value/default.** Secret fields are encrypted at rest with a key derived from `SECRET_KEY_BASE`.
+media server, the standard per-kind library roots (`movies_library_path`, `tv_library_path`,
+`books_library_path`, `audiobooks_library_path`), the per-kind size bands, subtitles,
+notifications, the book/audiobook metadata providers, the Readarr/Bookshelf migration source, and
+Audiobookshelf — is edited at `/settings` and stored in the database. **DB values override the env
+bootstrap; clearing a setting reverts to the env value/default.** Secret fields are encrypted at
+rest with a key derived from `SECRET_KEY_BASE`.
+
+**`books_library_path` and `audiobooks_library_path` have no environment bootstrap at all** —
+unlike `movies_library_path`/`tv_library_path`, which a `docker-compose.yml` deployment can set
+once and never touch again, the two book roots (and every other book/audiobook setting) must be
+typed into the wizard or `/settings` directly. This follows the project's own configuration rule:
+every external service Cinder gained after the original movies/TV core is a `Cinder.Settings`
+registry entry, never a new service environment variable.
 
 ### Download clients and completed-torrent cleanup
 
@@ -239,7 +248,12 @@ snapshot implementation for an on-demand copy.
 
 Retention bounds local recovery copies, but it is not an off-host backup. Regularly copy a
 verified snapshot and the matching `SECRET_KEY_BASE` to separate protected storage. Media files
-are not in the SQLite snapshot and need their own backup policy.
+are not in the SQLite snapshot and need their own backup policy — this includes every book and
+audiobook file under the `books`/`audiobooks` roots: the snapshot covers all eleven `book_*`
+catalog tables (work, author, edition, file, and identifier rows, blocklists, and the migration
+adoption state), byte-for-byte, but never the files themselves. A restored database with no
+matching filesystem backup still knows exactly what it should have — `book_files.path` rows
+intact — it just cannot serve the bytes until the files are restored (or re-adopted) separately.
 
 **Don't `cp` a live WAL database.** Cinder runs SQLite in WAL mode, so at any moment recent writes
 live in the `-wal` sidecar, not yet in `cinder.db`. A plain `cp` of the files while the container is
@@ -573,7 +587,8 @@ legacy selection and request to its matching profile, and leaves Auto titles or 
 proposed handling unlinked. A profile referenced by a title/request may only be renamed; its kind,
 handling, and root stay fixed, and the final profile of either kind cannot be deleted. Reassigning
 a title with existing files is rejected unless every file remains inside the new effective root.
-The first-run wizard still requires both standard roots, and a grab whose selected destination is
+The first-run wizard now requires all four standard roots — movies, TV, and (see "Books and
+audiobooks" below) the two book roots — and a grab whose selected destination is
 unavailable holds rather than importing into the wrong place. Point Jellyfin or Plex at every
 distinct root you configure.
 
@@ -585,6 +600,66 @@ distinct root you configure.
 > imports hold, red on `/dashboard`, until set). Keep both roots on the same filesystem as the download
 > client's completed dir for instant hardlinks; a root on a different filesystem still works via the
 > automatic copy fallback (see "Hardlink, with an automatic cross-filesystem copy fallback").
+
+## Books and audiobooks
+
+Books work the same request→approve→acquire→publish loop as movies/TV, kept in an entirely
+separate pipeline (own catalog, own release parser/scorer, own poller). Any authenticated user
+searches a work by title/author on `/discover` and requests it as an **e-book** or an
+**audiobook**; the request→approval gate, per-user quotas, and My-requests view all apply exactly
+as they do for movies. A work's e-book and audiobook targets are monitored independently — the
+same work can be neither, either, or both.
+
+**Requests stay unavailable until an admin configures at least one profile for that kind** at
+`/settings/profiles` (Books or Audiobooks) — this is separate from, and does not require, the
+library root being set, though in practice you configure both together.
+
+**There is no automatic release search for books, by design.** Unlike movies/TV, `BookPoller`
+runs no search sweep at all — `Cinder.Acquisition.Books`/`Audiobooks` export no automatic-release
+function, a deliberate gate pending a corpus-precision measurement the roadmap has not yet taken.
+Once a target is approved, an admin opens **manual search** on `/books/:id`, where Cinder ranks
+Prowlarr's book/audiobook candidates for the admin to choose from, scoring each against:
+
+- **Accepted formats**: EPUB, AZW3, MOBI for e-books (EPUB preferred); M4B, MP3 for audiobooks
+  (M4B preferred). An unrecognized or contradictory format is refused, never guessed.
+- **Author/title evidence** parsed from the release name, matched against the work's resolved
+  identity (Open Library primary, Hardcover secondary) — never a bare filename match.
+
+Once the admin picks a release, the pipeline takes over unattended from there: download, import,
+and (for audiobooks) the Audiobookshelf scan below.
+
+A multi-track audiobook (multiple MP3 files, or a disc/part-numbered set) imports **atomically**
+as one target: every track resolves and stages together, or none do. E-book archives (`.zip`/
+`.cbz` natively; `.rar`/`.cbr`/split `.rNN` volumes only when the `unrar` binary is present — it
+is **not** bundled in the shipped image; a release requiring it is refused with an explicit
+`:unsupported_archive` reason rather than silently skipped) extract into a bounded scratch
+directory with an entry-count and expanded-size ceiling, exactly like the video pipeline's own
+bounded work.
+
+**Retry, blocklist, and "Find a better match"** work identically to movies/TV: a `:held` target
+shows its exact reason and a Retry button; a confirmed-bad release is blocklisted so the next
+search never re-offers it; an `:available` target can be replaced with a better release, which
+atomically swaps the file(s) the same way a movie upgrade does.
+
+**Audiobookshelf scan.** After every successful audiobook import, Cinder requests a library scan
+through Audiobookshelf's own API (configure its URL, API key, and library id in `/settings`). A
+failed scan does not block or retry the import — the file is already durably in place — it simply
+retries the scan itself on every subsequent poller tick until Audiobookshelf confirms it, with no
+re-download involved either way. Booklore, by contrast, needs no push at all: point its own
+library scan at the `books` root and it will find new e-books on its normal schedule.
+
+**Author monitoring policies** (`/books/:id` → "Set author policy") let you opt an author into
+future-only, full-back-catalogue, or specific-work monitoring in one bounded batch, instead of
+monitoring each work by hand — capped per refresh so a large bibliography can't fan out into an
+unbounded burst of provider requests.
+
+**Migrating an existing Readarr-protocol Bookshelf library** (Booklore/Audiobookshelf households
+coming from `pennydreadful/bookshelf` or a compatible fork) is a one-time, in-place, no-rewrite
+adoption from `/library/adopt` — see [`docs/readarr-migration.md`](readarr-migration.md) for the
+full runbook, including the two-instance (e-book + audiobook) case and when it is safe to
+decommission Bookshelf afterward (see
+[`docs/books-dogfood-checklist.md`](books-dogfood-checklist.md) for the sign-off gate before you
+do).
 
 ## Adopting an existing library
 
@@ -648,3 +723,9 @@ are pruned automatically.
   Cinder will not guess a title or silently choose the largest playlist. Multi-file movies are
   accepted only when every video forms one unambiguous, contiguous stack named with
   `CD`/`disc`/`disk`/`part` plus `1..N`.
+- **Book/audiobook RAR archives need `unrar` on `PATH`, which the shipped image does not
+  include.** Unlike video (which never supports RAR), a book release's `.zip`/`.cbz` extracts
+  natively either way; a `.rar`/`.cbr` one refuses with an explicit `:unsupported_archive` reason
+  until you install `unrar` in the container (or its base image) yourself — checked fresh at every
+  extraction attempt, never cached, so installing it later is picked up on the next poller tick
+  with no restart required.

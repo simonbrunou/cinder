@@ -7,15 +7,18 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3" /></a>
 </p>
 
-Cinder is a single-household, self-hosted replacement for the **Sonarr + Radarr + Seerr** loop:
-request a movie or TV show → find the best release → download it → import it into **Jellyfin or
-Plex**. It's one Phoenix/LiveView app on SQLite — a single container, no external database. Every
-external service (TMDB, Prowlarr, the selected torrent/Usenet client, Jellyfin/Plex) sits behind a behaviour and
-is configured in-app.
+Cinder is a single-household, self-hosted replacement for the **Sonarr + Radarr + Seerr** loop
+*and* the **Readarr + Bookshelf** loop: request a movie, TV show, e-book, or audiobook → find the
+best release → download it → import it into **Jellyfin or Plex** (video) or **Booklore/
+Audiobookshelf** (books). It's one Phoenix/LiveView app on SQLite — a single container, no
+external database. Every external service (TMDB, Open Library/Hardcover, Prowlarr, the selected
+torrent/Usenet client, Jellyfin/Plex, Audiobookshelf) sits behind a behaviour and is configured
+in-app.
 
-> **Status:** **v2.0** — movies + TV + multi-user (request → admin approval), plus admin-named
-> movie/TV media profiles with opt-in per-title Anime handling, are built, validated live, and
-> released. Build history in [`ROADMAP.md`](ROADMAP.md).
+> **Status:** **v3.0** — movies + TV + multi-user (request → admin approval), admin-named
+> movie/TV media profiles with opt-in per-title Anime handling, and e-book + audiobook request,
+> acquisition, and library publication (replacing Readarr/Bookshelf) are built, validated live,
+> and released. Build history in [`ROADMAP.md`](ROADMAP.md).
 
 ## Screenshots
 
@@ -37,7 +40,7 @@ cd cinder
 cp .env.example .env
 echo "SECRET_KEY_BASE=$(openssl rand -base64 48)" >> .env   # or edit .env by hand
 echo "CINDER_BOOTSTRAP_TOKEN=$(openssl rand -hex 32)" >> .env
-mkdir -p media/{movies,tv,downloads} && sudo chown -R 65534:65534 media
+mkdir -p media/{movies,tv,books,audiobooks,downloads} && sudo chown -R 65534:65534 media
 docker compose up --build      # builds the image locally on first run
 ```
 
@@ -48,9 +51,12 @@ database volume is set up by the image itself.)
 Open <http://localhost:4000>. Paste the `CINDER_BOOTSTRAP_TOKEN` from `.env` into the registration
 form to claim the first admin, then remove both that `.env` value and its environment entry from
 `docker-compose.yml`. The **first-run wizard** then collects your TMDB / indexer / download-client /
-media-server details, validating each before it lets you finish. Later household self-registration
-stays open and always creates a normal user. A fresh instance without a bootstrap token fails
-closed: it cannot create the first account.
+media-server / **library path** details (movies and TV are pre-filled from the compose file; type
+in the e-book and audiobook folders, e.g. `/media/books` and `/media/audiobooks`, since only
+boot-only config gets an env bootstrap — see [Configuration](#configuration)), validating each
+before it lets you finish. Later household self-registration stays open and always creates a
+normal user. A fresh instance without a bootstrap token fails closed: it cannot create the first
+account.
 
 Once a media server is configured with `PLEX_URL`/`PLEX_TOKEN` (or the equivalent `/settings`
 fields), a **"Sign in with Plex"** button appears on the log-in page. Only Plex accounts with
@@ -110,12 +116,15 @@ Secrets are encrypted at rest with a key derived from `SECRET_KEY_BASE`.
 | Indexer | Prowlarr URL + API key |
 | Download | At most one torrent client (qBittorrent or Transmission) and one Usenet client (SABnzbd or NZBGet) — either protocol can be set to Disabled — credentials and per-client path mappings; optional completed-torrent ratio / seed-time cleanup limits |
 | Media server | Jellyfin URL + API key **or** Plex URL + token + a per-library section (Movies, TV); media-server type; an optional **web URL** per server (see below) |
-| Library paths | Required standard roots (`movies_library_path`, `tv_library_path`) plus admin-managed named movie/TV profiles at `/settings/profiles`; each profile chooses Standard or Anime handling and may set its own root, with a blank root falling back to the matching existing root |
+| Library paths | Required standard roots (`movies_library_path`, `tv_library_path`, `books_library_path`, `audiobooks_library_path`) plus admin-managed named movie/TV profiles at `/settings/profiles`; each profile chooses Standard or Anime handling and may set its own root, with a blank root falling back to the matching existing root. The two book roots have no env bootstrap (see below) — type them into the wizard or `/settings` directly |
 | Release size bands | Per-kind min/max size (decimal GB), preferred resolutions and sources, preferred/blocked title terms, and an optional automatic-upgrade resolution cutoff. TV sizes are per episode (see below the table). Ships with defaults — movies 0.3–15 GB, TV 0.05–4 GB per episode; blank = default, an explicit `0` = no limit |
 | Subtitles | OpenSubtitles API key + username + password, LibreTranslate URL + API key + batch size + request timeout (optional fallback translation), preferred subtitle languages (csv) — fetched automatically after each import and swept every 12 h; Cinder-downloaded sidecars are also checked serially by pinned, local CPU-only FFsubsync 0.5.1, with low-confidence/different-cut results left unchanged for review in Activity |
 | Notifications | Discord webhook URL — posts an embed on availability and failures, on a request approval, and on the two things that need an admin: a new request awaiting approval and a new account awaiting activation (unset ⇒ nothing is posted to Discord). Plus **SMTP host / port / username / password / from address**: a requester-facing transport with its own event set, mailed to one person rather than to a household channel — their account activated, their request approved or denied, an issue they reported resolved, a movie or season available, a movie failed, and a search exhausted for episodes they wanted. It is not a mirror of the Discord channel: it carries no admin-facing new-request or new-account event, and Discord carries no account-activation notice. Sent only to a user with a confirmed email address who has left *"Email me when a request is approved or ready to watch"* on in Account settings. Plus a **generic webhook URL** + optional `Authorization` header value: every event Cinder emits POSTed as JSON (`{"event": "movie_available", …}`) to anything that speaks HTTP — ntfy, Gotify, Apprise, n8n, Home Assistant. There is no payload template; reshape it in the receiver. With no transport configured at all, events are log-only |
 | Behaviour toggles | `auto_approve_all` (trusted households: every request grabs immediately), `move_on_import` (after a **Usenet** import, best-effort deletion of the source download; it never removes a torrent — the separate completed-torrent cleanup does that, and only once you set a ratio or seed-time limit, which is off by default), media-server type (Jellyfin/Plex) |
 | Anime releases | Embedded-subtitle mode (allow/prefer/require), preferred/blocked release-group lists, preferred-group fallback delay (hours) — global, applies to every title switched to the Anime profile (audio mode is per-title — see the Audio picker below); `ffprobe_bin` (the `ffprobe` binary path/name used for post-download verification) |
+| Metadata providers | Open Library (primary, no key required) plus an optional Hardcover API key (secondary, higher-precision identity resolution) — used to resolve a requested book/audiobook to a work, author, and edition |
+| Migration source (Readarr/Bookshelf) | URL + API key + remote/local path prefixes for an existing Readarr-protocol-compatible Bookshelf instance, used only by the one-time `/library/adopt` cutover runbook (see [`docs/readarr-migration.md`](docs/readarr-migration.md)) |
+| Audiobookshelf | URL + API key + library id — Cinder requests a library scan after every successful audiobook import; a failed scan retries automatically without re-downloading |
 
 **TV size bands are per episode.** A release is banded against the still-wanted episodes it
 covers, so one covering N of them is allowed N× the max. The upgrade sweep and manual search apply
@@ -137,9 +146,11 @@ Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PR
 `MOVIES_LIBRARY_PATH`, `TV_LIBRARY_PATH`, `MOVIES_PLEX_SECTION`, `TV_PLEX_SECTION`,
 `OPENSUBTITLES_API_KEY`, `LIBRETRANSLATE_URL`, `LIBRETRANSLATE_API_KEY`,
 `LIBRETRANSLATE_BATCH_SIZE`, `LIBRETRANSLATE_TIMEOUT`, `SUBTITLE_LANGUAGES`, …) for an unattended first boot, but the in-app
-value wins once set. Named profile roots, legacy Anime library destinations, the size bands, and
-the Anime release settings (including `ffprobe_bin`) have no env bootstrap — configure them in
-`/settings` or `/settings/profiles`.
+value wins once set. Named profile roots, legacy Anime library destinations, the size bands, the
+Anime release settings (including `ffprobe_bin`), and every book/audiobook setting (library
+paths, metadata providers, the migration source, Audiobookshelf) have no env bootstrap — every
+external service Cinder gained after the movies/TV core is configured directly in `/settings` or
+the wizard, not through a new environment variable.
 
 ### Household API
 
@@ -148,12 +159,15 @@ credential: it can read and mutate the request queue. The optional HTTP Basic ga
 
 - `GET /api/v1/status`
 - `GET /api/v1/requests?limit=50&offset=0`
-- `POST /api/v1/requests` with JSON `{"target_type":"movie","target_id":603}` or
-  `{"target_type":"season","target_id":1399,"season_number":2}`. Optional fields are
-  `requester_id`, `preferred_language` (`original`, `french`, `dual`, `any`), and `media_profile`
-  (`standard`, `anime`) or numeric `profile_id`. Do not send both profile fields. Without
-  `requester_id`, Cinder attributes the request to the first active admin by id and it
-  auto-approves; an active member id applies that member's quota and the normal approval gate.
+- `POST /api/v1/requests` with JSON `{"target_type":"movie","target_id":603}`,
+  `{"target_type":"season","target_id":1399,"season_number":2}`, or
+  `{"target_type":"book","target_id":42,"media_kind":"ebook"}` (`media_kind` is `ebook` or
+  `audiobook`; required for a book request, since a work is monitored independently per kind).
+  Optional fields are `requester_id`, `preferred_language` (`original`, `french`, `dual`, `any`,
+  movies/TV only), and `media_profile` (`standard`, `anime`) or numeric `profile_id`. Do not send
+  both profile fields. Without `requester_id`, Cinder attributes the request to the first active
+  admin by id and it auto-approves; an active member id applies that member's quota and the
+  normal approval gate.
 - `POST /api/v1/requests/:id/approve` with optional JSON `{"profile_id":4}` (or legacy
   `{"media_profile":"anime"}`). Omitted profile uses the requester's proposal, then the oldest
   matching Standard profile.
@@ -216,6 +230,26 @@ verification** (the movie's detail page; `/activity` for a TV grab): install `ff
 Named profiles at `/settings/profiles` can route movie and TV titles into separate roots. Leave a
 profile root blank to keep using the matching existing Standard/Anime root.
 
+**Books and audiobooks** work the same request→approve→publish loop, kept deliberately separate
+from the video pipeline (own contexts, own release parser/scorer, own poller): any authenticated
+user searches a work by title/author and requests it as an **e-book** or an **audiobook** —
+independently, so the same work can be monitored as neither, either, or both. Cinder resolves the
+work's identity through Open Library (primary) and an optional Hardcover key (secondary), never
+guessing when identity is ambiguous.
+
+**There is no automatic release search for books, by design** — the roadmap gates it behind a
+corpus-precision measurement that has not been taken, so `Cinder.Acquisition.Books`/`Audiobooks`
+export no automatic-selection function at all. Instead, an admin opens **manual search** on
+`/books/:id`, where Cinder ranks Prowlarr's book/audiobook candidates against the accepted format
+list (EPUB/AZW3/MOBI for e-books, M4B/MP3 for audiobooks) and author/title evidence for the admin
+to pick from. Once a release is chosen, the pipeline takes over unattended: download, atomic
+import (a multi-track audiobook imports as one target) into the `books`/`audiobooks` library
+roots, retry, and "Find a better match," the same way they work for movies/TV. Booklore reads the
+`books` root directly; Cinder requests an Audiobookshelf scan after every audiobook import and
+retries automatically on failure, without re-downloading. An existing Readarr-protocol Bookshelf
+library can be adopted in place (no re-download, no rewrite) from `/library/adopt` — see
+[`docs/readarr-migration.md`](docs/readarr-migration.md).
+
 ## Development
 
 ```sh
@@ -230,6 +264,7 @@ Tidewave MCP is wired in dev. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for conve
 
 - [`ROADMAP.md`](ROADMAP.md) — build plan and what's shipped.
 - [`docs/operating.md`](docs/operating.md) — deploy, security, backups, hardlinks, troubleshooting, limits.
+- [`docs/readarr-migration.md`](docs/readarr-migration.md) — migrating an existing Bookshelf e-book/audiobook library into Cinder.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — dev setup, conventions, release process.
 
 ## License

@@ -427,14 +427,20 @@ Per-file, exactly what changes:
   checks `books_library_path`/`audiobooks_library_path` at all, even though both are already
   operator-configurable settings once books ship). Drops the `video?: true` filter so every
   configured `LibraryKind` contributes its own `"#{kind}_library"` check, and `service_label/1`
-  gains `"books_library"`/`"audiobook_library"` clauses alongside the existing
-  `"movies_library"`/`"tv_library"` ones. A fresh install now fails first-run Finish until its book
-  and audiobook roots are writable, exactly like movies/TV already do.
+  gains `"ebook_library"`/`"audiobook_library"` clauses alongside the existing
+  `"movies_library"`/`"tv_library"` ones — `"ebook_library"`, not `"books_library"`, because the
+  key is derived from the `:ebook` `LibraryKind` atom itself, matching `decode_service/1`'s own
+  existing kind-generic pattern rather than the `books` filesystem-root role. A fresh install now
+  fails first-run Finish until its book and audiobook roots are writable, exactly like movies/TV
+  already do.
 - **`Dockerfile`** — no book-specific runtime dependency needs adding: `unrar` presence is already
   optional (feature degrades to `:unsupported_archive`, §B8a's audit), and `ffprobe` is already
   shipped for video. Confirmed no new binary is required; **no change**.
-- **`mix.exs`** — bump `@version` to `"2.1.0"` (minor: a genuinely new top-level feature surface,
-  matching the project's own precedent of moving `2.0.0` at the movies/TV/multi-user release).
+- **`mix.exs`** — bump `@version` to `"3.0.0"` (shipped as a major bump, not the minor originally
+  proposed here: this project's own precedent treats a major version as a roadmap-milestone
+  marker rather than a strict SemVer signal — `1.1.0 → 2.0.0` was itself a backward-compatible
+  feature addition, for the TV + multi-user milestone. Replacing a fourth `*arr` tool is at least
+  as significant, so B8d shipped `3.0.0`).
 - **`CHANGELOG.md`** — a new dated entry under the version bump, summarizing books/audiobooks as a
   feature addition (one paragraph, in the file's existing entry style — not a slice-by-slice
   history, which belongs in the plan docs, not the changelog).
@@ -445,9 +451,12 @@ Per-file, exactly what changes:
   `/library?status=held` for parked causes; note that missed releases, wrong matches, and recovery
   actions have no automated record and must be assessed from direct operator observation — either
   "zero/explained" across all seven roadmap categories or "unexplained — do not sign off").
-- **New: `docs/readarr-decommission.md`** — the explicit steps to stop and remove the two Bookshelf
-  containers and their settings rows, gated behind "only after the dogfood window's sign-off
-  decision," extending B6c's existing migration runbook rather than duplicating its prose.
+- **`docs/readarr-migration.md`** addendum (not a new `docs/readarr-decommission.md` file, as this
+  plan originally proposed): the explicit steps to stop and remove the Bookshelf container(s) and
+  their settings rows, gated behind "only after the dogfood window's sign-off decision," extending
+  B6c's existing migration runbook in place rather than duplicating its prose in a second document
+  — the better call on review, since the whole point of the migration runbook is one operator
+  document covering a Bookshelf instance's full lifecycle, cutover through decommission.
 
 ### Done when
 

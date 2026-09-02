@@ -44,6 +44,17 @@ defmodule CinderWeb.SetupLiveTest do
 
   # Enables qBittorrent + Jellyfin so the loop can validate green.
   @valid_params %{"torrent_client" => "qbittorrent", "media_server_type" => "jellyfin"}
+  # Book/audiobook roots have no env bootstrap (`Cinder.Settings`'s one-time bootstrap snapshot
+  # is cached in `:persistent_term` at first read and never refreshed mid-suite, so mutating
+  # `Application.put_env(:cinder, :books_library_path, ...)` inside a test is unreliable — the
+  # cache may already be frozen at `nil`/`[]` from an earlier, unrelated test). Submitting these
+  # through the form instead persists a real `Cinder.Settings` DB row, which
+  # `apply_kind_config/2` always reads in preference to the cached bootstrap fallback — the same
+  # path a real operator's wizard submission takes.
+  @valid_params_with_books Map.merge(@valid_params, %{
+                             "books_library_path" => "/tmp/cinder-test-books-library",
+                             "audiobooks_library_path" => "/tmp/cinder-test-audiobooks-library"
+                           })
 
   test "an admin validates services and finishes setup", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
@@ -52,7 +63,7 @@ defmodule CinderWeb.SetupLiveTest do
 
     {:ok, lv, _html} = live(conn, ~p"/setup")
 
-    lv |> form("#setup-form", @valid_params) |> render_submit()
+    lv |> form("#setup-form", @valid_params_with_books) |> render_submit()
     assert has_element?(lv, "#finish-setup:not([disabled])")
 
     lv |> element("#finish-setup") |> render_click()
@@ -77,7 +88,9 @@ defmodule CinderWeb.SetupLiveTest do
     refute html =~ ~s(name="books_anime_library_path")
   end
 
-  test "book roots are testable but do not expand the required-service set", %{conn: conn} do
+  test "book and audiobook roots are required to finish setup, like the video ones", %{
+    conn: conn
+  } do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)
     stub_all_services_ok()
@@ -86,19 +99,24 @@ defmodule CinderWeb.SetupLiveTest do
 
     assert has_element?(lv, "button[phx-value-service=ebook_library]", "Test Ebooks library")
 
-    # Positive control: the checklist exists and lists the required video roots, so the refutes
-    # below prove books are absent from it rather than that the selector matched nothing.
+    assert has_element?(
+             lv,
+             "button[phx-value-service=audiobook_library]",
+             "Test Audiobooks library"
+           )
+
+    # The checklist now lists all four library-path rows, book and video alike.
     assert has_element?(lv, "#setup-checklist", "Movies library path")
     assert has_element?(lv, "#setup-checklist", "TV library path")
+    assert has_element?(lv, "#setup-checklist", "Ebooks library path")
+    assert has_element?(lv, "#setup-checklist", "Audiobooks library path")
 
-    # Refute the SINGULAR stem. `service_label/1` has explicit clauses only for the video
-    # services, so a book row would fall through to its titlecase fallback and render
-    # "Ebook Library" — refuting the plural "Ebooks" matches nothing either way and fences
-    # nothing. The stem matches whatever spelling the label ends up with.
-    refute has_element?(lv, "#setup-checklist", "Ebook")
-    refute has_element?(lv, "#setup-checklist", "Audiobook")
-
+    # Neither book root is configured yet: Finish stays locked exactly like an unset/unwritable
+    # video root would, proving the requirement is enforced and not merely displayed.
     lv |> form("#setup-form", @valid_params) |> render_submit()
+    assert has_element?(lv, "#finish-setup[disabled]")
+
+    lv |> form("#setup-form", @valid_params_with_books) |> render_submit()
     assert has_element?(lv, "#finish-setup:not([disabled])")
   end
 
@@ -284,7 +302,13 @@ defmodule CinderWeb.SetupLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/setup")
 
     lv
-    |> form("#setup-form", %{"torrent_client" => "disabled", "media_server_type" => "jellyfin"})
+    |> form(
+      "#setup-form",
+      Map.merge(@valid_params_with_books, %{
+        "torrent_client" => "disabled",
+        "media_server_type" => "jellyfin"
+      })
+    )
     |> render_submit()
 
     assert has_element?(lv, "#finish-setup:not([disabled])")

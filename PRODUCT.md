@@ -19,18 +19,23 @@ admin who approves, a handful of requesters who ask. Success is the requester fo
 exists until the thing they wanted is in Jellyfin.
 
 ## Product Purpose
-Cinder replaces the **Radarr + Sonarr + Seerr** loop for one household with a single
-Phoenix/LiveView app on SQLite — one container, no external database. A household member
-requests a movie or TV season → an admin approves (their own requests auto-approve) → Cinder
-finds the best release through the indexer, hands it to the download client, then hardlinks and
-renames the finished file into the Jellyfin/Plex layout and triggers a scan. Background pollers
-advance each request through its state machine and broadcast live over PubSub.
+Cinder replaces the **Radarr + Sonarr + Seerr** loop, and separately the **Readarr + Bookshelf**
+loop, for one household with a single Phoenix/LiveView app on SQLite — one container, no
+external database. A household member requests a movie, TV season, e-book, or audiobook → an
+admin approves (their own requests auto-approve) → for movies/TV, Cinder automatically finds and
+grabs the best release; for books, an admin picks the release from a ranked manual-search panel,
+since automatic book selection is deliberately gated behind a corpus-precision measurement the
+roadmap has not yet taken. Either way, Cinder hands the release to the download client, then
+places the finished file — hardlinked and renamed for video, imported into the
+`books`/`audiobooks` roots for books — and triggers a scan (or, for audiobooks, an Audiobookshelf
+scan request). Background pollers advance each request through its state machine and broadcast
+live over PubSub.
 
 Success looks like: a stranger installs the container, the first-run wizard validates every
 service before it lets them finish, household members request through a plain search-and-ask
-flow, the admin approves from a queue, and titles land in the media server without anyone
-SSHing in or editing a config file. It collapses three power-user tools into one calm,
-self-explaining instance.
+flow, the admin approves from a queue, and titles land in the media server (or Booklore/
+Audiobookshelf, for books) without anyone SSHing in or editing a config file. It collapses four
+power-user tools into one calm, self-explaining instance.
 
 ## Brand Personality
 **Calm, trustworthy, unfussy.**
