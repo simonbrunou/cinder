@@ -44,17 +44,26 @@ defmodule CinderWeb.SetupLiveTest do
 
   # Enables qBittorrent + Jellyfin so the loop can validate green.
   @valid_params %{"torrent_client" => "qbittorrent", "media_server_type" => "jellyfin"}
+  # Book/audiobook roots have no env bootstrap (`Cinder.Settings`'s one-time bootstrap snapshot
+  # is cached in `:persistent_term` at first read and never refreshed mid-suite, so mutating
+  # `Application.put_env(:cinder, :books_library_path, ...)` inside a test is unreliable — the
+  # cache may already be frozen at `nil`/`[]` from an earlier, unrelated test). Submitting these
+  # through the form instead persists a real `Cinder.Settings` DB row, which
+  # `apply_kind_config/2` always reads in preference to the cached bootstrap fallback — the same
+  # path a real operator's wizard submission takes.
+  @valid_params_with_books Map.merge(@valid_params, %{
+                             "books_library_path" => "/tmp/cinder-test-books-library",
+                             "audiobooks_library_path" => "/tmp/cinder-test-audiobooks-library"
+                           })
 
   test "an admin validates services and finishes setup", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)
     stub_all_services_ok()
-    Application.put_env(:cinder, :books_library_path, "/tmp/cinder-test-books-library")
-    Application.put_env(:cinder, :audiobooks_library_path, "/tmp/cinder-test-audiobooks-library")
 
     {:ok, lv, _html} = live(conn, ~p"/setup")
 
-    lv |> form("#setup-form", @valid_params) |> render_submit()
+    lv |> form("#setup-form", @valid_params_with_books) |> render_submit()
     assert has_element?(lv, "#finish-setup:not([disabled])")
 
     lv |> element("#finish-setup") |> render_click()
@@ -89,6 +98,7 @@ defmodule CinderWeb.SetupLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/setup")
 
     assert has_element?(lv, "button[phx-value-service=ebook_library]", "Test Ebooks library")
+
     assert has_element?(
              lv,
              "button[phx-value-service=audiobook_library]",
@@ -106,10 +116,7 @@ defmodule CinderWeb.SetupLiveTest do
     lv |> form("#setup-form", @valid_params) |> render_submit()
     assert has_element?(lv, "#finish-setup[disabled]")
 
-    Application.put_env(:cinder, :books_library_path, "/tmp/cinder-test-books-library")
-    Application.put_env(:cinder, :audiobooks_library_path, "/tmp/cinder-test-audiobooks-library")
-
-    lv |> form("#setup-form", @valid_params) |> render_submit()
+    lv |> form("#setup-form", @valid_params_with_books) |> render_submit()
     assert has_element?(lv, "#finish-setup:not([disabled])")
   end
 
@@ -277,8 +284,6 @@ defmodule CinderWeb.SetupLiveTest do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)
     stub_all_services_ok()
-    Application.put_env(:cinder, :books_library_path, "/tmp/cinder-test-books-library")
-    Application.put_env(:cinder, :audiobooks_library_path, "/tmp/cinder-test-audiobooks-library")
 
     Req.Test.stub(Cinder.SabnzbdStub, fn conn ->
       case conn.params["mode"] do
@@ -297,7 +302,13 @@ defmodule CinderWeb.SetupLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/setup")
 
     lv
-    |> form("#setup-form", %{"torrent_client" => "disabled", "media_server_type" => "jellyfin"})
+    |> form(
+      "#setup-form",
+      Map.merge(@valid_params_with_books, %{
+        "torrent_client" => "disabled",
+        "media_server_type" => "jellyfin"
+      })
+    )
     |> render_submit()
 
     assert has_element?(lv, "#finish-setup:not([disabled])")
