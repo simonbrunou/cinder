@@ -15,7 +15,8 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   the id query alone is not enough), reusing the same normalization.
 
   `search_book/3` and `search_book_query/2` are the books siblings (`type=book` / `type=search`),
-  scoped to the e-book category by default.
+  scoped to the e-book category by default. `search_audiobook/3` and `search_audiobook_query/2`
+  are their audiobook siblings, scoped to the audiobook category instead.
   """
   @behaviour Cinder.Acquisition.Indexer
 
@@ -32,8 +33,16 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   # for a per-install override, and an unused settings key is a support burden.
   @ebook_category 7020
 
+  # Newznab/Torznab standard category for Audio/Audiobook. Audio's parent is 3000, the sibling of
+  # the Books parent (7000) the e-book category sits under — B7a's own module-attribute choice,
+  # the same "no per-install override" reasoning `@ebook_category` above already gives.
+  @audiobook_category 3030
+
   @doc "The Newznab category the book searches are scoped to."
   def ebook_category, do: @ebook_category
+
+  @doc "The Newznab category the audiobook searches are scoped to."
+  def audiobook_category, do: @audiobook_category
 
   @impl true
   def search(imdb_id) do
@@ -138,7 +147,34 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
     end
   end
 
+  @doc """
+  Structured audiobook search (`type=book`) — the audiobook sibling of `search_book/3`. Reuses
+  `book_query/2`'s brace-token construction unchanged: Newznab's structured book-search type
+  still carries `author`/`title` fields regardless of the category filtering the results to
+  audio. Results are tagged `:id_scoped`.
+  """
+  @impl true
+  def search_audiobook(author, title, opts) do
+    case search_query(book_query(author, title), "book", audiobook_categories(opts)) do
+      {:ok, releases} -> {:ok, tag_query_origin(releases, :id_scoped)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc """
+  Free-text audiobook search (`type=search`) — the audiobook sibling of `search_book_query/2`.
+  Used for the ASIN/ISBN probe and the `"Title Author"` fallback. Results are tagged `:free_text`.
+  """
+  @impl true
+  def search_audiobook_query(query, opts) do
+    case search_query(query, "search", audiobook_categories(opts)) do
+      {:ok, releases} -> {:ok, tag_query_origin(releases, :free_text)}
+      {:error, _reason} = error -> error
+    end
+  end
+
   defp categories(opts), do: Keyword.put_new(opts, :categories, [@ebook_category])
+  defp audiobook_categories(opts), do: Keyword.put_new(opts, :categories, [@audiobook_category])
 
   # Both braces are removed before interpolation. Prowlarr's `BookRegex` captures with `[^{]+`,
   # which stops at a `{` — so an embedded `{` would open a second token and let a crafted value
