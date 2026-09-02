@@ -7016,4 +7016,12 @@ msgstr ""
 #: lib/cinder_web/live/library_live.ex:454
 #, elixir-autogen, elixir-format
 msgid "Scan recovered"
+#: lib/cinder_web/live/setup_live.ex:303
+#, elixir-autogen, elixir-format
+msgid "Audiobooks library path"
+msgstr ""
+
+#: lib/cinder_web/live/setup_live.ex:304
+#, elixir-autogen, elixir-format
+msgid "Ebooks library path"
 msgstr ""

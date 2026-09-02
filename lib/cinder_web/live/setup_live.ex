@@ -3,8 +3,9 @@ defmodule CinderWeb.SetupLive do
   First-run wizard, mounted at `/setup`. The admin is already created (via the normal
   registration flow); this step collects external-service config, validates each via
   `Cinder.Health`, and only lets the admin finish once the loop is fully green — TMDB,
-  indexer, a media server, writable movie + TV library paths, and at least one download
-  client. Finishing marks `setup_complete`, releasing the `:require_setup` gate.
+  indexer, a media server, a writable library path for every kind Cinder manages (movies, TV,
+  e-books, audiobooks), and at least one download client. Finishing marks `setup_complete`,
+  releasing the `:require_setup` gate.
   """
   use CinderWeb, :live_view
 
@@ -17,10 +18,13 @@ defmodule CinderWeb.SetupLive do
   @base_required_services ["tmdb", "indexer", "media_server"]
   @download_services ["torrent", "usenet"]
 
-  # The required set is the base services plus one writable-root check per video library kind.
+  # The required set is the base services plus one writable-root check per library kind —
+  # every kind Cinder manages (movies, TV, ebooks, audiobooks), not just the video ones, so a
+  # fresh install cannot finish setup with an unwritable or unset book/audiobook root any more
+  # than it can with an unwritable movies/TV one.
   defp required_services do
     @base_required_services ++
-      for(%{kind: kind, video?: true} <- Settings.library_kinds(), do: "#{kind}_library")
+      for(%{kind: kind} <- Settings.library_kinds(), do: "#{kind}_library")
   end
 
   @impl true
@@ -297,5 +301,7 @@ defmodule CinderWeb.SetupLive do
   defp service_label("media_server"), do: gettext("Media server (Jellyfin/Plex)")
   defp service_label("movies_library"), do: gettext("Movies library path")
   defp service_label("tv_library"), do: gettext("TV library path")
+  defp service_label("ebook_library"), do: gettext("Ebooks library path")
+  defp service_label("audiobook_library"), do: gettext("Audiobooks library path")
   defp service_label(svc), do: svc |> String.replace("_", " ") |> :string.titlecase()
 end

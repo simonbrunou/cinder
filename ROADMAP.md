@@ -1101,6 +1101,54 @@ phase until the current Done-when block is green.
 
 ---
 
+# Part IV — Books & audiobooks (Readarr/Bookshelf replacement)
+
+A separate track, planned and executed after Part III, replacing the household's two
+`pennydreadful/bookshelf:hardcover` (Readarr-protocol) instances — one fronting Booklore for
+e-books, one fronting Audiobookshelf for audiobooks. Full governing documents:
+[`docs/plans/2026-08-20-readarr-replacement-roadmap.md`](docs/plans/2026-08-20-readarr-replacement-roadmap.md)
+(the milestone plan, B0–B8) and
+[`docs/specs/2026-08-20-books-parity-contract.md`](docs/specs/2026-08-20-books-parity-contract.md)
+(the locked parity contract against the live deployment audit,
+[`docs/audits/2026-08-20-bookshelf-inventory.md`](docs/audits/2026-08-20-bookshelf-inventory.md)).
+Each milestone has its own dated plan under `docs/plans/`; this section is the terse pointer, not
+a restatement.
+
+- **B0 — Inventory and parity contract.** Read-only audit of the live Bookshelf deployments;
+  locked the catalog identity model (author/work/edition/file), the monitoring-state vocabulary,
+  the accepted e-book/audiobook format lists, and the Open Library + Hardcover metadata-provider
+  decision (92.5% corpus identity resolution against a 40-case operator-confirmed corpus). No
+  production code.
+- **B1 — Media-kind foundation.** `Cinder.LibraryKind`'s `:ebook`/`:audiobook` kinds, generalized
+  alongside `:movies`/`:tv` everywhere a per-kind derivation (settings keys, health checks, size
+  bands) already existed.
+- **B2 — Books identity and metadata.** The `Cinder.Books` catalog schema (works, authors,
+  editions, files, series, namespaced provider identifiers) and the Open Library/Hardcover
+  metadata adapters, executed against the B0 corpus fixture.
+- **B3 — Request UX.** Book/audiobook discovery and the request→approval flow, reusing
+  `Cinder.Requests`' existing gate rather than a parallel one.
+- **B4 — E-book vertical slice (Book MVP).** End-to-end e-book acquisition: parser, scorer,
+  archive extraction (bounded ZIP/RAR), naming, import, and the `/books/:id` operator surface.
+- **B5 — Monitoring, wanted state, author policies, and operations.** Retry, a book release
+  blocklist, "Find a better match," bounded per-author bulk-monitoring policies, and
+  metadata-provider health.
+- **B6 — Readarr/Bookshelf migration, adoption preview, and e-book cutover.** The
+  `Cinder.Library.MigrationSource.Readarr` adapter, bounded/cached preview classification, and the
+  `Cinder.Books.Adoption` in-place write choke-point (`/library/adopt`) — the e-book replacement
+  milestone.
+- **B7 — Audiobook acquisition and Audiobookshelf publication.** An independent audiobook release
+  decision layer (M4B/MP3), atomic multi-track import, the `Cinder.Library.AudiobookServer`
+  behaviour with retryable post-import scan, the audiobook operator surface, and the migration
+  classification fix for a second (audiobook) Bookshelf instance.
+- **B8 — Hardening, documentation, and production sign-off.** Failure-mode verification, a
+  bounded-work audit, the security/privacy/accessibility review pass, first-run validation for the
+  book/audiobook roots, and this product-surface documentation cutover — the full Readarr
+  replacement milestone. A two-week Readarr-stopped dogfood window remains an operator-run,
+  elapsed-time gate outside what a commit can close; see
+  [`docs/books-dogfood-checklist.md`](docs/books-dogfood-checklist.md) and
+  [`docs/readarr-migration.md`](docs/readarr-migration.md#decommissioning-bookshelf-after-sign-off).
+---
+
 ## Parked (out of scope even for v1.0)
 
 *Automatic* quality upgrades & cutoffs (the **manual** upgrade path shipped post-0.7.0: "Find a

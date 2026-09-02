@@ -1,12 +1,14 @@
-# Cinder — self-hosted movies + TV request / download / import.
+# Cinder — self-hosted movies + TV + e-book + audiobook request / download / import.
 #
 # Quickstart:
 #   cp .env.example .env
 #   echo "SECRET_KEY_BASE=$(openssl rand -base64 48)" >> .env
 #   echo "CINDER_BOOTSTRAP_TOKEN=$(openssl rand -hex 32)" >> .env
-#   mkdir -p media/{movies,tv,downloads} && sudo chown -R 65534:65534 media
+#   mkdir -p media/{movies,tv,books,audiobooks,downloads} && sudo chown -R 65534:65534 media
 #   docker compose up --build      # builds the image locally on first run
-# Then open http://localhost:4000 and use the bootstrap token to create your admin.
+# Then open http://localhost:4000 and use the bootstrap token to create your admin. The wizard
+# also asks for the e-book/audiobook library folders (e.g. /media/books, /media/audiobooks) —
+# unlike the movie/TV roots below, they have no environment-variable bootstrap; type them in.
 #
 # The chown step matters: Cinder runs as `nobody` (uid 65534) and the ./media bind mount keeps host
 # ownership, so without it the onboarding wizard can't create/write the library roots and won't
@@ -73,9 +75,11 @@ services:
 # HARDLINK REQUIREMENT: Cinder hardlinks finished downloads into the library, and a hardlink
 # cannot cross filesystems. Keep the library and the download client's completed dir under one
 # mount:
-#   /media/movies      <- MOVIES_LIBRARY_PATH (movies import here)
-#   /media/tv          <- TV_LIBRARY_PATH    (episodes import here)
-#   /media/downloads   <- point your download client's completed dir here
+#   /media/movies       <- MOVIES_LIBRARY_PATH (movies import here)
+#   /media/tv           <- TV_LIBRARY_PATH (episodes import here)
+#   /media/books        <- typed into the wizard as the e-book library folder
+#   /media/audiobooks   <- typed into the wizard as the audiobook library folder
+#   /media/downloads    <- point your download client's completed dir here
 #
 # Example wiring (uncomment + adjust, and uncomment the matching named volumes below).
 # NOTE: Cinder runs as `nobody` (uid/gid 65534). Give the download client a matching PUID/PGID

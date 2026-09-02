@@ -118,6 +118,8 @@ defmodule CinderWeb.ConnCase do
     :tv_min_size,
     :tv_max_size,
     :tv_preferred_resolutions,
+    :books_library_path,
+    :audiobooks_library_path,
     :default_request_quota
   ]
 

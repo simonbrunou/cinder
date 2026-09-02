@@ -49,6 +49,8 @@ defmodule CinderWeb.SetupLiveTest do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)
     stub_all_services_ok()
+    Application.put_env(:cinder, :books_library_path, "/tmp/cinder-test-books-library")
+    Application.put_env(:cinder, :audiobooks_library_path, "/tmp/cinder-test-audiobooks-library")
 
     {:ok, lv, _html} = live(conn, ~p"/setup")
 
@@ -77,7 +79,9 @@ defmodule CinderWeb.SetupLiveTest do
     refute html =~ ~s(name="books_anime_library_path")
   end
 
-  test "book roots are testable but do not expand the required-service set", %{conn: conn} do
+  test "book and audiobook roots are required to finish setup, like the video ones", %{
+    conn: conn
+  } do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)
     stub_all_services_ok()
@@ -85,18 +89,25 @@ defmodule CinderWeb.SetupLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/setup")
 
     assert has_element?(lv, "button[phx-value-service=ebook_library]", "Test Ebooks library")
+    assert has_element?(
+             lv,
+             "button[phx-value-service=audiobook_library]",
+             "Test Audiobooks library"
+           )
 
-    # Positive control: the checklist exists and lists the required video roots, so the refutes
-    # below prove books are absent from it rather than that the selector matched nothing.
+    # The checklist now lists all four library-path rows, book and video alike.
     assert has_element?(lv, "#setup-checklist", "Movies library path")
     assert has_element?(lv, "#setup-checklist", "TV library path")
+    assert has_element?(lv, "#setup-checklist", "Ebooks library path")
+    assert has_element?(lv, "#setup-checklist", "Audiobooks library path")
 
-    # Refute the SINGULAR stem. `service_label/1` has explicit clauses only for the video
-    # services, so a book row would fall through to its titlecase fallback and render
-    # "Ebook Library" — refuting the plural "Ebooks" matches nothing either way and fences
-    # nothing. The stem matches whatever spelling the label ends up with.
-    refute has_element?(lv, "#setup-checklist", "Ebook")
-    refute has_element?(lv, "#setup-checklist", "Audiobook")
+    # Neither book root is configured yet: Finish stays locked exactly like an unset/unwritable
+    # video root would, proving the requirement is enforced and not merely displayed.
+    lv |> form("#setup-form", @valid_params) |> render_submit()
+    assert has_element?(lv, "#finish-setup[disabled]")
+
+    Application.put_env(:cinder, :books_library_path, "/tmp/cinder-test-books-library")
+    Application.put_env(:cinder, :audiobooks_library_path, "/tmp/cinder-test-audiobooks-library")
 
     lv |> form("#setup-form", @valid_params) |> render_submit()
     assert has_element?(lv, "#finish-setup:not([disabled])")
@@ -266,6 +277,8 @@ defmodule CinderWeb.SetupLiveTest do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)
     stub_all_services_ok()
+    Application.put_env(:cinder, :books_library_path, "/tmp/cinder-test-books-library")
+    Application.put_env(:cinder, :audiobooks_library_path, "/tmp/cinder-test-audiobooks-library")
 
     Req.Test.stub(Cinder.SabnzbdStub, fn conn ->
       case conn.params["mode"] do

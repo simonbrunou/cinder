@@ -7342,3 +7342,12 @@ msgstr "Échec de l'analyse"
 #, elixir-autogen, elixir-format
 msgid "Scan recovered"
 msgstr "Analyse rétablie"
+#: lib/cinder_web/live/setup_live.ex:303
+#, elixir-autogen, elixir-format
+msgid "Audiobooks library path"
+msgstr "Chemin de la bibliothèque de livres audio"
+
+#: lib/cinder_web/live/setup_live.ex:304
+#, elixir-autogen, elixir-format
+msgid "Ebooks library path"
+msgstr "Chemin de la bibliothèque de livres numériques"

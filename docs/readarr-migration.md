@@ -186,3 +186,31 @@ captured — migrates them with **two runs of this exact six-step runbook**, not
 
 This is the identical shape the operator already uses for Radarr vs. Sonarr — two different
 services, one settings block each — applied here to Bookshelf-ebook vs. Bookshelf-audiobook.
+
+## Decommissioning Bookshelf after sign-off
+
+Adoption is in-place and read-only against Bookshelf (this document's first line), so Bookshelf
+stays a harmless, redundant reader of the same files for as long as you leave it running — there
+is no forced cutover deadline in the code. The B8 milestone's own dogfood window (see
+[`docs/books-dogfood-checklist.md`](books-dogfood-checklist.md)) is the recommended gate before
+you actually turn Bookshelf off: keep it running and reachable for the length of that window so
+the operator has a working fallback (search, monitoring flags, and its own database) if the B8
+dogfood surfaces an unexplained problem. Do not decommission before that sign-off decision is
+made explicitly.
+
+Once you decide to decommission, per instance:
+
+1. Disable Bookshelf's own automation (already done in step 1 of the runbook above, if you
+   followed it) and stop the Bookshelf container/service.
+2. Remove the `readarr_url`/`readarr_api_key`/path-prefix settings for that instance from
+   `/settings` (optional — an unreachable, unconfigured migration source is otherwise inert and
+   costs nothing left in place, but clearing the credential is good hygiene once it is no longer
+   needed).
+3. Keep the Bookshelf container image and its own database/config volume backed up separately,
+   until you are confident Cinder's adoption was complete and correct (the verification steps in
+   step 5 of the runbook above). Cinder never wrote to or deleted from Bookshelf's own state, so
+   restoring it later — should you need to re-check something — is exactly as safe as restoring
+   any other stopped container.
+
+This does not delete or move a single file: every adopted `book_files.path` is byte-identical to
+what Bookshelf already had, and remains exactly where it is after Bookshelf itself is gone.

@@ -6,6 +6,35 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-09-02
+
+### Added
+- **E-book and audiobook requests.** Any household member can search a book by title/author and
+  request it as an e-book or an audiobook, independently monitored per work, through the same
+  request→approval gate, per-user quotas, and My-requests view movies and TV already use. Work
+  identity resolves through Open Library (primary) with an optional Hardcover key (secondary),
+  never falling back to a first-result guess when identity is ambiguous.
+- **Bounded book/audiobook acquisition.** A dedicated release parser and scorer accepts EPUB/
+  AZW3/MOBI (e-books) or M4B/MP3 (audiobooks), rejects unrecognized or contradictory formats, and
+  extracts `.zip`/`.cbz`/`.rar`/`.cbr` archives through the same bounded, entry- and size-capped
+  extractor discipline the rest of the pipeline already uses. A multi-track audiobook imports
+  atomically as one target.
+- **Booklore and Audiobookshelf publication.** Imports land under dedicated `books`/`audiobooks`
+  library roots; Cinder requests an Audiobookshelf scan after every successful audiobook import
+  and retries automatically on failure, without ever re-downloading the file.
+- **Retry, blocklist, and "Find a better match" for books.** A held book target shows its exact
+  reason with a Retry button; a confirmed-bad release is blocklisted; an available target can be
+  replaced with a better release exactly like a movie/TV upgrade.
+- **Bounded per-author monitoring policies.** An author can be opted into future-only, full
+  back-catalogue, or specific-work monitoring in one preview-then-confirm batch, capped so a large
+  bibliography cannot fan out into an unbounded burst of provider requests.
+- **Readarr/Bookshelf migration.** An existing Readarr-protocol Bookshelf library (e-book or
+  audiobook) adopts in place from `/library/adopt` — no re-download, no file rewrite — with a
+  bounded preview, monitoring-flag evidence preserved without auto-scheduling acquisition, and an
+  idempotent repeat adoption safe to re-run.
+- **First-run validation now covers every library kind.** The setup wizard's readiness checklist
+  requires a writable e-book and audiobook root, exactly as it already required movies and TV.
+
 ## [2.0.0] - 2026-08-15
 
 ### Added
@@ -551,7 +580,8 @@ Docker image and a first-run wizard. Pre-1.0: dogfooding ahead of the v1.0 publi
 - **Packaging** — Docker image, `docker-compose.yml` + `.env.example`, a tag-triggered GitHub
   Actions workflow publishing `ghcr.io/simonbrunou/cinder`, and operator + contributor docs.
 
-[Unreleased]: https://github.com/simonbrunou/cinder/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/simonbrunou/cinder/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/simonbrunou/cinder/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/simonbrunou/cinder/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/simonbrunou/cinder/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/simonbrunou/cinder/compare/v0.7.0...v1.0.0
