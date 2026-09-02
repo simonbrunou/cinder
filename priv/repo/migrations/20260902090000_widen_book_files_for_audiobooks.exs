@@ -69,16 +69,20 @@ defmodule Cinder.Repo.Migrations.WidenBookFilesForAudiobooks do
   # issues) can rescue this from outside, so the only thing within reach is to make a double fault
   # LOUD and unmistakable rather than silently indistinguishable from a clean single failure.
   defp rollback_after_failure(exception, stacktrace) do
-    query!("ROLLBACK")
+    try do
+      query!("ROLLBACK")
+    rescue
+      rollback_exception ->
+        raise RuntimeError,
+              "book_files rebuild failed, and the ROLLBACK meant to clean up after it ALSO " <>
+                "failed — this connection may still be inside an open transaction with " <>
+                "foreign keys disabled and must not be reused; restart the process before " <>
+                "retrying. " <>
+                "Original error: #{Exception.format(:error, exception, stacktrace)}\n" <>
+                "Rollback error: #{Exception.format(:error, rollback_exception, __STACKTRACE__)}"
+    end
+
     reraise exception, stacktrace
-  rescue
-    rollback_exception ->
-      raise RuntimeError,
-            "book_files rebuild failed, and the ROLLBACK meant to clean up after it ALSO " <>
-              "failed — this connection may still be inside an open transaction with foreign " <>
-              "keys disabled and must not be reused; restart the process before retrying. " <>
-              "Original error: #{Exception.format(:error, exception, stacktrace)}\n" <>
-              "Rollback error: #{Exception.format(:error, rollback_exception, __STACKTRACE__)}"
   end
 
   defp create_sql(audiobook_formats?: audiobook_formats?) do

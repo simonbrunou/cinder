@@ -159,9 +159,19 @@ defmodule Cinder.Repo.Migrations.WidenBookFilesForAudiobooksTest do
     VALUES (1, '/library/dune.m4b', 500000000, 'm4b', '2026-01-01T00:00:00', '2026-01-01T00:00:00')
     """)
 
-    assert_raise RuntimeError, ~r/cannot roll back/, fn ->
-      Ecto.Migrator.down(Repo, 20_260_902_090_000, WidenBookFilesForAudiobooks, log: false)
-    end
+    exception =
+      assert_raise RuntimeError, fn ->
+        Ecto.Migrator.down(Repo, 20_260_902_090_000, WidenBookFilesForAudiobooks, log: false)
+      end
+
+    # Exact message, not a substring match: the single-fault path (ROLLBACK itself succeeds)
+    # must propagate `ensure_no_audiobook_files!`'s own RuntimeError unwrapped — proving
+    # `rollback_after_failure/2` does NOT also report it as a double fault (the "ROLLBACK...
+    # ALSO failed" wrapper), which a looser `~r/cannot roll back/` match would miss: the
+    # original message text is a substring of the wrapped one too, since it gets interpolated
+    # into the wrapper's "Original error: ..." section.
+    assert exception.message ==
+             "cannot roll back audiobook book_files formats while file 1 (m4b) exists"
 
     # The failed rollback left foreign keys re-enabled rather than stuck off.
     assert %{rows: [[1]]} = query!("PRAGMA foreign_keys")
