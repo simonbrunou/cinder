@@ -51,6 +51,24 @@ defmodule Cinder.Acquisition.Indexer do
   @callback search_book_query(query :: String.t(), opts :: keyword()) ::
               {:ok, [map()]} | {:error, term()}
 
+  @doc """
+  Searches audiobook releases by the Newznab **book** search type, which carries `author` and
+  `title` as separate fields rather than one free-text blob — the audiobook sibling of
+  `search_book/3`. `author` may be `nil` when the caller has a title but no contributor evidence.
+  Returns the same normalized release maps as `search/1`.
+
+  Implementations should set each result's `:query_origins` the same way `search_book/3` does.
+  """
+  @callback search_audiobook(author :: String.t() | nil, title :: String.t(), opts :: keyword()) ::
+              {:ok, [map()]} | {:error, term()}
+
+  @doc """
+  Searches audiobook releases by a bounded free-text query — the ASIN/ISBN probe and the
+  last-resort `"Title Author"` fallback, the audiobook sibling of `search_book_query/2`.
+  """
+  @callback search_audiobook_query(query :: String.t(), opts :: keyword()) ::
+              {:ok, [map()]} | {:error, term()}
+
   @doc "Lightweight reachability check — `:ok` if the indexer answers, else `{:error, reason}`."
   @callback health() :: :ok | {:error, term()}
 end
