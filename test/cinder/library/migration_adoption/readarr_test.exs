@@ -204,11 +204,12 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
 
   # ------------------------------------------------------------- classification ---
 
-  test "two accepted-format files are :needs_decision, :multi_format with EPUB preferred as primary" do
+  test "two accepted-format files are :needs_decision, :multi_format with EPUB preferred as primary",
+       %{tmp: tmp} do
     work = seed_work("Multi Format Book", "multi-1")
 
-    epub = file(1, 1, "epub", "/multi/1.epub")
-    azw3 = file(2, 1, "azw3", "/multi/1.azw3")
+    epub = file(1, 1, "epub", path(tmp, "multi/1.epub"))
+    azw3 = file(2, 1, "azw3", path(tmp, "multi/1.azw3"))
 
     stub_snapshot(
       snapshot(
@@ -229,15 +230,16 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
     assert work.id == c.work_id
   end
 
-  test "three accepted formats keep EPUB primary with both siblings as extra_files, and AZW3 wins when EPUB is absent" do
+  test "three accepted formats keep EPUB primary with both siblings as extra_files, and AZW3 wins when EPUB is absent",
+       %{tmp: tmp} do
     seed_work("Triple Format", "triple-1")
     seed_work("No Epub", "noepub-1")
 
-    epub = file(1, 1, "epub", "/multi3/1-epub.epub")
-    azw3 = file(2, 1, "azw3", "/multi3/1-azw3.azw3")
-    mobi = file(3, 1, "mobi", "/multi3/1-mobi.mobi")
-    azw3_only = file(4, 2, "azw3", "/multi3/2-azw3.azw3")
-    mobi_only = file(5, 2, "mobi", "/multi3/2-mobi.mobi")
+    epub = file(1, 1, "epub", path(tmp, "multi3/1-epub.epub"))
+    azw3 = file(2, 1, "azw3", path(tmp, "multi3/1-azw3.azw3"))
+    mobi = file(3, 1, "mobi", path(tmp, "multi3/1-mobi.mobi"))
+    azw3_only = file(4, 2, "azw3", path(tmp, "multi3/2-azw3.azw3"))
+    mobi_only = file(5, 2, "mobi", path(tmp, "multi3/2-mobi.mobi"))
 
     stub_snapshot(
       snapshot(
@@ -253,10 +255,12 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
     assert {:ok, preview} = MigrationAdoption.preview(:readarr)
 
     triple = candidate(preview, 1)
+    assert triple.status == :needs_decision
     assert triple.primary_file.format == "epub"
     assert Enum.sort(Enum.map(triple.extra_files, & &1.format)) == ["azw3", "mobi"]
 
     no_epub = candidate(preview, 2)
+    assert no_epub.status == :needs_decision
     assert no_epub.primary_file.format == "azw3"
     assert Enum.map(no_epub.extra_files, & &1.format) == ["mobi"]
   end
@@ -388,6 +392,37 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
 
     already_managed = candidate(first, 2)
     assert already_managed.status == :already_managed
+  end
+
+  test "a multi-format candidate whose EXTRA (non-primary) file collides with a different work's target blocks :path_conflict, not :needs_decision",
+       %{tmp: tmp} do
+    owner = seed_work("Owner Book", "owner-shared", "openlibrary")
+    owner_target = owner |> seed_target() |> monitor_target()
+    owner_file = seed_file(owner_target, path(tmp, "multi-conflict/shared.azw3"))
+
+    seed_work("New Multi Book", "multi-conflict-1")
+
+    # EPUB (the preferred/primary format) is perfectly clean; only the AZW3 sibling collides.
+    # Checking the primary alone would miss this entirely and misreport the candidate as an
+    # ordinary needs-decision row.
+    epub = file(1, 1, "epub", path(tmp, "multi-conflict/clean.epub"))
+    azw3 = file(2, 1, "azw3", owner_file.path)
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Multi Conflict Author")],
+        works: [work(1, 1, "New Multi Book", "multi-conflict-1")],
+        files: [epub, azw3]
+      )
+    )
+
+    assert {:ok, preview} = MigrationAdoption.preview(:readarr)
+
+    c = candidate(preview, 1)
+    assert c.status == :blocked
+    assert c.reason == :path_conflict
+    assert c.primary_file == nil
+    assert c.extra_files == []
   end
 
   test "a resolved work already carrying a different recorded file blocks :identity_conflict" do

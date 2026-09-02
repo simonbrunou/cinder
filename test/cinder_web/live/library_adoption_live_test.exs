@@ -129,8 +129,9 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
   # event for it failed closed (no `plan/4` clause existed yet); B6b adds
   # `Cinder.Library.MigrationAdoption.Readarr`, so the same event now completes a real, if empty,
   # preview — proving the guard reaches an actually-implemented source, not a still-unwired one.
-  # No button exists for it yet regardless (B6c adds the third `<.button>`), so this stays a
-  # devtools-crafted event rather than a click.
+  # B6c adds the third `<.button id="scan-readarr">` (covered by its own tests below); this test
+  # stays a devtools-crafted event to keep exercising the guard directly, independent of the
+  # button markup.
   test "scan_migration for :readarr completes a real (if empty) preview instead of the old catch-all error",
        %{conn: conn} do
     expect(Cinder.Library.ReadarrMigrationSourceMock, :snapshot, fn ->
@@ -490,6 +491,64 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     refute has_element?(view, "#migration-decision-candidates input[checked]")
   end
 
+  test "set_decision rejects a book-only choice (preferred/all_formats) against an episode candidate",
+       %{conn: conn} do
+    stub(Cinder.Library.SonarrMigrationSourceMock, :snapshot, fn ->
+      {:ok,
+       %{
+         movies: [],
+         series: [%{provider_id: 12, tvdb_id: 200}],
+         episodes: [
+           %{
+             provider_id: 22,
+             series_id: 12,
+             tvdb_id: 2001,
+             season_number: 4,
+             episode_number: 15,
+             file_id: 602
+           },
+           %{
+             provider_id: 23,
+             series_id: 12,
+             tvdb_id: 2002,
+             season_number: 4,
+             episode_number: 16,
+             file_id: 603
+           }
+         ],
+         files: [
+           %{provider_id: 602, kind: :episode, path: "/sonarr/Show.S04E15.mkv", size: 10},
+           %{provider_id: 603, kind: :episode, path: "/sonarr/Show.S04E16.mkv", size: 10}
+         ]
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :find_by_external_id, fn
+      200, :tvdb_id ->
+        {:ok, [%{type: :tv, tmdb_id: 1100, title: "Show"}]}
+
+      id, :tvdb_id when id in [2001, 2002] ->
+        {:ok,
+         [
+           %{
+             type: :episode,
+             tmdb_episode_id: 2100,
+             series_tmdb_id: 1100,
+             season_number: 4,
+             episode_number: 15
+           }
+         ]}
+    end)
+
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    view |> element("#scan-sonarr") |> render_click()
+    render_async(view)
+
+    render_click(view, "set_decision", %{"id" => "1", "choice" => "preferred"})
+
+    refute has_element?(view, "#adoption-candidate-1 input[checked]")
+  end
+
   test "an episode adoption failure remains visible with its file after the transaction rolls back",
        %{conn: conn} do
     part =
@@ -574,6 +633,268 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
   test "non-admins are redirected away from adoption", %{conn: _conn} do
     conn = build_conn() |> log_in_user(Cinder.AccountsFixtures.user_fixture())
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/library/adopt")
+  end
+
+  test "renders one scan button per configured migration source, radarr/sonarr/readarr alike", %{
+    conn: conn
+  } do
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    assert has_element?(view, "#scan-radarr", "Preview Radarr")
+    assert has_element?(view, "#scan-sonarr", "Preview Sonarr")
+    assert has_element?(view, "#scan-readarr", "Preview Readarr")
+  end
+
+  test "a multi-batch :readarr preview auto-advances until every work is classified", %{
+    conn: conn
+  } do
+    cap = Cinder.Books.max_bibliography_candidates()
+    total = cap + 5
+
+    stub_readarr_snapshot(total)
+    stub(Cinder.Books.PrimaryMetadataMock, :search, fn _query -> {:ok, []} end)
+    stub(Cinder.Books.SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
+
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    view |> element("#scan-readarr") |> render_click()
+
+    # `total` (cap + 5) needs exactly two internal batches; each `render_async/1` call waits out
+    # one. `total` blocked candidates surfacing at all is only possible if the auto-advance
+    # genuinely ran that second batch, not just the first.
+    render_async(view)
+    render_async(view)
+
+    assert has_element?(view, "#migration-summary", "Readarr migration preview")
+    refute has_element?(view, "#readarr-scan-progress")
+    assert render(view) =~ "Blocked: #{total}"
+  end
+
+  test "Cancel stops the readarr batch auto-advance without losing the in-flight batch's candidates",
+       %{conn: conn} do
+    cap = Cinder.Books.max_bibliography_candidates()
+    total = cap + 5
+
+    stub_readarr_snapshot(total)
+    stub(Cinder.Books.PrimaryMetadataMock, :search, fn _query -> {:ok, []} end)
+    stub(Cinder.Books.SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
+
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    view |> element("#scan-readarr") |> render_click()
+
+    # Cancel immediately, before the already-launched first batch's async task has reported
+    # back — `cancelling?` is set synchronously by this click (`render_click` only returns after
+    # the LiveView has processed and re-rendered), so whenever that batch's own `handle_async`
+    # lands it is guaranteed to observe it and stop, never starting a second batch.
+    assert has_element?(view, "#cancel-readarr-scan")
+    view |> element("#cancel-readarr-scan") |> render_click()
+
+    render_async(view)
+
+    assert Process.alive?(view.pid)
+    assert has_element?(view, "#migration-summary")
+    refute has_element?(view, "#readarr-scan-progress")
+    # The in-flight (first) batch's own candidates were kept, not discarded — strictly fewer
+    # than the full snapshot (the second batch never ran).
+    assert render(view) =~ "Blocked: #{cap}"
+    refute render(view) =~ "Blocked: #{total}"
+  end
+
+  test "the multi_format decision offers Preferred/All formats and All formats adopts both files",
+       %{conn: conn} do
+    epub_path = "/readarr/multi.epub"
+    azw3_path = "/readarr/multi.azw3"
+
+    saved_books_root = Application.get_env(:cinder, :books_library_path)
+    Application.put_env(:cinder, :books_library_path, "/readarr")
+
+    on_exit(fn ->
+      if saved_books_root,
+        do: Application.put_env(:cinder, :books_library_path, saved_books_root),
+        else: Application.delete_env(:cinder, :books_library_path)
+    end)
+
+    stub(Cinder.Books.PrimaryMetadataMock, :provider, fn -> :openlibrary end)
+    stub(Cinder.Books.SecondaryMetadataMock, :provider, fn -> :hardcover end)
+
+    stub(Cinder.Library.ReadarrMigrationSourceMock, :snapshot, fn ->
+      {:ok,
+       %{
+         movies: [],
+         series: [],
+         episodes: [],
+         authors: [
+           %{
+             provider_id: 1,
+             name: "Multi Author",
+             foreign_id: "author-1",
+             monitored: true,
+             monitor_new_items: "all"
+           }
+         ],
+         works: [
+           %{
+             provider_id: 1,
+             author_id: 1,
+             title: "Multi Book",
+             foreign_id: "multi-1",
+             monitored: true
+           }
+         ],
+         editions: [],
+         files: [
+           %{provider_id: 1, kind: :book, path: epub_path, size: 10, work_id: 1, format: "epub"},
+           %{provider_id: 2, kind: :book, path: azw3_path, size: 10, work_id: 1, format: "azw3"}
+         ],
+         profiles: [],
+         roots: []
+       }}
+    end)
+
+    stub(Cinder.Books.PrimaryMetadataMock, :search, fn _query ->
+      {:ok,
+       [
+         %{
+           provider: :openlibrary,
+           foreign_id: "ol-multi-1",
+           title: "Multi Book",
+           contributors: [%{foreign_id: "a1", name: "Multi Author", role: "author"}],
+           contributors_incomplete: false,
+           first_published_year: nil,
+           edition_count: 1
+         }
+       ]}
+    end)
+
+    stub(Cinder.Books.PrimaryMetadataMock, :get_work, fn "ol-multi-1" ->
+      {:ok,
+       %{
+         provider: :openlibrary,
+         foreign_id: "ol-multi-1",
+         title: "Multi Book",
+         first_published_on: nil,
+         overview: nil,
+         contributors: [],
+         contributors_incomplete: true,
+         editions: [],
+         series: []
+       }}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{}} end)
+
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    view |> element("#scan-readarr") |> render_click()
+    render_async(view)
+
+    assert has_element?(view, "#migration-decision-candidates input[value=preferred]")
+    assert has_element?(view, "#migration-decision-candidates input[value=all_formats]")
+    refute has_element?(view, "#migration-decision-candidates input[value=fold]")
+
+    render_click(view, "set_decision", %{"id" => "1", "choice" => "all_formats"})
+    assert has_element?(view, "#adoption-candidate-1 input[value=all_formats][checked]")
+
+    view |> element("#adopt-migration-selected") |> render_click()
+    render_async(view)
+
+    assert has_element?(view, "#flash-info", "Adopted 1; skipped 0.")
+
+    target = Cinder.Repo.one!(Cinder.Books.BookTarget)
+    paths = Cinder.Repo.all(Cinder.Books.BookFile) |> Enum.map(& &1.path) |> Enum.sort()
+    assert paths == Enum.sort([epub_path, azw3_path])
+    assert target.status == :available
+  end
+
+  test "set_decision rejects an episode-only choice (fold/part) against a book candidate",
+       %{conn: conn} do
+    epub_path = "/readarr/mismatch.epub"
+    azw3_path = "/readarr/mismatch.azw3"
+
+    saved_books_root = Application.get_env(:cinder, :books_library_path)
+    Application.put_env(:cinder, :books_library_path, "/readarr")
+
+    on_exit(fn ->
+      if saved_books_root,
+        do: Application.put_env(:cinder, :books_library_path, saved_books_root),
+        else: Application.delete_env(:cinder, :books_library_path)
+    end)
+
+    stub(Cinder.Books.PrimaryMetadataMock, :provider, fn -> :openlibrary end)
+    stub(Cinder.Books.SecondaryMetadataMock, :provider, fn -> :hardcover end)
+
+    stub(Cinder.Library.ReadarrMigrationSourceMock, :snapshot, fn ->
+      {:ok,
+       %{
+         movies: [],
+         series: [],
+         episodes: [],
+         authors: [
+           %{
+             provider_id: 1,
+             name: "Mismatch Author",
+             foreign_id: "author-1",
+             monitored: true,
+             monitor_new_items: "all"
+           }
+         ],
+         works: [
+           %{
+             provider_id: 1,
+             author_id: 1,
+             title: "Mismatch Book",
+             foreign_id: "mismatch-1",
+             monitored: true
+           }
+         ],
+         editions: [],
+         files: [
+           %{provider_id: 1, kind: :book, path: epub_path, size: 10, work_id: 1, format: "epub"},
+           %{provider_id: 2, kind: :book, path: azw3_path, size: 10, work_id: 1, format: "azw3"}
+         ],
+         profiles: [],
+         roots: []
+       }}
+    end)
+
+    stub(Cinder.Books.PrimaryMetadataMock, :search, fn _query ->
+      {:ok,
+       [
+         %{
+           provider: :openlibrary,
+           foreign_id: "ol-mismatch-1",
+           title: "Mismatch Book",
+           contributors: [%{foreign_id: "a1", name: "Mismatch Author", role: "author"}],
+           contributors_incomplete: false,
+           first_published_year: nil,
+           edition_count: 1
+         }
+       ]}
+    end)
+
+    stub(Cinder.Books.PrimaryMetadataMock, :get_work, fn "ol-mismatch-1" ->
+      {:ok,
+       %{
+         provider: :openlibrary,
+         foreign_id: "ol-mismatch-1",
+         title: "Mismatch Book",
+         first_published_on: nil,
+         overview: nil,
+         contributors: [],
+         contributors_incomplete: true,
+         editions: [],
+         series: []
+       }}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{}} end)
+
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    view |> element("#scan-readarr") |> render_click()
+    render_async(view)
+
+    assert has_element?(view, "#migration-decision-candidates input[value=preferred]")
+
+    render_click(view, "set_decision", %{"id" => "1", "choice" => "fold"})
+
+    refute has_element?(view, "#adoption-candidate-1 input[checked]")
   end
 
   defp series_result do
@@ -665,6 +986,56 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
              episode_number: 10
            }
          ]}
+    end)
+  end
+
+  # `total` file-bearing, all-unresolvable (no metadata match) works — cheap to build and to
+  # classify (every one lands `:blocked, {:unresolved_identity, _}`), which is all the batching
+  # mechanism itself needs to exercise: it operates on the classified candidate COUNT, not on
+  # what any one candidate's status is.
+  defp stub_readarr_snapshot(total) do
+    works =
+      for i <- 1..total,
+          do: %{
+            provider_id: i,
+            author_id: 1,
+            title: "Book #{i}",
+            foreign_id: "book-#{i}",
+            monitored: true
+          }
+
+    files =
+      for i <- 1..total,
+          do: %{
+            provider_id: i,
+            kind: :book,
+            path: "/readarr/book-#{i}.epub",
+            size: 10,
+            work_id: i,
+            format: "epub"
+          }
+
+    stub(Cinder.Library.ReadarrMigrationSourceMock, :snapshot, fn ->
+      {:ok,
+       %{
+         movies: [],
+         series: [],
+         episodes: [],
+         authors: [
+           %{
+             provider_id: 1,
+             name: "Batch Author",
+             foreign_id: "author-1",
+             monitored: true,
+             monitor_new_items: "all"
+           }
+         ],
+         works: works,
+         editions: [],
+         files: files,
+         profiles: [],
+         roots: []
+       }}
     end)
   end
 end

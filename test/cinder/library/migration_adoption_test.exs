@@ -88,6 +88,27 @@ defmodule Cinder.Library.MigrationAdoptionTest do
     end
   end
 
+  test "a Sonarr TVDB split with a book-only choice (preferred/all_formats) is skipped, not adopted" do
+    snapshot = fixture_snapshot("n_to_one")
+    stub(SonarrMigrationSourceMock, :snapshot, fn -> {:ok, snapshot} end)
+    stub_n_to_one_tmdb()
+
+    assert {:ok, preview} = Adoption.preview_migration(:sonarr)
+    assert [%{status: :needs_decision, key: key} = candidate] = preview.candidates
+
+    # "preferred"/"all_formats" are Readarr's own multi-format choices — kind-scoped
+    # `MigrationAdoption.selected_candidates/2` refuses them against an episode candidate rather
+    # than silently applying whatever fold/part-shaped behavior `normalize_choice/1` would
+    # otherwise default to.
+    assert %{adopted: 0, skipped: 1, failures: []} =
+             Adoption.adopt_migration(:sonarr, [
+               %{key: key, choice: "preferred", candidate: candidate}
+             ])
+
+    series = Catalog.get_series_by_tmdb_id(1100)
+    assert series == nil
+  end
+
   test "a Fold coordinate survives re-running the Sonarr migration adoption" do
     snapshot = fixture_snapshot("n_to_one")
     stub(SonarrMigrationSourceMock, :snapshot, fn -> {:ok, snapshot} end)

@@ -32,7 +32,9 @@ defmodule CinderWeb.LibraryAdoptionLive do
        form: to_form(%{}, as: :adoption),
        mode: :filesystem,
        migration_source: nil,
+       migration_sources: Settings.migration_sources(),
        migration_buckets: @empty_buckets,
+       migration_deferred: %{count: 0, links: %{}},
        selected_ready: MapSet.new(),
        decisions: %{},
        pages: @first_pages,
@@ -40,7 +42,11 @@ defmodule CinderWeb.LibraryAdoptionLive do
        scanned?: false,
        scanning?: false,
        adopting?: false,
-       adoption_failures: []
+       adoption_failures: [],
+       readarr_progress: nil,
+       readarr_candidates: [],
+       readarr_seen: MapSet.new(),
+       cancelling?: false
      )
      |> stream_configure(:auto_candidates, dom_id: &"adoption-candidate-#{&1.id}")
      |> stream_configure(:ambiguous_candidates, dom_id: &"adoption-candidate-#{&1.id}")
@@ -129,9 +135,10 @@ defmodule CinderWeb.LibraryAdoptionLive do
   end
 
   def handle_event("set_decision", %{"id" => raw, "choice" => choice}, socket)
-      when choice in ["fold", "part"] do
+      when choice in ["fold", "part", "preferred", "all_formats"] do
     with id when not is_nil(id) <- parse_id(raw),
-         %{} = candidate <- Enum.find(current_page(socket, :needs_decision), &(&1.id == id)) do
+         %{} = candidate <- Enum.find(current_page(socket, :needs_decision), &(&1.id == id)),
+         true <- decision_choice_matches_kind?(candidate.kind, choice) do
       {:noreply,
        socket
        |> assign(decisions: Map.put(socket.assigns.decisions, id, choice))
@@ -142,12 +149,19 @@ defmodule CinderWeb.LibraryAdoptionLive do
   end
 
   # Bulk apply is an explicit operator action: it only fills items that have no decision yet, so a
-  # per-candidate choice set before or after survives untouched.
+  # per-candidate choice set before or after survives untouched. Kind-aware for the same reason
+  # `set_decision` is: a forged `apply_all` naming the wrong choice family for the candidates
+  # currently on screen (fold/part against book candidates, or preferred/all_formats against
+  # episode candidates) fills nothing rather than writing a decision `selected_candidates/2`
+  # would only reject later.
   def handle_event("apply_all", %{"choice" => choice}, socket)
-      when choice in ["fold", "part"] do
+      when choice in ["fold", "part", "preferred", "all_formats"] do
     decisions =
       Enum.reduce(socket.assigns.migration_buckets.needs_decision, socket.assigns.decisions, fn
-        candidate, acc -> Map.put_new(acc, candidate.id, choice)
+        candidate, acc ->
+          if decision_choice_matches_kind?(candidate.kind, choice),
+            do: Map.put_new(acc, candidate.id, choice),
+            else: acc
       end)
 
     {:noreply, socket |> assign(decisions: decisions) |> restream(:needs_decision)}
@@ -198,12 +212,55 @@ defmodule CinderWeb.LibraryAdoptionLive do
     end
   end
 
+  def handle_event(
+        "cancel_scan",
+        _params,
+        %{assigns: %{scanning?: true, mode: {:migration, :readarr}}} = socket
+      ),
+      do: {:noreply, assign(socket, cancelling?: true)}
+
   # Client-controlled events and malformed params are ignored rather than crashing the page.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_async(:scan, {:ok, candidates}, socket) when is_list(candidates),
     do: {:noreply, put_candidates(socket, candidates)}
+
+  # `:readarr` auto-advances through `Readarr.plan/2`'s bounded batches (B6c) — each batch's
+  # candidates are merged into `@readarr_candidates`, and `@readarr_seen` (the excluded set fed
+  # back into the next `preview_migration/2` call) grows so the next batch never re-pays or
+  # re-emits a work this session already classified. Stops on `preview.remaining == 0` or an
+  # operator Cancel (`@cancelling?`), renumbering the merged candidates' ids (batch-local ids
+  # collide across batches) before handing off to `put_migration_preview/2`.
+  def handle_async(
+        :scan,
+        {:ok, {:ok, preview}},
+        %{assigns: %{mode: {:migration, :readarr}}} = socket
+      ) do
+    merged = socket.assigns.readarr_candidates ++ preview.candidates
+
+    seen =
+      Enum.reduce(
+        preview.candidates,
+        socket.assigns.readarr_seen,
+        &MapSet.put(&2, &1.provider_id)
+      )
+
+    progress = %{resolved: length(merged), remaining: preview.remaining}
+
+    socket =
+      assign(socket, readarr_candidates: merged, readarr_seen: seen, readarr_progress: progress)
+
+    if socket.assigns.cancelling? or preview.remaining == 0 do
+      {:noreply,
+       socket
+       |> assign(scanning?: false, cancelling?: false)
+       |> put_migration_preview(%{preview | candidates: renumber_candidates(merged)})}
+    else
+      {:noreply,
+       start_async(socket, :scan, fn -> Adoption.preview_migration(:readarr, exclude: seen) end)}
+    end
+  end
 
   def handle_async(:scan, {:ok, {:ok, preview}}, socket) when is_map(preview),
     do: {:noreply, put_migration_preview(socket, preview)}
@@ -269,11 +326,16 @@ defmodule CinderWeb.LibraryAdoptionLive do
       counts: %{auto_matched: 0, ambiguous: 0, unmatched: 0, already_managed: 0},
       form: to_form(%{}, as: :adoption),
       migration_buckets: @empty_buckets,
+      migration_deferred: %{count: 0, links: %{}},
       selected_ready: MapSet.new(),
       decisions: %{},
       pages: @first_pages,
       undecided_skipped: 0,
-      scanned?: false
+      scanned?: false,
+      readarr_progress: nil,
+      readarr_candidates: [],
+      readarr_seen: MapSet.new(),
+      cancelling?: false
     )
     |> stream(:auto_candidates, [], reset: true)
     |> stream(:ambiguous_candidates, [], reset: true)
@@ -324,17 +386,22 @@ defmodule CinderWeb.LibraryAdoptionLive do
     |> assign(
       candidates: preview.candidates,
       migration_buckets: buckets,
+      migration_deferred: migration_deferred(preview),
       # Ready items are pre-selected (the previous default); the operator prunes with the header
       # controls. Decisions start empty — there is never a default fold/part.
       selected_ready: MapSet.new(ready, & &1.id),
       decisions: %{},
       pages: @first_pages,
       undecided_skipped: 0,
+      # Derived from THIS call's own filtered lists, not `preview.counts` — identical for a
+      # single-shot (:radarr/:sonarr) preview by construction, and correct for a `:readarr`
+      # batch-accumulated one, whose merged `candidates` no longer match any single batch's own
+      # `preview.counts` (each batch computes counts over only its own slice).
       counts: %{
-        auto_matched: preview.counts.ready,
-        ambiguous: preview.counts.needs_decision,
-        unmatched: preview.counts.blocked,
-        already_managed: preview.counts.already_managed
+        auto_matched: length(ready),
+        ambiguous: length(decision),
+        unmatched: length(blocked),
+        already_managed: length(managed)
       },
       form: to_form(%{}, as: :adoption),
       migration_source: preview.source,
@@ -346,6 +413,36 @@ defmodule CinderWeb.LibraryAdoptionLive do
     |> stream(:unmatched_candidates, page_slice(blocked, 1), reset: true)
     |> stream(:managed_candidates, page_slice(managed, 1), reset: true)
     |> stream(:migration_series_counts, preview.series_counts, reset: true)
+  end
+
+  # `:readarr`-only fields (`preview.deferred_bibliography_count`/`_authors`, added B6c on top of
+  # B6b's `Readarr.summary/2`); absent from a :radarr/:sonarr preview, defaulted away harmlessly.
+  # `links` resolves each deferred author id to a Cinder work id (and that author's own display
+  # name, for an accessible per-link label — see the template) worth linking to — one already
+  # classified in THIS same preview, credited to that exact author, with a known catalog
+  # `work_id` — so `/books/:id` (where B5b's "Set author policy" control lives) is only ever
+  # offered when it genuinely resolves to that author's own page. An author with no such
+  # candidate in this preview (nothing of theirs was ever imported before, or not yet resolved
+  # this session) gets no link — never a guessed one.
+  defp migration_deferred(preview) do
+    count = Map.get(preview, :deferred_bibliography_count, 0)
+    author_ids = Map.get(preview, :deferred_bibliography_authors, [])
+
+    by_author =
+      preview.candidates
+      |> Enum.filter(&(Map.get(&1, :kind) == :book and not is_nil(Map.get(&1, :work_id))))
+      |> Map.new(&{&1.author_id, {&1.work_id, Map.get(&1, :author_name)}})
+
+    links =
+      for author_id <- author_ids,
+          entry = Map.get(by_author, author_id),
+          not is_nil(entry),
+          into: %{} do
+        {work_id, author_name} = entry
+        {author_id, %{work_id: work_id, author_name: author_name}}
+      end
+
+    %{count: count, links: links}
   end
 
   defp current_page(socket, bucket) do
@@ -362,6 +459,17 @@ defmodule CinderWeb.LibraryAdoptionLive do
   end
 
   defp page_slice(list, page), do: Enum.slice(list, (page - 1) * @page_size, @page_size)
+
+  # Merged across `:readarr` batches (B6c), each batch's `preview.candidates` carry ids assigned
+  # independently within that batch alone (`MigrationAdoption.preview_result/4`'s own
+  # `Enum.with_index(1)`) — colliding once merged. Re-derives stable, unique ids over the FULL
+  # merged list the same way, so selection/decision state and stream dom ids never collide.
+  defp renumber_candidates(candidates) do
+    candidates
+    |> Enum.sort_by(& &1.key)
+    |> Enum.with_index(1)
+    |> Enum.map(fn {candidate, id} -> Map.put(candidate, :id, id) end)
+  end
 
   defp total_pages(count) when count <= 0, do: 1
   defp total_pages(count), do: ceil(count / @page_size)
@@ -402,6 +510,15 @@ defmodule CinderWeb.LibraryAdoptionLive do
       base
     end
   end
+
+  defp deferred_author_link_label(name) when is_binary(name) and name != "",
+    do: gettext("View %{name}'s migrated work", name: name)
+
+  defp deferred_author_link_label(_name), do: gettext("View migrated author")
+
+  defp decision_choice_matches_kind?(:episode, choice), do: choice in ["fold", "part"]
+  defp decision_choice_matches_kind?(:book, choice), do: choice in ["preferred", "all_formats"]
+  defp decision_choice_matches_kind?(_kind, _choice), do: false
 
   defp parse_id(value) when is_integer(value), do: value
 
@@ -487,6 +604,21 @@ defmodule CinderWeb.LibraryAdoptionLive do
   defp reason_text(:catalog_episode_missing),
     do: gettext("The matching episode is missing from Cinder's catalog.")
 
+  defp reason_text({:unresolved_identity, :providers_unavailable}),
+    do: gettext("Every metadata provider was unavailable.")
+
+  defp reason_text({:unresolved_identity, _reason}),
+    do: gettext("No reliable metadata match was found for this work.")
+
+  defp reason_text(:unsupported_format),
+    do: gettext("None of this work's files are in an accepted e-book format.")
+
+  defp reason_text(:target_held),
+    do: gettext("This title is held and needs an operator decision first.")
+
+  defp reason_text(:outside_library_root),
+    do: gettext("This file is outside the configured books library root.")
+
   defp reason_text(_reason), do: gettext("No safe match was found.")
 
   defp adoption_failure_label(%{episode_code: code, path: path})
@@ -504,6 +636,19 @@ defmodule CinderWeb.LibraryAdoptionLive do
 
   defp adoption_failure_text(%{reason: :episode_not_found}),
     do: gettext("The episode changed while adoption was running.")
+
+  # `Cinder.Books.Adoption.adopt_work/3`'s `do_import/1` — Bookshelf reported no `foreignBookId`
+  # for this work, so the durable "readarr" identifier stamp is impossible; nothing was written
+  # (the whole transaction rolled back). B6b's own `work/0` type permits a `nil` `foreign_id`.
+  defp adoption_failure_text(%{reason: %Ecto.Changeset{errors: errors}}) do
+    if Keyword.has_key?(errors, :foreign_id) do
+      gettext(
+        "Bookshelf did not report an identifier for this work; it cannot be adopted automatically."
+      )
+    else
+      gettext("The catalog rejected this file.")
+    end
+  end
 
   defp adoption_failure_text(_failure), do: gettext("The catalog rejected this file.")
 
@@ -603,24 +748,25 @@ defmodule CinderWeb.LibraryAdoptionLive do
           {if @scanning?, do: gettext("Scanning…"), else: gettext("Scan")}
         </.button>
         <.button
-          id="scan-radarr"
+          :for={source <- @migration_sources}
+          id={"scan-#{source.key}"}
           type="button"
           variant="neutral"
           phx-click="scan_migration"
-          phx-value-source="radarr"
+          phx-value-source={source.key}
           disabled={@scanning? or @adopting?}
         >
-          {gettext("Preview Radarr")}
+          {gettext("Preview %{name}", name: source.name)}
         </.button>
         <.button
-          id="scan-sonarr"
+          :if={match?({:migration, :readarr}, @mode) and @scanning?}
+          id="cancel-readarr-scan"
           type="button"
           variant="neutral"
-          phx-click="scan_migration"
-          phx-value-source="sonarr"
-          disabled={@scanning? or @adopting?}
+          phx-click="cancel_scan"
+          disabled={@cancelling?}
         >
-          {gettext("Preview Sonarr")}
+          {gettext("Cancel")}
         </.button>
         <.spinner
           :if={@scanning?}
@@ -631,6 +777,18 @@ defmodule CinderWeb.LibraryAdoptionLive do
             )
           }
         />
+        <span
+          :if={match?({:migration, :readarr}, @mode) and @scanning? and @readarr_progress}
+          id="readarr-scan-progress"
+          class="text-sm text-base-content/70"
+          role="status"
+          aria-live="polite"
+        >
+          {gettext("Resolving identities… %{resolved} of %{total} matched, continuing…",
+            resolved: @readarr_progress.resolved,
+            total: @readarr_progress.resolved + (@readarr_progress.remaining || 0)
+          )}
+        </span>
         <p class="text-sm text-base-content/70">
           {gettext(
             "Scanning and migration previews are read-only. Nothing changes until you confirm adoption."
@@ -709,6 +867,36 @@ defmodule CinderWeb.LibraryAdoptionLive do
           </li>
         </ul>
       </section>
+
+      <div
+        :if={@migration_source == :readarr and @migration_deferred.count > 0}
+        id="migration-deferred-bibliography"
+        class="alert alert-info mb-6 items-start"
+        role="status"
+      >
+        <.icon name="hero-information-circle" class="mt-0.5 size-5 shrink-0" />
+        <div>
+          <p>
+            {ngettext(
+              "%{count} additional monitored work was not imported; use per-author monitoring policy after cutover.",
+              "%{count} additional monitored works were not imported; use per-author monitoring policy after cutover.",
+              @migration_deferred.count,
+              count: @migration_deferred.count
+            )}
+          </p>
+          <p :if={map_size(@migration_deferred.links) > 0} class="mt-1 text-sm">
+            <.link
+              :for={{author_id, link} <- @migration_deferred.links}
+              navigate={~p"/books/#{link.work_id}"}
+              id={"deferred-author-#{author_id}"}
+              class="link mr-3"
+              aria-label={deferred_author_link_label(link.author_name)}
+            >
+              {gettext("View migrated author")}
+            </.link>
+          </p>
+        </div>
+      </div>
 
       <.form
         :if={@mode == :filesystem and Enum.sum(Map.values(@counts)) > 0}
@@ -1019,7 +1207,10 @@ defmodule CinderWeb.LibraryAdoptionLive do
                   <legend class="sr-only">
                     {gettext("Migration choice for %{title}", title: migration_title(candidate))}
                   </legend>
-                  <label class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2">
+                  <label
+                    :if={candidate.kind == :episode}
+                    class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2"
+                  >
                     <input
                       type="radio"
                       name={"migration-choice-#{candidate.id}"}
@@ -1039,7 +1230,10 @@ defmodule CinderWeb.LibraryAdoptionLive do
                       </span>
                     </span>
                   </label>
-                  <label class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2">
+                  <label
+                    :if={candidate.kind == :episode}
+                    class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2"
+                  >
                     <input
                       type="radio"
                       name={"migration-choice-#{candidate.id}"}
@@ -1054,6 +1248,50 @@ defmodule CinderWeb.LibraryAdoptionLive do
                       <span class="block font-medium">{gettext("Part")}</span>
                       <span class="text-sm text-base-content/70">
                         {gettext("Adopt the extra file as an explicit part of the primary episode.")}
+                      </span>
+                    </span>
+                  </label>
+                  <label
+                    :if={candidate.kind == :book}
+                    class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2"
+                  >
+                    <input
+                      type="radio"
+                      name={"migration-choice-#{candidate.id}"}
+                      value="preferred"
+                      checked={Map.get(@decisions, candidate.id) == "preferred"}
+                      phx-click="set_decision"
+                      phx-value-id={candidate.id}
+                      phx-value-choice="preferred"
+                      class="radio radio-primary mt-0.5"
+                    />
+                    <span>
+                      <span class="block font-medium">{gettext("Preferred format")}</span>
+                      <span class="text-sm text-base-content/70">
+                        {gettext(
+                          "Adopt only the preferred format (EPUB, else AZW3, else MOBI). The other files are left untouched on disk."
+                        )}
+                      </span>
+                    </span>
+                  </label>
+                  <label
+                    :if={candidate.kind == :book}
+                    class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2"
+                  >
+                    <input
+                      type="radio"
+                      name={"migration-choice-#{candidate.id}"}
+                      value="all_formats"
+                      checked={Map.get(@decisions, candidate.id) == "all_formats"}
+                      phx-click="set_decision"
+                      phx-value-id={candidate.id}
+                      phx-value-choice="all_formats"
+                      class="radio radio-primary mt-0.5"
+                    />
+                    <span>
+                      <span class="block font-medium">{gettext("All formats")}</span>
+                      <span class="text-sm text-base-content/70">
+                        {gettext("Adopt every accepted-format file for this work.")}
                       </span>
                     </span>
                   </label>
@@ -1172,7 +1410,12 @@ defmodule CinderWeb.LibraryAdoptionLive do
       source: source,
       candidates: candidates,
       counts: migration_counts(candidates),
-      series_counts: migration_series_counts(candidates)
+      series_counts: migration_series_counts(candidates),
+      # Snapshot arithmetic (§B6b's `Readarr.summary/2`) unaffected by adopting a batch — carried
+      # over rather than recomputed, since no fresh snapshot/summary was fetched by this refresh.
+      deferred_bibliography_count: Map.get(socket.assigns.migration_deferred, :count, 0),
+      deferred_bibliography_authors:
+        Map.keys(Map.get(socket.assigns.migration_deferred, :links, %{}))
     })
   end
 

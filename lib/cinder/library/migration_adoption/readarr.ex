@@ -1,12 +1,14 @@
 defmodule Cinder.Library.MigrationAdoption.Readarr do
   @moduledoc """
-  Bounded, cached, **preview-only** candidate classification for adopting Bookshelf's existing
-  e-book library — `docs/plans/2026-09-01-books-b6-migration-and-cutover.md` §B6b.
+  Bounded, cached e-book library classification for adopting Bookshelf's existing library —
+  `docs/plans/2026-09-01-books-b6-migration-and-cutover.md` §B6b (`plan/2`, `summary/2`,
+  preview-only) and §B6c (`revalidate/1`, `adopt/2`, the write path via `Cinder.Books.Adoption`).
 
   A sibling extraction from `Cinder.Library.MigrationAdoption`, the same "carved out as plain
   code motion" pattern `Cinder.Settings.Registry`/`Crypto` already established, not a new
-  top-level namespace. `MigrationAdoption.plan/4`'s `:readarr` clause delegates straight to
-  `plan/1` below.
+  top-level namespace. `MigrationAdoption.plan_source/3`'s `:readarr` clause delegates straight
+  to `plan/2` below; `MigrationAdoption.adopt/2`'s `:readarr` clause delegates to `revalidate/1`
+  then `adopt/2`.
 
   ## Two passes, cheap-local-filter first
 
@@ -26,8 +28,8 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
      classification.
   2. **Network-bound, capped.** Every miss is a candidate for `Identity.resolve/1`, called with a
      free-text query built from the work's author name plus its title — but at most
-     `Cinder.Books.max_bibliography_candidates/0` per `plan/1` call. Beyond the cap, a work is
-     simply not yet a candidate; its count surfaces through `summary/1`'s `:remaining`, exactly
+     `Cinder.Books.max_bibliography_candidates/0` per `plan/2` call. Beyond the cap, a work is
+     simply not yet a candidate; its count surfaces through `summary/2`'s `:remaining`, exactly
      the field `preview_author_policy/2` already returns for the same reason.
 
   A work step 2 actually attempts — resolved or not — becomes a visible, explained candidate:
@@ -38,19 +40,23 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
 
   ## Write boundary
 
-  `plan/1` and `summary/1` perform **zero** database writes. `Identity.resolve/1` is already
-  read-only (`get_work/1`, never `Cinder.Books.import_resolution/1`), and every other read here
-  (`book_identifiers`, `book_targets`, `book_files`, `book_editions`) is a plain `Repo.all`/`Ecto`
-  query, never an insert/update/delete. This is what makes "a dry run changes nothing" true by
-  construction, not by a separate check. B6c owns the write path.
+  `plan/2` and `summary/2` perform **zero** database writes, matching `revalidate/1` (a fresh
+  local classification, no Bookshelf refetch, no `Identity.resolve/1` call). `Identity.resolve/1`
+  is already read-only (`get_work/1`, never `Cinder.Books.import_resolution/1`), and every other
+  read here (`book_identifiers`, `book_targets`, `book_files`, `book_editions`) is a plain
+  `Repo.all`/`Ecto` query, never an insert/update/delete. This is what makes "a dry run changes
+  nothing" true by construction, not by a separate check. Only `adopt/2` writes, and only through
+  `Cinder.Books.Adoption.adopt_work/3` — B6c's single choke-point.
   """
 
   import Ecto.Query
 
   alias Cinder.Acquisition.BookScorer
   alias Cinder.Books
+  alias Cinder.Books.Adoption, as: BooksAdoption
   alias Cinder.Books.{BookFile, BookTarget, Edition, Identifier}
   alias Cinder.Books.Identity
+  alias Cinder.Books.Metadata
   alias Cinder.Library.MigrationSource
   alias Cinder.Repo
   alias Cinder.Settings
@@ -61,17 +67,27 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
   @accepted_formats Enum.map(BookScorer.accepted_formats(), &to_string/1)
 
   @doc """
-  Classifies every file-bearing work in `snapshot` into one `:readarr` candidate, mirroring
-  `MigrationAdoption`'s `movie_candidate/4` cond-chain style. See the module doc and the B6b plan
-  §3 for the classification rules.
+  Classifies every file-bearing work in `snapshot`, minus `exclude`, into one `:readarr`
+  candidate, mirroring `MigrationAdoption`'s `movie_candidate/4` cond-chain style. See the module
+  doc and the B6b plan §3 for the classification rules.
 
-  A monitored work with no file never reaches this function at all — see `summary/1`'s
+  `exclude` (default `MapSet.new()`) is a set of `work.provider_id` values to drop before
+  classification even starts — `MigrationAdoption.preview/2`'s `opts[:exclude]`, the LiveView's
+  own batch accumulator (B6c) asking not to re-pay or re-emit a work an earlier batch in the same
+  scan session already classified. `plan/2` has no cursor of its own; see the module doc's write
+  boundary and `MigrationAdoption.preview/2`'s own doc for why the caller carries this instead.
+
+  A monitored work with no file never reaches this function at all — see `summary/2`'s
   `:deferred_bibliography_count`.
   """
-  @spec plan(MigrationSource.snapshot()) :: [map()]
-  def plan(snapshot) do
+  @spec plan(MigrationSource.snapshot(), MapSet.t()) :: [map()]
+  def plan(snapshot, exclude \\ MapSet.new()) do
     files_by_work = files_by_work(snapshot)
-    file_bearing = file_bearing_works(snapshot, files_by_work)
+
+    file_bearing =
+      snapshot
+      |> file_bearing_works(files_by_work)
+      |> Enum.reject(&MapSet.member?(exclude, &1.provider_id))
 
     identifiers = local_identifier_index(file_bearing)
     {cached, uncached} = Enum.split_with(file_bearing, &Map.has_key?(identifiers, &1.foreign_id))
@@ -85,7 +101,10 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
       Map.new(cached, &{&1.provider_id, {:cached, Map.fetch!(identifiers, &1.foreign_id)}})
 
     identity_by_provider_id = Map.merge(cached_identity, resolved_identity_map(resolutions))
-    catalog = catalog_state(identity_by_provider_id, files_by_work)
+
+    work_ids = catalog_work_ids(identity_by_provider_id)
+    all_paths = catalog_paths(identity_by_provider_id, files_by_work)
+    catalog = catalog_state(work_ids, all_paths)
 
     (cached ++ to_resolve)
     |> Enum.map(fn work ->
@@ -94,7 +113,8 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
         Map.fetch!(identity_by_provider_id, work.provider_id),
         Map.get(files_by_work, work.provider_id, []),
         Map.get(editions_by_work, work.provider_id, []),
-        catalog
+        catalog,
+        authors_by_id
       )
     end)
   end
@@ -102,38 +122,52 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
   @doc """
   Preview summary fields no other migration source needs.
 
-  `remaining` is how many not-yet-attempted works `plan/1`'s cap left this call — the identical
+  `remaining` is how many not-yet-attempted works `plan/2`'s cap left this call — the identical
   field name and meaning `Books.preview_author_policy/2` already returns. `deferred_bibliography_count`
   is the count of monitored, fileless works (661 of the eBook instance's 842, in the real
   deployment) that never became candidates at all: importing every monitored source row as an
   active acquisition request would be the "back-catalogue flood" the parity contract's own
   cutover-hazard section warns against, so this is pure snapshot arithmetic, never a candidate.
+  Unaffected by `exclude` — a fileless work is never a candidate in any batch, so there is nothing
+  for a batch accumulator to have already counted.
+
+  `exclude` (default `MapSet.new()`) mirrors `plan/2`'s own — the same batch accumulator, so
+  `remaining` stays consistent with what THIS batch's `plan/2` call actually left unattempted.
 
   Both fields are cheap, local-DB-only reads — nothing here issues a metadata-provider HTTP
-  request. This redoes `plan/1`'s local identifier-cache lookup once more (one extra indexed
-  `book_identifiers` read per `MigrationAdoption.preview/1` call) rather than threading a second
+  request. This redoes `plan/2`'s local identifier-cache lookup once more (one extra indexed
+  `book_identifiers` read per `MigrationAdoption.preview/2` call) rather than threading a second
   return value through `plan/4`'s list-returning contract every other migration source relies on
-  unchanged — see `MigrationAdoption.extra_fields/2`.
+  unchanged — see `MigrationAdoption.extra_fields/3`.
   """
-  @spec summary(MigrationSource.snapshot()) :: %{
+  @spec summary(MigrationSource.snapshot(), MapSet.t()) :: %{
           remaining: non_neg_integer(),
-          deferred_bibliography_count: non_neg_integer()
+          deferred_bibliography_count: non_neg_integer(),
+          deferred_bibliography_authors: [MigrationSource.provider_id()]
         }
-  def summary(snapshot) do
+  def summary(snapshot, exclude \\ MapSet.new()) do
     files_by_work = files_by_work(snapshot)
-    file_bearing = file_bearing_works(snapshot, files_by_work)
     file_bearing_ids = MapSet.new(files_by_work, fn {work_id, _files} -> work_id end)
+
+    file_bearing =
+      snapshot
+      |> file_bearing_works(files_by_work)
+      |> Enum.reject(&MapSet.member?(exclude, &1.provider_id))
 
     identifiers = local_identifier_index(file_bearing)
     uncached_count = Enum.count(file_bearing, &(not Map.has_key?(identifiers, &1.foreign_id)))
     remaining = max(uncached_count - Books.max_bibliography_candidates(), 0)
 
-    deferred =
+    fileless =
       snapshot
       |> Map.get(:works, [])
-      |> Enum.count(&(&1.monitored and not MapSet.member?(file_bearing_ids, &1.provider_id)))
+      |> Enum.filter(&(&1.monitored and not MapSet.member?(file_bearing_ids, &1.provider_id)))
 
-    %{remaining: remaining, deferred_bibliography_count: deferred}
+    %{
+      remaining: remaining,
+      deferred_bibliography_count: length(fileless),
+      deferred_bibliography_authors: Enum.uniq(for work <- fileless, do: work.author_id)
+    }
   end
 
   defp files_by_work(snapshot) do
@@ -212,31 +246,35 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     end)
   end
 
-  defp catalog_state(identity_by_provider_id, files_by_work) do
-    work_ids =
-      identity_by_provider_id
-      |> Map.values()
-      |> Enum.flat_map(fn
-        {:blocked, _reason} -> []
-        identity -> [cinder_work_id(identity)]
-      end)
-      |> Enum.reject(&is_nil/1)
-      |> Enum.uniq()
+  defp catalog_work_ids(identity_by_provider_id) do
+    identity_by_provider_id
+    |> Map.values()
+    |> Enum.flat_map(fn
+      {:blocked, _reason} -> []
+      identity -> [cinder_work_id(identity)]
+    end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
 
+  defp catalog_paths(identity_by_provider_id, files_by_work) do
+    identity_by_provider_id
+    |> Map.keys()
+    |> Enum.flat_map(&Map.get(files_by_work, &1, []))
+    |> Enum.map(& &1.path)
+    |> Enum.uniq()
+  end
+
+  # Shared by `plan/2` (fed the whole batch's candidate identities/paths) and `revalidate/1`
+  # (B6c — fed just the already-selected candidates' own `work_id`/paths, no snapshot at all).
+  defp catalog_state(work_ids, paths) do
     targets = targets_by_work_id(work_ids)
     target_ids = targets |> Map.values() |> Enum.map(& &1.id)
-
-    all_paths =
-      identity_by_provider_id
-      |> Map.keys()
-      |> Enum.flat_map(&Map.get(files_by_work, &1, []))
-      |> Enum.map(& &1.path)
-      |> Enum.uniq()
 
     %{
       targets: targets,
       target_paths: target_file_paths(target_ids),
-      path_owners: path_owners(all_paths),
+      path_owners: path_owners(paths),
       edition_index: edition_identifier_index(work_ids)
     }
   end
@@ -297,8 +335,8 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     |> Map.new(fn {work_id, pairs} -> {work_id, Map.new(pairs)} end)
   end
 
-  defp candidate(work, {:blocked, reason} = _identity, _files, _editions, _catalog) do
-    Map.merge(base_candidate(work), %{
+  defp candidate(work, {:blocked, reason} = _identity, _files, _editions, _catalog, authors_by_id) do
+    Map.merge(base_candidate(work, authors_by_id), %{
       status: :blocked,
       reason: reason,
       work_id: nil,
@@ -312,13 +350,13 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     })
   end
 
-  defp candidate(work, identity, files, provider_editions, catalog) do
+  defp candidate(work, identity, files, provider_editions, catalog, authors_by_id) do
     work_id = cinder_work_id(identity)
     target = Map.get(catalog.targets, work_id)
     target_paths = if target, do: Map.get(catalog.target_paths, target.id, []), else: []
     {accepted, unsupported} = Enum.split_with(files, &accepted_format?/1)
 
-    base_candidate(work)
+    base_candidate(work, authors_by_id)
     |> Map.merge(%{
       work_id: work_id,
       identity: identity_evidence(work, identity),
@@ -328,15 +366,25 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     |> Map.merge(classify_files(accepted, work_id, target, target_paths, catalog.path_owners))
   end
 
-  defp base_candidate(work) do
+  defp base_candidate(work, authors_by_id) do
     %{
       key: "book:#{work.provider_id}",
       kind: :book,
       provider_id: work.provider_id,
       author_id: work.author_id,
+      # The author's own display name, carried through for B6c's deferred-bibliography banner
+      # (`CinderWeb.LibraryAdoptionLive.migration_deferred/1`) — an accessible label needs a
+      # human-readable name, not the raw Bookshelf-local `author_id` alone.
+      author_name: authors_by_id |> Map.get(work.author_id, %{}) |> Map.get(:name),
       source: :readarr,
       title: work.title,
-      monitored: work.monitored
+      monitored: work.monitored,
+      # Bookshelf's own foreign id for this work (`Cinder.Library.MigrationSource.work/0`'s
+      # `foreign_id`) — namespace-distinct from `identity.foreign_id` above, which (for a
+      # `:resolved` identity) is the METADATA provider's own id. B6c's `adopt/2` needs Bookshelf's
+      # id specifically to stamp `book_identifiers{provider: "readarr", ...}`
+      # (`Cinder.Books.Adoption.adopt_work/3`'s `:bookshelf_foreign_id`).
+      foreign_id: work.foreign_id
     }
   end
 
@@ -371,30 +419,71 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
       reason: reason,
       path: file.path,
       size: file.size,
+      # Needed by B6c's `adopt/2` to build the single `BookFile` insert attrs
+      # (`BookFile.changeset/2` requires `:format`) — the multi-format branch below already
+      # carries it on `primary_file`/`extra_files`; this plain single-file branch previously
+      # dropped it since B6b (preview-only) never needed it.
+      format: file.format,
       primary_file: nil,
       extra_files: []
     }
   end
 
-  # More than one accepted-format file: `:needs_decision, :multi_format`. `primary_file`/
-  # `extra_files` mirror Sonarr's n-to-one candidate shape exactly (`n_to_one_candidate/5`) —
-  # B6c's adopt step reads `primary_file` alone for the **preferred** choice (EPUB, else AZW3,
-  # else MOBI — `@accepted_formats`' own order) or `primary_file` + `extra_files` for **all**.
-  # B6b only exposes the shape; no choice is applied here.
-  defp classify_files(files, _work_id, _target, _target_paths, _path_owners) do
+  # More than one accepted-format file. Evaluated through the SAME `winner_status/5` cond-chain
+  # the single-file branch uses — but over EVERY accepted file, not just the primary. Mirrors
+  # `MigrationAdoption.n_to_one_status/4`'s own "check every member's path" precedent
+  # (`migration_adoption.ex`): `:target_held`/`:identity_conflict`/`:already_managed` are
+  # target-scoped and would trip on any file alike, but `:path_conflict` and
+  # `:outside_library_root` are PER-FILE — a clean primary EPUB with a sibling AZW3 that already
+  # belongs to a different work's target (or sits outside the configured `:ebook` root) must
+  # still block the whole candidate. Checking the primary alone left that conflict invisible: the
+  # candidate rendered as an ordinary `:needs_decision`, the write failed silently at
+  # revalidation every time, and a re-preview reproduced the identical misleading row forever
+  # (`classify_files/5` never re-evaluated the sibling). Only once every file clears
+  # (`{:ready, nil}`) does the candidate actually reach `:needs_decision, :multi_format`.
+  # `primary_file`/`extra_files` mirror Sonarr's n-to-one candidate shape exactly
+  # (`n_to_one_candidate/5`) — B6c's adopt step reads `primary_file` alone for the **preferred**
+  # choice (EPUB, else AZW3, else MOBI — `@accepted_formats`' own order) or `primary_file` +
+  # `extra_files` for **all**.
+  defp classify_files(files, work_id, target, target_paths, path_owners) do
     primary =
       Enum.min_by(files, fn file -> Enum.find_index(@accepted_formats, &(&1 == file.format)) end)
 
     extras = Enum.reject(files, &(&1.provider_id == primary.provider_id))
 
-    %{
-      status: :needs_decision,
-      reason: :multi_format,
-      path: primary.path,
-      size: primary.size,
-      primary_file: primary,
-      extra_files: extras
-    }
+    case blocking_status([primary | extras], work_id, target, target_paths, path_owners) do
+      {:ready, nil} ->
+        %{
+          status: :needs_decision,
+          reason: :multi_format,
+          path: primary.path,
+          size: primary.size,
+          primary_file: primary,
+          extra_files: extras
+        }
+
+      {status, reason} ->
+        %{
+          status: status,
+          reason: reason,
+          path: primary.path,
+          size: primary.size,
+          format: primary.format,
+          primary_file: nil,
+          extra_files: []
+        }
+    end
+  end
+
+  # The first non-`{:ready, nil}` verdict among `files`, in order — or `{:ready, nil}` when every
+  # one of them clears.
+  defp blocking_status(files, work_id, target, target_paths, path_owners) do
+    Enum.reduce_while(files, {:ready, nil}, fn file, _acc ->
+      case winner_status(file, work_id, target, target_paths, path_owners) do
+        {:ready, nil} -> {:cont, {:ready, nil}}
+        blocked -> {:halt, blocked}
+      end
+    end)
   end
 
   defp winner_status(file, work_id, target, target_paths, path_owners) do
@@ -437,6 +526,194 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     |> Enum.reject(&is_nil/1)
     |> Enum.find_value(&Map.get(identifiers, &1))
   end
+
+  # ================================================================ B6c: adopt ===
+
+  @doc """
+  Re-validates already-`selected` `:readarr` candidates against CURRENT catalog state, right
+  before adopting — the same "preview and adopt are not atomic with each other" defense
+  `MigrationAdoption.revalidate_catalog/2`'s `:radarr`/`:sonarr` clauses give via
+  `movie_path_status/3`/`episode_file_status/3`, reusing this module's own `winner_status/5`
+  cond-chain rather than a second one.
+
+  No Bookshelf refetch and no `Identity.resolve/1` call here — those only ever run at preview
+  time (`plan/2`); a candidate that went stale between preview and adopt is reported, never
+  silently re-resolved against a possibly-different provider answer.
+
+  `selected` is `[{candidate, choice}]`, `choice` one of `nil` (plain `:ready`), `:preferred`, or
+  `:all_formats`. Returns `{valid, stale}` in the same shape, matching `Enum.split_with/2` (and
+  `MigrationAdoption.revalidate_catalog/2`'s other clauses) exactly.
+  """
+  @spec revalidate([{map(), atom() | nil}]) :: {[{map(), atom() | nil}], [{map(), atom() | nil}]}
+  def revalidate(selected) do
+    work_ids =
+      selected
+      |> Enum.map(fn {c, _choice} -> c.work_id end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    paths =
+      selected
+      |> Enum.flat_map(fn {c, choice} -> candidate_files(c, choice) end)
+      |> Enum.map(& &1.path)
+      |> Enum.uniq()
+
+    catalog = catalog_state(work_ids, paths)
+
+    Enum.split_with(selected, fn {candidate, choice} -> current?(candidate, choice, catalog) end)
+  end
+
+  defp candidate_files(%{primary_file: %{} = primary, extra_files: extras}, :all_formats),
+    do: [primary | extras]
+
+  defp candidate_files(%{primary_file: %{} = primary}, _choice), do: [primary]
+
+  defp candidate_files(%{path: path, size: size, format: format}, _choice)
+       when not is_nil(path),
+       do: [%{path: path, size: size, format: format}]
+
+  defp candidate_files(_candidate, _choice), do: []
+
+  defp current?(%{status: :ready, work_id: work_id, path: path}, _choice, catalog) do
+    winner_status(
+      %{path: path},
+      work_id,
+      target_for(work_id, catalog),
+      target_paths(work_id, catalog),
+      catalog.path_owners
+    ) ==
+      {:ready, nil}
+  end
+
+  defp current?(%{status: :needs_decision, work_id: work_id} = candidate, choice, catalog) do
+    target = target_for(work_id, catalog)
+    target_paths = target_paths(work_id, catalog)
+
+    candidate
+    |> candidate_files(choice)
+    |> Enum.all?(
+      &(winner_status(&1, work_id, target, target_paths, catalog.path_owners) == {:ready, nil})
+    )
+  end
+
+  defp current?(_candidate, _choice, _catalog), do: false
+
+  defp target_for(work_id, catalog), do: Map.get(catalog.targets, work_id)
+
+  defp target_paths(work_id, catalog) do
+    case target_for(work_id, catalog) do
+      nil -> []
+      target -> Map.get(catalog.target_paths, target.id, [])
+    end
+  end
+
+  @doc """
+  Adopts each `{candidate, choice}` pair in `selected` via `Cinder.Books.Adoption.adopt_work/3`,
+  folding results into `summary` (`MigrationAdoption.adopt/2`'s running
+  `%{adopted:, skipped:, failures:, adopted_keys:, stale_keys:}` accumulator).
+
+  `isolate`-style: one candidate's failure never aborts the batch, matching
+  `Cinder.Books.apply_author_policy/4`'s established contract. Callers revalidate first
+  (`revalidate/1`) — this function trusts every pair it receives is still current and re-resolves
+  identity fresh via `Cinder.Books.Identity.resolve/1` for each (one direct-by-reference fetch,
+  never a free-text search — see `resolution_for/1`), since B6b's classification never threads a
+  full resolution payload through the candidate.
+  """
+  @spec adopt(map(), [{map(), atom() | nil}]) :: map()
+  def adopt(summary, selected) do
+    Enum.reduce(selected, summary, fn {candidate, choice}, acc ->
+      adopt_candidate(acc, candidate, choice)
+    end)
+  end
+
+  defp adopt_candidate(summary, candidate, choice) do
+    with {:ok, resolution} <- resolution_for(candidate),
+         resolution = Map.put(resolution, :bookshelf_foreign_id, candidate.foreign_id),
+         files = files_for(candidate, choice),
+         {:ok, _target} <- BooksAdoption.adopt_work(resolution, files) do
+      summary
+      |> Map.update!(:adopted, &(&1 + 1))
+      |> Map.update!(:adopted_keys, &(&1 ++ [candidate.key]))
+    else
+      {:error, reason} ->
+        Map.update!(summary, :failures, &(&1 ++ [%{path: candidate.path, reason: reason}]))
+    end
+  rescue
+    e ->
+      Map.update!(summary, :failures, fn failures ->
+        failures ++ [%{path: candidate.path, reason: {:exception, Exception.message(e)}}]
+      end)
+  catch
+    kind, value ->
+      Map.update!(summary, :failures, &(&1 ++ [%{path: candidate.path, reason: {kind, value}}]))
+  end
+
+  # A `:resolved` candidate already carries the metadata provider's own reference — one direct
+  # `get_work/1` fetch, never a search (`Identity.reference_for/2`'s whole point). A `:cached`
+  # candidate's `identity.provider` is the sentinel `:readarr` (Bookshelf's own namespace, not a
+  # real `Cinder.Books.Metadata` provider) — its work is already imported, so this looks up that
+  # SAME Cinder work's own best non-"readarr" identifier instead of guessing one.
+  defp resolution_for(%{identity: %{provider: :readarr}, work_id: work_id})
+       when not is_nil(work_id) do
+    case non_readarr_reference(work_id) do
+      {:ok, provider, foreign_id} ->
+        Identity.resolve(Identity.reference_for(provider, foreign_id))
+
+      :error ->
+        {:error, :no_provider_identity}
+    end
+  end
+
+  defp resolution_for(%{identity: %{provider: provider, foreign_id: foreign_id}}),
+    do: Identity.resolve(Identity.reference_for(provider, foreign_id))
+
+  defp resolution_for(_candidate), do: {:error, :no_provider_identity}
+
+  defp non_readarr_reference(work_id) do
+    Identifier
+    |> where([i], i.work_id == ^work_id and i.kind == "work" and i.provider != "readarr")
+    |> order_by([i], asc: i.id)
+    |> Repo.all()
+    |> List.first()
+    |> case do
+      nil ->
+        :error
+
+      %Identifier{provider: provider, foreign_id: foreign_id} ->
+        with_provider_atom(provider, foreign_id)
+    end
+  end
+
+  defp with_provider_atom(provider, foreign_id) do
+    case provider_atom(provider) do
+      nil -> :error
+      atom -> {:ok, atom, foreign_id}
+    end
+  end
+
+  defp provider_atom(provider) do
+    Metadata.providers()
+    |> Enum.find(&(to_string(&1.provider()) == provider))
+    |> case do
+      nil -> nil
+      module -> module.provider()
+    end
+  end
+
+  defp files_for(
+         %{primary_file: %{} = primary, extra_files: extras, edition_id: edition_id},
+         :all_formats
+       ),
+       do: Enum.map([primary | extras], &file_attrs(&1, edition_id))
+
+  defp files_for(%{primary_file: %{} = primary, edition_id: edition_id}, _preferred),
+    do: [file_attrs(primary, edition_id)]
+
+  defp files_for(%{path: path, size: size, format: format, edition_id: edition_id}, _choice),
+    do: [%{path: path, size: size, format: format, edition_id: edition_id}]
+
+  defp file_attrs(%{path: path, size: size, format: format}, edition_id),
+    do: %{path: path, size: size, format: format, edition_id: edition_id}
 
   # Mirrors `Cinder.Books`'s own private `normalize_identifier/1` (the same rule
   # `put_normalized_identifier/4` stores every ISBN/ASIN `book_identifiers` row under) —
