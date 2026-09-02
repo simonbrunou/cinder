@@ -477,20 +477,55 @@ defmodule Cinder.Download do
     Repo.all(from r in IntentEpisode, select: r.episode_id) |> MapSet.new()
   end
 
+  # `opts[:expect_remote_id]` (issue #415) is a generation guard for the post-commit fence path
+  # only: every EXISTING caller (`Catalog.cancel_movie/2`, `abort_upgrade/2`, `delete_movie/3`,
+  # `ReleaseVerification`) fences BEFORE the target becomes grabbable again, inside the same
+  # transaction as the write that makes it so — nothing can race a new reservation in, so "the"
+  # intent for this `target_id` is unambiguously the one being torn down. `Download`'s post-commit
+  # sites (movie/TV `remove_after_import/4` fences) invert that ordering on purpose (removing
+  # files mid-import is worse — see `remove_after_import/4`'s moduledoc), which opens a real
+  # window: a concurrent `UpgradeHunter` tick or a "Find a better match" click can reserve a NEW
+  # release for this same target between the commit and the fence. Fencing "whatever intent
+  # exists" there would silently hijack that NEW intent — flipping it to `:cleanup_pending` and
+  # discarding its own `remote_id` in favor of the OLD download's. `expect_remote_id`, passed only
+  # by those post-commit callers, refuses to touch an existing intent whose `remote_id` doesn't
+  # already match the download being fenced — returning `:mismatch` instead so the caller can fall
+  # back to a one-shot, undurable removal (today's pre-#415 behavior) rather than corrupt state.
+  # Omitted (the default, every existing caller), this check never runs — zero behavior change.
   @doc false
   def fence_movie_cleanup(%Movie{} = movie, opts \\ []) do
     intent = Repo.get_by(Intent, kind: :movie, target_id: movie.id)
     remote_id = if Keyword.get(opts, :include_remote, true), do: movie.download_id
+    expect_remote_id = Keyword.get(opts, :expect_remote_id)
 
-    case {intent, remote_id} do
-      {%Intent{} = existing, _} -> [mark_cleanup!(existing, remote_id).id]
-      {nil, id} when is_binary(id) -> [insert_movie_cleanup!(movie, id).id]
-      {nil, _} -> []
+    cond do
+      conflicting_intent?(intent, expect_remote_id) -> :mismatch
+      match?(%Intent{}, intent) -> [mark_cleanup!(intent, remote_id).id]
+      is_binary(remote_id) -> [insert_movie_cleanup!(movie, remote_id).id]
+      true -> []
     end
   end
 
+  defp conflicting_intent?(_intent, nil), do: false
+  defp conflicting_intent?(nil, _expect_remote_id), do: false
+
+  defp conflicting_intent?(%Intent{remote_id: remote_id}, expect_remote_id),
+    do: remote_id != expect_remote_id
+
+  # `opts[:expect_remote_id]` — same generation guard as `fence_movie_cleanup/2`'s, same reasoning
+  # (only `Download`'s post-commit TV sites pass it; every existing in-transaction caller doesn't
+  # and sees zero behavior change). Without it, an unrelated intent already holding one of
+  # `episode_ids` in `download_intent_episodes` (a concurrent upgrade-hunt/manual grab reserving
+  # the SAME episode between this tick's commit and this fence) would both get silently flipped to
+  # `:cleanup_pending` by the `pending_ids` mark below AND cause the `carrier_ids` insert to crash
+  # on `download_intent_episodes`' `unique_index(:episode_id)` (two intents can never claim one
+  # episode). Any conflicting pending intent aborts the WHOLE fence with `:mismatch` — episode_ids
+  # here all belong to the ONE grab/download being fenced, so a partial fence (some episodes
+  # carried, others not) would split one download's cleanup across two records for no reason.
   @doc false
-  def fence_episode_cleanup(episode_ids, grab_specs) do
+  def fence_episode_cleanup(episode_ids, grab_specs, opts \\ []) do
+    expect_remote_id = Keyword.get(opts, :expect_remote_id)
+
     pending =
       Repo.all(
         from i in Intent,
@@ -500,14 +535,18 @@ defmodule Cinder.Download do
           distinct: true
       )
 
-    pending_ids = Enum.map(pending, &mark_cleanup!(&1, nil).id)
+    if expect_remote_id && Enum.any?(pending, &(&1.remote_id != expect_remote_id)) do
+      :mismatch
+    else
+      pending_ids = Enum.map(pending, &mark_cleanup!(&1, nil).id)
 
-    carrier_ids =
-      for spec <- grab_specs,
-          not Enum.any?(pending, &(&1.remote_id == spec.remote_id)),
-          do: insert_episode_cleanup!(spec).id
+      carrier_ids =
+        for spec <- grab_specs,
+            not Enum.any?(pending, &(&1.remote_id == spec.remote_id)),
+            do: insert_episode_cleanup!(spec).id
 
-    Enum.uniq(pending_ids ++ carrier_ids)
+      Enum.uniq(pending_ids ++ carrier_ids)
+    end
   end
 
   # Unlike `fence_movie_cleanup/2` and `fence_episode_cleanup/2` — which only fence, leaving the
@@ -1231,15 +1270,35 @@ defmodule Cinder.Download do
 
   defp maybe_remove_client(_protocol, download_id, _fence) when download_id in [nil, ""], do: :ok
 
-  defp maybe_remove_client(_protocol, _download_id, {:movie, movie}) do
-    movie |> fence_movie_cleanup() |> cleanup_intents()
+  defp maybe_remove_client(protocol, download_id, {:movie, movie}) do
+    case fence_movie_cleanup(movie, expect_remote_id: download_id) do
+      :mismatch -> fallback_remove(protocol, download_id, "movie #{movie.id}")
+      intent_ids -> cleanup_intents(intent_ids)
+    end
   end
 
-  defp maybe_remove_client(_protocol, _download_id, {:episode, episode_ids, spec}) do
-    episode_ids |> fence_episode_cleanup([spec]) |> cleanup_intents()
+  defp maybe_remove_client(protocol, download_id, {:episode, episode_ids, spec}) do
+    case fence_episode_cleanup(episode_ids, [spec], expect_remote_id: download_id) do
+      :mismatch -> fallback_remove(protocol, download_id, "episodes #{inspect(episode_ids)}")
+      intent_ids -> cleanup_intents(intent_ids)
+    end
   end
 
-  defp maybe_remove_client(protocol, download_id, nil) do
+  defp maybe_remove_client(protocol, download_id, nil), do: fallback_remove(protocol, download_id)
+
+  # A conflicting intent (a concurrent re-grab reserved this target/episode between the tick's
+  # commit and this fence — see `fence_movie_cleanup/2`'s `expect_remote_id` doc) degrades to
+  # today's pre-#415 one-shot removal instead of corrupting the new intent: no durable record for
+  # THIS attempt, but nothing hijacked either. A logged `context` names what raced; the legacy
+  # unfenced callers (`nil`, no durable owner to begin with) pass none.
+  defp fallback_remove(protocol, download_id, context \\ nil) do
+    if context do
+      Logger.warning(
+        "#{context}: a newer download intent already claims this target; falling back to a " <>
+          "one-shot client removal for #{inspect(download_id)}"
+      )
+    end
+
     case client_for(protocol) do
       {:ok, client} -> best_effort_remove(client, download_id)
       :error -> :ok
