@@ -3110,6 +3110,8 @@ defmodule Cinder.Download.TvPollerTest do
       # this now-ungrabbed, still-monitored episode hitting an unstubbed indexer mock — expected
       # noise, not what this test is about.)
       refute log =~ "skipped grab"
+      # Positive assertion: the graceful park path logs the park error.
+      assert log =~ "could not be parked (:stale_grab); will retry next tick"
       refute Repo.get(Grab, ctx.grab.id)
       assert Repo.all(Intent) == []
     end
