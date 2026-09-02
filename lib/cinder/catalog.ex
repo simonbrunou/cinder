@@ -954,6 +954,41 @@ defmodule Cinder.Catalog do
   def abort_upgrade(%Movie{}, _actor), do: {:error, :not_upgrading}
 
   @doc """
+  Reverts a failed upgrade like `abort_upgrade/2`, but CAS-guarded on the caller's tick-start
+  status (`Cinder.Download.Poller`'s one caller, the blocked-content check) instead of
+  unconditional, so a concurrent user Cancel/Discard/Delete always wins. Fences BEFORE the
+  write, in the SAME transaction, so a stale-status miss rolls back the fence too — no orphan
+  cleanup intent survives pointing at a movie someone else already fenced or deleted.
+  """
+  def revert_upgrade_and_remove(%Movie{} = movie) do
+    result =
+      Repo.transaction(fn ->
+        intent_ids = Download.fence_movie_cleanup(movie)
+
+        case guarded_movie_transition(
+               movie,
+               %{
+                 status: :available,
+                 download_id: nil,
+                 download_protocol: nil,
+                 release_title: nil
+               },
+               movie.status
+             ) do
+          {:ok, updated} -> {updated, intent_ids}
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+
+    with {:ok, {updated, intent_ids}} <- result do
+      Download.cleanup_intents(intent_ids)
+      broadcast({:movie_updated, updated})
+      emit_transition(:movie, updated.status)
+      {:ok, updated}
+    end
+  end
+
+  @doc """
   Deletes a movie's DB row. An active row's tracked download is captured in a durable cleanup
   fence in the same transaction, then removed after commit. Broadcasts
   `{:movie_deleted, id}` on the `"movies"` topic.

@@ -3430,6 +3430,135 @@ defmodule Cinder.Download.PollerTest do
                Repo.all(Cinder.Catalog.BlockedRelease)
     end
 
+    test "a failed client removal survives as a durable cleanup record, and a later tick drains it" do
+      movie =
+        movie_fixture(%{
+          tmdb_id: 92,
+          title: "M2",
+          status: :upgrading,
+          download_id: "hash-upgrade-fake-2",
+          download_protocol: :torrent,
+          release_title: "M2.2024.2160p-FAKE",
+          file_path: "/lib/M2/M2.mkv"
+        })
+
+      test_pid = self()
+      Cinder.TestNotifier.subscribe()
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-upgrade-fake-2" ->
+        {:ok, %{state: :completed, content_path: "/downloads/M2.2024.2160p"}}
+      end)
+
+      expect(Cinder.Download.ClientMock, :files, fn "hash-upgrade-fake-2" ->
+        {:ok, ["M2.2024.2160p/M2.2024.2160p.mkv.exe"]}
+      end)
+
+      # #414: the immediate best-effort removal fails transiently (client restarting, an API
+      # timeout) — the exact failure the durable record has to survive.
+      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
+        send(test_pid, {:removed, id, opts})
+        {:error, :timeout}
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      # The pre-existing outcome still holds: reverted to :available, live file untouched,
+      # download_id cleared, release blocklisted — identical to the happy-path test above.
+      assert %Movie{status: :available, file_path: "/lib/M2/M2.mkv", download_id: nil} =
+               Repo.get!(Movie, movie.id)
+
+      assert [%{release_title: "M2.2024.2160p-FAKE", reason: "upgrade_failed"}] =
+               Repo.all(Cinder.Catalog.BlockedRelease)
+
+      assert_receive {:removed, "hash-upgrade-fake-2", _opts}
+      assert_receive {:notify, {:movie_upgrade_failed, %Movie{}, :blocked_content}}
+
+      # A durable download_intents row now survives the failed removal, carrying exactly what a
+      # retry needs: the remote id and protocol the movie used to be the sole owner of.
+      intent = Repo.get_by!(Intent, kind: :movie, target_id: movie.id)
+      assert intent.status == :cleanup_pending
+      assert intent.remote_id == "hash-upgrade-fake-2"
+      assert intent.protocol == :torrent
+
+      # Simulate the bounded retry becoming due — the movie poller reconciles pending intents
+      # every tick, but a failed attempt backs off rather than retrying immediately.
+      intent |> Ecto.Changeset.change(next_attempt_at: nil) |> Repo.update!()
+
+      # The later pass succeeds: the remote job is actually removed this time.
+      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
+        send(test_pid, {:removed_again, id, opts})
+        :ok
+      end)
+
+      assert :ok = Poller.poll()
+
+      assert_receive {:removed_again, "hash-upgrade-fake-2", _opts}
+      refute Repo.get(Intent, intent.id)
+      # Draining the cleanup record is not itself a movie-state change.
+      assert Repo.get!(Movie, movie.id).status == :available
+    end
+
+    test "a movie whose upgrade is aborted mid-vet reverts gracefully instead of raising" do
+      movie =
+        movie_fixture(%{
+          tmdb_id: 93,
+          title: "M3",
+          status: :upgrading,
+          download_id: "hash-upgrade-fake-3",
+          download_protocol: :torrent,
+          release_title: "M3.2024.2160p-FAKE",
+          file_path: "/lib/M3/M3.mkv"
+        })
+
+      test_pid = self()
+      # #414 review: a concurrent Cancel/Discard-upgrade (or Delete) can commit between the
+      # poller's tick-start read and vetted_upgrade/3's blocked verdict — simulated here by
+      # aborting the upgrade from inside the files/1 expectation, the exact point
+      # ContentPolicy.vet/2's client I/O sits. abort_upgrade/2's own cleanup removes the
+      # replacement job immediately, so the LOSING racer (this tick's revert) must find nothing
+      # left to remove and nothing left to fence. The describe block's default `ctx.movie`
+      # ("hash-fake") is also swept by this same tick, hence the second clause below.
+      expect(Cinder.Download.ClientMock, :files, 2, fn
+        "hash-fake" ->
+          {:ok, ["Movie.2024.1080p/Movie.2024.1080p.mkv"]}
+
+        "hash-upgrade-fake-3" ->
+          assert {:ok, %Movie{status: :available}} = Catalog.abort_upgrade(movie, nil)
+          {:ok, ["M3.2024.2160p/M3.2024.2160p.mkv.exe"]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :status, fn
+        "hash-fake" ->
+          {:ok, %{state: :downloading, progress: 0.9, speed: 500_000, seeders: 40}}
+
+        "hash-upgrade-fake-3" ->
+          {:ok, %{state: :completed, content_path: "/downloads/M3.2024.2160p"}}
+      end)
+
+      # A stub (not a bounded `expect`), so a second, REDUNDANT removal attempt (what the old
+      # best-effort-then-revert ordering made) is observable rather than silently swallowed by
+      # Mox's own over-call handling — the send/2 count below is the actual regression signal.
+      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
+        send(test_pid, {:removed, id, opts})
+        :ok
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+      log = capture_log(fn -> assert :ok = Poller.poll() end)
+
+      # isolate/2 would log "skipped movie N" for an unrescued raise or a stray write; its
+      # absence proves the stale-status rollback path was taken instead. No orphan cleanup
+      # intent survives pointing at a movie the concurrent abort already fenced and reverted —
+      # and the losing racer, having fenced-then-rolled-back BEFORE ever calling the client,
+      # never attempts its own redundant removal: exactly abort_upgrade's ONE call, not two.
+      refute log =~ "skipped movie"
+      assert_receive {:removed, "hash-upgrade-fake-3", _opts}
+      refute_receive {:removed, "hash-upgrade-fake-3", _opts}, 0
+      assert Repo.all(Intent) == []
+      assert Repo.get!(Movie, movie.id).status == :available
+    end
+
     test "a client that cannot list files leaves the download alone", %{movie: movie} do
       expect(Cinder.Download.ClientMock, :files, fn "hash-fake" -> {:error, :econnrefused} end)
 
