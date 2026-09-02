@@ -64,11 +64,18 @@ subprocess it can't see inside).
 ## 3. `System.cmd`/subprocess invocations reachable from book code
 
 - **`unrar`** (`lib/cinder/library/book_archive/rar.ex`): `list_entries/2` runs `System.cmd(bin,
-  ["lb", "-p-", "--", archive_path], ...)` (`:152-161`) with no separate timeout of its own (a
-  metadata-listing call, not the extraction itself); the actual extraction
-  (`do_extract_and_supervise/6`, `:184-199`) runs through the `Port` plus poll-loop bound
-  described in §2 above (`@max_duration_ms 60_000`), which is the real ceiling on `unrar`'s total
-  wall-clock cost.
+  ["lb", "-p-", "--", archive_path], ...)`, wrapped in `Task.async/Task.yield(@list_timeout_ms)/
+  Task.shutdown(:brutal_kill)` — the same idiom `MediaInfo.Ffprobe.health/0` and
+  `AudioProbe.Ffprobe.probe/1` already use — bounded to `@list_timeout_ms 5_000`. **This closes
+  a real gap the original draft of this audit disclosed but under-evaluated**: this call runs
+  synchronously inside `Cinder.Download.BookPoller`'s single-process tick
+  (`import_with_stage_handoff -> ... -> BookArchive.extract/3 -> Rar.list_entries/2`), so before
+  this fix, a hung or password-blocked `lb` would have stalled every subsequent tick, import,
+  Audiobookshelf scan, and ops-log write for every book/audiobook target, indefinitely, not
+  merely delayed the one archive being listed. A timeout maps to the same `:archive_corrupt` a
+  nonzero exit already returns, so no caller needed a new clause. The actual extraction
+  (`do_extract_and_supervise/6`, `:184-199` pre-fix line numbers) runs through the separate
+  `Port` plus poll-loop bound described in §2 above (`@max_duration_ms 60_000`), unchanged.
 - **`Ffprobe`** (`lib/cinder/library/media_info/ffprobe.ex`, shared with video): read directly to
   check the plan's prediction of "no explicit timeout." **Confirmed accurate for the paths that
   matter at import time.** `probe/1` (`:30`) and `probe_policy/1` (`:33`) both delegate to
@@ -172,7 +179,7 @@ this section's exhaustiveness claim, which is scoped exactly to the three named 
 
 ## Findings that differ from the plan's prediction
 
-Two findings genuinely differ from a literal reading of the plan's §3 bullet list; everything
+Three findings genuinely differ from a literal reading of the plan's §3 bullet list; everything
 else (provider bounds, archive ceilings, the `unrar` wall-clock/size supervision, the video-shared
 `Ffprobe`'s missing timeout, the poller interval being config not a per-call bound, and every
 audited transaction being DB-only) matches exactly what the plan predicted, verified against
@@ -194,3 +201,20 @@ current source rather than assumed:
    probe budget. This is a more favorable finding than the plan's item 4 wording implies, not a
    gap: the book-specific probe path is more tightly bounded than its video-shared sibling, not
    less.
+3. **`unrar list_entries/2` was a genuine, book-specific unbounded-work gap, not covered by the
+   accepted `Ffprobe` exception, and has since been fixed.** This audit's first draft disclosed
+   the missing timeout in §3's prose but framed it as low-risk ("a metadata-listing call, not
+   the extraction itself") without evaluating the consequence: `Cinder.Download.BookPoller` runs
+   its whole tick synchronously in one `GenServer`, and `isolate/2` is a bare `rescue`, not a
+   timeout boundary, so a hung or password-blocked `lb` on the path
+   `import_with_stage_handoff -> import_one -> do_import_one -> BookImport`/
+   `AudiobookImport.import_grab -> BookArchive.extract/3 -> Rar.list_entries/2` would have
+   blocked every subsequent tick, import, Audiobookshelf scan, and ops-log write for every book
+   and audiobook target, indefinitely, not merely delayed the one archive being listed. Unlike
+   the accepted `Ffprobe` exception (pre-existing, shared with video, explicitly out of scope),
+   `unrar list_entries/2` is book-specific and new to this track, so it was in scope and has been
+   fixed: `list_entries/2` now wraps its `System.cmd` in the same `Task.async/Task.yield/
+   Task.shutdown(:brutal_kill)` idiom `MediaInfo.Ffprobe.health/0` and `AudioProbe.Ffprobe.
+   probe/1` already use, bounded to `@list_timeout_ms 5_000` (§3 above). **`Ffprobe`'s missing
+   timeout on the paths that inspect actual file bytes is now genuinely the only unbounded-work
+   exception this audit accepts**, not one of two.

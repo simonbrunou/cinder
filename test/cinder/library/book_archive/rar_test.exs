@@ -233,6 +233,34 @@ defmodule Cinder.Library.BookArchive.RarTest do
       assert {:error, :archive_corrupt} = Rar.extract("/tmp/broken.rar", dest)
     end
 
+    test "a hung `lb` call is killed by list_timeout_ms and refused, without extraction ever
+          running",
+         %{
+           fakebin: fakebin,
+           original_path: original_path,
+           dest: dest,
+           tmp: tmp
+         } do
+      marker = Path.join(tmp, "extraction_ran")
+
+      install_fake_unrar(fakebin, original_path, """
+      #!/bin/sh
+      case "$1" in
+        lb) sleep 3600 ;;
+        x) touch #{marker}; exit 0 ;;
+      esac
+      """)
+
+      t0 = System.monotonic_time(:millisecond)
+
+      assert {:error, :archive_corrupt} =
+               Rar.extract("/tmp/hung-list.rar", dest, list_timeout_ms: 200)
+
+      elapsed = System.monotonic_time(:millisecond) - t0
+      assert elapsed < 3000
+      refute File.exists?(marker)
+    end
+
     test "exceeding max_expanded_size kills the process and refuses", %{
       fakebin: fakebin,
       original_path: original_path,

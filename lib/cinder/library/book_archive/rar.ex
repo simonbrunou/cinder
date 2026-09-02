@@ -23,6 +23,12 @@ defmodule Cinder.Library.BookArchive.Rar do
   A wall-clock ceiling runs alongside the size poll for the same reason `-p-` (never prompt for
   a password) is passed explicitly: a password-protected or otherwise-stuck archive must not
   leave a hung subprocess parked forever on a poller tick. Either ceiling kills the same way.
+  The `unrar lb` listing call that runs *before* extraction starts is bounded the same way, by
+  a separate, much shorter `Task.async`/`Task.yield`/`Task.shutdown(:brutal_kill)` timeout
+  (`@list_timeout_ms`) — the same idiom `Cinder.Library.MediaInfo.Ffprobe.health/0` and
+  `Cinder.Library.AudioProbe.Ffprobe.probe/1` already use, not a second bespoke mechanism. A
+  hung listing call is otherwise indistinguishable from a hung extraction from the poller's
+  point of view — both would occupy a tick indefinitely — so both need the same guarantee.
 
   ## Entry safety
 
@@ -58,6 +64,15 @@ defmodule Cinder.Library.BookArchive.Rar do
   # How often the destination directory's size is measured while `unrar` runs, and the
   # resulting worst-case overshoot bound (poll interval × throughput) — see the moduledoc.
   @poll_interval 200
+
+  # `unrar lb` only reads the archive's header/central-directory table, never decompresses
+  # entry content — the same "cheap, should be fast" shape as `MediaInfo.Ffprobe.health/0`'s
+  # `-version` call, not `AudioProbe.Ffprobe.probe/1`'s full-file read. 5s is generous headroom
+  # for a large multi-volume archive's header read on a slow/network disk while still leaving
+  # `unrar x`'s own 60s `@max_duration_ms` ceiling as the dominant, expected wait for legitimate
+  # work — a hung or password-blocked `lb` must not park a poller tick for anywhere near that
+  # long before extraction (which has its own ceiling) ever gets a chance to run.
+  @list_timeout_ms 5_000
 
   # No legitimate single-book-release extraction should ever take this long; a stuck or
   # password-blocked process is killed rather than left occupying a poller tick indefinitely.
@@ -102,8 +117,9 @@ defmodule Cinder.Library.BookArchive.Rar do
     max_expanded_size = Keyword.get(opts, :max_expanded_size, @max_expanded_size)
     poll_interval = Keyword.get(opts, :poll_interval, @poll_interval)
     max_duration_ms = Keyword.get(opts, :max_duration_ms, @max_duration_ms)
+    list_timeout_ms = Keyword.get(opts, :list_timeout_ms, @list_timeout_ms)
 
-    with {:ok, entries} <- list_entries(bin, archive_path),
+    with {:ok, entries} <- list_entries(bin, archive_path, list_timeout_ms),
          :ok <- check_entry_count(entries, max_entries),
          :ok <- validate_entries(entries, dest_dir),
          :ok <-
@@ -149,15 +165,31 @@ defmodule Cinder.Library.BookArchive.Rar do
     end
   end
 
-  defp list_entries(bin, archive_path) do
-    case System.cmd(bin, ["lb", "-p-", "--", archive_path], stderr_to_stdout: true) do
-      {output, 0} -> {:ok, output |> String.split("\n", trim: true)}
-      {_output, _status} -> {:error, :archive_corrupt}
+  # Bounded exactly like `MediaInfo.Ffprobe.health/0`/`AudioProbe.Ffprobe.probe/1`:
+  # `Task.async` + `Task.yield(timeout)` + `Task.shutdown(:brutal_kill)`. The missing-binary/
+  # port-open rescue runs INSIDE the task for the same reason those modules' comments give —
+  # `Task.async` links the caller to the task, so an uncaught raise there would crash the
+  # caller via the link's EXIT signal rather than return `{:error, _}`. A timeout maps to the
+  # same `:archive_corrupt` a nonzero exit already returns, so no caller needs a new clause —
+  # both mean "this archive cannot be listed," and a hung `lb` is exactly as unusable to the
+  # caller as a corrupt one.
+  defp list_entries(bin, archive_path, list_timeout_ms) do
+    task =
+      Task.async(fn ->
+        try do
+          System.cmd(bin, ["lb", "-p-", "--", archive_path], stderr_to_stdout: true)
+        rescue
+          e -> {:error, e}
+        end
+      end)
+
+    case Task.yield(task, list_timeout_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:error, _reason}} -> {:error, :archive_corrupt}
+      {:ok, {output, 0}} -> {:ok, output |> String.split("\n", trim: true)}
+      {:ok, {_output, _status}} -> {:error, :archive_corrupt}
+      {:exit, _reason} -> {:error, :archive_corrupt}
+      nil -> {:error, :archive_corrupt}
     end
-  catch
-    # A missing/unexecutable binary between the availability check and this call, or any other
-    # port-open failure `System.cmd/3` itself can raise for.
-    :error, _reason -> {:error, :archive_corrupt}
   end
 
   defp check_entry_count(entries, max_entries) do
