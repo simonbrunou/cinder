@@ -40,17 +40,23 @@ defmodule Cinder.Books.Refresher do
   def refresh_one(work) do
     with {:ok, reference} <- work_reference(work),
          {:ok, resolution} <- resolve(reference),
-         before = Books.get_work(work.id),
+         before = Books.work_identity_snapshot(work.id),
          {:ok, refreshed} <- store(work, resolution) do
-      record_drift(before, Books.get_work(refreshed.id))
+      record_drift(before, Books.work_identity_snapshot(refreshed.id))
       :ok
     end
   end
 
   # Best-effort, additive only — a `book_ops_log` write failure never affects the refresh
-  # `store/2` already committed. Only `title` and the contributor-name-*set* (dedup by name,
-  # not raw credit-row count — `Cinder.Books.import_work_in_tx/2`'s own `put_credits/3`
-  # dedups by `{foreign_id, role}` before writing) drift is watched, per the plan's own scope.
+  # `store/2` already committed. Only `title` and the contributor NAME SET (not its size: two
+  # authors becoming a different two authors at equal cardinality is exactly the drift this
+  # exists to catch, and a count comparison would miss it) drift is watched, per the plan's own
+  # scope. Both `before` and `refreshed` can be `nil` (the work vanished mid-refresh, or never
+  # existed — `work_identity_snapshot/1` returns `nil` rather than raising); either case skips
+  # the comparison instead of crashing this best-effort tail.
+  defp record_drift(nil, _refreshed), do: :ok
+  defp record_drift(_before, nil), do: :ok
+
   defp record_drift(before, refreshed) do
     for detail <- [title_drift(before, refreshed), contributor_drift(before, refreshed)],
         not is_nil(detail) do
@@ -60,17 +66,42 @@ defmodule Cinder.Books.Refresher do
     :ok
   end
 
-  defp title_drift(%{title: same}, %{title: same}), do: nil
-  defp title_drift(%{title: old}, %{title: new}), do: "title: #{old} → #{new}"
+  # Trimmed and case-folded so a provider re-sending the same name/title with different
+  # whitespace or capitalization is never reported as drift; `nil` and `""` normalize identically
+  # so a field going from unset to blank (or back) is not drift either.
+  defp normalize_text(nil), do: ""
+  defp normalize_text(text), do: text |> String.trim() |> String.downcase()
 
-  defp contributor_drift(before, refreshed) do
-    old_count = contributor_name_count(before)
-    new_count = contributor_name_count(refreshed)
-    if old_count == new_count, do: nil, else: "contributors: #{old_count} → #{new_count}"
+  defp title_drift(%{title: old}, %{title: new}) do
+    if normalize_text(old) == normalize_text(new), do: nil, else: "title: #{old} → #{new}"
   end
 
-  defp contributor_name_count(work),
-    do: work.credits |> Enum.map(& &1.author.name) |> Enum.uniq() |> length()
+  defp contributor_drift(%{contributors: before}, %{contributors: after_}) do
+    before_norm = MapSet.new(before, &normalize_text/1)
+    after_norm = MapSet.new(after_, &normalize_text/1)
+
+    if MapSet.equal?(before_norm, after_norm) do
+      nil
+    else
+      added = Enum.uniq(after_) |> Enum.reject(&MapSet.member?(before_norm, normalize_text(&1)))
+      removed = Enum.uniq(before) |> Enum.reject(&MapSet.member?(after_norm, normalize_text(&1)))
+      "contributors: " <> contributor_change_detail(Enum.sort(added), Enum.sort(removed))
+    end
+  end
+
+  # A same-cardinality swap (the exact case a count-only comparison used to miss) reads as a
+  # rename: "Old Name → New Name". Anything else spells out what was added/removed so the log
+  # names people, not integers.
+  defp contributor_change_detail([added], [removed]), do: "#{removed} → #{added}"
+
+  defp contributor_change_detail(added, removed) do
+    [
+      if(added != [], do: "added #{Enum.join(added, ", ")}"),
+      if(removed != [], do: "removed #{Enum.join(removed, ", ")}")
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join("; ")
+  end
 
   # `book_identifiers` also holds isbn/asin rows, which name an edition rather than a work, and
   # `Cinder.Books.Metadata` only fetches works — so only a work-kind row can drive a refresh.

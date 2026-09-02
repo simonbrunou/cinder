@@ -295,20 +295,30 @@ recording:
   a new, separate test case covers the log write) — logs `category: "duplicate_grab_refused"`
   before returning the error; the refusal behavior itself is unchanged.
 - `Cinder.Books.Refresher` gains an actual comparison: before calling `import_resolution/1`, read
-  the work's current `title` and current contributor-name set (one `Repo` read, already in scope
-  since the refresher already has the work loaded); after the refresh commits, compare against the
-  new values. A change to either logs `category: "metadata_drift"` with a `detail` naming what
-  changed (`"title: old → new"` or `"contributors: N → M"`). This is genuinely new comparison
-  logic, sized to the two fields most likely to silently drift and cause a wrong-looking catalog
-  entry during two unattended weeks, not every field `import_resolution/1` touches.
+  the work's current `title` and current contributor NAME SET via a narrow, two-query
+  `Books.work_identity_snapshot/1` read (not the full `get_work/1` preload shape, which the
+  refresher does not otherwise need); after the refresh commits, compare against the new values.
+  A change to either logs `category: "metadata_drift"` with a `detail` naming what changed
+  (`"title: old → new"`, or, for contributors, the actual names added/removed/swapped, e.g.
+  `"contributors: Old Name → New Name"` for a same-count swap, or `"contributors: added A, B;
+  removed C"` otherwise — **a count comparison alone cannot see a same-cardinality swap**, which
+  is exactly the failure mode this exists to catch, so the comparison is over the name set, not
+  its size). Both comparisons are trimmed and case-folded before comparing, so whitespace or
+  capitalization noise from a provider is never reported as drift. This is genuinely new
+  comparison logic, sized to the two fields most likely to silently drift and cause a
+  wrong-looking catalog entry during two unattended weeks, not every field `import_resolution/1`
+  touches.
 - `Cinder.Download.BookPoller`'s `scan_pending/1`: an `AudiobookServer.impl().scan()` failure logs
-  `category: "scan_failure"` on *every* occurrence (not throttled like the sibling `Logger.warning`
-  at the same call site, which bounds log volume for a human, not the operator-facing count over a
-  two-week window) — bounded because this call site already fires at most once per poller tick, one
-  whole-library scan request covering every pending target, never per-target. A later successful
-  scan logs `category: "scan_recovered"` only on the failed-to-succeeded transition (tracked in
-  `:persistent_term`, the same VM-global, cross-restart-durable mechanism `PollerSkeleton` already
-  uses for its own tick stamps), so a steady run of healthy ticks never accumulates a row.
+  `category: "scan_failure"` only on the healthy-or-startup-to-failing transition, and a later
+  successful scan logs `category: "scan_recovered"` only on the failed-to-succeeded transition
+  (both tracked in one `:persistent_term` flag, the same VM-global, cross-restart-durable
+  mechanism `PollerSkeleton` already uses for its own tick stamps). Deliberately not "every
+  occurrence": this call site's poller tick is 5 seconds, so a continuously unreachable
+  Audiobookshelf across the full two-week dogfood window would write 14 * 86,400 / 5 = 241,920
+  rows under an every-occurrence design — not a count any operator can read. One row marking
+  when an outage started, paired with one marking when it ended, answers the operator's actual
+  question ("is it down, and for how long") without unbounded growth, and a steady run of
+  healthy ticks never accumulates a row either.
 
 ### 4. Read surface
 

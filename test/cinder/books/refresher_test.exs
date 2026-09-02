@@ -139,7 +139,7 @@ defmodule Cinder.Books.RefresherTest do
       assert detail == "title: Beloved → Beloved (25th Anniversary)"
     end
 
-    test "a contributor-count change logs exactly one metadata_drift row with the old and new counts" do
+    test "a contributor addition at unequal cardinality logs the added name, not a bare count" do
       work = imported_work()
 
       expect(PrimaryMetadataMock, :get_work, fn "OL50548W" ->
@@ -153,8 +153,67 @@ defmodule Cinder.Books.RefresherTest do
 
       assert :ok = Refresher.refresh_one(reload(work))
 
-      assert [%BookOpsLog{category: "metadata_drift", detail: "contributors: 1 → 2"}] =
+      assert [
+               %BookOpsLog{
+                 category: "metadata_drift",
+                 detail: "contributors: added Second Author"
+               }
+             ] =
                Repo.all(from(l in BookOpsLog))
+    end
+
+    # The regression case a count-only comparison (`"contributors: N → M"`) cannot see at all:
+    # one contributor is swapped for a different one at the SAME cardinality, e.g. a provider
+    # correcting a misattributed author. A count comparison reports 1 -> 1, no drift, and this
+    # exact catalog-is-now-attributed-to-someone-else change goes unlogged.
+    test "a same-count contributor swap logs the rename, not silence" do
+      work = imported_work()
+
+      expect(PrimaryMetadataMock, :get_work, fn "OL50548W" ->
+        {:ok,
+         provider_work([])
+         |> Map.put(:contributors, [
+           %{foreign_id: "OL999A", name: "Someone Else", role: "author"}
+         ])}
+      end)
+
+      assert :ok = Refresher.refresh_one(reload(work))
+
+      assert [
+               %BookOpsLog{
+                 category: "metadata_drift",
+                 detail: "contributors: Toni Morrison → Someone Else"
+               }
+             ] =
+               Repo.all(from(l in BookOpsLog))
+    end
+
+    test "a contributor name differing only in surrounding whitespace or case logs no drift" do
+      work = imported_work()
+
+      expect(PrimaryMetadataMock, :get_work, fn "OL50548W" ->
+        {:ok,
+         provider_work([])
+         |> Map.put(:contributors, [
+           %{foreign_id: "OL30084A", name: "  TONI MORRISON  ", role: "author"}
+         ])}
+      end)
+
+      assert :ok = Refresher.refresh_one(reload(work))
+
+      assert Repo.aggregate(BookOpsLog, :count) == 0
+    end
+
+    test "a title differing only in surrounding whitespace or case logs no drift" do
+      work = imported_work()
+
+      expect(PrimaryMetadataMock, :get_work, fn "OL50548W" ->
+        {:ok, provider_work(title: "  beloved  ")}
+      end)
+
+      assert :ok = Refresher.refresh_one(reload(work))
+
+      assert Repo.aggregate(BookOpsLog, :count) == 0
     end
 
     test "an unchanged refresh logs no metadata_drift rows" do

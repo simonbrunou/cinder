@@ -152,6 +152,34 @@ defmodule Cinder.Books do
     end
   end
 
+  @doc """
+  The bare title and contributor-name list for `work_id`, with no series/target/edition
+  preloads — `Cinder.Books.Refresher`'s metadata-drift check reads only these two fields, and
+  `get_work/1`'s full `@work_preloads` shape (identifiers, series memberships, targets, editions
+  with their own identifiers/credits/authors) costs several extra queries neither comparison
+  touches. Two queries total (the work's `title`, then its credits joined to author names), not
+  `get_work/1`'s much larger preload set. `nil` if the work no longer exists.
+  """
+  @spec work_identity_snapshot(integer()) ::
+          %{title: String.t(), contributors: [String.t()]} | nil
+  def work_identity_snapshot(work_id) do
+    case Repo.one(from w in Work, where: w.id == ^work_id, select: w.title) do
+      nil ->
+        nil
+
+      title ->
+        contributors =
+          Repo.all(
+            from c in Credit,
+              join: a in assoc(c, :author),
+              where: c.work_id == ^work_id,
+              select: a.name
+          )
+
+        %{title: title, contributors: contributors}
+    end
+  end
+
   def list_targets(%Work{id: id}) do
     Repo.all(from t in BookTarget, where: t.work_id == ^id, order_by: [asc: t.media_kind])
   end
@@ -393,14 +421,16 @@ defmodule Cinder.Books do
   def log_metadata_drift(detail), do: put_ops_log(%{category: "metadata_drift", detail: detail})
 
   @doc """
-  Best-effort log of one failed Audiobookshelf scan request (`Cinder.Download.BookPoller`'s
-  `scan_pending/1`). Written every occurrence, not throttled like the sibling `Logger.warning` at
-  the same call site: the log line's throttle bounds *log volume* for a human tailing output, but
-  an operator counting failures over a two-week dogfood window wants every occurrence, and this
-  call site already only fires once per poller tick (one whole-library scan request per tick,
-  never per-target), so "every occurrence" here is already bounded by the poller's own interval,
-  not unbounded. No `book_target_id`: a scan failure is a fact about the Audiobookshelf
-  connection, not about any one pending target.
+  Best-effort log that an Audiobookshelf scan request failed (`Cinder.Download.BookPoller`'s
+  `scan_pending/1`), written only on the healthy-or-startup-to-failing transition, mirroring
+  `log_scan_recovered/0`'s own transition-only contract. A first draft of this logged every
+  occurrence, reasoning that an operator wants an exact failure count — but this call site's
+  poller tick is `@default_interval 5_000` (5s), so a continuously unreachable Audiobookshelf for
+  the full two-week dogfood window would write 14 * 86_400 / 5 = 241_920 rows, not a "count" any
+  operator can read. One row marking when the outage started, paired with `log_scan_recovered/0`'s
+  row marking when it ended, answers the operator's actual question ("is it down, and for how
+  long") without unbounded growth. No `book_target_id`: a scan failure is a fact about the
+  Audiobookshelf connection, not about any one pending target.
   """
   @spec log_scan_failure(String.t()) :: :ok
   def log_scan_failure(detail), do: put_ops_log(%{category: "scan_failure", detail: detail})

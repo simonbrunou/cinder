@@ -6,12 +6,11 @@ defmodule Cinder.Books.BookOpsLog do
   failure/recovery observed by `Cinder.Download.BookPoller`'s scan phase (`AudiobookServer`,
   B7c).
 
-
   Write-only from the pipeline's perspective: nothing here gates a decision, it exists only
   so an operator dogfooding an unattended run has something to read on `/library`.
 
-  `book_target_id` is nullable (`on_delete: :nilify_all`) so a row outlives a deleted target
-  — there is no book-target deletion feature today, but the column is written defensively
+  `book_target_id` is nullable (`on_delete: :nilify_all`) so a row outlives a deleted target,
+  since there is no book-target deletion feature today, but the column is written defensively
   against a future one, exactly like `Cinder.Books.BookBlockedRelease`. A `metadata_drift` row
   is never associated with one target at all: a work can carry zero, one, or two targets
   (ebook/audiobook), and the drift belongs to the work, not any one of them.
