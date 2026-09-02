@@ -78,6 +78,11 @@ config :cinder, media_info: Cinder.Library.MediaInfo.Ffprobe
 # `ffprobe` binary name/path; editable at /settings (Cinder.Settings overlays this key).
 config :cinder, ffprobe_bin: "ffprobe"
 
+# Import-time audiobook container/duration/tag probing (same `ffprobe` binary). Enabled by
+# default; degrades to filename-only ordering/mixed-book detection if ffprobe is absent — see
+# `Cinder.Library.AudioProbe`'s moduledoc. Set `audio_probe: nil` to disable.
+config :cinder, audio_probe: Cinder.Library.AudioProbe.Ffprobe
+
 # Local, CPU-only subtitle alignment. The release image pins ffsubsync 0.5.1 and coreutils timeout;
 # direct installs may point `ffsubsync_python` at a Python interpreter containing ffsubsync 0.5.1.
 config :cinder,

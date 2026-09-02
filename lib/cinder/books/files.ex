@@ -73,6 +73,86 @@ defmodule Cinder.Books.Files do
     end
   end
 
+  @doc """
+  Records N imported assets — a multi-track audiobook set — for one target and moves it to
+  `:available` in one transaction. The multi-file generalization of `record_import/3`; see its
+  own moduledoc for the shared "record and arm together, broadcast once after commit" invariants,
+  which this function reuses unchanged (`publish/2` below is the SAME private function
+  `record_import/3` already calls — it is generic over one file or a list of them).
+
+  `opts[:replace]` (default `false`) is a confirmed "Find a better match" import, generalized to
+  `maybe_supersede_set/3` below — see its own docs for the exact multi-file algorithm this is not
+  a naive "run `maybe_supersede/3` once against the whole incoming path set".
+  """
+  @spec record_import_set(BookTarget.t(), [map()], keyword()) ::
+          {:ok, [BookFile.t()]}
+          | {:ok, [BookFile.t()], [String.t()]}
+          | {:error, :stale_status | :book_file_exists | Ecto.Changeset.t()}
+  def record_import_set(%BookTarget{} = target, attrs_list, opts \\ []) do
+    stage_ids = Keyword.get(opts, :import_stage_ids, [])
+    replace? = Keyword.get(opts, :replace, false)
+
+    Repo.transaction(fn ->
+      with {:ok, superseded} <- maybe_supersede_set(target, attrs_list, replace?),
+           {:ok, files} <- insert_all_or_existing(target, attrs_list),
+           {:ok, _armed} <- arm_target(target) do
+        # Same ordering reason `record_import/3` documents: inside the transaction, and last.
+        ImportStage.mark_committed!(stage_ids)
+        {files, superseded}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> publish(target, replace?)
+  end
+
+  defp insert_all_or_existing(target, attrs_list) do
+    attrs_list
+    |> Enum.reduce_while({:ok, []}, fn attrs, {:ok, acc} ->
+      case insert_or_existing(target, attrs) do
+        {:ok, file} -> {:cont, {:ok, [file | acc]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, files} -> {:ok, Enum.reverse(files)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp maybe_supersede_set(_target, _attrs_list, false), do: {:ok, []}
+
+  defp maybe_supersede_set(%BookTarget{id: id}, attrs_list, true) do
+    existing = Repo.all(from f in BookFile, where: f.book_target_id == ^id)
+    existing_paths = MapSet.new(existing, & &1.path)
+    incoming_paths = MapSet.new(attrs_list, & &1.path)
+
+    if MapSet.equal?(existing_paths, incoming_paths) do
+      # Every incoming path is already this target's own current row, and the target has no path
+      # the incoming set lacks — a full replay of an already-completed replace (the staging step
+      # already found each track's destination hardlinked to itself and made no filesystem
+      # change). Delete nothing; `insert_or_existing/2` per track below hits the same unique-path
+      # conflict `insert_conflict/3` already treats as a no-op success, N times.
+      {:ok, []}
+    else
+      # ANY difference — disjoint, subset, superset, or partial overlap — deletes every existing
+      # row unconditionally, including one whose path IS reused by the incoming set: that row's
+      # bytes were already overwritten in place by the staging layer's backup-swap, so its OLD
+      # row (size, format, duration, track/disc metadata) would otherwise describe bytes that no
+      # longer exist at that path. Deleting it and letting the insert step recreate it fresh keeps
+      # metadata correct for reused paths, not merely "not wrong".
+      #
+      # Only paths NOT present in the incoming set are returned as `superseded_paths` for
+      # post-commit disk unlink — a REUSED path's disk bytes are already the new content (landed
+      # by the backup-swap); unlinking it would delete the file this same import just staged. An
+      # orphaned path (an old track whose slot the new release doesn't reuse — e.g. the new
+      # release has fewer tracks) has no landed replacement and is the only case whose bytes must
+      # actually be removed from disk.
+      Repo.delete_all(from f in BookFile, where: f.book_target_id == ^id)
+      {:ok, MapSet.difference(existing_paths, incoming_paths) |> MapSet.to_list()}
+    end
+  end
+
   @doc false
   # Shared with `Cinder.Books.Adoption.adopt_work/3` (B6c) — a duplicate `book_files.path` is
   # only a conflict when the row belongs to a DIFFERENT target; when it is the SAME target's own

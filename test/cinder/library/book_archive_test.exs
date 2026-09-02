@@ -138,4 +138,43 @@ defmodule Cinder.Library.BookArchiveTest do
       assert {:error, _reason} = result
     end
   end
+
+  describe "extract_and_resolve/3" do
+    # The real regression this arity exists for: `BookArchive` itself never passed `opts` to
+    # either extractor before B7b, even though `Zip.extract/3` and `Rar.extract/3` already
+    # accepted and applied it. A caller-supplied `max_expanded_size` well below the extractor's
+    # own 1 GB default must actually take effect, proving the option reaches the extractor rather
+    # than being silently dropped at this dispatch layer.
+    test "forwards max_expanded_size to the zip extractor", %{downloads: downloads} do
+      dir = Path.join(downloads, "release")
+      File.mkdir_p!(dir)
+      archive = Path.join(dir, "book.zip")
+      :zip.create(String.to_charlist(archive), [{~c"book.epub", String.duplicate("a", 200)}])
+
+      result =
+        BookArchive.extract_and_resolve(
+          archive,
+          fn scratch_dir -> {:ok, scratch_dir, :epub} end,
+          max_expanded_size: 50
+        )
+
+      assert {:error, :archive_size_limit} = result
+    end
+
+    # `opts` defaulting to `[]` (the 3rd-arity clause's default) is exactly what
+    # `Cinder.Library.BookSources.resolve/1`'s own 2-arity call site relies on unchanged.
+    test "opts default to [] — a 2-arity call keeps the extractor's own default ceiling", %{
+      downloads: downloads
+    } do
+      dir = Path.join(downloads, "release")
+      File.mkdir_p!(dir)
+      archive = Path.join(dir, "book.zip")
+      :zip.create(String.to_charlist(archive), [{~c"book.epub", String.duplicate("a", 200)}])
+
+      result =
+        BookArchive.extract_and_resolve(archive, fn scratch_dir -> {:ok, scratch_dir, :epub} end)
+
+      assert {:ok, _scratch_dir, :epub} = result
+    end
+  end
 end

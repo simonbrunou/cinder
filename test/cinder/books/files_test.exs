@@ -127,6 +127,171 @@ defmodule Cinder.Books.FilesTest do
     end
   end
 
+  describe "record_import_set/3 — multi-track audiobook import" do
+    setup do
+      id = unique_id()
+
+      {:ok, profile} =
+        Catalog.create_profile(%{name: "Audiobooks #{id}", kind: :audiobook, handling: :standard})
+
+      {:ok, work} = Books.upsert_work(%{title: "Beloved audio #{id}", identifier: identifier(id)})
+      {:ok, target} = Books.monitor_target(work, :audiobook, profile)
+
+      %{target: target}
+    end
+
+    test "a fresh import returns {:ok, files} for every track and arms the target", %{
+      target: target
+    } do
+      attrs = [
+        %{path: "/tmp/ab-#{target.id}-01.mp3", size: 1000, format: :mp3, track_number: 1},
+        %{path: "/tmp/ab-#{target.id}-02.mp3", size: 1000, format: :mp3, track_number: 2}
+      ]
+
+      assert {:ok, files} = Books.Files.record_import_set(target, attrs)
+      assert length(files) == 2
+      assert %BookTarget{status: :available} = Books.get_target(target.id)
+    end
+
+    # Identical incoming/existing path sets → zero rows deleted, superseded_paths: [].
+    test "identical incoming and existing path sets delete nothing and supersede nothing", %{
+      target: target
+    } do
+      attrs = [
+        %{path: "/tmp/ab-#{target.id}-01.mp3", size: 1000, format: :mp3},
+        %{path: "/tmp/ab-#{target.id}-02.mp3", size: 1000, format: :mp3}
+      ]
+
+      assert {:ok, [first, second]} = Books.Files.record_import_set(target, attrs)
+
+      assert {:ok, [replayed_first, replayed_second], []} =
+               Books.Files.record_import_set(target, attrs, replace: true)
+
+      assert Enum.map([replayed_first, replayed_second], & &1.id) ==
+               Enum.map([first, second], & &1.id)
+
+      files = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
+      assert length(files) == 2
+    end
+
+    # Disjoint sets (different track count, no path shared) → every existing row deleted, every
+    # one of their paths in superseded_paths.
+    test "a fully disjoint incoming set deletes every existing row and supersedes every path", %{
+      target: target
+    } do
+      old_attrs = [
+        %{path: "/tmp/ab-#{target.id}-old-01.mp3", size: 1000, format: :mp3},
+        %{path: "/tmp/ab-#{target.id}-old-02.mp3", size: 1000, format: :mp3}
+      ]
+
+      assert {:ok, _old_files} = Books.Files.record_import_set(target, old_attrs)
+
+      new_attrs = [
+        %{path: "/tmp/ab-#{target.id}-new-01.m4b", size: 5000, format: :m4b}
+      ]
+
+      assert {:ok, [new_file], superseded} =
+               Books.Files.record_import_set(target, new_attrs, replace: true)
+
+      assert new_file.path == "/tmp/ab-#{target.id}-new-01.m4b"
+
+      assert Enum.sort(superseded) ==
+               Enum.sort(Enum.map(old_attrs, & &1.path))
+
+      files = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
+      new_path = new_file.path
+      assert [%BookFile{path: ^new_path}] = files
+    end
+
+    # Partial overlap (some tracks reused, some old tracks orphaned) → every existing row
+    # deleted, including the reused-path one, but superseded_paths contains only the orphaned
+    # path — never a path this same import just landed new bytes at.
+    test "a partial-overlap incoming set deletes every existing row but supersedes only the orphan",
+         %{target: target} do
+      reused_path = "/tmp/ab-#{target.id}-track.mp3"
+      orphan_path = "/tmp/ab-#{target.id}-old-02.mp3"
+
+      old_attrs = [
+        %{path: reused_path, size: 1000, format: :mp3},
+        %{path: orphan_path, size: 1000, format: :mp3}
+      ]
+
+      assert {:ok, _old_files} = Books.Files.record_import_set(target, old_attrs)
+
+      # The new release reuses the first track's destination path (deterministic naming landed
+      # new bytes there via the staging layer's backup-swap) and drops the second track entirely.
+      new_attrs = [%{path: reused_path, size: 9999, format: :mp3}]
+
+      assert {:ok, [reused_file], [^orphan_path]} =
+               Books.Files.record_import_set(target, new_attrs, replace: true)
+
+      assert reused_file.path == reused_path
+      assert reused_file.size == 9999
+
+      files = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
+      assert [%BookFile{path: ^reused_path, size: 9999}] = files
+    end
+
+    # The incoming set a strict subset of the existing one (fewer tracks in the new release) →
+    # every existing row deleted, the paths absent from the incoming set are in superseded_paths.
+    test "an incoming subset of the existing set supersedes the dropped tracks", %{
+      target: target
+    } do
+      kept_path = "/tmp/ab-#{target.id}-01.mp3"
+      dropped_path = "/tmp/ab-#{target.id}-02.mp3"
+
+      old_attrs = [
+        %{path: kept_path, size: 1000, format: :mp3},
+        %{path: dropped_path, size: 1000, format: :mp3}
+      ]
+
+      assert {:ok, _old_files} = Books.Files.record_import_set(target, old_attrs)
+
+      new_attrs = [%{path: kept_path, size: 1000, format: :mp3}]
+
+      assert {:ok, [kept_file], [^dropped_path]} =
+               Books.Files.record_import_set(target, new_attrs, replace: true)
+
+      assert kept_file.path == kept_path
+
+      files = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
+      assert [%BookFile{path: ^kept_path}] = files
+    end
+
+    test "a mid-set insert failure rolls the whole transaction back", %{target: target} do
+      conflicting_path = "/tmp/ab-conflict-#{target.id}.mp3"
+
+      {:ok, other_profile} =
+        Catalog.create_profile(%{
+          name: "Other audiobooks #{unique_id()}",
+          kind: :audiobook,
+          handling: :standard
+        })
+
+      {:ok, other_work} =
+        Books.upsert_work(%{
+          title: "Another work #{unique_id()}",
+          identifier: identifier(unique_id())
+        })
+
+      {:ok, other_target} = Books.monitor_target(other_work, :audiobook, other_profile)
+
+      assert {:ok, _claimed} =
+               Books.Files.record_import_set(other_target, [
+                 %{path: conflicting_path, size: 1000, format: :mp3}
+               ])
+
+      attrs = [
+        %{path: "/tmp/ab-#{target.id}-01.mp3", size: 1000, format: :mp3},
+        %{path: conflicting_path, size: 1000, format: :mp3}
+      ]
+
+      assert {:error, :book_file_exists} = Books.Files.record_import_set(target, attrs)
+      assert Repo.all(from f in BookFile, where: f.book_target_id == ^target.id) == []
+      assert Books.get_target(target.id).status == :monitored
+    end
+  end
+
   defp identifier(id), do: %{provider: "openlibrary", kind: "work", foreign_id: id}
 
   defp unique_id, do: Integer.to_string(System.unique_integer([:positive]))
