@@ -763,6 +763,106 @@ any B6 code path — no `MigrationSource` call targets it, no `book_targets` row
 - Audiobookshelf sees the item after refresh, and refresh failure is recoverable without re-downloading.
 - An audiobook migration dry run and repeat adoption are safe.
 
+### Shipped as five slices
+
+B7a landed the decision layer: `Cinder.Acquisition.AudiobookParser`/`AudiobookScorer`, the
+narrow `Acquisition.Audiobooks` search entry point, and the `book_files.format` CHECK widening to
+accept `m4b`/`mp3`. B7b landed grab dispatch, multi-track validation, and atomic import. B7c
+landed the Audiobookshelf publisher with a retryable post-import scan. B7d landed the operator
+surface: manual search, Grab, replace, and deletion/recovery for audiobook targets on
+`/books/:id`. B7e landed audiobook migration adoption. See
+[`the B7 plan`](2026-09-02-books-b7-audiobooks.md).
+
+Two notes from executing B7a:
+
+- **The audiobook plumbing was already largely kind-generic**, so B7's real job was narrower than
+  this milestone's own Work list implies. `book_targets`' `media_kind` CHECK accepted `'audiobook'`
+  from the day `book_targets` was first created (B2a), `media_profiles.kind` accepted `'audiobook'`
+  from the same-day widening that gave it `'ebook'` (`20260824064512_add_book_profile_kinds.exs`),
+  the `audiobooks` root and its health row were already wired generically through
+  `Cinder.LibraryKind.root_role/1` (present since B1, iterated over unconditionally by both
+  `Settings` and `Health.book_checks/0`), and narrator needed no new schema at all —
+  `book_credits.role` is a plain, unconstrained string with no enum to widen. What was genuinely
+  missing was the `:ebook`-only guard in `Cinder.Download.grab_book_target/3` (a single clause,
+  no catch-all for a third media kind), the e-book-shaped parser/scorer/sources/naming, and the
+  `book_files.format` CHECK.
+- **The `book_files` CHECK widening was the track's first table rebuild**, following
+  `20260824064512_add_book_profile_kinds.exs`'s precedent and recreating one unique index, two
+  plain indexes, and two FKs. Its double-fault path needed care: a failed `ROLLBACK` swallowed
+  with `rescue _ -> :ok` would return a pooled connection mid-transaction with foreign keys still
+  off, because `PRAGMA foreign_keys = ON` is a no-op while a transaction is pending. The first fix
+  for that was itself wrong — a function-level `rescue` around `rebuild_in_transaction/1` caught
+  the function's own `reraise`, so every *single* fault reported as a double fault and lost the
+  original exception's type; scoping the rescue to the `ROLLBACK` call alone
+  (`rollback_after_failure/2`) fixed it.
+
+Four notes from executing B7b:
+
+- **Every successful audiobook archive extraction raised `FunctionClauseError`.**
+  `BookArchive.finish/2` matched only `BookSources`' 3-tuple `{:ok, source, format}`, while
+  `AudiobookSources.resolve/1` returns a 2-tuple `{:ok, tracks}` — a working import crashed into
+  the poller's `isolate/2` rescue and logged as an opaque failure. It went undetected because the
+  archive tests exercised only error paths. The fix is one generic clause (`finish/2` now
+  special-cases only `{:error, _reason}` and passes any other `resolve_fun` result through
+  unchanged); the lesson is the missing positive test.
+- **Bounded probing needed a cap AND an aggregate budget, not just a per-call timeout.** Each
+  `ffprobe` call was bounded at 10s, but nothing capped the track count, so an N-track set could
+  block the single-process `BookPoller` — and both media kinds behind it — for `10s × N`, directly
+  contradicting `AudioProbe`'s own moduledoc claim that a probe "never blocks a poller tick." Now
+  `@max_tracks 200` (refused up front as `:too_many_tracks`, a permanent import error, before any
+  probing starts) plus a wall-clock `@max_probe_budget_ms` (60s) aggregate budget that skips every
+  remaining track's probe once spent. The moduledoc's claim was corrected to describe the actual
+  guarantee.
+- **Multi-file supersede: a reused path must not be unlinked.** `maybe_supersede_set/3` deletes
+  every existing `book_files` row on any difference between the existing and incoming path sets,
+  but returns only the paths *absent* from the incoming set as `superseded_paths` for post-commit
+  disk unlink — a reused path's bytes were already replaced in place by the staging layer's
+  backup-swap, so unlinking it would delete the file the same import just staged.
+- **`StageEngine.stage_book_place`'s replace path needed a real backup-then-atomic-swap, not the
+  plain "keep existing" collision handling every non-replace book import already uses.** A
+  destination collision under `opts[:replace]` has to actually overwrite, not report success
+  while leaving the old bytes in place — combined with `AudiobookNaming`'s deterministic
+  (Author, Title, disc, track) destination naming, a "Find a better match" replace with the same
+  track count landing on the same path would otherwise write nothing, change no row, and tell the
+  operator it worked. The shipped `stage_book_replace/5` reuses `prepare_durable_stage/7` with
+  `backup_source: dest` — the identical machinery a confirmed movie upgrade already uses, not new
+  code.
+
+One note from executing B7c:
+
+- **The Audiobookshelf scan is one whole-library call per tick, not one per pending target.**
+  `AudiobookServer.scan/0` takes no per-book argument — it is a whole-library rescan, the only
+  shape the API offers. Calling it once per pending target would issue N sequential, functionally
+  identical HTTP requests in one tick for a backlog of N, each bounded by `HTTPPolicy`'s own
+  timeout, stalling the poller's unrelated download/import phases behind it.
+
+Two notes from executing B7e:
+
+- **B7e found three more `:ebook`-hardcoded sites than the plan named.** The plan named one call
+  site, `Cinder.Books.Adoption.adopt_work/3`'s `Books.ensure_target(work, :ebook)`
+  (`adoption.ex:100`). Execution also found `MigrationAdoption.Readarr`'s `targets_by_work_id/1`
+  (keyed by plain `work_id`, so `Map.new/2` silently kept only the last media kind seen for a
+  work with both), `target_for/3` (reading that same map), and `outside_library_root?/2` (checked
+  every candidate against the e-book root regardless of its own resolved kind) — any one of which
+  would have made an existing audiobook target's hold or already-managed state invisible to the
+  catalog fetch and silently re-offered it. The catalog is now keyed by `{work_id, media_kind}`
+  throughout.
+- **A known assumption recorded, not fixed:** `Readarr.accepted_media_kind/1` classifies a
+  multi-file candidate by its *first* accepted file's format, documented in its own comment as
+  relying on the real single-instance-per-kind Bookshelf deployment shape (every accepted file for
+  one work is the same kind in practice) rather than defending structurally against a mixed-kind
+  candidate that cannot occur against a real snapshot today.
+
+Three §0 judgment calls, made explicit in the plan rather than left implicit, carried into what
+shipped: the `[:m4b, :mp3]` accepted-format list and the 5 MB–8 GB size band are B7's own
+module-attribute judgment (the parity contract names only M4B as preferred and gestures at
+"common multipart audio containers," the same way the e-book profile's own band predates any
+contract number); no captured Audiobookshelf API evidence exists to build against, unlike
+Bookshelf's committed e-book fixture, so B7c was built against Audiobookshelf's own published,
+versioned public API instead of an invented shape; and multi-instance Bookshelf configuration was
+deliberately not built, so migrating both a legacy e-book and a legacy audiobook instance is two
+runs of the existing one-instance runbook, repointing settings between them.
+
 ---
 
 ## B8 — Hardening, documentation, and production sign-off
@@ -807,6 +907,80 @@ Before release also run the repository's production asset build, container build
 - Readarr remains recoverable until sign-off, then can be decommissioned explicitly.
 
 **Product gate:** Full Readarr replacement.
+
+### Shipped as four slices
+
+B8a landed the parity-matrix traceability assertion, the bounded-work audit, and a `BookPoller`
+crash/restart-recovery test. B8b landed the book operations log and its two (later four)
+instrumented write sites, plus a read-only `/library` panel. B8c landed the cumulative
+security/robustness review pass. B8d landed the product-surface documentation and first-run
+validation. See
+[`the B8 plan`](2026-09-02-books-b8-hardening-and-signoff.md).
+
+Three notes from executing B8b:
+
+- **The ops log was cut down, then partly restored.** The original design was a four-category
+  table plus a LiveView panel; review found parked causes were already durable, queryable, and
+  rendered (`book_targets.hold_reason` + `/library?type=books&status=held`), so that category was
+  dropped before it was ever built. Scan failure/recovery were deferred as unbuildable — B7c had
+  not landed `Cinder.Library.AudiobookServer` yet — then became buildable, and were built, once it
+  did, so the shipped table closes four of the roadmap's seven tracked categories, not two. Missed
+  releases, wrong matches, and operator recovery actions remain honestly untracked; the first two
+  because no code-observable signal exists to hang a log on.
+- **`scan_failure` had to be edge-triggered, not logged on every occurrence.** The first draft
+  logged every failed scan request, reasoning that an operator wants an exact count — but at this
+  poller's 5-second tick, a continuously unreachable Audiobookshelf across the full two-week
+  dogfood window would have written 14 × 86,400 / 5 = 241,920 rows. It now records only the
+  healthy-to-failing and failing-to-healthy transitions (one `:persistent_term` flag, the same
+  cross-restart-durable mechanism `PollerSkeleton` already uses for its own tick stamps), so "no
+  recent failure row" means "no new transition," not "no failures" — the dogfood checklist states
+  that distinction explicitly.
+- **The drift detector compared contributor counts, so it could not see the drift it existed
+  for.** `"contributors: N → M"` cannot detect a same-cardinality author swap or rename — the
+  likeliest real drift during two unattended weeks — because the count never changes. It now
+  compares the normalized contributor NAME SET and names the people actually added, removed, or
+  swapped. The narrower read this required (title + contributor names only, via a new
+  `Books.work_identity_snapshot/1`, not the refresher's existing full `get_work/1` preload) also
+  cut the refresher's own cost from 14 to 4 `Repo` queries per work per tick.
+
+One note from executing B8c:
+
+- **The bounded-work audit's own "only exception" claim was false.**
+  `BookArchive.Rar.list_entries/2` ran `unrar lb` through an unbounded `System.cmd`, disclosed in
+  the audit's own prose but framed as low-risk ("a metadata-listing call, not the extraction
+  itself") without evaluating the consequence: `Cinder.Download.BookPoller` runs its whole tick
+  synchronously in one `GenServer`, so a hung or password-blocked listing call would have frozen
+  every book and audiobook target indefinitely, not merely delayed the one archive being listed.
+  Unlike the accepted, pre-existing, video-shared `MediaInfo.Ffprobe` gap, this one was
+  book-specific and new to the track, so it was in scope and is now bounded at 5s with the same
+  `Task.async`/`Task.yield`/`Task.shutdown(:brutal_kill)` idiom its sibling probes already use.
+
+Two notes from executing B8d:
+
+- **The product docs claimed an automatic book release search that deliberately does not exist.**
+  `README.md`, `PRODUCT.md`, and `docs/operating.md` all described "the poller searches and scores"
+  for books, while `BookPoller`'s own moduledoc says plainly "there is no search pass, and that is
+  the milestone gate," and `Acquisition.Books`/`Audiobooks` export no automatic-selection function
+  at all, by design. All three were rewritten to say an admin opens manual search on `/books/:id`
+  and picks the release; only then does the unattended pipeline (download, import, Audiobookshelf
+  scan, retry, Find a better match) take over.
+- **First-run validation had never covered books.** `setup_live.ex` filtered its readiness
+  checklist to `video?: true` kinds, so a fresh install could finish setup with an unset or
+  unwritable book or audiobook root. Verifying the fix also surfaced a genuine test bug:
+  `Application.put_env(:cinder, :books_library_path, ...)` inside a test does not reliably reach
+  `Cinder.Settings`, because `Settings.base/1` caches its bootstrap fallback in `:persistent_term`
+  on first read, frozen for the rest of the suite run — mutating the env from inside one test
+  cannot un-freeze an already-cached value. Fixed by submitting the paths through the real setup
+  form instead, which persists an actual `Cinder.Settings` DB row and exercises the same path a
+  real operator's wizard submission takes.
+
+What B8 cannot close, stated plainly rather than implied: two of the roadmap's own Done-when
+criteria are operator-gated, not engineering-closable. The two-week dogfood window is elapsed
+wall-clock time plus an operator watching a live household deployment; no commit in this
+repository advances a calendar. Readarr (in practice, Bookshelf) remaining recoverable until an
+explicit decommission is a deployment action outside this codebase. B8 ships what makes that
+window *productive* rather than merely elapsed — the ops log, the dogfood checklist, and the
+decommission runbook — without claiming to discharge either criterion itself.
 
 ---
 
