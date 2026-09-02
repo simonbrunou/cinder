@@ -36,7 +36,7 @@ defmodule Cinder.Books.Adoption do
   @arm_statuses [:unmonitored, :monitored, :available]
 
   @doc """
-  Adopts `files` onto `resolution`'s work's `:ebook` target, in one transaction.
+  Adopts `files` onto `resolution`'s work's `media_kind` target, in one transaction.
 
   `resolution` is `Cinder.Books.Identity.resolve/1`'s own resolution shape
   (`%{work: Cinder.Books.Metadata.work(), provider: atom()}`) plus `:bookshelf_foreign_id` — the
@@ -56,7 +56,7 @@ defmodule Cinder.Books.Adoption do
   1. `Books.import_work_in_tx/2` then `Books.stamp_identifier_in_tx/3` fold the resolved work
      (and its author/editions) into the catalog and durably stamp the `"readarr"` identifier.
      Idempotent: safe to re-run against an already-imported work.
-  2. `Books.ensure_target/2` get-or-creates the `:ebook` target.
+  2. `Books.ensure_target/2` get-or-creates the `media_kind` target.
   3. Refuses a grab in progress for that target (`{:error, :grab_in_progress}`) — the identical
      race `Cinder.Books.pause_target/1` (B5a) closes for the same reason: overwriting
      `book_targets.status` out from under an in-flight download orphans it.
@@ -83,7 +83,7 @@ defmodule Cinder.Books.Adoption do
   transaction (`Repo.rollback/1` on `:grab_in_progress` undoes the import too), and getting the
   target first is what step 3's query needs.
   """
-  @spec adopt_work(map(), [map()], keyword()) ::
+  @spec adopt_work(map(), [map()], atom(), keyword()) ::
           {:ok, BookTarget.t()}
           | {:error,
              :grab_in_progress
@@ -92,12 +92,12 @@ defmodule Cinder.Books.Adoption do
              | :stale_status
              | Ecto.Changeset.t()
              | term()}
-  def adopt_work(resolution, files, _opts \\ [])
-      when is_map(resolution) and is_list(files) and files != [] do
+  def adopt_work(resolution, files, media_kind, _opts \\ [])
+      when is_map(resolution) and is_list(files) and files != [] and is_atom(media_kind) do
     Repo.transaction(
       fn ->
         with {:ok, work} <- do_import(resolution),
-             {:ok, target} <- Books.ensure_target(work, :ebook),
+             {:ok, target} <- Books.ensure_target(work, media_kind),
              :ok <- refuse_grab_in_progress(target),
              :ok <- refuse_held(target),
              :ok <- insert_files(target, files),

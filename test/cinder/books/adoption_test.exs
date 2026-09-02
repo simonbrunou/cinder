@@ -1,9 +1,12 @@
 defmodule Cinder.Books.AdoptionTest do
   @moduledoc """
-  B6c: the `Cinder.Books.Adoption.adopt_work/3` write choke-point, tested directly against the
+  B6c: the `Cinder.Books.Adoption.adopt_work/4` write choke-point, tested directly against the
   transactional guards (grab in progress, held target, idempotent file insert, guarded status
   write) — `test/cinder/library/migration_adoption/readarr_adopt_test.exs` drives the same choke
   point through the real `MigrationAdoption.preview/2` → `adopt/2` production path.
+
+  B7e adds `media_kind` as a required argument (previously hardcoded `:ebook`) — see the
+  `media_kind: :audiobook` tests below.
   """
   use Cinder.DataCase, async: true
 
@@ -17,9 +20,11 @@ defmodule Cinder.Books.AdoptionTest do
 
   test "adopts a resolved work in place: unchanged path, target available, readarr identifier stamped" do
     assert {:ok, target} =
-             Adoption.adopt_work(resolution(), [
-               %{path: "/library/beloved.epub", size: 4096, format: "epub", edition_id: nil}
-             ])
+             Adoption.adopt_work(
+               resolution(),
+               [%{path: "/library/beloved.epub", size: 4096, format: "epub", edition_id: nil}],
+               :ebook
+             )
 
     assert %BookTarget{status: :available, media_kind: :ebook} = target
 
@@ -33,6 +38,58 @@ defmodule Cinder.Books.AdoptionTest do
              Repo.all(from i in Identifier, where: i.provider == "readarr")
   end
 
+  test "adopts an :audiobook-classified candidate: media_kind: :audiobook target, unchanged path" do
+    assert {:ok, target} =
+             Adoption.adopt_work(
+               resolution(),
+               [%{path: "/library/beloved.m4b", size: 40_960, format: "m4b", edition_id: nil}],
+               :audiobook
+             )
+
+    assert %BookTarget{status: :available, media_kind: :audiobook} = target
+
+    assert [%BookFile{path: "/library/beloved.m4b", size: 40_960, format: :m4b}] =
+             Repo.all(BookFile)
+  end
+
+  # The property the task calls out by name: adopting one kind must never create, touch, or be
+  # confused with the OTHER kind's target for the same work — proven by adopting BOTH kinds for
+  # the identical resolution and asserting exactly two distinct targets, one per kind, each
+  # owning only its own file.
+  test "adopting both kinds for the same work creates two distinct targets, never one shared or the wrong kind" do
+    assert {:ok, ebook_target} =
+             Adoption.adopt_work(
+               resolution(),
+               [%{path: "/library/beloved.epub", size: 4096, format: "epub", edition_id: nil}],
+               :ebook
+             )
+
+    assert {:ok, audiobook_target} =
+             Adoption.adopt_work(
+               resolution(),
+               [%{path: "/library/beloved.m4b", size: 40_960, format: "m4b", edition_id: nil}],
+               :audiobook
+             )
+
+    assert ebook_target.work_id == audiobook_target.work_id
+    refute ebook_target.id == audiobook_target.id
+    assert ebook_target.media_kind == :ebook
+    assert audiobook_target.media_kind == :audiobook
+
+    assert Enum.sort(Repo.all(from t in BookTarget, select: t.media_kind)) == [
+             :audiobook,
+             :ebook
+           ]
+
+    ebook_files = Repo.all(from f in BookFile, where: f.book_target_id == ^ebook_target.id)
+    assert [%BookFile{path: "/library/beloved.epub"}] = ebook_files
+
+    audiobook_files =
+      Repo.all(from f in BookFile, where: f.book_target_id == ^audiobook_target.id)
+
+    assert [%BookFile{path: "/library/beloved.m4b"}] = audiobook_files
+  end
+
   test "never touches the source file: on-disk file set is identical before and after adoption" do
     tmp = tmp_dir()
     path = Path.join(tmp, "beloved.epub")
@@ -41,9 +98,11 @@ defmodule Cinder.Books.AdoptionTest do
     before = disk_snapshot(tmp)
 
     assert {:ok, _target} =
-             Adoption.adopt_work(resolution(), [
-               %{path: path, size: 10, format: "epub", edition_id: nil}
-             ])
+             Adoption.adopt_work(
+               resolution(),
+               [%{path: path, size: 10, format: "epub", edition_id: nil}],
+               :ebook
+             )
 
     assert disk_snapshot(tmp) == before
   end
@@ -51,8 +110,8 @@ defmodule Cinder.Books.AdoptionTest do
   test "a repeated adoption of the same work and path is idempotent, not a duplicate or an error" do
     files = [%{path: "/library/replay.epub", size: 100, format: "epub", edition_id: nil}]
 
-    assert {:ok, first} = Adoption.adopt_work(resolution(), files)
-    assert {:ok, second} = Adoption.adopt_work(resolution(), files)
+    assert {:ok, first} = Adoption.adopt_work(resolution(), files, :ebook)
+    assert {:ok, second} = Adoption.adopt_work(resolution(), files, :ebook)
 
     assert first.id == second.id
     assert [%BookFile{path: "/library/replay.epub"}] = Repo.all(BookFile)
@@ -60,13 +119,13 @@ defmodule Cinder.Books.AdoptionTest do
 
   test "a different target's file at the same path is a real conflict, not a replay" do
     files = [%{path: "/library/owned.epub", size: 100, format: "epub", edition_id: nil}]
-    assert {:ok, _target} = Adoption.adopt_work(resolution(), files)
+    assert {:ok, _target} = Adoption.adopt_work(resolution(), files, :ebook)
 
     other = resolution(work_foreign_id: "OL_OTHER", bookshelf_foreign_id: "bookshelf-other")
     # `:book_file_exists` — the same atom `Files.insert_conflict/3` (reused unchanged, per B6c's
     # own instruction) already returns for `Files.record_import/3`'s identical "different
     # target, same path" case; this is that shared mechanism, not a book-adoption-specific one.
-    assert {:error, :book_file_exists} = Adoption.adopt_work(other, files)
+    assert {:error, :book_file_exists} = Adoption.adopt_work(other, files, :ebook)
 
     # The failed second attempt wrote nothing — only the first target's file exists.
     assert [%BookFile{book_target_id: owner}] = Repo.all(BookFile)
@@ -80,9 +139,11 @@ defmodule Cinder.Books.AdoptionTest do
     grab = seed_grab(target)
 
     assert {:error, :grab_in_progress} =
-             Adoption.adopt_work(resolution(), [
-               %{path: "/library/racing.epub", size: 1, format: "epub", edition_id: nil}
-             ])
+             Adoption.adopt_work(
+               resolution(),
+               [%{path: "/library/racing.epub", size: 1, format: "epub", edition_id: nil}],
+               :ebook
+             )
 
     # Nothing else was written either — not even the catalog import this candidate would
     # otherwise have folded in.
@@ -96,9 +157,11 @@ defmodule Cinder.Books.AdoptionTest do
     work |> seed_target() |> monitor() |> hold()
 
     assert {:error, :target_held} =
-             Adoption.adopt_work(resolution(), [
-               %{path: "/library/held.epub", size: 1, format: "epub", edition_id: nil}
-             ])
+             Adoption.adopt_work(
+               resolution(),
+               [%{path: "/library/held.epub", size: 1, format: "epub", edition_id: nil}],
+               :ebook
+             )
 
     assert Repo.all(BookFile) == []
     assert Repo.get_by!(BookTarget, work_id: work.id).status == :held
@@ -117,14 +180,18 @@ defmodule Cinder.Books.AdoptionTest do
         end
 
       assert {:ok, armed} =
-               Adoption.adopt_work(resolution(), [
-                 %{
-                   path: "/library/#{unquote(status)}.epub",
-                   size: 1,
-                   format: "epub",
-                   edition_id: nil
-                 }
-               ])
+               Adoption.adopt_work(
+                 resolution(),
+                 [
+                   %{
+                     path: "/library/#{unquote(status)}.epub",
+                     size: 1,
+                     format: "epub",
+                     edition_id: nil
+                   }
+                 ],
+                 :ebook
+               )
 
       assert armed.id == target.id
       assert armed.status == :available
@@ -137,7 +204,7 @@ defmodule Cinder.Books.AdoptionTest do
       %{path: "/library/all.azw3", size: 20, format: "azw3", edition_id: nil}
     ]
 
-    assert {:ok, target} = Adoption.adopt_work(resolution(), files)
+    assert {:ok, target} = Adoption.adopt_work(resolution(), files, :ebook)
 
     work = Books.get_work(target.work_id)
     assert work.title == "Beloved"
@@ -153,9 +220,11 @@ defmodule Cinder.Books.AdoptionTest do
     Books.subscribe_targets()
 
     assert {:ok, target} =
-             Adoption.adopt_work(resolution(), [
-               %{path: "/library/broadcast.epub", size: 1, format: "epub", edition_id: nil}
-             ])
+             Adoption.adopt_work(
+               resolution(),
+               [%{path: "/library/broadcast.epub", size: 1, format: "epub", edition_id: nil}],
+               :ebook
+             )
 
     assert_receive {:book_target_updated, %BookTarget{id: id, status: :available}}
     assert id == target.id
@@ -197,8 +266,8 @@ defmodule Cinder.Books.AdoptionTest do
     work
   end
 
-  defp seed_target(%Work{} = work) do
-    {:ok, target} = Books.ensure_target(work, :ebook)
+  defp seed_target(%Work{} = work, media_kind \\ :ebook) do
+    {:ok, target} = Books.ensure_target(work, media_kind)
     target
   end
 

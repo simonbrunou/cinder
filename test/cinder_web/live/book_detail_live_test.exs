@@ -56,8 +56,21 @@ defmodule CinderWeb.BookDetailLiveTest do
              )
     end
 
-    test "an audiobook target renders read-only with no search affordance", %{conn: conn} do
-      {_ebook, work} = ebook_target()
+    test "a monitored audiobook target with no grab offers a search button", %{conn: conn} do
+      {target, _work} = audiobook_target()
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      assert has_element?(
+               lv,
+               "button[phx-value-target_id='#{target.id}']",
+               "Search for a release"
+             )
+    end
+
+    test "the same work's e-book and audiobook targets can each independently be searched",
+         %{conn: conn} do
+      {ebook, work} = ebook_target()
 
       {:ok, audio_profile} =
         Catalog.create_profile(%{
@@ -68,10 +81,23 @@ defmodule CinderWeb.BookDetailLiveTest do
 
       {:ok, audiobook} = Books.monitor_target(work, :audiobook, audio_profile)
 
+      stub_indexer([])
+      stub_audiobook_indexer([])
+
       {:ok, lv, _html} = live(conn, ~p"/books/#{work.id}")
 
-      assert has_element?(lv, "#book-target-state-audiobook")
-      refute has_element?(lv, "button[phx-value-target_id='#{audiobook.id}']")
+      # The panel toggle is one `@searching?` value shared by the page (opening a second panel
+      # closes the first) — each kind's OWN panel still opens and renders correctly, which is
+      # the property under test: an audiobook target is no longer read-only, independent of the
+      # e-book target on the same work.
+      lv |> element("button[phx-value-target_id='#{ebook.id}']") |> render_click()
+      render_async(lv)
+      assert has_element?(lv, "#ms-book-#{ebook.id}")
+
+      lv |> element("button[phx-value-target_id='#{audiobook.id}']") |> render_click()
+      render_async(lv)
+      assert has_element?(lv, "#ms-book-#{audiobook.id}")
+      refute has_element?(lv, "#ms-book-#{ebook.id}")
     end
 
     test "an available target offers 'Find a better match', not the search button", %{conn: conn} do
@@ -135,6 +161,46 @@ defmodule CinderWeb.BookDetailLiveTest do
       assert has_element?(lv, "button[phx-value-target_id='#{target.id}']", "Retry")
     end
 
+    test "a held audiobook target shows its hold reason, a Retry button, and no search panel", %{
+      conn: conn
+    } do
+      {target, _work} = audiobook_target()
+      {:ok, held} = Books.hold_target(target, "identity conflict")
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{held.work_id}")
+
+      assert has_element?(lv, "#book-target-state-audiobook", "Needs attention")
+      assert has_element?(lv, "#book-target-hold-reason-audiobook", "identity conflict")
+
+      refute has_element?(
+               lv,
+               "button[phx-value-target_id='#{target.id}']",
+               "Search for a release"
+             )
+
+      assert has_element?(lv, "button[phx-value-target_id='#{target.id}']", "Retry")
+
+      lv |> element("button[phx-value-target_id='#{target.id}']", "Retry") |> render_click()
+
+      assert Books.get_target(target.id).status == :monitored
+    end
+
+    test "a held audiobook target with a blocklisted release shows Clear blocklist, and clicking
+          it removes the button immediately",
+         %{conn: conn} do
+      {target, _work} = audiobook_target()
+      {:ok, held} = Books.hold_target(target, :download_failed, "Bad Release", true)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{held.work_id}")
+
+      assert has_element?(lv, "button[phx-value-target_id='#{target.id}']", "Clear blocklist")
+
+      render_click(lv, "clear_blocklist", %{"target_id" => Integer.to_string(target.id)})
+
+      refute has_element?(lv, "button[phx-value-target_id='#{target.id}']", "Clear blocklist")
+      assert Books.blocked_release_titles(target.id) == []
+    end
+
     test "a held target with a blocklisted release shows Clear blocklist, and clicking it
           removes the button immediately",
          %{conn: conn} do
@@ -153,6 +219,34 @@ defmodule CinderWeb.BookDetailLiveTest do
       # button stayed on screen even though the underlying blocklist was already empty.
       refute has_element?(lv, "button[phx-value-target_id='#{target.id}']", "Clear blocklist")
       assert Books.blocked_release_titles(target.id) == []
+    end
+
+    test "a retry_target payload naming another work's (audiobook) target is refused", %{
+      conn: conn
+    } do
+      {target, _work} = ebook_target()
+      {other_target, _other_work} = audiobook_target()
+      {:ok, other_held} = Books.hold_target(other_target, "unrelated conflict")
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      render_click(lv, "retry_target", %{"target_id" => Integer.to_string(other_held.id)})
+
+      assert Books.get_target(other_held.id).status == :held
+    end
+
+    test "a clear_blocklist payload naming another work's (audiobook) target is refused", %{
+      conn: conn
+    } do
+      {target, _work} = ebook_target()
+      {other_target, _other_work} = audiobook_target()
+      {:ok, other_held} = Books.hold_target(other_target, :download_failed, "Bad Release", true)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      render_click(lv, "clear_blocklist", %{"target_id" => Integer.to_string(other_held.id)})
+
+      refute Books.blocked_release_titles(other_held.id) == []
     end
 
     test "a target already downloading offers no second search button", %{conn: conn} do
@@ -305,6 +399,63 @@ defmodule CinderWeb.BookDetailLiveTest do
       assert has_element?(lv, panel, "Ursula K. Le Guin - The Dispossessed (French) (EPUB)")
       assert has_element?(lv, panel, "Ursula K. Le Guin - The Dispossessed (EPUB)")
       refute has_element?(lv, panel, "language doesn't match")
+    end
+  end
+
+  describe "audiobook manual search and grab" do
+    test "search shows accepted and rejected releases, and Grab succeeds", %{conn: conn} do
+      {target, _work} = audiobook_target(title: "The Dispossessed")
+
+      stub_audiobook_indexer([
+        indexer_result("Ursula K. Le Guin - The Dispossessed (M4B)", %{size: 40_000_000}),
+        indexer_result("Ursula K. Le Guin - The Dispossessed (EPUB)", %{size: 40_000_000})
+      ])
+
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "remote-1"} end)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      lv |> element("button[phx-value-target_id='#{target.id}']") |> render_click()
+      render_async(lv)
+
+      panel = "#ms-book-#{target.id}"
+      assert has_element?(lv, panel, "The Dispossessed (M4B)")
+      assert has_element?(lv, panel, "format not accepted")
+
+      lv |> element("#{panel} button[phx-value-index='0']", "Grab") |> render_click()
+
+      assert render(lv) =~ "Grabbing the selected release"
+      refute has_element?(lv, panel)
+      assert has_element?(lv, "#book-target-audiobook", "Downloading")
+      assert %BookGrab{} = Books.Grabs.for_target(target.id)
+    end
+
+    test "a permanent submission failure holds the target and the flash shows the real reason",
+         %{conn: conn} do
+      {target, _work} = audiobook_target(title: "The Dispossessed")
+
+      stub_audiobook_indexer([
+        indexer_result("Ursula K. Le Guin - The Dispossessed (M4B)", %{size: 40_000_000})
+      ])
+
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:error, :bad_torrent} end)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      lv |> element("button[phx-value-target_id='#{target.id}']") |> render_click()
+      render_async(lv)
+
+      panel = "#ms-book-#{target.id}"
+      lv |> element("#{panel} button[phx-value-index='0']", "Grab") |> render_click()
+
+      html = render(lv)
+      held = Books.get_target(target.id)
+      assert held.status == :held
+      assert html =~ held.hold_reason
+      assert has_element?(lv, "#book-target-state-audiobook", "Needs attention")
+      refute Books.Grabs.for_target(target.id)
     end
   end
 
@@ -645,6 +796,11 @@ defmodule CinderWeb.BookDetailLiveTest do
     stub(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
   end
 
+  defp stub_audiobook_indexer(releases) do
+    stub(IndexerMock, :search_audiobook, fn _author, _title, _opts -> {:ok, releases} end)
+    stub(IndexerMock, :search_audiobook_query, fn _query, _opts -> {:ok, []} end)
+  end
+
   defp indexer_result(title, attrs \\ %{}) do
     Map.merge(
       %{
@@ -679,6 +835,31 @@ defmodule CinderWeb.BookDetailLiveTest do
     {:ok, _credit} = Books.put_credit(work, %{author_id: author.id, role: "author", position: 0})
 
     {:ok, %BookTarget{} = target} = Books.monitor_target(work, :ebook, profile)
+
+    {target, Books.get_work(work.id)}
+  end
+
+  defp audiobook_target(opts \\ []) do
+    id = unique_id()
+
+    {:ok, profile} =
+      Catalog.create_profile(%{name: "Audiobooks #{id}", kind: :audiobook, handling: :standard})
+
+    {:ok, work} =
+      Books.upsert_work(%{
+        title: Keyword.get(opts, :title, "The Dispossessed #{id}"),
+        identifier: identifier(id)
+      })
+
+    {:ok, author} =
+      Books.upsert_author(%{
+        name: "Ursula K. Le Guin",
+        identifier: %{provider: "openlibrary", kind: "author", foreign_id: "a#{id}"}
+      })
+
+    {:ok, _credit} = Books.put_credit(work, %{author_id: author.id, role: "author", position: 0})
+
+    {:ok, %BookTarget{} = target} = Books.monitor_target(work, :audiobook, profile)
 
     {target, Books.get_work(work.id)}
   end

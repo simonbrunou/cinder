@@ -1,9 +1,11 @@
-# Migrating an existing Bookshelf e-book library into Cinder
+# Migrating an existing Bookshelf e-book or audiobook library into Cinder
 
-This is the operator runbook for the B6 Readarr/Bookshelf cutover. It assumes a
-`pennydreadful/bookshelf:hardcover`-style deployment reachable over its Readarr v3-compatible
-`/api/v1`, and Cinder's own `Cinder.Books.Adoption` write choke-point
-(`docs/plans/2026-09-01-books-b6-migration-and-cutover.md`, §B6c).
+This is the operator runbook for the B6 Readarr/Bookshelf cutover, covering both a Bookshelf
+e-book instance and a Bookshelf audiobook instance (B7e widened classification/adoption to the
+audiobook case; see the addendum near the end). It assumes a `pennydreadful/bookshelf:hardcover`-
+style deployment reachable over its Readarr v3-compatible `/api/v1`, and Cinder's own
+`Cinder.Books.Adoption` write choke-point (`docs/plans/2026-09-01-books-b6-migration-and-cutover.md`,
+§B6c; `docs/plans/2026-09-02-books-b7-audiobooks.md`, §B7e).
 
 **Read before running:** adoption is **in place**. Cinder never moves, renames, hardlinks, copies,
 or deletes a Bookshelf-managed file — it only inserts a `book_files` row pointing at the
@@ -29,9 +31,10 @@ below, alongside repointing the setting.
 
 ### 1. Disable Bookshelf automation
 
-In Bookshelf's own settings, disable RSS sync and automatic search for the eBook instance. (The
-audiobook instance is out of scope for B6 — leaving its automation running is safe; Cinder never
-touches it.)
+In Bookshelf's own settings, disable RSS sync and automatic search for the instance you are about
+to migrate. If the household runs a second Bookshelf instance for the other media kind, leave it
+running until you run this same runbook against it separately (see the addendum near the end) —
+migrating one instance never touches the other.
 
 This is an operator action inside Bookshelf, not a Cinder feature — there is nothing to configure
 in Cinder for this step.
@@ -71,13 +74,14 @@ file-bearing work into one of four buckets:
   untouched on disk, never adopted, never deleted) or **All formats** (adopts every accepted file
   as its own `book_files` row under the same target).
 - **Blocked** — never force-adoptable. Investigate before proceeding:
-  - `:unsupported_format` — no accepted-format file exists for this work; nothing to adopt.
+  - `:unsupported_format` — no accepted-format file exists for this work (EPUB/AZW3/MOBI for an
+    e-book instance, M4B/MP3 for an audiobook one); nothing to adopt.
   - `:path_conflict` / `:identity_conflict` — a real duplicate against something Cinder already
     manages; resolve the duplicate rather than forcing it through.
-  - `:target_held` — this work's `:ebook` target is already `:held` (an operator's or the
-    poller's own more recent decision). Open the work's `/books/:id` page and clear the hold
-    before re-running Preview; Cinder will never silently override a hold to force an adopt
-    through.
+  - `:target_held` — this work's target for the classified media kind (e-book or audiobook) is
+    already `:held` (an operator's or the poller's own more recent decision). Open the work's
+    `/books/:id` page and clear the hold before re-running Preview; Cinder will never silently
+    override a hold to force an adopt through.
   - `:outside_library_root` — the books-root precondition (above) is not actually satisfied for
     this specific file; fix the root/path-prefix settings, not the candidate.
   - `:unresolved_identity` — the configured metadata providers (Open Library primary, Hardcover
@@ -121,7 +125,8 @@ Nothing is automatic here on purpose. Every newly-adopted target lands `:availab
 search. From here, Cinder's normal per-work and per-author controls apply exactly as they do for
 anything else already in the catalog:
 
-- Monitor an individual work's `:ebook` target from its `/books/:id` page for upgrades.
+- Monitor an individual work's e-book or audiobook target (whichever kind this runbook just
+  adopted) from its `/books/:id` page for upgrades.
 - Use B5b's per-author monitoring policy (`Set author policy` on `/books/:id`, for any author
   credited to an already-adopted work) to opt into future or full back-catalogue monitoring — this
   is also how the operator handles the migration's own `deferred_bibliography_count`: works that
@@ -145,10 +150,39 @@ Bookshelf's perspective) or removed via normal `/books` admin actions if you wan
 
 ## What this migration does not do
 
-- **Audiobooks.** Every B6 candidate is `:ebook`. The audiobook Bookshelf instance is untouched —
-  no target, no import, no automation change. That is a later milestone's scope.
+- **Migrating two instances in one Preview/Adopt pass.** Classification and adoption are
+  media-kind-generic (both `:ebook` and `:audiobook` candidates classify and adopt correctly),
+  but the four Readarr-source settings are one configured value each — only one Bookshelf
+  instance is reachable at a time. Migrating a second, separately-deployed instance for the other
+  media kind is two full runs of this runbook, not one combined pass; see the addendum below.
 - **Calibre.** No B6 code path writes a Calibre database or invokes `calibredb`.
 - **Format conversion or automatic quality upgrades during adoption.** Every accepted file is
   adopted exactly as found. "Find a better match" (already shipped) is the only upgrade path, and
   it works unmodified against a migration-adopted `:available` target.
 - **Renaming.** Automatic renaming stays off; existing filenames are preserved verbatim.
+
+## Migrating both an e-book and an audiobook Bookshelf instance
+
+The classification/adoption code is media-kind-generic (B7e): a file whose format resolves to
+M4B/MP3 classifies and adopts as an `:audiobook` target, an EPUB/AZW3/MOBI file as an `:ebook`
+one, and neither can be mistaken for the other's target. What is **not** built is per-instance
+settings — `readarr_url`/`readarr_api_key`/the two path prefixes are one configured value each,
+covering whichever single Bookshelf instance they currently point at (deliberately not built;
+see the B7 plan's §0.3 for why per-instance config was judged out of scope). A household running
+**two** separate Bookshelf deployments — one per media kind, the real-world shape the B0 audit
+captured — migrates them with **two runs of this exact six-step runbook**, not a new procedure:
+
+1. Run steps 1–6 once with `readarr_url`/`readarr_api_key`/the path prefixes pointed at the
+   e-book instance, adopting its EPUB/AZW3/MOBI candidates as `:ebook` targets.
+2. Repoint those same four settings at the audiobook instance in `/settings`, and run steps 1–6
+   again. Its M4B/MP3 candidates classify and adopt as `:audiobook` targets — a distinct target
+   per work, never colliding with or overwriting the `:ebook` target the first run created for the
+   same work.
+3. Repeating a Preview against the SAME instance you already adopted is always safe and
+   idempotent regardless of which instance you point at when: an already-adopted work's cached
+   `"readarr"` identifier short-circuits it straight to `:already_managed` (this is the exact
+   guarantee B6c's own test plan already establishes for one instance, unaffected by re-pointing
+   the settings to a different instance in between).
+
+This is the identical shape the operator already uses for Radarr vs. Sonarr — two different
+services, one settings block each — applied here to Bookshelf-ebook vs. Bookshelf-audiobook.

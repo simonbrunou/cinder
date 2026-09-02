@@ -30,18 +30,55 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrAdoptTest do
         "cinder-readarr-adopt-test-#{System.unique_integer([:positive])}"
       )
 
+    audiobooks_tmp =
+      Path.join(
+        System.tmp_dir!(),
+        "cinder-readarr-adopt-test-audiobooks-#{System.unique_integer([:positive])}"
+      )
+
     File.mkdir_p!(tmp)
+    File.mkdir_p!(audiobooks_tmp)
 
     saved = Application.get_env(:cinder, :books_library_path)
+    saved_audiobooks = Application.get_env(:cinder, :audiobooks_library_path)
     Application.put_env(:cinder, :books_library_path, tmp)
+    Application.put_env(:cinder, :audiobooks_library_path, audiobooks_tmp)
 
     on_exit(fn ->
       if saved,
         do: Application.put_env(:cinder, :books_library_path, saved),
         else: Application.delete_env(:cinder, :books_library_path)
+
+      if saved_audiobooks,
+        do: Application.put_env(:cinder, :audiobooks_library_path, saved_audiobooks),
+        else: Application.delete_env(:cinder, :audiobooks_library_path)
     end)
 
-    %{tmp: tmp}
+    %{tmp: tmp, audiobooks_tmp: audiobooks_tmp}
+  end
+
+  test "a fresh :audiobook readarr candidate adopts in place: media_kind: :audiobook target, unchanged path",
+       %{audiobooks_tmp: audiobooks_tmp} do
+    path = path(audiobooks_tmp, "adopted-1.m4b")
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Audio Author")],
+        works: [work(1, 1, "Audio Book", "audio-fresh-1")],
+        files: [file(1, 1, "m4b", path)]
+      )
+    )
+
+    stub_resolve("Audio Author", "Audio Book", "openlibrary-audio-fresh-1")
+
+    assert {:ok, preview} = Adoption.preview_migration(:readarr)
+    assert [%{status: :ready, key: key, media_kind: :audiobook} = candidate] = preview.candidates
+
+    assert %{adopted: 1, skipped: 0, failures: [], adopted_keys: [^key]} =
+             Adoption.adopt_migration(:readarr, [%{key: key, candidate: candidate}])
+
+    assert [%BookFile{path: ^path, format: :m4b}] = Repo.all(BookFile)
+    assert [%BookTarget{status: :available, media_kind: :audiobook}] = Repo.all(BookTarget)
   end
 
   test "a fresh readarr candidate adopts in place: unchanged path, available target, readarr identifier",

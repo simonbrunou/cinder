@@ -37,18 +37,31 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
         "cinder-readarr-adoption-test-#{System.unique_integer([:positive])}"
       )
 
+    audiobooks_tmp =
+      Path.join(
+        System.tmp_dir!(),
+        "cinder-readarr-adoption-test-audiobooks-#{System.unique_integer([:positive])}"
+      )
+
     File.mkdir_p!(tmp)
+    File.mkdir_p!(audiobooks_tmp)
 
     saved = Application.get_env(:cinder, :books_library_path)
+    saved_audiobooks = Application.get_env(:cinder, :audiobooks_library_path)
     Application.put_env(:cinder, :books_library_path, tmp)
+    Application.put_env(:cinder, :audiobooks_library_path, audiobooks_tmp)
 
     on_exit(fn ->
       if saved,
         do: Application.put_env(:cinder, :books_library_path, saved),
         else: Application.delete_env(:cinder, :books_library_path)
+
+      if saved_audiobooks,
+        do: Application.put_env(:cinder, :audiobooks_library_path, saved_audiobooks),
+        else: Application.delete_env(:cinder, :audiobooks_library_path)
     end)
 
-    %{tmp: tmp}
+    %{tmp: tmp, audiobooks_tmp: audiobooks_tmp}
   end
 
   # ------------------------------------------------------------------ passes ---
@@ -291,15 +304,17 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
   end
 
   test "a work whose only file is an unsupported format blocks the whole work as :unsupported_format" do
-    seed_work("Audio Only", "audio-1")
+    seed_work("PDF Only", "pdf-1")
 
-    m4b = file(1, 1, "m4b", "/audio/1.m4b")
+    # `pdf` resolves to neither `:ebook` nor `:audiobook` (B7e's `media_kind_for/1`) — genuinely
+    # unsupported, unlike `m4b`/`mp3`, which are now recognized audiobook formats.
+    pdf = file(1, 1, "pdf", "/pdf/1.pdf")
 
     stub_snapshot(
       snapshot(
-        authors: [author(1, "Audio Author")],
-        works: [work(1, 1, "Audio Only", "audio-1")],
-        files: [m4b]
+        authors: [author(1, "PDF Author")],
+        works: [work(1, 1, "PDF Only", "pdf-1")],
+        files: [pdf]
       )
     )
 
@@ -309,7 +324,105 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
     assert c.status == :blocked
     assert c.reason == :unsupported_format
     assert c.path == nil
+    assert c.media_kind == nil
     assert Enum.map(c.unsupported_files, & &1.provider_id) == [1]
+  end
+
+  test "an m4b accepted file classifies :ready with media_kind: :audiobook", %{
+    audiobooks_tmp: audiobooks_tmp
+  } do
+    seed_work("Dune Audio", "audio-2")
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Audio Author")],
+        works: [work(1, 1, "Dune Audio", "audio-2")],
+        files: [file(1, 1, "m4b", path(audiobooks_tmp, "audio-2.m4b"))]
+      )
+    )
+
+    assert {:ok, preview} = MigrationAdoption.preview(:readarr)
+
+    c = candidate(preview, 1)
+    assert c.status == :ready
+    assert c.media_kind == :audiobook
+    assert c.format == "m4b"
+  end
+
+  test "an mp3 accepted file classifies :ready with media_kind: :audiobook, distinct from an
+        identically-shaped epub candidate's :ebook",
+       %{tmp: tmp, audiobooks_tmp: audiobooks_tmp} do
+    seed_work("Dune Audio MP3", "audio-3")
+    seed_work("Dune Text", "text-3")
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Mixed Author")],
+        works: [
+          work(1, 1, "Dune Audio MP3", "audio-3"),
+          work(2, 1, "Dune Text", "text-3")
+        ],
+        files: [
+          file(1, 1, "mp3", path(audiobooks_tmp, "audio-3.mp3")),
+          file(2, 2, "epub", path(tmp, "text-3.epub"))
+        ]
+      )
+    )
+
+    assert {:ok, preview} = MigrationAdoption.preview(:readarr)
+
+    audio = candidate(preview, 1)
+    text = candidate(preview, 2)
+    assert audio.status == :ready and audio.media_kind == :audiobook
+    assert text.status == :ready and text.media_kind == :ebook
+  end
+
+  # The exact bug this slice fixes: `targets_by_work_id/1` used to filter `media_kind == :ebook`
+  # unconditionally, so an existing `:audiobook` target's hold was INVISIBLE to the catalog and a
+  # re-classified m4b candidate for that same work would have silently read `:ready` — offering a
+  # held target back up for automatic re-adoption. Proves the fetch is no longer kind-scoped.
+  test "a held :audiobook target for a work is correctly seen — a fresh m4b candidate for the
+        SAME work blocks :target_held, not silently :ready",
+       %{audiobooks_tmp: audiobooks_tmp} do
+    work = seed_work("Held Audio Book", "held-audio-1")
+    work |> seed_target(:audiobook) |> monitor_target() |> hold_it()
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Held Audio Author")],
+        works: [work(1, 1, "Held Audio Book", "held-audio-1")],
+        files: [file(1, 1, "m4b", path(audiobooks_tmp, "1.m4b"))]
+      )
+    )
+
+    assert {:ok, preview} = MigrationAdoption.preview(:readarr)
+
+    c = candidate(preview, 1)
+    assert c.status == :blocked
+    assert c.reason == :target_held
+  end
+
+  # The independence in the OTHER direction: a held `:ebook` target must never leak into an
+  # unrelated `:audiobook` candidate for the same work — the two kinds' target lookups must stay
+  # scoped to `{work_id, media_kind}`, never collapse to a shared `work_id`-only key.
+  test "a held :ebook target for a work does not block a fresh m4b candidate for the SAME work",
+       %{audiobooks_tmp: audiobooks_tmp} do
+    work = seed_work("Held Text, Free Audio", "held-text-1")
+    work |> seed_target(:ebook) |> monitor_target() |> hold_it()
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Held Text Author")],
+        works: [work(1, 1, "Held Text, Free Audio", "held-text-1")],
+        files: [file(1, 1, "m4b", path(audiobooks_tmp, "1.m4b"))]
+      )
+    )
+
+    assert {:ok, preview} = MigrationAdoption.preview(:readarr)
+
+    c = candidate(preview, 1)
+    assert c.status == :ready
+    assert c.media_kind == :audiobook
   end
 
   test "a freshly-resolved work with no existing Cinder catalog entry is :ready", %{tmp: tmp} do
@@ -713,8 +826,8 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
     work
   end
 
-  defp seed_target(%Work{} = work) do
-    {:ok, target} = Books.ensure_target(work, :ebook)
+  defp seed_target(%Work{} = work, media_kind \\ :ebook) do
+    {:ok, target} = Books.ensure_target(work, media_kind)
     target
   end
 
