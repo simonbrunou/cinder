@@ -1283,10 +1283,15 @@ defmodule Cinder.Catalog.Grabs do
   **must** run before the delete: the `grab_id` FK nilifies on delete, after which the predicate
   would match nothing. Each imported episode is written individually (a single `update_all set:`
   could not give each its own dest); `n` is one season pack, so the per-row writes are cheap.
+
+  `opts[:fence_client]` additionally fences a durable cleanup intent for the grab's
+  `download_id`/`download_protocol` in the SAME transaction as the delete, then removes it from
+  the client after commit — `park_grab_and_remove/1`'s one caller (the `:blocked_content` park,
+  whose grab is still an active remote job).
   """
   def finish_grab(%Grab{} = grab, imported \\ []), do: finish_grab(grab, imported, [])
 
-  def finish_grab(%Grab{} = grab, imported, stage_ids) do
+  def finish_grab(%Grab{} = grab, imported, stage_ids, opts \\ []) do
     imported_ids = imported |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
     series_id = series_id_for_grab(grab.id)
 
@@ -1312,18 +1317,25 @@ defmodule Cinder.Catalog.Grabs do
         completed_seasons = completed_seasons_for_imported_episodes(imported_ids)
 
         ImportStage.mark_committed!(stage_ids)
+        intent_ids = if opts[:fence_client], do: fence_client_intent_ids(grab), else: []
         Repo.delete!(grab)
-        {bumped_ids, completed_seasons}
+        {bumped_ids, completed_seasons, intent_ids}
       end)
 
-    with {:ok, {bumped_ids, completed_seasons}} <- result do
+    with {:ok, {bumped_ids, completed_seasons, intent_ids}} <- result do
       Cinder.Catalog.broadcast_series(series_id)
       announce_search_exhausted(bumped_ids)
       Enum.each(completed_seasons, &Notifier.notify({:season_available, &1}))
+      Download.cleanup_intents(intent_ids)
       {:ok, grab}
     end
   rescue
     Ecto.StaleEntryError -> {:error, :stale_grab}
+  end
+
+  defp fence_client_intent_ids(grab) do
+    episode_ids = episode_ids_for_grab(grab.id)
+    Download.fence_episode_cleanup(episode_ids, [grab_cleanup_spec(grab, episode_ids)])
   end
 
   defp update_imported_episode!(grab_id, episode_id, dest, quality, timestamp) do
@@ -1390,6 +1402,12 @@ defmodule Cinder.Catalog.Grabs do
   bounded, then search-park). The terminal-failure case of `finish_grab/2` (nothing imported).
   """
   def park_grab(%Grab{} = grab), do: finish_grab(grab, [])
+
+  @doc """
+  Parks a grab like `park_grab/1`, but also fences+removes the grab's still-active client
+  download (`finish_grab/4`'s `:fence_client` opt) — for the `:blocked_content` park only.
+  """
+  def park_grab_and_remove(%Grab{} = grab), do: finish_grab(grab, [], [], fence_client: true)
 
   @doc """
   Reaps a stalled downloading grab (the stall reaper): one transaction blocklists its release
