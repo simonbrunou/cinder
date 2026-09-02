@@ -630,6 +630,103 @@ contract.
 
 **Product gate:** E-book Readarr replacement and cutover candidate.
 
+### Shipped as three slices
+
+B6a landed `Cinder.Library.MigrationSource.Readarr`, the settings registry rows, health, and the
+generalized migration-source dispatch. B6b landed the expanded provider-neutral snapshot contract
+and `Cinder.Library.MigrationAdoption.Readarr`'s bounded, cached preview classification. B6c
+landed the `Cinder.Books.Adoption` write choke-point, the `/library/adopt` batch UI, and
+`docs/readarr-migration.md`. See
+[`the B6 plan`](2026-09-01-books-b6-migration-and-cutover.md).
+
+Three notes from executing B6a:
+
+- **The migration source is not Readarr.** Readarr itself was archived in 2025 (see this
+  document's own opening note); the household runs Bookshelf
+  (`pennydreadful/bookshelf:hardcover`, app version `0.4.20.129`) exposing a Readarr
+  v3-compatible read-only `/api/v1`. `Cinder.Library.MigrationSource.Readarr` is named for the
+  wire protocol it speaks — matching how `Radarr`/`Sonarr` are named for theirs, and matching
+  what the deployment's own `system/status` self-reports as `appName` — not for the Bookshelf
+  fork that happens to serve it. No code in this milestone talks to the Readarr product.
+- **Generalizing dispatch surfaced four latent crash sites, not one.** Widening the
+  `/library/adopt` scan guard from a hardcoded source list to the registry made a
+  configured-but-unimplemented `:readarr` reachable before it had a body, and `plan/4`,
+  `revalidate_catalog/2`, `adopt_selected/3`, and `source_label/1` each lacked a clause —
+  found one at a time, each by the same devtools-fired `scan_migration` event that first raised
+  `FunctionClauseError` in `plan/4`, then in `source_label/1` once the first fix cleared the
+  path to it. `plan/4`'s catch-all was deliberately settled on `{:error, :unsupported_source}`,
+  not an empty plan: an empty-but-successful preview would have rendered as an ordinary
+  completed scan showing "Ready: 0", indistinguishable from "this library genuinely has nothing
+  to adopt" — the wrong signal for "not implemented yet". `revalidate_catalog/2` and
+  `adopt_selected/3` instead degrade to a no-op (every candidate stale; nothing adopted), mirroring
+  the catch-all `adopt/2` already had for the same unconfigured-source case.
+- **A test-hygiene lesson repeated from B5a.** A settings test extended for the four new
+  `readarr_*` fields called `Settings.save_form`, which `Application.put_env`s the new source's
+  module config the same way it already does for Radarr/Sonarr — but the new module was never
+  added to `settings_test.exs`'s `@env_keys` snapshot/restore list, so that env key stayed
+  permanently mutated for the rest of the VM's test run once that one test executed. Found by direct
+  repro, confirmed not pre-existing against the milestone's own base commit, and fixed by adding
+  the module to `@env_keys` — the identical class of bug B5a's own notes above name.
+
+One note from executing B6b:
+
+- **Preview's bound is per-call, and the local filter has to run before the cap.**
+  `Cinder.Books.Identity.resolve/1` is a real network call (up to three sequential HTTP requests
+  per work), and there is no batchable primitive the way movies/TV have one, so
+  `Cinder.Library.MigrationReconciler` was deliberately left untouched (movie/TV-only) rather than
+  widened for books. `Readarr.plan/2`'s pass 1 is a local, no-network `book_identifiers` lookup on
+  the `"readarr"` provider; only pass 2 — the misses — is resolved over the network, capped at
+  `Books.max_bibliography_candidates/0`. Capping before the local filter would re-inspect the same
+  already-adopted prefix on every later preview and never advance — the identical bug B5b's own
+  `preview_author_policy/2` had to design around first. Because adoption durably stamps the
+  `"readarr"` identifier, each later preview session is cheaper than the last for free: the
+  realistic cutover workflow (preview → adopt a wave → come back → preview more) gets faster each
+  time, not slower.
+
+Four notes from executing B6c:
+
+- **A batch cursor was missing from the plan.** `MigrationAdoption.preview/1` had no way to
+  advance between calls, so the LiveView's own promised batch auto-advance would have re-resolved
+  the identical capped window on every cycle rather than making progress. Fixed by adding a
+  backward-compatible `exclude` accumulator to `Readarr.plan/2`/`summary/2` and a matching
+  `opts` argument on `MigrationAdoption.preview/2`, which the LiveView grows across cycles and
+  feeds back in — not specified in the B6b plan, added when B6c's own UI needed it.
+- **The adopt path never touches a source file, structurally.** `Cinder.Books.Adoption.adopt_work/3`'s
+  whole call graph reaches no `Cinder.Library.StageEngine` and no filesystem-mutating call at
+  all — no hardlink, no copy, no rename, no delete — which is what makes the rollback plan
+  ("re-enable Bookshelf from backup") sound rather than aspirational. Its guarded status write
+  accepts `[:unmonitored, :monitored, :available]`, deliberately not `Files.arm_target/1`'s
+  narrower `[:monitored, :available]`: `ensure_target/2` creates a target at the schema default
+  `:unmonitored`, which is what essentially every one of the 181 file-bearing works in the real
+  deployment actually is — the narrower guard would have matched zero rows and failed nearly every
+  real adoption.
+- **A nested transaction had to be designed out, not caught after the fact.**
+  `Books.import_resolution/1` is itself a `Repo.transaction` whose call graph reaches
+  `Repo.rollback/1` on ordinary failures; calling it from inside `adopt_work/3`'s own transaction
+  would poison the connection the same way `Files.record_import/3`'s own `arm_target/1` comment
+  already warns about. The non-transactional fold `import_work/2` became the public `@doc false`
+  `Books.import_work_in_tx/2`, with `import_resolution/1` reduced to a one-line wrapper around it
+  (every existing caller unaffected), and `Files.insert_conflict/3`'s replay-safety logic —
+  "same target, same path ⇒ replay success; a different target's path ⇒ a real conflict" — was
+  extracted to a shared `@doc false` `Files.insert_or_existing/2` used unchanged by both
+  `Files.record_import/3` and `adopt_work/3`, rather than duplicated.
+- **Two per-file conditions were nearly masked by a per-work check.** `:path_conflict` and
+  `:outside_library_root` are per-file, not per-work, so the first version of the multi-format
+  classifier evaluated only the primary (preferred-format) file: a clean primary EPUB with a
+  sibling AZW3 that already belonged to a different work's target left that conflict invisible —
+  the row rendered as an ordinary `:needs_decision`, adoption silently skipped it at
+  revalidation, and re-previewing reproduced the identical misleading row forever, since the
+  classifier never re-evaluated the sibling. `Readarr.classify_files/5` now evaluates every
+  accepted file for a multi-format candidate, mirroring `MigrationAdoption.n_to_one_status/4`'s
+  own "check every member" precedent. Related and caught the same review pass: the root check is
+  scoped to `Settings.library_destination_for_path(:ebook, path)`, not "any configured root" —
+  a translated path landing inside the operator's movies/TV/audiobooks root by mistake is the
+  classic symptom of a wrong path prefix, and must still block.
+
+B6 is the e-book cutover only. The audiobook Bookshelf instance is untouched and unreachable from
+any B6 code path — no `MigrationSource` call targets it, no `book_targets` row of
+`media_kind: :audiobook` is ever created here. Audiobook adoption remains B7's.
+
 ---
 
 ## B7 — Audiobook acquisition and Audiobookshelf publication
