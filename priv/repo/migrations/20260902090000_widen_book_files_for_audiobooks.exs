@@ -52,14 +52,33 @@ defmodule Cinder.Repo.Migrations.WidenBookFilesForAudiobooks do
       verify_book_files_triggers!()
     rescue
       exception ->
-        try do
-          query!("ROLLBACK")
-        rescue
-          _rollback_failure -> :ok
-        end
-
-        reraise exception, __STACKTRACE__
+        stacktrace = __STACKTRACE__
+        rollback_after_failure(exception, stacktrace)
     end
+  end
+
+  # A plain `query!("ROLLBACK")` here that swallowed its own failure (`rescue _ -> :ok`) made a
+  # double fault indistinguishable from a single one: `rebuild/1`'s `after` still runs `PRAGMA
+  # foreign_keys = ON`, which SQLite makes a no-op while a transaction is still pending, so a
+  # connection whose ROLLBACK also failed went back to the pool mid-transaction with FK
+  # enforcement silently off, reporting only the ORIGINAL (now-misleading) error. Neither
+  # `DBConnection.run/3`'s exception path (a plain `checkin`, never a disconnect — the pool has no
+  # public API from here to force one) nor `Exqlite.Connection`'s own leaked-transaction check
+  # (`handle_status/2` reads `transaction_status`, which only `handle_begin`/`handle_commit`/
+  # `handle_rollback` update — never the raw `BEGIN IMMEDIATE`/`COMMIT`/`ROLLBACK` this migration
+  # issues) can rescue this from outside, so the only thing within reach is to make a double fault
+  # LOUD and unmistakable rather than silently indistinguishable from a clean single failure.
+  defp rollback_after_failure(exception, stacktrace) do
+    query!("ROLLBACK")
+    reraise exception, stacktrace
+  rescue
+    rollback_exception ->
+      raise RuntimeError,
+            "book_files rebuild failed, and the ROLLBACK meant to clean up after it ALSO " <>
+              "failed — this connection may still be inside an open transaction with foreign " <>
+              "keys disabled and must not be reused; restart the process before retrying. " <>
+              "Original error: #{Exception.format(:error, exception, stacktrace)}\n" <>
+              "Rollback error: #{Exception.format(:error, rollback_exception, __STACKTRACE__)}"
   end
 
   defp create_sql(audiobook_formats?: audiobook_formats?) do
@@ -75,7 +94,7 @@ defmodule Cinder.Repo.Migrations.WidenBookFilesForAudiobooks do
       "path" TEXT NOT NULL,
       "size" INTEGER,
       "format" TEXT NOT NULL
-        CONSTRAINT book_files_format_valid
+        CONSTRAINT "book_files_format_valid"
         CHECK (format IN (#{formats(audiobook_formats?)}))
       #{audiobook_columns(audiobook_formats?)},
       "inserted_at" TEXT NOT NULL,
