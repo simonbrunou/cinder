@@ -2,8 +2,10 @@ defmodule Cinder.Books.AudiobookshelfScanTest do
   @moduledoc """
   `Cinder.Books.list_pending_audiobook_scans/0` and `mark_audiobookshelf_scanned/1` — the
   context-level query and write `Cinder.Download.BookPoller`'s retryable scan phase (B7c) reads
-  and writes. `Cinder.Books.Files.arm_target/1`'s reset of the flag on a fresh `:available`
-  transition is covered in `Cinder.Books.FilesTest`.
+  and writes. `Cinder.Books.Files.arm_target/1`'s reset of the flag on a fresh/replace
+  `:available` transition (and its structural inability to fire for an e-book target) is covered
+  in `Cinder.Books.FilesTest`, describe blocks "record_import/3 with replace: true" and
+  "record_import_set/3 — multi-track audiobook import".
   """
   use Cinder.DataCase, async: false
 

@@ -163,6 +163,34 @@ defmodule Cinder.Download.AudiobookshelfScanTest do
       refute log =~ canary
       assert Repo.reload!(target).audiobookshelf_scanned_at == nil
     end
+
+    test "three pending targets in one tick trigger exactly ONE whole-library scan call, and a
+          failure leaves all three pending",
+         ctx do
+      %{target: t1, release_dir: r1} = downloading(ctx, "remote-1")
+      %{target: t2, release_dir: r2} = downloading(ctx, "remote-2")
+      %{target: t3, release_dir: r3} = downloading(ctx, "remote-3")
+
+      # exactly 1 — a buggy per-target call would raise Mox.UnexpectedCallError on the 2nd/3rd.
+      expect(Cinder.Library.AudiobookServerMock, :scan, 1, fn -> {:error, :econnrefused} end)
+
+      complete_download(r1, "remote-1")
+      complete_download(r2, "remote-2")
+      complete_download(r3, "remote-3")
+      capture_log(fn -> poll!() end)
+
+      assert Repo.reload!(t1).audiobookshelf_scanned_at == nil
+      assert Repo.reload!(t2).audiobookshelf_scanned_at == nil
+      assert Repo.reload!(t3).audiobookshelf_scanned_at == nil
+      assert length(Books.list_pending_audiobook_scans()) == 3
+
+      expect(Cinder.Library.AudiobookServerMock, :scan, 1, fn -> :ok end)
+      poll!()
+
+      assert %DateTime{} = Repo.reload!(t1).audiobookshelf_scanned_at
+      assert %DateTime{} = Repo.reload!(t2).audiobookshelf_scanned_at
+      assert %DateTime{} = Repo.reload!(t3).audiobookshelf_scanned_at
+    end
   end
 
   # --- fixtures ---
@@ -186,12 +214,13 @@ defmodule Cinder.Download.AudiobookshelfScanTest do
   defp build_target(%{downloads: downloads, audiobooks: audiobooks}, _ctx, remote_id) do
     release_dir = Path.join(downloads, "release-#{remote_id}")
     File.mkdir_p!(release_dir)
-    File.write!(Path.join(release_dir, "The Dispossessed.m4b"), m4b_bytes())
+    title = "The Dispossessed (#{remote_id})"
+    File.write!(Path.join(release_dir, "#{title}.m4b"), m4b_bytes())
 
     profile = audiobook_profile(audiobooks)
-    work = work_fixture("The Dispossessed", "Ursula K. Le Guin")
+    work = work_fixture(title, "Ursula K. Le Guin")
     {:ok, target} = Books.monitor_target(work, :audiobook, profile)
-    {:ok, grab} = Books.Grabs.create(target.id, remote_id, :torrent, "The Dispossessed Audiobook")
+    {:ok, grab} = Books.Grabs.create(target.id, remote_id, :torrent, "#{title} Audiobook")
 
     %{grab: grab, target: target, work: work, audiobooks: audiobooks, release_dir: release_dir}
   end

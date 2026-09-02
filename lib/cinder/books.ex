@@ -200,11 +200,19 @@ defmodule Cinder.Books do
   Stamps `target_id`'s successful Audiobookshelf scan. No status write, no broadcast — mirrors
   `clear_blocklist/1`'s "no side effect" contract: this changes nothing the UI renders, only
   whether the poller's scan phase considers the target done.
+
+  The `WHERE audiobookshelf_scanned_at IS NULL` guard is load-bearing, not defensive filler: a
+  concurrent replace resetting the flag to `nil` (`Cinder.Books.Files.arm_target/1`) must always
+  win over a stale success stamp from a scan that started before the replace landed. Today
+  `Cinder.Download.BookPoller` is the flag's only writer and its ticks are strictly sequential, so
+  the two writes can't actually interleave yet — but an unconditional `UPDATE` here would silently
+  stop being correct the moment a second caller (a future manual-replace trigger) can race it, so
+  the guard is written now rather than left for that race to discover later.
   """
   @spec mark_audiobookshelf_scanned(integer()) :: :ok
   def mark_audiobookshelf_scanned(target_id) do
     Repo.update_all(
-      from(t in BookTarget, where: t.id == ^target_id),
+      from(t in BookTarget, where: t.id == ^target_id and is_nil(t.audiobookshelf_scanned_at)),
       set: [audiobookshelf_scanned_at: DateTime.utc_now(:second)]
     )
 
