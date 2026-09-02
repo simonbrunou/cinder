@@ -351,6 +351,28 @@ defmodule CinderWeb.LibraryLiveTest do
       assert has_element?(lv, "#book-target-row-#{target.id}")
     end
 
+    test "pausing/resuming an :audiobook target round-trips identically to an :ebook one — the
+          same status-keyed control, proven for the OTHER kind, not merely read from source",
+         %{conn: conn} do
+      target = book_target!(%{title: "Dune Audio", media_kind: :audiobook})
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books&status=wanted")
+      assert has_element?(lv, "#book-target-row-#{target.id}")
+
+      lv |> element("#book-target-row-#{target.id} button", "Pause") |> render_click()
+
+      refute has_element?(lv, "#book-target-row-#{target.id}")
+      assert Books.get_target(target.id).status == :unmonitored
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books")
+      lv |> element("#book-target-row-#{target.id} button", "Resume") |> render_click()
+
+      assert Books.get_target(target.id).status == :monitored
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books&status=wanted")
+      assert has_element?(lv, "#book-target-row-#{target.id}")
+    end
+
     test "Pause is hidden while a grab is in flight, and pausing anyway is refused with a " <>
            "specific flash",
          %{conn: conn} do

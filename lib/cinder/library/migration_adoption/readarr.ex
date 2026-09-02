@@ -51,7 +51,7 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
 
   import Ecto.Query
 
-  alias Cinder.Acquisition.BookScorer
+  alias Cinder.Acquisition.{AudiobookScorer, BookScorer}
   alias Cinder.Books
   alias Cinder.Books.Adoption, as: BooksAdoption
   alias Cinder.Books.{BookFile, BookTarget, Edition, Identifier}
@@ -61,10 +61,21 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
   alias Cinder.Repo
   alias Cinder.Settings
 
-  # The parity contract's e-book profile, most preferred first — reusing `BookScorer`'s own list
-  # rather than a second one, so the release scorer and the migration classifier can never drift
-  # on what "accepted" means.
-  @accepted_formats Enum.map(BookScorer.accepted_formats(), &to_string/1)
+  # The parity contract's e-book and audiobook profiles, most preferred first within each —
+  # reusing `BookScorer`'s/`AudiobookScorer`'s own lists rather than duplicating them, so the
+  # release scorer and the migration classifier can never drift on what "accepted" means.
+  # Combined for `accepted_format?/1`'s "is this file classifiable at all" gate; kept as two
+  # separate lists for `media_kind_for/1`, which decides WHICH kind's target a classified file
+  # belongs to (B7e — the Bookshelf audiobook instance reports `m4b`/`mp3`, not e-book formats).
+  @ebook_formats Enum.map(BookScorer.accepted_formats(), &to_string/1)
+  @audiobook_formats Enum.map(AudiobookScorer.accepted_formats(), &to_string/1)
+  @accepted_formats @ebook_formats ++ @audiobook_formats
+
+  # A file whose format resolves to neither kind stays `:unsupported_format`, exactly as before
+  # this classifier existed — this only ever WIDENS which formats are recognized, never narrows.
+  defp media_kind_for(format) when format in @ebook_formats, do: {:ok, :ebook}
+  defp media_kind_for(format) when format in @audiobook_formats, do: {:ok, :audiobook}
+  defp media_kind_for(_unrecognized), do: :error
 
   @doc """
   Classifies every file-bearing work in `snapshot`, minus `exclude`, into one `:readarr`
@@ -284,9 +295,15 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
 
   defp targets_by_work_id([]), do: %{}
 
+  # No `media_kind` filter (B7e — was `:ebook`-only): a candidate's target must be looked up
+  # scoped to ITS OWN resolved kind (`target_for/3` below), never silently missing an existing
+  # `:audiobook` target's hold/already-managed state because this fetch only ever saw `:ebook`
+  # rows. Keyed by `{work_id, media_kind}` — a work can carry one target of each kind
+  # (`book_targets`' own `[work_id, media_kind]` unique index), and `Map.new/2` would otherwise
+  # silently keep only the last one seen for a plain `work_id` key.
   defp targets_by_work_id(work_ids) do
-    Repo.all(from t in BookTarget, where: t.work_id in ^work_ids and t.media_kind == :ebook)
-    |> Map.new(&{&1.work_id, &1})
+    Repo.all(from t in BookTarget, where: t.work_id in ^work_ids)
+    |> Map.new(&{{&1.work_id, &1.media_kind}, &1})
   end
 
   defp target_file_paths([]), do: %{}
@@ -341,6 +358,7 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
       reason: reason,
       work_id: nil,
       identity: nil,
+      media_kind: nil,
       edition_id: nil,
       path: nil,
       size: nil,
@@ -352,9 +370,10 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
 
   defp candidate(work, identity, files, provider_editions, catalog, authors_by_id) do
     work_id = cinder_work_id(identity)
-    target = Map.get(catalog.targets, work_id)
-    target_paths = if target, do: Map.get(catalog.target_paths, target.id, []), else: []
     {accepted, unsupported} = Enum.split_with(files, &accepted_format?/1)
+    media_kind = accepted_media_kind(accepted)
+    target = target_for(work_id, media_kind, catalog)
+    target_paths = target_paths(work_id, media_kind, catalog)
 
     base_candidate(work, authors_by_id)
     |> Map.merge(%{
@@ -363,7 +382,20 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
       edition_id: edition_id_for(provider_editions, work_id, catalog.edition_index),
       unsupported_files: unsupported
     })
-    |> Map.merge(classify_files(accepted, work_id, target, target_paths, catalog.path_owners))
+    |> Map.merge(
+      classify_files(accepted, work_id, media_kind, target, target_paths, catalog.path_owners)
+    )
+  end
+
+  # The candidate's own resolved kind, from its first accepted file — a real, real-world
+  # Bookshelf snapshot is always single-instance (one migration source config, §0.3 of the B7
+  # plan), so every accepted file for one work is the same kind in practice; `nil` when there is
+  # no accepted file at all (`classify_files/6`'s `[]` clause needs no target lookup either way).
+  defp accepted_media_kind([]), do: nil
+
+  defp accepted_media_kind([file | _rest]) do
+    {:ok, kind} = media_kind_for(file.format)
+    kind
   end
 
   defp base_candidate(work, authors_by_id) do
@@ -398,12 +430,13 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
 
   # No accepted-format file remains — nothing here is adoptable, so the work itself blocks. The
   # per-file evidence still rides along in `unsupported_files` (merged by the caller).
-  defp classify_files([], _work_id, _target, _target_paths, _path_owners) do
+  defp classify_files([], _work_id, media_kind, _target, _target_paths, _path_owners) do
     %{
       status: :blocked,
       reason: :unsupported_format,
       path: nil,
       size: nil,
+      media_kind: media_kind,
       primary_file: nil,
       extra_files: []
     }
@@ -411,14 +444,15 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
 
   # Exactly one accepted-format file: classify it through the same cond chain
   # `movie_candidate/4`/`episode_file_status/3` use, in the order the plan's §3 bullets give.
-  defp classify_files([file], work_id, target, target_paths, path_owners) do
-    {status, reason} = winner_status(file, work_id, target, target_paths, path_owners)
+  defp classify_files([file], work_id, media_kind, target, target_paths, path_owners) do
+    {status, reason} = winner_status(file, work_id, media_kind, target, target_paths, path_owners)
 
     %{
       status: status,
       reason: reason,
       path: file.path,
       size: file.size,
+      media_kind: media_kind,
       # Needed by B6c's `adopt/2` to build the single `BookFile` insert attrs
       # (`BookFile.changeset/2` requires `:format`) — the multi-format branch below already
       # carries it on `primary_file`/`extra_files`; this plain single-file branch previously
@@ -429,35 +463,44 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     }
   end
 
-  # More than one accepted-format file. Evaluated through the SAME `winner_status/5` cond-chain
+  # More than one accepted-format file. Evaluated through the SAME `winner_status/6` cond-chain
   # the single-file branch uses — but over EVERY accepted file, not just the primary. Mirrors
   # `MigrationAdoption.n_to_one_status/4`'s own "check every member's path" precedent
   # (`migration_adoption.ex`): `:target_held`/`:identity_conflict`/`:already_managed` are
   # target-scoped and would trip on any file alike, but `:path_conflict` and
   # `:outside_library_root` are PER-FILE — a clean primary EPUB with a sibling AZW3 that already
-  # belongs to a different work's target (or sits outside the configured `:ebook` root) must
-  # still block the whole candidate. Checking the primary alone left that conflict invisible: the
-  # candidate rendered as an ordinary `:needs_decision`, the write failed silently at
-  # revalidation every time, and a re-preview reproduced the identical misleading row forever
-  # (`classify_files/5` never re-evaluated the sibling). Only once every file clears
+  # belongs to a different work's target (or sits outside the configured library root for this
+  # candidate's kind) must still block the whole candidate. Checking the primary alone left that
+  # conflict invisible: the candidate rendered as an ordinary `:needs_decision`, the write failed
+  # silently at revalidation every time, and a re-preview reproduced the identical misleading row
+  # forever (`classify_files/6` never re-evaluated the sibling). Only once every file clears
   # (`{:ready, nil}`) does the candidate actually reach `:needs_decision, :multi_format`.
   # `primary_file`/`extra_files` mirror Sonarr's n-to-one candidate shape exactly
   # (`n_to_one_candidate/5`) — B6c's adopt step reads `primary_file` alone for the **preferred**
-  # choice (EPUB, else AZW3, else MOBI — `@accepted_formats`' own order) or `primary_file` +
-  # `extra_files` for **all**.
-  defp classify_files(files, work_id, target, target_paths, path_owners) do
+  # choice (most-preferred-first within the candidate's own resolved kind — EPUB else AZW3 else
+  # MOBI for `:ebook`, M4B else MP3 for `:audiobook`, `@accepted_formats`' own combined order) or
+  # `primary_file` + `extra_files` for **all**.
+  defp classify_files(files, work_id, media_kind, target, target_paths, path_owners) do
     primary =
       Enum.min_by(files, fn file -> Enum.find_index(@accepted_formats, &(&1 == file.format)) end)
 
     extras = Enum.reject(files, &(&1.provider_id == primary.provider_id))
 
-    case blocking_status([primary | extras], work_id, target, target_paths, path_owners) do
+    case blocking_status(
+           [primary | extras],
+           work_id,
+           media_kind,
+           target,
+           target_paths,
+           path_owners
+         ) do
       {:ready, nil} ->
         %{
           status: :needs_decision,
           reason: :multi_format,
           path: primary.path,
           size: primary.size,
+          media_kind: media_kind,
           primary_file: primary,
           extra_files: extras
         }
@@ -468,6 +511,7 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
           reason: reason,
           path: primary.path,
           size: primary.size,
+          media_kind: media_kind,
           format: primary.format,
           primary_file: nil,
           extra_files: []
@@ -477,16 +521,16 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
 
   # The first non-`{:ready, nil}` verdict among `files`, in order — or `{:ready, nil}` when every
   # one of them clears.
-  defp blocking_status(files, work_id, target, target_paths, path_owners) do
+  defp blocking_status(files, work_id, media_kind, target, target_paths, path_owners) do
     Enum.reduce_while(files, {:ready, nil}, fn file, _acc ->
-      case winner_status(file, work_id, target, target_paths, path_owners) do
+      case winner_status(file, work_id, media_kind, target, target_paths, path_owners) do
         {:ready, nil} -> {:cont, {:ready, nil}}
         blocked -> {:halt, blocked}
       end
     end)
   end
 
-  defp winner_status(file, work_id, target, target_paths, path_owners) do
+  defp winner_status(file, work_id, media_kind, target, target_paths, path_owners) do
     cond do
       file.path in target_paths ->
         {:already_managed, nil}
@@ -500,7 +544,7 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
       not is_nil(target) and target.status == :held ->
         {:blocked, :target_held}
 
-      outside_library_root?(file.path) ->
+      outside_library_root?(media_kind, file.path) ->
         {:blocked, :outside_library_root}
 
       true ->
@@ -508,13 +552,16 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     end
   end
 
-  # Kind-scoped to `:ebook` — `Settings.library_root_for_path/1` (any kind) would let a
-  # translated path that lands inside the operator's movies/TV/audiobooks root pass as "inside
-  # a library", the classic symptom of a misconfigured `readarr_local_path_prefix`. That is
-  # exactly the misconfiguration this bucket exists to catch, so the check must be scoped to the
-  # books root alone. See §0.2 of the B6 plan (corrected alongside this fix).
-  defp outside_library_root?(path),
-    do: match?({:error, :outside_library}, Settings.library_destination_for_path(:ebook, path))
+  # Kind-scoped to the CANDIDATE'S OWN resolved kind (B7e — was hardcoded `:ebook`) —
+  # `Settings.library_root_for_path/1` (any kind) would let a translated path that lands inside
+  # the operator's movies/TV/whichever-other-books root pass as "inside a library", the classic
+  # symptom of a misconfigured `readarr_local_path_prefix`. That is exactly the misconfiguration
+  # this bucket exists to catch, so the check must be scoped to the ONE root this file's own
+  # resolved format belongs in — the books root for an `:ebook` candidate, the audiobooks root
+  # for an `:audiobook` one. See §0.2 of the B6 plan (corrected alongside the original fix).
+  defp outside_library_root?(media_kind, path),
+    do:
+      match?({:error, :outside_library}, Settings.library_destination_for_path(media_kind, path))
 
   defp edition_id_for(_provider_editions, nil, _edition_index), do: nil
 
@@ -533,7 +580,7 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
   Re-validates already-`selected` `:readarr` candidates against CURRENT catalog state, right
   before adopting — the same "preview and adopt are not atomic with each other" defense
   `MigrationAdoption.revalidate_catalog/2`'s `:radarr`/`:sonarr` clauses give via
-  `movie_path_status/3`/`episode_file_status/3`, reusing this module's own `winner_status/5`
+  `movie_path_status/3`/`episode_file_status/3`, reusing this module's own `winner_status/6`
   cond-chain rather than a second one.
 
   No Bookshelf refetch and no `Identity.resolve/1` call here — those only ever run at preview
@@ -574,34 +621,45 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
 
   defp candidate_files(_candidate, _choice), do: []
 
-  defp current?(%{status: :ready, work_id: work_id, path: path}, _choice, catalog) do
+  defp current?(
+         %{status: :ready, work_id: work_id, media_kind: media_kind, path: path},
+         _choice,
+         catalog
+       ) do
     winner_status(
       %{path: path},
       work_id,
-      target_for(work_id, catalog),
-      target_paths(work_id, catalog),
+      media_kind,
+      target_for(work_id, media_kind, catalog),
+      target_paths(work_id, media_kind, catalog),
       catalog.path_owners
     ) ==
       {:ready, nil}
   end
 
-  defp current?(%{status: :needs_decision, work_id: work_id} = candidate, choice, catalog) do
-    target = target_for(work_id, catalog)
-    target_paths = target_paths(work_id, catalog)
+  defp current?(
+         %{status: :needs_decision, work_id: work_id, media_kind: media_kind} = candidate,
+         choice,
+         catalog
+       ) do
+    target = target_for(work_id, media_kind, catalog)
+    target_paths = target_paths(work_id, media_kind, catalog)
 
     candidate
     |> candidate_files(choice)
     |> Enum.all?(
-      &(winner_status(&1, work_id, target, target_paths, catalog.path_owners) == {:ready, nil})
+      &(winner_status(&1, work_id, media_kind, target, target_paths, catalog.path_owners) ==
+          {:ready, nil})
     )
   end
 
   defp current?(_candidate, _choice, _catalog), do: false
 
-  defp target_for(work_id, catalog), do: Map.get(catalog.targets, work_id)
+  defp target_for(work_id, media_kind, catalog),
+    do: Map.get(catalog.targets, {work_id, media_kind})
 
-  defp target_paths(work_id, catalog) do
-    case target_for(work_id, catalog) do
+  defp target_paths(work_id, media_kind, catalog) do
+    case target_for(work_id, media_kind, catalog) do
       nil -> []
       target -> Map.get(catalog.target_paths, target.id, [])
     end
@@ -630,7 +688,7 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     with {:ok, resolution} <- resolution_for(candidate),
          resolution = Map.put(resolution, :bookshelf_foreign_id, candidate.foreign_id),
          files = files_for(candidate, choice),
-         {:ok, _target} <- BooksAdoption.adopt_work(resolution, files) do
+         {:ok, _target} <- BooksAdoption.adopt_work(resolution, files, candidate.media_kind) do
       summary
       |> Map.update!(:adopted, &(&1 + 1))
       |> Map.update!(:adopted_keys, &(&1 ++ [candidate.key]))

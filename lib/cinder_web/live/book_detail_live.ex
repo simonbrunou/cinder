@@ -7,12 +7,18 @@ defmodule CinderWeb.BookDetailLive do
   `Cinder.Books.monitor_target/4` — the approval choke-point — has run, so a work reached here with
   a pending or denied request shows "Not yet approved" for that media kind, not a crash.
 
-  The manual-search-and-Grab panel is offered only for a `:monitored` `:ebook` target with no
-  `BookGrab` already in flight (an `:audiobook` target, an `:available`/`:held` target, and a
-  target already downloading all render read-only — see the B4c plan). Every write reaches either
-  `Cinder.Download.grab_book_target/2` or `Cinder.Books.set_target_language/2` (the ebook-only
-  language picker `Cinder.Acquisition.BookScorer.check_language/2` scores against on the next
-  search — see #404); this module holds no `Repo` writes of its own.
+  The manual-search-and-Grab panel is offered for a `:monitored` `:ebook` or `:audiobook` target
+  with no `BookGrab` already in flight (B7d) — an `:available` target instead offers "Find a
+  better match", and a `:held` or already-downloading target renders read-only either way. Each
+  kind renders through its own component (`CinderWeb.BookManualSearchComponent` /
+  `CinderWeb.AudiobookManualSearchComponent` — different acquisition module, different candidate
+  shape, see B7d's own plan §2 for why they stay separate rather than one component branching on
+  kind). Every write reaches either `Cinder.Download.grab_book_target/3` or
+  `Cinder.Books.set_target_language/2` (the ebook-only language picker
+  `Cinder.Acquisition.BookScorer.check_language/2` scores against on the next search — see #404;
+  an audiobook target has no language picker of its own, per B7d's own "no narrator/language UI
+  beyond the ebook picker" scope note — its scorer already reads the release's own parsed tag);
+  this module holds no `Repo` writes of its own.
 
   Subscribes to `Cinder.Books.subscribe_targets/0` for `{:book_target_updated, target}`
   (terminal status transitions and a language change alike), `{:book_grab_updated, grab}` (live
@@ -326,9 +332,11 @@ defmodule CinderWeb.BookDetailLive do
 
   defp target_for(work, kind), do: Enum.find(work.targets, &(&1.media_kind == kind))
 
+  defp searchable?(%BookTarget{media_kind: :audiobook, status: :monitored}, nil), do: true
   defp searchable?(%BookTarget{media_kind: :ebook, status: :monitored}, nil), do: true
   defp searchable?(_target, _grab), do: false
 
+  defp replaceable?(%BookTarget{media_kind: :audiobook, status: :available}, nil), do: true
   defp replaceable?(%BookTarget{media_kind: :ebook, status: :available}, nil), do: true
   defp replaceable?(_target, _grab), do: false
 
@@ -629,7 +637,7 @@ defmodule CinderWeb.BookDetailLive do
             </form>
 
             <.button
-              :if={target.media_kind == :ebook and target.status == :held}
+              :if={target.status == :held}
               type="button"
               variant="neutral"
               size="sm"
@@ -640,10 +648,7 @@ defmodule CinderWeb.BookDetailLive do
             </.button>
 
             <.button
-              :if={
-                target.media_kind == :ebook and target.status == :held and
-                  Map.get(@blocklists, target.id, []) != []
-              }
+              :if={target.status == :held and Map.get(@blocklists, target.id, []) != []}
               type="button"
               variant="ghost"
               size="sm"
@@ -676,8 +681,16 @@ defmodule CinderWeb.BookDetailLive do
             </.button>
 
             <.live_component
-              :if={@searching? == target.id}
+              :if={@searching? == target.id and target.media_kind == :ebook}
               module={CinderWeb.BookManualSearchComponent}
+              id={"ms-book-#{target.id}"}
+              target={target}
+              work={@work}
+            />
+
+            <.live_component
+              :if={@searching? == target.id and target.media_kind == :audiobook}
+              module={CinderWeb.AudiobookManualSearchComponent}
               id={"ms-book-#{target.id}"}
               target={target}
               work={@work}
