@@ -388,10 +388,36 @@ defmodule Cinder.Download.BookPoller do
     end
   end
 
+  @scan_failed_key {__MODULE__, :audiobookshelf_scan_failed}
+
   defp scan_pending(pending) do
     case AudiobookServer.impl().scan() do
-      :ok -> Enum.each(pending, &Books.mark_audiobookshelf_scanned(&1.id))
-      {:error, reason} -> warn_audiobookshelf_scan_failed(reason)
+      :ok ->
+        Enum.each(pending, &Books.mark_audiobookshelf_scanned(&1.id))
+        maybe_log_scan_recovered()
+
+      {:error, reason} ->
+        :persistent_term.put(@scan_failed_key, true)
+        Books.log_scan_failure(inspect(reason))
+        warn_audiobookshelf_scan_failed(reason)
+    end
+  end
+
+  # Written only on the failed -> succeeded transition. `:persistent_term`, not the GenServer's
+  # own state or Process dictionary: this poller's whole design re-derives every tick's work from
+  # the DB so a crash/restart resumes cleanly (see the moduledoc), and the failed/recovered
+  # signal has to survive that same restart to stay meaningful — a scan that failed, then a
+  # crash, then a scan that succeeds on the freshly restarted process IS a recovery an operator
+  # should see, not a transition this mechanism silently swallows because the flag lived in the
+  # dead process. `:persistent_term` is VM-global and already this module's sibling
+  # `PollerSkeleton`'s own choice for exactly this kind of cross-restart tick state (its
+  # `:last_run`/`:started_at` stamps). A steady run of healthy ticks never writes a row, so a
+  # permanently healthy consumer does not accumulate one `scan_recovered` row per tick over a
+  # two-week dogfood window.
+  defp maybe_log_scan_recovered do
+    if :persistent_term.get(@scan_failed_key, false) do
+      :persistent_term.erase(@scan_failed_key)
+      Books.log_scan_recovered()
     end
   end
 

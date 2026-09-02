@@ -63,6 +63,59 @@ defmodule Cinder.BooksB0ContractTest do
     "deliberately parked"
   ]
 
+  # B8a traceability: every row whose disposition is "required for cutover" or "required
+  # later" must map to at least one real test file/assertion that exercises its acceptance
+  # criterion. This does not change the fixture's disposition vocabulary (§B8a of
+  # docs/plans/2026-09-02-books-b8-hardening-and-signoff.md is explicit that the matrix's
+  # dispositions are frozen); it turns "no unacknowledged cutover requirement" into something
+  # `mix test` enforces: deleting or renaming a covering test, or adding a new required row
+  # with no mapping, fails this suite.
+  @row_coverage %{
+    "catalog identity boundaries" => [
+      {"test/cinder/books/schema_test.exs", "works and editions keep separate identities"}
+    ],
+    "eBook quality and format profile" => [
+      {"test/cinder/acquisition/book_scorer_test.exs",
+       "accepts AZW3 and MOBI, the other two profile formats"}
+    ],
+    "audiobook target and Spoken profile" => [
+      {"test/cinder/books/schema_test.exs",
+       "targets are unique per work and media kind while both kinds remain independent"}
+    ],
+    "hardlink/copy publication" => [
+      {"test/cinder/download/book_poller_test.exs",
+       "a completed download is published and the target goes available"}
+    ],
+    "import naming" => [
+      {"test/cinder/library/book_naming_test.exs",
+       "preserves the release filename verbatim, including scene noise"}
+    ],
+    "Booklore filesystem handoff" => [
+      {"test/cinder/download/book_poller_test.exs",
+       "a zipped release is extracted and published, end to end"}
+    ],
+    "Audiobookshelf filesystem and scan handoff" => [
+      {"test/cinder/download/audiobookshelf_scan_test.exs",
+       "a scan failure leaves the import committed, the target :available, and the file"}
+    ],
+    "monitoring-state adoption" => [
+      {"test/cinder/library/migration_adoption/readarr_adopt_test.exs",
+       "a fresh readarr candidate adopts in place: unchanged path, available target, readarr identifier"}
+    ],
+    "automatic author monitoring" => [
+      {"test/cinder/books/author_policy_test.exs",
+       "eligible excludes an already-monitored work and an ambiguous one, and confirming"}
+    ],
+    "metadata provider set" => [
+      {"test/cinder/books_b0_contract_test.exs",
+       "Open Library, Google Books, and Hardcover evidence determine the B2 provider set"}
+    ],
+    "identity ambiguity" => [
+      {"test/cinder/library/migration_adoption/readarr_test.exs",
+       "a work Identity.resolve/1 attempts but cannot resolve is a visible :blocked candidate, not a silent drop"}
+    ]
+  }
+
   test "B0 artifacts exist" do
     for path <- [
           @corpus_path,
@@ -746,6 +799,40 @@ defmodule Cinder.BooksB0ContractTest do
 
     assert by_behavior["automatic author monitoring"]["disposition"] ==
              "required for cutover"
+  end
+
+  test "every required-for-cutover or required-later row has a code-path/test mapping that actually exists" do
+    matrix = read_json!(@parity_path)
+    rows = matrix["rows"]
+
+    required_behaviors =
+      rows
+      |> Enum.filter(&(&1["disposition"] in ["required for cutover", "required later"]))
+      |> Enum.map(& &1["behavior"])
+      |> MapSet.new()
+
+    covered_behaviors = MapSet.new(Map.keys(@row_coverage))
+
+    assert MapSet.subset?(required_behaviors, covered_behaviors),
+           "row(s) with disposition 'required for cutover'/'required later' but no " <>
+             "traceability mapping: #{inspect(MapSet.difference(required_behaviors, covered_behaviors) |> MapSet.to_list())}"
+
+    for behavior <- required_behaviors do
+      mappings = Map.fetch!(@row_coverage, behavior)
+      refute Enum.empty?(mappings), "row #{inspect(behavior)} maps to no covering test"
+
+      for {path, substring} <- mappings do
+        assert File.regular?(path),
+               "row #{inspect(behavior)} names a missing covering test file: #{path}"
+
+        contents = File.read!(path)
+
+        assert contents =~ substring,
+               "row #{inspect(behavior)}'s covering test at #{path} no longer contains the " <>
+                 "expected test name/assertion #{inspect(substring)}, so the covering test may " <>
+                 "have been renamed or deleted"
+      end
+    end
   end
 
   test "the contract locks B0 decisions and assigns eBook/audio work to B6/B7" do

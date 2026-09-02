@@ -265,6 +265,14 @@ defmodule CinderWeb.LibraryLive do
   # UX-only: `Books.pause_target/1`'s own `:grab_in_progress` refusal is the actual guard.
   def handle_info({:book_target_updated, _target}, socket), do: {:noreply, assign_books(socket)}
 
+  # `Books.log_duplicate_grab_refused/2`/`Books.log_metadata_drift/1`'s own broadcast (see
+  # `books.ex`), on the same `book_targets` topic `subscribe_targets/0` already joins when
+  # `@tab == :books` — no second subscription needed. Re-queries the capped last-20 list rather
+  # than prepending in place: cheap at 20 rows, and avoids a second source of truth for
+  # ordering/limit.
+  def handle_info({:book_ops_log_entry, _entry}, socket),
+    do: {:noreply, assign(socket, book_ops_log: Books.list_recent_ops_log())}
+
   def handle_info(_message, socket), do: {:noreply, socket}
 
   # `id` straight through, like `run_series_op/5` — `find_by_id/2` already does the `to_string/1`
@@ -296,14 +304,22 @@ defmodule CinderWeb.LibraryLive do
 
   # `@books` loads on every mount regardless of tab (cheap: no join, same as `@movies`/`@series`)
   # so the nav count is always right even without a live subscription to that tab's topic — see
-  # the moduledoc. The size aggregate and `@book_grabbing` (batched, not one `Grabs.for_target/1`
-  # call per rendered row) are both gated on the tab exactly like `assign_series/1`'s own
-  # `series_sizes` gate, for the same reason: nothing reads either off-tab.
+  # the moduledoc. The size aggregate, `@book_grabbing` (batched, not one `Grabs.for_target/1`
+  # call per rendered row), and `@book_ops_log` (the "Recent activity" panel) are all gated on
+  # the tab exactly like `assign_series/1`'s own `series_sizes` gate, for the same reason:
+  # nothing reads any of them off-tab.
   defp assign_books(socket) do
     on_books_tab? = socket.assigns.tab == :books
     sizes = if on_books_tab?, do: Books.target_sizes(), else: %{}
     grabbing = if on_books_tab?, do: Grabs.target_ids_in_progress(), else: MapSet.new()
-    assign(socket, books: Books.list_targets(), book_sizes: sizes, book_grabbing: grabbing)
+    ops_log = if on_books_tab?, do: Books.list_recent_ops_log(), else: []
+
+    assign(socket,
+      books: Books.list_targets(),
+      book_sizes: sizes,
+      book_grabbing: grabbing,
+      book_ops_log: ops_log
+    )
   end
 
   # Render-time narrowing of the active tab's list. Case-insensitive substring on the
@@ -429,6 +445,14 @@ defmodule CinderWeb.LibraryLive do
 
   defp kind_label(:ebook), do: gettext("eBook")
   defp kind_label(:audiobook), do: gettext("Audiobook")
+
+  # Gettext label for a `book_ops_log` row's category — the "Recent activity" panel's own
+  # analogue of `CinderWeb.IssueComponents.category_label/1`.
+  defp book_ops_category_label("duplicate_grab_refused"), do: gettext("Duplicate grab refused")
+  defp book_ops_category_label("metadata_drift"), do: gettext("Metadata drift")
+  defp book_ops_category_label("scan_failure"), do: gettext("Scan failure")
+  defp book_ops_category_label("scan_recovered"), do: gettext("Scan recovered")
+  defp book_ops_category_label(other), do: other
 
   defp contributor_names(work), do: Enum.map_join(work.credits, ", ", & &1.author.name)
 
@@ -860,6 +884,43 @@ defmodule CinderWeb.LibraryLive do
               </div>
             </div>
           </article>
+        </div>
+
+        <%!-- Read-only: no write affordance here, per the plan. Reloaded wholesale (not
+              prepended) on every `{:book_ops_log_entry, _}` broadcast — see `handle_info/2` —
+              since the list is already capped at 20 rows, re-querying is cheap and avoids a
+              second source of truth for ordering/limit. --%>
+        <div class="mt-8">
+          <h3 class="text-sm font-semibold text-base-content/70 mb-3">
+            {gettext("Recent activity")}
+          </h3>
+          <.empty_state
+            :if={@book_ops_log == []}
+            icon="hero-clock"
+            title={gettext("No activity yet")}
+          />
+          <ul :if={@book_ops_log != []} id="book-ops-log" class="space-y-2">
+            <li
+              :for={entry <- @book_ops_log}
+              id={"book-ops-log-#{entry.id}"}
+              class="rounded-box bg-base-200/50 p-3 text-sm"
+            >
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="badge badge-sm badge-outline">
+                  {book_ops_category_label(entry.category)}
+                </span>
+                <.link
+                  :if={entry.book_target}
+                  navigate={~p"/books/#{entry.book_target.work_id}"}
+                  class="link link-hover font-medium"
+                >
+                  {entry.book_target.work.title}
+                </.link>
+              </div>
+              <p class="mt-1 break-words text-base-content/80">{entry.detail}</p>
+              <p class="mt-1 text-xs text-base-content/60">{relative_time(entry.inserted_at)}</p>
+            </li>
+          </ul>
         </div>
       </section>
     </Layouts.app>

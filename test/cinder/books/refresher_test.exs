@@ -7,7 +7,16 @@ defmodule Cinder.Books.RefresherTest do
   import Mox
 
   alias Cinder.Books
-  alias Cinder.Books.{Edition, Identifier, PrimaryMetadataMock, Refresher, SecondaryMetadataMock}
+
+  alias Cinder.Books.{
+    BookOpsLog,
+    Edition,
+    Identifier,
+    PrimaryMetadataMock,
+    Refresher,
+    SecondaryMetadataMock
+  }
+
   alias Cinder.Books.Work
 
   setup :set_mox_global
@@ -112,6 +121,72 @@ defmodule Cinder.Books.RefresherTest do
     # Non-vacuous because the assertions above prove the failing work really did fail: had it
     # raised, `isolate/2` would have rescued and logged it here instead.
     refute log =~ "books refresher skipped"
+  end
+
+  describe "metadata drift — book_ops_log" do
+    test "a title change logs exactly one metadata_drift row with the old and new title" do
+      work = imported_work()
+
+      expect(PrimaryMetadataMock, :get_work, fn "OL50548W" ->
+        {:ok, provider_work(title: "Beloved (25th Anniversary)")}
+      end)
+
+      assert :ok = Refresher.refresh_one(reload(work))
+
+      assert [%BookOpsLog{category: "metadata_drift", detail: detail}] =
+               Repo.all(from(l in BookOpsLog))
+
+      assert detail == "title: Beloved → Beloved (25th Anniversary)"
+    end
+
+    test "a contributor-count change logs exactly one metadata_drift row with the old and new counts" do
+      work = imported_work()
+
+      expect(PrimaryMetadataMock, :get_work, fn "OL50548W" ->
+        {:ok,
+         provider_work([])
+         |> Map.put(:contributors, [
+           %{foreign_id: "OL30084A", name: "Toni Morrison", role: "author"},
+           %{foreign_id: "OL999A", name: "Second Author", role: "author"}
+         ])}
+      end)
+
+      assert :ok = Refresher.refresh_one(reload(work))
+
+      assert [%BookOpsLog{category: "metadata_drift", detail: "contributors: 1 → 2"}] =
+               Repo.all(from(l in BookOpsLog))
+    end
+
+    test "an unchanged refresh logs no metadata_drift rows" do
+      work = imported_work()
+
+      expect(PrimaryMetadataMock, :get_work, fn "OL50548W" -> {:ok, provider_work([])} end)
+
+      assert :ok = Refresher.refresh_one(reload(work))
+
+      assert Repo.aggregate(BookOpsLog, :count) == 0
+    end
+
+    # `book_ops_log` renamed away forces a genuine, unmocked insert failure — the `catch`
+    # clause in `Books.log_metadata_drift/1`'s `put_ops_log/1`, not a changeset error. Restored
+    # before the final assertions so `Repo.aggregate/2` can read the (empty) table again.
+    test "a Repo failure logging metadata drift does not affect the refresh itself" do
+      work = imported_work()
+
+      expect(PrimaryMetadataMock, :get_work, fn "OL50548W" ->
+        {:ok, provider_work(title: "Beloved (25th Anniversary)")}
+      end)
+
+      Repo.query!("ALTER TABLE book_ops_log RENAME TO book_ops_log_disabled")
+
+      log = capture_log(fn -> assert :ok = Refresher.refresh_one(reload(work)) end)
+
+      Repo.query!("ALTER TABLE book_ops_log_disabled RENAME TO book_ops_log")
+
+      assert Repo.get!(Work, work.id).title == "Beloved (25th Anniversary)"
+      assert log =~ "book ops_log insert raised"
+      assert Repo.aggregate(BookOpsLog, :count) == 0
+    end
   end
 
   defp imported_work(overrides \\ []) do

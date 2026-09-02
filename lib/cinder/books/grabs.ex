@@ -46,8 +46,16 @@ defmodule Cinder.Books.Grabs do
       {:ok, grab} -> {:ok, grab}
       {:error, changeset} -> {:error, conflict_reason(changeset)}
     end
+    |> log_duplicate(book_target_id, download_id, protocol, release_title)
   rescue
-    Ecto.ConstraintError -> {:error, :book_grab_exists}
+    Ecto.ConstraintError ->
+      log_duplicate(
+        {:error, :book_grab_exists},
+        book_target_id,
+        download_id,
+        protocol,
+        release_title
+      )
   end
 
   defp conflict_reason(%Ecto.Changeset{errors: errors} = changeset) do
@@ -55,6 +63,29 @@ defmodule Cinder.Books.Grabs do
       do: :book_grab_exists,
       else: changeset
   end
+
+  # Best-effort, additive only — the refusal itself is unchanged by this log.
+  defp log_duplicate(
+         {:error, :book_grab_exists} = error,
+         book_target_id,
+         download_id,
+         protocol,
+         release_title
+       ) do
+    Books.log_duplicate_grab_refused(
+      book_target_id,
+      duplicate_detail(download_id, protocol, release_title)
+    )
+
+    error
+  end
+
+  defp log_duplicate(result, _book_target_id, _download_id, _protocol, _release_title), do: result
+
+  defp duplicate_detail(download_id, protocol, nil), do: "#{protocol} download #{download_id}"
+
+  defp duplicate_detail(_download_id, protocol, release_title),
+    do: "#{release_title} (#{protocol})"
 
   @doc "The grab for a target, or nil."
   @spec for_target(integer()) :: BookGrab.t() | nil

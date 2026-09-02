@@ -6,8 +6,10 @@ defmodule Cinder.Books.GrabsTest do
   """
   use Cinder.DataCase, async: false
 
+  import ExUnit.CaptureLog
+
   alias Cinder.Books
-  alias Cinder.Books.Grabs
+  alias Cinder.Books.{BookOpsLog, Grabs}
   alias Cinder.Catalog
 
   setup do
@@ -132,6 +134,49 @@ defmodule Cinder.Books.GrabsTest do
       assert :ok = Grabs.delete(grab)
       assert_receive {:book_grab_deleted, target_id}
       assert target_id == grab.book_target_id
+    end
+  end
+
+  describe "duplicate grab refusal — book_ops_log" do
+    test "a duplicate grab attempt is refused and logs exactly one book_ops_log row", %{
+      grab: grab
+    } do
+      assert {:error, :book_grab_exists} =
+               Grabs.create(
+                 grab.book_target_id,
+                 "remote-dup-#{grab.id}",
+                 :torrent,
+                 "Duplicate Release"
+               )
+
+      rows = Repo.all(from l in BookOpsLog, where: l.book_target_id == ^grab.book_target_id)
+      assert [%BookOpsLog{category: "duplicate_grab_refused"}] = rows
+    end
+
+    # `book_ops_log` renamed away (mirroring `book_request_test.exs`'s own raw-SQL DB-failure
+    # simulation) forces a genuine, unmocked insert failure — the `catch` clause in
+    # `Books.log_duplicate_grab_refused/2`'s `put_ops_log/1`, not a changeset error. Restored
+    # before the final assertion so `Repo.aggregate/2` can read the (empty) table again.
+    test "a Repo failure logging the duplicate does not affect the refusal it is recording", %{
+      grab: grab
+    } do
+      Repo.query!("ALTER TABLE book_ops_log RENAME TO book_ops_log_disabled")
+
+      log =
+        capture_log(fn ->
+          assert {:error, :book_grab_exists} =
+                   Grabs.create(
+                     grab.book_target_id,
+                     "remote-dup2-#{grab.id}",
+                     :torrent,
+                     "Duplicate Release"
+                   )
+        end)
+
+      Repo.query!("ALTER TABLE book_ops_log_disabled RENAME TO book_ops_log")
+
+      assert log =~ "book ops_log insert raised"
+      assert Repo.aggregate(BookOpsLog, :count) == 0
     end
   end
 

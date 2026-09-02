@@ -40,10 +40,37 @@ defmodule Cinder.Books.Refresher do
   def refresh_one(work) do
     with {:ok, reference} <- work_reference(work),
          {:ok, resolution} <- resolve(reference),
-         {:ok, _work} <- store(work, resolution) do
+         before = Books.get_work(work.id),
+         {:ok, refreshed} <- store(work, resolution) do
+      record_drift(before, Books.get_work(refreshed.id))
       :ok
     end
   end
+
+  # Best-effort, additive only — a `book_ops_log` write failure never affects the refresh
+  # `store/2` already committed. Only `title` and the contributor-name-*set* (dedup by name,
+  # not raw credit-row count — `Cinder.Books.import_work_in_tx/2`'s own `put_credits/3`
+  # dedups by `{foreign_id, role}` before writing) drift is watched, per the plan's own scope.
+  defp record_drift(before, refreshed) do
+    for detail <- [title_drift(before, refreshed), contributor_drift(before, refreshed)],
+        not is_nil(detail) do
+      Books.log_metadata_drift(detail)
+    end
+
+    :ok
+  end
+
+  defp title_drift(%{title: same}, %{title: same}), do: nil
+  defp title_drift(%{title: old}, %{title: new}), do: "title: #{old} → #{new}"
+
+  defp contributor_drift(before, refreshed) do
+    old_count = contributor_name_count(before)
+    new_count = contributor_name_count(refreshed)
+    if old_count == new_count, do: nil, else: "contributors: #{old_count} → #{new_count}"
+  end
+
+  defp contributor_name_count(work),
+    do: work.credits |> Enum.map(& &1.author.name) |> Enum.uniq() |> length()
 
   # `book_identifiers` also holds isbn/asin rows, which name an edition rather than a work, and
   # `Cinder.Books.Metadata` only fetches works — so only a work-kind row can drive a refresh.
