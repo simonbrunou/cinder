@@ -1296,6 +1296,72 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get!(Episode, e2.id).file_path =~ "S01E02"
   end
 
+  test "a failed post-import client removal survives as a durable cleanup record, and a later pass drains it" do
+    saved = Application.get_env(:cinder, :move_on_import, false)
+    Application.put_env(:cinder, :move_on_import, true)
+    on_exit(fn -> Application.put_env(:cinder, :move_on_import, saved) end)
+
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    e2 = episode(season, 2)
+    {:ok, grab} = Catalog.create_grab("nzo-pack", :usenet, [e1.id, e2.id])
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/pack")
+    start_supervised!({TvPoller, interval: 60_000})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn "/dl/pack" -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl/pack" ->
+      {:ok,
+       [
+         {"/dl/pack/Show.S01E01.1080p.mkv", 3_000_000_000},
+         {"/dl/pack/Show.S01E02.1080p.mkv", 3_000_000_000}
+       ]}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, &import_stat(&1, 3_000_000_000))
+
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rename, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+
+    # #415: the immediate best-effort removal fails transiently (client restarting, an API
+    # timeout) — the exact failure the durable record has to survive.
+    expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-pack", _opts ->
+      {:error, :timeout}
+    end)
+
+    assert :ok = TvPoller.poll()
+
+    # The pre-existing outcome still holds: the grab — previously the only durable record of
+    # download_id/download_protocol — is gone, and both episodes imported their files.
+    assert Repo.get(Grab, grab.id) == nil
+    assert Repo.get!(Episode, e1.id).file_path =~ "S01E01"
+    assert Repo.get!(Episode, e2.id).file_path =~ "S01E02"
+
+    # A durable download_intents row now survives the failed removal, carrying exactly what a
+    # retry needs: the remote id/protocol/episode ids the deleted grab used to be the sole owner
+    # of (episodes carry no download_id column of their own).
+    intent = Repo.get_by!(Intent, kind: :season_pack, remote_id: "nzo-pack")
+    assert intent.status == :cleanup_pending
+    assert intent.protocol == :usenet
+    assert Enum.sort(intent.episode_ids) == Enum.sort([e1.id, e2.id])
+
+    # Simulate the bounded retry becoming due — the TV poller reconciles pending intents every
+    # tick, but a failed attempt backs off rather than retrying immediately.
+    intent |> Ecto.Changeset.change(next_attempt_at: nil) |> Repo.update!()
+
+    # The later pass succeeds: the remote job is actually removed this time.
+    expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-pack", _opts -> :ok end)
+
+    assert :ok = TvPoller.poll()
+
+    refute Repo.get(Intent, intent.id)
+    # Draining the cleanup record is not itself an episode-state change.
+    assert Repo.get!(Episode, e1.id).file_path =~ "S01E01"
+  end
+
   @tag :tmp_dir
   test "a long season-pack import keeps prepared stages while the movie poller reconciles", %{
     tmp_dir: tmp

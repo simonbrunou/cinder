@@ -1197,29 +1197,57 @@ defmodule Cinder.Download do
      short history retention) that has already evicted the job silently no-ops on its own remove,
      so on-disk cleanup can't depend on that history surviving (issue #115).
 
+  `opts[:fence]` (issue #415) durably records the client-remove attempt before making it, so a
+  transient failure (client restarting, an API timeout) survives as a retryable
+  `download_intents` `:cleanup_pending` row instead of being silently discarded — the same
+  fence-then-`cleanup_intents/1` pair `Cinder.Catalog`/`Cinder.Catalog.Grabs` already use for
+  delete/cancel/reap, just called AFTER this tick's import already committed rather than inside
+  its transaction. That ordering is safe here specifically because the durable owner survives
+  the import: a movie row is never deleted by import (only `Catalog.abort_upgrade/2` and
+  `delete_movie/3` ever clear its `download_id`, and both already fence first), and an episode's
+  grab is captured by the caller BEFORE `Catalog.Grabs` deletes it — a retry can never fire
+  against a payload the import is still reading, because the fenced intent does not exist until
+  the import already has. Accepted values: `{:movie, movie}` (`fence_movie_cleanup/2`) or
+  `{:episode, episode_ids, spec}` (`fence_episode_cleanup/2`, `spec` from
+  `Catalog.grab_cleanup_spec/2`). Omitted (`nil`, the default) keeps today's one-shot
+  best-effort removal — the shape used where the caller has nothing durable left to fence
+  (`Cinder.Download.PollerSkeleton`'s `reject_release/4`, whose `download_id` is always `nil`
+  here regardless of any fence).
+
   A failure in either is logged, never propagated. Always `:ok`.
   """
-  def remove_after_import(protocol, download_id, content_path) do
-    move_on_import? = Application.get_env(:cinder, :move_on_import, false)
-
-    if move_on_import? and protocol == :usenet do
-      maybe_remove_client(protocol, download_id)
+  def remove_after_import(protocol, download_id, content_path, opts \\ []) do
+    if move_on_import_removal?(protocol) do
+      maybe_remove_client(protocol, download_id, Keyword.get(opts, :fence))
       best_effort_delete_source(content_path)
     end
 
     :ok
   end
 
-  defp maybe_remove_client(_protocol, download_id) when download_id in [nil, ""], do: :ok
+  @doc "Whether `remove_after_import/4` will attempt anything for `protocol` right now."
+  def move_on_import_removal?(protocol),
+    do: protocol == :usenet and Application.get_env(:cinder, :move_on_import, false)
 
-  defp maybe_remove_client(protocol, download_id) do
+  defp maybe_remove_client(_protocol, download_id, _fence) when download_id in [nil, ""], do: :ok
+
+  defp maybe_remove_client(_protocol, _download_id, {:movie, movie}) do
+    movie |> fence_movie_cleanup() |> cleanup_intents()
+  end
+
+  defp maybe_remove_client(_protocol, _download_id, {:episode, episode_ids, spec}) do
+    episode_ids |> fence_episode_cleanup([spec]) |> cleanup_intents()
+  end
+
+  defp maybe_remove_client(protocol, download_id, nil) do
     case client_for(protocol) do
       {:ok, client} -> best_effort_remove(client, download_id)
       :error -> :ok
     end
   end
 
-  defp best_effort_delete_source(content_path) do
+  @doc "Deletes `content_path` best-effort. Shared by `remove_after_import/4` and the book path."
+  def best_effort_delete_source(content_path) do
     case Library.delete_download_source(content_path) do
       :ok ->
         :ok

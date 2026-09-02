@@ -157,20 +157,31 @@ defmodule Cinder.Library.BookImport do
     end
   end
 
-  # Post-commit, best-effort. ORDER MATTERS: delete the grab first, then honour `move_on_import`.
+  # Post-commit, best-effort. ORDER MATTERS.
   #
-  # The reverse order has a crash window that demotes a valid import. `remove_after_import/3`
-  # deletes the source payload; a crash between that and the grab delete leaves an `:available`
-  # target, a good `book_files` row, and a surviving grab whose `content_path` no longer exists.
-  # The next tick re-imports it, fails `:enoent` ten times, and holds a target that is genuinely
-  # available. Deleting the grab first inverts the failure: a crash then leaves the source on
-  # disk, which the download client's own retention handles and no Cinder state contradicts.
+  # When the removal will actually be attempted (`move_on_import` on, usenet protocol —
+  # `Download.move_on_import_removal?/1`), the grab is fenced-then-deleted atomically via
+  # `Download.fence_book_cleanup/1` (#415): a durable `download_intents` `:cleanup_pending` row is
+  # inserted and the grab deleted in the SAME transaction, so a crash between them is impossible,
+  # and a transient client-removal failure survives as that row for `reconcile_pending_intents/1`'s
+  # bounded retry (every `BookPoller` tick) instead of leaking the remote job forever — the same
+  # fix #411 made for the `fail_download/2` path, applied here to the success path.
   #
-  # `move_on_import` is usenet-only inside `remove_after_import/3` (the movie path's rule), so a
-  # seeding torrent is never touched, and it never raises.
+  # Otherwise (torrent, or `move_on_import` off — nothing will be removed from the client), the
+  # grab is deleted plain. Deleting it first (rather than after) is what avoids the crash window
+  # that used to matter here: a crash between a content-path delete and the grab delete would
+  # leave an `:available` target, a good `book_files` row, and a surviving grab whose
+  # `content_path` no longer exists — the next tick re-imports it, fails `:enoent` ten times, and
+  # holds a target that is genuinely available.
   defp finish(grab, file, superseded_paths) do
-    Books.Grabs.delete(grab)
-    Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
+    if Download.move_on_import_removal?(grab.download_protocol) do
+      {:ok, intent_ids} = Download.fence_book_cleanup(grab)
+      Download.cleanup_intents(intent_ids)
+      Download.best_effort_delete_source(grab.content_path)
+    else
+      Books.Grabs.delete(grab)
+    end
+
     if superseded_paths == [], do: {:ok, file}, else: {:ok, file, superseded_paths}
   end
 

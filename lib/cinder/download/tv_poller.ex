@@ -314,6 +314,11 @@ defmodule Cinder.Download.TvPoller do
     kind, value -> {:error, {kind, value}}
   end
 
+  # #415: `Catalog.commit_grab_imports/4`'s `:closed` branch deletes `grab` — the only durable
+  # record of `download_id`/`download_protocol` (episodes carry no such column) — inside its own
+  # already-committed transaction, before `remove_after_import` ever runs. `episode_ids` is
+  # captured from the still-linked `grab.id` BEFORE that call so the fence can name the right
+  # episodes even though `grab_id` is nilified by the time `remove_after_import` runs.
   defp finalize_standard_grab(grab, staged, residuals) do
     # `placed?` is absent on every stage but the arbitrated keep (#250), which is the one case
     # where the episode's file did not change and its part files must survive the commit.
@@ -321,6 +326,8 @@ defmodule Cinder.Download.TvPoller do
       Enum.map(staged, fn {episode_id, stage} ->
         {episode_id, stage.dest, stage.quality, Map.get(stage, :placed?, true)}
       end)
+
+    episode_ids = Catalog.episode_ids_for_grab(grab.id)
 
     case Catalog.commit_grab_imports(
            grab,
@@ -331,7 +338,10 @@ defmodule Cinder.Download.TvPoller do
       {:ok, :closed, _grab} ->
         commit_stages(staged)
         remove_superseded_episode_files(grab.episodes)
-        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
+
+        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path,
+          fence: {:episode, episode_ids, Catalog.grab_cleanup_spec(grab, episode_ids)}
+        )
 
       {:ok, :open, _grab} ->
         commit_stages(staged)
@@ -441,11 +451,19 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
+  # #415: `Catalog.close_grab/1` deletes `grab` inside its own already-committed transaction,
+  # before `remove_after_import` ever runs — `episode_ids` is captured from the still-linked
+  # `grab.id` first, same reasoning as `finalize_standard_grab/3`.
   @doc false
   def finalize_residual_grab(%Grab{} = grab) do
+    episode_ids = Catalog.episode_ids_for_grab(grab.id)
+
     case Catalog.close_grab(grab) do
       {:ok, :closed, _grab} ->
-        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
+        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path,
+          fence: {:episode, episode_ids, Catalog.grab_cleanup_spec(grab, episode_ids)}
+        )
+
         {:ok, :closed}
 
       {:error, :unresolved_grab_files} ->
@@ -462,9 +480,14 @@ defmodule Cinder.Download.TvPoller do
   defp finalize_staged_grab(%Grab{arbitrate_at_import: true} = grab, staged),
     do: finalize_standard_grab(grab, staged, [])
 
+  # #415: `Catalog.finish_grab/3` deletes `grab` inside its own already-committed transaction,
+  # before `remove_after_import` ever runs — `episode_ids` is captured from the still-linked
+  # `grab.id` first, same reasoning as `finalize_standard_grab/3`.
   defp finalize_staged_grab(grab, staged) do
     imported =
       Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
+
+    episode_ids = Catalog.episode_ids_for_grab(grab.id)
 
     case Catalog.finish_grab(
            grab,
@@ -474,7 +497,10 @@ defmodule Cinder.Download.TvPoller do
       {:ok, _grab} ->
         commit_stages(staged)
         remove_superseded_episode_files(grab.episodes)
-        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
+
+        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path,
+          fence: {:episode, episode_ids, Catalog.grab_cleanup_spec(grab, episode_ids)}
+        )
 
       {:error, :stale_grab} ->
         rollback_stages(staged)
