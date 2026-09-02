@@ -16,6 +16,7 @@ defmodule Cinder.Books do
     BookBlockedRelease,
     BookFile,
     BookGrab,
+    BookOpsLog,
     BookTarget,
     BookTargetTransition,
     Credit,
@@ -151,6 +152,34 @@ defmodule Cinder.Books do
     end
   end
 
+  @doc """
+  The bare title and contributor-name list for `work_id`, with no series/target/edition
+  preloads — `Cinder.Books.Refresher`'s metadata-drift check reads only these two fields, and
+  `get_work/1`'s full `@work_preloads` shape (identifiers, series memberships, targets, editions
+  with their own identifiers/credits/authors) costs several extra queries neither comparison
+  touches. Two queries total (the work's `title`, then its credits joined to author names), not
+  `get_work/1`'s much larger preload set. `nil` if the work no longer exists.
+  """
+  @spec work_identity_snapshot(integer()) ::
+          %{title: String.t(), contributors: [String.t()]} | nil
+  def work_identity_snapshot(work_id) do
+    case Repo.one(from w in Work, where: w.id == ^work_id, select: w.title) do
+      nil ->
+        nil
+
+      title ->
+        contributors =
+          Repo.all(
+            from c in Credit,
+              join: a in assoc(c, :author),
+              where: c.work_id == ^work_id,
+              select: a.name
+          )
+
+        %{title: title, contributors: contributors}
+    end
+  end
+
   def list_targets(%Work{id: id}) do
     Repo.all(from t in BookTarget, where: t.work_id == ^id, order_by: [asc: t.media_kind])
   end
@@ -164,6 +193,21 @@ defmodule Cinder.Books do
   @spec list_targets() :: [BookTarget.t()]
   def list_targets do
     Repo.all(from t in BookTarget, order_by: [desc: t.id], preload: [work: [credits: :author]])
+  end
+
+  @doc """
+  The last `limit` `book_ops_log` rows, newest first, with `book_target: :work` preloaded — the
+  `/library` books tab's "Recent activity" panel source. `book_target` (and `work`) is `nil` for
+  a `metadata_drift` row, which names no single target (see `Cinder.Books.BookOpsLog`'s doc).
+  """
+  @spec list_recent_ops_log(pos_integer()) :: [BookOpsLog.t()]
+  def list_recent_ops_log(limit \\ 20) do
+    Repo.all(
+      from l in BookOpsLog,
+        order_by: [desc: l.id],
+        limit: ^limit,
+        preload: [book_target: :work]
+    )
   end
 
   @doc """
@@ -351,6 +395,71 @@ defmodule Cinder.Books do
         where: b.book_target_id == ^target_id,
         select: b.release_title
     )
+  end
+
+  @doc """
+  Best-effort log of a duplicate grab attempt `Cinder.Books.Grabs.create/5`'s unique-index
+  fence refused. Log-and-swallow on its own write failure — mirrors `maybe_block_release/3`
+  above; a diagnostic row is never a reason to fail the refusal it is recording. Broadcasts
+  `{:book_ops_log_entry, entry}` on `Cinder.Books.subscribe_targets/0`'s topic on success.
+  """
+  @spec log_duplicate_grab_refused(integer(), String.t()) :: :ok
+  def log_duplicate_grab_refused(book_target_id, detail) do
+    put_ops_log(%{
+      book_target_id: book_target_id,
+      category: "duplicate_grab_refused",
+      detail: detail
+    })
+  end
+
+  @doc """
+  Best-effort log of a title or contributor-set change `Cinder.Books.Refresher` observed
+  across one refresh. No `book_target_id`: see `Cinder.Books.BookOpsLog`'s doc for why.
+  Log-and-swallow on its own write failure, same contract as `log_duplicate_grab_refused/2`.
+  """
+  @spec log_metadata_drift(String.t()) :: :ok
+  def log_metadata_drift(detail), do: put_ops_log(%{category: "metadata_drift", detail: detail})
+
+  @doc """
+  Best-effort log that an Audiobookshelf scan request failed (`Cinder.Download.BookPoller`'s
+  `scan_pending/1`), written only on the healthy-or-startup-to-failing transition, mirroring
+  `log_scan_recovered/0`'s own transition-only contract. A first draft of this logged every
+  occurrence, reasoning that an operator wants an exact failure count — but this call site's
+  poller tick is `@default_interval 5_000` (5s), so a continuously unreachable Audiobookshelf for
+  the full two-week dogfood window would write 14 * 86_400 / 5 = 241_920 rows, not a "count" any
+  operator can read. One row marking when the outage started, paired with `log_scan_recovered/0`'s
+  row marking when it ended, answers the operator's actual question ("is it down, and for how
+  long") without unbounded growth. No `book_target_id`: a scan failure is a fact about the
+  Audiobookshelf connection, not about any one pending target.
+  """
+  @spec log_scan_failure(String.t()) :: :ok
+  def log_scan_failure(detail), do: put_ops_log(%{category: "scan_failure", detail: detail})
+
+  @doc """
+  Best-effort log that an Audiobookshelf scan succeeded after a prior failure, written only on
+  the transition, never on a steady run of successful ticks, so a permanently healthy consumer
+  never accumulates one row per tick over a dogfood window.
+  """
+  @spec log_scan_recovered() :: :ok
+  def log_scan_recovered, do: put_ops_log(%{category: "scan_recovered", detail: "scan succeeded"})
+
+  defp put_ops_log(attrs) do
+    case %BookOpsLog{} |> BookOpsLog.changeset(attrs) |> Repo.insert() do
+      {:ok, entry} ->
+        broadcast({:book_ops_log_entry, entry})
+        :ok
+
+      {:error, changeset} ->
+        Logger.warning(
+          "book ops_log insert failed for #{inspect(attrs)}: #{inspect(changeset.errors)}"
+        )
+
+        :ok
+    end
+  catch
+    kind, value ->
+      Logger.warning("book ops_log insert raised: #{inspect({kind, value})}")
+      :ok
   end
 
   @doc """

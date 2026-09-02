@@ -388,10 +388,44 @@ defmodule Cinder.Download.BookPoller do
     end
   end
 
+  @scan_failed_key {__MODULE__, :audiobookshelf_scan_failed}
+
   defp scan_pending(pending) do
     case AudiobookServer.impl().scan() do
-      :ok -> Enum.each(pending, &Books.mark_audiobookshelf_scanned(&1.id))
-      {:error, reason} -> warn_audiobookshelf_scan_failed(reason)
+      :ok ->
+        Enum.each(pending, &Books.mark_audiobookshelf_scanned(&1.id))
+        maybe_log_scan_recovered()
+
+      {:error, reason} ->
+        maybe_log_scan_failure(reason)
+        warn_audiobookshelf_scan_failed(reason)
+    end
+  end
+
+  # Both written only on their respective transition (`:persistent_term`, not the GenServer's own
+  # state or Process dictionary: this poller's whole design re-derives every tick's work from the
+  # DB so a crash/restart resumes cleanly (see the moduledoc), and the failed/recovered signal has
+  # to survive that same restart to stay meaningful — a scan that failed, then a crash, then a
+  # scan that succeeds on the freshly restarted process IS a recovery an operator should see, not
+  # a transition this mechanism silently swallows because the flag lived in the dead process.
+  # `:persistent_term` is VM-global and already this module's sibling `PollerSkeleton`'s own
+  # choice for exactly this kind of cross-restart tick state, its `:last_run`/`:started_at`
+  # stamps). See `Cinder.Books.log_scan_failure/1`'s doc for why this call site logs only the
+  # first failure of a run rather than one row per tick: at this poller's 5-second interval, a
+  # continuously unreachable Audiobookshelf for the whole two-week dogfood window would otherwise
+  # write 241,920 rows. One row marking when an outage started, paired with one marking when it
+  # ended, is what an operator can actually read.
+  defp maybe_log_scan_failure(reason) do
+    unless :persistent_term.get(@scan_failed_key, false) do
+      :persistent_term.put(@scan_failed_key, true)
+      Books.log_scan_failure(inspect(reason))
+    end
+  end
+
+  defp maybe_log_scan_recovered do
+    if :persistent_term.get(@scan_failed_key, false) do
+      :persistent_term.erase(@scan_failed_key)
+      Books.log_scan_recovered()
     end
   end
 

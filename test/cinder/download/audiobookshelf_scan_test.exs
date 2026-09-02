@@ -9,11 +9,12 @@ defmodule Cinder.Download.AudiobookshelfScanTest do
   """
   use Cinder.DataCase, async: false
 
+  import Ecto.Query
   import ExUnit.CaptureLog
   import Mox
 
   alias Cinder.Books
-  alias Cinder.Books.{BookFile, BookGrab}
+  alias Cinder.Books.{BookFile, BookGrab, BookOpsLog}
   alias Cinder.Catalog
   alias Cinder.Download.BookPoller
   alias Cinder.Repo
@@ -23,6 +24,8 @@ defmodule Cinder.Download.AudiobookshelfScanTest do
 
   setup do
     stub(Cinder.Download.ClientMock, :files, fn _id -> {:ok, []} end)
+    :persistent_term.erase({BookPoller, :audiobookshelf_scan_failed})
+    on_exit(fn -> :persistent_term.erase({BookPoller, :audiobookshelf_scan_failed}) end)
     :ok
   end
 
@@ -190,6 +193,113 @@ defmodule Cinder.Download.AudiobookshelfScanTest do
       assert %DateTime{} = Repo.reload!(t1).audiobookshelf_scanned_at
       assert %DateTime{} = Repo.reload!(t2).audiobookshelf_scanned_at
       assert %DateTime{} = Repo.reload!(t3).audiobookshelf_scanned_at
+    end
+  end
+
+  describe "scan failure/recovery ops log" do
+    test "a scan failure logs exactly one scan_failure ops-log row for the outage's start, not
+          one per tick",
+         ctx do
+      %{release_dir: release_dir} = downloading(ctx)
+
+      expect(Cinder.Library.AudiobookServerMock, :scan, 1, fn -> {:error, :econnrefused} end)
+      complete_download(release_dir)
+      capture_log(fn -> poll!() end)
+
+      assert [%BookOpsLog{category: "scan_failure", detail: detail, book_target_id: nil}] =
+               Repo.all(BookOpsLog)
+
+      assert detail =~ "econnrefused"
+
+      # Ten more consecutive failures (a still-unreachable Audiobookshelf, the exact case an
+      # every-occurrence design would flood at this poller's 5-second tick) log no further rows:
+      # the outage is already recorded, and only its eventual recovery is worth a second row.
+      capture_log(fn ->
+        for _ <- 1..10 do
+          expect(Cinder.Library.AudiobookServerMock, :scan, 1, fn -> {:error, :econnrefused} end)
+          poll!()
+        end
+      end)
+
+      assert length(Repo.all(BookOpsLog)) == 1
+    end
+
+    test "a scan succeeding on the first attempt (never having failed) logs no scan_recovered row",
+         ctx do
+      %{release_dir: release_dir} = downloading(ctx)
+
+      expect(Cinder.Library.AudiobookServerMock, :scan, 1, fn -> :ok end)
+      complete_download(release_dir)
+      poll!()
+
+      assert Repo.all(BookOpsLog) == []
+    end
+
+    test "a scan succeeding after a prior failure logs exactly one scan_recovered row, and a
+          further healthy tick logs no more",
+         ctx do
+      %{release_dir: release_dir} = downloading(ctx)
+
+      expect(Cinder.Library.AudiobookServerMock, :scan, 1, fn -> {:error, :econnrefused} end)
+      complete_download(release_dir)
+      capture_log(fn -> poll!() end)
+
+      expect(Cinder.Library.AudiobookServerMock, :scan, 1, fn -> :ok end)
+      poll!()
+
+      assert [
+               %BookOpsLog{category: "scan_failure"},
+               %BookOpsLog{category: "scan_recovered", book_target_id: nil}
+             ] = Repo.all(from(l in BookOpsLog, order_by: l.id))
+
+      # A steady-state healthy tick afterward (no pending target left, so no scan is even
+      # requested) never accumulates another recovered row.
+      poll!()
+      assert length(Repo.all(BookOpsLog)) == 2
+    end
+
+    # `book_ops_log` renamed away forces a genuine, unmocked insert failure — the `catch`
+    # clause in `Books.log_scan_failure/1`'s `put_ops_log/1`, not a changeset error. Restored
+    # before the final assertions so `Repo.all/1` can read the (empty) table again. Mirrors
+    # `grabs_test.exs`'s and `refresher_test.exs`'s own Repo-failure isolation tests.
+    test "a Repo failure logging a scan failure does not affect the scan-failure outcome itself",
+         ctx do
+      %{target: target, release_dir: release_dir} = downloading(ctx)
+
+      expect(Cinder.Library.AudiobookServerMock, :scan, 1, fn -> {:error, :econnrefused} end)
+      complete_download(release_dir)
+
+      Repo.query!("ALTER TABLE book_ops_log RENAME TO book_ops_log_disabled")
+
+      log = capture_log(fn -> poll!() end)
+
+      Repo.query!("ALTER TABLE book_ops_log_disabled RENAME TO book_ops_log")
+
+      assert log =~ "book ops_log insert raised"
+      assert Repo.reload!(target).audiobookshelf_scanned_at == nil
+      assert Repo.all(BookOpsLog) == []
+    end
+
+    test "a Repo failure logging a scan recovery does not affect the scan-recovered outcome
+          itself",
+         ctx do
+      %{target: target, release_dir: release_dir} = downloading(ctx)
+
+      expect(Cinder.Library.AudiobookServerMock, :scan, 1, fn -> {:error, :econnrefused} end)
+      complete_download(release_dir)
+      capture_log(fn -> poll!() end)
+
+      Repo.query!("ALTER TABLE book_ops_log RENAME TO book_ops_log_disabled")
+
+      expect(Cinder.Library.AudiobookServerMock, :scan, 1, fn -> :ok end)
+      log = capture_log(fn -> poll!() end)
+
+      Repo.query!("ALTER TABLE book_ops_log_disabled RENAME TO book_ops_log")
+
+      assert log =~ "book ops_log insert raised"
+      assert %DateTime{} = Repo.reload!(target).audiobookshelf_scanned_at
+      # The pre-rename scan_failure row survives untouched; no scan_recovered row was added.
+      assert [%BookOpsLog{category: "scan_failure"}] = Repo.all(BookOpsLog)
     end
   end
 

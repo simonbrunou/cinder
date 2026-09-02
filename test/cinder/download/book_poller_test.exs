@@ -12,6 +12,7 @@ defmodule Cinder.Download.BookPollerTest do
 
   import ExUnit.CaptureLog
   import Mox
+  import Cinder.PollerHelpers
 
   alias Cinder.Books
   alias Cinder.Books.{BookFile, BookGrab}
@@ -28,6 +29,8 @@ defmodule Cinder.Download.BookPollerTest do
     # The in-flight content gate asks the client what files the job will deliver. Default to a
     # clean payload; the blocked-content test overrides this with its own expectation.
     stub(Cinder.Download.ClientMock, :files, fn _id -> {:ok, ["The Dispossessed.epub"]} end)
+    :persistent_term.erase({BookPoller, :audiobookshelf_scan_failed})
+    on_exit(fn -> :persistent_term.erase({BookPoller, :audiobookshelf_scan_failed}) end)
     :ok
   end
 
@@ -680,6 +683,38 @@ defmodule Cinder.Download.BookPollerTest do
 
       # The grab is consumed, so the replay does not loop forever.
       assert Repo.all(BookGrab) == []
+    end
+  end
+
+  describe "restart recovery" do
+    test "the poller recovers from a crash and still advances the in-flight grab (OTP payoff)",
+         ctx do
+      %{grab: grab, target: target, books: books, release_dir: release_dir} =
+        downloading(ctx, "The Dispossessed.epub")
+
+      pid = start_supervised!({BookPoller, interval: 60_000})
+
+      complete_download(release_dir)
+
+      Process.exit(pid, :kill)
+      new_pid = await_restart(BookPoller, pid)
+      assert new_pid != pid
+
+      assert :ok = BookPoller.poll(new_pid)
+
+      target = Repo.reload!(target)
+      assert target.status == :available
+
+      file = Repo.get_by!(BookFile, book_target_id: target.id)
+
+      expected =
+        Path.join([books, "Ursula K. Le Guin", "The Dispossessed", "The Dispossessed.epub"])
+
+      assert file.path == expected
+      assert File.read!(expected) == epub_bytes()
+
+      # The grab is the transient row: it exists only while a download is in flight.
+      refute Repo.get(BookGrab, grab.id)
     end
   end
 

@@ -441,6 +441,35 @@ defmodule CinderWeb.LibraryLiveTest do
       assert has_element?(lv, "#library-books-wanted")
       assert has_element?(lv, "#library-books-held")
     end
+
+    test "the Recent activity panel is empty until a book_ops_log entry exists, then renders " <>
+           "live with its category label, target link, and detail",
+         %{conn: conn} do
+      target = book_target!(%{title: "Dune"})
+
+      {:ok, lv, html} = live(conn, ~p"/library?type=books")
+      assert html =~ "Recent activity"
+      assert html =~ "No activity yet"
+      refute has_element?(lv, "#book-ops-log")
+
+      :ok = Books.log_duplicate_grab_refused(target.id, "torrent Dune Release")
+
+      assert has_element?(lv, "#book-ops-log li", "Duplicate grab refused")
+      assert has_element?(lv, ~s|#book-ops-log a[href="/books/#{target.work_id}"]|, "Dune")
+      assert render(lv) =~ "torrent Dune Release"
+      refute render(lv) =~ "No activity yet"
+    end
+
+    test "a metadata-drift entry with no associated target renders its detail without a link",
+         %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/library?type=books")
+
+      :ok = Books.log_metadata_drift("title: Old Name -> New Name")
+
+      assert has_element?(lv, "#book-ops-log li", "Metadata drift")
+      assert has_element?(lv, "#book-ops-log li", "title: Old Name -> New Name")
+      refute has_element?(lv, "#book-ops-log a")
+    end
   end
 
   test "non-admins are redirected away from /library", %{conn: _conn} do
