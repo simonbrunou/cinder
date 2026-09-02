@@ -69,6 +69,9 @@ config :cinder,
   # Disabled by default (overrides the prod Ffprobe impl) so the import suite never shells out;
   # the media_info tests opt in per-test via Application.put_env(MediaInfoMock).
   media_info: nil,
+  # Same posture as :media_info, for the audiobook multi-track resolver's tag probe — disabled by
+  # default; `Cinder.Library.AudiobookSourcesTest` opts in per test via AudioProbeMock.
+  audio_probe: nil,
   notifier: Cinder.TestNotifier,
   subtitles_provider: Cinder.Subtitles.ProviderMock,
   subtitles_translator: Cinder.Subtitles.TranslatorMock,

@@ -14,7 +14,7 @@ defmodule Cinder.Download do
 
   require Logger
   alias Cinder.{Acquisition, Books, Catalog, Library, Notifier, Repo, Settings, Vault}
-  alias Cinder.Acquisition.{AnimePreferences, BookRelease, Release}
+  alias Cinder.Acquisition.{AnimePreferences, AudiobookRelease, BookRelease, Release}
   alias Cinder.Books.{BookGrab, BookTarget}
   alias Cinder.Catalog.{Grab, MediaProfile, Movie}
   alias Cinder.Download.{Intent, IntentEpisode}
@@ -188,20 +188,29 @@ defmodule Cinder.Download do
   @doc """
   Durably submits an operator-chosen book release for `target` and creates its grab.
 
-  A `%BookRelease{}` is converted to the `%Release{}` the intent journal and every download client
-  already speak: the client only ever needs a title, a URL and a protocol, and giving the
-  behaviour a second release struct would fork four adapters to carry fields none of them read.
-  The book-specific evidence stays in the books tables, not in the downloader.
+  A `%BookRelease{}`/`%AudiobookRelease{}` is converted to the `%Release{}` the intent journal
+  and every download client already speak: the client only ever needs a title, a URL and a
+  protocol, and giving the behaviour a third release struct would fork four adapters to carry
+  fields none of them read. The book-specific evidence stays in the books tables, not in the
+  downloader.
 
   No anime policy marker: `ensure_policy_marker/2` resolves an Anime handling profile, and
   `Cinder.LibraryKind` gives book kinds `handlings: [:standard]` only. Passing a book target
   through it would ask the video policy engine a question with no meaning here.
 
-  `:ebook` only. `:audiobook` is a live media kind with its own library root, and nothing
-  downstream of here is audiobook-aware: `BookSources` accepts `.epub`/`.azw3`/`.mobi`, so an
-  audiobook target handed an e-book release would publish an EPUB into the audiobook root and
-  report the audiobook available. Audiobooks are B7; until then this refuses rather than
-  half-works.
+  Two concrete clauses, one per live book media kind — each pattern-matches BOTH the target's
+  `media_kind` AND the release struct's own type, so a `%BookRelease{}` can never reach the
+  audiobook path (or an `%AudiobookRelease{}` the e-book path) by accident: the type match is the
+  safety rail, not merely the `media_kind` field. The two clauses are copied scaffolding, not
+  shared — the *dispatch* shape (check `Intent`, reserve-or-reconcile) is identical, but the
+  release struct being converted differs, and a single clause accepting either shape would let a
+  release built for one kind reach the other's pipeline by a caller's mistake rather than a
+  compile-time refusal.
+
+  The catch-all clause stays below both concrete ones and is unreachable for the two live kinds
+  today — it guards against any *future* third `Cinder.LibraryKind.books()` entry landing here
+  with no clause of its own, the same "half-works" failure mode this refusal has always fenced,
+  generalized from one unwired kind to any not-yet-wired one.
   """
   def grab_book_target(target, release, opts \\ [])
 
@@ -218,13 +227,41 @@ defmodule Cinder.Download do
     end
   end
 
-  def grab_book_target(%BookTarget{}, %BookRelease{}, _opts),
+  def grab_book_target(
+        %BookTarget{media_kind: :audiobook} = target,
+        %AudiobookRelease{} = release,
+        opts
+      ) do
+    case Repo.get_by(Intent, kind: :book_target, target_id: target.id) do
+      nil ->
+        reserve_and_reconcile(:book_target, target.id, [], audiobook_release(release), opts)
+
+      %Intent{status: :cleanup_pending} ->
+        {:error, :download_intent_busy}
+
+      intent ->
+        reconcile_matching_intent(intent, audiobook_release(release), [], opts)
+    end
+  end
+
+  def grab_book_target(%BookTarget{}, _release, _opts),
     do: {:error, :unsupported_media_kind}
 
   # A book release carries no mapping or policy snapshot: both are video-pipeline evidence (an
   # episode-numbering decision and an Anime language policy). Left nil, `Intent`'s validators
   # accept them and the reservation's equality checks pass unchanged.
   defp book_release(%BookRelease{} = release) do
+    %Release{
+      title: release.title,
+      download_url: release.download_url,
+      download_url_origin: release.download_url_origin,
+      protocol: release.protocol
+    }
+  end
+
+  # Mirrors `book_release/1` exactly — same nil mapping/policy snapshot reasoning, different
+  # source struct.
+  defp audiobook_release(%AudiobookRelease{} = release) do
     %Release{
       title: release.title,
       download_url: release.download_url,

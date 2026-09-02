@@ -52,14 +52,22 @@ defmodule Cinder.Library.BookArchive do
   `resolve_fun` on it. The scratch directory survives a success (see the moduledoc); a failure
   removes it, so a refused attempt does not accumulate partial extraction garbage under the
   import root.
+
+  `opts` (`:max_entries`, `:max_expanded_size`) is forwarded to whichever extractor `extract/3`
+  dispatches to — both `Zip.extract/3` and `Rar.extract/3` already accept and apply it, but this
+  module itself never passed any until `Cinder.Library.AudiobookSources.resolve/1` needed the
+  audiobook profile's own 8 GB ceiling instead of the e-book-tuned 1 GB extractor default.
+  `Cinder.Library.BookSources.resolve/1`'s own call site is unchanged: `opts` defaults to `[]`,
+  exactly what it passed by omission before this arity grew.
   """
-  @spec extract_and_resolve(String.t(), (String.t() -> result)) :: result | {:error, term()}
-        when result: {:ok, String.t(), atom()}
-  def extract_and_resolve(archive_path, resolve_fun) do
+  @spec extract_and_resolve(String.t(), (String.t() -> result), keyword()) ::
+          result | {:error, term()}
+        when result: term()
+  def extract_and_resolve(archive_path, resolve_fun, opts \\ []) do
     with {:ok, safe_path} <- safe_archive_source(archive_path),
          scratch_dir = Path.join(Path.dirname(safe_path), @scratch_dir_name),
          :ok <- reset_scratch_dir(scratch_dir),
-         :ok <- extract(safe_path, scratch_dir) do
+         :ok <- extract(safe_path, scratch_dir, opts) do
       finish(resolve_fun.(scratch_dir), scratch_dir)
     else
       {:error, _reason} = error -> error
@@ -80,20 +88,28 @@ defmodule Cinder.Library.BookArchive do
     end
   end
 
-  defp extract(archive_path, scratch_dir) do
+  defp extract(archive_path, scratch_dir, opts) do
     extension = String.downcase(Path.extname(archive_path))
 
     cond do
-      extension in @zip_extensions -> Zip.extract(archive_path, scratch_dir)
-      extension in @rar_extensions -> Rar.extract(archive_path, scratch_dir)
+      extension in @zip_extensions -> Zip.extract(archive_path, scratch_dir, opts)
+      extension in @rar_extensions -> Rar.extract(archive_path, scratch_dir, opts)
       true -> {:error, :unsupported_archive}
     end
   end
 
-  defp finish({:ok, _source, _format} = ok, _scratch_dir), do: ok
-
+  # Generic on purpose: `resolve_fun`'s own type is `(String.t() -> result) when result: term()`
+  # (see `extract_and_resolve/3`'s spec) — `BookSources.resolve/1`'s resolve_fun returns a
+  # 3-tuple (`{:ok, source, format}`), `Cinder.Library.AudiobookSources.resolve/1`'s returns a
+  # 2-tuple (`{:ok, tracks}`). A clause that only matched the 3-tuple shape left every SUCCESSFUL
+  # audiobook extraction raising `FunctionClauseError` here (caught only by the poller's
+  # `isolate/2` rescue, so it surfaced as an opaque logged failure, never a working import) — the
+  # `:error` clause is the only shape this function needs to special-case; anything else a
+  # `resolve_fun` returns is success, unconditionally.
   defp finish({:error, _reason} = error, scratch_dir) do
     _ = File.rm_rf(scratch_dir)
     error
   end
+
+  defp finish(ok_result, _scratch_dir), do: ok_result
 end

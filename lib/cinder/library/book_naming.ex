@@ -126,14 +126,21 @@ defmodule Cinder.Library.BookNaming do
   # Byte-for-byte the rule `Cinder.Library.Naming` applies to a movie title: strip
   # filesystem-illegal characters, trim, and collapse a dots-only name to "" so it can never
   # become a `..` path segment that climbs out of the library root.
-  defp sanitize(name) when is_binary(name) do
+  #
+  # Public (not private) and `@doc false`, matching `visible/1` just above: reused by
+  # `Cinder.Library.AudiobookNaming` via `defdelegate` rather than reimplemented — the same
+  # hostile-input class (`../../etc/passwd` release/work names, dot-leading folders) closed once
+  # here, not twice.
+  @doc false
+  def sanitize(name) when is_binary(name) do
     name
     |> String.replace(@illegal, "")
     |> String.trim()
     |> reject_dot_only()
   end
 
-  defp sanitize(_name), do: ""
+  def sanitize(_name), do: ""
 
-  defp reject_dot_only(name), do: if(name =~ ~r/\A\.+\z/, do: "", else: name)
+  @doc false
+  def reject_dot_only(name), do: if(name =~ ~r/\A\.+\z/, do: "", else: name)
 end

@@ -101,45 +101,66 @@ defmodule Cinder.Library.StageEngine do
   Separate from `stage_place/8` rather than a flag on it: that function's source gate is the
   video extension list, and its collision branches all resolve through `Library.existing_quality/3`
   and `Library.keep/3`, which read `imported_resolution`-style columns a book target does not
-  have. A book collision needs no comparison at all — the parity contract parks automatic
-  upgrades and format conversion for the first release, so an existing file at the destination is
-  always kept.
+  have. A book collision needs no comparison at all when `opts[:replace]` is falsy — the parity
+  contract parks automatic upgrades and format conversion for the first release, so an existing
+  file at the destination is always kept.
+
+  `opts`:
+  - `:extensions` — the source/link-or-copy extension allow-list, default
+    `BookSources.accepted_extensions()` (e-book). `Cinder.Library.AudiobookImport` passes
+    `Cinder.Library.AudiobookSources.accepted_extensions()`; this is what makes the SAME staging
+    function safe for both media kinds without a widened, e-book-only gate.
+  - `:replace` — default `false` (today's actual behavior, byte-for-byte unchanged: a destination
+    collision keeps the existing file). `true` is a confirmed "Find a better match" import: a
+    destination collision performs a real, durable, backup-then-atomic-swap replacement — the
+    SAME machinery `stage_replacement/4` already uses for a confirmed movie upgrade
+    (`prepare_durable_stage/7` with `backup_source: dest`), not new code. A same-inode collision
+    (the new bytes are already hardlinked at `dest` — a replay of an already-completed replace) is
+    still the idempotent no-op either way: never a second backup-swap over content already
+    swapped once.
 
   Returns `{:ok, rollback, placed?}`. `placed?` is false when the destination already held a
-  file, so the caller can tell a fresh publication from an adoption.
+  file and nothing changed, so the caller can tell a fresh publication (or a real replace) from
+  an adoption/replay.
   """
-  @spec stage_book_place(String.t(), String.t(), String.t()) ::
+  @spec stage_book_place(String.t(), String.t(), String.t(), keyword()) ::
           {:ok, map(), boolean()} | {:error, term()}
-  def stage_book_place(source, dest, root) do
-    with {:ok, source} <- BookSources.safe_source(source),
+  def stage_book_place(source, dest, root, opts \\ []) do
+    extensions = Keyword.get(opts, :extensions, BookSources.accepted_extensions())
+    replace? = Keyword.get(opts, :replace, false)
+
+    with {:ok, source} <- safe_source_file(source, extensions),
          {:ok, dest} <- safe_destination(dest, root),
          :ok <- normalize_import_directories(dest, root) do
       ImportStage.with_destination_lock(dest, fn ->
-        stage_book_place_locked(source, dest, root)
+        stage_book_place_locked(source, dest, root, extensions, replace?)
       end)
     end
   end
 
-  defp stage_book_place_locked(source, dest, root) do
+  defp stage_book_place_locked(source, dest, root, extensions, replace?) do
     case fs().lstat(dest) do
       {:error, :enoent} ->
         with {:ok, _quality, rollback, placed?} <-
-               stage_new(source, dest, root, %{}, BookSources.accepted_extensions()),
+               stage_new(source, dest, root, %{}, extensions),
              do: {:ok, rollback, placed?}
 
-      # A REGULAR FILE already occupies the destination, and it is kept either way:
+      # A REGULAR FILE already occupies the destination.
       #
-      # - same inode+device ⇒ this exact file is already published (a re-run after a crash between
-      #   placement and the catalog write), so the import is idempotent;
-      # - a different file ⇒ the contract parks automatic upgrades and format conversion for the
-      #   first release, so an operator's existing copy is never overwritten on the strength of a
-      #   release name.
+      # - same inode+device ⇒ this exact file is already published (a re-run after a crash
+      #   between placement and the catalog write, OR a replay of an already-completed replace),
+      #   so the import is idempotent either way — never a second backup-swap over content
+      #   already swapped once.
+      # - a different file, `replace?: false` ⇒ the contract parks automatic upgrades and format
+      #   conversion for the first release, so an operator's existing copy is never overwritten on
+      #   the strength of a release name.
+      # - a different file, `replace?: true` ⇒ a confirmed "Find a better match": real,
+      #   backup-then-atomic-swap replacement below.
       #
-      # Both journal a no-op so the caller's commit/rollback path is uniform, and both report
-      # `placed?: false` — no fresh bytes landed.
-      {:ok, %File.Stat{type: :regular}} ->
-        with {:ok, _quality, rollback, placed?} <- stage_noop(dest, root, %{}),
-             do: {:ok, rollback, placed?}
+      # Every branch but the real replacement journals a no-op so the caller's commit/rollback
+      # path is uniform and reports `placed?: false` — no fresh bytes landed.
+      {:ok, %File.Stat{type: :regular} = dest_stat} ->
+        stage_book_collision(source, dest, root, dest_stat, extensions, replace?)
 
       # Anything else at the destination — a directory, a symlink, a device node — is not a book
       # this import can adopt. Recording it would put a `book_files` row (and an `:available`
@@ -152,6 +173,30 @@ defmodule Cinder.Library.StageEngine do
         error
     end
   end
+
+  defp stage_book_collision(source, dest, root, dest_stat, extensions, replace?) do
+    with {:ok, source_stat} <- fs().lstat(source) do
+      if replace? and not same_file?(source_stat, dest_stat),
+        do: stage_book_replace(source, dest, root, dest_stat, extensions),
+        else: stage_book_keep(dest, root)
+    end
+  end
+
+  defp stage_book_replace(source, dest, root, dest_stat, extensions) do
+    with {:ok, _quality, rollback, placed?} <-
+           prepare_durable_stage(source, dest, root, dest, dest_stat, %{}, extensions),
+         do: {:ok, rollback, placed?}
+  end
+
+  defp stage_book_keep(dest, root) do
+    with {:ok, _quality, rollback, placed?} <- stage_noop(dest, root, %{}),
+         do: {:ok, rollback, placed?}
+  end
+
+  defp same_file?(%{inode: inode, major_device: device}, %{inode: inode, major_device: device}),
+    do: true
+
+  defp same_file?(_source_stat, _dest_stat), do: false
 
   @doc false
   def stage_place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
@@ -732,10 +777,10 @@ defmodule Cinder.Library.StageEngine do
   # accessors — kept as independent copies rather than shared for it.
   defp fs, do: Application.fetch_env!(:cinder, :filesystem)
 
-  defp safe_source_file(path) do
+  defp safe_source_file(path, extensions \\ @video_exts) do
     case Cinder.Settings.import_roots() do
       [] -> {:error, :download_roots_not_configured}
-      roots -> Library.path_policy().source_file(path, roots, @video_exts, filesystem: fs())
+      roots -> Library.path_policy().source_file(path, roots, extensions, filesystem: fs())
     end
   end
 

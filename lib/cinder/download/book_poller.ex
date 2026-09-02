@@ -27,7 +27,7 @@ defmodule Cinder.Download.BookPoller do
   alias Cinder.Download
   alias Cinder.Download.{ContentPolicy, StallReaper}
   alias Cinder.Library
-  alias Cinder.Library.BookImport
+  alias Cinder.Library.{AudiobookImport, BookImport}
   alias Cinder.Notifier
 
   @default_interval 5_000
@@ -52,6 +52,14 @@ defmodule Cinder.Download.BookPoller do
   # should see the import resume. Holding on them deletes the grab, so the download would have to
   # be re-grabbed to recover from a typo — they take the retry budget instead, which re-derives
   # every tick and succeeds as soon as the setting is right.
+  #
+  # `:mixed_book_filenames`, `:mixed_book_tags`, `:track_order_unknown`,
+  # `:track_order_contradictory`, `:container_mismatch`, `:too_many_tracks` (B7b) are every one
+  # of them a fact about the audiobook PAYLOAD too — an ambiguous, contradictory, or oversized
+  # multi-track set never resolves itself by retrying the same bytes. `:audio_probe_unavailable`
+  # is deliberately NOT a reason at all: a missing/erroring `Cinder.Library.AudioProbe` degrades
+  # the ORDERING signal (falls back to filename evidence), it never surfaces as its own import
+  # error.
   @permanent_import_errors [
     :no_book_file,
     :ambiguous_book_files,
@@ -62,7 +70,13 @@ defmodule Cinder.Download.BookPoller do
     :archive_size_limit,
     :archive_entry_unsafe,
     :archive_corrupt,
-    :archive_timeout
+    :archive_timeout,
+    :mixed_book_filenames,
+    :mixed_book_tags,
+    :track_order_unknown,
+    :track_order_contradictory,
+    :container_mismatch,
+    :too_many_tracks
   ]
 
   defp do_poll(_state) do
@@ -338,34 +352,49 @@ defmodule Cinder.Download.BookPoller do
     )
   end
 
-  defp do_import_one(%BookGrab{} = grab, %BookTarget{} = target) do
-    case BookImport.import_grab(grab, replace: grab.replace) do
-      {:ok, file} ->
-        finish_import(target, file)
-
-      {:ok, file, superseded_paths} ->
-        Enum.each(superseded_paths, &unlink_superseded/1)
-        finish_import(target, file)
-
-      {:error, reason} when reason in @permanent_import_errors ->
-        hold(grab, target, reason)
-
-      # The target moved under us (unmonitored, held, or already made available by another
-      # import). Nothing to park: the grab is gone and the next tick re-derives.
-      {:error, :stale_status} ->
-        Books.Grabs.delete(grab)
-        :ok
-
-      {:error, reason} ->
-        retry_or_hold(grab, target, reason)
-    end
+  defp do_import_one(%BookGrab{} = grab, %BookTarget{media_kind: :ebook} = target) do
+    handle_import_result(BookImport.import_grab(grab, replace: grab.replace), grab, target)
   end
 
+  defp do_import_one(%BookGrab{} = grab, %BookTarget{media_kind: :audiobook} = target) do
+    handle_import_result(AudiobookImport.import_grab(grab, replace: grab.replace), grab, target)
+  end
+
+  # `file` is a single `BookFile.t()` for the e-book branch and a LIST of `BookFile.t()` for the
+  # audiobook branch — every clause here already treats it as an opaque value handed straight to
+  # `finish_import/2`/`unlink_superseded/1`'s caller, so no clause needs to know which shape it
+  # got; only `finish_import/2`'s own log line (below) formats the two shapes differently.
+  defp handle_import_result({:ok, file}, _grab, target), do: finish_import(target, file)
+
+  defp handle_import_result({:ok, file, superseded_paths}, _grab, target) do
+    Enum.each(superseded_paths, &unlink_superseded/1)
+    finish_import(target, file)
+  end
+
+  defp handle_import_result({:error, reason}, grab, target)
+       when reason in @permanent_import_errors,
+       do: hold(grab, target, reason)
+
+  # The target moved under us (unmonitored, held, or already made available by another import).
+  # Nothing to park: the grab is gone and the next tick re-derives.
+  defp handle_import_result({:error, :stale_status}, grab, _target) do
+    Books.Grabs.delete(grab)
+    :ok
+  end
+
+  defp handle_import_result({:error, reason}, grab, target),
+    do: retry_or_hold(grab, target, reason)
+
   defp finish_import(target, file) do
-    Logger.info("book target #{target.id} imported #{file.path}")
+    Logger.info("book target #{target.id} imported #{import_log_detail(file)}")
     Notifier.notify({:book_available, reload(target)})
     :ok
   end
+
+  # A single `BookFile.t()` (e-book) logs its path; a list of them (audiobook — one per track)
+  # logs a count rather than every path, matching the existing terse one-line-per-import style.
+  defp import_log_detail(files) when is_list(files), do: "#{length(files)} track(s)"
+  defp import_log_detail(%{path: path}), do: path
 
   # Post-commit, best-effort removal of a file "Find a better match" just replaced — mirrors
   # `Download.remove_after_import/3`'s own "best-effort, after commit, log and continue" contract.
