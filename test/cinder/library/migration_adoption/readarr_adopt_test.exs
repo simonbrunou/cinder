@@ -71,6 +71,35 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrAdoptTest do
              Repo.all(from i in Identifier, where: i.provider == "readarr")
   end
 
+  test "a work with no Bookshelf foreign id fails cleanly with a changeset error, not a raised MatchError",
+       %{tmp: tmp} do
+    path = path(tmp, "no-foreign-id.epub")
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "No Id Author")],
+        works: [
+          %{provider_id: 1, author_id: 1, title: "No Id Book", foreign_id: nil, monitored: true}
+        ],
+        files: [file(1, 1, "epub", path)]
+      )
+    )
+
+    stub_resolve("No Id Author", "No Id Book", "openlibrary-no-id")
+
+    assert {:ok, preview} = Adoption.preview_migration(:readarr)
+    assert [%{status: :ready, key: key} = candidate] = preview.candidates
+    assert candidate.foreign_id == nil
+
+    assert %{adopted: 0, skipped: 0, failures: [%{reason: %Ecto.Changeset{} = changeset}]} =
+             Adoption.adopt_migration(:readarr, [%{key: key, candidate: candidate}])
+
+    assert Keyword.has_key?(changeset.errors, :foreign_id)
+    # Nothing was written — the whole transaction (including the catalog import) rolled back.
+    assert Repo.all(BookFile) == []
+    assert Repo.all(Cinder.Books.Work) == []
+  end
+
   test "adopting leaves every source file byte-identical on disk", %{tmp: tmp} do
     path = path(tmp, "untouched.epub")
     File.write!(path, "epub bytes")
@@ -204,6 +233,42 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrAdoptTest do
     assert Repo.get!(BookTarget, target.id).status == :monitored
   end
 
+  test "a held target's multi-format work classifies :blocked, not offered as a decision",
+       %{tmp: tmp} do
+    # Same "seeded under the real metadata provider" reasoning as the grab-in-progress test above:
+    # a held target only exists for a work Cinder already knows about.
+    work = seed_work("Held Multi Book", "held-multi-fx", "openlibrary")
+    work |> seed_target() |> monitor_target() |> hold_target()
+
+    epub = file(1, 1, "epub", path(tmp, "held-multi.epub"))
+    azw3 = file(2, 1, "azw3", path(tmp, "held-multi.azw3"))
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Held Multi Author")],
+        works: [work(1, 1, "Held Multi Book", "held-multi-1")],
+        files: [epub, azw3]
+      )
+    )
+
+    stub_resolve("Held Multi Author", "Held Multi Book", "held-multi-fx")
+
+    assert {:ok, preview} = Adoption.preview_migration(:readarr)
+
+    # The pre-B6c bug: classify_files/5's multi-format branch never called winner_status/5, so a
+    # held target's work rendered as an ordinary :needs_decision row — indistinguishable from a
+    # clean candidate — instead of the :blocked row the runbook tells operators to investigate.
+    assert [%{status: :blocked, reason: :target_held, primary_file: nil, extra_files: []}] =
+             preview.candidates
+
+    assert %{adopted: 0, skipped: 1, failures: []} =
+             Adoption.adopt_migration(:readarr, [
+               %{key: "book:1", choice: :all_formats, candidate: hd(preview.candidates)}
+             ])
+
+    assert Repo.all(BookFile) == []
+  end
+
   test "a second preview after adopting skips the adopted work via the readarr identifier fast path",
        %{tmp: tmp} do
     path = path(tmp, "cached.epub")
@@ -335,6 +400,11 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrAdoptTest do
 
   defp monitor_target(%BookTarget{} = target) do
     {:ok, target} = Books.transition_target(target, %{status: :monitored}, expect: :unmonitored)
+    target
+  end
+
+  defp hold_target(%BookTarget{} = target) do
+    {:ok, target} = Books.hold_target(target, :test_reason)
     target
   end
 

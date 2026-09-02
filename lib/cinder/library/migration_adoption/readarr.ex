@@ -113,7 +113,8 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
         Map.fetch!(identity_by_provider_id, work.provider_id),
         Map.get(files_by_work, work.provider_id, []),
         Map.get(editions_by_work, work.provider_id, []),
-        catalog
+        catalog,
+        authors_by_id
       )
     end)
   end
@@ -334,8 +335,8 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     |> Map.new(fn {work_id, pairs} -> {work_id, Map.new(pairs)} end)
   end
 
-  defp candidate(work, {:blocked, reason} = _identity, _files, _editions, _catalog) do
-    Map.merge(base_candidate(work), %{
+  defp candidate(work, {:blocked, reason} = _identity, _files, _editions, _catalog, authors_by_id) do
+    Map.merge(base_candidate(work, authors_by_id), %{
       status: :blocked,
       reason: reason,
       work_id: nil,
@@ -349,13 +350,13 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     })
   end
 
-  defp candidate(work, identity, files, provider_editions, catalog) do
+  defp candidate(work, identity, files, provider_editions, catalog, authors_by_id) do
     work_id = cinder_work_id(identity)
     target = Map.get(catalog.targets, work_id)
     target_paths = if target, do: Map.get(catalog.target_paths, target.id, []), else: []
     {accepted, unsupported} = Enum.split_with(files, &accepted_format?/1)
 
-    base_candidate(work)
+    base_candidate(work, authors_by_id)
     |> Map.merge(%{
       work_id: work_id,
       identity: identity_evidence(work, identity),
@@ -365,12 +366,16 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     |> Map.merge(classify_files(accepted, work_id, target, target_paths, catalog.path_owners))
   end
 
-  defp base_candidate(work) do
+  defp base_candidate(work, authors_by_id) do
     %{
       key: "book:#{work.provider_id}",
       kind: :book,
       provider_id: work.provider_id,
       author_id: work.author_id,
+      # The author's own display name, carried through for B6c's deferred-bibliography banner
+      # (`CinderWeb.LibraryAdoptionLive.migration_deferred/1`) — an accessible label needs a
+      # human-readable name, not the raw Bookshelf-local `author_id` alone.
+      author_name: authors_by_id |> Map.get(work.author_id, %{}) |> Map.get(:name),
       source: :readarr,
       title: work.title,
       monitored: work.monitored,
@@ -424,25 +429,43 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     }
   end
 
-  # More than one accepted-format file: `:needs_decision, :multi_format`. `primary_file`/
-  # `extra_files` mirror Sonarr's n-to-one candidate shape exactly (`n_to_one_candidate/5`) —
-  # B6c's adopt step reads `primary_file` alone for the **preferred** choice (EPUB, else AZW3,
-  # else MOBI — `@accepted_formats`' own order) or `primary_file` + `extra_files` for **all**.
-  # B6b only exposes the shape; no choice is applied here.
-  defp classify_files(files, _work_id, _target, _target_paths, _path_owners) do
+  # More than one accepted-format file. Evaluated against the primary (preferred) file through
+  # the SAME `winner_status/5` cond-chain the single-file branch uses — a held target or a path
+  # conflict blocks a multi-format work exactly as it would a single-format one; nothing here is
+  # exempt from those checks just because there is a decision to make on top of them. Only once
+  # `winner_status/5` clears (`{:ready, nil}`) does the candidate actually reach
+  # `:needs_decision, :multi_format`. `primary_file`/`extra_files` mirror Sonarr's n-to-one
+  # candidate shape exactly (`n_to_one_candidate/5`) — B6c's adopt step reads `primary_file`
+  # alone for the **preferred** choice (EPUB, else AZW3, else MOBI — `@accepted_formats`' own
+  # order) or `primary_file` + `extra_files` for **all**.
+  defp classify_files(files, work_id, target, target_paths, path_owners) do
     primary =
       Enum.min_by(files, fn file -> Enum.find_index(@accepted_formats, &(&1 == file.format)) end)
 
     extras = Enum.reject(files, &(&1.provider_id == primary.provider_id))
 
-    %{
-      status: :needs_decision,
-      reason: :multi_format,
-      path: primary.path,
-      size: primary.size,
-      primary_file: primary,
-      extra_files: extras
-    }
+    case winner_status(primary, work_id, target, target_paths, path_owners) do
+      {:ready, nil} ->
+        %{
+          status: :needs_decision,
+          reason: :multi_format,
+          path: primary.path,
+          size: primary.size,
+          primary_file: primary,
+          extra_files: extras
+        }
+
+      {status, reason} ->
+        %{
+          status: status,
+          reason: reason,
+          path: primary.path,
+          size: primary.size,
+          format: primary.format,
+          primary_file: nil,
+          extra_files: []
+        }
+    end
   end
 
   defp winner_status(file, work_id, target, target_paths, path_owners) do
@@ -631,6 +654,7 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
   defp non_readarr_reference(work_id) do
     Identifier
     |> where([i], i.work_id == ^work_id and i.kind == "work" and i.provider != "readarr")
+    |> order_by([i], asc: i.id)
     |> Repo.all()
     |> List.first()
     |> case do

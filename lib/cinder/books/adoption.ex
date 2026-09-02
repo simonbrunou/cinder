@@ -114,8 +114,11 @@ defmodule Cinder.Books.Adoption do
 
   defp do_import(%{work: work, provider: provider, bookshelf_foreign_id: foreign_id}) do
     cinder_work = Books.import_work_in_tx(work, to_string(provider))
-    {:ok, _identifier} = Books.stamp_identifier_in_tx(cinder_work, "readarr", foreign_id)
-    {:ok, cinder_work}
+
+    case Books.stamp_identifier_in_tx(cinder_work, "readarr", foreign_id) do
+      {:ok, _identifier} -> {:ok, cinder_work}
+      {:error, changeset} -> {:error, changeset}
+    end
   end
 
   defp refuse_grab_in_progress(%BookTarget{id: id}) do

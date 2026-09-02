@@ -50,10 +50,11 @@ touching Bookshelf.
 In `/settings`:
 
 - Set the `books` library root to Bookshelf's existing library path (the precondition above).
-- Configure the four Readarr-source settings with the household's real values:
-  `readarr_url`, `readarr_api_key` (stored Cloak-encrypted, never echoed back to the form),
-  `readarr_remote_path_prefix`, `readarr_local_path_prefix` (only needed if Bookshelf and Cinder
-  see the library under different mount paths; leave both blank if they see the same path).
+- Configure the four Readarr-source settings with the household's real values — shown in
+  `/settings` as **Readarr URL**, **Readarr API key** (stored Cloak-encrypted, never echoed back
+  to the form), **Readarr remote path prefix**, and **Readarr local path prefix** (the two path
+  prefixes are only needed if Bookshelf and Cinder see the library under different mount paths;
+  leave both blank if they see the same path).
 
 Before moving on: confirm Booklore's own library scan configuration already covers **every** root
 Cinder's `book_files` rows reference — the prior `books` root (if any) as well as Bookshelf's path
@@ -73,6 +74,10 @@ file-bearing work into one of four buckets:
   - `:unsupported_format` — no accepted-format file exists for this work; nothing to adopt.
   - `:path_conflict` / `:identity_conflict` — a real duplicate against something Cinder already
     manages; resolve the duplicate rather than forcing it through.
+  - `:target_held` — this work's `:ebook` target is already `:held` (an operator's or the
+    poller's own more recent decision). Open the work's `/books/:id` page and clear the hold
+    before re-running Preview; Cinder will never silently override a hold to force an adopt
+    through.
   - `:outside_library_root` — the books-root precondition (above) is not actually satisfied for
     this specific file; fix the root/path-prefix settings, not the candidate.
   - `:unresolved_identity` — the configured metadata providers (Open Library primary, Hardcover

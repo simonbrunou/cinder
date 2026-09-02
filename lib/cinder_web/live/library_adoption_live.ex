@@ -137,7 +137,8 @@ defmodule CinderWeb.LibraryAdoptionLive do
   def handle_event("set_decision", %{"id" => raw, "choice" => choice}, socket)
       when choice in ["fold", "part", "preferred", "all_formats"] do
     with id when not is_nil(id) <- parse_id(raw),
-         %{} = candidate <- Enum.find(current_page(socket, :needs_decision), &(&1.id == id)) do
+         %{} = candidate <- Enum.find(current_page(socket, :needs_decision), &(&1.id == id)),
+         true <- decision_choice_matches_kind?(candidate.kind, choice) do
       {:noreply,
        socket
        |> assign(decisions: Map.put(socket.assigns.decisions, id, choice))
@@ -148,12 +149,19 @@ defmodule CinderWeb.LibraryAdoptionLive do
   end
 
   # Bulk apply is an explicit operator action: it only fills items that have no decision yet, so a
-  # per-candidate choice set before or after survives untouched.
+  # per-candidate choice set before or after survives untouched. Kind-aware for the same reason
+  # `set_decision` is: a forged `apply_all` naming the wrong choice family for the candidates
+  # currently on screen (fold/part against book candidates, or preferred/all_formats against
+  # episode candidates) fills nothing rather than writing a decision `selected_candidates/2`
+  # would only reject later.
   def handle_event("apply_all", %{"choice" => choice}, socket)
       when choice in ["fold", "part", "preferred", "all_formats"] do
     decisions =
       Enum.reduce(socket.assigns.migration_buckets.needs_decision, socket.assigns.decisions, fn
-        candidate, acc -> Map.put_new(acc, candidate.id, choice)
+        candidate, acc ->
+          if decision_choice_matches_kind?(candidate.kind, choice),
+            do: Map.put_new(acc, candidate.id, choice),
+            else: acc
       end)
 
     {:noreply, socket |> assign(decisions: decisions) |> restream(:needs_decision)}
@@ -409,7 +417,8 @@ defmodule CinderWeb.LibraryAdoptionLive do
 
   # `:readarr`-only fields (`preview.deferred_bibliography_count`/`_authors`, added B6c on top of
   # B6b's `Readarr.summary/2`); absent from a :radarr/:sonarr preview, defaulted away harmlessly.
-  # `links` resolves each deferred author id to a Cinder work id worth linking to — one already
+  # `links` resolves each deferred author id to a Cinder work id (and that author's own display
+  # name, for an accessible per-link label — see the template) worth linking to — one already
   # classified in THIS same preview, credited to that exact author, with a known catalog
   # `work_id` — so `/books/:id` (where B5b's "Set author policy" control lives) is only ever
   # offered when it genuinely resolves to that author's own page. An author with no such
@@ -422,11 +431,15 @@ defmodule CinderWeb.LibraryAdoptionLive do
     by_author =
       preview.candidates
       |> Enum.filter(&(Map.get(&1, :kind) == :book and not is_nil(Map.get(&1, :work_id))))
-      |> Map.new(&{&1.author_id, &1.work_id})
+      |> Map.new(&{&1.author_id, {&1.work_id, Map.get(&1, :author_name)}})
 
     links =
-      for author_id <- author_ids, work_id = Map.get(by_author, author_id), into: %{} do
-        {author_id, work_id}
+      for author_id <- author_ids,
+          entry = Map.get(by_author, author_id),
+          not is_nil(entry),
+          into: %{} do
+        {work_id, author_name} = entry
+        {author_id, %{work_id: work_id, author_name: author_name}}
       end
 
     %{count: count, links: links}
@@ -497,6 +510,15 @@ defmodule CinderWeb.LibraryAdoptionLive do
       base
     end
   end
+
+  defp deferred_author_link_label(name) when is_binary(name) and name != "",
+    do: gettext("View %{name}'s migrated work", name: name)
+
+  defp deferred_author_link_label(_name), do: gettext("View migrated author")
+
+  defp decision_choice_matches_kind?(:episode, choice), do: choice in ["fold", "part"]
+  defp decision_choice_matches_kind?(:book, choice), do: choice in ["preferred", "all_formats"]
+  defp decision_choice_matches_kind?(_kind, _choice), do: false
 
   defp parse_id(value) when is_integer(value), do: value
 
@@ -614,6 +636,19 @@ defmodule CinderWeb.LibraryAdoptionLive do
 
   defp adoption_failure_text(%{reason: :episode_not_found}),
     do: gettext("The episode changed while adoption was running.")
+
+  # `Cinder.Books.Adoption.adopt_work/3`'s `do_import/1` — Bookshelf reported no `foreignBookId`
+  # for this work, so the durable "readarr" identifier stamp is impossible; nothing was written
+  # (the whole transaction rolled back). B6b's own `work/0` type permits a `nil` `foreign_id`.
+  defp adoption_failure_text(%{reason: %Ecto.Changeset{errors: errors}}) do
+    if Keyword.has_key?(errors, :foreign_id) do
+      gettext(
+        "Bookshelf did not report an identifier for this work; it cannot be adopted automatically."
+      )
+    else
+      gettext("The catalog rejected this file.")
+    end
+  end
 
   defp adoption_failure_text(_failure), do: gettext("The catalog rejected this file.")
 
@@ -746,6 +781,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
           :if={match?({:migration, :readarr}, @mode) and @scanning? and @readarr_progress}
           id="readarr-scan-progress"
           class="text-sm text-base-content/70"
+          role="status"
           aria-live="polite"
         >
           {gettext("Resolving identities… %{resolved} of %{total} matched, continuing…",
@@ -850,10 +886,11 @@ defmodule CinderWeb.LibraryAdoptionLive do
           </p>
           <p :if={map_size(@migration_deferred.links) > 0} class="mt-1 text-sm">
             <.link
-              :for={{author_id, work_id} <- @migration_deferred.links}
-              navigate={~p"/books/#{work_id}"}
+              :for={{author_id, link} <- @migration_deferred.links}
+              navigate={~p"/books/#{link.work_id}"}
               id={"deferred-author-#{author_id}"}
               class="link mr-3"
+              aria-label={deferred_author_link_label(link.author_name)}
             >
               {gettext("View migrated author")}
             </.link>

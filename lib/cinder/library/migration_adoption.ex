@@ -790,17 +790,12 @@ defmodule Cinder.Library.MigrationAdoption do
         %{status: :ready} = candidate ->
           {[{candidate, nil} | selected], unavailable}
 
-        %{status: :needs_decision} = candidate
-        when choice in [
-               :fold,
-               "fold",
-               :part,
-               "part",
-               :preferred,
-               "preferred",
-               :all_formats,
-               "all_formats"
-             ] ->
+        %{status: :needs_decision, kind: :episode} = candidate
+        when choice in [:fold, "fold", :part, "part"] ->
+          {[{candidate, normalize_choice(choice)} | selected], unavailable}
+
+        %{status: :needs_decision, kind: :book} = candidate
+        when choice in [:preferred, "preferred", :all_formats, "all_formats"] ->
           {[{candidate, normalize_choice(choice)} | selected], unavailable}
 
         _unavailable ->

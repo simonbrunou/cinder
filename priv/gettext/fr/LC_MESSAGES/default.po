@@ -7238,3 +7238,9 @@ msgstr "Ce titre est retenu et nécessite d'abord une décision de l'opérateur.
 
 msgid "View migrated author"
 msgstr "Voir l'auteur migré"
+
+msgid "Bookshelf did not report an identifier for this work; it cannot be adopted automatically."
+msgstr "Bookshelf n'a signalé aucun identifiant pour cette œuvre ; elle ne peut pas être adoptée automatiquement."
+
+msgid "View %{name}'s migrated work"
+msgstr "Voir l'œuvre migrée de %{name}"
