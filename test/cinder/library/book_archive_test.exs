@@ -137,6 +137,28 @@ defmodule Cinder.Library.BookArchiveTest do
 
       assert {:error, _reason} = result
     end
+
+    # The direct regression test for the B7b defect: `finish/2` originally had clauses only for
+    # `{:ok, _source, _format}` (3-tuple, `BookSources`' own resolve_fun shape) and
+    # `{:error, _reason}` — so `Cinder.Library.AudiobookSources`' resolve_fun, which returns
+    # `{:ok, ordered_tracks}` (a 2-tuple), raised `FunctionClauseError` on every SUCCESSFUL
+    # audiobook extraction, caught only by the poller's `isolate/2` rescue as an opaque logged
+    # failure. `extract_and_resolve/3`'s own spec is generic (`result | {:error, term()} when
+    # result: term()`), so `finish/2` must pass through ANY non-`:error`-tagged shape unchanged.
+    test "a 2-tuple resolve_fun result (AudiobookSources' own shape) passes through unchanged",
+         %{downloads: downloads} do
+      dir = Path.join(downloads, "release")
+      File.mkdir_p!(dir)
+      archive = Path.join(dir, "book.zip")
+      :zip.create(String.to_charlist(archive), [{~c"track.mp3", "mp3 bytes"}])
+
+      result =
+        BookArchive.extract_and_resolve(archive, fn scratch_dir ->
+          {:ok, [%{path: Path.join(scratch_dir, "track.mp3"), format: :mp3}]}
+        end)
+
+      assert {:ok, [%{format: :mp3}]} = result
+    end
   end
 
   describe "extract_and_resolve/3" do

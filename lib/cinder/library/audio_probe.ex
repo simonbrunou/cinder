@@ -24,8 +24,19 @@ defmodule Cinder.Library.AudioProbe do
   probe error identically: "can't verify the stronger (tag) signal", never "can't import". Track
   ordering and mixed-book detection fall back to filename-only evidence, and
   `duration_seconds`/`chapter_count`/`track_number`/`disc_number` simply stay `nil` on the
-  imported `book_files` row(s). It never fails the whole import and never blocks a poller tick —
-  see `Cinder.Library.AudioProbe.Ffprobe`'s own bounded-timeout implementation.
+  imported `book_files` row(s). A probe timeout or error never fails the whole import.
+
+  ## Bounded per call, and bounded in aggregate
+
+  A single `probe/1` call is bounded by the configured implementation's own timeout
+  (`Cinder.Library.AudioProbe.Ffprobe`'s `@probe_timeout`), but that alone would still let a
+  large or hostile multi-track set cost `track_count * per-call timeout` and stall the single-
+  tick `Cinder.Download.BookPoller` GenServer behind it. `Cinder.Library.AudiobookSources.resolve/1`
+  additionally enforces a hard per-set track-count ceiling (refusing an oversized set,
+  `{:error, :too_many_tracks}`, before any probing starts) and a wall-clock probe BUDGET for the
+  whole set (skipping every remaining track's probe, unprobed, once spent) — see
+  `Cinder.Library.AudiobookSources`'s own moduledoc ("Bounded probing") for the exact numbers and
+  the resulting worst-case bound.
   """
 
   @type probe_result :: %{

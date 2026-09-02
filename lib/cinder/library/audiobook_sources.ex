@@ -36,6 +36,28 @@ defmodule Cinder.Library.AudiobookSources do
 
   See the B7b plan (`docs/plans/2026-09-02-books-b7-audiobooks.md`, `## B7b`, §2) for the full
   reasoning behind each refusal.
+
+  ## Bounded probing — the aggregate cost of one set, not just one call
+
+  Each `Cinder.Library.AudioProbe.probe/1` call is individually bounded by the configured probe
+  implementation's own timeout, but a large or hostile track set still needs two more ceilings so
+  that resolving one set cannot cost `track_count * per-call timeout` and stall the single-tick
+  `Cinder.Download.BookPoller` GenServer behind it:
+
+  - **`@max_tracks`** refuses a set with more accepted candidates than this outright
+    (`{:error, :too_many_tracks}`), before any probing starts — a real, stated ceiling well above
+    any ordinary release (a 40+ hour audiobook split one chapter per file is commonly 40-60
+    tracks; `@max_tracks` leaves a full order of magnitude of headroom), not "no cap".
+  - **`@max_probe_budget_ms`** bounds the WALL-CLOCK cost of probing the whole (within-cap) set:
+    every track's probe is skipped (treated as unavailable, exactly the existing degrade path)
+    once the budget is spent, checked before each call starts rather than after. Worst-case
+    aggregate probing time for one import is therefore `@max_probe_budget_ms` plus at most one
+    more in-flight call's own timeout overshoot — a stated constant, not a function of `N`.
+
+  Both are overridable via `config :cinder, :audiobook_max_tracks` /
+  `:audiobook_probe_budget_ms`, falling back to the module attribute default — a test seam only
+  (mirrors `Cinder.Library.AudioProbe.Ffprobe`'s own `:ffprobe_bin` override), so a budget-
+  exhaustion test can prove the skip behavior deterministically without a real 60-second wait.
   """
 
   alias Cinder.Acquisition.AudiobookScorer
@@ -54,6 +76,10 @@ defmodule Cinder.Library.AudiobookSources do
 
   @archive_extensions ~w(.rar .zip .7z .gz .bz2 .xz .tar .cbz .cbr)
   @extractable_extensions ~w(.zip .cbz .rar .cbr)
+
+  # See the moduledoc's "Bounded probing" section for the exact reasoning behind both numbers.
+  @max_tracks 200
+  @max_probe_budget_ms 60_000
 
   @type resolved_track :: %{
           path: String.t(),
@@ -97,6 +123,7 @@ defmodule Cinder.Library.AudiobookSources do
              | :unsafe_source
              | :unsupported_archive
              | :format_mismatch
+             | :too_many_tracks
              | :mixed_book_filenames
              | :mixed_book_tags
              | :track_order_unknown
@@ -207,6 +234,10 @@ defmodule Cinder.Library.AudiobookSources do
       # `safe_source/1`'s allow-list refuses it, the same `:unsafe_source` an e-book import
       # already reports for a file outside its own accepted formats.
       other_audio != [] -> {:error, :unsafe_source}
+      # Refused before any probing/staging work starts — see the moduledoc's "Bounded probing"
+      # section. Checked here, not inside `validate_and_order/1`, so an oversized set never
+      # reaches `build_tracks/1` at all.
+      length(accepted) > max_tracks() -> {:error, :too_many_tracks}
       true -> validate_and_order(accepted)
     end
   end
@@ -218,7 +249,7 @@ defmodule Cinder.Library.AudiobookSources do
 
   defp validate_and_order(candidates) do
     with :ok <- verify_all_magic(candidates) do
-      tracks = Enum.map(candidates, &build_track/1)
+      tracks = build_tracks(candidates)
 
       with :ok <- check_mixed_filenames(tracks),
            :ok <- check_mixed_tags(tracks),
@@ -259,16 +290,29 @@ defmodule Cinder.Library.AudiobookSources do
 
   defp magic?(_prefix, _format), do: false
 
-  defp build_track(path) do
-    format = format(path)
+  # Aggregate probe budget for the whole set: a single fixed deadline computed once, checked
+  # before each track's OWN probe call starts (never after) so a set whose budget is already
+  # spent skips every remaining track's probe entirely — no subprocess spawned for it at all —
+  # rather than merely capping how long an in-flight call itself may run. Bounds the aggregate
+  # probing wall-clock for one import to `@max_probe_budget_ms` plus at most one more in-flight
+  # call's own timeout overshoot, regardless of how many tracks (up to `@max_tracks`) the set
+  # has. A skipped probe degrades exactly like an errored one (`probe: nil`) — never a reason to
+  # fail the import, per `Cinder.Library.AudioProbe`'s own "degradation, not failure" contract.
+  defp build_tracks(candidates) do
+    deadline = System.monotonic_time(:millisecond) + probe_budget_ms()
+    Enum.map(candidates, &build_track(&1, deadline))
+  end
+
+  defp build_track(path, deadline) do
+    probe = if System.monotonic_time(:millisecond) < deadline, do: probe_track(path), else: nil
 
     %{
       path: path,
-      format: format,
+      format: format(path),
       stem: filename_stem(path),
       filename_track: filename_track_number(path),
       filename_disc: filename_disc_number(path),
-      probe: probe_track(path)
+      probe: probe
     }
   end
 
@@ -291,6 +335,13 @@ defmodule Cinder.Library.AudiobookSources do
   end
 
   defp audio_probe, do: Application.fetch_env!(:cinder, :audio_probe)
+
+  # Test seam only (matches `Cinder.Library.AudioProbe.Ffprobe`'s own `:ffprobe_bin` override
+  # convention) — production never sets these, so both fall back to the real ceiling.
+  defp max_tracks, do: Application.get_env(:cinder, :audiobook_max_tracks, @max_tracks)
+
+  defp probe_budget_ms,
+    do: Application.get_env(:cinder, :audiobook_probe_budget_ms, @max_probe_budget_ms)
 
   # Lowercased, separator-collapsed basename with every track-number idiom stripped
   # (`track 03`, `part 3`, `disc 1`, `cd2`, or a bare number at the position a track number is

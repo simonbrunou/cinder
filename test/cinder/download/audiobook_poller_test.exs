@@ -139,6 +139,39 @@ defmodule Cinder.Download.AudiobookPollerTest do
     end
   end
 
+  # The end-to-end regression test for the B7b defect the review found: `BookArchive.finish/2`
+  # originally raised `FunctionClauseError` on every SUCCESSFUL audiobook extraction (only
+  # `BookSources`' own 3-tuple resolve_fun shape matched), caught only by `isolate/2`'s rescue —
+  # a working import looked like an opaque logged failure, and no test anywhere drove a real
+  # archive through the actual production path. This one does: a real `.zip` release, downloaded,
+  # polled, resolved, staged, and imported through `BookPoller` exactly as a real download client
+  # would hand it off.
+  describe "archive extraction" do
+    test "a real zip archive extracts, resolves, and imports atomically end to end", ctx do
+      %{target: target, audiobooks: audiobooks, release_dir: release_dir} = downloading(ctx, %{})
+
+      archive = Path.join(release_dir, "release.zip")
+
+      :zip.create(String.to_charlist(archive), [
+        {~c"02 - Recording.mp3", mp3_bytes()},
+        {~c"01 - Recording.mp3", mp3_bytes()}
+      ])
+
+      complete_download(release_dir)
+      poll!()
+      dir = Path.join([audiobooks, "Ursula K. Le Guin", "The Dispossessed"])
+
+      assert File.ls!(dir) |> Enum.sort() == [
+               "01 - The Dispossessed.mp3",
+               "02 - The Dispossessed.mp3"
+             ]
+
+      files = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
+      assert length(files) == 2
+      assert Repo.reload!(target).status == :available
+    end
+  end
+
   describe "atomic partial-failure — fresh import" do
     test "a fault on the Nth of M tracks leaves zero files and zero rows", ctx do
       %{target: target, audiobooks: audiobooks, release_dir: release_dir} =

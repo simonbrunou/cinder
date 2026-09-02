@@ -54,11 +54,12 @@ defmodule Cinder.Download.BookPoller do
   # every tick and succeeds as soon as the setting is right.
   #
   # `:mixed_book_filenames`, `:mixed_book_tags`, `:track_order_unknown`,
-  # `:track_order_contradictory`, `:container_mismatch` (B7b) are every one of them a fact about
-  # the audiobook PAYLOAD too — an ambiguous or contradictory multi-track set never resolves
-  # itself by retrying the same bytes. `:audio_probe_unavailable` is deliberately NOT a reason at
-  # all: a missing/erroring `Cinder.Library.AudioProbe` degrades the ORDERING signal (falls back
-  # to filename evidence), it never surfaces as its own import error.
+  # `:track_order_contradictory`, `:container_mismatch`, `:too_many_tracks` (B7b) are every one
+  # of them a fact about the audiobook PAYLOAD too — an ambiguous, contradictory, or oversized
+  # multi-track set never resolves itself by retrying the same bytes. `:audio_probe_unavailable`
+  # is deliberately NOT a reason at all: a missing/erroring `Cinder.Library.AudioProbe` degrades
+  # the ORDERING signal (falls back to filename evidence), it never surfaces as its own import
+  # error.
   @permanent_import_errors [
     :no_book_file,
     :ambiguous_book_files,
@@ -74,7 +75,8 @@ defmodule Cinder.Download.BookPoller do
     :mixed_book_tags,
     :track_order_unknown,
     :track_order_contradictory,
-    :container_mismatch
+    :container_mismatch,
+    :too_many_tracks
   ]
 
   defp do_poll(_state) do

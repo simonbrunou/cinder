@@ -25,28 +25,24 @@ defmodule Cinder.Library.AudiobookNaming do
   for ≤99 tracks) and the `Disc M/` segment present only when the resolved set spans more than
   one disc.
 
-  Every path component runs through the same `sanitize/1`/`reject_dot_only/1`/`visible/1`
-  hardening `BookNaming` already has — reused via `defdelegate`, not reimplemented, closing the
-  exact same hostile-input class (`../../etc/passwd` work titles, dot-leading folders) for audio
-  the same way it is already closed for text.
+  Every path component reaches the same `sanitize/1`/`reject_dot_only/1`/`visible/1` hardening
+  `BookNaming` already has TRANSITIVELY, through `author_folder/1` and `title_folder/1` — the
+  only two functions this module calls that ever handle release/work-controlled text at all. A
+  track's own filename is never one of those inputs (see above): it is built from
+  `title_folder(work)`, a zero-padded integer, and a format atom drawn from a closed two-value
+  set, none of which needs a second pass of sanitization this module would have to apply itself.
+  Closing the same hostile-input class (`../../etc/passwd` work titles, dot-leading folders) for
+  audio the same way it is already closed for text, without re-exporting `BookNaming`'s internal
+  hardening helpers as a second public surface this module never actually calls.
   """
   alias Cinder.Books.Work
-  alias Cinder.Library.{BookNaming, Naming}
+  alias Cinder.Library.BookNaming
 
   @doc "The folder name a work's author credits produce — reused unchanged from `BookNaming`."
   defdelegate author_folder(work), to: BookNaming
 
   @doc "The folder name a work's title produces — reused unchanged from `BookNaming`."
   defdelegate title_folder(work), to: BookNaming
-
-  @doc false
-  defdelegate visible(name), to: Naming
-
-  @doc false
-  defdelegate sanitize(name), to: BookNaming
-
-  @doc false
-  defdelegate reject_dot_only(name), to: BookNaming
 
   @type track_meta :: %{
           required(:index) => pos_integer(),

@@ -98,10 +98,18 @@ defmodule Cinder.Library.BookArchive do
     end
   end
 
-  defp finish({:ok, _source, _format} = ok, _scratch_dir), do: ok
-
+  # Generic on purpose: `resolve_fun`'s own type is `(String.t() -> result) when result: term()`
+  # (see `extract_and_resolve/3`'s spec) — `BookSources.resolve/1`'s resolve_fun returns a
+  # 3-tuple (`{:ok, source, format}`), `Cinder.Library.AudiobookSources.resolve/1`'s returns a
+  # 2-tuple (`{:ok, tracks}`). A clause that only matched the 3-tuple shape left every SUCCESSFUL
+  # audiobook extraction raising `FunctionClauseError` here (caught only by the poller's
+  # `isolate/2` rescue, so it surfaced as an opaque logged failure, never a working import) — the
+  # `:error` clause is the only shape this function needs to special-case; anything else a
+  # `resolve_fun` returns is success, unconditionally.
   defp finish({:error, _reason} = error, scratch_dir) do
     _ = File.rm_rf(scratch_dir)
     error
   end
+
+  defp finish(ok_result, _scratch_dir), do: ok_result
 end

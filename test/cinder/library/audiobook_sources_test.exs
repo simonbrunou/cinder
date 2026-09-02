@@ -16,7 +16,16 @@ defmodule Cinder.Library.AudiobookSourcesTest do
     downloads = Path.join(tmp, "downloads")
     File.mkdir_p!(downloads)
 
-    keys = [:filesystem, :path_policy, :import_roots, :explicit_import_roots, :audio_probe]
+    keys = [
+      :filesystem,
+      :path_policy,
+      :import_roots,
+      :explicit_import_roots,
+      :audio_probe,
+      :audiobook_max_tracks,
+      :audiobook_probe_budget_ms
+    ]
+
     saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
 
     Application.put_env(:cinder, :filesystem, Cinder.Library.Filesystem.Disk)
@@ -259,6 +268,81 @@ defmodule Cinder.Library.AudiobookSourcesTest do
 
       assert {:error, _reason} = AudiobookSources.resolve(archive)
       refute File.exists?(Path.join(tmp, "escape.mp3"))
+    end
+  end
+
+  # The direct regression tests for the B7b defect this review found: `BookArchive.finish/2`
+  # originally had clauses only for `{:ok, _source, _format}` (`BookSources`' own 3-tuple
+  # resolve_fun shape) and `{:error, _reason}` — so EVERY successful extraction through THIS
+  # module's own resolve_fun (which returns `{:ok, ordered_tracks}`, a 2-tuple) raised
+  # `FunctionClauseError`, caught only by the poller's `isolate/2` rescue as an opaque logged
+  # failure. `"hostile archives"` above exercises only refusal paths; nothing previously proved a
+  # real archive extracts and resolves successfully through the actual production call chain
+  # (`AudiobookSources.resolve/1` -> `BookArchive.extract_and_resolve/3` -> its own `finish/2`).
+  describe "archive extraction" do
+    test "a real zip with a valid multi-track set extracts and resolves in order", %{
+      downloads: downloads
+    } do
+      archive = Path.join(downloads, "release.zip")
+
+      :zip.create(String.to_charlist(archive), [
+        {~c"02 - Recording.mp3", mp3_bytes()},
+        {~c"01 - Recording.mp3", mp3_bytes()}
+      ])
+
+      assert {:ok, [first, second]} = AudiobookSources.resolve(archive)
+      assert Path.basename(first.path) == "01 - Recording.mp3"
+      assert Path.basename(second.path) == "02 - Recording.mp3"
+      assert first.format == :mp3
+      assert second.format == :mp3
+    end
+
+    test "a real zip with a single M4B extracts and resolves with no track segment", %{
+      downloads: downloads
+    } do
+      archive = Path.join(downloads, "release.zip")
+      :zip.create(String.to_charlist(archive), [{~c"The Dispossessed.m4b", m4b_bytes()}])
+
+      assert {:ok, [track]} = AudiobookSources.resolve(archive)
+      assert Path.basename(track.path) == "The Dispossessed.m4b"
+      assert track.format == :m4b
+    end
+  end
+
+  describe "track count ceiling" do
+    test "a set with more accepted files than the configured ceiling is refused before any probing",
+         %{downloads: downloads} do
+      Application.put_env(:cinder, :audiobook_max_tracks, 2)
+
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "01 - Track.mp3"), mp3_bytes())
+      File.write!(Path.join(dir, "02 - Track.mp3"), mp3_bytes())
+      File.write!(Path.join(dir, "03 - Track.mp3"), mp3_bytes())
+
+      assert {:error, :too_many_tracks} = AudiobookSources.resolve(dir)
+    end
+  end
+
+  describe "aggregate probe budget" do
+    test "an exhausted budget skips every remaining probe without invoking the probe module", %{
+      downloads: downloads
+    } do
+      Application.put_env(:cinder, :audio_probe, Cinder.Library.AudioProbeMock)
+      Application.put_env(:cinder, :audiobook_probe_budget_ms, -1)
+
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "01 - Recording.mp3"), mp3_bytes())
+      File.write!(Path.join(dir, "02 - Recording.mp3"), mp3_bytes())
+
+      # No stub/expect is registered on `AudioProbeMock` at all: if the already-exhausted
+      # budget were NOT honored and `probe_track/1` called it anyway, Mox would raise
+      # `Mox.UnexpectedCallError` right here and fail the test — the absence of a crash, plus
+      # ordering still succeeding from filename evidence, is the proof the probe was skipped.
+      assert {:ok, [first, second]} = AudiobookSources.resolve(dir)
+      assert first.track_number == nil
+      assert second.track_number == nil
     end
   end
 
