@@ -491,6 +491,64 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     refute has_element?(view, "#migration-decision-candidates input[checked]")
   end
 
+  test "set_decision rejects a book-only choice (preferred/all_formats) against an episode candidate",
+       %{conn: conn} do
+    stub(Cinder.Library.SonarrMigrationSourceMock, :snapshot, fn ->
+      {:ok,
+       %{
+         movies: [],
+         series: [%{provider_id: 12, tvdb_id: 200}],
+         episodes: [
+           %{
+             provider_id: 22,
+             series_id: 12,
+             tvdb_id: 2001,
+             season_number: 4,
+             episode_number: 15,
+             file_id: 602
+           },
+           %{
+             provider_id: 23,
+             series_id: 12,
+             tvdb_id: 2002,
+             season_number: 4,
+             episode_number: 16,
+             file_id: 603
+           }
+         ],
+         files: [
+           %{provider_id: 602, kind: :episode, path: "/sonarr/Show.S04E15.mkv", size: 10},
+           %{provider_id: 603, kind: :episode, path: "/sonarr/Show.S04E16.mkv", size: 10}
+         ]
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :find_by_external_id, fn
+      200, :tvdb_id ->
+        {:ok, [%{type: :tv, tmdb_id: 1100, title: "Show"}]}
+
+      id, :tvdb_id when id in [2001, 2002] ->
+        {:ok,
+         [
+           %{
+             type: :episode,
+             tmdb_episode_id: 2100,
+             series_tmdb_id: 1100,
+             season_number: 4,
+             episode_number: 15
+           }
+         ]}
+    end)
+
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    view |> element("#scan-sonarr") |> render_click()
+    render_async(view)
+
+    render_click(view, "set_decision", %{"id" => "1", "choice" => "preferred"})
+
+    refute has_element?(view, "#adoption-candidate-1 input[checked]")
+  end
+
   test "an episode adoption failure remains visible with its file after the transaction rolls back",
        %{conn: conn} do
     part =
@@ -743,6 +801,100 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     paths = Cinder.Repo.all(Cinder.Books.BookFile) |> Enum.map(& &1.path) |> Enum.sort()
     assert paths == Enum.sort([epub_path, azw3_path])
     assert target.status == :available
+  end
+
+  test "set_decision rejects an episode-only choice (fold/part) against a book candidate",
+       %{conn: conn} do
+    epub_path = "/readarr/mismatch.epub"
+    azw3_path = "/readarr/mismatch.azw3"
+
+    saved_books_root = Application.get_env(:cinder, :books_library_path)
+    Application.put_env(:cinder, :books_library_path, "/readarr")
+
+    on_exit(fn ->
+      if saved_books_root,
+        do: Application.put_env(:cinder, :books_library_path, saved_books_root),
+        else: Application.delete_env(:cinder, :books_library_path)
+    end)
+
+    stub(Cinder.Books.PrimaryMetadataMock, :provider, fn -> :openlibrary end)
+    stub(Cinder.Books.SecondaryMetadataMock, :provider, fn -> :hardcover end)
+
+    stub(Cinder.Library.ReadarrMigrationSourceMock, :snapshot, fn ->
+      {:ok,
+       %{
+         movies: [],
+         series: [],
+         episodes: [],
+         authors: [
+           %{
+             provider_id: 1,
+             name: "Mismatch Author",
+             foreign_id: "author-1",
+             monitored: true,
+             monitor_new_items: "all"
+           }
+         ],
+         works: [
+           %{
+             provider_id: 1,
+             author_id: 1,
+             title: "Mismatch Book",
+             foreign_id: "mismatch-1",
+             monitored: true
+           }
+         ],
+         editions: [],
+         files: [
+           %{provider_id: 1, kind: :book, path: epub_path, size: 10, work_id: 1, format: "epub"},
+           %{provider_id: 2, kind: :book, path: azw3_path, size: 10, work_id: 1, format: "azw3"}
+         ],
+         profiles: [],
+         roots: []
+       }}
+    end)
+
+    stub(Cinder.Books.PrimaryMetadataMock, :search, fn _query ->
+      {:ok,
+       [
+         %{
+           provider: :openlibrary,
+           foreign_id: "ol-mismatch-1",
+           title: "Mismatch Book",
+           contributors: [%{foreign_id: "a1", name: "Mismatch Author", role: "author"}],
+           contributors_incomplete: false,
+           first_published_year: nil,
+           edition_count: 1
+         }
+       ]}
+    end)
+
+    stub(Cinder.Books.PrimaryMetadataMock, :get_work, fn "ol-mismatch-1" ->
+      {:ok,
+       %{
+         provider: :openlibrary,
+         foreign_id: "ol-mismatch-1",
+         title: "Mismatch Book",
+         first_published_on: nil,
+         overview: nil,
+         contributors: [],
+         contributors_incomplete: true,
+         editions: [],
+         series: []
+       }}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{}} end)
+
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    view |> element("#scan-readarr") |> render_click()
+    render_async(view)
+
+    assert has_element?(view, "#migration-decision-candidates input[value=preferred]")
+
+    render_click(view, "set_decision", %{"id" => "1", "choice" => "fold"})
+
+    refute has_element?(view, "#adoption-candidate-1 input[checked]")
   end
 
   defp series_result do

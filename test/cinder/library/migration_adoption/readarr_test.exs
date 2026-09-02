@@ -394,6 +394,37 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
     assert already_managed.status == :already_managed
   end
 
+  test "a multi-format candidate whose EXTRA (non-primary) file collides with a different work's target blocks :path_conflict, not :needs_decision",
+       %{tmp: tmp} do
+    owner = seed_work("Owner Book", "owner-shared", "openlibrary")
+    owner_target = owner |> seed_target() |> monitor_target()
+    owner_file = seed_file(owner_target, path(tmp, "multi-conflict/shared.azw3"))
+
+    seed_work("New Multi Book", "multi-conflict-1")
+
+    # EPUB (the preferred/primary format) is perfectly clean; only the AZW3 sibling collides.
+    # Checking the primary alone would miss this entirely and misreport the candidate as an
+    # ordinary needs-decision row.
+    epub = file(1, 1, "epub", path(tmp, "multi-conflict/clean.epub"))
+    azw3 = file(2, 1, "azw3", owner_file.path)
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Multi Conflict Author")],
+        works: [work(1, 1, "New Multi Book", "multi-conflict-1")],
+        files: [epub, azw3]
+      )
+    )
+
+    assert {:ok, preview} = MigrationAdoption.preview(:readarr)
+
+    c = candidate(preview, 1)
+    assert c.status == :blocked
+    assert c.reason == :path_conflict
+    assert c.primary_file == nil
+    assert c.extra_files == []
+  end
+
   test "a resolved work already carrying a different recorded file blocks :identity_conflict" do
     work = seed_work("Conflict Book", "identity-conflict-1")
     target = work |> seed_target() |> monitor_target()

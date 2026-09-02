@@ -168,6 +168,34 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrAdoptTest do
     assert Repo.all(BookFile) == []
   end
 
+  test "a needs_decision book candidate with an episode-only choice (fold/part) is skipped, not adopted",
+       %{tmp: tmp} do
+    epub = file(1, 1, "epub", path(tmp, "kind-mismatch.epub"))
+    azw3 = file(2, 1, "azw3", path(tmp, "kind-mismatch.azw3"))
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Kind Mismatch Author")],
+        works: [work(1, 1, "Kind Mismatch Book", "kind-mismatch-1")],
+        files: [epub, azw3]
+      )
+    )
+
+    stub_resolve("Kind Mismatch Author", "Kind Mismatch Book", "openlibrary-kind-mismatch-1")
+
+    assert {:ok, preview} = Adoption.preview_migration(:readarr)
+    assert [%{status: :needs_decision, key: key} = candidate] = preview.candidates
+
+    # "fold"/"part" are Sonarr's own n-to-one choices — `MigrationAdoption.selected_candidates/2`
+    # is kind-scoped precisely so this book candidate cannot be adopted through them.
+    assert %{adopted: 0, skipped: 1} =
+             Adoption.adopt_migration(:readarr, [
+               %{key: key, choice: "fold", candidate: candidate}
+             ])
+
+    assert Repo.all(BookFile) == []
+  end
+
   test "the all_formats choice adopts every accepted file as its own book_files row", %{tmp: tmp} do
     epub = file(1, 1, "epub", path(tmp, "all.epub"))
     azw3 = file(2, 1, "azw3", path(tmp, "all.azw3"))

@@ -429,22 +429,29 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     }
   end
 
-  # More than one accepted-format file. Evaluated against the primary (preferred) file through
-  # the SAME `winner_status/5` cond-chain the single-file branch uses — a held target or a path
-  # conflict blocks a multi-format work exactly as it would a single-format one; nothing here is
-  # exempt from those checks just because there is a decision to make on top of them. Only once
-  # `winner_status/5` clears (`{:ready, nil}`) does the candidate actually reach
-  # `:needs_decision, :multi_format`. `primary_file`/`extra_files` mirror Sonarr's n-to-one
-  # candidate shape exactly (`n_to_one_candidate/5`) — B6c's adopt step reads `primary_file`
-  # alone for the **preferred** choice (EPUB, else AZW3, else MOBI — `@accepted_formats`' own
-  # order) or `primary_file` + `extra_files` for **all**.
+  # More than one accepted-format file. Evaluated through the SAME `winner_status/5` cond-chain
+  # the single-file branch uses — but over EVERY accepted file, not just the primary. Mirrors
+  # `MigrationAdoption.n_to_one_status/4`'s own "check every member's path" precedent
+  # (`migration_adoption.ex`): `:target_held`/`:identity_conflict`/`:already_managed` are
+  # target-scoped and would trip on any file alike, but `:path_conflict` and
+  # `:outside_library_root` are PER-FILE — a clean primary EPUB with a sibling AZW3 that already
+  # belongs to a different work's target (or sits outside the configured `:ebook` root) must
+  # still block the whole candidate. Checking the primary alone left that conflict invisible: the
+  # candidate rendered as an ordinary `:needs_decision`, the write failed silently at
+  # revalidation every time, and a re-preview reproduced the identical misleading row forever
+  # (`classify_files/5` never re-evaluated the sibling). Only once every file clears
+  # (`{:ready, nil}`) does the candidate actually reach `:needs_decision, :multi_format`.
+  # `primary_file`/`extra_files` mirror Sonarr's n-to-one candidate shape exactly
+  # (`n_to_one_candidate/5`) — B6c's adopt step reads `primary_file` alone for the **preferred**
+  # choice (EPUB, else AZW3, else MOBI — `@accepted_formats`' own order) or `primary_file` +
+  # `extra_files` for **all**.
   defp classify_files(files, work_id, target, target_paths, path_owners) do
     primary =
       Enum.min_by(files, fn file -> Enum.find_index(@accepted_formats, &(&1 == file.format)) end)
 
     extras = Enum.reject(files, &(&1.provider_id == primary.provider_id))
 
-    case winner_status(primary, work_id, target, target_paths, path_owners) do
+    case blocking_status([primary | extras], work_id, target, target_paths, path_owners) do
       {:ready, nil} ->
         %{
           status: :needs_decision,
@@ -466,6 +473,17 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
           extra_files: []
         }
     end
+  end
+
+  # The first non-`{:ready, nil}` verdict among `files`, in order — or `{:ready, nil}` when every
+  # one of them clears.
+  defp blocking_status(files, work_id, target, target_paths, path_owners) do
+    Enum.reduce_while(files, {:ready, nil}, fn file, _acc ->
+      case winner_status(file, work_id, target, target_paths, path_owners) do
+        {:ready, nil} -> {:cont, {:ready, nil}}
+        blocked -> {:halt, blocked}
+      end
+    end)
   end
 
   defp winner_status(file, work_id, target, target_paths, path_owners) do
