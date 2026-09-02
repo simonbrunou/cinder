@@ -12,21 +12,40 @@ defmodule Cinder.Library.MigrationAdoption do
 
   @statuses [:ready, :needs_decision, :blocked, :already_managed]
 
-  def preview(source) do
+  @doc """
+  `opts[:exclude]` (default `MapSet.new()`) is `:readarr`-only: a set of `work.provider_id`
+  values the caller (the LiveView's own batch auto-advance, B6c) already classified in an earlier
+  batch this scan session and does not want re-emitted — `Readarr.plan/1` has no cursor of its
+  own (preview never writes, so nothing durable marks a batch "done"; see its moduledoc), so
+  forward progress across auto-advanced batches is the caller's own accumulator, threaded back in
+  here. Every other source ignores `opts` entirely — movies/TV stay a single-shot preview.
+  """
+  def preview(source, opts \\ []) do
     with {:ok, module} <- source_module(source),
          {:ok, snapshot} <- module.snapshot() do
-      lookups = lookups(snapshot)
-      reconciled = MigrationReconciler.reconcile(snapshot, lookups)
-      managed = managed_state()
-
-      case plan(source, snapshot, reconciled, lookups, managed) do
+      case plan_source(source, snapshot, opts) do
         {:error, _reason} = error -> error
-        planned when is_list(planned) -> preview_result(source, snapshot, planned)
+        planned when is_list(planned) -> preview_result(source, snapshot, planned, opts)
       end
     end
   end
 
-  defp preview_result(source, snapshot, planned) do
+  # `:readarr` bypasses `plan/4`'s uniform 5-arg dispatch entirely (rather than widening it for
+  # every source) so only its own bounded, cached loop needs to know about `opts[:exclude]` —
+  # movies/TV's `plan_movies/3`/`plan_episodes/4` calls are untouched, still fed the batched
+  # `reconciled`/`lookups`/`managed` primitives `:readarr` has no use for (see `Readarr`'s
+  # moduledoc).
+  defp plan_source(:readarr, snapshot, opts),
+    do: Readarr.plan(snapshot, Keyword.get(opts, :exclude, MapSet.new()))
+
+  defp plan_source(source, snapshot, _opts) do
+    lookups = lookups(snapshot)
+    reconciled = MigrationReconciler.reconcile(snapshot, lookups)
+    managed = managed_state()
+    plan(source, snapshot, reconciled, lookups, managed)
+  end
+
+  defp preview_result(source, snapshot, planned, opts) do
     candidates =
       planned
       |> Kernel.++(diagnostic_candidates(snapshot, source))
@@ -41,15 +60,17 @@ defmodule Cinder.Library.MigrationAdoption do
        counts: counts(candidates),
        series_counts: series_counts(candidates)
      }
-     |> Map.merge(extra_fields(source, snapshot))}
+     |> Map.merge(extra_fields(source, snapshot, opts))}
   end
 
-  # `:readarr`'s preview carries two summary fields no other source needs (`remaining`,
-  # `deferred_bibliography_count` — see `Readarr.summary/1`'s doc). Extending the result map
-  # here, rather than widening `plan/4`'s list-returning contract every source relies on
-  # unchanged, keeps radarr/sonarr's dispatch untouched.
-  defp extra_fields(:readarr, snapshot), do: Readarr.summary(snapshot)
-  defp extra_fields(_source, _snapshot), do: %{}
+  # `:readarr`'s preview carries summary fields no other source needs (`remaining`,
+  # `deferred_bibliography_count`, `deferred_bibliography_authors` — see `Readarr.summary/2`'s
+  # doc). Extending the result map here, rather than widening `plan/4`'s list-returning contract
+  # every source relies on unchanged, keeps radarr/sonarr's dispatch untouched.
+  defp extra_fields(:readarr, snapshot, opts),
+    do: Readarr.summary(snapshot, Keyword.get(opts, :exclude, MapSet.new()))
+
+  defp extra_fields(_source, _snapshot, _opts), do: %{}
 
   def adopt(source, commands) when is_list(commands) do
     case adoption_candidates(source, commands) do
@@ -140,19 +161,14 @@ defmodule Cinder.Library.MigrationAdoption do
   defp plan(:sonarr, snapshot, reconciled, lookups, managed),
     do: plan_episodes(snapshot, reconciled, lookups, managed)
 
-  # Books have no batchable movie/TV-shaped `reconciled`/`lookups` primitive (see `Readarr`'s
-  # moduledoc) — its own bounded, cached loop reads `snapshot` directly and ignores the other
-  # three args entirely. This clause's mere presence, ahead of the catch-all below, is what B6a's
-  # own comment predicted: "B6b's real `:readarr` clause takes precedence over this catch-all
-  # automatically once added, with no other change required here."
-  defp plan(:readarr, snapshot, _reconciled, _lookups, _managed), do: Readarr.plan(snapshot)
-
-  # A source configured in the registry but not yet wired into plan/4 fails closed with an
-  # explicit error rather than raising OR returning an empty-but-successful preview — an empty
-  # `{:ok, %{candidates: []}}` is indistinguishable from "this library genuinely has nothing to
-  # adopt", which is the wrong signal for "not implemented yet". `preview/1` propagates this
-  # straight through; the LiveView's existing scan-failed flash (already exercised by the
-  # not-configured case) handles it with no new code.
+  # A source configured in the registry but not yet wired into `plan/4`/`plan_source/3` fails
+  # closed with an explicit error rather than raising OR returning an empty-but-successful
+  # preview — an empty `{:ok, %{candidates: []}}` is indistinguishable from "this library
+  # genuinely has nothing to adopt", which is the wrong signal for "not implemented yet".
+  # `preview/2` propagates this straight through; the LiveView's existing scan-failed flash
+  # (already exercised by the not-configured case) handles it with no new code. `:readarr` never
+  # reaches this clause — `plan_source/3` routes it to `Readarr.plan/2` before `plan/4` is ever
+  # called.
   defp plan(_source, _snapshot, _reconciled, _lookups, _managed),
     do: {:error, :unsupported_source}
 
@@ -713,6 +729,13 @@ defmodule Cinder.Library.MigrationAdoption do
     end)
   end
 
+  # No Bookshelf refetch and no `Identity.resolve/1` call here — those only ever run at preview
+  # time (`Readarr.plan/2`). This re-checks LOCAL catalog state only, the same "preview and adopt
+  # are not atomic" defense the :radarr/:sonarr clauses above give via `movie_path_status/3`/
+  # `episode_file_status/3` — reusing `Readarr`'s own `winner_status/5` cond-chain rather than a
+  # second one.
+  defp revalidate_catalog(:readarr, selected), do: Readarr.revalidate(selected)
+
   # `adopt/2` is reachable for any source once its list of commands passes `is_list/1` — including
   # a source `plan/4` never produces candidates for, via the direct `candidate:`-embedded command
   # shape `candidates_from_commands/1` accepts without calling `preview/1` first. Every candidate is
@@ -767,7 +790,17 @@ defmodule Cinder.Library.MigrationAdoption do
         %{status: :ready} = candidate ->
           {[{candidate, nil} | selected], unavailable}
 
-        %{status: :needs_decision} = candidate when choice in [:fold, "fold", :part, "part"] ->
+        %{status: :needs_decision} = candidate
+        when choice in [
+               :fold,
+               "fold",
+               :part,
+               "part",
+               :preferred,
+               "preferred",
+               :all_formats,
+               "all_formats"
+             ] ->
           {[{candidate, normalize_choice(choice)} | selected], unavailable}
 
         _unavailable ->
@@ -780,6 +813,8 @@ defmodule Cinder.Library.MigrationAdoption do
   end
 
   defp normalize_choice(choice) when choice in [:fold, "fold"], do: :fold
+  defp normalize_choice(choice) when choice in [:preferred, "preferred"], do: :preferred
+  defp normalize_choice(choice) when choice in [:all_formats, "all_formats"], do: :all_formats
   defp normalize_choice(_choice), do: :part
 
   defp adopt_selected(summary, :radarr, selected) do
@@ -795,6 +830,8 @@ defmodule Cinder.Library.MigrationAdoption do
       adopt_series_items(acc, items)
     end)
   end
+
+  defp adopt_selected(summary, :readarr, selected), do: Readarr.adopt(summary, selected)
 
   # `revalidate_catalog/2`'s catch-all always empties `selected` for an unimplemented source, so
   # this never actually adopts anything in practice — kept as an explicit no-op (not a crash) for

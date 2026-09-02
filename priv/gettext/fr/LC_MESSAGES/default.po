@@ -7197,3 +7197,44 @@ msgstr "Documentation de Bookshelf"
 #, elixir-autogen, elixir-format
 msgid "Readarr"
 msgstr "Readarr"
+
+msgid "%{count} additional monitored work was not imported; use per-author monitoring policy after cutover."
+msgid_plural "%{count} additional monitored works were not imported; use per-author monitoring policy after cutover."
+msgstr[0] "%{count} œuvre suivie supplémentaire n'a pas été importée ; utilisez la politique de suivi par auteur après la bascule."
+msgstr[1] "%{count} œuvres suivies supplémentaires n'ont pas été importées ; utilisez la politique de suivi par auteur après la bascule."
+
+msgid "Adopt every accepted-format file for this work."
+msgstr "Adopter tous les fichiers de format accepté pour cette œuvre."
+
+msgid "Adopt only the preferred format (EPUB, else AZW3, else MOBI). The other files are left untouched on disk."
+msgstr "Adopter uniquement le format préféré (EPUB, sinon AZW3, sinon MOBI). Les autres fichiers restent inchangés sur le disque."
+
+msgid "All formats"
+msgstr "Tous les formats"
+
+msgid "Every metadata provider was unavailable."
+msgstr "Aucun fournisseur de métadonnées n'était disponible."
+
+msgid "No reliable metadata match was found for this work."
+msgstr "Aucune correspondance de métadonnées fiable n'a été trouvée pour cette œuvre."
+
+msgid "None of this work's files are in an accepted e-book format."
+msgstr "Aucun des fichiers de cette œuvre n'est dans un format d'ebook accepté."
+
+msgid "Preferred format"
+msgstr "Format préféré"
+
+msgid "Preview %{name}"
+msgstr "Aperçu %{name}"
+
+msgid "Resolving identities… %{resolved} of %{total} matched, continuing…"
+msgstr "Résolution des identités… %{resolved} sur %{total} trouvées, poursuite en cours…"
+
+msgid "This file is outside the configured books library root."
+msgstr "Ce fichier se trouve hors de la racine de bibliothèque de livres configurée."
+
+msgid "This title is held and needs an operator decision first."
+msgstr "Ce titre est retenu et nécessite d'abord une décision de l'opérateur."
+
+msgid "View migrated author"
+msgstr "Voir l'auteur migré"

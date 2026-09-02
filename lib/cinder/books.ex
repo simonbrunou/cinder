@@ -783,10 +783,16 @@ defmodule Cinder.Books do
   flagged `contributors_incomplete`.
   """
   def import_resolution(%{work: work, provider: provider}) do
-    Repo.transaction(fn -> import_work(work, to_string(provider)) end, mode: :immediate)
+    Repo.transaction(fn -> import_work_in_tx(work, to_string(provider)) end, mode: :immediate)
   end
 
-  defp import_work(work, provider) do
+  @doc false
+  # The non-transactional fold `import_resolution/1` wraps above. Exposed so
+  # `Cinder.Books.Adoption.adopt_work/3` (B6c) can fold a resolved work into the catalog inside
+  # its OWN transaction — calling `import_resolution/1` itself there would nest a second
+  # `Repo.transaction`/rollback boundary inside the first. `import_resolution/1`'s own doc
+  # applies unchanged; this is the same body, not a different one.
+  def import_work_in_tx(work, provider) do
     {contributors, dropped?} = identified_contributors(work.contributors)
 
     attrs =
@@ -806,6 +812,23 @@ defmodule Cinder.Books do
     Enum.each(work.editions, &put_edition(record, &1, provider))
 
     record
+  end
+
+  @doc false
+  # Durably stamps a namespaced provider identifier onto an already-imported Cinder work, inside
+  # the caller's own transaction. `Cinder.Books.Adoption.adopt_work/3` (B6c) uses this to record
+  # `book_identifiers{provider: "readarr", kind: "work", foreign_id: <bookshelf foreign id>}` —
+  # the fact `Cinder.Library.MigrationAdoption.Readarr.plan/2`'s local-cache pass reads on the
+  # next preview. `on_conflict: :nothing` mirrors `put_normalized_identifier/4`'s own idempotent
+  # insert: a retried/replayed adopt of the same work is a no-op here, never a duplicate-key
+  # error.
+  def stamp_identifier_in_tx(%Work{id: id}, provider, foreign_id) do
+    insert_identifier(
+      %Identifier{work_id: id},
+      %{provider: provider, kind: "work", foreign_id: foreign_id},
+      on_conflict: :nothing,
+      conflict_target: [:provider, :kind, :foreign_id]
+    )
   end
 
   # A contributor with no provider id cannot be identified across refreshes, and the contract

@@ -28,7 +28,8 @@ defmodule Cinder.Library.Adoption do
     |> Enum.map(fn {candidate, id} -> Map.put(candidate, :id, id) end)
   end
 
-  defdelegate preview_migration(source), to: Cinder.Library.MigrationAdoption, as: :preview
+  def preview_migration(source, opts \\ []), do: Library.MigrationAdoption.preview(source, opts)
+
   defdelegate adopt_migration(source, commands), to: Cinder.Library.MigrationAdoption, as: :adopt
 
   @doc """
@@ -103,7 +104,7 @@ defmodule Cinder.Library.Adoption do
     decision_commands =
       for candidate <- buckets.needs_decision,
           choice = Map.get(decisions, candidate.id),
-          choice in ["fold", "part"],
+          choice in ["fold", "part", "preferred", "all_formats"],
           do: %{key: candidate.key, choice: choice, candidate: candidate}
 
     ready_commands ++ decision_commands

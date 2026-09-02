@@ -29,8 +29,8 @@ defmodule Cinder.Books.Files do
 
   Replay-safe by construction: when the incoming `path` is already one of the target's own rows
   (a crash/replay re-running an already-committed replace), nothing is deleted — the row stays,
-  and `insert_file/2` hits the same unique-path conflict `insert_conflict/3` already treats as a
-  no-op success. Only a GENUINELY different existing row is ever removed.
+  and `insert_or_existing/2` hits the same unique-path conflict `insert_conflict/3` already treats
+  as a no-op success. Only a GENUINELY different existing row is ever removed.
   """
   @spec record_import(BookTarget.t(), map(), keyword()) ::
           {:ok, BookFile.t()}
@@ -42,7 +42,7 @@ defmodule Cinder.Books.Files do
 
     Repo.transaction(fn ->
       with {:ok, superseded} <- maybe_supersede(target, attrs, replace?),
-           {:ok, file} <- insert_file(target, attrs),
+           {:ok, file} <- insert_or_existing(target, attrs),
            {:ok, _armed} <- arm_target(target) do
         # Inside the transaction, and last: `mark_committed!/1` rolls back on a stage that is no
         # longer `:prepared`, so a journal another process already reconciled aborts the catalog
@@ -73,7 +73,15 @@ defmodule Cinder.Books.Files do
     end
   end
 
-  defp insert_file(target, attrs) do
+  @doc false
+  # Shared with `Cinder.Books.Adoption.adopt_work/3` (B6c) — a duplicate `book_files.path` is
+  # only a conflict when the row belongs to a DIFFERENT target; when it is the SAME target's own
+  # row (a retried adopt, or a crash/replay), the write already succeeded and this call is
+  # replaying it. See `insert_conflict/3` below for exactly which case is which. Public and
+  # `@doc false` (not private) so B6c's own transaction can reuse this unchanged rather than
+  # duplicating it — the plan's own explicit instruction.
+  @spec insert_or_existing(BookTarget.t(), map()) :: {:ok, BookFile.t()} | {:error, term()}
+  def insert_or_existing(%BookTarget{} = target, attrs) do
     %BookFile{}
     |> BookFile.changeset(Map.put(attrs, :book_target_id, target.id))
     |> Repo.insert()
