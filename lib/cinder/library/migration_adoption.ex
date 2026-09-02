@@ -6,6 +6,7 @@ defmodule Cinder.Library.MigrationAdoption do
   alias Cinder.Catalog
   alias Cinder.Catalog.Adoption, as: CatalogAdoption
   alias Cinder.Catalog.{Episode, Movie, Series}
+  alias Cinder.Library.MigrationAdoption.Readarr
   alias Cinder.Library.MigrationReconciler
   alias Cinder.Repo
 
@@ -39,8 +40,16 @@ defmodule Cinder.Library.MigrationAdoption do
        candidates: candidates,
        counts: counts(candidates),
        series_counts: series_counts(candidates)
-     }}
+     }
+     |> Map.merge(extra_fields(source, snapshot))}
   end
+
+  # `:readarr`'s preview carries two summary fields no other source needs (`remaining`,
+  # `deferred_bibliography_count` — see `Readarr.summary/1`'s doc). Extending the result map
+  # here, rather than widening `plan/4`'s list-returning contract every source relies on
+  # unchanged, keeps radarr/sonarr's dispatch untouched.
+  defp extra_fields(:readarr, snapshot), do: Readarr.summary(snapshot)
+  defp extra_fields(_source, _snapshot), do: %{}
 
   def adopt(source, commands) when is_list(commands) do
     case adoption_candidates(source, commands) do
@@ -131,15 +140,19 @@ defmodule Cinder.Library.MigrationAdoption do
   defp plan(:sonarr, snapshot, reconciled, lookups, managed),
     do: plan_episodes(snapshot, reconciled, lookups, managed)
 
-  # A source configured in the registry but not yet wired into plan/4 (currently :readarr —
-  # B6a adds dispatch and the snapshot contract, but book-specific candidate classification
-  # doesn't exist until B6b) fails closed with an explicit error rather than raising OR
-  # returning an empty-but-successful preview — an empty `{:ok, %{candidates: []}}` is
-  # indistinguishable from "this library genuinely has nothing to adopt", which is the wrong
-  # signal for "not implemented yet". `preview/1` propagates this straight through; the
-  # LiveView's existing scan-failed flash (already exercised by the not-configured case)
-  # handles it with no new code. B6b's real `:readarr` clause takes precedence over this
-  # catch-all automatically once added, with no other change required here.
+  # Books have no batchable movie/TV-shaped `reconciled`/`lookups` primitive (see `Readarr`'s
+  # moduledoc) — its own bounded, cached loop reads `snapshot` directly and ignores the other
+  # three args entirely. This clause's mere presence, ahead of the catch-all below, is what B6a's
+  # own comment predicted: "B6b's real `:readarr` clause takes precedence over this catch-all
+  # automatically once added, with no other change required here."
+  defp plan(:readarr, snapshot, _reconciled, _lookups, _managed), do: Readarr.plan(snapshot)
+
+  # A source configured in the registry but not yet wired into plan/4 fails closed with an
+  # explicit error rather than raising OR returning an empty-but-successful preview — an empty
+  # `{:ok, %{candidates: []}}` is indistinguishable from "this library genuinely has nothing to
+  # adopt", which is the wrong signal for "not implemented yet". `preview/1` propagates this
+  # straight through; the LiveView's existing scan-failed flash (already exercised by the
+  # not-configured case) handles it with no new code.
   defp plan(_source, _snapshot, _reconciled, _lookups, _managed),
     do: {:error, :unsupported_source}
 

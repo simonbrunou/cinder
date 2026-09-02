@@ -53,8 +53,11 @@ contract nor the audit states which case the real deployment is in, and the *exi
 migration code has **no** such branch at all — it adopts a movie/episode's path verbatim, trusting
 the operator's media-server library section already covers wherever Radarr/Sonarr put it. B6
 follows that exact precedent (§3.3) rather than building an unused staging fallback: it fails closed
-via the existing `Settings.library_root_for_path/1` when a candidate's path is outside every
-configured root, and the cutover procedure (§4) makes "point the `books` root setting at Bookshelf's
+via `Settings.library_destination_for_path(:ebook, path)` when a candidate's path is outside
+every configured `:ebook` root — kind-scoped, not `Settings.library_root_for_path/1`'s any-kind
+match, so a translated path that happens to land inside the operator's movies/TV/audiobooks root
+is still correctly rejected as outside the books library — and the cutover procedure (§4) makes
+"point the `books` root setting at Bookshelf's
 existing library path" an explicit precondition. Building the B4-staging fallback for a scenario
 with zero observed need in the one real deployment is out of scope; see "What stays out."
 
@@ -347,8 +350,11 @@ For each file-bearing work that *did* resolve, group its `snapshot.files` (`kind
   more recent decision is never silently overridden, the same rule `monitor_target/4`'s `arm/3`
   already enforces.
 - The translated path (`PathMapping.translate/3`, same remote/local prefix mechanism `radarr.ex`/
-  `sonarr.ex` already use) is outside every configured library root
-  (`Settings.library_root_for_path/1` returns `{:error, :outside_library}`) → `:blocked,
+  `sonarr.ex` already use) is outside every configured `:ebook` library root
+  (`Settings.library_destination_for_path(:ebook, path)` returns `{:error, :outside_library}` —
+  kind-scoped, not `Settings.library_root_for_path/1`'s any-kind match, since a books path
+  landing inside a configured movies/TV/audiobooks root is exactly the misconfiguration this
+  bucket exists to catch) → `:blocked,
   :outside_library_root` — the fail-closed answer to §0.2.
 - Otherwise → `:ready`.
 
@@ -403,8 +409,10 @@ changes nothing" true by construction rather than by a separate check.
   identical path already recorded as *this* target's own file classifies `:already_managed`.
   (Idempotency: running `preview/1` twice with no adopt between them returns byte-identical
   candidates.)
-- A candidate's translated path resolves outside every `Settings.library_roots()` entry and blocks
-  `:outside_library_root` rather than being silently classified `:ready`.
+- A candidate's translated path resolves outside every configured `:ebook` root and blocks
+  `:outside_library_root` rather than being silently classified `:ready`. This must be
+  kind-scoped: a path that lands inside a configured *non-books* root (e.g. the audiobooks root)
+  is also `:outside_library_root`, never silently `:ready` just because some library claims it.
 - 661 fileless monitored works never appear in `preview.candidates`; `deferred_bibliography_count`
   equals their exact count.
 - `mix test` green.
@@ -526,7 +534,10 @@ not abort the batch, matching `apply_author_policy/4`'s established contract.
   `deferred_bibliography_count` monitored-fileless works were not imported, with a link to
   `/books/:id` for each migrated author (`preview.deferred_bibliography_authors`, the author ids the
   count is drawn from) where B5b's existing "Set author policy" control already lives — no new
-  screen.
+  screen. **Note for the B6c implementer:** B6b's `Readarr.summary/1` (§B6b.3) produces only the
+  scalar `deferred_bibliography_count`, not this `deferred_bibliography_authors` list — B6b's own
+  plan section never specifies it. B6c must add it (e.g. `Enum.uniq(for work <- fileless, do:
+  work.author_id)`) rather than assume it already exists on `preview/1`'s result.
 
 ### 3. `docs/readarr-migration.md` — the cutover runbook
 
