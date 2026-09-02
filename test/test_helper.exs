@@ -10,6 +10,7 @@ Mox.defmock(Cinder.Download.ClientMock, for: Cinder.Download.Client)
 # client in config/test.exs.
 Mox.defmock(Cinder.Download.SabnzbdClientMock, for: Cinder.Download.Client)
 Mox.defmock(Cinder.Library.MediaServerMock, for: Cinder.Library.MediaServer)
+Mox.defmock(Cinder.Library.AudiobookServerMock, for: Cinder.Library.AudiobookServer)
 Mox.defmock(Cinder.Library.MigrationSourceMock, for: Cinder.Library.MigrationSource)
 Mox.defmock(Cinder.Library.RadarrMigrationSourceMock, for: Cinder.Library.MigrationSource)
 Mox.defmock(Cinder.Library.SonarrMigrationSourceMock, for: Cinder.Library.MigrationSource)

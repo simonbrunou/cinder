@@ -28,6 +28,7 @@ defmodule Cinder.SettingsTest do
     Cinder.Download.Cleaner,
     Cinder.Library.MediaServer.Jellyfin,
     Cinder.Library.MediaServer.Plex,
+    Cinder.Library.AudiobookServer.Audiobookshelf,
     Cinder.Notifier.Discord,
     Cinder.Notifier.Webhook,
     Cinder.Mailer,

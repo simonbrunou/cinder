@@ -658,6 +658,12 @@ defmodule CinderWeb.SettingsComponents do
         "Optional. Configure OpenID Connect sign-in and the default request quota for newly registered users. Register the callback URL shown in the operating guide with your identity provider."
       )
 
+  defp setup_section_description(:audiobook_server),
+    do:
+      gettext(
+        "Optional. Cinder scans Audiobookshelf's library after a successful audiobook import; a failed scan retries automatically without re-downloading. Create an API token under Audiobookshelf's Settings > Users, then paste it below with the library's id."
+      )
+
   defp setup_section_resources(:tmdb),
     do: [
       {gettext("TMDB token guide"),
@@ -721,6 +727,7 @@ defmodule CinderWeb.SettingsComponents do
     do: [{"torrent", gettext("Torrent client")}, {"usenet", gettext("Usenet client")}]
 
   def services_for(:media_server), do: [{"media_server", gettext("Media server")}]
+  def services_for(:audiobook_server), do: [{"audiobook_server", "Audiobookshelf"}]
   def services_for(:notifications), do: [{"discord", "Discord"}]
   def services_for(:subtitles), do: [{"subtitles", "OpenSubtitles"}]
 
@@ -746,6 +753,7 @@ defmodule CinderWeb.SettingsComponents do
   def decode_service("sonarr"), do: {:migration_source, :sonarr}
   def decode_service("readarr"), do: {:migration_source, :readarr}
   def decode_service("media_server"), do: :media_server
+  def decode_service("audiobook_server"), do: :audiobook_server
   def decode_service("torrent"), do: {:download, :torrent}
   def decode_service("usenet"), do: {:download, :usenet}
   def decode_service("discord"), do: :discord

@@ -20,6 +20,7 @@ defmodule Cinder.Books.BookTarget do
     field :hold_reason, :string
     field :hold_transient, :boolean
     field :preferred_language, :string
+    field :audiobookshelf_scanned_at, :utc_datetime
 
     timestamps(type: :utc_datetime)
   end

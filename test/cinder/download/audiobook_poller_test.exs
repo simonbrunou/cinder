@@ -22,6 +22,9 @@ defmodule Cinder.Download.AudiobookPollerTest do
 
   setup do
     stub(Cinder.Download.ClientMock, :files, fn _id -> {:ok, []} end)
+    # Not under test here (see AudiobookshelfScanTest) — a bare stub keeps every :available
+    # transition in this file from tripping Mox's global-mode "no expectation" guard.
+    stub(Cinder.Library.AudiobookServerMock, :scan, fn -> :ok end)
     :ok
   end
 

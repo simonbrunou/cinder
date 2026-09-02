@@ -28,6 +28,7 @@ defmodule Cinder.HealthTest do
     stub(Cinder.Download.ClientMock, :health, fn -> {:error, :econnrefused} end)
     stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)
     stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)
+    stub(Cinder.Library.AudiobookServerMock, :health, fn -> :ok end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
   end
 
@@ -42,6 +43,7 @@ defmodule Cinder.HealthTest do
              %{label: "Download (torrent · ClientMock)", status: {:error, :econnrefused}},
              %{label: "Download (usenet · SabnzbdClientMock)", status: :ok},
              %{label: "Media server (MediaServerMock)", status: :ok},
+             %{label: "Audiobook server (AudiobookServerMock)", status: :ok},
              %{label: "Library (movies)", status: :ok},
              %{label: "Library (tv)", status: :ok}
            ] = Cinder.Health.check_all()

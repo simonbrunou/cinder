@@ -19,19 +19,23 @@ defmodule Cinder.Health do
     [tmdb_check(), indexer_check()] ++
       books_metadata_checks() ++
       download_checks() ++
-      [media_server_check()] ++
+      [media_server_check(), audiobook_server_check()] ++
       library_checks() ++ media_info_check() ++ subtitles_check() ++ secrets_check()
   end
 
   @doc """
   Checks a single service against its currently-applied config, returning
   `:ok | {:warning, term()} | {:error, term()}`. Used by the settings "Test connection" buttons.
-  `service` is `:tmdb | :indexer | :media_server | :discord | :subtitles | :media_info |
-  {:download, protocol} | {:books_metadata, provider}`.
+  `service` is `:tmdb | :indexer | :media_server | :audiobook_server | :discord | :subtitles |
+  :media_info | {:download, protocol} | {:books_metadata, provider}`.
   """
   def check_service(:tmdb), do: run(Application.fetch_env!(:cinder, :tmdb))
   def check_service(:indexer), do: run(Application.fetch_env!(:cinder, :indexer))
   def check_service(:media_server), do: run(Application.fetch_env!(:cinder, :media_server))
+
+  def check_service(:audiobook_server),
+    do: run(Application.fetch_env!(:cinder, :audiobook_server))
+
   def check_service(:discord), do: run(Cinder.Notifier.Discord)
 
   def check_service({:migration_source, source}) do
@@ -104,6 +108,11 @@ defmodule Cinder.Health do
   defp media_server_check do
     mod = Application.fetch_env!(:cinder, :media_server)
     check("Media server (#{short(mod)})", mod)
+  end
+
+  defp audiobook_server_check do
+    mod = Application.fetch_env!(:cinder, :audiobook_server)
+    check("Audiobook server (#{short(mod)})", mod)
   end
 
   # One row per configured protocol (sorted for a stable display order).

@@ -179,6 +179,38 @@ defmodule Cinder.Books do
     |> Map.new()
   end
 
+  @doc """
+  Audiobook targets whose on-disk content Audiobookshelf has not been told about yet — every
+  `:available` audiobook target with `audiobookshelf_scanned_at: nil`. The
+  `Cinder.Download.BookPoller` scan phase's source of retry work: re-derived fresh every tick, so
+  a scan failure (or a full crash/restart) simply leaves the row here to be picked up again next
+  tick, with no separate attempt-count/claim state to lose or exhaust.
+  """
+  @spec list_pending_audiobook_scans() :: [BookTarget.t()]
+  def list_pending_audiobook_scans do
+    Repo.all(
+      from t in BookTarget,
+        where:
+          t.media_kind == :audiobook and t.status == :available and
+            is_nil(t.audiobookshelf_scanned_at)
+    )
+  end
+
+  @doc """
+  Stamps `target_id`'s successful Audiobookshelf scan. No status write, no broadcast — mirrors
+  `clear_blocklist/1`'s "no side effect" contract: this changes nothing the UI renders, only
+  whether the poller's scan phase considers the target done.
+  """
+  @spec mark_audiobookshelf_scanned(integer()) :: :ok
+  def mark_audiobookshelf_scanned(target_id) do
+    Repo.update_all(
+      from(t in BookTarget, where: t.id == ^target_id),
+      set: [audiobookshelf_scanned_at: DateTime.utc_now(:second)]
+    )
+
+    :ok
+  end
+
   @doc "One target by id, with its work and author credits preloaded, or nil."
   @spec get_target(integer()) :: BookTarget.t() | nil
   def get_target(id),

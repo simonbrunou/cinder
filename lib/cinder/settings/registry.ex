@@ -274,6 +274,33 @@ defmodule Cinder.Settings.Registry do
       placeholder: "https://app.plex.tv"
     },
     %{
+      key: "audiobookshelf_url",
+      module: Cinder.Library.AudiobookServer.Audiobookshelf,
+      field: :url,
+      secret: false,
+      group: :audiobook_server,
+      label: "Audiobookshelf URL",
+      placeholder: "http://localhost:13378"
+    },
+    %{
+      key: "audiobookshelf_api_key",
+      module: Cinder.Library.AudiobookServer.Audiobookshelf,
+      field: :api_key,
+      secret: true,
+      group: :audiobook_server,
+      label: "Audiobookshelf API key",
+      placeholder: ""
+    },
+    %{
+      key: "audiobookshelf_library_id",
+      module: Cinder.Library.AudiobookServer.Audiobookshelf,
+      field: :library_id,
+      secret: false,
+      group: :audiobook_server,
+      label: "Audiobookshelf library id",
+      placeholder: ""
+    },
+    %{
       key: "discord_webhook_url",
       module: Cinder.Notifier.Discord,
       field: :webhook_url,
@@ -635,6 +662,7 @@ defmodule Cinder.Settings.Registry do
     migration: "Migration sources",
     download: "Download clients",
     media_server: "Media server",
+    audiobook_server: "Audiobookshelf",
     library: "Library paths",
     releases: "Release size bands",
     subtitles: "Subtitles",
