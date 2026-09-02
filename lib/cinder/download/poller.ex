@@ -388,7 +388,11 @@ defmodule Cinder.Download.Poller do
             finish_stage(stage, :commit)
             Notifier.notify({:movie_available, available})
             # After the DB commit (the file is recorded as imported): a best-effort, gated
-            # remove of the source download. Failure is logged, never strands or re-imports.
+            # remove of the source download, fenced (#415) so a transient client failure
+            # survives as a retryable `download_intents` row instead of being discarded — the
+            # movie row itself is the durable owner (this transition never clears
+            # download_id/download_protocol), so fencing off the just-committed `available` here,
+            # after commit, loses nothing to a crash.
             # The source MUST be read off `movie` (the pre-transition struct), never `available`:
             # `available.content_path` is nil (cleared above), so `Movie.download_source/1` would
             # fall back to `file_path` — which on `available` IS the just-imported library file.
@@ -397,7 +401,8 @@ defmodule Cinder.Download.Poller do
             Download.remove_after_import(
               movie.download_protocol,
               movie.download_id,
-              Movie.download_source(movie)
+              Movie.download_source(movie),
+              fence: {:movie, available}
             )
 
           # Cancelled/deleted while the import unit was hardlinking: no row will ever
@@ -717,7 +722,9 @@ defmodule Cinder.Download.Poller do
 
   # Post-commit side effects, all best-effort (none can unwind the committed upgrade): remove the
   # superseded file only when the dest path actually changed (a same-path replace already overwrote
-  # it), drop the source download, and notify. content_path is the NEW download's source — movie
+  # it), drop the source download (fenced, #415 — `available`, the just-committed row, is the
+  # durable owner: this transition never clears download_id/download_protocol, so fencing after
+  # commit loses nothing to a crash), and notify. content_path is the NEW download's source — movie
   # (the original, pre-upgrade struct) keeps file_path pointing at the OLD live library file, so it
   # must never stand in for the source here.
   defp finalize_upgrade(movie, available, content_path) do
@@ -726,7 +733,10 @@ defmodule Cinder.Download.Poller do
     |> Kernel.--(Movie.file_paths(available))
     |> Enum.each(&best_effort_remove_old/1)
 
-    Download.remove_after_import(movie.download_protocol, movie.download_id, content_path)
+    Download.remove_after_import(movie.download_protocol, movie.download_id, content_path,
+      fence: {:movie, available}
+    )
+
     Notifier.notify({:movie_available, available})
   end
 

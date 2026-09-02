@@ -10,7 +10,7 @@ defmodule Cinder.Download.MoveOnImportTest do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, GrabFile, Movie}
   alias Cinder.Download
-  alias Cinder.Download.{Poller, TvPoller}
+  alias Cinder.Download.{Intent, IntentEpisode, Poller, TvPoller}
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -391,6 +391,57 @@ defmodule Cinder.Download.MoveOnImportTest do
       assert :ok = Poller.poll()
       assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
     end
+
+    # #415 review (P1, BLOCKER): the post-commit fence used to look up "the" intent for this
+    # target_id with no check that it belonged to the download being fenced. Fencing runs AFTER
+    # the import already committed+broadcast — a genuine window for a concurrent re-grab
+    # (UpgradeHunter tick, "Find a better match" click) to reserve a brand-new intent for the SAME
+    # movie before this call runs. Without the `expect_remote_id` generation guard, that intent
+    # would get silently overwritten (flipped to `:cleanup_pending`, its own `remote_id`
+    # discarded) instead of left alone.
+    test "a concurrent re-grab's intent is never hijacked; the old download still gets a one-shot removal" do
+      enable()
+      movie = usenet_movie(96, "nzo-old")
+
+      # Simulate the race directly: a concurrent re-grab already reserved a brand-new intent for
+      # this same movie target_id (a real `:submitted` shape, matching what `store_remote_id/2`
+      # produces) between this tick's import commit and the post-commit fence call below.
+      race_intent =
+        %Intent{}
+        |> Intent.changeset(%{
+          operation_key: Ecto.UUID.generate(),
+          kind: :movie,
+          target_id: movie.id,
+          episode_ids: [],
+          protocol: :usenet,
+          release: %{"title" => "M"},
+          status: :submitted,
+          remote_id: "nzo-new"
+        })
+        |> Repo.insert!()
+
+      parent = self()
+
+      stub(Cinder.Download.SabnzbdClientMock, :remove, fn id, opts ->
+        send(parent, {:removed, id, opts})
+        :ok
+      end)
+
+      assert :ok =
+               Download.remove_after_import(:usenet, "nzo-old", "/downloads/M.mkv",
+                 fence: {:movie, movie}
+               )
+
+      # The old download still gets removed — one-shot, undurable, but not silently dropped.
+      assert_receive {:removed, "nzo-old", [delete_files: true]}
+
+      # The race-winning intent survives byte-identical: never hijacked into :cleanup_pending,
+      # its own remote_id intact.
+      assert %Intent{status: :submitted, remote_id: "nzo-new"} = Repo.get!(Intent, race_intent.id)
+
+      # No second, corrupted intent was created for the old download either.
+      refute Repo.get_by(Intent, kind: :movie, target_id: movie.id, remote_id: "nzo-old")
+    end
   end
 
   describe "upgrade path (issue #115)" do
@@ -559,6 +610,118 @@ defmodule Cinder.Download.MoveOnImportTest do
       assert_receive {:removed, "nzo-pack", [delete_files: true]}
       # The whole per-operation/unpack directory is deleted, not just the matched file inside it.
       assert_receive {:rm_rf, "/dl/pack"}
+    end
+
+    # #415 review (P2): the cleanup carrier used to reserve EVERY episode the grab ever linked
+    # (imported and missing alike), captured via `episode_ids_for_grab/1` before the Catalog
+    # call. `commit_grab_imports/close_grab/finish_grab` release the missing ones with
+    # `grab_id: nil` for `search_wanted/1` to re-pick up — but the fenced carrier still held
+    # E02's `download_intent_episodes` reservation, and `Download.pending_episode_ids/0` excludes
+    # anything reserved there, so E02 would silently stop re-searching for as long as the
+    # unrelated remote-cleanup intent lived. Uses a FAILING remove (not `echo_remove`) so the
+    # fenced intent survives long enough to inspect — an immediately-drained intent proves nothing.
+    test "a partial-match pack's cleanup fence reserves only the imported episode, leaving the missing one searchable" do
+      enable()
+      {_series, season} = series_tree()
+      e1 = episode(season, 1)
+      e2 = episode(season, 2)
+      {:ok, grab} = Catalog.create_grab("nzo-pack-2", :usenet, [e1.id, e2.id])
+      {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/pack2")
+
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+      # Only E01 is present; E02 is unmatched and must stay re-searchable.
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+        {:ok, [{"/dl/pack2/Show.S01E01.1080p.mkv", 3_000_000_000}]}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+        if String.contains?(path, ".cinder-stage-") or
+             not String.starts_with?(path, "/tmp/cinder-test-tv-library/"),
+           do: {:ok, %File.Stat{size: 3_000_000_000, inode: 1, major_device: 1}},
+           else: {:error, :enoent}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rename, fn _src, _dest -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
+      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+      stub_rm_rf()
+      stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> {:error, :timeout} end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      assert Repo.get!(Episode, e1.id).file_path =~ "S01E01"
+      assert is_nil(Repo.get!(Episode, e2.id).file_path)
+
+      # The fenced carrier survives (removal failed) and reserves ONLY the imported episode.
+      intent = Repo.get_by!(Intent, remote_id: "nzo-pack-2")
+      assert intent.status == :cleanup_pending
+      assert intent.episode_ids == [e1.id]
+
+      pending = Download.pending_episode_ids()
+      assert MapSet.member?(pending, e1.id)
+      refute MapSet.member?(pending, e2.id)
+    end
+
+    # #415 review (P1, BLOCKER): without the `expect_remote_id` generation guard,
+    # `fence_episode_cleanup/2` would (a) silently flip an unrelated intent already holding one
+    # of `episode_ids` in `download_intent_episodes` to `:cleanup_pending`, and (b) crash trying
+    # to insert a SECOND `download_intent_episodes` row for the SAME episode_id (the carrier
+    # insert), violating `unique_index(:episode_id)` — since two intents can never claim one
+    # episode. Simulates the same race as the movie clobber test: a concurrent re-grab already
+    # reserved this episode between the tick's import commit and the post-commit fence call.
+    test "an episode-reservation conflict is never hijacked or crashed; the grab's download still gets a one-shot removal" do
+      enable()
+      {_series, season} = series_tree()
+      e1 = episode(season, 5)
+
+      race_intent =
+        %Intent{}
+        |> Intent.changeset(%{
+          operation_key: Ecto.UUID.generate(),
+          kind: :episode,
+          target_id: e1.id,
+          episode_ids: [e1.id],
+          protocol: :usenet,
+          release: %{"title" => "Show S01E05 Better"},
+          status: :submitted,
+          remote_id: "nzo-new-ep"
+        })
+        |> Repo.insert!()
+
+      {:ok, _reservation} =
+        %IntentEpisode{}
+        |> IntentEpisode.changeset(%{intent_id: race_intent.id, episode_id: e1.id})
+        |> Repo.insert()
+
+      parent = self()
+
+      stub(Cinder.Download.SabnzbdClientMock, :remove, fn id, opts ->
+        send(parent, {:removed, id, opts})
+        :ok
+      end)
+
+      spec = %{
+        remote_id: "nzo-old-ep",
+        protocol: :usenet,
+        title: "Show S01E05",
+        episode_ids: [e1.id]
+      }
+
+      assert :ok =
+               Download.remove_after_import(:usenet, "nzo-old-ep", "/dl/Show.S01E05.mkv",
+                 fence: {:episode, [e1.id], spec}
+               )
+
+      assert_receive {:removed, "nzo-old-ep", [delete_files: true]}
+
+      assert %Intent{status: :submitted, remote_id: "nzo-new-ep"} =
+               Repo.get!(Intent, race_intent.id)
+
+      refute Repo.get_by(Intent, kind: :episode, remote_id: "nzo-old-ep")
     end
 
     test "an unmatched video fences client and source removal across repeated ticks" do

@@ -25,12 +25,14 @@ defmodule Cinder.Download.TvPoller do
   announced by Catalog at the counter's write site, covering every bump path.
   """
   require Logger
+  import Ecto.Query
 
   alias Cinder.{Acquisition, Catalog, Disk, Download, Library, Notifier, Settings}
   alias Cinder.Acquisition.AnimePreferences
   alias Cinder.Catalog.{Episode, Grab, Grabs, MediaProfile}
   alias Cinder.Download.{ContentPolicy, StallReaper}
   alias Cinder.HTTPPolicy
+  alias Cinder.Repo
 
   @default_interval 5_000
   @search_retry_after 60
@@ -314,6 +316,16 @@ defmodule Cinder.Download.TvPoller do
     kind, value -> {:error, {kind, value}}
   end
 
+  # #415: `Catalog.commit_grab_imports/4`'s `:closed` branch deletes `grab` — the only durable
+  # record of `download_id`/`download_protocol` (episodes carry no such column) — inside its own
+  # already-committed transaction, before `remove_after_import` ever runs. `imported` (already
+  # computed below) names exactly the episodes that got a file THIS round — the same set
+  # `commit_grab_imports/4` itself derives internally to decide which episodes are "missing" and
+  # bumps back into the wanted pool. Fencing only those (not every episode the grab ever linked)
+  # matters: `commit_grab_imports/4` releases the missing ones with `grab_id: nil` for
+  # `search_wanted/1` to re-pick up, and `Download.pending_episode_ids/0` excludes anything the
+  # cleanup carrier still reserves — over-reserving a missed episode would silently stop
+  # re-searching it for as long as the (unrelated) remote-cleanup intent lives.
   defp finalize_standard_grab(grab, staged, residuals) do
     # `placed?` is absent on every stage but the arbitrated keep (#250), which is the one case
     # where the episode's file did not change and its part files must survive the commit.
@@ -321,6 +333,8 @@ defmodule Cinder.Download.TvPoller do
       Enum.map(staged, fn {episode_id, stage} ->
         {episode_id, stage.dest, stage.quality, Map.get(stage, :placed?, true)}
       end)
+
+    imported_ids = imported |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
 
     case Catalog.commit_grab_imports(
            grab,
@@ -331,7 +345,10 @@ defmodule Cinder.Download.TvPoller do
       {:ok, :closed, _grab} ->
         commit_stages(staged)
         remove_superseded_episode_files(grab.episodes)
-        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
+
+        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path,
+          fence: episode_cleanup_fence(grab, imported_ids)
+        )
 
       {:ok, :open, _grab} ->
         commit_stages(staged)
@@ -441,11 +458,25 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
+  # #415: `Catalog.close_grab/1` deletes `grab` inside its own already-committed transaction,
+  # before `remove_after_import` ever runs. Unlike `finalize_standard_grab/3`/
+  # `finalize_staged_grab/2`, no local `imported` list is available here (residual decisions are
+  # applied one file at a time, elsewhere) — `imported_episode_ids/1` reads which of `grab`'s
+  # episodes already carry a file BEFORE `close_grab` runs. `close_grab/1` never adds a file to an
+  # episode that doesn't already have one at this point (fold/part/discard decisions already ran
+  # against it); it only finalizes bookkeeping and bumps whatever's left bare back to the wanted
+  # pool — so this snapshot exactly matches what `close_grab/1` itself will keep as "imported"
+  # once it returns.
   @doc false
   def finalize_residual_grab(%Grab{} = grab) do
+    imported_ids = imported_episode_ids(grab.id)
+
     case Catalog.close_grab(grab) do
       {:ok, :closed, _grab} ->
-        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
+        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path,
+          fence: episode_cleanup_fence(grab, imported_ids)
+        )
+
         {:ok, :closed}
 
       {:error, :unresolved_grab_files} ->
@@ -462,9 +493,14 @@ defmodule Cinder.Download.TvPoller do
   defp finalize_staged_grab(%Grab{arbitrate_at_import: true} = grab, staged),
     do: finalize_standard_grab(grab, staged, [])
 
+  # #415: `Catalog.finish_grab/3` deletes `grab` inside its own already-committed transaction,
+  # before `remove_after_import` ever runs. `imported` (already computed below) names exactly the
+  # episodes that got a file this round — same reasoning as `finalize_standard_grab/3`.
   defp finalize_staged_grab(grab, staged) do
     imported =
       Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
+
+    imported_ids = imported |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
 
     case Catalog.finish_grab(
            grab,
@@ -474,7 +510,10 @@ defmodule Cinder.Download.TvPoller do
       {:ok, _grab} ->
         commit_stages(staged)
         remove_superseded_episode_files(grab.episodes)
-        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
+
+        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path,
+          fence: episode_cleanup_fence(grab, imported_ids)
+        )
 
       {:error, :stale_grab} ->
         rollback_stages(staged)
@@ -483,6 +522,27 @@ defmodule Cinder.Download.TvPoller do
         rollback_stages(staged)
         retry_or_park(grab, {:finish_grab, reason})
     end
+  end
+
+  # Shared by all three `#415` fence sites above. `nil` (no fence) when nothing survived to fence
+  # — an empty `episode_ids` would crash `Download.fence_episode_cleanup/2`'s carrier insert on
+  # `hd([])` (mirroring `Catalog.Grabs.fence_client_intent_ids/1`'s own empty-list guard); it
+  # degrades to `remove_after_import/4`'s legacy one-shot removal instead, exactly like a genuine
+  # fence-vs-unrelated-intent mismatch.
+  defp episode_cleanup_fence(_grab, []), do: nil
+
+  defp episode_cleanup_fence(grab, episode_ids),
+    do: {:episode, episode_ids, Catalog.grab_cleanup_spec(grab, episode_ids)}
+
+  # Episodes still linked to `grab_id` that already carry a file — read BEFORE the caller's
+  # Catalog call finalizes the grab (which nilifies every linked episode's `grab_id`, imported or
+  # not, so this can't be reconstructed afterward). See `finalize_residual_grab/1`'s doc comment.
+  defp imported_episode_ids(grab_id) do
+    Repo.all(
+      from e in Episode,
+        where: e.grab_id == ^grab_id and not is_nil(e.file_path) and e.file_path != "",
+        select: e.id
+    )
   end
 
   defp hold_for_configuration(grab, :tv_library_path) do

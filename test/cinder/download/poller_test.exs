@@ -260,6 +260,54 @@ defmodule Cinder.Download.PollerTest do
     assert_receive {:movie_updated, %Movie{status: :available}}
   end
 
+  test "a failed post-import client removal survives as a durable cleanup record, and a later pass drains it" do
+    saved = Application.get_env(:cinder, :move_on_import, false)
+    Application.put_env(:cinder, :move_on_import, true)
+    on_exit(fn -> Application.put_env(:cinder, :move_on_import, saved) end)
+
+    movie = downloading_movie(90, "nzo-90", download_protocol: :usenet)
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Download.SabnzbdClientMock, :status, fn "nzo-90" ->
+      {:ok, %{state: :completed, content_path: "/downloads/M90.mkv"}}
+    end)
+
+    stub_import_ok()
+
+    # #415: the immediate best-effort removal fails transiently (client restarting, an API
+    # timeout) — the exact failure the durable record has to survive.
+    expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-90", _opts ->
+      {:error, :timeout}
+    end)
+
+    assert :ok = Poller.poll()
+
+    # The pre-existing outcome still holds: the movie imports and goes available, and its
+    # download_id survives untouched (issue #415's secondary claim — see Cleaner's claimed_ids/2).
+    reloaded = Repo.get!(Movie, movie.id)
+    assert reloaded.status == :available
+    assert reloaded.download_id == "nzo-90"
+
+    # A durable download_intents row now survives the failed removal.
+    intent = Repo.get_by!(Intent, kind: :movie, target_id: movie.id)
+    assert intent.status == :cleanup_pending
+    assert intent.remote_id == "nzo-90"
+    assert intent.protocol == :usenet
+
+    # Simulate the bounded retry becoming due — the movie poller reconciles pending intents every
+    # tick, but a failed attempt backs off rather than retrying immediately.
+    intent |> Ecto.Changeset.change(next_attempt_at: nil) |> Repo.update!()
+
+    # The later pass succeeds: the remote job is actually removed this time.
+    expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-90", _opts -> :ok end)
+
+    assert :ok = Poller.poll()
+
+    refute Repo.get(Intent, intent.id)
+    # Draining the cleanup record is not itself a movie-state change.
+    assert Repo.get!(Movie, movie.id).status == :available
+  end
+
   test "content_path (not file_path) is stamped at :downloaded, and import resolves from it" do
     movie = downloading_movie(40, "hash-40")
     Catalog.subscribe()
@@ -2585,6 +2633,70 @@ defmodule Cinder.Download.PollerTest do
       refute reloaded.file_path == "/lib/M (2020)/M (2020).mkv"
       # the old file (different container path) is unlinked best-effort after the DB commit
       assert_receive {:rm, "/lib/M (2020)/M (2020).mkv"}
+    end
+
+    test "a failed post-import client removal on an upgrade survives as a durable cleanup record, and a later pass drains it" do
+      saved = Application.get_env(:cinder, :move_on_import, false)
+      Application.put_env(:cinder, :move_on_import, true)
+      on_exit(fn -> Application.put_env(:cinder, :move_on_import, saved) end)
+
+      movie =
+        movie_fixture(%{
+          tmdb_id: 91,
+          status: :upgrading,
+          download_id: "nzo-91",
+          download_protocol: :usenet,
+          release_title: "Better.1080p-GRP",
+          file_path: "/lib/M91 (2020)/M91 (2020).mkv",
+          imported_resolution: "720p"
+        })
+
+      start_supervised!({Poller, interval: 60_000})
+
+      expect(Cinder.Download.SabnzbdClientMock, :status, fn "nzo-91" ->
+        {:ok, %{state: :completed, content_path: "/dl/Better91.1080p.mkv"}}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+        if String.contains?(path, [".cinder-rollback-", ".cinder-stage-"]),
+          do: {:error, :enoent},
+          else: {:ok, %File.Stat{size: 1, inode: 1}}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
+      stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
+      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+
+      # #415: the immediate best-effort removal fails transiently (client restarting, an API
+      # timeout) — the exact failure the durable record has to survive.
+      expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-91", _opts ->
+        {:error, :timeout}
+      end)
+
+      assert :ok = Poller.poll()
+
+      reloaded = Repo.get!(Movie, movie.id)
+      assert reloaded.status == :available
+      assert reloaded.imported_resolution == "1080p"
+      # download_id survives untouched — issue #415's secondary claim.
+      assert reloaded.download_id == "nzo-91"
+
+      intent = Repo.get_by!(Intent, kind: :movie, target_id: movie.id)
+      assert intent.status == :cleanup_pending
+      assert intent.remote_id == "nzo-91"
+      assert intent.protocol == :usenet
+
+      intent |> Ecto.Changeset.change(next_attempt_at: nil) |> Repo.update!()
+
+      expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-91", _opts -> :ok end)
+
+      assert :ok = Poller.poll()
+
+      refute Repo.get(Intent, intent.id)
+      assert Repo.get!(Movie, movie.id).status == :available
     end
 
     test "a terse single-file download records the release title's quality (#275)" do
