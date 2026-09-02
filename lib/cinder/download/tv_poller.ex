@@ -108,13 +108,18 @@ defmodule Cinder.Download.TvPoller do
   # check exists for and hand the payload to the importer.
   #
   # Deterministic: a fake's file list won't improve, so a blocked verdict skips retry_or_park's
-  # attempt budget and parks on the first sighting. The download is removed first — the park
-  # deletes the grab and takes `download_id` with it — so the payload stops arriving; if the park
-  # then fails, the next tick sees `:not_found` and parks through the bounded path instead.
+  # attempt budget and parks on the first sighting. #413: the client removal used to be a bare
+  # best-effort call fired BEFORE the park deleted the grab (the grab's only durable record of
+  # `download_id`/`download_protocol`) — a transient removal failure leaked the remote job
+  # forever. `park/2` now routes `:blocked_content` through `Catalog.park_grab_and_remove/1`,
+  # which fences a `:cleanup_pending` intent and deletes the grab in the SAME transaction (no
+  # crash window between them), then makes the immediate best-effort removal attempt after
+  # commit; a crash or failure there just leaves the fenced row for the next tick's
+  # `reconcile_pending_intents/1` to retry. The delete still lands before the removal attempt, so
+  # the payload still stops arriving as soon as this tick's cleanup runs.
   defp vetted(grab, client, continue) do
     case ContentPolicy.vet(client, grab.download_id) do
       {:blocked, detail} ->
-        Download.best_effort_remove(client, grab.download_id)
         park(grab, {:blocked_content, detail})
 
       :ok ->
@@ -805,7 +810,16 @@ defmodule Cinder.Download.TvPoller do
     # park_grab IS finish_grab(grab, []) — if the finalize transaction itself is what keeps
     # failing, notifying here would fire {:grab_failed} every 5s tick forever. Warn instead;
     # the grab stays visible in /activity and the warning names why it won't finalize.
-    case Catalog.park_grab(grab) do
+    #
+    # :blocked_content is the one reason whose grab is still an active remote job that needs
+    # removing — the others never removed anything from the client, so plain `park_grab/1`
+    # (grab-delete only) is enough for them.
+    park_result =
+      if code == :blocked_content,
+        do: Catalog.park_grab_and_remove(grab),
+        else: Catalog.park_grab(grab)
+
+    case park_result do
       {:ok, _} ->
         :telemetry.execute([:cinder, :park], %{count: 1}, %{kind: :episode, reason: code})
         Notifier.notify({:grab_failed, grab, code})

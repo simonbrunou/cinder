@@ -3035,6 +3035,87 @@ defmodule Cinder.Download.TvPollerTest do
       assert_receive {:notify, {:grab_failed, %Grab{}, :blocked_content}}
     end
 
+    test "a failed client removal survives as a durable cleanup record, and a later tick drains it",
+         ctx do
+      test_pid = self()
+      Cinder.TestNotifier.subscribe()
+
+      expect(Cinder.Download.ClientMock, :files, fn "hash-tv-fake" ->
+        {:ok, ["Show.S01E04/Show.S01E04.mkv.lnk"]}
+      end)
+
+      # #413: the immediate best-effort removal fails transiently (client restarting, an API
+      # timeout) — the exact failure the durable record has to survive.
+      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
+        send(test_pid, {:removed, id, opts})
+        {:error, :timeout}
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      # The pre-existing outcome still holds: the grab — previously the only durable record of
+      # `download_id`/`download_protocol` — is gone, the episode is unlinked and re-searchable,
+      # and the release is blocklisted, exactly as the happy-path test above.
+      refute Repo.get(Grab, ctx.grab.id)
+      assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
+      assert Catalog.blocked_release_titles_for_series(ctx.series.id) == ["Show.S01E04-FAKE"]
+
+      assert_receive {:removed, "hash-tv-fake", _opts}
+      assert_receive {:notify, {:grab_failed, %Grab{}, :blocked_content}}
+
+      # A durable download_intents row now survives the failed removal, carrying exactly what a
+      # retry needs: the remote id and protocol the deleted grab used to be the sole owner of.
+      intent = Repo.get_by!(Intent, kind: :episode, remote_id: "hash-tv-fake")
+      assert intent.status == :cleanup_pending
+      assert intent.protocol == :torrent
+      assert intent.episode_ids == [ctx.episode.id]
+
+      # Simulate the bounded retry becoming due — the TV poller reconciles pending intents every
+      # tick, but a failed attempt backs off rather than retrying immediately.
+      intent |> Ecto.Changeset.change(next_attempt_at: nil) |> Repo.update!()
+
+      # The later pass succeeds: the remote job is actually removed this time.
+      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
+        send(test_pid, {:removed_again, id, opts})
+        :ok
+      end)
+
+      assert :ok = TvPoller.poll()
+
+      assert_receive {:removed_again, "hash-tv-fake", _opts}
+      refute Repo.get(Intent, intent.id)
+      # Draining the cleanup record is not itself an episode-state change.
+      assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
+    end
+
+    test "a grab discarded mid-vet parks gracefully instead of raising", ctx do
+      # #442 review: a concurrent Discard (Catalog.cancel_grab/1) can commit between the
+      # poller's tick-start read and vetted/3's blocked verdict — the grab (and, via the FK's
+      # ON DELETE SET NULL, its episode link) is already gone by the time
+      # park_grab_and_remove/1's fence would run. Simulated by deleting the grab from inside the
+      # files/1 stub, the exact point ContentPolicy.vet/2's client I/O sits.
+      expect(Cinder.Download.ClientMock, :files, fn "hash-tv-fake" ->
+        Repo.delete!(ctx.grab)
+        {:ok, ["Show.S01E04/Show.S01E04.mkv.lnk"]}
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+
+      log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+      # isolate/2 would log "skipped grab N" for an unrescued raise (an ArgumentError from
+      # hd([]) on the nilified episode link) — its absence proves the stale-grab path was taken
+      # instead. (The tick's unrelated search-wanted pass also logs its own "skipped series" for
+      # this now-ungrabbed, still-monitored episode hitting an unstubbed indexer mock — expected
+      # noise, not what this test is about.)
+      refute log =~ "skipped grab"
+      # Positive assertion: the graceful park path logs the park error.
+      assert log =~ "could not be parked (:stale_grab); will retry next tick"
+      refute Repo.get(Grab, ctx.grab.id)
+      assert Repo.all(Intent) == []
+    end
+
     # As on the movie side: a fake is small enough to be :completed by the first tick, so the
     # :completed branch has to vet too or the payload reaches the importer.
     test "a fake caught only once COMPLETED is still rejected, never imported", ctx do

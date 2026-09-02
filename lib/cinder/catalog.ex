@@ -1433,6 +1433,7 @@ defmodule Cinder.Catalog do
   defdelegate decide_grab_file(file, episode, decision, stage), to: Grabs
   defdelegate discard_grab_file(file), to: Grabs
   defdelegate park_grab(grab), to: Grabs
+  defdelegate park_grab_and_remove(grab), to: Grabs
   defdelegate reap_stalled_grab(grab), to: Grabs
 
   defp series_id_for_season(season_id),
