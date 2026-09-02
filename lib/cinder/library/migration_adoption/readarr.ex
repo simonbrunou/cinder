@@ -419,8 +419,13 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     end
   end
 
+  # Kind-scoped to `:ebook` — `Settings.library_root_for_path/1` (any kind) would let a
+  # translated path that lands inside the operator's movies/TV/audiobooks root pass as "inside
+  # a library", the classic symptom of a misconfigured `readarr_local_path_prefix`. That is
+  # exactly the misconfiguration this bucket exists to catch, so the check must be scoped to the
+  # books root alone. See §0.2 of the B6 plan (corrected alongside this fix).
   defp outside_library_root?(path),
-    do: match?({:error, :outside_library}, Settings.library_root_for_path(path))
+    do: match?({:error, :outside_library}, Settings.library_destination_for_path(:ebook, path))
 
   defp edition_id_for(_provider_editions, nil, _edition_index), do: nil
 

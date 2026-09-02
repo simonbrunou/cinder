@@ -14,6 +14,7 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
   """
   use Cinder.DataCase, async: false
 
+  import Ecto.Query
   import Mox
 
   alias Cinder.Books
@@ -101,6 +102,65 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
 
     for _ <- 1..cap, do: assert_received(:searched)
     refute_received :searched
+  end
+
+  test "the cap applies after the local-cache filter, not before it — a cache-heavy prefix does not starve later uncached works of their turn" do
+    cap = Books.max_bibliography_candidates()
+    uncached_count = 5
+    test_pid = self()
+
+    cached_works =
+      for i <- 1..cap do
+        foreign_id = "cache-heavy-#{i}"
+        seed_work("Cache Heavy #{i}", foreign_id)
+        work(i, 1, "Cache Heavy #{i}", foreign_id)
+      end
+
+    uncached_works =
+      for i <- 1..uncached_count,
+          do: work(cap + i, 1, "Late Uncached #{i}", "late-uncached-#{i}")
+
+    # Cached works come FIRST in snapshot order — the exact shape a cap-before-filter bug needs
+    # to hide behind: it would take the first `cap` works verbatim as its capped batch (all
+    # cached here), filter locally-cached ones for free within that batch, and never even look
+    # at the `uncached_count` works past the cap boundary. `preview.remaining` would then read 5
+    # and zero of the uncached works would ever be searched, though nothing was actually left
+    # over — every uncached work would have fit comfortably under the cap's full headroom.
+    all_works = cached_works ++ uncached_works
+
+    files =
+      for w <- all_works,
+          do: file(w.provider_id, w.provider_id, "epub", "/mixed/#{w.provider_id}.epub")
+
+    stub(PrimaryMetadataMock, :search, fn query ->
+      send(test_pid, {:searched, query})
+      {:ok, []}
+    end)
+
+    stub(SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
+
+    stub_snapshot(
+      snapshot(authors: [author(1, "Cache Heavy Author")], works: all_works, files: files)
+    )
+
+    assert {:ok, preview} = MigrationAdoption.preview(:readarr)
+
+    expected_titles = for i <- 1..uncached_count, into: MapSet.new(), do: "Late Uncached #{i}"
+
+    searched_titles =
+      for _ <- 1..uncached_count, into: MapSet.new() do
+        assert_receive {:searched, query}
+        Enum.find(expected_titles, &String.contains?(query, &1))
+      end
+
+    # Proves WHICH works were resolved, not just how many — a count-only assertion here cannot
+    # tell a correct 5-of-5 resolution apart from an implementation that (by coincidence) still
+    # issues 5 searches against the wrong 5 works.
+    assert searched_titles == expected_titles
+    refute_received {:searched, _}
+
+    assert preview.remaining == 0
+    assert length(preview.candidates) == cap + uncached_count
   end
 
   test "a work Identity.resolve/1 attempts but cannot resolve is a visible :blocked candidate, not a silent drop" do
@@ -390,6 +450,45 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
     assert c.reason == :outside_library_root
   end
 
+  test "a path inside a configured non-books root (audiobooks) is still :outside_library_root, never silently :ready" do
+    audiobooks_root =
+      Path.join(
+        System.tmp_dir!(),
+        "cinder-readarr-adoption-test-audiobooks-#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(audiobooks_root)
+
+    saved_audiobooks = Application.get_env(:cinder, :audiobooks_library_path)
+    Application.put_env(:cinder, :audiobooks_library_path, audiobooks_root)
+
+    on_exit(fn ->
+      if saved_audiobooks,
+        do: Application.put_env(:cinder, :audiobooks_library_path, saved_audiobooks),
+        else: Application.delete_env(:cinder, :audiobooks_library_path)
+    end)
+
+    seed_work("Wrong Root Book", "wrong-root-1")
+
+    # Any-kind `Settings.library_root_for_path/1` would see this path sitting inside the
+    # configured audiobooks root and call it "inside a library" — the exact symptom of a
+    # misconfigured `readarr_local_path_prefix` this bucket exists to catch. The check must be
+    # scoped to the `:ebook` kind specifically.
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Wrong Root Author")],
+        works: [work(1, 1, "Wrong Root Book", "wrong-root-1")],
+        files: [file(1, 1, "epub", path(audiobooks_root, "wrong-root.epub"))]
+      )
+    )
+
+    assert {:ok, preview} = MigrationAdoption.preview(:readarr)
+
+    c = candidate(preview, 1)
+    assert c.status == :blocked
+    assert c.reason == :outside_library_root
+  end
+
   # ------------------------------------------------------------------ edition mapping ---
 
   test "an exact ISBN match against the resolved work's own identifiers sets edition_id, never a guess",
@@ -504,11 +603,14 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
       )
     )
 
-    before = row_counts()
+    before = row_content()
 
     assert {:ok, preview} = MigrationAdoption.preview(:readarr)
 
-    assert row_counts() == before
+    # Content-level, not just counts — a count-only comparison would miss an in-place UPDATE
+    # that changes an existing row without changing any table's row count, exactly what an
+    # accidental `Repo.update`/`update_all` in the classifier would produce.
+    assert row_content() == before
     assert length(preview.candidates) == 3
   end
 
@@ -516,7 +618,11 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
 
   @book_schemas [Work, Author, Edition, Identifier, BookTarget, BookFile]
 
-  defp row_counts, do: Map.new(@book_schemas, &{&1, Repo.aggregate(&1, :count, :id)})
+  defp row_content do
+    Map.new(@book_schemas, fn schema ->
+      {schema, Repo.all(from r in schema, order_by: [asc: r.id])}
+    end)
+  end
 
   defp path(tmp, name), do: Path.join(tmp, name)
 
