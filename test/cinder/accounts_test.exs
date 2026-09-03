@@ -309,6 +309,20 @@ defmodule Cinder.AccountsTest do
       assert Repo.get!(User, user.id).email == user.email
       assert Repo.get_by(UserToken, user_id: user.id)
     end
+
+    test "revokes existing session tokens, rejecting a stolen session", %{
+      user: user,
+      token: token,
+      email: email
+    } do
+      session_token = Accounts.generate_user_session_token(user)
+      assert Accounts.get_user_by_session_token(session_token)
+
+      assert {:ok, %{email: ^email}} = Accounts.update_user_email(user, token)
+
+      refute Accounts.get_user_by_session_token(session_token)
+      refute Repo.get_by(UserToken, token: session_token, context: "session")
+    end
   end
 
   describe "change_user_password/3" do
@@ -708,6 +722,20 @@ defmodule Cinder.AccountsTest do
   end
 
   describe "admin_update_email/2" do
+    test "revokes the target's existing session tokens, rejecting a stolen session" do
+      actor = admin_fixture()
+      target = user_fixture()
+      new_email = unique_user_email()
+
+      session_token = Accounts.generate_user_session_token(target)
+      assert Accounts.get_user_by_session_token(session_token)
+
+      assert {:ok, %User{}} = Accounts.admin_update_email(actor, target, %{email: new_email})
+
+      refute Accounts.get_user_by_session_token(session_token)
+      refute Repo.get_by(UserToken, token: session_token, context: "session")
+    end
+
     test "changes the email directly and audits it" do
       actor = admin_fixture()
       target = user_fixture()

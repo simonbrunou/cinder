@@ -65,7 +65,7 @@ defmodule Cinder.Subtitles.SweeperTest do
          }
        ]}
     end)
-    |> expect(:download, fn 7 -> {:ok, "SRT"} end)
+    |> expect(:download, fn 7 -> {:ok, "1\n00:00:01,000 --> 00:00:02,000\nSRT\n\n"} end)
 
     expect(Cinder.Library.MediaServerMock, :scan, fn kind ->
       send(parent, {:subtitle_scan, kind})
@@ -164,7 +164,7 @@ defmodule Cinder.Subtitles.SweeperTest do
          }
        ]}
     end)
-    |> expect(:download, fn 9 -> {:ok, "SRT"} end)
+    |> expect(:download, fn 9 -> {:ok, "1\n00:00:01,000 --> 00:00:02,000\nSRT\n\n"} end)
 
     expect(Cinder.Library.MediaServerMock, :scan, fn kind ->
       send(parent, {:subtitle_scan, kind})

@@ -78,10 +78,8 @@ defmodule CinderWeb.BookDetailLive do
   # the blocklist actually changes — mirrors `@grabs`'s own pattern and gives the Clear-blocklist
   # button's visibility a value that genuinely changes when cleared.
   defp assign_blocklists(socket) do
-    blocklists =
-      Map.new(socket.assigns.work.targets, fn target ->
-        {target.id, Books.blocked_release_titles(target.id)}
-      end)
+    target_ids = Enum.map(socket.assigns.work.targets, & &1.id)
+    blocklists = Books.blocked_release_titles_by_target_ids(target_ids)
 
     assign(socket, :blocklists, blocklists)
   end
@@ -91,10 +89,8 @@ defmodule CinderWeb.BookDetailLive do
   # wherever a policy actually changes, is what makes the `<select>`'s current value genuinely
   # change after a set/confirm.
   defp assign_author_policies(socket) do
-    policies =
-      socket.assigns.work
-      |> credited_authors()
-      |> Map.new(&{&1.id, Books.author_policy(&1.id)})
+    author_ids = socket.assigns.work |> credited_authors() |> Enum.map(& &1.id)
+    policies = Books.author_policies_by_author_ids(author_ids)
 
     assign(socket, :author_policies, policies)
   end

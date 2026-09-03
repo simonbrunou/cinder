@@ -313,7 +313,9 @@ defmodule Cinder.LibrarySubtitlesTest do
        ]}
     end)
 
-    expect(Cinder.Subtitles.ProviderMock, :download, fn 7 -> {:ok, "replacement SRT"} end)
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 7 ->
+      {:ok, "1\n00:00:01,000 --> 00:00:02,000\nreplacement SRT\n\n"}
+    end)
 
     assert {:ok, %{dest: ^dest, quality: quality} = stage} = Library.stage_movie(movie)
     assert quality.sidecar_subtitles == ["en"]
@@ -475,7 +477,9 @@ defmodule Cinder.LibrarySubtitlesTest do
        ]}
     end)
 
-    expect(Cinder.Subtitles.ProviderMock, :download, fn 9 -> {:ok, "replacement SRT"} end)
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 9 ->
+      {:ok, "1\n00:00:01,000 --> 00:00:02,000\nreplacement SRT\n\n"}
+    end)
 
     assert {:ok, [{7, ^dest, quality}], []} = Library.import_episodes("/dl", [episode])
     assert quality.sidecar_subtitles == ["en"]

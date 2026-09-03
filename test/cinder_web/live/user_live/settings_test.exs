@@ -249,12 +249,14 @@ defmodule CinderWeb.UserLive.SettingsTest do
       refute Cinder.Repo.get_by(Cinder.Accounts.User, email: user.email)
       assert Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
 
-      # use confirm token again
+      # #464: an email change revokes every session token, including the one this `conn`
+      # carries — using the confirm token again (with the now-revoked session) hits the
+      # login gate rather than reaching the live view at all.
       {:error, redirect} = live(conn, ~p"/users/settings/confirm-email/#{token}")
-      assert {:live_redirect, %{to: path, flash: flash}} = redirect
-      assert path == ~p"/users/settings"
+      assert {:redirect, %{to: path, flash: flash}} = redirect
+      assert path == ~p"/users/log-in"
       assert %{"error" => message} = flash
-      assert message == "Email change link is invalid or it has expired."
+      assert message == "You must log in to access this page."
     end
 
     test "does not update email with invalid token", %{conn: conn, user: user} do

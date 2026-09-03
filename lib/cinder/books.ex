@@ -398,6 +398,25 @@ defmodule Cinder.Books do
   end
 
   @doc """
+  `blocked_release_titles/1`, batched over `target_ids` in one query — the
+  `BookDetailLive` blocklists loader's shape, mirroring `target_sizes/0`'s one-query-not-N+1
+  pattern. A `target_id` with no blocked releases maps to `[]`, including when `target_ids` is
+  `[]` or names no known target.
+  """
+  @spec blocked_release_titles_by_target_ids([integer()]) :: %{integer() => [String.t()]}
+  def blocked_release_titles_by_target_ids(target_ids) do
+    grouped =
+      Repo.all(
+        from b in BookBlockedRelease,
+          where: b.book_target_id in ^target_ids,
+          select: {b.book_target_id, b.release_title}
+      )
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+
+    Map.new(target_ids, &{&1, Map.get(grouped, &1, [])})
+  end
+
+  @doc """
   Best-effort log of a duplicate grab attempt `Cinder.Books.Grabs.create/5`'s unique-index
   fence refused. Log-and-swallow on its own write failure — mirrors `maybe_block_release/3`
   above; a diagnostic row is never a reason to fail the refusal it is recording. Broadcasts
@@ -690,6 +709,24 @@ defmodule Cinder.Books do
       nil -> :specific
       %BookAuthorPolicy{policy: policy} -> policy
     end
+  end
+
+  @doc """
+  `author_policy/1`, batched over `author_ids` in one query — the `BookDetailLive`
+  author-policies loader's shape. An `author_id` with no stored row maps to `:specific`,
+  including when `author_ids` is `[]` or names no known author.
+  """
+  @spec author_policies_by_author_ids([integer()]) :: %{integer() => :specific | :future | :all}
+  def author_policies_by_author_ids(author_ids) do
+    stored =
+      Repo.all(
+        from p in BookAuthorPolicy,
+          where: p.author_id in ^author_ids,
+          select: {p.author_id, p.policy}
+      )
+      |> Map.new()
+
+    Map.new(author_ids, &{&1, Map.get(stored, &1, :specific)})
   end
 
   @doc "The cap `preview_author_policy/2` applies — exposed so the UI need not duplicate it."

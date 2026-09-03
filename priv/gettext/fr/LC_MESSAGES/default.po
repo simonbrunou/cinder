@@ -267,7 +267,7 @@ msgid "Close menu"
 msgstr "Fermer le menu"
 
 #: lib/cinder_web/components/core_components.ex:284
-#: lib/cinder_web/live/book_detail_live.ex:577
+#: lib/cinder_web/live/book_detail_live.ex:573
 #: lib/cinder_web/live/users_live.ex:694
 #, elixir-autogen
 msgid "Confirm"
@@ -613,7 +613,7 @@ msgid "Invalid email or password"
 msgstr "E-mail ou mot de passe invalide"
 
 #: lib/cinder_web/components/layouts.ex:345
-#: lib/cinder_web/live/book_detail_live.ex:632
+#: lib/cinder_web/live/book_detail_live.ex:628
 #: lib/cinder_web/live/movie_detail_live.ex:568
 #: lib/cinder_web/live/user_live/settings.ex:30
 #, elixir-autogen
@@ -985,7 +985,7 @@ msgid "Requesting…"
 msgstr "Demande…"
 
 #: lib/cinder_web/components/layouts.ex:120
-#: lib/cinder_web/live/book_detail_live.ex:510
+#: lib/cinder_web/live/book_detail_live.ex:506
 #: lib/cinder_web/live/requests_live.ex:357
 #: lib/cinder_web/live/settings_live.ex:198
 #: lib/cinder_web/user_auth.ex:419
@@ -1004,7 +1004,7 @@ msgid "Resetting…"
 msgstr "Réinitialisation…"
 
 #: lib/cinder_web/live/activity_live.ex:502
-#: lib/cinder_web/live/book_detail_live.ex:647
+#: lib/cinder_web/live/book_detail_live.ex:643
 #: lib/cinder_web/live/movie_detail_live.ex:515
 #: lib/cinder_web/live/series_detail_components.ex:331
 #, elixir-autogen
@@ -2013,7 +2013,7 @@ msgstr "Annuler la mise à niveau"
 msgid "Couldn't grab that release."
 msgstr "Impossible de récupérer cette version."
 
-#: lib/cinder_web/live/book_detail_live.ex:680
+#: lib/cinder_web/live/book_detail_live.ex:676
 #: lib/cinder_web/live/movie_detail_live.ex:527
 #: lib/cinder_web/live/series_detail_components.ex:75
 #: lib/cinder_web/live/series_detail_components.ex:518
@@ -2021,7 +2021,7 @@ msgstr "Impossible de récupérer cette version."
 msgid "Find a better match"
 msgstr "Trouver une meilleure version"
 
-#: lib/cinder_web/live/book_detail_live.ex:312
+#: lib/cinder_web/live/book_detail_live.ex:308
 #: lib/cinder_web/live/movie_detail_live.ex:242
 #: lib/cinder_web/live/series_detail_live.ex:589
 #, elixir-autogen
@@ -6766,7 +6766,7 @@ msgstr[0] "1 édition eBook"
 msgstr[1] "%{count} éditions eBook"
 
 #: lib/cinder_web/components/book_components.ex:75
-#: lib/cinder_web/live/book_detail_live.ex:347
+#: lib/cinder_web/live/book_detail_live.ex:343
 #: lib/cinder_web/live/library_live.ex:447
 #, elixir-autogen, elixir-format
 msgid "Audiobook"
@@ -6871,7 +6871,7 @@ msgid "We couldn’t load this book right now."
 msgstr "Impossible de charger ce livre pour le moment."
 
 #: lib/cinder_web/components/book_components.ex:74
-#: lib/cinder_web/live/book_detail_live.ex:346
+#: lib/cinder_web/live/book_detail_live.ex:342
 #: lib/cinder_web/live/library_live.ex:446
 #, elixir-autogen, elixir-format
 msgid "eBook"
@@ -6924,17 +6924,17 @@ msgstr "Votre demande pour %{title} est disponible à la lecture."
 msgid "book target #%{id}"
 msgstr "livre n°%{id}"
 
-#: lib/cinder_web/live/book_detail_live.ex:329
+#: lib/cinder_web/live/book_detail_live.ex:325
 #, elixir-autogen, elixir-format
 msgid "Couldn't submit this release. Try again."
 msgstr "Impossible de soumettre cette version. Réessayez."
 
-#: lib/cinder_web/live/book_detail_live.ex:593
+#: lib/cinder_web/live/book_detail_live.ex:589
 #, elixir-autogen, elixir-format
 msgid "Not yet approved."
 msgstr "Pas encore approuvé."
 
-#: lib/cinder_web/live/book_detail_live.ex:669
+#: lib/cinder_web/live/book_detail_live.ex:665
 #, elixir-autogen, elixir-format
 msgid "Search for a release"
 msgstr "Rechercher une version"
@@ -6950,7 +6950,7 @@ msgstr "Certains indexeurs n'ont pas pu être contactés ; les résultats peuven
 msgid "That book couldn't be found."
 msgstr "Ce livre est introuvable."
 
-#: lib/cinder_web/live/book_detail_live.ex:315
+#: lib/cinder_web/live/book_detail_live.ex:311
 #, elixir-autogen, elixir-format
 msgid "This target already has a download in progress."
 msgstr "Ce livre a déjà un téléchargement en cours."
@@ -7023,7 +7023,7 @@ msgstr "le titre ne correspond pas"
 msgid "unrecognized format"
 msgstr "format non reconnu"
 
-#: lib/cinder_web/live/book_detail_live.ex:357
+#: lib/cinder_web/live/book_detail_live.ex:353
 #, elixir-autogen, elixir-format
 msgid "No preference"
 msgstr "Aucune préférence"
@@ -7065,12 +7065,12 @@ msgstr "Visibilité de la bibliothèque"
 msgid "None found."
 msgstr "Aucun trouvé."
 
-#: lib/cinder_web/live/book_detail_live.ex:658
+#: lib/cinder_web/live/book_detail_live.ex:654
 #, elixir-autogen, elixir-format
 msgid "Clear blocklist"
 msgstr "Effacer la liste des versions bloquées"
 
-#: lib/cinder_web/live/book_detail_live.ex:144
+#: lib/cinder_web/live/book_detail_live.ex:140
 #, elixir-autogen, elixir-format
 msgid "Couldn't retry this target. Try again."
 msgstr "Impossible de réessayer cette cible. Réessayez."
@@ -7087,73 +7087,73 @@ msgstr "déjà essayé et échoué"
 msgid "This replaces the current file: continue?"
 msgstr "Cela remplace le fichier actuel : continuer ?"
 
-#: lib/cinder_web/live/book_detail_live.ex:455
+#: lib/cinder_web/live/book_detail_live.ex:451
 #, elixir-autogen, elixir-format
 msgid "%{count} new eBook would be monitored."
 msgid_plural "%{count} new eBooks would be monitored."
 msgstr[0] "%{count} nouvel eBook serait suivi."
 msgstr[1] "%{count} nouveaux eBooks seraient suivis."
 
-#: lib/cinder_web/live/book_detail_live.ex:535
+#: lib/cinder_web/live/book_detail_live.ex:531
 #, elixir-autogen, elixir-format
 msgid "%{name}'s monitoring"
 msgstr "Suivi de %{name}"
 
-#: lib/cinder_web/live/book_detail_live.ex:435
+#: lib/cinder_web/live/book_detail_live.ex:431
 #, elixir-autogen, elixir-format
 msgid "All works"
 msgstr "Toutes les œuvres"
 
-#: lib/cinder_web/live/book_detail_live.ex:555
+#: lib/cinder_web/live/book_detail_live.ex:551
 #, elixir-autogen, elixir-format
 msgid "Checking the author's bibliography…"
 msgstr "Vérification de la bibliographie de l’auteur…"
 
-#: lib/cinder_web/live/book_detail_live.ex:559
+#: lib/cinder_web/live/book_detail_live.ex:555
 #, elixir-autogen, elixir-format
 msgid "Couldn't preview this policy. Try again."
 msgstr "Impossible de prévisualiser cette règle de suivi. Réessayez."
 
-#: lib/cinder_web/live/book_detail_live.ex:434
+#: lib/cinder_web/live/book_detail_live.ex:430
 #, elixir-autogen, elixir-format
 msgid "Future works"
 msgstr "Œuvres à venir"
 
-#: lib/cinder_web/live/book_detail_live.ex:451
+#: lib/cinder_web/live/book_detail_live.ex:447
 #, elixir-autogen, elixir-format
 msgid "Nothing new to monitor."
 msgstr "Rien de nouveau à suivre."
 
-#: lib/cinder_web/live/book_detail_live.ex:433
+#: lib/cinder_web/live/book_detail_live.ex:429
 #, elixir-autogen, elixir-format
 msgid "Selected works"
 msgstr "Œuvres sélectionnées"
 
-#: lib/cinder_web/live/book_detail_live.ex:472
+#: lib/cinder_web/live/book_detail_live.ex:468
 #, elixir-autogen, elixir-format
 msgid "Showing %{examined} of %{total} not-yet-monitored works; run Preview again after confirming to see more."
 msgstr "Affichage de %{examined} sur %{total} œuvres pas encore suivies ; relancez l’aperçu après confirmation pour en voir davantage."
 
-#: lib/cinder_web/live/book_detail_live.ex:463
+#: lib/cinder_web/live/book_detail_live.ex:459
 #, elixir-autogen, elixir-format
 msgid "%{count} work could not be identified: never monitored automatically."
 msgid_plural "%{count} works could not be identified: never monitored automatically."
 msgstr[0] "%{count} œuvre n’a pas pu être identifiée : jamais suivie automatiquement."
 msgstr[1] "%{count} œuvres n’ont pas pu être identifiées : jamais suivies automatiquement."
 
-#: lib/cinder_web/live/book_detail_live.ex:484
+#: lib/cinder_web/live/book_detail_live.ex:480
 #, elixir-autogen, elixir-format
 msgid "%{count} eBook is now monitored."
 msgid_plural "%{count} eBooks are now monitored."
 msgstr[0] "%{count} eBook est désormais suivi."
 msgstr[1] "%{count} eBooks sont désormais suivis."
 
-#: lib/cinder_web/live/book_detail_live.ex:492
+#: lib/cinder_web/live/book_detail_live.ex:488
 #, elixir-autogen, elixir-format
 msgid "%{created} of %{previewed} previewed works are now monitored; the rest were already claimed by another action in the meantime."
 msgstr "%{created} des %{previewed} œuvres prévisualisées sont désormais suivies ; les autres avaient déjà été réclamées par une autre action entre-temps."
 
-#: lib/cinder_web/live/book_detail_live.ex:550
+#: lib/cinder_web/live/book_detail_live.ex:546
 #, elixir-autogen, elixir-format
 msgid "Preview again"
 msgstr "Prévisualiser à nouveau"
