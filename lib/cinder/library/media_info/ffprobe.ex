@@ -21,13 +21,22 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   ## Bounded subprocess execution (issue #447)
 
   `probe/1`, `probe_policy/1`, `subtitle_tracks/1` and `extract_subtitle/2` all shell out to
-  inspect an actual file's bytes, unlike `health/0`'s cheap `-version` no-file call. All four run
-  synchronously inside `Cinder.Download.Poller`/`Cinder.Download.TvPoller`'s single-process tick
-  (`capture_media/1`, `verify_audio/2`, `verify_release_policy/2`, `reject_wrong_audio/2` in
-  `Cinder.Library`; `Cinder.Subtitles`'s embedded-track lookup and extraction), and `isolate/2`'s
-  bare `rescue` is not a timeout boundary. A single hung `ffprobe`/`ffmpeg` process on a
-  pathological file therefore used to stall every subsequent tick, import, and park for every
-  movie and TV target, indefinitely.
+  inspect an actual file's bytes, unlike `health/0`'s cheap `-version` no-file call.
+  `probe/1`/`probe_policy/1` (via `Cinder.Library.capture_media/1`, `verify_audio/2`,
+  `verify_release_policy/2`, `reject_wrong_audio/2`) run synchronously inside
+  `Cinder.Download.Poller`/`Cinder.Download.TvPoller`'s single-process tick, and `isolate/2`'s
+  bare `rescue` is not a timeout boundary — a hung `ffprobe` there used to stall every subsequent
+  tick, import, and park for every movie and TV target, indefinitely.
+
+  `subtitle_tracks/1` and `extract_subtitle/2` are reached only through `Cinder.Subtitles` —
+  never from the movie/TV import poller's own tick. `Cinder.Library.PostImport.fetch_subtitles/4`
+  deliberately dispatches onto `Cinder.Subtitles.Fetcher`, a dedicated serializing `GenServer`,
+  *specifically* so a slow subtitle round-trip can't stall the import poller; the periodic
+  `Cinder.Subtitles.Sweeper` backfill is likewise its own independent poller process. A hang
+  there stalls only that worker's own queue/tick, not `Poller`/`TvPoller` — but it is still a
+  real, unbounded hang (an orphaned `ffprobe`/`ffmpeg` leaking a staging-file fd forever), so it
+  still needs a bound; see `@subtitle_tracks_timeout_ms` below for why it gets a much larger one
+  than `probe/1`/`probe_policy/1`.
 
   This module bounds all four with a supervised `Port` + `SIGKILL`-by-`os_pid`, the same idiom
   `Cinder.Library.BookArchive.Rar.run_extraction/6` and `Cinder.Disk.CommandProbe` already use for
@@ -36,16 +45,18 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   `BookArchive.Rar.list_entries/3`) use for their own, much cheaper, no-file calls.
   `Task.shutdown(:brutal_kill)` only kills the *Elixir* task; closing a port does not kill the
   child OS process on the other end when that child never reads stdin, which is exactly `ffmpeg`
-  and `ffprobe`'s situation here (`ffmpeg` is invoked with `-nostdin`). Since the poller retries
-  every tick, that lighter idiom would leak one orphaned `ffprobe`/`ffmpeg` per tick, each holding
-  an open file descriptor on the staging file being probed — worse than the original hang. The
-  heavier pattern here kills the actual OS process by pid, not merely the Elixir side of the port.
+  and `ffprobe`'s situation here (`ffmpeg` is invoked with `-nostdin`). Since both the poller and
+  `Cinder.Subtitles.Fetcher`/`Sweeper` retry (every tick, or every enqueued/swept file), that
+  lighter idiom would leak one orphaned `ffprobe`/`ffmpeg` per retry, each holding an open file
+  descriptor on the staging file being probed — worse than the original hang. The heavier pattern
+  here kills the actual OS process by pid, not merely the Elixir side of the port.
 
-  Because neither poller GenServer traps exits or has a catch-all `handle_info/2` (only
-  `PollerSkeleton`'s `:poll` clause), a stray `{port, {:data, _}}` or `{port, {:exit_status, _}}`
-  arriving in the poller's mailbox *after* this module has already returned would crash it with a
-  `FunctionClauseError` — the exact kind of failure this whole feature exists to prevent. So the
-  deadline path does not merely kill and best-effort-wait: it closes the port (stopping any
+  Neither `Poller`, `TvPoller`, nor `Cinder.Subtitles.Sweeper` (all three built on the same
+  `PollerSkeleton`) traps exits or has a catch-all `handle_info/2` (only `PollerSkeleton`'s
+  `:poll` clause) — a stray `{port, {:data, _}}` or `{port, {:exit_status, _}}` arriving in a
+  caller's mailbox *after* this module has already returned would crash it with a
+  `FunctionClauseError` — the exact kind of failure this whole feature exists to prevent.
+  So the deadline path does not merely kill and best-effort-wait: it closes the port (stopping any
   further messages) and then drains, with a non-blocking `after 0` receive loop, every message
   already queued for that port before returning — guaranteeing zero port messages ever reach the
   caller after the call returns, timeout or not.
@@ -60,9 +71,39 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   @stderr_env "CINDER_FFMPEG_STDERR"
   @health_timeout 3_000
 
-  # `probe/1`/`probe_policy/1`/`subtitle_tracks/1` only read metadata (no decoding), matching
-  # `Cinder.Library.AudioProbe.Ffprobe`'s own `@probe_timeout 10_000` for the same class of call.
+  # `probe/1`/`probe_policy/1` read stream metadata only — codec_type/disposition/language tags,
+  # no decoding, no packet counting — matching `Cinder.Library.AudioProbe.Ffprobe`'s own
+  # `@probe_timeout 10_000` for the same class of call. `subtitle_tracks/1` looks like the same
+  # class of call but is NOT: see `@subtitle_tracks_timeout_ms` below.
   @probe_timeout_ms 10_000
+
+  # `subtitle_track_args/1` passes `-count_packets`, which ffprobe's own docs describe as
+  # counting packets per stream: the demuxer must read every packet of the selected stream from
+  # start to EOF, not just parse the container header, so this is NOT a cheap metadata-only read
+  # despite `-select_streams s` narrowing what gets *reported*. Measured directly against
+  # `subtitle_track_args/1`'s exact argument list (ffprobe 9.0.1, synthetic MKVs with one
+  # embedded SRT track, page cache warm so the numbers isolate CPU/demux cost from disk I/O): the
+  # same command WITHOUT `-count_packets` held flat at ~30-40ms from a 31KB/10s file up to a
+  # 249MB/24h file (an 8000x size range — a pure header read), while WITH `-count_packets` grew
+  # from ~31ms (4 packets) to ~84ms (28,800 packets) over that same range. The cost scales with
+  # content, confirming the documented behaviour rather than assuming it. `-count_packets` cannot
+  # be dropped to dodge this: `Cinder.Subtitles.Sync.Reference.resolver/2` sorts candidate tracks
+  # by `packet_count` to pick the broadest-reference one, so the count is load-bearing.
+  #
+  # Unlike `probe/1`/`probe_policy/1`, `subtitle_tracks/1` never runs inside
+  # `Poller`/`TvPoller`'s tick (see the moduledoc) — only inside `Cinder.Subtitles.Fetcher`'s own
+  # serialized queue or `Cinder.Subtitles.Sweeper`'s own independent tick — so a generous bound
+  # here only delays the next queued subtitle fetch or the rest of one sweep pass, never an
+  # import/grab/park cycle, and can afford real headroom over a real worst case instead of
+  # sharing the 10s bound above. Worst realistic case for this deployment: a 60-80GB 4K UHD remux
+  # (Cinder's own target deployment serves media over a household NAS) read over a gigabit link.
+  # At a realistic sustained ~80MB/s (well under gigabit's ~125MB/s theoretical ceiling, allowing
+  # for real SMB/NFS overhead), demuxing through an 80GB file for `-count_packets` is ~1024s
+  # (~17 minutes) of I/O alone, before any CPU cost — and the measurement above shows I/O, not
+  # CPU, dominates at any realistic file size. 30 minutes leaves comfortable headroom above that
+  # worst case while still turning a genuinely hung/corrupt probe into a finite failure instead of
+  # parking `Fetcher`'s single-file queue (or one `Sweeper` pass) forever.
+  @subtitle_tracks_timeout_ms 1_800_000
 
   # `extract_subtitle/2` actually transcodes a subtitle stream, not just reads metadata, so it is
   # legitimately slower — but no single subtitle track of one movie/episode should ever
@@ -122,7 +163,9 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   @impl true
   def subtitle_tracks(path) do
-    case run_bounded(bin(), subtitle_track_args(path), probe_timeout_ms(), stderr_to_stdout: true) do
+    case run_bounded(bin(), subtitle_track_args(path), subtitle_tracks_timeout_ms(),
+           stderr_to_stdout: true
+         ) do
       {:ok, out, 0} ->
         with {:ok, metadata} <- Jason.decode(out) do
           {:ok, parse_subtitle_tracks(metadata)}
@@ -322,6 +365,14 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   # `BookArchive.Rar.extract/3` these bounds cannot be threaded through as an `opts` argument.
   defp probe_timeout_ms,
     do: Application.get_env(:cinder, :ffprobe_probe_timeout_ms, @probe_timeout_ms)
+
+  defp subtitle_tracks_timeout_ms,
+    do:
+      Application.get_env(
+        :cinder,
+        :ffprobe_subtitle_tracks_timeout_ms,
+        @subtitle_tracks_timeout_ms
+      )
 
   defp extract_timeout_ms,
     do: Application.get_env(:cinder, :ffmpeg_extract_timeout_ms, @extract_timeout_ms)

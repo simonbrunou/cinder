@@ -9,11 +9,15 @@ All notable changes to Cinder are documented here. The format follows
 ### Fixed
 - **Bounded `ffprobe`/`ffmpeg` media-inspection calls (#447).** `MediaInfo.Ffprobe`'s four
   file-inspecting calls — `probe/1`, `probe_policy/1`, `subtitle_tracks/1`, `extract_subtitle/2`
-  — used to shell out with no Elixir-side timeout; a single hung process on a pathological file
-  could stall every subsequent import-poller tick for every movie and TV target indefinitely.
-  Each now runs as a supervised subprocess killed by OS pid at a bound (~10s for the three
-  metadata reads, 60s for the slower subtitle transcode), so a hang now fails that one probe
-  instead of freezing the poller.
+  — used to shell out with no Elixir-side timeout. A single hung `probe/1`/`probe_policy/1` call
+  on a pathological file could stall every subsequent import-poller tick for every movie and TV
+  target indefinitely; a hung `subtitle_tracks/1`/`extract_subtitle/2` call likewise stalled the
+  subtitle-fetch queue or backfill sweep. Each now runs as a supervised subprocess killed by OS
+  pid at a bound: ~10s for `probe/1` and `probe_policy/1` (true metadata-only reads), 60s for
+  `extract_subtitle/2`'s subtitle transcode, and 30 minutes for `subtitle_tracks/1` — its
+  packet-counting scan reads through the whole file rather than just its header, so it needs
+  headroom for a large remux over a household NAS. A hang now fails that one probe instead of
+  freezing its caller.
 
 ## [3.0.0] - 2026-09-02
 

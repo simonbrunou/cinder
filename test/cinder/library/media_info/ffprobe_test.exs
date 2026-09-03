@@ -293,7 +293,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   test "subtitle_tracks/1 kills a hung ffprobe process and returns {:error, :timeout} within its bound",
        %{tmp_dir: tmp} do
     use_hanging_ffprobe(tmp)
-    with_short_timeout(:ffprobe_probe_timeout_ms, 150)
+    with_short_timeout(:ffprobe_subtitle_tracks_timeout_ms, 150)
 
     t0 = System.monotonic_time(:millisecond)
     assert Ffprobe.subtitle_tracks("/media/movie.mkv") == {:error, :timeout}
