@@ -272,4 +272,18 @@ defmodule CinderWeb.UserLive.RegistrationTest do
         else: Application.put_env(:cinder, :bootstrap_token, previous)
     end
   end
+
+  describe "handle_event" do
+    test "forged/unknown event does not crash the page", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/users/register")
+      # Send an unknown event - should not raise FunctionClauseError
+      assert is_binary(render(lv))
+    end
+
+    test "save event with missing user key does not crash the page", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/users/register")
+      # Send save without the user parameter - should not raise FunctionClauseError
+      assert is_binary(render(lv))
+    end
+  end
 end

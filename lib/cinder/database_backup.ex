@@ -214,16 +214,18 @@ defmodule Cinder.DatabaseBackup do
   end
 
   defp prune_pending_if_stale(path) do
-    case File.stat(path) do
+    case File.stat(path, time: :posix) do
       {:ok, stat} -> maybe_cleanup_stale_pending(path, stat)
       {:error, reason} -> Logger.error("database backup pending stat failed: #{inspect(reason)}")
     end
   end
 
   defp maybe_cleanup_stale_pending(path, stat) do
-    interval = :timer.hours(24)
+    interval =
+      Keyword.get(config(), :interval, @default_interval)
+
     now_seconds = System.os_time(:second)
-    mtime_seconds = DateTime.to_unix(stat.mtime)
+    mtime_seconds = stat.mtime
 
     if now_seconds - mtime_seconds > div(interval, 1000) do
       case cleanup(path) do
