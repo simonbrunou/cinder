@@ -1141,9 +1141,18 @@ defmodule Cinder.Acquisition.Anime do
 
   defp legal_title_remainder?(""), do: true
 
+  # A bare absolute-number/range match is disqualified when the very next token (after any
+  # separators) is a 4-digit release year (#468): canonicalize_separators/1 above lets a
+  # dot/hyphen-glued release like "Title.4.2024.1080p..." reach this alternative at all (a
+  # literal "." never matched the known title's literal " " before #450); once it does, "4"
+  # reads as a numbered, separately-catalogued sequel/season folded into the title, immediately
+  # followed by the RELEASE's own year field — not "Title" plus a legal absolute-episode
+  # remainder. The negative lookahead only fires on that specific year-adjacency, so every
+  # genuine fansub absolute form is untouched: "Title - 12 [1080p]", "Title - 03v2 [1080p]",
+  # and "Title - 01-05 [1080p]" are never followed by a year token.
   defp legal_title_remainder?(remainder) do
     Regex.match?(
-      ~r/^[\s._\-–—]+(?:\(?\d{4}\)?\b|S\d{1,3}(?:E\d+)?\b|E\d+\b|\d{1,6}(?:\s*-\s*\d{1,6})?(?:v\d+)?\b|\[|\(?(?:\d{3,4}p|WEB|BLURAY|BD|HDTV)\b)/iu,
+      ~r/^[\s._\-–—]+(?:\(?\d{4}\)?\b|S\d{1,3}(?:E\d+)?\b|E\d+\b|\d{1,6}(?:\s*-\s*\d{1,6})?(?:v\d+)?\b(?![\s._\-–—]*\(?(?:19|20)\d{2}\b)|\[|\(?(?:\d{3,4}p|WEB|BLURAY|BD|HDTV)\b)/iu,
       remainder
     )
   end

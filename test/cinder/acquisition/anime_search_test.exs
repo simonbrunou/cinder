@@ -140,6 +140,57 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert release.query_origins == [:free_text]
   end
 
+  test "free-text guard rejects a dot-separated release for a differently-numbered sequel naming its own year (#468)" do
+    context = series_context(nil)
+
+    expect(IndexerMock, :search_tv, fn nil, "Show", 1 ->
+      {:ok, [raw("Show.4.2024.1080p.WEB-DL-GROUP", "sequel")]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, [], false} = Anime.search_episodes(IndexerMock, context, [11], [])
+  end
+
+  test "free-text guard keeps a bracketed fansub absolute-numbered release (#468)" do
+    context = series_context(nil)
+
+    expect(IndexerMock, :search_tv, fn nil, "Show", 1 ->
+      {:ok, [raw("[Fansub] Show - 12 [1080p]", "absolute")]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, [release], false} = Anime.search_episodes(IndexerMock, context, [11], [])
+    assert release.title == "[Fansub] Show - 12 [1080p]"
+  end
+
+  test "free-text guard keeps an absolute release carrying a v2 revision tag (#468)" do
+    context = series_context(nil)
+
+    expect(IndexerMock, :search_tv, fn nil, "Show", 1 ->
+      {:ok, [raw("Show - 03v2 [1080p]", "v2")]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, [release], false} = Anime.search_episodes(IndexerMock, context, [11], [])
+    assert release.title == "Show - 03v2 [1080p]"
+  end
+
+  test "free-text guard keeps an absolute episode range (#468)" do
+    context = series_context(nil)
+
+    expect(IndexerMock, :search_tv, fn nil, "Show", 1 ->
+      {:ok, [raw("Show - 01-05 [1080p]", "range")]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, [release], false} = Anime.search_episodes(IndexerMock, context, [11], [])
+    assert release.title == "Show - 01-05 [1080p]"
+  end
+
   test "partial query failures retain results and all-query failure returns the first reason" do
     context = movie_context([])
 
