@@ -75,6 +75,21 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert release.title == "Akira.1988.4K.Remaster.2020.BluRay.2160p.x265-GROUP"
   end
 
+  test "a garbled indexer title in the free-text result set does not crash the movie search (#451)" do
+    context = movie_context([])
+    garbled = <<0xFF, 0xFE, 0x80, 0x81, "S01E01", 0xC0, 0xAF>>
+    good = raw("Your Name (2016) [1080p]", "good")
+
+    expect(IndexerMock, :search, fn "tt1" -> {:ok, []} end)
+
+    expect(IndexerMock, :search_movie_query, fn "Your Name 2016", categories: [5070] ->
+      {:ok, [raw(garbled, "garbled"), good]}
+    end)
+
+    assert {:ok, [release], false} = Anime.search_movie(IndexerMock, "tt1", context, [])
+    assert release.title == "Your Name (2016) [1080p]"
+  end
+
   test "TVDB search remains ID-scoped and propagates canonical title and season" do
     context = series_context(99)
 

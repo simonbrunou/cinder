@@ -688,7 +688,9 @@ defmodule Cinder.Acquisition.AnimeParser do
   # `/u`-flagged regexes make `:re.run` raise ArgumentError on invalid-UTF-8 subjects, and an
   # indexer aggregates trackers with inconsistent encodings — a single garbled title must not
   # raise and stall that title's whole search pass (#451). Scrub to valid UTF-8 once, up front.
-  defp sanitize(title) do
+  # Public: `Cinder.Acquisition.Anime` reuses this to sanitize a release title before running it
+  # through its own `/u`-flagged title/year guard regexes, rather than duplicating the scrub.
+  def sanitize(title) do
     if String.valid?(title), do: title, else: scrub_utf8(title, [])
   end
 

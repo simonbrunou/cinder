@@ -1079,9 +1079,17 @@ defmodule Cinder.Acquisition.Anime do
 
   defp union(first, second), do: Enum.uniq((first || []) ++ (second || []))
 
+  # A single garbled indexer title must not raise and stall the whole free-text search pass
+  # (#451): `known_title_match?/2` and `exact_movie_year?/2` below both run `/u`-flagged regexes
+  # against the release title. Sanitize once, here, at the point every release enters the guard —
+  # `AnimeParser.sanitize/1` scrubs to valid UTF-8 (a no-op on already-valid input) — reusing the
+  # parser's scrub instead of a third copy. Only the guard's local view is sanitized; `release.title`
+  # itself is never mutated, so it stays intact for display, `mapping_snapshot`, and downstream
+  # parsing (which already sanitizes independently via `AnimeParser.parse/2`).
   defp apply_title_guard(releases, context) do
     Enum.filter(releases, fn release ->
-      :id_scoped in release.query_origins or free_text_match?(release.title, context)
+      :id_scoped in release.query_origins or
+        free_text_match?(AnimeParser.sanitize(release.title), context)
     end)
   end
 
