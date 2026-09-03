@@ -114,6 +114,22 @@ All notable changes to Cinder are documented here. The format follows
   request or a LiveView remounts. This is a deliberate divergence from the `phx.gen.auth`
   generator's default behavior, which leaves sessions untouched on an email change — not a fix to
   generated code.
+- **An email change's session revocation didn't reach an already-connected LiveView
+  socket (#478).** #464 (above) made `Accounts.update_user_email/2` and
+  `admin_update_email/3` delete the target's session tokens, but that only closes the
+  database half of the threat: a LiveView socket mounted *before* the email change ran
+  had already cached `current_scope` in its assigns
+  (`CinderWeb.UserAuth.mount_current_scope/2`) and was never re-verified against the
+  database, so "rejected the next time it makes a request or a LiveView remounts" never
+  applied to a tab that was already open. A stolen or already-connected live session —
+  another browser tab, a shared device — stayed fully authenticated as the household
+  member and able to act until it happened to remount for some unrelated reason, for as
+  long as that took. Both paths now return their revoked session tokens the same way the
+  password paths already did, and their callers (`UserLive.Settings.mount/3` for the
+  self-service confirmation link, `UsersLive`'s admin email-edit handler) call
+  `UserAuth.disconnect_sessions/1` with them after the transaction commits, broadcasting
+  the same `"disconnect"` a real connected browser socket for that session is subscribed
+  to — the live-socket half of the same defence #464 started.
 - **CI and release workflows now pin third-party GitHub Actions to commit SHAs, not mutable
   version tags (#466).** A tag like `@v4` can be repointed by its maintainer or anyone who
   compromises their account or CI — this has happened to actions in this same class before — and
