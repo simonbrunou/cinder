@@ -2,7 +2,7 @@ defmodule Cinder.PollerSupervisor do
   @moduledoc """
   Isolates the household's 16 background workers (`Cinder.Application.poller_child/0`: search
   pollers, refreshers, sweeps, the janitor, etc.) from core infrastructure under their own
-  `:one_for_one` supervisor, nested as a single child of `Cinder.Supervisor`.
+  `:one_for_one` supervisor.
 
   Before this, the 16 workers were flat siblings of `Cinder.Repo` and `CinderWeb.Endpoint`
   directly under `Cinder.Supervisor`'s default restart budget (3 restarts / 5 seconds, shared by
@@ -14,13 +14,21 @@ defmodule Cinder.PollerSupervisor do
   along with the web endpoint and DB connection pool — over one misbehaving background feature
   (#456).
 
-  With this supervisor in between, a crash-looping worker can only exhaust *this* supervisor's
-  own budget. When it does, only `Cinder.PollerSupervisor` itself terminates and is restarted —
-  as a single child — by `Cinder.Supervisor`, which never sees any of the 16 workers directly and
-  is unaffected either way. `max_restarts: 16` (default `max_seconds: 5`) is sized to the child
-  count: one independent restart allowance per worker within the window, comfortably covering
-  ordinary transient restarts across all 16 without being so high that a genuine crash loop takes
-  meaningfully longer to isolate than the previous shared budget did to bring the whole app down.
+  `max_restarts: 16` (default `max_seconds: 5`) is sized to the child count: one independent
+  restart allowance per worker within the window, comfortably covering ordinary transient
+  restarts across all 16.
+
+  Nesting this alone is not enough: a *persistently* bad config value (as opposed to a transient
+  blip) crash-loops again immediately on every restart, including after this supervisor's own
+  budget is exceeded and `Cinder.Supervisor` restarts it — reached empirically: booting a real
+  poller with a permanently invalid `interval` still took `Cinder.Repo`/`CinderWeb.Endpoint` down
+  a few seconds later, because three of *this* supervisor's own restarts (each near-instant) fit
+  comfortably inside `Cinder.Supervisor`'s outer 3-restarts-in-5-seconds budget. `Cinder.Supervisor`
+  must therefore never attempt to restart this supervisor at all — see the `restart: :temporary`
+  child-spec override where this is started (`Cinder.Application.start/2`). That makes a
+  permanently crash-looping worker stop the whole poller subtree, once, for good, instead of
+  cascading: `Cinder.PollerSupervisor.Watchdog` logs loudly at `:error` when that happens, since
+  nothing else would otherwise notice background work has stopped.
   """
   use Supervisor
 
