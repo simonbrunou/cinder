@@ -94,16 +94,19 @@ subprocess it can't see inside).
   after this audit was written)**: this gap is closed. All four — `probe/1`, `probe_policy/1`,
   `subtitle_tracks/1`, `extract_subtitle/2` — now run through a supervised `Port`, killing the OS
   process by `os_pid` at a bound: `Application.get_env(:cinder, :ffprobe_probe_timeout_ms,
-  10_000)` for `probe/1`/`probe_policy/1` (true metadata-only reads); `:ffmpeg_extract_timeout_ms,
-  60_000` for `extract_subtitle/2`'s subtitle transcode; and a separate, much larger
-  `:ffprobe_subtitle_tracks_timeout_ms, 1_800_000` (30 minutes) for `subtitle_tracks/1` — its
-  `-count_packets` flag makes it a full-file demux, not a header read (confirmed by direct
-  measurement during review, not assumed from the flag's name alone), so it needs headroom for a
-  large remux served over a household NAS rather than sharing the two metadata calls' 10s bound.
-  This is the heavier `Port`+`SIGKILL` idiom `unrar list_entries/2` (above) already used, not
-  `health/0`'s lighter `Task.shutdown(:brutal_kill)`, specifically because that lighter idiom
-  does not kill the underlying `ffmpeg`/`ffprobe` process and would leak one orphan per retry.
-  See `lib/cinder/library/media_info/ffprobe.ex`'s moduledoc for the full reasoning.
+  10_000)` for `probe/1`/`probe_policy/1` (true metadata-only reads, and the two that run inside
+  `Poller`/`TvPoller`'s tick); and a separate, much larger 30 minutes —
+  `:ffprobe_subtitle_tracks_timeout_ms, 1_800_000` for `subtitle_tracks/1`,
+  `:ffmpeg_extract_timeout_ms, 1_800_000` for `extract_subtitle/2` — for the other two, which
+  both have to demux the whole file to EOF rather than read a header (`subtitle_tracks/1`'s
+  `-count_packets`; `extract_subtitle/2`'s extraction of an interleaved subtitle track), confirmed
+  by direct measurement during review rather than assumed, and which both run only on the
+  `Cinder.Subtitles.Fetcher`/`Sweeper` path, never a poller tick, so the larger bound only costs
+  subtitle work rather than an import cycle. This is the heavier `Port`+`SIGKILL` idiom `unrar
+  list_entries/2` (above) already used, not `health/0`'s lighter `Task.shutdown(:brutal_kill)`,
+  specifically because that lighter idiom does not kill the underlying `ffmpeg`/`ffprobe` process
+  and would leak one orphan per retry. See `lib/cinder/library/media_info/ffprobe.ex`'s moduledoc
+  for the full reasoning.
 
 ## 4. ffprobe/audio-probe calls specifically for books
 

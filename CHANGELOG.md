@@ -13,10 +13,11 @@ All notable changes to Cinder are documented here. The format follows
   on a pathological file could stall every subsequent import-poller tick for every movie and TV
   target indefinitely; a hung `subtitle_tracks/1`/`extract_subtitle/2` call likewise stalled the
   subtitle-fetch queue or backfill sweep. Each now runs as a supervised subprocess killed by OS
-  pid at a bound: ~10s for `probe/1` and `probe_policy/1` (true metadata-only reads), 60s for
-  `extract_subtitle/2`'s subtitle transcode, and 30 minutes for `subtitle_tracks/1` — its
-  packet-counting scan reads through the whole file rather than just its header, so it needs
-  headroom for a large remux over a household NAS. A hang now fails that one probe instead of
+  pid at a bound: ~10s for `probe/1` and `probe_policy/1` (true metadata-only reads, and the two
+  that run inside the import poller's own tick), and 30 minutes for `subtitle_tracks/1` and
+  `extract_subtitle/2` — both have to demux through the whole file, not just its header, so they
+  need headroom for a large remux over a household NAS, and both run only on the dedicated
+  subtitle-fetch path, never the import poller. A hang now fails that one probe instead of
   freezing its caller.
 
 ## [3.0.0] - 2026-09-02

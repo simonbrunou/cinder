@@ -35,8 +35,14 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   `Cinder.Subtitles.Sweeper` backfill is likewise its own independent poller process. A hang
   there stalls only that worker's own queue/tick, not `Poller`/`TvPoller` — but it is still a
   real, unbounded hang (an orphaned `ffprobe`/`ffmpeg` leaking a staging-file fd forever), so it
-  still needs a bound; see `@subtitle_tracks_timeout_ms` below for why it gets a much larger one
-  than `probe/1`/`probe_policy/1`.
+  still needs a bound. Both are, despite appearances, full-file demux passes rather than cheap
+  reads — `subtitle_tracks/1`'s `-count_packets` must read every packet of the selected stream
+  to EOF, and `extract_subtitle/2` must demux the whole container to EOF to extract a complete,
+  interleaved subtitle track — so both get the same much larger bound,
+  `@subtitle_tracks_timeout_ms` / `@extract_timeout_ms`, instead of `probe/1`/`probe_policy/1`'s
+  10s: see those two attributes' comments for the measurements and worst-case arithmetic behind
+  the split. The two 10s calls are the ones that actually run inside the poller tick, which is
+  where a tight bound matters; the two 30-minute calls never do.
 
   This module bounds all four with a supervised `Port` + `SIGKILL`-by-`os_pid`, the same idiom
   `Cinder.Library.BookArchive.Rar.run_extraction/6` and `Cinder.Disk.CommandProbe` already use for
@@ -103,15 +109,21 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   # CPU, dominates at any realistic file size. 30 minutes leaves comfortable headroom above that
   # worst case while still turning a genuinely hung/corrupt probe into a finite failure instead of
   # parking `Fetcher`'s single-file queue (or one `Sweeper` pass) forever.
+  #
+  # `extract_subtitle/2` shares this exact bound and reasoning, not `probe/1`/`probe_policy/1`'s
+  # 10s: `ffmpeg_args/2` (`-i <path> -map 0:<index> -c:s srt -f srt pipe:1`) has to demux the
+  # whole input from start to EOF to extract a COMPLETE subtitle track, for the same reason
+  # `-count_packets` does — a subtitle stream's packets are interleaved with every other stream's
+  # throughout the container, not stored contiguously. Measured directly against the exact
+  # `ffmpeg_args/2` command (same synthetic MKVs as above): 45ms for the 31KB/10s file, 53ms for
+  # the 10.4MB/1h file, 194ms for the 249MB/24h file — the same content-proportional scaling
+  # `-count_packets` showed, not the flat ~30-40ms a true header-only read holds at every size.
+  # So this is NOT "one media file's worth of CPU-bound work" the way a real transcode would be —
+  # it is the same full-file I/O pass as `subtitle_tracks/1`, reached only through the same
+  # `Fetcher`/`Sweeper` path, never a poller tick, so it gets the identical 30-minute bound and
+  # the identical ~17-minute worst-case arithmetic above.
   @subtitle_tracks_timeout_ms 1_800_000
-
-  # `extract_subtitle/2` actually transcodes a subtitle stream, not just reads metadata, so it is
-  # legitimately slower — but no single subtitle track of one movie/episode should ever
-  # legitimately take anywhere near this long. 60s mirrors `BookArchive.Rar`'s own
-  # `@max_duration_ms` for the same "one media file's worth of CPU-bound work" shape: generous
-  # headroom for a long file on a slow/loaded host, while still bounding a hung or
-  # pathologically-encoded input to a single poller tick rather than leaving it stuck forever.
-  @extract_timeout_ms 60_000
+  @extract_timeout_ms 1_800_000
 
   # Bounded wait for a killed process to actually exit before giving up on it and closing the
   # port out from under it regardless — mirrors `BookArchive.Rar`'s `@reap_wait_ms` /
