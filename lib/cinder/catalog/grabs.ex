@@ -72,10 +72,9 @@ defmodule Cinder.Catalog.Grabs do
   manually searchable episodes server-side (don't trust a stale panel snapshot) and creates the
   grab over exactly the missing or available episodes the release covers (`episodes: nil` = a
   whole-season pack covers them all). `create_grab/5` never links an episode that already has a
-  grab, and rolls the whole thing back if any of them was taken meanwhile, so a concurrent sweep
-  grab can't be double-linked; `Download.reconcile_episodes/1` flattens that rollback to
-  `{:error, :no_episodes_linked}` on this path. `{:error, :nothing_wanted}` when the season has
-  nothing to grab.
+  grab, rolling back if any was taken meanwhile so a concurrent sweep grab can't be double-linked;
+  `Download.reconcile_episodes/1` flattens that to `{:error, :no_episodes_linked}` here.
+  `{:error, :nothing_wanted}` when the season has nothing to grab.
   """
   def manual_grab_tv(%Series{id: series_id}, season_number, %Release{} = release) do
     case manual_grab_tv_state(series_id, season_number) do
@@ -268,14 +267,13 @@ defmodule Cinder.Catalog.Grabs do
   @doc """
   Creates a grab for `episode_ids` (a non-empty list of episodes in one series — a single
   episode or a season pack) and links them in one transaction, then broadcasts
-  `{:series_updated, series_id}`. `release_title` (optional) records the chosen release's name
-  on the grab so the blocklist can skip it if this download later parks. A changeset failure
-  (e.g. a missing `download_id`) rolls the whole thing back as `{:error, changeset}` rather than
-  raising, mirroring `set_season_monitored/2`.
+  `{:series_updated, series_id}`. `release_title` (optional) records the chosen release's name so
+  the blocklist can skip it if this download later parks. A changeset failure (e.g. a missing
+  `download_id`) rolls back as `{:error, changeset}` rather than raising, mirroring
+  `set_season_monitored/2`.
 
   `opts` — `reset_attempts: true` zeroes the linked episodes' `search_attempts` in the same
-  transaction (the manual-grab path uses it, mirroring `manual_grab_movie/2`): the user-chosen
-  release gets a fresh search budget, and new grabs never carry a counter at/above the cap.
+  transaction (mirrors `manual_grab_movie/2`): the user-chosen release gets a fresh search budget.
   `allow_available: true` is reserved for the durable manual-upgrade path.
   `arbitrate_at_import: true` marks the grab so the import, not the grab, decides each episode's
   swap — the unattended upgrade sweep sets it; the manual path leaves it off and forces (#250).
@@ -441,8 +439,7 @@ defmodule Cinder.Catalog.Grabs do
   @doc """
   Marks a grab downloaded (records `content_path`, the at-rest path to import) and broadcasts.
   Also resets `download_attempts` at the download→import boundary (mirrors the movie poller's
-  `import_attempts: 0` reset, `poller.ex:140`) so download-phase blips don't starve the shared
-  grab-lifetime retry budget the import pass then draws from.
+  `import_attempts: 0` reset) so download-phase blips don't starve the shared retry budget.
   """
   def mark_grab_downloaded(%Grab{} = grab, content_path) do
     changeset =
@@ -546,15 +543,11 @@ defmodule Cinder.Catalog.Grabs do
 
   @doc """
   `block_release/2`, then confirms the row is readable back under the movie's exact
-  `release_title`: `:ok` if it landed, `:error` if it did not.
-
-  For the one caller that cannot proceed without the row —
-  `Cinder.Download.Poller.requeue_failed/2`, where the blocklist is the only bound on a re-queue
-  loop, so a missing row means re-grabbing the same dead release every cycle forever. Everyone
-  else calls `block_release/2` and ignores the outcome, which is the right default: it is
-  deliberately non-raising (see above), and for a park the blocklist is a nicety, not a bound.
-
-  A nil `release_title` is `:error` — nothing to block means nothing to bound the loop.
+  `release_title`: `:ok` if it landed, `:error` if it did not. For the one caller that cannot
+  proceed without the row — `Cinder.Download.Poller.requeue_failed/2`, where the blocklist is the
+  only bound on a re-queue loop, so a missing row means re-grabbing the same dead release forever.
+  Everyone else calls `block_release/2` and ignores the outcome (deliberately non-raising, see
+  above). A nil `release_title` is `:error` — nothing to block means nothing to bound the loop.
   """
   def block_release_and_confirm(%Movie{release_title: title} = movie, reason) do
     block_release(movie, reason)
@@ -742,9 +735,9 @@ defmodule Cinder.Catalog.Grabs do
 
   @doc """
   The undecided residual videos of a standard-TV grab: inventoried at import time with no
-  fold/part decision yet. A non-empty result is what makes a `:residual_files` hold
-  (`grab_hold/1`), and these are exactly the rows `/activity` renders resolution actions
-  for. Tolerates an unloaded `grab_files` association (classifies as none).
+  fold/part decision yet. A non-empty result makes a `:residual_files` hold (`grab_hold/1`) and
+  is exactly what `/activity` renders resolution actions for. An unloaded `grab_files`
+  association classifies as none.
   """
   def unresolved_grab_files(%{grab_files: files}) when is_list(files),
     do: Enum.filter(files, &is_nil(&1.decision))
@@ -752,11 +745,11 @@ defmodule Cinder.Catalog.Grabs do
   def unresolved_grab_files(_grab), do: []
 
   @doc """
-  Which operator-action hold a grab sits in, or `nil` when it needs no operator: a mapping
-  hold (`:needs_mapping`), a verification hold (`:verification_blocked`), or a standard
-  residual grab with at least one undecided `grab_file` (`:residual_files`) — the same
-  reason atoms `{:operator_hold, grab, reason}` notifies with. A flagged `mapping_status`
-  wins over residual files, so a grab in two classes classifies once.
+  Which operator-action hold a grab sits in, or `nil` when it needs no operator: a mapping hold
+  (`:needs_mapping`), a verification hold (`:verification_blocked`), or a standard residual grab
+  with at least one undecided `grab_file` (`:residual_files`) — the same reason atoms
+  `{:operator_hold, grab, reason}` notifies with. A flagged `mapping_status` wins, so a grab in
+  two classes classifies once.
   """
   def grab_hold(%{mapping_status: :needs_mapping}), do: :needs_mapping
   def grab_hold(%{mapping_status: :verification_blocked}), do: :verification_blocked
@@ -781,9 +774,8 @@ defmodule Cinder.Catalog.Grabs do
   end
 
   @doc """
-  Grabs downloaded and awaiting import (`content_path` set), with `episodes: [season: :series]`
-  preloaded so the TV poller's import pass can map files → episodes and build library paths
-  without reaching past the Catalog boundary.
+  Grabs downloaded and awaiting import (`content_path` set), preloaded so the TV poller's
+  import pass can map files → episodes and build library paths without reaching past Catalog.
   """
   def list_grabs_downloaded do
     Repo.all(
@@ -795,14 +787,32 @@ defmodule Cinder.Catalog.Grabs do
     )
   end
 
-  @doc "All grabs newest-first, with `episodes: [season: :series]` preloaded for the admin /grabs view."
+  @list_grabs_limit 200
+
+  @doc """
+  All grabs newest-first, preloaded for the admin /grabs view. No terminal grab row survives to
+  prune (every terminal transition deletes it), so instead of a retention sweep this bounds cost
+  with a limit that never drops a hold, regardless of age (#459).
+  """
   def list_grabs do
     Repo.all(
       from g in Grab,
+        as: :grab,
+        where:
+          g.mapping_status in [:needs_mapping, :verification_blocked] or
+            exists(
+              from f in GrabFile, where: f.grab_id == parent_as(:grab).id and is_nil(f.decision)
+            ) or
+            g.id in subquery(
+              from g2 in Grab, order_by: [desc: g2.id], limit: ^list_grabs_limit(), select: g2.id
+            ),
         order_by: [desc: g.id],
         preload: [:grab_files, episodes: [season: :series]]
     )
   end
+
+  defp list_grabs_limit,
+    do: Application.get_env(:cinder, __MODULE__, [])[:list_grabs_limit] || @list_grabs_limit
 
   @doc "Lists held mapping grabs for one series, oldest first, with their series tree preloaded."
   def list_mapping_grabs_for_series(series_id) do
@@ -818,10 +828,9 @@ defmodule Cinder.Catalog.Grabs do
   end
 
   @doc """
-  Fetches one grab by id, or `nil`. User-initiated grab actions (e.g. /activity's
-  delete) must re-read before acting: a grab resolved from a rendered snapshot may
-  have finished importing meanwhile, and cancelling THAT would remove a completed,
-  already-imported torrent from the client (stopping seeding) for nothing.
+  Fetches one grab by id, or `nil`. User-initiated grab actions (e.g. /activity's delete) must
+  re-read before acting: a grab resolved from a rendered snapshot may have finished importing
+  meanwhile, and cancelling THAT would remove a completed, already-imported torrent for nothing.
   """
   def get_grab(id), do: Repo.get(Grab, id)
 
@@ -872,7 +881,7 @@ defmodule Cinder.Catalog.Grabs do
 
   @doc """
   Commits the clean matches from one standard-TV staging pass and durably inventories every
-  unmatched video. A clean pass closes the grab in this transaction; a residual pass leaves the
+  unmatched video: a clean pass closes the grab in this transaction; a residual pass leaves the
   grab and its unimported episodes intact for explicit per-file decisions.
   """
   def commit_grab_imports(%Grab{} = grab, imported, residuals, stage_ids \\ []) do
@@ -926,10 +935,7 @@ defmodule Cinder.Catalog.Grabs do
     Ecto.StaleEntryError -> {:error, :stale_grab}
   end
 
-  @doc """
-  Closes a standard-TV grab only after every residual file has an explicit fold/part decision.
-  Imported episodes are released unchanged; genuinely missing episodes are released and backed off.
-  """
+  @doc "Closes a standard-TV grab once every residual file has an explicit fold/part decision; imported episodes are released unchanged, genuinely missing ones are released and backed off."
   def close_grab(%Grab{} = grab) do
     grab = Repo.preload(grab, :episodes, force: true)
     series_id = series_id_for_grab(grab.id)
@@ -1102,11 +1108,10 @@ defmodule Cinder.Catalog.Grabs do
   Atomically records one Discard decision — the file-only path.
 
   `decide_grab_file/4` needs an `%Episode{}` of this grab, because both its decisions bind the
-  file to one: Fold writes the file's provider coordinate onto that episode, Part stages its
-  bytes at that episode's `-part` path. A residual whose content belongs to an episode *outside*
-  the grab has no such episode, so there is no truthful argument to pass. Discard takes none: it
-  claims the row the same guarded way (a decided row is a no-op), writes nothing but the
-  decision, and derives its single post-commit broadcast from the grab rather than the episode.
+  file to one (Fold writes the provider coordinate onto it, Part stages bytes at its `-part`
+  path); a residual belonging to an episode *outside* the grab has no such episode to pass.
+  Discard takes none: it claims the row the same guarded way (a decided row is a no-op), writes
+  only the decision, and derives its post-commit broadcast from the grab, not an episode.
   """
   def discard_grab_file(%GrabFile{} = file) do
     result =
@@ -1274,20 +1279,17 @@ defmodule Cinder.Catalog.Grabs do
 
   @doc """
   Finalizes a grab after import, in **one transaction**: sets `file_path`, clears
-  `part_file_paths` and `grab_id` on each imported episode, bumps `search_attempts` on the grab's
-  non-imported episodes, then deletes the grab. `imported` is `[{episode_id, dest_path}]`.
-  Broadcasts `{:series_updated, _}` and announces any season the import completes.
-
-  The search_attempts bump on the non-imported episodes makes a pack that never yields a wanted
-  episode re-search with backoff and eventually search-park, rather than re-grabbing forever. It
-  **must** run before the delete: the `grab_id` FK nilifies on delete, after which the predicate
-  would match nothing. Each imported episode is written individually (a single `update_all set:`
-  could not give each its own dest); `n` is one season pack, so the per-row writes are cheap.
+  `part_file_paths` and `grab_id` on each imported episode, bumps `search_attempts` on the
+  non-imported ones (backoff toward search-park instead of re-grabbing forever) — **before** the
+  delete, since the `grab_id` FK nilifies on delete and the bump's predicate would then match
+  nothing — then deletes the grab. `imported` is `[{episode_id, dest_path}]`; each is written
+  individually since a single `update_all set:` can't give each its own dest (cheap: `n` is one
+  season pack). Broadcasts `{:series_updated, _}` and announces any completed season.
 
   `opts[:fence_client]` additionally fences a durable cleanup intent for the grab's
-  `download_id`/`download_protocol` in the SAME transaction as the delete, then removes it from
-  the client after commit — `park_grab_and_remove/1`'s one caller (the `:blocked_content` park,
-  whose grab is still an active remote job).
+  `download_id`/`download_protocol` in the same transaction as the delete, removed from the
+  client after commit — `park_grab_and_remove/1`'s one caller (the `:blocked_content` park, whose
+  grab is still an active remote job).
   """
   def finish_grab(%Grab{} = grab, imported \\ []), do: finish_grab(grab, imported, [])
 
@@ -1417,15 +1419,13 @@ defmodule Cinder.Catalog.Grabs do
   Reaps a stalled downloading grab (the stall reaper): one transaction blocklists its release
   `:stalled`, bumps every linked episode's `search_attempts` (backoff), fences the client download
   for removal, then deletes the grab; after commit the remote job + reserved intent are torn down
-  and the series is announced. The episodes re-enter the wanted sweep and re-search a *different*
-  release next tick (the blocklist skips the dead one).
+  and the series is announced, so the episodes re-search a *different* release next tick.
 
-  Claims the grab with a compare-and-swap `update_all` **first** (like `cancel_grab/2`): the poller
-  reaps off a tick-start snapshot, so a concurrent user Discard/cancel can delete the same grab in
-  the `client.status/1` window. `{0, _}` ⇒ already gone ⇒ `{:error, :stale_grab}` no-op (no block,
-  no notify, no `hd([])` on nilified episode links). After a `{1, _}` claim the grab still exists,
-  so the block and the bump read its still-linked episodes before the `Repo.delete` (which nilifies
-  `grab_id`) runs last. Combines `cancel_grab/2`'s claim+fence teardown with `finish_grab/3`'s bump.
+  Claims the grab with a compare-and-swap `update_all` **first** (like `cancel_grab/2`): the
+  poller reaps off a tick-start snapshot, so a concurrent user Discard/cancel can delete the same
+  grab in the `client.status/1` window — `{0, _}` ⇒ already gone ⇒ `{:error, :stale_grab}` no-op.
+  After a `{1, _}` claim the grab still exists, so the block and bump read its still-linked
+  episodes before the `Repo.delete` (which nilifies `grab_id`) runs last.
   """
   def reap_stalled_grab(%Grab{} = grab) do
     series_id = series_id_for_grab(grab.id)

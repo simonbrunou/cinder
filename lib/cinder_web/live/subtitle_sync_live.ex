@@ -65,6 +65,21 @@ defmodule CinderWeb.SubtitleSyncLive do
          |> put_flash(:info, applied_message(status))
          |> put_item(item)}
 
+      # #453: the correction already landed on disk (with_scoped_item/3's callback runs before
+      # this check) — the scope just moved on (e.g. an upgrade import) before the operation could
+      # confirm it. Telling the operator their input was invalid would be wrong and would invite
+      # a needless re-apply of a correction that already succeeded; reload instead.
+      {:error, :stale_scope} ->
+        {:noreply,
+         socket
+         |> put_flash(
+           :info,
+           gettext(
+             "The correction was applied, but this item changed while it was being written. Reloading current items."
+           )
+         )
+         |> refresh_items()}
+
       {:error, _reason} ->
         {:noreply,
          socket
@@ -79,6 +94,18 @@ defmodule CinderWeb.SubtitleSyncLive do
         {:noreply,
          socket
          |> put_flash(:info, gettext("Original subtitle restored."))
+         |> refresh_items()}
+
+      # #453: same reasoning as "apply" above — the restore already landed, only the scope moved.
+      {:error, :stale_scope} ->
+        {:noreply,
+         socket
+         |> put_flash(
+           :info,
+           gettext(
+             "The original subtitle was restored, but this item changed while it was being written. Reloading current items."
+           )
+         )
          |> refresh_items()}
 
       {:error, _reason} ->

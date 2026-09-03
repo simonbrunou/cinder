@@ -324,6 +324,59 @@ defmodule Cinder.Library.AdoptionTest do
            } = Repo.reload!(movie)
   end
 
+  # Regression for #455: `validator` used to run *inside* `Repo.transaction(mode: :immediate)`,
+  # holding SQLite's one database-wide write lock for however long it took (unbounded on a stalled
+  # network mount). An unrelated write elsewhere in the catalog would queue behind it. Now
+  # `validator` runs before any transaction opens, so a concurrent unrelated write is not blocked.
+  test "an unrelated catalog write is not blocked behind a stalled adoption validator (#455)" do
+    unrelated = movie_fixture(%{tmdb_id: 900, title: "Unrelated", status: :requested})
+
+    assert {:ok, profile} =
+             Catalog.create_profile(%{
+               name: "Reserved movies",
+               kind: :movies,
+               handling: :anime,
+               library_path: "/tmp/cinder-atomic-movies"
+             })
+
+    attrs =
+      movie_result(901, "Reserved", 2021)
+      |> Map.merge(%{imdb_id: "tt0000901", localizations: %{}})
+
+    test_pid = self()
+
+    validator = fn _profile ->
+      send(test_pid, :validator_started)
+
+      receive do
+        :continue -> :ok
+      end
+    end
+
+    adopt_task =
+      Task.async(fn ->
+        Catalog.adopt_movie_at_available(
+          attrs,
+          "/tmp/cinder-atomic-movies/Reserved/Reserved.mkv",
+          profile.id,
+          :anime,
+          validator
+        )
+      end)
+
+    assert_receive :validator_started
+
+    update_task =
+      Task.async(fn ->
+        unrelated |> Ecto.Changeset.change(title: "Renamed") |> Repo.update!()
+      end)
+
+    assert %Movie{title: "Renamed"} = Task.await(update_task, 200)
+
+    send(adopt_task.pid, :continue)
+    assert {:ok, %Movie{}, :created} = Task.await(adopt_task)
+  end
+
   test "scan adopts a series from an Anime destination with the Anime profile" do
     anime_root = "/tmp/cinder-test-tv-library/anime"
     path = "#{anime_root}/Test Show (2001)/Test.Show.S01E01.mkv"
