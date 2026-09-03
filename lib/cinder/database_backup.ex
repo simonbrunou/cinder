@@ -208,8 +208,9 @@ defmodule Cinder.DatabaseBackup do
 
   defp prune_pending_files do
     backup_dir()
-    |> Path.join(".cinder-backup-pending-*.sqlite3")
-    |> Path.wildcard()
+    |> File.ls!()
+    |> Enum.filter(&String.match?(&1, ~r/^\.cinder-backup-pending-.*\.sqlite3$/))
+    |> Enum.map(&Path.join(backup_dir(), &1))
     |> Enum.each(&prune_pending_if_stale/1)
   end
 

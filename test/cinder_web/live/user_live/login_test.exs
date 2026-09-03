@@ -155,7 +155,7 @@ defmodule CinderWeb.UserLive.LoginTest do
     test "forged/unknown event does not crash the page", %{conn: conn} do
       {:ok, lv, _html} = live(conn, ~p"/users/log-in")
       # Send an unknown event - should not raise FunctionClauseError
-      assert is_binary(render(lv))
+      assert render_click(lv, "totally-unknown-event", %{}) =~ "Log in"
     end
   end
 end
