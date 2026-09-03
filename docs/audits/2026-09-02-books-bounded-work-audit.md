@@ -90,7 +90,15 @@ subprocess it can't see inside).
   called on a downloaded media file, so it does not change the real gap: every call that actually
   inspects book/movie/TV file bytes (`probe/1`, `probe_policy/1`, `subtitle_tracks/1`,
   `extract_subtitle/2`) has no Elixir-side timeout. This is a real, pre-existing,
-  video-and-books-shared limitation, out of scope to fix in B8a.
+  video-and-books-shared limitation, out of scope to fix in B8a. **Update (issue #447, fixed
+  after this audit was written)**: this gap is closed. All four — `probe/1`, `probe_policy/1`,
+  `subtitle_tracks/1`, `extract_subtitle/2` — now run through a supervised `Port` bounded by
+  `Application.get_env(:cinder, :ffprobe_probe_timeout_ms, 10_000)` (the first three) or
+  `:ffmpeg_extract_timeout_ms, 60_000` (the last), killing the OS process by `os_pid` at the
+  deadline — the heavier `Port`+`SIGKILL` idiom `unrar list_entries/2` (above) already used, not
+  `health/0`'s lighter `Task.shutdown(:brutal_kill)`, specifically because that lighter idiom
+  does not kill the underlying `ffmpeg`/`ffprobe` process and would leak one orphan per poller
+  tick. See `lib/cinder/library/media_info/ffprobe.ex`'s moduledoc for the full reasoning.
 
 ## 4. ffprobe/audio-probe calls specifically for books
 
@@ -215,6 +223,8 @@ current source rather than assumed:
    `unrar list_entries/2` is book-specific and new to this track, so it was in scope and has been
    fixed: `list_entries/2` now wraps its `System.cmd` in the same `Task.async/Task.yield/
    Task.shutdown(:brutal_kill)` idiom `MediaInfo.Ffprobe.health/0` and `AudioProbe.Ffprobe.
-   probe/1` already use, bounded to `@list_timeout_ms 5_000` (§3 above). **`Ffprobe`'s missing
-   timeout on the paths that inspect actual file bytes is now genuinely the only unbounded-work
-   exception this audit accepts**, not one of two.
+   probe/1` already use, bounded to `@list_timeout_ms 5_000` (§3 above). `Ffprobe`'s missing
+   timeout on the paths that inspect actual file bytes was, at the time this audit was written,
+   genuinely the only unbounded-work exception it accepted, not one of two. **Update (issue #447,
+   fixed after this audit was written)**: that exception is also closed now — see §3's own
+   updated `Ffprobe` bullet above. No unbounded-work exception remains open from this audit.
