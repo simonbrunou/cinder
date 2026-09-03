@@ -45,15 +45,21 @@ defmodule Cinder.PollerSupervisorTest do
     supervisor_pid = Process.whereis(Cinder.Supervisor)
     assert is_pid(repo_pid) and is_pid(endpoint_pid) and is_pid(supervisor_pid)
 
+    # Rebuild is silent today (`:start_poller` is false in test config, so
+    # `Cinder.Application.poller_child/0` returns `[]` and nothing supervisor-report-worthy
+    # happens) but wrapped in capture_log/1 defensively: cleanup code that races the test process
+    # tearing down must never leak raw logs regardless of environment.
     on_exit(fn ->
-      if is_nil(Process.whereis(Cinder.PollerSupervisor)) do
-        Supervisor.start_child(
-          Cinder.Supervisor,
-          Supervisor.child_spec({Cinder.PollerSupervisor, Cinder.Application.poller_child()},
-            restart: :temporary
+      capture_log(fn ->
+        if is_nil(Process.whereis(Cinder.PollerSupervisor)) do
+          Supervisor.start_child(
+            Cinder.Supervisor,
+            Supervisor.child_spec({Cinder.PollerSupervisor, Cinder.Application.poller_child()},
+              restart: :temporary
+            )
           )
-        )
-      end
+        end
+      end)
     end)
 
     capture_log(fn ->
@@ -76,8 +82,6 @@ defmodule Cinder.PollerSupervisorTest do
   # :permanent) nested supervisor. Synthetic (not the real Cinder.Supervisor): it needs a
   # deliberately tiny (3/5) parent budget to observe the cascade in bounded time.
   test "without :temporary, the same permanent crash loop cascades past its parent supervisor" do
-    :ok = Supervisor.terminate_child(Cinder.Supervisor, Cinder.PollerSupervisor)
-
     on_exit(fn ->
       Supervisor.start_child(
         Cinder.Supervisor,
@@ -92,18 +96,31 @@ defmodule Cinder.PollerSupervisorTest do
     # observe anything.
     Process.flag(:trap_exit, true)
 
-    {:ok, top} =
-      Supervisor.start_link(
-        [
-          Supervisor.child_spec({Agent, fn -> :infra end}, id: :infra),
-          Supervisor.child_spec({Cinder.PollerSupervisor, [PermanentCrashLooper]}, id: :pollers)
-        ],
-        strategy: :one_for_one,
-        max_restarts: 3,
-        max_seconds: 5
-      )
+    # terminate_child kills the real, Watchdog-monitored Cinder.PollerSupervisor synchronously —
+    # Watchdog's :error log fires inline with that call, not during the later sleep, so it must be
+    # inside the same capture (previously only the sleep was wrapped, leaking Watchdog's alarm to
+    # the raw console on every run).
+    {top, _log} =
+      with_log(fn ->
+        :ok = Supervisor.terminate_child(Cinder.Supervisor, Cinder.PollerSupervisor)
 
-    capture_log(fn -> Process.sleep(500) end)
+        {:ok, top} =
+          Supervisor.start_link(
+            [
+              Supervisor.child_spec({Agent, fn -> :infra end}, id: :infra),
+              Supervisor.child_spec({Cinder.PollerSupervisor, [PermanentCrashLooper]},
+                id: :pollers
+              )
+            ],
+            strategy: :one_for_one,
+            max_restarts: 3,
+            max_seconds: 5
+          )
+
+        Process.sleep(500)
+        top
+      end)
+
     assert_receive {:EXIT, ^top, _reason}, 1_000
     refute Process.alive?(top)
   end
