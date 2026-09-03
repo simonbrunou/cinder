@@ -7,16 +7,48 @@ defmodule Cinder.Catalog.Adoption do
   alias Cinder.Catalog.{Episode, Identity, Movie, Profiles, Season, Series, SeriesCatalog}
   alias Cinder.Repo
 
+  # #455: `validator` (`revalidate_candidate/3`) lstat-walks every path component down to the
+  # candidate file (up to `PathPolicy`'s `@max_depth 64`), then the file itself, to prove it
+  # hasn't changed since it was scanned. That is filesystem I/O that can stall on a network-mounted
+  # library root; it used to run *inside* `Repo.transaction(mode: :immediate)`, holding SQLite's
+  # one DATABASE-WIDE write lock for the whole stall — queuing every unrelated writer (both
+  # pollers' `Catalog.transition`/`expect:` writes, any concurrent admin action) behind it for up
+  # to `busy_timeout: 5_000`.
+  #
+  # The fix resolves the profile and runs `validator` here, before any transaction opens, then
+  # hands off to `do_adopt_movie_at_available/4`, which re-resolves the profile (a single indexed
+  # `Repo.get`, not filesystem I/O) fresh inside a transaction scoped to only the DB write — this
+  # is the "re-validate on a losing race" half of the guarantee, catching a profile that was
+  # deleted/changed in the gap. The filesystem check itself is not re-run inside the transaction
+  # (that would reopen the exact stall this closes); the residual race window — the file changing
+  # between `validator` returning and the transaction's `BEGIN IMMEDIATE` — shrinks from
+  # "however long the lstat walk takes" (unbounded on a bad mount) to the time between two
+  # back-to-back function calls with no I/O in between (low milliseconds at worst), and the DB
+  # write's own guards (`Movie.file_paths(movie) != []`, the status check,
+  # `Catalog.validate_movie_transition/3`) still fail safe on any *catalog-side* change in that
+  # gap, exactly as they did before.
   @doc false
   def adopt_movie_at_available(attrs, file_path, profile_id, legacy_handling, validator)
       when is_map(attrs) and is_binary(file_path) and file_path != "" and
              is_function(validator, 1) do
+    with {:ok, profile, _handling} <-
+           Profiles.resolve_assignment(profile_id, :movies, legacy_handling),
+         :ok <- validator.(profile) do
+      do_adopt_movie_at_available(attrs, file_path, profile_id, legacy_handling)
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def adopt_movie_at_available(_attrs, _file_path, _profile_id, _legacy_handling, _validator),
+    do: {:error, :invalid_file_path}
+
+  defp do_adopt_movie_at_available(attrs, file_path, profile_id, legacy_handling) do
     result =
       Repo.transaction(
         fn ->
           with {:ok, profile, handling} <-
                  Profiles.resolve_assignment(profile_id, :movies, legacy_handling),
-               :ok <- validator.(profile),
                {:ok, movie, marker} <-
                  adopt_movie_in_transaction(attrs, file_path, profile, handling) do
             {movie, marker}
@@ -39,9 +71,6 @@ defmodule Cinder.Catalog.Adoption do
         {:error, reason}
     end
   end
-
-  def adopt_movie_at_available(_attrs, _file_path, _profile_id, _legacy_handling, _validator),
-    do: {:error, :invalid_file_path}
 
   defp adopt_movie_in_transaction(attrs, file_path, profile, handling) do
     case Repo.get_by(Movie, tmdb_id: Map.get(attrs, :tmdb_id)) do
@@ -123,6 +152,10 @@ defmodule Cinder.Catalog.Adoption do
     end
   end
 
+  # See `adopt_movie_at_available/5` above for the #455 rationale; same shape here: the profile is
+  # resolved and `validator` (filesystem I/O) runs before any transaction, and
+  # `do_adopt_series_files/4` re-resolves both the profile and the series fresh (indexed
+  # `Repo.get`s, not filesystem I/O) inside a transaction scoped to only the DB writes.
   @doc false
   def adopt_series_files(
         %Series{id: series_id},
@@ -132,19 +165,28 @@ defmodule Cinder.Catalog.Adoption do
         validator
       )
       when is_list(actions) and is_function(validator, 1) do
+    with true <- actions != [],
+         {:ok, profile, _handling} <-
+           Profiles.resolve_assignment(profile_id, :tv, legacy_handling),
+         :ok <- validator.(profile) do
+      do_adopt_series_files(series_id, actions, profile_id, legacy_handling)
+    else
+      false -> {:error, [%{reason: :no_adoptable_files}]}
+      {:error, reason} -> {:error, [%{reason: reason}]}
+    end
+  end
+
+  defp do_adopt_series_files(series_id, actions, profile_id, legacy_handling) do
     result =
       Repo.transaction(
         fn ->
-          with true <- actions != [],
-               {:ok, profile, handling} <-
+          with {:ok, profile, handling} <-
                  Profiles.resolve_assignment(profile_id, :tv, legacy_handling),
                %Series{} = series <- Repo.get(Series, series_id),
-               :ok <- validator.(profile),
                {:ok, series} <- Profiles.assign_in_transaction(series, profile, handling) do
             {applied, updated} = reduce_adoptions(actions)
             {series, applied, updated}
           else
-            false -> Repo.rollback(%{reason: :no_adoptable_files})
             nil -> Repo.rollback(%{reason: :series_not_found})
             {:error, reason} -> Repo.rollback(%{reason: reason})
           end

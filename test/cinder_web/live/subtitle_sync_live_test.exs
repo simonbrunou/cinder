@@ -533,9 +533,18 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     assert File.read!(sidecar) == original
   end
 
-  test "scoped apply holds the catalog write reservation through filesystem publication", %{
-    movies: movies
-  } do
+  # Regression for #453: `with_scoped_item/3` used to wrap `manual/4`'s filesystem/manifest work
+  # (no DB write inside it at all) in `Repo.transaction(mode: :immediate)`, holding SQLite's one
+  # DATABASE-WIDE write lock across it. That serialized this ordinary write against it — the exact
+  # assertion this test used to make (`Task.yield(update, 100) == nil`) — but also every
+  # *unrelated* writer in the app for however long the video-file read/hash took. Now the
+  # concurrent write is not blocked; the operation instead re-validates the item is still in
+  # `scope` after the filesystem work lands, reporting `{:error, :stale_scope}` instead of a false
+  # success when it is not — the correction it already wrote to `sidecar` is not lost or rolled
+  # back (there is nothing transactional to roll back: it is a plain file write), just not
+  # reported as a success for a scope that has since moved on.
+  test "a concurrent catalog write during filesystem publication is not blocked, and a scope that moved on is reported instead of a false success (#453)",
+       %{movies: movies} do
     video = Path.join(movies, "Reserved/Reserved.mkv")
     replacement_video = Path.join(movies, "Reserved/Replacement.mkv")
     sidecar = Path.rootname(video) <> ".en.srt"
@@ -585,10 +594,15 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
         movie |> Ecto.Changeset.change(file_path: replacement_video) |> Repo.update!()
       end)
 
-    assert Task.yield(update, 100) == nil
+    # No SQLite write-lock reservation queues this behind the still-blocked moviehash read.
+    assert %{file_path: ^replacement_video} = Task.await(update, 100)
+
     send(pid, {ref, :continue})
-    assert {:ok, :corrected, _} = Task.await(apply)
-    assert %{file_path: ^replacement_video} = Task.await(update)
+    # The scope no longer resolves this item (the movie now points at replacement_video, which
+    # has no tracked sidecar of its own) by the time the filesystem work completes.
+    assert {:error, :stale_scope} = Task.await(apply)
+    # The correction itself still landed — captured against the original video before the swap,
+    # unaffected by it.
     assert File.read!(sidecar) =~ "00:00:02,000"
   end
 

@@ -3,7 +3,7 @@ defmodule Cinder.Subtitles.Sync do
   require Logger
 
   alias Cinder.Library.{Filesystem, PathPolicy, Sidecars}
-  alias Cinder.{Repo, Settings}
+  alias Cinder.Settings
   alias Cinder.Subtitles.{Manifest, Moviehash}
 
   alias Cinder.Subtitles.Sync.{
@@ -154,7 +154,10 @@ defmodule Cinder.Subtitles.Sync do
   def manual(_item, _offset_ms, _rate, _expected_sha256),
     do: {:error, :invalid_adjustment}
 
-  @doc "Applies a manual correction while holding a SQLite write reservation for its catalog scope."
+  @doc """
+  Applies a manual correction, re-validated against `scope` after the filesystem/manifest work
+  completes. Does not hold SQLite's write lock across that I/O (#453) — see `with_scoped_item/3`.
+  """
   @spec manual_in_scope(term(), String.t(), integer(), number(), String.t()) ::
           {:ok, :aligned | :corrected, item()} | {:error, term()}
   def manual_in_scope(scope, id, offset_ms, rate, expected_sha256) do
@@ -163,25 +166,47 @@ defmodule Cinder.Subtitles.Sync do
     end)
   end
 
-  @doc "Resets a subtitle while holding a SQLite write reservation for its catalog scope."
+  @doc """
+  Resets a subtitle, re-validated against `scope` after the filesystem/manifest work completes
+  (see `with_scoped_item/3`).
+  """
   @spec reset_in_scope(term(), String.t()) :: :ok | {:error, term()}
   def reset_in_scope(scope, id), do: with_scoped_item(scope, id, &reset/1)
 
+  # `callback` (`manual/4`/`reset/1`) is pure filesystem/manifest I/O — no DB write at all — so
+  # wrapping it in `Repo.transaction(mode: :immediate)` bought no atomicity; it only reserved
+  # SQLite's single, DATABASE-WIDE write lock for the whole operation. On a slow or
+  # network-mounted library root that queued every *unrelated* writer in the app (other titles'
+  # poller ticks included) behind however long the manifest read, sidecar scan, one-or-two
+  # `Moviehash.of_file/1` reads, and manifest write took (#453) — for zero atomicity benefit,
+  # since nothing here was ever written to the DB.
+  #
+  # What that reservation *did* incidentally buy, and what this still preserves without the lock:
+  # the operator is never told "success" for an item whose catalog scope moved out from under the
+  # operation (e.g. an upgrade import reassigning `file_path` mid-flight). `items(scope)` is
+  # resolved once before `callback` runs and once more after a successful callback; if the item no
+  # longer resolves within `scope`, the call reports `{:error, :stale_scope}` instead of a false
+  # success, mirroring the codebase's other re-validate-on-a-losing-race guards. This is a report,
+  # not a block: a concurrent catalog write is no longer serialized behind this operation, only
+  # detected if it invalidated the scope. Two things already cover the rest of what the lock's
+  # ordering incidentally provided: `manual/4` re-verifies the video's own bytes (moviehash) and
+  # the sidecar's (sha256) mid-flight, independent of any DB lock; `:global.trans/2` (keyed on
+  # `video_path`, still held around `manual/4`'s and `reset/1`'s own bodies) already serializes
+  # concurrent subtitle-sync calls for the same video. Neither depended on the write lock.
   defp with_scoped_item(scope, id, callback) do
-    Repo.transaction(
-      fn ->
-        case Enum.find(items(scope), &(&1.id == id)) do
-          nil -> Repo.rollback(:unknown_item)
-          item -> callback.(item)
-        end
-      end,
-      mode: :immediate
-    )
-    |> normalize_scoped_result()
+    case find_scoped_item(scope, id) do
+      nil -> {:error, :unknown_item}
+      item -> revalidate_scope(scope, id, callback.(item))
+    end
   end
 
-  defp normalize_scoped_result({:ok, result}), do: result
-  defp normalize_scoped_result({:error, reason}), do: {:error, reason}
+  defp revalidate_scope(_scope, _id, {:error, _reason} = error), do: error
+
+  defp revalidate_scope(scope, id, success) do
+    if find_scoped_item(scope, id), do: success, else: {:error, :stale_scope}
+  end
+
+  defp find_scoped_item(scope, id), do: Enum.find(items(scope), &(&1.id == id))
 
   @doc "Applies an affine correction derived from one or two sidecar→video timestamp anchors."
   @spec manual_from_anchors(item(), [{integer(), integer()}]) ::

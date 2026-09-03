@@ -37,7 +37,7 @@ defmodule Cinder.Application do
         # registration and login floors); must be up before the Endpoint serves logins.
         Cinder.Accounts.IpRateLimiter,
         CinderWeb.Endpoint
-      ] ++ poller_child()
+      ] ++ [{Cinder.PollerSupervisor, poller_child()}]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
