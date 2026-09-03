@@ -252,6 +252,20 @@ defmodule CinderWeb.UserLive.RegistrationTest do
     end
   end
 
+  describe "handle_event" do
+    test "forged/unknown event does not crash the page", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/users/register")
+      # Send an unknown event - should not raise FunctionClauseError
+      assert render_click(lv, "totally-unknown-event", %{}) =~ "Register"
+    end
+
+    test "save event with missing user key does not crash the page", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/users/register")
+      # Send save without the user parameter - should not raise FunctionClauseError
+      assert render_click(lv, "save", %{}) =~ "Register"
+    end
+  end
+
   defp registration_params(email) do
     password = valid_user_password()
     %{"email" => email, "password" => password, "password_confirmation" => password}
@@ -270,20 +284,6 @@ defmodule CinderWeb.UserLive.RegistrationTest do
       if is_nil(previous),
         do: Application.delete_env(:cinder, :bootstrap_token),
         else: Application.put_env(:cinder, :bootstrap_token, previous)
-    end
-  end
-
-  describe "handle_event" do
-    test "forged/unknown event does not crash the page", %{conn: conn} do
-      {:ok, lv, _html} = live(conn, ~p"/users/register")
-      # Send an unknown event - should not raise FunctionClauseError
-      assert render_click(lv, "totally-unknown-event", %{}) =~ "Register"
-    end
-
-    test "save event with missing user key does not crash the page", %{conn: conn} do
-      {:ok, lv, _html} = live(conn, ~p"/users/register")
-      # Send save without the user parameter - should not raise FunctionClauseError
-      assert render_click(lv, "save", %{}) =~ "Register"
     end
   end
 end
