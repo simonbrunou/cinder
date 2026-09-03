@@ -1079,9 +1079,17 @@ defmodule Cinder.Acquisition.Anime do
 
   defp union(first, second), do: Enum.uniq((first || []) ++ (second || []))
 
+  # A single garbled indexer title must not raise and stall the whole free-text search pass
+  # (#451): `known_title_match?/2` and `exact_movie_year?/2` below both run `/u`-flagged regexes
+  # against the release title. Sanitize once, here, at the point every release enters the guard —
+  # `AnimeParser.sanitize/1` scrubs to valid UTF-8 (a no-op on already-valid input) — reusing the
+  # parser's scrub instead of a third copy. Only the guard's local view is sanitized; `release.title`
+  # itself is never mutated, so it stays intact for display, `mapping_snapshot`, and downstream
+  # parsing (which already sanitizes independently via `AnimeParser.parse/2`).
   defp apply_title_guard(releases, context) do
     Enum.filter(releases, fn release ->
-      :id_scoped in release.query_origins or free_text_match?(release.title, context)
+      :id_scoped in release.query_origins or
+        free_text_match?(AnimeParser.sanitize(release.title), context)
     end)
   end
 
@@ -1093,13 +1101,14 @@ defmodule Cinder.Acquisition.Anime do
 
   defp known_title_match?(release_title, context) do
     normalized_release = release_title |> strip_group() |> normalize_title()
+    canonical_release = canonicalize_separators(normalized_release)
 
     context
     |> guard_titles()
     |> Enum.any?(fn title ->
       normalized_title = normalize_title(title)
 
-      if String.starts_with?(normalized_release, normalized_title) do
+      if String.starts_with?(canonical_release, canonicalize_separators(normalized_title)) do
         remainder =
           binary_part(
             normalized_release,
@@ -1114,6 +1123,15 @@ defmodule Cinder.Acquisition.Anime do
     end)
   end
 
+  # Scene releases are commonly dot/underscore-separated ("Puella.Magi.Madoka.Magica...") while
+  # the known title from TMDB/TVDB is space-separated; canonicalize both (map each separator
+  # character 1:1 to a space, never collapsing runs) before comparing, so the prefix match lines
+  # up while the byte offset used to slice the *returned* remainder still points at the original,
+  # un-canonicalized text (#450). `TitleAlias.normalize/1` itself is untouched — its ~15 other
+  # call sites compare two already-clean stored titles and rely on its current, non-canonicalizing
+  # semantics.
+  defp canonicalize_separators(title), do: String.replace(title, ~r/[._-]/u, " ")
+
   defp guard_titles(context) do
     [context.title | Enum.map(context.aliases, & &1.title)]
     |> Enum.filter(&within_codepoint_limit?(&1, @max_title_codepoints))
@@ -1123,16 +1141,25 @@ defmodule Cinder.Acquisition.Anime do
 
   defp legal_title_remainder?(""), do: true
 
+  # A bare absolute-number/range match is disqualified when the very next token (after any
+  # separators) is a 4-digit release year (#468): canonicalize_separators/1 above lets a
+  # dot/hyphen-glued release like "Title.4.2024.1080p..." reach this alternative at all (a
+  # literal "." never matched the known title's literal " " before #450); once it does, "4"
+  # reads as a numbered, separately-catalogued sequel/season folded into the title, immediately
+  # followed by the RELEASE's own year field — not "Title" plus a legal absolute-episode
+  # remainder. The negative lookahead only fires on that specific year-adjacency, so every
+  # genuine fansub absolute form is untouched: "Title - 12 [1080p]", "Title - 03v2 [1080p]",
+  # and "Title - 01-05 [1080p]" are never followed by a year token.
   defp legal_title_remainder?(remainder) do
     Regex.match?(
-      ~r/^[\s._\-–—]+(?:\(?\d{4}\)?\b|S\d{1,3}(?:E\d+)?\b|E\d+\b|\d{1,6}(?:\s*-\s*\d{1,6})?(?:v\d+)?\b|\[|\(?(?:\d{3,4}p|WEB|BLURAY|BD|HDTV)\b)/iu,
+      ~r/^[\s._\-–—]+(?:\(?\d{4}\)?\b|S\d{1,3}(?:E\d+)?\b|E\d+\b|\d{1,6}(?:\s*-\s*\d{1,6})?(?:v\d+)?\b(?![\s._\-–—]*\(?(?:19|20)\d{2}\b)|\[|\(?(?:\d{3,4}p|WEB|BLURAY|BD|HDTV)\b)/iu,
       remainder
     )
   end
 
   defp exact_movie_year?(title, year) when is_integer(year) do
     years = Regex.scan(~r/(?<!\d)(?:19|20)\d{2}(?!\d)/u, title, capture: :first) |> List.flatten()
-    years == [Integer.to_string(year)]
+    Integer.to_string(year) in years
   end
 
   defp exact_movie_year?(_title, _year), do: false

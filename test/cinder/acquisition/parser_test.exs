@@ -1,7 +1,7 @@
 defmodule Cinder.Acquisition.ParserTest do
   use ExUnit.Case, async: true
 
-  alias Cinder.Acquisition.Parser
+  alias Cinder.Acquisition.{AnimeParser, Parser}
 
   @preferences_fixture "test/support/fixtures/anime/preferences-v1.json"
 
@@ -495,6 +495,15 @@ defmodule Cinder.Acquisition.ParserTest do
                  "The.Show.S01E05.1080p.WEB.h264-GROUP.cinder-a1b2c3d4-e5f6-47a8-89b0-c1d2e3f4a5b6"
                )
     end
+  end
+
+  test "does not raise on an invalid-UTF-8 title, in either the standard or anime parser (#451)" do
+    garbled = <<0xFF, 0xFE, 0x80, 0x81, "S01E01", 0xC0, 0xAF>>
+
+    assert %{season: 1, episodes: [1]} = Parser.parse(garbled)
+
+    context = %{kind: :series, titles: ["Show"], scene_titles: [], year: 2020}
+    assert %{role: :unknown} = AnimeParser.parse(garbled, context)
   end
 
   defp subtitle_claim("present"), do: :present

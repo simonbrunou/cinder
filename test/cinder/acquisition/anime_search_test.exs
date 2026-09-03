@@ -56,6 +56,40 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert release.query_origins == [:free_text]
   end
 
+  test "free-text movie guard accepts a remaster release naming a second, later year (#458)" do
+    context = %{
+      kind: :movie,
+      title: "Akira",
+      year: 1988,
+      aliases: [],
+      profile: %{effective: :anime}
+    }
+
+    expect(IndexerMock, :search, fn "tt2" -> {:ok, []} end)
+
+    expect(IndexerMock, :search_movie_query, fn "Akira 1988", categories: [5070] ->
+      {:ok, [raw("Akira.1988.4K.Remaster.2020.BluRay.2160p.x265-GROUP", "remaster")]}
+    end)
+
+    assert {:ok, [release], false} = Anime.search_movie(IndexerMock, "tt2", context, [])
+    assert release.title == "Akira.1988.4K.Remaster.2020.BluRay.2160p.x265-GROUP"
+  end
+
+  test "a garbled indexer title in the free-text result set does not crash the movie search (#451)" do
+    context = movie_context([])
+    garbled = <<0xFF, 0xFE, 0x80, 0x81, "S01E01", 0xC0, 0xAF>>
+    good = raw("Your Name (2016) [1080p]", "good")
+
+    expect(IndexerMock, :search, fn "tt1" -> {:ok, []} end)
+
+    expect(IndexerMock, :search_movie_query, fn "Your Name 2016", categories: [5070] ->
+      {:ok, [raw(garbled, "garbled"), good]}
+    end)
+
+    assert {:ok, [release], false} = Anime.search_movie(IndexerMock, "tt1", context, [])
+    assert release.title == "Your Name (2016) [1080p]"
+  end
+
   test "TVDB search remains ID-scoped and propagates canonical title and season" do
     context = series_context(99)
 
@@ -104,6 +138,57 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert {:ok, [release], false} = Anime.search_episodes(IndexerMock, context, [11], [])
     assert release.title == "Show S01E01 [1080p]"
     assert release.query_origins == [:free_text]
+  end
+
+  test "free-text guard rejects a dot-separated release for a differently-numbered sequel naming its own year (#468)" do
+    context = series_context(nil)
+
+    expect(IndexerMock, :search_tv, fn nil, "Show", 1 ->
+      {:ok, [raw("Show.4.2024.1080p.WEB-DL-GROUP", "sequel")]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, [], false} = Anime.search_episodes(IndexerMock, context, [11], [])
+  end
+
+  test "free-text guard keeps a bracketed fansub absolute-numbered release (#468)" do
+    context = series_context(nil)
+
+    expect(IndexerMock, :search_tv, fn nil, "Show", 1 ->
+      {:ok, [raw("[Fansub] Show - 12 [1080p]", "absolute")]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, [release], false} = Anime.search_episodes(IndexerMock, context, [11], [])
+    assert release.title == "[Fansub] Show - 12 [1080p]"
+  end
+
+  test "free-text guard keeps an absolute release carrying a v2 revision tag (#468)" do
+    context = series_context(nil)
+
+    expect(IndexerMock, :search_tv, fn nil, "Show", 1 ->
+      {:ok, [raw("Show - 03v2 [1080p]", "v2")]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, [release], false} = Anime.search_episodes(IndexerMock, context, [11], [])
+    assert release.title == "Show - 03v2 [1080p]"
+  end
+
+  test "free-text guard keeps an absolute episode range (#468)" do
+    context = series_context(nil)
+
+    expect(IndexerMock, :search_tv, fn nil, "Show", 1 ->
+      {:ok, [raw("Show - 01-05 [1080p]", "range")]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, [release], false} = Anime.search_episodes(IndexerMock, context, [11], [])
+    assert release.title == "Show - 01-05 [1080p]"
   end
 
   test "partial query failures retain results and all-query failure returns the first reason" do
