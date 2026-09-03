@@ -11,10 +11,13 @@ defmodule Cinder.Acquisition.AnimeParser do
   @max_range 100
 
   def parse(title, %{kind: :movie}) when is_binary(title) do
+    title = sanitize(title)
     %{coordinates: [], role: :story, group: prefix_group(title)}
   end
 
   def parse(title, %{kind: :series} = context) when is_binary(title) do
+    title = sanitize(title)
+
     if extra?(title) do
       result([], :extra, title)
     else
@@ -654,11 +657,21 @@ defmodule Cinder.Acquisition.AnimeParser do
   defp present_string?(value), do: is_binary(value) and value != ""
 
   defp matching_remainder(title, known_title) do
-    if String.starts_with?(String.downcase(title), String.downcase(known_title)) do
+    if String.starts_with?(canonicalize_separators(title), canonicalize_separators(known_title)) do
       {_prefix, remainder} = String.split_at(title, String.length(known_title))
       if legal_title_boundary?(remainder), do: remainder
     end
   end
+
+  # Scene releases are commonly dot/underscore-separated ("Puella.Magi.Madoka.Magica...") while
+  # the known title from TMDB/TVDB is space-separated; canonicalize both (downcase, then map each
+  # separator character 1:1 to a space, never collapsing runs) before comparing, so the prefix
+  # match lines up while the *returned* remainder keeps its original punctuation for downstream
+  # coordinate parsing (#450). `TitleAlias.normalize/1` itself is untouched — its ~15 other call
+  # sites compare two already-clean stored titles and rely on its current, non-canonicalizing
+  # semantics.
+  defp canonicalize_separators(title),
+    do: title |> String.downcase() |> String.replace(~r/[._-]/u, " ")
 
   defp legal_title_boundary?(""), do: true
   defp legal_title_boundary?(remainder), do: Regex.match?(~r/^[\s._\-–—(]/u, remainder)
@@ -671,4 +684,22 @@ defmodule Cinder.Acquisition.AnimeParser do
   end
 
   defp strip_group(title), do: Regex.replace(~r/^\s*\[[^\]\r\n]+\]\s*/u, title, "")
+
+  # `/u`-flagged regexes make `:re.run` raise ArgumentError on invalid-UTF-8 subjects, and an
+  # indexer aggregates trackers with inconsistent encodings — a single garbled title must not
+  # raise and stall that title's whole search pass (#451). Scrub to valid UTF-8 once, up front.
+  defp sanitize(title) do
+    if String.valid?(title), do: title, else: scrub_utf8(title, [])
+  end
+
+  defp scrub_utf8(<<>>, acc), do: acc |> Enum.reverse() |> IO.iodata_to_binary()
+
+  defp scrub_utf8(binary, acc) do
+    case :unicode.characters_to_binary(binary, :utf8, :utf8) do
+      valid when is_binary(valid) -> scrub_utf8(<<>>, [valid | acc])
+      {:error, valid, <<_bad, rest::binary>>} -> scrub_utf8(rest, [valid | acc])
+      {:error, valid, <<>>} -> scrub_utf8(<<>>, [valid | acc])
+      {:incomplete, valid, _incomplete} -> scrub_utf8(<<>>, [valid | acc])
+    end
+  end
 end

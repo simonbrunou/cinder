@@ -1093,13 +1093,14 @@ defmodule Cinder.Acquisition.Anime do
 
   defp known_title_match?(release_title, context) do
     normalized_release = release_title |> strip_group() |> normalize_title()
+    canonical_release = canonicalize_separators(normalized_release)
 
     context
     |> guard_titles()
     |> Enum.any?(fn title ->
       normalized_title = normalize_title(title)
 
-      if String.starts_with?(normalized_release, normalized_title) do
+      if String.starts_with?(canonical_release, canonicalize_separators(normalized_title)) do
         remainder =
           binary_part(
             normalized_release,
@@ -1113,6 +1114,15 @@ defmodule Cinder.Acquisition.Anime do
       end
     end)
   end
+
+  # Scene releases are commonly dot/underscore-separated ("Puella.Magi.Madoka.Magica...") while
+  # the known title from TMDB/TVDB is space-separated; canonicalize both (map each separator
+  # character 1:1 to a space, never collapsing runs) before comparing, so the prefix match lines
+  # up while the byte offset used to slice the *returned* remainder still points at the original,
+  # un-canonicalized text (#450). `TitleAlias.normalize/1` itself is untouched — its ~15 other
+  # call sites compare two already-clean stored titles and rely on its current, non-canonicalizing
+  # semantics.
+  defp canonicalize_separators(title), do: String.replace(title, ~r/[._-]/u, " ")
 
   defp guard_titles(context) do
     [context.title | Enum.map(context.aliases, & &1.title)]
@@ -1132,7 +1142,7 @@ defmodule Cinder.Acquisition.Anime do
 
   defp exact_movie_year?(title, year) when is_integer(year) do
     years = Regex.scan(~r/(?<!\d)(?:19|20)\d{2}(?!\d)/u, title, capture: :first) |> List.flatten()
-    years == [Integer.to_string(year)]
+    Integer.to_string(year) in years
   end
 
   defp exact_movie_year?(_title, _year), do: false

@@ -56,6 +56,25 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert release.query_origins == [:free_text]
   end
 
+  test "free-text movie guard accepts a remaster release naming a second, later year (#458)" do
+    context = %{
+      kind: :movie,
+      title: "Akira",
+      year: 1988,
+      aliases: [],
+      profile: %{effective: :anime}
+    }
+
+    expect(IndexerMock, :search, fn "tt2" -> {:ok, []} end)
+
+    expect(IndexerMock, :search_movie_query, fn "Akira 1988", categories: [5070] ->
+      {:ok, [raw("Akira.1988.4K.Remaster.2020.BluRay.2160p.x265-GROUP", "remaster")]}
+    end)
+
+    assert {:ok, [release], false} = Anime.search_movie(IndexerMock, "tt2", context, [])
+    assert release.title == "Akira.1988.4K.Remaster.2020.BluRay.2160p.x265-GROUP"
+  end
+
   test "TVDB search remains ID-scoped and propagates canonical title and season" do
     context = series_context(99)
 

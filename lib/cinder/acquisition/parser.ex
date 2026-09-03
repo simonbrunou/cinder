@@ -254,7 +254,7 @@ defmodule Cinder.Acquisition.Parser do
   parser total.
   """
   def parse(name) when is_binary(name) do
-    name = strip_operation_suffix(name)
+    name = name |> sanitize() |> strip_operation_suffix()
     {season, episodes} = season_episodes(name)
 
     %{
@@ -487,4 +487,22 @@ defmodule Cinder.Acquisition.Parser do
   defp validate_episode(season, _episodes) when season < 0 or season > 99, do: {nil, nil}
   defp validate_episode(_season, []), do: {nil, nil}
   defp validate_episode(season, episodes), do: {season, episodes}
+
+  # `/u`-flagged regexes make `:re.run` raise ArgumentError on invalid-UTF-8 subjects. Prowlarr
+  # aggregates many trackers with inconsistent encodings, so a single garbled indexer title must
+  # not raise and stall that whole title's search pass (#451) — scrub to valid UTF-8 up front.
+  defp sanitize(name) do
+    if String.valid?(name), do: name, else: scrub_utf8(name, [])
+  end
+
+  defp scrub_utf8(<<>>, acc), do: acc |> Enum.reverse() |> IO.iodata_to_binary()
+
+  defp scrub_utf8(binary, acc) do
+    case :unicode.characters_to_binary(binary, :utf8, :utf8) do
+      valid when is_binary(valid) -> scrub_utf8(<<>>, [valid | acc])
+      {:error, valid, <<_bad, rest::binary>>} -> scrub_utf8(rest, [valid | acc])
+      {:error, valid, <<>>} -> scrub_utf8(<<>>, [valid | acc])
+      {:incomplete, valid, _incomplete} -> scrub_utf8(<<>>, [valid | acc])
+    end
+  end
 end

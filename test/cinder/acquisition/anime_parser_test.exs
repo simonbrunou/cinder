@@ -42,6 +42,24 @@ defmodule Cinder.Acquisition.AnimeParserTest do
            } = AnimeParser.parse("[Fansub] ワンピース - 1122 [1080p]", context)
   end
 
+  test "resolves standard coordinates in a dot-separated scene release of a multi-word title (#450)" do
+    context = %{
+      kind: :series,
+      titles: ["Puella Magi Madoka Magica"],
+      scene_titles: [],
+      year: 2011
+    }
+
+    assert %{
+             coordinates: [%{scheme: "standard", values: ["S01E01"]}],
+             role: :story
+           } =
+             AnimeParser.parse(
+               "Puella.Magi.Madoka.Magica.S01E01.1080p.BluRay.x265-ABJ",
+               context
+             )
+  end
+
   test "expands a scene-scoped arc batch written with an en dash (issue #312)" do
     context = %{
       kind: :series,
