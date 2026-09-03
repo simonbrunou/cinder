@@ -266,11 +266,197 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
              {:error, {:ffmpeg_exit, 7, "cannot decode"}}
   end
 
+  @tag :tmp_dir
+  test "probe/1 kills a hung ffprobe process and returns {:error, :timeout} within its bound", %{
+    tmp_dir: tmp
+  } do
+    use_hanging_ffprobe(tmp)
+    with_short_timeout(:ffprobe_probe_timeout_ms, 150)
+
+    t0 = System.monotonic_time(:millisecond)
+    assert Ffprobe.probe("/media/movie.mkv") == {:error, :timeout}
+    assert System.monotonic_time(:millisecond) - t0 < 3000
+  end
+
+  @tag :tmp_dir
+  test "probe_policy/1 kills a hung ffprobe process and returns {:error, :timeout} within its bound",
+       %{tmp_dir: tmp} do
+    use_hanging_ffprobe(tmp)
+    with_short_timeout(:ffprobe_probe_timeout_ms, 150)
+
+    t0 = System.monotonic_time(:millisecond)
+    assert Ffprobe.probe_policy("/media/movie.mkv") == {:error, :timeout}
+    assert System.monotonic_time(:millisecond) - t0 < 3000
+  end
+
+  @tag :tmp_dir
+  test "subtitle_tracks/1 kills a hung ffprobe process and returns {:error, :timeout} within its bound",
+       %{tmp_dir: tmp} do
+    use_hanging_ffprobe(tmp)
+    with_short_timeout(:ffprobe_subtitle_tracks_timeout_ms, 150)
+
+    t0 = System.monotonic_time(:millisecond)
+    assert Ffprobe.subtitle_tracks("/media/movie.mkv") == {:error, :timeout}
+    assert System.monotonic_time(:millisecond) - t0 < 3000
+  end
+
+  # Proves the deadline is an ABSOLUTE bound, not a per-message poll tick that a chatty process
+  # can keep resetting: this stub emits `:data` continuously, as fast as the shell can write, so
+  # a loop that only re-checks the deadline in its `after` branch — the module's actual shape
+  # before this test was added, with a fixed 100ms poll interval — would have that timer's clock
+  # perpetually reset by a message already waiting in the mailbox by the time each `receive` is
+  # re-entered, and would never time out at all: confirmed directly against the pre-fix
+  # `supervise/4` (calling `Ffprobe.extract_subtitle/2` outside ExUnit, with this exact stub) —
+  # it hung indefinitely rather than returning `{:error, :timeout}`. A slower, sleep-throttled
+  # version of this same stub was tried first and did not reliably fail under `mix test`'s own
+  # scheduler load (many concurrent test processes introduce enough incidental scheduling gaps
+  # to occasionally let a 100ms `after` fire "by accident"); this max-speed, no-sleep version
+  # leaves no such gap and fails deterministically instead. `extract_subtitle/2` (ffmpeg piping
+  # SRT to stdout) is the real-world path most exposed to this: a corrupt/pathological stream can
+  # make ffmpeg emit output continuously.
+  @tag :tmp_dir
+  @tag timeout: 5_000
+  test "extract_subtitle/2 still times out when the process emits data faster than any poll tick",
+       %{tmp_dir: tmp} do
+    pidfile = Path.join(tmp, "ffmpeg.pid")
+    use_ffmpeg_bin(tmp, "echo $$ > #{pidfile}\nwhile :; do printf spam; done")
+    with_short_timeout(:ffmpeg_extract_timeout_ms, 150)
+
+    t0 = System.monotonic_time(:millisecond)
+    assert Ffprobe.extract_subtitle("/media/movie.mkv", 2) == {:error, :timeout}
+    elapsed = System.monotonic_time(:millisecond) - t0
+
+    # Close to the configured bound (not merely "eventually finite") — proves the deadline fired
+    # on schedule rather than being starved indefinitely by the continuous stream of data.
+    assert elapsed >= 150
+    assert elapsed < 1000
+
+    pid = wait_for_pidfile(pidfile)
+    assert process_gone?(pid)
+  end
+
+  @tag :tmp_dir
+  test "extract_subtitle/2 kills a hung ffmpeg process and returns {:error, :timeout} within its bound",
+       %{tmp_dir: tmp} do
+    use_ffmpeg_bin(tmp, "exec sleep 30")
+    with_short_timeout(:ffmpeg_extract_timeout_ms, 150)
+
+    t0 = System.monotonic_time(:millisecond)
+    assert Ffprobe.extract_subtitle("/media/movie.mkv", 2) == {:error, :timeout}
+    assert System.monotonic_time(:millisecond) - t0 < 3000
+  end
+
+  # The whole point of the heavier Port+SIGKILL pattern over `Task.shutdown(:brutal_kill)` is
+  # that the real OS process dies, not just Cinder's side of the port — otherwise every poller
+  # tick against a hung file would leak one more orphaned ffmpeg holding a staging-file fd.
+  # Exercises the trickiest chain: `/bin/sh -c 'exec "$@" ...'` -> `exec`'d ffmpeg stub ->
+  # `exec`'d `sleep`, all sharing one pid via POSIX `exec`'s "replace, don't fork" semantics, so
+  # the pid our stub records is exactly the pid `kill/1` targets.
+  @tag :tmp_dir
+  test "extract_subtitle/2 timeout kills the underlying OS process, not just the Elixir call",
+       %{tmp_dir: tmp} do
+    pidfile = Path.join(tmp, "ffmpeg.pid")
+    use_ffmpeg_bin(tmp, "echo $$ > #{pidfile}\nexec sleep 30")
+    with_short_timeout(:ffmpeg_extract_timeout_ms, 150)
+
+    assert Ffprobe.extract_subtitle("/media/movie.mkv", 2) == {:error, :timeout}
+
+    pid = wait_for_pidfile(pidfile)
+    assert process_gone?(pid)
+  end
+
+  # Neither poller GenServer (`Cinder.Download.Poller`/`TvPoller`) traps exits or has a
+  # catch-all `handle_info/2` — a stray `{port, {:data, _}}`/`{port, {:exit_status, _}}` message
+  # surviving past this call's return would crash it with `FunctionClauseError`. Proves the
+  # killed port's messages are fully drained before `probe/1` returns, from the caller's own
+  # mailbox (this test process IS the port owner, exactly like the poller would be).
+  @tag :tmp_dir
+  test "probe/1's timeout leaves no port messages behind in the caller's mailbox", %{
+    tmp_dir: tmp
+  } do
+    use_hanging_ffprobe(tmp)
+    with_short_timeout(:ffprobe_probe_timeout_ms, 150)
+
+    assert Ffprobe.probe("/media/movie.mkv") == {:error, :timeout}
+
+    refute_receive {_port, {:data, _data}}, 300
+    refute_receive {_port, {:exit_status, _status}}, 50
+  end
+
+  test "probe/1 surfaces a missing binary as an error instead of crashing" do
+    Application.put_env(:cinder, :ffprobe_bin, "definitely-not-a-real-binary")
+    assert {:error, %ErlangError{original: :enoent}} = Ffprobe.probe("/media/movie.mkv")
+  end
+
+  test "probe_policy/1 surfaces a missing binary as an error instead of crashing" do
+    Application.put_env(:cinder, :ffprobe_bin, "definitely-not-a-real-binary")
+    assert {:error, %ErlangError{original: :enoent}} = Ffprobe.probe_policy("/media/movie.mkv")
+  end
+
+  test "subtitle_tracks/1 surfaces a missing binary as an error instead of crashing" do
+    Application.put_env(:cinder, :ffprobe_bin, "definitely-not-a-real-binary")
+    assert {:error, %ErlangError{original: :enoent}} = Ffprobe.subtitle_tracks("/media/movie.mkv")
+  end
+
+  test "extract_subtitle/2 surfaces a missing ffmpeg binary as an error instead of crashing" do
+    Application.put_env(:cinder, :ffmpeg_bin, "definitely-not-a-real-binary")
+
+    assert {:error, %ErlangError{original: :enoent}} =
+             Ffprobe.extract_subtitle("/media/movie.mkv", 2)
+  end
+
   defp use_ffmpeg_bin(tmp, script) do
     path = Path.join(tmp, "ffmpeg")
     File.write!(path, "#!/bin/sh\n#{script}\n")
     File.chmod!(path, 0o755)
     Application.put_env(:cinder, :ffmpeg_bin, path)
+  end
+
+  defp use_hanging_ffprobe(tmp) do
+    path = Path.join(tmp, "ffprobe")
+    File.write!(path, "#!/bin/sh\nexec sleep 30\n")
+    File.chmod!(path, 0o755)
+    Application.put_env(:cinder, :ffprobe_bin, path)
+  end
+
+  defp with_short_timeout(key, ms) do
+    previous = Application.get_env(:cinder, key)
+    Application.put_env(:cinder, key, ms)
+    on_exit(fn -> restore_bin(key, previous) end)
+  end
+
+  # Bounded poll for the stub's own pid file — it is written before the stub `exec`s into the
+  # long sleep, so this only waits for the process to have actually started.
+  defp wait_for_pidfile(pidfile, attempts \\ 50)
+
+  defp wait_for_pidfile(_pidfile, 0), do: flunk("stub process never wrote its pid file")
+
+  defp wait_for_pidfile(pidfile, attempts) do
+    case File.read(pidfile) do
+      {:ok, content} ->
+        content |> String.trim() |> String.to_integer()
+
+      {:error, :enoent} ->
+        Process.sleep(20)
+        wait_for_pidfile(pidfile, attempts - 1)
+    end
+  end
+
+  # `kill -0` sends no signal, just checks the pid is reachable; a real OS SIGKILL is not
+  # instantaneous from the caller's point of view, so this polls a short bounded window rather
+  # than asserting on the very first check.
+  defp process_gone?(pid, attempts \\ 50)
+  defp process_gone?(_pid, 0), do: false
+
+  defp process_gone?(pid, attempts) do
+    case System.cmd("kill", ["-0", Integer.to_string(pid)], stderr_to_stdout: true) do
+      {_out, 0} ->
+        Process.sleep(20)
+        process_gone?(pid, attempts - 1)
+
+      {_out, _nonzero} ->
+        true
+    end
   end
 
   defp policy_snapshot do
