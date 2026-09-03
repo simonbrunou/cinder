@@ -984,7 +984,7 @@ defmodule Cinder.Library do
   defp log_wrong_audio([], _target), do: :ok
 
   defp log_wrong_audio(sources, target) do
-    Logger.info(
+    Logger.warning(
       "skipping #{length(sources)} file(s) with wrong audio language (wanted #{target}): " <>
         inspect(sources)
     )

@@ -131,7 +131,11 @@ defmodule Cinder.DatabaseBackupTest do
     assert File.read!(path) == "operator-owned"
   end
 
+  @tag :unboxed
+  @tag :tmp_dir
+
   defp restore_config(nil), do: Application.delete_env(:cinder, DatabaseBackup)
+
   defp restore_config(config), do: Application.put_env(:cinder, DatabaseBackup, config)
 
   defp query(database, sql, params \\ []) do

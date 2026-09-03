@@ -15,7 +15,7 @@ defmodule Cinder.RepoConcurrencyTest do
 
   test "Cinder.Repo is configured with the pinned WAL + busy_timeout" do
     config = Application.get_env(:cinder, Cinder.Repo)
-    assert config[:busy_timeout] == 5_000
+    assert config[:busy_timeout] == 10_000
     assert config[:journal_mode] == :wal
 
     # WAL is observable on the live connection. busy_timeout is not — exqlite applies

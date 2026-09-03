@@ -25,6 +25,7 @@ defmodule Cinder.Notifier.Email do
   import Swoosh.Email
 
   alias Cinder.Accounts.User
+  alias Cinder.HTTPPolicy
   alias Cinder.Mailer
   alias Cinder.Requests
 
@@ -249,16 +250,16 @@ defmodule Cinder.Notifier.Email do
         :ok
 
       {:error, reason} ->
-        Logger.warning("email notify delivery failed: #{inspect(reason)}")
+        Logger.warning("email notify delivery failed: #{HTTPPolicy.sanitize_log(reason)}")
         :ok
     end
   rescue
     e ->
-      Logger.warning("email notify raised: #{Exception.message(e)}")
+      Logger.warning("email notify raised: #{HTTPPolicy.sanitize_log(Exception.message(e))}")
       :ok
   catch
     kind, value ->
-      Logger.warning("email notify #{kind}: #{inspect(value)}")
+      Logger.warning("email notify #{kind}: #{HTTPPolicy.sanitize_log(value)}")
       :ok
   end
 
