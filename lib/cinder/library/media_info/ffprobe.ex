@@ -96,32 +96,54 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   # be dropped to dodge this: `Cinder.Subtitles.Sync.Reference.resolver/2` sorts candidate tracks
   # by `packet_count` to pick the broadest-reference one, so the count is load-bearing.
   #
+  # That warm-cache run only isolates CPU/demux cost — not what a 30-minute bound needs to prove,
+  # I/O is. Measured again at real scale, cold cache, to close that gap: three real H.264/AAC/SRT
+  # MKVs (1.02GB/4.03GB/10.05GB, ffmpeg-encoded, not the tiny synthetic files above), page cache
+  # evicted per file with `posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED)` (no root needed; verified
+  # 0 resident pages via `fincore` before each run) so every read actually hits disk. This exact
+  # `subtitle_track_args/1` command, cold: 0.31s/0.66s/1.48s across the three sizes — linear in
+  # file size, user-CPU alone holding at ~0.02-0.03s/GB throughout; `ffmpeg_args/2` below showed
+  # the identical linear, CPU-negligible shape (0.27s/0.68s/1.50s cold). So this bound is sized by
+  # I/O THROUGHPUT, not CPU or packet count — extrapolating the measured CPU rate to 80GB adds
+  # only ~2s against the ~1024s I/O term below. The one number that arithmetic still can't touch —
+  # no household NAS exists to test against here — is the assumed ~80MB/s sustained throughput
+  # itself: a conservative, commonly-cited real-world SMB/NFS-over-gigabit figure, not a
+  # measurement, and the single input that would change this bound if it's wrong. Real deployment
+  # telemetry (this household's actual largest file, its actual sustained transfer rate) is what
+  # should recalibrate it, not a lab run against synthetic content on local disk.
+  #
   # Unlike `probe/1`/`probe_policy/1`, `subtitle_tracks/1` never runs inside
   # `Poller`/`TvPoller`'s tick (see the moduledoc) — only inside `Cinder.Subtitles.Fetcher`'s own
   # serialized queue or `Cinder.Subtitles.Sweeper`'s own independent tick — so a generous bound
   # here only delays the next queued subtitle fetch or the rest of one sweep pass, never an
-  # import/grab/park cycle, and can afford real headroom over a real worst case instead of
-  # sharing the 10s bound above. Worst realistic case for this deployment: a 60-80GB 4K UHD remux
-  # (Cinder's own target deployment serves media over a household NAS) read over a gigabit link.
-  # At a realistic sustained ~80MB/s (well under gigabit's ~125MB/s theoretical ceiling, allowing
-  # for real SMB/NFS overhead), demuxing through an 80GB file for `-count_packets` is ~1024s
-  # (~17 minutes) of I/O alone, before any CPU cost — and the measurement above shows I/O, not
-  # CPU, dominates at any realistic file size. 30 minutes leaves comfortable headroom above that
-  # worst case while still turning a genuinely hung/corrupt probe into a finite failure instead of
-  # parking `Fetcher`'s single-file queue (or one `Sweeper` pass) forever.
+  # import/grab/park cycle. Nothing can turn that delay into a crash: `Fetcher` defines no
+  # `handle_call` (nothing ever blocks waiting on it), and `Cinder.Subtitles.Sync.Worker` never
+  # blocks on the probe either — `start_next/1` spawns it `Task.Supervisor.async_nolink` and
+  # returns immediately, and every `handle_call` the Worker answers (e.g. `managed_video_paths/1`)
+  # replies straight from `state`, never from the in-flight task — so no LiveView or HTTP request
+  # can hang or crash behind a long probe. Worst realistic case for this deployment: a 60-80GB 4K
+  # UHD remux (Cinder's own target deployment serves media over a household NAS) read over a
+  # gigabit link — at the assumed ~80MB/s above, ~1024s (~17 minutes) of I/O plus ~2s of CPU. 30
+  # minutes leaves comfortable headroom over that projected worst case while still turning a
+  # genuinely hung/corrupt probe into a finite failure instead of parking `Fetcher`'s queue (or
+  # one `Sweeper` pass) forever. The asymmetry favors staying generous: a bound below a legitimate
+  # scan gets the call killed and `Reference.resolver/2` silently falls back to `&audio/1`
+  # (reference.ex:11) — degraded sync quality with no visible error — while a bound above one only
+  # delays background work by the time that work would legitimately have taken anyway.
   #
   # `extract_subtitle/2` shares this exact bound and reasoning, not `probe/1`/`probe_policy/1`'s
   # 10s: `ffmpeg_args/2` (`-i <path> -map 0:<index> -c:s srt -f srt pipe:1`) has to demux the
   # whole input from start to EOF to extract a COMPLETE subtitle track, for the same reason
   # `-count_packets` does — a subtitle stream's packets are interleaved with every other stream's
-  # throughout the container, not stored contiguously. Measured directly against the exact
-  # `ffmpeg_args/2` command (same synthetic MKVs as above): 45ms for the 31KB/10s file, 53ms for
-  # the 10.4MB/1h file, 194ms for the 249MB/24h file — the same content-proportional scaling
-  # `-count_packets` showed, not the flat ~30-40ms a true header-only read holds at every size.
-  # So this is NOT "one media file's worth of CPU-bound work" the way a real transcode would be —
-  # it is the same full-file I/O pass as `subtitle_tracks/1`, reached only through the same
-  # `Fetcher`/`Sweeper` path, never a poller tick, so it gets the identical 30-minute bound and
-  # the identical ~17-minute worst-case arithmetic above.
+  # throughout the container, not stored contiguously. The cold-cache measurement above (0.27s/
+  # 0.68s/1.50s across 1.02GB/4.03GB/10.05GB) shows the identical linear, I/O-dominated shape, so
+  # it gets the identical 30-minute bound. One property worth recording, not changing here:
+  # `Cinder.Subtitles.Sync.Reference.select/4` calls this inside `Enum.find_value/3`
+  # (reference.ex:22-27), trying each same-language non-forced candidate track until one succeeds
+  # — every attempt is its own full-file demux, so a file with several candidate tracks
+  # legitimately costs several full passes per sync unit, not only on a timeout. The per-call
+  # bound compounds across tracks; that's inherent to the caller's retry loop, orthogonal to this
+  # bound's value.
   @subtitle_tracks_timeout_ms 1_800_000
   @extract_timeout_ms 1_800_000
 
