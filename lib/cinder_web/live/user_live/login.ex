@@ -133,4 +133,7 @@ defmodule CinderWeb.UserLive.Login do
   def handle_event("submit_password", _params, socket) do
     {:noreply, assign(socket, :trigger_submit, true)}
   end
+
+  # Client-controlled payloads — ignore anything unmatched rather than crash.
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
 end

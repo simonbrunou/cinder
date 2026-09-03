@@ -2397,7 +2397,7 @@ msgstr ""
 msgid "Bootstrap token"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:193
+#: lib/cinder_web/live/user_live/registration.ex:196
 #, elixir-autogen
 msgid "Invalid bootstrap token."
 msgstr ""
@@ -3833,16 +3833,16 @@ msgstr ""
 msgid "Unavailable"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:214
-#: lib/cinder/notifier/email.ex:281
-#: lib/cinder/notifier/email.ex:288
-#: lib/cinder/notifier/email.ex:301
+#: lib/cinder/notifier/email.ex:215
+#: lib/cinder/notifier/email.ex:282
+#: lib/cinder/notifier/email.ex:289
+#: lib/cinder/notifier/email.ex:302
 #, elixir-autogen
 msgid "%{title} Season %{season}"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:139
-#: lib/cinder/notifier/email.ex:162
+#: lib/cinder/notifier/email.ex:140
+#: lib/cinder/notifier/email.ex:163
 #, elixir-autogen
 msgid "%{title} is ready to watch"
 msgstr ""
@@ -3857,7 +3857,7 @@ msgstr ""
 msgid "Email me when a request is approved or ready to watch"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:90
+#: lib/cinder/notifier/email.ex:91
 #, elixir-autogen
 msgid "Good news — your request for %{title} was approved and will start downloading soon."
 msgstr ""
@@ -3892,39 +3892,39 @@ msgstr ""
 msgid "SMTP: use implicit TLS/SSL (usually port 465; leave off for STARTTLS on 587)"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:216
-#, elixir-autogen
-msgid "We couldn't find %{title}"
-msgstr ""
-
-#: lib/cinder/notifier/email.ex:148
-#: lib/cinder/notifier/email.ex:195
-#, elixir-autogen
-msgid "We couldn't get %{title}"
-msgstr ""
-
 #: lib/cinder/notifier/email.ex:217
 #, elixir-autogen
-msgid "We're sorry — we couldn't find a release for %{title} after several attempts. An admin may need to take a look."
+msgid "We couldn't find %{title}"
 msgstr ""
 
 #: lib/cinder/notifier/email.ex:149
 #: lib/cinder/notifier/email.ex:196
 #, elixir-autogen
+msgid "We couldn't get %{title}"
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:218
+#, elixir-autogen
+msgid "We're sorry — we couldn't find a release for %{title} after several attempts. An admin may need to take a look."
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:150
+#: lib/cinder/notifier/email.ex:197
+#, elixir-autogen
 msgid "We're sorry — your request for %{title} could not be completed (%{reason}) and has been parked. An admin may need to take a look."
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:140
+#: lib/cinder/notifier/email.ex:141
 #, elixir-autogen
 msgid "Your request for %{title} is ready to watch."
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:70
+#: lib/cinder/notifier/email.ex:71
 #, elixir-autogen
 msgid "Your request for %{title} was approved"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:163
+#: lib/cinder/notifier/email.ex:164
 #, elixir-autogen
 msgid "Your requested season is ready to watch: %{title}."
 msgstr ""
@@ -4209,7 +4209,7 @@ msgstr ""
 msgid "Genre media type"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:52
+#: lib/cinder/notifier/email.ex:53
 #, elixir-autogen
 msgid "Good news — an admin activated your account. You can now sign in and start requesting."
 msgstr ""
@@ -4259,7 +4259,7 @@ msgstr ""
 msgid "War & Politics"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:51
+#: lib/cinder/notifier/email.ex:52
 #, elixir-autogen
 msgid "Your Cinder account is now active"
 msgstr ""
@@ -4345,17 +4345,17 @@ msgstr ""
 msgid "Request all seasons"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:133
+#: lib/cinder/notifier/email.ex:134
 #, elixir-autogen
 msgid "We're sorry — your request for %{title} was declined."
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:125
+#: lib/cinder/notifier/email.ex:126
 #, elixir-autogen
 msgid "We're sorry — your request for %{title} was declined. Reason: %{reason}"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:101
+#: lib/cinder/notifier/email.ex:102
 #, elixir-autogen
 msgid "Your request for %{title} was declined"
 msgstr ""
@@ -4911,7 +4911,7 @@ msgstr ""
 msgid "Find a better match: expand the seasons you can search"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:115
+#: lib/cinder/notifier/email.ex:116
 #, elixir-autogen
 msgid "Good news — the issue you reported for %{title} has been resolved. Please take another look."
 msgstr ""
@@ -5070,7 +5070,7 @@ msgstr ""
 msgid "That report was already handled."
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:114
+#: lib/cinder/notifier/email.ex:115
 #, elixir-autogen
 msgid "The issue you reported for %{title} is resolved"
 msgstr ""
@@ -6389,13 +6389,13 @@ msgstr ""
 msgid "Optional. Open Library identifies books and is used by default; a Hardcover-compatible proxy fills the gaps it leaves, if you run one."
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:295
+#: lib/cinder/notifier/email.ex:296
 #: lib/cinder_web/live_helpers.ex:167
 #, elixir-autogen, elixir-format
 msgid "%{title} (audiobook)"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:292
+#: lib/cinder/notifier/email.ex:293
 #: lib/cinder_web/live_helpers.ex:164
 #, elixir-autogen, elixir-format
 msgid "%{title} (eBook)"
@@ -6406,7 +6406,7 @@ msgstr ""
 msgid "Deleting a request does not remove anything it already created: a movie, a series, or a monitored book target all stay. If this request was denied or approved, the same title can be requested again afterwards."
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:83
+#: lib/cinder/notifier/email.ex:84
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Good news — your request for %{title} was approved. Cinder will watch for a copy."
 msgstr ""
@@ -6590,17 +6590,17 @@ msgstr ""
 msgid "Needs attention"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:179
+#: lib/cinder/notifier/email.ex:180
 #, elixir-autogen, elixir-format, fuzzy
 msgid "%{title} is ready to read"
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:180
+#: lib/cinder/notifier/email.ex:181
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Your request for %{title} is ready to read."
 msgstr ""
 
-#: lib/cinder/notifier/email.ex:210
+#: lib/cinder/notifier/email.ex:211
 #, elixir-autogen, elixir-format
 msgid "book target #%{id}"
 msgstr ""

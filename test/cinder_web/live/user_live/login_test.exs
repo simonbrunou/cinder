@@ -150,4 +150,12 @@ defmodule CinderWeb.UserLive.LoginTest do
                ~s(<input type="email" name="user[email]" id="login_form_password_email" value="#{user.email}")
     end
   end
+
+  describe "handle_event" do
+    test "forged/unknown event does not crash the page", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/users/log-in")
+      # Send an unknown event - should not raise FunctionClauseError
+      assert render_click(lv, "totally-unknown-event", %{}) =~ "Log in"
+    end
+  end
 end

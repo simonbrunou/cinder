@@ -23,7 +23,9 @@ config :cinder, Cinder.Repo,
   # checkout WAIT rather than drop at the 50ms default.
   queue_target: 5_000,
   queue_interval: 5_000,
-  # journal_mode/busy_timeout/foreign_keys/default_transaction_mode are pinned in config/config.exs.
+  # Coverage overhead delays lock release past the default 5000ms timeout.
+  busy_timeout: 10_000,
+  # journal_mode/foreign_keys/default_transaction_mode are pinned in config/config.exs; busy_timeout is overridden here for coverage.
   pool: Ecto.Adapters.SQL.Sandbox
 
 # We don't run a server during test. If one is required,

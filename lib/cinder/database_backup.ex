@@ -202,6 +202,41 @@ defmodule Cinder.DatabaseBackup do
         {:error, reason} -> Logger.error("database backup prune failed: #{inspect(reason)}")
       end
     end)
+
+    prune_pending_files()
+  end
+
+  defp prune_pending_files do
+    backup_dir()
+    |> File.ls!()
+    |> Enum.filter(&String.match?(&1, ~r/^\.cinder-backup-pending-.*\.sqlite3$/))
+    |> Enum.map(&Path.join(backup_dir(), &1))
+    |> Enum.each(&prune_pending_if_stale/1)
+  end
+
+  defp prune_pending_if_stale(path) do
+    case File.stat(path, time: :posix) do
+      {:ok, stat} -> maybe_cleanup_stale_pending(path, stat)
+      {:error, reason} -> Logger.error("database backup pending stat failed: #{inspect(reason)}")
+    end
+  end
+
+  defp maybe_cleanup_stale_pending(path, stat) do
+    interval =
+      Keyword.get(config(), :interval, @default_interval)
+
+    now_seconds = System.os_time(:second)
+    mtime_seconds = stat.mtime
+
+    if now_seconds - mtime_seconds > div(interval, 1000) do
+      case cleanup(path) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.error("database backup pending cleanup failed: #{inspect(reason)}")
+      end
+    end
   end
 
   defp scheduled_filename do

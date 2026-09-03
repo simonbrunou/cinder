@@ -170,6 +170,9 @@ defmodule CinderWeb.UserLive.Registration do
     {:noreply, assign_form(socket, Map.put(changeset, :action, :validate))}
   end
 
+  # Client-controlled payloads — ignore anything unmatched rather than crash.
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
+
   defp register(socket, user_params, bootstrap_token) do
     case Accounts.register_user(user_params, bootstrap_token) do
       {:ok, %User{active: true} = _user} ->

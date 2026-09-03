@@ -131,7 +131,33 @@ defmodule Cinder.DatabaseBackupTest do
     assert File.read!(path) == "operator-owned"
   end
 
+  @tag :unboxed
+  @tag :tmp_dir
+  test "pending files older than one backup interval are pruned", %{tmp_dir: tmp} do
+    saved = Application.get_env(:cinder, DatabaseBackup)
+    Application.put_env(:cinder, DatabaseBackup, backup_dir: tmp, retention: 2)
+    on_exit(fn -> restore_config(saved) end)
+
+    # Create two orphaned pending files
+    stale = Path.join(tmp, ".cinder-backup-pending-stale.sqlite3")
+    fresh = Path.join(tmp, ".cinder-backup-pending-fresh.sqlite3")
+
+    File.write!(stale, "stale")
+    File.write!(fresh, "fresh")
+
+    # Backdate stale file to 2 days ago
+    File.touch!(stale, System.os_time(:second) - 48 * 3600)
+
+    # Run the scheduled backup which triggers prune
+    assert {:ok, _backup} = DatabaseBackup.create_scheduled()
+
+    # Stale file should be removed, fresh file should remain
+    refute File.exists?(stale), "Stale pending file should be removed"
+    assert File.exists?(fresh), "Fresh pending file should remain"
+  end
+
   defp restore_config(nil), do: Application.delete_env(:cinder, DatabaseBackup)
+
   defp restore_config(config), do: Application.put_env(:cinder, DatabaseBackup, config)
 
   defp query(database, sql, params \\ []) do
