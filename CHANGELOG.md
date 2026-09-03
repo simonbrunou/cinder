@@ -19,16 +19,20 @@ All notable changes to Cinder are documented here. The format follows
   need headroom for a large remux over a household NAS, and both run only on the dedicated
   subtitle-fetch path, never the import poller. A hang now fails that one probe instead of
   freezing its caller.
-- **Garbled indexer titles no longer crash release parsing (#451).** `Parser.parse/1`,
-  `AnimeParser.parse/2`, and the anime free-text search guard (`Anime.apply_title_guard/2`) all
-  ran `/u`-flagged regexes directly against a raw indexer title. A `/u` regex makes `:re.run`
-  validate its subject as UTF-8 first, and Prowlarr aggregates trackers with inconsistent
-  encodings, so a single garbled or mis-encoded release title raised `ArgumentError` with no
-  rescue anywhere in the chain — silently stalling that one movie's or show's entire search pass,
-  indistinguishable from "no releases found." Both parser entry points, and the anime guard, now
-  scrub the title to valid UTF-8 first (dropping one invalid byte at a time, keeping the rest of
-  the string intact), so a garbled title degrades to whatever recognizable substring survives
-  instead of taking the search down.
+- **Garbled indexer titles no longer abort a whole title's search pass (#451).**
+  `Parser.parse/1`, `AnimeParser.parse/2`, and the anime free-text search guard
+  (`Anime.apply_title_guard/2`) all ran `/u`-flagged regexes directly against a raw indexer
+  title. A `/u` regex makes `:re.run` validate its subject as UTF-8 first, and Prowlarr
+  aggregates trackers with inconsistent encodings, so a single garbled or mis-encoded release
+  title raised `ArgumentError` with no rescue anywhere in the parsing chain. The poller's own
+  per-unit isolation (`isolate/2`) already caught that and logged it loudly at `:error` with a
+  full stack trace — this was never silent — but the whole `Enum.map(&Release.new/1)` pass for
+  that title aborted with it, discarding every other, perfectly good candidate release alongside
+  the one garbled title, and repeating on the next tick as long as the same indexer result kept
+  appearing. Both parser entry points, and the anime guard, now scrub the title to valid UTF-8
+  first (dropping one invalid byte at a time, keeping the rest of the string intact), so one
+  garbled release degrades to an unrecognized candidate instead of taking its title's whole
+  search pass down with it.
 - **Dot-separated anime releases now match their known titles (#450).** The anime free-text search
   guard and the anime parser's own season/episode resolver only normalized titles with NFKC, trim,
   whitespace-collapse, and downcase before comparing a release title to a known series title — no
@@ -100,14 +104,16 @@ All notable changes to Cinder are documented here. The format follows
   remaster date made it a second match. It now accepts the target year being present among however
   many year-like tokens the title carries, matching the tolerance the non-anime year guard already
   had.
-- **Changing an account's email now signs out every other session (#464).**
+- **Changing an account's email now revokes its other session tokens (#464).**
   `Accounts.update_user_email/2` (self-service) and `admin_update_email/3` (admin editing a
   member) updated the email but never revoked existing session tokens — only the password-change
   path did that. A stolen or leaked session, or one left open on a shared device, survived a
-  defensive email change untouched. Both paths now delete the account's session tokens in the same
-  transaction as the email write, so a failed update can't log everyone out but a successful one
-  always does. This is a deliberate divergence from the `phx.gen.auth` generator's default
-  behavior, which leaves sessions untouched on an email change — not a fix to generated code.
+  defensive email change untouched. Both paths now delete the account's session tokens in the
+  same transaction as the email write, so a failed update can't log everyone out, and a
+  successful one makes every other session's token invalid — rejected the next time it makes a
+  request or a LiveView remounts. This is a deliberate divergence from the `phx.gen.auth`
+  generator's default behavior, which leaves sessions untouched on an email change — not a fix to
+  generated code.
 - **CI and release workflows now pin third-party GitHub Actions to commit SHAs, not mutable
   version tags (#466).** A tag like `@v4` can be repointed by its maintainer or anyone who
   compromises their account or CI — this has happened to actions in this same class before — and
@@ -120,11 +126,16 @@ All notable changes to Cinder are documented here. The format follows
   notifier logged `inspect(reason)`, `Exception.message/1`, and `inspect(value)` directly, so an
   SMTP auth or connection failure could echo unbounded or configuration-shaped text straight into
   the application log. It now sanitizes the same way its siblings do.
-- **The Activity page's grab list no longer grows unbounded (#459).** `Grabs.list_grabs/0` had no
-  limit and preloaded every grab the household had ever made, re-running on every Activity mount
-  and broadcast — cost that only grows over an install's life, since grab rows are never pruned. It
-  now always includes every grab currently on hold plus the 200 most recent overall, so the nav
-  badge and the page can never disagree and the query stays cheap regardless of history.
+- **The Activity page's grab list is no longer unbounded and fully preloaded on every mount or
+  broadcast (#459).** Every terminal grab transition already deletes its row synchronously
+  (`commit_grab_imports`'s closed branch, `close_grab/1`, `finish_grab/3`, `cancel_grab/2`,
+  `reap_stalled_grab/1`), so `Grabs.list_grabs/0` was never scanning permanent history — but it
+  still had no limit and preloaded `grab_files` plus `episodes: [season: :series]` for every grab
+  still retained (in-flight downloads and everything on hold), re-running that full, unfiltered
+  query on every Activity mount and on every `series_updated`/`series_deleted` broadcast. It now
+  always includes every grab currently on hold plus the 200 most recent overall, so the nav badge
+  and the page can never disagree, and the query stays bounded regardless of how many concurrent
+  downloads or holds accumulate.
 - **The book detail page no longer issues one query per target and per author (#461).** Blocklist
   and author-policy lookups ran once per row instead of batched, unlike the equivalent lookups
   elsewhere in the app (`Catalog.series_library_sizes/0`, `Books.target_sizes/0`). Rows here are
@@ -136,11 +147,16 @@ All notable changes to Cinder are documented here. The format follows
   it to its final name; if the process is killed mid-`VACUUM INTO` (an OOM, a power loss), the
   pending file stuck around forever, because the pruning sweep's glob pattern didn't match its
   dotfile name. Pruning now also removes stale pending files older than one backup interval.
-- **Wrong-audio import rejections now log at warning level (#462).** They were logged at
-  `Logger.info`, a level most production log filters drop, so an operator investigating a stuck TV
-  import saw only a generic "unmatched files" warning and lost the specific "wanted language X,
-  rejected" detail that would have told them the release needs replacing. Now logged at
-  `Logger.warning`, matching the rest of the codebase's audio-language rejection logging.
+- **Wrong-audio import rejections now log at the same severity as the sibling warning beside
+  them (#462).** They were logged at `Logger.info` while the generic "import skipped N unmatched
+  file(s)" message they're folded into logs at `Logger.warning` — Cinder's own stock production
+  config (`config/prod.exs`) sets the logger level to `:info`, so the message wasn't dropped by
+  default, but it sat one severity step below the more prominent line beside it, and would be the
+  first casualty of any external log filter set stricter than info (a common aggregator default).
+  An operator investigating a stuck TV import saw the generic warning but had to go hunting at a
+  lower level for the specific "wanted language X, rejected" detail that would tell them the
+  release needs replacing. Now logged at `Logger.warning`, matching `log_unmatched/1` and the
+  movie path's own audio-check failure log.
 - **A settings test no longer fails under `mix test --cover` (#465).** Coverage instrumentation's
   overhead delayed a lock release past the SQLite busy timeout, producing a spurious "Database
   busy" failure unrelated to the code under test. Test-only; no runtime behavior changed.
