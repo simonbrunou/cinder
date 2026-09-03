@@ -277,7 +277,7 @@ defmodule Cinder.AccountsTest do
     end
 
     test "updates the email with a valid token", %{user: user, token: token, email: email} do
-      assert {:ok, %{email: ^email}} = Accounts.update_user_email(user, token)
+      assert {:ok, {%{email: ^email}, _expired_tokens}} = Accounts.update_user_email(user, token)
       changed_user = Repo.get!(User, user.id)
       assert changed_user.email != user.email
       assert changed_user.email == email
@@ -318,8 +318,9 @@ defmodule Cinder.AccountsTest do
       session_token = Accounts.generate_user_session_token(user)
       assert Accounts.get_user_by_session_token(session_token)
 
-      assert {:ok, %{email: ^email}} = Accounts.update_user_email(user, token)
+      assert {:ok, {%{email: ^email}, expired_tokens}} = Accounts.update_user_email(user, token)
 
+      assert session_token in Enum.map(expired_tokens, & &1.token)
       refute Accounts.get_user_by_session_token(session_token)
       refute Repo.get_by(UserToken, token: session_token, context: "session")
     end
@@ -730,8 +731,10 @@ defmodule Cinder.AccountsTest do
       session_token = Accounts.generate_user_session_token(target)
       assert Accounts.get_user_by_session_token(session_token)
 
-      assert {:ok, %User{}} = Accounts.admin_update_email(actor, target, %{email: new_email})
+      assert {:ok, %User{}, revoked_tokens} =
+               Accounts.admin_update_email(actor, target, %{email: new_email})
 
+      assert session_token in Enum.map(revoked_tokens, & &1.token)
       refute Accounts.get_user_by_session_token(session_token)
       refute Repo.get_by(UserToken, token: session_token, context: "session")
     end
@@ -741,7 +744,7 @@ defmodule Cinder.AccountsTest do
       target = user_fixture()
       new_email = unique_user_email()
 
-      assert {:ok, %User{} = updated} =
+      assert {:ok, %User{} = updated, _revoked_tokens} =
                Accounts.admin_update_email(actor, target, %{email: new_email})
 
       assert updated.email == new_email
@@ -767,7 +770,7 @@ defmodule Cinder.AccountsTest do
       target = user_fixture()
       Repo.delete_all(Cinder.Audit.AdminAudit)
 
-      assert {:ok, %User{} = updated} =
+      assert {:ok, %User{} = updated, []} =
                Accounts.admin_update_email(actor, target, %{email: target.email})
 
       assert updated.email == target.email
