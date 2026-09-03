@@ -2,20 +2,23 @@
 
 ## What this is
 
-Cinder is a single-household, self-hosted replacement for the Sonarr / Radarr / Seerr loop:
-request a movie or TV series → find the best release → download it → import it into
-Jellyfin/Plex. Built on Phoenix/LiveView.
+Cinder is a single-household, self-hosted replacement for the Sonarr / Radarr / Seerr loop and
+for Readarr/Bookshelf: request a movie, TV series, e-book or audiobook → find the best release →
+download it → import it into Jellyfin/Plex, Booklore or Audiobookshelf. Built on Phoenix/LiveView.
 
-**Status: released — v2.0.0 (2026-08-15).** Movies, TV (series/season/episode, season packs,
-calendar), multi-user with a request→approval gate, and an opt-in per-title anime handling
-profile and operator-named movie/TV media profiles are all shipped. Work is now incremental —
-issues, fixes, one-off features. There is no
-"current phase."
+**Status: released — v3.0.0 (2026-09-02).** Movies, TV (series/season/episode, season packs,
+calendar), multi-user with a request→approval gate, an opt-in per-title anime handling profile,
+operator-named movie/TV media profiles, and the whole books/audiobooks track (B0–B8: requests and
+approval, acquisition, publication, monitoring, Readarr/Bookshelf migration, hardening) are all
+shipped. Work is now incremental — issues, fixes, one-off features. There is no "current phase."
+The only roadmap criterion still open is operator-gated rather than code: the two-week
+Readarr-stopped dogfood window and the explicit Bookshelf decommission that follows sign-off
+(`docs/books-dogfood-checklist.md`, `docs/readarr-migration.md`).
 
-`ROADMAP.md` is the **build record** (Phases 0–5, M0–M8, A0–A6), not a live plan — read it only
-when you need the history behind a decision. Do not auto-import it: at 1,100+ lines it adds stale
-context to every task. Per-feature design and plan docs live under `docs/specs/`, `docs/plans/`,
-`docs/audits/`, and `docs/superpowers/`.
+`ROADMAP.md` is the **build record** (Phases 0–5, M0–M8, A0–A6, B0–B8), not a live plan — read it
+only when you need the history behind a decision. Do not auto-import it: at 1,100+ lines it adds
+stale context to every task. Per-feature design and plan docs live under `docs/specs/`,
+`docs/plans/`, `docs/audits/`, and `docs/superpowers/`.
 
 ## Stack
 
