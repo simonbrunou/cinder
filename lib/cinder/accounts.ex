@@ -711,6 +711,11 @@ defmodule Cinder.Accounts do
         # already identifies whose address changed.
         Audit.log_or_rollback(actor, "admin_update_email", updated, %{})
 
+        # #464: a deliberate divergence from the phx.gen.auth generator default — an email
+        # change is a defensive action against a stolen session, so it revokes every session
+        # token in the same transaction as the write, not just the one-time change token.
+        delete_tokens(user_session_tokens(updated))
+
         updated
 
       {:error, changeset} ->
@@ -965,6 +970,11 @@ defmodule Cinder.Accounts do
            {:ok, user} <- Repo.update(User.email_changeset(user, %{email: email})),
            {_count, _result} <-
              Repo.delete_all(from(UserToken, where: [user_id: ^user.id, context: ^context])) do
+        # #464: a deliberate divergence from the phx.gen.auth generator default — an email
+        # change is a defensive action against a stolen session, so it revokes every session
+        # token in the same transaction as the write, not just the one-time change token.
+        delete_tokens(user_session_tokens(user))
+
         {:ok, user}
       else
         _ -> {:error, :transaction_aborted}

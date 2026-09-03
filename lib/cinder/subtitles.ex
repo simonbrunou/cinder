@@ -13,6 +13,7 @@ defmodule Cinder.Subtitles do
   alias Cinder.Settings
   alias Cinder.Subtitles.{Fetcher, Manifest, Moviehash, Srt}
   alias Cinder.Subtitles.Sync
+  alias Cinder.Subtitles.Sync.Timing
   alias Cinder.Subtitles.Sync.Worker
 
   @doc "Subtitle-search criteria for a movie: imdb + tmdb id (the provider prefers imdb)."
@@ -209,7 +210,17 @@ defmodule Cinder.Subtitles do
     case provider().download(result.file_id) do
       {:ok, content} ->
         origin = if match == :hash, do: "opensubtitles_hash", else: "opensubtitles_id"
-        commit(video_path, kind, language, moviehash, origin, target, content)
+
+        case Timing.validate(content, Path.extname(target)) do
+          :ok ->
+            commit(video_path, kind, language, moviehash, origin, target, content)
+
+          {:error, reason} ->
+            Logger.warning(
+              "subtitle download for #{video_path} (#{language}) failed validation: #{inspect(reason)}"
+            )
+        end
+
         {:ok, cache}
 
       {:error, :quota_exceeded} ->
