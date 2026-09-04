@@ -118,6 +118,52 @@ defmodule Cinder.HealthTest do
     assert {:error, {:exit, :boom}} = indexer.status
   end
 
+  test "check_all/0 runs probes concurrently instead of paying their sum" do
+    stub_check_all_services()
+    sleep_ms = 200
+
+    for mock <- [
+          Cinder.Catalog.TMDBMock,
+          Cinder.Acquisition.IndexerMock,
+          Cinder.Books.PrimaryMetadataMock,
+          Cinder.Books.SecondaryMetadataMock,
+          Cinder.Library.MediaServerMock,
+          Cinder.Library.AudiobookServerMock
+        ] do
+      stub(mock, :health, fn ->
+        Process.sleep(sleep_ms)
+        :ok
+      end)
+    end
+
+    started = System.monotonic_time(:millisecond)
+    Cinder.Health.check_all()
+    elapsed = System.monotonic_time(:millisecond) - started
+
+    # Six probes at `sleep_ms` each cost `6 * sleep_ms` serially; concurrently the sweep costs
+    # one `sleep_ms`. Assert well under half the serial sum so this stays deterministic on a
+    # loaded CI box instead of chasing the concurrent figure exactly.
+    assert elapsed < 3 * sleep_ms
+  end
+
+  test "a probe exceeding the timeout budget reports :timeout without blocking other rows" do
+    stub_check_all_services()
+
+    Application.put_env(:cinder, :health_probe_timeout_ms, 200)
+    on_exit(fn -> Application.delete_env(:cinder, :health_probe_timeout_ms) end)
+
+    stub(Cinder.Acquisition.IndexerMock, :health, fn ->
+      Process.sleep(2_000)
+      :ok
+    end)
+
+    rows = Cinder.Health.check_all()
+
+    assert Enum.find(rows, &(&1.label =~ "Indexer")).status == {:error, :timeout}
+    assert Enum.find(rows, &(&1.label == "Metadata (TMDB)")).status == :ok
+    assert Enum.find(rows, &(&1.label == "Media server (MediaServerMock)")).status == :ok
+  end
+
   test "check_service({:library, :movies}) is :ok when the library dir is writable" do
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     assert Cinder.Health.check_service({:library, :movies}) == :ok
