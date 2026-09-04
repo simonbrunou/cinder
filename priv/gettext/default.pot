@@ -47,7 +47,7 @@ msgstr ""
 msgid "1080p, 720p"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:354
+#: lib/cinder_web/live/user_live/settings.ex:356
 #, elixir-autogen
 msgid "A link to confirm your email change has been sent to the new address."
 msgstr ""
@@ -84,7 +84,7 @@ msgid "Adding…"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:111
-#: lib/cinder_web/live/users_live.ex:548
+#: lib/cinder_web/live/users_live.ex:550
 #, elixir-autogen
 msgid "Admin"
 msgstr ""
@@ -125,7 +125,7 @@ msgstr ""
 
 #: lib/cinder_web/live/dashboard_live.ex:531
 #: lib/cinder_web/live/requests_live.ex:466
-#: lib/cinder_web/live/users_live.ex:432
+#: lib/cinder_web/live/users_live.ex:434
 #, elixir-autogen
 msgid "Approve"
 msgstr ""
@@ -143,7 +143,7 @@ msgstr ""
 #: lib/cinder_web/live/dashboard_live.ex:529
 #: lib/cinder_web/live/requests_live.ex:368
 #: lib/cinder_web/live/requests_live.ex:464
-#: lib/cinder_web/live/users_live.ex:430
+#: lib/cinder_web/live/users_live.ex:432
 #, elixir-autogen
 msgid "Approving…"
 msgstr ""
@@ -172,12 +172,12 @@ msgstr ""
 msgid "Calendar"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:311
+#: lib/cinder_web/live/users_live.ex:313
 #, elixir-autogen
 msgid "Can't delete the last admin."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:232
+#: lib/cinder_web/live/users_live.ex:234
 #, elixir-autogen
 msgid "Can't demote the last admin."
 msgstr ""
@@ -191,10 +191,10 @@ msgstr ""
 #: lib/cinder_web/live/movie_detail_live.ex:271
 #: lib/cinder_web/live/movie_detail_live.ex:442
 #: lib/cinder_web/live/series_detail_components.ex:254
-#: lib/cinder_web/live/users_live.ex:513
-#: lib/cinder_web/live/users_live.ex:560
-#: lib/cinder_web/live/users_live.ex:636
-#: lib/cinder_web/live/users_live.ex:707
+#: lib/cinder_web/live/users_live.ex:515
+#: lib/cinder_web/live/users_live.ex:562
+#: lib/cinder_web/live/users_live.ex:638
+#: lib/cinder_web/live/users_live.ex:709
 #, elixir-autogen
 msgid "Cancel"
 msgstr ""
@@ -259,7 +259,7 @@ msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:284
 #: lib/cinder_web/live/book_detail_live.ex:573
-#: lib/cinder_web/live/users_live.ex:694
+#: lib/cinder_web/live/users_live.ex:696
 #, elixir-autogen
 msgid "Confirm"
 msgstr ""
@@ -270,14 +270,14 @@ msgstr ""
 msgid "Confirm deny"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:85
-#: lib/cinder_web/live/users_live.ex:695
+#: lib/cinder_web/live/user_live/settings.ex:86
+#: lib/cinder_web/live/users_live.ex:697
 #, elixir-autogen
 msgid "Confirm new password"
 msgstr ""
 
 #: lib/cinder_web/live/user_live/registration.ex:93
-#: lib/cinder_web/live/users_live.ex:541
+#: lib/cinder_web/live/users_live.ex:543
 #, elixir-autogen
 msgid "Confirm password"
 msgstr ""
@@ -299,12 +299,12 @@ msgstr ""
 msgid "Couldn't cancel the series."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:235
+#: lib/cinder_web/live/users_live.ex:237
 #, elixir-autogen
 msgid "Couldn't change role."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:320
+#: lib/cinder_web/live/users_live.ex:322
 #, elixir-autogen
 msgid "Couldn't complete that action."
 msgstr ""
@@ -357,7 +357,7 @@ msgstr ""
 msgid "Couldn't update the season."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:557
+#: lib/cinder_web/live/users_live.ex:559
 #, elixir-autogen
 msgid "Create"
 msgstr ""
@@ -367,7 +367,7 @@ msgstr ""
 msgid "Create an account"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:555
+#: lib/cinder_web/live/users_live.ex:557
 #, elixir-autogen
 msgid "Creating…"
 msgstr ""
@@ -393,8 +393,8 @@ msgstr ""
 #: lib/cinder_web/live/requests_live.ex:503
 #: lib/cinder_web/live/series_detail_components.ex:98
 #: lib/cinder_web/live/series_detail_components.ex:306
-#: lib/cinder_web/live/users_live.ex:658
-#: lib/cinder_web/live/users_live.ex:667
+#: lib/cinder_web/live/users_live.ex:660
+#: lib/cinder_web/live/users_live.ex:669
 #, elixir-autogen
 msgid "Delete"
 msgstr ""
@@ -470,13 +470,13 @@ msgstr ""
 
 #: lib/cinder_web/live/dashboard_live.ex:541
 #: lib/cinder_web/live/requests_live.ex:483
-#: lib/cinder_web/live/users_live.ex:443
+#: lib/cinder_web/live/users_live.ex:445
 #, elixir-autogen
 msgid "Deny"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:932
-#: lib/cinder_web/live/users_live.ex:441
+#: lib/cinder_web/live/users_live.ex:443
 #, elixir-autogen
 msgid "Denying…"
 msgstr ""
@@ -518,30 +518,30 @@ msgstr ""
 msgid "Edit"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:593
+#: lib/cinder_web/live/users_live.ex:595
 #, elixir-autogen
 msgid "Edit email"
 msgstr ""
 
 #: lib/cinder_web/live/user_live/login.ex:42
 #: lib/cinder_web/live/user_live/registration.ex:77
-#: lib/cinder_web/live/user_live/settings.ex:48
-#: lib/cinder_web/live/users_live.ex:531
+#: lib/cinder_web/live/user_live/settings.ex:49
+#: lib/cinder_web/live/users_live.ex:533
 #, elixir-autogen
 msgid "Email"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:272
+#: lib/cinder_web/live/user_live/settings.ex:274
 #, elixir-autogen
 msgid "Email change link is invalid or it has expired."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:269
+#: lib/cinder_web/live/user_live/settings.ex:271
 #, elixir-autogen
 msgid "Email changed successfully."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:199
+#: lib/cinder_web/live/users_live.ex:201
 #, elixir-autogen
 msgid "Email updated."
 msgstr ""
@@ -599,7 +599,7 @@ msgstr ""
 #: lib/cinder_web/components/layouts.ex:345
 #: lib/cinder_web/live/book_detail_live.ex:628
 #: lib/cinder_web/live/movie_detail_live.ex:568
-#: lib/cinder_web/live/user_live/settings.ex:30
+#: lib/cinder_web/live/user_live/settings.ex:31
 #, elixir-autogen
 msgid "Language"
 msgstr ""
@@ -650,7 +650,7 @@ msgstr ""
 msgid "Logged out successfully."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:17
+#: lib/cinder_web/live/user_live/settings.ex:18
 #, elixir-autogen
 msgid "Manage your account email address and password settings"
 msgstr ""
@@ -742,9 +742,9 @@ msgstr ""
 msgid "My requests"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:77
-#: lib/cinder_web/live/users_live.ex:686
-#: lib/cinder_web/live/users_live.ex:687
+#: lib/cinder_web/live/user_live/settings.ex:78
+#: lib/cinder_web/live/users_live.ex:688
+#: lib/cinder_web/live/users_live.ex:689
 #, elixir-autogen
 msgid "New password"
 msgstr ""
@@ -754,7 +754,7 @@ msgstr ""
 msgid "New requests appear here."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:521
+#: lib/cinder_web/live/users_live.ex:523
 #, elixir-autogen
 msgid "New user"
 msgstr ""
@@ -844,7 +844,7 @@ msgstr ""
 
 #: lib/cinder_web/live/user_live/login.ex:50
 #: lib/cinder_web/live/user_live/registration.ex:86
-#: lib/cinder_web/live/users_live.ex:535
+#: lib/cinder_web/live/users_live.ex:537
 #, elixir-autogen
 msgid "Password"
 msgstr ""
@@ -884,7 +884,7 @@ msgstr ""
 msgid "Preferred resolutions (comma-separated)"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:601
+#: lib/cinder_web/live/users_live.ex:603
 #, elixir-autogen
 msgid "Quota"
 msgstr ""
@@ -977,12 +977,12 @@ msgstr ""
 msgid "Requests"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:647
+#: lib/cinder_web/live/users_live.ex:649
 #, elixir-autogen
 msgid "Reset password"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:702
+#: lib/cinder_web/live/users_live.ex:704
 #, elixir-autogen
 msgid "Resetting…"
 msgstr ""
@@ -1001,19 +1001,19 @@ msgstr ""
 msgid "Retrying…"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:547
+#: lib/cinder_web/live/users_live.ex:549
 #, elixir-autogen
 msgid "Role"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:406
+#: lib/cinder_web/live/users_live.ex:408
 #, elixir-autogen
 msgid "Roles and request quotas."
 msgstr ""
 
 #: lib/cinder_web/live/series_detail_components.ex:355
 #: lib/cinder_web/live/series_detail_components.ex:390
-#: lib/cinder_web/live/users_live.ex:611
+#: lib/cinder_web/live/users_live.ex:613
 #, elixir-autogen
 msgid "Save"
 msgstr ""
@@ -1023,7 +1023,7 @@ msgstr ""
 msgid "Save & validate"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:633
+#: lib/cinder_web/live/users_live.ex:635
 #, elixir-autogen
 msgid "Save email"
 msgstr ""
@@ -1037,10 +1037,10 @@ msgstr ""
 #: lib/cinder_web/live/series_detail_components.ex:353
 #: lib/cinder_web/live/series_detail_components.ex:389
 #: lib/cinder_web/live/settings_live.ex:192
-#: lib/cinder_web/live/user_live/settings.ex:37
-#: lib/cinder_web/live/user_live/settings.ex:89
-#: lib/cinder_web/live/users_live.ex:611
-#: lib/cinder_web/live/users_live.ex:632
+#: lib/cinder_web/live/user_live/settings.ex:38
+#: lib/cinder_web/live/user_live/settings.ex:90
+#: lib/cinder_web/live/users_live.ex:613
+#: lib/cinder_web/live/users_live.ex:634
 #, elixir-autogen
 msgid "Saving…"
 msgstr ""
@@ -1116,7 +1116,7 @@ msgstr ""
 msgid "Service health"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:704
+#: lib/cinder_web/live/users_live.ex:706
 #, elixir-autogen
 msgid "Set password"
 msgstr ""
@@ -1270,7 +1270,7 @@ msgstr ""
 msgid "Use system theme"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:548
+#: lib/cinder_web/live/users_live.ex:550
 #, elixir-autogen
 msgid "User"
 msgstr ""
@@ -1280,13 +1280,13 @@ msgstr ""
 msgid "User created."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:299
+#: lib/cinder_web/live/users_live.ex:301
 #, elixir-autogen
 msgid "User deleted."
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:159
-#: lib/cinder_web/live/users_live.ex:405
+#: lib/cinder_web/live/users_live.ex:407
 #: lib/cinder_web/user_auth.ex:421
 #, elixir-autogen
 msgid "Users"
@@ -1318,12 +1318,12 @@ msgstr ""
 msgid "Working…"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:305
+#: lib/cinder_web/live/users_live.ex:307
 #, elixir-autogen
 msgid "You can't delete your own account."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:346
+#: lib/cinder_web/live/users_live.ex:348
 #: lib/cinder_web/user_auth.ex:303
 #: lib/cinder_web/user_auth.ex:482
 #, elixir-autogen
@@ -1338,7 +1338,7 @@ msgstr ""
 
 #: lib/cinder_web/controllers/user_session_controller.ex:98
 #: lib/cinder_web/controllers/user_session_controller.ex:141
-#: lib/cinder_web/live/user_live/settings.ex:481
+#: lib/cinder_web/live/user_live/settings.ex:483
 #: lib/cinder_web/user_auth.ex:289
 #, elixir-autogen
 msgid "You must re-authenticate to access this page."
@@ -1395,7 +1395,7 @@ msgid "Any language"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1057
-#: lib/cinder_web/live/user_live/settings.ex:34
+#: lib/cinder_web/live/user_live/settings.ex:35
 #, elixir-autogen
 msgid "French"
 msgstr ""
@@ -1450,7 +1450,7 @@ msgstr ""
 msgid "A download client (torrent or usenet)"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:16
+#: lib/cinder_web/live/user_live/settings.ex:17
 #, elixir-autogen
 msgid "Account settings"
 msgstr ""
@@ -1488,17 +1488,17 @@ msgstr ""
 msgid "Bulk approve failed. Please try again."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:53
+#: lib/cinder_web/live/user_live/settings.ex:54
 #, elixir-autogen
 msgid "Change email"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:578
+#: lib/cinder_web/live/users_live.ex:580
 #, elixir-autogen
 msgid "Change role for %{email}, currently %{role}"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:53
+#: lib/cinder_web/live/user_live/settings.ex:54
 #, elixir-autogen
 msgid "Changing…"
 msgstr ""
@@ -1551,7 +1551,7 @@ msgstr ""
 msgid "Couldn't request %{title}. Try again."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:209
+#: lib/cinder_web/live/users_live.ex:211
 #, elixir-autogen
 msgid "Couldn't update email. Check the address."
 msgstr ""
@@ -1561,7 +1561,7 @@ msgstr ""
 msgid "Creating account…"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:670
+#: lib/cinder_web/live/users_live.ex:672
 #, elixir-autogen
 msgid "Delete %{email}? Their requests are deleted too."
 msgstr ""
@@ -1669,7 +1669,7 @@ msgid "Library paths"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:542
-#: lib/cinder_web/live/users_live.ex:461
+#: lib/cinder_web/live/users_live.ex:463
 #, elixir-autogen
 msgid "Loading…"
 msgstr ""
@@ -1689,7 +1689,7 @@ msgstr ""
 msgid "Movies library path"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:629
+#: lib/cinder_web/live/users_live.ex:631
 #, elixir-autogen
 msgid "New email"
 msgstr ""
@@ -1709,7 +1709,7 @@ msgstr ""
 msgid "Nothing was updated."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:263
+#: lib/cinder_web/live/users_live.ex:265
 #, elixir-autogen
 msgid "Password reset. The user's sessions were ended."
 msgstr ""
@@ -1784,7 +1784,7 @@ msgstr ""
 msgid "SABnzbd URL"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:90
+#: lib/cinder_web/live/user_live/settings.ex:91
 #, elixir-autogen
 msgid "Save password"
 msgstr ""
@@ -2076,7 +2076,7 @@ msgstr ""
 msgid "Couldn't reach TMDB. Please try again in a moment."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:343
+#: lib/cinder_web/live/users_live.ex:345
 #, elixir-autogen
 msgid "Couldn't reset the password."
 msgstr ""
@@ -2935,40 +2935,40 @@ msgstr ""
 msgid "Could not link your Plex account. Please try again."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:162
+#: lib/cinder_web/live/user_live/settings.ex:163
 #, elixir-autogen
 msgid "Link Plex account"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:123
-#: lib/cinder_web/live/user_live/settings.ex:176
+#: lib/cinder_web/live/user_live/settings.ex:124
+#: lib/cinder_web/live/user_live/settings.ex:177
 #, elixir-autogen
 msgid "Linked as %{username}."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:125
-#: lib/cinder_web/live/user_live/settings.ex:178
+#: lib/cinder_web/live/user_live/settings.ex:126
+#: lib/cinder_web/live/user_live/settings.ex:179
 #, elixir-autogen
 msgid "Linked."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:118
+#: lib/cinder_web/live/user_live/settings.ex:119
 #, elixir-autogen
 msgid "Plex account"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:160
+#: lib/cinder_web/live/user_live/settings.ex:161
 #, elixir-autogen
 msgid "Sign in faster next time by linking your Plex account."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:156
-#: lib/cinder_web/live/user_live/settings.ex:182
+#: lib/cinder_web/live/user_live/settings.ex:157
+#: lib/cinder_web/live/user_live/settings.ex:183
 #, elixir-autogen
 msgid "Unlink"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:434
+#: lib/cinder_web/live/user_live/settings.ex:436
 #, elixir-autogen
 msgid "Your Plex account has been unlinked."
 msgstr ""
@@ -2983,7 +2983,7 @@ msgstr ""
 msgid "Please re-enter your password before linking your Plex account."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:441
+#: lib/cinder_web/live/user_live/settings.ex:443
 #, elixir-autogen
 msgid "Could not unlink your Plex account. Please try again."
 msgstr ""
@@ -3331,7 +3331,7 @@ msgstr ""
 msgid "Select all pending requests"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:576
+#: lib/cinder_web/live/users_live.ex:578
 #, elixir-autogen
 msgid "…"
 msgstr ""
@@ -3484,7 +3484,7 @@ msgstr ""
 msgid "If that address is new, an administrator will review your request shortly."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:415
+#: lib/cinder_web/live/users_live.ex:417
 #, elixir-autogen
 msgid "No accounts are waiting for approval."
 msgstr ""
@@ -3495,7 +3495,7 @@ msgid "Pending account denied."
 msgstr ""
 
 #: lib/cinder_web/live/pending_approval_live.ex:43
-#: lib/cinder_web/live/users_live.ex:413
+#: lib/cinder_web/live/users_live.ex:415
 #: lib/cinder_web/user_auth.ex:427
 #, elixir-autogen
 msgid "Pending approval"
@@ -3596,22 +3596,22 @@ msgstr ""
 msgid "Default request quota"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:33
+#: lib/cinder_web/live/user_live/settings.ex:34
 #, elixir-autogen
 msgid "English"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:321
+#: lib/cinder_web/live/user_live/settings.ex:323
 #, elixir-autogen
 msgid "Language updated."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:38
+#: lib/cinder_web/live/user_live/settings.ex:39
 #, elixir-autogen
 msgid "Save language"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:31
+#: lib/cinder_web/live/user_live/settings.ex:32
 #, elixir-autogen
 msgid "Use session or browser language"
 msgstr ""
@@ -3846,12 +3846,12 @@ msgstr ""
 msgid "%{title} is ready to watch"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:405
+#: lib/cinder_web/live/user_live/settings.ex:407
 #, elixir-autogen
 msgid "Could not update your notification preference."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:108
+#: lib/cinder_web/live/user_live/settings.ex:109
 #, elixir-autogen
 msgid "Email me when a request is approved or ready to watch"
 msgstr ""
@@ -4137,37 +4137,37 @@ msgstr ""
 msgid "Several files claim this episode; resolve the duplicates on disk first."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:247
+#: lib/cinder_web/live/user_live/settings.ex:248
 #, elixir-autogen
 msgid "Confirm your current password"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:233
+#: lib/cinder_web/live/user_live/settings.ex:234
 #, elixir-autogen
 msgid "Danger zone"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:256
+#: lib/cinder_web/live/user_live/settings.ex:257
 #, elixir-autogen
 msgid "Delete my account"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:223
+#: lib/cinder_web/live/user_live/settings.ex:224
 #, elixir-autogen
 msgid "Download a copy of your account and request history as a JSON file."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:226
+#: lib/cinder_web/live/user_live/settings.ex:227
 #, elixir-autogen
 msgid "Download my data"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:235
+#: lib/cinder_web/live/user_live/settings.ex:236
 #, elixir-autogen
 msgid "Permanently delete your account and all of your requests. This cannot be undone."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:254
+#: lib/cinder_web/live/user_live/settings.ex:255
 #, elixir-autogen
 msgid "Permanently delete your account? This cannot be undone."
 msgstr ""
@@ -4188,7 +4188,7 @@ msgstr ""
 msgid "Your account has been permanently deleted."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:221
+#: lib/cinder_web/live/user_live/settings.ex:222
 #, elixir-autogen
 msgid "Your data"
 msgstr ""
@@ -5189,12 +5189,12 @@ msgstr ""
 msgid "These routes also sit behind the optional HTTP Basic gate, so if you enabled it, API clients must send those credentials too."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:499
+#: lib/cinder_web/live/users_live.ex:501
 #, elixir-autogen
 msgid "%{name}: no email on the media server"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:369
+#: lib/cinder_web/live/users_live.ex:371
 #, elixir-autogen
 msgid "Couldn't import those accounts."
 msgstr ""
@@ -5204,35 +5204,35 @@ msgstr ""
 msgid "Couldn't read the media server's user list."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:463
-#: lib/cinder_web/live/users_live.ex:471
+#: lib/cinder_web/live/users_live.ex:465
+#: lib/cinder_web/live/users_live.ex:473
 #, elixir-autogen
 msgid "Import from media server"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:510
+#: lib/cinder_web/live/users_live.ex:512
 #, elixir-autogen
 msgid "Import selected"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:377
+#: lib/cinder_web/live/users_live.ex:379
 #, elixir-autogen
 msgid "Imported %{count} account."
 msgid_plural "Imported %{count} accounts."
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/users_live.ex:473
+#: lib/cinder_web/live/users_live.ex:475
 #, elixir-autogen
 msgid "Imported accounts have no password: they sign in through the media server, or you set one here."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:508
+#: lib/cinder_web/live/users_live.ex:510
 #, elixir-autogen
 msgid "Importing…"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:374
+#: lib/cinder_web/live/users_live.ex:376
 #, elixir-autogen
 msgid "Nothing to import: those accounts already exist."
 msgstr ""
@@ -5242,7 +5242,7 @@ msgstr ""
 msgid "Select at least one account to import."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:478
+#: lib/cinder_web/live/users_live.ex:480
 #, elixir-autogen
 msgid "The media server reported no users."
 msgstr ""
@@ -5252,18 +5252,18 @@ msgstr ""
 msgid "Could not link your Jellyfin account. Please try again."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:461
+#: lib/cinder_web/live/user_live/settings.ex:463
 #, elixir-autogen
 msgid "Could not unlink your Jellyfin account. Please try again."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:171
+#: lib/cinder_web/live/user_live/settings.ex:172
 #, elixir-autogen
 msgid "Jellyfin account"
 msgstr ""
 
 #: lib/cinder_web/live/user_live/login.ex:100
-#: lib/cinder_web/live/user_live/settings.ex:207
+#: lib/cinder_web/live/user_live/settings.ex:208
 #, elixir-autogen
 msgid "Jellyfin password"
 msgstr ""
@@ -5282,12 +5282,12 @@ msgid "Jellyfin sign-in is not configured."
 msgstr ""
 
 #: lib/cinder_web/live/user_live/login.ex:92
-#: lib/cinder_web/live/user_live/settings.ex:199
+#: lib/cinder_web/live/user_live/settings.ex:200
 #, elixir-autogen
 msgid "Jellyfin username"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:212
+#: lib/cinder_web/live/user_live/settings.ex:213
 #, elixir-autogen
 msgid "Link Jellyfin account"
 msgstr ""
@@ -5297,7 +5297,7 @@ msgstr ""
 msgid "Please re-enter your password before linking your Jellyfin account."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:186
+#: lib/cinder_web/live/user_live/settings.ex:187
 #, elixir-autogen
 msgid "Sign in faster next time by linking your Jellyfin account."
 msgstr ""
@@ -5307,7 +5307,7 @@ msgstr ""
 msgid "Sign in with Jellyfin"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:454
+#: lib/cinder_web/live/user_live/settings.ex:456
 #, elixir-autogen
 msgid "Your Jellyfin account has been unlinked."
 msgstr ""
@@ -5317,12 +5317,12 @@ msgstr ""
 msgid "Your Jellyfin account is now linked."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:423
+#: lib/cinder_web/live/user_live/settings.ex:425
 #, elixir-autogen
 msgid "Could not update your Plex watchlist preference."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:146
+#: lib/cinder_web/live/user_live/settings.ex:147
 #, elixir-autogen
 msgid "Link your Plex account again to sync your Plex watchlist."
 msgstr ""
@@ -5332,17 +5332,17 @@ msgstr ""
 msgid "Plex watchlist sync"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:150
+#: lib/cinder_web/live/user_live/settings.ex:151
 #, elixir-autogen
 msgid "Relink Plex account"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:140
+#: lib/cinder_web/live/user_live/settings.ex:141
 #, elixir-autogen
 msgid "Request titles I add to my Plex watchlist"
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:492
+#: lib/cinder_web/live/users_live.ex:494
 #, elixir-autogen
 msgid "no email on the media server: a placeholder is generated"
 msgstr ""
@@ -5369,7 +5369,7 @@ msgstr ""
 msgid "No eligible TMDB episode remains; discard this file or keep it held."
 msgstr ""
 
-#: lib/cinder_web/live/users_live.ex:448
+#: lib/cinder_web/live/users_live.ex:450
 #, elixir-autogen
 msgid "Seeing a second account for someone who already has one? Their original was never linked to the media server: use Reset password on it below, then have them link their media server account from Account settings."
 msgstr ""

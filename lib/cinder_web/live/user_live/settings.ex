@@ -6,6 +6,7 @@ defmodule CinderWeb.UserLive.Settings do
   alias Cinder.Accounts
   alias Cinder.Accounts.JellyfinAuth
   alias Cinder.Accounts.PlexAuth
+  alias CinderWeb.UserAuth
 
   @impl true
   def render(assigns) do
@@ -265,7 +266,8 @@ defmodule CinderWeb.UserLive.Settings do
   def mount(%{"token" => token}, _session, socket) do
     socket =
       case Accounts.update_user_email(socket.assigns.current_scope.user, token) do
-        {:ok, _user} ->
+        {:ok, {_user, expired_tokens}} ->
+          UserAuth.disconnect_sessions(expired_tokens)
           put_flash(socket, :info, gettext("Email changed successfully."))
 
         {:error, _} ->
