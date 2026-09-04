@@ -69,10 +69,13 @@ with sync_playwright() as playwright:
     page.get_by_role("link", name="Dashboard", exact=True).click()
     expect(page).to_have_url(re.compile(r"/dashboard$"))
     wait_for_liveview(page)
-    # Dashboard health list is rendered only after Health.check_all/0 completes. The health probes
-    # run serially via HTTP with 3s connect + 3s receive timeouts each; realistic CI scenario has
-    # ~13s (TMDB + OpenLibrary only; other services default to unreachable localhost).
-    expect(page.locator("#dashboard-health")).to_be_visible(timeout=35_000)
+    # Dashboard health list is rendered only after Health.check_all/0 completes. Health probes
+    # now run concurrently (Cinder.Health.check_all/0 via Task.async_stream), so the sweep's
+    # wall clock is bounded by the slowest single row, not their sum: every row's own timeout is
+    # <=12s (qBittorrent/SABnzbd's login + probe round trip is the worst case today), backstopped
+    # by @probe_timeout_ms (15s) in case a row ignores its own timeout entirely. 20s = that 15s
+    # backstop plus headroom for page render/network latency on a loaded CI runner.
+    expect(page.locator("#dashboard-health")).to_be_visible(timeout=20_000)
 
     if SCREENSHOT_DIR:
         output = Path(SCREENSHOT_DIR)

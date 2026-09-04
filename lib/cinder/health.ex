@@ -5,22 +5,54 @@ defmodule Cinder.Health do
   configured impl behind its behaviour and calls its `health/0`. The `/dashboard` service-health
   panel uses this to surface an unwired/unreachable dependency instead of leaving it to stall
   silently and only show up in the logs.
+
+  `check_all/0` runs every probe concurrently (`Task.async_stream/3`), so the sweep's wall clock
+  is bounded by the slowest configured row instead of the sum of every row's own timeout.
   """
   alias Cinder.Books.Metadata
   alias Cinder.Download
   alias Cinder.LibraryKind
 
+  # Backstop above the worst individual probe today (~12s: qBittorrent/SABnzbd's login + probe
+  # round trip, or Plex's 2 video kinds × 6s) — the normal bound is each impl's own timeout, this
+  # only guards against a probe that ignores its own timeout and hangs outright. Overridable via
+  # `:health_probe_timeout_ms` so tests can shrink it instead of waiting out the real default.
+  @probe_timeout_ms 15_000
+
   @doc """
-  Checks every configured external service. Returns a list of
+  Checks every configured external service concurrently and returns a list of
   `%{label: String.t(), status: :ok | {:warning, term()} | {:error, term()}}`, ordered
-  metadata → indexer → download client(s) → media server.
+  metadata (TMDB) → indexer → books metadata providers → download clients (sorted protocols) →
+  media server → audiobook server → library rows (video kinds then book kinds) → media info →
+  subtitles → stored credentials. A probe that exceeds the timeout budget reports
+  `{:error, :timeout}` for its row without affecting any other row.
   """
   def check_all do
-    [tmdb_check(), indexer_check()] ++
-      books_metadata_checks() ++
-      download_checks() ++
-      [media_server_check(), audiobook_server_check()] ++
-      library_checks() ++ media_info_check() ++ subtitles_check() ++ secrets_check()
+    probes = probes()
+    timeout = Application.get_env(:cinder, :health_probe_timeout_ms, @probe_timeout_ms)
+
+    probes
+    |> Task.async_stream(fn {_label, fun} -> fun.() end,
+      ordered: true,
+      max_concurrency: length(probes),
+      on_timeout: :kill_task,
+      timeout: timeout
+    )
+    |> Enum.zip(probes)
+    |> Enum.reduce([], fn
+      {{:ok, :skip}, _probe}, rows ->
+        rows
+
+      {{:ok, status}, {label, _fun}}, rows ->
+        [%{label: label, status: status} | rows]
+
+      {{:exit, :timeout}, {label, _fun}}, rows ->
+        [%{label: label, status: {:error, :timeout}} | rows]
+
+      {{:exit, reason}, {label, _fun}}, rows ->
+        [%{label: label, status: {:error, reason}} | rows]
+    end)
+    |> Enum.reverse()
   end
 
   @doc """
@@ -84,98 +116,119 @@ defmodule Cinder.Health do
     end
   end
 
-  # TMDB drives discovery, requests, and the monitored-series refresh; an expired token leaves
-  # those failing while the rest of the panel stays green — so it gets its own aggregate row.
-  defp tmdb_check do
-    mod = Application.fetch_env!(:cinder, :tmdb)
-    check("Metadata (TMDB)", mod)
+  # Ordered list of `{label, fun}` probes — the label is known upfront (cheap, no network); `fun`
+  # is a 0-arity closure that runs the actual probe and returns `status | :skip`. `check_all/0`
+  # fans these out through `Task.async_stream/3`; this function only builds the list, it never
+  # calls a probe itself. `:skip` replaces the old "omit the row entirely" behaviour for rows
+  # that are `{:error, :not_configured}` (subtitles, media_info, book library kinds) or have no
+  # finding (`secrets_probe/0`'s empty case).
+  defp probes do
+    [tmdb_probe(), indexer_probe()] ++
+      books_metadata_probes() ++
+      download_probes() ++
+      [media_server_probe(), audiobook_server_probe()] ++
+      library_probes() ++
+      [media_info_probe(), subtitles_probe(), secrets_probe()]
   end
 
-  defp indexer_check do
+  # TMDB drives discovery, requests, and the monitored-series refresh; an expired token leaves
+  # those failing while the rest of the panel stays green — so it gets its own aggregate row.
+  defp tmdb_probe do
+    mod = Application.fetch_env!(:cinder, :tmdb)
+    {"Metadata (TMDB)", fn -> run(mod) end}
+  end
+
+  defp indexer_probe do
     mod = Application.fetch_env!(:cinder, :indexer)
-    check("Indexer (#{short(mod)})", mod)
+    {"Indexer (#{short(mod)})", fn -> run(mod) end}
   end
 
   # One row per configured metadata provider (Open Library, Hardcover, …) — the genuinely
   # missing health surface per the B5c plan (book-root/publisher health already exists below,
-  # via `library_checks/0`).
-  defp books_metadata_checks do
+  # via `library_probes/0`).
+  defp books_metadata_probes do
     for mod <- Metadata.providers() do
-      check("Metadata (#{short(mod)})", mod)
+      {"Metadata (#{short(mod)})", fn -> run(mod) end}
     end
   end
 
-  defp media_server_check do
+  defp media_server_probe do
     mod = Application.fetch_env!(:cinder, :media_server)
-    check("Media server (#{short(mod)})", mod)
+    {"Media server (#{short(mod)})", fn -> run(mod) end}
   end
 
-  defp audiobook_server_check do
+  defp audiobook_server_probe do
     mod = Application.fetch_env!(:cinder, :audiobook_server)
-    check("Audiobook server (#{short(mod)})", mod)
+    {"Audiobook server (#{short(mod)})", fn -> run(mod) end}
   end
 
   # One row per configured protocol (sorted for a stable display order).
-  defp download_checks do
+  defp download_probes do
     for protocol <- Enum.sort(Download.available_protocols()) do
       {:ok, mod} = Download.client_for(protocol)
-      check("Download (#{protocol} · #{short(mod)})", mod)
+      {"Download (#{protocol} · #{short(mod)})", fn -> run(mod) end}
     end
   end
 
   # One row per library kind (Movies, TV, …); reuses the writable-path probe so a missing or
-  # unwritable root shows red on /status — the visible signal that an import is holding.
-  defp library_checks do
-    video_checks =
+  # unwritable root shows red on /status — the visible signal that an import is holding. Video
+  # kinds always show a row; book kinds skip the row until their root is configured.
+  defp library_probes do
+    video_probes =
       for kind <- Cinder.Library.kinds() do
-        %{label: "Library (#{kind})", status: check_service({:library, kind})}
+        {"Library (#{kind})", fn -> check_service({:library, kind}) end}
       end
 
-    book_checks =
-      for kind <- LibraryKind.all(),
-          not LibraryKind.video?(kind),
-          status = check_service({:library, kind}),
-          status != {:error, :not_configured} do
-        %{label: "Library (#{LibraryKind.label(kind)})", status: status}
+    book_probes =
+      for kind <- LibraryKind.all(), not LibraryKind.video?(kind) do
+        {"Library (#{LibraryKind.label(kind)})", fn -> skip_if_unconfigured({:library, kind}) end}
       end
 
-    video_checks ++ book_checks
+    video_probes ++ book_probes
   end
 
-  # Subtitles is off-by-default (no api_key ⇒ :not_configured) — omit the row entirely rather
+  # Subtitles is off-by-default (no api_key ⇒ :not_configured) — skip the row entirely rather
   # than show red noise on an install that hasn't opted into the feature.
-  defp subtitles_check do
-    case check_service(:subtitles) do
-      {:error, :not_configured} -> []
-      status -> [%{label: "Subtitles (OpenSubtitles)", status: status}]
-    end
+  defp subtitles_probe do
+    {"Subtitles (OpenSubtitles)", fn -> skip_if_unconfigured(:subtitles) end}
   end
 
-  # media_info is enabled by default (ffprobe), but an operator can turn it off entirely — omit
+  # media_info is enabled by default (ffprobe), but an operator can turn it off entirely — skip
   # the row rather than show red noise on an install that deliberately disabled it.
-  defp media_info_check do
-    case check_service(:media_info) do
-      {:error, :not_configured} -> []
-      status -> [%{label: "Media info (ffprobe)", status: status}]
+  defp media_info_probe do
+    {"Media info (ffprobe)", fn -> skip_if_unconfigured(:media_info) end}
+  end
+
+  defp skip_if_unconfigured(service) do
+    case check_service(service) do
+      {:error, :not_configured} -> :skip
+      status -> status
     end
   end
 
   # A stored secret that can't be decrypted (SECRET_KEY_BASE changed) is skipped at load, so every
   # service row above can read green while the pipeline is actually credential-less. Surface it as
-  # its own red row naming the count; omit the row entirely when every secret decodes. Reads the
+  # its own red row naming the count; skip the row entirely when every secret decodes. Reads the
   # DB, so it goes through `safely/1` — a checkout failure (or anything else) degrades to "no
   # finding" rather than taking the whole panel down.
-  defp secrets_check do
-    case safely(fn -> Cinder.Settings.undecryptable_secret_keys() end) do
-      keys when is_list(keys) and keys != [] ->
-        [%{label: "Stored credentials", status: {:error, {:undecryptable_secrets, length(keys)}}}]
+  #
+  # This runs inside the same `Task.async_stream/3` sweep as every other probe, not inline in the
+  # caller. `Cinder.Repo`'s Ecto SQL Sandbox ownership (via `DBConnection.Ownership`) resolves the
+  # checked-out connection through the `$callers` process-dictionary chain that `Task` sets on the
+  # spawned process — the same mechanism Mox's private mode already relies on for `run/1`'s
+  # network probes — so no sandbox allowance is needed here.
+  defp secrets_probe do
+    {"Stored credentials",
+     fn ->
+       case safely(fn -> Cinder.Settings.undecryptable_secret_keys() end) do
+         keys when is_list(keys) and keys != [] ->
+           {:error, {:undecryptable_secrets, length(keys)}}
 
-      _ ->
-        []
-    end
+         _ ->
+           :skip
+       end
+     end}
   end
-
-  defp check(label, mod), do: %{label: label, status: run(mod)}
 
   # Both probes run inside a LiveView async task, so a misbehaving impl must degrade to a
   # red row rather than take the whole panel down. `catch` covers exits/throws (e.g. a
