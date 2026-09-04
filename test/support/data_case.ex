@@ -32,6 +32,18 @@ defmodule Cinder.DataCase do
   setup tags do
     Cinder.DataCase.setup_sandbox(tags)
 
+    # NimbleOwnership (Mox's backing ownership server) only resets global mode back to
+    # `:private` via an async `:DOWN` handler fired when the previous global-mode test's
+    # process exits (deps/nimble_ownership/lib/nimble_ownership.ex:568-569) — never via
+    # anything ExUnit's `on_exit` awaits. That leaves a real window, right after such a test
+    # finishes, where the ownership server still reports itself `{:shared, <dead pid>}`. If the
+    # very next test lands here before that `:DOWN` is processed, `Mox.stub/3` below raises
+    # "Mox is in global mode" for a process that no longer exists. Force private mode
+    # synchronously first: a `set_mox_global` test's own later `setup :set_mox_global` still
+    # re-enables shared mode for itself right after this runs, so this only removes stale state
+    # inherited from a previous test, never a test's own global mode.
+    Mox.set_mox_private()
+
     for client <- [Cinder.Download.ClientMock, Cinder.Download.SabnzbdClientMock] do
       Mox.stub(client, :find_by_operation_key, fn _key -> :not_found end)
     end
