@@ -533,9 +533,18 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     assert File.read!(sidecar) == original
   end
 
-  test "scoped apply holds the catalog write reservation through filesystem publication", %{
-    movies: movies
-  } do
+  # Regression for #453: `with_scoped_item/3` used to wrap `manual/4`'s filesystem/manifest work
+  # (no DB write inside it at all) in `Repo.transaction(mode: :immediate)`, holding SQLite's one
+  # DATABASE-WIDE write lock across it. That serialized this ordinary write against it — the exact
+  # assertion this test used to make (`Task.yield(update, 100) == nil`) — but also every
+  # *unrelated* writer in the app for however long the video-file read/hash took. Now the
+  # concurrent write is not blocked; the operation instead re-validates the item is still in
+  # `scope` after the filesystem work lands, reporting `{:error, :stale_scope}` instead of a false
+  # success when it is not — the correction it already wrote to `sidecar` is not lost or rolled
+  # back (there is nothing transactional to roll back: it is a plain file write), just not
+  # reported as a success for a scope that has since moved on.
+  test "a concurrent catalog write during filesystem publication is not blocked, and a scope that moved on is reported instead of a false success (#453)",
+       %{movies: movies} do
     video = Path.join(movies, "Reserved/Reserved.mkv")
     replacement_video = Path.join(movies, "Reserved/Replacement.mkv")
     sidecar = Path.rootname(video) <> ".en.srt"
@@ -585,10 +594,81 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
         movie |> Ecto.Changeset.change(file_path: replacement_video) |> Repo.update!()
       end)
 
-    assert Task.yield(update, 100) == nil
+    # No SQLite write-lock reservation queues this behind the still-blocked moviehash read.
+    assert %{file_path: ^replacement_video} = Task.await(update, 100)
+
     send(pid, {ref, :continue})
-    assert {:ok, :corrected, _} = Task.await(apply)
-    assert %{file_path: ^replacement_video} = Task.await(update)
+    # The scope no longer resolves this item (the movie now points at replacement_video, which
+    # has no tracked sidecar of its own) by the time the filesystem work completes.
+    assert {:error, :stale_scope} = Task.await(apply)
+    # The correction itself still landed — captured against the original video before the swap,
+    # unaffected by it.
+    assert File.read!(sidecar) =~ "00:00:02,000"
+  end
+
+  # Regression for #453: with_scoped_item/3's callback runs (and writes the correction) BEFORE
+  # the post-hoc scope check, so a scope that moved on mid-flight must not be reported to the
+  # operator as if their numeric input was invalid — that would be false (the correction already
+  # landed) and would invite a needless, harmful re-apply. It must get its own, accurate message,
+  # and the item list must reload so the operator sees the current (post-move) state.
+  test "apply reports a changed scope, not invalid input, when the correction outruns a concurrent scope change (#453)",
+       %{conn: conn, movies: movies} do
+    video = Path.join(movies, "Drift/Drift.mkv")
+    replacement_video = Path.join(movies, "Drift/Replacement.mkv")
+    sidecar = Path.rootname(video) <> ".en.srt"
+    original = "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n"
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, String.duplicate("v", 131_072))
+    File.write!(replacement_video, String.duplicate("r", 131_072))
+    File.write!(sidecar, original)
+    {:ok, hash} = Subtitles.Moviehash.of_file(video)
+
+    assert :ok =
+             Manifest.put(
+               video,
+               hash,
+               "en",
+               "opensubtitles_hash",
+               sidecar,
+               digest(original)
+             )
+
+    movie =
+      %{title: "Drift", status: :available}
+      |> movie_fixture()
+      |> Ecto.Changeset.change(file_path: video)
+      |> Repo.update!()
+
+    [item] = Sync.items({:movie, movie.id})
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
+    view |> element("#subtitle-sync-item-#{item.id} button", "Adjust") |> render_click()
+
+    params = %{"adjustment" => %{"mode" => "direct", "delay_ms" => "1000", "rate" => "1.0"}}
+    view |> form("#subtitle-sync-form", params) |> render_change()
+
+    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :moviehash_data,
+      contains: Path.basename(video),
+      once: true
+    })
+
+    submit =
+      Task.async(fn ->
+        view |> form("#subtitle-sync-form", params) |> render_submit()
+      end)
+
+    assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video}
+    movie |> Ecto.Changeset.change(file_path: replacement_video) |> Repo.update!()
+    send(pid, {ref, :continue})
+
+    html = Task.await(submit)
+
+    refute html =~ "Enter a valid delay/rate or timestamp anchors."
+    assert html =~ "The correction was applied, but this item changed while it was being written."
     assert File.read!(sidecar) =~ "00:00:02,000"
   end
 

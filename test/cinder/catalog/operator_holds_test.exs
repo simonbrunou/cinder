@@ -171,6 +171,45 @@ defmodule Cinder.Catalog.OperatorHoldsTest do
 
       assert Grabs.count_grab_holds() == Enum.count(grabs, &(Catalog.grab_hold(&1) != nil))
     end
+
+    # Regression for #459: list_grabs/0 used to have no limit at all, so bounding it risked
+    # dropping an old operator hold below the cutoff — desynchronizing the nav badge
+    # (count_grab_holds/0, unbounded) from what /activity actually lists and can act on. This
+    # pins a hold older than the (test-shrunk) cap to still be listed, and the badge/page
+    # agreement to still hold even once the table is well past the cap.
+    test "an old operator hold is still listed past the recent-grabs cap, and the badge still agrees (#459)" do
+      saved = Application.get_env(:cinder, Grabs, [])
+      on_exit(fn -> Application.put_env(:cinder, Grabs, saved) end)
+      Application.put_env(:cinder, Grabs, Keyword.put(saved, :list_grabs_limit, 2))
+
+      Repo.insert!(%Grab{
+        download_id: "old-hold",
+        download_protocol: :torrent,
+        mapping_status: :needs_mapping
+      })
+
+      for n <- 1..5 do
+        Repo.insert!(%Grab{
+          download_id: "clean-#{n}",
+          download_protocol: :torrent,
+          mapping_status: :resolved
+        })
+      end
+
+      grabs = Catalog.list_grabs()
+
+      # The cap (2) alone would have dropped "old-hold" (the oldest row); it is still present.
+      assert "old-hold" in Enum.map(grabs, & &1.download_id)
+      # Only the 2 most recent non-hold rows ride along with it — genuinely bounded, not "return
+      # everything".
+      assert Enum.map(grabs, & &1.download_id) |> Enum.sort() == [
+               "clean-4",
+               "clean-5",
+               "old-hold"
+             ]
+
+      assert Grabs.count_grab_holds() == Enum.count(grabs, &(Catalog.grab_hold(&1) != nil))
+    end
   end
 
   describe "{:operator_hold, grab, reason} is emitted once per new hold" do

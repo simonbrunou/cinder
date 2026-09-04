@@ -151,6 +151,52 @@ defmodule CinderWeb.UsersLiveTest do
     assert Cinder.Repo.get!(Cinder.Accounts.User, user.id).email == new_email
   end
 
+  test "an already-connected settings tab is disconnected by an admin email change",
+       %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    user = Cinder.AccountsFixtures.user_fixture()
+    new_email = Cinder.AccountsFixtures.unique_user_email()
+
+    user_conn = log_in_user(build_conn(), user)
+    session_token = get_session(user_conn, :user_token)
+    topic = "users_sessions:#{Base.url_encode64(session_token)}"
+    CinderWeb.Endpoint.subscribe(topic)
+
+    # #478: the victim already has a *connected* LiveView open (another browser tab) before
+    # the admin edits their email — this is the process a stolen/hijacked session would keep
+    # using.
+    {:ok, victim_lv, _html} = live(user_conn, ~p"/users/settings")
+
+    admin_conn = log_in_user(conn, admin)
+    {:ok, admin_lv, _html} = live(admin_conn, ~p"/users")
+    admin_lv |> element("#edit-email-btn-#{user.id}") |> render_click()
+
+    admin_lv
+    |> form("#edit-email-form-#{user.id}", %{"user" => %{"email" => new_email}})
+    |> render_submit()
+
+    assert Cinder.Repo.get!(Cinder.Accounts.User, user.id).email == new_email
+
+    # The DB session token backing the victim's already-open tab is gone...
+    refute Cinder.Accounts.get_user_by_session_token(session_token)
+
+    # ...and a real browser socket for that tab is subscribed to exactly this topic
+    # (`Phoenix.LiveView.Socket.id/1`) — Phoenix's own transport forces it to close
+    # (deps/phoenix/lib/phoenix/socket.ex, `__info__(%Broadcast{event: "disconnect"}, _)`)
+    # if and only if this broadcast arrives, exactly as the password/role/delete paths
+    # already do (see `session_topics/1` + `assert_disconnects/1` below).
+    # `Phoenix.LiveViewTest` does not simulate that transport teardown, so `victim_lv`
+    # itself stays alive and keeps honoring its stale `current_scope` either way — the
+    # broadcast below is the one signal a real connected tab actually reacts to.
+    assert_receive %Phoenix.Socket.Broadcast{event: "disconnect", topic: ^topic}, 200
+
+    victim_lv
+    |> form("#locale_form", %{"user" => %{"locale" => "fr"}})
+    |> render_submit()
+
+    assert Cinder.Repo.get!(Cinder.Accounts.User, user.id).locale == "fr"
+  end
+
   test "admin toggles a user's role", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     user = Cinder.AccountsFixtures.user_fixture()

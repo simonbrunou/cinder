@@ -37,7 +37,15 @@ defmodule Cinder.Application do
         # registration and login floors); must be up before the Endpoint serves logins.
         Cinder.Accounts.IpRateLimiter,
         CinderWeb.Endpoint
-      ] ++ poller_child()
+      ] ++
+        [
+          # :temporary: a permanently crash-looping poller must exhaust only this supervisor's
+          # own restart budget, never Cinder.Supervisor's — see Cinder.PollerSupervisor's
+          # moduledoc (#456). Cinder.Supervisor would otherwise retry restarting it and,
+          # empirically, itself go down a few seconds later, taking Repo/Endpoint with it.
+          Supervisor.child_spec({Cinder.PollerSupervisor, poller_child()}, restart: :temporary),
+          Cinder.PollerSupervisor.Watchdog
+        ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options

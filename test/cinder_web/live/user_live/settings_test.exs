@@ -249,12 +249,48 @@ defmodule CinderWeb.UserLive.SettingsTest do
       refute Cinder.Repo.get_by(Cinder.Accounts.User, email: user.email)
       assert Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
 
-      # use confirm token again
+      # #464: an email change revokes every session token, including the one this `conn`
+      # carries — using the confirm token again (with the now-revoked session) hits the
+      # login gate rather than reaching the live view at all.
       {:error, redirect} = live(conn, ~p"/users/settings/confirm-email/#{token}")
-      assert {:live_redirect, %{to: path, flash: flash}} = redirect
-      assert path == ~p"/users/settings"
+      assert {:redirect, %{to: path, flash: flash}} = redirect
+      assert path == ~p"/users/log-in"
       assert %{"error" => message} = flash
-      assert message == "Email change link is invalid or it has expired."
+      assert message == "You must log in to access this page."
+    end
+
+    test "an already-connected settings tab is disconnected by a self-service email change",
+         %{conn: conn, user: user, token: token, email: email} do
+      session_token = get_session(conn, :user_token)
+      topic = "users_sessions:#{Base.url_encode64(session_token)}"
+      CinderWeb.Endpoint.subscribe(topic)
+
+      # #478: the user already has a *connected* LiveView open (another browser tab) before
+      # they click the confirmation link — this is the process a stolen/hijacked session
+      # would keep using.
+      {:ok, victim_lv, _html} = live(conn, ~p"/users/settings")
+
+      {:error, {:live_redirect, _}} = live(conn, ~p"/users/settings/confirm-email/#{token}")
+      assert Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
+
+      # The DB session token backing the already-open tab is gone...
+      refute Accounts.get_user_by_session_token(session_token)
+
+      # ...and a real browser socket for that tab is subscribed to exactly this topic
+      # (`Phoenix.LiveView.Socket.id/1`) — Phoenix's own transport forces it to close
+      # (deps/phoenix/lib/phoenix/socket.ex, `__info__(%Broadcast{event: "disconnect"}, _)`)
+      # if and only if this broadcast arrives, exactly as the password/role/delete paths
+      # already do (see `session_topics/1` + `assert_disconnects/1` in users_live_test.exs).
+      # `Phoenix.LiveViewTest` does not simulate that transport teardown, so `victim_lv`
+      # itself stays alive and keeps honoring its stale `current_scope` either way — the
+      # broadcast below is the one signal a real connected tab actually reacts to.
+      assert_receive %Phoenix.Socket.Broadcast{event: "disconnect", topic: ^topic}, 200
+
+      victim_lv
+      |> form("#locale_form", %{"user" => %{"locale" => "fr"}})
+      |> render_submit()
+
+      assert Cinder.Repo.get!(Cinder.Accounts.User, user.id).locale == "fr"
     end
 
     test "does not update email with invalid token", %{conn: conn, user: user} do

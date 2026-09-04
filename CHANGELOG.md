@@ -19,6 +19,163 @@ All notable changes to Cinder are documented here. The format follows
   need headroom for a large remux over a household NAS, and both run only on the dedicated
   subtitle-fetch path, never the import poller. A hang now fails that one probe instead of
   freezing its caller.
+- **Garbled indexer titles no longer abort a whole title's search pass (#451).**
+  `Parser.parse/1`, `AnimeParser.parse/2`, and the anime free-text search guard
+  (`Anime.apply_title_guard/2`) all ran `/u`-flagged regexes directly against a raw indexer
+  title. A `/u` regex makes `:re.run` validate its subject as UTF-8 first, and Prowlarr
+  aggregates trackers with inconsistent encodings, so a single garbled or mis-encoded release
+  title raised `ArgumentError` with no rescue anywhere in the parsing chain. The poller's own
+  per-unit isolation (`isolate/2`) already caught that and logged it loudly at `:error` with a
+  full stack trace — this was never silent — but the whole `Enum.map(&Release.new/1)` pass for
+  that title aborted with it, discarding every other, perfectly good candidate release alongside
+  the one garbled title, and repeating on the next tick as long as the same indexer result kept
+  appearing. Both parser entry points, and the anime guard, now scrub the title to valid UTF-8
+  first (dropping one invalid byte at a time, keeping the rest of the string intact), so one
+  garbled release degrades to an unrecognized candidate instead of taking its title's whole
+  search pass down with it.
+- **Dot-separated anime releases now match their known titles (#450).** The anime free-text search
+  guard and the anime parser's own season/episode resolver only normalized titles with NFKC, trim,
+  whitespace-collapse, and downcase before comparing a release title to a known series title — no
+  separator canonicalization. A scene release named with dots or underscores instead of spaces
+  (`Puella.Magi.Madoka.Magica.S01E01...`, the actual convention most anime groups use) never
+  matched a known title stored as `Puella Magi Madoka Magica`, so a correctly-named, perfectly
+  good release was invisible to both search and coordinate parsing. Both sites now canonicalize
+  `.`/`_`/`-` to spaces character-by-character (length-preserving, so the offset used to slice out
+  the remainder after the matched title still lines up). Because a looser match can also
+  over-match, `legal_title_remainder?/1` gained a negative lookahead so a numbered sequel or season
+  folded into a release title (e.g. `Title.4.2024...`) can no longer free-text-match the base
+  title (`Title (2019)`) by misreading the sequel number as an absolute episode number — closing
+  off a genuine wrong-release grab that the looser match would otherwise have opened up.
+- **A subtitle provider's error page can no longer overwrite a working subtitle (#452).**
+  `Subtitles.download_and_commit/8` treated any HTTP 200 body from OpenSubtitles as subtitle
+  content and wrote it straight to the sidecar with no structure check — unlike every other write
+  path in the subsystem (manual/automatic sync corrections validate through
+  `Sync.Timing.validate/2`; translation only commits when `Srt.render/2` actually returns a
+  binary). A Cloudflare interstitial or truncated response landing with a 200 status — not
+  implausible against a third-party API — could silently replace a previously good, already-synced
+  subtitle with garbage. Downloaded content now runs through `Sync.Timing.validate/2` before it's
+  committed; a validation failure is logged and skipped instead of written.
+- **A crash-looping background worker can no longer take down the whole app (#456).** All 16
+  poller workers (search, refresh, cleanup, backups, the janitor) were flat siblings of
+  `Cinder.Repo` and `CinderWeb.Endpoint` under one supervisor sharing its default restart budget (3
+  restarts / 5 seconds). Each poller's tick body is wrapped defensively, but the code that runs on
+  every restart — reading its configured interval and scheduling the next tick — was not, so a bad
+  interval value could crash-loop fast enough to exhaust that shared budget and bring the whole
+  supervisor down, taking the database connection pool and the web endpoint with it. The 16
+  workers now live under their own `Cinder.PollerSupervisor`, sized to their count — but nesting
+  alone wasn't enough: three of that inner supervisor's own near-instant restarts still fit inside
+  the outer supervisor's budget and brought it down anyway, so the inner supervisor is now started
+  with `restart: :temporary` — a persistent crash loop exhausts and permanently kills its own
+  subtree once, instead of cascading. A new `Cinder.PollerSupervisor.Watchdog` logs loudly at
+  `:error` if that ever happens, since nothing else would otherwise notice that every background
+  worker had silently stopped.
+- **Slow or unresponsive storage can no longer stall the whole household behind one subtitle
+  adjustment or library adoption (#453, #455).** A manual subtitle-offset adjustment
+  (`Sync.manual_in_scope/5`) held a SQLite write-lock transaction (`mode: :immediate`) across a
+  `:global.trans` acquisition, a manifest read, a sidecar-directory scan, one-or-two
+  `Moviehash.of_file/1` reads of the video file itself, and a manifest write — none of it a
+  database write. Library adoption (`Catalog.Adoption.adopt_movie_at_available/5` and
+  `adopt_series_files/5`) held the same kind of lock across an `lstat` walk of every path component
+  down to the candidate file. SQLite holds one write lock database-wide, so on a slow or
+  network-mounted library root, either operation could block every other writer in the app — both
+  pollers included — for as long as the filesystem work took, up to the 5-second busy timeout. The
+  subtitle-adjustment lock is dropped outright, not narrowed — it was never doing anything
+  transactional; `manual/4`'s own hash checks and the existing `:global.trans` lock already cover
+  what it appeared to guarantee — and the operation now re-checks the item still belongs to its
+  catalog scope after the filesystem work, reporting `{:error, :stale_scope}` if it moved.
+  Adoption now runs its filesystem validation before opening a transaction, then re-resolves the
+  profile (and series) fresh inside a transaction scoped to just the database write.
+- **A forged event no longer crashes the login or registration page (#457).** `UserLive.Login` and
+  `UserLive.Registration` had `handle_event` clauses for their known events but no catch-all, so
+  any `phx-click` with an unrecognized event name — trivial for a client to send — crashed the
+  LiveView with `FunctionClauseError` and lost the in-progress form. Both views now fall through to
+  a no-op catch-all instead of crashing.
+- **The 5-second download and TV pollers no longer full-table-scan on every tick (#454).**
+  `movies.status`, `grabs.content_path`, and `book_grabs.content_path` back the pollers' hot
+  `WHERE` queries but carried no index, so SQLite scanned every row in all three tables every 5
+  seconds, forever — cost that only grows as library history accumulates, unlike every TV-pipeline
+  table, which already had one. A new migration adds a plain index on `movies.status` and partial
+  indexes on `grabs.content_path` and `book_grabs.content_path` matching each poller's actual
+  `WHERE` predicate, the same pattern `episodes_wanted_index` already uses.
+- **An anime remaster or reissue release is no longer rejected for naming its own release year
+  twice (#458).** `exact_movie_year?/2` required a release title to contain *exactly one*
+  year-like token equal to the target year, so `Akira.1988.4K.Remaster.2020.BluRay...` was
+  rejected outright even though 1988 — the correct year — was right there, because the `2020`
+  remaster date made it a second match. It now accepts the target year being present among however
+  many year-like tokens the title carries, matching the tolerance the non-anime year guard already
+  had.
+- **Changing an account's email now revokes its other session tokens (#464).**
+  `Accounts.update_user_email/2` (self-service) and `admin_update_email/3` (admin editing a
+  member) updated the email but never revoked existing session tokens — only the password-change
+  path did that. A stolen or leaked session, or one left open on a shared device, survived a
+  defensive email change untouched. Both paths now delete the account's session tokens in the
+  same transaction as the email write, so a failed update can't log everyone out, and a
+  successful one makes every other session's token invalid — rejected the next time it makes a
+  request or a LiveView remounts. This is a deliberate divergence from the `phx.gen.auth`
+  generator's default behavior, which leaves sessions untouched on an email change — not a fix to
+  generated code.
+- **An email change's session revocation didn't reach an already-connected LiveView
+  socket (#478).** #464 (above) made `Accounts.update_user_email/2` and
+  `admin_update_email/3` delete the target's session tokens, but that only closes the
+  database half of the threat: a LiveView socket mounted *before* the email change ran
+  had already cached `current_scope` in its assigns
+  (`CinderWeb.UserAuth.mount_current_scope/2`) and was never re-verified against the
+  database, so "rejected the next time it makes a request or a LiveView remounts" never
+  applied to a tab that was already open. A stolen or already-connected live session —
+  another browser tab, a shared device — stayed fully authenticated as the household
+  member and able to act until it happened to remount for some unrelated reason, for as
+  long as that took. Both paths now return their revoked session tokens the same way the
+  password paths already did, and their callers (`UserLive.Settings.mount/3` for the
+  self-service confirmation link, `UsersLive`'s admin email-edit handler) call
+  `UserAuth.disconnect_sessions/1` with them after the transaction commits, broadcasting
+  the same `"disconnect"` a real connected browser socket for that session is subscribed
+  to — the live-socket half of the same defence #464 started.
+- **CI and release workflows now pin third-party GitHub Actions to commit SHAs, not mutable
+  version tags (#466).** A tag like `@v4` can be repointed by its maintainer or anyone who
+  compromises their account or CI — this has happened to actions in this same class before — and
+  the release workflow runs several with `packages: write` and a `GITHUB_TOKEN`. Every third-party
+  `uses:` in `ci.yml` and `release.yml` is now pinned to a full commit SHA with the version kept
+  as a trailing comment, and Dependabot's `github-actions` ecosystem is enabled so future SHA
+  bumps arrive as a reviewable PR instead of silently.
+- **Email delivery failures no longer log raw, unsanitized error text (#463).** Every other
+  notifier routes its failure reason through `HTTPPolicy.sanitize_log/1` before logging; the email
+  notifier logged `inspect(reason)`, `Exception.message/1`, and `inspect(value)` directly, so an
+  SMTP auth or connection failure could echo unbounded or configuration-shaped text straight into
+  the application log. It now sanitizes the same way its siblings do.
+- **The Activity page's grab list is no longer unbounded and fully preloaded on every mount or
+  broadcast (#459).** Every terminal grab transition already deletes its row synchronously
+  (`commit_grab_imports`'s closed branch, `close_grab/1`, `finish_grab/3`, `cancel_grab/2`,
+  `reap_stalled_grab/1`), so `Grabs.list_grabs/0` was never scanning permanent history — but it
+  still had no limit and preloaded `grab_files` plus `episodes: [season: :series]` for every grab
+  still retained (in-flight downloads and everything on hold), re-running that full, unfiltered
+  query on every Activity mount and on every `series_updated`/`series_deleted` broadcast. It now
+  always includes every grab currently on hold plus the 200 most recent overall, so the nav badge
+  and the page can never disagree, and the query stays bounded regardless of how many concurrent
+  downloads or holds accumulate.
+- **The book detail page no longer issues one query per target and per author (#461).** Blocklist
+  and author-policy lookups ran once per row instead of batched, unlike the equivalent lookups
+  elsewhere in the app (`Catalog.series_library_sizes/0`, `Books.target_sizes/0`). Rows here are
+  small and bounded (at most two targets, typically a handful of credited authors), so this was
+  never a real slowdown, but `BookDetailLive` now uses batched lookups for consistency with the
+  rest of the codebase.
+- **Database backups no longer leave orphaned snapshot files behind after a crash (#460).** A
+  daily backup writes to a randomly-named `.cinder-backup-pending-*.sqlite3` file before renaming
+  it to its final name; if the process is killed mid-`VACUUM INTO` (an OOM, a power loss), the
+  pending file stuck around forever, because the pruning sweep's glob pattern didn't match its
+  dotfile name. Pruning now also removes stale pending files older than one backup interval.
+- **Wrong-audio import rejections now log at the same severity as the sibling warning beside
+  them (#462).** They were logged at `Logger.info` while the generic "import skipped N unmatched
+  file(s)" message they're folded into logs at `Logger.warning` — Cinder's own stock production
+  config (`config/prod.exs`) sets the logger level to `:info`, so the message wasn't dropped by
+  default, but it sat one severity step below the more prominent line beside it, and would be the
+  first casualty of any external log filter set stricter than info (a common aggregator default).
+  An operator investigating a stuck TV import saw the generic warning but had to go hunting at a
+  lower level for the specific "wanted language X, rejected" detail that would tell them the
+  release needs replacing. Now logged at `Logger.warning`, matching `log_unmatched/1` and the
+  movie path's own audio-check failure log.
+- **A settings test no longer fails under `mix test --cover` (#465).** Coverage instrumentation's
+  overhead delayed a lock release past the SQLite busy timeout, producing a spurious "Database
+  busy" failure unrelated to the code under test. Test-only; no runtime behavior changed.
 
 ## [3.0.0] - 2026-09-02
 

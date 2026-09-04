@@ -689,19 +689,24 @@ defmodule Cinder.Accounts do
 
   The edit form pre-fills the current address, so submitting it unchanged is a
   no-op: when the cast email equals the target's current email, return
-  `{:ok, target}` without writing or auditing. A genuinely different email is
+  `{:ok, target, []}` without writing or auditing. A genuinely different email is
   still validated (invalid/format/uniqueness errors return `{:error, changeset}`)
-  and a real change still updates + audits in one transaction.
+  and a real change still updates + audits in one transaction, returning the
+  revoked session tokens (`{:ok, %User{}, [...]}`) so the caller can disconnect any
+  already-connected LiveView socket via `UserAuth.disconnect_sessions/1` after the
+  transaction commits.
   """
   def admin_update_email(%User{} = actor, %User{} = target, attrs) do
-    admin_transaction(actor, fn actor ->
+    actor
+    |> admin_transaction(fn actor ->
       changeset = User.email_changeset(target, attrs)
       no_change? = Ecto.Changeset.get_change(changeset, :email) == nil
 
       if no_change? and Ecto.Changeset.get_field(changeset, :email) != nil,
-        do: target,
+        do: {target, []},
         else: do_admin_update_email(actor, changeset)
     end)
+    |> flatten_revocation_result()
   end
 
   defp do_admin_update_email(%User{} = actor, changeset) do
@@ -711,7 +716,16 @@ defmodule Cinder.Accounts do
         # already identifies whose address changed.
         Audit.log_or_rollback(actor, "admin_update_email", updated, %{})
 
-        updated
+        # #464/#478: a deliberate divergence from the phx.gen.auth generator default — an
+        # email change is a defensive action against a stolen session, so it revokes every
+        # session token in the same transaction as the write, not just the one-time change
+        # token, and returns them so the caller can disconnect any already-connected
+        # LiveView socket after the transaction commits (`UserAuth.disconnect_sessions/1`),
+        # the same way `admin_reset_password/3` already does.
+        expired_tokens = user_session_tokens(updated)
+        delete_tokens(expired_tokens)
+
+        {updated, expired_tokens}
 
       {:error, changeset} ->
         Repo.rollback(changeset)
@@ -955,6 +969,11 @@ defmodule Cinder.Accounts do
   Updates the user email using the given token.
 
   If the token matches, the user email is updated and the token is deleted.
+
+  Returns a tuple with the updated user, as well as a list of expired session tokens
+  (`{:ok, {%User{}, [...]}}`), mirroring `update_user_password/2` — the caller must
+  disconnect any already-connected LiveView socket via `UserAuth.disconnect_sessions/1`
+  after this transaction commits.
   """
   def update_user_email(user, token) do
     context = "change:#{user.email}"
@@ -965,7 +984,15 @@ defmodule Cinder.Accounts do
            {:ok, user} <- Repo.update(User.email_changeset(user, %{email: email})),
            {_count, _result} <-
              Repo.delete_all(from(UserToken, where: [user_id: ^user.id, context: ^context])) do
-        {:ok, user}
+        # #464/#478: a deliberate divergence from the phx.gen.auth generator default — an
+        # email change is a defensive action against a stolen session, so it revokes every
+        # session token in the same transaction as the write, not just the one-time change
+        # token, and returns them so the caller can disconnect any already-connected
+        # LiveView socket after the transaction commits.
+        expired_tokens = user_session_tokens(user)
+        delete_tokens(expired_tokens)
+
+        {:ok, {user, expired_tokens}}
       else
         _ -> {:error, :transaction_aborted}
       end

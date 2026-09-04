@@ -191,7 +191,9 @@ defmodule CinderWeb.UsersLive do
     actor = socket.assigns.current_scope.user
 
     with user when not is_nil(user) <- find_user(id),
-         {:ok, _} <- Accounts.admin_update_email(actor, user, %{email: email}) do
+         {:ok, _, revoked_tokens} <- Accounts.admin_update_email(actor, user, %{email: email}) do
+      UserAuth.disconnect_sessions(revoked_tokens)
+
       {:noreply,
        socket
        |> assign(editing_email: nil)
