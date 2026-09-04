@@ -149,11 +149,11 @@ defmodule Cinder.HealthTest do
   test "a probe exceeding the timeout budget reports :timeout without blocking other rows" do
     stub_check_all_services()
 
-    Application.put_env(:cinder, :health_probe_timeout_ms, 50)
+    Application.put_env(:cinder, :health_probe_timeout_ms, 200)
     on_exit(fn -> Application.delete_env(:cinder, :health_probe_timeout_ms) end)
 
     stub(Cinder.Acquisition.IndexerMock, :health, fn ->
-      Process.sleep(500)
+      Process.sleep(2_000)
       :ok
     end)
 
