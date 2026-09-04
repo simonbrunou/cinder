@@ -68,8 +68,11 @@ with sync_playwright() as playwright:
 
     page.get_by_role("link", name="Dashboard", exact=True).click()
     expect(page).to_have_url(re.compile(r"/dashboard$"))
-    expect(page.locator("#dashboard-health")).to_be_visible()
     wait_for_liveview(page)
+    # Dashboard health list is rendered only after Health.check_all/0 completes. The health probes
+    # run serially via HTTP with 3s connect + 3s receive timeouts each; realistic CI scenario has
+    # ~13s (TMDB + OpenLibrary only; other services default to unreachable localhost).
+    expect(page.locator("#dashboard-health")).to_be_visible(timeout=35_000)
 
     if SCREENSHOT_DIR:
         output = Path(SCREENSHOT_DIR)
