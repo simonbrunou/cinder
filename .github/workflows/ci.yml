@@ -44,11 +44,13 @@ jobs:
       #
       # #396: a flake sighting's failure detail is otherwise lost — a local `mix test --failed`
       # rerun can pass and clear the manifest before anyone captures the diff. `tee` keeps the
-      # full output on disk regardless of exit status (GitHub Actions' default `bash -eo
-      # pipefail` for `run:` steps makes this step still fail/succeed on mix test's own exit
-      # code, not tee's), and the always()-gated upload below preserves it as a downloadable
-      # artifact past whatever the job log's own retention does.
-      - run: mix test 2>&1 | tee mix-test-output.log
+      # full output on disk regardless of exit status. We set `shell: bash` explicitly so GitHub
+      # Actions applies `-o pipefail`, ensuring this step fails/succeeds on mix test's own exit
+      # code, not tee's. The default shell (bash -e) lacks pipefail, which would mask failures.
+      # The upload below preserves it as a downloadable artifact past whatever the job log's own
+      # retention does.
+      - shell: bash
+        run: mix test 2>&1 | tee mix-test-output.log
 
       - name: Upload mix test output
         if: always()
