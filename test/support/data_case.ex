@@ -29,33 +29,6 @@ defmodule Cinder.DataCase do
     end
   end
 
-  # Every project Mox mock, kept in sync with the `Mox.defmock/2` calls in
-  # test/test_helper.exs — see the comment in `setup/1` below for why each one needs a touch
-  # here, not just the two download client mocks.
-  @mox_mocks [
-    Cinder.Catalog.TMDBMock,
-    Cinder.Acquisition.IndexerMock,
-    Cinder.Download.ClientMock,
-    Cinder.Download.SabnzbdClientMock,
-    Cinder.Library.MediaServerMock,
-    Cinder.Library.AudiobookServerMock,
-    Cinder.Library.MigrationSourceMock,
-    Cinder.Library.RadarrMigrationSourceMock,
-    Cinder.Library.SonarrMigrationSourceMock,
-    Cinder.Library.ReadarrMigrationSourceMock,
-    Cinder.Accounts.PlexAuthMock,
-    Cinder.Accounts.JellyfinAuthMock,
-    Cinder.Accounts.OIDCMock,
-    Cinder.Library.FilesystemMock,
-    Cinder.Library.MediaInfoMock,
-    Cinder.Library.AudioProbeMock,
-    Cinder.Books.PrimaryMetadataMock,
-    Cinder.Books.SecondaryMetadataMock,
-    Cinder.Subtitles.ProviderMock,
-    Cinder.Subtitles.TranslatorMock,
-    Cinder.Subtitles.Sync.EngineMock
-  ]
-
   # Mox's own globally-registered ownership server name (`mox.ex`'s private `@this`), reused
   # deliberately here — see the comment in `setup/1` below.
   @mox_server {:global, Mox.Server}
@@ -101,7 +74,13 @@ defmodule Cinder.DataCase do
     # regress back to `nil`. This changes nothing about per-function dispatch — an
     # unstubbed/unexpected call still raises `Mox.UnexpectedCallError` exactly as before; only
     # the otherwise-invisible presence of the top-level map entry changes.
-    for mock <- @mox_mocks do
+    #
+    # The mock list itself is derived once, in test/test_helper.exs, from
+    # `function_exported?(mod, :__mock_for__, 0)` — the same authoritative test Mox uses
+    # internally to recognize a mock module — and stashed in `:persistent_term` there, so it can
+    # never silently drift out of sync with the project's `Mox.defmock/2` calls the way a
+    # hand-maintained list here could.
+    for mock <- :persistent_term.get({Cinder.DataCase, :mox_mocks}) do
       NimbleOwnership.get_and_update(
         @mox_server,
         self(),

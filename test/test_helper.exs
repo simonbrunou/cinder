@@ -28,3 +28,15 @@ Mox.defmock(Cinder.Books.SecondaryMetadataMock, for: Cinder.Books.Metadata)
 Mox.defmock(Cinder.Subtitles.ProviderMock, for: Cinder.Subtitles.Provider)
 Mox.defmock(Cinder.Subtitles.TranslatorMock, for: Cinder.Subtitles.Translator)
 Mox.defmock(Cinder.Subtitles.Sync.EngineMock, for: Cinder.Subtitles.Sync.Engine)
+
+# `Cinder.DataCase` needs the full set of project mocks to guard against NimbleOwnership's
+# global-mode nil-ownership corruption (see the comment in `test/support/data_case.ex`).
+# Derived here, once, rather than hand-duplicated: `function_exported?(mod, :__mock_for__, 0)`
+# is the same authoritative test `Mox.validate_mock!/1` (mox.ex:870-875) uses to recognize a
+# mock module, so this can never silently drift from the `Mox.defmock/2` calls above.
+mox_mocks =
+  for {mod, _file} <- :code.all_loaded(),
+      function_exported?(mod, :__mock_for__, 0),
+      do: mod
+
+:persistent_term.put({Cinder.DataCase, :mox_mocks}, mox_mocks)
