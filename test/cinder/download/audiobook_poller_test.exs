@@ -13,7 +13,7 @@ defmodule Cinder.Download.AudiobookPollerTest do
   alias Cinder.Books
   alias Cinder.Books.{BookFile, BookGrab}
   alias Cinder.Catalog
-  alias Cinder.Download.BookPoller
+  alias Cinder.Download.{BookPoller, Intent}
   alias Cinder.Library
   alias Cinder.Repo
 
@@ -139,6 +139,68 @@ defmodule Cinder.Download.AudiobookPollerTest do
       assert reloaded.status == :held
       assert reloaded.hold_reason == "mixed_book_filenames"
       assert Repo.all(BookFile) == []
+    end
+  end
+
+  describe "post-import cleanup fencing" do
+    test "a failed post-import client removal survives as a durable cleanup record, and a later pass drains it",
+         ctx do
+      %{downloads: downloads, audiobooks: audiobooks} = real_audiobook_library(ctx.tmp_dir, [])
+
+      saved = Application.get_env(:cinder, :move_on_import, false)
+      Application.put_env(:cinder, :move_on_import, true)
+      on_exit(fn -> Application.put_env(:cinder, :move_on_import, saved) end)
+
+      release_dir = Path.join(downloads, "release-nzo-audiobook")
+      File.mkdir_p!(release_dir)
+      File.write!(Path.join(release_dir, "The Dispossessed.m4b"), m4b_bytes())
+
+      profile = audiobook_profile(audiobooks)
+      work = work_fixture("The Dispossessed", "Ursula K. Le Guin")
+      {:ok, target} = Books.monitor_target(work, :audiobook, profile)
+
+      {:ok, _grab} =
+        Books.Grabs.create(target.id, "nzo-audiobook", :usenet, "The Dispossessed Audiobook")
+
+      expect(Cinder.Download.SabnzbdClientMock, :status, fn "nzo-audiobook" ->
+        {:ok, %{state: :completed, progress: 1.0, content_path: release_dir}}
+      end)
+
+      # #502: the immediate best-effort removal fails transiently (client restarting, an API
+      # timeout) — the exact failure the durable record has to survive.
+      expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-audiobook", _opts ->
+        {:error, :timeout}
+      end)
+
+      poll!()
+
+      target = Repo.reload!(target)
+      assert target.status == :available
+      file = Repo.get_by!(BookFile, book_target_id: target.id)
+      assert File.exists?(file.path)
+
+      # The grab is gone (fenced-then-deleted in one transaction) — same outcome as before the fix.
+      assert Repo.all(BookGrab) == []
+
+      # A durable download_intents row now survives the failed removal, carrying exactly what a
+      # retry needs: the remote id and protocol the deleted grab used to be the sole owner of.
+      intent = Repo.get_by!(Intent, kind: :book_target, target_id: target.id)
+      assert intent.status == :cleanup_pending
+      assert intent.remote_id == "nzo-audiobook"
+      assert intent.protocol == :usenet
+
+      # Simulate the bounded retry becoming due — BookPoller reconciles pending intents every
+      # tick, but a failed attempt backs off rather than retrying immediately.
+      intent |> Ecto.Changeset.change(next_attempt_at: nil) |> Repo.update!()
+
+      # The later pass succeeds: the remote job is actually removed this time.
+      expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-audiobook", _opts -> :ok end)
+
+      poll!()
+
+      refute Repo.get(Intent, intent.id)
+      # Draining the cleanup record is not itself a target-state change.
+      assert Repo.reload!(target).status == :available
     end
   end
 

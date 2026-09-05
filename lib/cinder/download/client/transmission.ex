@@ -213,7 +213,10 @@ defmodule Cinder.Download.Client.Transmission do
     }
   end
 
-  defp classify(%{"error" => error}) when is_integer(error) and error != 0, do: :error
+  # Transmission's `error` field distinguishes activity-independent local failures (3) from
+  # nonfatal tracker diagnostics (1: tracker warning, 2: tracker error) that a healthy torrent
+  # can carry while still downloading or seeding; only a local error is terminal here.
+  defp classify(%{"error" => 3}), do: :error
 
   defp classify(%{"status" => 0, "percentDone" => progress})
        when is_number(progress) and progress < 1,

@@ -426,6 +426,15 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert :not_found = Sabnzbd.find_by_operation_key("missing")
   end
 
+  test "find_by_operation_key/1 propagates a bad API key instead of :not_found" do
+    stub(fn conn ->
+      Req.Test.json(conn, %{"status" => false, "error" => "API Key Incorrect"})
+    end)
+
+    assert {:error, {:sabnzbd_api_error, "API Key Incorrect"}} =
+             Sabnzbd.find_by_operation_key("op-123")
+  end
+
   test "add/1 returns :add_rejected when SABnzbd creates no job (duplicate)" do
     stub_fetch_then_addfile(fn conn ->
       Req.Test.json(conn, %{"status" => true, "nzo_ids" => []})
@@ -623,6 +632,15 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:error, :not_found} = Sabnzbd.status("nzo-1")
   end
 
+  test "status/1 propagates a bad API key instead of :not_found" do
+    stub(fn conn ->
+      assert conn.params["nzo_ids"] == "nzo-1"
+      Req.Test.json(conn, %{"status" => false, "error" => "API Key Incorrect"})
+    end)
+
+    assert {:error, {:sabnzbd_api_error, "API Key Incorrect"}} = Sabnzbd.status("nzo-1")
+  end
+
   test "health/0 pings an auth-checked mode with the api key and returns :ok on success" do
     stub(fn conn ->
       assert conn.request_path == "/api"
@@ -800,6 +818,14 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   test "remove/2 returns an error tuple on a non-2xx status" do
     stub(fn conn -> conn |> Plug.Conn.put_status(500) |> Req.Test.text("boom") end)
     assert {:error, {:sabnzbd_status, 500}} = Sabnzbd.remove("nzo-1", [])
+  end
+
+  test "remove/2 propagates a bad API key instead of :ok" do
+    stub(fn conn ->
+      Req.Test.json(conn, %{"status" => false, "error" => "API Key Incorrect"})
+    end)
+
+    assert {:error, {:sabnzbd_api_error, "API Key Incorrect"}} = Sabnzbd.remove("nzo-1", [])
   end
 
   test "add/1 does not forward the API query key across redirects" do
