@@ -405,7 +405,12 @@ defmodule Cinder.Library.AudiobookSources do
   defp order_by_evidence(tracks) do
     cond do
       Enum.all?(tracks, &(&1.probe && &1.probe.track_tag)) ->
-        order_by_key(tracks, &{&1.probe.disc_tag || 1, &1.probe.track_tag})
+        # Falls back to filename_disc before 1, matching resolved_disc/1's own chain: a probed
+        # set commonly carries a track tag on every file but no disc tag at all (ffprobe/real
+        # rips rarely tag disc for a simple multi-disc set), so the directory-derived evidence
+        # (`CD1`/`CD2`) must still distinguish otherwise-matching track numbers (Codex review on
+        # PR #550) rather than every file collapsing to a fallback disc of 1.
+        order_by_key(tracks, &{&1.probe.disc_tag || &1.filename_disc || 1, &1.probe.track_tag})
 
       Enum.all?(tracks, & &1.filename_track) ->
         order_by_key(tracks, &{&1.filename_disc || 1, &1.filename_track})

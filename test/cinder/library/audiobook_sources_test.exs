@@ -228,6 +228,37 @@ defmodule Cinder.Library.AudiobookSourcesTest do
       assert second.path == t2
       assert second.order_disc == 2
     end
+
+    # Codex review on PR #550: the tag-derived key jumped straight to a fallback disc of 1
+    # whenever probe.disc_tag was nil, ignoring the directory-derived filename_disc evidence
+    # resolved_disc/1 already relies on — so a probed set with a track tag on every file but no
+    # DISC tag (real ffprobe rarely tags disc for a simple rip) falsely collided CD1/01 and
+    # CD2/01 into the same key and refused a genuinely valid multi-disc set.
+    test "a probed multi-disc set with no disc tag falls back to filename disc evidence", %{
+      downloads: downloads
+    } do
+      Application.put_env(:cinder, :audio_probe, Cinder.Library.AudioProbeMock)
+      dir = Path.join(downloads, "Multi")
+      cd1 = Path.join(dir, "CD1")
+      cd2 = Path.join(dir, "CD2")
+      File.mkdir_p!(cd1)
+      File.mkdir_p!(cd2)
+      t1 = Path.join(cd1, "01.mp3")
+      t2 = Path.join(cd2, "01.mp3")
+      File.write!(t1, mp3_bytes())
+      File.write!(t2, mp3_bytes())
+
+      stub(Cinder.Library.AudioProbeMock, :probe, fn
+        ^t1 -> {:ok, probe(track_tag: 1, album_tag: "The Dispossessed")}
+        ^t2 -> {:ok, probe(track_tag: 1, album_tag: "The Dispossessed")}
+      end)
+
+      assert {:ok, [first, second]} = AudiobookSources.resolve(dir)
+      assert first.path == t1
+      assert first.order_disc == 1
+      assert second.path == t2
+      assert second.order_disc == 2
+    end
   end
 
   describe "mixed-book detection" do
