@@ -36,6 +36,8 @@ defmodule CinderWeb.DashboardLiveTest do
     stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)
     stub(Cinder.Library.AudiobookServerMock, :health, fn -> :ok end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
 
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
       {:ok,
