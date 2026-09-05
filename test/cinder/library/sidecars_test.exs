@@ -309,6 +309,39 @@ defmodule Cinder.Library.SidecarsTest do
     end
 
     @tag :tmp_dir
+    test "a concurrent replacement published during reclaim survives untouched", %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "a complete subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_all_links(:eopnotsupp)
+      Application.put_env(:cinder, :exclusive_copy_file_module, TruncatingWriteFile)
+      on_exit(fn -> Application.delete_env(:cinder, :exclusive_copy_file_module) end)
+
+      # Pause right after the truncated destination is atomically grabbed onto its private
+      # quarantine name (freeing the real name) but before its identity is checked and it's
+      # discarded — the exact window another writer could win.
+      barrier(:rename, ".cinder-sidecar-quarantine-")
+
+      task = Task.async(fn -> Sidecars.link(video, dest) end)
+      {pid, ref, _quarantine_path} = await_barrier(:rename)
+
+      File.write!(sidecar_dest, "concurrent replacement")
+      send(pid, {ref, :continue})
+
+      log = capture_log(fn -> assert Task.await(task) == [] end)
+      assert log =~ "sidecar link rejected: :enospc"
+
+      # The reclaim only ever acts on the quarantined copy of *its own* truncated output; the
+      # file that took over the real name in the interim is never inspected or removed.
+      assert File.read!(sidecar_dest) == "concurrent replacement"
+    end
+
+    @tag :tmp_dir
     test "copy fallback preserves a sidecar created before landing", %{tmp_dir: tmp} do
       %{release: release, movies: movies} = configure_real_roots(tmp)
       video = Path.join(release, "Movie.mkv")

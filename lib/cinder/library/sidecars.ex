@@ -185,8 +185,17 @@ defmodule Cinder.Library.Sidecars do
   # recovers it via its durable journal, since a live inode swap between our failed copy and any
   # cleanup can never be told apart from a legitimate concurrent replacement without one. Sidecars
   # have no journal, so instead we capture the identity `cp_exclusive` handed us at creation and,
-  # on failure, remove the file only if it still names that exact inode — proven ours, never a
-  # pre-existing or since-replaced file — so a retry can publish the complete temp.
+  # on failure, reclaim only the file that still names that exact inode.
+  #
+  # POSIX has no atomic "unlink only if this path still names this inode" operation, so checking
+  # identity by path and then unlinking by the same path leaves a window a concurrent pathname
+  # replacement could win — the exact race `Filesystem.Disk.finish_exclusive_copy/2` documents
+  # avoiding for the journaled video path. Sidecars close it instead: `dest` is atomically
+  # `rename`d to an unguessable, dedicated quarantine name first (nothing else can be racing
+  # against a name nobody else knows), and only *then* is its identity compared against what
+  # `cp_exclusive` told us it had just created. A match is provably ours and is discarded from
+  # the now-private name; anything else — a genuinely concurrent replacement — is renamed back to
+  # `dest`, restoring whatever was really there.
   defp copy_exclusive(tmp, dest, root) do
     key = {__MODULE__, :landed_stat, make_ref()}
 
@@ -209,15 +218,54 @@ defmodule Cinder.Library.Sidecars do
   defp reclaim_owned_partial(_dest, _root, nil), do: :ok
 
   defp reclaim_owned_partial(dest, root, identity) do
-    case fs().lstat(dest) do
+    quarantine_name =
+      Path.join(
+        Path.dirname(dest),
+        ".cinder-sidecar-quarantine-#{System.unique_integer([:positive])}"
+      )
+
+    case safe_destination(quarantine_name, root) do
+      {:ok, quarantine} ->
+        quarantine_owned_partial(dest, quarantine, root, identity)
+
+      {:error, reason} ->
+        Logger.warning("sidecar reclaim rejected for #{dest}: #{inspect(reason)}")
+    end
+  end
+
+  defp quarantine_owned_partial(dest, quarantine, root, identity) do
+    case fs().rename(dest, quarantine) do
+      :ok ->
+        resolve_quarantined_partial(dest, quarantine, root, identity)
+
+      {:error, :enoent} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("sidecar reclaim rejected for #{dest}: #{inspect(reason)}")
+    end
+  end
+
+  defp resolve_quarantined_partial(dest, quarantine, root, identity) do
+    case fs().lstat(quarantine) do
       {:ok, %{major_device: device, inode: inode}} when {device, inode} == identity ->
-        case safe_remove(dest, root) do
+        case safe_remove(quarantine, root) do
           :ok -> :ok
-          error -> Logger.warning("sidecar reclaim failed for #{dest}: #{inspect(error)}")
+          error -> Logger.warning("sidecar reclaim failed for #{quarantine}: #{inspect(error)}")
         end
 
       _ ->
+        restore_quarantined_partial(dest, quarantine)
+    end
+  end
+
+  defp restore_quarantined_partial(dest, quarantine) do
+    case fs().rename(quarantine, dest) do
+      :ok ->
         :ok
+
+      {:error, reason} ->
+        Logger.warning("sidecar reclaim restore failed for #{dest}: #{inspect(reason)}")
     end
   end
 
