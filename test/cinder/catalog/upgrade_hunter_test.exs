@@ -809,6 +809,66 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     end
   end
 
+  # #520: adoption (filesystem/Radarr/Sonarr scan, or migration) leaves `imported_resolution`,
+  # `imported_size`, `imported_source` and `imported_language` all nil even though the row holds a
+  # real file. `Upgrade.candidate?/4`'s nil-baseline shortcut used to treat that as "no established
+  # quality, so anything is an upgrade" — the same nil-baseline rule that is legitimately correct
+  # for `better?/5` at import, where nil genuinely means "no file yet". Every candidate?/4 caller
+  # here already restricts to rows that DO hold a file, so an adopted 2160p movie/episode with a
+  # nil baseline must not lose its real file to a lower-quality automatic offer.
+  describe "an adopted quality baseline is never assumed (#520)" do
+    test "a lower-quality offer does not replace an adopted movie with no recorded quality" do
+      movie =
+        movie_fixture(%{
+          title: "Adopted",
+          imdb_id: "tt9999001",
+          status: :available,
+          file_path: "/lib/Adopted/Adopted.mkv"
+        })
+
+      refute movie.imported_resolution
+      watch_grabs()
+
+      # A real 720p release: an upgrade over nothing, but not over the 2160p file this row
+      # actually holds — the bug was that the nil baseline hid that fact entirely.
+      indexer_offers("tt9999001", [release("Adopted.2010.720p.WEBDL-GRP")])
+
+      poll()
+
+      refute_grabbed()
+
+      reloaded = Repo.get!(Movie, movie.id)
+      assert reloaded.status == :available
+      assert reloaded.file_path == "/lib/Adopted/Adopted.mkv"
+    end
+
+    test "a lower-quality offer does not replace an adopted episode with no recorded quality" do
+      series = series_fixture(%{tvdb_id: 8001, title: "Adopted Show", monitor_strategy: :all})
+      season = season_fixture(series)
+
+      episode =
+        episode_fixture(season, %{
+          episode_number: 1,
+          file_path: "/lib/Adopted Show/S01E01.mkv"
+        })
+
+      refute episode.imported_resolution
+      watch_grabs()
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 8001, "Adopted Show", 1 ->
+        {:ok, [release("Adopted.Show.S01E01.720p.WEBDL-GRP")]}
+      end)
+
+      poll()
+
+      refute_grabbed()
+
+      reloaded = Repo.get!(Episode, episode.id)
+      assert reloaded.grab_id == nil
+      assert reloaded.file_path == "/lib/Adopted Show/S01E01.mkv"
+    end
+  end
+
   # #356: the wanted-episode query already restricts Anime Season 0 to classified
   # story-special/recap episodes (`episode_kind_wanted?/3`). The upgrade hunter's anime path
   # reaches held episodes through `holdings/0` (monitored + file + no grab), which carries no
