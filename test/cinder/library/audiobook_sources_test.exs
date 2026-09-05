@@ -169,6 +169,65 @@ defmodule Cinder.Library.AudiobookSourcesTest do
       assert second.path == t2
       assert second.order_disc == 2
     end
+
+    # #505: order_by_evidence/1 sorted by (disc, track) but never checked uniqueness — two
+    # distinct files reducing to the same position (no disc evidence, same filename-embedded
+    # track number) both passed through, with filesystem walk order silently deciding which one
+    # became "01" versus "02".
+    test "filename-derived duplicate track positions are refused, not silently ordered", %{
+      downloads: downloads
+    } do
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(Path.join(dir, "A"))
+      File.mkdir_p!(Path.join(dir, "B"))
+      File.write!(Path.join(dir, "A/01 - One Book.mp3"), mp3_bytes())
+      File.write!(Path.join(dir, "B/01 - One Book.mp3"), mp3_bytes())
+
+      assert {:error, :track_order_contradictory} = AudiobookSources.resolve(dir)
+    end
+
+    # Same gap, embedded-tag evidence instead of filename evidence.
+    test "tag-derived duplicate track positions are refused, not silently ordered", %{
+      downloads: downloads
+    } do
+      Application.put_env(:cinder, :audio_probe, Cinder.Library.AudioProbeMock)
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(Path.join(dir, "A"))
+      File.mkdir_p!(Path.join(dir, "B"))
+      a = Path.join(dir, "A/Recording.mp3")
+      b = Path.join(dir, "B/Recording.mp3")
+      File.write!(a, mp3_bytes())
+      File.write!(b, mp3_bytes())
+
+      stub(Cinder.Library.AudioProbeMock, :probe, fn
+        ^a -> {:ok, probe(track_tag: 1, album_tag: "The Dispossessed")}
+        ^b -> {:ok, probe(track_tag: 1, album_tag: "The Dispossessed")}
+      end)
+
+      assert {:error, :track_order_contradictory} = AudiobookSources.resolve(dir)
+    end
+
+    # The disc digit must genuinely participate in the uniqueness check, not just happen to
+    # differ in every other test — same track number "01" on two distinct discs stays valid.
+    test "matching track numbers on genuinely different discs remain valid", %{
+      downloads: downloads
+    } do
+      dir = Path.join(downloads, "Multi")
+      cd1 = Path.join(dir, "CD1")
+      cd2 = Path.join(dir, "CD2")
+      File.mkdir_p!(cd1)
+      File.mkdir_p!(cd2)
+      t1 = Path.join(cd1, "01.mp3")
+      t2 = Path.join(cd2, "01.mp3")
+      File.write!(t1, mp3_bytes())
+      File.write!(t2, mp3_bytes())
+
+      assert {:ok, [first, second]} = AudiobookSources.resolve(dir)
+      assert first.path == t1
+      assert first.order_disc == 1
+      assert second.path == t2
+      assert second.order_disc == 2
+    end
   end
 
   describe "mixed-book detection" do

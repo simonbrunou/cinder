@@ -405,13 +405,30 @@ defmodule Cinder.Library.AudiobookSources do
   defp order_by_evidence(tracks) do
     cond do
       Enum.all?(tracks, &(&1.probe && &1.probe.track_tag)) ->
-        {:ok, Enum.sort_by(tracks, &{&1.probe.disc_tag || 1, &1.probe.track_tag})}
+        order_by_key(tracks, &{&1.probe.disc_tag || 1, &1.probe.track_tag})
 
       Enum.all?(tracks, & &1.filename_track) ->
-        {:ok, Enum.sort_by(tracks, &{&1.filename_disc || 1, &1.filename_track})}
+        order_by_key(tracks, &{&1.filename_disc || 1, &1.filename_track})
 
       true ->
         {:error, :track_order_unknown}
+    end
+  end
+
+  # #505: sorting by (disc, track) alone never proved every distinct file reduced to a distinct
+  # key — two files with no disc evidence and the same filename-embedded (or tagged) track
+  # number both passed through, with `Enum.sort_by/2`'s stable order (i.e. the filesystem walk
+  # order) silently deciding which became "01" versus "02". Refused instead, the same way a
+  # tag/filename contradiction on one file already is: the ordering evidence does not identify a
+  # unique position for every candidate, so it cannot be trusted for any of them. Independent of
+  # walk order — `Enum.uniq/1`'s result does not depend on input order.
+  defp order_by_key(tracks, key_fun) do
+    keys = Enum.map(tracks, key_fun)
+
+    if length(Enum.uniq(keys)) == length(keys) do
+      {:ok, Enum.sort_by(tracks, key_fun)}
+    else
+      {:error, :track_order_contradictory}
     end
   end
 
