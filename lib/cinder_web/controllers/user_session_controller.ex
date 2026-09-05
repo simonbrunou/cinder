@@ -108,14 +108,14 @@ defmodule CinderWeb.UserSessionController do
 
   # Renders the changeset's own validation messages (min length, confirmation mismatch, etc.)
   # instead of a canned string that may not match why this particular submission failed.
+  # Routed through the same CoreComponents.translate_error/1 every form error uses (the
+  # "errors" gettext domain, with %{count} plural handling) — a hand-rolled %{...}
+  # interpolation here would silently skip localization and leak raw English into a
+  # gettext-translated flash.
   defp password_update_error_message(changeset) do
     errors =
       changeset
-      |> Ecto.Changeset.traverse_errors(fn {msg, opts} ->
-        Regex.replace(~r"%{(\w+)}", msg, fn _, key ->
-          opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
-        end)
-      end)
+      |> Ecto.Changeset.traverse_errors(&CinderWeb.CoreComponents.translate_error/1)
       |> Map.take([:password, :password_confirmation])
       |> Map.values()
       |> List.flatten()
