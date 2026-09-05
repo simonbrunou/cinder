@@ -3174,14 +3174,14 @@ msgstr ""
 msgid "%{ago} ago"
 msgstr "il y a %{ago}"
 
-#: lib/cinder_web/live/activity_beacon_live.ex:159
-#: lib/cinder_web/live/activity_beacon_live.ex:179
+#: lib/cinder_web/live/activity_beacon_live.ex:162
+#: lib/cinder_web/live/activity_beacon_live.ex:182
 #, elixir-autogen
 msgid "%{count} active"
 msgstr "%{count} en cours"
 
 #: lib/cinder_web/components/layouts.ex:143
-#: lib/cinder_web/live/activity_beacon_live.ex:160
+#: lib/cinder_web/live/activity_beacon_live.ex:163
 #, elixir-autogen
 msgid "%{count} need attention"
 msgstr "%{count} à traiter"
@@ -3201,7 +3201,7 @@ msgstr "%{n} h"
 msgid "%{n}m"
 msgstr "%{n} min"
 
-#: lib/cinder_web/live/activity_beacon_live.ex:138
+#: lib/cinder_web/live/activity_beacon_live.ex:141
 #, elixir-autogen
 msgid "A download needs attention."
 msgstr "Un téléchargement requiert votre attention."
@@ -3228,7 +3228,7 @@ msgstr ""
 "Aucune version ne correspond encore à vos règles de taille/qualité. Ouvrez "
 "sa page pour réessayer ou ajuster."
 
-#: lib/cinder_web/live/activity_beacon_live.ex:164
+#: lib/cinder_web/live/activity_beacon_live.ex:167
 #, elixir-autogen
 msgid "Pipeline: %{summary}"
 msgstr "Pipeline : %{summary}"
@@ -3272,12 +3272,12 @@ msgstr "pas encore"
 msgid "on schedule"
 msgstr "planifié"
 
-#: lib/cinder_web/live/activity_beacon_live.ex:117
+#: lib/cinder_web/live/activity_beacon_live.ex:120
 #, elixir-autogen
 msgid "“%{title}” is now available."
 msgstr "« %{title} » est maintenant disponible."
 
-#: lib/cinder_web/live/activity_beacon_live.ex:123
+#: lib/cinder_web/live/activity_beacon_live.ex:126
 #, elixir-autogen
 msgid "“%{title}” needs attention."
 msgstr "« %{title} » requiert votre attention."
