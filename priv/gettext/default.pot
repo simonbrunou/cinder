@@ -645,7 +645,7 @@ msgstr ""
 msgid "Log out"
 msgstr ""
 
-#: lib/cinder_web/controllers/user_session_controller.ex:105
+#: lib/cinder_web/controllers/user_session_controller.ex:111
 #, elixir-autogen
 msgid "Logged out successfully."
 msgstr ""
@@ -1336,8 +1336,8 @@ msgstr ""
 msgid "You must log in to access this page."
 msgstr ""
 
-#: lib/cinder_web/controllers/user_session_controller.ex:98
-#: lib/cinder_web/controllers/user_session_controller.ex:141
+#: lib/cinder_web/controllers/user_session_controller.ex:104
+#: lib/cinder_web/controllers/user_session_controller.ex:147
 #: lib/cinder_web/live/user_live/settings.ex:483
 #: lib/cinder_web/user_auth.ex:289
 #, elixir-autogen
@@ -4172,18 +4172,18 @@ msgstr ""
 msgid "Permanently delete your account? This cannot be undone."
 msgstr ""
 
-#: lib/cinder_web/controllers/user_session_controller.ex:126
-#: lib/cinder_web/controllers/user_session_controller.ex:149
+#: lib/cinder_web/controllers/user_session_controller.ex:132
+#: lib/cinder_web/controllers/user_session_controller.ex:155
 #, elixir-autogen
 msgid "The password you entered is incorrect."
 msgstr ""
 
-#: lib/cinder_web/controllers/user_session_controller.ex:133
+#: lib/cinder_web/controllers/user_session_controller.ex:139
 #, elixir-autogen
 msgid "You are the last admin. Grant another user admin before deleting your account."
 msgstr ""
 
-#: lib/cinder_web/controllers/user_session_controller.ex:121
+#: lib/cinder_web/controllers/user_session_controller.ex:127
 #, elixir-autogen
 msgid "Your account has been permanently deleted."
 msgstr ""
@@ -7035,4 +7035,9 @@ msgstr ""
 #: lib/cinder_web/live/subtitle_sync_live.ex:105
 #, elixir-autogen, elixir-format
 msgid "The original subtitle was restored, but this item changed while it was being written. Reloading current items."
+msgstr ""
+
+#: lib/cinder_web/controllers/user_session_controller.ex:99
+#, elixir-autogen, elixir-format
+msgid "Password update failed. Password must be at least 12 characters."
 msgstr ""

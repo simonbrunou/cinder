@@ -331,6 +331,34 @@ defmodule CinderWeb.UserSessionControllerTest do
       assert redirected_to(conn) == ~p"/users/log-in"
       assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "re-authenticate"
     end
+
+    test "handles invalid password during update-password gracefully", %{
+      conn: conn,
+      user: user
+    } do
+      user = set_password(user)
+      original_hashed = user.hashed_password
+
+      conn =
+        conn
+        |> log_in_user(user)
+        |> post(~p"/users/update-password", %{
+          "user" => %{
+            "password" => "short",
+            "password_confirmation" => "short"
+          }
+        })
+
+      # Should not crash with 500, should redirect back to settings
+      assert redirected_to(conn) == ~p"/users/settings"
+      # Should have an error flash about password validation
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) != nil
+      # Session should still be valid
+      assert get_session(conn, :user_token)
+      # Password should not have changed
+      fresh_user = Cinder.Repo.get(Cinder.Accounts.User, user.id)
+      assert fresh_user.hashed_password == original_hashed
+    end
   end
 
   describe "POST /users/delete-account" do
