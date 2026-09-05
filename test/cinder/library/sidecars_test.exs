@@ -7,6 +7,39 @@ defmodule Cinder.Library.SidecarsTest do
   alias Cinder.Library.FilesystemMock
   alias Cinder.Library.Sidecars
 
+  # Models a mid-stream write failure during `cp_exclusive`'s exclusive-copy fallback: the
+  # first three bytes reach disk, then the write reports `:enospc` — the exact byte-level fault
+  # from issue #515, distinct from `write` failing outright before any bytes land.
+  defmodule TruncatingWriteFile do
+    @moduledoc false
+
+    def open(path, modes) do
+      case :file.open(path, modes) do
+        {:ok, io} = opened ->
+          if :write in modes, do: Process.put({__MODULE__, :output}, io)
+          opened
+
+        error ->
+          error
+      end
+    end
+
+    defdelegate read(io, count), to: :file
+    defdelegate read_file_info(io), to: :file
+    defdelegate close(io), to: :file
+
+    def write(io, bytes) do
+      if io == Process.get({__MODULE__, :output}) do
+        Process.delete({__MODULE__, :output})
+        truncated = binary_part(IO.iodata_to_binary(bytes), 0, 3)
+        :ok = :file.write(io, truncated)
+        {:error, :enospc}
+      else
+        :file.write(io, bytes)
+      end
+    end
+  end
+
   test "language/1 maps filename tokens to iso codes; flags ignored; unknown -> und" do
     assert Sidecars.language("Movie (2020).en.srt") == "en"
     assert Sidecars.language("Movie (2020).eng.forced.srt") == "en"
@@ -242,6 +275,70 @@ defmodule Cinder.Library.SidecarsTest do
       # a truncated .srt that later imports would :eexist-skip forever.
       assert File.read!(sidecar_dest) == "manual"
       assert Path.wildcard(Path.join(Path.dirname(sidecar_dest), ".cinder-tmp-*")) == []
+    end
+
+    @tag :tmp_dir
+    test "a byte-truncating exclusive-copy failure reclaims its own partial file so a retry can land it",
+         %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "a complete subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_all_links(:eopnotsupp)
+      Application.put_env(:cinder, :exclusive_copy_file_module, TruncatingWriteFile)
+      on_exit(fn -> Application.delete_env(:cinder, :exclusive_copy_file_module) end)
+
+      # The destination did not exist before this call: `cp_exclusive` creates it, then a
+      # write partway through the stream leaves only "a c" on disk — a truncated destination,
+      # not a pre-existing one.
+      log = capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+      assert log =~ "sidecar link rejected: :enospc"
+
+      # A failed landing never leaves a truncated .srt that a later retry would :eexist-skip
+      # forever — the file `cp_exclusive` just created is reclaimed because it's provably ours.
+      refute File.exists?(sidecar_dest)
+      assert Path.wildcard(Path.join(Path.dirname(sidecar_dest), ".cinder-tmp-*")) == []
+
+      Application.put_env(:cinder, :exclusive_copy_file_module, :file)
+      assert Sidecars.link(video, dest) == ["en"]
+      assert File.read!(sidecar_dest) == "a complete subtitle"
+    end
+
+    @tag :tmp_dir
+    test "a concurrent replacement published during reclaim survives untouched", %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "a complete subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_all_links(:eopnotsupp)
+      Application.put_env(:cinder, :exclusive_copy_file_module, TruncatingWriteFile)
+      on_exit(fn -> Application.delete_env(:cinder, :exclusive_copy_file_module) end)
+
+      # Pause right after the truncated destination is atomically grabbed onto its private
+      # quarantine name (freeing the real name) but before its identity is checked and it's
+      # discarded — the exact window another writer could win.
+      barrier(:rename, ".cinder-sidecar-quarantine-")
+
+      task = Task.async(fn -> Sidecars.link(video, dest) end)
+      {pid, ref, _quarantine_path} = await_barrier(:rename)
+
+      File.write!(sidecar_dest, "concurrent replacement")
+      send(pid, {ref, :continue})
+
+      log = capture_log(fn -> assert Task.await(task) == [] end)
+      assert log =~ "sidecar link rejected: :enospc"
+
+      # The reclaim only ever acts on the quarantined copy of *its own* truncated output; the
+      # file that took over the real name in the interim is never inspected or removed.
+      assert File.read!(sidecar_dest) == "concurrent replacement"
     end
 
     @tag :tmp_dir
