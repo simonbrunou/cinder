@@ -282,4 +282,99 @@ defmodule CinderWeb.BookManualSearchComponentTest do
 
     assert exit_socket.assigns.state == :error
   end
+
+  # #495: the accepted/rejected partition was scored against the OLD preferred_language and must
+  # never survive a language change while the panel stays open — mirrors
+  # ManualSearchComponentTest's own "a metadata refresh that moves the resolved audio target
+  # restarts the search" unit test of `update/2` directly, no host LiveView needed.
+  test "a target language change invalidates the loaded accepted/rejected partition" do
+    target = fn language ->
+      %BookTarget{id: 1, media_kind: :ebook, status: :monitored, preferred_language: language}
+    end
+
+    work = %{title: "Title", authors: ["Author"]}
+
+    loaded = %Socket{
+      assigns: %{
+        __changed__: %{},
+        id: "ms",
+        target: target.("en"),
+        work: work,
+        state: :loaded,
+        results: %{
+          accepted: [{release("Old English Release"), evidence()}],
+          rejected: [{release("Old Rejected"), :language_mismatch}],
+          complete?: true
+        }
+      }
+    }
+
+    assert {:ok, updated} =
+             BookManualSearchComponent.update(
+               %{id: "ms", target: target.("fr"), work: work},
+               loaded
+             )
+
+    assert updated.assigns.state == :loading
+    assert updated.assigns.results == %{accepted: [], rejected: [], complete?: true}
+  end
+
+  test "an unrelated re-render (same language) keeps the loaded results as they are" do
+    target = %BookTarget{id: 1, media_kind: :ebook, status: :monitored, preferred_language: "en"}
+    work = %{title: "Title", authors: ["Author"]}
+    results = %{accepted: [{release("Kept Release"), evidence()}], rejected: [], complete?: true}
+
+    loaded = %Socket{
+      assigns: %{
+        __changed__: %{},
+        id: "ms",
+        target: target,
+        work: work,
+        state: :loaded,
+        results: results
+      }
+    }
+
+    assert {:ok, updated} =
+             BookManualSearchComponent.update(%{id: "ms", target: target, work: work}, loaded)
+
+    assert updated.assigns.state == :loaded
+    assert updated.assigns.results == results
+  end
+
+  # A delayed pre-change search task completing AFTER a language change must not land: covered at
+  # the Phoenix.LiveView.Async level (its own ref-tracking drops a result whose ref no longer
+  # matches the socket's current one for a key — see `Phoenix.LiveView.Async.prune_current_async/3`
+  # and the comment on `context_changed?` in the component itself), so `handle_async/3` firing with
+  # the component's OWN stale-context assigns still in place (as it would if delivered) must not
+  # be reachable in practice; this test instead pins the precondition that makes the drop happen:
+  # a language change always assigns a fresh `:search_context`, which is exactly what changes the
+  # tracked async ref on the next `start_search/1` call.
+  test "a language change always assigns a fresh search_context, invalidating the async ref lookup" do
+    target = fn language ->
+      %BookTarget{id: 1, media_kind: :ebook, status: :monitored, preferred_language: language}
+    end
+
+    work = %{title: "Title", authors: ["Author"]}
+
+    loaded = %Socket{
+      assigns: %{
+        __changed__: %{},
+        id: "ms",
+        target: target.("en"),
+        work: work,
+        state: :loaded,
+        results: %{accepted: [], rejected: [], complete?: true},
+        search_context: {1, "en"}
+      }
+    }
+
+    assert {:ok, updated} =
+             BookManualSearchComponent.update(
+               %{id: "ms", target: target.("fr"), work: work},
+               loaded
+             )
+
+    assert updated.assigns.search_context == {1, "fr"}
+  end
 end

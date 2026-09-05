@@ -317,4 +317,71 @@ defmodule CinderWeb.AudiobookManualSearchComponentTest do
 
     assert exit_socket.assigns.state == :error
   end
+
+  # #495: mirrors BookManualSearchComponentTest's own coverage — this module is that component's
+  # verbatim-copied sibling (see the moduledoc), so the same context-invalidation bug and fix
+  # apply here identically.
+  test "a target language change invalidates the loaded accepted/rejected partition" do
+    target = fn language ->
+      %BookTarget{id: 1, media_kind: :audiobook, status: :monitored, preferred_language: language}
+    end
+
+    work = %{title: "Title", authors: ["Author"]}
+
+    loaded = %Socket{
+      assigns: %{
+        __changed__: %{},
+        id: "ms",
+        target: target.("en"),
+        work: work,
+        state: :loaded,
+        results: %{
+          accepted: [{release("Old English Release"), evidence()}],
+          rejected: [{release("Old Rejected"), :language_mismatch}],
+          complete?: true
+        }
+      }
+    }
+
+    assert {:ok, updated} =
+             AudiobookManualSearchComponent.update(
+               %{id: "ms", target: target.("fr"), work: work},
+               loaded
+             )
+
+    assert updated.assigns.state == :loading
+    assert updated.assigns.results == %{accepted: [], rejected: [], complete?: true}
+  end
+
+  test "an unrelated re-render (same language) keeps the loaded results as they are" do
+    target = %BookTarget{
+      id: 1,
+      media_kind: :audiobook,
+      status: :monitored,
+      preferred_language: "en"
+    }
+
+    work = %{title: "Title", authors: ["Author"]}
+    results = %{accepted: [{release("Kept Release"), evidence()}], rejected: [], complete?: true}
+
+    loaded = %Socket{
+      assigns: %{
+        __changed__: %{},
+        id: "ms",
+        target: target,
+        work: work,
+        state: :loaded,
+        results: results
+      }
+    }
+
+    assert {:ok, updated} =
+             AudiobookManualSearchComponent.update(
+               %{id: "ms", target: target, work: work},
+               loaded
+             )
+
+    assert updated.assigns.state == :loaded
+    assert updated.assigns.results == results
+  end
 end
