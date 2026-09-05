@@ -248,6 +248,15 @@ defmodule Cinder.Library.AudiobookSourcesTest do
       assert {:error, :unsafe_source} = AudiobookSources.resolve(dir)
     end
 
+    test "an AIFF-C (.aifc) sibling is refused the same way", %{downloads: downloads} do
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "01 - One Book.mp3"), mp3_bytes())
+      File.write!(Path.join(dir, "02 - One Book.aifc"), "aifc bytes")
+
+      assert {:error, :unsafe_source} = AudiobookSources.resolve(dir)
+    end
+
     test "a renamed executable at .mp3 is refused by the magic-byte gate", %{
       downloads: downloads
     } do
