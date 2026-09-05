@@ -35,6 +35,9 @@ msgstr "est réservé"
 msgid "does not match confirmation"
 msgstr "ne correspond pas à la confirmation"
 
+msgid "does not match password"
+msgstr "ne correspond pas au mot de passe"
+
 msgid "is still associated with this entry"
 msgstr "est toujours associé à cette entrée"
 
