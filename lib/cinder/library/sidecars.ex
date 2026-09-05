@@ -159,7 +159,7 @@ defmodule Cinder.Library.Sidecars do
              :ok <- fs().cp(src, tmp),
              {:ok, ^tmp} <- safe_destination(tmp, root),
              {:ok, ^dest} <- safe_destination(dest, root),
-             do: land_noreplace(tmp, dest)
+             do: land_noreplace(tmp, dest, root)
 
       _ = safe_remove(tmp, root)
       result
@@ -171,13 +171,53 @@ defmodule Cinder.Library.Sidecars do
   # because the source is the completed temp, not the original: a failed exclusive copy leaves a
   # partial destination only if the destination did not already exist, and the temp it copies from
   # is whole.
-  defp land_noreplace(tmp, dest) do
+  defp land_noreplace(tmp, dest, root) do
     case fs().ln(tmp, dest) do
       {:error, errno} when Library.copy_fallback_errno?(errno) ->
-        fs().cp_exclusive(tmp, dest, fn _stat -> :ok end)
+        copy_exclusive(tmp, dest, root)
 
       result ->
         result
+    end
+  end
+
+  # `cp_exclusive` deliberately retains partial output on failure — Library's primary import path
+  # recovers it via its durable journal, since a live inode swap between our failed copy and any
+  # cleanup can never be told apart from a legitimate concurrent replacement without one. Sidecars
+  # have no journal, so instead we capture the identity `cp_exclusive` handed us at creation and,
+  # on failure, remove the file only if it still names that exact inode — proven ours, never a
+  # pre-existing or since-replaced file — so a retry can publish the complete temp.
+  defp copy_exclusive(tmp, dest, root) do
+    key = {__MODULE__, :landed_stat, make_ref()}
+
+    on_create = fn stat ->
+      Process.put(key, {stat.major_device, stat.inode})
+      :ok
+    end
+
+    case fs().cp_exclusive(tmp, dest, on_create) do
+      :ok ->
+        Process.delete(key)
+        :ok
+
+      error ->
+        reclaim_owned_partial(dest, root, Process.delete(key))
+        error
+    end
+  end
+
+  defp reclaim_owned_partial(_dest, _root, nil), do: :ok
+
+  defp reclaim_owned_partial(dest, root, identity) do
+    case fs().lstat(dest) do
+      {:ok, %{major_device: device, inode: inode}} when {device, inode} == identity ->
+        case safe_remove(dest, root) do
+          :ok -> :ok
+          error -> Logger.warning("sidecar reclaim failed for #{dest}: #{inspect(error)}")
+        end
+
+      _ ->
+        :ok
     end
   end
 
