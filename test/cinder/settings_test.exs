@@ -275,6 +275,30 @@ defmodule Cinder.SettingsTest do
       assert Settings.explicit_import_roots() == nil
     end
 
+    test "save/2 blocks behind a concurrent holder of its own write lock (#489)" do
+      # `config/test.exs` pins the Ecto pool to a single connection under the Sandbox, so
+      # concurrent `Task`s can never race each other's DB writes here — a test that only
+      # runs concurrent `save/2` calls and checks the end state would pass identically with
+      # or without `:global.trans/2` in `save/2` (the interleaving `Settings.save/2` used to
+      # allow can only be forced this way). Take the SAME lock `save/2` acquires out of band
+      # instead, and prove `save/2` cannot proceed until it is released: this pins the
+      # serialization contract the fix actually introduces, and fails immediately if
+      # `:global.trans/2` is ever removed from `save/2`.
+      lock_id = {{Cinder.Settings, :write}, self()}
+      assert :global.set_lock(lock_id, [node()])
+
+      task = Task.async(fn -> Settings.put("import_roots", "/srv/downloads") end)
+
+      # save/2 must be blocked behind the held lock — not a timing hint, a liveness check:
+      # this generous window only needs to be well above one commit+reload's real cost.
+      refute Task.yield(task, 200)
+
+      :global.del_lock(lock_id)
+
+      assert {:ok, :ok} = Task.yield(task, 5_000)
+      assert Settings.explicit_import_roots() == ["/srv/downloads"]
+    end
+
     test "import_roots infers the common root from DB-only-configured library paths on boot" do
       # Regression: apply_import_roots's inferred_import_roots/0 fallback reads the
       # :movies_library_path/:tv_library_path env keys that apply_library_config writes, so it

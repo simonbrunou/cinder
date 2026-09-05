@@ -181,6 +181,112 @@ defmodule Cinder.Download.Client.TransmissionTest do
             }} = Transmission.status(@hash)
   end
 
+  test "status/1 keeps a downloading torrent active despite a tracker warning" do
+    stub_rpc(fn conn, %{"method" => "torrent-get"} ->
+      success(conn, %{
+        "torrents" => [
+          %{
+            "hashString" => @hash,
+            "status" => 4,
+            "percentDone" => 0.4,
+            "rateDownload" => 5000,
+            "eta" => 120,
+            "peersSendingToUs" => 2,
+            "error" => 1,
+            "errorString" => "Tracker warning: bad announce",
+            "downloadDir" => "/downloads",
+            "name" => "Movie"
+          }
+        ]
+      })
+    end)
+
+    assert {:ok, %{state: :downloading, reason: "Tracker warning: bad announce"}} =
+             Transmission.status(@hash)
+  end
+
+  test "status/1 keeps a completed torrent completed despite a tracker error" do
+    stub_rpc(fn conn, %{"method" => "torrent-get"} ->
+      success(conn, %{
+        "torrents" => [
+          %{
+            "hashString" => @hash,
+            "status" => 6,
+            "percentDone" => 1.0,
+            "rateDownload" => 0,
+            "eta" => -1,
+            "peersSendingToUs" => 0,
+            "error" => 2,
+            "errorString" => "Tracker gave an error",
+            "downloadDir" => "/downloads",
+            "name" => "Movie"
+          }
+        ]
+      })
+    end)
+
+    assert {:ok, %{state: :completed, reason: "Tracker gave an error"}} =
+             Transmission.status(@hash)
+  end
+
+  test "status/1 still reports :error for a genuine local error" do
+    stub_rpc(fn conn, %{"method" => "torrent-get"} ->
+      success(conn, %{
+        "torrents" => [
+          %{
+            "hashString" => @hash,
+            "status" => 4,
+            "percentDone" => 0.4,
+            "rateDownload" => 0,
+            "eta" => -1,
+            "peersSendingToUs" => 0,
+            "error" => 3,
+            "errorString" => "No space left on device",
+            "downloadDir" => "/downloads",
+            "name" => "Movie"
+          }
+        ]
+      })
+    end)
+
+    assert {:ok, %{state: :error, reason: "No space left on device"}} =
+             Transmission.status(@hash)
+  end
+
+  test "list_managed/0 reports downloading and completed states despite tracker warnings" do
+    stub_rpc(fn conn, %{"method" => "torrent-get"} ->
+      success(conn, %{
+        "torrents" => [
+          %{
+            "hashString" => @hash,
+            "labels" => ["cinder-op-warn"],
+            "status" => 4,
+            "percentDone" => 0.4,
+            "error" => 1,
+            "uploadRatio" => 0.0,
+            "secondsSeeding" => 0
+          },
+          %{
+            "hashString" => "other",
+            "labels" => ["cinder-op-error"],
+            "status" => 6,
+            "percentDone" => 1.0,
+            "error" => 2,
+            "uploadRatio" => 2.0,
+            "secondsSeeding" => 3600
+          }
+        ]
+      })
+    end)
+
+    assert {:ok, entries} = Transmission.list_managed()
+
+    assert [
+             %{id: @hash, operation_key: "op-warn", state: :downloading},
+             %{id: "other", operation_key: "op-error", state: :completed}
+           ] = entries
+  end
+
   test "files/1 and remove/2 implement the behavior contract" do
     stub_rpc(fn conn, request ->
       case request["method"] do

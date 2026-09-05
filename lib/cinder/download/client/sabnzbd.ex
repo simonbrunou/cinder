@@ -279,8 +279,14 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   defp named_slots(mode, name, extra \\ []) do
     case get([mode: mode, search: name] ++ extra) do
-      {:ok, %{status: 200, body: body}} -> {:ok, matching_named_slots(body, mode, name)}
-      other -> error(other)
+      {:ok, %{status: 200, body: body}} ->
+        case logical_error(body) do
+          nil -> {:ok, matching_named_slots(body, mode, name)}
+          error -> error
+        end
+
+      other ->
+        error(other)
     end
   end
 
@@ -420,6 +426,18 @@ defmodule Cinder.Download.Client.Sabnzbd do
   defp remote_id(%{"nzo_id" => id}) when is_binary(id), do: {:ok, id}
   defp remote_id(_slot), do: {:error, :unexpected_response}
 
+  # SABnzbd surfaces a rejected request (bad/revoked API key, disabled endpoint, malformed
+  # params) as HTTP 200 with `{"status": false, "error": "<message>"}` — indistinguishable by
+  # status code alone from an ordinary empty/no-match result (e.g. a delete of an id SABnzbd
+  # doesn't have, which comes back as bare `{"status": false}`, no message). Only the messaged
+  # form is a real error; every mode-specific parser below checks for it before treating a
+  # missing key/slot as "not found" or "no match".
+  defp logical_error(%{"status" => false, "error" => reason})
+       when is_binary(reason) and reason != "",
+       do: {:error, {:sabnzbd_api_error, reason}}
+
+  defp logical_error(_body), do: nil
+
   @impl true
   def status(nzo_id) do
     case queue_slot(nzo_id) do
@@ -456,21 +474,34 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   defp queue_slot(nzo_id) do
     case get(mode: "queue", nzo_ids: nzo_id) do
-      {:ok, %{status: 200, body: body}} -> {:ok, find_slot(body, "queue", nzo_id)}
-      other -> error(other)
+      {:ok, %{status: 200, body: body}} ->
+        case logical_error(body) do
+          nil -> {:ok, find_slot(body, "queue", nzo_id)}
+          error -> error
+        end
+
+      other ->
+        error(other)
     end
   end
 
   defp history_status(nzo_id) do
     case get(mode: "history", nzo_ids: nzo_id) do
-      {:ok, %{status: 200, body: body}} ->
+      {:ok, %{status: 200, body: body}} -> history_result(body, nzo_id)
+      other -> error(other)
+    end
+  end
+
+  defp history_result(body, nzo_id) do
+    case logical_error(body) do
+      nil ->
         case find_slot(body, "history", nzo_id) do
           nil -> {:error, :not_found}
           slot -> {:ok, classify_history(slot)}
         end
 
-      other ->
-        error(other)
+      error ->
+        error
     end
   end
 
@@ -587,9 +618,17 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   defp delete_in(mode, nzo_id, del) do
     case get(mode: mode, name: "delete", value: nzo_id, del_files: del) do
-      {:ok, %{status: 200, body: %{"status" => false}}} -> :not_deleted
-      {:ok, %{status: status}} when status in 200..299 -> :ok
-      other -> error(other)
+      {:ok, %{status: 200, body: %{"status" => false} = body}} ->
+        case logical_error(body) do
+          nil -> :not_deleted
+          error -> error
+        end
+
+      {:ok, %{status: status}} when status in 200..299 ->
+        :ok
+
+      other ->
+        error(other)
     end
   end
 
