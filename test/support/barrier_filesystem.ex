@@ -67,9 +67,15 @@ defmodule Cinder.Test.BarrierFilesystem do
 
   @impl true
   def lstat(path) do
-    result = Disk.lstat(path)
-    pause(:lstat, path)
-    result
+    case injected_failure(:lstat, path, path) do
+      :ok ->
+        result = Disk.lstat(path)
+        pause(:lstat, path)
+        result
+
+      {:error, _} = error ->
+        error
+    end
   end
 
   @impl true

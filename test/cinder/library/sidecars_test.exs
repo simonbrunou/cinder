@@ -342,6 +342,46 @@ defmodule Cinder.Library.SidecarsTest do
     end
 
     @tag :tmp_dir
+    test "an identity check that fails to stat during reclaim never guesses restore or discard",
+         %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "a complete subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_all_links(:eopnotsupp)
+      Application.put_env(:cinder, :exclusive_copy_file_module, TruncatingWriteFile)
+      on_exit(fn -> Application.delete_env(:cinder, :exclusive_copy_file_module) end)
+
+      # The identity check itself can't be completed (a transient I/O error, say) — this must
+      # neither discard the quarantined file as unowned nor guess it back onto the permanent
+      # name (which would reproduce the original :eexist-forever bug if it really was ours).
+      # The first lstat on the quarantine path is path_policy's own pre-existence check (the
+      # quarantine name genuinely doesn't exist yet at that point, so :enoent there changes
+      # nothing); the second is the reclaim's own identity check, the one this test targets.
+      Application.put_env(:cinder, :filesystem_failures, [
+        %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :enoent},
+        %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :eio}
+      ])
+
+      log = capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+      assert log =~ "sidecar reclaim identity check failed"
+
+      refute File.exists?(sidecar_dest)
+
+      assert [quarantine] =
+               Path.wildcard(
+                 Path.join(Path.dirname(sidecar_dest), ".cinder-sidecar-quarantine-*"),
+                 match_dot: true
+               )
+
+      assert File.read!(quarantine) == "a c"
+    end
+
+    @tag :tmp_dir
     test "copy fallback preserves a sidecar created before landing", %{tmp_dir: tmp} do
       %{release: release, movies: movies} = configure_real_roots(tmp)
       video = Path.join(release, "Movie.mkv")

@@ -254,12 +254,37 @@ defmodule Cinder.Library.Sidecars do
           error -> Logger.warning("sidecar reclaim failed for #{quarantine}: #{inspect(error)}")
         end
 
-      _ ->
+      {:ok, _mismatched_identity} ->
         restore_quarantined_partial(dest, quarantine)
+
+      {:error, reason} ->
+        Logger.warning(
+          "sidecar reclaim identity check failed for #{quarantine}: #{inspect(reason)}"
+        )
     end
   end
 
+  # A genuine identity mismatch means some other file won the name in between our own failed
+  # copy and this reclaim — restoring it is safe only while `dest` is still the free name our
+  # earlier rename left behind. Re-checking immediately before restoring can't make this fully
+  # atomic (no portable no-replace rename exists — see copy_exclusive/3's own comment — and
+  # `dest` is already known to be on a mount without hardlink support, so `ln` can't stand in for
+  # one here), but it closes the window to the single remaining unavoidable gap instead of
+  # unconditionally overwriting whatever a second concurrent writer may have published since.
   defp restore_quarantined_partial(dest, quarantine) do
+    case fs().lstat(dest) do
+      {:error, :enoent} ->
+        rename_quarantine_back(dest, quarantine)
+
+      {:ok, _stat} ->
+        Logger.warning("sidecar reclaim left quarantined for #{dest}: occupied")
+
+      {:error, reason} ->
+        Logger.warning("sidecar reclaim restore check failed for #{dest}: #{inspect(reason)}")
+    end
+  end
+
+  defp rename_quarantine_back(dest, quarantine) do
     case fs().rename(quarantine, dest) do
       :ok ->
         :ok
