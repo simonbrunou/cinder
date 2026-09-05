@@ -912,6 +912,55 @@ defmodule Cinder.LibraryTest do
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
   end
 
+  test "many small split volumes summing bigger than a visible clip still refuse (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      # Ten 900MB volumes (9 GB total) outweigh the 1 GB clip even though no single volume does.
+      volumes =
+        for n <- 1..10, do: {"/dl/X/movie.7z.#{String.pad_leading("#{n}", 3, "0")}", 900_000_000}
+
+      {:ok, [{"/dl/X/sample1.mkv", 1_000_000_000} | volumes]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
+  test "a split ZIP volume (movie.zip.001) fails explicitly instead of importing its sample (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/b.zip.001", 9_999}, {"/dl/X/b.zip.002", 9_999}]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
+  test "a real feature titled with the word 'sample' still imports beside a companion archive (#499)" do
+    movie = %Movie{title: "Sample", year: 2000, tmdb_id: 558, file_path: "/dl/X"}
+
+    Cinder.LibraryStubs.stub_import_ok(9 * @gb)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok,
+       [
+         {"/dl/X/Sample.2000.1080p.mkv", 9 * @gb},
+         {"/dl/X/Subs.zip", 50_000}
+       ]}
+    end)
+
+    assert {:ok, %{dest: dest} = stage} = Library.stage_movie(movie)
+    assert dest == "#{@lib}/Sample (2000) {tmdb-558}/Sample (2000) {tmdb-558}.mkv"
+    assert :ok = commit!(stage)
+  end
+
   test "disc structures fail explicitly without an extractor/playback contract" do
     movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
 
