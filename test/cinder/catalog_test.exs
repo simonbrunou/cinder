@@ -690,6 +690,23 @@ defmodule Cinder.CatalogTest do
       assert Catalog.abort_upgrade(movie_fixture(status: :available), nil) ==
                {:error, :not_upgrading}
     end
+
+    test "a concurrently-deleted movie returns a stable error instead of raising" do
+      movie =
+        movie_fixture(
+          status: :upgrading,
+          download_id: "dl-4",
+          download_protocol: :torrent,
+          file_path: "/lib/M (2020)/M (2020).mkv"
+        )
+
+      # Another admin deleted the row before this stale struct's cancel event was handled.
+      Repo.delete!(movie)
+
+      # No expect/2 on the client — verify_on_exit! fails if abort_upgrade attempted remote
+      # cleanup against a row that's already gone.
+      assert {:error, :stale_entry} = Catalog.abort_upgrade(movie, nil)
+    end
   end
 
   test "delete_movie removes the in-flight download of an :upgrading movie" do
