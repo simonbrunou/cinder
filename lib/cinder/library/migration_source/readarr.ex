@@ -17,6 +17,14 @@ defmodule Cinder.Library.MigrationSource.Readarr do
 
   @max_response_bytes 8 * 1024 * 1024
 
+  # Bookshelf's `/api/v1/bookfile` and `/api/v1/edition` are *scoped* collections: an unscoped GET
+  # is a hard 500 for bookfile ("authorId, bookId, bookFileIds or unmapped must be provided") and a
+  # silent empty list for edition, so both are fetched by scope id. Verified against
+  # 0.4.20.129/`bookshelf:hardcover`: `/api/v1/edition` honours a *repeated* `bookId` param, while
+  # `/api/v1/bookfile` reads only the first `authorId` — hence one request per author there.
+  @edition_scope_chunk 50
+  @bookfile_scope_chunk 1
+
   @impl true
   def snapshot do
     with {:ok, config} <- configured(),
@@ -25,10 +33,16 @@ defmodule Cinder.Library.MigrationSource.Readarr do
            request(config, url: "/api/v1/author"),
          {:ok, %{status: 200, body: books}} when is_list(books) <-
            request(config, url: "/api/v1/book"),
-         {:ok, %{status: 200, body: editions}} when is_list(editions) <-
-           request(config, url: "/api/v1/edition"),
-         {:ok, %{status: 200, body: files}} when is_list(files) <-
-           request(config, url: "/api/v1/bookfile"),
+         {:ok, editions} <-
+           scoped_collection(config, "/api/v1/edition", :bookId, ids(books), @edition_scope_chunk),
+         {:ok, files} <-
+           scoped_collection(
+             config,
+             "/api/v1/bookfile",
+             :authorId,
+             ids(authors),
+             @bookfile_scope_chunk
+           ),
          {:ok, %{status: 200, body: profiles}} when is_list(profiles) <-
            request(config, url: "/api/v1/qualityprofile"),
          {:ok, %{status: 200, body: roots}} when is_list(roots) <-
@@ -54,6 +68,31 @@ defmodule Cinder.Library.MigrationSource.Readarr do
     else
       {:ok, %{status: 200}} -> {:error, :unexpected_response}
       {:ok, %{status: status}} -> {:error, {:readarr_status, status}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  # Scope ids come from the enclosing collection's own rows; a row with no usable id is dropped
+  # here and rejected loudly by its normalizer, which is the one place that owns shape errors.
+  defp ids(rows) do
+    for %{"id" => id} <- rows, is_integer(id) and id > 0, do: id
+  end
+
+  defp scoped_collection(_config, _url, _param, [], _chunk), do: {:ok, []}
+
+  defp scoped_collection(config, url, param, ids, chunk) do
+    ids
+    |> Enum.chunk_every(chunk)
+    |> Enum.reduce_while({:ok, []}, fn batch, {:ok, acc} ->
+      case request(config, url: url, params: Enum.map(batch, &{param, &1})) do
+        {:ok, %{status: 200, body: rows}} when is_list(rows) -> {:cont, {:ok, [rows | acc]}}
+        {:ok, %{status: 200}} -> {:halt, {:error, :unexpected_response}}
+        {:ok, %{status: status}} -> {:halt, {:error, {:readarr_status, status}}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, chunks} -> {:ok, chunks |> Enum.reverse() |> Enum.concat()}
       {:error, _reason} = error -> error
     end
   end

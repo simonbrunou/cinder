@@ -6,6 +6,23 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **The Readarr migration source can now snapshot a live Bookshelf at all (#488).**
+  `MigrationSource.Readarr.snapshot/0` fetched `/api/v1/bookfile` and `/api/v1/edition` unscoped,
+  but the deployed build (`bookshelf:hardcover`, Readarr `0.4.20.129` — the same instance the B0
+  audit captured) treats both as *scoped* collections: an unscoped `bookfile` GET is a hard HTTP
+  500 (`"authorId, bookId, bookFileIds or unmapped must be provided"`) and an unscoped `edition`
+  GET is a silently empty list. The 500 meant **Preview Readarr produced no candidate at all** —
+  the whole books/audiobooks migration path was unusable against a real instance — and the empty
+  edition list was worse for being silent: `edition_id_for/3` resolved `edition_id: nil` for every
+  adopted file, so a household with existing `book_editions` rows carrying matching ISBN/ASIN
+  identifiers got its files adopted with no edition linkage and no error. Both collections are now
+  fetched by scope id: one request per author for `bookfile` (that endpoint reads only the first
+  `authorId`), chunked repeated `bookId` for `edition` (which does honour the repeated param).
+  The committed B0 fixture never caught this because the test stub dispatched on request path
+  alone, so an unscoped GET was indistinguishable from a scoped one; the new tests assert the
+  scope params are actually sent and that an unscoped GET is never a fallback.
+
 ## [3.0.1] - 2026-09-05
 
 ### Fixed
