@@ -218,11 +218,14 @@ defmodule Cinder.Library.Sidecars do
   defp reclaim_owned_partial(_dest, _root, nil), do: :ok
 
   defp reclaim_owned_partial(dest, root, identity) do
-    quarantine_name =
-      Path.join(
-        Path.dirname(dest),
-        ".cinder-sidecar-quarantine-#{System.unique_integer([:positive])}"
-      )
+    # A random token, not System.unique_integer/1: verification failures and occupied-name
+    # restores deliberately leave a quarantine file behind (see resolve_quarantined_partial/4
+    # and restore_quarantined_partial/2), and unique_integer/1 is only unique for the current
+    # BEAM instance — a later run reusing the same counter value after a restart would rename
+    # straight over whatever a prior quarantine attempt retained. 96 bits, matching the same
+    # unguessable-name convention AtomicFile.temporary/3 already uses for the same reason.
+    token = Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
+    quarantine_name = Path.join(Path.dirname(dest), ".cinder-sidecar-quarantine-#{token}")
 
     case safe_destination(quarantine_name, root) do
       {:ok, quarantine} ->
