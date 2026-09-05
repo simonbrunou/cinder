@@ -72,9 +72,9 @@ defmodule Cinder.Subtitles.Sync.Scope do
   end
 
   def unit_for_video_path(video_path, :tv) do
-    case find_episode(video_path) do
-      nil -> nil
-      episode -> episode_unit(video_path, episode, episode.season.series_id)
+    case find_episodes(video_path) do
+      [] -> nil
+      episodes -> merge_episode_unit(video_path, episodes)
     end
   end
 
@@ -95,19 +95,37 @@ defmodule Cinder.Subtitles.Sync.Scope do
     |> Enum.find(&(video_path in &1.part_file_paths))
   end
 
-  defp find_episode(video_path) do
-    case Repo.get_by(Episode, file_path: video_path) do
-      nil -> find_episode_by_part(video_path)
-      episode -> Repo.preload(episode, :season)
+  # A combined double-episode file (e.g. a season-pack "S01E05E06.mkv") is a supported case in
+  # the import pipeline: `file_path` names the same file for two separate episode rows. `all/2`
+  # (not `one/2`/`get_by/2`, which raise on more than one match) collects every owner so the unit
+  # carries every episode's scope, matching what `units(:library)`'s merge_units/1 already does
+  # for this exact case — a single-owner lookup would otherwise drop or crash on the second one.
+  defp find_episodes(video_path) do
+    case Repo.all(from(e in Episode, where: e.file_path == ^video_path, preload: :season)) do
+      [] -> find_episodes_by_part(video_path)
+      episodes -> episodes
     end
   end
 
-  defp find_episode_by_part(video_path) do
+  defp find_episodes_by_part(video_path) do
     Episode
     |> where([e], fragment("? != '[]'", e.part_file_paths))
     |> preload(:season)
     |> Repo.all()
-    |> Enum.find(&(video_path in &1.part_file_paths))
+    |> Enum.filter(&(video_path in &1.part_file_paths))
+  end
+
+  defp merge_episode_unit(video_path, [primary | _] = episodes) do
+    scopes = episodes |> Enum.flat_map(&episode_scopes/1) |> MapSet.new()
+    unit(video_path, episode_label(primary), MapSet.to_list(scopes))
+  end
+
+  defp episode_scopes(episode) do
+    [
+      {:series, episode.season.series_id},
+      {:season, episode.season_id},
+      {:episode, episode.id}
+    ]
   end
 
   defp episode_units(episodes, series_id) do

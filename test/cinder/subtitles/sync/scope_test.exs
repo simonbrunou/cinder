@@ -83,6 +83,26 @@ defmodule Cinder.Subtitles.Sync.ScopeTest do
     end
   end
 
+  test "unit_for_video_path/2 preserves every episode's scope for a shared combined-episode file" do
+    series = series_fixture()
+    season = season_fixture(series)
+    target_path = "/tv/Show/Season 01/Show - S01E05E06.mkv"
+
+    first =
+      episode_fixture(season, %{episode_number: 5, title: "Five", file_path: target_path})
+
+    second =
+      episode_fixture(season, %{episode_number: 6, title: "Six", file_path: target_path})
+
+    assert %{video_path: ^target_path, scopes: scopes} =
+             Sync.unit_for_video_path(target_path, :tv)
+
+    assert MapSet.member?(scopes, {:episode, first.id})
+    assert MapSet.member?(scopes, {:episode, second.id})
+    assert MapSet.member?(scopes, {:season, season.id})
+    assert MapSet.member?(scopes, {:series, series.id})
+  end
+
   test "unit_for_video_path/2 is nil for a path no available movie or filed episode owns" do
     refute Sync.unit_for_video_path("/lib/Nobody/Nobody.mkv", :movies)
     refute Sync.unit_for_video_path("/tv/Nobody/Nobody.mkv", :tv)
