@@ -198,7 +198,9 @@ defmodule Cinder.Subtitles do
       not writable?(state, language, exists?) ->
         {:ok, cache}
 
-      match == :id and exists? and origin(state, language) == "opensubtitles_id" ->
+      match == :id and exists? and
+          (origin(state, language) == "opensubtitles_id" or
+             keep_verified?(state, moviehash, language)) ->
         {:ok, cache}
 
       true ->
