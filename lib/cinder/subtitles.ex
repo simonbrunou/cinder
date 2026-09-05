@@ -503,7 +503,7 @@ defmodule Cinder.Subtitles do
 
   defp after_commit(video_path, kind, language, origin) do
     if origin in ["opensubtitles_hash", "opensubtitles_id"] do
-      Worker.enqueue_after_download(video_path)
+      Worker.enqueue_after_download(video_path, kind)
     end
 
     Cinder.Library.refresh(kind, video_path)
