@@ -351,13 +351,34 @@ defmodule CinderWeb.UserSessionControllerTest do
 
       # Should not crash with 500, should redirect back to settings
       assert redirected_to(conn) == ~p"/users/settings"
-      # Should have an error flash about password validation
-      assert Phoenix.Flash.get(conn.assigns.flash, :error) != nil
+      # The flash must name the actual reason ("too short"), not a generic pointer to a
+      # settings form that never renders these errors (see PR #531 review finding).
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "should be at least 12 character"
       # Session should still be valid
       assert get_session(conn, :user_token)
       # Password should not have changed
       fresh_user = Cinder.Repo.get(Cinder.Accounts.User, user.id)
       assert fresh_user.hashed_password == original_hashed
+    end
+
+    test "names a confirmation mismatch, not just the length constraint", %{
+      conn: conn,
+      user: user
+    } do
+      user = set_password(user)
+
+      conn =
+        conn
+        |> log_in_user(user)
+        |> post(~p"/users/update-password", %{
+          "user" => %{
+            "password" => "brand new pass phrase!",
+            "password_confirmation" => "does not match!"
+          }
+        })
+
+      assert redirected_to(conn) == ~p"/users/settings"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "does not match password"
     end
   end
 

@@ -94,9 +94,9 @@ defmodule CinderWeb.UserSessionController do
           |> put_session(:user_return_to, ~p"/users/settings")
           |> create(params, gettext("Password updated successfully!"))
 
-        {:error, _changeset} ->
+        {:error, changeset} ->
           conn
-          |> put_flash(:error, gettext("Password update failed. Password must be at least 12 characters."))
+          |> put_flash(:error, password_update_error_message(changeset))
           |> redirect(to: ~p"/users/settings")
       end
     else
@@ -104,6 +104,25 @@ defmodule CinderWeb.UserSessionController do
       |> put_flash(:error, gettext("You must re-authenticate to access this page."))
       |> redirect(to: ~p"/users/log-in")
     end
+  end
+
+  # Renders the changeset's own validation messages (min length, confirmation mismatch, etc.)
+  # instead of a canned string that may not match why this particular submission failed.
+  defp password_update_error_message(changeset) do
+    errors =
+      changeset
+      |> Ecto.Changeset.traverse_errors(fn {msg, opts} ->
+        Regex.replace(~r"%{(\w+)}", msg, fn _, key ->
+          opts |> Keyword.get(String.to_existing_atom(key), key) |> to_string()
+        end)
+      end)
+      |> Map.take([:password, :password_confirmation])
+      |> Map.values()
+      |> List.flatten()
+
+    detail = if errors == [], do: "", else: " " <> Enum.join(errors, "; ") <> "."
+
+    gettext("Password update failed.") <> detail
   end
 
   def delete(conn, _params) do
