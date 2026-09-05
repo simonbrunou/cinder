@@ -829,6 +829,19 @@ defmodule Cinder.LibraryTest do
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
   end
 
+  test "a split 7z first volume (movie.7z.001) fails explicitly instead of importing its sample (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/b.7z.001", 9_999}, {"/dl/X/b.7z.002", 9_999}]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
   test "a completed usenet folder with the real feature and leftover .par2 files still imports (#499)" do
     movie = %Movie{title: "X", year: 2000, tmdb_id: 555, file_path: "/dl/X"}
 

@@ -119,7 +119,14 @@ defmodule Cinder.Library.MovieSources do
 
   defp archive_file?(path) do
     extension = String.downcase(Path.extname(path))
-    extension in @archive_extensions or Regex.match?(~r/^\.r\d{2}$/u, extension)
+    basename = String.downcase(Path.basename(path))
+
+    # 7-Zip split-volume naming: movie.7z.001, .002, … — Path.extname/1 only ever sees the
+    # trailing ".NNN", so this checks the whole basename instead of the bare (and otherwise
+    # meaningless) numeric extension.
+    extension in @archive_extensions or
+      Regex.match?(~r/^\.r\d{2}$/u, extension) or
+      Regex.match?(~r/\.7z\.\d{3}$/u, basename)
   end
 
   defp disc_path?(path) do
