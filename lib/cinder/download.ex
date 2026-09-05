@@ -571,24 +571,52 @@ defmodule Cinder.Download do
   # emitted after commit." A rolled-back fence (or, under WAL, a `/books/:id` reload racing the
   # still-open write) would have announced a deletion that never happened, or hadn't happened
   # yet. `Books.broadcast/1` now runs after `Repo.transaction/1` returns `{:ok, _}`.
+  # #536: unlike `fence_movie_cleanup/2`/`fence_episode_cleanup/3`, every caller of this function
+  # runs post-commit with no caller-owned transaction to fence inside of (see above) — there is
+  # no safe "before" caller the way movie/episode have, so the `expect_remote_id` generation
+  # guard applies unconditionally here rather than being opt-in. A concurrent grab (a stale
+  # search result, a manual re-grab) can reserve a NEW intent for this same `book_target_id`
+  # between whatever committed earlier and this fence running; `grab.download_id` is
+  # unambiguously the download THIS fence is for, so any existing intent whose `remote_id`
+  # doesn't already match it is a conflict — refused as `:mismatch` (reusing
+  # `conflicting_intent?/2`) rather than silently hijacked (flipped to `:cleanup_pending`,
+  # discarding the race winner's own `remote_id`). Every caller falls back to
+  # `fallback_remove/3`'s one-shot, undurable removal on `:mismatch`, the same degrade the
+  # movie/episode fences use.
   @doc false
   def fence_book_cleanup(%BookGrab{} = grab) do
     result =
       Repo.transaction(fn ->
-        intent =
-          case Repo.get_by(Intent, kind: :book_target, target_id: grab.book_target_id) do
-            %Intent{} = existing -> mark_cleanup!(existing, grab.download_id)
-            nil -> insert_book_cleanup!(grab)
-          end
-
-        Books.Grabs.delete_only(grab)
-        [intent.id]
+        case Repo.get_by(Intent, kind: :book_target, target_id: grab.book_target_id) do
+          %Intent{} = existing -> fence_existing_book_intent(existing, grab)
+          nil -> fence_new_book_intent(grab)
+        end
       end)
 
-    with {:ok, intent_ids} <- result do
-      Books.broadcast({:book_grab_deleted, grab.book_target_id})
-      {:ok, intent_ids}
+    case result do
+      {:ok, intent_ids} ->
+        Books.broadcast({:book_grab_deleted, grab.book_target_id})
+        {:ok, intent_ids}
+
+      {:error, :mismatch} ->
+        :mismatch
     end
+  end
+
+  defp fence_existing_book_intent(existing, grab) do
+    if conflicting_intent?(existing, grab.download_id) do
+      Repo.rollback(:mismatch)
+    else
+      intent = mark_cleanup!(existing, grab.download_id)
+      Books.Grabs.delete_only(grab)
+      [intent.id]
+    end
+  end
+
+  defp fence_new_book_intent(grab) do
+    intent = insert_book_cleanup!(grab)
+    Books.Grabs.delete_only(grab)
+    [intent.id]
   end
 
   @doc false
@@ -1299,11 +1327,15 @@ defmodule Cinder.Download do
   defp maybe_remove_client(protocol, download_id, nil), do: fallback_remove(protocol, download_id)
 
   # A conflicting intent (a concurrent re-grab reserved this target/episode between the tick's
-  # commit and this fence — see `fence_movie_cleanup/2`'s `expect_remote_id` doc) degrades to
-  # today's pre-#415 one-shot removal instead of corrupting the new intent: no durable record for
-  # THIS attempt, but nothing hijacked either. A logged `context` names what raced; the legacy
-  # unfenced callers (`nil`, no durable owner to begin with) pass none.
-  defp fallback_remove(protocol, download_id, context \\ nil) do
+  # commit and this fence — see `fence_movie_cleanup/2`'s `expect_remote_id` doc, and
+  # `fence_book_cleanup/1`'s unconditional version of the same guard) degrades to today's
+  # pre-#415 one-shot removal instead of corrupting the new intent: no durable record for THIS
+  # attempt, but nothing hijacked either. A logged `context` names what raced; the legacy
+  # unfenced callers (`nil`, no durable owner to begin with) pass none. Public (not `defp`) so
+  # `Cinder.Library.BookImport`/`AudiobookImport`/`Cinder.Download.BookPoller` can reach it
+  # directly for `fence_book_cleanup/1`'s own `:mismatch` degrade.
+  @doc false
+  def fallback_remove(protocol, download_id, context \\ nil) do
     if context do
       Logger.warning(
         "#{context}: a newer download intent already claims this target; falling back to a " <>

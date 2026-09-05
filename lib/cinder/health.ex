@@ -252,13 +252,19 @@ defmodule Cinder.Health do
   end
 
   # The library import target isn't a behaviour with health/0; "reachable" means the
-  # configured path is writable. mkdir_p on an existing dir is a no-op, so this is a
-  # cheap probe through the same Filesystem behaviour the import uses (mockable in tests).
+  # configured path is writable. `mkdir_p` alone doesn't prove that: it's a no-op on an
+  # existing directory, so a read-only mount or a Docker UID/GID mismatch reports healthy
+  # while every import then fails. Actually create and remove a uniquely named, disposable
+  # entry through the same Filesystem behaviour the import uses (mockable in tests).
   defp library_writable(path) do
     safely(fn ->
-      case Application.fetch_env!(:cinder, :filesystem).mkdir_p(path) do
-        :ok -> :ok
-        {:error, _} = err -> err
+      fs = Application.fetch_env!(:cinder, :filesystem)
+      probe = Path.join(path, ".cinder-health-probe-#{System.unique_integer([:positive])}")
+
+      with :ok <- fs.mkdir_p(path),
+           :ok <- fs.write_exclusive(probe, "") do
+        fs.rm(probe)
+        :ok
       end
     end)
   end

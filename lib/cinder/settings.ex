@@ -601,9 +601,27 @@ defmodule Cinder.Settings do
   transaction, then re-applies the env overlay once.
   """
   def save(puts, deletes \\ []) do
-    # Asserted: upsert/delete_row are bang functions today, so a failure raises out of the
-    # transaction — but the result must never be silently discarded, or a future non-bang
-    # refactor would flash "Settings saved." over an unapplied rollback.
+    # `commit -> load_into_env/0` is not atomic: each loader captures its own DB snapshot
+    # (`rows_by_key/0`) before writing individual Application env keys. Without serialization,
+    # an older writer's commit-then-reload can interleave around a newer one — e.g. this save
+    # deletes `import_roots` and finishes its overlay, then a slower, already-committed earlier
+    # save's overlay lands afterwards and resurrects the deleted value in the env, even though
+    # the DB agrees with the newer state. `:global.trans/2` (the same lock primitive
+    # `Download.with_intent_lock/2` and `Library.with_lock/2` use) makes the whole
+    # commit-then-overlay sequence one atomic unit per writer, so an older snapshot can never
+    # apply after a newer commit.
+    :global.trans({{__MODULE__, :write}, self()}, fn -> commit_and_reload(puts, deletes) end)
+
+    # After the commit AND after the env overlay, so a subscriber that re-reads on this message
+    # sees the new values rather than racing the apply.
+    Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, :settings_updated)
+    :ok
+  end
+
+  # Asserted: upsert/delete_row are bang functions today, so a failure raises out of the
+  # transaction — but the result must never be silently discarded, or a future non-bang refactor
+  # would flash "Settings saved." over an unapplied rollback.
+  defp commit_and_reload(puts, deletes) do
     {:ok, _} =
       Repo.transaction(fn ->
         Enum.each(puts, fn {k, v} -> upsert(k, v) end)
@@ -611,10 +629,6 @@ defmodule Cinder.Settings do
       end)
 
     load_into_env()
-    # After the commit AND after the env overlay, so a subscriber that re-reads on this message
-    # sees the new values rather than racing the apply.
-    Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, :settings_updated)
-    :ok
   end
 
   @doc """

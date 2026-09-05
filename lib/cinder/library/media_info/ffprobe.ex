@@ -44,18 +44,19 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   the split. The two 10s calls are the ones that actually run inside the poller tick, which is
   where a tight bound matters; the two 30-minute calls never do.
 
-  This module bounds all four with a supervised `Port` + `SIGKILL`-by-`os_pid`, the same idiom
-  `Cinder.Library.BookArchive.Rar.run_extraction/6` and `Cinder.Disk.CommandProbe` already use for
-  their own subprocesses — deliberately **not** the lighter `Task.async`/`Task.yield`/
-  `Task.shutdown(:brutal_kill)` idiom `health/0` (and `AudioProbe.Ffprobe.probe/1`,
-  `BookArchive.Rar.list_entries/3`) use for their own, much cheaper, no-file calls.
-  `Task.shutdown(:brutal_kill)` only kills the *Elixir* task; closing a port does not kill the
-  child OS process on the other end when that child never reads stdin, which is exactly `ffmpeg`
-  and `ffprobe`'s situation here (`ffmpeg` is invoked with `-nostdin`). Since both the poller and
-  `Cinder.Subtitles.Fetcher`/`Sweeper` retry (every tick, or every enqueued/swept file), that
-  lighter idiom would leak one orphaned `ffprobe`/`ffmpeg` per retry, each holding an open file
-  descriptor on the staging file being probed — worse than the original hang. The heavier pattern
-  here kills the actual OS process by pid, not merely the Elixir side of the port.
+  This module bounds all five calls — `probe/1`, `probe_policy/1`, `subtitle_tracks/1`,
+  `extract_subtitle/2`, and `health/0` — with a supervised `Port` + `SIGKILL`-by-`os_pid`, the
+  same idiom `Cinder.Library.BookArchive.Rar.run_extraction/6`/`list_entries/3`,
+  `Cinder.Library.AudioProbe.Ffprobe.probe/1`, and `Cinder.Disk.CommandProbe` already use for
+  their own subprocesses (#510: `health/0`'s own `-version` no-file call used the lighter
+  `Task.async`/`Task.yield`/`Task.shutdown(:brutal_kill)` idiom until it was found to leak the
+  same way). `Task.shutdown(:brutal_kill)` only kills the *Elixir* task; closing a port does not
+  kill the child OS process on the other end when that child never reads stdin, which is exactly
+  `ffmpeg` and `ffprobe`'s situation here (`ffmpeg` is invoked with `-nostdin`). Since both the
+  poller and `Cinder.Subtitles.Fetcher`/`Sweeper` retry (every tick, or every enqueued/swept
+  file), that lighter idiom would leak one orphaned `ffprobe`/`ffmpeg` per retry, each holding an
+  open file descriptor on the staging file being probed — worse than the original hang. The
+  heavier pattern here kills the actual OS process by pid, not merely the Elixir side of the port.
 
   Neither `Poller`, `TvPoller`, nor `Cinder.Subtitles.Sweeper` (all three built on the same
   `PollerSkeleton`) traps exits or has a catch-all `handle_info/2` (only `PollerSkeleton`'s
@@ -158,30 +159,18 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   @impl true
   def probe_policy(path), do: run_probe(path, &parse_policy/1)
 
-  # `-version` is a cheap no-file call: proves the binary exists and runs, bounded to
-  # @health_timeout so a hung binary can't stall /status or "Test connection" (mirrors the
-  # ~3s bound every other service's health/0 uses). The missing-binary rescue runs INSIDE the
-  # task: Task.async links the caller to the task, so an uncaught raise there (e.g. `:enoent`)
-  # would crash the caller via the link's EXIT signal rather than return `{:error, _}`. This one
-  # call stays on the lighter Task idiom deliberately — see the moduledoc's "Bounded subprocess
-  # execution" section for why the other four, file-inspecting calls do not.
+  # `-version` is a cheap no-file call, but that does not make a hung binary harmless (#510): it
+  # must still not stall /status or "Test connection" indefinitely, and a killed Elixir task must
+  # not leave the OS process behind. Bounded the same supervised Port + SIGKILL way as the other
+  # four, file-inspecting calls below — see the moduledoc's "Bounded subprocess execution"
+  # section. `run_bounded/4` already returns the exact `{:error, %ErlangError{original: :enoent}}`
+  # shape a missing binary needs, so no separate rescue is required here.
   @impl true
   def health do
-    task =
-      Task.async(fn ->
-        try do
-          System.cmd(bin(), ["-version"], stderr_to_stdout: true)
-        rescue
-          e -> {:error, e}
-        end
-      end)
-
-    case Task.yield(task, @health_timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {:error, _} = error} -> error
-      {:ok, {_out, 0}} -> :ok
-      {:ok, {out, code}} -> {:error, {:ffprobe_exit, code, String.trim(out)}}
-      {:exit, reason} -> {:error, {:ffprobe_exit, reason}}
-      nil -> {:error, :timeout}
+    case run_bounded(bin(), ["-version"], health_timeout_ms(), stderr_to_stdout: true) do
+      {:ok, _out, 0} -> :ok
+      {:ok, out, code} -> {:error, {:ffprobe_exit, code, String.trim(out)}}
+      {:error, _reason} = error -> error
     end
   end
 
@@ -399,6 +388,9 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   # `BookArchive.Rar.extract/3` these bounds cannot be threaded through as an `opts` argument.
   defp probe_timeout_ms,
     do: Application.get_env(:cinder, :ffprobe_probe_timeout_ms, @probe_timeout_ms)
+
+  defp health_timeout_ms,
+    do: Application.get_env(:cinder, :ffprobe_health_timeout_ms, @health_timeout)
 
   defp subtitle_tracks_timeout_ms,
     do:

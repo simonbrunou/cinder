@@ -28,32 +28,38 @@ defmodule Cinder.Repo.Migrations.AllowEpisodeUpgradeGrabs do
   defp rebuild(mutually_exclusive?: mutually_exclusive?) do
     repo().checkout(fn ->
       query!("PRAGMA foreign_keys = OFF")
-      query!("BEGIN IMMEDIATE")
 
+      # The `after` covers every failure on this connection, including BEGIN IMMEDIATE
+      # itself — not just a failure inside the transaction — so a rejected rebuild never
+      # returns this checked-out connection to the pool with enforcement left disabled.
       try do
-        old_seq = current_autoincrement_seq()
-        columns = Enum.map_join(@columns, ", ", &~s("#{&1}"))
+        query!("BEGIN IMMEDIATE")
 
-        query!(create_sql(mutually_exclusive?: mutually_exclusive?))
-        query!(~s|INSERT INTO "episodes_new" (#{columns}) SELECT #{columns} FROM "episodes"|)
-        query!(~s|DROP TABLE "episodes"|)
-        query!(~s|ALTER TABLE "episodes_new" RENAME TO "episodes"|)
-        Enum.each(@index_sqls, &query!/1)
-        restore_autoincrement_seq(old_seq)
-        verify_foreign_keys!()
-        query!("COMMIT")
-      rescue
-        exception ->
-          try do
-            query!("ROLLBACK")
-          rescue
-            _rollback_failure -> :ok
-          end
+        try do
+          old_seq = current_autoincrement_seq()
+          columns = Enum.map_join(@columns, ", ", &~s("#{&1}"))
 
-          reraise exception, __STACKTRACE__
+          query!(create_sql(mutually_exclusive?: mutually_exclusive?))
+          query!(~s|INSERT INTO "episodes_new" (#{columns}) SELECT #{columns} FROM "episodes"|)
+          query!(~s|DROP TABLE "episodes"|)
+          query!(~s|ALTER TABLE "episodes_new" RENAME TO "episodes"|)
+          Enum.each(@index_sqls, &query!/1)
+          restore_autoincrement_seq(old_seq)
+          verify_foreign_keys!()
+          query!("COMMIT")
+        rescue
+          exception ->
+            try do
+              query!("ROLLBACK")
+            rescue
+              _rollback_failure -> :ok
+            end
+
+            reraise exception, __STACKTRACE__
+        end
+      after
+        query!("PRAGMA foreign_keys = ON")
       end
-
-      query!("PRAGMA foreign_keys = ON")
     end)
   end
 

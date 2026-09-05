@@ -159,7 +159,7 @@ defmodule Cinder.Library.Sidecars do
              :ok <- fs().cp(src, tmp),
              {:ok, ^tmp} <- safe_destination(tmp, root),
              {:ok, ^dest} <- safe_destination(dest, root),
-             do: land_noreplace(tmp, dest)
+             do: land_noreplace(tmp, dest, root)
 
       _ = safe_remove(tmp, root)
       result
@@ -171,13 +171,129 @@ defmodule Cinder.Library.Sidecars do
   # because the source is the completed temp, not the original: a failed exclusive copy leaves a
   # partial destination only if the destination did not already exist, and the temp it copies from
   # is whole.
-  defp land_noreplace(tmp, dest) do
+  defp land_noreplace(tmp, dest, root) do
     case fs().ln(tmp, dest) do
       {:error, errno} when Library.copy_fallback_errno?(errno) ->
-        fs().cp_exclusive(tmp, dest, fn _stat -> :ok end)
+        copy_exclusive(tmp, dest, root)
 
       result ->
         result
+    end
+  end
+
+  # `cp_exclusive` deliberately retains partial output on failure — Library's primary import path
+  # recovers it via its durable journal, since a live inode swap between our failed copy and any
+  # cleanup can never be told apart from a legitimate concurrent replacement without one. Sidecars
+  # have no journal, so instead we capture the identity `cp_exclusive` handed us at creation and,
+  # on failure, reclaim only the file that still names that exact inode.
+  #
+  # POSIX has no atomic "unlink only if this path still names this inode" operation, so checking
+  # identity by path and then unlinking by the same path leaves a window a concurrent pathname
+  # replacement could win — the exact race `Filesystem.Disk.finish_exclusive_copy/2` documents
+  # avoiding for the journaled video path. Sidecars close it instead: `dest` is atomically
+  # `rename`d to an unguessable, dedicated quarantine name first (nothing else can be racing
+  # against a name nobody else knows), and only *then* is its identity compared against what
+  # `cp_exclusive` told us it had just created. A match is provably ours and is discarded from
+  # the now-private name; anything else — a genuinely concurrent replacement — is renamed back to
+  # `dest`, restoring whatever was really there.
+  defp copy_exclusive(tmp, dest, root) do
+    key = {__MODULE__, :landed_stat, make_ref()}
+
+    on_create = fn stat ->
+      Process.put(key, {stat.major_device, stat.inode})
+      :ok
+    end
+
+    case fs().cp_exclusive(tmp, dest, on_create) do
+      :ok ->
+        Process.delete(key)
+        :ok
+
+      error ->
+        reclaim_owned_partial(dest, root, Process.delete(key))
+        error
+    end
+  end
+
+  defp reclaim_owned_partial(_dest, _root, nil), do: :ok
+
+  defp reclaim_owned_partial(dest, root, identity) do
+    # A random token, not System.unique_integer/1: verification failures and occupied-name
+    # restores deliberately leave a quarantine file behind (see resolve_quarantined_partial/4
+    # and restore_quarantined_partial/2), and unique_integer/1 is only unique for the current
+    # BEAM instance — a later run reusing the same counter value after a restart would rename
+    # straight over whatever a prior quarantine attempt retained. 96 bits, matching the same
+    # unguessable-name convention AtomicFile.temporary/3 already uses for the same reason.
+    token = Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
+    quarantine_name = Path.join(Path.dirname(dest), ".cinder-sidecar-quarantine-#{token}")
+
+    case safe_destination(quarantine_name, root) do
+      {:ok, quarantine} ->
+        quarantine_owned_partial(dest, quarantine, root, identity)
+
+      {:error, reason} ->
+        Logger.warning("sidecar reclaim rejected for #{dest}: #{inspect(reason)}")
+    end
+  end
+
+  defp quarantine_owned_partial(dest, quarantine, root, identity) do
+    case fs().rename(dest, quarantine) do
+      :ok ->
+        resolve_quarantined_partial(dest, quarantine, root, identity)
+
+      {:error, :enoent} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("sidecar reclaim rejected for #{dest}: #{inspect(reason)}")
+    end
+  end
+
+  defp resolve_quarantined_partial(dest, quarantine, root, identity) do
+    case fs().lstat(quarantine) do
+      {:ok, %{major_device: device, inode: inode}} when {device, inode} == identity ->
+        case safe_remove(quarantine, root) do
+          :ok -> :ok
+          error -> Logger.warning("sidecar reclaim failed for #{quarantine}: #{inspect(error)}")
+        end
+
+      {:ok, _mismatched_identity} ->
+        restore_quarantined_partial(dest, quarantine)
+
+      {:error, reason} ->
+        Logger.warning(
+          "sidecar reclaim identity check failed for #{quarantine}: #{inspect(reason)}"
+        )
+    end
+  end
+
+  # A genuine identity mismatch means some other file won the name in between our own failed
+  # copy and this reclaim — restoring it is safe only while `dest` is still the free name our
+  # earlier rename left behind. Re-checking immediately before restoring can't make this fully
+  # atomic (no portable no-replace rename exists — see copy_exclusive/3's own comment — and
+  # `dest` is already known to be on a mount without hardlink support, so `ln` can't stand in for
+  # one here), but it closes the window to the single remaining unavoidable gap instead of
+  # unconditionally overwriting whatever a second concurrent writer may have published since.
+  defp restore_quarantined_partial(dest, quarantine) do
+    case fs().lstat(dest) do
+      {:error, :enoent} ->
+        rename_quarantine_back(dest, quarantine)
+
+      {:ok, _stat} ->
+        Logger.warning("sidecar reclaim left quarantined for #{dest}: occupied")
+
+      {:error, reason} ->
+        Logger.warning("sidecar reclaim restore check failed for #{dest}: #{inspect(reason)}")
+    end
+  end
+
+  defp rename_quarantine_back(dest, quarantine) do
+    case fs().rename(quarantine, dest) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("sidecar reclaim restore failed for #{dest}: #{inspect(reason)}")
     end
   end
 
