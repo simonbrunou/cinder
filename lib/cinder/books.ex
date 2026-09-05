@@ -809,6 +809,49 @@ defmodule Cinder.Books do
     {:ok, created_count}
   end
 
+  @doc """
+  The unattended-sweep counterpart to `apply_author_policy/4`, used only by
+  `Cinder.Books.BibliographyRefresher`. Deliberately a SEPARATE choke-point rather than a shared
+  one: `apply_author_policy/4` is the explicit admin-confirm COMMAND (it always upserts the
+  policy row, which is exactly right when an admin just clicked Confirm) — a background tick has
+  no command to issue, only an already-confirmed policy to renew, and must never resurrect or
+  overwrite one the admin has since changed.
+
+  `preview_author_policy/2` and this batch's own `Identity.resolve/1` calls can take real wall
+  time; the admin may change the policy, change its profile, or revert to `:specific` (deleting
+  the row) while that I/O is in flight (#512). Before writing anything — a target write via
+  `import_and_monitor/2`, not just a final upsert — this re-reads the CURRENT stored
+  `book_author_policies` row and refuses the whole batch unless it still matches the
+  `policy`/`profile` this batch was computed against. A mismatch (changed policy, changed
+  profile, or a deleted row) means the operator's current policy/profile stands untouched and
+  zero targets are created from this stale batch — never a partial write.
+  """
+  @spec apply_bibliography_refresh(Author.t(), :future | :all, Profile.t(), [
+          Identity.resolution()
+        ]) ::
+          {:ok, non_neg_integer()} | {:error, :policy_changed}
+  def apply_bibliography_refresh(
+        %Author{id: author_id} = _author,
+        policy,
+        %Profile{id: profile_id} = profile,
+        eligible_candidates
+      )
+      when policy in [:future, :all] do
+    case Repo.get_by(BookAuthorPolicy, author_id: author_id) do
+      %BookAuthorPolicy{policy: ^policy, profile_id: ^profile_id} ->
+        created_count =
+          Enum.count(
+            eligible_candidates,
+            &match?({:ok, _target}, import_and_monitor(&1, profile))
+          )
+
+        {:ok, created_count}
+
+      _stale_or_removed ->
+        {:error, :policy_changed}
+    end
+  end
+
   defp author_provider_reference(%Author{id: id}) do
     Identifier
     |> where([i], i.author_id == ^id and i.kind == "author")

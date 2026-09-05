@@ -207,6 +207,67 @@ defmodule Cinder.Books.AuthorPolicyTest do
     end
   end
 
+  describe "apply_bibliography_refresh/4 (#512)" do
+    test "matches the current stored policy: writes targets exactly like apply_author_policy/4",
+         %{author: author, profile: profile} do
+      {:ok, _policy} = Books.set_author_policy(author, :all, profile)
+
+      resolution = %{provider: :openlibrary, work: provider_work("OLREFRESH1W")}
+
+      assert {:ok, 1} = Books.apply_bibliography_refresh(author, :all, profile, [resolution])
+      assert Repo.aggregate(BookTarget, :count) == 1
+      # Unlike apply_author_policy/4, this never re-upserts the row it just read as current.
+      assert Books.author_policy(author.id) == :all
+    end
+
+    test "the stored policy was deleted (reverted to :specific) mid-tick: refuses the whole batch",
+         %{author: author, profile: profile} do
+      {:ok, _policy} = Books.set_author_policy(author, :all, profile)
+      {:ok, nil} = Books.set_author_policy(author, :specific, nil)
+
+      resolution = %{provider: :openlibrary, work: provider_work("OLSTALE1W")}
+
+      # No get_work expectation registered — a write attempt would raise Mox.UnexpectedCallError
+      # rather than silently succeeding.
+      assert {:error, :policy_changed} =
+               Books.apply_bibliography_refresh(author, :all, profile, [resolution])
+
+      assert Repo.aggregate(BookTarget, :count) == 0
+      assert Books.author_policy(author.id) == :specific
+    end
+
+    test "the stored policy atom changed (:all -> :future) mid-tick: refuses the stale :all batch",
+         %{author: author, profile: profile} do
+      {:ok, _policy} = Books.set_author_policy(author, :all, profile)
+      {:ok, _policy} = Books.set_author_policy(author, :future, profile)
+
+      resolution = %{provider: :openlibrary, work: provider_work("OLSTALE2W")}
+
+      assert {:error, :policy_changed} =
+               Books.apply_bibliography_refresh(author, :all, profile, [resolution])
+
+      assert Repo.aggregate(BookTarget, :count) == 0
+      assert Books.author_policy(author.id) == :future
+    end
+
+    test "the stored profile changed mid-tick: refuses the stale batch even with the same policy atom",
+         %{author: author, profile: profile} do
+      {:ok, other_profile} =
+        Catalog.create_profile(%{name: "Other eBooks", kind: :ebook, handling: :standard})
+
+      {:ok, _policy} = Books.set_author_policy(author, :all, profile)
+      {:ok, _policy} = Books.set_author_policy(author, :all, other_profile)
+
+      resolution = %{provider: :openlibrary, work: provider_work("OLSTALE3W")}
+
+      assert {:error, :policy_changed} =
+               Books.apply_bibliography_refresh(author, :all, profile, [resolution])
+
+      assert Repo.aggregate(BookTarget, :count) == 0
+      assert Repo.get_by!(BookAuthorPolicy, author_id: author.id).profile_id == other_profile.id
+    end
+  end
+
   defp author_fixture do
     {:ok, author} =
       Books.upsert_author(%{

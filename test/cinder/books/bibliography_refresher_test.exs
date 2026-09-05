@@ -104,6 +104,75 @@ defmodule Cinder.Books.BibliographyRefresherTest do
              )
   end
 
+  # #512: a bibliography refresh loads a policy/profile, does provider I/O that can take real
+  # wall time, then used to unconditionally re-apply that STALE policy/profile — reinstating a
+  # row the admin had since deleted or changed. This exercises the actual concurrent interleaving
+  # (a real Task blocked on the provider mock, not just a unit call), not merely a function-level
+  # assertion.
+  test "an admin reverting to Selected works mid-tick is not undone by the stale batch", %{
+    profile: profile
+  } do
+    author = author_fixture("A1")
+    {:ok, _policy} = Books.set_author_policy(author, :all, profile)
+
+    test_pid = self()
+
+    expect(PrimaryMetadataMock, :bibliography, fn "A1" ->
+      send(test_pid, {:bibliography_called, self()})
+
+      receive do
+        :release -> :ok
+      end
+
+      {:ok, [candidate("OLNEW1W")]}
+    end)
+
+    expect(PrimaryMetadataMock, :get_work, fn "OLNEW1W" -> {:ok, provider_work("OLNEW1W")} end)
+
+    task = Task.async(&poll/0)
+    assert_receive {:bibliography_called, provider_pid}
+
+    # The admin reverts to Selected works while this tick's bibliography fetch is still pending.
+    {:ok, nil} = Books.set_author_policy(author, :specific, nil)
+
+    send(provider_pid, :release)
+    Task.await(task)
+
+    assert Repo.aggregate(BookTarget, :count) == 0
+    assert Books.author_policy(author.id) == :specific
+  end
+
+  test "an admin switching :all to :future mid-tick is not overwritten by the stale :all batch",
+       %{profile: profile} do
+    author = author_fixture("A1")
+    {:ok, _policy} = Books.set_author_policy(author, :all, profile)
+
+    test_pid = self()
+
+    expect(PrimaryMetadataMock, :bibliography, fn "A1" ->
+      send(test_pid, {:bibliography_called, self()})
+
+      receive do
+        :release -> :ok
+      end
+
+      {:ok, [candidate("OLNEW2W")]}
+    end)
+
+    expect(PrimaryMetadataMock, :get_work, fn "OLNEW2W" -> {:ok, provider_work("OLNEW2W")} end)
+
+    task = Task.async(&poll/0)
+    assert_receive {:bibliography_called, provider_pid}
+
+    {:ok, _policy} = Books.set_author_policy(author, :future, profile)
+
+    send(provider_pid, :release)
+    Task.await(task)
+
+    assert Repo.aggregate(BookTarget, :count) == 0
+    assert Books.author_policy(author.id) == :future
+  end
+
   test "quiet logging: a tick that creates zero targets logs nothing at :info", %{
     profile: profile
   } do
