@@ -114,11 +114,17 @@ defmodule Cinder.Download.Cleaner do
   defp claimed_ids(ids, protocol) do
     nil_protocol_is_torrent? = protocol == :torrent
 
+    # A movie at :available has committed its import and needs no further source bytes — the
+    # only status this releases for. Every other status (mid-download, mid-import at :downloaded,
+    # :upgrading, or a held :import_failed verification park that keeps frozen ownership) keeps
+    # protecting its download_id, matching ReleaseVerification's contract that a hold never
+    # clears ownership.
     movie_ids =
       Repo.all(
         from m in Movie,
           where:
             m.download_id in ^ids and
+              m.status != :available and
               (m.download_protocol == ^protocol or
                  (^nil_protocol_is_torrent? and is_nil(m.download_protocol))),
           select: m.download_id
