@@ -512,7 +512,7 @@ defmodule Cinder.Subtitles do
 
   defp after_commit(video_path, kind, language, origin) do
     if origin in ["opensubtitles_hash", "opensubtitles_id"] do
-      Worker.enqueue_after_download(video_path)
+      Worker.enqueue_after_download(video_path, kind)
     end
 
     Cinder.Library.refresh(kind, video_path)
@@ -685,7 +685,7 @@ defmodule Cinder.Subtitles do
   defp put_release_sidecar(video_path, moviehash, language, target) do
     state = Manifest.read(video_path)
 
-    if sidecar_exists?(target) and not keep_verified?(state, moviehash, language) do
+    if sidecar_exists?(target) and not keep_registered?(state, moviehash, language, target) do
       case Manifest.put(
              video_path,
              moviehash || state.video_moviehash,
@@ -710,6 +710,54 @@ defmodule Cinder.Subtitles do
   defp keep_verified?(state, moviehash, language) do
     Manifest.verified?(state, language) and
       (is_nil(moviehash) or Manifest.stable?(state, moviehash, language))
+  end
+
+  # `Manifest.put` here always writes a fresh track carrying only `backup_tombstone` forward —
+  # no managed digest, sync record, or cleanup journal (issue #527). Re-registering an
+  # already-provider-owned (`opensubtitles_hash`/`opensubtitles_id`) sidecar whose current bytes
+  # still match what Cinder last wrote — either the original download (`managed_sha256`) or a
+  # legitimate later correction (`sync.applied_sha256`) — would silently drop its synchronization
+  # provenance for no reason, removing it from `Sync.discover/1`. A track with an in-progress
+  # reset or replacement cleanup journal is protected the same way regardless of its bytes:
+  # erasing that journal mid-recovery would strand the crash-recovery state it exists for.
+  defp keep_registered?(state, moviehash, language, target) do
+    keep_verified?(state, moviehash, language) or
+      active_cleanup_journal?(state, language) or
+      unchanged_provider_track?(state, language, target)
+  end
+
+  defp active_cleanup_journal?(state, language) do
+    not is_nil(get_in(state, [:tracks, language, :reset_cleanup_sync])) or
+      not is_nil(get_in(state, [:tracks, language, :replacement_cleanup_sync]))
+  end
+
+  defp unchanged_provider_track?(state, language, target) do
+    case get_in(state, [:tracks, language]) do
+      %{origin: origin, managed_sha256: managed_sha256} = track
+      when origin in ["opensubtitles_hash", "opensubtitles_id"] and is_binary(managed_sha256) ->
+        matches_recorded_bytes?(current_sidecar_sha256(target), managed_sha256, track)
+
+      _ ->
+        false
+    end
+  end
+
+  # A failed read (`nil`) must never count as a match: a track carrying no `sync` yet has no
+  # `sync.applied_sha256` either, and comparing two absent values would otherwise silently
+  # "prove" an unreadable sidecar unchanged.
+  defp matches_recorded_bytes?(nil, _managed_sha256, _track), do: false
+
+  defp matches_recorded_bytes?(current, managed_sha256, track) do
+    current == managed_sha256 or current == get_in(track, [:sync, :applied_sha256])
+  end
+
+  defp current_sidecar_sha256(target) do
+    with {:ok, target} <- safe_destination(target),
+         {:ok, content} <- fs().read(target) do
+      sha256(content)
+    else
+      _ -> nil
+    end
   end
 
   defp current_moviehash(video_path) do

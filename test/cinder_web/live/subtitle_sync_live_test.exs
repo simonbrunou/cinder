@@ -222,7 +222,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
          analyze: fn ^video -> [result] end}
       )
 
-    assert :ok = Worker.enqueue_after_download(video, worker)
+    assert :ok = Worker.enqueue_after_download(video, :movies, worker)
     assert_eventually(fn -> has_element?(view, "#subtitle-sync-item-#{item.id}") end)
   end
 
