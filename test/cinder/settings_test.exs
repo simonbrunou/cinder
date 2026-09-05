@@ -275,6 +275,34 @@ defmodule Cinder.SettingsTest do
       assert Settings.explicit_import_roots() == nil
     end
 
+    test "concurrent revoke and re-save of import_roots never leave the env stale versus the DB (#489)" do
+      Settings.put("import_roots", "/srv/original")
+
+      tasks =
+        for i <- 1..20 do
+          Task.async(fn ->
+            if rem(i, 2) == 0 do
+              Settings.put("import_roots", "/srv/root-#{i}")
+            else
+              Settings.delete("import_roots")
+            end
+          end)
+        end
+
+      Enum.each(tasks, &Task.await(&1, 5_000))
+
+      # Whichever writer committed last, the effective env overlay must agree with the DB row
+      # it left behind — never a stale, already-superseded snapshot from an earlier writer
+      # (issue #489: `commit -> load_into_env/0` used to run unserialized).
+      expected =
+        case Settings.get("import_roots") do
+          nil -> nil
+          value -> [value]
+        end
+
+      assert Settings.explicit_import_roots() == expected
+    end
+
     test "import_roots infers the common root from DB-only-configured library paths on boot" do
       # Regression: apply_import_roots's inferred_import_roots/0 fallback reads the
       # :movies_library_path/:tv_library_path env keys that apply_library_config writes, so it
