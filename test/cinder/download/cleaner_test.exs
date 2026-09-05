@@ -131,6 +131,63 @@ defmodule Cinder.Download.CleanerTest do
     assert :ok = Cleaner.poll()
   end
 
+  test "removes a fully-imported movie's completed torrent after the opt-in ratio is reached" do
+    # A movie import success writes status: :available and clears content_path but deliberately
+    # keeps download_id/download_protocol (see poller.ex's import commit) — it needs no more
+    # source bytes, so it must release ownership for the explicitly enabled cleanup, unlike a
+    # movie still mid-download/mid-import/held.
+    movie =
+      movie_fixture(%{
+        status: :available,
+        download_id: "seeded",
+        download_protocol: :torrent,
+        file_path: "/media/Movie.mkv",
+        content_path: nil
+      })
+
+    assert movie.status == :available
+    configure_limits(ratio_limit: "1.5")
+
+    expect(ClientMock, :list_managed, fn ->
+      {:ok, [entry(%{id: "seeded", state: :completed, ratio: 1.5, seeding_time: 60})]}
+    end)
+
+    expect(ClientMock, :remove, fn "seeded", opts ->
+      assert Keyword.fetch!(opts, :delete_files)
+      :ok
+    end)
+
+    assert :ok = Cleaner.poll()
+  end
+
+  test "keeps a completed torrent whose movie is still importing, even after a limit" do
+    movie =
+      movie_fixture(%{status: :downloaded, download_id: "importing", download_protocol: :torrent})
+
+    assert movie.status == :downloaded
+    configure_limits(ratio_limit: "1")
+
+    expect(ClientMock, :list_managed, fn ->
+      {:ok, [entry(%{id: "importing", state: :completed, ratio: 5.0})]}
+    end)
+
+    assert :ok = Cleaner.poll()
+  end
+
+  test "keeps a completed torrent whose movie is held for verification, even after a limit" do
+    movie =
+      movie_fixture(%{status: :import_failed, download_id: "held", download_protocol: :torrent})
+
+    assert movie.status == :import_failed
+    configure_limits(ratio_limit: "1")
+
+    expect(ClientMock, :list_managed, fn ->
+      {:ok, [entry(%{id: "held", state: :completed, ratio: 5.0})]}
+    end)
+
+    assert :ok = Cleaner.poll()
+  end
+
   test "leaves a download whose intent still exists" do
     key = Ecto.UUID.generate()
     intent_for(key, "live")

@@ -78,26 +78,51 @@ defmodule CinderWeb.UserSessionController do
     # direct request), so redirect to reauth rather than crashing on a `true = ...` match (finding
     # 7 — mirrors with_sudo_mode/2 in UserLive.Settings).
     if Accounts.sudo_mode?(user) do
-      {:ok, {_user, expired_tokens}} = Accounts.update_user_password(user, user_params)
+      case Accounts.update_user_password(user, user_params) do
+        {:ok, {_user, expired_tokens}} ->
+          # disconnect all existing LiveViews with old sessions
+          UserAuth.disconnect_sessions(expired_tokens)
 
-      # disconnect all existing LiveViews with old sessions
-      UserAuth.disconnect_sessions(expired_tokens)
+          # This authenticated, sudo-gated path pipes into the rate-limited create/3 below AFTER
+          # committing the new password and expiring every session token — a blocked {ip, email}
+          # pair (or a blocked IP-only bucket) here would lock the user out of the password they
+          # just set. Clear both: the user has already proven possession of the account.
+          IpRateLimiter.clear(@pair_bucket, pair_key(ip_string(conn), user.email))
+          IpRateLimiter.clear(@ip_bucket, ip_string(conn))
 
-      # This authenticated, sudo-gated path pipes into the rate-limited create/3 below AFTER
-      # committing the new password and expiring every session token — a blocked {ip, email}
-      # pair (or a blocked IP-only bucket) here would lock the user out of the password they
-      # just set. Clear both: the user has already proven possession of the account.
-      IpRateLimiter.clear(@pair_bucket, pair_key(ip_string(conn), user.email))
-      IpRateLimiter.clear(@ip_bucket, ip_string(conn))
+          conn
+          |> put_session(:user_return_to, ~p"/users/settings")
+          |> create(params, gettext("Password updated successfully!"))
 
-      conn
-      |> put_session(:user_return_to, ~p"/users/settings")
-      |> create(params, gettext("Password updated successfully!"))
+        {:error, changeset} ->
+          conn
+          |> put_flash(:error, password_update_error_message(changeset))
+          |> redirect(to: ~p"/users/settings")
+      end
     else
       conn
       |> put_flash(:error, gettext("You must re-authenticate to access this page."))
       |> redirect(to: ~p"/users/log-in")
     end
+  end
+
+  # Renders the changeset's own validation messages (min length, confirmation mismatch, etc.)
+  # instead of a canned string that may not match why this particular submission failed.
+  # Routed through the same CoreComponents.translate_error/1 every form error uses (the
+  # "errors" gettext domain, with %{count} plural handling) — a hand-rolled %{...}
+  # interpolation here would silently skip localization and leak raw English into a
+  # gettext-translated flash.
+  defp password_update_error_message(changeset) do
+    errors =
+      changeset
+      |> Ecto.Changeset.traverse_errors(&CinderWeb.CoreComponents.translate_error/1)
+      |> Map.take([:password, :password_confirmation])
+      |> Map.values()
+      |> List.flatten()
+
+    detail = if errors == [], do: "", else: " " <> Enum.join(errors, "; ") <> "."
+
+    gettext("Password update failed.") <> detail
   end
 
   def delete(conn, _params) do
