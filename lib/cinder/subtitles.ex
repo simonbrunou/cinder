@@ -726,12 +726,20 @@ defmodule Cinder.Subtitles do
     case get_in(state, [:tracks, language]) do
       %{origin: origin, managed_sha256: managed_sha256} = track
       when origin in ["opensubtitles_hash", "opensubtitles_id"] and is_binary(managed_sha256) ->
-        current = current_sidecar_sha256(target)
-        current == managed_sha256 or current == get_in(track, [:sync, :applied_sha256])
+        matches_recorded_bytes?(current_sidecar_sha256(target), managed_sha256, track)
 
       _ ->
         false
     end
+  end
+
+  # A failed read (`nil`) must never count as a match: a track carrying no `sync` yet has no
+  # `sync.applied_sha256` either, and comparing two absent values would otherwise silently
+  # "prove" an unreadable sidecar unchanged.
+  defp matches_recorded_bytes?(nil, _managed_sha256, _track), do: false
+
+  defp matches_recorded_bytes?(current, managed_sha256, track) do
+    current == managed_sha256 or current == get_in(track, [:sync, :applied_sha256])
   end
 
   defp current_sidecar_sha256(target) do

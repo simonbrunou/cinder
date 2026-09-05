@@ -354,6 +354,64 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     assert state.tracks["fr"].replacement_cleanup_sync.source_sha256 == String.duplicate("a", 64)
   end
 
+  test "a re-run does not silently protect a provider track whose sidecar it fails to read" do
+    movie = movie_fixture(%{status: :available, file_path: "/lib/R (2020)/R (2020).mkv"})
+    sidecar = "/lib/R (2020)/R (2020).fr.srt"
+
+    manifest_json =
+      Jason.encode!(%{
+        "video_moviehash" => nil,
+        "tracks" => %{
+          "fr" => %{
+            "origin" => "opensubtitles_id",
+            "file" => "R (2020).fr.srt",
+            "managed_sha256" => String.duplicate("d", 64)
+          }
+        }
+      })
+
+    fs = start_supervised!({Agent, fn -> %{Manifest.path(movie.file_path) => manifest_json} end})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, [{sidecar, 10}]} end)
+
+    # The sidecar genuinely exists (lstat succeeds) but its bytes can't currently be read (a
+    # transient I/O error, say) — this track has no `sync`, so an unguarded comparison against
+    # two absent values would wrongly "prove" the unreadable file unchanged.
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^sidecar -> {:ok, %File.Stat{}} end)
+
+    stub(Cinder.Library.FilesystemMock, :read, fn
+      ^sidecar ->
+        {:error, :eio}
+
+      path ->
+        case Agent.get(fs, &Map.get(&1, path)) do
+          content when is_binary(content) -> {:ok, content}
+          _ -> {:error, :enoent}
+        end
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :rename, fn source, dest ->
+      Agent.get_and_update(fs, fn files ->
+        {:ok, files |> Map.delete(source) |> Map.put(dest, Map.fetch!(files, source))}
+      end)
+    end)
+
+    Backfill.run()
+
+    assert Manifest.read(movie.file_path).tracks["fr"].origin == "release_sidecar"
+  end
+
   defp digest(content),
     do: content |> then(&:crypto.hash(:sha256, &1)) |> Base.encode16(case: :lower)
 end
