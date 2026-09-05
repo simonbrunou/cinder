@@ -261,6 +261,33 @@ defmodule Cinder.Library.BookArchive.RarTest do
       refute File.exists?(marker)
     end
 
+    # #510: a hung `lb` timing out its Elixir-side Task used to leave the underlying OS process
+    # running — closing a port does nothing to a child that never reads stdin. Proven here by a
+    # fake `lb` that outlives the configured timeout and then writes a marker: the marker must
+    # never appear, meaning the real process was killed, not merely abandoned.
+    test "a hung `lb` call's OS process is actually killed, not merely abandoned by the timeout",
+         %{
+           fakebin: fakebin,
+           original_path: original_path,
+           dest: dest,
+           tmp: tmp
+         } do
+      marker = Path.join(tmp, "list_survived")
+
+      install_fake_unrar(fakebin, original_path, """
+      #!/bin/sh
+      case "$1" in
+        lb) sleep 1; touch #{marker}; exit 0 ;;
+      esac
+      """)
+
+      assert {:error, :archive_corrupt} =
+               Rar.extract("/tmp/hung-list.rar", dest, list_timeout_ms: 100)
+
+      Process.sleep(1200)
+      refute File.exists?(marker)
+    end
+
     test "exceeding max_expanded_size kills the process and refuses", %{
       fakebin: fakebin,
       original_path: original_path,
