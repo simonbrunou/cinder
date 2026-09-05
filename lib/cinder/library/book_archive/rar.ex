@@ -224,44 +224,81 @@ defmodule Cinder.Library.BookArchive.Rar do
         args: args
       ])
 
-    started_at = System.monotonic_time(:millisecond)
-    supervise(port, dest_dir, max_expanded_size, poll_interval, max_duration_ms, started_at)
+    now = System.monotonic_time(:millisecond)
+
+    supervise(
+      port,
+      dest_dir,
+      max_expanded_size,
+      poll_interval,
+      now + max_duration_ms,
+      now + poll_interval
+    )
   catch
     :error, reason -> {:error, {:port_open_failed, reason}}
   end
 
-  defp supervise(port, dest_dir, max_expanded_size, poll_interval, max_duration_ms, started_at) do
-    receive do
-      {^port, {:exit_status, 0}} ->
-        :ok
+  # `receive ... after poll_interval` alone is NOT a fixed schedule: each `{:data, _}` clause
+  # recurses straight back into a fresh `receive`, re-arming that relative timer, so continuous
+  # `unrar` output (no idle gap ever wide enough for `after` to win the race) suppresses the
+  # size/time ceiling indefinitely (#506) — the checks below must run on their own schedule
+  # regardless of how much output arrives in between. `due_check/4` compares against absolute
+  # monotonic deadlines computed once up front, so it fires on every iteration once it's due,
+  # whether that iteration was reached via a data message or an idle `after`.
+  defp supervise(port, dest_dir, max_expanded_size, poll_interval, deadline, next_poll_at) do
+    case due_check(dest_dir, max_expanded_size, deadline, next_poll_at, poll_interval) do
+      {:error, _reason} = error ->
+        kill_and_reap(port, error)
 
-      {^port, {:exit_status, _nonzero}} ->
-        {:error, :archive_corrupt}
+      {:ok, next_poll_at} ->
+        remaining = max(next_poll_at - System.monotonic_time(:millisecond), 0)
 
-      {^port, {:data, _data}} ->
-        supervise(port, dest_dir, max_expanded_size, poll_interval, max_duration_ms, started_at)
-    after
-      poll_interval ->
-        elapsed = System.monotonic_time(:millisecond) - started_at
+        receive do
+          {^port, {:exit_status, 0}} ->
+            check_final_size(dest_dir, max_expanded_size)
 
-        cond do
-          elapsed > max_duration_ms ->
-            kill_and_reap(port, {:error, :archive_timeout})
+          {^port, {:exit_status, _nonzero}} ->
+            {:error, :archive_corrupt}
 
-          dir_size(dest_dir) > max_expanded_size ->
-            kill_and_reap(port, {:error, :archive_size_limit})
-
-          true ->
-            supervise(
-              port,
-              dest_dir,
-              max_expanded_size,
-              poll_interval,
-              max_duration_ms,
-              started_at
-            )
+          {^port, {:data, _data}} ->
+            supervise(port, dest_dir, max_expanded_size, poll_interval, deadline, next_poll_at)
+        after
+          remaining ->
+            supervise(port, dest_dir, max_expanded_size, poll_interval, deadline, next_poll_at)
         end
     end
+  end
+
+  # `:ok` (not yet due) carries the unchanged `next_poll_at` through so the caller doesn't need
+  # its own separate "is it due" branch. Once due, this is the only place that walks `dest_dir`
+  # (dir_size/1 can be an expensive tree walk) — gated behind the cheap monotonic comparison so
+  # a burst of data messages between two due checks costs one integer comparison each, not a walk.
+  defp due_check(dest_dir, max_expanded_size, deadline, next_poll_at, poll_interval) do
+    now = System.monotonic_time(:millisecond)
+
+    cond do
+      now < next_poll_at ->
+        {:ok, next_poll_at}
+
+      now > deadline ->
+        {:error, :archive_timeout}
+
+      dir_size(dest_dir) > max_expanded_size ->
+        {:error, :archive_size_limit}
+
+      true ->
+        {:ok, next_poll_at + poll_interval}
+    end
+  end
+
+  # The zero-exit path used to return :ok unconditionally — a fast extraction that already
+  # exceeded the cap on disk but finished (and exited 0) before the first poll ever fired slipped
+  # through uncaught (#506). The process has already exited here, so there is nothing left to
+  # kill; only the disk needs to be judged.
+  defp check_final_size(dest_dir, max_expanded_size) do
+    if dir_size(dest_dir) > max_expanded_size,
+      do: {:error, :archive_size_limit},
+      else: :ok
   end
 
   # Waits briefly for the killed process to actually exit (draining its output so the port
