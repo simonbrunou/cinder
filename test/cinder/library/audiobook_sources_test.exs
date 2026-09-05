@@ -229,6 +229,25 @@ defmodule Cinder.Library.AudiobookSourcesTest do
       assert {:error, :unsafe_source} = AudiobookSources.resolve(dir)
     end
 
+    test "a WAV sibling is refused, not silently dropped, so the audiobook is never published incomplete",
+         %{downloads: downloads} do
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "01 - One Book.mp3"), mp3_bytes())
+      File.write!(Path.join(dir, "02 - One Book.wav"), "wav bytes")
+
+      assert {:error, :unsafe_source} = AudiobookSources.resolve(dir)
+    end
+
+    test "an AIFF sibling is refused the same way", %{downloads: downloads} do
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "01 - One Book.mp3"), mp3_bytes())
+      File.write!(Path.join(dir, "02 - One Book.aiff"), "aiff bytes")
+
+      assert {:error, :unsafe_source} = AudiobookSources.resolve(dir)
+    end
+
     test "a renamed executable at .mp3 is refused by the magic-byte gate", %{
       downloads: downloads
     } do

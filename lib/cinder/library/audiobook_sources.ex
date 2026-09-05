@@ -17,11 +17,11 @@ defmodule Cinder.Library.AudiobookSources do
   1. **Extraction** — identical to `BookSources.resolve/1`'s archive handling (one archive, or
      none), recursing into an extracted scratch directory exactly once.
   2. **Candidate collection** — every `.m4b`/`.mp3` file is a candidate. A stray *other audio*
-     file (`.m4a`/`.aac`/`.flac`/`.ogg`/`.wma`) alongside at least one accepted candidate is never
-     silently ignored: `safe_source/1`'s own extension allow-list refuses it as `:unsafe_source`,
-     the same reason an e-book import already uses for "not one of the accepted formats" — no new
-     rejection atom needed. `.nfo`/`.jpg`/`.txt`-style non-audio padding stays invisible, as it
-     already is for e-books.
+     file (`.m4a`/`.aac`/`.flac`/`.ogg`/`.wma`/`.wav`/`.aiff`/`.aif`) alongside at least one
+     accepted candidate is never silently ignored: `safe_source/1`'s own extension allow-list
+     refuses it as `:unsafe_source`, the same reason an e-book import already uses for "not one
+     of the accepted formats" — no new rejection atom needed. `.nfo`/`.jpg`/`.txt`-style
+     non-audio padding stays invisible, as it already is for e-books.
   3. **Format-magic verification** — an `ID3`/MPEG-frame-sync check for `.mp3`, an `ftyp` box
      check for `.m4b` — the same positive-identification discipline
      `BookSources.verify_magic/2` already applies, needing no subprocess.
@@ -70,9 +70,13 @@ defmodule Cinder.Library.AudiobookSources do
   @accepted_formats [:m4b, :mp3]
 
   # Recognized-but-not-accepted audio containers — `Cinder.Acquisition.AudiobookParser`'s own
-  # recognized-but-rejected audio vocabulary, minus the e-book formats it also recognizes (those
-  # are a different mixed-folder shape, `:unsupported_archive`'s territory, not this list's).
-  @other_audio_extensions ~w(.m4a .aac .flac .ogg .wma)
+  # recognized-but-rejected audio vocabulary (`.m4a`/`.aac`/`.flac`/`.ogg`/`.wma`), minus the
+  # e-book formats it also recognizes (those are a different mixed-folder shape,
+  # `:unsupported_archive`'s territory, not this list's), plus `.wav`/`.aiff`/`.aif` — real
+  # uncompressed audio containers a rip can legitimately carry, which that parser's own
+  # release-title vocabulary has no reason to name (a release title essentially never says
+  # "wav"), but which must not silently vanish here the same way a stray `.flac` mustn't (#504).
+  @other_audio_extensions ~w(.m4a .aac .flac .ogg .wma .wav .aiff .aif)
 
   @archive_extensions ~w(.rar .zip .7z .gz .bz2 .xz .tar .cbz .cbr)
   @extractable_extensions ~w(.zip .cbz .rar .cbr)
