@@ -942,6 +942,25 @@ defmodule Cinder.LibraryTest do
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
   end
 
+  test "an Info-ZIP split set (archive.z01 + archive.zip) fails explicitly instead of importing its sample (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok,
+       [
+         {"/dl/X/sample.mkv", 500},
+         {"/dl/X/b.z01", 9_999},
+         {"/dl/X/b.z02", 9_999},
+         {"/dl/X/b.zip", 100}
+       ]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
   test "a real feature titled with the word 'sample' still imports beside a companion archive (#499)" do
     movie = %Movie{title: "Sample", year: 2000, tmdb_id: 558, file_path: "/dl/X"}
 

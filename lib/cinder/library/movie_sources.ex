@@ -151,8 +151,11 @@ defmodule Cinder.Library.MovieSources do
     # movie.zip.001, .002, … alike — matched on the raw basename (no String.downcase/Unicode
     # mode: a non-UTF8 basename byte must never crash this check, and this pattern is pure
     # ASCII so case-insensitive byte matching is exact either way).
+    #
+    # Info-ZIP's own `-s` split (`archive.z01`, `.z02`, … + a final `archive.zip`) is the same
+    # shape as RAR's old-style `.r00`/`.r01` set — the .rNN regex's zip-lettered twin.
     extension in @archive_extensions or
-      Regex.match?(~r/^\.r\d{2}$/u, extension) or
+      Regex.match?(~r/^\.[rz]\d{2}$/u, extension) or
       Regex.match?(~r/\.(?:7z|zip)\.\d{3}$/i, Path.basename(path))
   end
 
