@@ -268,7 +268,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
 
   test "post-download enqueue is best effort when no named worker is alive" do
     refute Process.whereis(Worker)
-    assert :ok = Worker.enqueue_after_download("/library/downloaded.mkv")
+    assert :ok = Worker.enqueue_after_download("/library/downloaded.mkv", :movies)
   end
 
   test "an explicit request promotes queued work ahead of the background library backlog" do

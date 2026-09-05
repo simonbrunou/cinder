@@ -7,6 +7,71 @@ defmodule Cinder.Subtitles.SyncTest do
   alias Cinder.Subtitles.{Manifest, Moviehash, Sync}
   alias Cinder.Subtitles.Sync.AtomicFile
 
+  # Delegates every operation to the real `Disk` filesystem, except it reports each
+  # `write_bound/2` call back to the owning test process — so a test can pin "the reclaim path
+  # restages through the syncing primitive" without being able to observe an fsync directly.
+  defmodule SpyWriteBoundFilesystem do
+    @moduledoc false
+    @behaviour Cinder.Library.Filesystem
+
+    alias Cinder.Library.Filesystem.Disk
+
+    @impl true
+    defdelegate dir?(path), to: Disk
+    @impl true
+    defdelegate ls(path), to: Disk
+    @impl true
+    defdelegate find_files(path), to: Disk
+    @impl true
+    defdelegate mkdir_p(path), to: Disk
+    @impl true
+    defdelegate mkdir_exclusive(path, mode), to: Disk
+    @impl true
+    defdelegate ln(source, dest), to: Disk
+    @impl true
+    defdelegate cp(source, dest), to: Disk
+    @impl true
+    defdelegate cp_exclusive(source, dest, on_create), to: Disk
+    @impl true
+    defdelegate lstat(path), to: Disk
+    @impl true
+    defdelegate rename(source, dest), to: Disk
+    @impl true
+    defdelegate rm(path), to: Disk
+    @impl true
+    defdelegate rmdir(path), to: Disk
+    @impl true
+    defdelegate rm_rf(path), to: Disk
+    @impl true
+    defdelegate read(path), to: Disk
+    @impl true
+    defdelegate read_prefix(path, bytes), to: Disk
+    @impl true
+    defdelegate write(path, content), to: Disk
+    @impl true
+    defdelegate chmod(path, mode), to: Disk
+    @impl true
+    defdelegate write_exclusive(path, content), to: Disk
+    @impl true
+    defdelegate open_bound(path, modes), to: Disk
+    @impl true
+    defdelegate create_bound(path, content), to: Disk
+    @impl true
+    defdelegate close_bound(bound), to: Disk
+    @impl true
+    defdelegate discard_bound(bound), to: Disk
+    @impl true
+    defdelegate exchange(source, dest), to: Disk
+    @impl true
+    defdelegate moviehash_data(path), to: Disk
+
+    @impl true
+    def write_bound(bound, content) do
+      send(self(), {:write_bound, bound.path})
+      Disk.write_bound(bound, content)
+    end
+  end
+
   @moduletag :tmp_dir
 
   setup :set_mox_global
@@ -177,6 +242,106 @@ defmodule Cinder.Subtitles.SyncTest do
     assert File.read!(path) == original
     assert File.read!(backup) == ""
     assert Manifest.sync(Manifest.read(video), "en") == nil
+  end
+
+  test "a repeated identical manual/reset cycle does not collide with the first reset's retired workspace",
+       %{video: video} do
+    path = managed_srt!(video)
+    original = File.read!(path)
+
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+    assert File.read!(path) =~ "00:00:02,000"
+
+    [item] = Sync.discover(video)
+    assert :ok = Sync.reset(item)
+    assert File.read!(path) == original
+
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+    assert File.read!(path) =~ "00:00:02,000"
+
+    [item] = Sync.discover(video)
+    assert :ok = Sync.reset(item)
+    assert File.read!(path) == original
+    assert Manifest.sync(Manifest.read(video), "en") == nil
+
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 2_000, 1.0)
+    assert File.read!(path) =~ "00:00:03,000"
+  end
+
+  test "a reclaimed tombstone restages through the syncing write_bound primitive", %{
+    video: video
+  } do
+    path = managed_srt!(video)
+    original = File.read!(path)
+
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+
+    [item] = Sync.discover(video)
+    assert :ok = Sync.reset(item)
+    assert File.read!(path) == original
+
+    saved_filesystem = Application.get_env(:cinder, :filesystem)
+    Application.put_env(:cinder, :filesystem, SpyWriteBoundFilesystem)
+    on_exit(fn -> Application.put_env(:cinder, :filesystem, saved_filesystem) end)
+
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+
+    # Drain any write_bound activity from the manual correction itself (e.g. reactivating a
+    # backup retired by the first reset) so the messages left afterward can only be the reset's
+    # own restage.
+    drain_write_bound_messages()
+
+    [item] = Sync.discover(video)
+    assert :ok = Sync.reset(item)
+    assert File.read!(path) == original
+
+    assert_received {:write_bound, _}
+  end
+
+  test "a multiply-linked staged tombstone is refused instead of being written through", %{
+    video: video
+  } do
+    path = managed_srt!(video)
+    original = File.read!(path)
+
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+
+    [item] = Sync.discover(video)
+    assert :ok = Sync.reset(item)
+    assert File.read!(path) == original
+
+    # Every tombstoned staged file left behind so far (the deterministic reversal workspace
+    # reset reuses, and any transient random-id workspace manual left along the way) gets a
+    # second link, standing in for a same-filesystem file outside the library tree that an
+    # attacker planted at the deterministic path before Cinder's own mkdir_exclusive ran.
+    outside_links =
+      Path.dirname(path)
+      |> Path.join(".cinder-subtitle-sync-cas-*/.cinder-subtitle-sync-write-staged")
+      |> Path.wildcard(match_dot: true)
+      |> Enum.with_index()
+      |> Enum.map(fn {staged, index} ->
+        outside = Path.join(Path.dirname(path), "outside-link-#{index}")
+        File.ln!(staged, outside)
+        outside
+      end)
+
+    refute outside_links == []
+
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+    assert File.read!(path) =~ "00:00:02,000"
+
+    [item] = Sync.discover(video)
+    assert {:error, :pending_workspace_mismatch} = Sync.reset(item)
+
+    assert File.read!(path) =~ "00:00:02,000"
+    for outside <- outside_links, do: assert(File.read!(outside) == "")
   end
 
   test "legacy embedded migration retires a proven duplicate backup", %{video: video} do
@@ -2147,6 +2312,14 @@ defmodule Cinder.Subtitles.SyncTest do
 
   defp digest(content),
     do: content |> then(&:crypto.hash(:sha256, &1)) |> Base.encode16(case: :lower)
+
+  defp drain_write_bound_messages do
+    receive do
+      {:write_bound, _} -> drain_write_bound_messages()
+    after
+      0 -> :ok
+    end
+  end
 
   defp sidecar(video, language, extension),
     do: Path.rootname(video) <> ".#{language}" <> extension

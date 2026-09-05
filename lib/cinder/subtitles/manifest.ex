@@ -77,7 +77,7 @@ defmodule Cinder.Subtitles.Manifest do
       state =
         state
         |> put_in([:tracks, language], track)
-        |> Map.put(:video_moviehash, moviehash)
+        |> Map.put(:video_moviehash, moviehash || state.video_moviehash)
 
       write(video_path, state)
     end

@@ -198,7 +198,9 @@ defmodule Cinder.Subtitles do
       not writable?(state, language, exists?) ->
         {:ok, cache}
 
-      match == :id and exists? and origin(state, language) == "opensubtitles_id" ->
+      match == :id and exists? and
+          (origin(state, language) == "opensubtitles_id" or
+             keep_verified?(state, moviehash, language)) ->
         {:ok, cache}
 
       true ->
@@ -245,16 +247,20 @@ defmodule Cinder.Subtitles do
 
   defp local_fallback(video_path, kind, language, moviehash, state, cache) do
     target = sidecar_path(video_path, language)
+    exists? = sidecar_exists?(target)
 
-    if writable?(state, language, sidecar_exists?(target)) do
-      {source, cache} = local_source(video_path, language, cache)
+    if writable?(state, language, exists?) do
+      {source, cache} = local_source(video_path, language, target, cache)
 
       case source do
         {:direct, content, origin} ->
           commit(video_path, kind, language, moviehash, origin, target, content)
 
-        {:translate, srt} ->
+        {:translate, srt} when not exists? ->
           translate_and_commit(video_path, kind, language, moviehash, target, srt)
+
+        {:translate, _srt} ->
+          :ok
 
         nil ->
           :ok
@@ -266,25 +272,25 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  defp local_source(video_path, language, cache) do
+  defp local_source(video_path, language, target, cache) do
     {tracks, cache} = subtitle_tracks(video_path, cache)
 
     case Enum.find(tracks, &(track_language(&1) == language and not &1.forced?)) do
       nil ->
-        default_or_sidecar(video_path, language, tracks, cache)
+        default_or_sidecar(video_path, language, target, tracks, cache)
 
       track ->
         case extract(video_path, track) do
           {:ok, content} -> {{:direct, content, "embedded"}, cache}
-          :error -> default_or_sidecar(video_path, language, tracks, cache)
+          :error -> default_or_sidecar(video_path, language, target, tracks, cache)
         end
     end
   end
 
-  defp default_or_sidecar(video_path, language, tracks, cache) do
+  defp default_or_sidecar(video_path, language, target, tracks, cache) do
     case default_srt(video_path, tracks, cache) do
       {{:ok, srt}, cache} -> {{:translate, srt}, cache}
-      {:none, cache} -> sidecar_source(video_path, language, cache)
+      {:none, cache} -> sidecar_source(video_path, language, target, cache)
     end
   end
 
@@ -330,20 +336,23 @@ defmodule Cinder.Subtitles do
 
   defp default_srt(_video_path, _tracks, %{default_srt: result} = cache), do: {result, cache}
 
-  defp sidecar_source(video_path, language, cache) do
+  defp sidecar_source(video_path, language, target, cache) do
     {sidecars, cache} = srt_sidecars(video_path, cache)
+    candidates = Enum.reject(sidecars, fn {path, _language} -> same_path?(path, target) end)
 
-    case Enum.find(sidecars, fn {_path, source_language} -> source_language == language end) do
+    case Enum.find(candidates, fn {_path, source_language} -> source_language == language end) do
       {path, _language} ->
         case read(path) do
           {:ok, content} -> {{:direct, content, "translated"}, cache}
-          :error -> translation_sidecar(video_path, language, sidecars, cache)
+          :error -> translation_sidecar(video_path, language, candidates, cache)
         end
 
       nil ->
-        translation_sidecar(video_path, language, sidecars, cache)
+        translation_sidecar(video_path, language, candidates, cache)
     end
   end
+
+  defp same_path?(a, b), do: Path.expand(a) == Path.expand(b)
 
   defp translation_sidecar(video_path, _language, sidecars, %{sidecar_srt: :unknown} = cache) do
     result =
@@ -503,7 +512,7 @@ defmodule Cinder.Subtitles do
 
   defp after_commit(video_path, kind, language, origin) do
     if origin in ["opensubtitles_hash", "opensubtitles_id"] do
-      Worker.enqueue_after_download(video_path)
+      Worker.enqueue_after_download(video_path, kind)
     end
 
     Cinder.Library.refresh(kind, video_path)
@@ -676,7 +685,7 @@ defmodule Cinder.Subtitles do
   defp put_release_sidecar(video_path, moviehash, language, target) do
     state = Manifest.read(video_path)
 
-    if sidecar_exists?(target) and not keep_verified?(state, moviehash, language) do
+    if sidecar_exists?(target) and not keep_registered?(state, moviehash, language, target) do
       case Manifest.put(
              video_path,
              moviehash || state.video_moviehash,
@@ -701,6 +710,54 @@ defmodule Cinder.Subtitles do
   defp keep_verified?(state, moviehash, language) do
     Manifest.verified?(state, language) and
       (is_nil(moviehash) or Manifest.stable?(state, moviehash, language))
+  end
+
+  # `Manifest.put` here always writes a fresh track carrying only `backup_tombstone` forward —
+  # no managed digest, sync record, or cleanup journal (issue #527). Re-registering an
+  # already-provider-owned (`opensubtitles_hash`/`opensubtitles_id`) sidecar whose current bytes
+  # still match what Cinder last wrote — either the original download (`managed_sha256`) or a
+  # legitimate later correction (`sync.applied_sha256`) — would silently drop its synchronization
+  # provenance for no reason, removing it from `Sync.discover/1`. A track with an in-progress
+  # reset or replacement cleanup journal is protected the same way regardless of its bytes:
+  # erasing that journal mid-recovery would strand the crash-recovery state it exists for.
+  defp keep_registered?(state, moviehash, language, target) do
+    keep_verified?(state, moviehash, language) or
+      active_cleanup_journal?(state, language) or
+      unchanged_provider_track?(state, language, target)
+  end
+
+  defp active_cleanup_journal?(state, language) do
+    not is_nil(get_in(state, [:tracks, language, :reset_cleanup_sync])) or
+      not is_nil(get_in(state, [:tracks, language, :replacement_cleanup_sync]))
+  end
+
+  defp unchanged_provider_track?(state, language, target) do
+    case get_in(state, [:tracks, language]) do
+      %{origin: origin, managed_sha256: managed_sha256} = track
+      when origin in ["opensubtitles_hash", "opensubtitles_id"] and is_binary(managed_sha256) ->
+        matches_recorded_bytes?(current_sidecar_sha256(target), managed_sha256, track)
+
+      _ ->
+        false
+    end
+  end
+
+  # A failed read (`nil`) must never count as a match: a track carrying no `sync` yet has no
+  # `sync.applied_sha256` either, and comparing two absent values would otherwise silently
+  # "prove" an unreadable sidecar unchanged.
+  defp matches_recorded_bytes?(nil, _managed_sha256, _track), do: false
+
+  defp matches_recorded_bytes?(current, managed_sha256, track) do
+    current == managed_sha256 or current == get_in(track, [:sync, :applied_sha256])
+  end
+
+  defp current_sidecar_sha256(target) do
+    with {:ok, target} <- safe_destination(target),
+         {:ok, content} <- fs().read(target) do
+      sha256(content)
+    else
+      _ -> nil
+    end
   end
 
   defp current_moviehash(video_path) do

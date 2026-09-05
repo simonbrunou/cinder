@@ -169,6 +169,96 @@ defmodule Cinder.Library.AudiobookSourcesTest do
       assert second.path == t2
       assert second.order_disc == 2
     end
+
+    # #505: order_by_evidence/1 sorted by (disc, track) but never checked uniqueness — two
+    # distinct files reducing to the same position (no disc evidence, same filename-embedded
+    # track number) both passed through, with filesystem walk order silently deciding which one
+    # became "01" versus "02".
+    test "filename-derived duplicate track positions are refused, not silently ordered", %{
+      downloads: downloads
+    } do
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(Path.join(dir, "A"))
+      File.mkdir_p!(Path.join(dir, "B"))
+      File.write!(Path.join(dir, "A/01 - One Book.mp3"), mp3_bytes())
+      File.write!(Path.join(dir, "B/01 - One Book.mp3"), mp3_bytes())
+
+      assert {:error, :track_order_contradictory} = AudiobookSources.resolve(dir)
+    end
+
+    # Same gap, embedded-tag evidence instead of filename evidence.
+    test "tag-derived duplicate track positions are refused, not silently ordered", %{
+      downloads: downloads
+    } do
+      Application.put_env(:cinder, :audio_probe, Cinder.Library.AudioProbeMock)
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(Path.join(dir, "A"))
+      File.mkdir_p!(Path.join(dir, "B"))
+      a = Path.join(dir, "A/Recording.mp3")
+      b = Path.join(dir, "B/Recording.mp3")
+      File.write!(a, mp3_bytes())
+      File.write!(b, mp3_bytes())
+
+      stub(Cinder.Library.AudioProbeMock, :probe, fn
+        ^a -> {:ok, probe(track_tag: 1, album_tag: "The Dispossessed")}
+        ^b -> {:ok, probe(track_tag: 1, album_tag: "The Dispossessed")}
+      end)
+
+      assert {:error, :track_order_contradictory} = AudiobookSources.resolve(dir)
+    end
+
+    # The disc digit must genuinely participate in the uniqueness check, not just happen to
+    # differ in every other test — same track number "01" on two distinct discs stays valid.
+    test "matching track numbers on genuinely different discs remain valid", %{
+      downloads: downloads
+    } do
+      dir = Path.join(downloads, "Multi")
+      cd1 = Path.join(dir, "CD1")
+      cd2 = Path.join(dir, "CD2")
+      File.mkdir_p!(cd1)
+      File.mkdir_p!(cd2)
+      t1 = Path.join(cd1, "01.mp3")
+      t2 = Path.join(cd2, "01.mp3")
+      File.write!(t1, mp3_bytes())
+      File.write!(t2, mp3_bytes())
+
+      assert {:ok, [first, second]} = AudiobookSources.resolve(dir)
+      assert first.path == t1
+      assert first.order_disc == 1
+      assert second.path == t2
+      assert second.order_disc == 2
+    end
+
+    # Codex review on PR #550: the tag-derived key jumped straight to a fallback disc of 1
+    # whenever probe.disc_tag was nil, ignoring the directory-derived filename_disc evidence
+    # resolved_disc/1 already relies on — so a probed set with a track tag on every file but no
+    # DISC tag (real ffprobe rarely tags disc for a simple rip) falsely collided CD1/01 and
+    # CD2/01 into the same key and refused a genuinely valid multi-disc set.
+    test "a probed multi-disc set with no disc tag falls back to filename disc evidence", %{
+      downloads: downloads
+    } do
+      Application.put_env(:cinder, :audio_probe, Cinder.Library.AudioProbeMock)
+      dir = Path.join(downloads, "Multi")
+      cd1 = Path.join(dir, "CD1")
+      cd2 = Path.join(dir, "CD2")
+      File.mkdir_p!(cd1)
+      File.mkdir_p!(cd2)
+      t1 = Path.join(cd1, "01.mp3")
+      t2 = Path.join(cd2, "01.mp3")
+      File.write!(t1, mp3_bytes())
+      File.write!(t2, mp3_bytes())
+
+      stub(Cinder.Library.AudioProbeMock, :probe, fn
+        ^t1 -> {:ok, probe(track_tag: 1, album_tag: "The Dispossessed")}
+        ^t2 -> {:ok, probe(track_tag: 1, album_tag: "The Dispossessed")}
+      end)
+
+      assert {:ok, [first, second]} = AudiobookSources.resolve(dir)
+      assert first.path == t1
+      assert first.order_disc == 1
+      assert second.path == t2
+      assert second.order_disc == 2
+    end
   end
 
   describe "mixed-book detection" do
@@ -190,6 +280,30 @@ defmodule Cinder.Library.AudiobookSourcesTest do
       end)
 
       assert {:error, :mixed_book_tags} = AudiobookSources.resolve(dir)
+    end
+
+    # #503: distinct per-track chapter titles alone must not read as "different books" — only
+    # book-level evidence (the album tag) identifies cross-file identity; title_tag is a
+    # per-chapter field ffprobe reads directly, expected to legitimately differ track to track.
+    test "equal album tags with distinct chapter titles resolve in track order and import", %{
+      downloads: downloads
+    } do
+      Application.put_env(:cinder, :audio_probe, Cinder.Library.AudioProbeMock)
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(dir)
+      a = Path.join(dir, "01 - Recording.mp3")
+      b = Path.join(dir, "02 - Recording.mp3")
+      File.write!(a, mp3_bytes())
+      File.write!(b, mp3_bytes())
+
+      stub(Cinder.Library.AudioProbeMock, :probe, fn
+        ^a -> {:ok, probe(track_tag: 1, album_tag: "One Book", title_tag: "Chapter One")}
+        ^b -> {:ok, probe(track_tag: 2, album_tag: "One Book", title_tag: "Chapter Two")}
+      end)
+
+      assert {:ok, [first, second]} = AudiobookSources.resolve(dir)
+      assert first.path == a
+      assert second.path == b
     end
 
     test "two unrelated tracks with no probe configured are held :mixed_book_filenames", %{
@@ -225,6 +339,34 @@ defmodule Cinder.Library.AudiobookSourcesTest do
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "01 - Chapter.mp3"), mp3_bytes())
       File.write!(Path.join(dir, "bonus.flac"), "flac bytes")
+
+      assert {:error, :unsafe_source} = AudiobookSources.resolve(dir)
+    end
+
+    test "a WAV sibling is refused, not silently dropped, so the audiobook is never published incomplete",
+         %{downloads: downloads} do
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "01 - One Book.mp3"), mp3_bytes())
+      File.write!(Path.join(dir, "02 - One Book.wav"), "wav bytes")
+
+      assert {:error, :unsafe_source} = AudiobookSources.resolve(dir)
+    end
+
+    test "an AIFF sibling is refused the same way", %{downloads: downloads} do
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "01 - One Book.mp3"), mp3_bytes())
+      File.write!(Path.join(dir, "02 - One Book.aiff"), "aiff bytes")
+
+      assert {:error, :unsafe_source} = AudiobookSources.resolve(dir)
+    end
+
+    test "an AIFF-C (.aifc) sibling is refused the same way", %{downloads: downloads} do
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "01 - One Book.mp3"), mp3_bytes())
+      File.write!(Path.join(dir, "02 - One Book.aifc"), "aifc bytes")
 
       assert {:error, :unsafe_source} = AudiobookSources.resolve(dir)
     end

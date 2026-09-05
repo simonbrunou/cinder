@@ -66,9 +66,16 @@ defmodule Cinder.Library.BookArchive do
   def extract_and_resolve(archive_path, resolve_fun, opts \\ []) do
     with {:ok, safe_path} <- safe_archive_source(archive_path),
          scratch_dir = Path.join(Path.dirname(safe_path), @scratch_dir_name),
-         :ok <- reset_scratch_dir(scratch_dir),
-         :ok <- extract(safe_path, scratch_dir, opts) do
-      finish(resolve_fun.(scratch_dir), scratch_dir)
+         :ok <- reset_scratch_dir(scratch_dir) do
+      # Once `reset_scratch_dir/1` has succeeded, this attempt owns `scratch_dir` — an extractor
+      # refusal (a size/CRC ceiling, a corrupt archive) can already have written partial output
+      # under it, same as a resolver refusal, so both flow through the same `finish/2` cleanup
+      # (#507). Before this point (a rejected/outside-root archive_path), nothing has been
+      # written under this attempt's ownership, so there is nothing to clean up.
+      case extract(safe_path, scratch_dir, opts) do
+        :ok -> finish(resolve_fun.(scratch_dir), scratch_dir)
+        {:error, _reason} = error -> finish(error, scratch_dir)
+      end
     else
       {:error, _reason} = error -> error
     end

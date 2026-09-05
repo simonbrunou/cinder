@@ -63,38 +63,44 @@ defmodule Cinder.Repo.Migrations.AddMovieEpisodeCheckConstraints do
   defp rebuild_all(checked?: checked?) do
     repo().checkout(fn ->
       query!("PRAGMA foreign_keys = OFF")
-      query!("BEGIN IMMEDIATE")
 
+      # The `after` covers every failure on this connection, including BEGIN IMMEDIATE
+      # itself — not just a failure inside the transaction — so a rejected rebuild never
+      # returns this checked-out connection to the pool with enforcement left disabled.
       try do
-        rebuild_table(
-          "movies",
-          @movies_columns,
-          movies_create_sql(checked?: checked?),
-          @movies_index_sqls
-        )
+        query!("BEGIN IMMEDIATE")
 
-        rebuild_table(
-          "episodes",
-          @episodes_columns,
-          episodes_create_sql(checked?: checked?),
-          @episodes_index_sqls
-        )
+        try do
+          rebuild_table(
+            "movies",
+            @movies_columns,
+            movies_create_sql(checked?: checked?),
+            @movies_index_sqls
+          )
 
-        verify_foreign_keys!()
-        query!("COMMIT")
-      rescue
-        exception ->
-          # Best-effort: never let a failed ROLLBACK mask the original error.
-          try do
-            query!("ROLLBACK")
-          rescue
-            _rollback_failure -> :ok
-          end
+          rebuild_table(
+            "episodes",
+            @episodes_columns,
+            episodes_create_sql(checked?: checked?),
+            @episodes_index_sqls
+          )
 
-          reraise exception, __STACKTRACE__
+          verify_foreign_keys!()
+          query!("COMMIT")
+        rescue
+          exception ->
+            # Best-effort: never let a failed ROLLBACK mask the original error.
+            try do
+              query!("ROLLBACK")
+            rescue
+              _rollback_failure -> :ok
+            end
+
+            reraise exception, __STACKTRACE__
+        end
+      after
+        query!("PRAGMA foreign_keys = ON")
       end
-
-      query!("PRAGMA foreign_keys = ON")
     end)
   end
 

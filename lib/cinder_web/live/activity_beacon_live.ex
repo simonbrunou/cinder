@@ -20,6 +20,9 @@ defmodule CinderWeb.ActivityBeaconLive do
   # on_mount hooks those attach (including locale) don't run here on their own, so wire it
   # directly. The session it's rendered with already carries "locale" (the same conn session
   # every live_session reads it from).
+  on_mount {CinderWeb.UserAuth, :require_authenticated}
+  on_mount {CinderWeb.UserAuth, :require_active}
+  on_mount {CinderWeb.UserAuth, :require_admin}
   on_mount CinderWeb.Locale
 
   import CinderWeb.LiveHelpers
