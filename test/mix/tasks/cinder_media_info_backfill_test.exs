@@ -4,8 +4,8 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.Catalog.Episode
-  alias Cinder.Library.Backfill
-  alias Cinder.Subtitles.Manifest
+  alias Cinder.Library.{Backfill, Filesystem.Disk}
+  alias Cinder.Subtitles.{Manifest, Moviehash, Sync}
 
   setup :verify_on_exit!
 
@@ -203,4 +203,157 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     assert Manifest.stable?(state, moviehash, "fr")
     assert state.tracks["en"] == %{origin: "release_sidecar", file: "V (2020).en.srt"}
   end
+
+  @tag :tmp_dir
+  test "preserves an opensubtitles_id track's synchronization provenance across a re-run", %{
+    tmp_dir: tmp
+  } do
+    keys = [:filesystem, :path_policy, :movies_library_path]
+    saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
+    movies = Path.join(tmp, "movies")
+    File.mkdir_p!(movies)
+    Application.put_env(:cinder, :filesystem, Cinder.Library.Filesystem.Disk)
+    Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
+    Application.put_env(:cinder, :movies_library_path, movies)
+
+    on_exit(fn ->
+      Enum.each(saved, fn
+        {key, nil} -> Application.delete_env(:cinder, key)
+        {key, value} -> Application.put_env(:cinder, key, value)
+      end)
+    end)
+
+    video = Path.join(movies, "P (2020)/P (2020).mkv")
+    File.mkdir_p!(Path.dirname(video))
+    video_content = String.duplicate("v", 131_072)
+    File.write!(video, video_content)
+    chunk = String.duplicate("v", 65_536)
+    moviehash = Moviehash.compute(131_072, chunk, chunk)
+
+    sidecar = Path.rootname(video) <> ".fr.srt"
+    original = "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n"
+    corrected = "1\n00:00:02,000 --> 00:00:03,000\nOne\n\n"
+    File.write!(sidecar, corrected)
+
+    original_sha = digest(original)
+    corrected_sha = digest(corrected)
+
+    Jason.encode!(%{
+      "video_moviehash" => moviehash,
+      "tracks" => %{
+        "fr" => %{
+          "origin" => "opensubtitles_id",
+          "file" => Path.basename(sidecar),
+          "managed_sha256" => original_sha,
+          "sync" => %{
+            "status" => "aligned",
+            "method" => "manual",
+            "moviehash" => moviehash,
+            "source_sha256" => original_sha,
+            "applied_sha256" => corrected_sha,
+            "offset_ms" => 1000,
+            "rate" => 1.0
+          }
+        }
+      }
+    })
+    |> then(&File.write!(Manifest.path(video), &1))
+
+    # A real correction's backup is created through Backup.ensure/2, which records the backup
+    # file's own identity as a tombstone so a later reset can prove it's discarding its own
+    # immutable copy rather than an unrelated file — reproduce that here instead of a plain
+    # `File.write!/2`.
+    assert {:ok, bound} = Disk.create_bound(Sync.backup_path(sidecar), original)
+    assert :ok = Manifest.put_backup_tombstone(video, "fr", bound.identity)
+    assert :ok = Disk.close_bound(bound)
+
+    movie_fixture(%{status: :available, file_path: video})
+
+    Backfill.run()
+
+    state = Manifest.read(video)
+    assert state.tracks["fr"].origin == "opensubtitles_id"
+    assert state.tracks["fr"].managed_sha256 == original_sha
+    assert state.tracks["fr"].sync.applied_sha256 == corrected_sha
+    assert File.read!(sidecar) == corrected
+
+    assert [item] = Sync.discover(video)
+    assert :ok = Sync.reset(item)
+    assert File.read!(sidecar) == original
+  end
+
+  test "a re-run never erases an in-progress replacement cleanup journal" do
+    movie = movie_fixture(%{status: :available, file_path: "/lib/J (2020)/J (2020).mkv"})
+    sidecar = "/lib/J (2020)/J (2020).fr.srt"
+
+    journal = %{
+      "status" => "aligned",
+      "method" => "manual",
+      "moviehash" => nil,
+      "source_sha256" => String.duplicate("a", 64),
+      "applied_sha256" => String.duplicate("b", 64),
+      "offset_ms" => 1000,
+      "rate" => 1.0
+    }
+
+    manifest_json =
+      Jason.encode!(%{
+        "video_moviehash" => nil,
+        "tracks" => %{
+          "fr" => %{
+            "origin" => "opensubtitles_id",
+            "file" => "J (2020).fr.srt",
+            "managed_sha256" => String.duplicate("c", 64),
+            "replacement_cleanup_sync" => journal
+          }
+        }
+      })
+
+    fs =
+      start_supervised!(
+        {Agent,
+         fn ->
+           %{sidecar => "unrelated new bytes", Manifest.path(movie.file_path) => manifest_json}
+         end}
+      )
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, [{sidecar, 10}]} end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+      if Agent.get(fs, &Map.has_key?(&1, path)), do: {:ok, %File.Stat{}}, else: {:error, :enoent}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :read, fn path ->
+      case Agent.get(fs, &Map.get(&1, path)) do
+        content when is_binary(content) -> {:ok, content}
+        _ -> {:error, :enoent}
+      end
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :rename, fn source, dest ->
+      Agent.get_and_update(fs, fn files ->
+        {:ok, files |> Map.delete(source) |> Map.put(dest, Map.fetch!(files, source))}
+      end)
+    end)
+
+    Backfill.run()
+
+    state = Manifest.read(movie.file_path)
+    assert state.tracks["fr"].origin == "opensubtitles_id"
+    assert state.tracks["fr"].replacement_cleanup_sync.source_sha256 == String.duplicate("a", 64)
+  end
+
+  defp digest(content),
+    do: content |> then(&:crypto.hash(:sha256, &1)) |> Base.encode16(case: :lower)
 end
