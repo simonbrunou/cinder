@@ -312,6 +312,79 @@ defmodule Cinder.Library.MigrationSource.ReadarrTest do
     assert {:error, :unexpected_response} = Readarr.snapshot()
   end
 
+  test "snapshot/0 scopes the bookfile and edition collections the way the live API demands" do
+    configure(local_dir())
+    test_pid = self()
+
+    Req.Test.stub(Cinder.ReadarrStub, fn conn ->
+      scopes = Enum.to_list(URI.query_decoder(conn.query_string))
+
+      case {conn.request_path, scopes} do
+        {"/api/v1/author", _} ->
+          Req.Test.json(conn, @fixture["author"])
+
+        {"/api/v1/book", _} ->
+          Req.Test.json(conn, @fixture["book"])
+
+        # 0.4.20.129's own failure modes for an unscoped collection GET: bookfile is a hard 500,
+        # edition a silently empty list. Both would sink the whole migration.
+        {"/api/v1/bookfile", []} ->
+          Plug.Conn.send_resp(conn, 500, "authorId, bookId, bookFileIds or unmapped")
+
+        {"/api/v1/edition", []} ->
+          Req.Test.json(conn, [])
+
+        {"/api/v1/bookfile", scopes} ->
+          ids = for {"authorId", raw} <- scopes, do: String.to_integer(raw)
+          send(test_pid, {:bookfile_scope, ids})
+          Req.Test.json(conn, Enum.filter(@fixture["bookfile"], &(&1["authorId"] in ids)))
+
+        {"/api/v1/edition", scopes} ->
+          ids = for {"bookId", raw} <- scopes, do: String.to_integer(raw)
+          send(test_pid, {:edition_scope, ids})
+          Req.Test.json(conn, Enum.filter(@fixture["edition"], &(&1["bookId"] in ids)))
+
+        {"/api/v1/qualityprofile", _} ->
+          Req.Test.json(conn, @fixture["qualityprofile"])
+
+        {"/api/v1/rootfolder", _} ->
+          Req.Test.json(conn, @fixture["rootfolder"])
+
+        {"/api/v1/config/naming", _} ->
+          Req.Test.json(conn, @fixture["config/naming"])
+      end
+    end)
+
+    assert {:ok, snapshot} = Readarr.snapshot()
+
+    # Every file and edition still arrives, though no unscoped GET ever succeeds.
+    assert Enum.map(snapshot.files, & &1.provider_id) == [1, 2, 3, 4]
+    assert Enum.map(snapshot.editions, & &1.provider_id) == [1, 2, 3, 4]
+
+    # One request per author, because the live build reads only the first `authorId` ...
+    assert_received {:bookfile_scope, [1]}
+    assert_received {:bookfile_scope, [2]}
+    # ... and every work id in a single repeated-`bookId` request, which it does honour.
+    assert_received {:edition_scope, [1, 2, 3]}
+  end
+
+  test "snapshot/0 surfaces a failure on one scoped request instead of a partial snapshot" do
+    configure(local_dir())
+
+    Req.Test.stub(Cinder.ReadarrStub, fn conn ->
+      case {conn.request_path, conn.query_string} do
+        {"/api/v1/author", _} -> Req.Test.json(conn, @fixture["author"])
+        {"/api/v1/book", _} -> Req.Test.json(conn, @fixture["book"])
+        {"/api/v1/edition", _} -> Req.Test.json(conn, @fixture["edition"])
+        {"/api/v1/bookfile", "authorId=2"} -> Plug.Conn.send_resp(conn, 503, "down")
+        {"/api/v1/bookfile", _} -> Req.Test.json(conn, @fixture["bookfile"])
+        {_path, _query} -> Req.Test.json(conn, [])
+      end
+    end)
+
+    assert {:error, {:readarr_status, 503}} = Readarr.snapshot()
+  end
+
   test "the configured API key never appears in a snapshot error or health error" do
     configure(local_dir(), @secret)
 
