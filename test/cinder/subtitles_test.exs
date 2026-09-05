@@ -726,6 +726,85 @@ defmodule Cinder.SubtitlesTest do
     assert Agent.get(fs, &Map.fetch!(&1, target)) == "manual"
   end
 
+  test "a default embedded track never replaces an existing release-sidecar target", %{fs: fs} do
+    video = @video
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+    target = "/lib/M/M.fr.srt"
+    manifest = Manifest.path(@video)
+
+    Agent.update(fs, fn files ->
+      files
+      |> Map.put(target, "1\n00:00:01,000 --> 00:00:02,000\nBonjour original\n\n")
+      |> Map.put(
+        manifest,
+        Jason.encode!(%{
+          video_moviehash: nil,
+          tracks: %{"fr" => %{origin: "release_sidecar"}}
+        })
+      )
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok, [%{index: 3, language: "en", default?: true, forced?: false}]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 3 ->
+      {:ok, "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n"}
+    end)
+
+    stub(Cinder.Subtitles.TranslatorMock, :translate, fn ["Hello"], "fr" ->
+      {:ok, ["MACHINE-EN->FR: Hello"]}
+    end)
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+
+    assert Agent.get(fs, &Map.fetch!(&1, target)) ==
+             "1\n00:00:01,000 --> 00:00:02,000\nBonjour original\n\n"
+
+    assert %{tracks: %{"fr" => %{origin: "release_sidecar"}}} = Manifest.read(@video)
+  end
+
+  test "sidecar_source never reclassifies the canonical target as its own translation source",
+       %{fs: fs} do
+    video = @video
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+    target = "/lib/M/M.fr.srt"
+    manifest = Manifest.path(@video)
+
+    Agent.update(fs, fn files ->
+      files
+      |> Map.put(target, "1\n00:00:01,000 --> 00:00:02,000\nProvider FR\n\n")
+      |> Map.put(
+        manifest,
+        Jason.encode!(%{
+          video_moviehash: nil,
+          tracks: %{"fr" => %{origin: "opensubtitles_id"}}
+        })
+      )
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+    expect(Cinder.Library.FilesystemMock, :dir?, fn "/lib/M" -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn "/lib/M" ->
+      {:ok, [{video, 1}, {target, 1}]}
+    end)
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+
+    assert Agent.get(fs, &Map.fetch!(&1, target)) ==
+             "1\n00:00:01,000 --> 00:00:02,000\nProvider FR\n\n"
+
+    assert %{tracks: %{"fr" => %{origin: "opensubtitles_id"}}} = Manifest.read(@video)
+  end
+
   test "fetch_missing/2 remains a movies wrapper" do
     Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "")
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video)

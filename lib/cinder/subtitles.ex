@@ -245,16 +245,20 @@ defmodule Cinder.Subtitles do
 
   defp local_fallback(video_path, kind, language, moviehash, state, cache) do
     target = sidecar_path(video_path, language)
+    exists? = sidecar_exists?(target)
 
-    if writable?(state, language, sidecar_exists?(target)) do
-      {source, cache} = local_source(video_path, language, cache)
+    if writable?(state, language, exists?) do
+      {source, cache} = local_source(video_path, language, target, cache)
 
       case source do
         {:direct, content, origin} ->
           commit(video_path, kind, language, moviehash, origin, target, content)
 
-        {:translate, srt} ->
+        {:translate, srt} when not exists? ->
           translate_and_commit(video_path, kind, language, moviehash, target, srt)
+
+        {:translate, _srt} ->
+          :ok
 
         nil ->
           :ok
@@ -266,25 +270,25 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  defp local_source(video_path, language, cache) do
+  defp local_source(video_path, language, target, cache) do
     {tracks, cache} = subtitle_tracks(video_path, cache)
 
     case Enum.find(tracks, &(track_language(&1) == language and not &1.forced?)) do
       nil ->
-        default_or_sidecar(video_path, language, tracks, cache)
+        default_or_sidecar(video_path, language, target, tracks, cache)
 
       track ->
         case extract(video_path, track) do
           {:ok, content} -> {{:direct, content, "embedded"}, cache}
-          :error -> default_or_sidecar(video_path, language, tracks, cache)
+          :error -> default_or_sidecar(video_path, language, target, tracks, cache)
         end
     end
   end
 
-  defp default_or_sidecar(video_path, language, tracks, cache) do
+  defp default_or_sidecar(video_path, language, target, tracks, cache) do
     case default_srt(video_path, tracks, cache) do
       {{:ok, srt}, cache} -> {{:translate, srt}, cache}
-      {:none, cache} -> sidecar_source(video_path, language, cache)
+      {:none, cache} -> sidecar_source(video_path, language, target, cache)
     end
   end
 
@@ -330,20 +334,23 @@ defmodule Cinder.Subtitles do
 
   defp default_srt(_video_path, _tracks, %{default_srt: result} = cache), do: {result, cache}
 
-  defp sidecar_source(video_path, language, cache) do
+  defp sidecar_source(video_path, language, target, cache) do
     {sidecars, cache} = srt_sidecars(video_path, cache)
+    candidates = Enum.reject(sidecars, fn {path, _language} -> same_path?(path, target) end)
 
-    case Enum.find(sidecars, fn {_path, source_language} -> source_language == language end) do
+    case Enum.find(candidates, fn {_path, source_language} -> source_language == language end) do
       {path, _language} ->
         case read(path) do
           {:ok, content} -> {{:direct, content, "translated"}, cache}
-          :error -> translation_sidecar(video_path, language, sidecars, cache)
+          :error -> translation_sidecar(video_path, language, candidates, cache)
         end
 
       nil ->
-        translation_sidecar(video_path, language, sidecars, cache)
+        translation_sidecar(video_path, language, candidates, cache)
     end
   end
+
+  defp same_path?(a, b), do: Path.expand(a) == Path.expand(b)
 
   defp translation_sidecar(video_path, _language, sidecars, %{sidecar_srt: :unknown} = cache) do
     result =
