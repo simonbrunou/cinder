@@ -383,6 +383,14 @@ defmodule Cinder.Subtitles.Sync.AtomicFile do
   # or a crash before any byte was ever staged — either way nothing was published from it, so
   # restaging `content` and retrying the exchange is safe. Any other content is left untouched:
   # it may be a genuinely interrupted, resumable write that must not be overwritten.
+  #
+  # `mkdir_exclusive`/`mkdir_exclusive_near` only prove Cinder created *this* directory when the
+  # deterministic name was genuinely free; a same-named directory pre-planted by another actor
+  # (predicting the id from target path + content hashes needs no secret) would still route here
+  # on `:eexist`. Emptiness alone doesn't prove the staged file is Cinder's own reclaimed
+  # tombstone rather than a hard link to a file outside the library tree, so a link count other
+  # than 1 is refused exactly like unrecognized content — nothing here writes through a path
+  # some other name might also resolve to.
   defp reuse_reclaimed_workspace(
          target,
          staged_path,
@@ -392,7 +400,40 @@ defmodule Cinder.Subtitles.Sync.AtomicFile do
          expected_current,
          directory
        ) do
-    case File.write(staged.path, content) do
+    # `staged.path` may be the bound descriptor's own `/proc/<pid>/fd/<n>` reference rather than
+    # the plain pathname (see `Disk.create_bound/2`/`open_bound/2`): `File.stat/1` follows that
+    # reference to the still-open inode's live metadata, tying the check to the exact descriptor
+    # `staged` already holds rather than re-walking a pathname a concurrent rename could swap.
+    case File.stat(staged.path) do
+      {:ok, %{links: 1}} ->
+        restage_reclaimed_workspace(
+          target,
+          staged_path,
+          current,
+          staged,
+          content,
+          expected_current,
+          directory
+        )
+
+      {:ok, _multiply_linked} ->
+        {:error, :pending_workspace_mismatch}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp restage_reclaimed_workspace(
+         target,
+         staged_path,
+         current,
+         staged,
+         content,
+         expected_current,
+         directory
+       ) do
+    case fs().write_bound(staged, content) do
       :ok ->
         perform_atomic_operation(
           target,
