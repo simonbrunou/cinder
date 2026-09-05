@@ -282,6 +282,30 @@ defmodule Cinder.Library.AudiobookSourcesTest do
       assert {:error, :mixed_book_tags} = AudiobookSources.resolve(dir)
     end
 
+    # #503: distinct per-track chapter titles alone must not read as "different books" — only
+    # book-level evidence (the album tag) identifies cross-file identity; title_tag is a
+    # per-chapter field ffprobe reads directly, expected to legitimately differ track to track.
+    test "equal album tags with distinct chapter titles resolve in track order and import", %{
+      downloads: downloads
+    } do
+      Application.put_env(:cinder, :audio_probe, Cinder.Library.AudioProbeMock)
+      dir = Path.join(downloads, "Multi")
+      File.mkdir_p!(dir)
+      a = Path.join(dir, "01 - Recording.mp3")
+      b = Path.join(dir, "02 - Recording.mp3")
+      File.write!(a, mp3_bytes())
+      File.write!(b, mp3_bytes())
+
+      stub(Cinder.Library.AudioProbeMock, :probe, fn
+        ^a -> {:ok, probe(track_tag: 1, album_tag: "One Book", title_tag: "Chapter One")}
+        ^b -> {:ok, probe(track_tag: 2, album_tag: "One Book", title_tag: "Chapter Two")}
+      end)
+
+      assert {:ok, [first, second]} = AudiobookSources.resolve(dir)
+      assert first.path == a
+      assert second.path == b
+    end
+
     test "two unrelated tracks with no probe configured are held :mixed_book_filenames", %{
       downloads: downloads
     } do

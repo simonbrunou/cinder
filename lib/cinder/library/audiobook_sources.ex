@@ -374,14 +374,16 @@ defmodule Cinder.Library.AudiobookSources do
   end
 
   # Only when `AudioProbe` is configured — an unanswered/absent probe is "can't verify the
-  # stronger signal", never a positive "these differ" verdict.
+  # stronger signal", never a positive "these differ" verdict. Album evidence only (#503):
+  # `title_tag` is a per-chapter field (`AudioProbe.Ffprobe` reads it straight from each file's
+  # ordinary `title` tag), legitimately different track to track within one genuine audiobook —
+  # "Chapter One" vs "Chapter Two" is not a contradiction, only differing album tags are.
   defp check_mixed_tags(tracks) when length(tracks) <= 1, do: :ok
 
   defp check_mixed_tags(tracks) do
-    if is_nil(audio_probe()) or
-         (not tag_disagreement?(tracks, :album_tag) and not tag_disagreement?(tracks, :title_tag)),
-       do: :ok,
-       else: {:error, :mixed_book_tags}
+    if is_nil(audio_probe()) or not tag_disagreement?(tracks, :album_tag),
+      do: :ok,
+      else: {:error, :mixed_book_tags}
   end
 
   defp tag_disagreement?(tracks, key) do
