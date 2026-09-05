@@ -23,12 +23,15 @@ defmodule Cinder.Library.BookArchive.Rar do
   A wall-clock ceiling runs alongside the size poll for the same reason `-p-` (never prompt for
   a password) is passed explicitly: a password-protected or otherwise-stuck archive must not
   leave a hung subprocess parked forever on a poller tick. Either ceiling kills the same way.
-  The `unrar lb` listing call that runs *before* extraction starts is bounded the same way, by
-  a separate, much shorter `Task.async`/`Task.yield`/`Task.shutdown(:brutal_kill)` timeout
-  (`@list_timeout_ms`) — the same idiom `Cinder.Library.MediaInfo.Ffprobe.health/0` and
-  `Cinder.Library.AudioProbe.Ffprobe.probe/1` already use, not a second bespoke mechanism. A
-  hung listing call is otherwise indistinguishable from a hung extraction from the poller's
-  point of view — both would occupy a tick indefinitely — so both need the same guarantee.
+  The `unrar lb` listing call that runs *before* extraction starts is bounded the same
+  supervised-`Port` + `SIGKILL`-by-`os_pid` way as extraction itself (`@list_timeout_ms`,
+  a separate, much shorter ceiling) — reusing this module's own `kill/1` rather than a second
+  bespoke mechanism. `Task.shutdown(:brutal_kill)` only kills the *Elixir* task, not `unrar`
+  itself when it never reads stdin, which is exactly the defect issue #510 closed for this
+  listing call and for `Cinder.Library.MediaInfo.Ffprobe.health/0` and
+  `Cinder.Library.AudioProbe.Ffprobe.probe/1`. A hung listing call is otherwise
+  indistinguishable from a hung extraction from the poller's point of view — both would occupy
+  a tick indefinitely — so both need the same guarantee.
 
   ## Entry safety
 

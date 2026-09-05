@@ -5,14 +5,16 @@ defmodule Cinder.Library.AudioProbe.Ffprobe do
   Reuses `Cinder.Library.MediaInfo.Ffprobe`'s established techniques rather than inventing ad hoc
   timeout/projection disciplines:
 
-  - **Time bound**: `probe/1` uses the same supervised `Port` + `SIGKILL`-by-`os_pid` idiom
-    `MediaInfo.Ffprobe.run_bounded/4` and `BookArchive.Rar.run_extraction/6` use (`@probe_timeout`
-    10s — generous for even a large M4B's moov-atom-only read: `ffprobe` never decodes audio for
-    `-show_entries`, only parses container metadata). `Task.shutdown(:brutal_kill)` only kills
-    the *Elixir* task, not a child that never reads stdin — exactly `ffprobe`'s situation — so a
-    hung/slow probe used to keep running and holding the source file open past the reported
-    timeout (#510). `health/0`'s own `-version` no-file call stays on the lighter
-    `Task.async/yield/shutdown(:brutal_kill)` idiom deliberately; it is out of this issue's scope.
+  - **Time bound**: both `probe/1` and `health/0` use the same supervised `Port` +
+    `SIGKILL`-by-`os_pid` idiom `MediaInfo.Ffprobe.run_bounded/4` and
+    `BookArchive.Rar.run_extraction/6` use (`@probe_timeout` 10s for `probe/1` — generous for
+    even a large M4B's moov-atom-only read: `ffprobe` never decodes audio for `-show_entries`,
+    only parses container metadata; `@health_timeout` 3s for `health/0`'s cheap no-file
+    `-version` call, mirroring every other service's `health/0` bound). `Task.shutdown(
+    :brutal_kill)` only kills the *Elixir* task, not a child that never reads stdin — exactly
+    `ffprobe`'s situation, for a `-version` probe as much as a real file read — so a hung/slow
+    call used to keep running (and, for `probe/1`, holding the source file open) past the
+    reported timeout (#510).
   - **Output bound**: a narrow `-show_entries format=format_name,duration:format_tags=album,title,
     track,disc:chapter=id -of json` projection — the same "ask only for the fields you need"
     discipline `MediaInfo.Ffprobe.args/1`'s CSV projection already uses, rather than a full
@@ -49,30 +51,26 @@ defmodule Cinder.Library.AudioProbe.Ffprobe do
     e -> {:error, e}
   end
 
-  # `health/0` mirrors `MediaInfo.Ffprobe.health/0` exactly (`-version`, same timeout) — see its
-  # own comments for why the missing-binary rescue must run INSIDE the task.
+  # `-version` is a cheap no-file call, but that does not make a hung binary harmless (#510): a
+  # `Task.shutdown(:brutal_kill)`-killed Elixir task does not kill the OS process behind it
+  # either. Bounded the same supervised Port + SIGKILL way as `probe/1` and
+  # `MediaInfo.Ffprobe.health/0` — see the moduledoc. `run_bounded/3` already returns the exact
+  # `{:error, %ErlangError{original: :enoent}}` shape a missing binary needs, so no separate
+  # rescue is required here.
   @impl true
   def health do
-    task =
-      Task.async(fn ->
-        try do
-          System.cmd(bin(), ["-version"], stderr_to_stdout: true)
-        rescue
-          e -> {:error, e}
-        end
-      end)
-
-    case Task.yield(task, @health_timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {:error, _} = error} -> error
-      {:ok, {_out, 0}} -> :ok
-      {:ok, {out, code}} -> {:error, {:ffprobe_exit, code, String.trim(out)}}
-      {:exit, reason} -> {:error, {:ffprobe_exit, reason}}
-      nil -> {:error, :timeout}
+    case run_bounded(bin(), ["-version"], health_timeout_ms()) do
+      {:ok, _out, 0} -> :ok
+      {:ok, out, code} -> {:error, {:ffprobe_exit, code, String.trim(out)}}
+      {:error, _reason} = error -> error
     end
   end
 
   defp probe_timeout_ms,
     do: Application.get_env(:cinder, :audiobook_probe_timeout_ms, @probe_timeout)
+
+  defp health_timeout_ms,
+    do: Application.get_env(:cinder, :audiobook_health_timeout_ms, @health_timeout)
 
   defp run_bounded(bin, args, timeout_ms) do
     case System.find_executable(bin) do
