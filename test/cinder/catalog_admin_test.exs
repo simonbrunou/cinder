@@ -697,6 +697,53 @@ defmodule Cinder.CatalogAdminTest do
       refute Repo.get(Series, series.id)
     end
 
+    test "delete_files: true still unlinks a part-only survivor of an earlier partial unlink (#521)" do
+      series =
+        Repo.insert!(%Series{
+          tmdb_id: System.unique_integer([:positive]),
+          title: "Show",
+          year: 2010
+        })
+
+      season = Repo.insert!(%Season{series_id: series.id, season_number: 1})
+
+      ep =
+        Repo.insert!(%Episode{
+          season_id: season.id,
+          episode_number: 1,
+          monitored: true,
+          file_path: "/tmp/ep.mkv",
+          part_file_paths: ["/tmp/ep-part-2.mkv"]
+        })
+
+      # A prior "delete episode file" unlinked the primary but failed on the part (EACCES) — a
+      # supported recovery state: file_path: nil, part_file_paths: [survivor].
+      expect(Cinder.Library.FilesystemMock, :rm, 2, fn
+        "/tmp/ep.mkv" -> :ok
+        "/tmp/ep-part-2.mkv" -> {:error, :eacces}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      capture_log(fn -> assert {:error, :eacces} = Catalog.delete_episode_file(ep, nil) end)
+
+      assert Repo.get!(Episode, ep.id).part_file_paths == ["/tmp/ep-part-2.mkv"]
+
+      # A later "delete series and files" must still attempt the surviving part, not silently
+      # drop it because the episode's primary file_path is now nil.
+      expect(Cinder.Library.FilesystemMock, :rm, fn "/tmp/ep-part-2.mkv" -> :ok end)
+
+      assert {:ok, _} = Catalog.delete_series(series, nil, delete_files: true)
+
+      audit =
+        Cinder.Audit.AdminAudit
+        |> Repo.all()
+        |> Enum.find(&(&1.action == "delete_series"))
+
+      assert audit.detail["files_deleted"] == true
+      assert audit.detail["file_paths"] == ["/tmp/ep-part-2.mkv"]
+    end
+
     defp series_with_episode_file!(file_path: path) do
       series =
         Repo.insert!(%Series{

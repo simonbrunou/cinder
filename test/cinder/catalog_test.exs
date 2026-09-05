@@ -232,6 +232,21 @@ defmodule Cinder.CatalogTest do
       assert got.id == ep.id
       assert %Series{} = got.season.series
     end
+
+    test "list_episodes_with_file/0 includes a part-only episode (nil primary, one part) (#521)" do
+      series = series_fixture()
+      season = season_fixture(series)
+
+      part_only =
+        episode_fixture(season,
+          episode_number: 3,
+          file_path: nil,
+          part_file_paths: ["/x/e-part-2.mkv"]
+        )
+
+      ids = Catalog.list_episodes_with_file() |> Enum.map(& &1.id)
+      assert part_only.id in ids
+    end
   end
 
   describe "retry_movie/1" do
