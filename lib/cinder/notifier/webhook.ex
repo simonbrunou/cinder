@@ -15,6 +15,7 @@ defmodule Cinder.Notifier.Webhook do
   """
   @behaviour Cinder.Notifier
 
+  alias Cinder.Books.BookTarget
   alias Cinder.HTTPPolicy
   alias Cinder.Util
 
@@ -69,10 +70,32 @@ defmodule Cinder.Notifier.Webhook do
   defp fields(%{season: %{season_number: number}} = episode),
     do: episode |> Map.take(@subject_keys) |> Map.put(:season_number, number)
 
+  # Book target events: the title lives in the nested `work` association and `hold_reason`
+  # is book-target-only — neither is in the general @subject_keys allowlist below, so project
+  # them explicitly instead of letting the generic clause silently drop them (#491). Dropping
+  # nils rather than sending `hold_reason: null` on every available event keeps the shape the
+  # same one a caller would hand-write for each event.
+  defp fields(%BookTarget{} = target) do
+    %{
+      id: target.id,
+      work_id: target.work_id,
+      title: book_title(target),
+      media_kind: target.media_kind,
+      hold_reason: target.hold_reason
+    }
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
   # The maintenance events' subject is the operation key, not a record.
   defp fields(key) when is_atom(key), do: %{name: key}
   defp fields(%{} = subject), do: Map.take(subject, @subject_keys)
   defp fields(other), do: %{summary: inspect(other)}
+
+  # A work deleted between the transition and this notify would otherwise raise inside a
+  # transport — mirrors every other notifier's own book_title/1 (discord.ex, email.ex, log.ex).
+  defp book_title(%{work: %{title: title}}) when is_binary(title), do: title
+  defp book_title(%{id: id}), do: "book target ##{id}"
 
   # Atoms and strings encode as-is; a tuple/struct reason has no JSON form, so it is inspected.
   defp reason(reason) when is_atom(reason) or is_binary(reason), do: reason

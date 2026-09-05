@@ -4,6 +4,8 @@ defmodule Cinder.Notifier.WebhookTest do
   import ExUnit.CaptureLog
 
   alias Cinder.Accounts.User
+  alias Cinder.Books.BookTarget
+  alias Cinder.Books.Work
   alias Cinder.Notifier.Discord
   alias Cinder.Notifier.Webhook
 
@@ -34,6 +36,11 @@ defmodule Cinder.Notifier.WebhookTest do
   end
 
   defp movie, do: %{title: "Dune", year: 2021, poster_path: "/dune.jpg"}
+
+  defp book_target(attrs) do
+    %BookTarget{id: 7, work_id: 42, work: %Work{title: "Dune"}}
+    |> Map.merge(Map.new(attrs))
+  end
 
   test "posts the event as JSON under a stable event discriminator" do
     configure(url: @url)
@@ -105,6 +112,73 @@ defmodule Cinder.Notifier.WebhookTest do
     assert :ok = Webhook.notify({:movie_available, movie()})
     assert_receive {:posted, _body, headers}
     refute List.keyfind(headers, "authorization", 0)
+  end
+
+  test "book_available carries the work title, ids, and media kind for an eBook" do
+    configure(url: @url)
+    expect_post()
+
+    target = book_target(media_kind: :ebook)
+    assert :ok = Webhook.notify({:book_available, target})
+
+    assert_receive {:posted, body, _headers}
+
+    assert body == %{
+             "event" => "book_available",
+             "id" => 7,
+             "work_id" => 42,
+             "title" => "Dune",
+             "media_kind" => "ebook"
+           }
+  end
+
+  test "book_available carries the work title, ids, and media kind for an audiobook" do
+    configure(url: @url)
+    expect_post()
+
+    target = book_target(media_kind: :audiobook)
+    assert :ok = Webhook.notify({:book_available, target})
+
+    assert_receive {:posted, body, _headers}
+
+    assert body == %{
+             "event" => "book_available",
+             "id" => 7,
+             "work_id" => 42,
+             "title" => "Dune",
+             "media_kind" => "audiobook"
+           }
+  end
+
+  test "book_target_held carries the sanitized hold reason alongside the title and ids" do
+    configure(url: @url)
+    expect_post()
+
+    target = book_target(media_kind: :audiobook, hold_reason: "invalid_audio")
+    assert :ok = Webhook.notify({:book_target_held, target})
+
+    assert_receive {:posted, body, _headers}
+
+    assert body == %{
+             "event" => "book_target_held",
+             "id" => 7,
+             "work_id" => 42,
+             "title" => "Dune",
+             "media_kind" => "audiobook",
+             "hold_reason" => "invalid_audio"
+           }
+  end
+
+  test "book_target_held for an eBook carries its own hold reason" do
+    configure(url: @url)
+    expect_post()
+
+    target = book_target(media_kind: :ebook, hold_reason: "no_match")
+    assert :ok = Webhook.notify({:book_target_held, target})
+
+    assert_receive {:posted, body, _headers}
+    assert body["media_kind"] == "ebook"
+    assert body["hold_reason"] == "no_match"
   end
 
   test "never sends a requester email or a user's free text" do
@@ -180,7 +254,9 @@ defmodule Cinder.Notifier.WebhookTest do
       {:operator_hold, %{id: 7}, :needs_mapping},
       {:episodes_search_exhausted, [episode()]},
       {:maintenance_completed, :movie_pipeline},
-      {:maintenance_failed, :scan_movies, :unavailable}
+      {:maintenance_failed, :scan_movies, :unavailable},
+      {:book_available, book_target(media_kind: :ebook)},
+      {:book_target_held, book_target(media_kind: :audiobook, hold_reason: "invalid_audio")}
     ]
   end
 
