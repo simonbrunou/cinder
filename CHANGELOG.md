@@ -6,6 +6,8 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-09-05
+
 ### Fixed
 - **Bounded `ffprobe`/`ffmpeg` media-inspection calls (#447).** `MediaInfo.Ffprobe`'s four
   file-inspecting calls — `probe/1`, `probe_policy/1`, `subtitle_tracks/1`, `extract_subtitle/2`
@@ -173,6 +175,21 @@ All notable changes to Cinder are documented here. The format follows
   lower level for the specific "wanted language X, rejected" detail that would tell them the
   release needs replacing. Now logged at `Logger.warning`, matching `log_unmatched/1` and the
   movie path's own audio-check failure log.
+- **The `/dashboard` health panel no longer waits out every probe in series (#481).**
+  `Health.check_all/0` built its rows by serial list concatenation, so the sweep's wall clock was
+  the *sum* of every configured probe's own timeout — up to ~69s with a full complement of
+  services wired and one of them unreachable — and the panel showed nothing but a spinner until
+  the slowest probe returned. Probes now run concurrently through `Task.async_stream/3` (ordered,
+  so row order is unchanged), bounding the sweep by the slowest single row instead. A new 15s
+  per-probe backstop, above the worst individual probe today, catches an impl that ignores its own
+  timeout and hangs outright: that one row reports `{:error, :timeout}` while every other row
+  still reports normally. The existing per-probe rescue/catch is unchanged.
+- **Bumped the transitive `mint` dependency to 1.10.0 for two HTTP/1 parser advisories.** `mint`
+  1.9.3 — pulled in by `finch` and `tz`, and carrying every outbound HTTP call Cinder makes to an
+  indexer, download client, media server, or metadata provider — is affected by
+  GHSA-g83f-2j6r-q6m4 (HIGH: unbounded HTTP/1 status-line and chunk-extension buffering,
+  memory-exhaustion DoS) and GHSA-7p8w-j234-7qc8 (MEDIUM: quadratic chunk-size parsing,
+  CPU-exhaustion DoS). `mix.lock` only; no requirement in `mix.exs` changed.
 - **A settings test no longer fails under `mix test --cover` (#465).** Coverage instrumentation's
   overhead delayed a lock release past the SQLite busy timeout, producing a spurious "Database
   busy" failure unrelated to the code under test. Test-only; no runtime behavior changed.
@@ -751,7 +768,8 @@ Docker image and a first-run wizard. Pre-1.0: dogfooding ahead of the v1.0 publi
 - **Packaging** — Docker image, `docker-compose.yml` + `.env.example`, a tag-triggered GitHub
   Actions workflow publishing `ghcr.io/simonbrunou/cinder`, and operator + contributor docs.
 
-[Unreleased]: https://github.com/simonbrunou/cinder/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/simonbrunou/cinder/compare/v3.0.1...HEAD
+[3.0.1]: https://github.com/simonbrunou/cinder/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/simonbrunou/cinder/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/simonbrunou/cinder/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/simonbrunou/cinder/compare/v1.0.0...v1.1.0
