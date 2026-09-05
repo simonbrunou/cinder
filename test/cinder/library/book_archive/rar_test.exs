@@ -261,6 +261,33 @@ defmodule Cinder.Library.BookArchive.RarTest do
       refute File.exists?(marker)
     end
 
+    # #510: a hung `lb` timing out its Elixir-side Task used to leave the underlying OS process
+    # running — closing a port does nothing to a child that never reads stdin. Proven here by a
+    # fake `lb` that outlives the configured timeout and then writes a marker: the marker must
+    # never appear, meaning the real process was killed, not merely abandoned.
+    test "a hung `lb` call's OS process is actually killed, not merely abandoned by the timeout",
+         %{
+           fakebin: fakebin,
+           original_path: original_path,
+           dest: dest,
+           tmp: tmp
+         } do
+      marker = Path.join(tmp, "list_survived")
+
+      install_fake_unrar(fakebin, original_path, """
+      #!/bin/sh
+      case "$1" in
+        lb) sleep 1; touch #{marker}; exit 0 ;;
+      esac
+      """)
+
+      assert {:error, :archive_corrupt} =
+               Rar.extract("/tmp/hung-list.rar", dest, list_timeout_ms: 100)
+
+      Process.sleep(1200)
+      refute File.exists?(marker)
+    end
+
     test "exceeding max_expanded_size kills the process and refuses", %{
       fakebin: fakebin,
       original_path: original_path,
@@ -315,6 +342,57 @@ defmodule Cinder.Library.BookArchive.RarTest do
 
       elapsed = System.monotonic_time(:millisecond) - t0
       assert elapsed < 3000
+    end
+
+    # #506: `unrar` emitting continuous stdout activity (no sleep between writes — a
+    # sleep-throttled stub leaves incidental gaps that let the timer fire by accident and would
+    # not reliably reproduce this under suite scheduler load) must not suppress the size ceiling
+    # forever. The oversized write happens up front, then the process spins on `printf` alone —
+    # no forked subprocess in the loop — to keep stdout messages arriving back-to-back.
+    @tag timeout: 5_000
+    test "continuous stdout activity cannot suppress max_expanded_size indefinitely", %{
+      fakebin: fakebin,
+      original_path: original_path,
+      dest: dest
+    } do
+      install_fake_unrar(fakebin, original_path, """
+      #!/bin/sh
+      case "$1" in
+        lb) printf 'book.epub\\n'; exit 0 ;;
+        x)
+          dest="$7"
+          dd if=/dev/zero of="$dest/big" bs=1024 count=200 2>/dev/null
+          while :; do printf 'spam'; done
+          ;;
+      esac
+      """)
+
+      assert {:error, :archive_size_limit} =
+               Rar.extract("/tmp/chatty-bomb.rar", dest,
+                 max_expanded_size: 50 * 1024,
+                 poll_interval: 50,
+                 max_duration_ms: 3_000
+               )
+    end
+
+    # #506: the zero-exit-status path returned :ok unconditionally, with no final size check —
+    # so a fast extraction that finishes (and exits 0) before the first poll tick ever fires
+    # slipped through even though it already exceeded the cap on disk.
+    test "a fast extractor exceeding max_expanded_size is refused even if it exits 0 before the first poll",
+         %{fakebin: fakebin, original_path: original_path, dest: dest} do
+      install_fake_unrar(fakebin, original_path, """
+      #!/bin/sh
+      case "$1" in
+        lb) printf 'book.epub\\n'; exit 0 ;;
+        x) dd if=/dev/zero of="$7big" bs=1024 count=64 2>/dev/null; exit 0 ;;
+      esac
+      """)
+
+      assert {:error, :archive_size_limit} =
+               Rar.extract("/tmp/fast-bomb.rar", dest,
+                 max_expanded_size: 1024,
+                 poll_interval: 1_000
+               )
     end
   end
 
