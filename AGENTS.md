@@ -6,7 +6,7 @@ Cinder is a single-household, self-hosted replacement for the Sonarr / Radarr / 
 for Readarr/Bookshelf: request a movie, TV series, e-book or audiobook → find the best release →
 download it → import it into Jellyfin/Plex, Booklore or Audiobookshelf. Built on Phoenix/LiveView.
 
-**Status: released — v3.0.0 (2026-09-02).** Movies, TV (series/season/episode, season packs,
+**Status: released — v3.0.1 (2026-09-05).** Movies, TV (series/season/episode, season packs,
 calendar), multi-user with a request→approval gate, an opt-in per-title anime handling profile,
 operator-named movie/TV media profiles, and the whole books/audiobooks track (B0–B8: requests and
 approval, acquisition, publication, monitoring, Readarr/Bookshelf migration, hardening) are all
