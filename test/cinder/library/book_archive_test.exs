@@ -95,6 +95,73 @@ defmodule Cinder.Library.BookArchiveTest do
       refute File.exists?(Path.join(dir, ".cinder-extract"))
     end
 
+    # #507: `extract_and_resolve/3` only called `finish/2`'s cleanup after the extractor
+    # SUCCEEDED — when `extract/3` itself refuses (a size/CRC ceiling, a corrupt archive), the
+    # `with` chain's `else` returned immediately, leaving whatever the extractor had already
+    # written under `.cinder-extract`. Two entries so the first is written successfully and the
+    # second is what trips the cap mid-extraction, proving genuine partial output is cleaned up,
+    # not merely an empty directory.
+    test "an extractor size-limit refusal removes the scratch directory, no partial extraction litter",
+         %{downloads: downloads} do
+      dir = Path.join(downloads, "release")
+      File.mkdir_p!(dir)
+      archive = Path.join(dir, "book.zip")
+
+      :zip.create(String.to_charlist(archive), [
+        {~c"one.epub", String.duplicate("a", 200)},
+        {~c"two.epub", String.duplicate("a", 200)}
+      ])
+
+      result =
+        BookArchive.extract_and_resolve(
+          archive,
+          fn scratch_dir -> {:ok, scratch_dir, :epub} end,
+          max_expanded_size: 250
+        )
+
+      assert {:error, :archive_size_limit} = result
+      refute File.exists?(Path.join(dir, ".cinder-extract"))
+      assert File.exists?(archive)
+    end
+
+    test "a RAR extraction error removes the scratch directory, no partial extraction litter", %{
+      downloads: downloads,
+      tmp_dir: tmp
+    } do
+      original_path = System.get_env("PATH")
+      fakebin = Path.join(tmp, "fakebin")
+      File.mkdir_p!(fakebin)
+      unrar_path = Path.join(fakebin, "unrar")
+
+      File.write!(unrar_path, """
+      #!/bin/sh
+      case "$1" in
+        lb) printf 'one.epub\\n'; exit 0 ;;
+        x)
+          dest="$7"
+          printf 'partial bytes' > "${dest}one.epub"
+          exit 1
+          ;;
+      esac
+      """)
+
+      File.chmod!(unrar_path, 0o755)
+      System.put_env("PATH", fakebin <> ":" <> (original_path || ""))
+      on_exit(fn -> if original_path, do: System.put_env("PATH", original_path) end)
+
+      dir = Path.join(downloads, "release")
+      File.mkdir_p!(dir)
+      archive = Path.join(dir, "book.rar")
+      File.write!(archive, "rar bytes")
+
+      result =
+        BookArchive.extract_and_resolve(archive, fn scratch_dir -> {:ok, scratch_dir, :epub} end)
+
+      assert {:error, :archive_corrupt} = result
+      refute File.exists?(Path.join(dir, ".cinder-extract"))
+      assert File.exists?(archive)
+    end
+
     test "a stale scratch directory from a prior crashed attempt is wiped before re-extraction",
          %{downloads: downloads} do
       dir = Path.join(downloads, "release")
