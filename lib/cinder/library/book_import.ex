@@ -167,6 +167,11 @@ defmodule Cinder.Library.BookImport do
   # bounded retry (every `BookPoller` tick) instead of leaking the remote job forever — the same
   # fix #411 made for the `fail_download/2` path, applied here to the success path.
   #
+  # `:mismatch` (#536) means a concurrent grab already reserved a NEW intent for this same target
+  # between commit and this call — fencing would have hijacked it. Degrades to the pre-#415
+  # one-shot removal (`Download.fallback_remove/3`) plus a plain grab delete instead: no durable
+  # record for THIS attempt, but the race winner's own intent is never touched.
+  #
   # Otherwise (torrent, or `move_on_import` off — nothing will be removed from the client), the
   # grab is deleted plain. Deleting it first (rather than after) is what avoids the crash window
   # that used to matter here: a crash between a content-path delete and the grab delete would
@@ -175,8 +180,20 @@ defmodule Cinder.Library.BookImport do
   # holds a target that is genuinely available.
   defp finish(grab, file, superseded_paths) do
     if Download.move_on_import_removal?(grab.download_protocol) do
-      {:ok, intent_ids} = Download.fence_book_cleanup(grab)
-      Download.cleanup_intents(intent_ids)
+      case Download.fence_book_cleanup(grab) do
+        {:ok, intent_ids} ->
+          Download.cleanup_intents(intent_ids)
+
+        :mismatch ->
+          Books.Grabs.delete(grab)
+
+          Download.fallback_remove(
+            grab.download_protocol,
+            grab.download_id,
+            "book target #{grab.book_target_id}"
+          )
+      end
+
       Download.best_effort_delete_source(grab.content_path)
     else
       Books.Grabs.delete(grab)

@@ -283,7 +283,11 @@ defmodule Cinder.Download.BookPoller do
   # `download_intents` `:cleanup_pending` row and deletes the grab in the SAME transaction (no
   # crash window between them), and `cleanup_intents/1` makes the immediate best-effort attempt;
   # a failure there leaves the row for `reconcile_pending_intents/1`'s bounded retry to drain on
-  # a later tick instead of losing it.
+  # a later tick instead of losing it. `:mismatch` (#536) means a concurrent grab already
+  # reserved a NEW intent for this same target between whatever committed earlier and this
+  # fence — degrades to a plain grab delete plus `Download.fallback_remove/3`'s one-shot,
+  # undurable removal, so this dead download's own job is still cleaned up without touching the
+  # race winner's intent.
   defp fail_download(%BookGrab{} = grab, reason) do
     Logger.warning("book grab #{grab.id} download failed: #{inspect(reason)}")
 
@@ -295,8 +299,20 @@ defmodule Cinder.Download.BookPoller do
       grab.replace
     )
 
-    {:ok, intent_ids} = Download.fence_book_cleanup(grab)
-    Download.cleanup_intents(intent_ids)
+    case Download.fence_book_cleanup(grab) do
+      {:ok, intent_ids} ->
+        Download.cleanup_intents(intent_ids)
+
+      :mismatch ->
+        Books.Grabs.delete(grab)
+
+        Download.fallback_remove(
+          grab.download_protocol,
+          grab.download_id,
+          "book target #{grab.book_target_id}"
+        )
+    end
+
     :ok
   end
 
