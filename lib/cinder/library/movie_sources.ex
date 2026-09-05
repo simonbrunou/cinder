@@ -65,16 +65,36 @@ defmodule Cinder.Library.MovieSources do
   defp classify(files) do
     paths = Enum.map(files, &elem(&1, 0))
     videos = Enum.filter(files, fn {path, _size} -> Library.video_file?(path) end)
+    archives = Enum.filter(files, fn {path, _size} -> archive_file?(path) end)
     parts = Enum.map(videos, fn {path, _size} -> {path, stack_part(path)} end)
 
     cond do
       Enum.any?(paths, &disc_path?/1) -> {:error, :unsupported_disc}
-      Enum.any?(paths, &archive_file?/1) -> {:error, :unsupported_archive}
+      blocking_archive?(archives, videos) -> {:error, :unsupported_archive}
       videos == [] -> {:error, :no_video_file}
       Enum.any?(parts, fn {_path, part} -> not is_nil(part) end) -> strict_stack(parts)
       true -> {:ok, [{pick_video(videos), nil}]}
     end
   end
+
+  # An archive blocks the ordinary largest-video pick only when it could plausibly BE the
+  # feature: no non-sample video exists yet, or the archive is at least as large as every
+  # visible video (so a genuinely bigger/better file could be packed inside it). A small
+  # companion archive (subtitles, extras) sitting beside a real, full-size feature must never
+  # block that feature's import — closing the sample-import bug (#499) must not trade it for a
+  # new false positive that strands an otherwise-good release.
+  defp blocking_archive?([], _videos), do: false
+
+  defp blocking_archive?(archives, videos) do
+    largest_archive = archives |> Enum.map(&elem(&1, 1)) |> Enum.max()
+    not Enum.any?(videos, &real_feature_candidate?(&1, largest_archive))
+  end
+
+  defp real_feature_candidate?({path, size}, largest_archive_size),
+    do: size >= largest_archive_size and not sample_name?(path)
+
+  @sample_token ~r/(?:^|[\s._\-\[\]()])(?:sample|preview)(?:$|[\s._\-\[\]()])/i
+  defp sample_name?(path), do: Regex.match?(@sample_token, Path.basename(path))
 
   defp stack_part(path) do
     stem = path |> Path.basename() |> Path.rootname()
@@ -119,14 +139,13 @@ defmodule Cinder.Library.MovieSources do
 
   defp archive_file?(path) do
     extension = String.downcase(Path.extname(path))
-    basename = String.downcase(Path.basename(path))
 
-    # 7-Zip split-volume naming: movie.7z.001, .002, … — Path.extname/1 only ever sees the
-    # trailing ".NNN", so this checks the whole basename instead of the bare (and otherwise
-    # meaningless) numeric extension.
+    # 7-Zip split-volume naming: movie.7z.001, .002, … — matched on the raw basename (no
+    # String.downcase/Unicode mode: a non-UTF8 basename byte must never crash this check, and
+    # this pattern is pure ASCII so case-insensitive byte matching is exact either way).
     extension in @archive_extensions or
       Regex.match?(~r/^\.r\d{2}$/u, extension) or
-      Regex.match?(~r/\.7z\.\d{3}$/u, basename)
+      Regex.match?(~r/\.7z\.\d{3}$/i, Path.basename(path))
   end
 
   defp disc_path?(path) do

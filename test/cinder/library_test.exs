@@ -865,6 +865,53 @@ defmodule Cinder.LibraryTest do
     assert :ok = commit!(stage)
   end
 
+  test "a completed movie with a small companion .zip (subs/extras) still imports (#499)" do
+    movie = %Movie{title: "X", year: 2000, tmdb_id: 556, file_path: "/dl/X"}
+
+    Cinder.LibraryStubs.stub_import_ok(9 * @gb)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    # Subs.zip is a legitimate companion archive many releases ship alongside the real feature —
+    # it must never block an otherwise-good, full-size, non-sample video from importing.
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok,
+       [
+         {"/dl/X/X.2000.1080p.mkv", 9 * @gb},
+         {"/dl/X/Subs.zip", 50_000}
+       ]}
+    end)
+
+    assert {:ok, %{dest: dest} = stage} = Library.stage_movie(movie)
+    assert dest == "#{@lib}/X (2000) {tmdb-556}/X (2000) {tmdb-556}.mkv"
+    assert :ok = commit!(stage)
+  end
+
+  test "a zip outweighing every visible video still refuses (the feature could be inside it) (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/movie.zip", 9_999_999_999}]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
+  test "a non-UTF8 archive filename does not crash the archive guard (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/" <> <<255>> <> ".7z.001", 9_999}]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
   test "disc structures fail explicitly without an extractor/playback contract" do
     movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
 
