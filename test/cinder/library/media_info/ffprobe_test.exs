@@ -40,6 +40,28 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     assert {:error, %ErlangError{original: :enoent}} = Ffprobe.health()
   end
 
+  # #510: `health/0` used the lighter `Task.async/yield/shutdown(:brutal_kill)` idiom — the
+  # exact defect `probe/1`/`probe_policy/1`/`subtitle_tracks/1`/`extract_subtitle/2` already fixed
+  # for issue #447: killing the Elixir task does not kill a child that never reads stdin.
+  @tag :tmp_dir
+  test "health/0 kills the underlying ffprobe process on timeout, not just the Elixir task", %{
+    tmp_dir: tmp
+  } do
+    pidfile = Path.join(tmp, "ffprobe.pid")
+    path = Path.join(tmp, "ffprobe")
+    File.write!(path, "#!/bin/sh\necho $$ > #{pidfile}\nexec sleep 30\n")
+    File.chmod!(path, 0o755)
+    Application.put_env(:cinder, :ffprobe_bin, path)
+    with_short_timeout(:ffprobe_health_timeout_ms, 150)
+
+    t0 = System.monotonic_time(:millisecond)
+    assert Ffprobe.health() == {:error, :timeout}
+    assert System.monotonic_time(:millisecond) - t0 < 3000
+
+    pid = wait_for_pidfile(pidfile)
+    assert process_gone?(pid)
+  end
+
   @tag :tmp_dir
   test "Health.check_service(:media_info) delegates to the configured impl's health/0", %{
     tmp_dir: tmp

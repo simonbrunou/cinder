@@ -202,6 +202,87 @@ defmodule Cinder.Download.AudiobookPollerTest do
       # Draining the cleanup record is not itself a target-state change.
       assert Repo.reload!(target).status == :available
     end
+
+    # #536: a concurrent re-grab reserving a NEW intent for this same target between commit and
+    # this post-import fence must never be hijacked (flipped to :cleanup_pending, its own
+    # remote_id discarded) — the same `expect_remote_id` guard `fence_movie_cleanup/2`/
+    # `fence_episode_cleanup/3` already apply, now closing the gap `fence_book_cleanup/1` had.
+    test "finish/3's post-import fence never hijacks a concurrently reserved intent", ctx do
+      %{downloads: downloads, audiobooks: audiobooks} = real_audiobook_library(ctx.tmp_dir, [])
+
+      saved = Application.get_env(:cinder, :move_on_import, false)
+      Application.put_env(:cinder, :move_on_import, true)
+      on_exit(fn -> Application.put_env(:cinder, :move_on_import, saved) end)
+
+      release_dir = Path.join(downloads, "release-nzo-audiobook")
+      File.mkdir_p!(release_dir)
+      File.write!(Path.join(release_dir, "The Dispossessed.m4b"), m4b_bytes())
+
+      profile = audiobook_profile(audiobooks)
+      work = work_fixture("The Dispossessed", "Ursula K. Le Guin")
+      {:ok, target} = Books.monitor_target(work, :audiobook, profile)
+
+      {:ok, _grab} =
+        Books.Grabs.create(target.id, "nzo-audiobook", :usenet, "The Dispossessed Audiobook")
+
+      # Simulate the race directly: a concurrent re-grab already reserved a brand-new intent for
+      # this same target between the import commit and the post-import fence about to run.
+      race_intent =
+        %Intent{}
+        |> Intent.changeset(%{
+          operation_key: Ecto.UUID.generate(),
+          kind: :book_target,
+          target_id: target.id,
+          episode_ids: [],
+          protocol: :usenet,
+          release: %{"title" => "The Dispossessed"},
+          status: :submitted,
+          remote_id: "nzo-new"
+        })
+        |> Repo.insert!()
+
+      expect(Cinder.Download.SabnzbdClientMock, :status, fn "nzo-audiobook" ->
+        {:ok, %{state: :completed, progress: 1.0, content_path: release_dir}}
+      end)
+
+      # `stub`, not `expect`: the race intent itself is also swept by this same tick's normal
+      # `reconcile_pending_intents/1` pass and may call `remove/2` for its OWN remote_id too —
+      # an `expect` pinned to a call COUNT would then reject the fence's own removal as "called
+      # too many times" for reasons having nothing to do with this fix.
+      parent = self()
+
+      stub(Cinder.Download.SabnzbdClientMock, :remove, fn
+        "nzo-audiobook", _opts ->
+          send(parent, {:removed, "nzo-audiobook"})
+          :ok
+
+        _other_id, _opts ->
+          :ok
+      end)
+
+      poll!()
+
+      assert_receive {:removed, "nzo-audiobook"}
+
+      target = Repo.reload!(target)
+      assert target.status == :available
+      assert Repo.all(BookGrab) == []
+
+      # The race-winning intent was never hijacked into carrying the OLD download's id — whether
+      # this same tick's own unrelated reconcile-pending-intents sweep has since drained it
+      # (a natural, correct outcome for an otherwise-unbacked :submitted intent) or not.
+      case Repo.get(Intent, race_intent.id) do
+        nil -> :ok
+        %Intent{remote_id: remote_id} -> assert remote_id == "nzo-new"
+      end
+
+      # No second, corrupted intent was created for the old download either.
+      refute Repo.get_by(Intent,
+               kind: :book_target,
+               target_id: target.id,
+               remote_id: "nzo-audiobook"
+             )
+    end
   end
 
   # The end-to-end regression test for the B7b defect the review found: `BookArchive.finish/2`

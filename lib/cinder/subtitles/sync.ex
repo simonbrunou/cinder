@@ -46,6 +46,10 @@ defmodule Cinder.Subtitles.Sync do
   @spec units(:library | {:movie | :series | :season | :episode, pos_integer()}) :: [map()]
   defdelegate units(scope), to: Scope
 
+  @doc "The single unit owning `video_path`, resolved without loading the whole catalog."
+  @spec unit_for_video_path(String.t(), :movies | :tv) :: map() | nil
+  defdelegate unit_for_video_path(video_path, kind), to: Scope
+
   @doc "Runs automatic analysis for every managed sidecar belonging to a video."
   @spec analyze_video(String.t()) :: [map()]
   def analyze_video(video_path) do

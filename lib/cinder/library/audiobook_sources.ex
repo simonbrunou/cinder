@@ -17,11 +17,11 @@ defmodule Cinder.Library.AudiobookSources do
   1. **Extraction** — identical to `BookSources.resolve/1`'s archive handling (one archive, or
      none), recursing into an extracted scratch directory exactly once.
   2. **Candidate collection** — every `.m4b`/`.mp3` file is a candidate. A stray *other audio*
-     file (`.m4a`/`.aac`/`.flac`/`.ogg`/`.wma`) alongside at least one accepted candidate is never
-     silently ignored: `safe_source/1`'s own extension allow-list refuses it as `:unsafe_source`,
-     the same reason an e-book import already uses for "not one of the accepted formats" — no new
-     rejection atom needed. `.nfo`/`.jpg`/`.txt`-style non-audio padding stays invisible, as it
-     already is for e-books.
+     file (`.m4a`/`.aac`/`.flac`/`.ogg`/`.wma`/`.wav`/`.aiff`/`.aif`/`.aifc`) alongside at least
+     one accepted candidate is never silently ignored: `safe_source/1`'s own extension
+     allow-list refuses it as `:unsafe_source`, the same reason an e-book import already uses
+     for "not one of the accepted formats" — no new rejection atom needed. `.nfo`/`.jpg`/`.txt`-
+     style non-audio padding stays invisible, as it already is for e-books.
   3. **Format-magic verification** — an `ID3`/MPEG-frame-sync check for `.mp3`, an `ftyp` box
      check for `.m4b` — the same positive-identification discipline
      `BookSources.verify_magic/2` already applies, needing no subprocess.
@@ -70,9 +70,15 @@ defmodule Cinder.Library.AudiobookSources do
   @accepted_formats [:m4b, :mp3]
 
   # Recognized-but-not-accepted audio containers — `Cinder.Acquisition.AudiobookParser`'s own
-  # recognized-but-rejected audio vocabulary, minus the e-book formats it also recognizes (those
-  # are a different mixed-folder shape, `:unsupported_archive`'s territory, not this list's).
-  @other_audio_extensions ~w(.m4a .aac .flac .ogg .wma)
+  # recognized-but-rejected audio vocabulary (`.m4a`/`.aac`/`.flac`/`.ogg`/`.wma`), minus the
+  # e-book formats it also recognizes (those are a different mixed-folder shape,
+  # `:unsupported_archive`'s territory, not this list's), plus `.wav`/`.aiff`/`.aif`/`.aifc` —
+  # real uncompressed audio containers a rip can legitimately carry (`.aifc` is AIFF-C, the
+  # compressed-audio variant of the same container, with its own standard extension), which that
+  # parser's own release-title vocabulary has no reason to name (a release title essentially
+  # never says "wav" or "aiff"), but which must not silently vanish here the same way a stray
+  # `.flac` mustn't (#504).
+  @other_audio_extensions ~w(.m4a .aac .flac .ogg .wma .wav .aiff .aif .aifc)
 
   @archive_extensions ~w(.rar .zip .7z .gz .bz2 .xz .tar .cbz .cbr)
   @extractable_extensions ~w(.zip .cbz .rar .cbr)
@@ -368,14 +374,16 @@ defmodule Cinder.Library.AudiobookSources do
   end
 
   # Only when `AudioProbe` is configured — an unanswered/absent probe is "can't verify the
-  # stronger signal", never a positive "these differ" verdict.
+  # stronger signal", never a positive "these differ" verdict. Album evidence only (#503):
+  # `title_tag` is a per-chapter field (`AudioProbe.Ffprobe` reads it straight from each file's
+  # ordinary `title` tag), legitimately different track to track within one genuine audiobook —
+  # "Chapter One" vs "Chapter Two" is not a contradiction, only differing album tags are.
   defp check_mixed_tags(tracks) when length(tracks) <= 1, do: :ok
 
   defp check_mixed_tags(tracks) do
-    if is_nil(audio_probe()) or
-         (not tag_disagreement?(tracks, :album_tag) and not tag_disagreement?(tracks, :title_tag)),
-       do: :ok,
-       else: {:error, :mixed_book_tags}
+    if is_nil(audio_probe()) or not tag_disagreement?(tracks, :album_tag),
+      do: :ok,
+      else: {:error, :mixed_book_tags}
   end
 
   defp tag_disagreement?(tracks, key) do
@@ -405,13 +413,35 @@ defmodule Cinder.Library.AudiobookSources do
   defp order_by_evidence(tracks) do
     cond do
       Enum.all?(tracks, &(&1.probe && &1.probe.track_tag)) ->
-        {:ok, Enum.sort_by(tracks, &{&1.probe.disc_tag || 1, &1.probe.track_tag})}
+        # Falls back to filename_disc before 1, matching resolved_disc/1's own chain: a probed
+        # set commonly carries a track tag on every file but no disc tag at all (ffprobe/real
+        # rips rarely tag disc for a simple multi-disc set), so the directory-derived evidence
+        # (`CD1`/`CD2`) must still distinguish otherwise-matching track numbers (Codex review on
+        # PR #550) rather than every file collapsing to a fallback disc of 1.
+        order_by_key(tracks, &{&1.probe.disc_tag || &1.filename_disc || 1, &1.probe.track_tag})
 
       Enum.all?(tracks, & &1.filename_track) ->
-        {:ok, Enum.sort_by(tracks, &{&1.filename_disc || 1, &1.filename_track})}
+        order_by_key(tracks, &{&1.filename_disc || 1, &1.filename_track})
 
       true ->
         {:error, :track_order_unknown}
+    end
+  end
+
+  # #505: sorting by (disc, track) alone never proved every distinct file reduced to a distinct
+  # key — two files with no disc evidence and the same filename-embedded (or tagged) track
+  # number both passed through, with `Enum.sort_by/2`'s stable order (i.e. the filesystem walk
+  # order) silently deciding which became "01" versus "02". Refused instead, the same way a
+  # tag/filename contradiction on one file already is: the ordering evidence does not identify a
+  # unique position for every candidate, so it cannot be trusted for any of them. Independent of
+  # walk order — `Enum.uniq/1`'s result does not depend on input order.
+  defp order_by_key(tracks, key_fun) do
+    keys = Enum.map(tracks, key_fun)
+
+    if length(Enum.uniq(keys)) == length(keys) do
+      {:ok, Enum.sort_by(tracks, key_fun)}
+    else
+      {:error, :track_order_contradictory}
     end
   end
 

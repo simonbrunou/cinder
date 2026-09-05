@@ -181,12 +181,27 @@ defmodule Cinder.Library.AudiobookImport do
   # the grab is fenced-then-deleted atomically via `Download.fence_book_cleanup/1` (#415), so a
   # crash or a transient client-removal failure survives as a durable `:cleanup_pending`
   # `download_intents` row for `reconcile_pending_intents/1`'s bounded retry, instead of the grab
-  # (the only row carrying the remote id) being gone with nothing left to retry it. Otherwise
-  # (torrent, or `move_on_import` off), the grab is deleted plain.
+  # (the only row carrying the remote id) being gone with nothing left to retry it. `:mismatch`
+  # (#536) means a concurrent grab already reserved a new intent for this same target — fencing
+  # would have hijacked it, so this degrades to a plain grab delete plus
+  # `Download.fallback_remove/3`'s one-shot, undurable removal instead. Otherwise (torrent, or
+  # `move_on_import` off), the grab is deleted plain.
   defp finish(grab, files, superseded_paths) do
     if Download.move_on_import_removal?(grab.download_protocol) do
-      {:ok, intent_ids} = Download.fence_book_cleanup(grab)
-      Download.cleanup_intents(intent_ids)
+      case Download.fence_book_cleanup(grab) do
+        {:ok, intent_ids} ->
+          Download.cleanup_intents(intent_ids)
+
+        :mismatch ->
+          Books.Grabs.delete(grab)
+
+          Download.fallback_remove(
+            grab.download_protocol,
+            grab.download_id,
+            "audiobook target #{grab.book_target_id}"
+          )
+      end
+
       Download.best_effort_delete_source(grab.content_path)
     else
       Books.Grabs.delete(grab)

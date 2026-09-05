@@ -16,6 +16,8 @@ defmodule CinderWeb.SetupLiveTest do
     stub(Cinder.Download.ClientMock, :health, fn -> :ok end)
     stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
 
     Req.Test.set_req_test_to_shared()
     on_exit(fn -> Req.Test.set_req_test_to_private() end)

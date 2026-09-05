@@ -331,6 +331,95 @@ defmodule CinderWeb.UserSessionControllerTest do
       assert redirected_to(conn) == ~p"/users/log-in"
       assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "re-authenticate"
     end
+
+    test "handles invalid password during update-password gracefully", %{
+      conn: conn,
+      user: user
+    } do
+      user = set_password(user)
+      original_hashed = user.hashed_password
+
+      conn =
+        conn
+        |> log_in_user(user)
+        |> post(~p"/users/update-password", %{
+          "user" => %{
+            "password" => "short",
+            "password_confirmation" => "short"
+          }
+        })
+
+      # Should not crash with 500, should redirect back to settings
+      assert redirected_to(conn) == ~p"/users/settings"
+      # The flash must name the actual reason ("too short"), not a generic pointer to a
+      # settings form that never renders these errors (see PR #531 review finding).
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "should be at least 12 character"
+      # Session should still be valid
+      assert get_session(conn, :user_token)
+      # Password should not have changed
+      fresh_user = Cinder.Repo.get(Cinder.Accounts.User, user.id)
+      assert fresh_user.hashed_password == original_hashed
+    end
+
+    test "names a confirmation mismatch, not just the length constraint", %{
+      conn: conn,
+      user: user
+    } do
+      user = set_password(user)
+
+      conn =
+        conn
+        |> log_in_user(user)
+        |> post(~p"/users/update-password", %{
+          "user" => %{
+            "password" => "brand new pass phrase!",
+            "password_confirmation" => "does not match!"
+          }
+        })
+
+      assert redirected_to(conn) == ~p"/users/settings"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "does not match password"
+    end
+
+    test "the invalid-password flash is fully translated under the FR locale, not a mix of French and raw English validation text",
+         %{conn: conn, user: user} do
+      # The router's CinderWeb.Locale plug resolves the active locale from the authenticated
+      # user's saved preference (current_user_locale/1) on every request, overriding any
+      # process-level Gettext.put_locale/2 done ahead of time in this test process.
+      user =
+        user
+        |> set_password()
+        |> Ecto.Changeset.change(locale: "fr")
+        |> Cinder.Repo.update!()
+
+      too_short =
+        conn
+        |> log_in_user(user)
+        |> post(~p"/users/update-password", %{
+          "user" => %{"password" => "short", "password_confirmation" => "short"}
+        })
+
+      too_short_flash = Phoenix.Flash.get(too_short.assigns.flash, :error)
+      assert too_short_flash =~ "Échec de la mise à jour du mot de passe."
+      assert too_short_flash =~ "doit comporter au moins 12 caractères"
+      refute too_short_flash =~ "should be at least"
+
+      mismatch =
+        conn
+        |> log_in_user(user)
+        |> post(~p"/users/update-password", %{
+          "user" => %{
+            "password" => "brand new pass phrase!",
+            "password_confirmation" => "does not match!"
+          }
+        })
+
+      mismatch_flash = Phoenix.Flash.get(mismatch.assigns.flash, :error)
+      assert mismatch_flash =~ "ne correspond pas au mot de passe"
+      refute mismatch_flash =~ "does not match password"
+    after
+      Gettext.put_locale(CinderWeb.Gettext, "en")
+    end
   end
 
   describe "POST /users/delete-account" do

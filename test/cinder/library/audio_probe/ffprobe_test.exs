@@ -5,7 +5,14 @@ defmodule Cinder.Library.AudioProbe.FfprobeTest do
 
   setup do
     ffprobe_bin = Application.get_env(:cinder, :ffprobe_bin)
-    on_exit(fn -> restore_bin(ffprobe_bin) end)
+    timeout_ms = Application.get_env(:cinder, :audiobook_probe_timeout_ms)
+    health_timeout_ms = Application.get_env(:cinder, :audiobook_health_timeout_ms)
+
+    on_exit(fn ->
+      restore_bin(ffprobe_bin)
+      restore_timeout(timeout_ms)
+      restore_health_timeout(health_timeout_ms)
+    end)
   end
 
   @tag :tmp_dir
@@ -23,6 +30,23 @@ defmodule Cinder.Library.AudioProbe.FfprobeTest do
   test "health/0 surfaces a missing binary as an error instead of crashing" do
     Application.put_env(:cinder, :ffprobe_bin, "definitely-not-a-real-binary")
     assert {:error, %ErlangError{original: :enoent}} = Ffprobe.health()
+  end
+
+  # #510: a hung `-version` call timing out its Elixir-side Task used to leave the underlying
+  # `ffprobe` process running, the same defect `probe/1` had — proven the same way: a fake
+  # ffprobe that outlives the configured timeout and then writes a marker must never get to.
+  @tag :tmp_dir
+  test "health/0 kills the underlying ffprobe process on timeout, not merely abandons it", %{
+    tmp_dir: tmp
+  } do
+    marker = Path.join(tmp, "health_survived")
+    use_ffprobe(tmp, "sleep 1\ntouch #{marker}\nexit 0")
+    Application.put_env(:cinder, :audiobook_health_timeout_ms, 100)
+
+    assert Ffprobe.health() == {:error, :timeout}
+
+    Process.sleep(1200)
+    refute File.exists?(marker)
   end
 
   @tag :tmp_dir
@@ -114,6 +138,24 @@ defmodule Cinder.Library.AudioProbe.FfprobeTest do
     assert {:error, %ErlangError{original: :enoent}} = Ffprobe.probe("/media/book.mp3")
   end
 
+  # #510: a hung probe timing out its Elixir-side Task used to leave the underlying `ffprobe`
+  # process running — closing a port does nothing to a child that never reads stdin. Proven here
+  # by a fake ffprobe that outlives the configured timeout and then writes a marker: the marker
+  # must never appear, meaning the real process was killed, not merely abandoned.
+  @tag :tmp_dir
+  test "probe/1 kills the underlying ffprobe process on timeout, not merely abandons it", %{
+    tmp_dir: tmp
+  } do
+    marker = Path.join(tmp, "probe_survived")
+    use_ffprobe(tmp, "sleep 1\ntouch #{marker}\nexit 0")
+    Application.put_env(:cinder, :audiobook_probe_timeout_ms, 100)
+
+    assert Ffprobe.probe("/media/book.mp3") == {:error, :timeout}
+
+    Process.sleep(1200)
+    refute File.exists?(marker)
+  end
+
   defp use_ffprobe(tmp, script) do
     path = Path.join(tmp, "ffprobe")
     File.write!(path, "#!/bin/sh\n#{script}\n")
@@ -123,4 +165,15 @@ defmodule Cinder.Library.AudioProbe.FfprobeTest do
 
   defp restore_bin(nil), do: Application.delete_env(:cinder, :ffprobe_bin)
   defp restore_bin(value), do: Application.put_env(:cinder, :ffprobe_bin, value)
+
+  defp restore_timeout(nil), do: Application.delete_env(:cinder, :audiobook_probe_timeout_ms)
+
+  defp restore_timeout(value),
+    do: Application.put_env(:cinder, :audiobook_probe_timeout_ms, value)
+
+  defp restore_health_timeout(nil),
+    do: Application.delete_env(:cinder, :audiobook_health_timeout_ms)
+
+  defp restore_health_timeout(value),
+    do: Application.put_env(:cinder, :audiobook_health_timeout_ms, value)
 end
