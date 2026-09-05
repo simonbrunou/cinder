@@ -520,6 +520,13 @@ defmodule CinderWeb.LibraryAdoptionLive do
   defp decision_choice_matches_kind?(:book, choice), do: choice in ["preferred", "all_formats"]
   defp decision_choice_matches_kind?(_kind, _choice), do: false
 
+  # Whether the Needs-decision bucket contains at least one candidate of `kind` — gates which
+  # bulk "Apply ... to all undecided" button/copy renders, since Fold/Part only ever mean
+  # anything for an episode candidate and Preferred format/All formats only for a book one
+  # (`decision_choice_matches_kind?/2` already refuses the mismatched write; this just keeps the
+  # UI from offering a control that would silently do nothing).
+  defp needs_decision_kind?(candidates, kind), do: Enum.any?(candidates, &(&1.kind == kind))
+
   defp parse_id(value) when is_integer(value), do: value
 
   defp parse_id(value) when is_binary(value) do
@@ -1158,6 +1165,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
                 )}
               </span>
               <.button
+                :if={needs_decision_kind?(@migration_buckets.needs_decision, :episode)}
                 type="button"
                 variant="neutral"
                 size="sm"
@@ -1168,6 +1176,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
                 {gettext("Apply Fold to all undecided")}
               </.button>
               <.button
+                :if={needs_decision_kind?(@migration_buckets.needs_decision, :episode)}
                 type="button"
                 variant="neutral"
                 size="sm"
@@ -1177,11 +1186,44 @@ defmodule CinderWeb.LibraryAdoptionLive do
               >
                 {gettext("Apply Part to all undecided")}
               </.button>
+              <.button
+                :if={needs_decision_kind?(@migration_buckets.needs_decision, :book)}
+                type="button"
+                variant="neutral"
+                size="sm"
+                phx-click="apply_all"
+                phx-value-choice="preferred"
+                aria-label={gettext("Apply Preferred format to all undecided items")}
+              >
+                {gettext("Apply Preferred format to all undecided")}
+              </.button>
+              <.button
+                :if={needs_decision_kind?(@migration_buckets.needs_decision, :book)}
+                type="button"
+                variant="neutral"
+                size="sm"
+                phx-click="apply_all"
+                phx-value-choice="all_formats"
+                aria-label={gettext("Apply All formats to all undecided items")}
+              >
+                {gettext("Apply All formats to all undecided")}
+              </.button>
             </div>
           </div>
-          <p class="mb-3 text-sm text-base-content/70">
+          <p
+            :if={needs_decision_kind?(@migration_buckets.needs_decision, :episode)}
+            class="mb-3 text-sm text-base-content/70"
+          >
             {gettext(
               "Sonarr split several TVDB episodes into files that map to one TMDB episode. Choose how to treat each extra file."
+            )}
+          </p>
+          <p
+            :if={needs_decision_kind?(@migration_buckets.needs_decision, :book)}
+            class="mb-3 text-sm text-base-content/70"
+          >
+            {gettext(
+              "This book has multiple accepted formats. Choose whether to keep only the preferred one or adopt them all."
             )}
           </p>
           <div id="migration-decision-candidates" phx-update="stream" class="space-y-3">

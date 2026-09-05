@@ -907,6 +907,148 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
 
     paths = Cinder.Repo.all(Cinder.Books.BookFile) |> Enum.map(& &1.path) |> Enum.sort()
     assert paths == Enum.sort([track1_path, track2_path])
+end
+
+  # #496: both bulk buttons used to be silent no-ops for a book preview — apply_all/2 already
+  # guarded the write (decision_choice_matches_kind?/2), but the template only ever rendered the
+  # Sonarr Fold/Part bulk buttons, never Preferred format/All formats, so a Readarr preview with
+  # several undecided multi-format books had no working bulk control at all.
+  test "a Readarr preview renders working bulk Preferred/All-formats buttons, not Sonarr's Fold/Part",
+       %{conn: conn} do
+    saved_books_root = Application.get_env(:cinder, :books_library_path)
+    Application.put_env(:cinder, :books_library_path, "/readarr")
+
+    on_exit(fn ->
+      if saved_books_root,
+        do: Application.put_env(:cinder, :books_library_path, saved_books_root),
+        else: Application.delete_env(:cinder, :books_library_path)
+    end)
+
+    stub(Cinder.Books.PrimaryMetadataMock, :provider, fn -> :openlibrary end)
+    stub(Cinder.Books.SecondaryMetadataMock, :provider, fn -> :hardcover end)
+
+    stub(Cinder.Library.ReadarrMigrationSourceMock, :snapshot, fn ->
+      {:ok,
+       %{
+         movies: [],
+         series: [],
+         episodes: [],
+         authors: [
+           %{
+             provider_id: 1,
+             name: "Multi Author",
+             foreign_id: "author-1",
+             monitored: true,
+             monitor_new_items: "all"
+           }
+         ],
+         works: [
+           %{
+             provider_id: 1,
+             author_id: 1,
+             title: "Book One",
+             foreign_id: "multi-1",
+             monitored: true
+           },
+           %{
+             provider_id: 2,
+             author_id: 1,
+             title: "Book Two",
+             foreign_id: "multi-2",
+             monitored: true
+           }
+         ],
+         editions: [],
+         files: [
+           %{
+             provider_id: 1,
+             kind: :book,
+             path: "/readarr/one.epub",
+             size: 10,
+             work_id: 1,
+             format: "epub"
+           },
+           %{
+             provider_id: 2,
+             kind: :book,
+             path: "/readarr/one.azw3",
+             size: 10,
+             work_id: 1,
+             format: "azw3"
+           },
+           %{
+             provider_id: 3,
+             kind: :book,
+             path: "/readarr/two.epub",
+             size: 10,
+             work_id: 2,
+             format: "epub"
+           },
+           %{
+             provider_id: 4,
+             kind: :book,
+             path: "/readarr/two.azw3",
+             size: 10,
+             work_id: 2,
+             format: "azw3"
+           }
+         ],
+         profiles: [],
+         roots: []
+       }}
+    end)
+
+    stub(Cinder.Books.PrimaryMetadataMock, :search, fn query ->
+      title = if query =~ "One", do: "Book One", else: "Book Two"
+
+      {:ok,
+       [
+         %{
+           provider: :openlibrary,
+           foreign_id: "ol-#{title}",
+           title: title,
+           contributors: [%{foreign_id: "a1", name: "Multi Author", role: "author"}],
+           contributors_incomplete: false,
+           first_published_year: nil,
+           edition_count: 1
+         }
+       ]}
+    end)
+
+    stub(Cinder.Books.PrimaryMetadataMock, :get_work, fn foreign_id ->
+      {:ok,
+       %{
+         provider: :openlibrary,
+         foreign_id: foreign_id,
+         title: "Book",
+         first_published_on: nil,
+         overview: nil,
+         contributors: [],
+         contributors_incomplete: true,
+         editions: [],
+         series: []
+       }}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{}} end)
+
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    view |> element("#scan-readarr") |> render_click()
+    render_async(view)
+
+    assert has_element?(view, "button", "Apply Preferred format to all undecided")
+    assert has_element?(view, "button", "Apply All formats to all undecided")
+    refute has_element?(view, "button", "Apply Fold to all undecided")
+    refute has_element?(view, "button", "Apply Part to all undecided")
+
+    # An existing per-candidate override survives the bulk apply — mirrors the Sonarr bulk test.
+    render_click(view, "set_decision", %{"id" => "1", "choice" => "all_formats"})
+
+    view |> element("button", "Apply Preferred format to all undecided") |> render_click()
+
+    assert render(view) =~ "0 decisions pending"
+    assert has_element?(view, "#adoption-candidate-1 input[value=all_formats][checked]")
+    assert has_element?(view, "#adoption-candidate-2 input[value=preferred][checked]")
   end
 
   test "set_decision rejects an episode-only choice (fold/part) against a book candidate",
