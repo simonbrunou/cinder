@@ -9,11 +9,18 @@ defmodule Cinder.Library.MovieSources do
 
   alias Cinder.Library
 
-  # The RAR-set extensions plus every other format `Cinder.Download.ContentPolicy` treats as a
-  # plausible archive/parity container a movie release can arrive in before unpacking (#499): none
-  # of them are ever extracted here (unlike the books side), so a folder carrying one alongside an
-  # ordinary video (a sample) must refuse rather than let the sample stand in for the feature.
-  @archive_extensions ~w(.rar .zip .7z .par2 .tar .gz .001)
+  # ZIP/7z alongside the existing RAR-set (#499): a folder carrying one of these container
+  # formats can plausibly have the feature packed INSIDE it, and none of them are ever
+  # extracted here (unlike the books side), so it must refuse rather than let the ordinary
+  # largest-visible-video policy pick a sample standing next to the container.
+  #
+  # Deliberately NOT included: `.par2` is parity/repair data, never a container the feature
+  # could be packed inside — a completed usenet download routinely keeps `.par2` files
+  # alongside the real, already-repaired video, and refusing on their presence would turn a
+  # normal working import into a permanent hold. Bare `.tar`/`.gz`/`.001` are excluded too:
+  # no evidence any real movie release ships in them, and `.gz` alone false-positives on an
+  # unrelated companion file (a compressed `.nfo`), not just a packed container.
+  @archive_extensions ~w(.rar .zip .7z)
 
   def resolve(path) do
     case Library.safe_walk(path) do

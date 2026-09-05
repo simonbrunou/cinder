@@ -829,6 +829,29 @@ defmodule Cinder.LibraryTest do
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
   end
 
+  test "a completed usenet folder with the real feature and leftover .par2 files still imports (#499)" do
+    movie = %Movie{title: "X", year: 2000, tmdb_id: 555, file_path: "/dl/X"}
+
+    Cinder.LibraryStubs.stub_import_ok(9 * @gb)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    # .par2 is repair/parity data, never a container the feature could be packed inside — a real
+    # usenet client routinely leaves these behind after a successful repair. They must not trip
+    # the archive guard meant for genuinely unimportable containers (.rar/.zip/.7z).
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok,
+       [
+         {"/dl/X/X.2000.1080p.mkv", 9 * @gb},
+         {"/dl/X/X.2000.1080p.par2", 50_000},
+         {"/dl/X/X.2000.1080p.vol00+01.par2", 50_000}
+       ]}
+    end)
+
+    assert {:ok, %{dest: dest} = stage} = Library.stage_movie(movie)
+    assert dest == "#{@lib}/X (2000) {tmdb-555}/X (2000) {tmdb-555}.mkv"
+    assert :ok = commit!(stage)
+  end
+
   test "disc structures fail explicitly without an extractor/playback contract" do
     movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
 
