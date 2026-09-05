@@ -1425,11 +1425,12 @@ defmodule Cinder.Library do
     end
   end
 
-  # `arbitrating?` fails closed on a nil baseline instead of treating it as an unconditional win —
-  # see `Upgrade.arbitration_upgrade?/5` (#520 mixed-pack gap). Only `stage_group/7`'s `:arbitrate`
-  # clause passes `true`; every other caller keeps `better?/5`'s ordinary import-time semantics.
+  # `arbitrating?` fails closed on a nil baseline (Upgrade.arbitration_upgrade?/5, #520) only
+  # when the episode still holds a file — a mid-flight deletion can clear file_path/quality
+  # while grab_id survives, and a fileless episode has nothing left to protect (better?/5).
   defp ep_upgrade?(ep, new_q, target, arbitrating? \\ false) do
-    fun = if arbitrating?, do: &Upgrade.arbitration_upgrade?/5, else: &Upgrade.better?/5
+    fail_closed? = arbitrating? and Episode.file_paths(ep) != []
+    fun = if fail_closed?, do: &Upgrade.arbitration_upgrade?/5, else: &Upgrade.better?/5
     fun.(new_q, old_quality(ep), target, preferred_resolutions(:tv), preferred_sources(:tv))
   end
 

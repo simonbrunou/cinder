@@ -91,6 +91,50 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
   end
 
   @tag :tmp_dir
+  test "an episode left fileless by a mid-flight deletion still accepts its download (#520)", %{
+    tmp_dir: tmp
+  } do
+    %{downloads: downloads, tv: tv} = real_tv_library(tmp)
+
+    release_dir = Path.join(downloads, "Show.S01.1080p.WEB-DL-GRP")
+    File.mkdir_p!(release_dir)
+    File.write!(Path.join(release_dir, "Show.S01E01.1080p.WEB-DL.mkv"), "release-1")
+
+    series = series_fixture(%{tmdb_id: 4261, title: "Show", year: 2008, monitor_strategy: :all})
+    season = season_fixture(series)
+
+    # An admin deleted the held file (and its recorded quality) while this episode's automatic
+    # upgrade was already downloading — SeriesDeletion.reconcile_deleted_paths/3's documented
+    # shape: file_path/quality cleared, grab_id (set by arbitrated_grab/2 below) untouched. With
+    # nothing left to protect, the fail-closed arbitration gate must not reject the replacement.
+    episode =
+      episode_fixture(season, %{
+        episode_number: 1,
+        file_path: nil,
+        imported_resolution: nil
+      })
+
+    {:ok, grab} = arbitrated_grab([episode], release_dir)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    reloaded = reload([episode], 1)
+
+    assert reloaded.file_path ==
+             Path.join([
+               tv,
+               "Show (2008) {tmdb-4261}",
+               "Season 01",
+               "Show (2008) {tmdb-4261} - S01E01.mkv"
+             ])
+
+    assert File.read!(reloaded.file_path) == "release-1"
+    assert reloaded.imported_resolution == "1080p"
+    refute Repo.get(Grab, grab.id)
+  end
+
+  @tag :tmp_dir
   test "a manual grab still forces the swap", %{tmp_dir: tmp} do
     %{release_dir: release_dir, library: library, episodes: episodes} = partly_better_pack(tmp)
 
