@@ -165,30 +165,94 @@ defmodule Cinder.Library.BookArchive.Rar do
     end
   end
 
-  # Bounded exactly like `MediaInfo.Ffprobe.health/0`/`AudioProbe.Ffprobe.probe/1`:
-  # `Task.async` + `Task.yield(timeout)` + `Task.shutdown(:brutal_kill)`. The missing-binary/
-  # port-open rescue runs INSIDE the task for the same reason those modules' comments give —
-  # `Task.async` links the caller to the task, so an uncaught raise there would crash the
-  # caller via the link's EXIT signal rather than return `{:error, _}`. A timeout maps to the
-  # same `:archive_corrupt` a nonzero exit already returns, so no caller needs a new clause —
-  # both mean "this archive cannot be listed," and a hung `lb` is exactly as unusable to the
-  # caller as a corrupt one.
+  # Supervised `Port` + `SIGKILL`-by-`os_pid` (#510), reusing this module's own `kill/1` — the
+  # same technique `run_extraction/6` already uses for the extraction subprocess, applied here to
+  # the listing one. `Task.shutdown(:brutal_kill)` (the previous implementation) only kills the
+  # *Elixir* task, not `unrar` itself when it never reads stdin, so a hung/slow `lb` used to keep
+  # running past the reported timeout. A timeout maps to the same `:archive_corrupt` a nonzero
+  # exit already returns, so no caller needs a new clause — both mean "this archive cannot be
+  # listed," and a hung `lb` is exactly as unusable to the caller as a corrupt one.
   defp list_entries(bin, archive_path, list_timeout_ms) do
-    task =
-      Task.async(fn ->
-        try do
-          System.cmd(bin, ["lb", "-p-", "--", archive_path], stderr_to_stdout: true)
-        rescue
-          e -> {:error, e}
-        end
-      end)
+    case run_bounded_list(bin, ["lb", "-p-", "--", archive_path], list_timeout_ms) do
+      {:ok, output, 0} -> {:ok, String.split(output, "\n", trim: true)}
+      {:ok, _output, _status} -> {:error, :archive_corrupt}
+      {:error, _reason} -> {:error, :archive_corrupt}
+    end
+  end
 
-    case Task.yield(task, list_timeout_ms) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {:error, _reason}} -> {:error, :archive_corrupt}
-      {:ok, {output, 0}} -> {:ok, output |> String.split("\n", trim: true)}
-      {:ok, {_output, _status}} -> {:error, :archive_corrupt}
-      {:exit, _reason} -> {:error, :archive_corrupt}
-      nil -> {:error, :archive_corrupt}
+  defp run_bounded_list(bin, args, timeout_ms) do
+    port =
+      Port.open({:spawn_executable, bin}, [
+        :binary,
+        :exit_status,
+        :use_stdio,
+        :stderr_to_stdout,
+        args: args
+      ])
+
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    list_supervise(port, deadline, [])
+  catch
+    :error, reason -> {:error, {:port_open_failed, reason}}
+  end
+
+  # Bounded by an ABSOLUTE deadline recomputed on every receive, not a fixed poll tick a chatty
+  # `lb` could keep resetting — same reasoning as `supervise/6`'s own fixed-schedule fix (#506).
+  defp list_supervise(port, deadline, acc) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    if remaining <= 0 do
+      list_kill_and_reap(port)
+    else
+      receive do
+        {^port, {:data, data}} ->
+          list_supervise(port, deadline, [data | acc])
+
+        {^port, {:exit_status, status}} ->
+          drain_immediate(port)
+          {:ok, IO.iodata_to_binary(Enum.reverse(acc)), status}
+      after
+        remaining -> list_kill_and_reap(port)
+      end
+    end
+  end
+
+  # Kills the OS process (reusing this module's own `kill/1`), waits briefly for it to actually
+  # exit, then closes the port and drains anything left in its mailbox regardless — a stray
+  # `{port, {:data, _}}` past this return could reach `BookPoller` (no catch-all `handle_info/2`).
+  defp list_kill_and_reap(port) do
+    kill(port)
+    list_reap(port, System.monotonic_time(:millisecond) + @reap_wait_ms)
+    close_port(port)
+    drain_immediate(port)
+    {:error, :timeout}
+  end
+
+  defp list_reap(port, deadline) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    if remaining > 0 do
+      receive do
+        {^port, {:exit_status, _status}} -> :ok
+        {^port, {:data, _data}} -> list_reap(port, deadline)
+      after
+        remaining -> :ok
+      end
+    end
+  end
+
+  # `Port.close/1` raises `ArgumentError` if the port already closed on its own.
+  defp close_port(port) do
+    if Port.info(port), do: Port.close(port)
+  rescue
+    ArgumentError -> :ok
+  end
+
+  defp drain_immediate(port) do
+    receive do
+      {^port, _message} -> drain_immediate(port)
+    after
+      0 -> :ok
     end
   end
 
