@@ -30,6 +30,8 @@ defmodule Cinder.HealthTest do
     stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)
     stub(Cinder.Library.AudiobookServerMock, :health, fn -> :ok end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
   end
 
   test "check_all/0 returns labeled rows for metadata, indexer, download clients, media server, libraries" do
@@ -166,6 +168,8 @@ defmodule Cinder.HealthTest do
 
   test "check_service({:library, :movies}) is :ok when the library dir is writable" do
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
     assert Cinder.Health.check_service({:library, :movies}) == :ok
   end
 
@@ -174,8 +178,37 @@ defmodule Cinder.HealthTest do
     assert Cinder.Health.check_service({:library, :movies}) == {:error, :eacces}
   end
 
+  test "check_service({:library, :movies}) reports an existing, unwritable directory as unhealthy" do
+    # mkdir_p on an existing directory always returns :ok even when the app cannot create
+    # files or subdirectories in it (a read-only mount, a Docker UID/GID mismatch) — the
+    # writability check must go further than that.
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> {:error, :eacces} end)
+    assert Cinder.Health.check_service({:library, :movies}) == {:error, :eacces}
+  end
+
+  test "check_service({:library, :movies}) removes its disposable probe entry" do
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+
+    parent = self()
+
+    expect(Cinder.Library.FilesystemMock, :write_exclusive, fn path, "" ->
+      send(parent, {:probe_path, path})
+      :ok
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :rm, fn path ->
+      assert_received {:probe_path, ^path}
+      :ok
+    end)
+
+    assert Cinder.Health.check_service({:library, :movies}) == :ok
+  end
+
   test "check_service({:library, :tv}) is :ok when the TV library dir is writable" do
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
     assert Cinder.Health.check_service({:library, :tv}) == :ok
   end
 
