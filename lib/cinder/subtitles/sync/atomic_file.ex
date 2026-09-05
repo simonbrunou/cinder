@@ -233,13 +233,26 @@ defmodule Cinder.Subtitles.Sync.AtomicFile do
     end
   end
 
+  # A completed reversal's displaced content is truncated to empty by `discard_bound` after
+  # exchange (see `finalize_exchange`), leaving this exact directory and an empty staged file as
+  # a tombstone — nothing was ever published from it beyond what the exchange already verified,
+  # so it's never itself a conflict. Recognized only when the target still reads as the
+  # pre-reversal `expected_sha256`: empty content alone must not authorize reuse of a workspace
+  # whose target has moved to some other, unaccounted-for state.
   defp verify_pending_workspace(target, staged, expected_sha256, applied_sha256) do
-    if {sha256(target), sha256(staged)} in [
-         {expected_sha256, applied_sha256},
-         {applied_sha256, expected_sha256}
-       ],
-       do: :ok,
-       else: {:error, :pending_workspace_mismatch}
+    cond do
+      {sha256(target), sha256(staged)} in [
+        {expected_sha256, applied_sha256},
+        {applied_sha256, expected_sha256}
+      ] ->
+        :ok
+
+      staged == "" and sha256(target) == expected_sha256 ->
+        :ok
+
+      true ->
+        {:error, :pending_workspace_mismatch}
+    end
   end
 
   defp atomic_operation(target, staged_path, content, expected_current, directory) do
@@ -346,11 +359,53 @@ defmodule Cinder.Subtitles.Sync.AtomicFile do
           directory
         )
 
+      {:ok, ""} ->
+        reuse_reclaimed_workspace(
+          target,
+          staged_path,
+          current,
+          staged,
+          content,
+          expected_current,
+          directory
+        )
+
       {:ok, _other} ->
         {:error, :pending_workspace_mismatch}
 
       {:error, _reason} = error ->
         error
+    end
+  end
+
+  # An empty staged file beside a target that already reads as `expected_current` (the caller
+  # only reaches here after confirming that) is a reclaimed tombstone from a completed reversal,
+  # or a crash before any byte was ever staged — either way nothing was published from it, so
+  # restaging `content` and retrying the exchange is safe. Any other content is left untouched:
+  # it may be a genuinely interrupted, resumable write that must not be overwritten.
+  defp reuse_reclaimed_workspace(
+         target,
+         staged_path,
+         current,
+         staged,
+         content,
+         expected_current,
+         directory
+       ) do
+    case File.write(staged.path, content) do
+      :ok ->
+        perform_atomic_operation(
+          target,
+          staged_path,
+          current,
+          staged,
+          expected_current,
+          content,
+          directory
+        )
+
+      {:error, reason} ->
+        {:error, {:reclaim_write_failed, reason}}
     end
   end
 

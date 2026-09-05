@@ -179,6 +179,33 @@ defmodule Cinder.Subtitles.SyncTest do
     assert Manifest.sync(Manifest.read(video), "en") == nil
   end
 
+  test "a repeated identical manual/reset cycle does not collide with the first reset's retired workspace",
+       %{video: video} do
+    path = managed_srt!(video)
+    original = File.read!(path)
+
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+    assert File.read!(path) =~ "00:00:02,000"
+
+    [item] = Sync.discover(video)
+    assert :ok = Sync.reset(item)
+    assert File.read!(path) == original
+
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+    assert File.read!(path) =~ "00:00:02,000"
+
+    [item] = Sync.discover(video)
+    assert :ok = Sync.reset(item)
+    assert File.read!(path) == original
+    assert Manifest.sync(Manifest.read(video), "en") == nil
+
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 2_000, 1.0)
+    assert File.read!(path) =~ "00:00:03,000"
+  end
+
   test "legacy embedded migration retires a proven duplicate backup", %{video: video} do
     path = managed_srt!(video)
     original = File.read!(path)
