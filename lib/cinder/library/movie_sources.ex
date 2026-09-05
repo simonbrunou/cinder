@@ -9,6 +9,12 @@ defmodule Cinder.Library.MovieSources do
 
   alias Cinder.Library
 
+  # The RAR-set extensions plus every other format `Cinder.Download.ContentPolicy` treats as a
+  # plausible archive/parity container a movie release can arrive in before unpacking (#499): none
+  # of them are ever extracted here (unlike the books side), so a folder carrying one alongside an
+  # ordinary video (a sample) must refuse rather than let the sample stand in for the feature.
+  @archive_extensions ~w(.rar .zip .7z .par2 .tar .gz .001)
+
   def resolve(path) do
     case Library.safe_walk(path) do
       {:ok, files} -> resolve_folder(files)
@@ -106,7 +112,7 @@ defmodule Cinder.Library.MovieSources do
 
   defp archive_file?(path) do
     extension = String.downcase(Path.extname(path))
-    extension == ".rar" or Regex.match?(~r/^\.r\d{2}$/u, extension)
+    extension in @archive_extensions or Regex.match?(~r/^\.r\d{2}$/u, extension)
   end
 
   defp disc_path?(path) do
