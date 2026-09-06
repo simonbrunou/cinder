@@ -76,7 +76,9 @@ defmodule Cinder.Catalog.SeriesDeletion do
     from(e in Episode,
       join: s in Season,
       on: s.id == e.season_id,
-      where: s.series_id == ^series_id and not is_nil(e.file_path)
+      where:
+        s.series_id == ^series_id and
+          (not is_nil(e.file_path) or fragment("json_array_length(?) > 0", e.part_file_paths))
     )
     |> Repo.all()
     |> Enum.flat_map(&Episode.file_paths/1)
