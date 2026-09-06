@@ -316,6 +316,14 @@ defmodule Cinder.Acquisition.BookScorerTest do
                )
     end
 
+    test "an author whose name is also the edition abbreviation is not stripped as metadata" do
+      # Codex review, round 6: "ed" joined the edition-keyword strip list, but "Ed" is also a
+      # real first name. A dot-separated release with author "Ed" must not read "Ed" as an
+      # edition marker and lose both the author byline and the wanted title's own number.
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("Ed.13.epub"), %{title: "13", authors: ["Ed"]})
+    end
+
     test "a series ordinal that coincidentally equals the wanted number is not title evidence" do
       # Codex review on #517: a release-side series ordinal ("Foo 13") must not be mistaken for
       # the wanted title's own number just because the two digits coincide. This release is
@@ -390,6 +398,16 @@ defmodule Cinder.Acquisition.BookScorerTest do
 
       assert {:reject, :title_mismatch} =
                BookScorer.evaluate(release("X - 13 Foo - Room (epub)"), work)
+    end
+
+    test "a number is preserved when the wanted title itself is the series name plus that number" do
+      # Codex review, round 6: the wanted title can BE its series name followed by its own
+      # number ("Room 13", series "Room") -- unlike the round-1 case (series "Foo" for a wanted
+      # "Room 13"), here the series name is genuinely part of the wanted title, so its adjacent
+      # number must not be stripped as an unrelated ordinal.
+      work = %{title: "Room 13", authors: ["X"], series: ["Room"]}
+
+      assert {:accept, _evidence} = BookScorer.evaluate(release("X - Room 13 (epub)"), work)
     end
   end
 

@@ -283,14 +283,17 @@ defmodule Cinder.Acquisition.AudiobookScorer do
     |> drop_bracketed_groups(work)
     |> strip_series_ordinal(work)
     |> String.replace(~r/-[A-Za-z0-9]+$/, " ")
-    # "edition"/"ed" joins the keyword list: "Room - Edition 13" for a DIFFERENT "Room" was
+    # "edition" joins the keyword list: "Room - Edition 13" for a DIFFERENT "Room" was
     # otherwise unstripped, and its "13" coincided with a wanted "Room 13" as false title
     # evidence -- the exact hazard series ordinals close, for edition/printing metadata instead
     # of a series name (Codex review).
-    |> String.replace(
-      ~r/\b(?:book|bk|vol|volume|part|pt|no|nr|edition|ed)\b[ .#]*\d{1,3}\b/i,
-      " "
-    )
+    |> String.replace(~r/\b(?:book|bk|vol|volume|part|pt|no|nr|edition)\b[ .#]*\d{1,3}\b/i, " ")
+    # "ed" alone is the SAME abbreviation, but it is also a real first name -- "Ed.13.epub" for
+    # author "Ed" and title "13" must not read "Ed" as an edition marker and strip both it and
+    # the wanted title's own number. Author names lead a release ("Author - Title" convention),
+    # so a lookbehind requiring at least one preceding character excludes "ed" at the very start
+    # of the string, where a genuine edition marker essentially never sits (Codex review).
+    |> String.replace(~r/(?<=.)\bed\b[ .#]*\d{1,3}\b/i, " ")
     |> String.replace(~r/#\d{1,3}\b/, " ")
     |> strip_series_number(wanted_numeric_tokens(work))
   end
@@ -298,36 +301,55 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   # See `Cinder.Acquisition.BookScorer.strip_series_ordinal/2` for the reasoning (Codex review).
   defp strip_series_ordinal(title, work) do
     normalized = nfd(title)
+    wanted_tokens = work |> Map.fetch!(:title) |> tokens()
 
     work
     |> Map.get(:series)
     |> List.wrap()
-    |> Enum.reduce(normalized, &apply_series_ordinal_strip/2)
+    |> Enum.reduce(normalized, &apply_series_ordinal_strip(&1, &2, wanted_tokens))
   end
 
-  defp apply_series_ordinal_strip(series_entry, title) do
+  defp apply_series_ordinal_strip(series_entry, title, wanted_tokens) do
     with name when is_binary(name) <- series_name(series_entry),
          [_ | _] = words <- tokens(name) do
       pattern = Enum.map_join(words, "[^A-Za-z0-9]+", &word_pattern/1)
 
       title
-      |> strip_ordinal_after(pattern)
-      |> strip_ordinal_before(pattern)
+      |> strip_ordinal_after(pattern, words, wanted_tokens)
+      |> strip_ordinal_before(pattern, words, wanted_tokens)
     else
       _ -> title
     end
   end
 
-  # See `Cinder.Acquisition.BookScorer.strip_ordinal_after/2` and `strip_ordinal_before/2` for the
+  # See `Cinder.Acquisition.BookScorer.strip_ordinal_after/4` and `strip_ordinal_before/4` for the
   # reasoning (Codex review).
-  defp strip_ordinal_after(title, pattern) do
-    regex = Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*\\d{1,3}\\b", "iu")
-    Regex.replace(regex, title, fn _whole, name -> name <> " " end)
+  defp strip_ordinal_after(title, pattern, words, wanted_tokens) do
+    regex = Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*(\\d{1,3})\\b", "iu")
+
+    Regex.replace(regex, title, fn _whole, name, digits ->
+      if belongs_to_wanted_title?(words ++ [digits], wanted_tokens),
+        do: name <> " " <> digits,
+        else: name <> " "
+    end)
   end
 
-  defp strip_ordinal_before(title, pattern) do
-    regex = Regex.compile!("\\b\\d{1,3}[^A-Za-z0-9]*(" <> pattern <> ")\\b", "iu")
-    Regex.replace(regex, title, fn _whole, name -> " " <> name end)
+  defp strip_ordinal_before(title, pattern, words, wanted_tokens) do
+    regex = Regex.compile!("\\b(\\d{1,3})[^A-Za-z0-9]*(" <> pattern <> ")\\b", "iu")
+
+    Regex.replace(regex, title, fn _whole, digits, name ->
+      if belongs_to_wanted_title?([digits | words], wanted_tokens),
+        do: digits <> " " <> name,
+        else: " " <> name
+    end)
+  end
+
+  defp belongs_to_wanted_title?(sequence, wanted_tokens) do
+    span = length(sequence)
+
+    wanted_tokens
+    |> Enum.chunk_every(span, 1, :discard)
+    |> Enum.any?(&(&1 == sequence))
   end
 
   # See `Cinder.Acquisition.BookScorer.word_pattern/1` for the reasoning (Codex review).

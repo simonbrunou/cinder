@@ -388,14 +388,17 @@ defmodule Cinder.Acquisition.BookScorer do
     |> drop_bracketed_groups(work)
     |> strip_series_ordinal(work)
     |> String.replace(~r/-[A-Za-z0-9]+$/, " ")
-    # "edition"/"ed" joins the keyword list: "Room - Edition 13" for a DIFFERENT "Room" was
+    # "edition" joins the keyword list: "Room - Edition 13" for a DIFFERENT "Room" was
     # otherwise unstripped, and its "13" coincided with a wanted "Room 13" as false title
     # evidence -- the exact hazard series ordinals close, for edition/printing metadata instead
     # of a series name (Codex review).
-    |> String.replace(
-      ~r/\b(?:book|bk|vol|volume|part|pt|no|nr|edition|ed)\b[ .#]*\d{1,3}\b/i,
-      " "
-    )
+    |> String.replace(~r/\b(?:book|bk|vol|volume|part|pt|no|nr|edition)\b[ .#]*\d{1,3}\b/i, " ")
+    # "ed" alone is the SAME abbreviation, but it is also a real first name -- "Ed.13.epub" for
+    # author "Ed" and title "13" must not read "Ed" as an edition marker and strip both it and
+    # the wanted title's own number. Author names lead a release ("Author - Title" convention),
+    # so a lookbehind requiring at least one preceding character excludes "ed" at the very start
+    # of the string, where a genuine edition marker essentially never sits (Codex review).
+    |> String.replace(~r/(?<=.)\bed\b[ .#]*\d{1,3}\b/i, " ")
     |> String.replace(~r/#\d{1,3}\b/, " ")
     |> strip_series_number(wanted_numeric_tokens(work))
   end
@@ -409,21 +412,22 @@ defmodule Cinder.Acquisition.BookScorer do
   # never reaches it.
   defp strip_series_ordinal(title, work) do
     normalized = nfd(title)
+    wanted_tokens = work |> Map.fetch!(:title) |> tokens()
 
     work
     |> Map.get(:series)
     |> List.wrap()
-    |> Enum.reduce(normalized, &apply_series_ordinal_strip/2)
+    |> Enum.reduce(normalized, &apply_series_ordinal_strip(&1, &2, wanted_tokens))
   end
 
-  defp apply_series_ordinal_strip(series_entry, title) do
+  defp apply_series_ordinal_strip(series_entry, title, wanted_tokens) do
     with name when is_binary(name) <- series_name(series_entry),
          [_ | _] = words <- tokens(name) do
       pattern = Enum.map_join(words, "[^A-Za-z0-9]+", &word_pattern/1)
 
       title
-      |> strip_ordinal_after(pattern)
-      |> strip_ordinal_before(pattern)
+      |> strip_ordinal_after(pattern, words, wanted_tokens)
+      |> strip_ordinal_before(pattern, words, wanted_tokens)
     else
       _ -> title
     end
@@ -435,23 +439,40 @@ defmodule Cinder.Acquisition.BookScorer do
   # else, and a literal-space match missed it, leaving the ordinal unstripped and readmitting the
   # coincidence this function exists to close (Codex review).
   #
-  # The series-name portion is CAPTURED and kept in the replacement, and only the digits are
-  # dropped -- replacing the WHOLE match unconditionally erased the series name's own text too,
-  # which wrongly rejected a legitimate release when the work's title IS its series name ("Dune",
-  # series `["Dune"]`): the release's "Dune 01" lost "Dune" along with "01", and the title check
-  # no longer found the wanted title at all (Codex review).
-  #
-  # Checked in both orders -- "Foo 13" and "13 Foo" are both real placements an indexer writes an
-  # ordinal in, and matching only the after-form left the before-form's digits unstripped and
-  # readmitted the same coincidence from the other side (Codex review).
-  defp strip_ordinal_after(title, pattern) do
-    regex = Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*\\d{1,3}\\b", "iu")
-    Regex.replace(regex, title, fn _whole, name -> name <> " " end)
+  # The series-name portion is CAPTURED and kept in the replacement always; the DIGIT is kept
+  # only when "series words ++ digit" (or "digit ++ series words", for the before-form) forms a
+  # contiguous run of the WANTED title's own tokens -- i.e. the wanted title itself is the series
+  # name followed by its own number ("Room 13", series `["Room"]`), not just any release whose
+  # ordinal happens to numerically coincide with the wanted title's digit while naming an
+  # unrelated series ("Foo 13 - Room" for a wanted "Room 13" in series "Foo" is a DIFFERENT book,
+  # and must still lose its ordinal). Checked in both orders -- "Foo 13" and "13 Foo" are both
+  # real placements an indexer writes an ordinal in (Codex review, both directions).
+  defp strip_ordinal_after(title, pattern, words, wanted_tokens) do
+    regex = Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*(\\d{1,3})\\b", "iu")
+
+    Regex.replace(regex, title, fn _whole, name, digits ->
+      if belongs_to_wanted_title?(words ++ [digits], wanted_tokens),
+        do: name <> " " <> digits,
+        else: name <> " "
+    end)
   end
 
-  defp strip_ordinal_before(title, pattern) do
-    regex = Regex.compile!("\\b\\d{1,3}[^A-Za-z0-9]*(" <> pattern <> ")\\b", "iu")
-    Regex.replace(regex, title, fn _whole, name -> " " <> name end)
+  defp strip_ordinal_before(title, pattern, words, wanted_tokens) do
+    regex = Regex.compile!("\\b(\\d{1,3})[^A-Za-z0-9]*(" <> pattern <> ")\\b", "iu")
+
+    Regex.replace(regex, title, fn _whole, digits, name ->
+      if belongs_to_wanted_title?([digits | words], wanted_tokens),
+        do: digits <> " " <> name,
+        else: " " <> name
+    end)
+  end
+
+  defp belongs_to_wanted_title?(sequence, wanted_tokens) do
+    span = length(sequence)
+
+    wanted_tokens
+    |> Enum.chunk_every(span, 1, :discard)
+    |> Enum.any?(&(&1 == sequence))
   end
 
   # `work.series` entries are the plain strings every existing caller and fixture uses, but

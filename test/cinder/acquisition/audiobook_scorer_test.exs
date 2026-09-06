@@ -200,6 +200,11 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
                )
     end
 
+    test "an author whose name is also the edition abbreviation is not stripped as metadata" do
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(release("Ed.13.m4b"), %{title: "13", authors: ["Ed"]})
+    end
+
     test "a series ordinal that coincidentally equals the wanted number is not title evidence" do
       work = %{title: "Room 13", authors: ["X"], series: ["Foo"]}
 
@@ -254,6 +259,12 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
 
       assert {:reject, :title_mismatch} =
                AudiobookScorer.evaluate(release("X - 13 Foo - Room (M4B)"), work)
+    end
+
+    test "a number is preserved when the wanted title itself is the series name plus that number" do
+      work = %{title: "Room 13", authors: ["X"], series: ["Room"]}
+
+      assert {:accept, _evidence} = AudiobookScorer.evaluate(release("X - Room 13 (M4B)"), work)
     end
   end
 
