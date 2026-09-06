@@ -9,7 +9,7 @@ defmodule Cinder.Books.AuthorPolicyTest do
   import Mox
 
   alias Cinder.Books
-  alias Cinder.Books.{BookAuthorPolicy, BookTarget, Identifier, PrimaryMetadataMock}
+  alias Cinder.Books.{BookAuthorPolicy, BookTarget, Identifier, PrimaryMetadataMock, Work}
   alias Cinder.Catalog
 
   setup :verify_on_exit!
@@ -204,6 +204,130 @@ defmodule Cinder.Books.AuthorPolicyTest do
       reloaded = Repo.get!(BookTarget, raced_target.id)
       assert reloaded.status == :monitored
       assert reloaded.profile_id == race_profile.id
+    end
+  end
+
+  describe "apply_bibliography_refresh/4 (#512)" do
+    test "matches the current stored policy: writes targets exactly like apply_author_policy/4",
+         %{author: author, profile: profile} do
+      {:ok, _policy} = Books.set_author_policy(author, :all, profile)
+
+      resolution = %{provider: :openlibrary, work: provider_work("OLREFRESH1W")}
+
+      assert {:ok, 1} = Books.apply_bibliography_refresh(author, :all, profile, [resolution])
+      assert Repo.aggregate(BookTarget, :count) == 1
+      # Unlike apply_author_policy/4, this never re-upserts the row it just read as current.
+      assert Books.author_policy(author.id) == :all
+    end
+
+    test "the stored policy was deleted (reverted to :specific) mid-tick: refuses the whole batch",
+         %{author: author, profile: profile} do
+      {:ok, _policy} = Books.set_author_policy(author, :all, profile)
+      {:ok, nil} = Books.set_author_policy(author, :specific, nil)
+
+      resolution = %{provider: :openlibrary, work: provider_work("OLSTALE1W")}
+
+      # No get_work expectation registered — a write attempt would raise Mox.UnexpectedCallError
+      # rather than silently succeeding.
+      assert {:ok, 0} = Books.apply_bibliography_refresh(author, :all, profile, [resolution])
+
+      assert Repo.aggregate(BookTarget, :count) == 0
+      assert Books.author_policy(author.id) == :specific
+    end
+
+    test "the stored policy atom changed (:all -> :future) mid-tick: refuses the stale :all batch",
+         %{author: author, profile: profile} do
+      {:ok, _policy} = Books.set_author_policy(author, :all, profile)
+      {:ok, _policy} = Books.set_author_policy(author, :future, profile)
+
+      resolution = %{provider: :openlibrary, work: provider_work("OLSTALE2W")}
+
+      assert {:ok, 0} = Books.apply_bibliography_refresh(author, :all, profile, [resolution])
+
+      assert Repo.aggregate(BookTarget, :count) == 0
+      assert Books.author_policy(author.id) == :future
+    end
+
+    test "the stored profile changed mid-tick: refuses the stale batch even with the same policy atom",
+         %{author: author, profile: profile} do
+      {:ok, other_profile} =
+        Catalog.create_profile(%{name: "Other eBooks", kind: :ebook, handling: :standard})
+
+      {:ok, _policy} = Books.set_author_policy(author, :all, profile)
+      {:ok, _policy} = Books.set_author_policy(author, :all, other_profile)
+
+      resolution = %{provider: :openlibrary, work: provider_work("OLSTALE3W")}
+
+      assert {:ok, 0} = Books.apply_bibliography_refresh(author, :all, profile, [resolution])
+
+      assert Repo.aggregate(BookTarget, :count) == 0
+      assert Repo.get_by!(BookAuthorPolicy, author_id: author.id).profile_id == other_profile.id
+    end
+
+    # Codex review on PR #563: the original single up-front check still let a candidate queued
+    # AFTER a mid-batch change slip through under the superseded policy. This proves the
+    # TIGHTENED per-candidate revalidation actually closes that: the policy is revoked from
+    # inside the very first candidate's own write (via a `:telemetry` hook on its `book_works`
+    # insert, the same idiom `Cinder.Requests.BookRequestTest` uses for a TOCTOU race), strictly
+    # between the two candidates' own writes within ONE call.
+    test "a policy revoked BETWEEN two candidates' own writes within one batch stops the second, not just a future batch",
+         %{author: author, profile: profile} do
+      {:ok, _policy} = Books.set_author_policy(author, :all, profile)
+
+      resolution1 = %{provider: :openlibrary, work: provider_work("OLMIDBATCH1W")}
+      resolution2 = %{provider: :openlibrary, work: provider_work("OLMIDBATCH2W")}
+
+      handler = "revoke-mid-batch-#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      :telemetry.attach(
+        handler,
+        [:cinder, :repo, :query],
+        fn _event, _measurements, metadata, _config ->
+          if metadata[:source] == "book_works" do
+            :telemetry.detach(handler)
+            {:ok, nil} = Books.set_author_policy(author, :specific, nil)
+            send(test_pid, :revoked)
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler) end)
+
+      assert {:ok, 1} =
+               Books.apply_bibliography_refresh(author, :all, profile, [resolution1, resolution2])
+
+      assert_received :revoked
+      assert Repo.aggregate(BookTarget, :count) == 1
+      assert Books.author_policy(author.id) == :specific
+    end
+
+    # Codex review on PR #563: a single up-front check-then-write is still two separate
+    # operations — closing the race means the check and this candidate's ENTIRE write (work
+    # import + target arm) succeed or fail together in ONE transaction, not merely "checked
+    # fresh immediately before" two independently-committing writes. Force arm_new_policy_target/2
+    # to fail on its own terms (a non-:ebook profile — never reaches a target write at all) and
+    # prove the work import from THIS SAME candidate's first step is rolled back with it: before
+    # this fix, import_resolution/1 committed the work in its own separate transaction
+    # regardless of what the arm step did next.
+    test "a candidate whose target arm fails rolls back its own work import too (atomic, not two writes)",
+         %{author: author} do
+      {:ok, audiobook_profile} =
+        Catalog.create_profile(%{name: "Audiobooks 563", kind: :audiobook, handling: :standard})
+
+      {:ok, _policy} = Books.set_author_policy(author, :all, audiobook_profile)
+
+      resolution = %{provider: :openlibrary, work: provider_work("OLATOMIC1W")}
+
+      assert {:ok, 0} =
+               Books.apply_bibliography_refresh(author, :all, audiobook_profile, [resolution])
+
+      # Never-before-imported work: if the import and the arm were still two separate writes,
+      # this row would exist despite arm_new_policy_target/2 refusing an audiobook profile.
+      assert Repo.aggregate(Work, :count) == 0
+      assert Repo.aggregate(BookTarget, :count) == 0
+      assert Books.author_policy(author.id) == :all
     end
   end
 

@@ -1,14 +1,17 @@
 defmodule Cinder.Books.BibliographyRefresher do
   @moduledoc """
   Periodically applies every `book_author_policies` row against its provider's current
-  bibliography — the unattended half of B5b's author monitoring policies. Runs the identical
-  `Cinder.Books.preview_author_policy/2` + `Cinder.Books.apply_author_policy/4` pair the admin
-  Confirm button uses, so the sweep and the button can never disagree about what counts as "new
-  and unambiguous."
+  bibliography — the unattended half of B5b's author monitoring policies. Reuses the identical
+  `Cinder.Books.preview_author_policy/2` eligibility computation the admin Confirm button uses,
+  so the sweep and the button can never disagree about what counts as "new and unambiguous" —
+  but applies it through `Cinder.Books.apply_bibliography_refresh/4`, not
+  `Cinder.Books.apply_author_policy/4`: a background tick has no command to issue, only an
+  already-confirmed policy to renew, and must re-validate that policy is still current (#512)
+  rather than unconditionally re-upserting it the way an explicit admin confirm does.
 
   **Never demotes, never deletes.** The only write this module ever reaches is
-  `Cinder.Books.monitor_target/4` (via `apply_author_policy/4`), which only ever arms a target —
-  it has no path that touches an existing target's status. `Cinder.Books.import_resolution/1`'s
+  `Cinder.Books.monitor_target/4` (via `apply_bibliography_refresh/4`), which only ever arms a
+  target — it has no path that touches an existing target's status. `Cinder.Books.import_resolution/1`'s
   "only write what the provider actually returned" rule (unchanged) already means a provider that
   stops listing a work causes no local write at all, let alone a delete. A provider outage during
   a tick therefore leaves every existing target byte-identical.
@@ -66,8 +69,13 @@ defmodule Cinder.Books.BibliographyRefresher do
 
   defp apply_eligible(_author, _policy, _profile, []), do: :ok
 
+  # `apply_bibliography_refresh/4` re-validates the stored policy fresh before EVERY candidate's
+  # own write, so `created_count` already reflects any admin change mid-tick — 0 means either
+  # nothing new to monitor or the whole batch went stale (the admin changed the policy, changed
+  # its profile, or reverted to :specific before this batch started); either way the current
+  # policy stands untouched and there is nothing more to log (#512).
   defp apply_eligible(author, policy, profile, eligible) do
-    case Books.apply_author_policy(author, policy, profile, eligible) do
+    case Books.apply_bibliography_refresh(author, policy, profile, eligible) do
       {:ok, 0} ->
         :ok
 
