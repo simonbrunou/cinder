@@ -28,6 +28,15 @@ defmodule Cinder.Library.Upgrade do
   what the file turns out to be. The **import stays the arbiter** — it re-runs `better?/5` against
   the real file, where both sides are `lstat` results and size legitimately decides — so a
   mis-parsed name can never replace a good file with a worse one.
+
+  Every caller of this function (`UpgradeHunter`) already restricts `record` to a row that has a
+  file (`file_path`/`imported_*` describe a real, held file — see `hunt_movies/0`/`holdings/0`).
+  So unlike `better?/5`, a fully nil baseline here is never "nothing held yet"; it is an
+  established file whose quality was simply never recorded — adopted from disk/Radarr/Sonarr, or
+  imported before the quality columns existed. #520: treating that as an unconditional win let any
+  acceptable release replace a superior adopted file the first time the sweep looked at it. This
+  fails closed instead: no baseline, no automatic candidate. A manual/forced import (which always
+  records real quality) establishes one, after which normal comparison applies.
   """
   def candidate?(record, %Release{} = release, kind, target) do
     compare(
@@ -46,6 +55,7 @@ defmodule Cinder.Library.Upgrade do
       target,
       preferred_resolutions(kind),
       preferred_sources(kind),
+      false,
       false
     )
   end
@@ -72,16 +82,45 @@ defmodule Cinder.Library.Upgrade do
   @spec better?(map(), map(), String.t() | nil, [String.t()] | nil, [String.t()] | nil) ::
           boolean()
   def better?(new, old, target, preferred, preferred_sources \\ []),
-    do: compare(new, old, target, preferred, preferred_sources, true)
+    do: compare(new, old, target, preferred, preferred_sources, true, true)
+
+  @doc """
+  Whether `new` is an upgrade over `old` for the automatic upgrade sweep's IMPORT-TIME arbitration
+  (`Cinder.Library`'s `stage_group/7` `:arbitrate` gate, `Grab.arbitrate_at_import`) — the same
+  full comparison as `better?/5` (size legitimately decides: both sides are real `lstat` results),
+  but like `candidate?/4` it fails closed on a nil baseline instead of treating it as an
+  unconditional win.
+
+  Every caller here is deciding whether to unattendedly replace an episode that ALREADY holds a
+  file, so a nil baseline only ever means "held, but its quality was never recorded" (adopted, or
+  a pre-quality-columns row) — never "nothing held yet". #520's mixed-pack gap: a season pack
+  covering both a genuinely-upgradable known-quality episode and a nil-baseline sibling used to
+  pass `candidate?/4`'s pre-download gate on the known episode alone, then this same nil-baseline
+  shortcut let the import replace the sibling's superior file too, once the pack was already
+  downloading. The manual/forced import path never calls this — it always replaces
+  unconditionally, regardless of quality.
+  """
+  @spec arbitration_upgrade?(
+          map(),
+          map(),
+          String.t() | nil,
+          [String.t()] | nil,
+          [String.t()] | nil
+        ) ::
+          boolean()
+  def arbitration_upgrade?(new, old, target, preferred, preferred_sources \\ []),
+    do: compare(new, old, target, preferred, preferred_sources, true, false)
 
   # `weigh_size?` is false only for `candidate?/4` — see its doc for why a release's size and an
-  # imported file's size are not the same quantity.
-  defp compare(new, old, target, preferred, preferred_sources, weigh_size?) do
+  # imported file's size are not the same quantity. `nil_baseline_wins?` is true only for
+  # `better?/5` (an import comparing against a genuinely absent old file is a legitimate,
+  # unconditional win); `candidate?/4`'s pre-download gate fails closed instead (#520).
+  defp compare(new, old, target, preferred, preferred_sources, weigh_size?, nil_baseline_wins?) do
     lang_verdict = language_decides?(new, old, target)
 
     cond do
       nil_baseline?(old) ->
-        true
+        nil_baseline_wins?
 
       lang_verdict != :tie ->
         lang_verdict == :upgrade
