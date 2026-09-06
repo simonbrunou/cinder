@@ -4,6 +4,8 @@ defmodule CinderWeb.MyRequestsLiveTest do
   import Mox
   import Phoenix.LiveViewTest
 
+  alias Cinder.Books
+  alias Cinder.Books.{BookGrab, Grabs}
   alias Cinder.Requests
 
   setup do
@@ -304,6 +306,234 @@ defmodule CinderWeb.MyRequestsLiveTest do
       # button would raise on click.
       req = hd(Requests.list_for_user(user))
       refute has_element?(lv, "#report-issue-#{req.id}")
+    end
+  end
+
+  describe "book target availability and holds (#494)" do
+    setup do
+      id = Integer.to_string(System.unique_integer([:positive]))
+
+      {:ok, work} =
+        Cinder.Books.upsert_work(%{
+          title: "Tracked Book #{id}",
+          identifier: %{provider: "openlibrary", kind: "work", foreign_id: id}
+        })
+
+      {:ok, profile} =
+        Cinder.Catalog.create_profile(%{name: "Ebooks #{id}", kind: :ebook, handling: :standard})
+
+      %{work: work, profile: profile}
+    end
+
+    defp approve_book(user, admin, work, media_kind, profile) do
+      {:ok, request} =
+        Requests.create_request(user, %{
+          target_type: "book",
+          target_id: work.id,
+          media_kind: media_kind
+        })
+
+      {:ok, approved} = Requests.approve_request(request, admin, profile)
+      {approved, hd(Books.list_targets(work))}
+    end
+
+    test "an approved eBook shows Available once its target is available", %{
+      conn: conn,
+      work: work,
+      profile: profile
+    } do
+      user = Cinder.AccountsFixtures.user_fixture()
+      admin = Cinder.AccountsFixtures.admin_fixture()
+
+      {request, target} = approve_book(user, admin, work, :ebook, profile)
+
+      {:ok, _file} =
+        Books.Files.record_import(target, %{path: "/lib/book.epub", size: 1, format: :epub})
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      html = lv |> element("#request-#{request.id}") |> render()
+      assert html =~ "Available"
+      refute html =~ "Approved"
+    end
+
+    test "an approved audiobook shows Needs attention once its target is held", %{
+      conn: conn,
+      work: work
+    } do
+      user = Cinder.AccountsFixtures.user_fixture()
+      admin = Cinder.AccountsFixtures.admin_fixture()
+
+      {:ok, audiobook_profile} =
+        Cinder.Catalog.create_profile(%{
+          name: "Audiobooks #{work.id}",
+          kind: :audiobook,
+          handling: :standard
+        })
+
+      {request, target} = approve_book(user, admin, work, :audiobook, audiobook_profile)
+      {:ok, _held} = Books.hold_target(target, :test_reason)
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      html = lv |> element("#request-#{request.id}") |> render()
+      assert html =~ "Needs attention"
+    end
+
+    test "a book target broadcast updates the row live, without remount", %{
+      conn: conn,
+      work: work,
+      profile: profile
+    } do
+      user = Cinder.AccountsFixtures.user_fixture()
+      admin = Cinder.AccountsFixtures.admin_fixture()
+
+      {request, target} = approve_book(user, admin, work, :ebook, profile)
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, html} = live(conn, ~p"/my-requests")
+      assert html =~ "Approved"
+
+      {:ok, _file} =
+        Books.Files.record_import(target, %{path: "/lib/book.epub", size: 1, format: :epub})
+
+      render(lv)
+      row_html = lv |> element("#request-#{request.id}") |> render()
+      assert row_html =~ "Available"
+      refute row_html =~ "Approved"
+    end
+
+    # PR #557 follow-up: a household is single-shared, so a SECOND requester's approval can
+    # drive the SAME target the first requester's OWN request was denied against all the way to
+    # :available. The first requester's row must keep reading Denied (it still renders its own
+    # denial reason and Request again) — not silently start reading Available because someone
+    # else's request happened to land on the shared target, which would erase the record that
+    # THIS request was refused. (The shared, current-state book_badge_state/2 that Discover and
+    # the book detail page use makes the opposite call on purpose — see its own moduledoc.)
+    test "a denied row stays Denied even after a different requester's approval makes the shared target available",
+         %{conn: conn, work: work, profile: profile} do
+      denied_user = Cinder.AccountsFixtures.user_fixture()
+      approved_user = Cinder.AccountsFixtures.user_fixture()
+      admin = Cinder.AccountsFixtures.admin_fixture()
+
+      {:ok, denied_request} =
+        Requests.create_request(denied_user, %{
+          target_type: "book",
+          target_id: work.id,
+          media_kind: :ebook
+        })
+
+      {:ok, denied_request} = Requests.deny_request(denied_request, admin, "not now")
+
+      {approved_request, target} = approve_book(approved_user, admin, work, :ebook, profile)
+      assert approved_request.target_id == denied_request.target_id
+
+      {:ok, _file} =
+        Books.Files.record_import(target, %{path: "/lib/shared.epub", size: 1, format: :epub})
+
+      conn = log_in_user(conn, denied_user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      row_html = lv |> element("#request-#{denied_request.id}") |> render()
+      assert row_html =~ "Denied"
+      refute row_html =~ "Available"
+    end
+
+    # PR #557 review finding: Books.Grabs.track/2 broadcasts {:book_grab_updated, grab} on this
+    # same topic on every transfer-metrics tick (normally every five seconds while a book
+    # download is active), but this page renders no book-grab metrics. Before the fix the
+    # catch-all handle_info/2 re-ran load/1 on every one of those ticks, hitting the DB with a
+    # full reload (movies, series, requests, issues, settings, book target states) it could
+    # never show anything for.
+    test "a book-grab progress broadcast does not trigger a reload", %{
+      conn: conn,
+      work: work,
+      profile: profile
+    } do
+      user = Cinder.AccountsFixtures.user_fixture()
+      admin = Cinder.AccountsFixtures.admin_fixture()
+
+      {_request, target} = approve_book(user, admin, work, :ebook, profile)
+
+      grab =
+        %BookGrab{}
+        |> BookGrab.changeset(%{
+          book_target_id: target.id,
+          download_id: "grab-progress-#{target.id}",
+          download_protocol: :torrent
+        })
+        |> Cinder.Repo.insert!()
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      {_result, events} =
+        Cinder.TelemetryHelpers.capture([:cinder, :repo, :query], fn ->
+          {:ok, _updated} = Grabs.track(grab, %{download_progress: 42})
+          render(lv)
+        end)
+
+      refute Enum.any?(events, fn {_measurements, metadata} ->
+               is_binary(metadata.query) and String.contains?(metadata.query, ~s(FROM "requests"))
+             end)
+    end
+
+    test "an eBook target's status does not affect the same work's audiobook row", %{
+      conn: conn,
+      work: work,
+      profile: profile
+    } do
+      user = Cinder.AccountsFixtures.user_fixture()
+      admin = Cinder.AccountsFixtures.admin_fixture()
+
+      {:ok, audiobook_profile} =
+        Cinder.Catalog.create_profile(%{
+          name: "Audiobooks collision #{work.id}",
+          kind: :audiobook,
+          handling: :standard
+        })
+
+      {ebook_request, ebook_target} = approve_book(user, admin, work, :ebook, profile)
+
+      {audiobook_request, _audiobook_target} =
+        approve_book(user, admin, work, :audiobook, audiobook_profile)
+
+      {:ok, _file} =
+        Books.Files.record_import(ebook_target, %{path: "/lib/book.epub", size: 1, format: :epub})
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      ebook_html = lv |> element("#request-#{ebook_request.id}") |> render()
+      audiobook_html = lv |> element("#request-#{audiobook_request.id}") |> render()
+
+      assert ebook_html =~ "Available"
+      assert audiobook_html =~ "Approved"
+      refute audiobook_html =~ "Available"
+    end
+
+    test "an available movie sharing the work's id as target_id does not affect the book row's badge",
+         %{conn: conn, work: work, profile: profile} do
+      user = Cinder.AccountsFixtures.user_fixture()
+      admin = Cinder.AccountsFixtures.admin_fixture()
+
+      Cinder.Repo.insert!(%Cinder.Catalog.Movie{
+        tmdb_id: work.id,
+        title: "Colliding Movie",
+        status: :available,
+        media_server_item_id: "collision-badge"
+      })
+
+      {request, _target} = approve_book(user, admin, work, :ebook, profile)
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      html = lv |> element("#request-#{request.id}") |> render()
+      assert html =~ "Approved"
+      refute html =~ "Available"
     end
   end
 

@@ -61,8 +61,19 @@ defmodule CinderWeb.LiveHelpers do
 
   @doc """
   Folds a book's request status and its `book_targets` status into one badge state. Single source
-  of truth for every book-badge surface: Discover's cards and the work page read the same two
-  inputs, and deriving them separately is how the two drift into disagreeing about one work.
+  of truth for every book-badge surface: Discover's cards, the book detail page, and the library
+  page read the same two inputs, and deriving them separately is how the two drift into
+  disagreeing about one work. This answers "what is this work's status for this viewer right
+  now" — a live, current-state question — which is why the target always outranks the request,
+  `:denied` included: a household is single-shared, so a book a *different* request made
+  `:available` is genuinely available to everyone, and telling a denied requester otherwise would
+  hide a book they can already open and (on Discover's book detail page) wrongly re-offer a
+  request button for it.
+
+  `CinderWeb.MyRequestsLive` is a DIFFERENT question — "what happened to each of MY own past
+  requests" — and answers it with its own local `:denied` short-circuit in `book_badge/2` rather
+  than here, precisely so that history-of-my-requests view can diverge from this one without
+  every other current-status surface inheriting it.
 
   The target outranks the request once it exists — an approved request whose target has since gone
   `:available` is available, not merely approved. `:monitored` outranks a *pending* request for the

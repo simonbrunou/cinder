@@ -13,6 +13,7 @@ defmodule CinderWeb.MyRequestsLive do
     only: [
       request_title: 2,
       movie_badge_status: 1,
+      book_badge_state: 2,
       pipeline_hint: 1,
       anime_hold_reason: 1,
       relative_time: 1,
@@ -21,7 +22,7 @@ defmodule CinderWeb.MyRequestsLive do
 
   import CinderWeb.IssueComponents, only: [report_form: 1, report_status: 1]
 
-  alias Cinder.{Catalog, Issues, Requests, Settings}
+  alias Cinder.{Books, Catalog, Issues, Requests, Settings}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -33,12 +34,21 @@ defmodule CinderWeb.MyRequestsLive do
       # An admin resolving/dismissing a report updates its status here live.
       Issues.subscribe()
       Settings.subscribe()
+      # A book target's own available/held transitions (and language changes) — the catch-all
+      # handle_info/2 below re-`load/1`s the same as every other subscribed topic. The same
+      # topic also carries {:book_grab_updated, _} on every transfer-metrics tick (progress,
+      # speed, ETA — normally every five seconds while a book download is active); this page
+      # renders no book-grab metrics, so that one message is ignored below rather than paying
+      # for a full reload it can never show.
+      Books.subscribe_targets()
     end
 
     {:ok, socket |> assign(confirming: nil, reporting: nil) |> load()}
   end
 
   @impl true
+  def handle_info({:book_grab_updated, _grab}, socket), do: {:noreply, socket}
+
   def handle_info(_message, socket), do: {:noreply, load(socket)}
 
   @impl true
@@ -191,18 +201,46 @@ defmodule CinderWeb.MyRequestsLive do
     user = socket.assigns.current_scope.user
     movies = Catalog.list_movies()
     series = Catalog.list_series()
+    requests = Requests.list_for_user(user)
 
     socket
     |> assign(
-      requests: Requests.list_for_user(user),
+      requests: requests,
       movies_by_tmdb: Map.new(movies, &{&1.tmdb_id, &1}),
       series_by_tmdb: Map.new(series, &{&1.tmdb_id, &1}),
       available_seasons: Catalog.available_season_keys(),
       season_progress: Catalog.season_progress_keys(),
-      latest_report_by_target: latest_reports(user)
+      latest_report_by_target: latest_reports(user),
+      book_target_states: book_target_states(requests)
     )
     |> assign_media_server()
   end
+
+  # Every book target this user's own requests point at, keyed the same `{work_id, media_kind}`
+  # pair `Books.target_statuses/1` and `book_badge_state/2` already use on Discover/the work
+  # page — never the shared movies_by_tmdb/series_by_tmdb id spaces, which collide with a book's
+  # local book_works.id.
+  defp book_target_states(requests) do
+    requests
+    |> Enum.filter(&(&1.target_type == "book"))
+    |> Enum.map(& &1.target_id)
+    |> Enum.uniq()
+    |> Books.target_statuses()
+  end
+
+  # A book row's own status — never another request row's, even one racing to re-request the
+  # same target. `:denied` is short-circuited HERE, not in the shared `book_badge_state/2`
+  # (Codex review on PR #557): this is the one surface answering "what happened to each of MY
+  # own past requests," a history question, so a denied row keeps reading Denied even once a
+  # DIFFERENT request folds the shared target to :available/:held/:monitored — it still renders
+  # its own denial reason and "Request again" action. Every other book-badge surface
+  # (Discover, book detail, library) answers a different, current-state question — "is this
+  # book available right now" — where the household-shared target correctly outranks any one
+  # user's denied request, so that behavior stays in the shared function, not here.
+  defp book_badge(%{target_type: "book", status: :denied}, _book_target_states), do: :denied
+
+  defp book_badge(%{target_type: "book"} = r, book_target_states),
+    do: book_badge_state(r.status, book_target_states[{r.target_id, r.media_kind}])
 
   # The caller's newest report per target (`list_for_user` is desc by id, so the first seen per
   # key is the latest) — drives the per-row "Reported/Resolved/Dismissed" pill and whether the
@@ -334,7 +372,11 @@ defmodule CinderWeb.MyRequestsLive do
               {request_title(r, @locale)}
             </span>
             <span :if={r.year} class="text-base-content/70">({r.year})</span>
-            <.status_badge kind={:request} status={effective_status(r, @available_seasons)} />
+            <% request_status =
+              if r.target_type == "book",
+                do: book_badge(r, @book_target_states),
+                else: effective_status(r, @available_seasons) %>
+            <.status_badge kind={:request} status={request_status} />
             <.report_status :if={report} status={report.status} />
             <.status_badge
               :if={movie_row?}

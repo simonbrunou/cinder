@@ -147,6 +147,38 @@ defmodule CinderWeb.BookDiscoveryLiveTest do
       assert has_element?(lv, "#ebook-unavailable")
       refute has_element?(lv, ~s(a[href="/settings/profiles"]))
     end
+
+    # PR #557 follow-up: a household is single-shared, so a DIFFERENT member's approved request
+    # can drive this work's :ebook target all the way to :available even though the viewer's OWN
+    # earlier request for it was denied. `book_badge_state/2` (unlike CinderWeb.MyRequestsLive's
+    # own local, deliberately different short-circuit) must still show the truth here: the book
+    # is genuinely available to open, and re-offering a request button for it would be wrong.
+    test "a denied requester still sees Available once a different member's request satisfies the same target",
+         %{conn: conn, user: user, ebook_profile: profile} do
+      admin = Cinder.AccountsFixtures.admin_fixture()
+
+      assert {:ok, work} = Books.import_resolution(resolution())
+
+      {:ok, denied_request} =
+        Requests.create_request(user, %{
+          target_type: "book",
+          target_id: work.id,
+          media_kind: :ebook
+        })
+
+      {:ok, _denied} = Requests.deny_request(denied_request, admin, "not now")
+
+      assert {:ok, target} = Books.monitor_target(work, :ebook, profile)
+
+      {:ok, _file} =
+        Books.Files.record_import(target, %{path: "/lib/beloved.epub", size: 1, format: :epub})
+
+      {:ok, lv, _html} = open_book(conn)
+
+      assert has_element?(lv, "#book-state-ebook", "Available")
+      refute has_element?(lv, "#book-state-ebook", "Denied")
+      refute has_element?(lv, "#request-ebook")
+    end
   end
 
   describe "requesting as an admin" do
