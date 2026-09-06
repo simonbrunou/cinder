@@ -9,7 +9,7 @@ defmodule Cinder.Books.AuthorPolicyTest do
   import Mox
 
   alias Cinder.Books
-  alias Cinder.Books.{BookAuthorPolicy, BookTarget, Identifier, PrimaryMetadataMock}
+  alias Cinder.Books.{BookAuthorPolicy, BookTarget, Identifier, PrimaryMetadataMock, Work}
   alias Cinder.Catalog
 
   setup :verify_on_exit!
@@ -301,6 +301,33 @@ defmodule Cinder.Books.AuthorPolicyTest do
       assert_received :revoked
       assert Repo.aggregate(BookTarget, :count) == 1
       assert Books.author_policy(author.id) == :specific
+    end
+
+    # Codex review on PR #563: a single up-front check-then-write is still two separate
+    # operations — closing the race means the check and this candidate's ENTIRE write (work
+    # import + target arm) succeed or fail together in ONE transaction, not merely "checked
+    # fresh immediately before" two independently-committing writes. Force arm_new_policy_target/2
+    # to fail on its own terms (a non-:ebook profile — never reaches a target write at all) and
+    # prove the work import from THIS SAME candidate's first step is rolled back with it: before
+    # this fix, import_resolution/1 committed the work in its own separate transaction
+    # regardless of what the arm step did next.
+    test "a candidate whose target arm fails rolls back its own work import too (atomic, not two writes)",
+         %{author: author} do
+      {:ok, audiobook_profile} =
+        Catalog.create_profile(%{name: "Audiobooks 563", kind: :audiobook, handling: :standard})
+
+      {:ok, _policy} = Books.set_author_policy(author, :all, audiobook_profile)
+
+      resolution = %{provider: :openlibrary, work: provider_work("OLATOMIC1W")}
+
+      assert {:ok, 0} =
+               Books.apply_bibliography_refresh(author, :all, audiobook_profile, [resolution])
+
+      # Never-before-imported work: if the import and the arm were still two separate writes,
+      # this row would exist despite arm_new_policy_target/2 refusing an audiobook profile.
+      assert Repo.aggregate(Work, :count) == 0
+      assert Repo.aggregate(BookTarget, :count) == 0
+      assert Books.author_policy(author.id) == :all
     end
   end
 

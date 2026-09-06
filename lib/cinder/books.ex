@@ -819,15 +819,18 @@ defmodule Cinder.Books do
 
   `preview_author_policy/2` and this batch's own `Identity.resolve/1` calls can take real wall
   time, and so can the batch's own per-candidate imports; the admin may change the policy, change
-  its profile, or revert to `:specific` (deleting the row) at any point during either (#512).
-  Every candidate's write is individually gated on a FRESH read of the stored
-  `book_author_policies` row taken immediately before that candidate's own
-  `import_and_monitor/2` — not a single check before the whole batch, which would still let
-  candidates queued after a mid-batch change slip through under the superseded policy. The first
-  candidate whose fresh check no longer matches the `policy`/`profile` this batch was computed
-  against — and every one after it — is skipped, not written; an author with no stored policy at
-  all when the batch starts also creates nothing. The operator's current policy/profile always
-  stands untouched: this never re-upserts it, on any path.
+  its profile, or revert to `:specific` (deleting the row) at any point during either (#512), or
+  even mid-write for one specific candidate (#563: a check-then-write race, not just a
+  batch-scoped one). Every candidate's policy re-check and its own import + target-arming write
+  now run inside ONE `:immediate`-mode transaction (`import_and_monitor_if_current/5`) — SQLite
+  takes the write lock at `BEGIN`, before the policy `SELECT` even runs, so a concurrent policy
+  change (also `:immediate` by `config/config.exs`'s `default_transaction_mode`) either commits
+  first and is seen by our check, or blocks until our transaction finishes; there is no window
+  between the check and the write it guards for a change to land unseen. The first candidate
+  whose fresh check no longer matches the `policy`/`profile` this batch was computed against —
+  and every one after it — is skipped, not written; an author with no stored policy at all when
+  the batch starts also creates nothing. The operator's current policy/profile always stands
+  untouched: this never re-upserts it, on any path.
   """
   @spec apply_bibliography_refresh(Author.t(), :future | :all, Profile.t(), [
           Identity.resolution()
@@ -841,8 +844,10 @@ defmodule Cinder.Books do
       when policy in [:future, :all] do
     created_count =
       Enum.count(eligible_candidates, fn candidate ->
-        current_policy_matches?(author_id, policy, profile_id) and
-          match?({:ok, _target}, import_and_monitor(candidate, profile))
+        match?(
+          {:ok, _target},
+          import_and_monitor_if_current(candidate, profile, author_id, policy, profile_id)
+        )
       end)
 
     {:ok, created_count}
@@ -853,6 +858,57 @@ defmodule Cinder.Books do
       %BookAuthorPolicy{policy: ^policy, profile_id: ^profile_id},
       Repo.get_by(BookAuthorPolicy, author_id: author_id)
     )
+  end
+
+  # The policy re-check and this candidate's entire write (work import + target arming) as ONE
+  # atomic unit (#563) — see `apply_bibliography_refresh/4`'s doc for why `:immediate` mode is
+  # what actually closes the race, not merely wrapping in a transaction. Calls `import_work_in_tx/2`
+  # directly rather than the public `import_resolution/1`, which opens its OWN `:immediate`
+  # transaction — nesting it here would nest a second `Repo.transaction`/rollback boundary inside
+  # this one, the same reason `Cinder.Books.Adoption.adopt_work/3` calls it directly too.
+  # `isolate`-style exception handling, same as `import_and_monitor/2`: one candidate's exception
+  # must not abort the batch.
+  defp import_and_monitor_if_current(
+         %{work: work, provider: provider},
+         profile,
+         author_id,
+         policy,
+         profile_id
+       ) do
+    Repo.transaction(
+      fn ->
+        if current_policy_matches?(author_id, policy, profile_id),
+          do: import_and_arm_in_tx(work, provider, profile),
+          else: Repo.rollback(:policy_changed)
+      end,
+      mode: :immediate
+    )
+  rescue
+    e ->
+      Logger.warning(
+        "author policy candidate failed: #{Exception.format(:error, e, __STACKTRACE__)}"
+      )
+
+      {:error, :exception}
+  catch
+    kind, value ->
+      Logger.warning(
+        "author policy candidate failed: #{Exception.format(kind, value, __STACKTRACE__)}"
+      )
+
+      {:error, :exception}
+  end
+
+  # The write half, inside import_and_monitor_if_current/5's own transaction: import the work,
+  # then arm its target under the checked-current policy/profile. A rejected target write rolls
+  # back the whole candidate (policy stands untouched either way — this never re-upserts it).
+  defp import_and_arm_in_tx(work, provider, profile) do
+    imported = import_work_in_tx(work, to_string(provider))
+
+    case arm_new_policy_target(imported, profile) do
+      {:ok, target} -> target
+      {:error, reason} -> Repo.rollback(reason)
+    end
   end
 
   defp author_provider_reference(%Author{id: id}) do
