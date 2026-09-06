@@ -227,6 +227,8 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
     end
 
     test "a series ordinal that coincidentally equals the wanted number is not title evidence" do
+      # THE regression that matters most for #517 -- see the identical test in
+      # BookScorerTest for the full reasoning. Driven through the public evaluate/3.
       work = %{title: "Room 13", authors: ["X"], series: ["Foo"]}
 
       assert {:reject, :title_mismatch} =

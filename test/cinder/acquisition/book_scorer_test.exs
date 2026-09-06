@@ -355,9 +355,11 @@ defmodule Cinder.Acquisition.BookScorerTest do
     end
 
     test "a series ordinal that coincidentally equals the wanted number is not title evidence" do
-      # Codex review on #517: a release-side series ordinal ("Foo 13") must not be mistaken for
-      # the wanted title's own number just because the two digits coincide. This release is
-      # actually a DIFFERENT book ("Room", volume 13 of series "Foo"), not the requested "Room 13".
+      # THE regression that matters most for #517: preserving the wanted title's own number must
+      # never loosen the title-match guard enough to admit an unrelated book. This release is a
+      # DIFFERENT book -- "Room", volume 13 of series "Foo" -- not the requested "Room 13"; its
+      # ordinal "13" merely coincides in value with the wanted title's own number. Driven through
+      # the public evaluate/3, not a private helper, so it exercises the full title-match guard.
       work = %{title: "Room 13", authors: ["X"], series: ["Foo"]}
 
       assert {:reject, :title_mismatch} =
