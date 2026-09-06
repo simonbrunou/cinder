@@ -887,7 +887,7 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
        }}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{}} end)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{type: :regular}} end)
 
     {:ok, view, _html} = live(conn, ~p"/library/adopt")
     view |> element("#scan-readarr") |> render_click()
