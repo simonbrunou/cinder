@@ -30,6 +30,7 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   alias Cinder.Acquisition.AudiobookParser
   alias Cinder.Acquisition.AudiobookRelease
   alias Cinder.Acquisition.Parser
+  alias Cinder.Acquisition.TitleNoise
   alias Cinder.Books.TitleFold
 
   # B7a's own judgment (§0.1) — the two formats the roadmap names by name, M4B preferred. NOT
@@ -279,142 +280,12 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   defp strip_noise(nil, _work), do: ""
 
   defp strip_noise(title, work) do
-    wanted_tokens = work |> Map.fetch!(:title) |> tokens()
-
     title
-    # A release-side leading/trailing space must not shift the "start of string" the
-    # "ed"/author-collision guard below anchors on (Codex review).
+    # A release-side leading/trailing space must not shift the "start of string" TitleNoise's
+    # "ed"/author-collision guard anchors on.
     |> String.trim()
     |> drop_bracketed_groups(work)
-    |> strip_series_ordinal(work)
-    |> String.replace(~r/-[A-Za-z0-9]+$/, " ")
-    |> strip_keyword_number(wanted_tokens)
-    |> String.replace(~r/#\d{1,3}\b/, " ")
-    |> strip_series_number(wanted_numeric_tokens(work))
-  end
-
-  # See `Cinder.Acquisition.BookScorer.strip_keyword_number/2` for the reasoning (Codex review).
-  defp strip_keyword_number(title, wanted_tokens) do
-    keyword_regex = ~r/\b(book|bk|vol|volume|part|pt|no|nr|edition)\b[ .#]*(\d{1,3})\b/i
-
-    stripped =
-      Regex.replace(keyword_regex, title, fn _whole, word, digits ->
-        keyword_replacement(word, digits, wanted_tokens)
-      end)
-
-    Regex.replace(~r/(?<=.)\bed\b[ .#]*(\d{1,3})\b/i, stripped, fn _whole, digits ->
-      if belongs_to_wanted_title?(["ed", digits], wanted_tokens),
-        do: "ed " <> digits,
-        else: " "
-    end)
-  end
-
-  defp keyword_replacement(word, digits, wanted_tokens) do
-    if belongs_to_wanted_title?([String.downcase(word), digits], wanted_tokens),
-      do: word <> " " <> digits,
-      else: " "
-  end
-
-  # See `Cinder.Acquisition.BookScorer.strip_series_ordinal/2` for the reasoning (Codex review).
-  defp strip_series_ordinal(title, work) do
-    normalized = nfd(title)
-    wanted_tokens = work |> Map.fetch!(:title) |> tokens()
-
-    work
-    |> Map.get(:series)
-    |> List.wrap()
-    |> Enum.reduce(normalized, &apply_series_ordinal_strip(&1, &2, wanted_tokens))
-  end
-
-  defp apply_series_ordinal_strip(series_entry, title, wanted_tokens) do
-    with name when is_binary(name) <- series_name(series_entry),
-         [_ | _] = words <- tokens(name) do
-      pattern = Enum.map_join(words, "[^A-Za-z0-9]+", &word_pattern/1)
-
-      title
-      |> strip_ordinal_after(pattern, words, wanted_tokens)
-      |> strip_ordinal_before(pattern, words, wanted_tokens)
-      |> strip_embedded_series_number(pattern, words, wanted_tokens)
-    else
-      _ -> title
-    end
-  end
-
-  # See `Cinder.Acquisition.BookScorer.strip_ordinal_after/4` and `strip_ordinal_before/4` for the
-  # reasoning (Codex review).
-  defp strip_ordinal_after(title, pattern, words, wanted_tokens) do
-    regex = Regex.compile!("\\b(" <> pattern <> ")[ .#_]*(\\d{1,3}(?:\\.\\d{1,3})?)\\b", "iu")
-
-    Regex.replace(regex, title, fn _whole, name, digits ->
-      if belongs_to_wanted_title?(words ++ [digits], wanted_tokens),
-        do: name <> " " <> digits,
-        else: name <> " "
-    end)
-  end
-
-  defp strip_ordinal_before(title, pattern, words, wanted_tokens) do
-    regex = Regex.compile!("\\b(\\d{1,3}(?:\\.\\d{1,3})?)[ .#_]*(" <> pattern <> ")\\b", "iu")
-
-    Regex.replace(regex, title, fn _whole, digits, name ->
-      if belongs_to_wanted_title?([digits | words], wanted_tokens),
-        do: digits <> " " <> name,
-        else: " " <> name
-    end)
-  end
-
-  # See `Cinder.Acquisition.BookScorer.strip_embedded_series_number/4` for the reasoning (Codex
-  # review).
-  defp strip_embedded_series_number(title, pattern, words, wanted_tokens) do
-    if Enum.any?(words, &Regex.match?(~r/^\d+$/, &1)),
-      do: replace_embedded_series(title, pattern, words, wanted_tokens),
-      else: title
-  end
-
-  defp replace_embedded_series(title, pattern, words, wanted_tokens) do
-    regex = Regex.compile!("\\b(" <> pattern <> ")\\b", "iu")
-
-    Regex.replace(regex, title, fn _whole, name ->
-      if belongs_to_wanted_title?(words, wanted_tokens), do: name <> " ", else: " "
-    end)
-  end
-
-  defp belongs_to_wanted_title?(sequence, wanted_tokens) do
-    span = length(sequence)
-
-    wanted_tokens
-    |> Enum.chunk_every(span, 1, :discard)
-    |> Enum.any?(&(&1 == sequence))
-  end
-
-  # See `Cinder.Acquisition.BookScorer.word_pattern/1` for the reasoning (Codex review).
-  defp word_pattern(word) do
-    word
-    |> String.graphemes()
-    |> Enum.map_join("", &(Regex.escape(&1) <> "[\u2019'\\p{Mn}]*"))
-  end
-
-  defp series_name(%{name: name}) when is_binary(name), do: name
-  defp series_name(name) when is_binary(name), do: name
-  defp series_name(_other), do: nil
-
-  # See `Cinder.Acquisition.BookScorer.nfd/1` for the reasoning.
-  defp nfd(string) do
-    case :unicode.characters_to_nfd_binary(string) do
-      binary when is_binary(binary) -> binary
-      {_kind, ok_part, _rest} -> ok_part
-    end
-  end
-
-  # See `Cinder.Acquisition.BookScorer.strip_series_number/2` -- copied rather than shared per
-  # this module's own "new sibling modules, not widened e-book ones" decision (moduledoc).
-  defp strip_series_number(title, wanted_numbers) do
-    Regex.replace(~r/(?<=[-–—:.,]|\s)\d{1,3}(?=\s*[-–—:.,]|\s|$)/, title, fn digits ->
-      if digits in wanted_numbers, do: digits, else: " "
-    end)
-  end
-
-  defp wanted_numeric_tokens(work) do
-    work |> Map.fetch!(:title) |> tokens() |> Enum.filter(&Regex.match?(~r/^\d{1,3}$/, &1))
+    |> TitleNoise.strip(work)
   end
 
   # Same bracket-drop shape `BookScorer.drop_bracketed_groups/2` uses, plus one addition: a
@@ -525,7 +396,7 @@ defmodule Cinder.Acquisition.AudiobookScorer do
     work
     |> Map.get(:series)
     |> List.wrap()
-    |> Enum.flat_map(&(&1 |> series_name() |> tokens()))
+    |> Enum.flat_map(&(&1 |> TitleNoise.series_name() |> tokens()))
   end
 
   defp check_collection(%AudiobookRelease{collection?: true} = release, work) do
