@@ -75,6 +75,7 @@ defmodule Cinder.Acquisition.BookScorer do
   alias Cinder.Acquisition.BookParser
   alias Cinder.Acquisition.BookRelease
   alias Cinder.Acquisition.Parser
+  alias Cinder.Acquisition.TitleNoise
   alias Cinder.Books.TitleFold
 
   # The parity contract's e-book profile, best first. EPUB preferred; no conversion.
@@ -379,17 +380,18 @@ defmodule Cinder.Acquisition.BookScorer do
   end
 
   # Everything a release name carries that is not part of any work's identity: bracketed groups
-  # (year, format, tracker, translator), a trailing scene `-GROUP` tag, and series-position idioms
-  # ("Book 1", "Vol. 2", "#3", a bare "01" between separators).
+  # (year, format, tracker, translator), a trailing scene `-GROUP` tag, and series-position
+  # idioms ("Book 1", "Vol. 2", "#3", a bare "01" between separators) -- the latter shared with
+  # AudiobookScorer via `TitleNoise`, see its moduledoc for why any of this exists.
   defp strip_noise(nil, _work), do: ""
 
   defp strip_noise(title, work) do
     title
+    # A release-side leading/trailing space (some indexers preserve it verbatim) must not shift
+    # the "start of string" TitleNoise's "ed"/author-collision guard anchors on.
+    |> String.trim()
     |> drop_bracketed_groups(work)
-    |> String.replace(~r/-[A-Za-z0-9]+$/, " ")
-    |> String.replace(~r/\b(?:book|bk|vol|volume|part|pt|no|nr)\b[ .#]*\d{1,3}\b/i, " ")
-    |> String.replace(~r/#\d{1,3}\b/, " ")
-    |> String.replace(~r/(?<=[-–—:.,]|\s)\d{1,3}(?=\s*[-–—:.,]|\s|$)/, " ")
+    |> TitleNoise.strip(work)
   end
 
   # Dropping EVERY bracketed group unconditionally made the brackets a bypass: "Dune (Messiah)"
@@ -541,7 +543,7 @@ defmodule Cinder.Acquisition.BookScorer do
     work
     |> Map.get(:series)
     |> List.wrap()
-    |> Enum.flat_map(&tokens/1)
+    |> Enum.flat_map(&(&1 |> TitleNoise.series_name() |> tokens()))
   end
 
   # A collection marker is evidence of ambiguity only when the REQUEST did not ask for one. Works

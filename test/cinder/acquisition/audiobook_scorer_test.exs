@@ -177,6 +177,143 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
                  work
                )
     end
+
+    test "accepts a wanted title whose own number is a release-side bare digit" do
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(
+                 release("Ray Bradbury - Fahrenheit 451 (M4B)"),
+                 %{title: "Fahrenheit 451", authors: ["Ray Bradbury"]}
+               )
+
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(
+                 release("Joseph Heller - Catch-22 (M4B)"),
+                 %{title: "Catch-22", authors: ["Joseph Heller"]}
+               )
+    end
+
+    test "a different numbered work by the same author is still rejected" do
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(
+                 release("John Buchan - The 24 Hours (M4B)"),
+                 %{title: "The 39 Steps", authors: ["John Buchan"]}
+               )
+    end
+
+    test "an author whose name is also the edition abbreviation is not stripped as metadata" do
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(release("Ed.13.m4b"), %{title: "13", authors: ["Ed"]})
+    end
+
+    test "a leading space does not defeat the author-named-Ed guard" do
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(release(" Ed.13.m4b"), %{title: "13", authors: ["Ed"]})
+    end
+
+    test "a wanted title that IS a keyword phrase keeps its own number" do
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(release("X - Edition 13 (M4B)"), %{
+                 title: "Edition 13",
+                 authors: ["X"]
+               })
+    end
+
+    test "a genuine mid-release 'ed N' edition marker is not preserved by digit-value alone" do
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Room - Ed 13 (M4B)"), %{
+                 title: "Room 13",
+                 authors: ["X"]
+               })
+    end
+
+    test "a series ordinal that coincidentally equals the wanted number is not title evidence" do
+      # THE regression that matters most for #517 -- see the identical test in
+      # BookScorerTest for the full reasoning. Driven through the public evaluate/3.
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Foo 13 - Room (M4B)"), work)
+    end
+
+    test "a structured series entry (map, not string) does not crash the ordinal check" do
+      work = %{title: "Room 13", authors: ["X"], series: [%{name: "Foo", position: "1"}]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Foo 13 - Room (M4B)"), work)
+    end
+
+    test "a series ordinal is recognized across a normalized (dot/underscore) separator" do
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo Bar"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Foo.Bar.13 - Room (M4B)"), work)
+    end
+
+    test "an eponymous series name is preserved as title evidence, only its ordinal is stripped" do
+      work = %{title: "Dune", authors: ["Frank Herbert"], series: ["Dune"]}
+
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(release("Frank Herbert - Dune 01 (M4B)"), work)
+    end
+
+    test "a series ordinal is recognized despite a diacritic the release keeps" do
+      work = %{title: "Room 13", authors: ["X"], series: ["Café"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Café.13 - Room (M4B)"), work)
+    end
+
+    test "an edition number that coincidentally equals the wanted number is not title evidence" do
+      work = %{title: "Room 13", authors: ["X"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Room - Edition 13 (M4B)"), work)
+    end
+
+    test "a series ordinal is recognized despite an apostrophe the release keeps" do
+      work = %{title: "Room 13", authors: ["X"], series: ["Dragon's Foo"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Dragon's Foo 13 - Room (M4B)"), work)
+    end
+
+    test "a series ordinal is recognized whether it precedes or follows the series name" do
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - 13 Foo - Room (M4B)"), work)
+    end
+
+    test "a number is preserved when the wanted title itself is the series name plus that number" do
+      work = %{title: "Room 13", authors: ["X"], series: ["Room"]}
+
+      assert {:accept, _evidence} = AudiobookScorer.evaluate(release("X - Room 13 (M4B)"), work)
+    end
+
+    test "a proper field separator does not attach the next field's number as an ordinal" do
+      work = %{title: "13 Ways", authors: ["X"], series: [%{name: "Foo", position: "1"}]}
+
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(release("X - Foo - 13 Ways (M4B)"), work)
+    end
+
+    test "a digit embedded in the series name itself is not preserved for an unrelated title" do
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo 13"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Foo 13 - Room (M4B)"), work)
+    end
+
+    test "a fractional series ordinal is consumed as one unit, not left partly exposed" do
+      work = %{
+        title: "Room 5",
+        authors: ["X"],
+        series: [%{name: "Foo", position: "1.5"}]
+      }
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X.Foo.1.5.Room.m4b"), work)
+    end
   end
 
   describe "unfoldable titles" do
