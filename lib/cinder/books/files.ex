@@ -42,7 +42,7 @@ defmodule Cinder.Books.Files do
 
     Repo.transaction(fn ->
       with {:ok, superseded} <- maybe_supersede(target, attrs, replace?),
-           {:ok, file} <- insert_or_existing(target, attrs),
+           {:ok, file} <- insert_or_existing(target, attrs, replace?),
            {:ok, _armed} <- arm_target(target) do
         # Inside the transaction, and last: `mark_committed!/1` rolls back on a stage that is no
         # longer `:prepared`, so a journal another process already reconciled aborts the catalog
@@ -59,18 +59,22 @@ defmodule Cinder.Books.Files do
   defp maybe_supersede(_target, _attrs, false), do: {:ok, []}
 
   defp maybe_supersede(%BookTarget{id: id}, %{path: path}, true) do
-    existing = Repo.all(from f in BookFile, where: f.book_target_id == ^id)
+    # Every OTHER row this target owns must go, whether or not the incoming path also happens to
+    # be one of them — confirmed replacement semantics allow exactly one current e-book file. A
+    # target adopted with multiple formats (e.g. an EPUB and a MOBI row) that replaces only the
+    # EPUB's basename must still lose the MOBI row, not accumulate a second live format
+    # (Codex review on PR #565). The incoming path's OWN row (if it has one) is deliberately
+    # excluded from the delete: `insert_or_existing/3` below is what decides whether to leave it
+    # alone or refresh it, per the SAME `replace?` this function was called with — deleting it
+    # here would degrade a same-path replace into indistinguishable delete-then-reinsert, losing
+    # the row's `id` a caller (or a UI mid-render) may be holding.
+    superseded =
+      from(f in BookFile, where: f.book_target_id == ^id and f.path != ^path)
+      |> Repo.all()
+      |> Enum.map(& &1.path)
 
-    if Enum.any?(existing, &(&1.path == path)) do
-      # The incoming file is already this target's own row — a replay of an already-completed
-      # replace. Deleting nothing here means `insert_file/2` below hits the same unique-path
-      # conflict `insert_conflict/3` already treats as a no-op success, converging exactly like
-      # a plain (non-replace) replay does today.
-      {:ok, []}
-    else
-      Repo.delete_all(from f in BookFile, where: f.book_target_id == ^id)
-      {:ok, Enum.map(existing, & &1.path)}
-    end
+    Repo.delete_all(from f in BookFile, where: f.book_target_id == ^id and f.path != ^path)
+    {:ok, superseded}
   end
 
   @doc """
@@ -227,7 +231,7 @@ defmodule Cinder.Books.Files do
   # replacement is exactly as much an identity break — the downloaded release carries no
   # evidence it belongs to the adopted edition either — so this path must clear it too rather
   # than silently inherit stale identity metadata from the row it is overwriting (Codex review
-  # on PR #569).
+  # on PR #565 and PR #569).
   defp update_existing(%BookFile{} = existing, attrs) do
     existing
     |> BookFile.changeset(Map.put(attrs, :edition_id, nil))
