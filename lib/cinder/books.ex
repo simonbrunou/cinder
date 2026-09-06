@@ -833,7 +833,7 @@ defmodule Cinder.Books do
     new_candidates =
       candidates
       |> drop_locally_monitored()
-      |> drop_locally_past(policy)
+      |> prioritize_unresolved(policy)
 
     remaining = max(length(new_candidates) - @max_bibliography_candidates, 0)
     capped = Enum.take(new_candidates, @max_bibliography_candidates)
@@ -856,27 +856,37 @@ defmodule Cinder.Books do
     end)
   end
 
-  # A second cheap, local, no-network pass, also run BEFORE the cap and specific to :future:
-  # `candidate.first_published_year` comes from the SAME bulk `bibliography/1` call that
-  # produced the list, at no extra network cost — coarser than the network-resolved
-  # `first_published_on` (a year, not a date) but still enough to safely reject a candidate
-  # `accept_if_wanted/2` would reject anyway, without spending one of the
-  # @max_bibliography_candidates resolves confirming what a whole past year already rules out.
+  # A cheap, local, no-network REORDER, run BEFORE the cap and specific to :future — it never
+  # discards a candidate, only moves one whose OWN bibliography-listing `first_published_year`
+  # (from the SAME bulk `bibliography/1` call, at no extra network cost) is a definite past year
+  # to the END of the list. `Enum.sort_by/2` is stable, so within each group (definite-past vs.
+  # everything else) the provider's own relative order is unchanged.
   #
   # Without this, a long run of already-published leading works (the common case: a prolific
   # author's back catalog sorts ahead of their next unreleased book in most providers' own
-  # bibliography order) permanently occupies every pass's cap: a rejected candidate is never
-  # monitored, so it never drops out of `drop_locally_monitored/1`'s own filter either, and the
-  # SAME first #{@max_bibliography_candidates} keep getting re-resolved and re-rejected on every
-  # preview or refresher tick — future-author monitoring never reaches the work actually worth
-  # watching for (#511). A year that is unknown or the current one stays genuinely ambiguous
-  # here and is left for `accept_if_wanted/2`'s own exact date check.
-  defp drop_locally_past(candidates, :future) do
+  # bibliography order) permanently occupies every pass's cap: a candidate `accept_if_wanted/2`
+  # rejects is never monitored, so it never drops out of `drop_locally_monitored/1`'s own filter
+  # either, and the SAME first #{@max_bibliography_candidates} keep getting re-resolved and
+  # re-rejected on every preview or refresher tick — future-author monitoring never reaches the
+  # work actually worth watching for (#511).
+  #
+  # Deliberately a reorder, not an outright reject: `bibliography/1`'s own year is a coarser,
+  # SEPARATELY-fetched snapshot than the network-resolved `first_published_on`
+  # `accept_if_wanted/2` actually checks — the behaviour gives no guarantee the two stay
+  # consistent (Open Library, notably, obtains them via different requests), so discarding on the
+  # summary alone could permanently hide a work whose corrected, authoritative date turns out to
+  # be in the future. Every candidate within the capped window still reaches
+  # `Identity.resolve/1`; deprioritizing only means a stale/wrong summary at worst delays that
+  # candidate's OWN resolve to a later slot in this pass (or a later pass, once the bibliography
+  # exceeds the cap) — moving the genuinely promising candidates to the FRONT is what reaches an
+  # upcoming work, not removing anyone from consideration. A year that is unknown or the current
+  # one is treated the same as "not a definite past year" and keeps its original position.
+  defp prioritize_unresolved(candidates, :future) do
     current_year = Date.utc_today().year
-    Enum.reject(candidates, &known_past_year?(&1.first_published_year, current_year))
+    Enum.sort_by(candidates, &known_past_year?(&1.first_published_year, current_year))
   end
 
-  defp drop_locally_past(candidates, :all), do: candidates
+  defp prioritize_unresolved(candidates, :all), do: candidates
 
   defp known_past_year?(year, current_year) when is_integer(year), do: year < current_year
   defp known_past_year?(_year, _current_year), do: false

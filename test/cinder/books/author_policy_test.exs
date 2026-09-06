@@ -172,31 +172,40 @@ defmodule Cinder.Books.AuthorPolicyTest do
     # #511: a candidate with a known-past first_published_year must never occupy a cap slot
     # under :future — otherwise a long run of leading, already-published works starves the
     # policy from ever reaching an upcoming one behind them, on every repeated pass.
-    test ":future skips a known-past-year prefix locally, reaching an upcoming work behind it
-          without spending the cap on any of them",
+    test ":future deprioritizes a known-past-year prefix (never discards it), reaching an
+          upcoming work behind it within the same bounded, cap-respecting pass",
          %{author: author} do
       past_candidates =
         for n <- 1..50, do: candidate("OLPASTCAP#{n}W", first_published_year: 2010)
 
       future_candidate = candidate("OLFUTURECAP1W", first_published_year: nil)
 
-      # Exactly 2 calls (registered exactly, so a cap-before-local-date-filter regression would
-      # fail this expectation's count rather than the assertions below): three separate,
-      # independent preview passes over the SAME bibliography must all reach the future work,
-      # never re-resolving any of the 50 known-past candidates.
+      # Three separate, independent preview passes over the SAME 51-candidate bibliography must
+      # all reach the future work — deterministic every time, since the reorder is a pure
+      # function of the candidate list, not persisted cursor state.
       expect(PrimaryMetadataMock, :bibliography, 3, fn "A1" ->
         {:ok, past_candidates ++ [future_candidate]}
       end)
 
-      expect(PrimaryMetadataMock, :get_work, 3, fn "OLFUTURECAP1W" ->
-        {:ok, provider_work("OLFUTURECAP1W", first_published_on: nil)}
+      # Every candidate the capped window actually reaches is genuinely resolved — nothing is
+      # discarded on the bibliography summary's own first_published_year alone (a stale or
+      # disagreeing summary must not permanently hide a work whose network-resolved date turns
+      # out to be in the future). With 51 total candidates and a cap of 50, exactly one of the
+      # 50 known-past ones is left for a later pass (`remaining: 1`); the other 49 are still
+      # resolved and correctly rejected here, alongside the future one.
+      stub(PrimaryMetadataMock, :get_work, fn
+        "OLFUTURECAP1W" ->
+          {:ok, provider_work("OLFUTURECAP1W", first_published_on: nil)}
+
+        "OLPASTCAP" <> _rest = fid ->
+          {:ok, provider_work(fid, first_published_on: ~D[2010-01-01])}
       end)
 
       for _pass <- 1..3 do
-        assert {:ok, %{eligible: eligible, ambiguous_count: 0, remaining: 0}} =
+        assert {:ok, %{eligible: eligible, remaining: 1}} =
                  Books.preview_author_policy(author, :future)
 
-        assert [%{work: %{foreign_id: "OLFUTURECAP1W"}}] = eligible
+        assert Enum.map(eligible, & &1.work.foreign_id) == ["OLFUTURECAP1W"]
       end
     end
 
