@@ -1252,7 +1252,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
                     </span>
                   </label>
                   <label
-                    :if={candidate.kind == :book}
+                    :if={candidate.kind == :book and candidate.reason != :multi_track}
                     class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2"
                   >
                     <input
@@ -1275,7 +1275,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
                     </span>
                   </label>
                   <label
-                    :if={candidate.kind == :book}
+                    :if={candidate.kind == :book and candidate.reason != :multi_track}
                     class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2"
                   >
                     <input
@@ -1292,6 +1292,29 @@ defmodule CinderWeb.LibraryAdoptionLive do
                       <span class="block font-medium">{gettext("All formats")}</span>
                       <span class="text-sm text-base-content/70">
                         {gettext("Adopt every accepted-format file for this work.")}
+                      </span>
+                    </span>
+                  </label>
+                  <label
+                    :if={candidate.kind == :book and candidate.reason == :multi_track}
+                    class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2"
+                  >
+                    <input
+                      type="radio"
+                      name={"migration-choice-#{candidate.id}"}
+                      value="all_formats"
+                      checked={Map.get(@decisions, candidate.id) in ["preferred", "all_formats"]}
+                      phx-click="set_decision"
+                      phx-value-id={candidate.id}
+                      phx-value-choice="all_formats"
+                      class="radio radio-primary mt-0.5"
+                    />
+                    <span>
+                      <span class="block font-medium">{gettext("Adopt all tracks")}</span>
+                      <span class="text-sm text-base-content/70">
+                        {gettext(
+                          "These files are sequential tracks of one audiobook, not alternative formats. Every track is adopted together."
+                        )}
                       </span>
                     </span>
                   </label>

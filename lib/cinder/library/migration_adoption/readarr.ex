@@ -480,6 +480,15 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
   # choice (most-preferred-first within the candidate's own resolved kind — EPUB else AZW3 else
   # MOBI for `:ebook`, M4B else MP3 for `:audiobook`, `@accepted_formats`' own combined order) or
   # `primary_file` + `extra_files` for **all**.
+  #
+  # Multiple audiobook files sharing ONE format are sequential tracks of a single audiobook
+  # (Bookshelf/Readarr split MP3 by chapter; M4B is one file per book), never alternative
+  # editions the way a mixed EPUB/AZW3/MOBI set — or a genuinely mixed M4B+MP3 set — is. Treating
+  # a track set as `:multi_format` let `:preferred` hand the catalog exactly one chapter as if it
+  # were the complete book (#513). `track_set?/2` tells the two apart; `reason: :multi_track`
+  # carries the distinction through to `files_for/2`, which adopts the whole set atomically
+  # regardless of which bulk/individual choice fires — there is no valid "pick one" for a track
+  # set, so neither choice is allowed to mean that.
   defp classify_files(files, work_id, media_kind, target, target_paths, path_owners) do
     primary =
       Enum.min_by(files, fn file -> Enum.find_index(@accepted_formats, &(&1 == file.format)) end)
@@ -497,7 +506,7 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
       {:ready, nil} ->
         %{
           status: :needs_decision,
-          reason: :multi_format,
+          reason: multi_file_reason(files, media_kind),
           path: primary.path,
           size: primary.size,
           media_kind: media_kind,
@@ -518,6 +527,17 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
         }
     end
   end
+
+  defp multi_file_reason(files, media_kind) do
+    if track_set?(files, media_kind), do: :multi_track, else: :multi_format
+  end
+
+  # Same format, more than one file, audiobook: sequential tracks, not alternative formats. An
+  # e-book never has this shape (Readarr/Bookshelf report one file per e-book format, never a
+  # split single format), and a genuinely mixed-format audiobook set (M4B + MP3) is still a real
+  # format choice, not a track set.
+  defp track_set?(files, :audiobook), do: files |> Enum.uniq_by(& &1.format) |> length() == 1
+  defp track_set?(_files, :ebook), do: false
 
   # The first non-`{:ready, nil}` verdict among `files`, in order — or `{:ready, nil}` when every
   # one of them clears.
@@ -609,6 +629,18 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
 
     Enum.split_with(selected, fn {candidate, choice} -> current?(candidate, choice, catalog) end)
   end
+
+  # Revalidation must check every path adoption will actually write. Matched before the generic
+  # :all_formats/other clauses below, mirroring files_for/2's own :multi_track clause exactly —
+  # a track set's :preferred choice writes the complete set (#513), so checking only the primary
+  # here would let an extra track that went stale between preview and adopt (moved, deleted, or
+  # relocated outside the audiobook root by a live settings change) slip through unrevalidated
+  # and be written anyway.
+  defp candidate_files(
+         %{primary_file: %{} = primary, extra_files: extras, reason: :multi_track},
+         _choice
+       ),
+       do: [primary | extras]
 
   defp candidate_files(%{primary_file: %{} = primary, extra_files: extras}, :all_formats),
     do: [primary | extras]
@@ -757,6 +789,20 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
       module -> module.provider()
     end
   end
+
+  # A track set has no valid "pick one" — every choice adopts the complete set. Matched before
+  # the generic :all_formats/:preferred clauses below, which stay exactly as they were for a
+  # genuine multi-format (alternative-edition) candidate.
+  defp files_for(
+         %{
+           primary_file: %{} = primary,
+           extra_files: extras,
+           reason: :multi_track,
+           edition_id: edition_id
+         },
+         _choice
+       ),
+       do: Enum.map([primary | extras], &file_attrs(&1, edition_id))
 
   defp files_for(
          %{primary_file: %{} = primary, extra_files: extras, edition_id: edition_id},

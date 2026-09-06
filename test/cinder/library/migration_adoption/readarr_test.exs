@@ -328,6 +328,56 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrTest do
     assert Enum.map(c.unsupported_files, & &1.provider_id) == [1]
   end
 
+  test "two same-format MP3 files classify as :needs_decision, :multi_track — sequential tracks, not alternative formats",
+       %{audiobooks_tmp: audiobooks_tmp} do
+    work = seed_work("Two Track Audiobook", "track-1")
+
+    track1 = file(1, 1, "mp3", path(audiobooks_tmp, "track-1/01.mp3"))
+    track2 = file(2, 1, "mp3", path(audiobooks_tmp, "track-1/02.mp3"))
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Track Author")],
+        works: [work(1, 1, "Two Track Audiobook", "track-1")],
+        files: [track1, track2]
+      )
+    )
+
+    assert {:ok, preview} = MigrationAdoption.preview(:readarr)
+
+    c = candidate(preview, 1)
+    assert c.status == :needs_decision
+    assert c.reason == :multi_track
+    assert c.media_kind == :audiobook
+    assert c.primary_file.format == "mp3"
+    assert Enum.map(c.extra_files, & &1.format) == ["mp3"]
+    assert work.id == c.work_id
+  end
+
+  test "an M4B plus an MP3 for the same audiobook classifies as :multi_format, not :multi_track — a genuine format choice",
+       %{audiobooks_tmp: audiobooks_tmp} do
+    seed_work("Mixed Audio Formats", "mixed-audio-1")
+
+    m4b = file(1, 1, "m4b", path(audiobooks_tmp, "mixed-audio-1/book.m4b"))
+    mp3 = file(2, 1, "mp3", path(audiobooks_tmp, "mixed-audio-1/book.mp3"))
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Mixed Audio Author")],
+        works: [work(1, 1, "Mixed Audio Formats", "mixed-audio-1")],
+        files: [m4b, mp3]
+      )
+    )
+
+    assert {:ok, preview} = MigrationAdoption.preview(:readarr)
+
+    c = candidate(preview, 1)
+    assert c.status == :needs_decision
+    assert c.reason == :multi_format
+    assert c.primary_file.format == "m4b"
+    assert Enum.map(c.extra_files, & &1.format) == ["mp3"]
+  end
+
   test "an m4b accepted file classifies :ready with media_kind: :audiobook", %{
     audiobooks_tmp: audiobooks_tmp
   } do
