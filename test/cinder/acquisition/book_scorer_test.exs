@@ -341,6 +341,19 @@ defmodule Cinder.Acquisition.BookScorerTest do
                })
     end
 
+    test "a genuine mid-release 'ed N' edition marker is not preserved by digit-value alone" do
+      # Codex review, round 8: the same eponymous-phrase test the other keywords use was missing
+      # for the abbreviated "ed" form -- it only checked whether the digit VALUE appeared
+      # anywhere in the wanted title, not whether "ed N" itself forms a run of wanted's tokens.
+      # "Ed 13" here is genuine edition metadata for a DIFFERENT "Room", not the requested
+      # "Room 13".
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Room - Ed 13 (epub)"), %{
+                 title: "Room 13",
+                 authors: ["X"]
+               })
+    end
+
     test "a series ordinal that coincidentally equals the wanted number is not title evidence" do
       # Codex review on #517: a release-side series ordinal ("Foo 13") must not be mistaken for
       # the wanted title's own number just because the two digits coincide. This release is
@@ -445,6 +458,20 @@ defmodule Cinder.Acquisition.BookScorerTest do
 
       assert {:reject, :title_mismatch} =
                BookScorer.evaluate(release("X - Foo 13 - Room (epub)"), work)
+    end
+
+    test "a fractional series ordinal is consumed as one unit, not left partly exposed" do
+      # Codex review, round 8: a series position can be a decimal ("1.5", a novella between
+      # books 1 and 2). Matching only the integer prefix left the fractional remainder exposed
+      # as a coincidentally-matching bare digit for an unrelated wanted title.
+      work = %{
+        title: "Room 5",
+        authors: ["X"],
+        series: [%{name: "Foo", position: "1.5"}]
+      }
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X.Foo.1.5.Room.epub"), work)
     end
   end
 

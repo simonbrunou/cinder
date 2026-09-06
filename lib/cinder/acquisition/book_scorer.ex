@@ -419,7 +419,9 @@ defmodule Cinder.Acquisition.BookScorer do
     # of the (now trimmed) string, where a genuine edition marker essentially never sits (Codex
     # review).
     Regex.replace(~r/(?<=.)\bed\b[ .#]*(\d{1,3})\b/i, stripped, fn _whole, digits ->
-      if digits in wanted_tokens, do: "ed " <> digits, else: " "
+      if belongs_to_wanted_title?(["ed", digits], wanted_tokens),
+        do: "ed " <> digits,
+        else: " "
     end)
   end
 
@@ -481,7 +483,7 @@ defmodule Cinder.Acquisition.BookScorer do
   # 13 Ways" must not read the next field's leading number as "Foo"'s ordinal just because a
   # hyphen sits loosely between them (Codex review).
   defp strip_ordinal_after(title, pattern, words, wanted_tokens) do
-    regex = Regex.compile!("\\b(" <> pattern <> ")[ .#_]*(\\d{1,3})\\b", "iu")
+    regex = Regex.compile!("\\b(" <> pattern <> ")[ .#_]*(\\d{1,3}(?:\\.\\d{1,3})?)\\b", "iu")
 
     Regex.replace(regex, title, fn _whole, name, digits ->
       if belongs_to_wanted_title?(words ++ [digits], wanted_tokens),
@@ -491,7 +493,7 @@ defmodule Cinder.Acquisition.BookScorer do
   end
 
   defp strip_ordinal_before(title, pattern, words, wanted_tokens) do
-    regex = Regex.compile!("\\b(\\d{1,3})[ .#_]*(" <> pattern <> ")\\b", "iu")
+    regex = Regex.compile!("\\b(\\d{1,3}(?:\\.\\d{1,3})?)[ .#_]*(" <> pattern <> ")\\b", "iu")
 
     Regex.replace(regex, title, fn _whole, digits, name ->
       if belongs_to_wanted_title?([digits | words], wanted_tokens),

@@ -218,6 +218,14 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
                })
     end
 
+    test "a genuine mid-release 'ed N' edition marker is not preserved by digit-value alone" do
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Room - Ed 13 (M4B)"), %{
+                 title: "Room 13",
+                 authors: ["X"]
+               })
+    end
+
     test "a series ordinal that coincidentally equals the wanted number is not title evidence" do
       work = %{title: "Room 13", authors: ["X"], series: ["Foo"]}
 
@@ -292,6 +300,17 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
 
       assert {:reject, :title_mismatch} =
                AudiobookScorer.evaluate(release("X - Foo 13 - Room (M4B)"), work)
+    end
+
+    test "a fractional series ordinal is consumed as one unit, not left partly exposed" do
+      work = %{
+        title: "Room 5",
+        authors: ["X"],
+        series: [%{name: "Foo", position: "1.5"}]
+      }
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X.Foo.1.5.Room.m4b"), work)
     end
   end
 

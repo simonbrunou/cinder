@@ -303,7 +303,9 @@ defmodule Cinder.Acquisition.AudiobookScorer do
       end)
 
     Regex.replace(~r/(?<=.)\bed\b[ .#]*(\d{1,3})\b/i, stripped, fn _whole, digits ->
-      if digits in wanted_tokens, do: "ed " <> digits, else: " "
+      if belongs_to_wanted_title?(["ed", digits], wanted_tokens),
+        do: "ed " <> digits,
+        else: " "
     end)
   end
 
@@ -341,7 +343,7 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   # See `Cinder.Acquisition.BookScorer.strip_ordinal_after/4` and `strip_ordinal_before/4` for the
   # reasoning (Codex review).
   defp strip_ordinal_after(title, pattern, words, wanted_tokens) do
-    regex = Regex.compile!("\\b(" <> pattern <> ")[ .#_]*(\\d{1,3})\\b", "iu")
+    regex = Regex.compile!("\\b(" <> pattern <> ")[ .#_]*(\\d{1,3}(?:\\.\\d{1,3})?)\\b", "iu")
 
     Regex.replace(regex, title, fn _whole, name, digits ->
       if belongs_to_wanted_title?(words ++ [digits], wanted_tokens),
@@ -351,7 +353,7 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   end
 
   defp strip_ordinal_before(title, pattern, words, wanted_tokens) do
-    regex = Regex.compile!("\\b(\\d{1,3})[ .#_]*(" <> pattern <> ")\\b", "iu")
+    regex = Regex.compile!("\\b(\\d{1,3}(?:\\.\\d{1,3})?)[ .#_]*(" <> pattern <> ")\\b", "iu")
 
     Regex.replace(regex, title, fn _whole, digits, name ->
       if belongs_to_wanted_title?([digits | words], wanted_tokens),
