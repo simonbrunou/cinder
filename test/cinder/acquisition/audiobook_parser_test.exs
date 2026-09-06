@@ -107,6 +107,16 @@ defmodule Cinder.Acquisition.AudiobookParserTest do
       assert %{abridged?: false} =
                AudiobookParser.parse("Frank Herbert - Dune (Unabridged) (M4B)")
     end
+
+    test "a bare numeric range records its digits so the scorer can tell a title from a span" do
+      assert %{collection?: true, collection_numbers: ["11", "22"]} =
+               AudiobookParser.parse("Stephen King - 11-22-63 (M4B)")
+    end
+
+    test "a keyword-marked range records no digits — it needs no extra corroboration" do
+      assert %{collection?: true, collection_numbers: nil} =
+               AudiobookParser.parse("Brandon Sanderson - Stormlight Archive Books 1-3 (M4B)")
+    end
   end
 
   test "known_formats/0 lists the recognizer's vocabulary" do

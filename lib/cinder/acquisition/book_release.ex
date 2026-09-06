@@ -32,6 +32,7 @@ defmodule Cinder.Acquisition.BookRelease do
           language: String.t() | nil,
           retail?: boolean() | nil,
           collection?: boolean() | nil,
+          collection_numbers: [String.t()] | nil,
           abridged?: boolean() | nil
         }
 
@@ -49,6 +50,7 @@ defmodule Cinder.Acquisition.BookRelease do
     :language,
     :retail?,
     :collection?,
+    :collection_numbers,
     :abridged?
   ]
 

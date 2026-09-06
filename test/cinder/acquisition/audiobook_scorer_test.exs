@@ -214,6 +214,26 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
                  work
                )
     end
+
+    # See `Cinder.Acquisition.BookScorerTest`'s matching test for the reasoning: this check alone
+    # cannot make the release fully acceptable (that also needs #517), so the assertion is that
+    # the COLLECTION gate specifically no longer blocks it.
+    test "a numeric title matching the release's own bare range clears the collection gate" do
+      work = %{title: "11/22/63", authors: ["Stephen King"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("Stephen King - 11-22-63 (M4B)"), work)
+    end
+
+    test "a bare numeric range unrelated to the wanted title is still refused" do
+      work = %{title: "The Way of Kings", authors: ["Brandon Sanderson"]}
+
+      assert {:reject, :collection_ambiguous} =
+               AudiobookScorer.evaluate(
+                 release("Brandon Sanderson - The Way of Kings 1-3 (M4B)"),
+                 work
+               )
+    end
   end
 
   describe "language" do

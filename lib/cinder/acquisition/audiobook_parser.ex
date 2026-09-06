@@ -65,16 +65,22 @@ defmodule Cinder.Acquisition.AudiobookParser do
   @abridged ~r/(?<!un)\babridged\b/i
 
   # Markers that say the release is more than the one work asked for — the same rationale
-  # `BookParser`'s own `@collection` documents, copied verbatim for audio releases.
-  @collection [
+  # `BookParser`'s own `@collection_markers` documents, copied verbatim for audio releases.
+  @collection_markers [
     ~r/\bomnibus\b/i,
     ~r/\banthology\b/i,
     ~r/\bcollection\b/i,
     ~r/\bbox[\s._-]?sets?\b/i,
     ~r/\bcomplete\s+(?:series|works|collection|trilogy|saga)\b/i,
-    ~r/\b(?:books?|vols?|volumes?)[\s._#-]*\d+\s*(?:-|–|to|thru|through)\s*\d+\b/i,
-    ~r/\s\d{1,2}\s*(?:-|–)\s*\d{1,2}\b/,
-    ~r/#\s*\d+\s*(?:-|–)\s*\d+\b/
+    ~r/\b(?:books?|vols?|volumes?)[\s._#-]*\d+\s*(?:-|–|to|thru|through)\s*\d+\b/i
+  ]
+
+  # See `BookParser`'s own `@collection_numeric_ranges` for why these are kept separate: no
+  # keyword, so genuinely ambiguous between a real pack span and a numeric title's own number
+  # (#518).
+  @collection_numeric_ranges [
+    ~r/\s(\d{1,2})\s*(?:-|–)\s*(\d{1,2})\b/,
+    ~r/#\s*(\d+)\s*(?:-|–)\s*(\d+)\b/
   ]
 
   # `{regex, tag}` for each language, derived from the shared registry so book/audiobook/video
@@ -98,15 +104,19 @@ defmodule Cinder.Acquisition.AudiobookParser do
           language: String.t() | nil,
           retail?: boolean(),
           collection?: boolean(),
+          collection_numbers: [String.t()] | nil,
           abridged?: boolean(),
           narrator: String.t() | nil
         }
   def parse(name) when is_binary(name) do
+    {collection?, collection_numbers} = collection_evidence(name)
+
     %{
       formats: formats(name),
       language: language(name),
       retail?: Regex.match?(@retail, name),
-      collection?: Enum.any?(@collection, &Regex.match?(&1, name)),
+      collection?: collection?,
+      collection_numbers: collection_numbers,
       abridged?: Regex.match?(@abridged, name),
       narrator: narrator(name)
     }
@@ -118,6 +128,7 @@ defmodule Cinder.Acquisition.AudiobookParser do
       language: nil,
       retail?: false,
       collection?: false,
+      collection_numbers: nil,
       abridged?: false,
       narrator: nil
     }
@@ -125,6 +136,27 @@ defmodule Cinder.Acquisition.AudiobookParser do
   @doc "Every format token the parser recognizes, in preference-neutral recognizer order."
   @spec known_formats() :: [atom()]
   def known_formats, do: Enum.map(@formats, fn {_regex, format} -> format end) |> Enum.uniq()
+
+  # See `BookParser.collection_evidence/1` for the reasoning.
+  defp collection_evidence(name) do
+    if Enum.any?(@collection_markers, &Regex.match?(&1, name)) do
+      {true, nil}
+    else
+      case numeric_range(name) do
+        nil -> {false, nil}
+        numbers -> {true, numbers}
+      end
+    end
+  end
+
+  defp numeric_range(name) do
+    Enum.find_value(@collection_numeric_ranges, fn regex ->
+      case Regex.run(regex, name) do
+        [_whole, a, b] -> [a, b]
+        nil -> nil
+      end
+    end)
+  end
 
   defp narrator(name) do
     case Regex.run(@narrator, name, capture: :all_but_first) do

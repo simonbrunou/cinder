@@ -551,14 +551,37 @@ defmodule Cinder.Acquisition.BookScorer do
   # what the work is called. So the marker is ignored when the wanted title carries the same word,
   # and still refuses a pack that volunteers one the request never mentioned.
   defp check_collection(%BookRelease{collection?: true} = release, work) do
-    wanted = work |> Map.fetch!(:title) |> tokens() |> MapSet.new()
+    wanted_tokens = work |> Map.fetch!(:title) |> tokens()
+    wanted = MapSet.new(wanted_tokens)
 
-    if release.title |> tokens() |> Enum.any?(&(&1 in @collection_words and &1 in wanted)),
-      do: :ok,
-      else: {:reject, :collection_ambiguous}
+    cond do
+      release.title |> tokens() |> Enum.any?(&(&1 in @collection_words and &1 in wanted)) ->
+        :ok
+
+      numeric_range_forgiven?(release.collection_numbers, wanted_tokens) ->
+        :ok
+
+      true ->
+        {:reject, :collection_ambiguous}
+    end
   end
 
   defp check_collection(%BookRelease{}, _work), do: :ok
+
+  # The release's own numeric span is forgiven only when it IS the wanted title's own number,
+  # written the way a release punctuation-normalizes it: the exact digits, in the exact order,
+  # appearing consecutively among the wanted title's tokens (#518). A genuine collection span
+  # ("1-3" for a pack the request never asked for) shares no such run with an unrelated wanted
+  # title and is still rejected.
+  defp numeric_range_forgiven?(nil, _wanted_tokens), do: false
+
+  defp numeric_range_forgiven?(numbers, wanted_tokens) do
+    span = length(numbers)
+
+    wanted_tokens
+    |> Enum.chunk_every(span, 1, :discard)
+    |> Enum.any?(&(&1 == numbers))
+  end
 
   # An abridged text is a DIFFERENT text, not a lesser copy of the same one — the contract puts
   # "abridged/unabridged ambiguity" in the same sentence as omnibus and anthology and requires an
