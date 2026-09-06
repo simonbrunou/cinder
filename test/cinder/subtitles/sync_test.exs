@@ -1007,8 +1007,11 @@ defmodule Cinder.Subtitles.SyncTest do
        %{video: video} do
     managed_srt!(video, "cn")
 
+    # The real Cinder.Library.MediaInfo.Ffprobe.subtitle_language/1 already canonicalizes a raw
+    # "chi"/"zho" ffprobe tag through Language.normalize/1 before this ever reaches
+    # Reference.select/4, so the track here carries "zh" — never the raw alias string.
     expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
-      {:ok, [%{index: 2, language: "chi", forced?: false, default?: true, packet_count: 20}]}
+      {:ok, [%{index: 2, language: "zh", forced?: false, default?: true, packet_count: 20}]}
     end)
 
     expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 2 ->
