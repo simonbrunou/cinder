@@ -932,7 +932,11 @@ defmodule Cinder.Books do
     do: Enum.find(Metadata.providers(), &(to_string(&1.provider()) == provider))
 
   defp partition_bibliography(candidates, policy) do
-    new_candidates = drop_locally_monitored(candidates)
+    new_candidates =
+      candidates
+      |> drop_locally_monitored()
+      |> prioritize_unresolved(policy)
+
     remaining = max(length(new_candidates) - @max_bibliography_candidates, 0)
     capped = Enum.take(new_candidates, @max_bibliography_candidates)
     {eligible, ambiguous_count} = resolve_eligible(capped, policy)
@@ -953,6 +957,41 @@ defmodule Cinder.Books do
       end
     end)
   end
+
+  # A cheap, local, no-network REORDER, run BEFORE the cap and specific to :future — it never
+  # discards a candidate, only moves one whose OWN bibliography-listing `first_published_year`
+  # (from the SAME bulk `bibliography/1` call, at no extra network cost) is a definite past year
+  # to the END of the list. `Enum.sort_by/2` is stable, so within each group (definite-past vs.
+  # everything else) the provider's own relative order is unchanged.
+  #
+  # Without this, a long run of already-published leading works (the common case: a prolific
+  # author's back catalog sorts ahead of their next unreleased book in most providers' own
+  # bibliography order) permanently occupies every pass's cap: a candidate `accept_if_wanted/2`
+  # rejects is never monitored, so it never drops out of `drop_locally_monitored/1`'s own filter
+  # either, and the SAME first #{@max_bibliography_candidates} keep getting re-resolved and
+  # re-rejected on every preview or refresher tick — future-author monitoring never reaches the
+  # work actually worth watching for (#511).
+  #
+  # Deliberately a reorder, not an outright reject: `bibliography/1`'s own year is a coarser,
+  # SEPARATELY-fetched snapshot than the network-resolved `first_published_on`
+  # `accept_if_wanted/2` actually checks — the behaviour gives no guarantee the two stay
+  # consistent (Open Library, notably, obtains them via different requests), so discarding on the
+  # summary alone could permanently hide a work whose corrected, authoritative date turns out to
+  # be in the future. Every candidate within the capped window still reaches
+  # `Identity.resolve/1`; deprioritizing only means a stale/wrong summary at worst delays that
+  # candidate's OWN resolve to a later slot in this pass (or a later pass, once the bibliography
+  # exceeds the cap) — moving the genuinely promising candidates to the FRONT is what reaches an
+  # upcoming work, not removing anyone from consideration. A year that is unknown or the current
+  # one is treated the same as "not a definite past year" and keeps its original position.
+  defp prioritize_unresolved(candidates, :future) do
+    current_year = Date.utc_today().year
+    Enum.sort_by(candidates, &known_past_year?(&1.first_published_year, current_year))
+  end
+
+  defp prioritize_unresolved(candidates, :all), do: candidates
+
+  defp known_past_year?(year, current_year) when is_integer(year), do: year < current_year
+  defp known_past_year?(_year, _current_year), do: false
 
   # The capped, network-bound pass: one `Identity.resolve/1` call per remaining candidate, at
   # most `@max_bibliography_candidates` of them. A candidate the provider fails to re-serve, or

@@ -168,6 +168,66 @@ defmodule Cinder.Books.AuthorPolicyTest do
 
       assert length(eligible) == Books.max_bibliography_candidates()
     end
+
+    # #511: a candidate with a known-past first_published_year must never occupy a cap slot
+    # under :future — otherwise a long run of leading, already-published works starves the
+    # policy from ever reaching an upcoming one behind them, on every repeated pass.
+    test ":future deprioritizes a known-past-year prefix (never discards it), reaching an
+          upcoming work behind it within the same bounded, cap-respecting pass",
+         %{author: author} do
+      past_candidates =
+        for n <- 1..50, do: candidate("OLPASTCAP#{n}W", first_published_year: 2010)
+
+      future_candidate = candidate("OLFUTURECAP1W", first_published_year: nil)
+
+      # Three separate, independent preview passes over the SAME 51-candidate bibliography must
+      # all reach the future work — deterministic every time, since the reorder is a pure
+      # function of the candidate list, not persisted cursor state.
+      expect(PrimaryMetadataMock, :bibliography, 3, fn "A1" ->
+        {:ok, past_candidates ++ [future_candidate]}
+      end)
+
+      # Every candidate the capped window actually reaches is genuinely resolved — nothing is
+      # discarded on the bibliography summary's own first_published_year alone (a stale or
+      # disagreeing summary must not permanently hide a work whose network-resolved date turns
+      # out to be in the future). With 51 total candidates and a cap of 50, exactly one of the
+      # 50 known-past ones is left for a later pass (`remaining: 1`); the other 49 are still
+      # resolved and correctly rejected here, alongside the future one.
+      stub(PrimaryMetadataMock, :get_work, fn
+        "OLFUTURECAP1W" ->
+          {:ok, provider_work("OLFUTURECAP1W", first_published_on: nil)}
+
+        "OLPASTCAP" <> _rest = fid ->
+          {:ok, provider_work(fid, first_published_on: ~D[2010-01-01])}
+      end)
+
+      for _pass <- 1..3 do
+        assert {:ok, %{eligible: eligible, remaining: 1}} =
+                 Books.preview_author_policy(author, :future)
+
+        assert Enum.map(eligible, & &1.work.foreign_id) == ["OLFUTURECAP1W"]
+      end
+    end
+
+    # The current year is not yet a definite past date (an unknown month/day could still be
+    # ahead), so it stays genuinely ambiguous locally and must still reach the network check —
+    # only a STRICTLY past year is safe to reject for free.
+    test ":future still resolves a candidate whose first_published_year is the current year",
+         %{author: author} do
+      current_year = Date.utc_today().year
+      this_year_candidate = candidate("OLTHISYEARW", first_published_year: current_year)
+
+      expect(PrimaryMetadataMock, :bibliography, fn "A1" -> {:ok, [this_year_candidate]} end)
+
+      expect(PrimaryMetadataMock, :get_work, fn "OLTHISYEARW" ->
+        {:ok, provider_work("OLTHISYEARW", first_published_on: Date.utc_today())}
+      end)
+
+      # A same-year, not-yet-past publication date is exactly the "not yet past" case :future
+      # is meant to keep — the local year-only filter must not have rejected it for free.
+      assert {:ok, %{eligible: [%{work: %{foreign_id: "OLTHISYEARW"}}], ambiguous_count: 0}} =
+               Books.preview_author_policy(author, :future)
+    end
   end
 
   describe "apply_author_policy/4" do
