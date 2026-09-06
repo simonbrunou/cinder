@@ -133,6 +133,31 @@ defmodule Cinder.Acquisition.LanguageTest do
     end
   end
 
+  describe "exact_track?/2" do
+    # #573 review: "chi"/"zho" satisfy a "cn" target but are ambiguous (also satisfy "zh") -
+    # weaker evidence than an explicit "cn"/"yue" tag when several candidate tracks exist.
+    test "an explicit cn or yue track is exact for a cn target" do
+      assert Language.exact_track?("cn", "cn")
+      assert Language.exact_track?("cn", "yue")
+    end
+
+    test "a generic chi or zho track is not exact for a cn target, even though it satisfies it" do
+      assert Language.raw_track_satisfies?("cn", "chi")
+      refute Language.exact_track?("cn", "chi")
+      refute Language.exact_track?("cn", "zho")
+    end
+
+    test "an explicit zh or cmn track is exact for a zh target" do
+      assert Language.exact_track?("zh", "zh")
+      assert Language.exact_track?("zh", "cmn")
+    end
+
+    test "a track that does not satisfy the target at all is not exact" do
+      refute Language.exact_track?("cn", "cmn")
+      refute Language.exact_track?("cn", "fre")
+    end
+  end
+
   describe "filter/3" do
     test "inactive filter returns releases unchanged" do
       releases = [rel("FRENCH"), rel(nil), rel("GERMAN")]

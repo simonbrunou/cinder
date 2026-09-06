@@ -21,7 +21,14 @@ defmodule Cinder.Subtitles.Sync.Reference do
     tracks
     |> Enum.filter(&Language.raw_track_satisfies?(language, &1.language))
     |> Enum.reject(&Map.get(&1, :forced?, false))
-    |> Enum.sort_by(&Map.get(&1, :packet_count, 0), :desc)
+    # An unambiguous match (an explicit "cn"/"yue" or "zh"/"cmn" tag) beats a generic-alias one
+    # ("chi"/"zho", tolerated by both) regardless of packet count - the ambiguous track might
+    # genuinely be the other language (#573 review). Packet count still breaks ties within the
+    # same exactness tier.
+    |> Enum.sort_by(
+      &{if(Language.exact_track?(language, &1.language), do: 0, else: 1),
+       -Map.get(&1, :packet_count, 0)}
+    )
     |> Enum.find_value({:audio, nil}, fn track ->
       case media_info.extract_subtitle(video_path, track.index) do
         {:ok, content} when is_binary(content) -> {:embedded, {:content, content}}

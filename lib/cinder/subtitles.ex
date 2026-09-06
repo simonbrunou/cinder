@@ -277,11 +277,16 @@ defmodule Cinder.Subtitles do
 
     # Language.raw_track_satisfies?/2, not exact equality against the raw track code: a "cn"
     # (Cantonese) request must still accept a generically-tagged "chi"/"zho" track (#573), the
-    # same forward-tolerance rule Cinder.Subtitles.Sync.Reference.select/4 uses.
-    case Enum.find(
-           tracks,
-           &(Language.raw_track_satisfies?(language, &1.language) and not &1.forced?)
-         ) do
+    # same forward-tolerance rule Cinder.Subtitles.Sync.Reference.select/4 uses. An unambiguous
+    # match ("cn"/"yue", "zh"/"cmn") is preferred over a generic-alias one ("chi"/"zho", tolerated
+    # by both) - the ambiguous track might genuinely be the other language (#573 review).
+    match =
+      tracks
+      |> Enum.filter(&(Language.raw_track_satisfies?(language, &1.language) and not &1.forced?))
+      |> Enum.sort_by(&if(Language.exact_track?(language, &1.language), do: 0, else: 1))
+      |> List.first()
+
+    case match do
       nil ->
         default_or_sidecar(video_path, language, target, tracks, cache)
 

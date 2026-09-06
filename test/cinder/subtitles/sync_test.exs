@@ -1058,6 +1058,35 @@ defmodule Cinder.Subtitles.SyncTest do
     assert [%{method: "embedded", status: :corrected}] = Sync.analyze_video(video)
   end
 
+  test "a cn (Cantonese) target prefers an unambiguous yue track over a louder generic chi track (#573)",
+       %{video: video} do
+    managed_srt!(video, "cn")
+
+    # "chi" (generic Chinese) satisfies "cn" via the forward-tolerance list but is ambiguous - it
+    # could genuinely be Mandarin. "yue" positively identifies Cantonese. The exact track must
+    # win even though the ambiguous one has far more packets (Codex review finding on PR #574).
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok,
+       [
+         %{index: 2, language: "chi", forced?: false, default?: true, packet_count: 999},
+         %{index: 3, language: "yue", forced?: false, default?: false, packet_count: 5}
+       ]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 3 ->
+      {:ok, subtitle(".srt")}
+    end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn reference, input, output ->
+      assert File.read!(reference) == subtitle(".srt")
+      assert File.read!(input) == subtitle(".srt")
+      File.write!(output, shifted_subtitle(subtitle(".srt")))
+      {:ok, %{score: 30.0, offset_ms: 1_000, rate: 1.0}}
+    end)
+
+    assert [%{method: "embedded", status: :corrected}] = Sync.analyze_video(video)
+  end
+
   test "restores legacy embedded corrections before language-matched reanalysis", %{video: video} do
     path = managed_srt!(video, "fr")
     original = File.read!(path)
