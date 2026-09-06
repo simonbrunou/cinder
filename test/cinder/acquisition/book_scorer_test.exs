@@ -325,6 +325,34 @@ defmodule Cinder.Acquisition.BookScorerTest do
       assert {:reject, :title_mismatch} =
                BookScorer.evaluate(release("X - Foo 13 - Room (epub)"), work)
     end
+
+    test "a structured series entry (map, not string) does not crash the ordinal check" do
+      # Codex review, round 2: `Cinder.Books.Metadata.work/0`'s documented series shape is a list
+      # of `%{name:, position:}` maps, not plain strings.
+      work = %{title: "Room 13", authors: ["X"], series: [%{name: "Foo", position: "1"}]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Foo 13 - Room (epub)"), work)
+    end
+
+    test "a series ordinal is recognized across a normalized (dot/underscore) separator" do
+      # Codex review, round 2: a scene-style release writes the series name with dots, not the
+      # literal spaces the metadata carries -- the same normalization `tokens/1` already applies.
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo Bar"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Foo.Bar.13 - Room (epub)"), work)
+    end
+
+    test "an eponymous series name is preserved as title evidence, only its ordinal is stripped" do
+      # Codex review, round 2: when the work's own title IS its series name ("Dune"), stripping
+      # the whole "Dune 01" match (not just "01") erased the title itself and wrongly rejected a
+      # legitimate release.
+      work = %{title: "Dune", authors: ["Frank Herbert"], series: ["Dune"]}
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("Frank Herbert - Dune 01 (epub)"), work)
+    end
   end
 
   describe "protocol" do

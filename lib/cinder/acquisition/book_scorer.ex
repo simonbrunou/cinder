@@ -404,14 +404,44 @@ defmodule Cinder.Acquisition.BookScorer do
     work
     |> Map.get(:series)
     |> List.wrap()
-    |> Enum.reduce(title, fn series_name, acc ->
-      String.replace(acc, series_ordinal_regex(series_name), " ")
-    end)
+    |> Enum.reduce(title, &apply_series_ordinal_strip/2)
   end
 
-  defp series_ordinal_regex(series_name) do
-    Regex.compile!("\\b" <> Regex.escape(series_name) <> "\\s*\\d{1,3}\\b", "i")
+  defp apply_series_ordinal_strip(series_entry, title) do
+    case series_ordinal_regex(series_entry) do
+      nil -> title
+      regex -> Regex.replace(regex, title, fn _whole, name -> name <> " " end)
+    end
   end
+
+  # Matched on the series name's own TOKENS, joined by "any run of non-alphanumeric characters",
+  # not its literal metadata spelling -- an indexer writing scene-style "Foo.Bar.13" for a series
+  # named "Foo Bar" is the identical separator normalization `tokens/1` already applies everywhere
+  # else, and a literal-space match missed it, leaving the ordinal unstripped and readmitting the
+  # coincidence this function exists to close (Codex review).
+  #
+  # The series-name portion is CAPTURED and kept in the replacement, and only the trailing digits
+  # are dropped -- replacing the WHOLE match unconditionally erased the series name's own text
+  # too, which wrongly rejected a legitimate release when the work's title IS its series name
+  # ("Dune", series `["Dune"]`): the release's "Dune 01" lost "Dune" along with "01", and the
+  # title check no longer found the wanted title at all (Codex review).
+  #
+  # `work.series` entries are the plain strings every existing caller and fixture uses, but
+  # `Cinder.Books.Metadata.work/0`'s documented shape is a list of `%{name:, position:}` maps;
+  # `series_name/1` accepts either so this never crashes on the real shape (Codex review).
+  defp series_ordinal_regex(series_entry) do
+    with name when is_binary(name) <- series_name(series_entry),
+         [_ | _] = words <- tokens(name) do
+      pattern = Enum.map_join(words, "[^A-Za-z0-9]+", &Regex.escape/1)
+      Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*\\d{1,3}\\b", "i")
+    else
+      _ -> nil
+    end
+  end
+
+  defp series_name(%{name: name}) when is_binary(name), do: name
+  defp series_name(name) when is_binary(name), do: name
+  defp series_name(_other), do: nil
 
   # A bare 1-3 digit token between separators is ambiguous: overwhelmingly it is release-side
   # series-position noise ("Sanderson - The Stormlight Archive 01 - The Way of Kings"), but a
@@ -579,7 +609,7 @@ defmodule Cinder.Acquisition.BookScorer do
     work
     |> Map.get(:series)
     |> List.wrap()
-    |> Enum.flat_map(&tokens/1)
+    |> Enum.flat_map(&(&1 |> series_name() |> tokens()))
   end
 
   # A collection marker is evidence of ambiguity only when the REQUEST did not ask for one. Works

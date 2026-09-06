@@ -293,14 +293,30 @@ defmodule Cinder.Acquisition.AudiobookScorer do
     work
     |> Map.get(:series)
     |> List.wrap()
-    |> Enum.reduce(title, fn series_name, acc ->
-      String.replace(acc, series_ordinal_regex(series_name), " ")
-    end)
+    |> Enum.reduce(title, &apply_series_ordinal_strip/2)
   end
 
-  defp series_ordinal_regex(series_name) do
-    Regex.compile!("\\b" <> Regex.escape(series_name) <> "\\s*\\d{1,3}\\b", "i")
+  defp apply_series_ordinal_strip(series_entry, title) do
+    case series_ordinal_regex(series_entry) do
+      nil -> title
+      regex -> Regex.replace(regex, title, fn _whole, name -> name <> " " end)
+    end
   end
+
+  # See `Cinder.Acquisition.BookScorer.series_ordinal_regex/1` for the reasoning (Codex review).
+  defp series_ordinal_regex(series_entry) do
+    with name when is_binary(name) <- series_name(series_entry),
+         [_ | _] = words <- tokens(name) do
+      pattern = Enum.map_join(words, "[^A-Za-z0-9]+", &Regex.escape/1)
+      Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*\\d{1,3}\\b", "i")
+    else
+      _ -> nil
+    end
+  end
+
+  defp series_name(%{name: name}) when is_binary(name), do: name
+  defp series_name(name) when is_binary(name), do: name
+  defp series_name(_other), do: nil
 
   # See `Cinder.Acquisition.BookScorer.strip_series_number/2` -- copied rather than shared per
   # this module's own "new sibling modules, not widened e-book ones" decision (moduledoc).
@@ -422,7 +438,7 @@ defmodule Cinder.Acquisition.AudiobookScorer do
     work
     |> Map.get(:series)
     |> List.wrap()
-    |> Enum.flat_map(&tokens/1)
+    |> Enum.flat_map(&(&1 |> series_name() |> tokens()))
   end
 
   defp check_collection(%AudiobookRelease{collection?: true} = release, work) do

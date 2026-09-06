@@ -206,6 +206,27 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
       assert {:reject, :title_mismatch} =
                AudiobookScorer.evaluate(release("X - Foo 13 - Room (M4B)"), work)
     end
+
+    test "a structured series entry (map, not string) does not crash the ordinal check" do
+      work = %{title: "Room 13", authors: ["X"], series: [%{name: "Foo", position: "1"}]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Foo 13 - Room (M4B)"), work)
+    end
+
+    test "a series ordinal is recognized across a normalized (dot/underscore) separator" do
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo Bar"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Foo.Bar.13 - Room (M4B)"), work)
+    end
+
+    test "an eponymous series name is preserved as title evidence, only its ordinal is stripped" do
+      work = %{title: "Dune", authors: ["Frank Herbert"], series: ["Dune"]}
+
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(release("Frank Herbert - Dune 01 (M4B)"), work)
+    end
   end
 
   describe "unfoldable titles" do
