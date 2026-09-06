@@ -405,6 +405,42 @@ defmodule CinderWeb.MyRequestsLiveTest do
       refute row_html =~ "Approved"
     end
 
+    # PR #557 follow-up: a household is single-shared, so a SECOND requester's approval can
+    # drive the SAME target the first requester's OWN request was denied against all the way to
+    # :available. The first requester's row must keep reading Denied (it still renders its own
+    # denial reason and Request again) — not silently start reading Available because someone
+    # else's request happened to land on the shared target, which would erase the record that
+    # THIS request was refused. (The shared, current-state book_badge_state/2 that Discover and
+    # the book detail page use makes the opposite call on purpose — see its own moduledoc.)
+    test "a denied row stays Denied even after a different requester's approval makes the shared target available",
+         %{conn: conn, work: work, profile: profile} do
+      denied_user = Cinder.AccountsFixtures.user_fixture()
+      approved_user = Cinder.AccountsFixtures.user_fixture()
+      admin = Cinder.AccountsFixtures.admin_fixture()
+
+      {:ok, denied_request} =
+        Requests.create_request(denied_user, %{
+          target_type: "book",
+          target_id: work.id,
+          media_kind: :ebook
+        })
+
+      {:ok, denied_request} = Requests.deny_request(denied_request, admin, "not now")
+
+      {approved_request, target} = approve_book(approved_user, admin, work, :ebook, profile)
+      assert approved_request.target_id == denied_request.target_id
+
+      {:ok, _file} =
+        Books.Files.record_import(target, %{path: "/lib/shared.epub", size: 1, format: :epub})
+
+      conn = log_in_user(conn, denied_user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      row_html = lv |> element("#request-#{denied_request.id}") |> render()
+      assert row_html =~ "Denied"
+      refute row_html =~ "Available"
+    end
+
     # PR #557 review finding: Books.Grabs.track/2 broadcasts {:book_grab_updated, grab} on this
     # same topic on every transfer-metrics tick (normally every five seconds while a book
     # download is active), but this page renders no book-grab metrics. Before the fix the

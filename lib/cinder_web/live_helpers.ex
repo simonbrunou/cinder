@@ -61,21 +61,25 @@ defmodule CinderWeb.LiveHelpers do
 
   @doc """
   Folds a book's request status and its `book_targets` status into one badge state. Single source
-  of truth for every book-badge surface: Discover's cards and the work page read the same two
-  inputs, and deriving them separately is how the two drift into disagreeing about one work.
+  of truth for every book-badge surface: Discover's cards, the book detail page, and the library
+  page read the same two inputs, and deriving them separately is how the two drift into
+  disagreeing about one work. This answers "what is this work's status for this viewer right
+  now" — a live, current-state question — which is why the target always outranks the request,
+  `:denied` included: a household is single-shared, so a book a *different* request made
+  `:available` is genuinely available to everyone, and telling a denied requester otherwise would
+  hide a book they can already open and (on Discover's book detail page) wrongly re-offer a
+  request button for it.
 
-  A `:denied` request is short-circuited before any target folding — a denied row is a historical
-  record of that specific request being refused, and multiple requests for the same work/kind can
-  share one `book_targets` row (a later, approved request folds onto the same target a household
-  member's earlier request was denied against). Letting the target outrank `:denied` would make
-  the denied row silently start reading Approved/Held/Available once the *other* request's target
-  progresses, even though this row still renders its own denial reason and "Request again" action.
+  `CinderWeb.MyRequestsLive` is a DIFFERENT question — "what happened to each of MY own past
+  requests" — and answers it with its own local `:denied` short-circuit in `book_badge/2` rather
+  than here, precisely so that history-of-my-requests view can diverge from this one without
+  every other current-status surface inheriting it.
 
-  For every other request status, the target outranks the request once it exists — an approved
-  request whose target has since gone `:available` is available, not merely approved. `:monitored`
-  outranks a *pending* request for the same reason: a second household member requesting a work
-  someone else already had approved is waiting on nothing, and telling them "Pending" invites them
-  to chase an admin who has no action left to take.
+  The target outranks the request once it exists — an approved request whose target has since gone
+  `:available` is available, not merely approved. `:monitored` outranks a *pending* request for the
+  same reason: a second household member requesting a work someone else already had approved is
+  waiting on nothing, and telling them "Pending" invites them to chase an admin who has no action
+  left to take.
 
   `:held` outranks the request for the same reason `:available` does, and B4b is when it started
   to matter: the acquisition pipeline now parks a target `:held` with a `hold_reason` on a dead
@@ -92,12 +96,12 @@ defmodule CinderWeb.LiveHelpers do
   than a plain "Unmonitored" label.
   """
   @spec book_badge_state(atom() | nil, atom() | nil) :: atom()
-  def book_badge_state(:denied, _target), do: :denied
   def book_badge_state(_request, :available), do: :available
   def book_badge_state(_request, :held), do: :held
   def book_badge_state(_request, :monitored), do: :approved
   def book_badge_state(:pending, _target), do: :pending
   def book_badge_state(:approved, _target), do: :approved
+  def book_badge_state(:denied, _target), do: :denied
   def book_badge_state(nil, :unmonitored), do: :unmonitored
   def book_badge_state(_request, _target), do: :none
 

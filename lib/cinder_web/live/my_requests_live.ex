@@ -228,10 +228,17 @@ defmodule CinderWeb.MyRequestsLive do
     |> Books.target_statuses()
   end
 
-  # A book row's own status (never another request row's, even one racing to re-request the
-  # same target — the denied row that "Request again" leaves behind keeps reading Denied, same
-  # as a movie's own row does) folded with its target's current status via the single shared
-  # `book_badge_state/2` every other book-badge surface uses.
+  # A book row's own status — never another request row's, even one racing to re-request the
+  # same target. `:denied` is short-circuited HERE, not in the shared `book_badge_state/2`
+  # (Codex review on PR #557): this is the one surface answering "what happened to each of MY
+  # own past requests," a history question, so a denied row keeps reading Denied even once a
+  # DIFFERENT request folds the shared target to :available/:held/:monitored — it still renders
+  # its own denial reason and "Request again" action. Every other book-badge surface
+  # (Discover, book detail, library) answers a different, current-state question — "is this
+  # book available right now" — where the household-shared target correctly outranks any one
+  # user's denied request, so that behavior stays in the shared function, not here.
+  defp book_badge(%{target_type: "book", status: :denied}, _book_target_states), do: :denied
+
   defp book_badge(%{target_type: "book"} = r, book_target_states),
     do: book_badge_state(r.status, book_target_states[{r.target_id, r.media_kind}])
 

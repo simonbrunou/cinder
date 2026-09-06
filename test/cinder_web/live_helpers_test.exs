@@ -81,16 +81,18 @@ defmodule CinderWeb.LiveHelpersTest do
       assert book_badge_state(nil, nil) == :none
     end
 
-    # PR #557 review finding: a household member's earlier, denied request and a later,
-    # approved one for the same work/kind share ONE book_targets row. Once that shared target
-    # progresses to :available/:held/:monitored, the denied row must keep reading Denied — it
-    # still renders its own denial reason and "Request again" action, so silently relabeling it
-    # Approved/Held/Available (because the OTHER request's target moved on) would be wrong.
-    test "a denied request never inherits a shared target's later lifecycle" do
-      assert book_badge_state(:denied, :available) == :denied
-      assert book_badge_state(:denied, :held) == :denied
-      assert book_badge_state(:denied, :monitored) == :denied
-      assert book_badge_state(:denied, :unmonitored) == :denied
+    # PR #557 follow-up: a household is single-shared, so a book a DIFFERENT request already
+    # made :available/:held/:monitored is genuinely that, for every current-state surface
+    # (Discover, book detail, library) — a denied requester must still be told the truth about
+    # whether the book is actually there, not shown a stale "Denied" for something they can
+    # already open. `CinderWeb.MyRequestsLive` needs the opposite (a denied ROW keeps reading
+    # Denied) precisely because it answers a different question — "what happened to each of my
+    # own past requests" — and gets it via its own local short-circuit in `book_badge/2`, not
+    # here. Pinning both halves of that split so neither regresses into the other's job.
+    test "the target still outranks a denied request in the shared, current-state function" do
+      assert book_badge_state(:denied, :available) == :available
+      assert book_badge_state(:denied, :held) == :held
+      assert book_badge_state(:denied, :monitored) == :approved
     end
 
     # A linked target with no request behind it and still `:unmonitored` must render its own
