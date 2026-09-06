@@ -80,7 +80,7 @@ defmodule Cinder.Acquisition.BookParser do
   # `books 1-3` / `#1-5` / `vol 1-3` are ranges, not single volumes. A bare "collection" or
   # "anthology" is enough on its own; those words are near-never part of a novel's own title, and
   # when they are, the cost is a manual search rather than a wrong import.
-  @collection [
+  @collection_markers [
     ~r/\bomnibus\b/i,
     ~r/\banthology\b/i,
     ~r/\bcollection\b/i,
@@ -88,12 +88,28 @@ defmodule Cinder.Acquisition.BookParser do
     # closed-up spelling.
     ~r/\bbox[\s._-]?sets?\b/i,
     ~r/\bcomplete\s+(?:series|works|collection|trilogy|saga)\b/i,
-    # A bare numeric range with no "books"/"vols" prefix — "The Stormlight Archive 1-3" — is the
-    # same pack, written the way most uploaders actually write it. Bounded to 1-2 digits per side
-    # so a year range or an ISBN fragment cannot read as a volume span.
+    # A keyword-prefixed range ("Books 1-3", "Vols 1-3") carries its own word, so unlike the bare
+    # range below it needs no further corroboration to count as a collection claim.
     ~r/\b(?:books?|vols?|volumes?)[\s._#-]*\d+\s*(?:-|–|to|thru|through)\s*\d+\b/i,
-    ~r/\s\d{1,2}\s*(?:-|–)\s*\d{1,2}\b/,
+    # A hash-prefixed range ("#1-3", "#1-5") is `#` PLUS a range — that "#" is itself explicit
+    # volume/issue notation, not punctuation a title incidentally carries, so this is unconditional
+    # evidence exactly like the keyword-prefixed range above (Codex review, #518): a numeric title
+    # that also happens to contain the same digits ("Numeric Work 1/3" against a release naming
+    # itself "... 1/3 #1-3") must not forgive an explicit "#1-3" pack claim just because its own
+    # title coincidentally shares those digits.
     ~r/#\s*\d+\s*(?:-|–)\s*\d+\b/
+  ]
+
+  # A bare numeric range with no "books"/"vols" prefix and no leading "#" — "The Stormlight
+  # Archive 1-3" — is the same pack, written the way most uploaders actually write it, and is
+  # bounded to 1-2 digits per side so a year range or an ISBN fragment cannot read as a volume
+  # span. But with no keyword and no "#" it is genuinely ambiguous: a work whose own title IS a
+  # number written as a range ("11/22/63", punctuation-normalized to "11-22-63") matches the
+  # identical shape (#518). The digits are captured so `BookScorer.check_collection/2` can tell
+  # the two apart by comparing them against the wanted title's own numeric tokens — a real pack's
+  # span shares no such run with an unrelated wanted title.
+  @collection_numeric_ranges [
+    ~r/\s(\d{1,2})\s*(?:-|–)\s*(\d{1,2})\b/
   ]
 
   # `{regex, tag}` for each language, derived from the shared registry so the two families cannot
@@ -112,24 +128,59 @@ defmodule Cinder.Acquisition.BookParser do
           language: String.t() | nil,
           retail?: boolean(),
           collection?: boolean(),
+          collection_numbers: [String.t()] | nil,
           abridged?: boolean()
         }
   def parse(name) when is_binary(name) do
+    {collection?, collection_numbers} = collection_evidence(name)
+
     %{
       formats: formats(name),
       language: language(name),
       retail?: Regex.match?(@retail, name),
-      collection?: Enum.any?(@collection, &Regex.match?(&1, name)),
+      collection?: collection?,
+      collection_numbers: collection_numbers,
       abridged?: Regex.match?(@abridged, name)
     }
   end
 
   def parse(_name),
-    do: %{formats: [], language: nil, retail?: false, collection?: false, abridged?: false}
+    do: %{
+      formats: [],
+      language: nil,
+      retail?: false,
+      collection?: false,
+      collection_numbers: nil,
+      abridged?: false
+    }
 
   @doc "Every format token the parser recognizes, in preference-neutral recognizer order."
   @spec known_formats() :: [atom()]
   def known_formats, do: Enum.map(@formats, fn {_regex, format} -> format end) |> Enum.uniq()
+
+  # A keyword marker is unambiguous evidence on its own. A bare numeric range gets no benefit of
+  # the doubt when a keyword marker ALSO matched — that is real additional evidence of a pack, not
+  # a coincidental digit overlap with the wanted title — so its digits are only captured when the
+  # numeric range is the ENTIRE collection evidence for this release.
+  defp collection_evidence(name) do
+    if Enum.any?(@collection_markers, &Regex.match?(&1, name)) do
+      {true, nil}
+    else
+      case numeric_range(name) do
+        nil -> {false, nil}
+        numbers -> {true, numbers}
+      end
+    end
+  end
+
+  defp numeric_range(name) do
+    Enum.find_value(@collection_numeric_ranges, fn regex ->
+      case Regex.run(regex, name) do
+        [_whole, a, b] -> [a, b]
+        nil -> nil
+      end
+    end)
+  end
 
   # Formats are read from the TAG REGION, not the whole name — the same discipline `language/1`
   # follows, and for the same reason. A book ABOUT a format carries the word in its title:

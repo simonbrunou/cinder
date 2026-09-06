@@ -195,6 +195,24 @@ defmodule Cinder.Acquisition.BookParserTest do
       assert %{collection?: false} =
                BookParser.parse("Brandon Sanderson - The Way of Kings Book 1 (epub)")
     end
+
+    test "a bare numeric range records its digits so the scorer can tell a title from a span" do
+      assert %{collection?: true, collection_numbers: ["11", "22"]} =
+               BookParser.parse("Stephen King - 11-22-63 (epub)")
+    end
+
+    test "a keyword-marked range records no digits — it needs no extra corroboration" do
+      assert %{collection?: true, collection_numbers: nil} =
+               BookParser.parse("Brandon Sanderson - Stormlight Archive Books 1-3 (epub)")
+    end
+
+    test "a hash-prefixed range records no digits either — '#' is its own unconditional evidence" do
+      # Codex review: a bare-range digit match was being captured even for "#1-3", so a numeric
+      # title sharing those same digits could forgive an explicit "#1-3" pack claim. "#" is
+      # explicit volume/issue notation on its own, so it must never be forgivable.
+      assert %{collection?: true, collection_numbers: nil} =
+               BookParser.parse("Author - Series #1-3 (epub)")
+    end
   end
 
   test "known_formats/0 lists the recognizer's vocabulary" do

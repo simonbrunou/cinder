@@ -574,6 +574,55 @@ defmodule Cinder.Acquisition.BookScorerTest do
                  work
                )
     end
+
+    # #518: the bare numeric-range regex ("11-22-63") has no keyword, so it cannot tell a
+    # collection span from a numeric title's own number written as a range -- fixed here so the
+    # release no longer fails at the COLLECTION gate. Full acceptance also needed #517's
+    # wanted-number preservation in `check_title/2`; both are merged now, so the release is fully
+    # accepted rather than merely clearing one gate.
+    test "a numeric title matching the release's own bare range is fully accepted" do
+      work = %{title: "11/22/63", authors: ["Stephen King"]}
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("Stephen King - 11-22-63 (epub)"), work)
+    end
+
+    # The other direction: a bare numeric range that does NOT match the wanted title's own digits
+    # is still a genuine, unexplained collection claim and must still be refused.
+    test "a bare numeric range unrelated to the wanted title is still refused" do
+      work = %{title: "The Way of Kings", authors: ["Brandon Sanderson"]}
+
+      assert {:reject, :collection_ambiguous} =
+               BookScorer.evaluate(
+                 release("Brandon Sanderson - The Way of Kings 1-3 (epub)"),
+                 work
+               )
+    end
+
+    test "an explicit hash-range pack is refused even when its digits match the wanted title" do
+      # Codex review: "#1-3" is explicit volume/issue notation, unconditional evidence of a pack,
+      # regardless of whether the wanted title happens to share those digits.
+      work = %{title: "Numeric Work 1/3", authors: ["Author Name"]}
+
+      assert {:reject, :collection_ambiguous} =
+               BookScorer.evaluate(
+                 release("Author Name - Numeric Work 1/3 #1-3 (epub)"),
+                 work
+               )
+    end
+
+    test "a bare pack range redundant with the wanted title's own number is still refused" do
+      # Codex review, round 2: the release restates the wanted number ONCE as its own title
+      # ("1/3") and a SECOND time as a genuinely separate bare-range pack marker ("1-3"). A real
+      # numeric title needs its number only once; the second occurrence is unexplained.
+      work = %{title: "Numeric Work 1/3", authors: ["Author Name"]}
+
+      assert {:reject, :collection_ambiguous} =
+               BookScorer.evaluate(
+                 release("Author Name - Numeric Work 1/3 1-3 (epub)"),
+                 work
+               )
+    end
   end
 
   describe "language" do

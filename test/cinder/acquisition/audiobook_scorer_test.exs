@@ -351,6 +351,45 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
                  work
                )
     end
+
+    # See `Cinder.Acquisition.BookScorerTest`'s matching test for the reasoning: #517 and #518 are
+    # both merged now, so the release is fully accepted rather than merely clearing one gate.
+    test "a numeric title matching the release's own bare range is fully accepted" do
+      work = %{title: "11/22/63", authors: ["Stephen King"]}
+
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(release("Stephen King - 11-22-63 (M4B)"), work)
+    end
+
+    test "a bare numeric range unrelated to the wanted title is still refused" do
+      work = %{title: "The Way of Kings", authors: ["Brandon Sanderson"]}
+
+      assert {:reject, :collection_ambiguous} =
+               AudiobookScorer.evaluate(
+                 release("Brandon Sanderson - The Way of Kings 1-3 (M4B)"),
+                 work
+               )
+    end
+
+    test "an explicit hash-range pack is refused even when its digits match the wanted title" do
+      work = %{title: "Numeric Work 1/3", authors: ["Author Name"]}
+
+      assert {:reject, :collection_ambiguous} =
+               AudiobookScorer.evaluate(
+                 release("Author Name - Numeric Work 1/3 #1-3 (M4B)"),
+                 work
+               )
+    end
+
+    test "a bare pack range redundant with the wanted title's own number is still refused" do
+      work = %{title: "Numeric Work 1/3", authors: ["Author Name"]}
+
+      assert {:reject, :collection_ambiguous} =
+               AudiobookScorer.evaluate(
+                 release("Author Name - Numeric Work 1/3 1-3 (M4B)"),
+                 work
+               )
+    end
   end
 
   describe "language" do

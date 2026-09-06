@@ -400,14 +400,46 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   end
 
   defp check_collection(%AudiobookRelease{collection?: true} = release, work) do
-    wanted = work |> Map.fetch!(:title) |> tokens() |> MapSet.new()
+    wanted_tokens = work |> Map.fetch!(:title) |> tokens()
+    wanted = MapSet.new(wanted_tokens)
 
-    if release.title |> tokens() |> Enum.any?(&(&1 in @collection_words and &1 in wanted)),
-      do: :ok,
-      else: {:reject, :collection_ambiguous}
+    cond do
+      release.title |> tokens() |> Enum.any?(&(&1 in @collection_words and &1 in wanted)) ->
+        :ok
+
+      numeric_range_forgiven?(release, wanted_tokens) ->
+        :ok
+
+      true ->
+        {:reject, :collection_ambiguous}
+    end
   end
 
   defp check_collection(%AudiobookRelease{}, _work), do: :ok
+
+  # See `Cinder.Acquisition.BookScorer.numeric_range_forgiven?/2` for the reasoning.
+  defp numeric_range_forgiven?(%AudiobookRelease{collection_numbers: nil}, _wanted_tokens),
+    do: false
+
+  defp numeric_range_forgiven?(
+         %AudiobookRelease{collection_numbers: numbers} = release,
+         wanted_tokens
+       ) do
+    span = length(numbers)
+
+    wanted_tokens
+    |> Enum.chunk_every(span, 1, :discard)
+    |> Enum.any?(&(&1 == numbers)) and occurs_once?(release.title, numbers)
+  end
+
+  defp occurs_once?(title, numbers) do
+    span = length(numbers)
+
+    title
+    |> tokens()
+    |> Enum.chunk_every(span, 1, :discard)
+    |> Enum.count(&(&1 == numbers)) == 1
+  end
 
   defp check_abridgement(%AudiobookRelease{abridged?: true}, work) do
     if Map.get(work, :abridged) == true, do: :ok, else: {:reject, :abridged_edition}

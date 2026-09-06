@@ -33,6 +33,7 @@ defmodule Cinder.Acquisition.AudiobookRelease do
           language: String.t() | nil,
           retail?: boolean() | nil,
           collection?: boolean() | nil,
+          collection_numbers: [String.t()] | nil,
           abridged?: boolean() | nil,
           narrator: String.t() | nil
         }
@@ -51,6 +52,7 @@ defmodule Cinder.Acquisition.AudiobookRelease do
     :language,
     :retail?,
     :collection?,
+    :collection_numbers,
     :abridged?,
     :narrator
   ]
