@@ -215,9 +215,19 @@ defmodule Cinder.Library.Sidecars do
     end
   end
 
+  # Issue #558, residual 1: bounded, so a `safe_destination/2` rejection that is genuinely
+  # permanent (a real symlink somewhere in the path, an invalid root) still gives up and logs,
+  # exactly as before — this only gives a TRANSIENT one (an I/O error mid-walk) a second chance
+  # before the captured identity is discarded for good. A fresh token each attempt costs nothing:
+  # `safe_destination/2` is (re-)validating a path that does not exist yet either way.
+  @quarantine_setup_attempts 3
+
   defp reclaim_owned_partial(_dest, _root, nil), do: :ok
 
-  defp reclaim_owned_partial(dest, root, identity) do
+  defp reclaim_owned_partial(dest, root, identity),
+    do: reclaim_owned_partial(dest, root, identity, @quarantine_setup_attempts)
+
+  defp reclaim_owned_partial(dest, root, identity, attempts) do
     # A random token, not System.unique_integer/1: verification failures and occupied-name
     # restores deliberately leave a quarantine file behind (see resolve_quarantined_partial/4
     # and restore_quarantined_partial/2), and unique_integer/1 is only unique for the current
@@ -230,6 +240,9 @@ defmodule Cinder.Library.Sidecars do
     case safe_destination(quarantine_name, root) do
       {:ok, quarantine} ->
         quarantine_owned_partial(dest, quarantine, root, identity)
+
+      {:error, _reason} when attempts > 1 ->
+        reclaim_owned_partial(dest, root, identity, attempts - 1)
 
       {:error, reason} ->
         Logger.warning("sidecar reclaim rejected for #{dest}: #{inspect(reason)}")

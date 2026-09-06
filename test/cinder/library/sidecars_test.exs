@@ -341,6 +341,90 @@ defmodule Cinder.Library.SidecarsTest do
       assert File.read!(sidecar_dest) == "concurrent replacement"
     end
 
+    # Issue #558, residual 1: `safe_destination/2` validates the QUARANTINE name itself (a
+    # symlink-safety walk of its path components) before `reclaim_owned_partial/3` ever renames
+    # `dest` there. A transient failure partway through that walk — an I/O error on one existing
+    # ancestor component, not the (expected-missing) quarantine leaf itself — must not strand the
+    # captured identity: `dest` is never renamed anywhere, so a later retry's own cp_exclusive
+    # hits :eexist immediately and on_create never runs again, reproducing the original #515
+    # "stuck forever" bug for this one narrower trigger.
+    @tag :tmp_dir
+    test "a transient failure validating the quarantine name gets a second chance, not stuck forever",
+         %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "a complete subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_all_links(:eopnotsupp)
+      Application.put_env(:cinder, :exclusive_copy_file_module, TruncatingWriteFile)
+      on_exit(fn -> Application.delete_env(:cinder, :exclusive_copy_file_module) end)
+
+      # A single transient failure on the quarantine leaf's own lstat (part of safe_destination's
+      # component walk) — a genuine :enoent there is expected and harmless (the name doesn't
+      # exist yet); :eio is not, and is exactly what a transient I/O hiccup mid-walk looks like.
+      Application.put_env(:cinder, :filesystem_failures, [
+        %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :eio}
+      ])
+
+      log = capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+      assert log =~ "sidecar link rejected: :enospc"
+
+      # The truncated destination was reclaimed on a later attempt, not stranded at its
+      # permanent name — a subsequent retry can still land the real sidecar.
+      refute File.exists?(sidecar_dest)
+      assert Path.wildcard(Path.join(Path.dirname(sidecar_dest), ".cinder-tmp-*")) == []
+
+      assert Path.wildcard(Path.join(Path.dirname(sidecar_dest), ".cinder-sidecar-quarantine-*")) ==
+               []
+
+      Application.put_env(:cinder, :exclusive_copy_file_module, :file)
+      assert Sidecars.link(video, dest) == ["en"]
+      assert File.read!(sidecar_dest) == "a complete subtitle"
+    end
+
+    # The bound exists precisely so a genuinely permanent rejection (a real symlink in the
+    # path, an invalid root) still gives up and logs — not an infinite retry loop.
+    @tag :tmp_dir
+    test "quarantine-name validation retries are bounded: a persistent failure still fails safe",
+         %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "a complete subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_all_links(:eopnotsupp)
+      Application.put_env(:cinder, :exclusive_copy_file_module, TruncatingWriteFile)
+      on_exit(fn -> Application.delete_env(:cinder, :exclusive_copy_file_module) end)
+
+      # A single `:filesystem_failure` slot already holds fail_all_links/1's own `:ln` rejection
+      # above — sequenced `:filesystem_failures` is the mechanism that composes with it instead
+      # of clobbering it. One entry per bounded attempt, so every quarantine-name validation the
+      # retry makes fails the same persistent way.
+      Application.put_env(
+        :cinder,
+        :filesystem_failures,
+        List.duplicate(
+          %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :eio},
+          5
+        )
+      )
+
+      log = capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+      assert log =~ "sidecar link rejected: :enospc"
+      assert log =~ "sidecar reclaim rejected for #{sidecar_dest}: :unsafe_destination"
+
+      # Gave up after exhausting its bounded attempts — the truncated file is left at its
+      # permanent name (safe, not lost), same as any other quarantine-setup rejection.
+      assert File.read!(sidecar_dest) == "a c"
+    end
+
     @tag :tmp_dir
     test "an identity check that fails to stat during reclaim never guesses restore or discard",
          %{tmp_dir: tmp} do
