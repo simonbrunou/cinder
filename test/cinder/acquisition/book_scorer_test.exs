@@ -283,6 +283,198 @@ defmodule Cinder.Acquisition.BookScorerTest do
                  work
                )
     end
+
+    test "accepts a wanted title whose own number is a release-side bare digit" do
+      # `strip_noise/2` used to strip EVERY standalone 1-3 digit token as series-position noise,
+      # including one the wanted title itself needs -- the exact defect #517 describes.
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release("Ray Bradbury - Fahrenheit 451 (epub)"),
+                 %{title: "Fahrenheit 451", authors: ["Ray Bradbury"]}
+               )
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release("Joseph Heller - Catch-22 (epub)"),
+                 %{title: "Catch-22", authors: ["Joseph Heller"]}
+               )
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release("John Buchan - The 39 Steps (epub)"),
+                 %{title: "The 39 Steps", authors: ["John Buchan"]}
+               )
+    end
+
+    test "a different numbered work by the same author is still rejected" do
+      # The other direction: preserving the WANTED title's own number must not turn into ignoring
+      # numbers altogether. A release naming a different number entirely is still a different book.
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(
+                 release("John Buchan - The 24 Hours (epub)"),
+                 %{title: "The 39 Steps", authors: ["John Buchan"]}
+               )
+    end
+
+    test "an author whose name is also the edition abbreviation is not stripped as metadata" do
+      # Codex review, round 6: "ed" joined the edition-keyword strip list, but "Ed" is also a
+      # real first name. A dot-separated release with author "Ed" must not read "Ed" as an
+      # edition marker and lose both the author byline and the wanted title's own number.
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("Ed.13.epub"), %{title: "13", authors: ["Ed"]})
+    end
+
+    test "a leading space does not defeat the author-named-Ed guard" do
+      # Codex review, round 7: the guard excluding "ed" at the very start of the string must
+      # still hold when the release keeps a leading space before that start.
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release(" Ed.13.epub"), %{title: "13", authors: ["Ed"]})
+    end
+
+    test "a wanted title that IS a keyword phrase keeps its own number" do
+      # Codex review, round 7: "edition"/"book"/"vol" etc keyword stripping must not erase a
+      # wanted title that literally IS that phrase, mirroring the eponymous-series fix.
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("X - Edition 13 (epub)"), %{
+                 title: "Edition 13",
+                 authors: ["X"]
+               })
+    end
+
+    test "a genuine mid-release 'ed N' edition marker is not preserved by digit-value alone" do
+      # Codex review, round 8: the same eponymous-phrase test the other keywords use was missing
+      # for the abbreviated "ed" form -- it only checked whether the digit VALUE appeared
+      # anywhere in the wanted title, not whether "ed N" itself forms a run of wanted's tokens.
+      # "Ed 13" here is genuine edition metadata for a DIFFERENT "Room", not the requested
+      # "Room 13".
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Room - Ed 13 (epub)"), %{
+                 title: "Room 13",
+                 authors: ["X"]
+               })
+    end
+
+    test "a series ordinal that coincidentally equals the wanted number is not title evidence" do
+      # THE regression that matters most for #517: preserving the wanted title's own number must
+      # never loosen the title-match guard enough to admit an unrelated book. This release is a
+      # DIFFERENT book -- "Room", volume 13 of series "Foo" -- not the requested "Room 13"; its
+      # ordinal "13" merely coincides in value with the wanted title's own number. Driven through
+      # the public evaluate/3, not a private helper, so it exercises the full title-match guard.
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Foo 13 - Room (epub)"), work)
+    end
+
+    test "a structured series entry (map, not string) does not crash the ordinal check" do
+      # Codex review, round 2: `Cinder.Books.Metadata.work/0`'s documented series shape is a list
+      # of `%{name:, position:}` maps, not plain strings.
+      work = %{title: "Room 13", authors: ["X"], series: [%{name: "Foo", position: "1"}]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Foo 13 - Room (epub)"), work)
+    end
+
+    test "a series ordinal is recognized across a normalized (dot/underscore) separator" do
+      # Codex review, round 2: a scene-style release writes the series name with dots, not the
+      # literal spaces the metadata carries -- the same normalization `tokens/1` already applies.
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo Bar"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Foo.Bar.13 - Room (epub)"), work)
+    end
+
+    test "an eponymous series name is preserved as title evidence, only its ordinal is stripped" do
+      # Codex review, round 2: when the work's own title IS its series name ("Dune"), stripping
+      # the whole "Dune 01" match (not just "01") erased the title itself and wrongly rejected a
+      # legitimate release.
+      work = %{title: "Dune", authors: ["Frank Herbert"], series: ["Dune"]}
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("Frank Herbert - Dune 01 (epub)"), work)
+    end
+
+    test "a series ordinal is recognized despite a diacritic the release keeps" do
+      # Codex review, round 3: the pattern is built from the ASCII-folded series name but must
+      # still match the release's own accented spelling, not just a pre-folded one.
+      work = %{title: "Room 13", authors: ["X"], series: ["Café"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Café.13 - Room (epub)"), work)
+    end
+
+    test "an edition number that coincidentally equals the wanted number is not title evidence" do
+      # Codex review, round 4: the same coincidence series ordinals close applies to edition or
+      # printing metadata -- "Edition 13" for a DIFFERENT "Room" must not supply the wanted
+      # title's own missing "13" just because the digits match.
+      work = %{title: "Room 13", authors: ["X"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Room - Edition 13 (epub)"), work)
+    end
+
+    test "a series ordinal is recognized despite an apostrophe the release keeps" do
+      # Codex review, round 4: tokens/1 DROPS apostrophes rather than treating them as
+      # separators ("Dragon's" folds to "dragons"), so the ordinal pattern must tolerate one
+      # between letters, not just combining marks.
+      work = %{title: "Room 13", authors: ["X"], series: ["Dragon's Foo"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Dragon's Foo 13 - Room (epub)"), work)
+    end
+
+    test "a series ordinal is recognized whether it precedes or follows the series name" do
+      # Codex review, round 5: an indexer can write the ordinal before the series name too
+      # ("13 Foo"), not only after it ("Foo 13").
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - 13 Foo - Room (epub)"), work)
+    end
+
+    test "a number is preserved when the wanted title itself is the series name plus that number" do
+      # Codex review, round 6: the wanted title can BE its series name followed by its own
+      # number ("Room 13", series "Room") -- unlike the round-1 case (series "Foo" for a wanted
+      # "Room 13"), here the series name is genuinely part of the wanted title, so its adjacent
+      # number must not be stripped as an unrelated ordinal.
+      work = %{title: "Room 13", authors: ["X"], series: ["Room"]}
+
+      assert {:accept, _evidence} = BookScorer.evaluate(release("X - Room 13 (epub)"), work)
+    end
+
+    test "a proper field separator does not attach the next field's number as an ordinal" do
+      # Codex review, round 7: "Author - Series - Title" uses a spaced hyphen as a FIELD
+      # delimiter, not a tight ordinal separator -- the next field's own leading number
+      # ("13 Ways") must not be misread as the series' ordinal just because a loose hyphen
+      # sits between them.
+      work = %{title: "13 Ways", authors: ["X"], series: [%{name: "Foo", position: "1"}]}
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("X - Foo - 13 Ways (epub)"), work)
+    end
+
+    test "a digit embedded in the series name itself is not preserved for an unrelated title" do
+      # Codex review, round 7: the series name can itself embed a number ("Foo 13") that
+      # coincides with the wanted title's own digit while naming a completely different work.
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo 13"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Foo 13 - Room (epub)"), work)
+    end
+
+    test "a fractional series ordinal is consumed as one unit, not left partly exposed" do
+      # Codex review, round 8: a series position can be a decimal ("1.5", a novella between
+      # books 1 and 2). Matching only the integer prefix left the fractional remainder exposed
+      # as a coincidentally-matching bare digit for an unrelated wanted title.
+      work = %{
+        title: "Room 5",
+        authors: ["X"],
+        series: [%{name: "Foo", position: "1.5"}]
+      }
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X.Foo.1.5.Room.epub"), work)
+    end
   end
 
   describe "protocol" do

@@ -59,6 +59,18 @@ defmodule Cinder.Acquisition.Language do
   # language (park) from a code it doesn't recognise (could be a variant of the target; don't park).
   @known_audio_codes @audio_codes |> Map.values() |> List.flatten() |> MapSet.new()
 
+  # A code accepted by more than one canonical language's tolerance list (only "chi"/"zho" today
+  # — generic Chinese, tolerated by both "zh" and "cn") is ambiguous: it could genuinely be either
+  # language, so a track carrying it is a weaker match than one carrying a code unique to the
+  # target (an explicit "cn"/"yue", or "zh"/"cmn"). Powers `exact_track?/2` (#573 review).
+  @ambiguous_codes @audio_codes
+                   |> Map.values()
+                   |> List.flatten()
+                   |> Enum.frequencies()
+                   |> Enum.filter(fn {_code, count} -> count > 1 end)
+                   |> Enum.map(fn {code, _count} -> code end)
+                   |> MapSet.new()
+
   # An untagged release is English audio by scene convention (non-English is tagged).
   @default_audio "en"
 
@@ -161,6 +173,45 @@ defmodule Cinder.Acquisition.Language do
         Enum.any?(langs, &(&1 in accepted)) or Enum.any?(langs, &(&1 not in @known_audio_codes))
     end
   end
+
+  @doc """
+  Whether a RAW (un-normalized) MediaInfo-reported track language code satisfies `target` — the
+  same forward audio-code tolerance list `audio_satisfies?/2` draws from (so a Cantonese `"cn"`
+  target still accepts a generically-tagged `"chi"`/`"zho"` track), but strict: an unrecognized
+  code never satisfies, unlike `audio_satisfies?/2`'s deliberate leniency there (which exists to
+  avoid parking a download over a code it merely doesn't recognise — the wrong purpose when
+  actually *selecting* one specific track to use, per #573).
+
+  Checked two ways: the raw code directly against the tolerance list (never re-normalized first —
+  normalizing it away would lose exactly the ambiguous-vs-unambiguous distinction "chi"/"zho" vs
+  "cmn" this function exists to preserve), OR — because some encoders report a full-name tag
+  ("French") rather than an ISO code — its own `normalize/1` equal to the target's. That fallback
+  cannot let `"cmn"` satisfy `"cn"`: `normalize/1` pins `"cmn"` to `"zh"` unambiguously (only
+  `"zh"`'s registry entry lists it), so it only ever equals a `"zh"` target, never `"cn"`.
+  """
+  def raw_track_satisfies?(target, raw_code) when is_binary(raw_code) do
+    code = String.downcase(raw_code)
+    accepted = Map.get(@audio_codes, normalize(target), [normalize(target)])
+    code in accepted or normalize(code) == normalize(target)
+  end
+
+  def raw_track_satisfies?(_target, _raw_code), do: false
+
+  @doc """
+  Whether a RAW track code satisfies `target` (`raw_track_satisfies?/2`) via a code UNIQUE to
+  that target, not one shared with another language's tolerance list. "chi"/"zho" (generic
+  Chinese) satisfy both "zh" and "cn" — routinely correct, but weaker evidence than an explicit
+  "cn"/"yue" or "zh"/"cmn" track when multiple candidates are available. Track selectors should
+  prefer an exact match over an ambiguous one before falling back to packet count or order
+  (#573 review: a "cn" target must not settle for an earlier/louder ambiguous "chi" track over a
+  later/quieter but unambiguous "yue" one).
+  """
+  def exact_track?(target, raw_code) when is_binary(raw_code) do
+    code = String.downcase(raw_code)
+    raw_track_satisfies?(target, code) and code not in @ambiguous_codes
+  end
+
+  def exact_track?(_target, _raw_code), do: false
 
   @doc """
   Whether a file satisfies `target` on paper but *plays* in another language: `file_langs` holds the

@@ -30,6 +30,7 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   alias Cinder.Acquisition.AudiobookParser
   alias Cinder.Acquisition.AudiobookRelease
   alias Cinder.Acquisition.Parser
+  alias Cinder.Acquisition.TitleNoise
   alias Cinder.Books.TitleFold
 
   # B7a's own judgment (§0.1) — the two formats the roadmap names by name, M4B preferred. NOT
@@ -280,11 +281,11 @@ defmodule Cinder.Acquisition.AudiobookScorer do
 
   defp strip_noise(title, work) do
     title
+    # A release-side leading/trailing space must not shift the "start of string" TitleNoise's
+    # "ed"/author-collision guard anchors on.
+    |> String.trim()
     |> drop_bracketed_groups(work)
-    |> String.replace(~r/-[A-Za-z0-9]+$/, " ")
-    |> String.replace(~r/\b(?:book|bk|vol|volume|part|pt|no|nr)\b[ .#]*\d{1,3}\b/i, " ")
-    |> String.replace(~r/#\d{1,3}\b/, " ")
-    |> String.replace(~r/(?<=[-–—:.,]|\s)\d{1,3}(?=\s*[-–—:.,]|\s|$)/, " ")
+    |> TitleNoise.strip(work)
   end
 
   # Same bracket-drop shape `BookScorer.drop_bracketed_groups/2` uses, plus one addition: a
@@ -395,7 +396,7 @@ defmodule Cinder.Acquisition.AudiobookScorer do
     work
     |> Map.get(:series)
     |> List.wrap()
-    |> Enum.flat_map(&tokens/1)
+    |> Enum.flat_map(&(&1 |> TitleNoise.series_name() |> tokens()))
   end
 
   defp check_collection(%AudiobookRelease{collection?: true} = release, work) do

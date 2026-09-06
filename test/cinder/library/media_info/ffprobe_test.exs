@@ -247,11 +247,15 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
                }
              ]
            }) == [
-             %{index: 2, language: "en", default?: true, forced?: false, packet_count: 0}
+             %{index: 2, language: "eng", default?: true, forced?: false, packet_count: 0}
            ]
   end
 
-  test "parse_subtitle_tracks/1 normalizes chi/zho to zh, not cn, while yue stays cn (#519)" do
+  test "parse_subtitle_tracks/1 reports chi/zho/yue as their raw ffprobe codes, not zh/cn (#573)" do
+    # #519 previously canonicalized this value through Language.normalize/1 so "chi"/"zho"/"yue"
+    # all read as "zh"/"cn". That collapsed the very distinction a Cantonese "cn" reference/local
+    # source selector needs to tell a generic Chinese track ("chi"/"zho", forward-tolerant) apart
+    # from an explicitly Mandarin one ("cmn", never tolerant) - see Language.raw_track_satisfies?/2.
     assert Ffprobe.parse_subtitle_tracks(%{
              "streams" => [
                %{
@@ -274,9 +278,9 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
                }
              ]
            }) == [
-             %{index: 2, language: "zh", default?: false, forced?: false, packet_count: 0},
-             %{index: 3, language: "zh", default?: false, forced?: false, packet_count: 0},
-             %{index: 4, language: "cn", default?: false, forced?: false, packet_count: 0}
+             %{index: 2, language: "chi", default?: false, forced?: false, packet_count: 0},
+             %{index: 3, language: "zho", default?: false, forced?: false, packet_count: 0},
+             %{index: 4, language: "yue", default?: false, forced?: false, packet_count: 0}
            ]
   end
 
