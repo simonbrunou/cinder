@@ -19,6 +19,12 @@ defmodule Cinder.Library.MediaInfo do
 
   @type subtitle_track :: %{
           required(:index) => non_neg_integer(),
+          # The RAW registry code as reported by the probe (e.g. "chi", "eng"), validated against
+          # `Cinder.Acquisition.Language.known?/1` but deliberately NEVER canonicalized through
+          # `Language.normalize/1` — normalizing away "chi"/"zho" (accepted by both "zh" and "cn")
+          # into one value would make an ambiguous generic-Chinese track indistinguishable from an
+          # explicitly Mandarin "cmn" one to a "cn" (Cantonese) selector (#573). Compare it with
+          # `Language.raw_track_satisfies?/2` / `Language.exact_track?/2`, never `==`/`normalize/1`.
           required(:language) => String.t(),
           required(:default?) => boolean(),
           required(:forced?) => boolean(),
@@ -61,6 +67,11 @@ defmodule Cinder.Library.MediaInfo do
   @doc "Probes streams while preserving whether audio or subtitle language tags are unknown."
   @callback probe_policy(path :: String.t()) :: {:ok, probe_report()} | {:error, term()}
 
+  @doc """
+  Lists the file's text-based subtitle streams for embedded-track selection
+  (`Cinder.Subtitles.local_source/4`, `Cinder.Subtitles.Sync.Reference.select/4`). See
+  `subtitle_track/0` — `:language` is a raw, un-normalized code.
+  """
   @callback subtitle_tracks(path :: String.t()) ::
               {:ok, [subtitle_track()]} | {:error, term()}
 

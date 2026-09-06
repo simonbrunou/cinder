@@ -1,7 +1,7 @@
 defmodule Cinder.Subtitles.Sync.Reference do
   @moduledoc false
 
-  alias Cinder.Acquisition.{Language, Parser}
+  alias Cinder.Acquisition.Language
 
   def resolver(nil, _video_path), do: &audio/1
 
@@ -13,25 +13,22 @@ defmodule Cinder.Subtitles.Sync.Reference do
   end
 
   defp select(media_info, video_path, tracks, language) do
-    # Every real MediaInfo implementation reports an already-canonicalized track language
-    # (Cinder.Library.MediaInfo.Ffprobe.subtitle_language/1 calls Language.normalize/1 too), so
-    # "chi"/"zho" never reach here as raw alias strings — they arrive as "zh". A "cn" (Cantonese)
-    # target's forward tolerance list still lists the raw aliases ("cn", "yue", "zho", "chi"), so
-    # each of THOSE is normalized too before comparison: "zh" then legitimately satisfies a "cn"
-    # target (a generically-tagged Cantonese track), while a "yue"/"cn"-tagged track (which stays
-    # "cn" after normalization, unambiguous) still does too. Comparing raw alias strings against
-    # an already-canonical track language would never match at all (#519).
-    accepted =
-      language
-      |> Language.normalize()
-      |> then(&Map.get(Parser.audio_codes(), &1, [&1]))
-      |> Enum.map(&Language.normalize/1)
-      |> Enum.uniq()
-
+    # Language.raw_track_satisfies?/2 — a track's RAW (un-normalized) code against the forward
+    # tolerance list — not equality-after-normalize: a "cn" (Cantonese) target must still accept
+    # a generically-tagged "chi"/"zho" track, while correctly excluding an explicitly Mandarin
+    # "cmn" one (#519, #573). Cinder.Library.MediaInfo.Ffprobe.subtitle_language/1 reports the raw
+    # code for exactly this reason — never canonicalize &1.language before this comparison.
     tracks
-    |> Enum.filter(&(Language.normalize(&1.language) in accepted))
+    |> Enum.filter(&Language.raw_track_satisfies?(language, &1.language))
     |> Enum.reject(&Map.get(&1, :forced?, false))
-    |> Enum.sort_by(&Map.get(&1, :packet_count, 0), :desc)
+    # An unambiguous match (an explicit "cn"/"yue" or "zh"/"cmn" tag) beats a generic-alias one
+    # ("chi"/"zho", tolerated by both) regardless of packet count - the ambiguous track might
+    # genuinely be the other language (#573 review). Packet count still breaks ties within the
+    # same exactness tier.
+    |> Enum.sort_by(
+      &{if(Language.exact_track?(language, &1.language), do: 0, else: 1),
+       -Map.get(&1, :packet_count, 0)}
+    )
     |> Enum.find_value({:audio, nil}, fn track ->
       case media_info.extract_subtitle(video_path, track.index) do
         {:ok, content} when is_binary(content) -> {:embedded, {:content, content}}

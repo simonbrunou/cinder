@@ -366,12 +366,16 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     ]
   end
 
-  # Single source of truth for alias resolution — `Cinder.Acquisition.Language.normalize/1`,
-  # not a second reverse-lookup table built straight from `Parser.audio_codes/0`: that shape is
-  # exactly what made "chi"/"zho" (ambiguous between "zh" and Cantonese's "cn") resolve
-  # differently here than everywhere else that matters (#519).
+  # Deliberately NOT canonicalized through Language.normalize/1: that collapses "chi"/"zho"
+  # (ambiguous between "zh" and Cantonese's "cn") down to one value, indistinguishable from an
+  # explicitly Mandarin-only "cmn" track once both land on "zh" — exactly the precision
+  # Cinder.Subtitles.Sync.Reference.select/4 and Cinder.Subtitles.local_source/4 need to tell a
+  # merely-generic Chinese track from a definitively-Mandarin one when matching a Cantonese
+  # request (#573). Language.known?/1 still validates the code is one this registry recognises;
+  # the value returned is the raw, lowercased, trimmed tag itself.
   defp subtitle_language(%{"tags" => %{"language" => language}}) when is_binary(language) do
-    if Language.known?(language), do: Language.normalize(language), else: "und"
+    code = language |> String.trim() |> String.downcase()
+    if Language.known?(code), do: code, else: "und"
   end
 
   defp subtitle_language(_), do: "und"

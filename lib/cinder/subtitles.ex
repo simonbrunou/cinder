@@ -7,7 +7,7 @@ defmodule Cinder.Subtitles do
   """
 
   require Logger
-
+  alias Cinder.Acquisition.Language
   alias Cinder.Catalog.{Episode, Movie, Series}
   alias Cinder.Library.{PathPolicy, Sidecars}
   alias Cinder.Settings
@@ -275,7 +275,18 @@ defmodule Cinder.Subtitles do
   defp local_source(video_path, language, target, cache) do
     {tracks, cache} = subtitle_tracks(video_path, cache)
 
-    case Enum.find(tracks, &(track_language(&1) == language and not &1.forced?)) do
+    # Language.raw_track_satisfies?/2, not exact equality against the raw track code: a "cn"
+    # (Cantonese) request must still accept a generically-tagged "chi"/"zho" track (#573), the
+    # same forward-tolerance rule Cinder.Subtitles.Sync.Reference.select/4 uses. An unambiguous
+    # match ("cn"/"yue", "zh"/"cmn") is preferred over a generic-alias one ("chi"/"zho", tolerated
+    # by both) - the ambiguous track might genuinely be the other language (#573 review).
+    match =
+      tracks
+      |> Enum.filter(&(Language.raw_track_satisfies?(language, &1.language) and not &1.forced?))
+      |> Enum.sort_by(&if(Language.exact_track?(language, &1.language), do: 0, else: 1))
+      |> List.first()
+
+    case match do
       nil ->
         default_or_sidecar(video_path, language, target, tracks, cache)
 
@@ -631,8 +642,6 @@ defmodule Cinder.Subtitles do
          do: true,
          else: (_ -> false)
   end
-
-  defp track_language(track), do: Map.get(track, :language, "") |> String.downcase()
 
   defp with_moviehash(criteria_base, video_path) do
     case Moviehash.of_file(video_path) do
