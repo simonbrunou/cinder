@@ -576,15 +576,14 @@ defmodule Cinder.Acquisition.BookScorerTest do
     end
 
     # #518: the bare numeric-range regex ("11-22-63") has no keyword, so it cannot tell a
-    # collection span from a numeric title's own number written as a range. This check alone
-    # cannot make the release fully acceptable yet — that also needs #517's wanted-number
-    # preservation in `check_title/2` — so the assertion here is specifically that the release no
-    # longer fails at the COLLECTION gate; `:title_mismatch` (not `:collection_ambiguous`) proves
-    # this gate passed.
-    test "a numeric title matching the release's own bare range clears the collection gate" do
+    # collection span from a numeric title's own number written as a range -- fixed here so the
+    # release no longer fails at the COLLECTION gate. Full acceptance also needed #517's
+    # wanted-number preservation in `check_title/2`; both are merged now, so the release is fully
+    # accepted rather than merely clearing one gate.
+    test "a numeric title matching the release's own bare range is fully accepted" do
       work = %{title: "11/22/63", authors: ["Stephen King"]}
 
-      assert {:reject, :title_mismatch} =
+      assert {:accept, _evidence} =
                BookScorer.evaluate(release("Stephen King - 11-22-63 (epub)"), work)
     end
 
