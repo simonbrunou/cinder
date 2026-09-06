@@ -7,7 +7,7 @@ defmodule Cinder.Books.FilesTest do
   use Cinder.DataCase, async: false
 
   alias Cinder.Books
-  alias Cinder.Books.{BookFile, BookTarget}
+  alias Cinder.Books.{BookFile, BookTarget, Edition}
   alias Cinder.Catalog
 
   setup do
@@ -97,6 +97,78 @@ defmodule Cinder.Books.FilesTest do
       files = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
       assert [%BookFile{path: ^new_path, id: id}] = files
       assert id == first_file.id
+    end
+
+    # Codex review on PR #565: an adopted target can own MORE than one row (e.g. an EPUB and a
+    # MOBI from a Bookshelf import). A confirmed replace whose incoming path matches only ONE of
+    # them must still remove every OTHER format — "exactly one current e-book file" is the
+    # contract, not "exactly one row per touched path".
+    test "a same-path replace on a multi-format target supersedes every other format too", %{
+      target: target
+    } do
+      same_path = "/tmp/book-#{target.id}.epub"
+      other_path = "/tmp/book-#{target.id}.mobi"
+
+      assert {:ok, _epub} =
+               Books.Files.record_import(target, %{path: same_path, size: 1000, format: :epub})
+
+      assert {:ok, _mobi} =
+               Books.Files.insert_or_existing(target, %{
+                 book_target_id: target.id,
+                 path: other_path,
+                 size: 500,
+                 format: :mobi
+               })
+
+      assert {:ok, updated, superseded_paths} =
+               Books.Files.record_import(
+                 target,
+                 %{path: same_path, size: 2000, format: :epub},
+                 replace: true
+               )
+
+      assert updated.path == same_path
+      assert updated.size == 2000
+      assert superseded_paths == [other_path]
+
+      files = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
+      assert [%BookFile{path: ^same_path, size: 2000}] = files
+    end
+
+    # Codex review on PR #565: `update_existing/2`'s changeset only carries `path`/`format`/
+    # `size`, so casting it over an adopted row with a real `edition_id` would silently leave
+    # that stale identity association in place — the SAME break a different-path replace already
+    # avoids by inserting a brand new (`edition_id: nil`) row.
+    test "a same-path replace clears a stale adopted edition_id", %{target: target} do
+      path = "/tmp/book-#{target.id}.epub"
+
+      assert {:ok, %BookFile{id: file_id}} =
+               Books.Files.record_import(target, %{path: path, size: 1000, format: :epub})
+
+      {:ok, edition} =
+        Edition.changeset(
+          %Edition{work_id: target.work_id},
+          %{media_kind: :ebook, title: "Adopted Edition"}
+        )
+        |> Repo.insert()
+
+      Repo.get!(BookFile, file_id)
+      |> Ecto.Changeset.change(edition_id: edition.id)
+      |> Repo.update!()
+
+      assert {:ok, updated, []} =
+               Books.Files.record_import(
+                 target,
+                 %{path: path, size: 2000, format: :epub},
+                 replace: true
+               )
+
+      assert updated.id == file_id
+      assert updated.size == 2000
+      assert is_nil(updated.edition_id)
+
+      reloaded = Repo.get!(BookFile, file_id)
+      assert is_nil(reloaded.edition_id)
     end
 
     test "a replace grab that fails on its first attempt leaves the original file untouched", %{
