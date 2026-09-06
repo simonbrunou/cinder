@@ -283,7 +283,14 @@ defmodule Cinder.Acquisition.AudiobookScorer do
     |> drop_bracketed_groups(work)
     |> strip_series_ordinal(work)
     |> String.replace(~r/-[A-Za-z0-9]+$/, " ")
-    |> String.replace(~r/\b(?:book|bk|vol|volume|part|pt|no|nr)\b[ .#]*\d{1,3}\b/i, " ")
+    # "edition"/"ed" joins the keyword list: "Room - Edition 13" for a DIFFERENT "Room" was
+    # otherwise unstripped, and its "13" coincided with a wanted "Room 13" as false title
+    # evidence -- the exact hazard series ordinals close, for edition/printing metadata instead
+    # of a series name (Codex review).
+    |> String.replace(
+      ~r/\b(?:book|bk|vol|volume|part|pt|no|nr|edition|ed)\b[ .#]*\d{1,3}\b/i,
+      " "
+    )
     |> String.replace(~r/#\d{1,3}\b/, " ")
     |> strip_series_number(wanted_numeric_tokens(work))
   end
@@ -320,7 +327,7 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   defp word_pattern(word) do
     word
     |> String.graphemes()
-    |> Enum.map_join("", &(Regex.escape(&1) <> "\\p{Mn}*"))
+    |> Enum.map_join("", &(Regex.escape(&1) <> "[\u2019'\\p{Mn}]*"))
   end
 
   defp series_name(%{name: name}) when is_binary(name), do: name

@@ -234,6 +234,20 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
       assert {:reject, :title_mismatch} =
                AudiobookScorer.evaluate(release("X - Café.13 - Room (M4B)"), work)
     end
+
+    test "an edition number that coincidentally equals the wanted number is not title evidence" do
+      work = %{title: "Room 13", authors: ["X"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Room - Edition 13 (M4B)"), work)
+    end
+
+    test "a series ordinal is recognized despite an apostrophe the release keeps" do
+      work = %{title: "Room 13", authors: ["X"], series: ["Dragon's Foo"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Dragon's Foo 13 - Room (M4B)"), work)
+    end
   end
 
   describe "unfoldable titles" do

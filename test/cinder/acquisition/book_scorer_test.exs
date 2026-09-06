@@ -362,6 +362,26 @@ defmodule Cinder.Acquisition.BookScorerTest do
       assert {:reject, :title_mismatch} =
                BookScorer.evaluate(release("X - Café.13 - Room (epub)"), work)
     end
+
+    test "an edition number that coincidentally equals the wanted number is not title evidence" do
+      # Codex review, round 4: the same coincidence series ordinals close applies to edition or
+      # printing metadata -- "Edition 13" for a DIFFERENT "Room" must not supply the wanted
+      # title's own missing "13" just because the digits match.
+      work = %{title: "Room 13", authors: ["X"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Room - Edition 13 (epub)"), work)
+    end
+
+    test "a series ordinal is recognized despite an apostrophe the release keeps" do
+      # Codex review, round 4: tokens/1 DROPS apostrophes rather than treating them as
+      # separators ("Dragon's" folds to "dragons"), so the ordinal pattern must tolerate one
+      # between letters, not just combining marks.
+      work = %{title: "Room 13", authors: ["X"], series: ["Dragon's Foo"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Dragon's Foo 13 - Room (epub)"), work)
+    end
   end
 
   describe "protocol" do
