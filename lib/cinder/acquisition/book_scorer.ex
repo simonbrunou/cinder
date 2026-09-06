@@ -401,10 +401,12 @@ defmodule Cinder.Acquisition.BookScorer do
   # Stripped unconditionally, ahead of the wanted-number preservation step, so the coincidence
   # never reaches it.
   defp strip_series_ordinal(title, work) do
+    normalized = nfd(title)
+
     work
     |> Map.get(:series)
     |> List.wrap()
-    |> Enum.reduce(title, &apply_series_ordinal_strip/2)
+    |> Enum.reduce(normalized, &apply_series_ordinal_strip/2)
   end
 
   defp apply_series_ordinal_strip(series_entry, title) do
@@ -432,16 +434,38 @@ defmodule Cinder.Acquisition.BookScorer do
   defp series_ordinal_regex(series_entry) do
     with name when is_binary(name) <- series_name(series_entry),
          [_ | _] = words <- tokens(name) do
-      pattern = Enum.map_join(words, "[^A-Za-z0-9]+", &Regex.escape/1)
-      Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*\\d{1,3}\\b", "i")
+      pattern = Enum.map_join(words, "[^A-Za-z0-9]+", &word_pattern/1)
+      Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*\\d{1,3}\\b", "iu")
     else
       _ -> nil
     end
   end
 
+  # Each character of the (already ASCII-folded) word may be followed by any run of Unicode
+  # combining marks in the release's NFD-normalized text ("\p{Mn}*", nonspacing marks) -- the
+  # release keeps its original diacritics ("Cafe with an accent"), which NFD decomposes to base
+  # letter + mark rather than dropping, unlike the folded series name this pattern is built from.
+  # Matching the bare ASCII letters against that raw text never lined up, so a diacritic-bearing
+  # series name's ordinal went unstripped and became false wanted-number evidence (Codex review).
+  defp word_pattern(word) do
+    word
+    |> String.graphemes()
+    |> Enum.map_join("", &(Regex.escape(&1) <> "\\p{Mn}*"))
+  end
+
   defp series_name(%{name: name}) when is_binary(name), do: name
   defp series_name(name) when is_binary(name), do: name
   defp series_name(_other), do: nil
+
+  # NFD-decompose so a release's own diacritics align with the ASCII-folded series-name pattern
+  # character-by-character; malformed UTF-8 falls back to its decodable prefix rather than
+  # raising, the same discipline `Cinder.Books.TitleFold.nfd/1` documents.
+  defp nfd(string) do
+    case :unicode.characters_to_nfd_binary(string) do
+      binary when is_binary(binary) -> binary
+      {_kind, ok_part, _rest} -> ok_part
+    end
+  end
 
   # A bare 1-3 digit token between separators is ambiguous: overwhelmingly it is release-side
   # series-position noise ("Sanderson - The Stormlight Archive 01 - The Way of Kings"), but a

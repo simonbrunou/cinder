@@ -290,10 +290,12 @@ defmodule Cinder.Acquisition.AudiobookScorer do
 
   # See `Cinder.Acquisition.BookScorer.strip_series_ordinal/2` for the reasoning (Codex review).
   defp strip_series_ordinal(title, work) do
+    normalized = nfd(title)
+
     work
     |> Map.get(:series)
     |> List.wrap()
-    |> Enum.reduce(title, &apply_series_ordinal_strip/2)
+    |> Enum.reduce(normalized, &apply_series_ordinal_strip/2)
   end
 
   defp apply_series_ordinal_strip(series_entry, title) do
@@ -307,16 +309,31 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   defp series_ordinal_regex(series_entry) do
     with name when is_binary(name) <- series_name(series_entry),
          [_ | _] = words <- tokens(name) do
-      pattern = Enum.map_join(words, "[^A-Za-z0-9]+", &Regex.escape/1)
-      Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*\\d{1,3}\\b", "i")
+      pattern = Enum.map_join(words, "[^A-Za-z0-9]+", &word_pattern/1)
+      Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*\\d{1,3}\\b", "iu")
     else
       _ -> nil
     end
   end
 
+  # See `Cinder.Acquisition.BookScorer.word_pattern/1` for the reasoning (Codex review).
+  defp word_pattern(word) do
+    word
+    |> String.graphemes()
+    |> Enum.map_join("", &(Regex.escape(&1) <> "\\p{Mn}*"))
+  end
+
   defp series_name(%{name: name}) when is_binary(name), do: name
   defp series_name(name) when is_binary(name), do: name
   defp series_name(_other), do: nil
+
+  # See `Cinder.Acquisition.BookScorer.nfd/1` for the reasoning.
+  defp nfd(string) do
+    case :unicode.characters_to_nfd_binary(string) do
+      binary when is_binary(binary) -> binary
+      {_kind, ok_part, _rest} -> ok_part
+    end
+  end
 
   # See `Cinder.Acquisition.BookScorer.strip_series_number/2` -- copied rather than shared per
   # this module's own "new sibling modules, not widened e-book ones" decision (moduledoc).

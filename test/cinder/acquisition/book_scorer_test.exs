@@ -353,6 +353,15 @@ defmodule Cinder.Acquisition.BookScorerTest do
       assert {:accept, _evidence} =
                BookScorer.evaluate(release("Frank Herbert - Dune 01 (epub)"), work)
     end
+
+    test "a series ordinal is recognized despite a diacritic the release keeps" do
+      # Codex review, round 3: the pattern is built from the ASCII-folded series name but must
+      # still match the release's own accented spelling, not just a pre-folded one.
+      work = %{title: "Room 13", authors: ["X"], series: ["Café"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Café.13 - Room (epub)"), work)
+    end
   end
 
   describe "protocol" do

@@ -227,6 +227,13 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
       assert {:accept, _evidence} =
                AudiobookScorer.evaluate(release("Frank Herbert - Dune 01 (M4B)"), work)
     end
+
+    test "a series ordinal is recognized despite a diacritic the release keeps" do
+      work = %{title: "Room 13", authors: ["X"], series: ["Café"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Café.13 - Room (M4B)"), work)
+    end
   end
 
   describe "unfoldable titles" do
