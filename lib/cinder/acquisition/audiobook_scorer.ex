@@ -306,21 +306,28 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   end
 
   defp apply_series_ordinal_strip(series_entry, title) do
-    case series_ordinal_regex(series_entry) do
-      nil -> title
-      regex -> Regex.replace(regex, title, fn _whole, name -> name <> " " end)
-    end
-  end
-
-  # See `Cinder.Acquisition.BookScorer.series_ordinal_regex/1` for the reasoning (Codex review).
-  defp series_ordinal_regex(series_entry) do
     with name when is_binary(name) <- series_name(series_entry),
          [_ | _] = words <- tokens(name) do
       pattern = Enum.map_join(words, "[^A-Za-z0-9]+", &word_pattern/1)
-      Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*\\d{1,3}\\b", "iu")
+
+      title
+      |> strip_ordinal_after(pattern)
+      |> strip_ordinal_before(pattern)
     else
-      _ -> nil
+      _ -> title
     end
+  end
+
+  # See `Cinder.Acquisition.BookScorer.strip_ordinal_after/2` and `strip_ordinal_before/2` for the
+  # reasoning (Codex review).
+  defp strip_ordinal_after(title, pattern) do
+    regex = Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*\\d{1,3}\\b", "iu")
+    Regex.replace(regex, title, fn _whole, name -> name <> " " end)
+  end
+
+  defp strip_ordinal_before(title, pattern) do
+    regex = Regex.compile!("\\b\\d{1,3}[^A-Za-z0-9]*(" <> pattern <> ")\\b", "iu")
+    Regex.replace(regex, title, fn _whole, name -> " " <> name end)
   end
 
   # See `Cinder.Acquisition.BookScorer.word_pattern/1` for the reasoning (Codex review).

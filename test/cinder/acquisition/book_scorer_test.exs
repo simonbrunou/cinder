@@ -382,6 +382,15 @@ defmodule Cinder.Acquisition.BookScorerTest do
       assert {:reject, :title_mismatch} =
                BookScorer.evaluate(release("X - Dragon's Foo 13 - Room (epub)"), work)
     end
+
+    test "a series ordinal is recognized whether it precedes or follows the series name" do
+      # Codex review, round 5: an indexer can write the ordinal before the series name too
+      # ("13 Foo"), not only after it ("Foo 13").
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - 13 Foo - Room (epub)"), work)
+    end
   end
 
   describe "protocol" do

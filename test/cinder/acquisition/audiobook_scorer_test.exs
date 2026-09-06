@@ -248,6 +248,13 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
       assert {:reject, :title_mismatch} =
                AudiobookScorer.evaluate(release("X - Dragon's Foo 13 - Room (M4B)"), work)
     end
+
+    test "a series ordinal is recognized whether it precedes or follows the series name" do
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - 13 Foo - Room (M4B)"), work)
+    end
   end
 
   describe "unfoldable titles" do

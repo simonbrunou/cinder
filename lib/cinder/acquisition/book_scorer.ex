@@ -417,9 +417,15 @@ defmodule Cinder.Acquisition.BookScorer do
   end
 
   defp apply_series_ordinal_strip(series_entry, title) do
-    case series_ordinal_regex(series_entry) do
-      nil -> title
-      regex -> Regex.replace(regex, title, fn _whole, name -> name <> " " end)
+    with name when is_binary(name) <- series_name(series_entry),
+         [_ | _] = words <- tokens(name) do
+      pattern = Enum.map_join(words, "[^A-Za-z0-9]+", &word_pattern/1)
+
+      title
+      |> strip_ordinal_after(pattern)
+      |> strip_ordinal_before(pattern)
+    else
+      _ -> title
     end
   end
 
@@ -429,24 +435,28 @@ defmodule Cinder.Acquisition.BookScorer do
   # else, and a literal-space match missed it, leaving the ordinal unstripped and readmitting the
   # coincidence this function exists to close (Codex review).
   #
-  # The series-name portion is CAPTURED and kept in the replacement, and only the trailing digits
-  # are dropped -- replacing the WHOLE match unconditionally erased the series name's own text
-  # too, which wrongly rejected a legitimate release when the work's title IS its series name
-  # ("Dune", series `["Dune"]`): the release's "Dune 01" lost "Dune" along with "01", and the
-  # title check no longer found the wanted title at all (Codex review).
+  # The series-name portion is CAPTURED and kept in the replacement, and only the digits are
+  # dropped -- replacing the WHOLE match unconditionally erased the series name's own text too,
+  # which wrongly rejected a legitimate release when the work's title IS its series name ("Dune",
+  # series `["Dune"]`): the release's "Dune 01" lost "Dune" along with "01", and the title check
+  # no longer found the wanted title at all (Codex review).
   #
+  # Checked in both orders -- "Foo 13" and "13 Foo" are both real placements an indexer writes an
+  # ordinal in, and matching only the after-form left the before-form's digits unstripped and
+  # readmitted the same coincidence from the other side (Codex review).
+  defp strip_ordinal_after(title, pattern) do
+    regex = Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*\\d{1,3}\\b", "iu")
+    Regex.replace(regex, title, fn _whole, name -> name <> " " end)
+  end
+
+  defp strip_ordinal_before(title, pattern) do
+    regex = Regex.compile!("\\b\\d{1,3}[^A-Za-z0-9]*(" <> pattern <> ")\\b", "iu")
+    Regex.replace(regex, title, fn _whole, name -> " " <> name end)
+  end
+
   # `work.series` entries are the plain strings every existing caller and fixture uses, but
   # `Cinder.Books.Metadata.work/0`'s documented shape is a list of `%{name:, position:}` maps;
   # `series_name/1` accepts either so this never crashes on the real shape (Codex review).
-  defp series_ordinal_regex(series_entry) do
-    with name when is_binary(name) <- series_name(series_entry),
-         [_ | _] = words <- tokens(name) do
-      pattern = Enum.map_join(words, "[^A-Za-z0-9]+", &word_pattern/1)
-      Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*\\d{1,3}\\b", "iu")
-    else
-      _ -> nil
-    end
-  end
 
   # Each character of the (already ASCII-folded) word may be followed by any run of Unicode
   # combining marks ("\p{Mn}*", nonspacing marks) or an apostrophe -- the release keeps its
