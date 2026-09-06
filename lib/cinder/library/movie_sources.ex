@@ -106,15 +106,20 @@ defmodule Cinder.Library.MovieSources do
   defp stack_part(path) do
     stem = path |> Path.basename() |> Path.rootname()
 
-    case Regex.named_captures(
-           ~r/^(?<title>.+?)[ ._-]+(?:cd|disc|disk|part)[ ._-]?(?<part>\d{1,2})$/iu,
-           stem
-         ) do
-      %{"title" => title, "part" => part} ->
-        {normalize_title(title), String.to_integer(part)}
+    # A non-UTF8 basename byte (permitted on Linux) must never crash this — the /iu regex
+    # requires a valid UTF-8 subject, and this file is not part of a detectable multi-part
+    # stack either way (#559): fall through to the ordinary non-stack single-video pick.
+    if String.valid?(stem) do
+      case Regex.named_captures(
+             ~r/^(?<title>.+?)[ ._-]+(?:cd|disc|disk|part)[ ._-]?(?<part>\d{1,2})$/iu,
+             stem
+           ) do
+        %{"title" => title, "part" => part} ->
+          {normalize_title(title), String.to_integer(part)}
 
-      nil ->
-        nil
+        nil ->
+          nil
+      end
     end
   end
 

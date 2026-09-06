@@ -751,6 +751,60 @@ defmodule Cinder.LibraryTest do
     assert {:error, :ambiguous_multipart_movie} = Library.stage_movie(movie)
   end
 
+  test "a non-UTF8 video filename does not crash multi-part stack detection (#559)" do
+    movie = %Movie{title: "X", year: 2000, tmdb_id: 559, file_path: "/dl/X"}
+
+    Cinder.LibraryStubs.stub_import_ok(9 * @gb)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/X/" <> <<255>> <> ".mkv", 9 * @gb}]}
+    end)
+
+    assert {:ok, _stage} = Library.stage_movie(movie)
+  end
+
+  test "a multi-byte UTF-8 title still forms a CD1/CD2 stack (#559)" do
+    movie = %Movie{title: "Amélie", year: 2001, tmdb_id: 560, file_path: "/dl/Amelie"}
+    cd1 = "/dl/Amelie/Amélie.CD1.mkv"
+    cd2 = "/dl/Amelie/Amélie.CD2.mkv"
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _path -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl/Amelie" ->
+      {:ok, [{cd2, 4_000}, {cd1, 3_000}]}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+      cond do
+        path == cd1 ->
+          {:ok, %File.Stat{size: 3_000, inode: 11, major_device: 1}}
+
+        path == cd2 ->
+          {:ok, %File.Stat{size: 4_000, inode: 12, major_device: 1}}
+
+        String.contains?(path, ".cinder-stage-") ->
+          size = if String.contains?(path, "-cd1"), do: 3_000, else: 4_000
+          {:ok, %File.Stat{size: size, inode: 20 + size, major_device: 1}}
+
+        true ->
+          {:error, :enoent}
+      end
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _path -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _source, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rename, fn _source, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert {:ok, stage} = Library.stage_movie(movie)
+    assert stage.dest =~ "Amélie (2001) {tmdb-560}-cd1.mkv"
+    assert [part] = stage.part_file_paths
+    assert part =~ "Amélie (2001) {tmdb-560}-cd2.mkv"
+    assert :ok = commit!(stage)
+  end
+
   describe "scan/1" do
     test "returns the configured media server result" do
       expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
