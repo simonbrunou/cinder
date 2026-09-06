@@ -342,6 +342,48 @@ defmodule Cinder.Books.FilesTest do
 
       assert Repo.reload!(target).audiobookshelf_scanned_at == nil
     end
+
+    # Codex review on PR #569: `AudiobookSources`' own AudioProbe can time out or exhaust its
+    # probe budget on ANY given tick and degrade gracefully to nil duration/track/disc facts,
+    # independent of whether the underlying bytes changed. `attrs[:changed?]` (populated from
+    # `StageEngine`'s own `placed?` staging outcome, NOT from `replace?`) is what must gate the
+    # metadata refresh: a same-inode replay (`changed?: false`) must never let a degraded probe
+    # attempt overwrite metadata an earlier, successful tick already committed.
+    test "a degraded replay never overwrites metadata from an earlier successful probe", %{
+      target: target
+    } do
+      path = "/tmp/ab-#{target.id}-01.mp3"
+
+      good_attrs = [
+        %{path: path, size: 1000, format: :mp3, track_number: 1, duration_seconds: 60}
+      ]
+
+      assert {:ok, [file]} = Books.Files.record_import_set(target, good_attrs)
+      assert file.duration_seconds == 60
+      assert file.track_number == 1
+
+      degraded_attrs = [
+        %{
+          path: path,
+          size: 1000,
+          format: :mp3,
+          track_number: nil,
+          duration_seconds: nil,
+          changed?: false
+        }
+      ]
+
+      assert {:ok, [replayed], []} =
+               Books.Files.record_import_set(target, degraded_attrs, replace: true)
+
+      assert replayed.id == file.id
+      assert replayed.duration_seconds == 60
+      assert replayed.track_number == 1
+
+      reloaded = Repo.get!(BookFile, file.id)
+      assert reloaded.duration_seconds == 60
+      assert reloaded.track_number == 1
+    end
   end
 
   defp identifier(id), do: %{provider: "openlibrary", kind: "work", foreign_id: id}

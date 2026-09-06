@@ -95,7 +95,7 @@ defmodule Cinder.Library.AudiobookImport do
              replace: replace?
            ),
          {:ok, size} <- recorded_size(placed?, track.path, dest) do
-      {:ok, %{track: track, dest: dest, rollback: rollback, size: size}}
+      {:ok, %{track: track, dest: dest, rollback: rollback, size: size, placed?: placed?}}
     end
   end
 
@@ -128,8 +128,12 @@ defmodule Cinder.Library.AudiobookImport do
     replace? = Keyword.get(opts, :replace, false)
     stage_ids = Library.stage_ids(Enum.map(staged, &%{rollback: &1.rollback}))
 
+    # `changed?` carries this track's actual `placed?` staging outcome through to
+    # `Files.record_import_set/3` — see that call's own `insert_all_or_existing/3` comment for
+    # why a same-inode replay (`placed?: false`) must never refresh a row's metadata even when
+    # `replace?` is true, regardless of what this tick's own probe attempt returned.
     attrs_list =
-      Enum.map(staged, fn %{track: track, dest: dest, size: size} ->
+      Enum.map(staged, fn %{track: track, dest: dest, size: size, placed?: placed?} ->
         %{
           path: dest,
           format: track.format,
@@ -137,7 +141,8 @@ defmodule Cinder.Library.AudiobookImport do
           track_number: track.track_number,
           disc_number: track.disc_number,
           duration_seconds: track.duration_seconds,
-          chapter_count: track.chapter_count
+          chapter_count: track.chapter_count,
+          changed?: placed?
         }
       end)
 
