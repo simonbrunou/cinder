@@ -73,6 +73,25 @@ defmodule Cinder.Acquisition.LanguageTest do
     end
   end
 
+  describe "normalize/1" do
+    # #519: "chi" and "zho" (generic ISO 639-2 Chinese) are listed under BOTH "zh" and "cn"
+    # (Cantonese) in the parser's audio-tolerance table, which is correct for audio_satisfies?/2 —
+    # a Cantonese track is often tagged with the generic code. But that same ambiguity used to
+    # leak into this reverse lookup, built by flattening every {canonical, aliases} pair through
+    # Map.new — whichever canonical's entry the map happened to enumerate last silently won.
+    # Resolved explicitly: the generic codes always normalize to "zh", never "cn".
+    test "the generic Chinese codes normalize to zh, not cn" do
+      assert Language.normalize("chi") == "zh"
+      assert Language.normalize("zho") == "zh"
+      assert Language.normalize("CHI") == "zh"
+    end
+
+    test "Cantonese's own distinct code still normalizes to cn" do
+      assert Language.normalize("yue") == "cn"
+      assert Language.normalize("YUE") == "cn"
+    end
+  end
+
   describe "filter/3" do
     test "inactive filter returns releases unchanged" do
       releases = [rel("FRENCH"), rel(nil), rel("GERMAN")]
