@@ -7,7 +7,7 @@ defmodule Cinder.Books.FilesTest do
   use Cinder.DataCase, async: false
 
   alias Cinder.Books
-  alias Cinder.Books.{BookFile, BookTarget}
+  alias Cinder.Books.{BookFile, BookTarget, Edition}
   alias Cinder.Catalog
 
   setup do
@@ -383,6 +383,43 @@ defmodule Cinder.Books.FilesTest do
       reloaded = Repo.get!(BookFile, file.id)
       assert reloaded.duration_seconds == 60
       assert reloaded.track_number == 1
+    end
+
+    # Codex review on PR #569: an audiobook adopted from Readarr can carry a real `edition_id`
+    # on its `book_files` rows too — the same identity-loss risk `record_import/3`'s own
+    # `update_existing/2` fix defends against for e-books, exercised here through the SET path.
+    test "a genuine same-path replace clears a stale adopted edition_id", %{target: target} do
+      path = "/tmp/ab-#{target.id}-01.mp3"
+
+      assert {:ok, [file]} =
+               Books.Files.record_import_set(target, [
+                 %{path: path, size: 1000, format: :mp3}
+               ])
+
+      {:ok, edition} =
+        Edition.changeset(%Edition{work_id: target.work_id}, %{
+          media_kind: :audiobook,
+          title: "Adopted Edition"
+        })
+        |> Repo.insert()
+
+      Repo.get!(BookFile, file.id)
+      |> Ecto.Changeset.change(edition_id: edition.id)
+      |> Repo.update!()
+
+      assert {:ok, [updated], []} =
+               Books.Files.record_import_set(
+                 target,
+                 [%{path: path, size: 2000, format: :mp3, changed?: true}],
+                 replace: true
+               )
+
+      assert updated.id == file.id
+      assert updated.size == 2000
+      assert is_nil(updated.edition_id)
+
+      reloaded = Repo.get!(BookFile, file.id)
+      assert is_nil(reloaded.edition_id)
     end
   end
 
