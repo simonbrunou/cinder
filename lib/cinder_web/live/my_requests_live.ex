@@ -35,7 +35,11 @@ defmodule CinderWeb.MyRequestsLive do
       Issues.subscribe()
       Settings.subscribe()
       # A book target's own available/held transitions (and language changes) — the catch-all
-      # handle_info/2 below re-`load/1`s the same as every other subscribed topic.
+      # handle_info/2 below re-`load/1`s the same as every other subscribed topic. The same
+      # topic also carries {:book_grab_updated, _} on every transfer-metrics tick (progress,
+      # speed, ETA — normally every five seconds while a book download is active); this page
+      # renders no book-grab metrics, so that one message is ignored below rather than paying
+      # for a full reload it can never show.
       Books.subscribe_targets()
     end
 
@@ -43,6 +47,8 @@ defmodule CinderWeb.MyRequestsLive do
   end
 
   @impl true
+  def handle_info({:book_grab_updated, _grab}, socket), do: {:noreply, socket}
+
   def handle_info(_message, socket), do: {:noreply, load(socket)}
 
   @impl true

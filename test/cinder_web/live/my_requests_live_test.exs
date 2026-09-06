@@ -5,6 +5,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
   import Phoenix.LiveViewTest
 
   alias Cinder.Books
+  alias Cinder.Books.{BookGrab, Grabs}
   alias Cinder.Requests
 
   setup do
@@ -402,6 +403,45 @@ defmodule CinderWeb.MyRequestsLiveTest do
       row_html = lv |> element("#request-#{request.id}") |> render()
       assert row_html =~ "Available"
       refute row_html =~ "Approved"
+    end
+
+    # PR #557 review finding: Books.Grabs.track/2 broadcasts {:book_grab_updated, grab} on this
+    # same topic on every transfer-metrics tick (normally every five seconds while a book
+    # download is active), but this page renders no book-grab metrics. Before the fix the
+    # catch-all handle_info/2 re-ran load/1 on every one of those ticks, hitting the DB with a
+    # full reload (movies, series, requests, issues, settings, book target states) it could
+    # never show anything for.
+    test "a book-grab progress broadcast does not trigger a reload", %{
+      conn: conn,
+      work: work,
+      profile: profile
+    } do
+      user = Cinder.AccountsFixtures.user_fixture()
+      admin = Cinder.AccountsFixtures.admin_fixture()
+
+      {_request, target} = approve_book(user, admin, work, :ebook, profile)
+
+      grab =
+        %BookGrab{}
+        |> BookGrab.changeset(%{
+          book_target_id: target.id,
+          download_id: "grab-progress-#{target.id}",
+          download_protocol: :torrent
+        })
+        |> Cinder.Repo.insert!()
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      {_result, events} =
+        Cinder.TelemetryHelpers.capture([:cinder, :repo, :query], fn ->
+          {:ok, _updated} = Grabs.track(grab, %{download_progress: 42})
+          render(lv)
+        end)
+
+      refute Enum.any?(events, fn {_measurements, metadata} ->
+               is_binary(metadata.query) and String.contains?(metadata.query, ~s(FROM "requests"))
+             end)
     end
 
     test "an eBook target's status does not affect the same work's audiobook row", %{

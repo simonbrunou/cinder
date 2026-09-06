@@ -81,6 +81,18 @@ defmodule CinderWeb.LiveHelpersTest do
       assert book_badge_state(nil, nil) == :none
     end
 
+    # PR #557 review finding: a household member's earlier, denied request and a later,
+    # approved one for the same work/kind share ONE book_targets row. Once that shared target
+    # progresses to :available/:held/:monitored, the denied row must keep reading Denied — it
+    # still renders its own denial reason and "Request again" action, so silently relabeling it
+    # Approved/Held/Available (because the OTHER request's target moved on) would be wrong.
+    test "a denied request never inherits a shared target's later lifecycle" do
+      assert book_badge_state(:denied, :available) == :denied
+      assert book_badge_state(:denied, :held) == :denied
+      assert book_badge_state(:denied, :monitored) == :denied
+      assert book_badge_state(:denied, :unmonitored) == :denied
+    end
+
     # A linked target with no request behind it and still `:unmonitored` must render its own
     # explicit state — falling to `:none` (no badge at all) is indistinguishable from "there is
     # nothing here", which is wrong once a target exists.
