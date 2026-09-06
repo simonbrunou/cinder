@@ -389,7 +389,24 @@ defmodule Cinder.Acquisition.BookScorer do
     |> String.replace(~r/-[A-Za-z0-9]+$/, " ")
     |> String.replace(~r/\b(?:book|bk|vol|volume|part|pt|no|nr)\b[ .#]*\d{1,3}\b/i, " ")
     |> String.replace(~r/#\d{1,3}\b/, " ")
-    |> String.replace(~r/(?<=[-–—:.,]|\s)\d{1,3}(?=\s*[-–—:.,]|\s|$)/, " ")
+    |> strip_series_number(wanted_numeric_tokens(work))
+  end
+
+  # A bare 1-3 digit token between separators is ambiguous: overwhelmingly it is release-side
+  # series-position noise ("Sanderson - The Stormlight Archive 01 - The Way of Kings"), but a
+  # work whose own title carries a number writes it the exact same way ("Fahrenheit 451",
+  # "Catch-22", "The 39 Steps") -- stripping it unconditionally erased the wanted title's own
+  # number and rejected the exact requested book (#517). The distinguishing evidence is the
+  # wanted title itself: a digit the release alone contributes is noise; a digit the request
+  # itself asked for is not, so it is kept rather than swept away with genuine series markers.
+  defp strip_series_number(title, wanted_numbers) do
+    Regex.replace(~r/(?<=[-–—:.,]|\s)\d{1,3}(?=\s*[-–—:.,]|\s|$)/, title, fn digits ->
+      if digits in wanted_numbers, do: digits, else: " "
+    end)
+  end
+
+  defp wanted_numeric_tokens(work) do
+    work |> Map.fetch!(:title) |> tokens() |> Enum.filter(&Regex.match?(~r/^\d{1,3}$/, &1))
   end
 
   # Dropping EVERY bracketed group unconditionally made the brackets a bypass: "Dune (Messiah)"

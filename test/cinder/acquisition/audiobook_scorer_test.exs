@@ -177,6 +177,28 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
                  work
                )
     end
+
+    test "accepts a wanted title whose own number is a release-side bare digit" do
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(
+                 release("Ray Bradbury - Fahrenheit 451 (M4B)"),
+                 %{title: "Fahrenheit 451", authors: ["Ray Bradbury"]}
+               )
+
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(
+                 release("Joseph Heller - Catch-22 (M4B)"),
+                 %{title: "Catch-22", authors: ["Joseph Heller"]}
+               )
+    end
+
+    test "a different numbered work by the same author is still rejected" do
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(
+                 release("John Buchan - The 24 Hours (M4B)"),
+                 %{title: "The 39 Steps", authors: ["John Buchan"]}
+               )
+    end
   end
 
   describe "unfoldable titles" do

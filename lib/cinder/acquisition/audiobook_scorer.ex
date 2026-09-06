@@ -284,7 +284,19 @@ defmodule Cinder.Acquisition.AudiobookScorer do
     |> String.replace(~r/-[A-Za-z0-9]+$/, " ")
     |> String.replace(~r/\b(?:book|bk|vol|volume|part|pt|no|nr)\b[ .#]*\d{1,3}\b/i, " ")
     |> String.replace(~r/#\d{1,3}\b/, " ")
-    |> String.replace(~r/(?<=[-–—:.,]|\s)\d{1,3}(?=\s*[-–—:.,]|\s|$)/, " ")
+    |> strip_series_number(wanted_numeric_tokens(work))
+  end
+
+  # See `Cinder.Acquisition.BookScorer.strip_series_number/2` -- copied rather than shared per
+  # this module's own "new sibling modules, not widened e-book ones" decision (moduledoc).
+  defp strip_series_number(title, wanted_numbers) do
+    Regex.replace(~r/(?<=[-–—:.,]|\s)\d{1,3}(?=\s*[-–—:.,]|\s|$)/, title, fn digits ->
+      if digits in wanted_numbers, do: digits, else: " "
+    end)
+  end
+
+  defp wanted_numeric_tokens(work) do
+    work |> Map.fetch!(:title) |> tokens() |> Enum.filter(&Regex.match?(~r/^\d{1,3}$/, &1))
   end
 
   # Same bracket-drop shape `BookScorer.drop_bracketed_groups/2` uses, plus one addition: a

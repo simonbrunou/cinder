@@ -283,6 +283,38 @@ defmodule Cinder.Acquisition.BookScorerTest do
                  work
                )
     end
+
+    test "accepts a wanted title whose own number is a release-side bare digit" do
+      # `strip_noise/2` used to strip EVERY standalone 1-3 digit token as series-position noise,
+      # including one the wanted title itself needs -- the exact defect #517 describes.
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release("Ray Bradbury - Fahrenheit 451 (epub)"),
+                 %{title: "Fahrenheit 451", authors: ["Ray Bradbury"]}
+               )
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release("Joseph Heller - Catch-22 (epub)"),
+                 %{title: "Catch-22", authors: ["Joseph Heller"]}
+               )
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(
+                 release("John Buchan - The 39 Steps (epub)"),
+                 %{title: "The 39 Steps", authors: ["John Buchan"]}
+               )
+    end
+
+    test "a different numbered work by the same author is still rejected" do
+      # The other direction: preserving the WANTED title's own number must not turn into ignoring
+      # numbers altogether. A release naming a different number entirely is still a different book.
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(
+                 release("John Buchan - The 24 Hours (epub)"),
+                 %{title: "The 39 Steps", authors: ["John Buchan"]}
+               )
+    end
   end
 
   describe "protocol" do
