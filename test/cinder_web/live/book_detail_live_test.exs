@@ -400,6 +400,63 @@ defmodule CinderWeb.BookDetailLiveTest do
       assert has_element?(lv, panel, "Ursula K. Le Guin - The Dispossessed (EPUB)")
       refute has_element?(lv, panel, "language doesn't match")
     end
+
+    # #495: changing the language while the panel stays open must restart the search under the
+    # new preference, and a search that was already in flight under the OLD preference must
+    # never land afterward — even when it completes later than the fresh, post-change search.
+    # `search_book` is called once per `Books.candidates/2` invocation (the structured query in
+    # `Acquisition.Books.plan/1`), so blocking the FIRST call and racing a language change against
+    # it exercises the real `start_async`/`cancel_async` ref machinery, not just `update/2`.
+    test "changing the language mid-search restarts it, and a late pre-change result never lands",
+         %{conn: conn} do
+      {target, _work} = ebook_target(title: "The Dispossessed")
+      test_pid = self()
+
+      Mox.expect(IndexerMock, :search_book, fn _author, _title, _opts ->
+        send(test_pid, {:old_search_started, self()})
+
+        receive do
+          :release -> :ok
+        end
+
+        {:ok, [indexer_result("Ursula K. Le Guin - The Dispossessed (Stale English) (EPUB)")]}
+      end)
+
+      Mox.expect(IndexerMock, :search_book, fn _author, _title, _opts ->
+        {:ok, [indexer_result("Ursula K. Le Guin - The Dispossessed (French) (EPUB)")]}
+      end)
+
+      stub(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+      lv |> element("button[phx-value-target_id='#{target.id}']") |> render_click()
+      assert_receive {:old_search_started, old_task}
+
+      {:ok, _target} = Books.set_target_language(target, "fr")
+
+      panel = "#ms-book-#{target.id}"
+
+      # Bounded wait for the fast, post-change search to land — not a race against the stale one,
+      # which stays deliberately blocked until explicitly released below.
+      assert Enum.reduce_while(1..50, false, fn _, _ ->
+               if has_element?(lv, panel, "French") do
+                 {:halt, true}
+               else
+                 Process.sleep(10)
+                 {:cont, false}
+               end
+             end),
+             "the post-change search never landed"
+
+      refute has_element?(lv, panel, "Stale English")
+
+      send(old_task, :release)
+      Process.sleep(200)
+
+      refute has_element?(lv, panel, "Stale English")
+      assert has_element?(lv, panel, "French")
+    end
   end
 
   describe "audiobook manual search and grab" do
