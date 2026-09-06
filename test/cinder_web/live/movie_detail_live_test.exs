@@ -623,6 +623,31 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert Catalog.get_movie_by_id(movie.id).status == :available
   end
 
+  test "Cancel upgrade against a concurrently-deleted movie flashes instead of crashing (#522)",
+       %{conn: conn} do
+    movie =
+      movie_fixture(%{
+        title: "Nosferatu",
+        status: :upgrading,
+        imdb_id: "tt3",
+        download_id: "h-up-2",
+        download_protocol: :torrent,
+        file_path: "/lib/Nosferatu (1922)/Nosferatu (1922).mkv"
+      })
+
+    {:ok, lv, _html} = live_movie(conn, movie)
+
+    # Another admin deletes the row before this stale-assigned view handles the cancel event —
+    # the view's own socket.assigns.movie is the pre-delete struct, exactly what abort_upgrade/2
+    # receives.
+    Repo.delete!(movie)
+
+    html = render_click(lv, "cancel_upgrade", %{})
+
+    assert html =~ "cancel: that upgrade has already moved on."
+    assert Process.alive?(lv.pid)
+  end
+
   test "changing the language select updates the movie's preferred language", %{conn: conn} do
     movie = movie_fixture(%{title: "Arrival"})
     {:ok, lv, _html} = live_movie(conn, movie)

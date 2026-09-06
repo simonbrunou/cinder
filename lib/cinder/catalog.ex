@@ -916,7 +916,7 @@ defmodule Cinder.Catalog do
   def abort_upgrade(%Movie{status: :upgrading} = movie, actor) do
     result =
       Repo.transaction(fn ->
-        cleanup_source = Repo.get!(Movie, movie.id)
+        cleanup_source = Repo.get(Movie, movie.id) || Repo.rollback(:stale_entry)
 
         case cleanup_source
              |> Movie.transition_changeset(%{
