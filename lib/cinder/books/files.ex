@@ -42,7 +42,7 @@ defmodule Cinder.Books.Files do
 
     Repo.transaction(fn ->
       with {:ok, superseded} <- maybe_supersede(target, attrs, replace?),
-           {:ok, file} <- insert_or_existing(target, attrs),
+           {:ok, file} <- insert_or_existing(target, attrs, replace?),
            {:ok, _armed} <- arm_target(target) do
         # Inside the transaction, and last: `mark_committed!/1` rolls back on a stage that is no
         # longer `:prepared`, so a journal another process already reconciled aborts the catalog
@@ -59,18 +59,22 @@ defmodule Cinder.Books.Files do
   defp maybe_supersede(_target, _attrs, false), do: {:ok, []}
 
   defp maybe_supersede(%BookTarget{id: id}, %{path: path}, true) do
-    existing = Repo.all(from f in BookFile, where: f.book_target_id == ^id)
+    # Every OTHER row this target owns must go, whether or not the incoming path also happens to
+    # be one of them — confirmed replacement semantics allow exactly one current e-book file. A
+    # target adopted with multiple formats (e.g. an EPUB and a MOBI row) that replaces only the
+    # EPUB's basename must still lose the MOBI row, not accumulate a second live format
+    # (Codex review on PR #565). The incoming path's OWN row (if it has one) is deliberately
+    # excluded from the delete: `insert_or_existing/3` below is what decides whether to leave it
+    # alone or refresh it, per the SAME `replace?` this function was called with — deleting it
+    # here would degrade a same-path replace into indistinguishable delete-then-reinsert, losing
+    # the row's `id` a caller (or a UI mid-render) may be holding.
+    superseded =
+      from(f in BookFile, where: f.book_target_id == ^id and f.path != ^path)
+      |> Repo.all()
+      |> Enum.map(& &1.path)
 
-    if Enum.any?(existing, &(&1.path == path)) do
-      # The incoming file is already this target's own row — a replay of an already-completed
-      # replace. Deleting nothing here means `insert_file/2` below hits the same unique-path
-      # conflict `insert_conflict/3` already treats as a no-op success, converging exactly like
-      # a plain (non-replace) replay does today.
-      {:ok, []}
-    else
-      Repo.delete_all(from f in BookFile, where: f.book_target_id == ^id)
-      {:ok, Enum.map(existing, & &1.path)}
-    end
+    Repo.delete_all(from f in BookFile, where: f.book_target_id == ^id and f.path != ^path)
+    {:ok, superseded}
   end
 
   @doc """
@@ -157,17 +161,20 @@ defmodule Cinder.Books.Files do
   # Shared with `Cinder.Books.Adoption.adopt_work/3` (B6c) — a duplicate `book_files.path` is
   # only a conflict when the row belongs to a DIFFERENT target; when it is the SAME target's own
   # row (a retried adopt, or a crash/replay), the write already succeeded and this call is
-  # replaying it. See `insert_conflict/3` below for exactly which case is which. Public and
+  # replaying it. See `insert_conflict/4` below for exactly which case is which. Public and
   # `@doc false` (not private) so B6c's own transaction can reuse this unchanged rather than
-  # duplicating it — the plan's own explicit instruction.
-  @spec insert_or_existing(BookTarget.t(), map()) :: {:ok, BookFile.t()} | {:error, term()}
-  def insert_or_existing(%BookTarget{} = target, attrs) do
+  # duplicating it — the plan's own explicit instruction. B6c never confirms a replacement, so it
+  # relies on the `replace?` default (`false`) and gets today's unchanged "return the existing
+  # row" behavior.
+  @spec insert_or_existing(BookTarget.t(), map(), boolean()) ::
+          {:ok, BookFile.t()} | {:error, term()}
+  def insert_or_existing(%BookTarget{} = target, attrs, replace? \\ false) do
     %BookFile{}
     |> BookFile.changeset(Map.put(attrs, :book_target_id, target.id))
     |> Repo.insert()
     |> case do
       {:ok, file} -> {:ok, file}
-      {:error, changeset} -> insert_conflict(target, attrs, changeset)
+      {:error, changeset} -> insert_conflict(target, attrs, changeset, replace?)
     end
   end
 
@@ -179,14 +186,38 @@ defmodule Cinder.Books.Files do
   # Returning `:book_file_exists` there parked a target that is genuinely `:available`, with its
   # file on disk and in the catalog, at `:held`. Treating the replay as success is what makes the
   # import idempotent one layer above `StageEngine`'s same-inode branch.
-  defp insert_conflict(target, attrs, changeset) do
+  #
+  # `replace?` decides whether the existing row is returned as-is or updated with `attrs`. Path
+  # equality alone cannot tell a true replay (the file at this path never changed) from a
+  # confirmed "Find a better match" replacement that happens to land on the same basename
+  # (`StageEngine.stage_book_place/4`'s backup-swap already overwrote the bytes at this exact
+  # path — issue #500): the caller already knows which one this is (it is the same `replace?`
+  # that told `StageEngine` whether to perform the swap), so it is threaded straight through
+  # rather than re-derived from a fresh `File.stat/1` here. `attrs` already carries the truth of
+  # what is currently on disk either way (`BookImport.recorded_size/3` re-stats the actual
+  # destination when nothing was staged), so updating on every confirmed-replace conflict is safe
+  # for a genuine replay too — the update just writes back the same values.
+  defp insert_conflict(target, attrs, changeset, replace?) do
     with true <- Keyword.has_key?(changeset.errors, :path),
          %BookFile{book_target_id: owner} = existing <- Repo.get_by(BookFile, path: attrs.path),
          true <- owner == target.id do
-      {:ok, existing}
+      if replace?, do: update_existing(existing, attrs), else: {:ok, existing}
     else
       _different_owner_or_other_error -> {:error, insert_reason(changeset)}
     end
+  end
+
+  # An adopted row (Readarr/Bookshelf) can carry a non-null `edition_id`; a different-path
+  # replacement already ends up with `edition_id: nil` (a brand new `%BookFile{}` struct, and
+  # neither caller's attrs ever set it). Bytes at the SAME path changing underneath a confirmed
+  # replacement is exactly as much an identity break — the downloaded release carries no
+  # evidence it belongs to the adopted edition either — so this path must clear it too rather
+  # than silently inherit stale identity metadata from the row it is overwriting (Codex review
+  # on PR #565).
+  defp update_existing(%BookFile{} = existing, attrs) do
+    existing
+    |> BookFile.changeset(Map.put(attrs, :edition_id, nil))
+    |> Repo.update()
   end
 
   defp insert_reason(%Ecto.Changeset{errors: errors} = changeset) do
