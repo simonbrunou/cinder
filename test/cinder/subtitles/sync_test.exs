@@ -1003,6 +1003,32 @@ defmodule Cinder.Subtitles.SyncTest do
     assert File.read!(path) == original
   end
 
+  test "a Cantonese sidecar still selects an embedded track tagged with the generic Chinese code (#519)",
+       %{video: video} do
+    managed_srt!(video, "cn")
+
+    # The real Cinder.Library.MediaInfo.Ffprobe.subtitle_language/1 already canonicalizes a raw
+    # "chi"/"zho" ffprobe tag through Language.normalize/1 before this ever reaches
+    # Reference.select/4, so the track here carries "zh" — never the raw alias string.
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok, [%{index: 2, language: "zh", forced?: false, default?: true, packet_count: 20}]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 2 ->
+      {:ok, subtitle(".srt")}
+    end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn reference, input, output ->
+      # The embedded "chi" track was selected as the reference, not a fallback to raw audio.
+      assert File.read!(reference) == subtitle(".srt")
+      assert File.read!(input) == subtitle(".srt")
+      File.write!(output, shifted_subtitle(subtitle(".srt")))
+      {:ok, %{score: 30.0, offset_ms: 1_000, rate: 1.0}}
+    end)
+
+    assert [%{method: "embedded", status: :corrected}] = Sync.analyze_video(video)
+  end
+
   test "restores legacy embedded corrections before language-matched reanalysis", %{video: video} do
     path = managed_srt!(video, "fr")
     original = File.read!(path)

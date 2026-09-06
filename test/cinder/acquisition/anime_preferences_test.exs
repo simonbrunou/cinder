@@ -104,6 +104,28 @@ defmodule Cinder.Acquisition.AnimePreferencesTest do
            ]) == ["subsplease", "ember"]
   end
 
+  test "a required chi subtitle setting accepts a release whose subtitles parse as zh (#519)" do
+    policy = %{
+      required_audio_languages: [],
+      subtitle_languages: AnimePreferences.normalize_languages(["chi"]),
+      embedded_subtitle_mode: :require,
+      preferred_groups: [],
+      blocked_groups: [],
+      group_fallback_delay: 86_400
+    }
+
+    assert policy.subtitle_languages == ["zh"]
+
+    release = %Release{
+      title: "[Group] Show - 01 [1080p] [Chinese Subs]",
+      group: "Group",
+      embedded_subtitle_claim: :present,
+      embedded_subtitle_languages: ["zh"]
+    }
+
+    assert AnimePreferences.verdict(release, policy) == :ok
+  end
+
   test "snapshot freezes normalized hard requirements and release evidence" do
     policy = %{
       required_audio_languages: ["ja", "fr"],
