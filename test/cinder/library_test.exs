@@ -803,6 +803,183 @@ defmodule Cinder.LibraryTest do
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
   end
 
+  test "ZIP-packed movie fails explicitly instead of importing its sample (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/b.zip", 9_999}]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
+  test "7z-packed movie fails explicitly instead of importing its sample (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/b.7z", 9_999}]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
+  test "a split 7z first volume (movie.7z.001) fails explicitly instead of importing its sample (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/b.7z.001", 9_999}, {"/dl/X/b.7z.002", 9_999}]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
+  test "a completed usenet folder with the real feature and leftover .par2 files still imports (#499)" do
+    movie = %Movie{title: "X", year: 2000, tmdb_id: 555, file_path: "/dl/X"}
+
+    Cinder.LibraryStubs.stub_import_ok(9 * @gb)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    # .par2 is repair/parity data, never a container the feature could be packed inside — a real
+    # usenet client routinely leaves these behind after a successful repair. They must not trip
+    # the archive guard meant for genuinely unimportable containers (.rar/.zip/.7z).
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok,
+       [
+         {"/dl/X/X.2000.1080p.mkv", 9 * @gb},
+         {"/dl/X/X.2000.1080p.par2", 50_000},
+         {"/dl/X/X.2000.1080p.vol00+01.par2", 50_000}
+       ]}
+    end)
+
+    assert {:ok, %{dest: dest} = stage} = Library.stage_movie(movie)
+    assert dest == "#{@lib}/X (2000) {tmdb-555}/X (2000) {tmdb-555}.mkv"
+    assert :ok = commit!(stage)
+  end
+
+  test "a completed movie with a small companion .zip (subs/extras) still imports (#499)" do
+    movie = %Movie{title: "X", year: 2000, tmdb_id: 556, file_path: "/dl/X"}
+
+    Cinder.LibraryStubs.stub_import_ok(9 * @gb)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    # Subs.zip is a legitimate companion archive many releases ship alongside the real feature —
+    # it must never block an otherwise-good, full-size, non-sample video from importing.
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok,
+       [
+         {"/dl/X/X.2000.1080p.mkv", 9 * @gb},
+         {"/dl/X/Subs.zip", 50_000}
+       ]}
+    end)
+
+    assert {:ok, %{dest: dest} = stage} = Library.stage_movie(movie)
+    assert dest == "#{@lib}/X (2000) {tmdb-556}/X (2000) {tmdb-556}.mkv"
+    assert :ok = commit!(stage)
+  end
+
+  test "a zip outweighing every visible video still refuses (the feature could be inside it) (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/movie.zip", 9_999_999_999}]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
+  test "a non-UTF8 archive filename does not crash the archive guard (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/" <> <<255>> <> ".7z.001", 9_999}]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
+  test "many small split volumes summing bigger than a visible clip still refuse (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      # Ten 900MB volumes (9 GB total) outweigh the 1 GB clip even though no single volume does.
+      volumes =
+        for n <- 1..10, do: {"/dl/X/movie.7z.#{String.pad_leading("#{n}", 3, "0")}", 900_000_000}
+
+      {:ok, [{"/dl/X/sample1.mkv", 1_000_000_000} | volumes]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
+  test "a split ZIP volume (movie.zip.001) fails explicitly instead of importing its sample (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/b.zip.001", 9_999}, {"/dl/X/b.zip.002", 9_999}]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
+  test "an Info-ZIP split set (archive.z01 + archive.zip) fails explicitly instead of importing its sample (#499)" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok,
+       [
+         {"/dl/X/sample.mkv", 500},
+         {"/dl/X/b.z01", 9_999},
+         {"/dl/X/b.z02", 9_999},
+         {"/dl/X/b.zip", 100}
+       ]}
+    end)
+
+    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
+  test "a real feature titled with the word 'sample' still imports beside a companion archive (#499)" do
+    movie = %Movie{title: "Sample", year: 2000, tmdb_id: 558, file_path: "/dl/X"}
+
+    Cinder.LibraryStubs.stub_import_ok(9 * @gb)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok,
+       [
+         {"/dl/X/Sample.2000.1080p.mkv", 9 * @gb},
+         {"/dl/X/Subs.zip", 50_000}
+       ]}
+    end)
+
+    assert {:ok, %{dest: dest} = stage} = Library.stage_movie(movie)
+    assert dest == "#{@lib}/Sample (2000) {tmdb-558}/Sample (2000) {tmdb-558}.mkv"
+    assert :ok = commit!(stage)
+  end
+
   test "disc structures fail explicitly without an extractor/playback contract" do
     movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
 
