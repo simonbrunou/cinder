@@ -268,6 +268,82 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrAdoptTest do
     assert work.title == "All Book"
   end
 
+  # #513: a two-track MP3 audiobook must never become :available with just one track, no matter
+  # which decision choice fires — there is no valid "pick one" for sequential chapters.
+  test "a two-track MP3 audiobook adopts BOTH tracks even through the :preferred (default) choice",
+       %{audiobooks_tmp: audiobooks_tmp} do
+    track1 = file(1, 1, "mp3", path(audiobooks_tmp, "two-track/01.mp3"))
+    track2 = file(2, 1, "mp3", path(audiobooks_tmp, "two-track/02.mp3"))
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Track Author")],
+        works: [work(1, 1, "Two Track Audiobook", "track-1")],
+        files: [track1, track2]
+      )
+    )
+
+    stub_resolve("Track Author", "Two Track Audiobook", "openlibrary-track-1")
+
+    assert {:ok, preview} = Adoption.preview_migration(:readarr)
+
+    assert [%{status: :needs_decision, reason: :multi_track, key: key} = candidate] =
+             preview.candidates
+
+    assert %{adopted: 1, skipped: 0, failures: []} =
+             Adoption.adopt_migration(:readarr, [
+               %{key: key, choice: :preferred, candidate: candidate}
+             ])
+
+    [target] = Repo.all(BookTarget)
+    assert target.status == :available
+    assert target.media_kind == :audiobook
+
+    stored =
+      from(f in BookFile, where: f.book_target_id == ^target.id)
+      |> Repo.all()
+      |> Enum.map(& &1.path)
+      |> Enum.sort()
+
+    assert stored == Enum.sort([track1.path, track2.path])
+  end
+
+  test "a two-track MP3 audiobook adopts both tracks through the :all_formats choice too",
+       %{audiobooks_tmp: audiobooks_tmp} do
+    track1 = file(1, 1, "mp3", path(audiobooks_tmp, "two-track-all/01.mp3"))
+    track2 = file(2, 1, "mp3", path(audiobooks_tmp, "two-track-all/02.mp3"))
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Track Author")],
+        works: [work(1, 1, "Two Track Audiobook All", "track-all-1")],
+        files: [track1, track2]
+      )
+    )
+
+    stub_resolve("Track Author", "Two Track Audiobook All", "openlibrary-track-all-1")
+
+    assert {:ok, preview} = Adoption.preview_migration(:readarr)
+
+    assert [%{status: :needs_decision, reason: :multi_track, key: key} = candidate] =
+             preview.candidates
+
+    assert %{adopted: 1, skipped: 0, failures: []} =
+             Adoption.adopt_migration(:readarr, [
+               %{key: key, choice: :all_formats, candidate: candidate}
+             ])
+
+    [target] = Repo.all(BookTarget)
+
+    stored =
+      from(f in BookFile, where: f.book_target_id == ^target.id)
+      |> Repo.all()
+      |> Enum.map(& &1.path)
+      |> Enum.sort()
+
+    assert stored == Enum.sort([track1.path, track2.path])
+  end
+
   test "an adopt racing an in-flight grab is refused and leaves the grab untouched", %{tmp: tmp} do
     # Seeded under "openlibrary" (the real metadata provider), not "readarr": the grab-in-progress
     # race only matters for a work Cinder already knows about (a target to race on), and only a
