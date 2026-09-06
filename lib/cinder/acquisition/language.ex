@@ -163,6 +163,25 @@ defmodule Cinder.Acquisition.Language do
   end
 
   @doc """
+  Whether a RAW (un-normalized) MediaInfo-reported track language code satisfies `target` — the
+  same forward audio-code tolerance list `audio_satisfies?/2` draws from (so a Cantonese `"cn"`
+  target still accepts a generically-tagged `"chi"`/`"zho"` track), but strict: an unrecognized
+  code never satisfies, unlike `audio_satisfies?/2`'s deliberate leniency there (which exists to
+  avoid parking a download over a code it merely doesn't recognise — the wrong purpose when
+  actually *selecting* one specific track to use, per #573).
+
+  `raw_code` MUST be the pre-canonicalization code as reported by the source (never re-normalized
+  first) — normalizing it away loses exactly the ambiguous-vs-unambiguous distinction ("chi"/"zho"
+  vs "cmn") this function exists to preserve.
+  """
+  def raw_track_satisfies?(target, raw_code) when is_binary(raw_code) do
+    accepted = Map.get(@audio_codes, normalize(target), [normalize(target)])
+    String.downcase(raw_code) in accepted
+  end
+
+  def raw_track_satisfies?(_target, _raw_code), do: false
+
+  @doc """
   Whether a file satisfies `target` on paper but *plays* in another language: `file_langs` holds the
   target somewhere, yet `default_audio` — the language of the default track, which is what a
   player selects absent a viewer preference — is a recognised other language. That is the

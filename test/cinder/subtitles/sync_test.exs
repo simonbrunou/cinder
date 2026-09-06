@@ -1007,11 +1007,11 @@ defmodule Cinder.Subtitles.SyncTest do
        %{video: video} do
     managed_srt!(video, "cn")
 
-    # The real Cinder.Library.MediaInfo.Ffprobe.subtitle_language/1 already canonicalizes a raw
-    # "chi"/"zho" ffprobe tag through Language.normalize/1 before this ever reaches
-    # Reference.select/4, so the track here carries "zh" — never the raw alias string.
+    # Cinder.Library.MediaInfo.Ffprobe.subtitle_language/1 reports the raw, validated ffprobe
+    # tag - never canonicalized through Language.normalize/1 - so the track here carries the raw
+    # "chi" alias string exactly as a real Cantonese-tagged file would (#573).
     expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
-      {:ok, [%{index: 2, language: "zh", forced?: false, default?: true, packet_count: 20}]}
+      {:ok, [%{index: 2, language: "chi", forced?: false, default?: true, packet_count: 20}]}
     end)
 
     expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 2 ->
@@ -1020,6 +1020,35 @@ defmodule Cinder.Subtitles.SyncTest do
 
     expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn reference, input, output ->
       # The embedded "chi" track was selected as the reference, not a fallback to raw audio.
+      assert File.read!(reference) == subtitle(".srt")
+      assert File.read!(input) == subtitle(".srt")
+      File.write!(output, shifted_subtitle(subtitle(".srt")))
+      {:ok, %{score: 30.0, offset_ms: 1_000, rate: 1.0}}
+    end)
+
+    assert [%{method: "embedded", status: :corrected}] = Sync.analyze_video(video)
+  end
+
+  test "a cn (Cantonese) target prefers a lower-priority yue track over a higher-priority Mandarin cmn track (#573)",
+       %{video: video} do
+    managed_srt!(video, "cn")
+
+    # cmn (explicitly Mandarin) has more packets and would win the sort-by-packet-count
+    # tiebreak if it were allowed to satisfy a Cantonese target at all - proving it is filtered
+    # out entirely, not merely deprioritized, requires the weaker yue track to still be picked.
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok,
+       [
+         %{index: 2, language: "cmn", forced?: false, default?: true, packet_count: 999},
+         %{index: 3, language: "yue", forced?: false, default?: false, packet_count: 5}
+       ]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 3 ->
+      {:ok, subtitle(".srt")}
+    end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn reference, input, output ->
       assert File.read!(reference) == subtitle(".srt")
       assert File.read!(input) == subtitle(".srt")
       File.write!(output, shifted_subtitle(subtitle(".srt")))

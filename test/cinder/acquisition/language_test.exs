@@ -92,6 +92,35 @@ defmodule Cinder.Acquisition.LanguageTest do
     end
   end
 
+  describe "raw_track_satisfies?/2" do
+    # #573: reference/local-source track selection must compare the RAW (un-normalized) track
+    # code against the forward audio-tolerance list, not normalize(target) == normalize(track) -
+    # normalizing both sides collapses "chi"/"zho"/"yue"/"cmn" to the same "zh"/"cn" bucket and
+    # would let an explicitly Mandarin "cmn" track satisfy a Cantonese "cn" request.
+    test "a generic chi or zho track satisfies a cn (Cantonese) target" do
+      assert Language.raw_track_satisfies?("cn", "chi")
+      assert Language.raw_track_satisfies?("cn", "zho")
+      assert Language.raw_track_satisfies?("cn", "CHI")
+    end
+
+    test "Cantonese's own yue code satisfies a cn target" do
+      assert Language.raw_track_satisfies?("cn", "yue")
+    end
+
+    test "an explicitly Mandarin cmn track does not satisfy a cn (Cantonese) target" do
+      refute Language.raw_track_satisfies?("cn", "cmn")
+    end
+
+    test "a generic chi or zho track still satisfies a zh (Mandarin) target" do
+      assert Language.raw_track_satisfies?("zh", "chi")
+      assert Language.raw_track_satisfies?("zh", "zho")
+    end
+
+    test "an unrecognized code alongside a real target still flags mismatch" do
+      refute Language.raw_track_satisfies?("cn", "fre")
+    end
+  end
+
   describe "filter/3" do
     test "inactive filter returns releases unchanged" do
       releases = [rel("FRENCH"), rel(nil), rel("GERMAN")]

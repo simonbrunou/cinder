@@ -695,6 +695,32 @@ defmodule Cinder.SubtitlesTest do
     assert %{tracks: %{"fr" => %{origin: "embedded"}}} = Manifest.read(@video)
   end
 
+  test "a cn (Cantonese) target selects a generically-tagged chi embedded track, not a fallback translation (#573)",
+       %{fs: fs} do
+    video = @video
+    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "cn")
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok, [%{index: 2, language: "chi", default?: false, forced?: false}]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 2 ->
+      {:ok, "1\n00:00:01,000 --> 00:00:02,000\nCantonese SRT\n\n"}
+    end)
+
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+
+    assert Agent.get(fs, &Map.fetch!(&1, "/lib/M/M.cn.srt")) ==
+             "1\n00:00:01,000 --> 00:00:02,000\nCantonese SRT\n\n"
+
+    assert %{tracks: %{"cn" => %{origin: "embedded"}}} = Manifest.read(@video)
+  end
+
   test "a forced exact embedded track falls through to a default non-forced translation", %{
     fs: fs
   } do
