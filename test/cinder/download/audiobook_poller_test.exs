@@ -451,6 +451,243 @@ defmodule Cinder.Download.AudiobookPollerTest do
     end
   end
 
+  # #501: `record_import_set/3`'s same-track-count replay-detection treats an identical
+  # destination PATH SET as proof nothing changed, but audiobook destinations depend only on
+  # work/disc/order (`AudiobookNaming.track_dest/4`) — never on source bytes. A confirmed
+  # replacement whose new release resolves to the SAME track/disc layout reuses every path while
+  # every track's actual audio (and therefore its size, duration, etc.) changes underneath it.
+  # The "actually replaces bytes at every reused path" test above already proves the FILE
+  # content lands correctly; these prove the `book_files` ROW is refreshed to match it.
+  describe "same-path replacement metadata" do
+    test "a same-track-count replace refreshes every persisted field to match the new audio",
+         ctx do
+      %{target: target, audiobooks: audiobooks, release_dir: release_dir} =
+        downloading(ctx, %{
+          "01 - Track.mp3" => mp3_bytes("original track one padding"),
+          "02 - Track.mp3" => mp3_bytes("original track two, with rather more padding than one")
+        })
+
+      Application.put_env(:cinder, :audio_probe, Cinder.Library.AudioProbeMock)
+      one = Path.join(release_dir, "01 - Track.mp3")
+      two = Path.join(release_dir, "02 - Track.mp3")
+
+      stub(Cinder.Library.AudioProbeMock, :probe, fn
+        ^one -> {:ok, probe(track_tag: 1, duration_seconds: 60)}
+        ^two -> {:ok, probe(track_tag: 2, duration_seconds: 120)}
+      end)
+
+      complete_download(release_dir)
+      poll!()
+
+      dir = Path.join([audiobooks, "Ursula K. Le Guin", "The Dispossessed"])
+      dest_one = Path.join(dir, "01 - The Dispossessed.mp3")
+      dest_two = Path.join(dir, "02 - The Dispossessed.mp3")
+
+      original_one_bytes = mp3_bytes("original track one padding")
+      original_two_bytes = mp3_bytes("original track two, with rather more padding than one")
+
+      files = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
+      assert length(files) == 2
+      by_track = Map.new(files, &{&1.track_number, &1})
+      assert by_track[1].size == byte_size(original_one_bytes)
+      assert by_track[1].duration_seconds == 60
+      assert by_track[2].size == byte_size(original_two_bytes)
+      assert by_track[2].duration_seconds == 120
+
+      new_release_dir = Path.join(ctx.tmp_dir, "downloads/release-remote-2")
+      File.mkdir_p!(new_release_dir)
+      new_one_bytes = mp3_bytes("replacement one")
+      new_two_bytes = mp3_bytes("a much longer replacement payload for track two entirely")
+      File.write!(Path.join(new_release_dir, "01 - Track.mp3"), new_one_bytes)
+      File.write!(Path.join(new_release_dir, "02 - Track.mp3"), new_two_bytes)
+
+      new_one = Path.join(new_release_dir, "01 - Track.mp3")
+      new_two = Path.join(new_release_dir, "02 - Track.mp3")
+
+      stub(Cinder.Library.AudioProbeMock, :probe, fn
+        ^new_one -> {:ok, probe(track_tag: 1, duration_seconds: 90)}
+        ^new_two -> {:ok, probe(track_tag: 2, duration_seconds: 150)}
+      end)
+
+      {:ok, _replace_grab} =
+        Books.Grabs.create(target.id, "remote-2", :torrent, "The Dispossessed Retail",
+          replace: true
+        )
+
+      complete_download(new_release_dir, "remote-2")
+      poll!()
+
+      assert File.read!(dest_one) == new_one_bytes
+      assert File.read!(dest_two) == new_two_bytes
+
+      reloaded = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
+      assert length(reloaded) == 2
+      by_track2 = Map.new(reloaded, &{&1.track_number, &1})
+      assert by_track2[1].size == byte_size(new_one_bytes)
+      assert by_track2[1].duration_seconds == 90
+      refute by_track2[1].size == byte_size(original_one_bytes)
+      assert by_track2[2].size == byte_size(new_two_bytes)
+      assert by_track2[2].duration_seconds == 150
+      refute by_track2[2].size == byte_size(original_two_bytes)
+      assert Repo.reload!(target).status == :available
+      assert Repo.all(BookGrab) == []
+    end
+
+    test "replaying a same-track-count replace is a true no-op — rows stay on the replaced audio",
+         ctx do
+      %{target: target, audiobooks: audiobooks, release_dir: release_dir} =
+        downloading(ctx, %{
+          "01 - Track.mp3" => mp3_bytes("original-1"),
+          "02 - Track.mp3" => mp3_bytes("original-2")
+        })
+
+      Application.put_env(:cinder, :audio_probe, Cinder.Library.AudioProbeMock)
+      one = Path.join(release_dir, "01 - Track.mp3")
+      two = Path.join(release_dir, "02 - Track.mp3")
+
+      stub(Cinder.Library.AudioProbeMock, :probe, fn
+        ^one -> {:ok, probe(track_tag: 1)}
+        ^two -> {:ok, probe(track_tag: 2)}
+      end)
+
+      complete_download(release_dir)
+      poll!()
+
+      dir = Path.join([audiobooks, "Ursula K. Le Guin", "The Dispossessed"])
+      dest_one = Path.join(dir, "01 - The Dispossessed.mp3")
+      dest_two = Path.join(dir, "02 - The Dispossessed.mp3")
+
+      new_release_dir = Path.join(ctx.tmp_dir, "downloads/release-remote-2")
+      File.mkdir_p!(new_release_dir)
+      new_one_bytes = mp3_bytes("replacement one, quite a bit longer than the original was")
+      new_two_bytes = mp3_bytes("replacement two")
+      File.write!(Path.join(new_release_dir, "01 - Track.mp3"), new_one_bytes)
+      File.write!(Path.join(new_release_dir, "02 - Track.mp3"), new_two_bytes)
+
+      new_one = Path.join(new_release_dir, "01 - Track.mp3")
+      new_two = Path.join(new_release_dir, "02 - Track.mp3")
+
+      stub(Cinder.Library.AudioProbeMock, :probe, fn
+        ^new_one -> {:ok, probe(track_tag: 1)}
+        ^new_two -> {:ok, probe(track_tag: 2)}
+      end)
+
+      {:ok, replace_grab} =
+        Books.Grabs.create(target.id, "remote-2", :torrent, "The Dispossessed Retail",
+          replace: true
+        )
+
+      complete_download(new_release_dir, "remote-2")
+      poll!()
+
+      files = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
+      assert length(files) == 2
+      by_track = Map.new(files, &{&1.track_number, &1})
+      ids = Map.new(by_track, fn {track, file} -> {track, file.id} end)
+      assert by_track[1].size == byte_size(new_one_bytes)
+      assert by_track[2].size == byte_size(new_two_bytes)
+      assert File.read!(dest_one) == new_one_bytes
+      assert File.read!(dest_two) == new_two_bytes
+
+      # Simulate the crash-and-retry: the same remote download is re-grabbed (a fresh grab row,
+      # since the first was already deleted post-commit) with the same content, exactly as a
+      # replayed import tick would re-derive it.
+      {:ok, _replayed} =
+        Books.Grabs.create(
+          target.id,
+          replace_grab.download_id,
+          :torrent,
+          replace_grab.release_title,
+          replace: true
+        )
+
+      complete_download(new_release_dir, "remote-2")
+      poll!()
+
+      replayed = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
+      assert length(replayed) == 2
+      by_track2 = Map.new(replayed, &{&1.track_number, &1})
+      assert by_track2[1].id == ids[1]
+      assert by_track2[2].id == ids[2]
+      assert by_track2[1].size == byte_size(new_one_bytes)
+      assert by_track2[2].size == byte_size(new_two_bytes)
+      assert File.read!(dest_one) == new_one_bytes
+      assert File.read!(dest_two) == new_two_bytes
+      assert Repo.all(BookGrab) == []
+    end
+
+    test "an injected catalog failure during a same-track-count replace restores the original bytes and metadata",
+         ctx do
+      %{target: target, audiobooks: audiobooks, release_dir: release_dir} =
+        downloading(ctx, %{
+          "01 - Track.mp3" => mp3_bytes("original-1"),
+          "02 - Track.mp3" => mp3_bytes("original-2")
+        })
+
+      Application.put_env(:cinder, :audio_probe, Cinder.Library.AudioProbeMock)
+      one = Path.join(release_dir, "01 - Track.mp3")
+      two = Path.join(release_dir, "02 - Track.mp3")
+
+      stub(Cinder.Library.AudioProbeMock, :probe, fn
+        ^one -> {:ok, probe(track_tag: 1)}
+        ^two -> {:ok, probe(track_tag: 2)}
+      end)
+
+      complete_download(release_dir)
+      poll!()
+
+      dir = Path.join([audiobooks, "Ursula K. Le Guin", "The Dispossessed"])
+      dest_one = Path.join(dir, "01 - The Dispossessed.mp3")
+      dest_two = Path.join(dir, "02 - The Dispossessed.mp3")
+      original_one_bytes = mp3_bytes("original-1")
+      original_two_bytes = mp3_bytes("original-2")
+
+      original = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
+      original_by_track = Map.new(original, &{&1.track_number, &1})
+
+      new_release_dir = Path.join(ctx.tmp_dir, "downloads/release-remote-2")
+      File.mkdir_p!(new_release_dir)
+      File.write!(Path.join(new_release_dir, "01 - Track.mp3"), mp3_bytes("must never land 1"))
+      File.write!(Path.join(new_release_dir, "02 - Track.mp3"), mp3_bytes("must never land 2"))
+
+      new_one = Path.join(new_release_dir, "01 - Track.mp3")
+      new_two = Path.join(new_release_dir, "02 - Track.mp3")
+
+      stub(Cinder.Library.AudioProbeMock, :probe, fn
+        ^new_one -> {:ok, probe(track_tag: 1)}
+        ^new_two -> {:ok, probe(track_tag: 2)}
+      end)
+
+      {:ok, _replace_grab} =
+        Books.Grabs.create(target.id, "remote-2", :torrent, "The Dispossessed Retail",
+          replace: true
+        )
+
+      # Simulate a concurrent operator hold landing between the download completing and this
+      # tick's catalog write: `Files.record_import_set/3`'s `arm_target/1` guard refuses any
+      # status outside `[:monitored, :available]`, so the whole transaction (every staged
+      # backup-swap included) must roll all the way back to the pre-replace files.
+      Repo.update_all(from(t in Cinder.Books.BookTarget, where: t.id == ^target.id),
+        set: [status: :held, hold_reason: "operator hold"]
+      )
+
+      complete_download(new_release_dir, "remote-2")
+      capture_log(fn -> poll!() end)
+
+      assert Repo.reload!(target).status == :held
+      assert File.read!(dest_one) == original_one_bytes
+      assert File.read!(dest_two) == original_two_bytes
+
+      reloaded = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
+      assert length(reloaded) == 2
+      by_track = Map.new(reloaded, &{&1.track_number, &1})
+      assert by_track[1].id == original_by_track[1].id
+      assert by_track[1].size == byte_size(original_one_bytes)
+      assert by_track[2].id == original_by_track[2].id
+      assert by_track[2].size == byte_size(original_two_bytes)
+    end
+  end
+
   describe "crash-safety around the record/stage-commit boundary" do
     # A fault injected on the commit-phase filesystem call (backup cleanup) after the catalog
     # transaction has already committed must never lose or roll back a `book_files` row or its
