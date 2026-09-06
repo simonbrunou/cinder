@@ -280,21 +280,24 @@ defmodule Cinder.Subtitles do
     # same forward-tolerance rule Cinder.Subtitles.Sync.Reference.select/4 uses. An unambiguous
     # match ("cn"/"yue", "zh"/"cmn") is preferred over a generic-alias one ("chi"/"zho", tolerated
     # by both) - the ambiguous track might genuinely be the other language (#573 review).
-    match =
+    candidates =
       tracks
       |> Enum.filter(&(Language.raw_track_satisfies?(language, &1.language) and not &1.forced?))
       |> Enum.sort_by(&if(Language.exact_track?(language, &1.language), do: 0, else: 1))
-      |> List.first()
 
-    case match do
-      nil ->
-        default_or_sidecar(video_path, language, target, tracks, cache)
+    # Try every matching candidate in preference order, not just the best one - an unextractable
+    # exact track must not give up before trying a usable, merely-ambiguous one (#575), mirroring
+    # Reference.select/4's existing cascade.
+    case Enum.find_value(candidates, &extracted(video_path, &1)) do
+      nil -> default_or_sidecar(video_path, language, target, tracks, cache)
+      content -> {{:direct, content, "embedded"}, cache}
+    end
+  end
 
-      track ->
-        case extract(video_path, track) do
-          {:ok, content} -> {{:direct, content, "embedded"}, cache}
-          :error -> default_or_sidecar(video_path, language, target, tracks, cache)
-        end
+  defp extracted(video_path, track) do
+    case extract(video_path, track) do
+      {:ok, content} -> content
+      :error -> nil
     end
   end
 
