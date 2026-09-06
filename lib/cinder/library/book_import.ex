@@ -87,7 +87,7 @@ defmodule Cinder.Library.BookImport do
     # every component, so a symlinked ancestor fails here and nothing is created.
     with {:ok, _vetted} <- BookSources.safe_destination(Path.dirname(dest), root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, rollback, placed?} <- StageEngine.stage_book_place(source, dest, root),
+         {:ok, rollback, placed?} <- StageEngine.stage_book_place(source, dest, root, opts),
          {:ok, size} <- recorded_size(placed?, size, dest) do
       record(grab, target, dest, format, size, rollback, opts)
     end

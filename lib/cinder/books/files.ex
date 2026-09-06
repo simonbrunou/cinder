@@ -42,7 +42,7 @@ defmodule Cinder.Books.Files do
 
     Repo.transaction(fn ->
       with {:ok, superseded} <- maybe_supersede(target, attrs, replace?),
-           {:ok, file} <- insert_or_existing(target, attrs),
+           {:ok, file} <- insert_or_existing(target, attrs, replace?),
            {:ok, _armed} <- arm_target(target) do
         # Inside the transaction, and last: `mark_committed!/1` rolls back on a stage that is no
         # longer `:prepared`, so a journal another process already reconciled aborts the catalog
@@ -157,17 +157,20 @@ defmodule Cinder.Books.Files do
   # Shared with `Cinder.Books.Adoption.adopt_work/3` (B6c) — a duplicate `book_files.path` is
   # only a conflict when the row belongs to a DIFFERENT target; when it is the SAME target's own
   # row (a retried adopt, or a crash/replay), the write already succeeded and this call is
-  # replaying it. See `insert_conflict/3` below for exactly which case is which. Public and
+  # replaying it. See `insert_conflict/4` below for exactly which case is which. Public and
   # `@doc false` (not private) so B6c's own transaction can reuse this unchanged rather than
-  # duplicating it — the plan's own explicit instruction.
-  @spec insert_or_existing(BookTarget.t(), map()) :: {:ok, BookFile.t()} | {:error, term()}
-  def insert_or_existing(%BookTarget{} = target, attrs) do
+  # duplicating it — the plan's own explicit instruction. B6c never confirms a replacement, so it
+  # relies on the `replace?` default (`false`) and gets today's unchanged "return the existing
+  # row" behavior.
+  @spec insert_or_existing(BookTarget.t(), map(), boolean()) ::
+          {:ok, BookFile.t()} | {:error, term()}
+  def insert_or_existing(%BookTarget{} = target, attrs, replace? \\ false) do
     %BookFile{}
     |> BookFile.changeset(Map.put(attrs, :book_target_id, target.id))
     |> Repo.insert()
     |> case do
       {:ok, file} -> {:ok, file}
-      {:error, changeset} -> insert_conflict(target, attrs, changeset)
+      {:error, changeset} -> insert_conflict(target, attrs, changeset, replace?)
     end
   end
 
@@ -179,14 +182,31 @@ defmodule Cinder.Books.Files do
   # Returning `:book_file_exists` there parked a target that is genuinely `:available`, with its
   # file on disk and in the catalog, at `:held`. Treating the replay as success is what makes the
   # import idempotent one layer above `StageEngine`'s same-inode branch.
-  defp insert_conflict(target, attrs, changeset) do
+  #
+  # `replace?` decides whether the existing row is returned as-is or updated with `attrs`. Path
+  # equality alone cannot tell a true replay (the file at this path never changed) from a
+  # confirmed "Find a better match" replacement that happens to land on the same basename
+  # (`StageEngine.stage_book_place/4`'s backup-swap already overwrote the bytes at this exact
+  # path — issue #500): the caller already knows which one this is (it is the same `replace?`
+  # that told `StageEngine` whether to perform the swap), so it is threaded straight through
+  # rather than re-derived from a fresh `File.stat/1` here. `attrs` already carries the truth of
+  # what is currently on disk either way (`BookImport.recorded_size/3` re-stats the actual
+  # destination when nothing was staged), so updating on every confirmed-replace conflict is safe
+  # for a genuine replay too — the update just writes back the same values.
+  defp insert_conflict(target, attrs, changeset, replace?) do
     with true <- Keyword.has_key?(changeset.errors, :path),
          %BookFile{book_target_id: owner} = existing <- Repo.get_by(BookFile, path: attrs.path),
          true <- owner == target.id do
-      {:ok, existing}
+      if replace?, do: update_existing(existing, attrs), else: {:ok, existing}
     else
       _different_owner_or_other_error -> {:error, insert_reason(changeset)}
     end
+  end
+
+  defp update_existing(%BookFile{} = existing, attrs) do
+    existing
+    |> BookFile.changeset(attrs)
+    |> Repo.update()
   end
 
   defp insert_reason(%Ecto.Changeset{errors: errors} = changeset) do
