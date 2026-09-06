@@ -22,7 +22,7 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrAdoptTest do
   setup do
     stub(PrimaryMetadataMock, :provider, fn -> :openlibrary end)
     stub(SecondaryMetadataMock, :provider, fn -> :hardcover end)
-    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{}} end)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{type: :regular}} end)
 
     tmp =
       Path.join(

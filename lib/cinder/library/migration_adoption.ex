@@ -679,7 +679,7 @@ defmodule Cinder.Library.MigrationAdoption do
   end
 
   defp revalidate_selected(source, selected) do
-    {present, missing} = Enum.split_with(selected, &candidate_files_exist?/1)
+    {present, missing} = Enum.split_with(selected, &candidate_files_valid?/1)
 
     case Repo.transaction(fn -> revalidate_catalog(source, present) end) do
       {:ok, {valid, stale}} ->
@@ -690,13 +690,27 @@ defmodule Cinder.Library.MigrationAdoption do
     end
   end
 
-  defp candidate_files_exist?({candidate, _choice}) do
+  # Requires every candidate path to still be a REGULAR file — not merely something `lstat`
+  # succeeds on. A bare `match?({:ok, %File.Stat{}}, ...)` accepted a directory or a symlink
+  # alike (#514): a file replaced with either after preview, or a provider's mapped path
+  # resolving to the wrong filesystem object, still passed this gate and went on to
+  # `Catalog.find_or_create_at_available`, making a non-media path "available." `type: :regular`
+  # mirrors the ordinary (non-migration) adoption path's own `validate_candidate_file/3`
+  # (`lib/cinder/library/adoption.ex`), which rejects a symlink exactly the same way regardless
+  # of what it resolves to — this codebase's own import writes only ever hardlink, never
+  # symlink, so a symlink at a candidate's path is never something Cinder itself produced and is
+  # never treated as legitimate here either.
+  defp candidate_files_valid?({candidate, _choice}) do
     candidate
     |> candidate_paths()
-    |> Enum.all?(fn path ->
-      is_binary(path) and path != "" and match?({:ok, %File.Stat{}}, filesystem().lstat(path))
-    end)
+    |> Enum.all?(&regular_file?/1)
   end
+
+  defp regular_file?(path) when is_binary(path) and path != "" do
+    match?({:ok, %File.Stat{type: :regular}}, filesystem().lstat(path))
+  end
+
+  defp regular_file?(_path), do: false
 
   defp candidate_paths(%{primary_file: %{path: path}} = candidate),
     do: [path | Enum.map(Map.get(candidate, :extra_files, []), & &1.path)]
