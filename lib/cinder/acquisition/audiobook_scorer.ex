@@ -279,23 +279,38 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   defp strip_noise(nil, _work), do: ""
 
   defp strip_noise(title, work) do
+    wanted_tokens = work |> Map.fetch!(:title) |> tokens()
+
     title
+    # A release-side leading/trailing space must not shift the "start of string" the
+    # "ed"/author-collision guard below anchors on (Codex review).
+    |> String.trim()
     |> drop_bracketed_groups(work)
     |> strip_series_ordinal(work)
     |> String.replace(~r/-[A-Za-z0-9]+$/, " ")
-    # "edition" joins the keyword list: "Room - Edition 13" for a DIFFERENT "Room" was
-    # otherwise unstripped, and its "13" coincided with a wanted "Room 13" as false title
-    # evidence -- the exact hazard series ordinals close, for edition/printing metadata instead
-    # of a series name (Codex review).
-    |> String.replace(~r/\b(?:book|bk|vol|volume|part|pt|no|nr|edition)\b[ .#]*\d{1,3}\b/i, " ")
-    # "ed" alone is the SAME abbreviation, but it is also a real first name -- "Ed.13.epub" for
-    # author "Ed" and title "13" must not read "Ed" as an edition marker and strip both it and
-    # the wanted title's own number. Author names lead a release ("Author - Title" convention),
-    # so a lookbehind requiring at least one preceding character excludes "ed" at the very start
-    # of the string, where a genuine edition marker essentially never sits (Codex review).
-    |> String.replace(~r/(?<=.)\bed\b[ .#]*\d{1,3}\b/i, " ")
+    |> strip_keyword_number(wanted_tokens)
     |> String.replace(~r/#\d{1,3}\b/, " ")
     |> strip_series_number(wanted_numeric_tokens(work))
+  end
+
+  # See `Cinder.Acquisition.BookScorer.strip_keyword_number/2` for the reasoning (Codex review).
+  defp strip_keyword_number(title, wanted_tokens) do
+    keyword_regex = ~r/\b(book|bk|vol|volume|part|pt|no|nr|edition)\b[ .#]*(\d{1,3})\b/i
+
+    stripped =
+      Regex.replace(keyword_regex, title, fn _whole, word, digits ->
+        keyword_replacement(word, digits, wanted_tokens)
+      end)
+
+    Regex.replace(~r/(?<=.)\bed\b[ .#]*(\d{1,3})\b/i, stripped, fn _whole, digits ->
+      if digits in wanted_tokens, do: "ed " <> digits, else: " "
+    end)
+  end
+
+  defp keyword_replacement(word, digits, wanted_tokens) do
+    if belongs_to_wanted_title?([String.downcase(word), digits], wanted_tokens),
+      do: word <> " " <> digits,
+      else: " "
   end
 
   # See `Cinder.Acquisition.BookScorer.strip_series_ordinal/2` for the reasoning (Codex review).
@@ -317,6 +332,7 @@ defmodule Cinder.Acquisition.AudiobookScorer do
       title
       |> strip_ordinal_after(pattern, words, wanted_tokens)
       |> strip_ordinal_before(pattern, words, wanted_tokens)
+      |> strip_embedded_series_number(pattern, words, wanted_tokens)
     else
       _ -> title
     end
@@ -325,7 +341,7 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   # See `Cinder.Acquisition.BookScorer.strip_ordinal_after/4` and `strip_ordinal_before/4` for the
   # reasoning (Codex review).
   defp strip_ordinal_after(title, pattern, words, wanted_tokens) do
-    regex = Regex.compile!("\\b(" <> pattern <> ")[^A-Za-z0-9]*(\\d{1,3})\\b", "iu")
+    regex = Regex.compile!("\\b(" <> pattern <> ")[ .#_]*(\\d{1,3})\\b", "iu")
 
     Regex.replace(regex, title, fn _whole, name, digits ->
       if belongs_to_wanted_title?(words ++ [digits], wanted_tokens),
@@ -335,12 +351,28 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   end
 
   defp strip_ordinal_before(title, pattern, words, wanted_tokens) do
-    regex = Regex.compile!("\\b(\\d{1,3})[^A-Za-z0-9]*(" <> pattern <> ")\\b", "iu")
+    regex = Regex.compile!("\\b(\\d{1,3})[ .#_]*(" <> pattern <> ")\\b", "iu")
 
     Regex.replace(regex, title, fn _whole, digits, name ->
       if belongs_to_wanted_title?([digits | words], wanted_tokens),
         do: digits <> " " <> name,
         else: " " <> name
+    end)
+  end
+
+  # See `Cinder.Acquisition.BookScorer.strip_embedded_series_number/4` for the reasoning (Codex
+  # review).
+  defp strip_embedded_series_number(title, pattern, words, wanted_tokens) do
+    if Enum.any?(words, &Regex.match?(~r/^\d+$/, &1)),
+      do: replace_embedded_series(title, pattern, words, wanted_tokens),
+      else: title
+  end
+
+  defp replace_embedded_series(title, pattern, words, wanted_tokens) do
+    regex = Regex.compile!("\\b(" <> pattern <> ")\\b", "iu")
+
+    Regex.replace(regex, title, fn _whole, name ->
+      if belongs_to_wanted_title?(words, wanted_tokens), do: name <> " ", else: " "
     end)
   end
 

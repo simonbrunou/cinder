@@ -324,6 +324,23 @@ defmodule Cinder.Acquisition.BookScorerTest do
                BookScorer.evaluate(release("Ed.13.epub"), %{title: "13", authors: ["Ed"]})
     end
 
+    test "a leading space does not defeat the author-named-Ed guard" do
+      # Codex review, round 7: the guard excluding "ed" at the very start of the string must
+      # still hold when the release keeps a leading space before that start.
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release(" Ed.13.epub"), %{title: "13", authors: ["Ed"]})
+    end
+
+    test "a wanted title that IS a keyword phrase keeps its own number" do
+      # Codex review, round 7: "edition"/"book"/"vol" etc keyword stripping must not erase a
+      # wanted title that literally IS that phrase, mirroring the eponymous-series fix.
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("X - Edition 13 (epub)"), %{
+                 title: "Edition 13",
+                 authors: ["X"]
+               })
+    end
+
     test "a series ordinal that coincidentally equals the wanted number is not title evidence" do
       # Codex review on #517: a release-side series ordinal ("Foo 13") must not be mistaken for
       # the wanted title's own number just because the two digits coincide. This release is
@@ -408,6 +425,26 @@ defmodule Cinder.Acquisition.BookScorerTest do
       work = %{title: "Room 13", authors: ["X"], series: ["Room"]}
 
       assert {:accept, _evidence} = BookScorer.evaluate(release("X - Room 13 (epub)"), work)
+    end
+
+    test "a proper field separator does not attach the next field's number as an ordinal" do
+      # Codex review, round 7: "Author - Series - Title" uses a spaced hyphen as a FIELD
+      # delimiter, not a tight ordinal separator -- the next field's own leading number
+      # ("13 Ways") must not be misread as the series' ordinal just because a loose hyphen
+      # sits between them.
+      work = %{title: "13 Ways", authors: ["X"], series: [%{name: "Foo", position: "1"}]}
+
+      assert {:accept, _evidence} =
+               BookScorer.evaluate(release("X - Foo - 13 Ways (epub)"), work)
+    end
+
+    test "a digit embedded in the series name itself is not preserved for an unrelated title" do
+      # Codex review, round 7: the series name can itself embed a number ("Foo 13") that
+      # coincides with the wanted title's own digit while naming a completely different work.
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo 13"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Foo 13 - Room (epub)"), work)
     end
   end
 

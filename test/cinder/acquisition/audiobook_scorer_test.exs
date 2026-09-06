@@ -205,6 +205,19 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
                AudiobookScorer.evaluate(release("Ed.13.m4b"), %{title: "13", authors: ["Ed"]})
     end
 
+    test "a leading space does not defeat the author-named-Ed guard" do
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(release(" Ed.13.m4b"), %{title: "13", authors: ["Ed"]})
+    end
+
+    test "a wanted title that IS a keyword phrase keeps its own number" do
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(release("X - Edition 13 (M4B)"), %{
+                 title: "Edition 13",
+                 authors: ["X"]
+               })
+    end
+
     test "a series ordinal that coincidentally equals the wanted number is not title evidence" do
       work = %{title: "Room 13", authors: ["X"], series: ["Foo"]}
 
@@ -265,6 +278,20 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
       work = %{title: "Room 13", authors: ["X"], series: ["Room"]}
 
       assert {:accept, _evidence} = AudiobookScorer.evaluate(release("X - Room 13 (M4B)"), work)
+    end
+
+    test "a proper field separator does not attach the next field's number as an ordinal" do
+      work = %{title: "13 Ways", authors: ["X"], series: [%{name: "Foo", position: "1"}]}
+
+      assert {:accept, _evidence} =
+               AudiobookScorer.evaluate(release("X - Foo - 13 Ways (M4B)"), work)
+    end
+
+    test "a digit embedded in the series name itself is not preserved for an unrelated title" do
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo 13"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Foo 13 - Room (M4B)"), work)
     end
   end
 
