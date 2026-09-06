@@ -242,7 +242,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   def list_episodes_with_file do
     Repo.all(
       from e in Episode,
-        where: not is_nil(e.file_path),
+        where: not is_nil(e.file_path) or fragment("json_array_length(?) > 0", e.part_file_paths),
         preload: [:episode_coordinates, season: :series]
     )
   end

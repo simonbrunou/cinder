@@ -232,6 +232,21 @@ defmodule Cinder.CatalogTest do
       assert got.id == ep.id
       assert %Series{} = got.season.series
     end
+
+    test "list_episodes_with_file/0 includes a part-only episode (nil primary, one part) (#521)" do
+      series = series_fixture()
+      season = season_fixture(series)
+
+      part_only =
+        episode_fixture(season,
+          episode_number: 3,
+          file_path: nil,
+          part_file_paths: ["/x/e-part-2.mkv"]
+        )
+
+      ids = Catalog.list_episodes_with_file() |> Enum.map(& &1.id)
+      assert part_only.id in ids
+    end
   end
 
   describe "retry_movie/1" do
@@ -689,6 +704,23 @@ defmodule Cinder.CatalogTest do
     test "rejects a non-upgrading movie" do
       assert Catalog.abort_upgrade(movie_fixture(status: :available), nil) ==
                {:error, :not_upgrading}
+    end
+
+    test "a concurrently-deleted movie returns a stable error instead of raising" do
+      movie =
+        movie_fixture(
+          status: :upgrading,
+          download_id: "dl-4",
+          download_protocol: :torrent,
+          file_path: "/lib/M (2020)/M (2020).mkv"
+        )
+
+      # Another admin deleted the row before this stale struct's cancel event was handled.
+      Repo.delete!(movie)
+
+      # No expect/2 on the client — verify_on_exit! fails if abort_upgrade attempted remote
+      # cleanup against a row that's already gone.
+      assert {:error, :stale_entry} = Catalog.abort_upgrade(movie, nil)
     end
   end
 

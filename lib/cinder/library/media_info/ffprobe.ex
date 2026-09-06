@@ -70,11 +70,10 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   """
   @behaviour Cinder.Library.MediaInfo
 
-  alias Cinder.Acquisition.Parser
+  alias Cinder.Acquisition.Language
 
   @ignored ~w(und unknown)
   @text_codecs ~w(subrip ass ssa mov_text text webvtt)
-  @aliases for {iso1, codes} <- Parser.audio_codes(), code <- codes, into: %{}, do: {code, iso1}
   @stderr_env "CINDER_FFMPEG_STDERR"
   @health_timeout 3_000
 
@@ -367,8 +366,12 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     ]
   end
 
+  # Single source of truth for alias resolution — `Cinder.Acquisition.Language.normalize/1`,
+  # not a second reverse-lookup table built straight from `Parser.audio_codes/0`: that shape is
+  # exactly what made "chi"/"zho" (ambiguous between "zh" and Cantonese's "cn") resolve
+  # differently here than everywhere else that matters (#519).
   defp subtitle_language(%{"tags" => %{"language" => language}}) when is_binary(language) do
-    @aliases[language |> String.trim() |> String.downcase()] || "und"
+    if Language.known?(language), do: Language.normalize(language), else: "und"
   end
 
   defp subtitle_language(_), do: "und"

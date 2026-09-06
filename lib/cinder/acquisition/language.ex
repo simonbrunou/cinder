@@ -45,6 +45,16 @@ defmodule Cinder.Acquisition.Language do
                       end)
                     )
 
+  # "chi"/"zho" (generic ISO 639-2 Chinese) are deliberately listed under BOTH "zh" and "cn" in
+  # the parser's audio-tolerance table above — a Cantonese track is routinely tagged with the
+  # generic code, and `audio_satisfies?/2` must accept that. But that ambiguity must not reach
+  # THIS reverse lookup: flattening every {canonical, aliases} pair through `Map.new` left
+  # whichever canonical the map happened to enumerate last silently win (#519), so
+  # `normalize/1` and the book/audiobook scorers' own independent alias resolution disagreed on
+  # the very same input. Pinned explicitly: the generic codes always normalize to "zh"; "yue"
+  # (Cantonese's own, unambiguous code) is untouched and still normalizes to "cn".
+  @language_aliases Map.merge(@language_aliases, %{"chi" => "zh", "zho" => "zh"})
+
   # Every audio code known for any language — lets `audio_satisfies?/2` tell a *recognised* wrong
   # language (park) from a code it doesn't recognise (could be a variant of the target; don't park).
   @known_audio_codes @audio_codes |> Map.values() |> List.flatten() |> MapSet.new()

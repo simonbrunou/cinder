@@ -9,6 +9,19 @@ defmodule Cinder.Library.MovieSources do
 
   alias Cinder.Library
 
+  # ZIP/7z alongside the existing RAR-set (#499): a folder carrying one of these container
+  # formats can plausibly have the feature packed INSIDE it, and none of them are ever
+  # extracted here (unlike the books side), so it must refuse rather than let the ordinary
+  # largest-visible-video policy pick a sample standing next to the container.
+  #
+  # Deliberately NOT included: `.par2` is parity/repair data, never a container the feature
+  # could be packed inside — a completed usenet download routinely keeps `.par2` files
+  # alongside the real, already-repaired video, and refusing on their presence would turn a
+  # normal working import into a permanent hold. Bare `.tar`/`.gz`/`.001` are excluded too:
+  # no evidence any real movie release ships in them, and `.gz` alone false-positives on an
+  # unrelated companion file (a compressed `.nfo`), not just a packed container.
+  @archive_extensions ~w(.rar .zip .7z)
+
   def resolve(path) do
     case Library.safe_walk(path) do
       {:ok, files} -> resolve_folder(files)
@@ -52,29 +65,61 @@ defmodule Cinder.Library.MovieSources do
   defp classify(files) do
     paths = Enum.map(files, &elem(&1, 0))
     videos = Enum.filter(files, fn {path, _size} -> Library.video_file?(path) end)
+    archives = Enum.filter(files, fn {path, _size} -> archive_file?(path) end)
     parts = Enum.map(videos, fn {path, _size} -> {path, stack_part(path)} end)
 
     cond do
       Enum.any?(paths, &disc_path?/1) -> {:error, :unsupported_disc}
-      Enum.any?(paths, &archive_file?/1) -> {:error, :unsupported_archive}
+      blocking_archive?(archives, videos) -> {:error, :unsupported_archive}
       videos == [] -> {:error, :no_video_file}
       Enum.any?(parts, fn {_path, part} -> not is_nil(part) end) -> strict_stack(parts)
       true -> {:ok, [{pick_video(videos), nil}]}
     end
   end
 
+  # An archive blocks the ordinary largest-video pick only when it could plausibly BE the
+  # feature: no non-sample video exists yet, or the archive set (summed — a split RAR/7z/ZIP
+  # release is many small volumes whose total, not any one member, is what could hold the
+  # feature) is at least as large as every visible video. A small companion archive (subtitles,
+  # extras) sitting beside a real, full-size feature must never block that feature's import —
+  # closing the sample-import bug (#499) must not trade it for a new false positive that
+  # strands an otherwise-good release.
+  defp blocking_archive?([], _videos), do: false
+
+  defp blocking_archive?(archives, videos) do
+    total_archive_size = archives |> Enum.map(&elem(&1, 1)) |> Enum.sum()
+    not Enum.any?(videos, &real_feature_candidate?(&1, total_archive_size))
+  end
+
+  defp real_feature_candidate?({path, size}, total_archive_size),
+    do: size >= total_archive_size and not sample_name?(path, size)
+
+  # Token AND small size both required — mirrors AnimePreflight's own sample_ignorable?/2 rule.
+  # A movie whose real title happens to contain "sample"/"preview" as a word is never penalized
+  # just for its name: only an actually-small file is ever excluded from feature-candidacy here.
+  @sample_token ~r/(?:^|[\s._\-\[\]()])(?:sample|preview)(?:$|[\s._\-\[\]()])/i
+  @sample_max_bytes 100 * 1024 * 1024
+
+  defp sample_name?(path, size),
+    do: size <= @sample_max_bytes and Regex.match?(@sample_token, Path.basename(path))
+
   defp stack_part(path) do
     stem = path |> Path.basename() |> Path.rootname()
 
-    case Regex.named_captures(
-           ~r/^(?<title>.+?)[ ._-]+(?:cd|disc|disk|part)[ ._-]?(?<part>\d{1,2})$/iu,
-           stem
-         ) do
-      %{"title" => title, "part" => part} ->
-        {normalize_title(title), String.to_integer(part)}
+    # A non-UTF8 basename byte (permitted on Linux) must never crash this — the /iu regex
+    # requires a valid UTF-8 subject, and this file is not part of a detectable multi-part
+    # stack either way (#559): fall through to the ordinary non-stack single-video pick.
+    if String.valid?(stem) do
+      case Regex.named_captures(
+             ~r/^(?<title>.+?)[ ._-]+(?:cd|disc|disk|part)[ ._-]?(?<part>\d{1,2})$/iu,
+             stem
+           ) do
+        %{"title" => title, "part" => part} ->
+          {normalize_title(title), String.to_integer(part)}
 
-      nil ->
-        nil
+        nil ->
+          nil
+      end
     end
   end
 
@@ -106,7 +151,17 @@ defmodule Cinder.Library.MovieSources do
 
   defp archive_file?(path) do
     extension = String.downcase(Path.extname(path))
-    extension == ".rar" or Regex.match?(~r/^\.r\d{2}$/u, extension)
+
+    # 7-Zip split-volume naming applies to any container it splits: movie.7z.001, .002, … and
+    # movie.zip.001, .002, … alike — matched on the raw basename (no String.downcase/Unicode
+    # mode: a non-UTF8 basename byte must never crash this check, and this pattern is pure
+    # ASCII so case-insensitive byte matching is exact either way).
+    #
+    # Info-ZIP's own `-s` split (`archive.z01`, `.z02`, … + a final `archive.zip`) is the same
+    # shape as RAR's old-style `.r00`/`.r01` set — the .rNN regex's zip-lettered twin.
+    extension in @archive_extensions or
+      Regex.match?(~r/^\.[rz]\d{2}$/u, extension) or
+      Regex.match?(~r/\.(?:7z|zip)\.\d{3}$/i, Path.basename(path))
   end
 
   defp disc_path?(path) do

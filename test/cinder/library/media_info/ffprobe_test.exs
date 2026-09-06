@@ -251,6 +251,35 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
            ]
   end
 
+  test "parse_subtitle_tracks/1 normalizes chi/zho to zh, not cn, while yue stays cn (#519)" do
+    assert Ffprobe.parse_subtitle_tracks(%{
+             "streams" => [
+               %{
+                 "index" => 2,
+                 "codec_name" => "subrip",
+                 "tags" => %{"language" => "chi"},
+                 "disposition" => %{"default" => 0, "forced" => 0}
+               },
+               %{
+                 "index" => 3,
+                 "codec_name" => "subrip",
+                 "tags" => %{"language" => "zho"},
+                 "disposition" => %{"default" => 0, "forced" => 0}
+               },
+               %{
+                 "index" => 4,
+                 "codec_name" => "subrip",
+                 "tags" => %{"language" => "yue"},
+                 "disposition" => %{"default" => 0, "forced" => 0}
+               }
+             ]
+           }) == [
+             %{index: 2, language: "zh", default?: false, forced?: false, packet_count: 0},
+             %{index: 3, language: "zh", default?: false, forced?: false, packet_count: 0},
+             %{index: 4, language: "cn", default?: false, forced?: false, packet_count: 0}
+           ]
+  end
+
   test "parse_subtitle_tracks/1 exposes packet counts for broadest-reference selection" do
     assert Ffprobe.parse_subtitle_tracks(%{
              "streams" => [

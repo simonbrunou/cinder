@@ -1190,7 +1190,7 @@ defmodule Cinder.Library do
   defp stage_group(episodes, source, root, target, download, :arbitrate, keeps) do
     case arbitration_quality(source, download.release_title) do
       {:ok, new_q} ->
-        if Enum.all?(episodes, &ep_upgrade?(&1, new_q, target)) do
+        if Enum.all?(episodes, &ep_upgrade?(&1, new_q, target, true)) do
           stage_group(episodes, source, root, target, download, :adopt, keeps)
         else
           keep_held_files(episodes, source, root, download, keeps)
@@ -1425,14 +1425,13 @@ defmodule Cinder.Library do
     end
   end
 
-  defp ep_upgrade?(ep, new_q, target) do
-    Upgrade.better?(
-      new_q,
-      old_quality(ep),
-      target,
-      preferred_resolutions(:tv),
-      preferred_sources(:tv)
-    )
+  # `arbitrating?` fails closed on a nil baseline (Upgrade.arbitration_upgrade?/5, #520) only
+  # when the episode still holds a file — a mid-flight deletion can clear file_path/quality
+  # while grab_id survives, and a fileless episode has nothing left to protect (better?/5).
+  defp ep_upgrade?(ep, new_q, target, arbitrating? \\ false) do
+    fail_closed? = arbitrating? and Episode.file_paths(ep) != []
+    fun = if fail_closed?, do: &Upgrade.arbitration_upgrade?/5, else: &Upgrade.better?/5
+    fun.(new_q, old_quality(ep), target, preferred_resolutions(:tv), preferred_sources(:tv))
   end
 
   defp log_unmatched([]), do: :ok

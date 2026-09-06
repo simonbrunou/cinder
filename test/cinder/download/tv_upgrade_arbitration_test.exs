@@ -63,6 +63,78 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
   end
 
   @tag :tmp_dir
+  test "a pack does not treat an adopted (nil-baseline) sibling episode as improvable (#520)", %{
+    tmp_dir: tmp
+  } do
+    %{release_dir: release_dir, library: library, episodes: episodes} = mixed_baseline_pack(tmp)
+
+    {:ok, grab} = arbitrated_grab(episodes, release_dir)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    # E01's known 480p file is a genuine upgrade and takes the new 1080p file.
+    known = reload(episodes, 1)
+    assert known.file_path == Path.join(library, "Show (2008) {tmdb-4260} - S01E01.mkv")
+    assert File.read!(known.file_path) == "release-1"
+    assert known.imported_resolution == "1080p"
+
+    # E02 (adopted: no recorded quality) keeps its real held file untouched, even though the SAME
+    # arbitrated grab that upgraded E01 also covers it.
+    adopted = reload(episodes, 2)
+    assert adopted.file_path == Path.join(library, "Show (2008) {tmdb-4260} - S01E02.mkv")
+    assert File.read!(adopted.file_path) == "held-2"
+    refute adopted.imported_resolution
+
+    refute Repo.get(Grab, grab.id)
+    assert Catalog.count_operator_holds() == 0
+  end
+
+  @tag :tmp_dir
+  test "an episode left fileless by a mid-flight deletion still accepts its download (#520)", %{
+    tmp_dir: tmp
+  } do
+    %{downloads: downloads, tv: tv} = real_tv_library(tmp)
+
+    release_dir = Path.join(downloads, "Show.S01.1080p.WEB-DL-GRP")
+    File.mkdir_p!(release_dir)
+    File.write!(Path.join(release_dir, "Show.S01E01.1080p.WEB-DL.mkv"), "release-1")
+
+    series = series_fixture(%{tmdb_id: 4261, title: "Show", year: 2008, monitor_strategy: :all})
+    season = season_fixture(series)
+
+    # An admin deleted the held file (and its recorded quality) while this episode's automatic
+    # upgrade was already downloading — SeriesDeletion.reconcile_deleted_paths/3's documented
+    # shape: file_path/quality cleared, grab_id (set by arbitrated_grab/2 below) untouched. With
+    # nothing left to protect, the fail-closed arbitration gate must not reject the replacement.
+    episode =
+      episode_fixture(season, %{
+        episode_number: 1,
+        file_path: nil,
+        imported_resolution: nil
+      })
+
+    {:ok, grab} = arbitrated_grab([episode], release_dir)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    reloaded = reload([episode], 1)
+
+    assert reloaded.file_path ==
+             Path.join([
+               tv,
+               "Show (2008) {tmdb-4261}",
+               "Season 01",
+               "Show (2008) {tmdb-4261} - S01E01.mkv"
+             ])
+
+    assert File.read!(reloaded.file_path) == "release-1"
+    assert reloaded.imported_resolution == "1080p"
+    refute Repo.get(Grab, grab.id)
+  end
+
+  @tag :tmp_dir
   test "a manual grab still forces the swap", %{tmp_dir: tmp} do
     %{release_dir: release_dir, library: library, episodes: episodes} = partly_better_pack(tmp)
 
@@ -779,6 +851,42 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
       end
 
     %{release_dir: release_dir, library: library, episodes: episodes}
+  end
+
+  # #520 mixed-pack gap: E01 is a known 480p file (a genuine 1080p offer upgrades it); E02 is
+  # adopted — a real held file but no recorded quality at all. Both are covered by ONE arbitrated
+  # grab, but each has its own per-episode file, so `stage_group/7` arbitrates them separately.
+  defp mixed_baseline_pack(tmp) do
+    %{downloads: downloads, tv: tv} = real_tv_library(tmp)
+
+    release_dir = Path.join(downloads, "Show.S01.1080p.WEB-DL-GRP")
+    File.mkdir_p!(release_dir)
+    library = Path.join([tv, "Show (2008) {tmdb-4260}", "Season 01"])
+    File.mkdir_p!(library)
+
+    series = series_fixture(%{tmdb_id: 4260, title: "Show", year: 2008, monitor_strategy: :all})
+    season = season_fixture(series)
+
+    File.write!(Path.join(release_dir, "Show.S01E01.1080p.WEB-DL.mkv"), "release-1")
+    known_held = Path.join(library, "Show (2008) {tmdb-4260} - S01E01.mkv")
+    File.write!(known_held, "held-1")
+
+    known =
+      episode_fixture(season, %{
+        episode_number: 1,
+        file_path: known_held,
+        imported_resolution: "480p",
+        imported_source: "WEBDL",
+        imported_size: 700_000_000
+      })
+
+    File.write!(Path.join(release_dir, "Show.S01E02.1080p.WEB-DL.mkv"), "release-2")
+    adopted_held = Path.join(library, "Show (2008) {tmdb-4260} - S01E02.mkv")
+    File.write!(adopted_held, "held-2")
+
+    adopted = episode_fixture(season, %{episode_number: 2, file_path: adopted_held})
+
+    %{release_dir: release_dir, library: library, episodes: [known, adopted]}
   end
 
   defp incoming(number) when number in [1, 3], do: "1080p"

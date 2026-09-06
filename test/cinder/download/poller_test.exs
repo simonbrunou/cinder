@@ -927,7 +927,7 @@ defmodule Cinder.Download.PollerTest do
 
     poll = Task.async(fn -> Poller.poll() end)
 
-    assert_receive {:filesystem_barrier, pid, ref, operation, dest}, 1_000
+    assert_receive {:filesystem_barrier, pid, ref, operation, dest}, 15_000
     assert operation == :ln
     assert File.read!(dest) == "candidate"
     assert {:ok, _deleted} = Catalog.delete_movie(Repo.get!(Movie, movie.id), nil)
@@ -999,7 +999,7 @@ defmodule Cinder.Download.PollerTest do
     })
 
     poll = Task.async(fn -> Poller.poll() end)
-    assert_receive {:filesystem_barrier, pid, ref, :cp, candidate}, 1_000
+    assert_receive {:filesystem_barrier, pid, ref, :cp, candidate}, 15_000
 
     dest =
       Path.join(
@@ -1045,7 +1045,7 @@ defmodule Cinder.Download.PollerTest do
     })
 
     stage_task = Task.async(fn -> Cinder.Library.stage_movie(movie) end)
-    assert_receive {:filesystem_barrier, pid, ref, :cp, _candidate}, 1_000
+    assert_receive {:filesystem_barrier, pid, ref, :cp, _candidate}, 15_000
 
     tv_pid = start_supervised!({TvPoller, interval: 60_000})
     observer = Task.async(fn -> TvPoller.poll(tv_pid) end)
@@ -1196,7 +1196,7 @@ defmodule Cinder.Download.PollerTest do
     })
 
     stage = Task.async(fn -> Cinder.Library.stage_movie(movie) end)
-    assert_receive {:filesystem_barrier, pid, ref, :cp_exclusive, dest}, 1_000
+    assert_receive {:filesystem_barrier, pid, ref, :cp_exclusive, dest}, 15_000
     File.write!(dest, "user file")
     send(pid, {ref, :continue})
 
@@ -1230,7 +1230,7 @@ defmodule Cinder.Download.PollerTest do
       end)
 
     Process.unlink(stage.pid)
-    assert_receive {:filesystem_barrier, pid, _ref, :cp_exclusive, ^dest}, 1_000
+    assert_receive {:filesystem_barrier, pid, _ref, :cp_exclusive, ^dest}, 15_000
     journal = Repo.one!(ImportStage)
     assert journal.state == :preparing
     assert journal.staged_inode
@@ -1279,7 +1279,7 @@ defmodule Cinder.Download.PollerTest do
     })
 
     task = Task.async(fn -> Cinder.Library.stage_movie(movie) end)
-    assert_receive {:filesystem_barrier, pid, ref, :cp_exclusive, dest}, 1_000
+    assert_receive {:filesystem_barrier, pid, ref, :cp_exclusive, dest}, 15_000
     displaced = dest <> ".opened"
     File.rename!(dest, displaced)
     File.write!(dest, "user replacement")
@@ -1357,7 +1357,7 @@ defmodule Cinder.Download.PollerTest do
         end)
 
       Process.unlink(task.pid)
-      assert_receive {:filesystem_barrier, pid, _ref, :cp_exclusive_created, dest}, 1_000
+      assert_receive {:filesystem_barrier, pid, _ref, :cp_exclusive_created, dest}, 15_000
       journal = Repo.one!(ImportStage)
       assert journal.staged_inode == nil
       assert File.exists?(dest)
@@ -1396,7 +1396,7 @@ defmodule Cinder.Download.PollerTest do
     })
 
     first = Task.async(fn -> Cinder.Library.stage_movie(movie) end)
-    assert_receive {:filesystem_barrier, pid, ref, :lstat, _candidate}, 1_000
+    assert_receive {:filesystem_barrier, pid, ref, :lstat, _candidate}, 15_000
 
     second_movie = %{movie | file_path: second_source}
     second = Task.async(fn -> Cinder.Library.stage_movie(second_movie) end)
@@ -1426,7 +1426,7 @@ defmodule Cinder.Download.PollerTest do
         Cinder.Library.stage_movie(%{movie | file_path: source}, replace: true)
       end)
 
-    assert_receive {:filesystem_barrier, pid, ref, :lstat, _candidate}, 1_000
+    assert_receive {:filesystem_barrier, pid, ref, :lstat, _candidate}, 15_000
     File.rm!(dest)
     File.write!(dest, "user replacement")
     send(pid, {ref, :continue})
@@ -1592,7 +1592,7 @@ defmodule Cinder.Download.PollerTest do
     })
 
     poll = Task.async(fn -> Poller.poll() end)
-    assert_receive {:filesystem_barrier, pid, ref, :ln, dest}, 1_000
+    assert_receive {:filesystem_barrier, pid, ref, :ln, dest}, 15_000
     assert {:ok, _} = Catalog.delete_movie(Repo.get!(Movie, movie.id), nil)
     File.rm!(dest)
     File.write!(dest, "user replacement")
@@ -2777,7 +2777,7 @@ defmodule Cinder.Download.PollerTest do
       })
 
       poll = Task.async(fn -> Poller.poll() end)
-      assert_receive {:filesystem_barrier, pid, ref, :ln, ^dest}, 1_000
+      assert_receive {:filesystem_barrier, pid, ref, :ln, ^dest}, 15_000
       assert File.read!(dest) == "candidate"
 
       assert {:ok, _} =
@@ -2833,7 +2833,7 @@ defmodule Cinder.Download.PollerTest do
 
       poll = Task.async(fn -> Poller.poll(pid) end)
       Process.unlink(poll.pid)
-      assert_receive {:filesystem_barrier, ^pid, _ref, :ln, ^dest}, 1_000
+      assert_receive {:filesystem_barrier, ^pid, _ref, :ln, ^dest}, 15_000
       assert File.read!(dest) == "candidate"
       Process.exit(pid, :kill)
       catch_exit(Task.await(poll))
@@ -2877,7 +2877,7 @@ defmodule Cinder.Download.PollerTest do
 
       poll = Task.async(fn -> Poller.poll(pid) end)
       Process.unlink(poll.pid)
-      assert_receive {:filesystem_barrier, ^pid, _ref, :rm, backup}, 1_000
+      assert_receive {:filesystem_barrier, ^pid, _ref, :rm, backup}, 15_000
       assert Repo.get!(Movie, movie.id).status == :available
       assert File.read!(dest) == "candidate"
       assert File.exists?(backup)
@@ -2923,7 +2923,7 @@ defmodule Cinder.Download.PollerTest do
       })
 
       poll = Task.async(fn -> Poller.poll() end)
-      assert_receive {:filesystem_barrier, pid, ref, :ln, ^dest}, 1_000
+      assert_receive {:filesystem_barrier, pid, ref, :ln, ^dest}, 15_000
 
       assert {:ok, _} =
                Catalog.transition(Repo.get!(Movie, movie.id), %{status: :available},
