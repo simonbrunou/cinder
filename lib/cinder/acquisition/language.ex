@@ -170,13 +170,17 @@ defmodule Cinder.Acquisition.Language do
   avoid parking a download over a code it merely doesn't recognise — the wrong purpose when
   actually *selecting* one specific track to use, per #573).
 
-  `raw_code` MUST be the pre-canonicalization code as reported by the source (never re-normalized
-  first) — normalizing it away loses exactly the ambiguous-vs-unambiguous distinction ("chi"/"zho"
-  vs "cmn") this function exists to preserve.
+  Checked two ways: the raw code directly against the tolerance list (never re-normalized first —
+  normalizing it away would lose exactly the ambiguous-vs-unambiguous distinction "chi"/"zho" vs
+  "cmn" this function exists to preserve), OR — because some encoders report a full-name tag
+  ("French") rather than an ISO code — its own `normalize/1` equal to the target's. That fallback
+  cannot let `"cmn"` satisfy `"cn"`: `normalize/1` pins `"cmn"` to `"zh"` unambiguously (only
+  `"zh"`'s registry entry lists it), so it only ever equals a `"zh"` target, never `"cn"`.
   """
   def raw_track_satisfies?(target, raw_code) when is_binary(raw_code) do
+    code = String.downcase(raw_code)
     accepted = Map.get(@audio_codes, normalize(target), [normalize(target)])
-    String.downcase(raw_code) in accepted
+    code in accepted or normalize(code) == normalize(target)
   end
 
   def raw_track_satisfies?(_target, _raw_code), do: false

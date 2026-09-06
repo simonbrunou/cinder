@@ -119,6 +119,18 @@ defmodule Cinder.Acquisition.LanguageTest do
     test "an unrecognized code alongside a real target still flags mismatch" do
       refute Language.raw_track_satisfies?("cn", "fre")
     end
+
+    test "a full-name track tag still satisfies via normalize equality" do
+      # Some encoders write a full-name tag ("French") instead of an ISO code. Not in the "fr"
+      # tolerance list ("fr"/"fra"/"fre") directly, so this falls back to normalize/1 equality
+      # rather than the forward-tolerance list (Codex review finding on PR #574).
+      assert Language.raw_track_satisfies?("fr", "French")
+      assert Language.raw_track_satisfies?("fr", "FRENCH")
+    end
+
+    test "a full-name fallback still cannot let a Mandarin tag satisfy a cn (Cantonese) target" do
+      refute Language.raw_track_satisfies?("cn", "Chinese")
+    end
   end
 
   describe "filter/3" do
