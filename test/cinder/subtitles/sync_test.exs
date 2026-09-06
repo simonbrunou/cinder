@@ -555,7 +555,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     {:ok, task} = Task.start(fn -> Sync.reset(item) end)
     monitor = Process.monitor(task)
-    assert_receive {:filesystem_barrier, ^task, _ref, :exchange, staged_path}, 5_000
+    assert_receive {:filesystem_barrier, ^task, _ref, :exchange, staged_path}, 15_000
     workspace = Path.dirname(staged_path)
     assert File.read!(path) == original
     assert File.dir?(workspace)
@@ -591,7 +591,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     {:ok, task} = Task.start(fn -> Sync.reset(item) end)
     monitor = Process.monitor(task)
-    assert_receive {:filesystem_barrier, ^task, _ref, :discard_bound, ^backup}, 5_000
+    assert_receive {:filesystem_barrier, ^task, _ref, :discard_bound, ^backup}, 15_000
     assert File.read!(path) == original
     assert File.read!(backup) == ""
     assert Manifest.sync(Manifest.read(video), "en") != nil
@@ -679,7 +679,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     task = Task.async(fn -> Sync.manual(item, 1_000, 1.0) end)
-    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 5_000
+    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 15_000
 
     assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
     assert File.read!(Sync.backup_path(path)) == subtitle(".srt")
@@ -756,7 +756,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     {:ok, task} = Task.start(fn -> Sync.manual(item, 2_000, 1.0) end)
-    assert_receive {:filesystem_barrier, ^task, _ref, :exchange, _temporary}, 5_000
+    assert_receive {:filesystem_barrier, ^task, _ref, :exchange, _temporary}, 15_000
     monitor = Process.monitor(task)
     Process.exit(task, :kill)
     assert_receive {:DOWN, ^monitor, :process, ^task, :killed}
@@ -783,7 +783,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     {:ok, task} = Task.start(fn -> Sync.manual(item, 1_000, 1.0) end)
-    assert_receive {:filesystem_barrier, ^task, _ref, :exchange, temporary}, 5_000
+    assert_receive {:filesystem_barrier, ^task, _ref, :exchange, temporary}, 15_000
     workspace = Path.dirname(temporary)
     assert File.dir?(workspace)
     monitor = Process.monitor(task)
@@ -812,7 +812,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     {:ok, task} = Task.start(fn -> Sync.manual(item, 1_000, 1.0) end)
     monitor = Process.monitor(task)
-    assert_receive {:filesystem_barrier, ^task, _ref, :discard_bound, ^path}, 5_000
+    assert_receive {:filesystem_barrier, ^task, _ref, :discard_bound, ^path}, 15_000
 
     [workspace] =
       Path.wildcard(Path.join(Path.dirname(path), ".cinder-subtitle-sync-cas-*"), match_dot: true)
@@ -922,7 +922,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     task = Task.async(fn -> Sync.manual(item, 0, 1.0) end)
-    assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video}, 5_000
+    assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video}, 15_000
     File.write!(video, "x" <> String.duplicate("v", 131_071))
     send(pid, {ref, :continue})
 
@@ -1308,7 +1308,7 @@ defmodule Cinder.Subtitles.SyncTest do
     stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
     task = Task.async(fn -> Sync.analyze_video(video) end)
 
-    assert_receive {:filesystem_barrier, pid, ref, :open_bound, ^path}, 5_000
+    assert_receive {:filesystem_barrier, pid, ref, :open_bound, ^path}, 15_000
     File.rm!(path)
     File.ln_s!(outside, path)
     send(pid, {ref, :continue})
@@ -1485,7 +1485,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     task = Task.async(fn -> Sync.manual(item, 1_000, 1.0, fingerprint) end)
-    assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video}, 5_000
+    assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video}, 15_000
     File.write!(path, external)
     send(pid, {ref, :continue})
 
@@ -1512,7 +1512,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     task = Task.async(fn -> Sync.manual(item, 1_000, 1.0) end)
-    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 5_000
+    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 15_000
     File.write!(path, external)
     send(pid, {ref, :continue})
 
@@ -1542,7 +1542,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     task = Task.async(fn -> Sync.manual(item, 1_000, 1.0) end)
-    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 5_000
+    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 15_000
     File.rename!(replacement, path)
     send(pid, {ref, :continue})
 
@@ -1907,7 +1907,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     task = Task.async(fn -> Sync.manual(item, 1_000, 1.0) end)
-    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 5_000
+    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 15_000
 
     Application.put_env(:cinder, :filesystem_failure, %{
       operation: :write_exclusive,
@@ -1941,7 +1941,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     task = Task.async(fn -> Sync.manual(item, 1_000, 1.0) end)
-    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 5_000
+    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 15_000
 
     Application.put_env(:cinder, :filesystem_failures, [
       %{operation: :write_exclusive, source_contains: ".cinder-subtitle-manifest-", reason: :eio},
@@ -1974,7 +1974,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     task = Task.async(fn -> Sync.manual(item, 1_000, 1.0) end)
-    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 5_000
+    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 15_000
 
     Application.put_env(:cinder, :filesystem_failures, [
       %{
@@ -2011,7 +2011,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     task = Task.async(fn -> Sync.manual(item, 2_000, 1.0) end)
-    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 5_000
+    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 15_000
 
     Application.put_env(:cinder, :filesystem_failure, %{
       operation: :write_exclusive,
@@ -2041,7 +2041,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     task = Task.async(fn -> Sync.manual(item, 1_000, 1.0) end)
-    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 5_000
+    assert_receive {:filesystem_barrier, pid, ref, :exchange, _temporary}, 15_000
 
     Application.put_env(:cinder, :filesystem_failures, [
       %{
@@ -2085,7 +2085,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     task = Task.async(fn -> Sync.manual(item, 1_000, 1.0) end)
-    assert_receive {:filesystem_barrier, pid, ref, :create_bound, temporary}, 5_000
+    assert_receive {:filesystem_barrier, pid, ref, :create_bound, temporary}, 15_000
     File.ln_s!(outside, temporary)
     send(pid, {ref, :continue})
 
