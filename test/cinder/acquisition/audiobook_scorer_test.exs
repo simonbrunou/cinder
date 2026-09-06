@@ -244,6 +244,16 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
                  work
                )
     end
+
+    test "a bare pack range redundant with the wanted title's own number is still refused" do
+      work = %{title: "Numeric Work 1/3", authors: ["Author Name"]}
+
+      assert {:reject, :collection_ambiguous} =
+               AudiobookScorer.evaluate(
+                 release("Author Name - Numeric Work 1/3 1-3 (M4B)"),
+                 work
+               )
+    end
   end
 
   describe "language" do

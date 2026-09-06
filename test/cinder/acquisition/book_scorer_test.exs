@@ -419,6 +419,19 @@ defmodule Cinder.Acquisition.BookScorerTest do
                  work
                )
     end
+
+    test "a bare pack range redundant with the wanted title's own number is still refused" do
+      # Codex review, round 2: the release restates the wanted number ONCE as its own title
+      # ("1/3") and a SECOND time as a genuinely separate bare-range pack marker ("1-3"). A real
+      # numeric title needs its number only once; the second occurrence is unexplained.
+      work = %{title: "Numeric Work 1/3", authors: ["Author Name"]}
+
+      assert {:reject, :collection_ambiguous} =
+               BookScorer.evaluate(
+                 release("Author Name - Numeric Work 1/3 1-3 (epub)"),
+                 work
+               )
+    end
   end
 
   describe "language" do

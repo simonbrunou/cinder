@@ -406,7 +406,7 @@ defmodule Cinder.Acquisition.AudiobookScorer do
       release.title |> tokens() |> Enum.any?(&(&1 in @collection_words and &1 in wanted)) ->
         :ok
 
-      numeric_range_forgiven?(release.collection_numbers, wanted_tokens) ->
+      numeric_range_forgiven?(release, wanted_tokens) ->
         :ok
 
       true ->
@@ -417,14 +417,27 @@ defmodule Cinder.Acquisition.AudiobookScorer do
   defp check_collection(%AudiobookRelease{}, _work), do: :ok
 
   # See `Cinder.Acquisition.BookScorer.numeric_range_forgiven?/2` for the reasoning.
-  defp numeric_range_forgiven?(nil, _wanted_tokens), do: false
+  defp numeric_range_forgiven?(%AudiobookRelease{collection_numbers: nil}, _wanted_tokens),
+    do: false
 
-  defp numeric_range_forgiven?(numbers, wanted_tokens) do
+  defp numeric_range_forgiven?(
+         %AudiobookRelease{collection_numbers: numbers} = release,
+         wanted_tokens
+       ) do
     span = length(numbers)
 
     wanted_tokens
     |> Enum.chunk_every(span, 1, :discard)
-    |> Enum.any?(&(&1 == numbers))
+    |> Enum.any?(&(&1 == numbers)) and occurs_once?(release.title, numbers)
+  end
+
+  defp occurs_once?(title, numbers) do
+    span = length(numbers)
+
+    title
+    |> tokens()
+    |> Enum.chunk_every(span, 1, :discard)
+    |> Enum.count(&(&1 == numbers)) == 1
   end
 
   defp check_abridgement(%AudiobookRelease{abridged?: true}, work) do

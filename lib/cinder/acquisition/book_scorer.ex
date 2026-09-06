@@ -558,7 +558,7 @@ defmodule Cinder.Acquisition.BookScorer do
       release.title |> tokens() |> Enum.any?(&(&1 in @collection_words and &1 in wanted)) ->
         :ok
 
-      numeric_range_forgiven?(release.collection_numbers, wanted_tokens) ->
+      numeric_range_forgiven?(release, wanted_tokens) ->
         :ok
 
       true ->
@@ -570,17 +570,30 @@ defmodule Cinder.Acquisition.BookScorer do
 
   # The release's own numeric span is forgiven only when it IS the wanted title's own number,
   # written the way a release punctuation-normalizes it: the exact digits, in the exact order,
-  # appearing consecutively among the wanted title's tokens (#518). A genuine collection span
-  # ("1-3" for a pack the request never asked for) shares no such run with an unrelated wanted
-  # title and is still rejected.
-  defp numeric_range_forgiven?(nil, _wanted_tokens), do: false
+  # appearing consecutively among the wanted title's tokens (#518) -- AND that exact digit run
+  # appears exactly ONCE anywhere in the release name. A genuine collection span ("1-3" for a
+  # pack the request never asked for) either shares no such run with an unrelated wanted title
+  # (rejected by the first test), or -- when the release ALSO separately restates the wanted
+  # title's own number elsewhere ("Numeric Work 1/3 1-3") -- shows up TWICE, once as the title's
+  # own rendering and once as a genuinely redundant extra span, which the second test catches
+  # (Codex review): a real numeric title needs its number only once.
+  defp numeric_range_forgiven?(%BookRelease{collection_numbers: nil}, _wanted_tokens), do: false
 
-  defp numeric_range_forgiven?(numbers, wanted_tokens) do
+  defp numeric_range_forgiven?(%BookRelease{collection_numbers: numbers} = release, wanted_tokens) do
     span = length(numbers)
 
     wanted_tokens
     |> Enum.chunk_every(span, 1, :discard)
-    |> Enum.any?(&(&1 == numbers))
+    |> Enum.any?(&(&1 == numbers)) and occurs_once?(release.title, numbers)
+  end
+
+  defp occurs_once?(title, numbers) do
+    span = length(numbers)
+
+    title
+    |> tokens()
+    |> Enum.chunk_every(span, 1, :discard)
+    |> Enum.count(&(&1 == numbers)) == 1
   end
 
   # An abridged text is a DIFFERENT text, not a lesser copy of the same one — the contract puts
