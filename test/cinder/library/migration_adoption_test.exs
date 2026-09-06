@@ -16,7 +16,7 @@ defmodule Cinder.Library.MigrationAdoptionTest do
   setup :verify_on_exit!
 
   setup do
-    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{}} end)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{type: :regular}} end)
     :ok
   end
 
@@ -42,6 +42,58 @@ defmodule Cinder.Library.MigrationAdoptionTest do
 
     assert %Movie{status: :available, file_path: "/radarr/Movie One.mkv"} =
              Catalog.get_movie_by_tmdb_id(10)
+  end
+
+  # #514: the final revalidation predicate accepted ANY successful `lstat`, including a
+  # directory or a symlink, and recorded it as available media. Reproduces the audit's own
+  # scratch harness scenario (a Radarr candidate whose mapped path is a directory) through the
+  # real production entrypoints.
+  test "a candidate whose mapped path is a directory (not a regular file) is stale, never adopted" do
+    snapshot =
+      "unique"
+      |> fixture_snapshot()
+      |> Map.update!(:movies, &Enum.take(&1, 1))
+      |> Map.update!(:files, &Enum.filter(&1, fn file -> file.provider_id == 501 end))
+      |> Map.merge(%{series: [], episodes: []})
+
+    stub(RadarrMigrationSourceMock, :snapshot, fn -> {:ok, snapshot} end)
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn 10 -> {:ok, movie_details(10)} end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn "/radarr/Movie One.mkv" ->
+      {:ok, %File.Stat{type: :directory}}
+    end)
+
+    assert {:ok, preview} = Adoption.preview_migration(:radarr)
+    assert [%{status: :ready, tmdb_id: 10, key: key} = candidate] = preview.candidates
+
+    assert %{adopted: 0, skipped: 1, failures: [], adopted_keys: [], stale_keys: [^key]} =
+             Adoption.adopt_migration(:radarr, [%{key: key, candidate: candidate}])
+
+    refute Catalog.get_movie_by_tmdb_id(10)
+  end
+
+  test "a candidate whose mapped path is a symlink (not a regular file) is stale, never adopted" do
+    snapshot =
+      "unique"
+      |> fixture_snapshot()
+      |> Map.update!(:movies, &Enum.take(&1, 1))
+      |> Map.update!(:files, &Enum.filter(&1, fn file -> file.provider_id == 501 end))
+      |> Map.merge(%{series: [], episodes: []})
+
+    stub(RadarrMigrationSourceMock, :snapshot, fn -> {:ok, snapshot} end)
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn 10 -> {:ok, movie_details(10)} end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn "/radarr/Movie One.mkv" ->
+      {:ok, %File.Stat{type: :symlink}}
+    end)
+
+    assert {:ok, preview} = Adoption.preview_migration(:radarr)
+    assert [%{status: :ready, tmdb_id: 10, key: key} = candidate] = preview.candidates
+
+    assert %{adopted: 0, skipped: 1, failures: [], adopted_keys: [], stale_keys: [^key]} =
+             Adoption.adopt_migration(:radarr, [%{key: key, candidate: candidate}])
+
+    refute Catalog.get_movie_by_tmdb_id(10)
   end
 
   for choice <- [:fold, :part] do

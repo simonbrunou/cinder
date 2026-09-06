@@ -235,7 +235,7 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
        }}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :lstat, fn ^path -> {:ok, %File.Stat{}} end)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^path -> {:ok, %File.Stat{type: :regular}} end)
 
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn 10 ->
       {:ok,
@@ -278,7 +278,7 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
        }}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :lstat, fn ^path -> {:ok, %File.Stat{}} end)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^path -> {:ok, %File.Stat{type: :regular}} end)
 
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn 10 ->
       {:ok,
@@ -391,7 +391,7 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
 
   test "adopt reports undecided needs-decision items as skipped honestly", %{conn: conn} do
     stub_two_group_sonarr_snapshot()
-    stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %File.Stat{}} end)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %File.Stat{type: :regular}} end)
 
     # Adopting the decided item creates its series in the catalog; stub that chain so the adopt
     # returns a summary (rather than crashing) and the honest-skip flash is reachable.
@@ -779,7 +779,7 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
        }}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{}} end)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{type: :regular}} end)
 
     {:ok, view, _html} = live(conn, ~p"/library/adopt")
     view |> element("#scan-readarr") |> render_click()
@@ -884,7 +884,7 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
        }}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{}} end)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{type: :regular}} end)
 
     {:ok, view, _html} = live(conn, ~p"/library/adopt")
     view |> element("#scan-readarr") |> render_click()
