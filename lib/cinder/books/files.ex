@@ -98,7 +98,7 @@ defmodule Cinder.Books.Files do
 
     Repo.transaction(fn ->
       with {:ok, superseded} <- maybe_supersede_set(target, attrs_list, replace?),
-           {:ok, files} <- insert_all_or_existing(target, attrs_list),
+           {:ok, files} <- insert_all_or_existing(target, attrs_list, replace?),
            {:ok, _armed} <- arm_target(target) do
         # Same ordering reason `record_import/3` documents: inside the transaction, and last.
         ImportStage.mark_committed!(stage_ids)
@@ -110,10 +110,25 @@ defmodule Cinder.Books.Files do
     |> publish(target, replace?)
   end
 
-  defp insert_all_or_existing(target, attrs_list) do
+  # `changed?` (default `true` per item, popped out of each attrs map before it ever reaches a
+  # changeset — see `AudiobookImport.record/4`) is the actual `StageEngine.stage_book_place/4`
+  # `placed?` outcome for that specific track: `true` only when new bytes genuinely landed at
+  # that destination THIS tick, `false` for a same-inode replay where nothing changed. This
+  # matters independently of `replace?` because probe-derived fields (`duration_seconds`,
+  # `track_number`, `disc_number`, `chapter_count`) can legitimately come back `nil` on a
+  # replayed tick — a timed-out or budget-exhausted `AudioProbe` degrades gracefully rather than
+  # failing (`AudiobookSources`' own "degradation, not failure" contract) — even though the
+  # committed row already holds correct values from its first, successful pass. Refreshing on
+  # every `replace?: true` conflict regardless would silently erase good metadata with a
+  # transient probe miss (Codex review on PR #569); skipping the update entirely on a true
+  # no-op replay (`changed?: false`) is exactly as correct as leaving it alone would be for any
+  # other reason nothing changed.
+  defp insert_all_or_existing(target, attrs_list, replace?) do
     attrs_list
     |> Enum.reduce_while({:ok, []}, fn attrs, {:ok, acc} ->
-      case insert_or_existing(target, attrs) do
+      {changed?, attrs} = Map.pop(attrs, :changed?, true)
+
+      case insert_or_existing(target, attrs, replace?, changed?) do
         {:ok, file} -> {:cont, {:ok, [file | acc]}}
         {:error, _reason} = error -> {:halt, error}
       end
@@ -133,10 +148,14 @@ defmodule Cinder.Books.Files do
 
     if MapSet.equal?(existing_paths, incoming_paths) do
       # Every incoming path is already this target's own current row, and the target has no path
-      # the incoming set lacks — a full replay of an already-completed replace (the staging step
-      # already found each track's destination hardlinked to itself and made no filesystem
-      # change). Delete nothing; `insert_or_existing/2` per track below hits the same unique-path
-      # conflict `insert_conflict/3` already treats as a no-op success, N times.
+      # the incoming set lacks. Path equality alone does not prove nothing changed, though —
+      # audiobook destinations depend only on work/disc/order (`AudiobookNaming.track_dest/4`),
+      # never on the source bytes, so a same-track-count replacement with different audio at
+      # every track reuses every path while every track's actual content changes (issue #501).
+      # Deleting nothing here is still correct (the staging step already performed any real
+      # backup-swap in place, so there is nothing stale to unlink); `insert_or_existing/3` below
+      # is what decides whether each row is left alone or refreshed with the incoming attrs, per
+      # the SAME `replace?` this function was called with.
       {:ok, []}
     else
       # ANY difference — disjoint, subset, superset, or partial overlap — deletes every existing
@@ -166,15 +185,15 @@ defmodule Cinder.Books.Files do
   # duplicating it — the plan's own explicit instruction. B6c never confirms a replacement, so it
   # relies on the `replace?` default (`false`) and gets today's unchanged "return the existing
   # row" behavior.
-  @spec insert_or_existing(BookTarget.t(), map(), boolean()) ::
+  @spec insert_or_existing(BookTarget.t(), map(), boolean(), boolean()) ::
           {:ok, BookFile.t()} | {:error, term()}
-  def insert_or_existing(%BookTarget{} = target, attrs, replace? \\ false) do
+  def insert_or_existing(%BookTarget{} = target, attrs, replace? \\ false, changed? \\ true) do
     %BookFile{}
     |> BookFile.changeset(Map.put(attrs, :book_target_id, target.id))
     |> Repo.insert()
     |> case do
       {:ok, file} -> {:ok, file}
-      {:error, changeset} -> insert_conflict(target, attrs, changeset, replace?)
+      {:error, changeset} -> insert_conflict(target, attrs, changeset, replace?, changed?)
     end
   end
 
@@ -187,21 +206,20 @@ defmodule Cinder.Books.Files do
   # file on disk and in the catalog, at `:held`. Treating the replay as success is what makes the
   # import idempotent one layer above `StageEngine`'s same-inode branch.
   #
-  # `replace?` decides whether the existing row is returned as-is or updated with `attrs`. Path
-  # equality alone cannot tell a true replay (the file at this path never changed) from a
-  # confirmed "Find a better match" replacement that happens to land on the same basename
-  # (`StageEngine.stage_book_place/4`'s backup-swap already overwrote the bytes at this exact
-  # path — issue #500): the caller already knows which one this is (it is the same `replace?`
-  # that told `StageEngine` whether to perform the swap), so it is threaded straight through
-  # rather than re-derived from a fresh `File.stat/1` here. `attrs` already carries the truth of
-  # what is currently on disk either way (`BookImport.recorded_size/3` re-stats the actual
-  # destination when nothing was staged), so updating on every confirmed-replace conflict is safe
-  # for a genuine replay too — the update just writes back the same values.
-  defp insert_conflict(target, attrs, changeset, replace?) do
+  # `replace?` and `changed?` together decide whether the existing row is returned as-is or
+  # updated with `attrs`. Path equality alone cannot tell a true replay (the file at this path
+  # never changed) from a confirmed "Find a better match" replacement that happens to reuse the
+  # same path — a single e-book's exact-basename collision (issue #500) or an audiobook's
+  # same-track-count set, whose destinations depend only on work/disc/order and never on source
+  # bytes (issue #501). The caller already knows which one this is (`replace?` is the same flag
+  # that told `StageEngine` whether to attempt a swap at all; `changed?` is whether that attempt
+  # actually landed new bytes THIS tick — see `insert_all_or_existing/3`'s own comment), so both
+  # are threaded straight through rather than re-derived from a fresh `File.stat/1` here.
+  defp insert_conflict(target, attrs, changeset, replace?, changed?) do
     with true <- Keyword.has_key?(changeset.errors, :path),
          %BookFile{book_target_id: owner} = existing <- Repo.get_by(BookFile, path: attrs.path),
          true <- owner == target.id do
-      if replace?, do: update_existing(existing, attrs), else: {:ok, existing}
+      if replace? and changed?, do: update_existing(existing, attrs), else: {:ok, existing}
     else
       _different_owner_or_other_error -> {:error, insert_reason(changeset)}
     end
@@ -213,7 +231,7 @@ defmodule Cinder.Books.Files do
   # replacement is exactly as much an identity break — the downloaded release carries no
   # evidence it belongs to the adopted edition either — so this path must clear it too rather
   # than silently inherit stale identity metadata from the row it is overwriting (Codex review
-  # on PR #565).
+  # on PR #565 and PR #569).
   defp update_existing(%BookFile{} = existing, attrs) do
     existing
     |> BookFile.changeset(Map.put(attrs, :edition_id, nil))
