@@ -1067,6 +1067,135 @@ defmodule Cinder.Download.BookPollerTest do
       assert File.read!(new_dest) == epub_bytes() <> "better"
     end
 
+    # #500: the destination path is computed from the target's work, not the release's
+    # filename, so a confirmed replacement whose new file happens to share the OLD file's exact
+    # basename collides at the SAME path `stage_book_place/4` already occupies — the case the
+    # "Retail" test above never exercises.
+    test "a confirmed replace reusing the exact same filename changes bytes and recorded size",
+         ctx do
+      %{target: target, books: books, release_dir: release_dir} =
+        downloading(ctx, "The Dispossessed.epub")
+
+      complete_download(release_dir)
+      poll!()
+
+      dest =
+        Path.join([books, "Ursula K. Le Guin", "The Dispossessed", "The Dispossessed.epub"])
+
+      original_bytes = epub_bytes()
+      assert File.read!(dest) == original_bytes
+      assert [%BookFile{size: original_size}] = Repo.all(BookFile)
+      assert original_size == byte_size(original_bytes)
+
+      new_bytes = epub_bytes() <> "a genuinely different, larger replacement payload"
+      new_release_dir = Path.join(ctx.tmp_dir, "downloads/release-remote-2")
+      File.mkdir_p!(new_release_dir)
+      File.write!(Path.join(new_release_dir, "The Dispossessed.epub"), new_bytes)
+
+      {:ok, _replace_grab} =
+        Books.Grabs.create(target.id, "remote-2", :torrent, "The Dispossessed EPUB Retail",
+          replace: true
+        )
+
+      complete_download(new_release_dir, "remote-2")
+      poll!()
+
+      assert Repo.reload!(target).status == :available
+      assert [%BookFile{path: ^dest, size: new_size}] = Repo.all(BookFile)
+      refute new_size == original_size
+      assert new_size == byte_size(new_bytes)
+      assert File.read!(dest) == new_bytes
+      assert Repo.all(BookGrab) == []
+    end
+
+    test "replaying a same-filename replace is a true no-op — row and file stay on the replaced bytes",
+         ctx do
+      %{target: target, books: books, release_dir: release_dir} =
+        downloading(ctx, "The Dispossessed.epub")
+
+      complete_download(release_dir)
+      poll!()
+
+      dest =
+        Path.join([books, "Ursula K. Le Guin", "The Dispossessed", "The Dispossessed.epub"])
+
+      new_bytes = epub_bytes() <> "a genuinely different replacement payload"
+      new_release_dir = Path.join(ctx.tmp_dir, "downloads/release-remote-2")
+      File.mkdir_p!(new_release_dir)
+      File.write!(Path.join(new_release_dir, "The Dispossessed.epub"), new_bytes)
+
+      {:ok, replace_grab} =
+        Books.Grabs.create(target.id, "remote-2", :torrent, "The Dispossessed EPUB Retail",
+          replace: true
+        )
+
+      complete_download(new_release_dir, "remote-2")
+      poll!()
+
+      assert [%BookFile{id: file_id, size: replaced_size}] = Repo.all(BookFile)
+      assert File.read!(dest) == new_bytes
+
+      # Simulate the crash-and-retry: the same remote download is re-grabbed (a fresh grab row,
+      # since the first was already deleted post-commit) with the same content, exactly as a
+      # replayed import tick would re-derive it.
+      {:ok, _replayed} =
+        Books.Grabs.create(
+          target.id,
+          replace_grab.download_id,
+          :torrent,
+          replace_grab.release_title,
+          replace: true
+        )
+
+      complete_download(new_release_dir, "remote-2")
+      poll!()
+
+      assert [%BookFile{id: ^file_id, path: ^dest, size: ^replaced_size}] = Repo.all(BookFile)
+      assert File.read!(dest) == new_bytes
+      assert Repo.all(BookGrab) == []
+    end
+
+    test "an injected catalog failure during a same-filename replace restores the original bytes",
+         ctx do
+      %{target: target, books: books, release_dir: release_dir} =
+        downloading(ctx, "The Dispossessed.epub")
+
+      complete_download(release_dir)
+      poll!()
+
+      dest =
+        Path.join([books, "Ursula K. Le Guin", "The Dispossessed", "The Dispossessed.epub"])
+
+      original_bytes = epub_bytes()
+      assert File.read!(dest) == original_bytes
+
+      new_bytes = epub_bytes() <> "a replacement that must never land"
+      new_release_dir = Path.join(ctx.tmp_dir, "downloads/release-remote-2")
+      File.mkdir_p!(new_release_dir)
+      File.write!(Path.join(new_release_dir, "The Dispossessed.epub"), new_bytes)
+
+      {:ok, _replace_grab} =
+        Books.Grabs.create(target.id, "remote-2", :torrent, "The Dispossessed EPUB Retail",
+          replace: true
+        )
+
+      # Simulate a concurrent operator hold landing between the download completing and this
+      # tick's catalog write: `Files.record_import/3`'s `arm_target/1` guard refuses any status
+      # outside `[:monitored, :available]`, so the transaction (staging's backup-swap included)
+      # must roll all the way back to the pre-replace file.
+      Repo.update_all(from(t in Cinder.Books.BookTarget, where: t.id == ^target.id),
+        set: [status: :held, hold_reason: "operator hold"]
+      )
+
+      complete_download(new_release_dir, "remote-2")
+      capture_log(fn -> poll!() end)
+
+      assert Repo.reload!(target).status == :held
+      assert [%BookFile{path: ^dest, size: original_size}] = Repo.all(BookFile)
+      assert original_size == byte_size(original_bytes)
+      assert File.read!(dest) == original_bytes
+    end
+
     # The bug this defends against: `Books.hold_target/4` used to guard `expect: :monitored`
     # unconditionally, but a replace grab's target stays `:available` for its whole
     # download/import cycle (grabs never touch `book_targets.status`). Every failure path for a
