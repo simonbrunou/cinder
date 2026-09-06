@@ -229,8 +229,7 @@ defmodule Cinder.Books.AuthorPolicyTest do
 
       # No get_work expectation registered — a write attempt would raise Mox.UnexpectedCallError
       # rather than silently succeeding.
-      assert {:error, :policy_changed} =
-               Books.apply_bibliography_refresh(author, :all, profile, [resolution])
+      assert {:ok, 0} = Books.apply_bibliography_refresh(author, :all, profile, [resolution])
 
       assert Repo.aggregate(BookTarget, :count) == 0
       assert Books.author_policy(author.id) == :specific
@@ -243,8 +242,7 @@ defmodule Cinder.Books.AuthorPolicyTest do
 
       resolution = %{provider: :openlibrary, work: provider_work("OLSTALE2W")}
 
-      assert {:error, :policy_changed} =
-               Books.apply_bibliography_refresh(author, :all, profile, [resolution])
+      assert {:ok, 0} = Books.apply_bibliography_refresh(author, :all, profile, [resolution])
 
       assert Repo.aggregate(BookTarget, :count) == 0
       assert Books.author_policy(author.id) == :future
@@ -260,11 +258,49 @@ defmodule Cinder.Books.AuthorPolicyTest do
 
       resolution = %{provider: :openlibrary, work: provider_work("OLSTALE3W")}
 
-      assert {:error, :policy_changed} =
-               Books.apply_bibliography_refresh(author, :all, profile, [resolution])
+      assert {:ok, 0} = Books.apply_bibliography_refresh(author, :all, profile, [resolution])
 
       assert Repo.aggregate(BookTarget, :count) == 0
       assert Repo.get_by!(BookAuthorPolicy, author_id: author.id).profile_id == other_profile.id
+    end
+
+    # Codex review on PR #563: the original single up-front check still let a candidate queued
+    # AFTER a mid-batch change slip through under the superseded policy. This proves the
+    # TIGHTENED per-candidate revalidation actually closes that: the policy is revoked from
+    # inside the very first candidate's own write (via a `:telemetry` hook on its `book_works`
+    # insert, the same idiom `Cinder.Requests.BookRequestTest` uses for a TOCTOU race), strictly
+    # between the two candidates' own writes within ONE call.
+    test "a policy revoked BETWEEN two candidates' own writes within one batch stops the second, not just a future batch",
+         %{author: author, profile: profile} do
+      {:ok, _policy} = Books.set_author_policy(author, :all, profile)
+
+      resolution1 = %{provider: :openlibrary, work: provider_work("OLMIDBATCH1W")}
+      resolution2 = %{provider: :openlibrary, work: provider_work("OLMIDBATCH2W")}
+
+      handler = "revoke-mid-batch-#{System.unique_integer([:positive])}"
+      test_pid = self()
+
+      :telemetry.attach(
+        handler,
+        [:cinder, :repo, :query],
+        fn _event, _measurements, metadata, _config ->
+          if metadata[:source] == "book_works" do
+            :telemetry.detach(handler)
+            {:ok, nil} = Books.set_author_policy(author, :specific, nil)
+            send(test_pid, :revoked)
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler) end)
+
+      assert {:ok, 1} =
+               Books.apply_bibliography_refresh(author, :all, profile, [resolution1, resolution2])
+
+      assert_received :revoked
+      assert Repo.aggregate(BookTarget, :count) == 1
+      assert Books.author_policy(author.id) == :specific
     end
   end
 

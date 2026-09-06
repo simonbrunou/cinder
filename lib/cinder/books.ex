@@ -818,38 +818,41 @@ defmodule Cinder.Books do
   overwrite one the admin has since changed.
 
   `preview_author_policy/2` and this batch's own `Identity.resolve/1` calls can take real wall
-  time; the admin may change the policy, change its profile, or revert to `:specific` (deleting
-  the row) while that I/O is in flight (#512). Before writing anything — a target write via
-  `import_and_monitor/2`, not just a final upsert — this re-reads the CURRENT stored
-  `book_author_policies` row and refuses the whole batch unless it still matches the
-  `policy`/`profile` this batch was computed against. A mismatch (changed policy, changed
-  profile, or a deleted row) means the operator's current policy/profile stands untouched and
-  zero targets are created from this stale batch — never a partial write.
+  time, and so can the batch's own per-candidate imports; the admin may change the policy, change
+  its profile, or revert to `:specific` (deleting the row) at any point during either (#512).
+  Every candidate's write is individually gated on a FRESH read of the stored
+  `book_author_policies` row taken immediately before that candidate's own
+  `import_and_monitor/2` — not a single check before the whole batch, which would still let
+  candidates queued after a mid-batch change slip through under the superseded policy. The first
+  candidate whose fresh check no longer matches the `policy`/`profile` this batch was computed
+  against — and every one after it — is skipped, not written; an author with no stored policy at
+  all when the batch starts also creates nothing. The operator's current policy/profile always
+  stands untouched: this never re-upserts it, on any path.
   """
   @spec apply_bibliography_refresh(Author.t(), :future | :all, Profile.t(), [
           Identity.resolution()
-        ]) ::
-          {:ok, non_neg_integer()} | {:error, :policy_changed}
+        ]) :: {:ok, non_neg_integer()}
   def apply_bibliography_refresh(
-        %Author{id: author_id} = _author,
+        %Author{id: author_id},
         policy,
         %Profile{id: profile_id} = profile,
         eligible_candidates
       )
       when policy in [:future, :all] do
-    case Repo.get_by(BookAuthorPolicy, author_id: author_id) do
-      %BookAuthorPolicy{policy: ^policy, profile_id: ^profile_id} ->
-        created_count =
-          Enum.count(
-            eligible_candidates,
-            &match?({:ok, _target}, import_and_monitor(&1, profile))
-          )
+    created_count =
+      Enum.count(eligible_candidates, fn candidate ->
+        current_policy_matches?(author_id, policy, profile_id) and
+          match?({:ok, _target}, import_and_monitor(candidate, profile))
+      end)
 
-        {:ok, created_count}
+    {:ok, created_count}
+  end
 
-      _stale_or_removed ->
-        {:error, :policy_changed}
-    end
+  defp current_policy_matches?(author_id, policy, profile_id) do
+    match?(
+      %BookAuthorPolicy{policy: ^policy, profile_id: ^profile_id},
+      Repo.get_by(BookAuthorPolicy, author_id: author_id)
+    )
   end
 
   defp author_provider_reference(%Author{id: id}) do

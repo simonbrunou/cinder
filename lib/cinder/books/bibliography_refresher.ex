@@ -69,6 +69,11 @@ defmodule Cinder.Books.BibliographyRefresher do
 
   defp apply_eligible(_author, _policy, _profile, []), do: :ok
 
+  # `apply_bibliography_refresh/4` re-validates the stored policy fresh before EVERY candidate's
+  # own write, so `created_count` already reflects any admin change mid-tick — 0 means either
+  # nothing new to monitor or the whole batch went stale (the admin changed the policy, changed
+  # its profile, or reverted to :specific before this batch started); either way the current
+  # policy stands untouched and there is nothing more to log (#512).
   defp apply_eligible(author, policy, profile, eligible) do
     case Books.apply_bibliography_refresh(author, policy, profile, eligible) do
       {:ok, 0} ->
@@ -77,16 +82,6 @@ defmodule Cinder.Books.BibliographyRefresher do
       {:ok, created_count} ->
         Logger.info(
           "books bibliography refresher: author #{author.id} monitored #{created_count} new work(s)"
-        )
-
-        :ok
-
-      # The admin changed the policy, changed its profile, or reverted to :specific while this
-      # tick's preview/resolve I/O was in flight — the current policy stands, untouched, and
-      # this stale batch creates nothing (#512).
-      {:error, :policy_changed} ->
-        Logger.debug(
-          "books bibliography refresher: author #{author.id} policy changed mid-tick, skipping stale batch"
         )
 
         :ok
