@@ -754,6 +754,42 @@ defmodule Cinder.SubtitlesTest do
     assert %{tracks: %{"cn" => %{origin: "embedded"}}} = Manifest.read(@video)
   end
 
+  test "an unextractable exact track falls through to a usable ambiguous track, not translation (#575)",
+       %{fs: fs} do
+    video = @video
+    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "cn")
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+    # "yue" (exact for "cn") sorts first but fails extraction. "chi" (generic Chinese, merely
+    # ambiguous) sorts second and must still be tried and used - giving up after the first,
+    # best-ranked candidate would wrongly fall to translation instead (#575).
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok,
+       [
+         %{index: 2, language: "yue", default?: false, forced?: false},
+         %{index: 3, language: "chi", default?: false, forced?: false}
+       ]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, 2, fn ^video, index ->
+      case index do
+        2 -> {:error, :corrupt}
+        3 -> {:ok, "1\n00:00:01,000 --> 00:00:02,000\nCantonese SRT\n\n"}
+      end
+    end)
+
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+
+    assert Agent.get(fs, &Map.fetch!(&1, "/lib/M/M.cn.srt")) ==
+             "1\n00:00:01,000 --> 00:00:02,000\nCantonese SRT\n\n"
+
+    assert %{tracks: %{"cn" => %{origin: "embedded"}}} = Manifest.read(@video)
+  end
+
   test "a forced exact embedded track falls through to a default non-forced translation", %{
     fs: fs
   } do
