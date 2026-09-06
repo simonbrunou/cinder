@@ -199,6 +199,13 @@ defmodule Cinder.Acquisition.AudiobookScorerTest do
                  %{title: "The 39 Steps", authors: ["John Buchan"]}
                )
     end
+
+    test "a series ordinal that coincidentally equals the wanted number is not title evidence" do
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo"]}
+
+      assert {:reject, :title_mismatch} =
+               AudiobookScorer.evaluate(release("X - Foo 13 - Room (M4B)"), work)
+    end
   end
 
   describe "unfoldable titles" do

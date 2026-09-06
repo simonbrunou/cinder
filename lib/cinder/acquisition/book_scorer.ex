@@ -386,10 +386,31 @@ defmodule Cinder.Acquisition.BookScorer do
   defp strip_noise(title, work) do
     title
     |> drop_bracketed_groups(work)
+    |> strip_series_ordinal(work)
     |> String.replace(~r/-[A-Za-z0-9]+$/, " ")
     |> String.replace(~r/\b(?:book|bk|vol|volume|part|pt|no|nr)\b[ .#]*\d{1,3}\b/i, " ")
     |> String.replace(~r/#\d{1,3}\b/, " ")
     |> strip_series_number(wanted_numeric_tokens(work))
+  end
+
+  # A bare digit right after a series name THIS WORK belongs to is a series-position ordinal
+  # ("The Stormlight Archive 01"), not part of the title -- regardless of whether that digit
+  # happens to numerically coincide with the wanted title's own number. Without this, a release
+  # for a DIFFERENT book sharing a series (`X - Foo 13 - Room` for a wanted `"Room 13"` in series
+  # `"Foo"`) had its ordinal misread as supplying the wanted title's missing "13" (Codex review).
+  # Stripped unconditionally, ahead of the wanted-number preservation step, so the coincidence
+  # never reaches it.
+  defp strip_series_ordinal(title, work) do
+    work
+    |> Map.get(:series)
+    |> List.wrap()
+    |> Enum.reduce(title, fn series_name, acc ->
+      String.replace(acc, series_ordinal_regex(series_name), " ")
+    end)
+  end
+
+  defp series_ordinal_regex(series_name) do
+    Regex.compile!("\\b" <> Regex.escape(series_name) <> "\\s*\\d{1,3}\\b", "i")
   end
 
   # A bare 1-3 digit token between separators is ambiguous: overwhelmingly it is release-side

@@ -315,6 +315,16 @@ defmodule Cinder.Acquisition.BookScorerTest do
                  %{title: "The 39 Steps", authors: ["John Buchan"]}
                )
     end
+
+    test "a series ordinal that coincidentally equals the wanted number is not title evidence" do
+      # Codex review on #517: a release-side series ordinal ("Foo 13") must not be mistaken for
+      # the wanted title's own number just because the two digits coincide. This release is
+      # actually a DIFFERENT book ("Room", volume 13 of series "Foo"), not the requested "Room 13".
+      work = %{title: "Room 13", authors: ["X"], series: ["Foo"]}
+
+      assert {:reject, :title_mismatch} =
+               BookScorer.evaluate(release("X - Foo 13 - Room (epub)"), work)
+    end
   end
 
   describe "protocol" do
