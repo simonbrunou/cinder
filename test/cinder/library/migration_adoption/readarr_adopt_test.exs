@@ -344,6 +344,48 @@ defmodule Cinder.Library.MigrationAdoption.ReadarrAdoptTest do
     assert stored == Enum.sort([track1.path, track2.path])
   end
 
+  # #513 review finding (PR #567): revalidation must check every track a :multi_track candidate
+  # will actually write, not just the primary — otherwise an extra track that goes stale between
+  # preview and adopt slips through unrevalidated and gets written anyway. The primary stays
+  # perfectly valid throughout, so a fix that only re-checks the primary would still pass this.
+  test "revalidation checks every track a :multi_track candidate will write, not just the primary",
+       %{audiobooks_tmp: audiobooks_tmp} do
+    track1 = file(1, 1, "mp3", path(audiobooks_tmp, "revalidate-track/01.mp3"))
+    track2 = file(2, 1, "mp3", path(audiobooks_tmp, "revalidate-track/02.mp3"))
+
+    stub_snapshot(
+      snapshot(
+        authors: [author(1, "Track Author")],
+        works: [work(1, 1, "Revalidated Track Audiobook", "revalidate-track-1")],
+        files: [track1, track2]
+      )
+    )
+
+    stub_resolve("Track Author", "Revalidated Track Audiobook", "openlibrary-revalidate-track-1")
+
+    assert {:ok, preview} = Adoption.preview_migration(:readarr)
+
+    assert [%{status: :needs_decision, reason: :multi_track, key: key} = candidate] =
+             preview.candidates
+
+    # Between preview and adopt, track2's EXACT path is claimed by a different work's target —
+    # e.g. a concurrent import elsewhere already landed there. track1 is untouched and still
+    # perfectly valid.
+    other_work = seed_work("Other Work", "other-work-fx", "openlibrary")
+    {:ok, other_target} = Books.ensure_target(other_work, :audiobook)
+    other_target = other_target |> monitor_target()
+
+    {:ok, _file} =
+      Books.Files.record_import(other_target, %{path: track2.path, size: 4096, format: :mp3})
+
+    assert %{adopted: 0, skipped: 1, failures: []} =
+             Adoption.adopt_migration(:readarr, [
+               %{key: key, choice: :preferred, candidate: candidate}
+             ])
+
+    assert Repo.all(BookFile) |> Enum.map(& &1.path) == [track2.path]
+  end
+
   test "an adopt racing an in-flight grab is refused and leaves the grab untouched", %{tmp: tmp} do
     # Seeded under "openlibrary" (the real metadata provider), not "readarr": the grab-in-progress
     # race only matters for a work Cinder already knows about (a target to race on), and only a

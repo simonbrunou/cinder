@@ -3942,7 +3942,7 @@ msgid "Adopt existing library"
 msgstr ""
 
 #: lib/cinder_web/live/library_adoption_live.ex:1059
-#: lib/cinder_web/live/library_adoption_live.ex:1376
+#: lib/cinder_web/live/library_adoption_live.ex:1399
 #, elixir-autogen
 msgid "Adopt selected"
 msgstr ""
@@ -3953,13 +3953,13 @@ msgid "Adopted %{adopted}; skipped %{skipped}."
 msgstr ""
 
 #: lib/cinder_web/live/library_adoption_live.ex:1061
-#: lib/cinder_web/live/library_adoption_live.ex:1378
+#: lib/cinder_web/live/library_adoption_live.ex:1401
 #, elixir-autogen
 msgid "Adopting selected files…"
 msgstr ""
 
 #: lib/cinder_web/live/library_adoption_live.ex:1059
-#: lib/cinder_web/live/library_adoption_live.ex:1376
+#: lib/cinder_web/live/library_adoption_live.ex:1399
 #, elixir-autogen
 msgid "Adopting…"
 msgstr ""
@@ -4403,14 +4403,14 @@ msgstr ""
 msgid "Adopt the extra file as an explicit part of the primary episode."
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex:1345
-#: lib/cinder_web/live/library_adoption_live.ex:1365
+#: lib/cinder_web/live/library_adoption_live.ex:1368
+#: lib/cinder_web/live/library_adoption_live.ex:1388
 #, elixir-autogen
 msgid "Already managed"
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex:1312
-#: lib/cinder_web/live/library_adoption_live.ex:1336
+#: lib/cinder_web/live/library_adoption_live.ex:1335
+#: lib/cinder_web/live/library_adoption_live.ex:1359
 #, elixir-autogen
 msgid "Blocked"
 msgstr ""
@@ -4452,7 +4452,7 @@ msgid "Migration sources"
 msgstr ""
 
 #: lib/cinder_web/live/library_adoption_live.ex:1146
-#: lib/cinder_web/live/library_adoption_live.ex:1306
+#: lib/cinder_web/live/library_adoption_live.ex:1329
 #, elixir-autogen
 msgid "Needs decision"
 msgstr ""
@@ -4605,7 +4605,7 @@ msgstr ""
 msgid "The source series could not be resolved."
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex:1315
+#: lib/cinder_web/live/library_adoption_live.ex:1338
 #, elixir-autogen
 msgid "These source records cannot be adopted safely and will not be changed."
 msgstr ""
@@ -7041,4 +7041,14 @@ msgstr ""
 #: lib/cinder_web/controllers/user_session_controller.ex:125
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Password update failed."
+msgstr ""
+
+#: lib/cinder_web/live/library_adoption_live.ex:1313
+#, elixir-autogen, elixir-format
+msgid "Adopt all tracks"
+msgstr ""
+
+#: lib/cinder_web/live/library_adoption_live.ex:1315
+#, elixir-autogen, elixir-format, fuzzy
+msgid "These files are sequential tracks of one audiobook, not alternative formats. Every track is adopted together."
 msgstr ""

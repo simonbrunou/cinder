@@ -630,6 +630,18 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     Enum.split_with(selected, fn {candidate, choice} -> current?(candidate, choice, catalog) end)
   end
 
+  # Revalidation must check every path adoption will actually write. Matched before the generic
+  # :all_formats/other clauses below, mirroring files_for/2's own :multi_track clause exactly —
+  # a track set's :preferred choice writes the complete set (#513), so checking only the primary
+  # here would let an extra track that went stale between preview and adopt (moved, deleted, or
+  # relocated outside the audiobook root by a live settings change) slip through unrevalidated
+  # and be written anyway.
+  defp candidate_files(
+         %{primary_file: %{} = primary, extra_files: extras, reason: :multi_track},
+         _choice
+       ),
+       do: [primary | extras]
+
   defp candidate_files(%{primary_file: %{} = primary, extra_files: extras}, :all_formats),
     do: [primary | extras]
 
