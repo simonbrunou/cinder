@@ -907,7 +907,7 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
 
     paths = Cinder.Repo.all(Cinder.Books.BookFile) |> Enum.map(& &1.path) |> Enum.sort()
     assert paths == Enum.sort([track1_path, track2_path])
-end
+  end
 
   # #496: both bulk buttons used to be silent no-ops for a book preview — apply_all/2 already
   # guarded the write (decision_choice_matches_kind?/2), but the template only ever rendered the
