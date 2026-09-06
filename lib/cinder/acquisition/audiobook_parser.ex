@@ -72,15 +72,17 @@ defmodule Cinder.Acquisition.AudiobookParser do
     ~r/\bcollection\b/i,
     ~r/\bbox[\s._-]?sets?\b/i,
     ~r/\bcomplete\s+(?:series|works|collection|trilogy|saga)\b/i,
-    ~r/\b(?:books?|vols?|volumes?)[\s._#-]*\d+\s*(?:-|–|to|thru|through)\s*\d+\b/i
+    ~r/\b(?:books?|vols?|volumes?)[\s._#-]*\d+\s*(?:-|–|to|thru|through)\s*\d+\b/i,
+    # A hash-prefixed range ("#1-3") is `#` PLUS a range and is unconditional evidence exactly
+    # like the keyword-prefixed range above — see `BookParser`'s own list (Codex review, #518).
+    ~r/#\s*\d+\s*(?:-|–)\s*\d+\b/
   ]
 
-  # See `BookParser`'s own `@collection_numeric_ranges` for why these are kept separate: no
-  # keyword, so genuinely ambiguous between a real pack span and a numeric title's own number
+  # See `BookParser`'s own `@collection_numeric_ranges` for why this is kept separate: no keyword
+  # and no "#", so genuinely ambiguous between a real pack span and a numeric title's own number
   # (#518).
   @collection_numeric_ranges [
-    ~r/\s(\d{1,2})\s*(?:-|–)\s*(\d{1,2})\b/,
-    ~r/#\s*(\d+)\s*(?:-|–)\s*(\d+)\b/
+    ~r/\s(\d{1,2})\s*(?:-|–)\s*(\d{1,2})\b/
   ]
 
   # `{regex, tag}` for each language, derived from the shared registry so book/audiobook/video

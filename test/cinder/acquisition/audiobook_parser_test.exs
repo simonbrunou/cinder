@@ -117,6 +117,11 @@ defmodule Cinder.Acquisition.AudiobookParserTest do
       assert %{collection?: true, collection_numbers: nil} =
                AudiobookParser.parse("Brandon Sanderson - Stormlight Archive Books 1-3 (M4B)")
     end
+
+    test "a hash-prefixed range records no digits either — '#' is its own unconditional evidence" do
+      assert %{collection?: true, collection_numbers: nil} =
+               AudiobookParser.parse("Author - Series #1-3 (M4B)")
+    end
   end
 
   test "known_formats/0 lists the recognizer's vocabulary" do

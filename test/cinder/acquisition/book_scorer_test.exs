@@ -407,6 +407,18 @@ defmodule Cinder.Acquisition.BookScorerTest do
                  work
                )
     end
+
+    test "an explicit hash-range pack is refused even when its digits match the wanted title" do
+      # Codex review: "#1-3" is explicit volume/issue notation, unconditional evidence of a pack,
+      # regardless of whether the wanted title happens to share those digits.
+      work = %{title: "Numeric Work 1/3", authors: ["Author Name"]}
+
+      assert {:reject, :collection_ambiguous} =
+               BookScorer.evaluate(
+                 release("Author Name - Numeric Work 1/3 #1-3 (epub)"),
+                 work
+               )
+    end
   end
 
   describe "language" do

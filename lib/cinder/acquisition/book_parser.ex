@@ -89,21 +89,27 @@ defmodule Cinder.Acquisition.BookParser do
     ~r/\bbox[\s._-]?sets?\b/i,
     ~r/\bcomplete\s+(?:series|works|collection|trilogy|saga)\b/i,
     # A keyword-prefixed range ("Books 1-3", "Vols 1-3") carries its own word, so unlike the bare
-    # ranges below it needs no further corroboration to count as a collection claim.
-    ~r/\b(?:books?|vols?|volumes?)[\s._#-]*\d+\s*(?:-|–|to|thru|through)\s*\d+\b/i
+    # range below it needs no further corroboration to count as a collection claim.
+    ~r/\b(?:books?|vols?|volumes?)[\s._#-]*\d+\s*(?:-|–|to|thru|through)\s*\d+\b/i,
+    # A hash-prefixed range ("#1-3", "#1-5") is `#` PLUS a range — that "#" is itself explicit
+    # volume/issue notation, not punctuation a title incidentally carries, so this is unconditional
+    # evidence exactly like the keyword-prefixed range above (Codex review, #518): a numeric title
+    # that also happens to contain the same digits ("Numeric Work 1/3" against a release naming
+    # itself "... 1/3 #1-3") must not forgive an explicit "#1-3" pack claim just because its own
+    # title coincidentally shares those digits.
+    ~r/#\s*\d+\s*(?:-|–)\s*\d+\b/
   ]
 
-  # A bare numeric range with no "books"/"vols" prefix — "The Stormlight Archive 1-3" — is the
-  # same pack, written the way most uploaders actually write it, and is bounded to 1-2 digits per
-  # side so a year range or an ISBN fragment cannot read as a volume span. But with no keyword it
-  # is genuinely ambiguous: a work whose own title IS a number written as a range ("11/22/63",
-  # punctuation-normalized to "11-22-63") matches the identical shape (#518). The digits are
-  # captured so `BookScorer.check_collection/2` can tell the two apart by comparing them against
-  # the wanted title's own numeric tokens — a real pack's span shares no such run with an
-  # unrelated wanted title.
+  # A bare numeric range with no "books"/"vols" prefix and no leading "#" — "The Stormlight
+  # Archive 1-3" — is the same pack, written the way most uploaders actually write it, and is
+  # bounded to 1-2 digits per side so a year range or an ISBN fragment cannot read as a volume
+  # span. But with no keyword and no "#" it is genuinely ambiguous: a work whose own title IS a
+  # number written as a range ("11/22/63", punctuation-normalized to "11-22-63") matches the
+  # identical shape (#518). The digits are captured so `BookScorer.check_collection/2` can tell
+  # the two apart by comparing them against the wanted title's own numeric tokens — a real pack's
+  # span shares no such run with an unrelated wanted title.
   @collection_numeric_ranges [
-    ~r/\s(\d{1,2})\s*(?:-|–)\s*(\d{1,2})\b/,
-    ~r/#\s*(\d+)\s*(?:-|–)\s*(\d+)\b/
+    ~r/\s(\d{1,2})\s*(?:-|–)\s*(\d{1,2})\b/
   ]
 
   # `{regex, tag}` for each language, derived from the shared registry so the two families cannot
