@@ -140,7 +140,15 @@ defmodule Cinder.Library.StageEngineTest do
         reason: :eio
       })
 
-      assert {:error, _reason} = StageEngine.stage_book_place(source, dest, books, replace: true)
+      assert {:error, :eio} = StageEngine.stage_book_place(source, dest, books, replace: true)
+
+      # Pin the post-failure state, not just the rollback's outcome: `File.read!(dest)` below is
+      # equally satisfied by a stage that failed BEFORE the backup move, with `dest` untouched and
+      # nothing to restore — green while defending a path it never entered.
+      refute File.exists?(dest)
+
+      assert [_backup] =
+               Path.wildcard(Path.join(Path.dirname(dest), ".cinder-rollback-*"), match_dot: true)
 
       # The half-prepared stage's own rollback (via `Library.reconcile_stages/0`) restores the
       # original destination bytes from its tracked backup path.
