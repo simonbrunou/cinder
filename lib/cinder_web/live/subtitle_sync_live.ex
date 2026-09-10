@@ -580,7 +580,8 @@ defmodule CinderWeb.SubtitleSyncLive do
     Enum.reduce(results, socket, fn result, socket ->
       case {Map.get(socket.assigns.items_by_id, Map.get(result, :id)), Map.get(result, :status)} do
         {%{} = item, status} when status in [:aligned, :corrected, :review] ->
-          sync = Map.take(result, [:method, :offset_ms, :rate, :reason])
+          sync =
+            Map.take(result, [:method, :offset_ms, :rate, :reason, :segments, :max_offset_ms])
 
           item = %{
             item
@@ -643,6 +644,19 @@ defmodule CinderWeb.SubtitleSyncLive do
 
   defp sync_label(%{status: "review", reason: reason}),
     do: gettext("Needs review: %{reason}", reason: reason || gettext("low confidence"))
+
+  # A piecewise alignment applied a different shift to each segment of the timeline, so the
+  # single recorded delay describes none of them; report what it did instead.
+  defp sync_label(%{method: method, segments: segments, max_offset_ms: max_offset, rate: rate})
+       when is_integer(segments) and segments > 1,
+       do:
+         gettext(
+           "Aligned via %{method}: %{segments} segments, up to %{delay} ms, rate %{rate}",
+           method: method,
+           segments: segments,
+           delay: max_offset,
+           rate: :erlang.float_to_binary(rate * 1.0, decimals: 6)
+         )
 
   defp sync_label(%{method: method, offset_ms: offset, rate: rate}),
     do:
