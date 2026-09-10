@@ -1,7 +1,9 @@
 defmodule Cinder.HealthTest do
-  use ExUnit.Case, async: false
+  use Cinder.DataCase, async: false
 
   import Mox
+
+  alias Cinder.Library.SidecarQuarantine
 
   setup :verify_on_exit!
 
@@ -254,5 +256,34 @@ defmodule Cinder.HealthTest do
     # "delegates to the configured impl's health/0" path is covered in ffprobe_test.exs
     # (async: false), which already owns mutating :ffprobe_bin/:media_info safely.
     assert {:error, :not_configured} = Cinder.Health.check_service(:media_info)
+  end
+
+  test "check_all/0 surfaces a 'Sidecar files' warning row for a retained sidecar whose file still exists" do
+    stub_check_all_services()
+    path = "/library/movies/Movie (2020)/.cinder-sidecar-quarantine-abc123"
+    :ok = SidecarQuarantine.record("/library/movies/Movie (2020)/Movie.en.srt", path, "occupied")
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^path -> {:ok, %File.Stat{}} end)
+
+    row = Enum.find(Cinder.Health.check_all(), &(&1.label == "Sidecar files"))
+    assert row.status == {:warning, {:retained_sidecars, [path]}}
+  end
+
+  test "no 'Sidecar files' row when nothing is recorded" do
+    stub_check_all_services()
+
+    refute Enum.any?(Cinder.Health.check_all(), &(&1.label == "Sidecar files"))
+  end
+
+  # Issue #585: a row survives its own file being cleaned up by hand only until the next
+  # /dashboard mount notices it's gone — no filesystem walk ever rediscovers a stale row, so
+  # nothing would prune it otherwise.
+  test "check_all/0 prunes a row whose quarantine file no longer exists and never surfaces it" do
+    stub_check_all_services()
+    path = "/library/movies/Movie (2020)/.cinder-sidecar-quarantine-gone"
+    :ok = SidecarQuarantine.record("/library/movies/Movie (2020)/Movie.en.srt", path, "occupied")
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^path -> {:error, :enoent} end)
+
+    refute Enum.any?(Cinder.Health.check_all(), &(&1.label == "Sidecar files"))
+    assert Repo.all(SidecarQuarantine) == []
   end
 end

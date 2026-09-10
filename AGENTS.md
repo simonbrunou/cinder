@@ -61,8 +61,9 @@ stale context to every task. Per-feature design and plan docs live under `docs/s
   to a dedicated search tool and will refuse the raw shell command.
   Naming `catalog.ex` explicitly matters because the choke-points themselves live there.
   The callers stay clean: `lib/cinder/download/*`, `acquisition.ex` and
-  `lib/cinder/library/*` (bar `import_stage.ex`, which owns `import_stages`) hold no `Repo`
-  mutations of their own. `download.ex` writes only its own `download_intents` tables.
+  `lib/cinder/library/*` (bar `import_stage.ex`, which owns `import_stages`, and
+  `sidecar_quarantine.ex`, which owns `sidecar_quarantines`) hold no `Repo` mutations of their
+  own. `download.ex` writes only its own `download_intents` tables.
   SQLite is pinned to WAL + `busy_timeout: 5000` across dev/test/runtime, so a web write racing
   the poller waits rather than failing with "database busy" — but only while writes use the
   choke-points.

@@ -191,7 +191,7 @@ msgid "Can't demote the last admin."
 msgstr "Impossible de rétrograder le dernier administrateur."
 
 #: lib/cinder_web/components/core_components.ex:287
-#: lib/cinder_web/components/core_components.ex:936
+#: lib/cinder_web/components/core_components.ex:961
 #: lib/cinder_web/components/issue_components.ex:47
 #: lib/cinder_web/live/library_adoption_live.ex:716
 #: lib/cinder_web/live/library_live.ex:669
@@ -491,7 +491,7 @@ msgstr "Refusé"
 msgid "Deny"
 msgstr "Refuser"
 
-#: lib/cinder_web/components/core_components.ex:932
+#: lib/cinder_web/components/core_components.ex:957
 #: lib/cinder_web/live/users_live.ex:443
 #, elixir-autogen
 msgid "Denying…"
@@ -572,7 +572,7 @@ msgstr "Fichier de l'épisode supprimé."
 msgid "Everyone"
 msgstr "Tout le monde"
 
-#: lib/cinder_web/components/core_components.ex:1009
+#: lib/cinder_web/components/core_components.ex:1034
 #, elixir-autogen
 msgid "Film"
 msgstr "Film"
@@ -810,7 +810,7 @@ msgstr "Aucune correspondance"
 msgid "No movies yet"
 msgstr "Aucun film pour le moment"
 
-#: lib/cinder_web/components/core_components.ex:985
+#: lib/cinder_web/components/core_components.ex:1010
 #: lib/cinder_web/live/movie_detail_live.ex:332
 #: lib/cinder_web/live/movie_discovery_live.ex:282
 #: lib/cinder_web/live/series_discovery_live.ex:425
@@ -915,7 +915,7 @@ msgstr "Le quota doit être un nombre positif ou nul."
 msgid "Quota updated."
 msgstr "Quota mis à jour."
 
-#: lib/cinder_web/components/core_components.ex:928
+#: lib/cinder_web/components/core_components.ex:953
 #, elixir-autogen
 msgid "Reason (optional)"
 msgstr "Motif (facultatif)"
@@ -1084,7 +1084,7 @@ msgstr "Recherchez dans le catalogue pour demander un titre."
 msgid "Searching"
 msgstr "Recherche en cours"
 
-#: lib/cinder_web/components/core_components.ex:1156
+#: lib/cinder_web/components/core_components.ex:1181
 #, elixir-autogen
 msgid "Season %{number}"
 msgstr "Saison %{number}"
@@ -1177,7 +1177,7 @@ msgstr "Aller au contenu"
 msgid "Something went wrong!"
 msgstr "Une erreur est survenue !"
 
-#: lib/cinder_web/components/core_components.ex:1155
+#: lib/cinder_web/components/core_components.ex:1180
 #, elixir-autogen
 msgid "Specials"
 msgstr "Épisodes spéciaux"
@@ -1199,7 +1199,7 @@ msgstr "TMDB n'a renvoyé aucune donnée de saison pour cette série."
 msgid "TMDB search failed. Try again."
 msgstr "Échec de la recherche TMDB. Réessayez."
 
-#: lib/cinder_web/components/core_components.ex:1010
+#: lib/cinder_web/components/core_components.ex:1035
 #: lib/cinder_web/live/dashboard_live.ex:316
 #: lib/cinder_web/live/discover_live.ex:474
 #: lib/cinder_web/live/discover_live.ex:627
@@ -1409,18 +1409,18 @@ msgstr "•••• enregistré (laisser vide pour conserver)"
 msgid "Media server"
 msgstr "Serveur multimédia"
 
-#: lib/cinder_web/components/core_components.ex:1059
+#: lib/cinder_web/components/core_components.ex:1084
 #, elixir-autogen
 msgid "Any language"
 msgstr "Toutes les langues"
 
-#: lib/cinder_web/components/core_components.ex:1057
+#: lib/cinder_web/components/core_components.ex:1082
 #: lib/cinder_web/live/user_live/settings.ex:35
 #, elixir-autogen
 msgid "French"
 msgstr "Français"
 
-#: lib/cinder_web/components/core_components.ex:1060
+#: lib/cinder_web/components/core_components.ex:1085
 #: lib/cinder_web/components/discover_components.ex:284
 #: lib/cinder_web/components/discover_components.ex:287
 #, elixir-autogen
@@ -1498,7 +1498,7 @@ msgid_plural "Approved %{count} requests."
 msgstr[0] "%{count} demande approuvée."
 msgstr[1] "%{count} demandes approuvées."
 
-#: lib/cinder_web/components/core_components.ex:874
+#: lib/cinder_web/components/core_components.ex:887
 #, elixir-autogen
 msgid "Authentication failed"
 msgstr "Échec de l'authentification"
@@ -1523,7 +1523,7 @@ msgstr "Changer le rôle de %{email}, actuellement %{role}"
 msgid "Changing…"
 msgstr "Changement…"
 
-#: lib/cinder_web/components/core_components.ex:884
+#: lib/cinder_web/components/core_components.ex:897
 #, elixir-autogen
 msgid "Check failed"
 msgstr "Échec de la vérification"
@@ -1650,7 +1650,7 @@ msgstr ""
 "Saisissez et validez vos services. Terminer se débloque une fois tous les "
 "services requis connectés."
 
-#: lib/cinder_web/components/core_components.ex:877
+#: lib/cinder_web/components/core_components.ex:890
 #, elixir-autogen
 msgid "HTTP %{status}"
 msgstr "HTTP %{status}"
@@ -2279,7 +2279,7 @@ msgstr "Langues des sous-titres (séparées par des virgules, ex. en,fr)"
 msgid "Subtitles"
 msgstr "Sous-titres"
 
-#: lib/cinder_web/components/core_components.ex:1045
+#: lib/cinder_web/components/core_components.ex:1070
 #: lib/cinder_web/live/movie_detail_live.ex:385
 #: lib/cinder_web/live/movie_detail_live.ex:572
 #: lib/cinder_web/live/series_detail_components.ex:169
@@ -2472,15 +2472,15 @@ msgstr "%{kind} : Taille minimale (Go)"
 msgid "Not saved. Check: %{fields}."
 msgstr "Paramètres non enregistrés. Vérifiez : %{fields}."
 
-#: lib/cinder_web/components/core_components.ex:1143
+#: lib/cinder_web/components/core_components.ex:1168
 #: lib/cinder_web/live/profiles_live.ex:276
 #, elixir-autogen
 msgid "Anime"
 msgstr "Anime"
 
-#: lib/cinder_web/components/core_components.ex:1077
-#: lib/cinder_web/components/core_components.ex:1099
-#: lib/cinder_web/components/core_components.ex:1141
+#: lib/cinder_web/components/core_components.ex:1102
+#: lib/cinder_web/components/core_components.ex:1124
+#: lib/cinder_web/components/core_components.ex:1166
 #, elixir-autogen
 msgid "Auto"
 msgstr "Auto"
@@ -2491,24 +2491,24 @@ msgstr "Auto"
 msgid "Confirmed media profile for %{title}"
 msgstr "Profil multimédia confirmé pour %{title}"
 
-#: lib/cinder_web/components/core_components.ex:1075
-#: lib/cinder_web/components/core_components.ex:1108
+#: lib/cinder_web/components/core_components.ex:1100
+#: lib/cinder_web/components/core_components.ex:1133
 #, elixir-autogen
 msgid "Media profile"
 msgstr "Profil multimédia"
 
-#: lib/cinder_web/components/core_components.ex:1142
+#: lib/cinder_web/components/core_components.ex:1167
 #: lib/cinder_web/live/profiles_live.ex:277
 #, elixir-autogen
 msgid "Standard"
 msgstr "Standard"
 
-#: lib/cinder_web/components/core_components.ex:1146
+#: lib/cinder_web/components/core_components.ex:1171
 #, elixir-autogen
 msgid " and "
 msgstr " et "
 
-#: lib/cinder_web/components/core_components.ex:1131
+#: lib/cinder_web/components/core_components.ex:1156
 #, elixir-autogen
 msgid "%{profile} suggested by %{evidence}. Auto remains %{effective} until selected."
 msgstr ""
@@ -2567,7 +2567,7 @@ msgstr "Modifier l’alias %{title}"
 msgid "Extra"
 msgstr "Bonus"
 
-#: lib/cinder_web/components/core_components.ex:1149
+#: lib/cinder_web/components/core_components.ex:1174
 #, elixir-autogen
 msgid "Japanese animation"
 msgstr "animation japonaise"
@@ -2641,12 +2641,12 @@ msgstr "Hors-série narratif"
 msgid "Title aliases"
 msgstr "Alias de titre"
 
-#: lib/cinder_web/components/core_components.ex:1150
+#: lib/cinder_web/components/core_components.ex:1175
 #, elixir-autogen
 msgid "an absolute episode group"
 msgstr "un groupe d’épisodes absolus"
 
-#: lib/cinder_web/components/core_components.ex:1128
+#: lib/cinder_web/components/core_components.ex:1153
 #, elixir-autogen
 msgid "effective"
 msgstr "effectif"
@@ -2930,7 +2930,7 @@ msgstr ""
 "Saisissez un nombre de Go (0 = aucune limite), ou laissez vide pour la "
 "valeur par défaut."
 
-#: lib/cinder_web/components/core_components.ex:1058
+#: lib/cinder_web/components/core_components.ex:1083
 #, elixir-autogen
 msgid "French + original"
 msgstr "Français + originale"
@@ -3437,7 +3437,7 @@ msgstr "Art"
 msgid "Camera"
 msgstr "Caméra"
 
-#: lib/cinder_web/components/core_components.ex:1012
+#: lib/cinder_web/components/core_components.ex:1037
 #, elixir-autogen
 msgid "Collection"
 msgstr "Collection"
@@ -3492,7 +3492,7 @@ msgstr "Aucun film trouvé"
 msgid "People"
 msgstr "Personnes"
 
-#: lib/cinder_web/components/core_components.ex:1011
+#: lib/cinder_web/components/core_components.ex:1036
 #, elixir-autogen
 msgid "Person"
 msgstr "Personne"
@@ -3852,7 +3852,7 @@ msgstr "Guerre"
 msgid "Western"
 msgstr "Western"
 
-#: lib/cinder_web/components/core_components.ex:869
+#: lib/cinder_web/components/core_components.ex:882
 #, elixir-autogen
 msgid "Local path prefix is not an existing readable directory: %{path}"
 msgstr ""
@@ -6277,19 +6277,19 @@ msgstr ""
 "La sauvegarde de la base de données n’a pas pu être créée. Veuillez "
 "réessayer."
 
-#: lib/cinder_web/components/core_components.ex:889
+#: lib/cinder_web/components/core_components.ex:914
 #, elixir-autogen
 msgid "Folder name limit is %{length}; raise it to 246 or higher."
 msgstr "Limite du nom de dossier : %{length} ; augmentez-la à 246 ou plus."
 
-#: lib/cinder_web/components/core_components.ex:896
+#: lib/cinder_web/components/core_components.ex:921
 #, elixir-autogen
 msgid "Pause on Duplicates is enabled; turn it off or exclude Cinder's category."
 msgstr ""
 "« Pause on Duplicates » est activé ; désactivez-le ou excluez la catégorie "
 "de Cinder."
 
-#: lib/cinder_web/components/core_components.ex:893
+#: lib/cinder_web/components/core_components.ex:918
 #, elixir-autogen
 msgid "Series duplicate detection is enabled; turn it off or exclude Cinder's category."
 msgstr ""
@@ -7409,3 +7409,21 @@ msgid "Aligned via %{method}: %{segments} segments, up to %{delay} ms, rate %{ra
 msgstr ""
 "Aligné via %{method} : %{segments} segments, jusqu’à %{delay} ms, facteur "
 "%{rate}"
+
+#: lib/cinder_web/components/core_components.ex:909
+#, elixir-autogen, elixir-format
+msgid "(+%{count} more)"
+msgstr "(+%{count} de plus)"
+
+#: lib/cinder_web/components/core_components.ex:872
+#, elixir-autogen, elixir-format
+msgid "1 sidecar file was kept aside because Cinder could not prove it owned the file. Review it and delete it if it is not yours:"
+msgid_plural "%{count} sidecar files were kept aside because Cinder could not prove it owned them. Review them and delete them if they are not yours:"
+msgstr[0] ""
+"1 fichier de sous-titres a été mis de côté car Cinder n’a pas pu prouver "
+"qu’il lui appartenait. Vérifiez-le et supprimez-le s’il ne vous appartient "
+"pas :"
+msgstr[1] ""
+"%{count} fichiers de sous-titres ont été mis de côté car Cinder n’a pas pu "
+"prouver qu’ils lui appartenaient. Vérifiez-les et supprimez-les s’ils ne "
+"vous appartiennent pas :"

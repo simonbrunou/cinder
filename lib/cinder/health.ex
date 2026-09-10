@@ -11,6 +11,7 @@ defmodule Cinder.Health do
   """
   alias Cinder.Books.Metadata
   alias Cinder.Download
+  alias Cinder.Library.SidecarQuarantine
   alias Cinder.LibraryKind
 
   # Backstop above the worst individual probe today (~12s: qBittorrent/SABnzbd's login + probe
@@ -24,8 +25,8 @@ defmodule Cinder.Health do
   `%{label: String.t(), status: :ok | {:warning, term()} | {:error, term()}}`, ordered
   metadata (TMDB) → indexer → books metadata providers → download clients (sorted protocols) →
   media server → audiobook server → library rows (video kinds then book kinds) → media info →
-  subtitles → stored credentials. A probe that exceeds the timeout budget reports
-  `{:error, :timeout}` for its row without affecting any other row.
+  subtitles → stored credentials → retained sidecar files. A probe that exceeds the timeout
+  budget reports `{:error, :timeout}` for its row without affecting any other row.
   """
   def check_all do
     probes = probes()
@@ -128,7 +129,7 @@ defmodule Cinder.Health do
       download_probes() ++
       [media_server_probe(), audiobook_server_probe()] ++
       library_probes() ++
-      [media_info_probe(), subtitles_probe(), secrets_probe()]
+      [media_info_probe(), subtitles_probe(), secrets_probe(), sidecar_quarantine_probe()]
   end
 
   # TMDB drives discovery, requests, and the monitored-series refresh; an expired token leaves
@@ -226,6 +227,24 @@ defmodule Cinder.Health do
 
          _ ->
            :skip
+       end
+     end}
+  end
+
+  # Issue #585: `Cinder.Library.Sidecars` retains a sidecar it can't prove it owns by renaming it
+  # to an unguessable `.cinder-sidecar-quarantine-*` name and logging it, but nothing sweeps that
+  # prefix and the log line is the only trace. `PathPolicy.walk/2` hard-caps at 100_000 entries
+  # and this probe runs on every `/dashboard` mount via `start_async`, so it can't recover those
+  # paths by walking the library — it only reads what `SidecarQuarantine.record/3` recorded at
+  # the moment retention happened. Reads the DB, so — like `secrets_probe/0` — it goes through
+  # `safely/1` and degrades to `:skip` on anything unexpected rather than taking the panel down.
+  defp sidecar_quarantine_probe do
+    {"Sidecar files",
+     fn ->
+       case safely(fn -> SidecarQuarantine.list_present() end) do
+         [] -> :skip
+         rows when is_list(rows) -> {:warning, {:retained_sidecars, Enum.map(rows, & &1.path)}}
+         _error -> :skip
        end
      end}
   end

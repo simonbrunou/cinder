@@ -5,6 +5,7 @@ defmodule Cinder.Library.SidecarsTest do
   setup :verify_on_exit!
 
   alias Cinder.Library.FilesystemMock
+  alias Cinder.Library.SidecarQuarantine
   alias Cinder.Library.Sidecars
   alias Cinder.Test.BarrierFilesystem
   alias Cinder.Test.ForeignFile
@@ -465,6 +466,68 @@ defmodule Cinder.Library.SidecarsTest do
                )
 
       assert File.read!(quarantine) == "a c"
+    end
+
+    # Issue #585: every branch that leaves a file sitting at the quarantine name must record it,
+    # since the log line is the only other trace and disappears with log rotation. This drives
+    # the exact same identity-check-failed trigger as the test above and checks the DB row it
+    # records instead of (only) the log line.
+    @tag :tmp_dir
+    test "a reclaim that leaves the file quarantined records it for Cinder.Health to surface",
+         %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "a complete subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_all_links(:eopnotsupp)
+      Application.put_env(:cinder, :exclusive_copy_file_module, TruncatingWriteFile)
+      on_exit(fn -> Application.delete_env(:cinder, :exclusive_copy_file_module) end)
+
+      Application.put_env(:cinder, :filesystem_failures, [
+        %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :enoent},
+        %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :eio}
+      ])
+
+      capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+
+      assert [quarantine] =
+               Path.wildcard(
+                 Path.join(Path.dirname(sidecar_dest), ".cinder-sidecar-quarantine-*"),
+                 match_dot: true
+               )
+
+      assert [row] = Repo.all(SidecarQuarantine)
+      assert row.path == quarantine
+      assert row.destination == sidecar_dest
+      assert row.reason == "identity_check_failed"
+    end
+
+    # The mirror image: a reclaim that succeeds at removing its own truncated partial (the
+    # existing "byte-truncating exclusive-copy failure reclaims its own partial file" test above)
+    # never leaves anything at the quarantine name, so it must record nothing.
+    @tag :tmp_dir
+    test "a reclaim that successfully discards its own partial records no retention",
+         %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "a complete subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_all_links(:eopnotsupp)
+      Application.put_env(:cinder, :exclusive_copy_file_module, TruncatingWriteFile)
+      on_exit(fn -> Application.delete_env(:cinder, :exclusive_copy_file_module) end)
+
+      capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+
+      refute File.exists?(sidecar_dest)
+      assert Repo.all(SidecarQuarantine) == []
     end
 
     # Issue #558, residual 2: on a FUSE/union mount that computes the inode it reports from the
