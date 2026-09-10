@@ -69,13 +69,38 @@ defmodule Cinder.Test.BarrierFilesystem do
   def lstat(path) do
     case injected_failure(:lstat, path, path) do
       :ok ->
-        result = Disk.lstat(path)
+        result = path |> Disk.lstat() |> reported_identity(path)
         pause(:lstat, path)
         result
 
       {:error, _} = error ->
         error
     end
+  end
+
+  # Models the mount class in issue #558: a FUSE/union mount that computes the inode it reports
+  # from the path rather than from the backing file (mergerfs `inodecalc=path-hash`), so one
+  # physical file reports a different inode either side of a rename nothing else touched. The
+  # device is left alone — the mount is one filesystem, and only the inode is synthesised.
+  defp reported_identity({:ok, stat}, path) do
+    if Application.get_env(:cinder, :filesystem_path_hash_inodes, false),
+      do: {:ok, %{stat | inode: :erlang.phash2(path)}},
+      else: {:ok, stat}
+  end
+
+  defp reported_identity(result, _path), do: result
+
+  @doc """
+  Makes `lstat/1` report a path-derived inode for the rest of the test — the FUSE/union mount
+  class in issue #558, where an identity captured before a rename can never match the one
+  reported after it.
+  """
+  def report_path_derived_inodes do
+    Application.put_env(:cinder, :filesystem_path_hash_inodes, true)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Application.delete_env(:cinder, :filesystem_path_hash_inodes)
+    end)
   end
 
   @impl true

@@ -13,6 +13,7 @@ defmodule Cinder.Library.StageEngineTest do
   use Cinder.DataCase, async: false
 
   alias Cinder.Library.{ImportStage, StageEngine}
+  alias Cinder.Test.BarrierFilesystem
 
   setup %{tmp_dir: tmp} do
     downloads = Path.join(tmp, "downloads")
@@ -143,6 +144,58 @@ defmodule Cinder.Library.StageEngineTest do
 
       # The half-prepared stage's own rollback (via `Library.reconcile_stages/0`) restores the
       # original destination bytes from its tracked backup path.
+      Application.delete_env(:cinder, :filesystem_failure)
+      assert :ok = Cinder.Library.reconcile_stages()
+      assert File.read!(dest) == "old bytes"
+      assert Cinder.Library.quarantined_import_stages() == []
+    end
+
+    # Issue #558: the journal's `{inode, device, size}` identity is captured at `dest` and then
+    # checked at `.cinder-rollback-<key>`, either side of a rename this engine performs itself.
+    # On a mount that computes the inode it reports from the path (mergerfs
+    # `inodecalc=path-hash`), that comparison can never match, and BOTH halves of the two-phase
+    # commit break for a file nothing else touched: a committed replace can't clean up its
+    # backup, and an uncommitted one can't restore it. The operation-keyed path — which only this
+    # journal row ever names — is the ownership evidence that survives.
+    test "a committed replace still cleans up its backup when the mount rewrites inodes on rename",
+         %{downloads: downloads, books: books} do
+      source = Path.join(downloads, "book (retail).epub")
+      File.write!(source, "new retail bytes")
+      dest = Path.join(books, "Author/Title/book.epub")
+      File.mkdir_p!(Path.dirname(dest))
+      File.write!(dest, "old bytes")
+      BarrierFilesystem.report_path_derived_inodes()
+
+      assert {:ok, rollback, true} =
+               StageEngine.stage_book_place(source, dest, books, replace: true)
+
+      assert File.read!(dest) == "new retail bytes"
+      assert :ok = commit!(rollback)
+
+      # The replaced original is gone rather than stranded under its rollback name forever.
+      assert Path.wildcard(Path.join(Path.dirname(dest), ".cinder-rollback-*"), match_dot: true) ==
+               []
+
+      assert Cinder.Library.quarantined_import_stages() == []
+    end
+
+    test "a rollback still restores the ORIGINAL bytes when the mount rewrites inodes on rename",
+         %{downloads: downloads, books: books} do
+      source = Path.join(downloads, "book (retail).epub")
+      File.write!(source, "new retail bytes")
+      dest = Path.join(books, "Author/Title/book.epub")
+      File.mkdir_p!(Path.dirname(dest))
+      File.write!(dest, "old bytes")
+      BarrierFilesystem.report_path_derived_inodes()
+
+      Application.put_env(:cinder, :filesystem_failure, %{
+        operation: :ln,
+        source_contains: ".cinder-stage-",
+        reason: :eio
+      })
+
+      assert {:error, _reason} = StageEngine.stage_book_place(source, dest, books, replace: true)
+
       Application.delete_env(:cinder, :filesystem_failure)
       assert :ok = Cinder.Library.reconcile_stages()
       assert File.read!(dest) == "old bytes"

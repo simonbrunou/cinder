@@ -7,6 +7,23 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **An import no longer strands files on a mount that renumbers inodes across a rename.** Every
+  ownership check the import makes — "is the file at this path still the one I put there?" —
+  compares the `{device, inode}` pair `lstat` reports, captured before one of the import's own
+  renames and checked after it. Some FUSE and union mounts compute the inode they report from the
+  *path* rather than the backing file (mergerfs with `inodecalc=path-hash`), so one physical file
+  reports two different inodes either side of a rename nothing else touched, and the difference
+  was read as "someone replaced my file". On that mount class a failed sidecar copy renamed its
+  own truncated `.srt` back to the permanent name, where every later import skipped it with
+  `:eexist` forever (#558) — and, found while fixing that, a confirmed replacement could neither
+  clean up nor roll back: the file it replaced stayed stranded under the internal
+  `.cinder-rollback-*` name it had been moved to, and the import parked. A mismatch is now only
+  acted on after asking the mount whether it carries identity across a rename at all (write a
+  file under an unguessable name, rename it, compare). Where it demonstrably does not, the
+  two-phase commit falls back to the operation-keyed path only one journal row ever names, and
+  the sidecar reclaim leaves the file quarantined instead of restoring bytes it cannot vouch for
+  — the destination name is freed either way, so a retry can land. Nothing is deleted on an
+  unverifiable identity, and a public destination path gets no fallback at all.
 - **Subtitle drift that changes partway through a file is now corrected.** Automatic alignment
   asked the engine for a single global offset, which cannot follow a sidecar whose divergence is
   structural rather than constant — ad breaks cut out of the video, a theatrical/extended cut

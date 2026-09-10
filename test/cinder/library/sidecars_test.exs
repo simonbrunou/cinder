@@ -6,6 +6,7 @@ defmodule Cinder.Library.SidecarsTest do
 
   alias Cinder.Library.FilesystemMock
   alias Cinder.Library.Sidecars
+  alias Cinder.Test.BarrierFilesystem
 
   # Models a mid-stream write failure during `cp_exclusive`'s exclusive-copy fallback: the
   # first three bytes reach disk, then the write reports `:enospc` — the exact byte-level fault
@@ -463,6 +464,55 @@ defmodule Cinder.Library.SidecarsTest do
                )
 
       assert File.read!(quarantine) == "a c"
+    end
+
+    # Issue #558, residual 2: on a FUSE/union mount that computes the inode it reports from the
+    # path rather than the backing file (mergerfs `inodecalc=path-hash`), the reclaim's OWN rename
+    # onto the quarantine name changes the reported identity of a file nothing else touched.
+    # Reading that as a concurrent replacement renamed the truncated partial back to the permanent
+    # name, where every later import skipped it with `:eexist` forever — the exact symptom the
+    # reclaim exists to prevent, reintroduced on one mount class.
+    @tag :tmp_dir
+    test "a mount that does not preserve identity across a rename never restores the partial",
+         %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "a complete subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_all_links(:eopnotsupp)
+      Application.put_env(:cinder, :exclusive_copy_file_module, TruncatingWriteFile)
+      on_exit(fn -> Application.delete_env(:cinder, :exclusive_copy_file_module) end)
+      BarrierFilesystem.report_path_derived_inodes()
+
+      log = capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+      assert log =~ "sidecar link rejected: :enospc"
+      assert log =~ "sidecar reclaim left quarantined for #{sidecar_dest}"
+
+      # The permanent name is left free, so the mismatch this mount cannot help with no longer
+      # blocks the sidecar forever — and the bytes are retained rather than discarded, because a
+      # mount that can't confirm the file was ours can't confirm it wasn't someone else's either.
+      refute File.exists?(sidecar_dest)
+
+      assert [quarantine] =
+               Path.wildcard(
+                 Path.join(Path.dirname(sidecar_dest), ".cinder-sidecar-quarantine-*"),
+                 match_dot: true
+               )
+
+      assert File.read!(quarantine) == "a c"
+
+      # The probe answers with a file of its own; it must never leave one behind.
+      assert Path.wildcard(Path.join(Path.dirname(sidecar_dest), ".cinder-inode-probe-*"),
+               match_dot: true
+             ) == []
+
+      Application.put_env(:cinder, :exclusive_copy_file_module, :file)
+      assert Sidecars.link(video, dest) == ["en"]
+      assert File.read!(sidecar_dest) == "a complete subtitle"
     end
 
     @tag :tmp_dir
