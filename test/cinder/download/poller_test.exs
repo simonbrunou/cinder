@@ -14,6 +14,7 @@ defmodule Cinder.Download.PollerTest do
   alias Cinder.Download.{Intent, Poller, TvPoller}
   alias Cinder.Library.{ImportStage, Upgrade}
   alias Cinder.Repo
+  alias Cinder.Test.ForeignFile
 
   import Cinder.CatalogFixtures
   import Cinder.LibraryStubs
@@ -1427,8 +1428,7 @@ defmodule Cinder.Download.PollerTest do
       end)
 
     assert_receive {:filesystem_barrier, pid, ref, :lstat, _candidate}, 15_000
-    File.rm!(dest)
-    File.write!(dest, "user replacement")
+    ForeignFile.publish!(dest, "user replacement")
     send(pid, {ref, :continue})
 
     assert {:error, :import_stage_destination_changed} = Task.await(stage)
@@ -1594,8 +1594,7 @@ defmodule Cinder.Download.PollerTest do
     poll = Task.async(fn -> Poller.poll() end)
     assert_receive {:filesystem_barrier, pid, ref, :ln, dest}, 15_000
     assert {:ok, _} = Catalog.delete_movie(Repo.get!(Movie, movie.id), nil)
-    File.rm!(dest)
-    File.write!(dest, "user replacement")
+    ForeignFile.publish!(dest, "user replacement")
     assert [%ImportStage{state: :preparing, candidate_size: 9}] = Repo.all(ImportStage)
     assert File.stat!(dest).size == 16
     send(pid, {ref, :continue})

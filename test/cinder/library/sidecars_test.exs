@@ -7,6 +7,7 @@ defmodule Cinder.Library.SidecarsTest do
   alias Cinder.Library.FilesystemMock
   alias Cinder.Library.Sidecars
   alias Cinder.Test.BarrierFilesystem
+  alias Cinder.Test.ForeignFile
 
   # Models a mid-stream write failure during `cp_exclusive`'s exclusive-copy fallback: the
   # first three bytes reach disk, then the write reports `:enospc` — the exact byte-level fault
@@ -542,14 +543,8 @@ defmodule Cinder.Library.SidecarsTest do
       {pid, ref, quarantine} = await_barrier(:rename)
 
       # Publish a different file over the quarantine name, so its identity genuinely no longer
-      # matches what `cp_exclusive` created — the mismatch the probe must NOT excuse here. The
-      # replacement is created while the partial still holds its inode and then renamed over it:
-      # removing the partial first and writing in its place is not deterministic, since the
-      # filesystem may hand the replacement the inode number it just freed, and the reclaim then
-      # reads a stranger's file as its own. (Observed: passes locally, discarded the file on CI.)
-      other = Path.join(release, "someone-else.srt")
-      File.write!(other, "someone else's subtitle")
-      File.rename!(other, quarantine)
+      # matches what `cp_exclusive` created — the mismatch the probe must NOT excuse here.
+      ForeignFile.publish!(quarantine, "someone else's subtitle")
       send(pid, {ref, :continue})
 
       log = capture_log(fn -> assert Task.await(task) == [] end)
