@@ -18,8 +18,24 @@ defmodule Cinder.MixProject do
       listeners: [Phoenix.CodeReloader],
       description: @description,
       source_url: @source_url,
-      package: package()
+      package: package(),
+      hex: hex()
     ]
+  end
+
+  # Two LOW advisories that `mix hex.audit` (a required CI check) fails on, both terminal
+  # escape-sequence injection in an *interactive* mix task run by a developer — `mix
+  # igniter.install`'s confirmation prompt and `mix usage_rules.search_docs` — via package
+  # metadata fetched from Hex. Neither is reachable from the release: `usage_rules` is
+  # `only: [:dev]` and `igniter` is nothing but its transitive dependency, so neither ships in
+  # the container nor runs on a request. They are acknowledged rather than fixed because the
+  # fixed versions are not free: `usage_rules` 1.2.8 replaces the `mix usage_rules.sync AGENTS.md
+  # --all --link-to-folder deps --remove-missing` CLI that AGENTS.md documents with an in-mix.exs
+  # config block, and `igniter` 0.8.4 resolves `req` — the HTTP client behind every external
+  # service — from 0.6.2 up to 0.7.4, whose breaking changes (the `run_finch`/`run_plug` steps
+  # becoming adapter modules) deserve their own change, not a drive-by inside an audit fix.
+  defp hex do
+    [ignore_advisories: ["CVE-2026-82710", "CVE-2026-82584"]]
   end
 
   # Package metadata. Not published to Hex; present for discoverability + SPDX licensing.
