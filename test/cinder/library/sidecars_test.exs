@@ -490,7 +490,9 @@ defmodule Cinder.Library.SidecarsTest do
 
       log = capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
       assert log =~ "sidecar link rejected: :enospc"
-      assert log =~ "sidecar reclaim left quarantined for #{sidecar_dest}"
+
+      assert log =~
+               "sidecar reclaim left quarantined for #{sidecar_dest}: identity not preserved across rename"
 
       # The permanent name is left free, so the mismatch this mount cannot help with no longer
       # blocks the sidecar forever — and the bytes are retained rather than discarded, because a
@@ -513,6 +515,48 @@ defmodule Cinder.Library.SidecarsTest do
       Application.put_env(:cinder, :exclusive_copy_file_module, :file)
       assert Sidecars.link(video, dest) == ["en"]
       assert File.read!(sidecar_dest) == "a complete subtitle"
+    end
+
+    # The other half of the gate, and the one that keeps it honest: on a mount that DOES preserve
+    # identity a mismatch still means another file won the name, and putting it back is what
+    # preserves it. Without this the suite would stay green if the probe ever over-reported
+    # `:unpreserved` — every data-preserving restore would silently become a retention.
+    @tag :tmp_dir
+    test "a genuine mismatch is still restored when the mount preserves identity across a rename",
+         %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      sidecar = Path.join(release, "Movie.en.srt")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      sidecar_dest = Path.rootname(dest) <> ".en.srt"
+      File.write!(video, "video")
+      File.write!(sidecar, "a complete subtitle")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_all_links(:eopnotsupp)
+      Application.put_env(:cinder, :exclusive_copy_file_module, TruncatingWriteFile)
+      on_exit(fn -> Application.delete_env(:cinder, :exclusive_copy_file_module) end)
+
+      barrier(:rename, ".cinder-sidecar-quarantine-")
+
+      task = Task.async(fn -> Sidecars.link(video, dest) end)
+      {pid, ref, quarantine} = await_barrier(:rename)
+
+      # Swap the quarantined partial for a different file, so its identity genuinely no longer
+      # matches what `cp_exclusive` created — the mismatch the probe must NOT excuse here.
+      File.rm!(quarantine)
+      File.write!(quarantine, "someone else's subtitle")
+      send(pid, {ref, :continue})
+
+      log = capture_log(fn -> assert Task.await(task) == [] end)
+      assert log =~ "sidecar link rejected: :enospc"
+      refute log =~ "identity not preserved across rename"
+
+      # Bytes this reclaim cannot claim go back to the name they were found under.
+      assert File.read!(sidecar_dest) == "someone else's subtitle"
+
+      assert Path.wildcard(Path.join(Path.dirname(sidecar_dest), ".cinder-inode-probe-*"),
+               match_dot: true
+             ) == []
     end
 
     @tag :tmp_dir

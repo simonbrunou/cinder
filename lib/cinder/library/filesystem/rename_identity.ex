@@ -35,17 +35,36 @@ defmodule Cinder.Library.Filesystem.RenameIdentity do
     dest = probe_path(dir)
 
     with {:ok, ^source} <- safe_destination(source, root),
-         {:ok, ^dest} <- safe_destination(dest, root),
-         :ok <- fs().write_exclusive(source, "") do
-      verdict = compare_across_rename(source, dest)
-      # The probe file sits at `dest` when the rename landed and at `source` when it did not, and
-      # an :unknown gives no way to tell which: discard both so no verdict can leave litter in a
-      # library folder.
-      discard(source, root)
-      discard(dest, root)
-      verdict
+         {:ok, ^dest} <- safe_destination(dest, root) do
+      create_and_compare(source, dest, root)
     else
       _ -> :unknown
+    end
+  end
+
+  defp create_and_compare(source, dest, root) do
+    case fs().write_exclusive(source, "") do
+      :ok ->
+        verdict = compare_across_rename(source, dest)
+        # The probe file sits at `dest` when the rename landed and at `source` when it did not,
+        # and an :unknown gives no way to tell which: discard both so no verdict can leave litter
+        # in a library folder.
+        discard(source, root)
+        discard(dest, root)
+        verdict
+
+      # The one error where the file at `source` is not ours to remove.
+      {:error, :eexist} ->
+        :unknown
+
+      # `write_exclusive/2` creates the file with `O_EXCL` before it can fail, and a later write,
+      # fsync or parent-sync error only closes the handle — `Disk.close_bound_error/2` and
+      # `rooted_create_bound/4` both leave the file behind. Discard it, or a probe on a mount
+      # that fails mid-write litters the very folder it was asked about: nothing sweeps this
+      # prefix (`Sidecars.sweep_temps/2` matches `.cinder-tmp-` only).
+      {:error, _reason} ->
+        discard(source, root)
+        :unknown
     end
   end
 

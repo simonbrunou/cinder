@@ -194,7 +194,15 @@ defmodule Cinder.Library.StageEngineTest do
         reason: :eio
       })
 
-      assert {:error, _reason} = StageEngine.stage_book_place(source, dest, books, replace: true)
+      assert {:error, :eio} = StageEngine.stage_book_place(source, dest, books, replace: true)
+
+      # Without this the assertion below is also satisfied by a stage that failed BEFORE
+      # `maybe_move_backup/2` ever moved anything — `dest` untouched, nothing to restore, and a
+      # green test defending a path it never entered.
+      refute File.exists?(dest)
+
+      assert [_backup] =
+               Path.wildcard(Path.join(Path.dirname(dest), ".cinder-rollback-*"), match_dot: true)
 
       Application.delete_env(:cinder, :filesystem_failure)
       assert :ok = Cinder.Library.reconcile_stages()

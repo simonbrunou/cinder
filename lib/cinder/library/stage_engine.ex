@@ -700,8 +700,14 @@ defmodule Cinder.Library.StageEngine do
   # preserving the file and parking the stage.
   defp owned?(stat, identity, path, root) do
     identity_matches?(stat, identity) or
-      RenameIdentity.probe(Path.dirname(path), root) == :unpreserved
+      (captured?(identity) and RenameIdentity.probe(Path.dirname(path), root) == :unpreserved)
   end
+
+  # A path fallback on an identity that was never captured would be no evidence at all. A nil
+  # field is `identity_matches?/2`'s own refusal case and must not be upgraded into ownership by
+  # the probe — no caller reaches here with one today, and none should acquire the ability to.
+  defp captured?({inode, device, size}),
+    do: not is_nil(inode) and not is_nil(device) and not is_nil(size)
 
   defp candidate_identity(stage),
     do: {stage.candidate_inode, stage.candidate_device, stage.candidate_size}

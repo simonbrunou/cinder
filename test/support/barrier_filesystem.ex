@@ -56,8 +56,13 @@ defmodule Cinder.Test.BarrierFilesystem do
       dest,
       fn stat ->
         pause(:cp_exclusive_created, dest)
+        # The create-time identity comes from an fstat on our own descriptor, not from `lstat/1`,
+        # so the mount model has to be applied here too. Otherwise a path-derived-inode test
+        # manufactures its mismatch out of fd-stat vs path-hash — which would arise without any
+        # rename at all — instead of out of the rename the mount class is about.
+        {:ok, reported} = reported_identity({:ok, stat}, dest)
 
-        with :ok <- on_create.(stat) do
+        with :ok <- on_create.(reported) do
           pause(:cp_exclusive, dest)
         end
       end,
@@ -177,6 +182,12 @@ defmodule Cinder.Test.BarrierFilesystem do
         result = Disk.write_exclusive(path, content)
         pause(:write_exclusive, path)
         result
+
+      # `Disk.write_exclusive/2` creates the file with `O_EXCL` and only then writes, fsyncs and
+      # syncs the parent; those failures close the handle and leave the file. Model that shape
+      # rather than a create that never happened.
+      {:post_effect_error, reason} ->
+        with :ok <- Disk.write_exclusive(path, content), do: {:error, reason}
 
       {:error, _} = error ->
         error
