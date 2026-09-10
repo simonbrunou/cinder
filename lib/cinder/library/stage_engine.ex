@@ -58,17 +58,18 @@ defmodule Cinder.Library.StageEngine do
 
       {:error, :eexist} ->
         with {:ok, ^dest} <- safe_destination(dest, root),
-             {:ok, %{inode: di, major_device: ddev}} <- fs().lstat(dest) do
+             {:ok, %{inode: di, major_device: ddev} = dest_stat} <- fs().lstat(dest) do
           # Inode numbers are unique only within one filesystem, so an idempotency short-circuit must
           # also match the device — across filesystems two inodes can collide and would otherwise skip
           # a genuine upgrade. Same-fs hardlink fast path (sdev == ddev) is unchanged.
           same_inode? = si == di and sdev == ddev
+          upgrade? = replace? or upgrade_fun.()
 
           do_resolve(
             source,
             dest,
-            same_inode?,
-            replace? or upgrade_fun.(),
+            same_inode? or (upgrade? and same_backing_file?(source, dest, dest_stat, root)),
+            upgrade?,
             record,
             new_q,
             replace?,
@@ -95,6 +96,47 @@ defmodule Cinder.Library.StageEngine do
 
   defp do_resolve(_source, dest, false, false, movie, new_q, _replace?, _root),
     do: Library.keep(dest, movie, new_q)
+
+  # Issue #584, a follow-up to #558: `si == di and sdev == ddev` answers "is `dest` already the
+  # file I am about to place there" by comparing what `lstat` reports for two DIFFERENT paths. On
+  # a mount that computes the reported inode from the path (mergerfs `inodecalc=path-hash`, some
+  # FUSE) that always reads "different", so replaying an already-completed replace re-runs the
+  # whole backup-then-swap over content that was already swapped once and reports `placed?: true`
+  # for bytes that never moved.
+  #
+  # #583's fallback does not carry over: it re-reads an identity mismatch as "the mount renamed
+  # my own file", which works because the path it falls back to is operation-keyed and only one
+  # journal row ever names it. `source` and `dest` are both public names, so this question needs
+  # an identity that is not derived from a path at all — `backing_identity/1`, which goes to the
+  # backing store (mergerfs's branch descriptor) rather than to the union's synthesized inode.
+  #
+  # Consulted only where the alternative is overwriting the destination, and only after two
+  # cheaper necessary conditions hold: a destination with a single link cannot be a second name
+  # for `source` at all, and a mount that carries identity across a rename already answered the
+  # question with `lstat`. On every normal mount this returns false without opening anything and
+  # the placement path is what it always was.
+  defp same_backing_file?(source, dest, dest_stat, root) do
+    hardlinked?(dest_stat) and
+      RenameIdentity.probe(Path.dirname(dest), root) == :unpreserved and
+      backing_identities_match?(source, dest)
+  end
+
+  # Positive evidence required: a filesystem that does not report a link count leaves the
+  # reported-inode verdict standing rather than buying the proof on a maybe.
+  defp hardlinked?(%{links: links}), do: is_integer(links) and links > 1
+  defp hardlinked?(_stat), do: false
+
+  # An identity the helper cannot produce for BOTH paths (either sits under no configured root, no
+  # helper, an unreadable file) is not evidence of anything: fall back to the reported-inode
+  # verdict rather than guessing, exactly as before this fix.
+  defp backing_identities_match?(source, dest) do
+    with {:ok, identity} <- fs().backing_identity(source),
+         {:ok, ^identity} <- fs().backing_identity(dest) do
+      true
+    else
+      _ -> false
+    end
+  end
 
   @doc """
   Stages a book file, using the same journal as `stage_place/8` with none of its quality logic.
@@ -175,11 +217,15 @@ defmodule Cinder.Library.StageEngine do
     end
   end
 
+  # `same_file?/2` reads the destination as a different file whenever the mount derives the
+  # reported inode from the path, so the cross-path proof (issue #584) guards the swap here too:
+  # a replayed replace must stay the idempotent no-op this function's docstring promises.
   defp stage_book_collision(source, dest, root, dest_stat, extensions, replace?) do
     with {:ok, source_stat} <- fs().lstat(source) do
-      if replace? and not same_file?(source_stat, dest_stat),
-        do: stage_book_replace(source, dest, root, dest_stat, extensions),
-        else: stage_book_keep(dest, root)
+      if replace? and not same_file?(source_stat, dest_stat) and
+           not same_backing_file?(source, dest, dest_stat, root),
+         do: stage_book_replace(source, dest, root, dest_stat, extensions),
+         else: stage_book_keep(dest, root)
     end
   end
 
@@ -237,8 +283,7 @@ defmodule Cinder.Library.StageEngine do
         stage_new(source, dest, root, new_q)
 
       {:ok, %{inode: ^si, major_device: ^sdev}} ->
-        quality = existing_quality_for_stage(record, new_q, replace?, dest)
-        stage_noop(dest, root, quality)
+        stage_same_file(dest, root, record, new_q, replace?)
 
       {:ok, stat} ->
         stage_existing(source, dest, root, stat, record, new_q, replace?, upgrade_fun)
@@ -248,13 +293,27 @@ defmodule Cinder.Library.StageEngine do
     end
   end
 
+  defp stage_same_file(dest, root, record, new_q, replace?) do
+    quality = existing_quality_for_stage(record, new_q, replace?, dest)
+    stage_noop(dest, root, quality)
+  end
+
   defp stage_existing(source, dest, root, stat, record, new_q, replace?, upgrade_fun) do
     if replace? or upgrade_fun.() do
-      stage_replacement(source, dest, root, stat, new_q)
+      stage_upgrade(source, dest, root, stat, record, new_q, replace?)
     else
       {:ok, quality, false} = Library.keep(dest, record, new_q)
       stage_noop(dest, root, quality)
     end
+  end
+
+  # The clause above matched `dest`'s reported inode against the source's; where that comparison
+  # cannot answer (issue #584), prove it across the two paths before spending a whole file's
+  # worth of link-or-copy plus a backup swap on bytes that are already published.
+  defp stage_upgrade(source, dest, root, stat, record, new_q, replace?) do
+    if same_backing_file?(source, dest, stat, root),
+      do: stage_same_file(dest, root, record, new_q, replace?),
+      else: stage_replacement(source, dest, root, stat, new_q)
   end
 
   defp existing_quality_for_stage(_record, new_q, true, _dest), do: new_q

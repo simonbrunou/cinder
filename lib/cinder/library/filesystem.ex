@@ -45,6 +45,22 @@ defmodule Cinder.Library.Filesystem do
   @callback moviehash_data(path :: String.t()) ::
               {:ok, {non_neg_integer(), binary(), binary()}} | :too_small | {:error, term()}
 
+  @doc """
+  Identity of the file BEHIND `path`: the one identity two DIFFERENT paths can be compared on.
+
+  `lstat`'s `{device, inode}` answers "is the file at this path still the one I put there?", but
+  not "are these two paths the same file?" — on a mount that computes the inode it reports from
+  the path (mergerfs `inodecalc=path-hash`, some FUSE) two names for one file report two inodes
+  (issues #558, #584). This goes to the backing store instead: `Cinder.Library.Filesystem.Disk`
+  holds the path open through `priv/rooted_fs.py`, which hands back mergerfs's own branch
+  descriptor, and returns that file's `{major_device, minor_device, inode}`.
+
+  Fails rather than degrading: `{:error, :outside_roots}` when `path` sits under no configured
+  library or import root, and the helper's own error otherwise. An `lstat` fallback here would
+  hand back exactly the path-derived answer callers came here to avoid.
+  """
+  @callback backing_identity(path :: String.t()) :: {:ok, term()} | {:error, term()}
+
   @spec identity?(map(), term()) :: boolean()
   def identity?(bound, expected),
     do: bound.identity == expected or Map.get(bound, :union_identity) == expected

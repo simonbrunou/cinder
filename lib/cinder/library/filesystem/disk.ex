@@ -304,6 +304,29 @@ defmodule Cinder.Library.Filesystem.Disk do
     end
   end
 
+  # Anchored at import roots as well as library roots (`identity_location/1`): the whole point of
+  # this callback is comparing an import's SOURCE against its destination, and a source lives
+  # under an import root. Only this lookup widens — every other rooted operation still resolves
+  # through `rooted_location/1`, so nothing else changes which paths run through the helper.
+  #
+  # The bound is opened read-only and closed immediately; the identity is the descriptor's, which
+  # for a mergerfs mount is the branch file behind the union name rather than the union's
+  # synthesized inode.
+  @impl true
+  def backing_identity(path) do
+    case identity_location(path) do
+      {:ok, root, relative} -> rooted_backing_identity(root, relative, path)
+      :outside_roots -> {:error, :outside_roots}
+    end
+  end
+
+  defp rooted_backing_identity(root, relative, path) do
+    with {:ok, bound} <- open_rooted_bound(root, relative, path, "read") do
+      close_rooted_port(elem(bound.io, 1))
+      {:ok, bound.identity}
+    end
+  end
+
   @impl true
   def close_bound(%{io: {:rooted, port}}), do: close_rooted_port(port)
   def close_bound(%{io: io}), do: File.close(io)
@@ -447,10 +470,15 @@ defmodule Cinder.Library.Filesystem.Disk do
   @impl true
   def rm_rf(path), do: File.rm_rf(path)
 
-  defp rooted_location(path) do
+  defp rooted_location(path), do: locate(path, Settings.library_roots())
+
+  defp identity_location(path),
+    do: locate(path, Settings.library_roots() ++ Settings.import_roots())
+
+  defp locate(path, roots) do
     expanded = Path.expand(path)
 
-    Settings.library_roots()
+    roots
     |> Enum.sort_by(&byte_size/1, :desc)
     |> Enum.find_value(:outside_roots, fn root ->
       root = Path.expand(root)

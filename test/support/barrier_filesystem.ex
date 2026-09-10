@@ -108,6 +108,18 @@ defmodule Cinder.Test.BarrierFilesystem do
     end)
   end
 
+  # Deliberately NOT passed through `reported_identity/2`. Unlike `lstat/1` and the fd-stat in
+  # `cp_exclusive/3` — both of which a path-hash union mount answers from the union — this
+  # identity comes from the rooted helper's descriptor on the BACKING branch, which that mount
+  # class never renumbers (issue #584). Modelling it as path-derived would model a mount that
+  # does not exist and would leave the cross-path proof untestable.
+  @impl true
+  def backing_identity(path) do
+    result = Disk.backing_identity(path)
+    pause(:backing_identity, path)
+    result
+  end
+
   @impl true
   def rename(source, dest) do
     case injected_failure(:rename, source, dest) do

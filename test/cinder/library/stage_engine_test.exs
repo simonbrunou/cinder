@@ -219,6 +219,76 @@ defmodule Cinder.Library.StageEngineTest do
     end
   end
 
+  # Issue #584: the collision branch asks "is `dest` already this exact file?" by comparing what
+  # `lstat` reports for two DIFFERENT paths, which on this mount class always reads "different".
+  # A replay of an already-completed replace then re-runs the whole backup-then-swap over content
+  # already swapped once and reports a fresh publication for bytes that never moved.
+  #
+  # The destination is a configured library root here because that is what makes the backing
+  # identity reachable at all — `Filesystem.backing_identity/1` answers only for paths under a
+  # configured library or import root, and in production every destination is one.
+  describe "replace: true on a mount that reports path-derived inodes" do
+    setup %{books: books} do
+      saved = Application.get_env(:cinder, :books_library_path)
+      Application.put_env(:cinder, :books_library_path, books)
+
+      on_exit(fn ->
+        if saved,
+          do: Application.put_env(:cinder, :books_library_path, saved),
+          else: Application.delete_env(:cinder, :books_library_path)
+      end)
+
+      :ok
+    end
+
+    test "a replayed replace is still an idempotent no-op", %{downloads: downloads, books: books} do
+      source = Path.join(downloads, "book.epub")
+      File.write!(source, "bytes")
+      dest = Path.join(books, "Author/Title/book.epub")
+      File.mkdir_p!(Path.dirname(dest))
+      File.ln!(source, dest)
+      BarrierFilesystem.report_path_derived_inodes()
+
+      assert {:ok, rollback, false} =
+               StageEngine.stage_book_place(source, dest, books, replace: true)
+
+      assert File.read!(dest) == "bytes"
+
+      # `placed?: false` alone is also satisfied by a swap that happened and was reported as a
+      # keep, so pin the absence of the backup a real swap would have left behind.
+      assert Path.wildcard(Path.join(Path.dirname(dest), ".cinder-rollback-*"), match_dot: true) ==
+               []
+
+      assert :ok = commit!(rollback)
+    end
+
+    # The other half of the proof: it must not answer "same file" for two files that merely both
+    # sit under a configured root, or a confirmed replace would silently keep the old bytes —
+    # the exact defect `stage_book_place/4`'s `:replace` path exists to fix. The destination is
+    # hardlinked from a SECOND download so it clears the link-count precondition and the proof
+    # actually runs, rather than being short-circuited by a single-link destination.
+    test "a genuinely different destination is still replaced", %{
+      downloads: downloads,
+      books: books
+    } do
+      source = Path.join(downloads, "book (retail).epub")
+      File.write!(source, "new retail bytes")
+      other = Path.join(downloads, "book (old).epub")
+      File.write!(other, "old bytes")
+      dest = Path.join(books, "Author/Title/book.epub")
+      File.mkdir_p!(Path.dirname(dest))
+      File.ln!(other, dest)
+      BarrierFilesystem.report_path_derived_inodes()
+
+      assert {:ok, rollback, true} =
+               StageEngine.stage_book_place(source, dest, books, replace: true)
+
+      assert File.read!(dest) == "new retail bytes"
+      assert :ok = commit!(rollback)
+      assert Cinder.Library.quarantined_import_stages() == []
+    end
+  end
+
   describe ":extensions — the audiobook call site's own gate" do
     test "a .mp3 source is refused with the e-book default extensions", %{
       downloads: downloads,

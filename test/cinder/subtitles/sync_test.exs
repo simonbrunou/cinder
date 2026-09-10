@@ -64,6 +64,8 @@ defmodule Cinder.Subtitles.SyncTest do
     defdelegate exchange(source, dest), to: Disk
     @impl true
     defdelegate moviehash_data(path), to: Disk
+    @impl true
+    defdelegate backing_identity(path), to: Disk
 
     @impl true
     def write_bound(bound, content) do
