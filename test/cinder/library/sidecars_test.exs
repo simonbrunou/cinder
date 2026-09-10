@@ -541,10 +541,15 @@ defmodule Cinder.Library.SidecarsTest do
       task = Task.async(fn -> Sidecars.link(video, dest) end)
       {pid, ref, quarantine} = await_barrier(:rename)
 
-      # Swap the quarantined partial for a different file, so its identity genuinely no longer
-      # matches what `cp_exclusive` created — the mismatch the probe must NOT excuse here.
-      File.rm!(quarantine)
-      File.write!(quarantine, "someone else's subtitle")
+      # Publish a different file over the quarantine name, so its identity genuinely no longer
+      # matches what `cp_exclusive` created — the mismatch the probe must NOT excuse here. The
+      # replacement is created while the partial still holds its inode and then renamed over it:
+      # removing the partial first and writing in its place is not deterministic, since the
+      # filesystem may hand the replacement the inode number it just freed, and the reclaim then
+      # reads a stranger's file as its own. (Observed: passes locally, discarded the file on CI.)
+      other = Path.join(release, "someone-else.srt")
+      File.write!(other, "someone else's subtitle")
+      File.rename!(other, quarantine)
       send(pid, {ref, :continue})
 
       log = capture_log(fn -> assert Task.await(task) == [] end)
