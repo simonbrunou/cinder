@@ -7,6 +7,50 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Subtitle drift that changes partway through a file is now corrected.** Automatic alignment
+  asked the engine for a single global offset, which cannot follow a sidecar whose divergence is
+  structural rather than constant — ad breaks cut out of the video, a theatrical/extended cut
+  mismatch, a recap trimmed off the front, discs concatenated into one file. The opening scene
+  looked perfect while the rest of the file was tens of seconds out, and the pass recorded itself
+  as `aligned`. Alignment now runs piecewise (`--split-penalty`), and three things that defeated
+  it are fixed with it: (1) `--max-framerate-deviation` was tightened to `0.05`, which rejected
+  the *correct* alignment for NTSC-timed subtitles on a film-rate release (scale 0.799/1.2513)
+  and left the sidecar minutes out by the end — it now admits the ratios real releases produce,
+  and the piecewise search, not a narrow rate cap, is what keeps a structural cut from being
+  "fixed" by stretching time (the #348 concern); (2) an embedded subtitle reference was handed to
+  the engine with an empty format, because `Path.extname(".srt")` is `""` — the engine could not
+  read it as subtitles and so could not infer a framerate ratio from durations; (3) a correction
+  was skipped as an imperceptible no-op whenever the *global* offset was under 100 ms, which is
+  exactly what a piecewise fix reports when most of the file was already in place and only the
+  tail moved. Measured against ffsubsync 0.5.1 with synthetic references: an ad-break case went
+  from 60 of 90 cues 38–76 s out to 0 ms error, the NTSC case from 334 s to 7 ms, and correctly
+  timed sidecars still align as one segment and are left byte-identical.
+- **The first subtitle alignment after a restart no longer ran without format information.**
+  `Sync` probed the engine with `function_exported?(module, :sync, 5)`, which answers for loaded
+  modules only; code loading is lazy, so before the engine module had ever been called the probe
+  said no and the call fell back to the 3-arity form — no input/reference/output formats, on
+  extension-less descriptor paths the engine cannot infer them from.
+- **A subtitle file can no longer describe its own alignment result.** The engine's metrics were
+  read by regex out of its human-readable log — a stream that also carries subtitle bytes
+  verbatim, because ffsubsync's SRT parser logs an unparseable block and a traceback can embed
+  one. A crafted sidecar could therefore contribute a metric: a stray, non-cue paragraph reading
+  `1 cue(s) offset 0.000s` was measurably counted as a segment of the applied correction, and
+  since the score/offset/rate patterns were unanchored first-match, log ordering was the only
+  thing standing between that and a desynced sidecar being recorded `aligned` (and then never
+  re-analyzed). `priv/ffsubsync_runner.py` now reports the metrics itself — from `run/1`'s return
+  value plus its own log records, matched on logger name *and* message template, never on
+  rendered text — as one line prefixed with a random per-run token, and that line is the only
+  thing Cinder reads. Nothing in a subtitle file can carry a token generated after it was
+  written. This also removes the log-scraping fragility that came with it (`rich`'s column
+  wrapping, `%.3f`-rounded values, the emission order of the engine's own lines), so recorded
+  offsets and framerate scales now carry full precision.
+- Automatic corrections recorded by an older version are restored from their originals and
+  re-analyzed (sync metadata version 3), so sidecars a previous pass had marked `aligned` are
+  re-checked with the alignment above. Manual corrections are left alone.
+- `/subtitle-sync` no longer describes a piecewise correction by a single delay. The row records
+  and reports the segment count and the largest shift applied ("Aligned via audio: 3 segments, up
+  to 40000 ms") instead of the global search's `offset_ms`, which reads as `0 ms` for a
+  correction that moved the tail of the file by 40 s.
 - **The Readarr migration source can now snapshot a live Bookshelf at all (#488).**
   `MigrationSource.Readarr.snapshot/0` fetched `/api/v1/bookfile` and `/api/v1/edition` unscoped,
   but the deployed build (`bookshelf:hardcover`, Readarr `0.4.20.129` — the same instance the B0

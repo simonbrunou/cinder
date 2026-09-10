@@ -85,6 +85,7 @@ defmodule Cinder.Subtitles.SyncTest do
       :tv_library_path,
       :media_info,
       :subtitle_sync_engine,
+      :subtitle_sync_engine_report,
       :subtitle_sync_workspace_id,
       :rooted_filesystem_helper,
       :filesystem_barrier,
@@ -216,6 +217,48 @@ defmodule Cinder.Subtitles.SyncTest do
     assert File.read!(path) == original
     assert File.stat!(path).mtime == before
     refute File.exists?(Sync.backup_path(path))
+  end
+
+  test "a piecewise correction whose global offset reads as a no-op is still applied", %{
+    video: video
+  } do
+    path = managed_srt!(video)
+    original = File.read!(path)
+    corrected = shifted_subtitle(original)
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, input, output ->
+      assert File.read!(input) == original
+      File.write!(output, corrected)
+      # A split alignment that leaves most of the file where it was and moves the tail 40s:
+      # the global search that preceded it saw no shift at all.
+      {:ok, %{score: 30.0, offset_ms: 0, rate: 1.0, segments: 2, max_offset_ms: 40_000}}
+    end)
+
+    assert [%{status: :corrected, segments: 2, max_offset_ms: 40_000}] = Sync.analyze_video(video)
+    assert File.read!(path) == corrected
+    assert File.read!(Sync.backup_path(path)) == original
+
+    # Recorded, because `offset_ms: 0` alone would report a 40s tail correction as no correction.
+    assert %{status: "aligned", offset_ms: 0, segments: 2, max_offset_ms: 40_000} =
+             Manifest.sync(Manifest.read(video), "en")
+  end
+
+  test "an embedded reference reaches the engine as a subtitle format", %{video: video} do
+    _path = managed_srt!(video)
+    Application.put_env(:cinder, :subtitle_sync_engine, Cinder.Test.ReportingEngine)
+    Application.put_env(:cinder, :subtitle_sync_engine_report, %{owner: self()})
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok, [%{index: 2, language: "en", forced?: false, default?: true, packet_count: 20}]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 2 ->
+      {:ok, subtitle(".srt")}
+    end)
+
+    assert [%{method: "embedded", status: :aligned}] = Sync.analyze_video(video)
+    assert_receive {:engine_formats, ".srt", ".srt"}
   end
 
   test "manual correction keeps one immutable backup, reapplies from it, and reset restores it",
@@ -374,7 +417,7 @@ defmodule Cinder.Subtitles.SyncTest do
     assert File.read!(path) == original
     assert File.read!(backup) == ""
 
-    assert %{method: "audio", status: "aligned", version: 2} =
+    assert %{method: "audio", status: "aligned", version: 3} =
              Manifest.sync(Manifest.read(video), "en")
   end
 
@@ -412,7 +455,7 @@ defmodule Cinder.Subtitles.SyncTest do
     assert [%{method: "audio", status: :aligned}] = Sync.analyze_video(video)
     assert File.read!(path) == original
 
-    assert %{method: "audio", status: "aligned", version: 2} =
+    assert %{method: "audio", status: "aligned", version: 3} =
              Manifest.sync(Manifest.read(video), "en")
   end
 
