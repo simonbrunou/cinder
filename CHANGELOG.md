@@ -30,6 +30,20 @@ All notable changes to Cinder are documented here. The format follows
   modules only; code loading is lazy, so before the engine module had ever been called the probe
   said no and the call fell back to the 3-arity form — no input/reference/output formats, on
   extension-less descriptor paths the engine cannot infer them from.
+- **A subtitle file can no longer describe its own alignment result.** The engine's metrics were
+  read by regex out of its human-readable log — a stream that also carries subtitle bytes
+  verbatim, because ffsubsync's SRT parser logs an unparseable block and a traceback can embed
+  one. A crafted sidecar could therefore contribute a metric: a stray, non-cue paragraph reading
+  `1 cue(s) offset 0.000s` was measurably counted as a segment of the applied correction, and
+  since the score/offset/rate patterns were unanchored first-match, log ordering was the only
+  thing standing between that and a desynced sidecar being recorded `aligned` (and then never
+  re-analyzed). `priv/ffsubsync_runner.py` now reports the metrics itself — from `run/1`'s return
+  value plus its own log records, matched on logger name *and* message template, never on
+  rendered text — as one line prefixed with a random per-run token, and that line is the only
+  thing Cinder reads. Nothing in a subtitle file can carry a token generated after it was
+  written. This also removes the log-scraping fragility that came with it (`rich`'s column
+  wrapping, `%.3f`-rounded values, the emission order of the engine's own lines), so recorded
+  offsets and framerate scales now carry full precision.
 - Automatic corrections recorded by an older version are restored from their originals and
   re-analyzed (sync metadata version 3), so sidecars a previous pass had marked `aligned` are
   re-checked with the alignment above. Manual corrections are left alone.
