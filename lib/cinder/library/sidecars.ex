@@ -9,6 +9,7 @@ defmodule Cinder.Library.Sidecars do
 
   alias Cinder.Acquisition.Parser
   alias Cinder.Library
+  alias Cinder.Library.Filesystem.RenameIdentity
   alias Cinder.Library.PathPolicy
   alias Cinder.Settings
 
@@ -271,12 +272,36 @@ defmodule Cinder.Library.Sidecars do
         end
 
       {:ok, _mismatched_identity} ->
-        restore_quarantined_partial(dest, quarantine)
+        resolve_identity_mismatch(dest, quarantine, root)
 
       {:error, reason} ->
         Logger.warning(
           "sidecar reclaim identity check failed for #{quarantine}: #{inspect(reason)}"
         )
+    end
+  end
+
+  # Issue #558: a mismatch only means "some other file won the name" on a mount whose reported
+  # identity survives a rename at all. Where the inode `lstat` reports is computed from the path
+  # (mergerfs `inodecalc=path-hash`, some FUSE), our OWN rename to the quarantine name changes it
+  # for a file nothing else touched, and restoring on that reading puts our truncated partial back
+  # at `dest` — where every later retry then skips it with `:eexist` forever, the very symptom
+  # this reclaim exists to prevent. So ask the mount before acting on the mismatch.
+  #
+  # When the identity provably did not survive the probe's own rename, the file stays quarantined:
+  # `dest` is left free for a later import to land the sidecar, and the bytes are retained rather
+  # than discarded, so a genuinely concurrent replacement is never destroyed on a mount that
+  # cannot tell us it was one — only relocated to a logged, unguessable name. A probe that cannot
+  # answer (`:unknown`) changes nothing: the restore stands, exactly as before.
+  defp resolve_identity_mismatch(dest, quarantine, root) do
+    case RenameIdentity.probe(Path.dirname(dest), root) do
+      :unpreserved ->
+        Logger.warning(
+          "sidecar reclaim left quarantined for #{dest}: identity not preserved across rename"
+        )
+
+      _preserved_or_unknown ->
+        restore_quarantined_partial(dest, quarantine)
     end
   end
 

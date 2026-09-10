@@ -12,6 +12,7 @@ defmodule Cinder.Library.StageEngine do
 
   alias Cinder.Library
   alias Cinder.Library.{BookSources, ImportStage}
+  alias Cinder.Library.Filesystem.RenameIdentity
 
   require Library
 
@@ -635,25 +636,29 @@ defmodule Cinder.Library.StageEngine do
   end
 
   defp restore_matching_backup(stage, stat) do
-    if identity_matches?(stat, backup_identity(stage)) do
-      backup = stage.backup
-      dest = stage.dest
-
-      with {:error, :enoent} <- fs().lstat(dest),
-           {:ok, ^backup} <- safe_destination(backup, stage.root),
-           {:ok, ^dest} <- safe_destination(dest, stage.root),
-           :ok <- fs().rename(backup, dest),
-           {:ok, restored} <- fs().lstat(dest),
-           true <-
-             identity_matches?(restored, backup_identity(stage)) ||
-               {:error, :import_stage_restore_changed} do
-        :ok
-      else
-        {:ok, _occupant} -> {:error, :import_stage_destination_changed}
-        {:error, _} = error -> error
-      end
+    if owned?(stat, backup_identity(stage), stage.backup, stage.root) do
+      restore_backup(stage)
     else
       {:error, :import_stage_backup_changed}
+    end
+  end
+
+  defp restore_backup(stage) do
+    backup = stage.backup
+    dest = stage.dest
+
+    with {:error, :enoent} <- fs().lstat(dest),
+         {:ok, ^backup} <- safe_destination(backup, stage.root),
+         {:ok, ^dest} <- safe_destination(dest, stage.root),
+         :ok <- fs().rename(backup, dest),
+         {:ok, restored} <- fs().lstat(dest),
+         true <-
+           owned?(restored, backup_identity(stage), dest, stage.root) ||
+             {:error, :import_stage_restore_changed} do
+      :ok
+    else
+      {:ok, _occupant} -> {:error, :import_stage_destination_changed}
+      {:error, _} = error -> error
     end
   end
 
@@ -665,7 +670,7 @@ defmodule Cinder.Library.StageEngine do
         :ok
 
       {:ok, stat} ->
-        if identity_matches?(stat, identity),
+        if owned?(stat, identity, path, root),
           do: safe_remove(path, [root]),
           else: {:error, :import_stage_file_changed}
 
@@ -673,6 +678,36 @@ defmodule Cinder.Library.StageEngine do
         error
     end
   end
+
+  # Issue #558: the journal's `{inode, device, size}` is only ownership evidence on a mount whose
+  # reported identity survives a rename. Where the inode `lstat` reports is computed from the path
+  # (mergerfs `inodecalc=path-hash`, some FUSE), an identity captured before one of OUR OWN
+  # renames can never match the one reported after it — `maybe_move_backup/2` renames `dest` to
+  # `.cinder-rollback-<key>`, and every later check of that backup then reads a mismatch, so a
+  # committed stage never cleans up its replaced original and an uncommitted one never restores
+  # it. Both park forever on that mount class, for a file nothing else touched.
+  #
+  # The fallback is the operation-keyed path itself. `.cinder-stage-<key>` and
+  # `.cinder-rollback-<key>` are named by exactly one journal row and nothing else, which
+  # `remove_unique_candidate/1` already treats as durable ownership evidence in its own right;
+  # `dest` immediately after we renamed our backup onto it holds, by construction, the file that
+  # rename moved. So when the mount PROVES it does not carry identity across a rename, fall back
+  # to that. Only a positive `:unpreserved` finding unlocks it — an inconclusive probe leaves the
+  # mismatch fatal, exactly as before.
+  #
+  # `remove_or_preserve_destination/2` deliberately gets no fallback: `dest` is a public name a
+  # third party's file can legitimately occupy, so an unverifiable identity there must keep
+  # preserving the file and parking the stage.
+  defp owned?(stat, identity, path, root) do
+    identity_matches?(stat, identity) or
+      (captured?(identity) and RenameIdentity.probe(Path.dirname(path), root) == :unpreserved)
+  end
+
+  # A path fallback on an identity that was never captured would be no evidence at all. A nil
+  # field is `identity_matches?/2`'s own refusal case and must not be upgraded into ownership by
+  # the probe — no caller reaches here with one today, and none should acquire the ability to.
+  defp captured?({inode, device, size}),
+    do: not is_nil(inode) and not is_nil(device) and not is_nil(size)
 
   defp candidate_identity(stage),
     do: {stage.candidate_inode, stage.candidate_device, stage.candidate_size}

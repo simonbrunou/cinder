@@ -56,8 +56,13 @@ defmodule Cinder.Test.BarrierFilesystem do
       dest,
       fn stat ->
         pause(:cp_exclusive_created, dest)
+        # The create-time identity comes from an fstat on our own descriptor, not from `lstat/1`,
+        # so the mount model has to be applied here too. Otherwise a path-derived-inode test
+        # manufactures its mismatch out of fd-stat vs path-hash — which would arise without any
+        # rename at all — instead of out of the rename the mount class is about.
+        {:ok, reported} = reported_identity({:ok, stat}, dest)
 
-        with :ok <- on_create.(stat) do
+        with :ok <- on_create.(reported) do
           pause(:cp_exclusive, dest)
         end
       end,
@@ -69,13 +74,38 @@ defmodule Cinder.Test.BarrierFilesystem do
   def lstat(path) do
     case injected_failure(:lstat, path, path) do
       :ok ->
-        result = Disk.lstat(path)
+        result = path |> Disk.lstat() |> reported_identity(path)
         pause(:lstat, path)
         result
 
       {:error, _} = error ->
         error
     end
+  end
+
+  # Models the mount class in issue #558: a FUSE/union mount that computes the inode it reports
+  # from the path rather than from the backing file (mergerfs `inodecalc=path-hash`), so one
+  # physical file reports a different inode either side of a rename nothing else touched. The
+  # device is left alone — the mount is one filesystem, and only the inode is synthesised.
+  defp reported_identity({:ok, stat}, path) do
+    if Application.get_env(:cinder, :filesystem_path_hash_inodes, false),
+      do: {:ok, %{stat | inode: :erlang.phash2(path)}},
+      else: {:ok, stat}
+  end
+
+  defp reported_identity(result, _path), do: result
+
+  @doc """
+  Makes `lstat/1` report a path-derived inode for the rest of the test — the FUSE/union mount
+  class in issue #558, where an identity captured before a rename can never match the one
+  reported after it.
+  """
+  def report_path_derived_inodes do
+    Application.put_env(:cinder, :filesystem_path_hash_inodes, true)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Application.delete_env(:cinder, :filesystem_path_hash_inodes)
+    end)
   end
 
   @impl true
@@ -152,6 +182,12 @@ defmodule Cinder.Test.BarrierFilesystem do
         result = Disk.write_exclusive(path, content)
         pause(:write_exclusive, path)
         result
+
+      # `Disk.write_exclusive/2` creates the file with `O_EXCL` and only then writes, fsyncs and
+      # syncs the parent; those failures close the handle and leave the file. Model that shape
+      # rather than a create that never happened.
+      {:post_effect_error, reason} ->
+        with :ok <- Disk.write_exclusive(path, content), do: {:error, reason}
 
       {:error, _} = error ->
         error
