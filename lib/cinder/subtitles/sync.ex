@@ -17,7 +17,11 @@ defmodule Cinder.Subtitles.Sync do
   }
 
   @managed_origins ~w(opensubtitles_hash opensubtitles_id)
-  @sync_version 2
+  # Bumped whenever the alignment an automatic pass would produce changes, so already-"aligned"
+  # sidecars are restored from their originals and re-analyzed instead of being trusted forever.
+  # 3: piecewise alignment, a subtitle reference the engine reads as subtitles, and framerate
+  # corrections beyond ±5% — v2 results left structural and NTSC-ratio drift in place.
+  @sync_version 3
   @type item :: map()
   @doc "Manifest-managed OpenSubtitles sidecars belonging to one video."
   @spec discover(String.t()) :: [item()]
@@ -346,7 +350,11 @@ defmodule Cinder.Subtitles.Sync do
   defp normalize_engine_result(result, _item, _method), do: result
 
   defp invoke_bound_engine(item, moviehash, method, reference, input) do
-    reference_extension = Path.extname(if(method == "audio", do: item.video_path, else: ".srt"))
+    # An embedded reference is always extracted as SRT (`-c:s srt`); only the audio method hands
+    # the engine the video container itself. Both paths reach the engine as an extension-less
+    # descriptor path, so the format has to travel separately — and a subtitle reference the
+    # engine can read as subtitles is what lets it infer a framerate ratio from durations.
+    reference_extension = if method == "audio", do: Path.extname(item.video_path), else: ".srt"
     input_extension = Path.extname(item.sidecar_path)
 
     with {:ok, source} <- File.read(input.path),
@@ -1161,9 +1169,14 @@ defmodule Cinder.Subtitles.Sync do
       current_hash == item.sync.applied_sha256
   end
 
+  # Skips rewriting a sidecar (and taking a backup) for a shift nobody can perceive. A piecewise
+  # alignment reports the largest shift it actually applied: its `offset_ms` is only the global
+  # search that preceded the splits and can read as ~0 while the tail of the file moves by tens
+  # of seconds, so trusting it here would discard exactly the corrections that matter most.
   defp insignificant_correction?(metrics) do
-    abs(Map.get(metrics, :offset_ms, 0)) <= 100 and
-      abs(Map.get(metrics, :rate, 1.0) - 1.0) <= 0.0005
+    offset_ms = Map.get(metrics, :max_offset_ms) || Map.get(metrics, :offset_ms, 0)
+
+    abs(offset_ms) <= 100 and abs(Map.get(metrics, :rate, 1.0) - 1.0) <= 0.0005
   end
 
   defp syncable_track?(track) do
@@ -1244,7 +1257,19 @@ defmodule Cinder.Subtitles.Sync do
       score: Map.get(metrics, :score),
       reason: reason(Map.get(metrics, :reason))
     }
+    |> maybe_put_piecewise(metrics)
   end
+
+  # Only a piecewise alignment carries these, and only then are they worth recording: `offset_ms`
+  # above is the global search that preceded the splits, so on its own it reports a 40s tail
+  # correction as "0 ms". The segment count and the largest applied shift are what make the row
+  # readable in `/subtitle-sync`.
+  defp maybe_put_piecewise(metadata, %{segments: segments, max_offset_ms: max_offset_ms})
+       when is_integer(segments) and segments > 1 and is_integer(max_offset_ms) do
+    Map.merge(metadata, %{segments: segments, max_offset_ms: max_offset_ms})
+  end
+
+  defp maybe_put_piecewise(metadata, _metrics), do: metadata
 
   defp result(item, status, method, metadata) do
     %{
@@ -1258,6 +1283,7 @@ defmodule Cinder.Subtitles.Sync do
       score: Map.get(metadata, :score),
       reason: Map.get(metadata, :reason)
     }
+    |> maybe_put_piecewise(metadata)
   end
 
   @doc false
@@ -1438,10 +1464,13 @@ defmodule Cinder.Subtitles.Sync do
   defp reason(value) when is_binary(value), do: value
   defp reason(value), do: inspect(value)
 
+  # `function_exported?/3` answers for *loaded* modules only, and code loading is lazy: probing
+  # before the engine module has ever been called reports no `sync/5` and silently drops the
+  # format arguments the extension-less descriptor paths cannot carry.
   defp engine_sync(reference, input, output, reference_extension, input_extension) do
     module = engine()
 
-    if function_exported?(module, :sync, 5) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :sync, 5) do
       module.sync(reference, input, output, reference_extension, input_extension)
     else
       module.sync(reference, input, output)

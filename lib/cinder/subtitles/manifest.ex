@@ -460,6 +460,7 @@ defmodule Cinder.Subtitles.Manifest do
       |> maybe_put_version(sync)
       |> maybe_put_expected_sha256(sync)
       |> maybe_put_operation_id(sync)
+      |> maybe_put_piecewise(sync)
 
     if valid_sync?(normalized),
       do: {:ok, %{normalized | rate: normalized.rate * 1.0}},
@@ -489,6 +490,22 @@ defmodule Cinder.Subtitles.Manifest do
     case value(sync, :operation_id) do
       nil -> normalized
       operation_id -> Map.put(normalized, :operation_id, operation_id)
+    end
+  end
+
+  # A piecewise alignment's segment count and largest applied shift, both optional: pre-piecewise
+  # tracks never carried them, and a single-segment alignment is fully described by `offset_ms`.
+  # Unusable values are dropped rather than quarantining the whole track — they are descriptive
+  # only, and no decision reads them.
+  defp maybe_put_piecewise(normalized, sync) do
+    case {value(sync, :segments), value(sync, :max_offset_ms)} do
+      {segments, max_offset_ms}
+      when is_integer(segments) and segments > 1 and is_integer(max_offset_ms) and
+             max_offset_ms >= 0 ->
+        Map.merge(normalized, %{segments: segments, max_offset_ms: max_offset_ms})
+
+      _ ->
+        normalized
     end
   end
 

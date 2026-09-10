@@ -118,6 +118,39 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     assert render(view) =~ "Aligned via newest: 2000 ms"
   end
 
+  # A piecewise result's `offset_ms` is the global search that preceded the splits, so rendering
+  # it as "the delay" describes a 40s tail correction as 0 ms.
+  test "a piecewise result reports its segments instead of one delay", %{
+    conn: conn,
+    movies: movies
+  } do
+    {movie, _video, _sidecar, item} = managed_movie!(movies, "Broken")
+
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
+
+    send(
+      view.pid,
+      {:subtitle_sync_status,
+       status_with_results([
+         %{
+           id: item.id,
+           video_path: item.video_path,
+           status: :corrected,
+           method: "audio",
+           offset_ms: 0,
+           rate: 1.0,
+           reason: nil,
+           segments: 3,
+           max_offset_ms: 40_000
+         }
+       ])}
+    )
+
+    render_async(view)
+    assert render(view) =~ "Aligned via audio: 3 segments, up to 40000 ms"
+  end
+
   test "worker results discover sidecars added after mount", %{conn: conn, movies: movies} do
     video = Path.join(movies, "Added/Added.mkv")
     sidecar = Path.rootname(video) <> ".en.srt"

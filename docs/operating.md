@@ -402,10 +402,21 @@ Sidecars are named `<video basename>.<lang>.srt` — e.g. `Movie (2020) {tmdb-1}
 `Show (Year) {tmdb-2} - S01E02.fr.srt` — the convention both Jellyfin and Plex auto-detect next to
 the video file, with no library scan configuration required.
 
-Cinder also aligns its managed sidecars without exposing half-written files. If `/media` is a
-mergerfs mount, bind every backing branch into the Cinder container read-write at the same absolute
-path mergerfs reports (for example, `/mnt/media1:/mnt/media1`); the single `/media` bind is still
-required. Without those backing mounts, alignment fails closed and leaves the subtitle unchanged.
+Cinder also aligns its managed sidecars without exposing half-written files. Alignment is
+**piecewise**: it corrects a constant delay, a framerate mismatch (including NTSC-timed subtitles
+on a film-rate release), *and* a shift that changes partway through — ad breaks cut out of the
+video, a theatrical/extended cut mismatch, a recap trimmed off the front, discs concatenated into
+one file. Those are the cases where the opening scene looks perfect and the last act is a minute
+out. A sidecar that is already correct is left byte-identical. When a sidecar is corrected the
+original is kept next to it as a hidden `.<name>.cinder-sync-original` file, so **Reset** in
+`/subtitle-sync` always restores exactly what was downloaded. Upgrading re-checks sidecars that a
+previous version had recorded as aligned, since it can now fix drift those passes had to leave
+alone.
+
+If `/media` is a mergerfs mount, bind every backing branch into the Cinder container read-write at
+the same absolute path mergerfs reports (for example, `/mnt/media1:/mnt/media1`); the single
+`/media` bind is still required. Without those backing mounts, alignment fails closed and leaves
+the subtitle unchanged.
 
 Separately from OpenSubtitles, any loose subtitle files (`.srt`, `.ass`, …) the release itself
 shipped are imported alongside the video only for folder/pack downloads — a bare single-file
