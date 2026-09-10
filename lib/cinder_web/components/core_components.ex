@@ -865,6 +865,19 @@ defmodule CinderWeb.CoreComponents do
     )
   end
 
+  # Placed above the generic integer-tuple clauses below for the same reason as
+  # {:undecryptable_secrets, _}: `paths` is a list, not an HTTP status.
+  def health_reason({:retained_sidecars, paths}) do
+    intro =
+      ngettext(
+        "1 sidecar file was kept aside because Cinder could not prove it owned the file. Review it and delete it if it is not yours:",
+        "%{count} sidecar files were kept aside because Cinder could not prove it owned them. Review them and delete them if they are not yours:",
+        length(paths)
+      )
+
+    intro <> " " <> preview_paths(paths)
+  end
+
   def health_reason({:path_mapping_local_prefix_unreadable, path}),
     do: gettext("Local path prefix is not an existing readable directory: %{path}", path: path)
 
@@ -884,6 +897,18 @@ defmodule CinderWeb.CoreComponents do
   def health_reason(%{__exception__: true}), do: gettext("Check failed")
   def health_reason(reason) when is_binary(reason), do: String.slice(reason, 0, 80)
   def health_reason(reason), do: reason |> inspect() |> String.slice(0, 80)
+
+  # Up to 3 paths, comma-joined, with a "+N more" suffix once there are more than that — enough
+  # to identify the affected release without turning the warning row into a wall of text.
+  defp preview_paths(paths) do
+    case Enum.split(paths, 3) do
+      {shown, []} ->
+        Enum.join(shown, ", ")
+
+      {shown, rest} ->
+        Enum.join(shown, ", ") <> " " <> gettext("(+%{count} more)", count: length(rest))
+    end
+  end
 
   defp sabnzbd_warning({:folder_max_length, length}),
     do: gettext("Folder name limit is %{length}; raise it to 246 or higher.", length: length)

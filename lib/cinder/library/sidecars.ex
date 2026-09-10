@@ -11,6 +11,7 @@ defmodule Cinder.Library.Sidecars do
   alias Cinder.Library
   alias Cinder.Library.Filesystem.RenameIdentity
   alias Cinder.Library.PathPolicy
+  alias Cinder.Library.SidecarQuarantine
   alias Cinder.Settings
 
   require Library
@@ -266,16 +267,33 @@ defmodule Cinder.Library.Sidecars do
   defp resolve_quarantined_partial(dest, quarantine, root, identity) do
     case fs().lstat(quarantine) do
       {:ok, %{major_device: device, inode: inode}} when {device, inode} == identity ->
+        # Provably our own truncated partial, so removing it is safe — but a removal that fails
+        # leaves it at the quarantine name just like the unprovable cases below, and nothing
+        # retries. Record it too (issue #585): here the operator can delete it without thinking,
+        # because this branch already proved it was ours.
         case safe_remove(quarantine, root) do
-          :ok -> :ok
-          error -> Logger.warning("sidecar reclaim failed for #{quarantine}: #{inspect(error)}")
+          :ok ->
+            :ok
+
+          error ->
+            retain(
+              dest,
+              quarantine,
+              "removal_failed",
+              "sidecar reclaim failed for #{quarantine}: #{inspect(error)}"
+            )
         end
 
       {:ok, _mismatched_identity} ->
         resolve_identity_mismatch(dest, quarantine, root)
 
       {:error, reason} ->
-        Logger.warning(
+        # Can't tell whether the quarantined file is provably ours, so it's left in place —
+        # recorded (issue #585) since this is the only place its path is ever known.
+        retain(
+          dest,
+          quarantine,
+          "identity_check_failed",
           "sidecar reclaim identity check failed for #{quarantine}: #{inspect(reason)}"
         )
     end
@@ -288,15 +306,19 @@ defmodule Cinder.Library.Sidecars do
   # at `dest` — where every later retry then skips it with `:eexist` forever, the very symptom
   # this reclaim exists to prevent. So ask the mount before acting on the mismatch.
   #
-  # When the identity provably did not survive the probe's own rename, the file stays quarantined:
-  # `dest` is left free for a later import to land the sidecar, and the bytes are retained rather
-  # than discarded, so a genuinely concurrent replacement is never destroyed on a mount that
-  # cannot tell us it was one — only relocated to a logged, unguessable name. A probe that cannot
-  # answer (`:unknown`) changes nothing: the restore stands, exactly as before.
+  # When the identity provably did not survive the probe's own rename, the file stays quarantined
+  # (recorded, issue #585): `dest` is left free for a later import to land the sidecar, and the
+  # bytes are retained rather than discarded, so a genuinely concurrent replacement is never
+  # destroyed on a mount that cannot tell us it was one — only relocated to a logged, unguessable
+  # name. A probe that cannot answer (`:unknown`) changes nothing: the restore stands, exactly as
+  # before.
   defp resolve_identity_mismatch(dest, quarantine, root) do
     case RenameIdentity.probe(Path.dirname(dest), root) do
       :unpreserved ->
-        Logger.warning(
+        retain(
+          dest,
+          quarantine,
+          "identity_not_preserved",
           "sidecar reclaim left quarantined for #{dest}: identity not preserved across rename"
         )
 
@@ -318,10 +340,20 @@ defmodule Cinder.Library.Sidecars do
         rename_quarantine_back(dest, quarantine)
 
       {:ok, _stat} ->
-        Logger.warning("sidecar reclaim left quarantined for #{dest}: occupied")
+        retain(
+          dest,
+          quarantine,
+          "occupied",
+          "sidecar reclaim left quarantined for #{dest}: occupied"
+        )
 
       {:error, reason} ->
-        Logger.warning("sidecar reclaim restore check failed for #{dest}: #{inspect(reason)}")
+        retain(
+          dest,
+          quarantine,
+          "restore_check_failed",
+          "sidecar reclaim restore check failed for #{dest}: #{inspect(reason)}"
+        )
     end
   end
 
@@ -331,8 +363,23 @@ defmodule Cinder.Library.Sidecars do
         :ok
 
       {:error, reason} ->
-        Logger.warning("sidecar reclaim restore failed for #{dest}: #{inspect(reason)}")
+        retain(
+          dest,
+          quarantine,
+          "restore_failed",
+          "sidecar reclaim restore failed for #{dest}: #{inspect(reason)}"
+        )
     end
+  end
+
+  # Issue #585: every branch above leaves the file sitting at `quarantine` — nothing renames or
+  # deletes it automatically, since it may be a third party's bytes, so the log line was the only
+  # trace and it disappeared with log rotation. Recording it here, at the moment retention
+  # happens, is the only place the path is ever known; `Cinder.Health` surfaces the recorded rows
+  # without ever walking the library filesystem to rediscover them.
+  defp retain(dest, quarantine, reason, message) do
+    Logger.warning(message)
+    SidecarQuarantine.record(dest, quarantine, reason)
   end
 
   defp safe_sidecars(paths, roots) do
