@@ -142,6 +142,23 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
     assert {:review, %{reason: :low_confidence}} = sync(tmp, "low-score")
   end
 
+  # The engine checks its framerate cap against the scale the single-offset search chose, then
+  # lets the split search settle on a different one — so a report that says the alignment
+  # succeeded can still carry a scale outside the cap. Stretching a subtitle by 90% is never a
+  # correction worth publishing unreviewed.
+  @tag :tmp_dir
+  test "a framerate scale outside the cap is review, however the engine reports it", %{
+    tmp_dir: tmp
+  } do
+    Application.put_env(
+      :cinder,
+      :ffsubsync_python,
+      fake_runner(tmp, Path.join(tmp, "argv"), :wild_rate)
+    )
+
+    assert {:review, %{reason: :low_confidence, rate: 1.9}} = sync(tmp, "wild-rate")
+  end
+
   # The engine's log carries subtitle bytes verbatim (its SRT parser logs an unparseable block),
   # so metrics may only be read from the line the runner emits under this run's token. Anything
   # else in the stream — including a line shaped exactly like a metrics report — describes a
@@ -244,6 +261,10 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
 
       :low_score ->
         %{base | score: 9.5}
+
+      # A report that claims success while carrying a scale the engine's own cap would reject.
+      :wild_rate ->
+        %{base | framerate_scale_factor: 1.9}
 
       _ok_or_missing ->
         base

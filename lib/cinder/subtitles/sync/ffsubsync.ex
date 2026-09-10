@@ -20,7 +20,10 @@ defmodule Cinder.Subtitles.Sync.Ffsubsync do
   # overfitting this used to guard against (a structural cut "fixed" by stretching time, #348)
   # is now handled by @split_penalty, and the engine still scores every candidate scale against
   # the piecewise fit, so an inferred-but-wrong ratio loses to "no stretch plus one split".
-  @max_framerate_deviation "0.26"
+  # The engine applies this as `--max-framerate-deviation`, but its own check runs on the scale
+  # the *single-offset* search chose, before the split search may settle on a different one — so
+  # the cap is re-applied below to the scale actually applied.
+  @max_framerate_deviation 0.26
 
   # Minimum alignment score to trust, enforced by the engine (`--min-score`) and re-checked here.
   @min_score 10
@@ -80,7 +83,7 @@ defmodule Cinder.Subtitles.Sync.Ffsubsync do
       "--split-penalty",
       @split_penalty,
       "--max-framerate-deviation",
-      @max_framerate_deviation,
+      Float.to_string(@max_framerate_deviation),
       "--output-encoding",
       "same"
     ]
@@ -115,9 +118,17 @@ defmodule Cinder.Subtitles.Sync.Ffsubsync do
 
   defp verdict(%{metrics: metrics}, output) do
     cond do
-      metrics.score < @min_score -> {:review, Map.put(metrics, :reason, :low_confidence)}
-      not regular_file?(output) -> {:review, Map.put(metrics, :reason, :missing_output)}
-      true -> {:ok, metrics}
+      metrics.score < @min_score ->
+        {:review, Map.put(metrics, :reason, :low_confidence)}
+
+      abs(metrics.rate - 1.0) > @max_framerate_deviation ->
+        {:review, Map.put(metrics, :reason, :low_confidence)}
+
+      not regular_file?(output) ->
+        {:review, Map.put(metrics, :reason, :missing_output)}
+
+      true ->
+        {:ok, metrics}
     end
   end
 

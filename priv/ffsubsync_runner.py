@@ -16,16 +16,27 @@ from ffsubsync import ffsubsync, generic_subtitles
 # metrics go missing and the caller reports the analysis unparseable rather than trusting a
 # guess.
 SCORE_TEMPLATE = "score:"
+OFFSET_TEMPLATE = "offset seconds:"
+RATE_TEMPLATE = "framerate scale factor:"
 SEGMENT_TEMPLATE = "cue(s) offset"
 LOW_QUALITY_TEMPLATE = "low-quality alignment"
 
 
 class MetricsCollector(logging.Handler):
-    """Collects the score, the piecewise segment offsets, and any low-quality verdict."""
+    """Collects the metrics `run()` does not return, and those it withholds when it refuses.
+
+    `run()` reports the offset and framerate scale it *applied*, and reports neither when the
+    alignment was rejected as low quality — it returns before recording them. The candidate
+    values are logged before that check, so collecting them here keeps a rejected alignment
+    describable (a review row carrying the score, offset and rate the engine refused) instead of
+    indistinguishable from an unreadable one.
+    """
 
     def __init__(self):
         super().__init__(level=logging.INFO)
         self.score = None
+        self.offset_seconds = None
+        self.framerate_scale_factor = None
         self.segment_offsets_seconds = []
         self.low_quality_reasons = []
 
@@ -37,6 +48,10 @@ class MetricsCollector(logging.Handler):
         try:
             if template.startswith(SCORE_TEMPLATE):
                 self.score = float(args[0])
+            elif template.startswith(OFFSET_TEMPLATE):
+                self.offset_seconds = float(args[0])
+            elif template.startswith(RATE_TEMPLATE):
+                self.framerate_scale_factor = float(args[0])
             elif SEGMENT_TEMPLATE in template:
                 self.segment_offsets_seconds.append(float(args[1]))
             elif template.startswith(LOW_QUALITY_TEMPLATE):
@@ -93,9 +108,10 @@ def report(token, result, collector):
     """Emit one metrics line, prefixed with the caller's per-run token.
 
     The token is random per invocation, so nothing the engine echoes from a subtitle file can
-    forge this line. `offset_seconds` and `framerate_scale_factor` come from `run()`'s own
-    return value, which reports what was applied (in piecewise mode, the median segment offset
-    and the scale the split search settled on).
+    forge this line. The offset and framerate scale come from `run()`'s own return value, which
+    reports what was *applied* (in piecewise mode, the median segment offset and the scale the
+    split search settled on), and fall back to the logged candidate values for a run that was
+    rejected before recording them.
     """
     sys.stdout.write(
         "%s %s\n"
@@ -105,8 +121,13 @@ def report(token, result, collector):
                 {
                     "sync_was_successful": bool(result.get("sync_was_successful")),
                     "score": collector.score,
-                    "offset_seconds": result.get("offset_seconds"),
-                    "framerate_scale_factor": result.get("framerate_scale_factor"),
+                    "offset_seconds": _applied(
+                        result.get("offset_seconds"), collector.offset_seconds
+                    ),
+                    "framerate_scale_factor": _applied(
+                        result.get("framerate_scale_factor"),
+                        collector.framerate_scale_factor,
+                    ),
                     "segment_offsets_seconds": collector.segment_offsets_seconds,
                     "low_quality_reasons": collector.low_quality_reasons,
                 }
@@ -114,6 +135,10 @@ def report(token, result, collector):
         )
     )
     sys.stdout.flush()
+
+
+def _applied(applied, candidate):
+    return candidate if applied is None else applied
 
 
 def main():
