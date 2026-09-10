@@ -48,6 +48,12 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
     assert Enum.chunk_every(args, 2, 1)
            |> Enum.any?(&(&1 == ["--quality-max-offset-seconds", "90"]))
 
+    assert Enum.chunk_every(args, 2, 1)
+           |> Enum.any?(&(&1 == ["--split-penalty", "5"]))
+
+    assert Enum.chunk_every(args, 2, 1)
+           |> Enum.any?(&(&1 == ["--max-framerate-deviation", "0.26"]))
+
     assert Path.extname(output) == Path.extname(input)
     assert File.read!(output) == "subtitle"
     refute File.exists?(Path.join(tmp, "pwned.ass"))
@@ -133,6 +139,29 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
              Ffsubsync.sync(reference, input, Path.join(tmp, "low-score-output.srt"))
   end
 
+  @tag :tmp_dir
+  test "a piecewise alignment reports its segments and the shift it actually applied", %{
+    tmp_dir: tmp
+  } do
+    input = Path.join(tmp, "input.srt")
+    reference = Path.join(tmp, "reference.srt")
+    File.write!(input, "subtitle")
+    File.write!(reference, "reference")
+    Application.put_env(:cinder, :ffsubsync_bin, fake_bin(tmp, Path.join(tmp, "split"), :split))
+
+    assert {:ok, metrics} = Ffsubsync.sync(reference, input, Path.join(tmp, "split-output.srt"))
+
+    # The header offset (-2.5s) describes the single-offset search that ran first; the tail of
+    # the file moved 78.5s, and the split search preferred a framerate scale of its own.
+    assert metrics == %{
+             score: 42.5,
+             offset_ms: -2_500,
+             rate: 0.959,
+             segments: 3,
+             max_offset_ms: 78_500
+           }
+  end
+
   defp fake_bin(tmp, argv, mode) do
     path = Path.join(tmp, "ffsubsync-#{mode}")
 
@@ -164,6 +193,14 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
         :low ->
           "score: 42.500\\noffset seconds: 27.300\\n" <>
             "framerate scale factor: 0.999\\nlow-quality alignment; leaving subtitles unmodified\\n"
+
+        :split ->
+          "score: 42.500\\noffset seconds: -2.500\\nframerate scale factor: 1.000\\n" <>
+            "split search preferred framerate scale 0.959 " <>
+            "(single-offset search had chosen 1.000)\\n" <>
+            "split alignment: 3 segment(s), 2 split(s)\\n" <>
+            "  30 cue(s) offset -2.500s\\n  30 cue(s) offset -40.500s\\n" <>
+            "  30 cue(s) offset -78.500s\\n"
 
         _ ->
           "score: 42.500\\noffset seconds: 27.300\\nframerate scale factor: 0.999\\n"
