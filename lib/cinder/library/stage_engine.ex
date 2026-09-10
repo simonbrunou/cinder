@@ -68,7 +68,7 @@ defmodule Cinder.Library.StageEngine do
           do_resolve(
             source,
             dest,
-            same_inode? or (upgrade? and same_backing_file?(source, dest, dest_stat, root)),
+            same_inode? or (upgrade? and same_backing_file?(source, dest, dest_stat)),
             upgrade?,
             record,
             new_q,
@@ -110,15 +110,18 @@ defmodule Cinder.Library.StageEngine do
   # an identity that is not derived from a path at all — `backing_identity/1`, which goes to the
   # backing store (mergerfs's branch descriptor) rather than to the union's synthesized inode.
   #
-  # Consulted only where the alternative is overwriting the destination, and only after two
-  # cheaper necessary conditions hold: a destination with a single link cannot be a second name
-  # for `source` at all, and a mount that carries identity across a rename already answered the
-  # question with `lstat`. On every normal mount this returns false without opening anything and
-  # the placement path is what it always was.
-  defp same_backing_file?(source, dest, dest_stat, root) do
-    hardlinked?(dest_stat) and
-      RenameIdentity.probe(Path.dirname(dest), root) == :unpreserved and
-      backing_identities_match?(source, dest)
+  # Consulted only where the alternative is overwriting the destination, and only past the one
+  # free necessary condition: a destination with a single link cannot be a second name for
+  # `source`, so the proof cannot change the answer and is not worth opening anything for.
+  #
+  # No `RenameIdentity.probe/2` gate, unlike `owned?/4`. There the probe IS the evidence — it is
+  # what licenses reading a mismatch as "the mount renamed my own file". Here the backing
+  # identities are the evidence and they are conclusive on any mount, so a probe would add
+  # nothing while costing five more helper spawns and a `.cinder-inode-probe-*` file written
+  # into the operator's media folder on the ORDINARY upgrade path: a library file hardlinked in
+  # from a still-seeding download has two links, so that path is common, not exotic.
+  defp same_backing_file?(source, dest, dest_stat) do
+    hardlinked?(dest_stat) and backing_identities_match?(source, dest)
   end
 
   # Positive evidence required: a filesystem that does not report a link count leaves the
@@ -223,7 +226,7 @@ defmodule Cinder.Library.StageEngine do
   defp stage_book_collision(source, dest, root, dest_stat, extensions, replace?) do
     with {:ok, source_stat} <- fs().lstat(source) do
       if replace? and not same_file?(source_stat, dest_stat) and
-           not same_backing_file?(source, dest, dest_stat, root),
+           not same_backing_file?(source, dest, dest_stat),
          do: stage_book_replace(source, dest, root, dest_stat, extensions),
          else: stage_book_keep(dest, root)
     end
@@ -311,7 +314,7 @@ defmodule Cinder.Library.StageEngine do
   # cannot answer (issue #584), prove it across the two paths before spending a whole file's
   # worth of link-or-copy plus a backup swap on bytes that are already published.
   defp stage_upgrade(source, dest, root, stat, record, new_q, replace?) do
-    if same_backing_file?(source, dest, stat, root),
+    if same_backing_file?(source, dest, stat),
       do: stage_same_file(dest, root, record, new_q, replace?),
       else: stage_replacement(source, dest, root, stat, new_q)
   end

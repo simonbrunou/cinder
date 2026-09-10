@@ -20,9 +20,11 @@ refresh). Each emits exactly one broadcast, *after* commit.
 `lib/cinder/download/*`, `acquisition.ex` and `lib/cinder/library/*` are callers. They
 stay clean.
 
-The two sanctioned exceptions, both owning their own table and nothing derived:
+The sanctioned exceptions, each owning its own table and nothing derived:
 
 - `lib/cinder/library/import_stage.ex` owns `import_stages`.
+- `lib/cinder/library/sidecar_quarantine.ex` owns `sidecar_quarantines` (issue #585: the
+  retained-quarantine journal `Cinder.Health` surfaces).
 - `download.ex` writes only its own `download_intents` tables.
 
 If your write is neither of those, move it behind a Catalog choke-point instead.
