@@ -30,6 +30,8 @@ defmodule Cinder.Library.ImportStage do
     field :backup_inode, :integer
     field :backup_device, :integer
     field :backup_size, :integer
+    field :candidate_backing_identity, :string
+    field :backup_backing_identity, :string
     field :last_error, :string
     field :attempt_count, :integer, default: 0
     field :next_attempt_at, :utc_datetime
@@ -58,6 +60,8 @@ defmodule Cinder.Library.ImportStage do
       :backup_inode,
       :backup_device,
       :backup_size,
+      :candidate_backing_identity,
+      :backup_backing_identity,
       :last_error,
       :attempt_count,
       :next_attempt_at,

@@ -289,6 +289,82 @@ defmodule Cinder.Library.StageEngineTest do
     end
   end
 
+  # Issue #588: `remove_or_preserve_destination/2` decided whether the file now at `dest` was the
+  # one this stage landed there by comparing `lstat(dest)` against the journal's `staged_*`/
+  # `candidate_*` triples, both captured at a DIFFERENT path (the candidate's) and both
+  # `lstat`-derived. On this mount class that cross-path comparison can never match, so a fresh
+  # placement's rollback could not recognise the file it had itself just landed.
+  describe "a fresh placement rolled back on a mount that reports path-derived inodes" do
+    setup %{books: books} do
+      saved = Application.get_env(:cinder, :books_library_path)
+      Application.put_env(:cinder, :books_library_path, books)
+
+      on_exit(fn ->
+        if saved,
+          do: Application.put_env(:cinder, :books_library_path, saved),
+          else: Application.delete_env(:cinder, :books_library_path)
+      end)
+
+      :ok
+    end
+
+    # Pre-fix, this returned `{:error, :import_stage_destination_changed}`: `remove_or_preserve_destination/2`
+    # could not recognise the file it had just landed at `dest`, quarantined the stage, and left
+    # the file published — the stage row survived and the file stayed on disk. Post-fix the
+    # `candidate_backing_identity` disjunct recognises the file (one backing file, two names —
+    # candidate and `dest`, via the hardlink `land_candidate/2` makes) and the rollback actually
+    # removes what it landed.
+    test "the file it landed is deleted and its journal row is gone, not quarantined", %{
+      downloads: downloads,
+      books: books
+    } do
+      source = Path.join(downloads, "book.epub")
+      File.write!(source, "bytes")
+      dest = Path.join(books, "Author/Title/book.epub")
+      File.mkdir_p!(Path.dirname(dest))
+      BarrierFilesystem.report_path_derived_inodes()
+
+      assert {:ok, rollback, true} = StageEngine.stage_book_place(source, dest, books)
+      assert File.exists?(dest)
+
+      assert :ok = StageEngine.rollback(rollback)
+
+      refute File.exists?(dest)
+      assert ImportStage.get(rollback.stage_id) == nil
+      assert Cinder.Library.quarantined_import_stages() == []
+    end
+
+    # The other half of the proof: the new disjunct is positive evidence for the file THIS stage
+    # landed, not a blanket "delete whatever occupies dest now". A third party's file swapped in
+    # after placement is a genuinely different backing file (a fresh `File.rm!/1` +
+    # `File.write!/2` gets a new real inode from the underlying filesystem, unaffected by the
+    # path-hash mount model — `backing_identity/1` reads the backing store, not the union), so
+    # the rollback must still refuse to touch it and still park the stage. The replacement bytes
+    # are also a different LENGTH from the staged bytes on purpose: `landed_candidate?/2`'s size
+    # guard exists precisely because a freed inode can be reused by the very next create on the
+    # same backing device, and a same-length third-party file would leave that guard unexercised
+    # even though the backing identity itself already happens to differ here.
+    test "a third party's file at dest afterward is preserved and the stage still parks", %{
+      downloads: downloads,
+      books: books
+    } do
+      source = Path.join(downloads, "book.epub")
+      File.write!(source, "bytes")
+      dest = Path.join(books, "Author/Title/book.epub")
+      File.mkdir_p!(Path.dirname(dest))
+      BarrierFilesystem.report_path_derived_inodes()
+
+      assert {:ok, rollback, true} = StageEngine.stage_book_place(source, dest, books)
+
+      File.rm!(dest)
+      File.write!(dest, "someone else's bytes")
+
+      assert {:error, :import_stage_destination_changed} = StageEngine.rollback(rollback)
+      assert File.read!(dest) == "someone else's bytes"
+      assert [_stage] = Cinder.Library.quarantined_import_stages()
+    end
+  end
+
   describe ":extensions — the audiobook call site's own gate" do
     test "a .mp3 source is refused with the e-book default extensions", %{
       downloads: downloads,

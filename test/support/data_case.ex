@@ -94,6 +94,19 @@ defmodule Cinder.DataCase do
       Mox.stub(client, :find_by_operation_key, fn _key -> :not_found end)
     end
 
+    # Issue #588: `Cinder.Library.StageEngine` now calls `backing_identity/1` on every candidate
+    # (and, for a replace, backup) placement — not just on a rollback — so any test staging a
+    # file through the real `Cinder.Library.FilesystemMock` needs this stubbed or it raises
+    # `Mox.UnexpectedCallError` regardless of whether the test cares about backing identity at
+    # all. `{:error, :outside_roots}` is the real, common answer for a mocked path (`Disk`'s own
+    # default for anything under no configured root) and every caller already treats an error
+    # here as "no evidence" — a plain `stub`, so any test asserting its own backing-identity
+    # behavior (see `Cinder.Test.BarrierFilesystem`, used instead of this Mox for that) can still
+    # override it.
+    Mox.stub(Cinder.Library.FilesystemMock, :backing_identity, fn _path ->
+      {:error, :outside_roots}
+    end)
+
     :ok
   end
 
