@@ -24,6 +24,21 @@ All notable changes to Cinder are documented here. The format follows
   the sidecar reclaim leaves the file quarantined instead of restoring bytes it cannot vouch for
   — the destination name is freed either way, so a retry can land. Nothing is deleted on an
   unverifiable identity, and a public destination path gets no fallback at all.
+- **A fresh import placement could still fail to roll back on the same inode-by-path mount
+  class.** The fix above still left one case: a rollback recognises the file it landed at the
+  destination by comparing an `lstat`-derived identity captured at the *candidate* path against
+  the destination — a cross-path comparison that mount class can never satisfy, with or without
+  a rename of the import's own. A brand-new placement's rollback therefore quarantined with
+  `:import_stage_destination_changed` (when a backup existed) or simply left the file published
+  (when it did not), even though nothing else had touched it (#588). The journal now also
+  carries `Filesystem.backing_identity/1`'s path-independent identity for the candidate and, on
+  a replace, the original file it is about to displace, and a rollback recognises its own landed
+  file by that identity. At the destination — a public name a third party's file may legitimately
+  occupy — it compares the stored file size first, since inode numbers are reused, then the
+  backing identity, and there is no probe fallback: only that conclusive identity unlocks a
+  removal there. For a moved backup, under a name only one journal row ever uses, it compares the
+  stored identity, then the backing identity, and only then probes whether the mount carries
+  identity across a rename at all.
 - **Subtitle drift that changes partway through a file is now corrected.** Automatic alignment
   asked the engine for a single global offset, which cannot follow a sidecar whose divergence is
   structural rather than constant — ad breaks cut out of the video, a theatrical/extended cut

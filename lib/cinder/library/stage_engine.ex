@@ -114,7 +114,7 @@ defmodule Cinder.Library.StageEngine do
   # free necessary condition: a destination with a single link cannot be a second name for
   # `source`, so the proof cannot change the answer and is not worth opening anything for.
   #
-  # No `RenameIdentity.probe/2` gate, unlike `owned?/4`. There the probe IS the evidence — it is
+  # No `RenameIdentity.probe/2` gate, unlike `owned?/5`. There the probe IS the evidence — it is
   # what licenses reading a mismatch as "the mount renamed my own file". Here the backing
   # identities are the evidence and they are conclusive on any mount, so a probe would add
   # nothing while costing five more helper spawns and a `.cinder-inode-probe-*` file written
@@ -364,7 +364,7 @@ defmodule Cinder.Library.StageEngine do
             candidate: candidate,
             backup: backup
           },
-          identity_attrs(:backup, backup_stat)
+          identity_attrs(:backup, backup_stat, backup_source)
         )
 
       case create_stage(attrs) do
@@ -400,7 +400,8 @@ defmodule Cinder.Library.StageEngine do
 
     with :ok <- Library.link_or_copy(source, candidate, stage.root, extensions),
          {:ok, candidate_stat} <- fs().lstat(candidate),
-         stage <- ImportStage.update!(stage, identity_attrs(:candidate, candidate_stat)),
+         stage <-
+           ImportStage.update!(stage, identity_attrs(:candidate, candidate_stat, candidate)),
          {:ok, stage} <- maybe_move_backup(stage, backup_source),
          {:ok, landed_stat} <- land_candidate(stage, candidate_stat) do
       {:ok,
@@ -457,7 +458,12 @@ defmodule Cinder.Library.StageEngine do
   end
 
   defp finish_candidate_land(stage, candidate_stat) do
-    case remove_owned(stage.candidate, identity(candidate_stat), stage.root) do
+    case remove_owned(
+           stage.candidate,
+           identity(candidate_stat),
+           stage.candidate_backing_identity,
+           stage.root
+         ) do
       :ok -> {:ok, candidate_stat}
       {:error, _} = error -> error
     end
@@ -470,7 +476,13 @@ defmodule Cinder.Library.StageEngine do
          {:ok, landed_stat} <- fs().lstat(stage.dest),
          :ok <- verify_opened_destination(stage.id, landed_stat),
          _stage <- ImportStage.update!(stage, identity_attrs(:staged, landed_stat)),
-         :ok <- remove_owned(stage.candidate, identity(candidate_stat), stage.root) do
+         :ok <-
+           remove_owned(
+             stage.candidate,
+             identity(candidate_stat),
+             stage.candidate_backing_identity,
+             stage.root
+           ) do
       {:ok, landed_stat}
     end
   end
@@ -506,22 +518,67 @@ defmodule Cinder.Library.StageEngine do
   defp rollback_path(dest, operation_key),
     do: Path.join(Path.dirname(dest), ".cinder-rollback-#{operation_key}")
 
-  defp identity_attrs(_prefix, nil), do: %{}
-
-  defp identity_attrs(:candidate, stat),
+  # Issue #588, building on #584/#558 (the comments at `owned?/5` and `same_backing_file?/3`
+  # cover why a path-derived inode needs a path-independent identity at all): the `candidate_*`
+  # and `staged_*` triples below are both captured at `candidate` — `finish_candidate_land/2`
+  # deliberately hands `land_candidate/2`'s ORIGINAL `candidate_stat` back up as `landed_stat`
+  # rather than re-`lstat`-ing `dest` (that stays untouched: pinning the identity of the file WE
+  # created is what stops a third party's swap at `dest`, between our `ln` and any later check,
+  # from ever being journaled as ours). So `staged_*` is a cross-path identity exactly like
+  # `candidate_*`, captured at the candidate path and later checked against `dest` — and on the
+  # hardlink placement path (the common one; `exclusive_copy_candidate/2` is the fallback) the
+  # file at `dest` IS the candidate's backing file, one backing file under two names. A single
+  # `candidate_backing_identity`, captured once at the candidate path, therefore answers BOTH
+  # "is `dest` the candidate I landed" (issue #588) and "is `dest` the file `staged_*` names" —
+  # there is no separate `staged_backing_identity` column because a third column would be one
+  # more nullable field and one more helper spawn per import that can never change an answer:
+  # `exclusive_copy_candidate/2`'s copy path captures `staged_*` at `stage.dest` and checks it at
+  # `stage.dest` — a same-path comparison, never broken by a path-derived inode, needing no
+  # backing identity at all.
+  defp identity_attrs(:candidate, stat, path),
     do: %{
       candidate_inode: stat.inode,
       candidate_device: stat.major_device,
-      candidate_size: stat.size
+      candidate_size: stat.size,
+      candidate_backing_identity: capture_backing_identity(path)
+    }
+
+  # A fresh placement (no collision to back up) passes `backup_stat: nil` and must produce no
+  # attrs at all — including no backing-identity key — so `create_stage/1`'s `attrs` map never
+  # claims backup evidence that was never captured. Must precede the clause below: `stat` there
+  # is an unbound variable and would otherwise also match `nil`.
+  defp identity_attrs(:backup, nil, _path), do: %{}
+
+  defp identity_attrs(:backup, stat, path),
+    do: %{
+      backup_inode: stat.inode,
+      backup_device: stat.major_device,
+      backup_size: stat.size,
+      backup_backing_identity: capture_backing_identity(path)
     }
 
   defp identity_attrs(:staged, stat),
     do: %{staged_inode: stat.inode, staged_device: stat.major_device, staged_size: stat.size}
 
-  defp identity_attrs(:backup, stat),
-    do: %{backup_inode: stat.inode, backup_device: stat.major_device, backup_size: stat.size}
-
   defp identity(stat), do: {stat.inode, stat.major_device, stat.size}
+
+  # Opaque and comparison-only: nothing ever queries or orders a backing identity, so it is
+  # encoded as a plain string rather than kept structured. Anything the callback cannot turn into
+  # a `{major, minor, inode}` triple of integers — including its own `{:error, _}` — stores
+  # `nil`, which `backing_identity_matches?/2` already reads as "no evidence" rather than a
+  # match.
+  defp capture_backing_identity(path) do
+    case fs().backing_identity(path) do
+      {:ok, identity} -> encode_backing_identity(identity)
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp encode_backing_identity({major, minor, inode})
+       when is_integer(major) and is_integer(minor) and is_integer(inode),
+       do: "#{major}:#{minor}:#{inode}"
+
+  defp encode_backing_identity(_identity), do: nil
 
   # Public (not private): called from `Cinder.Library.rollback_stage/1`.
   @doc false
@@ -621,7 +678,13 @@ defmodule Cinder.Library.StageEngine do
     do: stage |> rollback_uncommitted_stage() |> finish_stage_reconciliation(stage)
 
   defp cleanup_committed_stage(stage) do
-    with :ok <- remove_owned(stage.backup, backup_identity(stage), stage.root),
+    with :ok <-
+           remove_owned(
+             stage.backup,
+             backup_identity(stage),
+             stage.backup_backing_identity,
+             stage.root
+           ),
          do: delete_stage(stage)
   end
 
@@ -636,7 +699,13 @@ defmodule Cinder.Library.StageEngine do
     do: remove_unique_candidate(stage)
 
   defp remove_unlanded_candidate(%ImportStage{} = stage),
-    do: remove_owned(stage.candidate, candidate_identity(stage), stage.root)
+    do:
+      remove_owned(
+        stage.candidate,
+        candidate_identity(stage),
+        stage.candidate_backing_identity,
+        stage.root
+      )
 
   # The UUID candidate path belongs exclusively to its journal row. A crash can land between the
   # link/copy and its first lstat; in that narrow window there is no identity to persist, but the
@@ -662,14 +731,38 @@ defmodule Cinder.Library.StageEngine do
     end
   end
 
+  # A backing-identity match is proof, not a fallback: it is the candidate's identity, captured
+  # once at the candidate path (see the comment above `identity_attrs/3`), and on the hardlink
+  # placement path the file at `dest` IS that candidate's backing file under a second name. It
+  # deliberately stays a THIRD disjunct rather than a `RenameIdentity.probe/2` gate like
+  # `owned?/5` uses — `dest` is a public name a third party's file can legitimately occupy, so an
+  # unverifiable identity there must keep preserving the file and parking the stage; a probe
+  # would license exactly that guess. Only positive backing-identity evidence — proof the mount
+  # cannot fabricate for two different files — can unlock removal here.
   defp remove_or_preserve_destination(stage, stat) do
     if staged_identity_matches?(stat, stage) or
-         identity_matches?(stat, candidate_identity(stage)) do
+         identity_matches?(stat, candidate_identity(stage)) or
+         landed_candidate?(stage, stat) do
       safe_remove(stage.dest, [stage.root])
     else
       fail_if_backup_waits(stage)
     end
   end
+
+  # Inode numbers are reused: unlike `owned?/5`'s operation-keyed paths (`.cinder-stage-<key>` /
+  # `.cinder-rollback-<key>`, each named by exactly one journal row — no third party ever creates
+  # a file there, which is why the `RenameIdentity.probe/2` fallback below `owned?/5` is allowed
+  # to trust the path alone with no size check), `dest` is a PUBLIC name. Unlink our staged file
+  # there, and a third party's very next create in the same directory can inherit the
+  # now-free inode on the same backing device — common on ext4/tmpfs — and a bare
+  # `backing_identity_matches?/2` would then read that unrelated file as ours and delete it. The
+  # stored `candidate_size` restores the parity `identity_matches?/2` already has, for free: a
+  # struct field already in hand, compared before the (possibly nil, never-captured) backing
+  # identity spawns anything.
+  defp landed_candidate?(stage, stat),
+    do:
+      stat.size == stage.candidate_size and
+        backing_identity_matches?(stage.dest, stage.candidate_backing_identity)
 
   defp fail_if_backup_waits(%ImportStage{backup: nil}),
     do: {:error, :import_stage_destination_changed}
@@ -698,7 +791,13 @@ defmodule Cinder.Library.StageEngine do
   end
 
   defp restore_matching_backup(stage, stat) do
-    if owned?(stat, backup_identity(stage), stage.backup, stage.root) do
+    if owned?(
+         stat,
+         backup_identity(stage),
+         stage.backup_backing_identity,
+         stage.backup,
+         stage.root
+       ) do
       restore_backup(stage)
     else
       {:error, :import_stage_backup_changed}
@@ -715,7 +814,13 @@ defmodule Cinder.Library.StageEngine do
          :ok <- fs().rename(backup, dest),
          {:ok, restored} <- fs().lstat(dest),
          true <-
-           owned?(restored, backup_identity(stage), dest, stage.root) ||
+           owned?(
+             restored,
+             backup_identity(stage),
+             stage.backup_backing_identity,
+             dest,
+             stage.root
+           ) ||
              {:error, :import_stage_restore_changed} do
       :ok
     else
@@ -724,15 +829,15 @@ defmodule Cinder.Library.StageEngine do
     end
   end
 
-  defp remove_owned(nil, _identity, _root), do: :ok
+  defp remove_owned(nil, _identity, _backing, _root), do: :ok
 
-  defp remove_owned(path, identity, root) do
+  defp remove_owned(path, identity, backing, root) do
     case fs().lstat(path) do
       {:error, :enoent} ->
         :ok
 
       {:ok, stat} ->
-        if owned?(stat, identity, path, root),
+        if owned?(stat, identity, backing, path, root),
           do: safe_remove(path, [root]),
           else: {:error, :import_stage_file_changed}
 
@@ -749,21 +854,38 @@ defmodule Cinder.Library.StageEngine do
   # committed stage never cleans up its replaced original and an uncommitted one never restores
   # it. Both park forever on that mount class, for a file nothing else touched.
   #
-  # The fallback is the operation-keyed path itself. `.cinder-stage-<key>` and
-  # `.cinder-rollback-<key>` are named by exactly one journal row and nothing else, which
-  # `remove_unique_candidate/1` already treats as durable ownership evidence in its own right;
-  # `dest` immediately after we renamed our backup onto it holds, by construction, the file that
-  # rename moved. So when the mount PROVES it does not carry identity across a rename, fall back
-  # to that. Only a positive `:unpreserved` finding unlocks it — an inconclusive probe leaves the
-  # mismatch fatal, exactly as before.
+  # Issue #588 gave this a second, cheaper-to-check disjunct: `backing` is the same
+  # `backup_backing_identity` captured at the ORIGINAL `dest` before `maybe_move_backup/2` ever
+  # renamed it (see `identity_attrs/3`'s `:backup` clause), which a path-derived-inode mount does
+  # not renumber — so it settles most of what issue #558 could previously only settle by probing.
+  # It is not a full replacement for the probe: a row written before this column existed, or one
+  # whose capture failed (`capture_backing_identity/1`'s helper unavailable, or `path` outside
+  # every configured root — see `Cinder.Library.Filesystem.backing_identity/1`'s doc), still has
+  # nothing but the path-derived triple to go on. The fallback for THOSE rows is the
+  # operation-keyed path itself: `.cinder-stage-<key>` and `.cinder-rollback-<key>` are named by
+  # exactly one journal row and nothing else, which `remove_unique_candidate/1` already treats as
+  # durable ownership evidence in its own right; `dest` immediately after we renamed our backup
+  # onto it holds, by construction, the file that rename moved. So when the mount PROVES it does
+  # not carry identity across a rename, fall back to that. Only a positive `:unpreserved` finding
+  # unlocks it — an inconclusive probe leaves the mismatch fatal, exactly as before. Ordered
+  # cheapest-first: a free struct comparison, then one helper spawn only if that failed, then the
+  # probe's five helper spawns only if both failed.
   #
-  # `remove_or_preserve_destination/2` deliberately gets no fallback: `dest` is a public name a
-  # third party's file can legitimately occupy, so an unverifiable identity there must keep
-  # preserving the file and parking the stage.
-  defp owned?(stat, identity, path, root) do
+  # `remove_or_preserve_destination/2` deliberately gets no probe fallback: `dest` is a public
+  # name a third party's file can legitimately occupy, so an unverifiable identity there must
+  # keep preserving the file and parking the stage. Its own backing-identity disjunct is
+  # conclusive proof (see the comment there), not a guess, so it is safe where the probe is not.
+  defp owned?(stat, identity, backing, path, root) do
     identity_matches?(stat, identity) or
+      backing_identity_matches?(path, backing) or
       (captured?(identity) and RenameIdentity.probe(Path.dirname(path), root) == :unpreserved)
   end
+
+  # `nil` first: a journal row with no captured backing identity (pre-migration row, or a
+  # `capture_backing_identity/1` failure) must never spawn the helper only to compare against
+  # nothing.
+  defp backing_identity_matches?(_path, nil), do: false
+  defp backing_identity_matches?(path, stored), do: capture_backing_identity(path) == stored
 
   # A path fallback on an identity that was never captured would be no evidence at all. A nil
   # field is `identity_matches?/2`'s own refusal case and must not be upgraded into ownership by
