@@ -85,13 +85,9 @@ jobs:
       - run: docker build --check .
       - run: docker build -t cinder:ci .
 
-      - name: Boot and exercise a fresh instance in a browser
+      - name: Boot a fresh instance
         env:
-          CINDER_SMOKE_BASE_URL: http://127.0.0.1:4000
-          CINDER_SMOKE_EMAIL: browser-smoke@example.invalid
-          CINDER_SMOKE_PASSWORD: ci-only-browser-smoke-password
           CINDER_SMOKE_BOOTSTRAP_TOKEN: ci-only-not-a-real-bootstrap-token
-          CINDER_SMOKE_BROWSER_CHANNEL: chrome
         run: |
           docker run --detach --name cinder-ci -p 127.0.0.1:4000:4000 \
             -e SECRET_KEY_BASE=ci-only-not-a-real-secret-key-base-0123456789abcdefghijklmnopqrstuvwxyz \
@@ -99,7 +95,6 @@ jobs:
             -e PHX_HOST=127.0.0.1 \
             -e CINDER_BOOTSTRAP_TOKEN="$CINDER_SMOKE_BOOTSTRAP_TOKEN" \
             cinder:ci
-          trap 'docker logs cinder-ci; docker rm --force cinder-ci' EXIT
           for _ in {1..30}; do
             if curl --fail --silent http://127.0.0.1:4000/healthz; then
               ready=true
@@ -113,10 +108,38 @@ jobs:
           docker exec cinder-ci /app/bin/cinder eval \
             '{:ok, _} = Application.ensure_all_started(:cinder); Cinder.Settings.mark_setup_complete()'
 
-          browser_venv="$RUNNER_TEMP/cinder-browser-smoke"
-          python3 -m venv "$browser_venv"
-          "$browser_venv/bin/pip" install --disable-pip-version-check playwright==1.61.0
-          "$browser_venv/bin/python" .github/scripts/browser_smoke.py
+          python3 -m venv "$RUNNER_TEMP/cinder-browser-smoke"
+          "$RUNNER_TEMP/cinder-browser-smoke/bin/pip" install --disable-pip-version-check playwright==1.61.0
+
+      - name: Browser smoke
+        env:
+          CINDER_SMOKE_BASE_URL: http://127.0.0.1:4000
+          CINDER_SMOKE_EMAIL: browser-smoke@example.invalid
+          CINDER_SMOKE_PASSWORD: ci-only-browser-smoke-password
+          CINDER_SMOKE_BOOTSTRAP_TOKEN: ci-only-not-a-real-bootstrap-token
+          CINDER_SMOKE_BROWSER_CHANNEL: chrome
+        run: '"$RUNNER_TEMP/cinder-browser-smoke/bin/python" .github/scripts/browser_smoke.py'
+
+      # #593: covers the two JS lifecycles (Kindle status-badge flare, poster-failure handling)
+      # #592 added, neither of which the smoke test above touches. Drives real state changes
+      # into the already-running instance via `bin/cinder rpc` (not `eval` — eval boots a
+      # disconnected temporary node whose broadcasts can never reach a mounted LiveView), so a
+      # real broadcast patches the real, already-open page the way #592's own author
+      # hand-verified the kindle flare while writing it.
+      - name: Browser JS lifecycle regression (#593)
+        env:
+          CINDER_SMOKE_BASE_URL: http://127.0.0.1:4000
+          CINDER_SMOKE_EMAIL: browser-smoke@example.invalid
+          CINDER_SMOKE_PASSWORD: ci-only-browser-smoke-password
+          CINDER_SMOKE_CONTAINER: cinder-ci
+          CINDER_SMOKE_BROWSER_CHANNEL: chrome
+        run: '"$RUNNER_TEMP/cinder-browser-smoke/bin/python" .github/scripts/browser_lifecycle.py'
+
+      - name: Container logs and cleanup
+        if: always()
+        run: |
+          docker logs cinder-ci
+          docker rm --force cinder-ci
 
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
