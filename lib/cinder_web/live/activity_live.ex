@@ -468,6 +468,7 @@ defmodule CinderWeb.ActivityLive do
               {media_title(m, @locale)}<span :if={m.year} class="text-base-content/70"> ({m.year})</span>
             </.link>
             <.status_badge
+              id={"activity-movie-status-#{m.id}"}
               kind={:movie}
               status={movie_badge_status(m)}
               progress={m.download_progress}
@@ -548,6 +549,7 @@ defmodule CinderWeb.ActivityLive do
             <div class="flex flex-wrap items-center gap-2">
               <span class="min-w-0 break-words font-semibold">{series_title(g, @locale)}</span>
               <.status_badge
+                id={"activity-grab-status-#{g.id}"}
                 kind={:grab}
                 status={grab_state(g)}
                 progress={g.download_progress}

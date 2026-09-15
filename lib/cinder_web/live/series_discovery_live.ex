@@ -410,20 +410,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       </.link>
 
       <div class="mb-8 flex flex-col gap-6 sm:flex-row">
-        <img
-          :if={@info.poster_path}
-          src={poster_url(@info.poster_path)}
-          alt={media_title(@info, @locale)}
-          loading="lazy"
-          decoding="async"
-          class="aspect-[2/3] w-40 shrink-0 rounded object-cover"
-        />
-        <div
-          :if={!@info.poster_path}
-          class="grid aspect-[2/3] w-40 shrink-0 place-items-center rounded bg-base-300 text-sm text-base-content/70"
-        >
-          {gettext("No poster")}
-        </div>
+        <.detail_poster poster_path={@info.poster_path} title={media_title(@info, @locale)} />
 
         <div class="min-w-0 flex-1">
           <.header>
@@ -547,7 +534,12 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   defp season_action(assigns) do
     ~H"""
-    <.status_badge :if={@status != nil} kind={:request} status={@status} />
+    <.status_badge
+      :if={@status != nil}
+      id={"seriesdiscovery-season-status-#{@season_number}"}
+      kind={:request}
+      status={@status}
+    />
     <.button
       :if={@status in [nil, :denied]}
       type="button"

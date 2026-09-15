@@ -653,6 +653,7 @@ defmodule CinderWeb.CoreComponents do
     values: [:movie, :series, :request, :episode, :grab, :health, :monitored]
 
   attr :status, :any, required: true
+  attr :id, :string, default: nil
   attr :class, :any, default: nil
   attr :progress, :float, default: nil
   attr :speed, :integer, default: nil
@@ -673,8 +674,11 @@ defmodule CinderWeb.CoreComponents do
     ~H"""
     <div
       :if={operation_badge?(@kind, @status)}
-      class={["min-w-32 space-y-1", @class]}
+      id={@id}
+      class={["min-w-32 space-y-1 status-badge", @class]}
       role="status"
+      phx-hook={if @id, do: "Kindle"}
+      data-kindle={if @id, do: "#{@color}|#{@label}"}
       {@rest}
     >
       <div class="flex items-center gap-1 text-sm">
@@ -697,8 +701,11 @@ defmodule CinderWeb.CoreComponents do
     </div>
     <span
       :if={!operation_badge?(@kind, @status)}
-      class={["badge badge-sm gap-1 shrink-0", @color, @class]}
+      id={@id}
+      class={["badge badge-sm gap-1 shrink-0 status-badge", @color, @class]}
       title={@title}
+      phx-hook={if @id, do: "Kindle"}
+      data-kindle={if @id, do: "#{@color}|#{@label}"}
       {@rest}
     >
       <.icon name={@icon} class="size-3.5" />{@label}
@@ -993,22 +1000,22 @@ defmodule CinderWeb.CoreComponents do
   def media_card(assigns) do
     ~H"""
     <div class="card bg-base-200 shadow-sm">
-      <figure class="relative">
+      <figure class="poster-frame relative overflow-hidden">
+        <div
+          class="grid aspect-[2/3] w-full place-items-center text-sm text-white"
+          style={poster_fallback_style(@title)}
+        >
+          <span class="poster-fallback-text">{gettext("No poster")}</span>
+        </div>
         <img
           :if={@poster_path}
           src={poster_url(@poster_path)}
           alt={@title}
+          data-poster
           loading="lazy"
           decoding="async"
-          class="aspect-[2/3] w-full object-cover"
+          class="absolute inset-0 h-full w-full object-cover"
         />
-        <div
-          :if={!@poster_path}
-          class="grid aspect-[2/3] w-full place-items-center text-sm text-base-content/70"
-          style={poster_fallback_style(@title)}
-        >
-          {gettext("No poster")}
-        </div>
         <span
           :if={@type}
           class="badge badge-sm absolute left-2 top-2 gap-1 border-0 bg-base-100"
@@ -1036,6 +1043,12 @@ defmodule CinderWeb.CoreComponents do
   defp type_label(:person), do: gettext("Person")
   defp type_label(:collection), do: gettext("Collection")
 
+  # HSL lightness is pinned at 30%/18% regardless of theme — this gradient is dark by
+  # construction in both dark and light mode, so media_card's "No poster" label is fixed
+  # `text-white` rather than `text-base-content` (which would go near-black in the light
+  # theme and read as dark text on a dark tile). Worst-case measured contrast, solid white on
+  # the lightest achievable stop across every hue this can produce (hsl(*, 55%, 30%)): 4.75:1,
+  # clearing WCAG AA's 4.5:1 for body text.
   defp poster_fallback_style(title) do
     hue = :erlang.phash2(title, 360_000) |> rem(360)
     hue2 = rem(hue + 40, 360)
@@ -1047,6 +1060,62 @@ defmodule CinderWeb.CoreComponents do
   is the TMDB image size token — `"w342"` for cards (default), `"w92"` for thumbnails.
   """
   def poster_url(path, size \\ "w342"), do: @image_base <> size <> path
+
+  @doc """
+  Hero poster for a title's own detail/discovery page (movie, series, person, collection) — the
+  larger portrait next to the page header, distinct from `media_card`'s grid card. The "No
+  poster" placeholder is always rendered as a base layer with the image layered on top, so a
+  poster that fails to load (TMDB 404, blocked CDN, network error) degrades to the exact same
+  box as a title with no poster at all, instead of the browser's broken-image glyph sitting
+  next to the alt text.
+  """
+  attr :poster_path, :string, default: nil
+  attr :title, :string, required: true
+
+  def detail_poster(assigns) do
+    ~H"""
+    <div class="poster-frame relative aspect-[2/3] w-40 shrink-0 overflow-hidden rounded bg-base-300">
+      <div class="grid h-full w-full place-items-center text-sm text-base-content/70">
+        <span class="poster-fallback-text">{gettext("No poster")}</span>
+      </div>
+      <img
+        :if={@poster_path}
+        src={poster_url(@poster_path)}
+        alt={@title}
+        data-poster
+        loading="lazy"
+        decoding="async"
+        class="absolute inset-0 h-full w-full object-cover"
+      />
+    </div>
+    """
+  end
+
+  @doc """
+  Small (`w-12`) poster thumbnail for a list row — the admin approval queue and the requests
+  list. Distinct from `detail_poster`'s larger hero treatment: a plain fixed-size box, not a
+  "No poster" label (there's no room to set that text at this size). Same base-layer-plus-
+  overlay technique, so a poster that fails to load degrades to the same empty box as a title
+  with no poster at all, instead of the browser's broken-image glyph in the middle of a list row.
+  """
+  attr :poster_path, :string, default: nil
+  attr :title, :string, required: true
+
+  def thumb_poster(assigns) do
+    ~H"""
+    <div class="relative aspect-[2/3] w-12 shrink-0 overflow-hidden rounded bg-base-300">
+      <img
+        :if={@poster_path}
+        src={poster_url(@poster_path, "w92")}
+        alt={@title}
+        data-poster
+        loading="lazy"
+        decoding="async"
+        class="absolute inset-0 h-full w-full object-cover"
+      />
+    </div>
+    """
+  end
 
   @doc """
   The per-title Audio `<select>` shared across the request/edit surfaces: four options

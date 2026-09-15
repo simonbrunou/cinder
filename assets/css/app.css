@@ -150,3 +150,151 @@
 .label-text {
   white-space: normal;
 }
+
+/* Colour travel — a status change reads as a change, not a teleport. */
+.status-badge {
+  transition: background-color 400ms cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 400ms cubic-bezier(0.16, 1, 0.3, 1),
+              color 400ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Kindle — the focal moment: a pipeline state change that arrived over PubSub gets one
+   flare of the badge's own colour, then settles. */
+@keyframes cinder-kindle {
+  from { filter: saturate(1.75) contrast(1.06); }
+  to   { filter: none; }
+}
+
+/* Under normal motion, the Kindle hook applies and removes this class, triggering the keyframe */
+.status-badge.is-kindled {
+  animation: cinder-kindle 600ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Reduced motion means fewer and gentler, not silent: a reduced-motion user still needs to
+   see that the state changed, so the kindle gets a static alternative — a flat saturation
+   bump, no animation, no movement — instead of losing the signal to the global reset below. */
+@media (prefers-reduced-motion: reduce) {
+  .status-badge.is-kindled {
+    filter: saturate(1.6);
+    animation: none !important;
+  }
+}
+
+/* Poster reveal. The class is added by JS only (app.js fadeUncachedPosters), so an image is
+   visible if JS never runs, and a grid of cached posters renders with no fade at all. */
+.poster-fade { opacity: 0; }
+.poster-fade.poster-shown { opacity: 1; transition: opacity 320ms cubic-bezier(0.16, 1, 0.3, 1); }
+
+/* A poster that fails to load (TMDB 404, blocked CDN, offline) must degrade to the exact same
+   placeholder as a title with no poster at all, never the browser's broken-image glyph sitting
+   on top of the corner type chip. app.js detects the failure (the error event, or a
+   synchronous check for one that already failed before this code ran) and adds this class; the
+   gradient/box placeholder is already painted underneath, so hiding the image is all that's
+   needed. */
+.poster-broken { display: none; }
+
+/* The "No poster" label is honest, not decorative — it must read (and be announced) only when
+   it's actually true. The gradient/box backdrop always renders underneath (see media_card and
+   detail_poster), but the text itself hides whenever a poster image is present and hasn't
+   failed, via :has() rather than a template condition: the template only knows the poster
+   *path* exists, not whether the request behind it is still loading, succeeded, or failed
+   (that's a runtime event app.js resolves onto .poster-broken above). Without this, every
+   loading poster would flash the words "No poster" before the artwork arrives, and a screen
+   reader would announce it on every card whose poster loads fine. */
+.poster-frame:has(> img[data-poster]:not(.poster-broken)) .poster-fallback-text {
+  display: none;
+}
+
+/* Button press: the smallest change that makes cause and result unmistakable. daisyUI's own
+   .btn transition-property list omits transform (it only nudges via `translate` on :active,
+   which is not in that list either), so this extends the same list rather than replacing it. */
+.btn { transition-property: color, background-color, border-color, box-shadow, transform; }
+.btn:active:not(:disabled):not(.btn-disabled) { transform: scale(0.985); }
+
+/* In-flight. Every click gets acknowledged, including the many buttons that pass no
+   phx-disable-with. Colour and cursor only — no size change, so nothing reflows mid-click,
+   and pointer-events blocks a double submit. */
+.btn.phx-click-loading,
+.btn.phx-submit-loading {
+  opacity: 0.75;
+  cursor: progress;
+  pointer-events: none;
+  transition: opacity 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Selection colour. The browser's default blue selection has nothing to do with "ember on
+   charcoal" and looks like an unstyled page mid-select. The primary/primary-content pairing
+   (used for text-on-ember in buttons and badges) looked like the obvious reuse, but it's a
+   4.5:1 WCAG AA failure in the light theme (primary-content-on-primary measures 3.39:1 there —
+   fine for a button label at that size/weight, not for arbitrary selected body text). A
+   highlighter tints rather than replaces: a translucent ember wash under the page's own text
+   colour reads as unmistakably ember while keeping the exact contrast the surrounding text
+   already had. Measured (relative-luminance contrast, ember 30% over base-100/base-200):
+   dark 9.68:1 / 8.85:1, light 11.63:1 / 11.09:1 — both themes, both surfaces, comfortably
+   clear of 4.5:1. */
+::selection {
+  background-color: color-mix(in oklab, var(--color-primary) 30%, transparent);
+  color: var(--color-base-content);
+}
+
+/* Caret colour. A black-on-charcoal or default-blue text cursor in a form field is stock
+   browser chrome the theme never drew; the ember accent matches the rest of the focus/input
+   story. */
+input, textarea {
+  caret-color: var(--color-primary);
+}
+
+/* Scrollbar colour is already themed by daisyUI's own base layer (:root scrollbar-color reads
+   currentColor at 35% over a transparent track, so it tracks both themes automatically) — no
+   rule needed here. */
+
+/* Focus-visible outlines, restated in ember. PRODUCT.md promises "visible focus-visible
+   outlines on the ember accent" — already true for primary buttons (--btn-color) and the
+   handful of icon-only controls that set focus-visible:outline-primary by hand, but daisyUI's
+   own default for text inputs/selects/textareas and checkboxes reads --input-color, which
+   falls back to a muted base-content grey. The input-error/select-error/textarea-error states
+   already set their own (red) --input-color and must keep winning, so they're excluded rather
+   than relied on for cascade order. */
+.input:not(.input-error):focus,
+.input:not(.input-error):focus-within,
+.select:not(.select-error):focus,
+.select:not(.select-error):focus-within,
+.textarea:not(.textarea-error):focus,
+.textarea:not(.textarea-error):focus-within,
+.checkbox:focus-visible {
+  --input-color: var(--color-primary);
+}
+
+/* A plain link outside .link/.btn (the sidebar nav items, the skip-to-content link) otherwise
+   gets the browser's native ring. This includes the sidebar `.menu` deliberately: daisyUI's
+   own menu-item focus-visible state is a 10%-opacity background tint with no outline at all
+   (verified in-browser — legible but faint, especially in light mode), and the sidebar is the
+   app's primary navigation, so it gets the same visible ember ring as everything else rather
+   than a fainter, bespoke indicator. Verified this doesn't double up with .link's own
+   currentColor ring (same outline property, one value wins, not two rings) or fight `.menu`'s
+   background tint (that stays — the ring adds to it, not against it). */
+a:not(.btn):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Poster cards: library_live wraps every media_card in a plain <a> ("block max-w-xs") that
+   receives focus, while the .card div inside it never does (no tabindex — nothing here is
+   faked-focusable) — so daisyUI's own `.card:focus-visible { outline-color: currentColor }`
+   is unreachable for the app's single most-clicked link. Ring the card itself from the
+   ancestor anchor's focus state instead of the generic rule above, so the outline hugs the
+   card's own rounded corners rather than a bare rectangle around the whole link (poster,
+   title, and badges together). */
+a:has(> .card):focus-visible {
+  outline: none;
+}
+a:focus-visible > .card {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Underline offset. The browser default sits right on the baseline and clips descenders (g,
+   y, p, j) in Inter. A little breathing room reads as a deliberate underline, not a strikethrough. */
+a {
+  text-underline-offset: 3px;
+}

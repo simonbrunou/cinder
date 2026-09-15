@@ -317,20 +317,7 @@ defmodule CinderWeb.MovieDetailLive do
       </.confirm_action>
 
       <div class="flex flex-col gap-6 sm:flex-row">
-        <img
-          :if={@movie.poster_path}
-          src={poster_url(@movie.poster_path)}
-          alt={media_title(@movie, @locale)}
-          loading="lazy"
-          decoding="async"
-          class="aspect-[2/3] w-40 shrink-0 rounded object-cover"
-        />
-        <div
-          :if={!@movie.poster_path}
-          class="grid aspect-[2/3] w-40 shrink-0 place-items-center rounded bg-base-300 text-sm text-base-content/70"
-        >
-          {gettext("No poster")}
-        </div>
+        <.detail_poster poster_path={@movie.poster_path} title={media_title(@movie, @locale)} />
 
         <div class="min-w-0 flex-1">
           <.header>
@@ -338,6 +325,7 @@ defmodule CinderWeb.MovieDetailLive do
             <span :if={@movie.year} class="font-normal text-base-content/70">({@movie.year})</span>
             <:actions>
               <.status_badge
+                id={"movie-detail-status-#{@movie.id}"}
                 kind={:movie}
                 status={movie_badge_status(@movie)}
                 progress={@movie.download_progress}

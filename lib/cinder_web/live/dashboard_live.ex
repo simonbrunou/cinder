@@ -203,6 +203,15 @@ defmodule CinderWeb.DashboardLive do
       else: socket
   end
 
+  # `label` is a plain, non-gettext'd literal for every normal probe row (see health.ex) — this
+  # slug is the badge's DOM id fragment, so it must stay stable across locales.
+  defp health_slug(label) do
+    label
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9]+/, "-")
+    |> String.trim("-")
+  end
+
   defp check_disk(socket) do
     if connected?(socket),
       do: start_async(socket, :disk, &Disk.check_all/0),
@@ -304,7 +313,7 @@ defmodule CinderWeb.DashboardLive do
       </span>
       <span
         :if={match?({:ok, _}, @status)}
-        class={["text-sm", low_disk?(@status) && "font-medium text-warning"]}
+        class={["text-sm tabular-nums", low_disk?(@status) && "font-medium text-warning"]}
       >
         {disk_summary(@status)}
       </span>
@@ -481,14 +490,7 @@ defmodule CinderWeb.DashboardLive do
           <ul :if={@pending != []} class="space-y-3">
             <li :for={r <- @pending} id={"pending-#{r.id}"} class="rounded-box bg-base-200/50 p-4">
               <div class="flex flex-row items-center gap-4">
-                <img
-                  :if={r.poster_path}
-                  src={poster_url(r.poster_path, "w92")}
-                  alt={request_title(r, @locale)}
-                  loading="lazy"
-                  decoding="async"
-                  class="w-12 rounded"
-                />
+                <.thumb_poster poster_path={r.poster_path} title={request_title(r, @locale)} />
                 <div class="min-w-0 flex-1">
                   <p class="truncate font-medium">
                     {request_title(r, @locale)}
@@ -502,7 +504,7 @@ defmodule CinderWeb.DashboardLive do
                     {gettext("Audio: %{pick}", pick: audio_pick_label(r.preferred_language))}
                   </p>
                 </div>
-                <.status_badge kind={:request} status={r.status} />
+                <.status_badge id={"dash-request-status-#{r.id}"} kind={:request} status={r.status} />
               </div>
               <div class="mt-3 flex flex-wrap items-center gap-2">
                 <form
@@ -587,7 +589,11 @@ defmodule CinderWeb.DashboardLive do
                     {health_reason(elem(h.status, 1))}
                   </p>
                 </div>
-                <.status_badge kind={:health} status={h.status} />
+                <.status_badge
+                  id={"dash-health-status-#{health_slug(h.label)}"}
+                  kind={:health}
+                  status={h.status}
+                />
               </li>
             </ul>
           </section>
@@ -634,6 +640,7 @@ defmodule CinderWeb.DashboardLive do
                   class="min-w-0 flex-1 flex items-center gap-3"
                 >
                   <.status_badge
+                    id={"dash-movie-status-#{m.id}"}
                     kind={:movie}
                     status={movie_badge_status(m)}
                     progress={m.download_progress}
@@ -645,7 +652,7 @@ defmodule CinderWeb.DashboardLive do
                 </.link>
                 <time
                   datetime={DateTime.to_iso8601(m.updated_at)}
-                  class="ml-auto whitespace-nowrap text-xs text-base-content/70"
+                  class="ml-auto whitespace-nowrap text-xs tabular-nums text-base-content/70"
                 >
                   {format_date(m.updated_at)}
                 </time>

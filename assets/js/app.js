@@ -39,6 +39,69 @@ const DisclosureState = {
 const formControls = form => Array.from(form.elements)
   .filter(({type}) => !["button", "file", "reset", "submit"].includes(type))
 
+/* Module-scope memory: survives hook remounts. status_badge renders a <span> for resting
+   states and a <div> with a <progress> for in-flight ones, so a status change can swap the
+   element type and remount the hook — per-instance state would lose the previous status. */
+const kindleSeen = new Map()
+
+const Kindle = {
+  mounted() {
+    const prev = kindleSeen.get(this.el.id)
+    kindleSeen.set(this.el.id, this.el.dataset.kindle)
+    // First sighting of this id on this page => record only, never flare on initial load.
+    if (prev !== undefined && prev !== this.el.dataset.kindle) this.kindle()
+  },
+  updated() {
+    const next = this.el.dataset.kindle
+    if (next === kindleSeen.get(this.el.id)) return
+    kindleSeen.set(this.el.id, next)
+    this.kindle()
+  },
+  kindle() {
+    this.el.classList.remove("is-kindled")
+    void this.el.offsetWidth
+    this.el.classList.add("is-kindled")
+    clearTimeout(this.timer)
+    this.timer = setTimeout(() => this.el.classList.remove("is-kindled"), 1400)
+  },
+  destroyed() {
+    // Deliberately keep the kindleSeen entry: surviving remount is the point.
+    clearTimeout(this.timer)
+  },
+}
+
+// Posters arrive over the network at unpredictable times. Fade in only the ones that were not
+// already cached; a cached grid must render instantly. No per-card hook and no generated ids —
+// one pass over the document, and the image is visible unless this code explicitly hides it.
+const revealPoster = img => img.classList.add("poster-shown")
+
+// A failed poster (TMDB 404, blocked CDN, offline) must hide and expose the gradient/box
+// placeholder markup already painted behind it (core_components.ex media_card/detail_poster,
+// discover_components.ex cast_strip) rather than the browser's broken-image glyph + alt text.
+const hidePoster = img => img.classList.add("poster-broken")
+
+// img.complete is true both when the image finished loading AND when it already failed (a
+// cached 404, a fast/synchronous failure) — naturalWidth is 0 only in the failure case. This
+// is the one reliable synchronous test, and it must run before any "complete → already fine"
+// shortcut or the most common failure case (already failed before this code runs) is missed.
+const posterHasFailed = img => img.complete && img.naturalWidth === 0
+
+const fadeUncachedPosters = () => {
+  document.querySelectorAll("img[data-poster]:not([data-poster-seen])").forEach(img => {
+    img.dataset.posterSeen = "1"
+    if (posterHasFailed(img)) { hidePoster(img); return }
+    if (img.complete) return
+    img.classList.add("poster-fade")
+    img.addEventListener("load", () => revealPoster(img), {once: true})
+    img.addEventListener("error", () => hidePoster(img), {once: true})
+    // The image can finish (either way) between the complete check and the listener attach.
+    if (posterHasFailed(img)) { hidePoster(img); return }
+    if (img.complete) revealPoster(img)
+    // Last resort: a stalled request must never leave the poster invisible.
+    setTimeout(() => revealPoster(img), 3000)
+  })
+}
+
 const FormState = {
   mounted() {
     this.revision = this.el.dataset.formRevision
@@ -72,19 +135,33 @@ const FormState = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, DisclosureState, FormState},
+  hooks: {...colocatedHooks, DisclosureState, FormState, Kindle},
 })
 
 // Show progress bar on live navigation and form submits
-topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
+// The bar is the most frequently seen motion in the app; it must be the ember accent, and it
+// must follow a runtime theme switch (root.html.heex rewrites data-theme on phx:set-theme).
+const themeTopbar = () => {
+  const ember = getComputedStyle(document.documentElement).getPropertyValue("--color-primary").trim()
+  topbar.config({
+    barColors: {0: ember || "#e06c2b"},
+    barThickness: 2,
+    shadowColor: "transparent",
+  })
+}
+themeTopbar()
+window.addEventListener("phx:set-theme", () => requestAnimationFrame(themeTopbar))
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
+window.addEventListener("phx:page-loading-start", () => kindleSeen.clear())
+window.addEventListener("phx:page-loading-stop", fadeUncachedPosters)
 window.addEventListener("phx:focus-invalid", ({detail: {id}}) => {
   requestAnimationFrame(() => document.getElementById(id)?.focus())
 })
 
 // connect if there are any LiveViews on the page
 liveSocket.connect()
+fadeUncachedPosters()
 
 // expose liveSocket on window for web console debug logs and latency simulation:
 // >> liveSocket.enableDebug()
