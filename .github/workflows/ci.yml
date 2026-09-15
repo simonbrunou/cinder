@@ -138,8 +138,8 @@ jobs:
       - name: Container logs and cleanup
         if: always()
         run: |
-          docker logs cinder-ci
-          docker rm --force cinder-ci
+          docker logs cinder-ci || true
+          docker rm --force cinder-ci || true
 
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

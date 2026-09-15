@@ -169,6 +169,13 @@ KINDLE_OBSERVER_INIT_SCRIPT = """
   // itself always reported exactly one real call). Element identity for a `DOMTokenList` isn't
   // otherwise queryable, so the `classList` getter is wrapped once to remember which element
   // owns which token list.
+  //
+  // Blind spot this trades in: it observes `classList.add` calls only. `is-kindled` is applied
+  // in exactly one place today (Kindle.kindle() in app.js), via `classList.add`, so there's no
+  // gap right now — but a future rewrite of `Kindle.kindle()` that used `setAttribute("class",
+  // ...)` or `className = ...` instead would silently defeat this. Cases 1/3/4 would then read
+  // `flare_count() === 0` as a pass while a real flare fired unobserved. Whoever next touches
+  // `Kindle.kindle()`'s DOM-mutation mechanism should also update this spy.
   window.__kindleFlares = {};
   window.__kindleFilters = {};
   const tokenListOwner = new WeakMap();
@@ -406,11 +413,17 @@ def case_4_no_false_flare_after_error_kind(page):
 
 def case_5_live_inserted_poster(page):
     """A poster inserted by a pure PubSub-driven handle_info re-render (no navigation, no
-    page-loading event at all) still gets failure handling via LiveSocket's onNodeAdded."""
+    page-loading event at all) still gets failure handling via LiveSocket's onNodeAdded.
+    Self-contained: navigates to /library itself rather than assuming a prior case left the
+    page there, so cases stay independently runnable regardless of CASES order or subsetting.
+    Navigate-and-settle happens before the movie exists, so its arrival is still a pure
+    broadcast into an already-mounted page, not something picked up by page load."""
     poster_path = "/case5-live-insert.jpg"
     POSTER_BEHAVIOR[poster_path] = "fail"
 
     with SuspendedPoller():
+        goto_library(page)
+
         movie_id = seed_movie("Case5 Live Insert", poster_path=poster_path)
         broadcast_movie_created(movie_id)
 
