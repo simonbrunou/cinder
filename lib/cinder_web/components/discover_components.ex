@@ -21,6 +21,7 @@ defmodule CinderWeb.DiscoverComponents do
     <div id={@id} class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
       <.media_card
         :for={r <- @results}
+        id={"#{@id}-#{r.type}-#{r.tmdb_id}"}
         poster_path={r.poster_path}
         title={r.title}
         year={r.year}
@@ -63,7 +64,7 @@ defmodule CinderWeb.DiscoverComponents do
     <section :if={@cast != []} class="mt-8" aria-label={gettext("Top cast")}>
       <h2 class="mb-3 text-sm font-semibold text-base-content/70">{gettext("Top cast")}</h2>
       <ul class="flex gap-4 overflow-x-auto pb-2">
-        <li :for={person <- @cast} class="w-24 shrink-0">
+        <li :for={person <- @cast} id={"cast-#{person.tmdb_id}"} class="w-24 shrink-0">
           <.link navigate={~p"/person/tmdb/#{person.tmdb_id}"} class="group block text-center">
             <div class="relative aspect-[2/3] w-full overflow-hidden rounded bg-base-300">
               <div

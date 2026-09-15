@@ -991,6 +991,13 @@ defmodule CinderWeb.CoreComponents do
         <.status_badge kind={:movie} status={m.status} />
       </.media_card>
   """
+  attr :id, :string,
+    default: nil,
+    doc:
+      "set when :for-iterated with no keyed wrapper (e.g. DiscoverComponents.media_grid/1) " <>
+        "so morphdom recognizes a genuinely new card as an insertion, not a positional morph " <>
+        "of the previous occupant — without it, onNodeAdded never sees a live-inserted poster"
+
   attr :poster_path, :string, default: nil
   attr :title, :string, required: true
   attr :year, :integer, default: nil
@@ -999,7 +1006,7 @@ defmodule CinderWeb.CoreComponents do
 
   def media_card(assigns) do
     ~H"""
-    <div class="card bg-base-200 shadow-sm">
+    <div id={@id} class="card bg-base-200 shadow-sm">
       <figure class="poster-frame relative overflow-hidden">
         <div
           class="grid aspect-[2/3] w-full place-items-center text-sm text-white"
