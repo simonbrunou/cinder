@@ -376,10 +376,15 @@ defmodule CinderWeb.MyRequestsLive do
               if r.target_type == "book",
                 do: book_badge(r, @book_target_states),
                 else: effective_status(r, @available_seasons) %>
-            <.status_badge kind={:request} status={request_status} />
+            <.status_badge
+              id={"myrequests-request-status-#{r.id}"}
+              kind={:request}
+              status={request_status}
+            />
             <.report_status :if={report} status={report.status} />
             <.status_badge
               :if={movie_row?}
+              id={"myrequests-movie-status-#{r.id}"}
               kind={:movie}
               status={movie_badge_status(movie)}
               progress={movie.download_progress}

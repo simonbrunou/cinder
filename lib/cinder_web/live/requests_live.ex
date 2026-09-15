@@ -407,14 +407,7 @@ defmodule CinderWeb.RequestsLive do
                 gettext("Select the request for %{title}", title: request_title(r, @locale))
               }
             />
-            <img
-              :if={r.poster_path}
-              src={poster_url(r.poster_path, "w92")}
-              alt={request_title(r, @locale)}
-              loading="lazy"
-              decoding="async"
-              class="w-12 rounded"
-            />
+            <.thumb_poster poster_path={r.poster_path} title={request_title(r, @locale)} />
             <div class="min-w-0 flex-1">
               <span class="font-semibold">
                 <.link
@@ -435,7 +428,7 @@ defmodule CinderWeb.RequestsLive do
                 {gettext("Audio: %{pick}", pick: audio_pick_label(r.preferred_language))}
               </span>
             </div>
-            <.status_badge kind={:request} status={r.status} />
+            <.status_badge id={"requests-status-#{r.id}"} kind={:request} status={r.status} />
             <form
               :if={r.status == :pending}
               id={"approval-profile-form-#{r.id}"}

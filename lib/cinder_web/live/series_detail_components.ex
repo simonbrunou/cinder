@@ -104,20 +104,17 @@ defmodule CinderWeb.SeriesDetailComponents do
       </.confirm_action>
 
       <div class="mb-8 flex gap-4">
-        <img
-          :if={@series.poster_path}
-          src={poster_url(@series.poster_path)}
-          alt={media_title(@series, @locale)}
-          loading="lazy"
-          decoding="async"
-          class="aspect-[2/3] w-40 shrink-0 rounded object-cover"
-        />
+        <.detail_poster poster_path={@series.poster_path} title={media_title(@series, @locale)} />
         <div class="min-w-0 flex-1">
           <.header>
             {media_title(@series, @locale)}
             <span :if={@series.year} class="font-normal text-base-content/70">({@series.year})</span>
             <:actions>
-              <.status_badge kind={:monitored} status={@series.monitored} />
+              <.status_badge
+                id={"series-detail-monitored-status-#{@series.id}"}
+                kind={:monitored}
+                status={@series.monitored}
+              />
             </:actions>
           </.header>
 
@@ -431,7 +428,7 @@ defmodule CinderWeb.SeriesDetailComponents do
         >
           <span class="text-lg font-semibold">
             {season_label(season.season_number)}
-            <span class="ml-2 text-sm font-normal text-base-content/70">
+            <span class="ml-2 text-sm font-normal tabular-nums text-base-content/70">
               {gettext("%{n}/%{m} monitored",
                 n: monitored_count(season),
                 m: length(season.episodes)
@@ -610,7 +607,7 @@ defmodule CinderWeb.SeriesDetailComponents do
                 <time
                   :if={ep.air_date}
                   datetime={Date.to_iso8601(ep.air_date)}
-                  class="text-xs text-base-content/70"
+                  class="text-xs tabular-nums text-base-content/70"
                 >
                   {format_date_year(ep.air_date)}
                 </time>
@@ -647,6 +644,7 @@ defmodule CinderWeb.SeriesDetailComponents do
                 </.button>
                 <.status_badge
                   :if={episode_badge_status(ep, season, @profile_summary)}
+                  id={"episode-status-#{ep.id}"}
                   kind={:episode}
                   status={episode_badge_status(ep, season, @profile_summary)}
                 />

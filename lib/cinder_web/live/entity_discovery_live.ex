@@ -135,14 +135,7 @@ defmodule CinderWeb.EntityDiscoveryLive do
       </.link>
 
       <div class="mb-8 flex gap-4">
-        <img
-          :if={@info.profile_path}
-          src={poster_url(@info.profile_path)}
-          alt={@info.name}
-          loading="lazy"
-          decoding="async"
-          class="aspect-[2/3] w-40 shrink-0 rounded object-cover"
-        />
+        <.detail_poster poster_path={@info.profile_path} title={@info.name} />
         <div class="min-w-0 flex-1">
           <.header>
             {@info.name}
@@ -190,14 +183,7 @@ defmodule CinderWeb.EntityDiscoveryLive do
       </.link>
 
       <div class="mb-8 flex gap-4">
-        <img
-          :if={@info.poster_path}
-          src={poster_url(@info.poster_path)}
-          alt={@info.title}
-          loading="lazy"
-          decoding="async"
-          class="aspect-[2/3] w-40 shrink-0 rounded object-cover"
-        />
+        <.detail_poster poster_path={@info.poster_path} title={@info.title} />
         <div class="min-w-0 flex-1">
           <.header>{@info.title}</.header>
         </div>

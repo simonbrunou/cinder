@@ -65,20 +65,22 @@ defmodule CinderWeb.DiscoverComponents do
       <ul class="flex gap-4 overflow-x-auto pb-2">
         <li :for={person <- @cast} class="w-24 shrink-0">
           <.link navigate={~p"/person/tmdb/#{person.tmdb_id}"} class="group block text-center">
-            <img
-              :if={person.profile_path}
-              src={poster_url(person.profile_path, "w185")}
-              alt={person.name}
-              loading="lazy"
-              decoding="async"
-              class="aspect-[2/3] w-full rounded object-cover"
-            />
-            <div
-              :if={!person.profile_path}
-              class="grid aspect-[2/3] w-full place-items-center rounded bg-base-300 text-base-content/40"
-              aria-hidden="true"
-            >
-              <.icon name="hero-user" class="size-8" />
+            <div class="relative aspect-[2/3] w-full overflow-hidden rounded bg-base-300">
+              <div
+                class="grid h-full w-full place-items-center text-base-content/40"
+                aria-hidden="true"
+              >
+                <.icon name="hero-user" class="size-8" />
+              </div>
+              <img
+                :if={person.profile_path}
+                src={poster_url(person.profile_path, "w185")}
+                alt={person.name}
+                data-poster
+                loading="lazy"
+                decoding="async"
+                class="absolute inset-0 h-full w-full object-cover"
+              />
             </div>
             <p class="mt-1 truncate text-xs font-medium group-hover:underline">{person.name}</p>
             <p :if={person.character} class="truncate text-xs text-base-content/60">

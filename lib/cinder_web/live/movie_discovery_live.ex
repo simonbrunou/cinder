@@ -267,27 +267,19 @@ defmodule CinderWeb.MovieDiscoveryLive do
       </.link>
 
       <div class="flex flex-col gap-6 sm:flex-row">
-        <img
-          :if={@info.poster_path}
-          src={poster_url(@info.poster_path)}
-          alt={media_title(@info, @locale)}
-          loading="lazy"
-          decoding="async"
-          class="aspect-[2/3] w-40 shrink-0 rounded object-cover"
-        />
-        <div
-          :if={!@info.poster_path}
-          class="grid aspect-[2/3] w-40 shrink-0 place-items-center rounded bg-base-300 text-sm text-base-content/70"
-        >
-          {gettext("No poster")}
-        </div>
+        <.detail_poster poster_path={@info.poster_path} title={media_title(@info, @locale)} />
 
         <div class="min-w-0 flex-1">
           <.header>
             {media_title(@info, @locale)}
             <span :if={@info.year} class="font-normal text-base-content/70">({@info.year})</span>
             <:actions>
-              <.status_badge :if={@state != :none} kind={:request} status={@state} />
+              <.status_badge
+                :if={@state != :none}
+                id={"discover-movie-request-status-#{@tmdb_id}"}
+                kind={:request}
+                status={@state}
+              />
             </:actions>
           </.header>
 

@@ -646,6 +646,7 @@ defmodule CinderWeb.LibraryLive do
                   {humanize_bytes(item_size(m, @series_sizes))}
                 </p>
                 <.status_badge
+                  id={"library-movie-status-#{m.id}"}
                   kind={:movie}
                   status={movie_badge_status(m)}
                   progress={m.download_progress}
@@ -748,6 +749,7 @@ defmodule CinderWeb.LibraryLive do
                   {humanize_bytes(item_size(s, @series_sizes))}
                 </p>
                 <.status_badge
+                  id={"library-series-monitored-#{s.id}"}
                   kind={:monitored}
                   status={s.monitored}
                   class="h-auto break-words text-center"

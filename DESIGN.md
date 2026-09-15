@@ -125,12 +125,26 @@ truth for its pattern — assemble screens from these, don't reinvent.
   accent = movie downloaded; success = available / OK / grab downloaded; warning = pending /
   wanted / no-match; error = failed / denied / unreachable; ghost = upcoming. Health
   `{:error, reason}` puts the reason in the hover `title`. A safe fallback humanizes any unmapped
-  atom (never crashes a view).
+  atom (never crashes a view). Optional `id` opts a call site into the kindle flare (see Motion)
+  on surfaces whose LiveView subscribes to PubSub.
 - **`media_card`** — the poster card for movie/TV results and library records. `card bg-base-200
-  shadow-sm`; figure is a `aspect-[2/3]` cover image, or a `bg-base-300` "No poster" placeholder.
-  Optional type chip (top-left, `bg-base-100`, film/TV icon + label). Body
-  (`card-body p-3`) shows the title (`text-sm font-semibold leading-tight`) + dimmed year, then an
-  inner-block action slot (Add button, status badge, season link, admin controls).
+  shadow-sm`; the figure always renders the per-title gradient placeholder
+  (`poster_fallback_style/1`) as a base layer, with `<img data-poster>` absolutely positioned on
+  top of it once a `poster_path` exists — so a poster that fails to load degrades to the exact
+  same tile as a title with no poster at all, never the browser's broken-image glyph (see Motion
+  for the failure-detection half). The "No poster" label is CSS-gated to that same state
+  (`:has(> img[data-poster]:not(.poster-broken))`) so it only shows, and is only announced, when
+  it's actually true — not on every card while its real poster is still loading. Optional type
+  chip (top-left, `bg-base-100`, film/TV icon + label). Body (`card-body p-3`) shows the title
+  (`text-sm font-semibold leading-tight`) + dimmed year, then an inner-block action slot (Add
+  button, status badge, season link, admin controls).
+- **`detail_poster`** — the larger hero poster (`w-40`) on a title's own detail/discovery page:
+  movie detail, movie/series discovery, series detail, and the entity-discovery person/collection
+  headers. Same always-present-base-layer-plus-overlay mechanism as `media_card`, with each
+  page's own `bg-base-300` "No poster" box (not the gradient) as the base layer.
+- **`thumb_poster`** — the 48px (`w-12`, TMDB `w92`) list-row thumbnail in the admin approval
+  queue and the requests list. Same mechanism again, sized down to a plain `bg-base-300` box with
+  no label — there's no room to set "No poster" text at that size.
 - **`confirm_action`** — inline two-step confirm for destructive actions. `alert alert-warning`,
   `role="alert" aria-live="assertive"`; a caveat line, a confirm button (`btn-error` or
   `btn-warning`, `phx-disable-with="Working…"`) and a `btn-ghost` cancel; optional inline
@@ -153,15 +167,74 @@ truth for its pattern — assemble screens from these, don't reinvent.
 
 Functional only; no bounce, no spring, no decorative motion.
 
-- **Global reduced-motion reset** in `app.css`: under `prefers-reduced-motion: reduce`, all
-  animation/transition durations collapse to `0.01ms !important` and `scroll-behavior: auto`. This
-  is the safety net — new motion is covered for free; `motion-safe:*` utilities simply no-op under
-  reduce.
+- **The kindle:** the focal moment. `status_badge` acknowledges a pipeline state change that
+  arrived over PubSub — `@keyframes cinder-kindle` flares the badge's own colour
+  (`filter: saturate(1.75) contrast(1.06)` decaying to none, 600ms,
+  `cubic-bezier(0.16, 1, 0.3, 1)`). Driven by the `Kindle` hook in `app.js`, keyed on
+  `data-kindle` (`"#{color}|#{label}"` — the user-visible state, not the raw status term).
+  Opt-in per call site via `id`, wired only on surfaces whose LiveView subscribes to PubSub. It
+  never fires on initial page load or on a progress tick — the hook's module-scope `kindleSeen`
+  map is what makes that true across the `<span>`/`<div>` branch swap.
+- **Colour travel:** `.status-badge` transitions `background-color`/`border-color`/`color` over
+  400ms so a state change reads as a change rather than a teleport.
+- **Reduced motion means fewer and gentler, not silent.** The global reset in `app.css` collapses
+  every animation/transition duration to `0.01ms !important` under `prefers-reduced-motion:
+  reduce` — but that alone would erase the kindle's state-change signal entirely, so the kindle
+  carries a deliberate alternative: a static `filter: saturate(1.6)` under reduce, no animation,
+  no movement. Everything else genuinely is covered for free by the reset; `motion-safe:*`
+  utilities simply no-op under reduce.
+- **Feedback:** `.btn:active` presses (`scale(0.985)`, with `transform` added to daisyUI's own
+  `transition-property` list, which otherwise omits it); in-flight `.phx-click-loading` /
+  `.phx-submit-loading` dims and disables pointer events so every click is acknowledged, even the
+  many buttons with no `phx-disable-with`.
+- **Poster reveal:** uncached posters fade in via `data-poster` on the `<img>` and
+  `fadeUncachedPosters()` in `app.js`; a grid of cached posters renders with no fade at all, and
+  the image is visible if JS never runs. The same pass also detects failure — the `error` event,
+  or a synchronous `img.complete && naturalWidth === 0` check for a poster that already failed
+  *before* this code ran (a cached 404, a fast failure) — and adds `.poster-broken`
+  (`display: none`), so the always-present placeholder underneath (`media_card` /
+  `detail_poster` / `thumb_poster`, above) re-exposes itself instead of the browser's
+  broken-image glyph.
+- **Loading bar:** the topbar is the ember accent, read from `--color-primary` at runtime and
+  re-themed on `phx:set-theme`, replacing the stock Phoenix `#29d` blue.
 - **Show / hide** (`JS.show`/`JS.hide` helpers): **show** = `ease-out duration-300`, fades + rises
   (`opacity-0 translate-y-4 sm:scale-95` → `opacity-100 translate-y-0 sm:scale-100`); **hide** =
   `ease-in duration-200`, the reverse. Asymmetric, gentle, no overshoot.
 - **Theme toggle:** a sliding pill (`transition-[left]`) moving across system / light / dark.
 - **Spinner / reconnect:** `motion-safe:animate-spin` only.
+
+## Browser chrome
+
+Stock browser defaults for UI the theme didn't explicitly draw — the cheapest signal a UI was
+assembled rather than built. Everything here reads from the color tokens above; nothing new is
+invented.
+
+- **`::selection`** — an ember tint under the page's own `base-content` text, not the
+  `primary`/`primary-content` pairing buttons and badges use for text-on-ember. That pairing was
+  tried first and rejected: it measures 3.39:1 in the light theme, under WCAG AA's 4.5:1 for
+  body text (fine for a button label at that size/weight, not for arbitrary selected text). A
+  30%-opacity ember wash under `base-content` measures 9.68:1 / 8.85:1 (dark, over base-100 /
+  base-200) and 11.63:1 / 11.09:1 (light) — comfortably clear in both themes, on both surfaces.
+- **`caret-color`** on `input`/`textarea` — the ember accent, not the browser default.
+- **Scrollbars are intentionally left alone.** daisyUI's own base layer already sets
+  `:root { scrollbar-color: color-mix(currentColor 35%, transparent) transparent }`, which tracks
+  both themes automatically. A second rule here would be redundant at best.
+- **`:focus-visible`**, restated in ember wherever daisyUI's own default is a muted
+  `base-content`-derived ring: `input`/`select`/`textarea`/`checkbox` (their `-error` states keep
+  their own red — the override explicitly excludes them, rather than relying on cascade order to
+  keep it that way) and any plain `<a>` outside `.link`/`.btn`. This deliberately includes the
+  sidebar `.menu`: daisyUI's own menu-item focus state is a 10%-opacity background tint with no
+  outline at all, measured too faint to trust as the primary-navigation focus indicator, so the
+  sidebar gets the same ember ring as everything else (verified it adds to the tint rather than
+  fighting it, and doesn't double up with `.link`'s own `currentColor` ring — same `outline`
+  property, one value wins). The poster card is a special case: `library_live` wraps every
+  `media_card` in a plain `<a>` that receives focus, while the `.card` div inside it never does
+  (no faked `tabindex`), so daisyUI's own `.card:focus-visible { outline-color: currentColor }`
+  is unreachable dead CSS. `a:has(> .card):focus-visible { outline: none }` plus
+  `a:focus-visible > .card { outline: 2px solid ember }` rings the card itself instead, so the
+  outline hugs its own rounded corners rather than a bare rectangle around the whole link.
+- **`text-underline-offset: 3px`** on `a` — the browser default sits right on the baseline and
+  clips descenders (g, y, p, j) in Inter.
 
 ## Layout
 
