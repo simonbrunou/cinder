@@ -393,6 +393,7 @@ defmodule CinderWeb.RequestsLive do
       <ul :if={@requests != []} class="space-y-3">
         <li
           :for={r <- @requests}
+          id={"request-#{r.id}"}
           class="rounded-box bg-base-200/50 p-4 flex flex-col gap-3"
         >
           <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
