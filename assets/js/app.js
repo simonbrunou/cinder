@@ -70,9 +70,11 @@ const Kindle = {
   },
 }
 
-// Posters arrive over the network at unpredictable times. Fade in only the ones that were not
+// Posters arrive over the network at unpredictable times: an initial page load, a live
+// navigation/patch, or a bare PubSub-driven re-render that inserts a brand-new node (no
+// page-loading event fires for that last case at all). Fade in only the ones that were not
 // already cached; a cached grid must render instantly. No per-card hook and no generated ids —
-// one pass over the document, and the image is visible unless this code explicitly hides it.
+// processPoster is applied to every matching <img>, wherever it came from.
 const revealPoster = img => img.classList.add("poster-shown")
 
 // A failed poster (TMDB 404, blocked CDN, offline) must hide and expose the gradient/box
@@ -86,20 +88,37 @@ const hidePoster = img => img.classList.add("poster-broken")
 // shortcut or the most common failure case (already failed before this code runs) is missed.
 const posterHasFailed = img => img.complete && img.naturalWidth === 0
 
+const posterSelector = "img[data-poster]:not([data-poster-seen])"
+
+const processPoster = img => {
+  img.dataset.posterSeen = "1"
+  if (posterHasFailed(img)) { hidePoster(img); return }
+  if (img.complete) return
+  img.classList.add("poster-fade")
+  img.addEventListener("load", () => revealPoster(img), {once: true})
+  img.addEventListener("error", () => hidePoster(img), {once: true})
+  // The image can finish (either way) between the complete check and the listener attach.
+  if (posterHasFailed(img)) { hidePoster(img); return }
+  if (img.complete) revealPoster(img)
+  // Last resort: a stalled request must never leave the poster invisible.
+  setTimeout(() => revealPoster(img), 3000)
+}
+
 const fadeUncachedPosters = () => {
-  document.querySelectorAll("img[data-poster]:not([data-poster-seen])").forEach(img => {
-    img.dataset.posterSeen = "1"
-    if (posterHasFailed(img)) { hidePoster(img); return }
-    if (img.complete) return
-    img.classList.add("poster-fade")
-    img.addEventListener("load", () => revealPoster(img), {once: true})
-    img.addEventListener("error", () => hidePoster(img), {once: true})
-    // The image can finish (either way) between the complete check and the listener attach.
-    if (posterHasFailed(img)) { hidePoster(img); return }
-    if (img.complete) revealPoster(img)
-    // Last resort: a stalled request must never leave the poster invisible.
-    setTimeout(() => revealPoster(img), 3000)
-  })
+  document.querySelectorAll(posterSelector).forEach(processPoster)
+}
+
+// A plain server-pushed diff from a handle_info/assign (dashboard polling, a PubSub-driven
+// movie/request row insert) never touches liveSocket.connect() or a phx:page-loading-* event —
+// those only fire for full joins, live navigation, and reconnects. onNodeAdded is LiveView's own
+// per-patch hook and is the only thing that sees nodes inserted that way. The added node may BE
+// the <img> (a bare poster patch) or may CONTAIN one or more (a whole <.thumb_poster>/
+// <.media_card> inserted as a unit), so both the node itself and its descendants are checked.
+// data-poster-seen keeps this idempotent against the startup/page-loading-stop sweeps below.
+const fadePosterNode = node => {
+  if (!(node instanceof Element)) return
+  if (node.matches(posterSelector)) processPoster(node)
+  node.querySelectorAll(posterSelector).forEach(processPoster)
 }
 
 const FormState = {
@@ -136,6 +155,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
   hooks: {...colocatedHooks, DisclosureState, FormState, Kindle},
+  dom: {onNodeAdded: fadePosterNode},
 })
 
 // Show progress bar on live navigation and form submits
@@ -153,7 +173,17 @@ themeTopbar()
 window.addEventListener("phx:set-theme", () => requestAnimationFrame(themeTopbar))
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
-window.addEventListener("phx:page-loading-start", () => kindleSeen.clear())
+// Cleared on page-loading-start to bound growth across navigations — without this the map
+// would keep an entry per badge id ever seen for the life of the tab. But phx:page-loading-*
+// fires for five distinct events (view.ts join/displayError, live_socket.ts historyRedirect/
+// pushLinkPatch/pageshow-reload), and only "initial" (fresh join) and "redirect" (new View,
+// including the full-page pageshow reload) actually destroy the mounted hooks. "patch" (same-
+// View live navigation) and "error" (same-View reconnect after a drop) leave badges mounted,
+// so clearing here would erase their history out from under them: the next updated() would
+// compare data-kindle against undefined, never match, and flare on a status that never changed.
+window.addEventListener("phx:page-loading-start", ({detail}) => {
+  if (detail?.kind === "initial" || detail?.kind === "redirect") kindleSeen.clear()
+})
 window.addEventListener("phx:page-loading-stop", fadeUncachedPosters)
 window.addEventListener("phx:focus-invalid", ({detail: {id}}) => {
   requestAnimationFrame(() => document.getElementById(id)?.focus())
