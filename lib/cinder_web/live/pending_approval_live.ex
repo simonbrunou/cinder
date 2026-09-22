@@ -45,14 +45,15 @@ defmodule CinderWeb.PendingApprovalLive do
             {gettext("Your account is awaiting administrator approval.")}
           </:subtitle>
         </.header>
-        <.link
+        <.button
           id="pending-logout"
           href={~p"/users/log-out"}
           method="delete"
-          class="btn btn-primary mt-6"
+          variant="primary"
+          class="mt-6"
         >
           {gettext("Log out")}
-        </.link>
+        </.button>
       </div>
     </Layouts.app>
     """

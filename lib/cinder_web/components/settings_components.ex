@@ -488,6 +488,8 @@ defmodule CinderWeb.SettingsComponents do
           <div
             :for={{svc, svc_label} <- services_for(group)}
             class="flex flex-wrap items-center gap-x-2 gap-y-1"
+            role="status"
+            aria-live="polite"
           >
             <.button
               type="button"
@@ -496,6 +498,7 @@ defmodule CinderWeb.SettingsComponents do
               class="min-h-11"
               phx-click="test"
               phx-value-service={svc}
+              phx-disable-with={gettext("Testing…")}
             >
               {gettext("Test %{service}", service: svc_label)}
             </.button>
