@@ -825,6 +825,41 @@ defmodule Cinder.AcquisitionTest do
              ]
     end
 
+    test "a series whose title is itself a year still matches on tvdb identity" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 281_535, "1923", 1 ->
+        {:ok,
+         [
+           raw_tv("1923.S01E01.1080p.WEB-DL-GRP",
+             tvdb_id: 281_535,
+             query_origins: [:id_scoped]
+           )
+         ]}
+      end)
+
+      assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
+               Acquisition.best_releases(
+                 series(tvdb_id: 281_535, title: "1923", year: 2022),
+                 1,
+                 [1]
+               )
+    end
+
+    test "a series whose title is itself a year still matches on a genuine premiere year token" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, "1923", 1 ->
+        {:ok,
+         [
+           raw_tv("1923.2022.S01E01.1080p.WEB-DL-GRP", query_origins: [:free_text])
+         ]}
+      end)
+
+      assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
+               Acquisition.best_releases(
+                 series(tvdb_id: nil, title: "1923", year: 2022),
+                 1,
+                 [1]
+               )
+    end
+
     test "a franchise-prefixed release name still matches (series '1883' in 'Yellowstone.1883')" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
         {:ok, [raw_tv("Yellowstone.1883.S01E01.1080p.WEB-DL-GRP")]}

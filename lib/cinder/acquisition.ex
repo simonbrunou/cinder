@@ -606,7 +606,7 @@ defmodule Cinder.Acquisition do
          %{year: year} = series
        )
        when is_integer(year) and is_list(origins),
-       do: search_title_match?(series, title) and year_verified?(title, year)
+       do: search_title_match?(series, title) and year_verified?(title, series)
 
   # A series with no year cannot use year evidence. Preserve the legacy provenance behavior there:
   # free-text results need the title guard; id-only results remain the best evidence available.
@@ -625,29 +625,53 @@ defmodule Cinder.Acquisition do
   # packs for the year-1998 series. An explicit year token is the one discriminator
   # scene names reliably carry, so a candidate is dropped only when every year in its
   # title is more than a year off the series year (±1 absorbs premiere-date wobble
-  # between TMDB and scene naming). `tv_title_match?/2` applies the stricter identity rule for
-  # unverified known-year results; this final pass also catches conflicts on explicitly identified
-  # AKA results.
-  defp reject_year_conflicts(candidates, %{year: year}) when is_integer(year),
-    do: Enum.reject(candidates, &year_conflict?(&1.title, year))
+  # between TMDB and scene naming). A year-shaped token that spells the series' OWN title
+  # (a series literally named "1923") is stripped before this scan — it is the title, not
+  # year evidence — so `release_years/2` excludes it on both sides of the check.
+  # `tv_title_match?/2` applies the stricter identity rule for unverified known-year results;
+  # this final pass also catches conflicts on explicitly identified AKA results.
+  defp reject_year_conflicts(candidates, %{year: year} = series) when is_integer(year),
+    do: Enum.reject(candidates, &year_conflict?(&1.title, series))
 
   defp reject_year_conflicts(candidates, _series), do: candidates
 
-  defp year_conflict?(release_title, year) do
-    case release_years(release_title) do
+  defp year_conflict?(release_title, %{year: year} = series) do
+    case release_years(release_title, series) do
       [] -> false
       years -> Enum.all?(years, &(abs(&1 - year) > 1))
     end
   end
 
-  defp year_verified?(release_title, year),
-    do: Enum.any?(release_years(release_title), &(abs(&1 - year) <= 1))
+  defp year_verified?(release_title, %{year: year} = series),
+    do: Enum.any?(release_years(release_title, series), &(abs(&1 - year) <= 1))
 
-  defp release_years(release_title) do
+  # A year-shaped token that is part of the series' own matched title run ("1923", "1883", "1899")
+  # is the TITLE, not year evidence: it must count neither as a conflict nor as verification.
+  # Stripped once via `title_needle/1` + `consume_leading/2` — the same leading-run matcher
+  # `leads_with_title?/2` uses — so a genuine year elsewhere in the name (a real premiere year, or
+  # an actual reboot year) still counts.
+  defp release_years(release_title, series) do
     release_title
     |> tokens()
+    |> drop_title_run(series)
     |> Enum.filter(&Regex.match?(~r/^(?:19|20)\d{2}$/, &1))
     |> Enum.map(&String.to_integer/1)
+  end
+
+  defp drop_title_run(tokens, target) do
+    case title_needle(Map.get(target, :title)) do
+      "" -> tokens
+      needle -> strip_run(tokens, needle)
+    end
+  end
+
+  defp strip_run([], _needle), do: []
+
+  defp strip_run([token | rest] = tokens, needle) do
+    case consume_leading(tokens, needle) do
+      {:ok, remaining} -> strip_run(remaining, needle)
+      :error -> [token | strip_run(rest, needle)]
+    end
   end
 
   defp filter_by_title(candidates, series),
@@ -837,7 +861,7 @@ defmodule Cinder.Acquisition do
       # strands a season at :no_match — annoying, recoverable. Here the same "no opinion" would
       # authorise deleting a file we cannot place. Same missing datum, opposite safe direction.
       Regex.match?(@year_marker, next) ->
-        is_integer(Map.get(target, :year)) and not year_conflict?(next, target.year)
+        is_integer(Map.get(target, :year)) and not year_conflict?(next, target)
 
       true ->
         false
