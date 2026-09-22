@@ -349,10 +349,9 @@ defmodule Cinder.Library do
 
   # Probe the source's audio + embedded-subtitle languages for storage on the imported row. Empty
   # lists when media_info is disabled or the probe errors — never blocks the import. Runs on every
-  # import (folder or single-file); the release's sidecar languages are captured separately —
-  # by maybe_link_sidecars/5 (a folder scan) when a fresh file is actually placed, or by
-  # adopt_quality/2 (a dest scan) when a never-imported record adopts an already-present file
-  # (issue #128).
+  # import (folder or single-file); the release's sidecar languages are captured separately — by
+  # maybe_link_sidecars/5 (a folder scan) when a fresh file is actually placed, or by adopt_quality/2
+  # (a dest scan) when a never-imported record adopts an already-present file (issue #128).
   defp capture_media(source) do
     case media_info() do
       nil -> empty_media()
@@ -1096,9 +1095,11 @@ defmodule Cinder.Library do
     end)
   end
 
-  # One source per episode: prefer a candidate that isn't sample-named (MovieSources.sample_name?/2
-  # — the movie import path's own rule), then keep the largest (path breaks ties); fall back to
-  # largest-wins only when every candidate is sample-named. Losers fall through to `resolve`.
+  # One source per episode: prefer a non-sample-named candidate via `MovieSources.sample_name?/2`,
+  # falling back to largest-wins only when every candidate is sample-named; path breaks ties for a
+  # dest stable across retries. Losers fall through to `resolve` as unmatched (logged) — never
+  # link two different sources onto one episode's dest (the second would collide). Group by
+  # episode, not source, so a double-episode file still maps to both.
   defp dedupe_per_episode(matches) do
     matches
     |> Enum.group_by(fn {ep, _path, _size} -> ep.id end)
@@ -1222,8 +1223,7 @@ defmodule Cinder.Library do
   # it keeps its own path and recorded quality and still counts as imported — otherwise
   # `commit_grab_imports/4` would bump it as missing. An episode in the group holding nothing gets
   # nothing: the file is one unit and we just declined it, so that episode stays wanted and
-  # re-searches.
-  # One stage per distinct HELD PATH across the whole import, never one per episode:
+  # re-searches. One stage per distinct HELD PATH across the whole import, never one per episode:
   # `import_stages.dest` is globally unique and two episodes legitimately share a `file_path` —
   # that is exactly what a previously imported double-episode file leaves behind. A stage each
   # would collide on the second insert, fail the whole grab, and leave the first one's `:prepared`
