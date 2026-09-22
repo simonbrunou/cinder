@@ -38,6 +38,12 @@ services:
       # below, but a fresh, unclaimed instance still shouldn't sit open on the whole network.
       # To serve the LAN, change to "4000:4000" (or front it with a reverse proxy) AFTER
       # creating your admin — and note prod redirects non-localhost HTTP to https://$PHX_HOST.
+      # CAVEAT: switching to direct LAN exposure (4000:4000 or any non-loopback binding without
+      # a trusted reverse proxy in front) means every device on the LAN subnet is treated as a
+      # trusted proxy by CinderWeb.Plugs.RemoteIp — any LAN host can send a cf-connecting-ip
+      # header naming an arbitrary IP and have it honoured, letting them evade per-IP rate limits
+      # on login and registration. Keep the loopback binding plus cloudflared tunnel, or front
+      # with a reverse proxy that strips inbound cf-connecting-ip before it reaches Cinder.
       - "127.0.0.1:4000:4000"
     environment:
       # Boot-only config — stays in env (needed before the in-app settings store is up).

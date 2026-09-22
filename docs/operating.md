@@ -47,6 +47,11 @@ terminate at a reverse proxy):
   or a VPN — this is the real access control, since an unclaimed instance still accepts (bootstrap
   gated) registration attempts and a claimed one still accepts (now inactive-pending) self-signups
   from anyone who can reach it.
+- **Direct LAN exposure breaks the `cf-connecting-ip` trust model.** `CinderWeb.Plugs.RemoteIp`
+  honours that header from any loopback/RFC1918 peer, which is safe only while cloudflared (or a
+  proxy that strips it) is the sole thing reaching port 4000. Bind `4000:4000` to the LAN and every
+  LAN host can spoof it to dodge the per-IP login/registration throttles (rate-limit evasion only,
+  not an auth bypass): keep the loopback binding, or strip the header at your reverse proxy.
 - **Registration is rate-limited per source IP:** at most 10 registration attempts per minute per
   IP (blocked attempts get a generic "too many attempts" flash). Behind a reverse proxy or tunnel
   that doesn't forward the real client IP, every visitor shares one bucket — see the login-limiter

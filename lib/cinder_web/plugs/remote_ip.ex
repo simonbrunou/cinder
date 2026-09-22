@@ -24,6 +24,16 @@ defmodule CinderWeb.Plugs.RemoteIp do
   `CF-Connecting-IP` carries exactly one client IP (never a comma-separated chain like
   `X-Forwarded-For`), so there is no "which hop do I trust" ambiguity: parse it as a single
   address, or don't trust it.
+
+  ## Direct LAN exposure caveat
+
+  If the origin port is reachable directly from the LAN (no cloudflared or reverse proxy in front),
+  every LAN host is considered a "private peer" and can forge the `cf-connecting-ip` header to spoof
+  an arbitrary client IP. This lets a LAN-resident attacker rotate the header per request to evade
+  the per-IP rate limits in `Cinder.Accounts.IpRateLimiter` (the `{ip, email}` bucket is unaffected
+  since it keys on both email and IP). This is **not** an authentication bypass, only rate-limit
+  evasion. Mitigation: keep the origin port bound to localhost only and tunnel through cloudflared,
+  or front with a reverse proxy that strips inbound `cf-connecting-ip` before it reaches Cinder.
   """
   @behaviour Plug
 
