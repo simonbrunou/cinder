@@ -38,6 +38,7 @@ npm-debug.log
 # Database files
 *.db
 *.db-*
+*.db.bak*
 
 # Local env (the quickstart puts SECRET_KEY_BASE here — never commit it)
 .env
