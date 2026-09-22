@@ -252,7 +252,8 @@ input, textarea {
 
 /* Focus-visible outlines, restated in ember. PRODUCT.md promises "visible focus-visible
    outlines on the ember accent" — already true for primary buttons (--btn-color) and the
-   handful of icon-only controls that set focus-visible:outline-primary by hand, but daisyUI's
+   handful of icon-only controls that use focus-visible:outline-(--color-focus-ring) by hand
+   (theme-toggle buttons, settings disclosure headers — #598), but daisyUI's
    own default for text inputs/selects/textareas and checkboxes reads --input-color, which
    falls back to a muted base-content grey. The input-error/select-error/textarea-error states
    already set their own (red) --input-color and must keep winning, so they're excluded rather
@@ -282,7 +283,8 @@ input, textarea {
    `--color-focus-ring` identical to `--color-primary` — no visual change there, it already
    had headroom (6.45–7.46:1 across base-100/200/300). Light's `--color-focus-ring` is
    `oklch(52% 0.17 45)`: measured worst case (against `base-300`, the tightest surface) is
-   4.657:1, comfortably clear of both the 4.5:1 target and the 3.5:1 floor; base-200 is
+   4.657:1 — comfortably clear of WCAG 1.4.11's actual 3:1 floor, and past the 4.5:1 target
+   chosen for real margin (not a standard, a buffer); base-200 is
    5.331:1 and base-100 5.651:1.
 
    A plain link outside .link/.btn (the sidebar nav items, the skip-to-content link) otherwise

@@ -380,7 +380,7 @@ defmodule CinderWeb.Layouts do
         aria-checked="true"
         tabindex="0"
         aria-label={gettext("Use system theme")}
-        class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
+        class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-(--color-focus-ring)"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="system"
       >
@@ -393,7 +393,7 @@ defmodule CinderWeb.Layouts do
         aria-checked="false"
         tabindex="-1"
         aria-label={gettext("Use light theme")}
-        class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
+        class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-(--color-focus-ring)"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="light"
       >
@@ -406,7 +406,7 @@ defmodule CinderWeb.Layouts do
         aria-checked="false"
         tabindex="-1"
         aria-label={gettext("Use dark theme")}
-        class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
+        class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-(--color-focus-ring)"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="dark"
       >

@@ -230,7 +230,10 @@ invented.
   non-text floor by 0.25 against `bg-base-200` in the light theme, and fell under it against
   `bg-base-300`; `focus-ring` is deeper on the same hue, measured ≥4.5:1 against `base-100`/
   `base-200`/`base-300`, without touching the pinned `primary`/`accent` buttons and badges
-  depend on). This deliberately includes the
+  depend on). The handful of hand-set icon-only controls — the theme-toggle buttons
+  (`bg-base-300`) and the settings disclosure `<summary>` headers (`bg-base-200`) — use the
+  same `focus-visible:outline-(--color-focus-ring)` token for the same reason. This
+  deliberately includes the
   sidebar `.menu`: daisyUI's own menu-item focus state is a 10%-opacity background tint with no
   outline at all, measured too faint to trust as the primary-navigation focus indicator, so the
   sidebar gets the same ember ring as everything else (verified it adds to the tint rather than
