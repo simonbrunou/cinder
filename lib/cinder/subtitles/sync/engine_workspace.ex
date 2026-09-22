@@ -1,6 +1,29 @@
 defmodule Cinder.Subtitles.Sync.EngineWorkspace do
   @moduledoc false
 
+  alias Cinder.BoundedCommand
+
+  # Elixir-side bound for every subprocess this module shells out to: `seal/1` and
+  # `start_holder/0` (issue #591 -- same defect shape as #590's `Disk.run_rooted/2`/
+  # `open_rooted_bound/4`; `System.cmd/3` has no `:timeout` option at all, and `start_holder/0`'s
+  # own pre-existing 5s bound is the precedent for this value). Overridable only as a test seam
+  # (mirrors `Cinder.Library.Filesystem.Disk.subprocess_timeout_ms/0`'s own convention) --
+  # production never sets this. Named distinctly from Disk's own `:disk_subprocess_timeout_ms`
+  # rather than reusing it: this is a different helper family (`priv/anonymous_file.py`, not
+  # `priv/rooted_fs.py`) in a wholly separate subsystem -- subtitle sync's own per-video-path
+  # lock (`Cinder.Subtitles.analyze_video/1`), not the household-wide import lock #590 protects
+  # -- so sharing one knob would make it impossible to tune either bound independently, in tests
+  # or in a future runtime override.
+  @subprocess_timeout_ms 5_000
+
+  defp subprocess_timeout_ms,
+    do:
+      Application.get_env(
+        :cinder,
+        :engine_workspace_subprocess_timeout_ms,
+        @subprocess_timeout_ms
+      )
+
   @spec run(map() | {:content, binary()}, map(), String.t(), String.t(), function()) ::
           {:ok, term()} | {:error, term()}
   def run(reference, input, reference_extension, input_extension, callback) do
@@ -102,7 +125,7 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspace do
       {^port, {:data, output}} -> decode_holder(port, output)
       {^port, {:exit_status, status}} -> {:error, {:anonymous_helper_exit, status}}
     after
-      5_000 ->
+      subprocess_timeout_ms() ->
         close_holder(port)
         {:error, :anonymous_helper_timeout}
     end
@@ -138,12 +161,23 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspace do
   defp maybe_seal(bound, true), do: seal(bound)
   defp maybe_seal(_bound, false), do: :ok
 
+  # Supervised `Port` + `SIGKILL`-by-`os_pid` (#591) via `Cinder.BoundedCommand.run/4` -- see
+  # that module's moduledoc. `python3` is resolved from `PATH` inside `run/4` itself, exactly
+  # like `System.cmd/3` did, so a missing binary still raises the equivalent
+  # `%ErlangError{original: :enoent}` shape the `rescue` below already wraps. A timeout is
+  # treated like a non-zero exit (`:timeout` in the status position) rather than routed through
+  # `decode_seal/1`: unlike `Disk.run_rooted/2` (#590), `seal/1` already distinguishes a zero
+  # exit from a non-zero one instead of decoding output unconditionally, so a killed-mid-seal
+  # helper with an unknown exit status fits that existing non-zero-exit shape, not
+  # `decode_seal/1`'s "exited 0 but produced garbage" one.
   defp seal(%{path: path}) do
-    python = System.find_executable("python3") || "python3"
-
-    case System.cmd(python, [helper(), "seal", path], stderr_to_stdout: true) do
-      {output, 0} -> decode_seal(output)
-      {output, status} -> {:error, {:anonymous_seal_exit, status, output}}
+    case BoundedCommand.run("python3", [helper(), "seal", path], subprocess_timeout_ms(),
+           stderr_to_stdout: true
+         ) do
+      {:ok, output, 0} -> decode_seal(output)
+      {:ok, output, status} -> {:error, {:anonymous_seal_exit, status, output}}
+      {:error, {:timeout, output}} -> {:error, {:anonymous_seal_exit, :timeout, output}}
+      {:error, error} -> {:error, {:anonymous_seal_exec_failed, error}}
     end
   rescue
     error -> {:error, {:anonymous_seal_exec_failed, error}}
@@ -184,12 +218,11 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspace do
   defp finish_anonymous_operation({:raised, kind, reason, stacktrace}, _close_result),
     do: :erlang.raise(kind, reason, stacktrace)
 
-  defp close_holder(port) do
-    if Port.info(port), do: Port.close(port)
-    :ok
-  rescue
-    ArgumentError -> :ok
-  end
+  # Kills the OS process behind `port` by pid before closing it (#591) -- `Port.close/1` alone
+  # does not terminate a child stuck in a blocking syscall against a wedged mount, the same
+  # #510-class defect `Disk.close_rooted_port/1` (#590) fixed in the same helper family.
+  # Delegates to `Cinder.BoundedCommand.kill_and_close/1`.
+  defp close_holder(port), do: BoundedCommand.kill_and_close(port)
 
   defp identity(stat), do: {stat.major_device, stat.minor_device, stat.inode}
 
