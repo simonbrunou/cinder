@@ -1046,5 +1046,30 @@ defmodule Cinder.AcquisitionTest do
       assert [%Release{title: "La.Casa.de.Papel.S01E01.1080p.WEB-DL-GRP"}] =
                Acquisition.title_guard(releases, :tv, target)
     end
+
+    test "a title containing a year token still year-verifies against its own decoration year" do
+      # "Class of 2009" (2021) carries a year-shaped token as part of the title itself; only
+      # the trailing "2021" is the release's actual decoration year, and it matches the series.
+      target = series(tvdb_id: nil, title: "Class of 2009", year: 2021)
+
+      releases =
+        [raw_tv("Class.of.2009.2021.S01E01.1080p.WEB-DL-GRP", query_origins: [:free_text])]
+        |> Enum.map(&Release.new/1)
+
+      assert [%Release{title: "Class.of.2009.2021.S01E01.1080p.WEB-DL-GRP"}] =
+               Acquisition.title_guard(releases, :tv, target)
+    end
+
+    test "a bare-numeral title still rejects a genuinely conflicting decoration year" do
+      # Series "1923" (2022): the release's own "1923" token is the title, not year evidence,
+      # but its "2005" decoration is a real, different vintage and must still conflict.
+      target = series(tvdb_id: nil, title: "1923", year: 2022)
+
+      releases =
+        [raw_tv("1923.2005.S01E01.1080p.WEB-DL-GRP", query_origins: [:free_text])]
+        |> Enum.map(&Release.new/1)
+
+      assert [] = Acquisition.title_guard(releases, :tv, target)
+    end
   end
 end
