@@ -193,6 +193,27 @@
    needed. */
 .poster-broken { display: none; }
 
+/* Per-title placeholder gradient (poster_fallback_style/1 emits only the --poster-hue /
+   --poster-hue2 custom properties, keeping the identity hue itself out of CSS). Lightness is
+   theme-aware so the tile always reads as belonging to its theme instead of a dark tile
+   floating on warm paper in light mode (#599): dark keeps a dark ramp, light gets a light ramp
+   on the same hues. See the comment above poster_fallback_style/1 for the measured worst-case
+   label contrast this ramp is tuned against. */
+.poster-fallback {
+  background: linear-gradient(
+    135deg,
+    hsl(var(--poster-hue) 55% 26%),
+    hsl(var(--poster-hue2) 55% 14%)
+  );
+}
+[data-theme=light] .poster-fallback {
+  background: linear-gradient(
+    135deg,
+    hsl(var(--poster-hue) 45% 88%),
+    hsl(var(--poster-hue2) 45% 80%)
+  );
+}
+
 /* The "No poster" label is honest, not decorative — it must read (and be announced) only when
    it's actually true. The gradient/box backdrop always renders underneath (see media_card and
    detail_poster), but the text itself hides whenever a poster image is present and hasn't
