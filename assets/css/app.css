@@ -34,6 +34,7 @@
   --color-base-content: oklch(93% 0.003 265);
   --color-primary: oklch(72% 0.16 47);
   --color-primary-content: oklch(20% 0.04 50);
+  --color-focus-ring: oklch(72% 0.16 47);
   --color-secondary: oklch(55% 0.02 265);
   --color-secondary-content: oklch(96% 0.003 265);
   --color-accent: oklch(72% 0.16 47);
@@ -69,6 +70,7 @@
   --color-base-content: oklch(22% 0.01 265);
   --color-primary: oklch(64% 0.17 45);
   --color-primary-content: oklch(98% 0.015 75);
+  --color-focus-ring: oklch(52% 0.17 45);
   --color-secondary: oklch(50% 0.02 265);
   --color-secondary-content: oklch(98% 0.002 247);
   --color-accent: oklch(64% 0.17 45);
@@ -254,7 +256,12 @@ input, textarea {
    own default for text inputs/selects/textareas and checkboxes reads --input-color, which
    falls back to a muted base-content grey. The input-error/select-error/textarea-error states
    already set their own (red) --input-color and must keep winning, so they're excluded rather
-   than relied on for cascade order. */
+   than relied on for cascade order. Left on --color-primary rather than --color-focus-ring
+   (below) deliberately: daisyUI renders this as `.input`'s border-color, a filled/bordered
+   field edge, not an outline ring, and it isn't the pair #598 measured — solid ember vs
+   base-100 here is 3.442:1 in the light theme (base-100 is what inputs sit on), not the
+   3.247:1 vs base-200 the issue flagged for the card/link ring. A separate, narrower problem;
+   left alone rather than folded into this fix. */
 .input:not(.input-error):focus,
 .input:not(.input-error):focus-within,
 .select:not(.select-error):focus,
@@ -265,7 +272,20 @@ input, textarea {
   --input-color: var(--color-primary);
 }
 
-/* A plain link outside .link/.btn (the sidebar nav items, the skip-to-content link) otherwise
+/* Ring colour is --color-focus-ring, not --color-primary (#598): the light theme's
+   `--color-primary` only measures 3.247:1 against `bg-base-200` (the poster card's own
+   surface) — WCAG 1.4.11's 3:1 non-text-contrast floor, but by just 0.25, and worse against
+   `bg-base-300` (list rows/sidebar), 2.836:1 — actually under the floor. Buying margin by
+   darkening `--color-primary` itself was rejected in #592: the palette is pinned by
+   DESIGN.md and primary/accent drive buttons and badges too. `--color-focus-ring` is a
+   separate token instead (same hue, deeper on light) so only the ring moves. Dark keeps
+   `--color-focus-ring` identical to `--color-primary` — no visual change there, it already
+   had headroom (6.45–7.46:1 across base-100/200/300). Light's `--color-focus-ring` is
+   `oklch(52% 0.17 45)`: measured worst case (against `base-300`, the tightest surface) is
+   4.657:1, comfortably clear of both the 4.5:1 target and the 3.5:1 floor; base-200 is
+   5.331:1 and base-100 5.651:1.
+
+   A plain link outside .link/.btn (the sidebar nav items, the skip-to-content link) otherwise
    gets the browser's native ring. This includes the sidebar `.menu` deliberately: daisyUI's
    own menu-item focus-visible state is a 10%-opacity background tint with no outline at all
    (verified in-browser — legible but faint, especially in light mode), and the sidebar is the
@@ -274,7 +294,7 @@ input, textarea {
    currentColor ring (same outline property, one value wins, not two rings) or fight `.menu`'s
    background tint (that stays — the ring adds to it, not against it). */
 a:not(.btn):focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
 }
 
@@ -284,12 +304,13 @@ a:not(.btn):focus-visible {
    is unreachable for the app's single most-clicked link. Ring the card itself from the
    ancestor anchor's focus state instead of the generic rule above, so the outline hugs the
    card's own rounded corners rather than a bare rectangle around the whole link (poster,
-   title, and badges together). */
+   title, and badges together). Same --color-focus-ring token as above (#598) — this is the
+   exact rule the issue measured against bg-base-200. */
 a:has(> .card):focus-visible {
   outline: none;
 }
 a:focus-visible > .card {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
 }
 
