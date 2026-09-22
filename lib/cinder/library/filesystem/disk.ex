@@ -507,15 +507,21 @@ defmodule Cinder.Library.Filesystem.Disk do
   end
 
   # Supervised `Port` + `SIGKILL`-by-`os_pid` (#590) via `Cinder.BoundedCommand.run/4` — see
-  # that module's moduledoc. A timeout still routes through `decode_rooted_result/2`, exactly
-  # like a normal exit does, using whatever output had already accumulated (in practice always
-  # empty — a hang here is a blocking syscall before the helper's own JSON line is ever
-  # written): for the `@rooted_effect_operations` this module actually mutates through, that
+  # that module's moduledoc. For the `@rooted_effect_operations` this module actually mutates
+  # through, a timeout still routes through `decode_rooted_result/2`, exactly like a normal exit
+  # does, using whatever output had already accumulated (in practice always empty — a hang here
+  # is a blocking syscall before the helper's own JSON line is ever written): that
   # unparseable/empty output already conservatively resolves to `{:error, {:effect_committed,
   # operation, {:helper_outcome_unknown, _}}}` — the exact "we cannot prove this did or didn't
   # land" shape every caller of a rooted mutation (`Cinder.Subtitles`, `Cinder.Library.Sidecars`,
   # `Cinder.Subtitles.Sync.AtomicFile`, ...) already handles, so a killed-mid-effect helper gains
-  # no new error clause anywhere.
+  # no new error clause anywhere. Every OTHER operation (today: only `"sync_parent"`, an `fsync`
+  # that commits no filesystem effect of its own) is not conservatively-ambiguous the same way —
+  # collapsing its timeout into the same malformed-output bucket a corrupt/buggy helper produces
+  # would make a wedged mount indistinguishable from a broken helper in the logs an operator
+  # reads. It gets its own explicit `:timeout` reason instead, reusing the existing
+  # `{:rooted_helper_exec_failed, operation, _}}` shape (already produced by the `rescue`/`catch`
+  # clauses below for a raised exception) rather than inventing a new one.
   defp run_rooted(operation, args) do
     case BoundedCommand.run(
            "python3",
@@ -523,9 +529,17 @@ defmodule Cinder.Library.Filesystem.Disk do
            subprocess_timeout_ms(),
            stderr_to_stdout: true
          ) do
-      {:ok, output, _status} -> decode_rooted_result(output, operation)
-      {:error, {:timeout, output}} -> decode_rooted_result(output, operation)
-      {:error, error} -> {:error, {:rooted_helper_exec_failed, operation, error}}
+      {:ok, output, _status} ->
+        decode_rooted_result(output, operation)
+
+      {:error, {:timeout, output}} when operation in @rooted_effect_operations ->
+        decode_rooted_result(output, operation)
+
+      {:error, {:timeout, _output}} ->
+        {:error, {:rooted_helper_exec_failed, operation, :timeout}}
+
+      {:error, error} ->
+        {:error, {:rooted_helper_exec_failed, operation, error}}
     end
   rescue
     error -> {:error, {:rooted_helper_exec_failed, operation, error}}

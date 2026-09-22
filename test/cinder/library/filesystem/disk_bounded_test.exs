@@ -179,6 +179,41 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     refute File.exists?(marker)
   end
 
+  # --- run_rooted/2's non-effect-operation timeout (today: only "sync_parent") ---------------
+
+  # Review finding on PR #618: a timeout for a NON-effect rooted operation used to fall through
+  # `decode_rooted_result/2`'s generic malformed-output clause, reported as
+  # `{:rooted_helper_malformed, "sync_parent", ""}` — indistinguishable in the logs from a
+  # genuinely corrupt/buggy helper. `sync_parent` (the `fsync` `write_and_sync_rooted/4` runs
+  # after every rooted write) commits no filesystem effect of its own, so it doesn't need
+  # `@rooted_effect_operations`' conservative "maybe committed" treatment — it gets its own
+  # explicit `:timeout` reason instead, reusing the existing `{:rooted_helper_exec_failed,
+  # operation, _}}` shape.
+  @tag :tmp_dir
+  test "run_rooted's sync_parent timeout is reported distinctly from a malformed helper, and the OS process is killed",
+       %{tmp_dir: tmp} do
+    root = library_root!(tmp)
+    pidfile = Path.join(tmp, "sync_parent.pid")
+    marker = Path.join(tmp, "sync_parent_survived")
+    hanging_sync_parent_helper!(tmp, pidfile, marker)
+    Application.put_env(:cinder, :disk_subprocess_timeout_ms, 150)
+
+    path = Path.join(root, "subtitle.srt")
+
+    t0 = System.monotonic_time(:millisecond)
+
+    assert {:error, {:rooted_helper_exec_failed, "sync_parent", :timeout}} =
+             Disk.write(path, "subtitle content")
+
+    assert System.monotonic_time(:millisecond) - t0 < 3000
+
+    pid = wait_for_pidfile(pidfile)
+    assert process_gone?(pid)
+
+    Process.sleep(1200)
+    refute File.exists?(marker)
+  end
+
   # --- helpers ---------------------------------------------------------------------------
 
   defp library_root!(tmp) do
@@ -209,6 +244,53 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
 
     with open(#{inspect(marker)}, "w") as f:
         f.write("")
+    """)
+
+    Application.put_env(:cinder, :rooted_filesystem_helper, helper)
+  end
+
+  # Dispatches on `sys.argv[1]` like the real `rooted_fs.py`: `hold` genuinely opens the target
+  # for read/write and emits a real fd (mirroring `open_rooted_bound/4`'s "write" mode) so
+  # `Disk.write/2`'s own `File.write/2`/`sync_file/1` through the `/proc/<pid>/fd/<n>` path
+  # succeed normally; `sync_parent` — the one call this test exercises — writes its own pid,
+  # sleeps past the configured bound, then writes `marker` and exits, never emitting the real
+  # helper's JSON result line.
+  defp hanging_sync_parent_helper!(tmp, pidfile, marker) do
+    helper = Path.join(tmp, "hanging_sync_parent_helper.py")
+
+    File.write!(helper, """
+    import errno
+    import json
+    import os
+    import sys
+    import time
+
+    def emit(payload):
+        sys.stdout.write(json.dumps(payload, separators=(",", ":")) + "\\n")
+        sys.stdout.flush()
+
+    def hold(root, relative, mode):
+        fd = os.open(
+            os.path.join(root, relative),
+            os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+        )
+        emit({"ok": {"fd": fd}})
+        sys.stdin.buffer.read()
+        os.close(fd)
+
+    def hanging_sync_parent():
+        with open(#{inspect(pidfile)}, "w") as f:
+            f.write(str(os.getpid()))
+        time.sleep(1)
+        with open(#{inspect(marker)}, "w") as f:
+            f.write("")
+
+    if sys.argv[1] == "hold" and len(sys.argv) == 5:
+        hold(sys.argv[2], sys.argv[3], sys.argv[4])
+    elif sys.argv[1] == "sync_parent" and len(sys.argv) == 4:
+        hanging_sync_parent()
+    else:
+        raise OSError(errno.EINVAL, "invalid rooted operation")
     """)
 
     Application.put_env(:cinder, :rooted_filesystem_helper, helper)
