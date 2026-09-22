@@ -28,12 +28,13 @@ value** in both themes (one accent, not two).
 | base-200 | `oklch(19.5% 0.009 265)` | cards, sidebar surface |
 | base-300 | `oklch(23% 0.01 262)` | poster placeholder, borders, toggle track |
 | base-content | `oklch(93% 0.003 265)` | primary text (muted via `/70`, `/60`, `/40`) |
-| primary | `oklch(72% 0.16 47)` | ember — brand mark, primary buttons, active nav, focus |
+| primary | `oklch(72% 0.16 47)` | ember — brand mark, primary buttons, active nav |
 | primary-content | `oklch(20% 0.04 50)` | text on ember |
 | secondary | `oklch(55% 0.02 265)` | low-emphasis grey |
 | secondary-content | `oklch(96% 0.003 265)` | text on secondary |
 | accent | `oklch(72% 0.16 47)` | **same as primary** (downloaded badge) |
 | accent-content | `oklch(20% 0.04 50)` | text on accent |
+| focus-ring | `oklch(72% 0.16 47)` | `a`/poster-card focus outline — same as primary here (dark already clears WCAG 1.4.11 with headroom, #598) |
 | neutral | `oklch(27% 0.012 265)` | neutral badge ("Requested") |
 | neutral-content | `oklch(92% 0.003 265)` | text on neutral |
 | info | `oklch(72% 0.13 250)` | blue — searching / downloading / approved |
@@ -51,6 +52,7 @@ value** in both themes (one accent, not two).
 | base-content | `oklch(22% 0.01 265)` |
 | primary / accent | `oklch(64% 0.17 45)` (deeper ember; again identical) |
 | primary-content / accent-content | `oklch(98% 0.015 75)` |
+| focus-ring | `oklch(52% 0.17 45)` (deeper still, same hue) — a separate token so the light-theme ring clears WCAG 1.4.11 without darkening the pinned primary/accent (#598) |
 | secondary | `oklch(50% 0.02 265)` · neutral `oklch(44% 0.017 265)` |
 | info | `oklch(58% 0.16 250)` · success `oklch(62% 0.15 165)` · warning `oklch(70% 0.16 70)` · error `oklch(58% 0.22 25)` |
 
@@ -226,7 +228,16 @@ invented.
 - **`:focus-visible`**, restated in ember wherever daisyUI's own default is a muted
   `base-content`-derived ring: `input`/`select`/`textarea`/`checkbox` (their `-error` states keep
   their own red — the override explicitly excludes them, rather than relying on cascade order to
-  keep it that way) and any plain `<a>` outside `.link`/`.btn`. This deliberately includes the
+  keep it that way, and stay on `--color-primary`, a border-colour not an outline) and any plain
+  `<a>` outside `.link`/`.btn`, which — along with the poster card below — use the dedicated
+  `focus-ring` token instead of `primary` (#598: `primary` only cleared WCAG 1.4.11's 3:1
+  non-text floor by 0.25 against `bg-base-200` in the light theme, and fell under it against
+  `bg-base-300`; `focus-ring` is deeper on the same hue, measured ≥4.5:1 against `base-100`/
+  `base-200`/`base-300`, without touching the pinned `primary`/`accent` buttons and badges
+  depend on). The handful of hand-set icon-only controls — the theme-toggle buttons
+  (`bg-base-300`) and the settings disclosure `<summary>` headers (`bg-base-200`) — use the
+  same `focus-visible:outline-(--color-focus-ring)` token for the same reason. This
+  deliberately includes the
   sidebar `.menu`: daisyUI's own menu-item focus state is a 10%-opacity background tint with no
   outline at all, measured too faint to trust as the primary-navigation focus indicator, so the
   sidebar gets the same ember ring as everything else (verified it adds to the tint rather than
@@ -235,8 +246,8 @@ invented.
   `media_card` in a plain `<a>` that receives focus, while the `.card` div inside it never does
   (no faked `tabindex`), so daisyUI's own `.card:focus-visible { outline-color: currentColor }`
   is unreachable dead CSS. `a:has(> .card):focus-visible { outline: none }` plus
-  `a:focus-visible > .card { outline: 2px solid ember }` rings the card itself instead, so the
-  outline hugs its own rounded corners rather than a bare rectangle around the whole link.
+  `a:focus-visible > .card { outline: 2px solid focus-ring }` rings the card itself instead, so
+  the outline hugs its own rounded corners rather than a bare rectangle around the whole link.
 - **`text-underline-offset: 3px`** on `a` — the browser default sits right on the baseline and
   clips descenders (g, y, p, j) in Inter.
 

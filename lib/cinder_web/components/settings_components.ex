@@ -77,7 +77,7 @@ defmodule CinderWeb.SettingsComponents do
       data-setup-optional={@show_setup_guidance && to_string(is_nil(setup_step(group)))}
       class="collapse collapse-arrow rounded-box bg-base-200"
     >
-      <summary class="collapse-title flex min-h-11 cursor-pointer items-center gap-2 text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary">
+      <summary class="collapse-title flex min-h-11 cursor-pointer items-center gap-2 text-lg font-semibold focus-visible:outline-2 focus-visible:outline-(--color-focus-ring)">
         <span
           :if={@show_setup_guidance && setup_step(group)}
           class="badge badge-primary badge-sm font-bold"
@@ -516,7 +516,7 @@ defmodule CinderWeb.SettingsComponents do
       data-force-open={to_string(MapSet.member?(@invalid_groups, :anime))}
       class="collapse collapse-arrow rounded-box bg-base-200"
     >
-      <summary class="collapse-title min-h-11 cursor-pointer text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary">
+      <summary class="collapse-title min-h-11 cursor-pointer text-lg font-semibold focus-visible:outline-2 focus-visible:outline-(--color-focus-ring)">
         {gettext("Anime releases")}
       </summary>
       <div class="collapse-content grid gap-4 md:grid-cols-2">
