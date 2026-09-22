@@ -1096,15 +1096,16 @@ defmodule Cinder.Library do
     end)
   end
 
-  # One source per episode: when two files parse the same SxxEyy, keep the largest (path breaks
-  # ties for a dest stable across retries) and let the losers fall through to `resolve` as
-  # unmatched (logged) — never link two different sources onto one episode's dest (the second
-  # would collide). Group by episode, not source, so a double-episode file still maps to both.
+  # One source per episode: prefer a candidate that isn't sample-named (MovieSources.sample_name?/2
+  # — the movie import path's own rule), then keep the largest (path breaks ties); fall back to
+  # largest-wins only when every candidate is sample-named. Losers fall through to `resolve`.
   defp dedupe_per_episode(matches) do
     matches
     |> Enum.group_by(fn {ep, _path, _size} -> ep.id end)
     |> Enum.map(fn {_id, group} ->
-      {ep, path, _size} = Enum.max_by(group, fn {_ep, path, size} -> {size, path} end)
+      real = Enum.reject(group, fn {_e, p, s} -> MovieSources.sample_name?(p, s) end)
+      candidates = if real == [], do: group, else: real
+      {ep, path, _size} = Enum.max_by(candidates, fn {_e, p, s} -> {s, p} end)
       {ep, path}
     end)
   end
