@@ -7,6 +7,7 @@ defmodule Cinder.Library.Filesystem.Disk do
   """
   @behaviour Cinder.Library.Filesystem
 
+  alias Cinder.BoundedCommand
   alias Cinder.Library.PathPolicy
   alias Cinder.Settings
 
@@ -35,6 +36,19 @@ defmodule Cinder.Library.Filesystem.Disk do
     "EXDEV" => :exdev
   }
   @rooted_effect_operations ~w(chmod exchange rename unlink rmdir mkdir mkdir_near reconcile_duplicates)
+
+  # Elixir-side bound for every subprocess this module shells out to: `run_rooted/2`,
+  # `open_rooted_bound/4`, `sync_directory/1`, and `run_command/2` (issue #590 — none of these
+  # had any bound before; `System.cmd/3` has no `:timeout` option at all). A few seconds is
+  # generous headroom for a healthy mount, since none of these do real work under one, while
+  # still turning a wedged FUSE/network mount into a bounded failure instead of holding
+  # `Cinder.Library.with_stage_handoff/1`'s household-wide lock indefinitely for as long as the
+  # mount stays wedged. Overridable only as a test seam (mirrors `Cinder.Library.MediaInfo.
+  # Ffprobe.probe_timeout_ms/0`'s own convention) — production never sets this.
+  @subprocess_timeout_ms 5_000
+
+  defp subprocess_timeout_ms,
+    do: Application.get_env(:cinder, :disk_subprocess_timeout_ms, @subprocess_timeout_ms)
 
   @impl true
   def dir?(path), do: File.dir?(path)
@@ -382,21 +396,22 @@ defmodule Cinder.Library.Filesystem.Disk do
   end
 
   defp unrooted_exchange(source, dest) do
-    executable = System.find_executable("mv") || "mv"
-
-    case run_command(
-           executable,
-           ["--exchange", "--no-copy", "--no-target-directory", source, dest]
-         ) do
+    case run_command("mv", ["--exchange", "--no-copy", "--no-target-directory", source, dest]) do
       {:ok, _output} -> sync_directories([Path.dirname(source), Path.dirname(dest)])
       {:error, _reason} = error -> error
     end
   end
 
+  # Supervised `Port` + `SIGKILL`-by-`os_pid` (#590) via `Cinder.BoundedCommand.run/4` — see
+  # that module's moduledoc. `executable` is resolved from `PATH` inside `run/4` itself, exactly
+  # like `System.cmd/3` did, so a missing `mv` still raises the equivalent
+  # `%ErlangError{original: :enoent}` shape the `rescue` below already wraps.
   defp run_command(executable, args) do
-    case System.cmd(executable, args, stderr_to_stdout: true) do
-      {output, 0} -> {:ok, output}
-      {output, status} -> {:error, {:exchange_failed, status, output}}
+    case BoundedCommand.run(executable, args, subprocess_timeout_ms(), stderr_to_stdout: true) do
+      {:ok, output, 0} -> {:ok, output}
+      {:ok, output, status} -> {:error, {:exchange_failed, status, output}}
+      {:error, {:timeout, output}} -> {:error, {:exchange_failed, :timeout, output}}
+      {:error, error} -> {:error, {:exchange_exec_failed, error}}
     end
   rescue
     error -> {:error, {:exchange_exec_failed, error}}
@@ -491,11 +506,26 @@ defmodule Cinder.Library.Filesystem.Disk do
     end)
   end
 
+  # Supervised `Port` + `SIGKILL`-by-`os_pid` (#590) via `Cinder.BoundedCommand.run/4` — see
+  # that module's moduledoc. A timeout still routes through `decode_rooted_result/2`, exactly
+  # like a normal exit does, using whatever output had already accumulated (in practice always
+  # empty — a hang here is a blocking syscall before the helper's own JSON line is ever
+  # written): for the `@rooted_effect_operations` this module actually mutates through, that
+  # unparseable/empty output already conservatively resolves to `{:error, {:effect_committed,
+  # operation, {:helper_outcome_unknown, _}}}` — the exact "we cannot prove this did or didn't
+  # land" shape every caller of a rooted mutation (`Cinder.Subtitles`, `Cinder.Library.Sidecars`,
+  # `Cinder.Subtitles.Sync.AtomicFile`, ...) already handles, so a killed-mid-effect helper gains
+  # no new error clause anywhere.
   defp run_rooted(operation, args) do
-    python = System.find_executable("python3") || "python3"
-
-    case System.cmd(python, [rooted_helper(), operation | args], stderr_to_stdout: true) do
-      {output, _status} -> decode_rooted_result(output, operation)
+    case BoundedCommand.run(
+           "python3",
+           [rooted_helper(), operation | args],
+           subprocess_timeout_ms(),
+           stderr_to_stdout: true
+         ) do
+      {:ok, output, _status} -> decode_rooted_result(output, operation)
+      {:error, {:timeout, output}} -> decode_rooted_result(output, operation)
+      {:error, error} -> {:error, {:rooted_helper_exec_failed, operation, error}}
     end
   rescue
     error -> {:error, {:rooted_helper_exec_failed, operation, error}}
@@ -559,7 +589,7 @@ defmodule Cinder.Library.Filesystem.Disk do
       {^port, {:exit_status, status}} ->
         {:error, {:rooted_helper_exit, status}}
     after
-      5_000 ->
+      subprocess_timeout_ms() ->
         close_rooted_port(port)
         {:error, :rooted_helper_timeout}
     end
@@ -610,16 +640,14 @@ defmodule Cinder.Library.Filesystem.Disk do
 
   defp rooted_identity(_identity), do: nil
 
-  defp close_rooted_port(port) do
-    if Port.info(port) do
-      Port.close(port)
-      :ok
-    else
-      :ok
-    end
-  rescue
-    ArgumentError -> :ok
-  end
+  # Kills the OS process behind `port` by pid before closing it (#590) — `Port.close/1` alone
+  # does not terminate a child stuck in a blocking syscall against a wedged mount (the
+  # `python3 priv/rooted_fs.py hold ...` process this closes was never proven to have reached
+  # its own graceful `sys.stdin.buffer.read()` shutdown wait, especially on the timeout path
+  # above). Delegates to `Cinder.BoundedCommand.kill_and_close/1`, the same
+  # `Port.info(port, :os_pid)` + `kill -KILL` idiom issue #510 already proved for three other
+  # modules' own subprocesses.
+  defp close_rooted_port(port), do: BoundedCommand.kill_and_close(port)
 
   defp with_rooted_bound(root, relative, source_path, mode, callback) do
     with {:ok, bound} <- open_rooted_bound(root, relative, source_path, mode) do
@@ -680,12 +708,18 @@ defmodule Cinder.Library.Filesystem.Disk do
     end)
   end
 
+  # Supervised `Port` + `SIGKILL`-by-`os_pid` (#590) via `Cinder.BoundedCommand.run/4` — see
+  # that module's moduledoc. `executable` is resolved from `PATH` inside `run/4` itself, exactly
+  # like `System.cmd/3` did, so a missing `sync` still raises the equivalent
+  # `%ErlangError{original: :enoent}` shape the `rescue` below already wraps.
   defp sync_directory(path) do
-    executable = System.find_executable("sync") || "sync"
-
-    case System.cmd(executable, ["-d", "--", path], stderr_to_stdout: true) do
-      {_output, 0} -> :ok
-      {output, status} -> {:error, {:directory_sync_failed, status, output}}
+    case BoundedCommand.run("sync", ["-d", "--", path], subprocess_timeout_ms(),
+           stderr_to_stdout: true
+         ) do
+      {:ok, _output, 0} -> :ok
+      {:ok, output, status} -> {:error, {:directory_sync_failed, status, output}}
+      {:error, {:timeout, output}} -> {:error, {:directory_sync_failed, :timeout, output}}
+      {:error, error} -> {:error, {:directory_sync_exec_failed, error}}
     end
   rescue
     error -> {:error, {:directory_sync_exec_failed, error}}
