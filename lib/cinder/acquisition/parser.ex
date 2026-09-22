@@ -228,8 +228,11 @@ defmodule Cinder.Acquisition.Parser do
   # S01-S02/"S01 - S02" are pre-rejected by multi_season?, and S01-1080p has no e-token so
   # it still reads as a bare-season pack.
   @season_episode ~r/(?:^|[^a-z0-9])s(\d{1,2})[._ -]{0,3}((?:e\d{1,3})(?:-?e?\d{1,3})*)/i
-  # The 1x02 form (single episode only).
-  @alt_episode ~r/(?:^|[^a-z0-9])(\d{1,2})x(\d{1,2})(?!\d)/i
+  # The 1x02 form (single episode), optionally continued by a range/double tail in the
+  # same shape as @season_episode's: "-1x03" (episode, season repeated) or "-03" (episode
+  # only, same season implied). Captures season, episode, [continuation season],
+  # [continuation episode] — the continuation groups are "" when absent (#603).
+  @alt_episode ~r/(?:^|[^a-z0-9])(\d{1,2})x(\d{1,2})(?!\d)(?:-(?:(\d{1,2})x)?(\d{1,3}))?/i
   # A bare season pack: S01 / S01.COMPLETE (no episode token following). The trailing
   # boundary requires a NON-alphanumeric (or end), so a group/title fragment like
   # "-S1CK" (digit glued to a letter) is never read as a whole-season pack — while
@@ -391,14 +394,37 @@ defmodule Cinder.Acquisition.Parser do
   # dots/spaces), after stripping a container extension. Otherwise nil — so a
   # hyphenated title ("Spider-Man") or a source token ("WEB-DL.H264") is never read
   # as a group. See the spec for the two accepted, bounded edge cases.
+  #
+  # A trailing "-TOKEN" that completes a known hyphenated COMPOUND tag (#602) is not a
+  # group either — "WEB-DL"/"WEB-Rip"/"Blu-Ray"/"DVD-Rip" mirror the hyphenated forms
+  # @sources already accepts (`web-?dl`, `web-?rip`, `blu-?ray`, `dvd-?rip`); "DTS-HD" /
+  # "DTS-X" are added even though this module has no audio-codec field of its own — same
+  # shape, same false-positive risk. Only the LAST hyphenated pair is checked, so a real
+  # group named after a compound still wins ("WEB-DL-GRP" → "GRP": the checked pair is
+  # "DL"-"GRP", not "WEB"-"DL").
+  @compound_tag_pairs [
+    {"web", "dl"},
+    {"web", "rip"},
+    {"blu", "ray"},
+    {"dvd", "rip"},
+    {"dts", "hd"},
+    {"dts", "x"}
+  ]
+
   defp group(name) do
     stripped = Regex.replace(~r/\.(mkv|mp4|avi|m4v|ts)$/i, name, "")
 
-    case Regex.run(~r/-([A-Za-z0-9]+)$/, stripped) do
-      [_, group] -> group
-      nil -> leading_group(name)
+    case Regex.run(~r/([A-Za-z0-9]*)-([A-Za-z0-9]+)$/, stripped) do
+      [_, prefix, group] ->
+        if compound_tag?(prefix, group), do: leading_group(name), else: group
+
+      nil ->
+        leading_group(name)
     end
   end
+
+  defp compound_tag?(prefix, group),
+    do: {String.downcase(prefix), String.downcase(group)} in @compound_tag_pairs
 
   defp leading_group(name) do
     case Regex.run(~r/^\s*\[([^\]\r\n]+)\]/u, name, capture: :all_but_first) do
@@ -439,9 +465,30 @@ defmodule Cinder.Acquisition.Parser do
   defp from_tail([_, season, tail]),
     do: validate_episode(String.to_integer(season), parse_tail(tail))
 
-  defp single([_, season, episode]) do
+  defp single([_, season, episode]), do: resolve_alt(season, episode, "", "")
+
+  defp single([_, season, episode, cont_season, cont_episode]),
+    do: resolve_alt(season, episode, cont_season, cont_episode)
+
+  # Feeds the x-form tail through the SAME parse_tail/1 the SxxEyy form uses, so range
+  # expansion and the stop-early rules can't drift between the two forms (#603). A
+  # continuation naming an explicit, different season ("1x01-2x01") is dropped rather
+  # than expanded across seasons — @alt_episode has no multi-season guard of its own
+  # (multi_season?/1 only scans the S-token forms), so the cross-season case is decided
+  # right here instead.
+  defp resolve_alt(season, episode, cont_season, cont_episode) do
     ep = String.to_integer(episode)
-    if ep?(ep), do: validate_episode(String.to_integer(season), [ep]), else: {nil, nil}
+
+    if ep?(ep) do
+      tail =
+        if cont_episode == "" or (cont_season != "" and cont_season != season),
+          do: "e#{episode}",
+          else: "e#{episode}-#{cont_episode}"
+
+      validate_episode(String.to_integer(season), parse_tail(tail))
+    else
+      {nil, nil}
+    end
   end
 
   defp bare([_, season]), do: validate(String.to_integer(season), nil)

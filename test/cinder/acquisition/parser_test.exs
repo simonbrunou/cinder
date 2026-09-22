@@ -45,9 +45,23 @@ defmodule Cinder.Acquisition.ParserTest do
   end
 
   test "a source-hyphen token with a trailing field is not a group" do
-    # Note: ends on `.H264`, not on `WEB-DL` — a name ending exactly on `WEB-DL` would give "DL".
     assert %{group: nil, codec: "h264", resolution: "1080p"} =
              Parser.parse("Movie.2010.1080p.WEB-DL.H264")
+  end
+
+  test "a trailing hyphenated compound tag is not a group (#602)" do
+    # WEB-DL, WEB-Rip, Blu-Ray, DVD-Rip mirror the hyphenated forms @sources already
+    # accepts; DTS-HD/DTS-X are common scene audio tags with the same shape even though
+    # this module has no audio-codec field of its own.
+    assert %{group: nil} = Parser.parse("Movie.2010.1080p.WEB-DL")
+    assert %{group: nil} = Parser.parse("Show.S01E05.720p.WEB-DL")
+    assert %{group: nil} = Parser.parse("Movie.2020.1080p.BluRay.DTS-HD")
+    assert %{group: nil} = Parser.parse("Movie.2010.1080p.Blu-Ray")
+    assert %{group: nil} = Parser.parse("Movie.2020.1080p.WEB-DL.DTS-X")
+
+    # A real group after a compound tag still wins.
+    assert %{group: "GRP"} = Parser.parse("Movie.2010.1080p.WEB-DL-GRP")
+    assert %{group: "GRP"} = Parser.parse("Movie.2020.1080p.BluRay.DTS-HD.MA-GRP")
   end
 
   test "a groupless scene name yields a nil group" do
@@ -179,6 +193,24 @@ defmodule Cinder.Acquisition.ParserTest do
     test "the 1x02 form is read as a single episode" do
       assert %{season: 1, episodes: [2], resolution: "720p", codec: "x264", group: "GRP"} =
                Parser.parse("Show.Name.1x02.720p.HDTV.x264-GRP")
+    end
+
+    test "an x-form range (1x01-1x03 / 1x01-03) expands to the inclusive episode list (#603)" do
+      assert %{season: 1, episodes: [1, 2, 3]} =
+               Parser.parse("Show.Name.1x01-1x03.720p.HDTV.x264-GRP")
+
+      assert %{season: 1, episodes: [1, 2, 3]} =
+               Parser.parse("Show.Name.1x01-03.720p.HDTV.x264-GRP")
+
+      assert %{season: 1, episodes: [1, 2]} = Parser.parse("Show.Name.1x01-1x02.720p")
+    end
+
+    test "an x-form descending range keeps the valid leading episode" do
+      assert %{season: 1, episodes: [3]} = Parser.parse("Show.1x03-1x01.720p")
+    end
+
+    test "an x-form continuation naming a different season does not expand across seasons" do
+      assert %{season: 1, episodes: [1]} = Parser.parse("Show.1x01-2x01.720p")
     end
 
     test "a dash-separated episode (Sxx-Eyy) is a single episode, not a season pack" do
@@ -455,6 +487,10 @@ defmodule Cinder.Acquisition.ParserTest do
     test "a hyphen-glued resolution keeps the episode instead of dropping the release" do
       assert %{season: 1, episodes: [2], resolution: "720p"} =
                Parser.parse("Show.S01E02-720p.WEB")
+    end
+
+    test "an x-form hyphen-glued resolution keeps the episode instead of dropping the release" do
+      assert %{season: 1, episodes: [2]} = Parser.parse("Show.1x02-720p")
     end
 
     test "a descending range keeps the valid leading episode" do
