@@ -112,6 +112,7 @@ defmodule CinderWeb.IssuesLive do
                 size="sm"
                 phx-click="dismiss"
                 phx-value-id={r.id}
+                phx-disable-with={gettext("Dismissing…")}
               >
                 {gettext("Dismiss")}
               </.button>

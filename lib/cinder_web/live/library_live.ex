@@ -513,9 +513,9 @@ defmodule CinderWeb.LibraryLive do
         {gettext("Library")}
         <:subtitle>{gettext("Manage movies, added series, and book targets.")}</:subtitle>
         <:actions>
-          <.link id="adopt-library-link" navigate={~p"/library/adopt"} class="btn btn-primary">
+          <.button id="adopt-library-link" navigate={~p"/library/adopt"} variant="primary">
             {gettext("Adopt existing library")}
-          </.link>
+          </.button>
         </:actions>
       </.header>
 

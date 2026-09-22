@@ -681,7 +681,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
           )}
         </:subtitle>
         <:actions>
-          <.link navigate={~p"/library"} class="btn btn-ghost">{gettext("Back to library")}</.link>
+          <.button navigate={~p"/library"} variant="ghost">{gettext("Back to library")}</.button>
         </:actions>
       </.header>
 
@@ -1002,7 +1002,12 @@ defmodule CinderWeb.LibraryAdoptionLive do
         </section>
 
         <div :if={@counts.auto_matched + @counts.ambiguous > 0} class="flex items-center gap-3">
-          <.button id="adopt-selected" type="submit" disabled={@adopting? or @scanning?}>
+          <.button
+            id="adopt-selected"
+            type="submit"
+            disabled={@adopting? or @scanning?}
+            phx-disable-with={gettext("Adopting…")}
+          >
             {if @adopting?, do: gettext("Adopting…"), else: gettext("Adopt selected")}
           </.button>
           <.spinner :if={@adopting?} label={gettext("Adopting selected files…")} />

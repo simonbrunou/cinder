@@ -153,7 +153,16 @@ defmodule CinderWeb.UserLive.Settings do
               />
             <% end %>
 
-            <.button phx-click="unlink_plex" variant="neutral" class="mt-2">
+            <.button
+              phx-click="unlink_plex"
+              variant="neutral"
+              class="mt-2"
+              data-confirm={
+                gettext(
+                  "Unlink your Plex account? You'll need to link it again to sign in with Plex."
+                )
+              }
+            >
               {gettext("Unlink")}
             </.button>
           <% else %>
@@ -179,7 +188,16 @@ defmodule CinderWeb.UserLive.Settings do
                 {gettext("Linked.")}
               <% end %>
             </p>
-            <.button phx-click="unlink_jellyfin" variant="neutral" class="mt-2">
+            <.button
+              phx-click="unlink_jellyfin"
+              variant="neutral"
+              class="mt-2"
+              data-confirm={
+                gettext(
+                  "Unlink your Jellyfin account? You'll need to link it again to sign in with Jellyfin."
+                )
+              }
+            >
               {gettext("Unlink")}
             </.button>
           <% else %>

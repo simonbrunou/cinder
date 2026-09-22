@@ -419,7 +419,9 @@ defmodule CinderWeb.MovieDetailLive do
           <.input field={@alias_form[:country_code]} label={gettext("Country (optional)")} />
           <.input field={@alias_form[:language_code]} label={gettext("Language (optional)")} />
           <div class="mb-2 flex gap-1">
-            <.button type="submit" variant="primary" size="sm">{gettext("Save alias")}</.button>
+            <.button type="submit" variant="primary" size="sm" phx-disable-with={gettext("Saving…")}>{gettext(
+              "Save alias"
+            )}</.button>
             <.button
               :if={@alias_form[:id].value not in [nil, ""]}
               type="button"
@@ -478,6 +480,7 @@ defmodule CinderWeb.MovieDetailLive do
                 phx-click="delete_alias"
                 phx-value-id={title_alias.id}
                 aria-label={gettext("Delete alias %{title}", title: title_alias.title)}
+                data-confirm={gettext("Delete this alias?")}
               >
                 {gettext("Delete")}
               </.button>

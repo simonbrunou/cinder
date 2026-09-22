@@ -500,6 +500,16 @@ defmodule CinderWeb.DiscoverLive do
         />
       </section>
 
+      <section
+        :if={@books_state == :loading and @books_showing?}
+        id="books-search-loading"
+        class="mb-10"
+        aria-labelledby="books-loading-heading"
+      >
+        <h2 id="books-loading-heading" class="mb-4 text-lg font-semibold">{gettext("Books")}</h2>
+        <.spinner label={gettext("Searching books…")} />
+      </section>
+
       <section :if={@filtered_book_results != []} class="mb-10" aria-labelledby="books-heading">
         <h2 id="books-heading" class="mb-4 text-lg font-semibold">{gettext("Books")}</h2>
         <.book_cards id="book-results" results={@filtered_book_results} states={@book_states} />
