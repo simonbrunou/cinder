@@ -790,7 +790,7 @@ msgid "No movies yet"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1015
-#: lib/cinder_web/components/core_components.ex:1086
+#: lib/cinder_web/components/core_components.ex:1092
 #, elixir-autogen
 msgid "No poster"
 msgstr ""
@@ -1063,7 +1063,7 @@ msgstr ""
 msgid "Searching"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1257
+#: lib/cinder_web/components/core_components.ex:1263
 #, elixir-autogen
 msgid "Season %{number}"
 msgstr ""
@@ -1154,7 +1154,7 @@ msgstr ""
 msgid "Something went wrong!"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1256
+#: lib/cinder_web/components/core_components.ex:1262
 #, elixir-autogen
 msgid "Specials"
 msgstr ""
@@ -1384,18 +1384,18 @@ msgstr ""
 msgid "Media server"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1160
+#: lib/cinder_web/components/core_components.ex:1166
 #, elixir-autogen
 msgid "Any language"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1158
+#: lib/cinder_web/components/core_components.ex:1164
 #: lib/cinder_web/live/user_live/settings.ex:35
 #, elixir-autogen
 msgid "French"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1161
+#: lib/cinder_web/components/core_components.ex:1167
 #: lib/cinder_web/components/discover_components.ex:287
 #: lib/cinder_web/components/discover_components.ex:290
 #, elixir-autogen
@@ -2241,7 +2241,7 @@ msgstr ""
 msgid "Subtitles"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1146
+#: lib/cinder_web/components/core_components.ex:1152
 #: lib/cinder_web/live/movie_detail_live.ex:373
 #: lib/cinder_web/live/movie_detail_live.ex:563
 #: lib/cinder_web/live/series_detail_components.ex:166
@@ -2431,15 +2431,15 @@ msgstr ""
 msgid "Not saved. Check: %{fields}."
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1244
+#: lib/cinder_web/components/core_components.ex:1250
 #: lib/cinder_web/live/profiles_live.ex:276
 #, elixir-autogen
 msgid "Anime"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1178
-#: lib/cinder_web/components/core_components.ex:1200
-#: lib/cinder_web/components/core_components.ex:1242
+#: lib/cinder_web/components/core_components.ex:1184
+#: lib/cinder_web/components/core_components.ex:1206
+#: lib/cinder_web/components/core_components.ex:1248
 #, elixir-autogen
 msgid "Auto"
 msgstr ""
@@ -2450,24 +2450,24 @@ msgstr ""
 msgid "Confirmed media profile for %{title}"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1176
-#: lib/cinder_web/components/core_components.ex:1209
+#: lib/cinder_web/components/core_components.ex:1182
+#: lib/cinder_web/components/core_components.ex:1215
 #, elixir-autogen
 msgid "Media profile"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1243
+#: lib/cinder_web/components/core_components.ex:1249
 #: lib/cinder_web/live/profiles_live.ex:277
 #, elixir-autogen
 msgid "Standard"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1247
+#: lib/cinder_web/components/core_components.ex:1253
 #, elixir-autogen
 msgid " and "
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1232
+#: lib/cinder_web/components/core_components.ex:1238
 #, elixir-autogen
 msgid "%{profile} suggested by %{evidence}. Auto remains %{effective} until selected."
 msgstr ""
@@ -2524,7 +2524,7 @@ msgstr ""
 msgid "Extra"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1250
+#: lib/cinder_web/components/core_components.ex:1256
 #, elixir-autogen
 msgid "Japanese animation"
 msgstr ""
@@ -2598,12 +2598,12 @@ msgstr ""
 msgid "Title aliases"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1251
+#: lib/cinder_web/components/core_components.ex:1257
 #, elixir-autogen
 msgid "an absolute episode group"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1229
+#: lib/cinder_web/components/core_components.ex:1235
 #, elixir-autogen
 msgid "effective"
 msgstr ""
@@ -2867,7 +2867,7 @@ msgstr ""
 msgid "Enter a number of GB (0 = no limit), or leave blank for the default."
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1159
+#: lib/cinder_web/components/core_components.ex:1165
 #, elixir-autogen
 msgid "French + original"
 msgstr ""

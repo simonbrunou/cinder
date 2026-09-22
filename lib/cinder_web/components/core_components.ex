@@ -1009,7 +1009,7 @@ defmodule CinderWeb.CoreComponents do
     <div id={@id} class="card bg-base-200 shadow-sm">
       <figure class="poster-frame relative overflow-hidden">
         <div
-          class="grid aspect-[2/3] w-full place-items-center text-sm text-white"
+          class="poster-fallback grid aspect-[2/3] w-full place-items-center text-sm text-base-content"
           style={poster_fallback_style(@title)}
         >
           <span class="poster-fallback-text">{gettext("No poster")}</span>
@@ -1050,16 +1050,22 @@ defmodule CinderWeb.CoreComponents do
   defp type_label(:person), do: gettext("Person")
   defp type_label(:collection), do: gettext("Collection")
 
-  # HSL lightness is pinned at 30%/18% regardless of theme — this gradient is dark by
-  # construction in both dark and light mode, so media_card's "No poster" label is fixed
-  # `text-white` rather than `text-base-content` (which would go near-black in the light
-  # theme and read as dark text on a dark tile). Worst-case measured contrast, solid white on
-  # the lightest achievable stop across every hue this can produce (hsl(*, 55%, 30%)): 4.75:1,
-  # clearing WCAG AA's 4.5:1 for body text.
+  # Lightness is theme-aware, not pinned dark: the function below emits only the per-title
+  # --poster-hue/--poster-hue2 custom properties (keeping the identity hue — same
+  # `:erlang.phash2(title, 360_000)` and `hue + 40` split — untouched); app.css owns two
+  # gradients keyed off `.poster-fallback` and `[data-theme=light] .poster-fallback`, a dark
+  # ramp (hsl(*, 55%, 26%) -> hsl(*, 55%, 14%)) and a light ramp on the same hues (hsl(*, 45%,
+  # 88%) -> hsl(*, 45%, 80%)), so the tile always tracks its own theme instead of a dark tile
+  # floating on warm paper (#599). That lets the "No poster" label use the theme's own
+  # `text-base-content` instead of a pinned `text-white`. Worst-case measured contrast
+  # (base-content vs. the ramp stop closest to it in lightness, across all 360 hues): dark
+  # 4.850:1 (hue 60, 93% content over the 26% stop), light 8.813:1 (hue 240, 22% content over
+  # the 80% stop) — both clear WCAG AA's 4.5:1 for body text, dark with real margin this time
+  # instead of "only just".
   defp poster_fallback_style(title) do
     hue = :erlang.phash2(title, 360_000) |> rem(360)
     hue2 = rem(hue + 40, 360)
-    "background: linear-gradient(135deg, hsl(#{hue}, 55%, 30%), hsl(#{hue2}, 55%, 18%));"
+    "--poster-hue: #{hue}; --poster-hue2: #{hue2};"
   end
 
   @doc """

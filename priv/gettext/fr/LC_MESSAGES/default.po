@@ -27,7 +27,7 @@ msgstr "%{count} bloqué(s)"
 msgid "%{count} series"
 msgstr "%{count} série(s)"
 
-#: lib/cinder_web/live/series_detail_components.ex:433
+#: lib/cinder_web/live/series_detail_components.ex:435
 #, elixir-autogen
 msgid "%{n}/%{m} monitored"
 msgstr "%{n}/%{m} suivis"
@@ -48,7 +48,7 @@ msgstr "%{title} est déjà demandé."
 msgid "1080p, 720p"
 msgstr "1080p, 720p"
 
-#: lib/cinder_web/live/user_live/settings.ex:356
+#: lib/cinder_web/live/user_live/settings.ex:374
 #, elixir-autogen
 msgid "A link to confirm your email change has been sent to the new address."
 msgstr ""
@@ -120,12 +120,12 @@ msgstr "Supprimer aussi les fichiers du disque"
 msgid "Also delete the file from disk"
 msgstr "Supprimer aussi le fichier du disque"
 
-#: lib/cinder_web/live/series_detail_components.ex:540
+#: lib/cinder_web/live/series_detail_components.ex:542
 #, elixir-autogen
 msgid "Also stop monitoring these episodes"
 msgstr "Arrêter aussi de suivre ces épisodes"
 
-#: lib/cinder_web/live/series_detail_components.ex:680
+#: lib/cinder_web/live/series_detail_components.ex:682
 #, elixir-autogen
 msgid "Also stop monitoring this episode"
 msgstr "Arrêter aussi de suivre cet épisode"
@@ -197,8 +197,8 @@ msgstr "Impossible de rétrograder le dernier administrateur."
 #: lib/cinder_web/live/library_live.ex:670
 #: lib/cinder_web/live/library_live.ex:768
 #: lib/cinder_web/live/movie_detail_live.ex:271
-#: lib/cinder_web/live/movie_detail_live.ex:430
-#: lib/cinder_web/live/series_detail_components.ex:251
+#: lib/cinder_web/live/movie_detail_live.ex:432
+#: lib/cinder_web/live/series_detail_components.ex:253
 #: lib/cinder_web/live/users_live.ex:515
 #: lib/cinder_web/live/users_live.ex:562
 #: lib/cinder_web/live/users_live.ex:638
@@ -399,23 +399,23 @@ msgstr "Tableau de bord"
 #: lib/cinder_web/live/library_live.ex:796
 #: lib/cinder_web/live/movie_detail_live.ex:280
 #: lib/cinder_web/live/movie_detail_live.ex:311
-#: lib/cinder_web/live/movie_detail_live.ex:483
+#: lib/cinder_web/live/movie_detail_live.ex:485
 #: lib/cinder_web/live/profiles_live.ex:197
 #: lib/cinder_web/live/requests_live.ex:497
 #: lib/cinder_web/live/series_detail_components.ex:98
-#: lib/cinder_web/live/series_detail_components.ex:304
+#: lib/cinder_web/live/series_detail_components.ex:306
 #: lib/cinder_web/live/users_live.ex:660
 #: lib/cinder_web/live/users_live.ex:669
 #, elixir-autogen
 msgid "Delete"
 msgstr "Supprimer"
 
-#: lib/cinder_web/live/series_detail_components.ex:474
+#: lib/cinder_web/live/series_detail_components.ex:476
 #, elixir-autogen
 msgid "Delete all files in %{season}"
 msgstr "Supprimer tous les fichiers de %{season}"
 
-#: lib/cinder_web/live/series_detail_components.ex:543
+#: lib/cinder_web/live/series_detail_components.ex:545
 #, elixir-autogen
 msgid "Delete every downloaded file in %{season}? Monitored episodes will be re-downloaded next sweep unless you also stop monitoring."
 msgstr ""
@@ -423,19 +423,19 @@ msgstr ""
 "seront re-téléchargés au prochain passage, sauf si vous arrêtez aussi le "
 "suivi."
 
-#: lib/cinder_web/live/series_detail_components.ex:635
-#: lib/cinder_web/live/series_detail_components.ex:677
+#: lib/cinder_web/live/series_detail_components.ex:637
+#: lib/cinder_web/live/series_detail_components.ex:679
 #, elixir-autogen
 msgid "Delete file"
 msgstr "Supprimer le fichier"
 
-#: lib/cinder_web/live/series_detail_components.ex:629
+#: lib/cinder_web/live/series_detail_components.ex:631
 #, elixir-autogen
 msgid "Delete file for %{season} episode %{number}"
 msgstr "Supprimer le fichier de %{season} épisode %{number}"
 
-#: lib/cinder_web/live/series_detail_components.ex:477
-#: lib/cinder_web/live/series_detail_components.ex:537
+#: lib/cinder_web/live/series_detail_components.ex:479
+#: lib/cinder_web/live/series_detail_components.ex:539
 #, elixir-autogen
 msgid "Delete files"
 msgstr "Supprimer les fichiers"
@@ -527,9 +527,9 @@ msgstr "En téléchargement"
 msgid "Downloads"
 msgstr "Téléchargements"
 
-#: lib/cinder_web/live/movie_detail_live.ex:471
+#: lib/cinder_web/live/movie_detail_live.ex:473
 #: lib/cinder_web/live/profiles_live.ex:187
-#: lib/cinder_web/live/series_detail_components.ex:292
+#: lib/cinder_web/live/series_detail_components.ex:294
 #, elixir-autogen
 msgid "Edit"
 msgstr "Modifier"
@@ -547,12 +547,12 @@ msgstr "Modifier l'e-mail"
 msgid "Email"
 msgstr "E-mail"
 
-#: lib/cinder_web/live/user_live/settings.ex:274
+#: lib/cinder_web/live/user_live/settings.ex:292
 #, elixir-autogen
 msgid "Email change link is invalid or it has expired."
 msgstr "Le lien de changement d'e-mail est invalide ou a expiré."
 
-#: lib/cinder_web/live/user_live/settings.ex:271
+#: lib/cinder_web/live/user_live/settings.ex:289
 #, elixir-autogen
 msgid "Email changed successfully."
 msgstr "E-mail changé avec succès."
@@ -609,7 +609,7 @@ msgstr "E-mail ou mot de passe invalide"
 
 #: lib/cinder_web/components/layouts.ex:345
 #: lib/cinder_web/live/book_detail_live.ex:628
-#: lib/cinder_web/live/movie_detail_live.ex:557
+#: lib/cinder_web/live/movie_detail_live.ex:559
 #: lib/cinder_web/live/user_live/settings.ex:31
 #, elixir-autogen
 msgid "Language"
@@ -681,17 +681,17 @@ msgstr "Type de serveur multimédia"
 msgid "Min size (GB)"
 msgstr "Taille min (Go)"
 
-#: lib/cinder_web/live/series_detail_components.ex:564
+#: lib/cinder_web/live/series_detail_components.ex:566
 #, elixir-autogen
 msgid "Monitor %{season} episode %{number}"
 msgstr "Suivre %{season} épisode %{number}"
 
-#: lib/cinder_web/live/series_detail_components.ex:464
+#: lib/cinder_web/live/series_detail_components.ex:466
 #, elixir-autogen
 msgid "Monitor all"
 msgstr "Tout suivre"
 
-#: lib/cinder_web/live/series_detail_components.ex:459
+#: lib/cinder_web/live/series_detail_components.ex:461
 #, elixir-autogen
 msgid "Monitor all episodes in %{season}"
 msgstr "Suivre tous les épisodes de %{season}"
@@ -732,7 +732,7 @@ msgstr "Pipeline des films"
 
 #: lib/cinder_web/live/dashboard_live.ex:324
 #: lib/cinder_web/live/discover_live.ex:473
-#: lib/cinder_web/live/discover_live.ex:632
+#: lib/cinder_web/live/discover_live.ex:637
 #: lib/cinder_web/live/library_live.ex:532
 #: lib/cinder_web/live/library_live.ex:611
 #: lib/cinder_web/live/profiles_live.ex:271
@@ -781,7 +781,7 @@ msgstr "Aucun téléchargement actif"
 msgid "No activity yet"
 msgstr "Aucune activité pour le moment"
 
-#: lib/cinder_web/live/series_detail_components.ex:551
+#: lib/cinder_web/live/series_detail_components.ex:553
 #, elixir-autogen
 msgid "No episodes yet."
 msgstr "Aucun épisode pour le moment."
@@ -791,7 +791,7 @@ msgstr "Aucun épisode pour le moment."
 msgid "No match"
 msgstr "Aucune correspondance"
 
-#: lib/cinder_web/live/discover_live.ex:662
+#: lib/cinder_web/live/discover_live.ex:667
 #: lib/cinder_web/live/library_live.ex:615
 #: lib/cinder_web/live/library_live.ex:718
 #: lib/cinder_web/live/library_live.ex:815
@@ -806,7 +806,7 @@ msgid "No movies yet"
 msgstr "Aucun film pour le moment"
 
 #: lib/cinder_web/components/core_components.ex:1015
-#: lib/cinder_web/components/core_components.ex:1086
+#: lib/cinder_web/components/core_components.ex:1092
 #, elixir-autogen
 msgid "No poster"
 msgstr "Aucune affiche"
@@ -821,7 +821,7 @@ msgstr "Aucune demande"
 msgid "No requests yet"
 msgstr "Aucune demande pour le moment"
 
-#: lib/cinder_web/live/series_detail_components.ex:414
+#: lib/cinder_web/live/series_detail_components.ex:416
 #, elixir-autogen
 msgid "No seasons found"
 msgstr "Aucune saison trouvée"
@@ -998,14 +998,14 @@ msgstr "Réinitialisation…"
 
 #: lib/cinder_web/live/activity_live.ex:503
 #: lib/cinder_web/live/book_detail_live.ex:643
-#: lib/cinder_web/live/movie_detail_live.ex:504
-#: lib/cinder_web/live/series_detail_components.ex:329
+#: lib/cinder_web/live/movie_detail_live.ex:506
+#: lib/cinder_web/live/series_detail_components.ex:331
 #, elixir-autogen
 msgid "Retry"
 msgstr "Réessayer"
 
 #: lib/cinder_web/live/activity_live.ex:501
-#: lib/cinder_web/live/movie_detail_live.ex:500
+#: lib/cinder_web/live/movie_detail_live.ex:502
 #, elixir-autogen
 msgid "Retrying…"
 msgstr "Nouvelle tentative…"
@@ -1020,8 +1020,8 @@ msgstr "Rôle"
 msgid "Roles and request quotas."
 msgstr "Rôles et quotas de demandes."
 
-#: lib/cinder_web/live/series_detail_components.ex:353
-#: lib/cinder_web/live/series_detail_components.ex:388
+#: lib/cinder_web/live/series_detail_components.ex:355
+#: lib/cinder_web/live/series_detail_components.ex:390
 #: lib/cinder_web/live/users_live.ex:613
 #, elixir-autogen
 msgid "Save"
@@ -1045,8 +1045,8 @@ msgstr "Enregistrer les paramètres"
 #: lib/cinder_web/live/movie_detail_live.ex:422
 #: lib/cinder_web/live/profiles_live.ex:260
 #: lib/cinder_web/live/series_detail_components.ex:243
-#: lib/cinder_web/live/series_detail_components.ex:351
-#: lib/cinder_web/live/series_detail_components.ex:387
+#: lib/cinder_web/live/series_detail_components.ex:353
+#: lib/cinder_web/live/series_detail_components.ex:389
 #: lib/cinder_web/live/settings_live.ex:192
 #: lib/cinder_web/live/user_live/settings.ex:38
 #: lib/cinder_web/live/user_live/settings.ex:90
@@ -1058,8 +1058,8 @@ msgstr "Enregistrement…"
 
 #: lib/cinder_web/components/core_components.ex:760
 #: lib/cinder_web/components/core_components.ex:813
-#: lib/cinder_web/live/discover_live.ex:668
-#: lib/cinder_web/live/discover_live.ex:674
+#: lib/cinder_web/live/discover_live.ex:673
+#: lib/cinder_web/live/discover_live.ex:679
 #, elixir-autogen
 msgid "Search failed"
 msgstr "Échec de la recherche"
@@ -1079,7 +1079,7 @@ msgstr "Recherchez dans le catalogue pour demander un titre."
 msgid "Searching"
 msgstr "Recherche en cours"
 
-#: lib/cinder_web/components/core_components.ex:1257
+#: lib/cinder_web/components/core_components.ex:1263
 #, elixir-autogen
 msgid "Season %{number}"
 msgstr "Saison %{number}"
@@ -1172,17 +1172,17 @@ msgstr "Aller au contenu"
 msgid "Something went wrong!"
 msgstr "Une erreur est survenue !"
 
-#: lib/cinder_web/components/core_components.ex:1256
+#: lib/cinder_web/components/core_components.ex:1262
 #, elixir-autogen
 msgid "Specials"
 msgstr "Épisodes spéciaux"
 
-#: lib/cinder_web/live/discover_live.ex:669
+#: lib/cinder_web/live/discover_live.ex:674
 #, elixir-autogen
 msgid "TMDB didn't respond. Try again."
 msgstr "TMDB n'a pas répondu. Réessayez."
 
-#: lib/cinder_web/live/series_detail_components.ex:415
+#: lib/cinder_web/live/series_detail_components.ex:417
 #: lib/cinder_web/live/series_discovery_live.ex:482
 #, elixir-autogen
 msgid "TMDB returned no season data for this series."
@@ -1197,9 +1197,9 @@ msgstr "Échec de la recherche TMDB. Réessayez."
 #: lib/cinder_web/components/core_components.ex:1049
 #: lib/cinder_web/live/dashboard_live.ex:325
 #: lib/cinder_web/live/discover_live.ex:474
-#: lib/cinder_web/live/discover_live.ex:632
+#: lib/cinder_web/live/discover_live.ex:637
 #: lib/cinder_web/live/profiles_live.ex:272
-#: lib/cinder_web/live/series_detail_components.ex:755
+#: lib/cinder_web/live/series_detail_components.ex:757
 #: lib/cinder_web/settings_labels.ex:47
 #, elixir-autogen
 msgid "TV"
@@ -1241,12 +1241,12 @@ msgstr "Trop de tentatives. Réessayez dans une minute."
 msgid "Track what you've asked for."
 msgstr "Suivez ce que vous avez demandé."
 
-#: lib/cinder_web/live/series_detail_components.ex:464
+#: lib/cinder_web/live/series_detail_components.ex:466
 #, elixir-autogen
 msgid "Unmonitor all"
 msgstr "Tout arrêter de suivre"
 
-#: lib/cinder_web/live/series_detail_components.ex:455
+#: lib/cinder_web/live/series_detail_components.ex:457
 #, elixir-autogen
 msgid "Unmonitor all episodes in %{season}"
 msgstr "Arrêter de suivre tous les épisodes de %{season}"
@@ -1351,7 +1351,7 @@ msgstr "Vous devez vous connecter pour accéder à cette page."
 
 #: lib/cinder_web/controllers/user_session_controller.ex:104
 #: lib/cinder_web/controllers/user_session_controller.ex:166
-#: lib/cinder_web/live/user_live/settings.ex:483
+#: lib/cinder_web/live/user_live/settings.ex:501
 #: lib/cinder_web/user_auth.ex:289
 #, elixir-autogen
 msgid "You must re-authenticate to access this page."
@@ -1404,18 +1404,18 @@ msgstr "•••• enregistré (laisser vide pour conserver)"
 msgid "Media server"
 msgstr "Serveur multimédia"
 
-#: lib/cinder_web/components/core_components.ex:1160
+#: lib/cinder_web/components/core_components.ex:1166
 #, elixir-autogen
 msgid "Any language"
 msgstr "Toutes les langues"
 
-#: lib/cinder_web/components/core_components.ex:1158
+#: lib/cinder_web/components/core_components.ex:1164
 #: lib/cinder_web/live/user_live/settings.ex:35
 #, elixir-autogen
 msgid "French"
 msgstr "Français"
 
-#: lib/cinder_web/components/core_components.ex:1161
+#: lib/cinder_web/components/core_components.ex:1167
 #: lib/cinder_web/components/discover_components.ex:287
 #: lib/cinder_web/components/discover_components.ex:290
 #, elixir-autogen
@@ -1524,7 +1524,7 @@ msgid "Check failed"
 msgstr "Échec de la vérification"
 
 #: lib/cinder_web/live/requests_live.ex:378
-#: lib/cinder_web/live/series_detail_components.ex:397
+#: lib/cinder_web/live/series_detail_components.ex:399
 #, elixir-autogen
 msgid "Clear"
 msgstr "Effacer"
@@ -1581,7 +1581,7 @@ msgstr "Création du compte…"
 msgid "Delete %{email}? Their requests are deleted too."
 msgstr "Supprimer %{email} ? Ses demandes sont également supprimées."
 
-#: lib/cinder_web/live/series_detail_components.ex:683
+#: lib/cinder_web/live/series_detail_components.ex:685
 #, elixir-autogen
 msgid "Delete the downloaded file for this episode? If it stays monitored it will be downloaded again. Stop monitoring it to keep it gone."
 msgstr ""
@@ -1997,7 +1997,7 @@ msgstr "résolution non préférée"
 msgid "source not preferred"
 msgstr "source non préférée"
 
-#: lib/cinder_web/live/movie_detail_live.ex:528
+#: lib/cinder_web/live/movie_detail_live.ex:530
 #, elixir-autogen
 msgid "Cancel upgrade"
 msgstr "Annuler la mise à niveau"
@@ -2009,9 +2009,9 @@ msgid "Couldn't grab that release."
 msgstr "Impossible de récupérer cette version."
 
 #: lib/cinder_web/live/book_detail_live.ex:676
-#: lib/cinder_web/live/movie_detail_live.ex:516
+#: lib/cinder_web/live/movie_detail_live.ex:518
 #: lib/cinder_web/live/series_detail_components.ex:75
-#: lib/cinder_web/live/series_detail_components.ex:516
+#: lib/cinder_web/live/series_detail_components.ex:518
 #, elixir-autogen
 msgid "Find a better match"
 msgstr "Trouver une meilleure version"
@@ -2033,17 +2033,17 @@ msgstr "Ce film ne peut pas être récupéré pour le moment."
 msgid "Nothing left to grab this season."
 msgstr "Plus rien à récupérer pour cette saison."
 
-#: lib/cinder_web/live/series_detail_components.ex:661
+#: lib/cinder_web/live/series_detail_components.ex:663
 #, elixir-autogen
 msgid "Search"
 msgstr "Rechercher"
 
-#: lib/cinder_web/live/series_detail_components.ex:501
+#: lib/cinder_web/live/series_detail_components.ex:503
 #, elixir-autogen
 msgid "Search all missing"
 msgstr "Rechercher les épisodes manquants"
 
-#: lib/cinder_web/live/series_detail_components.ex:659
+#: lib/cinder_web/live/series_detail_components.ex:661
 #, elixir-autogen
 msgid "Search for episode %{number}"
 msgstr "Rechercher l'épisode %{number}"
@@ -2157,7 +2157,7 @@ msgstr "nov."
 msgid "Oct"
 msgstr "oct."
 
-#: lib/cinder_web/live/series_detail_components.ex:496
+#: lib/cinder_web/live/series_detail_components.ex:498
 #, elixir-autogen
 msgid "Search all missing episodes in %{season}"
 msgstr "Rechercher tous les épisodes manquants de %{season}"
@@ -2199,7 +2199,7 @@ msgstr "Relance impossible : ce film a déjà changé d'état."
 msgid "%{n} min"
 msgstr "%{n} min"
 
-#: lib/cinder_web/live/movie_detail_live.ex:541
+#: lib/cinder_web/live/movie_detail_live.ex:543
 #, elixir-autogen
 msgid "Downloaded file"
 msgstr "Fichier téléchargé"
@@ -2218,22 +2218,22 @@ msgstr "Film introuvable."
 msgid "No description available."
 msgstr "Aucune description disponible."
 
-#: lib/cinder_web/live/movie_detail_live.ex:594
+#: lib/cinder_web/live/movie_detail_live.ex:596
 #, elixir-autogen
 msgid "Release"
 msgstr "Version"
 
-#: lib/cinder_web/live/movie_detail_live.ex:545
+#: lib/cinder_web/live/movie_detail_live.ex:547
 #, elixir-autogen
 msgid "Resolution"
 msgstr "Résolution"
 
-#: lib/cinder_web/live/movie_detail_live.ex:549
+#: lib/cinder_web/live/movie_detail_live.ex:551
 #, elixir-autogen
 msgid "Size"
 msgstr "Taille"
 
-#: lib/cinder_web/live/movie_detail_live.ex:553
+#: lib/cinder_web/live/movie_detail_live.ex:555
 #, elixir-autogen
 msgid "Source"
 msgstr "Source"
@@ -2268,36 +2268,36 @@ msgstr "Nom d'utilisateur OpenSubtitles"
 msgid "Subtitle languages (comma-separated, e.g. en,fr)"
 msgstr "Langues des sous-titres (séparées par des virgules, ex. en,fr)"
 
-#: lib/cinder_web/live/movie_detail_live.ex:570
+#: lib/cinder_web/live/movie_detail_live.ex:572
 #: lib/cinder_web/settings_labels.ex:31
 #, elixir-autogen
 msgid "Subtitles"
 msgstr "Sous-titres"
 
-#: lib/cinder_web/components/core_components.ex:1146
+#: lib/cinder_web/components/core_components.ex:1152
 #: lib/cinder_web/live/movie_detail_live.ex:373
-#: lib/cinder_web/live/movie_detail_live.ex:561
+#: lib/cinder_web/live/movie_detail_live.ex:563
 #: lib/cinder_web/live/series_detail_components.ex:166
 #, elixir-autogen
 msgid "Audio"
 msgstr "Audio"
 
-#: lib/cinder_web/live/series_detail_components.ex:594
+#: lib/cinder_web/live/series_detail_components.ex:596
 #, elixir-autogen
 msgid "audio %{lang}"
 msgstr "audio %{lang}"
 
-#: lib/cinder_web/live/movie_detail_live.ex:576
+#: lib/cinder_web/live/movie_detail_live.ex:578
 #, elixir-autogen
 msgid "embedded"
 msgstr "intégré"
 
-#: lib/cinder_web/live/movie_detail_live.ex:582
+#: lib/cinder_web/live/movie_detail_live.ex:584
 #, elixir-autogen
 msgid "sidecar"
 msgstr "externe"
 
-#: lib/cinder_web/live/series_detail_components.ex:603
+#: lib/cinder_web/live/series_detail_components.ex:605
 #, elixir-autogen
 msgid "subtitle %{lang}"
 msgstr "sous-titre %{lang}"
@@ -2467,15 +2467,15 @@ msgstr "%{kind} : Taille minimale (Go)"
 msgid "Not saved. Check: %{fields}."
 msgstr "Paramètres non enregistrés. Vérifiez : %{fields}."
 
-#: lib/cinder_web/components/core_components.ex:1244
+#: lib/cinder_web/components/core_components.ex:1250
 #: lib/cinder_web/live/profiles_live.ex:276
 #, elixir-autogen
 msgid "Anime"
 msgstr "Anime"
 
-#: lib/cinder_web/components/core_components.ex:1178
-#: lib/cinder_web/components/core_components.ex:1200
-#: lib/cinder_web/components/core_components.ex:1242
+#: lib/cinder_web/components/core_components.ex:1184
+#: lib/cinder_web/components/core_components.ex:1206
+#: lib/cinder_web/components/core_components.ex:1248
 #, elixir-autogen
 msgid "Auto"
 msgstr "Auto"
@@ -2486,24 +2486,24 @@ msgstr "Auto"
 msgid "Confirmed media profile for %{title}"
 msgstr "Profil multimédia confirmé pour %{title}"
 
-#: lib/cinder_web/components/core_components.ex:1176
-#: lib/cinder_web/components/core_components.ex:1209
+#: lib/cinder_web/components/core_components.ex:1182
+#: lib/cinder_web/components/core_components.ex:1215
 #, elixir-autogen
 msgid "Media profile"
 msgstr "Profil multimédia"
 
-#: lib/cinder_web/components/core_components.ex:1243
+#: lib/cinder_web/components/core_components.ex:1249
 #: lib/cinder_web/live/profiles_live.ex:277
 #, elixir-autogen
 msgid "Standard"
 msgstr "Standard"
 
-#: lib/cinder_web/components/core_components.ex:1247
+#: lib/cinder_web/components/core_components.ex:1253
 #, elixir-autogen
 msgid " and "
 msgstr " et "
 
-#: lib/cinder_web/components/core_components.ex:1232
+#: lib/cinder_web/components/core_components.ex:1238
 #, elixir-autogen
 msgid "%{profile} suggested by %{evidence}. Auto remains %{effective} until selected."
 msgstr ""
@@ -2545,24 +2545,24 @@ msgstr "Impossible de mettre à jour le profil."
 msgid "Country (optional)"
 msgstr "Pays (facultatif)"
 
-#: lib/cinder_web/live/movie_detail_live.ex:480
-#: lib/cinder_web/live/series_detail_components.ex:301
+#: lib/cinder_web/live/movie_detail_live.ex:482
+#: lib/cinder_web/live/series_detail_components.ex:303
 #, elixir-autogen
 msgid "Delete alias %{title}"
 msgstr "Supprimer l’alias %{title}"
 
-#: lib/cinder_web/live/movie_detail_live.ex:469
-#: lib/cinder_web/live/series_detail_components.ex:290
+#: lib/cinder_web/live/movie_detail_live.ex:471
+#: lib/cinder_web/live/series_detail_components.ex:292
 #, elixir-autogen
 msgid "Edit alias %{title}"
 msgstr "Modifier l’alias %{title}"
 
-#: lib/cinder_web/live/series_detail_components.ex:701
+#: lib/cinder_web/live/series_detail_components.ex:703
 #, elixir-autogen
 msgid "Extra"
 msgstr "Bonus"
 
-#: lib/cinder_web/components/core_components.ex:1250
+#: lib/cinder_web/components/core_components.ex:1256
 #, elixir-autogen
 msgid "Japanese animation"
 msgstr "animation japonaise"
@@ -2585,18 +2585,18 @@ msgstr "Sous licence"
 msgid "Native"
 msgstr "Natif"
 
-#: lib/cinder_web/live/movie_detail_live.ex:441
-#: lib/cinder_web/live/series_detail_components.ex:262
+#: lib/cinder_web/live/movie_detail_live.ex:443
+#: lib/cinder_web/live/series_detail_components.ex:264
 #, elixir-autogen
 msgid "No title aliases."
 msgstr "Aucun alias de titre."
 
-#: lib/cinder_web/live/series_detail_components.ex:700
+#: lib/cinder_web/live/series_detail_components.ex:702
 #, elixir-autogen
 msgid "Recap"
 msgstr "Récapitulatif"
 
-#: lib/cinder_web/live/series_detail_components.ex:698
+#: lib/cinder_web/live/series_detail_components.ex:700
 #, elixir-autogen
 msgid "Regular"
 msgstr "Standard"
@@ -2619,13 +2619,13 @@ msgstr "Enregistrer l’alias"
 msgid "Scene"
 msgstr "Scène"
 
-#: lib/cinder_web/live/movie_detail_live.ex:459
-#: lib/cinder_web/live/series_detail_components.ex:280
+#: lib/cinder_web/live/movie_detail_live.ex:461
+#: lib/cinder_web/live/series_detail_components.ex:282
 #, elixir-autogen
 msgid "Source: %{source}"
 msgstr "Source : %{source}"
 
-#: lib/cinder_web/live/series_detail_components.ex:699
+#: lib/cinder_web/live/series_detail_components.ex:701
 #, elixir-autogen
 msgid "Story special"
 msgstr "Hors-série narratif"
@@ -2636,12 +2636,12 @@ msgstr "Hors-série narratif"
 msgid "Title aliases"
 msgstr "Alias de titre"
 
-#: lib/cinder_web/components/core_components.ex:1251
+#: lib/cinder_web/components/core_components.ex:1257
 #, elixir-autogen
 msgid "an absolute episode group"
 msgstr "un groupe d’épisodes absolus"
 
-#: lib/cinder_web/components/core_components.ex:1229
+#: lib/cinder_web/components/core_components.ex:1235
 #, elixir-autogen
 msgid "effective"
 msgstr "effectif"
@@ -2780,7 +2780,7 @@ msgid "Needs verification"
 msgstr "Vérification requise"
 
 #: lib/cinder_web/live/activity_live.ex:591
-#: lib/cinder_web/live/movie_detail_live.ex:503
+#: lib/cinder_web/live/movie_detail_live.ex:505
 #, elixir-autogen
 msgid "Retry verification"
 msgstr "Réessayer la vérification"
@@ -2925,7 +2925,7 @@ msgstr ""
 "Saisissez un nombre de Go (0 = aucune limite), ou laissez vide pour la "
 "valeur par défaut."
 
-#: lib/cinder_web/components/core_components.ex:1159
+#: lib/cinder_web/components/core_components.ex:1165
 #, elixir-autogen
 msgid "French + original"
 msgstr "Français + originale"
@@ -2993,19 +2993,19 @@ msgstr "ou"
 msgid "Could not link your Plex account. Please try again."
 msgstr "Impossible de lier votre compte Plex. Veuillez réessayer."
 
-#: lib/cinder_web/live/user_live/settings.ex:163
+#: lib/cinder_web/live/user_live/settings.ex:172
 #, elixir-autogen
 msgid "Link Plex account"
 msgstr "Lier un compte Plex"
 
 #: lib/cinder_web/live/user_live/settings.ex:124
-#: lib/cinder_web/live/user_live/settings.ex:177
+#: lib/cinder_web/live/user_live/settings.ex:186
 #, elixir-autogen
 msgid "Linked as %{username}."
 msgstr "Lié en tant que %{username}."
 
 #: lib/cinder_web/live/user_live/settings.ex:126
-#: lib/cinder_web/live/user_live/settings.ex:179
+#: lib/cinder_web/live/user_live/settings.ex:188
 #, elixir-autogen
 msgid "Linked."
 msgstr "Lié."
@@ -3015,19 +3015,19 @@ msgstr "Lié."
 msgid "Plex account"
 msgstr "Compte Plex"
 
-#: lib/cinder_web/live/user_live/settings.ex:161
+#: lib/cinder_web/live/user_live/settings.ex:170
 #, elixir-autogen
 msgid "Sign in faster next time by linking your Plex account."
 msgstr ""
 "Connectez-vous plus rapidement la prochaine fois en liant votre compte Plex."
 
-#: lib/cinder_web/live/user_live/settings.ex:157
-#: lib/cinder_web/live/user_live/settings.ex:183
+#: lib/cinder_web/live/user_live/settings.ex:166
+#: lib/cinder_web/live/user_live/settings.ex:201
 #, elixir-autogen
 msgid "Unlink"
 msgstr "Délier"
 
-#: lib/cinder_web/live/user_live/settings.ex:436
+#: lib/cinder_web/live/user_live/settings.ex:454
 #, elixir-autogen
 msgid "Your Plex account has been unlinked."
 msgstr "Votre compte Plex a été délié."
@@ -3042,17 +3042,17 @@ msgstr "Votre compte Plex est maintenant lié."
 msgid "Please re-enter your password before linking your Plex account."
 msgstr "Veuillez ressaisir votre mot de passe avant de lier votre compte Plex."
 
-#: lib/cinder_web/live/user_live/settings.ex:443
+#: lib/cinder_web/live/user_live/settings.ex:461
 #, elixir-autogen
 msgid "Could not unlink your Plex account. Please try again."
 msgstr "Impossible de dissocier votre compte Plex. Veuillez réessayer."
 
-#: lib/cinder_web/live/series_detail_components.ex:751
+#: lib/cinder_web/live/series_detail_components.ex:753
 #, elixir-autogen
 msgid "Absolute"
 msgstr "Absolu"
 
-#: lib/cinder_web/live/series_detail_components.ex:316
+#: lib/cinder_web/live/series_detail_components.ex:318
 #, elixir-autogen
 msgid "Alternate numbering"
 msgstr "Numérotation alternative"
@@ -3062,7 +3062,7 @@ msgstr "Numérotation alternative"
 msgid "Alternate numbering saved."
 msgstr "Numérotation alternative enregistrée."
 
-#: lib/cinder_web/live/series_detail_components.ex:360
+#: lib/cinder_web/live/series_detail_components.ex:362
 #, elixir-autogen
 msgid "Couldn't load that group's mapping."
 msgstr "Impossible de charger la correspondance de ce groupe."
@@ -3073,27 +3073,27 @@ msgstr "Impossible de charger la correspondance de ce groupe."
 msgid "Couldn't save the alternate numbering."
 msgstr "Impossible d’enregistrer la numérotation alternative."
 
-#: lib/cinder_web/live/series_detail_components.ex:752
+#: lib/cinder_web/live/series_detail_components.ex:754
 #, elixir-autogen
 msgid "Digital"
 msgstr "Numérique"
 
-#: lib/cinder_web/live/series_detail_components.ex:343
+#: lib/cinder_web/live/series_detail_components.ex:345
 #, elixir-autogen
 msgid "Episode group"
 msgstr "Groupe d’épisodes"
 
-#: lib/cinder_web/live/series_detail_components.ex:345
+#: lib/cinder_web/live/series_detail_components.ex:347
 #, elixir-autogen
 msgid "None (default numbering)"
 msgstr "Aucun (numérotation par défaut)"
 
-#: lib/cinder_web/live/series_detail_components.ex:756
+#: lib/cinder_web/live/series_detail_components.ex:758
 #, elixir-autogen
 msgid "Other"
 msgstr "Autre"
 
-#: lib/cinder_web/live/series_detail_components.ex:319
+#: lib/cinder_web/live/series_detail_components.ex:321
 #, elixir-autogen
 msgid "Pick a TMDB episode group when indexers number this show differently than TMDB does (e.g. TMDB keeps one continuous season, but releases are split by another season count)."
 msgstr ""
@@ -3101,40 +3101,40 @@ msgstr ""
 "série différemment de TMDB (par exemple, TMDB garde une seule saison "
 "continue, mais les sorties sont réparties sur un autre nombre de saisons)."
 
-#: lib/cinder_web/live/series_detail_components.ex:754
+#: lib/cinder_web/live/series_detail_components.ex:756
 #: lib/cinder_web/live/subtitle_sync_live.ex:237
 #, elixir-autogen
 msgid "Seasons"
 msgstr "Saisons"
 
-#: lib/cinder_web/live/series_detail_components.ex:753
+#: lib/cinder_web/live/series_detail_components.ex:755
 #, elixir-autogen
 msgid "Story Arc"
 msgstr "Arc narratif"
 
-#: lib/cinder_web/live/series_detail_components.ex:802
+#: lib/cinder_web/live/series_detail_components.ex:804
 #, elixir-autogen
 msgid "%{count} entry doesn't match your episodes."
 msgid_plural "%{count} entries don't match your episodes."
 msgstr[0] "%{count} entrée ne correspond à aucun de vos épisodes."
 msgstr[1] "%{count} entrées ne correspondent à aucun de vos épisodes."
 
-#: lib/cinder_web/live/series_detail_components.ex:749
+#: lib/cinder_web/live/series_detail_components.ex:751
 #, elixir-autogen
 msgid "%{group_id} (unavailable on TMDB)"
 msgstr "%{group_id} (indisponible sur TMDB)"
 
-#: lib/cinder_web/live/series_detail_components.ex:797
+#: lib/cinder_web/live/series_detail_components.ex:799
 #, elixir-autogen
 msgid "%{season} (\"%{name}\")"
 msgstr "%{season} (« %{name} »)"
 
-#: lib/cinder_web/live/series_detail_components.ex:782
+#: lib/cinder_web/live/series_detail_components.ex:784
 #, elixir-autogen
 msgid "%{season} → %{alt} (episodes %{first}–%{last})"
 msgstr "%{season} → %{alt} (épisodes %{first}–%{last})"
 
-#: lib/cinder_web/live/series_detail_components.ex:764
+#: lib/cinder_web/live/series_detail_components.ex:766
 #, elixir-autogen
 msgid "%{season} → %{count} entry doesn't match your episodes."
 msgid_plural "%{season} → %{count} entries don't match your episodes."
@@ -3142,12 +3142,12 @@ msgstr[0] "%{season} → %{count} entrée ne correspond à aucun de vos épisode
 msgstr[1] ""
 "%{season} → %{count} entrées ne correspondent à aucun de vos épisodes."
 
-#: lib/cinder_web/live/series_detail_components.ex:327
+#: lib/cinder_web/live/series_detail_components.ex:329
 #, elixir-autogen
 msgid "Couldn't load episode groups from TMDB."
 msgstr "Impossible de charger les groupes d’épisodes depuis TMDB."
 
-#: lib/cinder_web/live/series_detail_components.ex:324
+#: lib/cinder_web/live/series_detail_components.ex:326
 #, elixir-autogen
 msgid "Loading episode groups…"
 msgstr "Chargement des groupes d’épisodes…"
@@ -3282,12 +3282,12 @@ msgstr "« %{title} » requiert votre attention."
 msgid "Searching indexers (attempt %{n})"
 msgstr "Recherche sur les indexeurs (tentative %{n})"
 
-#: lib/cinder_web/live/series_detail_components.ex:436
+#: lib/cinder_web/live/series_detail_components.ex:438
 #, elixir-autogen
 msgid "%{n}/%{m} available"
 msgstr "%{n}/%{m} disponibles"
 
-#: lib/cinder_web/live/series_detail_components.ex:395
+#: lib/cinder_web/live/series_detail_components.ex:397
 #, elixir-autogen
 msgid "Clear season offset"
 msgstr "Effacer le décalage de saison"
@@ -3297,12 +3297,12 @@ msgstr "Effacer le décalage de saison"
 msgid "Enter a starting season (1 or more) and a non-zero shift."
 msgstr "Saisissez une saison de départ (1 ou plus) et un décalage non nul."
 
-#: lib/cinder_web/live/series_detail_components.ex:384
+#: lib/cinder_web/live/series_detail_components.ex:386
 #, elixir-autogen
 msgid "From TMDB season"
 msgstr "À partir de la saison TMDB"
 
-#: lib/cinder_web/live/series_detail_components.ex:366
+#: lib/cinder_web/live/series_detail_components.ex:368
 #, elixir-autogen
 msgid "Season offset"
 msgstr "Décalage de saison"
@@ -3317,17 +3317,17 @@ msgstr "Décalage de saison effacé."
 msgid "Season offset saved."
 msgstr "Décalage de saison enregistré."
 
-#: lib/cinder_web/live/series_detail_components.ex:386
+#: lib/cinder_web/live/series_detail_components.ex:388
 #, elixir-autogen
 msgid "Season shift (±)"
 msgstr "Décalage de saison (±)"
 
-#: lib/cinder_web/live/series_detail_components.ex:402
+#: lib/cinder_web/live/series_detail_components.ex:404
 #, elixir-autogen
 msgid "TMDB S%{tmdb} → S%{scene}"
 msgstr "TMDB S%{tmdb} → S%{scene}"
 
-#: lib/cinder_web/live/series_detail_components.ex:369
+#: lib/cinder_web/live/series_detail_components.ex:371
 #, elixir-autogen
 msgid "When releases number this show's seasons with a fixed shift from TMDB (e.g. an inserted season pushes later seasons up by one), generate the matching scene coordinates. Review any native collisions before saving — the alternate numbering wins over that native episode at search time."
 msgstr ""
@@ -3337,7 +3337,7 @@ msgstr ""
 "les conflits natifs avant d'enregistrer — la numérotation alternative "
 "l'emporte sur cet épisode natif lors de la recherche."
 
-#: lib/cinder_web/live/series_detail_components.ex:405
+#: lib/cinder_web/live/series_detail_components.ex:407
 #, elixir-autogen
 msgid "collides with native %{codes}"
 msgstr "en conflit avec la numérotation native %{codes}"
@@ -3412,7 +3412,7 @@ msgstr "Sélectionner toutes les demandes en attente"
 msgid "…"
 msgstr "…"
 
-#: lib/cinder_web/live/discover_live.ex:528
+#: lib/cinder_web/live/discover_live.ex:533
 #, elixir-autogen
 msgid "Trending this week"
 msgstr "Tendances de la semaine"
@@ -3686,7 +3686,7 @@ msgstr "Quota de demandes par défaut"
 msgid "English"
 msgstr "Anglais"
 
-#: lib/cinder_web/live/user_live/settings.ex:323
+#: lib/cinder_web/live/user_live/settings.ex:341
 #, elixir-autogen
 msgid "Language updated."
 msgstr "Langue mise à jour."
@@ -3716,7 +3716,7 @@ msgstr "Aventure"
 msgid "Animation"
 msgstr "Animation"
 
-#: lib/cinder_web/live/discover_live.ex:624
+#: lib/cinder_web/live/discover_live.ex:629
 #, elixir-autogen
 msgid "Browse by genre"
 msgstr "Parcourir par genre"
@@ -3792,7 +3792,7 @@ msgstr "Musique"
 msgid "Mystery"
 msgstr "Mystère"
 
-#: lib/cinder_web/live/discover_live.ex:576
+#: lib/cinder_web/live/discover_live.ex:581
 #, elixir-autogen
 msgid "Now playing"
 msgstr "À l'affiche"
@@ -3802,7 +3802,7 @@ msgstr "À l'affiche"
 msgid "Pending accounts"
 msgstr "Comptes en attente"
 
-#: lib/cinder_web/live/discover_live.ex:544
+#: lib/cinder_web/live/discover_live.ex:549
 #, elixir-autogen
 msgid "Popular movies"
 msgstr "Films populaires"
@@ -3832,7 +3832,7 @@ msgstr "Téléfilm"
 msgid "Thriller"
 msgstr "Thriller"
 
-#: lib/cinder_web/live/discover_live.ex:560
+#: lib/cinder_web/live/discover_live.ex:565
 #, elixir-autogen
 msgid "Top rated movies"
 msgstr "Films les mieux notés"
@@ -3935,7 +3935,7 @@ msgstr "%{title} Saison %{season}"
 msgid "%{title} is ready to watch"
 msgstr "%{title} est disponible"
 
-#: lib/cinder_web/live/user_live/settings.ex:407
+#: lib/cinder_web/live/user_live/settings.ex:425
 #, elixir-autogen
 msgid "Could not update your notification preference."
 msgstr "Impossible de mettre à jour votre préférence de notification."
@@ -4026,7 +4026,7 @@ msgid "Your requested season is ready to watch: %{title}."
 msgstr "La saison que vous avez demandée est disponible : %{title}."
 
 #: lib/cinder_web/live/library_adoption_live.ex:876
-#: lib/cinder_web/live/library_adoption_live.ex:1070
+#: lib/cinder_web/live/library_adoption_live.ex:1075
 #, elixir-autogen
 msgid "Adopt %{title}"
 msgstr "Adopter %{title}"
@@ -4037,8 +4037,8 @@ msgstr "Adopter %{title}"
 msgid "Adopt existing library"
 msgstr "Adopter une bibliothèque existante"
 
-#: lib/cinder_web/live/library_adoption_live.ex:1006
-#: lib/cinder_web/live/library_adoption_live.ex:1164
+#: lib/cinder_web/live/library_adoption_live.ex:1011
+#: lib/cinder_web/live/library_adoption_live.ex:1169
 #, elixir-autogen
 msgid "Adopt selected"
 msgstr "Adopter la sélection"
@@ -4048,15 +4048,15 @@ msgstr "Adopter la sélection"
 msgid "Adopted %{adopted}; skipped %{skipped}."
 msgstr "%{adopted} élément(s) adopté(s) ; %{skipped} ignoré(s)."
 
-#: lib/cinder_web/live/library_adoption_live.ex:1008
-#: lib/cinder_web/live/library_adoption_live.ex:1166
+#: lib/cinder_web/live/library_adoption_live.ex:1013
+#: lib/cinder_web/live/library_adoption_live.ex:1171
 #, elixir-autogen
 msgid "Adopting selected files…"
 msgstr "Adoption des fichiers sélectionnés…"
 
-#: lib/cinder_web/live/library_adoption_live.ex:1005
-#: lib/cinder_web/live/library_adoption_live.ex:1006
-#: lib/cinder_web/live/library_adoption_live.ex:1164
+#: lib/cinder_web/live/library_adoption_live.ex:1009
+#: lib/cinder_web/live/library_adoption_live.ex:1011
+#: lib/cinder_web/live/library_adoption_live.ex:1169
 #, elixir-autogen
 msgid "Adopting…"
 msgstr "Adoption…"
@@ -4244,41 +4244,41 @@ msgstr ""
 "Plusieurs fichiers revendiquent cet épisode ; résolvez d'abord les doublons "
 "sur le disque."
 
-#: lib/cinder_web/live/user_live/settings.ex:248
+#: lib/cinder_web/live/user_live/settings.ex:266
 #, elixir-autogen
 msgid "Confirm your current password"
 msgstr "Confirmez votre mot de passe actuel"
 
-#: lib/cinder_web/live/user_live/settings.ex:234
+#: lib/cinder_web/live/user_live/settings.ex:252
 #, elixir-autogen
 msgid "Danger zone"
 msgstr "Zone de danger"
 
-#: lib/cinder_web/live/user_live/settings.ex:257
+#: lib/cinder_web/live/user_live/settings.ex:275
 #, elixir-autogen
 msgid "Delete my account"
 msgstr "Supprimer mon compte"
 
-#: lib/cinder_web/live/user_live/settings.ex:224
+#: lib/cinder_web/live/user_live/settings.ex:242
 #, elixir-autogen
 msgid "Download a copy of your account and request history as a JSON file."
 msgstr ""
 "Téléchargez une copie de votre compte et de votre historique de demandes au "
 "format JSON."
 
-#: lib/cinder_web/live/user_live/settings.ex:227
+#: lib/cinder_web/live/user_live/settings.ex:245
 #, elixir-autogen
 msgid "Download my data"
 msgstr "Télécharger mes données"
 
-#: lib/cinder_web/live/user_live/settings.ex:236
+#: lib/cinder_web/live/user_live/settings.ex:254
 #, elixir-autogen
 msgid "Permanently delete your account and all of your requests. This cannot be undone."
 msgstr ""
 "Supprimez définitivement votre compte et toutes vos demandes. Cette action "
 "est irréversible."
 
-#: lib/cinder_web/live/user_live/settings.ex:255
+#: lib/cinder_web/live/user_live/settings.ex:273
 #, elixir-autogen
 msgid "Permanently delete your account? This cannot be undone."
 msgstr "Supprimer définitivement votre compte ? Cette action est irréversible."
@@ -4301,7 +4301,7 @@ msgstr ""
 msgid "Your account has been permanently deleted."
 msgstr "Votre compte a été définitivement supprimé."
 
-#: lib/cinder_web/live/user_live/settings.ex:222
+#: lib/cinder_web/live/user_live/settings.ex:240
 #, elixir-autogen
 msgid "Your data"
 msgstr "Vos données"
@@ -4319,7 +4319,7 @@ msgstr ""
 msgid "Action & Adventure"
 msgstr "Action & Aventure"
 
-#: lib/cinder_web/live/discover_live.ex:629
+#: lib/cinder_web/live/discover_live.ex:634
 #, elixir-autogen
 msgid "Genre media type"
 msgstr "Type de média"
@@ -4341,7 +4341,7 @@ msgstr "Jeunesse"
 msgid "News"
 msgstr "Actualités"
 
-#: lib/cinder_web/live/discover_live.ex:592
+#: lib/cinder_web/live/discover_live.ex:597
 #, elixir-autogen
 msgid "Popular TV"
 msgstr "Séries populaires"
@@ -4366,7 +4366,7 @@ msgstr "Feuilleton"
 msgid "Talk"
 msgstr "Talk-show"
 
-#: lib/cinder_web/live/discover_live.ex:608
+#: lib/cinder_web/live/discover_live.ex:613
 #, elixir-autogen
 msgid "Top rated TV"
 msgstr "Séries les mieux notées"
@@ -4535,14 +4535,14 @@ msgstr ""
 "Adopter le fichier supplémentaire comme partie explicite de l’épisode "
 "principal."
 
-#: lib/cinder_web/live/library_adoption_live.ex:1133
-#: lib/cinder_web/live/library_adoption_live.ex:1153
+#: lib/cinder_web/live/library_adoption_live.ex:1138
+#: lib/cinder_web/live/library_adoption_live.ex:1158
 #, elixir-autogen
 msgid "Already managed"
 msgstr "Déjà géré"
 
-#: lib/cinder_web/live/library_adoption_live.ex:1100
-#: lib/cinder_web/live/library_adoption_live.ex:1124
+#: lib/cinder_web/live/library_adoption_live.ex:1105
+#: lib/cinder_web/live/library_adoption_live.ex:1129
 #, elixir-autogen
 msgid "Blocked"
 msgstr "Bloqué"
@@ -4608,7 +4608,7 @@ msgstr "Partie"
 msgid "Primary: %{file}"
 msgstr "Principal : %{file}"
 
-#: lib/cinder_web/live/library_adoption_live.ex:1054
+#: lib/cinder_web/live/library_adoption_live.ex:1059
 #, elixir-autogen
 msgid "Provider identities and file paths have one safe catalog target."
 msgstr ""
@@ -4641,8 +4641,8 @@ msgstr "Préfixe du chemin local Radarr"
 msgid "Radarr remote path prefix"
 msgstr "Préfixe du chemin distant Radarr"
 
-#: lib/cinder_web/live/library_adoption_live.ex:1020
-#: lib/cinder_web/live/library_adoption_live.ex:1086
+#: lib/cinder_web/live/library_adoption_live.ex:1025
+#: lib/cinder_web/live/library_adoption_live.ex:1091
 #, elixir-autogen
 msgid "Ready"
 msgstr "Prêt"
@@ -4750,7 +4750,7 @@ msgstr "Le fichier source n’est lié à aucun titre."
 msgid "The source series could not be resolved."
 msgstr "La série source n’a pas pu être identifiée."
 
-#: lib/cinder_web/live/library_adoption_live.ex:1103
+#: lib/cinder_web/live/library_adoption_live.ex:1108
 #, elixir-autogen
 msgid "These source records cannot be adopted safely and will not be changed."
 msgstr ""
@@ -5002,7 +5002,7 @@ msgstr[1] ""
 msgid "%{label} pages"
 msgstr "Pages de %{label}"
 
-#: lib/cinder_web/live/library_adoption_live.ex:1028
+#: lib/cinder_web/live/library_adoption_live.ex:1033
 #, elixir-autogen
 msgid "%{selected} of %{total} selected"
 msgstr "%{selected} sur %{total} sélectionné(s)"
@@ -5048,12 +5048,12 @@ msgstr "Impossible d'envoyer ce signalement. Veuillez réessayer."
 msgid "Couldn't update that report. Please try again."
 msgstr "Impossible de mettre à jour ce signalement. Veuillez réessayer."
 
-#: lib/cinder_web/live/library_adoption_live.ex:1049
+#: lib/cinder_web/live/library_adoption_live.ex:1054
 #, elixir-autogen
 msgid "Deselect all"
 msgstr "Tout désélectionner"
 
-#: lib/cinder_web/live/library_adoption_live.ex:1047
+#: lib/cinder_web/live/library_adoption_live.ex:1052
 #, elixir-autogen
 msgid "Deselect all ready items"
 msgstr "Désélectionner tous les éléments prêts"
@@ -5068,7 +5068,7 @@ msgstr "Rejeter"
 msgid "Dismissed"
 msgstr "Rejeté"
 
-#: lib/cinder_web/live/series_detail_components.ex:511
+#: lib/cinder_web/live/series_detail_components.ex:513
 #, elixir-autogen
 msgid "Find a better match in %{season}"
 msgstr "Trouver une meilleure version dans %{season}"
@@ -5199,12 +5199,12 @@ msgstr "Résolu"
 msgid "Resolving…"
 msgstr "Résolution…"
 
-#: lib/cinder_web/live/library_adoption_live.ex:1040
+#: lib/cinder_web/live/library_adoption_live.ex:1045
 #, elixir-autogen
 msgid "Select all"
 msgstr "Tout sélectionner"
 
-#: lib/cinder_web/live/library_adoption_live.ex:1038
+#: lib/cinder_web/live/library_adoption_live.ex:1043
 #, elixir-autogen
 msgid "Select all ready items"
 msgstr "Sélectionner tous les éléments prêts"
@@ -5275,7 +5275,7 @@ msgstr ""
 msgid "This item changed since the scan; run the preview again."
 msgstr "Cet élément a changé depuis l'analyse ; relancez l'aperçu."
 
-#: lib/cinder_web/live/movie_detail_live.ex:588
+#: lib/cinder_web/live/movie_detail_live.ex:590
 #, elixir-autogen
 msgid "Plays as %{language} by default: the language you asked for is in the file, but it isn't the default audio track."
 msgstr ""
@@ -5437,18 +5437,18 @@ msgstr "Le serveur multimédia n'a signalé aucun utilisateur."
 msgid "Could not link your Jellyfin account. Please try again."
 msgstr "Impossible de lier votre compte Jellyfin. Veuillez réessayer."
 
-#: lib/cinder_web/live/user_live/settings.ex:463
+#: lib/cinder_web/live/user_live/settings.ex:481
 #, elixir-autogen
 msgid "Could not unlink your Jellyfin account. Please try again."
 msgstr "Impossible de dissocier votre compte Jellyfin. Veuillez réessayer."
 
-#: lib/cinder_web/live/user_live/settings.ex:172
+#: lib/cinder_web/live/user_live/settings.ex:181
 #, elixir-autogen
 msgid "Jellyfin account"
 msgstr "Compte Jellyfin"
 
 #: lib/cinder_web/live/user_live/login.ex:100
-#: lib/cinder_web/live/user_live/settings.ex:208
+#: lib/cinder_web/live/user_live/settings.ex:226
 #, elixir-autogen
 msgid "Jellyfin password"
 msgstr "Mot de passe Jellyfin"
@@ -5467,12 +5467,12 @@ msgid "Jellyfin sign-in is not configured."
 msgstr "La connexion Jellyfin n'est pas configurée."
 
 #: lib/cinder_web/live/user_live/login.ex:92
-#: lib/cinder_web/live/user_live/settings.ex:200
+#: lib/cinder_web/live/user_live/settings.ex:218
 #, elixir-autogen
 msgid "Jellyfin username"
 msgstr "Nom d'utilisateur Jellyfin"
 
-#: lib/cinder_web/live/user_live/settings.ex:213
+#: lib/cinder_web/live/user_live/settings.ex:231
 #, elixir-autogen
 msgid "Link Jellyfin account"
 msgstr "Lier un compte Jellyfin"
@@ -5483,7 +5483,7 @@ msgid "Please re-enter your password before linking your Jellyfin account."
 msgstr ""
 "Veuillez ressaisir votre mot de passe avant de lier votre compte Jellyfin."
 
-#: lib/cinder_web/live/user_live/settings.ex:187
+#: lib/cinder_web/live/user_live/settings.ex:205
 #, elixir-autogen
 msgid "Sign in faster next time by linking your Jellyfin account."
 msgstr ""
@@ -5495,7 +5495,7 @@ msgstr ""
 msgid "Sign in with Jellyfin"
 msgstr "Se connecter avec Jellyfin"
 
-#: lib/cinder_web/live/user_live/settings.ex:456
+#: lib/cinder_web/live/user_live/settings.ex:474
 #, elixir-autogen
 msgid "Your Jellyfin account has been unlinked."
 msgstr "Votre compte Jellyfin a été délié."
@@ -5505,7 +5505,7 @@ msgstr "Votre compte Jellyfin a été délié."
 msgid "Your Jellyfin account is now linked."
 msgstr "Votre compte Jellyfin est maintenant lié."
 
-#: lib/cinder_web/live/user_live/settings.ex:425
+#: lib/cinder_web/live/user_live/settings.ex:443
 #, elixir-autogen
 msgid "Could not update your Plex watchlist preference."
 msgstr "Impossible de mettre à jour votre préférence de liste de suivi Plex."
@@ -5916,18 +5916,18 @@ msgstr "Relancer les recherches de titres échouées"
 msgid "ffprobe media analysis tool"
 msgstr "Outil d’analyse multimédia ffprobe"
 
-#: lib/cinder_web/live/discover_live.ex:685
+#: lib/cinder_web/live/discover_live.ex:690
 #, elixir-autogen
 msgid "Add your API key in Settings →"
 msgstr "Ajoutez votre clé API dans les paramètres →"
 
-#: lib/cinder_web/live/discover_live.ex:684
+#: lib/cinder_web/live/discover_live.ex:689
 #, elixir-autogen
 msgid "Add your API key in Setup →"
 msgstr "Ajoutez votre clé API dans la configuration →"
 
 #: lib/cinder_web/live/discover_live.ex:224
-#: lib/cinder_web/live/discover_live.ex:675
+#: lib/cinder_web/live/discover_live.ex:680
 #, elixir-autogen
 msgid "TMDB isn't configured yet."
 msgstr "TMDB n'est pas encore configuré."
@@ -6099,8 +6099,8 @@ msgstr "Analyse des sous-titres de la médiathèque mise en attente."
 
 #: lib/cinder_web/live/movie_detail_live.ex:289
 #: lib/cinder_web/live/series_detail_components.ex:59
-#: lib/cinder_web/live/series_detail_components.ex:486
-#: lib/cinder_web/live/series_detail_components.ex:644
+#: lib/cinder_web/live/series_detail_components.ex:488
+#: lib/cinder_web/live/series_detail_components.ex:646
 #, elixir-autogen
 msgid "Subtitle sync"
 msgstr "Synchronisation des sous-titres"
@@ -6774,15 +6774,15 @@ msgid "Audiobook requests aren't available yet."
 msgstr "Les demandes de livres audio ne sont pas encore disponibles."
 
 #: lib/cinder_web/live/discover_live.ex:477
-#: lib/cinder_web/live/discover_live.ex:504
 #: lib/cinder_web/live/discover_live.ex:509
+#: lib/cinder_web/live/discover_live.ex:514
 #: lib/cinder_web/live/library_live.ex:548
 #: lib/cinder_web/live/library_live.ex:808
 #, elixir-autogen, elixir-format
 msgid "Books"
 msgstr "Livres"
 
-#: lib/cinder_web/live/discover_live.ex:520
+#: lib/cinder_web/live/discover_live.ex:525
 #, elixir-autogen, elixir-format
 msgid "Books are temporarily unavailable"
 msgstr "Les livres sont temporairement indisponibles"
@@ -6817,12 +6817,12 @@ msgstr "Langues : %{languages}"
 msgid "Loading book…"
 msgstr "Chargement du livre…"
 
-#: lib/cinder_web/live/discover_live.ex:522
+#: lib/cinder_web/live/discover_live.ex:527
 #, elixir-autogen, elixir-format
 msgid "Movie and TV results are still available. Try the book search again later."
 msgstr "Les résultats films et séries restent disponibles. Réessayez la recherche de livres plus tard."
 
-#: lib/cinder_web/live/discover_live.ex:663
+#: lib/cinder_web/live/discover_live.ex:668
 #, elixir-autogen, elixir-format
 msgid "No movies, shows, or books matched that search."
 msgstr "Aucun film, série ou livre ne correspond à cette recherche."
@@ -7430,8 +7430,8 @@ msgstr[1] ""
 msgid "Health check"
 msgstr "Vérification de l'état"
 
-#: lib/cinder_web/live/movie_detail_live.ex:481
-#: lib/cinder_web/live/series_detail_components.ex:302
+#: lib/cinder_web/live/movie_detail_live.ex:483
+#: lib/cinder_web/live/series_detail_components.ex:304
 #, elixir-autogen, elixir-format
 msgid "Delete this alias?"
 msgstr "Supprimer cet alias ?"
@@ -7441,7 +7441,7 @@ msgstr "Supprimer cet alias ?"
 msgid "Dismissing…"
 msgstr "Rejet…"
 
-#: lib/cinder_web/live/discover_live.ex:505
+#: lib/cinder_web/live/discover_live.ex:510
 #, elixir-autogen, elixir-format
 msgid "Searching books…"
 msgstr "Recherche de livres…"
@@ -7451,12 +7451,12 @@ msgstr "Recherche de livres…"
 msgid "Testing…"
 msgstr "Test en cours…"
 
-#: lib/cinder_web/live/user_live/settings.ex:182
+#: lib/cinder_web/live/user_live/settings.ex:196
 #, elixir-autogen, elixir-format
 msgid "Unlink your Jellyfin account? You'll need to link it again to sign in with Jellyfin."
 msgstr "Dissocier votre compte Jellyfin ? Vous devrez le relier pour vous connecter avec Jellyfin."
 
-#: lib/cinder_web/live/user_live/settings.ex:156
+#: lib/cinder_web/live/user_live/settings.ex:161
 #, elixir-autogen, elixir-format
 msgid "Unlink your Plex account? You'll need to link it again to sign in with Plex."
 msgstr "Dissocier votre compte Plex ? Vous devrez le relier pour vous connecter avec Plex."

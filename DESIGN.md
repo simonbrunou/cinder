@@ -132,7 +132,11 @@ truth for its pattern — assemble screens from these, don't reinvent.
   (`poster_fallback_style/1`) as a base layer, with `<img data-poster>` absolutely positioned on
   top of it once a `poster_path` exists — so a poster that fails to load degrades to the exact
   same tile as a title with no poster at all, never the browser's broken-image glyph (see Motion
-  for the failure-detection half). The "No poster" label is CSS-gated to that same state
+  for the failure-detection half). The gradient's hue is per-title and fixed (identity feature);
+  its lightness is theme-aware — a dark ramp under dark, a light ramp on the same hues under
+  `[data-theme=light]` (`app.css`) — so the tile always tracks its own theme, and the "No
+  poster" label can use the theme's own `text-base-content` instead of a pinned `text-white`.
+  The label is CSS-gated to that same state
   (`:has(> img[data-poster]:not(.poster-broken))`) so it only shows, and is only announced, when
   it's actually true — not on every card while its real poster is still loading. Optional type
   chip (top-left, `bg-base-100`, film/TV icon + label). Body (`card-body p-3`) shows the title
