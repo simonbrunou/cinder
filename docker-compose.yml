@@ -38,6 +38,8 @@ services:
       # below, but a fresh, unclaimed instance still shouldn't sit open on the whole network.
       # To serve the LAN, change to "4000:4000" (or front it with a reverse proxy) AFTER
       # creating your admin — and note prod redirects non-localhost HTTP to https://$PHX_HOST.
+      # Exposing the port to the LAN directly also lets any LAN host spoof cf-connecting-ip and dodge
+      # the per-IP login/registration throttles; see docs/operating.md ("Direct LAN exposure").
       - "127.0.0.1:4000:4000"
     environment:
       # Boot-only config — stays in env (needed before the in-app settings store is up).

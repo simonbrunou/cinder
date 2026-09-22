@@ -24,6 +24,9 @@ defmodule CinderWeb.Plugs.RemoteIp do
   `CF-Connecting-IP` carries exactly one client IP (never a comma-separated chain like
   `X-Forwarded-For`), so there is no "which hop do I trust" ambiguity: parse it as a single
   address, or don't trust it.
+
+  Bind the port to the LAN directly and that isolation is gone: any LAN host can spoof the header
+  (rate-limit evasion only, not an auth bypass) — see `docs/operating.md`, "Direct LAN exposure".
   """
   @behaviour Plug
 
