@@ -860,6 +860,31 @@ defmodule Cinder.AcquisitionTest do
                )
     end
 
+    test "a series titled 1923 rejects a second 1923 token as a release tag year" do
+      target = %{title: "1923", year: 2022}
+
+      # The episode marker after the title run is valid regardless
+      assert Acquisition.names_release?(
+               "1923.S01E01.mkv",
+               "1923.S01.1080p.WEB-DL-GRP",
+               target
+             ) == true
+
+      # The series' own year (2022) is valid
+      assert Acquisition.names_release?(
+               "1923.2022.S01E01.mkv",
+               "1923.S01.1080p.WEB-DL-GRP",
+               target
+             ) == true
+
+      # A second "1923" token is NOT our year (2022), so it must be rejected
+      assert Acquisition.names_release?(
+               "1923.1923.S01E01.mkv",
+               "1923.S01.1080p.WEB-DL-GRP",
+               target
+             ) == false
+    end
+
     test "a franchise-prefixed release name still matches (series '1883' in 'Yellowstone.1883')" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
         {:ok, [raw_tv("Yellowstone.1883.S01E01.1080p.WEB-DL-GRP")]}

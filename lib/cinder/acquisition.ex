@@ -860,8 +860,15 @@ defmodule Cinder.Acquisition do
       # `reject_year_conflicts/2`. That clause fails open because filtering a search too hard
       # strands a season at :no_match — annoying, recoverable. Here the same "no opinion" would
       # authorise deleting a file we cannot place. Same missing datum, opposite safe direction.
+      #
+      # Compared directly rather than through `year_conflict?/2`: `next` is a candidate TAG, so
+      # the title-run stripping that guard applies must not run here (a series titled "1923"
+      # would otherwise treat a second "1923" token as its own year).
       Regex.match?(@year_marker, next) ->
-        is_integer(Map.get(target, :year)) and not year_conflict?(next, target)
+        case Map.get(target, :year) do
+          year when is_integer(year) -> abs(String.to_integer(next) - year) <= 1
+          _ -> false
+        end
 
       true ->
         false
