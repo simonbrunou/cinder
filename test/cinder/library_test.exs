@@ -1346,6 +1346,45 @@ defmodule Cinder.LibraryTest do
       assert log =~ "unmatched"
     end
 
+    test "two files parsing the same episode: the sample-named one loses even though it's larger (#604)" do
+      # A pack's real episode can be smaller than a mislabeled sample/preview sharing its SxxEyy
+      # token — size-only largest-wins would silently import the sample under the episode's
+      # canonical name. Prefer the non-sample candidate first, same rule MovieSources uses.
+      stub_dir([
+        {"/dl/Show.S01E05.1080p.WEB-GRP.mkv", 60_000_000},
+        {"/dl/Show.S01E05.sample.mkv", 90_000_000}
+      ])
+
+      stub_link_ok()
+
+      log =
+        capture_log(fn ->
+          assert {:ok, [{1, dest, _q}], ["/dl/Show.S01E05.sample.mkv"]} =
+                   Library.import_episodes("/dl", [ep(1, 5)])
+
+          assert dest ==
+                   "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E05.mkv"
+        end)
+
+      assert log =~ "unmatched"
+    end
+
+    test "two non-sample files parsing the same episode: largest still wins (#604)" do
+      # The sample guard must not disturb the existing rule when neither candidate is a sample.
+      stub_dir([
+        {"/dl/Show.S01E05.1080p.WEB-GRP.mkv", 60_000_000},
+        {"/dl/Show.S01E05.PROPER.1080p.WEB-GRP.mkv", 90_000_000}
+      ])
+
+      stub_link_ok()
+
+      assert {:ok, [{1, dest, _q}], ["/dl/Show.S01E05.1080p.WEB-GRP.mkv"]} =
+               Library.import_episodes("/dl", [ep(1, 5)])
+
+      assert dest ==
+               "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E05.mkv"
+    end
+
     test "an unmatchable file is logged and skipped; the rest still import" do
       stub_dir([{"/dl/Show.S01E01.mkv", 3 * @gb}, {"/dl/Show.S01E05.mkv", 3 * @gb}])
       stub_link_ok()

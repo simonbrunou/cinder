@@ -94,13 +94,17 @@ defmodule Cinder.Library.MovieSources do
   defp real_feature_candidate?({path, size}, total_archive_size),
     do: size >= total_archive_size and not sample_name?(path, size)
 
-  # Token AND small size both required — mirrors AnimePreflight's own sample_ignorable?/2 rule.
-  # A movie whose real title happens to contain "sample"/"preview" as a word is never penalized
-  # just for its name: only an actually-small file is ever excluded from feature-candidacy here.
+  # Token AND small size both required — mirrors AnimePreflight's own sample_ignorable?/2 rule
+  # (that one also weighs a size ratio against the largest sibling; this one doesn't need to,
+  # so the two stay separate predicates). A movie whose real title happens to contain
+  # "sample"/"preview" as a word is never penalized just for its name: only an actually-small
+  # file is ever excluded from feature-candidacy here. Shared with `Library.dedupe_per_episode/1`
+  # (TV season-pack dedupe), the one other caller with the identical token+size rule.
   @sample_token ~r/(?:^|[\s._\-\[\]()])(?:sample|preview)(?:$|[\s._\-\[\]()])/i
   @sample_max_bytes 100 * 1024 * 1024
 
-  defp sample_name?(path, size),
+  @doc false
+  def sample_name?(path, size),
     do: size <= @sample_max_bytes and Regex.match?(@sample_token, Path.basename(path))
 
   defp stack_part(path) do
