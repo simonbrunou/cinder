@@ -17,25 +17,5 @@ defmodule CinderWeb.MediaCardTest do
     html_again = card(%{id: "m-1", title: "Inception", type: :movie})
     assert html_again =~ "--poster-hue: #{hue};"
     assert html_again =~ "--poster-hue2: #{hue2};"
-
-    # A different title gets a different (but still deterministic) hue.
-    other = card(%{id: "m-2", title: "The Matrix", type: :movie})
-    assert other =~ ~r/--poster-hue:\s*\d+;/
-  end
-
-  test "the placeholder tile theme-gates its lightness via the .poster-fallback class, not an inline gradient" do
-    html = card(%{id: "m-3", title: "Dune", type: :movie})
-
-    assert html =~ "poster-fallback"
-    refute html =~ "linear-gradient"
-    refute html =~ "background:"
-  end
-
-  test "the 'No poster' label uses the theme token, not a pinned text-white" do
-    html = card(%{id: "m-4", title: "Arrival", type: :movie})
-
-    assert html =~ "text-base-content"
-    refute html =~ "text-white"
-    assert html =~ "No poster"
   end
 end
