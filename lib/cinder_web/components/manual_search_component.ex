@@ -15,7 +15,7 @@ defmodule CinderWeb.ManualSearchComponent do
   asks `Cinder.Acquisition.Language.filter/4` — the sweep's own pool function — rather than
   comparing tags itself, and only a row the sweep actually reaches a language verdict on can be
   flagged at all. A tag that satisfies the pick is the release's own fact and is stated either
-  way; see `language_states/4`.
+  way; see `language_states/5`.
 
   Required assigns: `id`, `mode` (`:movie | :tv`), `target` (the `%Movie{}` or `%Series{}`), plus
   `season_number` for `:tv`. A `results:` assign (a list of `{release, verdict}` tuples) is

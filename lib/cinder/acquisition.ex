@@ -8,7 +8,7 @@ defmodule Cinder.Acquisition do
   """
   require Logger
 
-  alias Cinder.Acquisition.{Anime, AnimePreferences}
+  alias Cinder.Acquisition.{Anime, AnimeParser, AnimePreferences}
   alias Cinder.Acquisition.Language
   alias Cinder.Acquisition.Release
   alias Cinder.Acquisition.Scorer
@@ -724,11 +724,19 @@ defmodule Cinder.Acquisition do
 
     case needles do
       [] -> candidates
-      needles -> Enum.filter(candidates, &(&1.title |> tokens() |> spells_any?(needles)))
+      needles -> Enum.filter(candidates, &(&1.title |> untagged_tokens() |> spells_any?(needles)))
     end
   end
 
-  defp spells_any?(tokens, needles), do: Enum.any?(needles, &spells_run?(tokens, &1))
+  defp spells_any?(tokens, needles), do: Enum.any?(needles, &spells?(tokens, &1))
+
+  # An all-digit title ("2012", "1917", "300") has to lead the name. Anywhere else the same tokens
+  # are another release's year or decoration: "Avatar.2012.1080p" is not the movie "2012".
+  defp spells?(tokens, needle) do
+    if Regex.match?(~r/^\d+$/, needle),
+      do: consume_leading(tokens, needle) != :error,
+      else: spells_run?(tokens, needle)
+  end
 
   defp spells_run?([], _needle), do: false
 
@@ -776,8 +784,12 @@ defmodule Cinder.Acquisition do
   # Tag-prefixed names ("[TGx] Dune.2021...") are common and would otherwise fail the start anchor.
   defp untagged_tokens(release_title), do: release_title |> untag() |> tokens()
 
+  # `sanitize/1` first, here and in `tokens/1`: these `/u` regexes raise on malformed UTF-8, and one
+  # garbled indexer title must not stall a whole search pass (#451).
   defp untag(nil), do: nil
-  defp untag(release_title), do: String.replace(release_title, ~r/^\s*\[[^\]\r\n]+\]\s*/u, "")
+
+  defp untag(release_title),
+    do: String.replace(AnimeParser.sanitize(release_title), ~r/^\s*\[[^\]\r\n]+\]\s*/u, "")
 
   # Fail closed when tokenization ate most of the title: a non-Latin title ("Дом") folds to
   # nothing, "Дом 2" to a bare "2" — a remnant that would match almost anything and import the
@@ -955,6 +967,7 @@ defmodule Cinder.Acquisition do
 
   defp tokens(title) do
     title
+    |> AnimeParser.sanitize()
     |> fold()
     |> nfd()
     |> String.replace(~r/[^\x00-\x7f]/u, "")

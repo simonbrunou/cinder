@@ -1137,6 +1137,35 @@ defmodule Cinder.AcquisitionTest do
                Acquisition.title_guard(releases, :movie, movie_context(title: "Up", year: 2009))
     end
 
+    # Every release carries a year, so a year-shaped title matched anywhere would admit any film
+    # from that year. The title has to lead the name (after an optional `[tag]`).
+    test "an IMDb-scoped movie with an all-digit title needs it to lead the name" do
+      kept = ["2012.2009.720p.WEB-DL-GRP", "[TGx] 2012 (2009) 1080p BluRay"]
+
+      releases =
+        Enum.map(["Avatar.2012.1080p.BluRay.x264-GRP" | kept], &Release.new(raw(title: &1)))
+
+      assert releases
+             |> Acquisition.title_guard(:movie, movie_context(title: "2012", year: 2009))
+             |> Enum.map(& &1.title) == kept
+    end
+
+    # #451 class: the guard's `/u` regexes raise on malformed UTF-8. One garbled indexer title
+    # must not take the good releases of the same search down with it.
+    test "a garbled indexer title is judged, not raised on, by the movie and TV guards" do
+      garbled = <<0xFF, 0xFE, "Interstellar.2014", 0xC0, 0xAF>>
+      good = Release.new(raw(title: "Inception.2010.1080p.BluRay.x264-GRP"))
+      movie = movie_context(title: "Inception", year: 2010)
+
+      assert Acquisition.title_guard([Release.new(raw(title: garbled)), good], :movie, movie) ==
+               [good]
+
+      # The scrubbed name still reads "Interstellar.2014", so the TV guard keeps it for that show.
+      tv = [Release.new(raw_tv(garbled, query_origins: [:free_text]))]
+      target = series(tvdb_id: nil, title: "Interstellar", year: 2014)
+      assert Acquisition.title_guard(tv, :tv, target) == tv
+    end
+
     # Nothing to compare release names against, so the IMDb scope stays the only evidence rather
     # than every release of the movie being dropped.
     test "an IMDb-scoped movie with no Latin-script title or alias keeps its results" do

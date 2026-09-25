@@ -68,9 +68,10 @@ optional `v2`, `[`, or a resolution/source token) — NOT a bare substring match
 requires an exact-year hit (`exact_movie_year?/2`). The standard movie IMDb path
 (`best_release/3` / `title_guard/3`) runs `filter_id_scoped_movie/2`. An IMDb-scoped result is
 NOT identity proof: a release must spell the title, a localized title, or an alias as a
-whole-token run anywhere in the name. There is no year requirement, and the guard is skipped
-only when no title yields a usable needle. Do not drop this guard or make it a bare substring
-match. `nfd/1` (`acquisition.ex`)
+whole-token run anywhere in the name. The exception is an all-digit title ("2012"), which must
+lead the name so that another release's year can't match it. There is no year requirement, and
+the guard is skipped only when no title yields a usable needle. Do not drop this guard or make it
+a bare substring match. `nfd/1` (`acquisition.ex`)
 must tolerate malformed UTF-8 (a garbled indexer title must not crash or stall the
 season). Language pool: soft Original/Any falls back to unfiltered; an explicit pick is
 strict (parks on no match). `band_opts/1` returns only non-nil keys so it can't clobber
