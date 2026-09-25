@@ -91,7 +91,7 @@ defmodule Cinder.Acquisition.ParserTest do
   end
 
   test "a non-string title yields all-nil attrs instead of raising" do
-    # An indexer result with a missing/null title must not crash best_release/2;
+    # An indexer result with a missing/null title must not crash best_release/3;
     # the parser stays total so the {:ok | :no_match | {:error, _}} contract holds.
     assert Parser.parse(nil) ==
              %{

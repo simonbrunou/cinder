@@ -188,7 +188,7 @@ defmodule Cinder.DownloadTest do
   # The natural winner (1080p) and the fallback (720p) — A out-ranks B absent the blocklist.
   defp release_a,
     do: %{
-      title: "Movie.A.1080p.BluRay-GRP",
+      title: "Inception.A.1080p.BluRay-GRP",
       size: 8_000_000_000,
       download_url: "magnet:?xt=urn:btih:a",
       seeders: 10
@@ -196,7 +196,7 @@ defmodule Cinder.DownloadTest do
 
   defp release_b,
     do: %{
-      title: "Movie.B.720p.WEB-GRP",
+      title: "Inception.B.720p.WEB-GRP",
       size: 5_000_000_000,
       download_url: "magnet:?xt=urn:btih:b",
       seeders: 5
@@ -206,7 +206,7 @@ defmodule Cinder.DownloadTest do
     movie = movie_fixture(%{imdb_id: "tt1375666"})
 
     Repo.insert!(%BlockedRelease{
-      release_title: "Movie.A.1080p.BluRay-GRP",
+      release_title: "Inception.A.1080p.BluRay-GRP",
       reason: "wrong_audio_language",
       movie_id: movie.id
     })
@@ -215,11 +215,11 @@ defmodule Cinder.DownloadTest do
 
     # A would win on resolution; the blocklist drops it, so the client must receive B.
     expect(Cinder.Download.ClientMock, :add, fn release, _opts ->
-      assert release.title == "Movie.B.720p.WEB-GRP"
+      assert release.title == "Inception.B.720p.WEB-GRP"
       {:ok, "hash-b"}
     end)
 
-    assert {:ok, %Movie{status: :downloading, release_title: "Movie.B.720p.WEB-GRP"}} =
+    assert {:ok, %Movie{status: :downloading, release_title: "Inception.B.720p.WEB-GRP"}} =
              Download.start(movie)
   end
 
@@ -227,7 +227,7 @@ defmodule Cinder.DownloadTest do
     movie = movie_fixture(%{imdb_id: "tt1375666"})
 
     Repo.insert!(%BlockedRelease{
-      release_title: "Movie.A.1080p.BluRay-GRP",
+      release_title: "Inception.A.1080p.BluRay-GRP",
       reason: "no_video_file",
       movie_id: movie.id
     })

@@ -36,6 +36,7 @@ defmodule CinderWeb.ManualSearchComponent do
       |> assign(assigns)
       |> assign(:search_context, search_context)
       |> assign(:audio_target, context_audio_target(search_context))
+      |> assign(:guard_target, guard_target(assigns.mode, assigns.target))
       |> assign_new(:confirming, fn -> nil end)
       |> maybe_cancel_stale_search(context_changed?)
 
@@ -97,6 +98,12 @@ defmodule CinderWeb.ManualSearchComponent do
 
   defp context_audio_target(search_context), do: elem(search_context, 6)
 
+  # What `Acquisition.title_guard/3` judges against: the series itself, or the movie's acquisition
+  # context — its aliases and localized titles are what the sweep's IMDb-path guard accepts.
+  # Resolved here, not in render, because the aliases are a query.
+  defp guard_target(:movie, movie), do: Catalog.movie_acquisition_context(movie)
+  defp guard_target(:tv, series), do: series
+
   defp search_context_changed?(socket, current) do
     previous = socket.assigns[:search_context] || previous_search_context(socket.assigns)
     not is_nil(previous) and previous != current
@@ -132,7 +139,7 @@ defmodule CinderWeb.ManualSearchComponent do
     with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()) do
       Acquisition.list_anime_movie_releases(
         target.imdb_id,
-        Catalog.anime_movie_acquisition_context(target),
+        Catalog.movie_acquisition_context(target),
         opts ++ AnimePreferences.selection_opts(policy)
       )
     end
@@ -261,7 +268,13 @@ defmodule CinderWeb.ManualSearchComponent do
       assign(
         assigns,
         :language_scope,
-        language_states(assigns.results, assigns.mode, assigns.audio_target, assigns.target)
+        language_states(
+          assigns.results,
+          assigns.mode,
+          assigns.audio_target,
+          assigns.target,
+          assigns.guard_target
+        )
       )
 
     ~H"""
@@ -365,11 +378,11 @@ defmodule CinderWeb.ManualSearchComponent do
   # has no such fallback — it parks — so its `scored` stands and it flags. `:match` is not in this
   # ballot: it is the release's own tag against the pick, so it is stated wherever it is true, and
   # only a nil target (no pick in force) silences the badge outright.
-  defp language_states(_results, _mode, nil = _target, _title), do: nil
+  defp language_states(_results, _mode, nil = _target, _title, _guard_target), do: nil
 
-  defp language_states(results, mode, _target, title) do
+  defp language_states(results, mode, _target, title, guard_target) do
     pick = {title.preferred_language, title.original_language, keep_untagged?(mode, title)}
-    scored = MapSet.new(scored_by_sweep(results, mode, title))
+    scored = MapSet.new(scored_by_sweep(results, mode, guard_target))
 
     if sweep_would_fall_back?(scored, pick, title),
       do: {MapSet.new(), pick},
@@ -378,18 +391,18 @@ defmodule CinderWeb.ManualSearchComponent do
 
   # The rows automatic selection actually reaches a language decision on, which is narrower than
   # what the panel lists twice over. Both `movie_pool/2` and `best_releases/4` run
-  # `filter_protocols` BEFORE `language_pool/4`, and the free-text movie / free-text-origin TV
-  # results also title-guard; the panel deliberately lists releases with no configured client and
+  # `filter_protocols` BEFORE `language_pool/4`, and the movie / free-text-origin TV results also
+  # title-guard; the panel deliberately lists releases with no configured client and
   # never title-guards, because those are exactly the rows an operator opens it to override. They
   # are still not rows the sweep judges on language: counting one as a pool survivor would suppress
   # the fallback and turn every other row into an accusation the sweep never makes, and badging one
   # itself states an outcome that is never reached. The guard comes from `Acquisition.title_guard/3`
   # for the same reason the language rule comes from `Language.filter/4`: re-deriving it drifts.
-  defp scored_by_sweep(results, mode, title) do
+  defp scored_by_sweep(results, mode, guard_target) do
     results
     |> Enum.reject(fn {_release, verdict} -> verdict == {:rejected, :wrong_protocol} end)
     |> Enum.map(fn {release, _verdict} -> release end)
-    |> Acquisition.title_guard(mode, title)
+    |> Acquisition.title_guard(mode, guard_target)
   end
 
   defp sweep_would_fall_back?(scored, pick, title) do

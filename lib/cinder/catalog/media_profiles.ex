@@ -130,15 +130,25 @@ defmodule Cinder.Catalog.MediaProfiles do
 
   def media_profile_summary(%Movie{} = movie), do: MediaProfile.summary(movie)
 
-  @doc "Builds the plain Catalog-owned identity context used for anime movie acquisition."
-  def anime_movie_acquisition_context(%Movie{} = movie) do
+  @doc """
+  Builds the plain Catalog-owned identity context used for movie acquisition — the anime search
+  guard and the standard IMDb-search title guard (`Cinder.Acquisition.best_release/3`) alike.
+  `localized_titles` are the TMDB translations' titles, which regional release names use.
+  """
+  def movie_acquisition_context(%Movie{} = movie) do
     %{
       kind: :movie,
+      imdb_id: movie.imdb_id,
       title: movie.title,
       year: movie.year,
       aliases: acquisition_aliases(movie),
+      localized_titles: localized_titles(movie.localizations),
       profile: media_profile_summary(movie)
     }
+  end
+
+  defp localized_titles(localizations) do
+    for {_locale, %{"title" => title}} when is_binary(title) <- localizations || %{}, do: title
   end
 
   # Duplicated in `Cinder.Catalog.SeriesCatalog` (used there by

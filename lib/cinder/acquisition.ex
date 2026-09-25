@@ -36,8 +36,10 @@ defmodule Cinder.Acquisition do
   end
 
   @doc """
-  Searches the configured indexer for `imdb_id`, parses each result, and returns
-  the best release per `Scorer` rules. `opts` are forwarded to `Scorer.select/2`.
+  Searches the configured indexer for `imdb_id`, parses each result, keeps only releases whose
+  name spells one of the movie's known titles (the IMDb scope alone is not identity proof), and
+  returns the best release per `Scorer` rules. `context` is
+  `Cinder.Catalog.movie_acquisition_context/1`'s map. `opts` are forwarded to `Scorer.select/2`.
 
   When `opts[:protocols]` is given (a list of `:torrent`/`:usenet`), releases on
   any other protocol are dropped before scoring — this is the graceful-degradation
@@ -48,10 +50,12 @@ defmodule Cinder.Acquisition do
   `:no_language_match` (a non-empty candidate set was fully removed by an active per-item
   language preference), or `{:error, term}` (indexer failure, passed through).
   """
-  def best_release(imdb_id, opts \\ []) do
+  def best_release(imdb_id, context, opts \\ []) do
     case indexer().search(imdb_id) do
       {:ok, raw_results} ->
-        case movie_pool(Enum.map(raw_results, &Release.new/1), opts) do
+        releases = raw_results |> Enum.map(&Release.new/1) |> filter_id_scoped_movie(context)
+
+        case movie_pool(releases, opts) do
           :no_language_match -> :no_language_match
           pool -> Scorer.select(pool, opts)
         end
@@ -65,7 +69,7 @@ defmodule Cinder.Acquisition do
   Free-text fallback for a movie TMDB publishes no IMDb id for (issue #195): a `"Title Year"`
   `moviesearch` instead of the `{ImdbId:...}` token, then the same title guard the free-text TV
   path uses plus a year-token check, re-establishing the identity the id token would have pinned.
-  Returns the same values as `best_release/2`.
+  Returns the same values as `best_release/3`.
   """
   def best_release_by_title(title, year, opts \\ []) do
     with {:ok, releases} <- title_search(title, year) do
@@ -97,7 +101,7 @@ defmodule Cinder.Acquisition do
   still-wanted episode-number set for that season.
 
   `opts[:protocols]` drops releases on any other protocol before scoring (same
-  graceful-degradation guard as `best_release/2`); `opts` is otherwise forwarded
+  graceful-degradation guard as `best_release/3`); `opts` is otherwise forwarded
   to the scorer. `opts[:season_episode_count]` (the season's real episode count) enables the
   last-resort pack retry described in `pack_band_retry/4`.
 
@@ -198,10 +202,11 @@ defmodule Cinder.Acquisition do
 
   @doc """
   Lists EVERY parsed release for `imdb_id`, each paired with the scorer's verdict (`:ok` or
-  `{:rejected, reason}`), sorted acceptable-first then best-ranked. Unlike `best_release/2` it
-  does not drop or collapse — the interactive manual-search panel shows them all and lets the
-  user grab any (overriding the band/blocklist). `opts[:protocols]` adds a `:wrong_protocol`
-  verdict for releases with no configured client (still listed, but the panel disables grab).
+  `{:rejected, reason}`), sorted acceptable-first then best-ranked. Unlike `best_release/3` it
+  neither title-guards, drops nor collapses — the interactive manual-search panel shows them all
+  and lets the user grab any (overriding the band/blocklist). `opts[:protocols]` adds a
+  `:wrong_protocol` verdict for releases with no configured client (still listed, but the panel
+  disables grab).
   """
   def list_releases(imdb_id, opts \\ []) do
     case indexer().search(imdb_id) do
@@ -216,17 +221,18 @@ defmodule Cinder.Acquisition do
   end
 
   @doc """
-  The releases automatic selection's title guard would keep for `target` — all of them when no
-  guard applies, an id-scoped search being identity-scoped already. The manual panel lists
-  guarded-away rows on purpose, so it needs this to tell a candidate-pool survivor from a row the
-  sweep never sees; re-deriving the guard there would drift from these clauses.
+  The releases automatic selection's title guard would keep for `target` — the TV series, or for
+  a movie `Cinder.Catalog.movie_acquisition_context/1`'s map, whose `imdb_id` picks the strict
+  free-text guard or the id-scoped one. The manual panel lists guarded-away rows on purpose, so it
+  needs this to tell a candidate-pool survivor from a row the sweep never sees; re-deriving the
+  guard there would drift from these clauses.
   """
   def title_guard(releases, :movie, %{imdb_id: imdb_id, title: title, year: year})
       when imdb_id in [nil, ""],
       do: filter_movie_title(releases, title, year)
 
+  def title_guard(releases, :movie, context), do: filter_id_scoped_movie(releases, context)
   def title_guard(releases, :tv, series), do: filter_title(releases, series)
-  def title_guard(releases, _mode, _target), do: releases
 
   @doc """
   TV variant of `list_releases/2`. A `:standard_numbering` result from
@@ -697,6 +703,37 @@ defmodule Cinder.Acquisition do
       {:error, _reason} = error -> error
     end
   end
+
+  # An IMDb-scoped search is scope, not identity proof — the TV lesson of #315. An indexer can
+  # ignore the `{ImdbId:...}` token and answer with keyword matches or its latest feed, and an
+  # uploader can link a release to the wrong IMDb page; the scorer then takes the biggest file,
+  # which is how "Spider-Island" was grabbed for "Spider-Man: Brand New Day". So a release must
+  # spell one of the movie's known titles (canonical, TMDB-localized, alias) as a whole-token run.
+  #
+  # Deliberately looser than `filter_movie_title/3`'s Title.Year anchoring: the id scope already
+  # did most of the work, and this is the main movie path, so it must keep the conventions that
+  # guard fails closed on — language before the year ("Dune.German.2021"), an edition tag, a site
+  # prefix, no year at all. A movie with no usable needle (a non-Latin title and no Latin alias)
+  # has nothing to compare names against, so the id scope stays the only evidence.
+  defp filter_id_scoped_movie(candidates, context) do
+    needles =
+      [context.title | context.localized_titles ++ Enum.map(context.aliases, & &1.title)]
+      |> Enum.map(&title_needle/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.uniq()
+
+    case needles do
+      [] -> candidates
+      needles -> Enum.filter(candidates, &(&1.title |> tokens() |> spells_any?(needles)))
+    end
+  end
+
+  defp spells_any?(tokens, needles), do: Enum.any?(needles, &spells_run?(tokens, &1))
+
+  defp spells_run?([], _needle), do: false
+
+  defp spells_run?([_ | rest] = tokens, needle),
+    do: consume_leading(tokens, needle) != :error or spells_run?(rest, needle)
 
   # Scene movie names are `Title.Year.rest`, so with a known year BOTH ends of the title are
   # pinnable and the guard demands exactly that: everything before the year token concatenates to

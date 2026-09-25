@@ -90,7 +90,7 @@ defmodule CinderWeb.ManualSearchComponentTest do
           id: 1,
           status: :requested,
           imdb_id: "tt1",
-          title: "M",
+          title: "Film",
           preferred_language: "french",
           original_language: "en"
         },
@@ -233,9 +233,9 @@ defmodule CinderWeb.ManualSearchComponentTest do
           original_language: "fr"
         },
         results: [
-          {%Release{title: "Le.Film.FRENCH", protocol: :usenet, language: "FRENCH"},
+          {%Release{title: "Guru.2025.FRENCH", protocol: :usenet, language: "FRENCH"},
            {:rejected, :wrong_protocol}},
-          {%Release{title: "The.Film.ENGLISH", protocol: :torrent, language: "ENGLISH"}, :ok}
+          {%Release{title: "Guru.2025.ENGLISH", protocol: :torrent, language: "ENGLISH"}, :ok}
         ]
       })
 
@@ -333,6 +333,36 @@ defmodule CinderWeb.ManualSearchComponentTest do
     refute html =~ "Doesn&#39;t match this title&#39;s audio pick"
   end
 
+  # The IMDb-scoped movie search is title-guarded too: a row naming another film is one the sweep
+  # never scores, so under a strict pick the panel still makes no mismatch claim about it.
+  test "a title-guarded IMDb-scoped movie release isn't accused of a language mismatch" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: "tt1",
+          title: "Spider-Man: Brand New Day",
+          preferred_language: "french",
+          original_language: "en"
+        },
+        results: [
+          {%Release{
+             title: "Spider-Man.Brand.New.Day.2026.FRENCH",
+             protocol: :torrent,
+             language: "FRENCH"
+           }, :ok},
+          {%Release{title: "Spider-Island.2026.ENGLISH", protocol: :torrent, language: "ENGLISH"},
+           :ok}
+        ]
+      })
+
+    assert html =~ "Matches this title&#39;s audio pick"
+    refute html =~ "badge-warning"
+    refute html =~ "Doesn&#39;t match this title&#39;s audio pick"
+  end
+
   # …but a MATCH is a fact about the release's own tag, not a claim about what the sweep would do,
   # so it survives on a row the sweep never scores. Withholding it would go silent precisely where
   # the panel is the only surface left: this row is unplayable as configured, and the operator
@@ -374,7 +404,9 @@ defmodule CinderWeb.ManualSearchComponentTest do
           preferred_language: "french",
           original_language: "en"
         },
-        results: [{%Release{title: "Only.English", protocol: :torrent, language: "ENGLISH"}, :ok}]
+        results: [
+          {%Release{title: "M.Only.English", protocol: :torrent, language: "ENGLISH"}, :ok}
+        ]
       })
 
     assert html =~ "badge-warning"

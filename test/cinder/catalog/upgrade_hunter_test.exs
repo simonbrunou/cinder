@@ -108,6 +108,26 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert %Movie{status: :available, download_id: nil} = Repo.get!(Movie, movie.id)
     end
 
+    # The reported re-grab: the sweep searches through the same IMDb-scoped path as the first grab,
+    # so a release for another film must lose to the same title guard, however good its quality.
+    test "never upgrades to an id-scoped release that names another film" do
+      movie =
+        library_movie(%{
+          title: "Spider-Man: Brand New Day",
+          imdb_id: "tt22084616",
+          file_path: "/lib/Spider-Man/Spider-Man.mkv"
+        })
+
+      watch_grabs()
+      # A clear quality upgrade over the 720p file; only its name disqualifies it.
+      indexer_offers("tt22084616", [release("Spider-Island.2026.1080p.BluRay.x264-GRP")])
+
+      poll()
+
+      refute_grabbed()
+      assert %Movie{status: :available, download_id: nil} = Repo.get!(Movie, movie.id)
+    end
+
     test "still searches a top-resolution movie whose language is wrong when no cutoff is set" do
       put_env(:movies_preferred_resolutions, ["1080p", "720p"])
 
