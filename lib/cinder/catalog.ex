@@ -141,8 +141,8 @@ defmodule Cinder.Catalog do
   defdelegate preview_scene_offset(series, from, delta), to: SceneNumbering
   defdelegate save_scene_offset_coordinates(series, from, delta), to: SceneNumbering
 
-  @doc "Builds the plain Catalog-owned identity context used for anime movie acquisition."
-  defdelegate anime_movie_acquisition_context(movie), to: MediaProfiles
+  @doc "Builds the plain Catalog-owned identity context used for movie acquisition."
+  defdelegate movie_acquisition_context(movie), to: MediaProfiles
 
   @doc "Builds the plain Catalog-owned identity context used for anime series acquisition."
   defdelegate anime_series_acquisition_context(series), to: SeriesCatalog

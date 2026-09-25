@@ -6,19 +6,28 @@ defmodule Cinder.Catalog.AnimeAcquisitionContextTest do
   alias Cinder.Catalog
   alias Cinder.Repo
 
-  test "builds a plain movie context with aliases and profile summary" do
-    movie = movie_fixture(title: "Your Name", year: 2016, media_profile: :anime)
+  test "builds a plain movie context with aliases, localized titles and profile summary" do
+    movie =
+      movie_fixture(
+        title: "Your Name",
+        year: 2016,
+        imdb_id: "tt5311514",
+        media_profile: :anime,
+        localizations: %{"fr" => %{"title" => "Your Name.", "overview" => nil}}
+      )
 
     assert {:ok, _alias_record} =
              Catalog.save_manual_alias(movie, %{title: "君の名は。", kind: :native})
 
     assert %{
              kind: :movie,
+             imdb_id: "tt5311514",
              title: "Your Name",
              year: 2016,
              aliases: aliases,
+             localized_titles: ["Your Name."],
              profile: %{effective: :anime}
-           } = Catalog.anime_movie_acquisition_context(movie)
+           } = Catalog.movie_acquisition_context(Repo.reload!(movie))
 
     assert aliases == [
              %{

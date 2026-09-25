@@ -22,6 +22,14 @@ defmodule Cinder.AcquisitionTest do
 
   defp series(attrs \\ []), do: struct(%Series{tvdb_id: 123, title: "The Office"}, attrs)
 
+  # `Catalog.movie_acquisition_context/1`'s shape; `raw/1`'s default release names this movie.
+  defp movie_context(attrs \\ []) do
+    Map.merge(
+      %{imdb_id: "tt1", title: "Movie", year: 2020, aliases: [], localized_titles: []},
+      Map.new(attrs)
+    )
+  end
+
   defp raw_tv(title, attrs \\ []),
     do: Map.merge(%{title: title, size: 2 * @gb, download_url: "u", seeders: 10}, Map.new(attrs))
 
@@ -121,7 +129,7 @@ defmodule Cinder.AcquisitionTest do
     refute_received :unexpected_empty_search
   end
 
-  test "best_release/2 composes indexer search, parse, and scoring" do
+  test "best_release/3 composes indexer search, parse, and scoring" do
     expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
       {:ok,
        [
@@ -131,30 +139,30 @@ defmodule Cinder.AcquisitionTest do
     end)
 
     assert {:ok, %Release{group: "BEST", resolution: "1080p"}} =
-             Acquisition.best_release("tt1375666", max_size: 20 * @gb)
+             Acquisition.best_release("tt1375666", movie_context(), max_size: 20 * @gb)
   end
 
-  test "best_release/2 returns :no_match when nothing survives the rules" do
+  test "best_release/3 returns :no_match when nothing survives the rules" do
     expect(Cinder.Acquisition.IndexerMock, :search, fn _ ->
       {:ok, [raw(title: "Movie.2020.1080p.BluRay.x264-GRP", size: 50 * @gb)]}
     end)
 
-    assert :no_match = Acquisition.best_release("tt1375666", max_size: 20 * @gb)
+    assert :no_match = Acquisition.best_release("tt1375666", movie_context(), max_size: 20 * @gb)
   end
 
-  test "best_release/2 returns :no_match on an empty indexer result" do
+  test "best_release/3 returns :no_match on an empty indexer result" do
     expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:ok, []} end)
 
-    assert :no_match = Acquisition.best_release("tt1375666")
+    assert :no_match = Acquisition.best_release("tt1375666", movie_context())
   end
 
-  test "best_release/2 passes an indexer error straight through" do
+  test "best_release/3 passes an indexer error straight through" do
     expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:error, :timeout} end)
 
-    assert {:error, :timeout} = Acquisition.best_release("tt1375666")
+    assert {:error, :timeout} = Acquisition.best_release("tt1375666", movie_context())
   end
 
-  test "best_release/2 excludes releases whose protocol has no configured client" do
+  test "best_release/3 excludes releases whose protocol has no configured client" do
     expect(Cinder.Acquisition.IndexerMock, :search, fn _ ->
       {:ok,
        [
@@ -166,16 +174,19 @@ defmodule Cinder.AcquisitionTest do
     # Only torrent clients available: the 1080p Usenet release is filtered out
     # before scoring, so the 720p torrent wins despite the lower resolution.
     assert {:ok, %Release{resolution: "720p", protocol: :torrent}} =
-             Acquisition.best_release("tt1", protocols: [:torrent], max_size: 20 * @gb)
+             Acquisition.best_release("tt1", movie_context(),
+               protocols: [:torrent],
+               max_size: 20 * @gb
+             )
   end
 
-  test "best_release/2 with no :protocols opt keeps every protocol" do
+  test "best_release/3 with no :protocols opt keeps every protocol" do
     expect(Cinder.Acquisition.IndexerMock, :search, fn _ ->
       {:ok, [raw(title: "Movie.2020.1080p.WEB-DL-USE", protocol: :usenet, size: 9 * @gb)]}
     end)
 
     assert {:ok, %Release{protocol: :usenet}} =
-             Acquisition.best_release("tt1", max_size: 20 * @gb)
+             Acquisition.best_release("tt1", movie_context(), max_size: 20 * @gb)
   end
 
   test "best_release filters by language: french pick keeps a FRENCH release" do
@@ -188,7 +199,7 @@ defmodule Cinder.AcquisitionTest do
     end)
 
     assert {:ok, %Release{group: "FR", language: "FRENCH"}} =
-             Acquisition.best_release("tt1",
+             Acquisition.best_release("tt1", movie_context(),
                max_size: 20 * @gb,
                preferred_language: "french",
                original_language: "en"
@@ -207,7 +218,7 @@ defmodule Cinder.AcquisitionTest do
     end)
 
     assert :no_match =
-             Acquisition.best_release("tt1",
+             Acquisition.best_release("tt1", movie_context(),
                max_size: 20 * @gb,
                preferred_language: "french",
                original_language: "en",
@@ -221,7 +232,7 @@ defmodule Cinder.AcquisitionTest do
     end)
 
     assert :no_language_match =
-             Acquisition.best_release("tt1",
+             Acquisition.best_release("tt1", movie_context(),
                max_size: 20 * @gb,
                preferred_language: "french",
                original_language: "en"
@@ -238,7 +249,7 @@ defmodule Cinder.AcquisitionTest do
     end)
 
     assert {:ok, %Release{group: "EN"}} =
-             Acquisition.best_release("tt1",
+             Acquisition.best_release("tt1", movie_context(),
                max_size: 20 * @gb,
                preferred_language: "original",
                original_language: "en"
@@ -251,7 +262,7 @@ defmodule Cinder.AcquisitionTest do
     end)
 
     assert {:ok, %Release{group: "FR"}} =
-             Acquisition.best_release("tt1",
+             Acquisition.best_release("tt1", movie_context(),
                max_size: 20 * @gb,
                preferred_language: "any",
                original_language: "en"
@@ -271,7 +282,7 @@ defmodule Cinder.AcquisitionTest do
     end)
 
     assert {:ok, %Release{language: "ITALIAN", resolution: "1080p"}} =
-             Acquisition.best_release("tt1",
+             Acquisition.best_release("tt1", movie_context(title: "The Italian Job"),
                max_size: 20 * @gb,
                preferred_language: "original",
                original_language: "en"
@@ -288,7 +299,7 @@ defmodule Cinder.AcquisitionTest do
     end)
 
     assert :no_language_match =
-             Acquisition.best_release("tt1",
+             Acquisition.best_release("tt1", movie_context(title: "The Italian Job"),
                max_size: 20 * @gb,
                preferred_language: "french",
                original_language: "en"
@@ -307,7 +318,7 @@ defmodule Cinder.AcquisitionTest do
     end)
 
     assert {:ok, %Release{language: "FRENCH"}} =
-             Acquisition.best_release("tt1",
+             Acquisition.best_release("tt1", movie_context(title: "Chasse gardée"),
                max_size: 20 * @gb,
                preferred_language: "original",
                original_language: "fr"
@@ -327,7 +338,7 @@ defmodule Cinder.AcquisitionTest do
     end)
 
     assert {:ok, %Release{language: "FRENCH"}} =
-             Acquisition.best_release("tt1",
+             Acquisition.best_release("tt1", movie_context(title: "Chasse gardée"),
                max_size: 20 * @gb,
                preferred_language: "original",
                original_language: "fr"
@@ -348,11 +359,27 @@ defmodule Cinder.AcquisitionTest do
     end)
 
     assert {:ok, %Release{group: "FW"}} =
-             Acquisition.best_release("tt1",
+             Acquisition.best_release("tt1", movie_context(title: "Guru"),
                max_size: 12 * @gb,
                preferred_language: "original",
                original_language: "fr"
              )
+  end
+
+  # The reported mis-grab: an indexer answered the `{ImdbId:...}` search for "Spider-Man: Brand New
+  # Day" with another film's release, and the scorer took it because it was the bigger file.
+  test "best_release/3 never grabs an id-scoped result that spells none of the movie's titles" do
+    context = movie_context(imdb_id: "tt22084616", title: "Spider-Man: Brand New Day", year: 2026)
+    wrong = raw(title: "Spider-Island.2026.1080p.WEB-DL.x264-BIG", size: 15 * @gb)
+    right = raw(title: "Spider-Man.Brand.New.Day.2026.1080p.WEB-DL.x264-GRP", size: 6 * @gb)
+
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt22084616" -> {:ok, [wrong, right]} end)
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt22084616" -> {:ok, [wrong]} end)
+
+    assert {:ok, %Release{group: "GRP"}} =
+             Acquisition.best_release("tt22084616", context, max_size: 20 * @gb)
+
+    assert :no_match = Acquisition.best_release("tt22084616", context, max_size: 20 * @gb)
   end
 
   describe "list_releases/2" do
@@ -1070,6 +1097,82 @@ defmodule Cinder.AcquisitionTest do
         |> Enum.map(&Release.new/1)
 
       assert [] = Acquisition.title_guard(releases, :tv, target)
+    end
+
+    test "an IMDb-scoped movie keeps any name spelling a known title and drops another film" do
+      context =
+        movie_context(
+          title: "The Godfather",
+          year: 1972,
+          localized_titles: ["Le Parrain"],
+          aliases: [%{title: "Il Padrino"}]
+        )
+
+      # Conventions the strict free-text guard fails closed on stay grabbable on the id path:
+      # a tag prefix, language before the year, a site prefix with no year, a localized title
+      # and an alias.
+      kept = [
+        "The.Godfather.1972.1080p.BluRay.x264-GRP",
+        "[TGx] The Godfather (1972) 2160p WEB-DL",
+        "The.Godfather.German.1972.AC3.BDRiP.x264-GRP",
+        "www.site.org - The Godfather 1080p BluRay",
+        "Le.Parrain.1972.FRENCH.1080p.BluRay.x264-FR",
+        "Il.Padrino.1972.ITALIAN.1080p.BluRay.x264-IT"
+      ]
+
+      releases =
+        Enum.map(["The.Godmother.1972.1080p.WEB-DL-GRP" | kept], &Release.new(raw(title: &1)))
+
+      assert Enum.map(Acquisition.title_guard(releases, :movie, context), & &1.title) == kept
+    end
+
+    test "an IMDb-scoped movie title matches whole tokens, not a word's prefix" do
+      releases =
+        Enum.map(
+          ["Upgrade.2018.1080p.BluRay.x264-GRP", "Up.2009.1080p.BluRay.x264-GRP"],
+          &Release.new(raw(title: &1))
+        )
+
+      assert [%Release{title: "Up.2009.1080p.BluRay.x264-GRP"}] =
+               Acquisition.title_guard(releases, :movie, movie_context(title: "Up", year: 2009))
+    end
+
+    # Every release carries a year, so a year-shaped title matched anywhere would admit any film
+    # from that year. The title has to lead the name (after an optional `[tag]`).
+    test "an IMDb-scoped movie with an all-digit title needs it to lead the name" do
+      kept = ["2012.2009.720p.WEB-DL-GRP", "[TGx] 2012 (2009) 1080p BluRay"]
+
+      releases =
+        Enum.map(["Avatar.2012.1080p.BluRay.x264-GRP" | kept], &Release.new(raw(title: &1)))
+
+      assert releases
+             |> Acquisition.title_guard(:movie, movie_context(title: "2012", year: 2009))
+             |> Enum.map(& &1.title) == kept
+    end
+
+    # #451 class: the guard's `/u` regexes raise on malformed UTF-8. One garbled indexer title
+    # must not take the good releases of the same search down with it.
+    test "a garbled indexer title is judged, not raised on, by the movie and TV guards" do
+      garbled = <<0xFF, 0xFE, "Interstellar.2014", 0xC0, 0xAF>>
+      good = Release.new(raw(title: "Inception.2010.1080p.BluRay.x264-GRP"))
+      movie = movie_context(title: "Inception", year: 2010)
+
+      assert Acquisition.title_guard([Release.new(raw(title: garbled)), good], :movie, movie) ==
+               [good]
+
+      # The scrubbed name still reads "Interstellar.2014", so the TV guard keeps it for that show.
+      tv = [Release.new(raw_tv(garbled, query_origins: [:free_text]))]
+      target = series(tvdb_id: nil, title: "Interstellar", year: 2014)
+      assert Acquisition.title_guard(tv, :tv, target) == tv
+    end
+
+    # Nothing to compare release names against, so the IMDb scope stays the only evidence rather
+    # than every release of the movie being dropped.
+    test "an IMDb-scoped movie with no Latin-script title or alias keeps its results" do
+      releases = [Release.new(raw(title: "Dom.2011.1080p.WEB-DL-GRP"))]
+
+      assert Acquisition.title_guard(releases, :movie, movie_context(title: "Дом", year: 2011)) ==
+               releases
     end
   end
 end

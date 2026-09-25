@@ -2436,7 +2436,7 @@ defmodule Cinder.Download.PollerTest do
           imdb_id: "tt50",
           status: :downloading,
           download_id: "hash-50",
-          release_title: "Bad.Release.1080p-GRP"
+          release_title: "Inception.Bad.Release.1080p-GRP"
         })
 
       start_supervised!({Poller, interval: 60_000})
@@ -2448,7 +2448,7 @@ defmodule Cinder.Download.PollerTest do
 
       assert :ok = Poller.poll()
       assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
-      assert Catalog.blocked_release_titles(movie) == ["Bad.Release.1080p-GRP"]
+      assert Catalog.blocked_release_titles(movie) == ["Inception.Bad.Release.1080p-GRP"]
 
       # The blocklist row is what bounds the re-queue loop: a re-search that finds only the
       # blocked release parks :no_match rather than re-grabbing it forever. (Asserted on a fresh
@@ -2457,7 +2457,7 @@ defmodule Cinder.Download.PollerTest do
         movie_fixture(%{tmdb_id: 51, imdb_id: "tt50", status: :requested, release_title: nil})
 
       Catalog.block_release(
-        %{Repo.get!(Movie, fresh.id) | release_title: "Bad.Release.1080p-GRP"},
+        %{Repo.get!(Movie, fresh.id) | release_title: "Inception.Bad.Release.1080p-GRP"},
         :download_error
       )
 
@@ -2465,7 +2465,7 @@ defmodule Cinder.Download.PollerTest do
         {:ok,
          [
            %{
-             title: "Bad.Release.1080p-GRP",
+             title: "Inception.Bad.Release.1080p-GRP",
              size: 8_000_000_000,
              download_url: "magnet:?xt=urn:btih:bad",
              seeders: 1

@@ -87,7 +87,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   # Duplicated from Cinder.Catalog's own copy (used there by
-  # anime_movie_acquisition_context/1) — tiny enough to keep as two independent copies rather
+  # movie_acquisition_context/1) — tiny enough to keep as two independent copies rather
   # than share a module for it.
   defp acquisition_aliases(owner) do
     owner

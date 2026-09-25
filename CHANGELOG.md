@@ -7,6 +7,18 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A movie search no longer grabs another film the indexer returned for its IMDb id.** A search
+  for "Spider-Man: Brand New Day" downloaded "Spider-Island". Every result of the `{ImdbId:...}`
+  search was trusted as the requested movie, but an indexer can ignore the id and answer with
+  keyword matches, and an uploader can link a release to the wrong IMDb page. The scorer then
+  took the biggest file. Automatic selection (search and upgrade hunting) now keeps only releases
+  whose name spells the movie's title, one of its TMDB alternative titles, or a localized title,
+  as whole words anywhere in the name. An all-digit title such as "2012" must come first in the
+  name, so that another film's year can't match it. The check is deliberately looser than the
+  no-IMDb fallback, so names with the language before the year, an edition tag, a site prefix,
+  or no year still qualify. A movie whose titles have no Latin-script form keeps the previous
+  behaviour. The manual search panel still lists every result, so an operator can still grab a
+  release named differently.
 - **An import no longer strands files on a mount that renumbers inodes across a rename.** Every
   ownership check the import makes — "is the file at this path still the one I put there?" —
   compares the `{device, inode}` pair `lstat` reports, captured before one of the import's own
