@@ -53,9 +53,8 @@ or fixed per deployment: `SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_HOST`, `PHX_SE
 choice — MUST live in the `Cinder.Settings` registry: DB-backed, editable in `/settings`,
 overlaid on env-as-bootstrap. A new service config value MUST get a `Cinder.Settings` registry
 entry, never a new `System.get_env` call site. Secrets MUST be Cloak-encrypted at rest (key
-derived from `SECRET_KEY_BASE`) and MUST NEVER be echoed back into a form, logged, or assigned to
-a socket assign / input `value=` (`.agents/skills/approval-gate-reviewer/SKILL.md`, Invariant 4:
-"must never land in form_state `values`, a socket assign, an input `value=`, or any log line").
+derived from `SECRET_KEY_BASE`) and MUST NEVER be echoed into a form value, a socket assign, or a
+log line.
 *Rationale: DB overrides env, a cleared setting reverts to env, and every context reads the same
 keys unchanged — a stray env var would fork that contract.*
 
