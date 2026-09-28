@@ -1864,8 +1864,8 @@ git commit -m "feat: hold unverifiable anime downloads"
 **Files:**
 - Modify only after all tests pass: `ROADMAP.md`
 - Update generated graph artifacts through: `graphify update .`
-- Review: `docs/superpowers/specs/2026-07-13-a4-anime-specials-preferences-design.md`
-- Review: `docs/superpowers/plans/2026-07-13-a4-anime-specials-preferences.md`
+- Review: `specs/046-a4-anime-specials-preferences/research.md`
+- Review: `specs/046-a4-anime-specials-preferences/plan.md`
 
 **Interfaces:**
 - Produces complete A4 test evidence and a current knowledge graph.

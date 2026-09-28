@@ -6,7 +6,7 @@
 
 **Architecture:** Episodes stay status-less; state is derived (`file_path` ⇒ available, `grab_id` ⇒ downloading, else wanted). A transient `grabs` row owns the `download_id`/`download_protocol` and, via `content_path`, its phase (nil ⇒ downloading, set ⇒ ready to import). All episode/grab writes go through Catalog choke-points that broadcast `{:series_updated, series_id}` on the existing `"series"` topic. Multi-row writes are wrapped in `Repo.transaction` (the M0 WAL + `busy_timeout` correctness guarantee).
 
-**Tech Stack:** Elixir/Phoenix 1.8, Ecto + `ecto_sqlite3`, ExUnit, Mox. Design spec: `docs/specs/2026-06-22-m5-design.md`.
+**Tech Stack:** Elixir/Phoenix 1.8, Ecto + `ecto_sqlite3`, ExUnit, Mox. Design spec: `specs/010-m5-tv-acquisition-import/research.md`.
 
 ## Global Constraints
 
@@ -582,7 +582,7 @@ git commit -m "M5a: wanted_episodes/0 query"
 
 ## Self-Review
 
-**Spec coverage (M5a section of `docs/specs/2026-06-22-m5-design.md`):**
+**Spec coverage (M5a section of `specs/010-m5-tv-acquisition-import/research.md`):**
 - Migration: grabs table + 4 episode columns + `index(:episodes, [:grab_id])` → Task 1. ✓
 - `Cinder.Catalog.Grab` schema + `Episode.transition_changeset/2` → Task 1. ✓
 - `transition_episode/2` choke-point → Task 2. ✓

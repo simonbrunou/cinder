@@ -1,6 +1,6 @@
 # Books bounded-work audit
 
-Produced for B8a (`docs/plans/2026-09-02-books-b8-hardening-and-signoff.md`, `## B8a`, §3).
+Produced for B8a (`specs/066-books-b8-hardening-signoff/plan.md`, `## B8a`, §3).
 Every claim below was checked by reading the named file at the cited line, on the current
 `feat/books-b8ab-hardening` branch, not copied from the plan's own prose. Where the plan's
 prediction and the actual source diverge, that is called out explicitly in the closing section

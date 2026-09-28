@@ -17,7 +17,7 @@
 - All user-facing strings go through `gettext/1` (en/fr). New strings are extracted with `mix gettext.extract --merge` at the end.
 - Match model (verbatim): a release satisfies target `T` for a title with original language `O` when `release.language == "MULTI"`, **or** `release.language == tag(T)` (where `tag("fr")="FRENCH"`, `"de"→"GERMAN"`, `"es"→"SPANISH"`, `"it"→"ITALIAN"`, `"en"`/other → `nil`), **or** `release.language == nil and T == O`. Pick resolves to `T`: `"any"`→none(off), `"original"`→`O` (off when `O` blank/nil), `"french"`→`"fr"`.
 - After code changes land, run `graphify update .` (AST-only) to keep the graph current.
-- Spec: `docs/specs/2026-06-25-per-item-language-preference-design.md`.
+- Spec: `specs/022-per-item-language-preference/research.md`.
 
 ---
 

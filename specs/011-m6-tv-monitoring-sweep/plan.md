@@ -6,7 +6,7 @@
 
 **Architecture:** Air-date eligibility, monitor-strategy enforcement, and the wanted-driven sweep already exist (`Catalog.wanted_episodes/0`, `TvPoller.search_wanted/1`). This milestone adds: (1) a partial index backing the wanted query; (2) `Catalog.refresh_series/1` reconciling a series against TMDB keyed on `tmdb_episode_id`, driven by a long-interval `Cinder.Catalog.Refresher` GenServer; (3) `Catalog.upcoming_episodes/0` + `CinderWeb.CalendarLive`. The movie pipeline is untouched.
 
-**Tech Stack:** Elixir/Phoenix 1.8, LiveView/HEEx, Ecto + `ecto_sqlite3`, `Req`, ExUnit + Mox, daisyUI. Spec: `docs/specs/2026-06-22-m6-design.md`.
+**Tech Stack:** Elixir/Phoenix 1.8, LiveView/HEEx, Ecto + `ecto_sqlite3`, `Req`, ExUnit + Mox, daisyUI. Spec: `specs/011-m6-tv-monitoring-sweep/research.md`.
 
 ## Global Constraints
 

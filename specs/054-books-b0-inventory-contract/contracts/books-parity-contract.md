@@ -2,7 +2,7 @@
 
 **Status:** Accepted for B0 on 2026-08-20
 Council review: n/a
-**Roadmap:** [`docs/plans/2026-08-20-readarr-replacement-roadmap.md`](../plans/2026-08-20-readarr-replacement-roadmap.md), milestone B0
+**Roadmap:** [`specs/053-books-readarr-replacement/plan.md`](../plans/2026-08-20-readarr-replacement-roadmap.md), milestone B0
 **Evidence:**
 [`bookshelf-inventory-v1.json`](../audits/data/bookshelf-inventory-v1.json),
 [`bookshelf inventory audit`](../audits/2026-08-20-bookshelf-inventory.md),

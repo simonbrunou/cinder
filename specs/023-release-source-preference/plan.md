@@ -6,7 +6,7 @@
 
 **Architecture:** Add a `source` field to the parser and `Release` struct; add a `preferred_sources` filter + ranking dimension to the scorer; surface a per-kind setting that overlays `:cinder, :<kind>_preferred_sources` through the existing `band_opts/2` seam (reaching both pollers unchanged). No migration, no new machinery.
 
-**Tech Stack:** Elixir / Phoenix 1.8, ExUnit. Spec: `docs/specs/2026-06-26-release-source-preference-design.md`.
+**Tech Stack:** Elixir / Phoenix 1.8, ExUnit. Spec: `specs/023-release-source-preference/research.md`.
 
 ## Global Constraints
 

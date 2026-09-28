@@ -8,7 +8,7 @@
 
 **Tech Stack:** Elixir/Phoenix 1.8.7, LiveView, Ecto + `ecto_sqlite3` (WAL + busy_timeout), `bcrypt_elixir` (new), ExUnit + Mox, daisyUI.
 
-**Spec:** `docs/superpowers/specs/2026-06-21-m2-accounts-roles-requests-design.md` — read it first.
+**Spec:** `specs/007-m2-accounts-roles-requests/research.md` — read it first.
 
 > Council review: 2 rounds (perspective-diverse Claude reviewers, code-correctness + completeness
 > grounded in the real codebase & generator templates). Round 1 found executability defects (all

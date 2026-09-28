@@ -9,8 +9,8 @@ defmodule Cinder.BooksB0ContractTest do
   @provider_decision_path "docs/audits/data/books-provider-decision-v1.json"
   @parity_path "docs/audits/data/books-parity-matrix-v1.json"
   @audit_path "docs/audits/2026-08-20-bookshelf-inventory.md"
-  @contract_path "docs/specs/2026-08-20-books-parity-contract.md"
-  @roadmap_path "docs/plans/2026-08-20-readarr-replacement-roadmap.md"
+  @contract_path "specs/054-books-b0-inventory-contract/contracts/books-parity-contract.md"
+  @roadmap_path "specs/053-books-readarr-replacement/plan.md"
   @generator_path "test/support/books_b0_inventory.py"
 
   @required_instance_inputs ~w(

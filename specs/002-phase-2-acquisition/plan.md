@@ -8,7 +8,7 @@
 
 **Tech Stack:** Elixir / Phoenix 1.8, `Req` (HTTP) + `Req.Test` (client tests), `Mox` (behaviour mocks), ExUnit, `credo --strict`.
 
-**Design spec:** `docs/superpowers/specs/2026-06-18-phase-2-acquisition-design.md` (read it; this plan implements it).
+**Design spec:** `specs/002-phase-2-acquisition/research.md` (read it; this plan implements it).
 
 Council review: 1 round (Opus Elixir-correctness + Sonnet test-mechanics; scope seat skipped —
 settled at the spec stage). Consensus **SOUND-WITH-FIXES**, both high-confidence: the Opus seat

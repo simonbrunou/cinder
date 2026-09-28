@@ -17,7 +17,7 @@
 - Destructive guards (last-admin, self-delete) live in the context, run inside one `Repo.transaction` with a post-write re-count, and use the server-side `current_scope` actor (never a client `phx-value` id).
 - The audit row for a destructive op is written inside that same transaction, after the guard passes.
 - `@moduledoc` on every new module; `@impl true` on new behaviour impls; keep the catch-all `handle_event/3`; add a catch-all `handle_info/2` to any newly-subscribed LiveView.
-- All work on branch `feat/admin-crud`; commit per task. Spec: `docs/superpowers/specs/2026-06-23-admin-crud-design.md`.
+- All work on branch `feat/admin-crud`; commit per task. Spec: `specs/013-admin-crud/research.md`.
 - Reach the code in CT 113: `pct exec 113 -- env -i TMPDIR=/tmp HOME=/root bash -lc 'cd /root/cinder && <cmd>'`.
 
 ---

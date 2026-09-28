@@ -8,7 +8,7 @@
 
 **Tech Stack:** Elixir/Phoenix 1.8, LiveView (HEEx), Ecto + ecto_sqlite3, Mox, daisyUI.
 
-**Spec:** `docs/specs/2026-06-25-file-deletion-design.md`.
+**Spec:** `specs/020-file-deletion/research.md`.
 
 **Council review:** 1 round (architecture / implementation / red-team), all seats **sound** — no design or data-safety flaws (prune guard fails closed; no layering cycle; choke-point + file_path⊕grab_id invariant respected). Folded in: a blocker Mox count fix (Task 5 `expect(:rm, 2, …)`), the `movie_fixture`→`movie!`+`Repo.update` fixtures (Task 6), explicit catch-all clause ordering (Tasks 6–7), an out-of-root prune safety test (Task 1), re-download caveat copy (Task 7), and minor notes (TOCTOU window, symlink-root fail-closed, credo nesting extraction).
 

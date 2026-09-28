@@ -17,7 +17,7 @@ views (inline, server-assign-gated — the project has no modals).
 **Tech Stack:** Elixir/Phoenix 1.8 LiveView (HEEx), Ecto + `ecto_sqlite3`, `Req`, Tailwind + daisyUI,
 ExUnit + Mox.
 
-Spec: `docs/specs/2026-06-29-better-match-manual-search-design.md` (read it first).
+Spec: `specs/028-manual-search-better-match/research.md` (read it first).
 
 ## Global Constraints
 

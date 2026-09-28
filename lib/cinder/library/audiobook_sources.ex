@@ -34,7 +34,7 @@ defmodule Cinder.Library.AudiobookSources do
      interchangeable copies of each other the way `BookSources`' multi-format e-book collapse
      treats an EPUB + MOBI pair.
 
-  See the B7b plan (`docs/plans/2026-09-02-books-b7-audiobooks.md`, `## B7b`, §2) for the full
+  See the B7b plan (`specs/065-books-b7-audiobooks/plan.md`, `## B7b`, §2) for the full
   reasoning behind each refusal.
 
   ## Bounded probing — the aggregate cost of one set, not just one call

@@ -196,7 +196,7 @@ requester surfaces** and fully usable on a phone everywhere.
   drawer on mobile.
 
 The approved direction is captured as throwaway HTML/CSS mockups in
-`docs/specs/assets/2026-06-24-ux-overhaul/` (`discover.html`, `dashboard.html`, `_shared.css`) —
+`specs/014-ux-identity-overhaul/assets/` (`discover.html`, `dashboard.html`, `_shared.css`) —
 open in a browser or render at any width. The Discover mockup is responsive: persistent sidebar
 ≥ `lg`, hamburger drawer + 2-column grid on mobile. These are a visual target for UX-1/UX-3, not
 code to port.

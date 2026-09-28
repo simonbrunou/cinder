@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-(Verbatim from `docs/specs/2026-06-24-ux-identity-overhaul-design.md`. Every task implicitly includes these.)
+(Verbatim from `specs/014-ux-identity-overhaul/research.md`. Every task implicitly includes these.)
 
 - **Do not touch the approval gate, role-gating, or pipeline logic.** Presentation/IA/theme only. No route's `on_mount` *auth* guard changes; `Cinder.Requests.create_request/2` stays the only user-action path that can create a `:requested` row. (UX-1 adds a *non-auth* `:current_path` hook alongside the existing guards — it must not alter who can access what.)
 - **Stay in-stack.** Tailwind v4 + daisyUI + HEEx. No React, no CSS framework swap, no new external service env vars.

@@ -1,7 +1,7 @@
 # UX-5 — Hardening: a11y, motion, light theme, cross-device QA
 
 **Track:** UX/identity overhaul, final phase (UX-5). **Date:** 2026-06-25.
-**Design:** `docs/specs/2026-06-24-ux-identity-overhaul-design.md` (§ "UX-5").
+**Design:** `specs/014-ux-identity-overhaul/research.md` (§ "UX-5").
 **Status:** shipped — `mix test` green (673), cross-device QA passed live.
 
 ## Context

@@ -13,8 +13,8 @@ globs:
   - lib/cinder/library/**/audiobook*
   - lib/cinder/library/**/readarr.ex
   - lib/cinder_web/live/book_*
-  - docs/plans/*books*
-  - docs/specs/*books*
+  - specs/*books*/**
+  - specs/*books*/**
 ---
 
 **The track is finished.** B0–B8 all shipped and released in v3.0.0 (`CHANGELOG.md`, tagged
@@ -76,7 +76,7 @@ sign-off. Both are operator actions — `docs/books-dogfood-checklist.md` and
 ## Decisions that are already settled — do not re-derive them
 
 B0 closed these, and `test/cinder/books_b0_contract_test.exs` asserts the parity matrix still
-traces to real tests. Read them from `docs/specs/2026-08-20-books-parity-contract.md`,
+traces to real tests. Read them from `specs/054-books-b0-inventory-contract/contracts/books-parity-contract.md`,
 `docs/audits/2026-08-20-bookshelf-inventory.md`, and
 `docs/audits/data/books-parity-matrix-v1.json`:
 
@@ -92,7 +92,7 @@ call inside a fix.
 
 ## Where the history is
 
-`docs/plans/2026-08-20-readarr-replacement-roadmap.md` is the build record for the track, one
+`specs/053-books-readarr-replacement/plan.md` is the build record for the track, one
 section per milestone, each ending in a "Shipped as N slices" subsection plus the execution notes
 and amendments discovered while building it. **Those notes are authoritative** where they
 contradict the original plan prose — read them before reconstructing why something works the way

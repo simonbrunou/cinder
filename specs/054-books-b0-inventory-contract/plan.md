@@ -46,7 +46,7 @@ Run only this test and retain the failing output as RED evidence.
 
 Create the smallest artifacts that satisfy the contract:
 
-- `docs/specs/2026-08-20-books-parity-contract.md`
+- `specs/054-books-b0-inventory-contract/contracts/books-parity-contract.md`
 - `docs/audits/2026-08-20-bookshelf-inventory.md`
 - `docs/audits/data/books-parity-matrix-v1.json`
 - `docs/audits/data/bookshelf-inventory-v1.json`

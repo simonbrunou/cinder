@@ -6,7 +6,7 @@
 
 **Architecture:** Add a persisted `imported_source` column (movies + episodes; the clean library filename strips the source token, so it can't be re-derived). Thread `source` through the import quality maps and the two persist sites, re-expose `Scorer.source_rank/2`, and insert the source axis into the comparator via a shared tuple-rank.
 
-**Tech Stack:** Elixir / Phoenix, Ecto + ecto_sqlite3, ExUnit + Mox. Spec: `docs/specs/2026-06-27-source-aware-upgrade-design.md`.
+**Tech Stack:** Elixir / Phoenix, Ecto + ecto_sqlite3, ExUnit + Mox. Spec: `specs/025-source-aware-upgrade/research.md`.
 
 ## Global Constraints
 

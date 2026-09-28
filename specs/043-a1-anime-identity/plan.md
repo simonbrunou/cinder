@@ -856,7 +856,7 @@ Commit: `feat: expose anime identity controls`
 
 **Files:**
 - Modify: `ROADMAP.md`
-- Modify: `docs/superpowers/plans/2026-07-13-a1-anime-identity-foundation.md`
+- Modify: `specs/043-a1-anime-identity/plan.md`
 
 **Interfaces:**
 - Produces: A1 marked done only after corpus, focused, full-suite, and graph gates pass.

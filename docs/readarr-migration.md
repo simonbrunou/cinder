@@ -4,8 +4,8 @@ This is the operator runbook for the B6 Readarr/Bookshelf cutover, covering both
 e-book instance and a Bookshelf audiobook instance (B7e widened classification/adoption to the
 audiobook case; see the addendum near the end). It assumes a `pennydreadful/bookshelf:hardcover`-
 style deployment reachable over its Readarr v3-compatible `/api/v1`, and Cinder's own
-`Cinder.Books.Adoption` write choke-point (`docs/plans/2026-09-01-books-b6-migration-and-cutover.md`,
-§B6c; `docs/plans/2026-09-02-books-b7-audiobooks.md`, §B7e).
+`Cinder.Books.Adoption` write choke-point (`specs/064-books-b6-migration-cutover/plan.md`,
+§B6c; `specs/065-books-b7-audiobooks/plan.md`, §B7e).
 
 **Read before running:** adoption is **in place**. Cinder never moves, renames, hardlinks, copies,
 or deletes a Bookshelf-managed file — it only inserts a `book_files` row pointing at the

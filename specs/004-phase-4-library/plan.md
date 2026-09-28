@@ -17,7 +17,7 @@ all fixes are correct with no new issues. No residual disagreement.**
 
 **Tech Stack:** Elixir/Phoenix 1.8, Ecto + ecto_sqlite3, `Req`, Mox, ExUnit.
 
-**Spec:** `docs/superpowers/specs/2026-06-19-phase-4-library-design.md`
+**Spec:** `specs/004-phase-4-library/research.md`
 
 ## Global Constraints
 

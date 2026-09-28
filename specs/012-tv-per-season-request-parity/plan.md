@@ -8,7 +8,7 @@
 
 **Tech Stack:** Elixir/Phoenix 1.8, LiveView (HEEx), Ecto + `ecto_sqlite3`, ExUnit + Mox.
 
-**Design spec:** `docs/specs/2026-06-23-tv-per-season-request-parity-design.md`.
+**Design spec:** `specs/012-tv-per-season-request-parity/research.md`.
 
 ## Global Constraints
 

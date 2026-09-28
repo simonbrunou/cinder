@@ -8,7 +8,7 @@
 
 **Tech Stack:** Elixir/Phoenix 1.8, Ecto + ecto_sqlite3, Req (qBittorrent Web API v2), Phoenix.PubSub, Mox + Req.Test for tests.
 
-**Design spec:** `docs/superpowers/specs/2026-06-18-phase-3-download-design.md` (council-reviewed). Read it for the *why*; this plan is the *how*.
+**Design spec:** `specs/003-phase-3-download/research.md` (council-reviewed). Read it for the *why*; this plan is the *how*.
 
 Council review: 1 round (Claude-only harness — perspective-diverse seats: Opus code-correctness + Sonnet library-API verification against the vendored `deps/`). Consensus **READY-TO-IMPLEMENT**, no blockers. Both verified the riskiest claims empirically: the full-machine fixture survives `best_release` with no opts (confirmed no `Cinder.Acquisition.Scorer` config exists, so no size band rejects it), `Ecto.Enum`'s cast error really is `"is invalid"`, and the Req (`form_multipart`, `Req.Response.get_header` on `set-cookie`, `conn.params["hashes"]`, manual cookie threading — Req has no cookie jar), Mox (global mode + `async: false`), PubSub (synchronous `broadcast`, so `assert_receive` can't race), and `start_supervised!`/`:permanent`-restart flows are all correct. Two minor robustness fixes (the complete list both reviewers gave) applied: `await_restart/2` no longer busy-spins (added `Process.sleep(10)`), and the poller tests pass `interval: 60_000` to `start_supervised!` so the background timer can't fire mid-test. No NEEDS-REWORK; no second round warranted (the fixes were mechanical and pre-enumerated).
 

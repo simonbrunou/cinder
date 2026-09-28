@@ -15,7 +15,7 @@ The design spec's component list names a `<.page>` scaffold ("always `.header` +
 
 ## Global Constraints
 
-(Verbatim from `docs/specs/2026-06-24-ux-identity-overhaul-design.md`. Every task implicitly includes these.)
+(Verbatim from `specs/014-ux-identity-overhaul/research.md`. Every task implicitly includes these.)
 
 - **Do not touch the approval gate, role-gating, or pipeline logic.** Presentation/theme only. No route's `on_mount` *auth* guard changes; `Cinder.Requests.create_request/2` stays the only user-action path that can create a `:requested` row; the poller pickup is unchanged. UX-2 changes markup and deletes view helpers — it must not alter any `handle_event`/context call. Existing `phx-click`/`phx-submit` **event names and `phx-value-id` wiring are preserved** at every adoption site (the components are markup-only; per-page `@confirming`/`@search_error` assigns stay as they are).
 - **Stay in-stack.** Tailwind v4 + daisyUI + HEEx. No React, no CSS framework swap, no new external service env vars.
