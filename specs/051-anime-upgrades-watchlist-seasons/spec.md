@@ -16,8 +16,9 @@ A household member holds an Anime series where a better release becomes availabl
 original episode files were imported. Cinder should find and adopt those better releases the same
 way it already does for Standard TV, without the household member doing anything.
 
-**Why this priority**: This closes the one gap between Anime and Standard TV handling that left
-Anime episodes permanently stuck at whatever quality was first grabbed.
+**Why this priority**: This brings automatic upgrades to Anime series by reusing the existing
+Anime search/reservation/verification/import paths, while leaving Standard TV upgrade behavior
+unchanged.
 
 **Independent Test**: Configure an Anime series below its upgrade cutoff, let a better release
 appear, and confirm the episode file is replaced automatically while a series already at cutoff is
@@ -42,8 +43,8 @@ A Plex user with watchlist sync enabled adds a TV show to their Plex watchlist. 
 that into requests for every season of the show currently known, respecting Cinder's per-season
 request model, rather than ignoring TV watchlist entries entirely.
 
-**Why this priority**: Watchlist sync previously handled only movies; shows on a watchlist were
-skipped entirely, so the feature's TV coverage was missing.
+**Why this priority**: A watchlisted show now expands into one request per currently known
+numbered season, preserving Cinder's per-season request model.
 
 **Independent Test**: Add a show to a synced Plex user's watchlist and confirm one request per
 currently known numbered TMDB season is created under that user, each subject to their quota and
@@ -130,8 +131,9 @@ the household approval gate independently.
 - The following items were explicitly deferred at the time of this doc and are NOT part of this
   feature and NOT implemented here: arbitrary named library destinations beyond Standard and Anime
   (later addressed by named media profiles, v2.0.0); built-in backup scheduling and restore
-  verification (the operating guide documents manual SQLite backups instead); additional download
-  clients beyond qBittorrent, Transmission, SABnzbd, and NZBGet; and tracker-specific/RSS
+  verification (deferred at the time because the operating guide already documented safe SQLite
+  backups; later shipped as automatic verified database backups, changelog v2.0.0); additional
+  download clients beyond qBittorrent, Transmission, SABnzbd, and NZBGet; and tracker-specific/RSS
   automation beyond Prowlarr's existing normalization.
 - Anime upgrades shipped 2026-08-14 (changelog v1.1.0, "Automatic Anime TV upgrades"); Plex
   watchlist TV-season sync followed 2026-08-15 (changelog v2.0.0, "Plex watchlist TV-season sync").
