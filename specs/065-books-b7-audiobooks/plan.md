@@ -1,10 +1,10 @@
 # Books B7 — Audiobook acquisition and Audiobookshelf publication
 
 **Status:** planned 2026-09-02. Base: `main` @ `7c44d8dc` (post-B6, all three B6 slices merged).
-**Milestone:** [B7](2026-08-20-readarr-replacement-roadmap.md#b7--audiobook-acquisition-and-audiobookshelf-publication)
-of the [Readarr replacement roadmap](2026-08-20-readarr-replacement-roadmap.md).
-**Governing spec:** [the B0 parity contract](../specs/2026-08-20-books-parity-contract.md) and the
-[Bookshelf inventory audit](../audits/2026-08-20-bookshelf-inventory.md) own the audiobook format
+**Milestone:** [B7](../053-books-readarr-replacement/plan.md#b7--audiobook-acquisition-and-audiobookshelf-publication)
+of the [Readarr replacement roadmap](../053-books-readarr-replacement/plan.md).
+**Governing spec:** [the B0 parity contract](../054-books-b0-inventory-contract/contracts/books-parity-contract.md) and the
+[Bookshelf inventory audit](../../docs/audits/2026-08-20-bookshelf-inventory.md) own the audiobook format
 list, the monitoring vocabulary, the naming/root contract, and the fact that the real deployment
 has a *second*, separately-captured Bookshelf instance in front of Audiobookshelf. Decisions below
 are *taken* from those two documents wherever they speak; §0 records the three places they are

@@ -1,9 +1,9 @@
 # Books B3b — discovery, work page, and the request UI
 
 **Date:** 2026-08-25
-**Roadmap item:** [`readarr-replacement-roadmap`](2026-08-20-readarr-replacement-roadmap.md), B3 (second of two slices)
-**Contract:** [`books parity contract`](../specs/2026-08-20-books-parity-contract.md)
-**Predecessor:** [`B3a`](2026-08-25-books-b3a-requests-and-approval.md)
+**Roadmap item:** [`readarr-replacement-roadmap`](../053-books-readarr-replacement/plan.md), B3 (second of two slices)
+**Contract:** [`books parity contract`](../054-books-b0-inventory-contract/contracts/books-parity-contract.md)
+**Predecessor:** [`B3a`](../058-books-b3a-requests-approval/plan.md)
 **Branch:** `feat/books-b3b-discovery-and-request-ui`
 
 ## Goal

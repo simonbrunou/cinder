@@ -1111,8 +1111,8 @@ e-books, one fronting Audiobookshelf for audiobooks. Full governing documents:
 [`specs/054-books-b0-inventory-contract/contracts/books-parity-contract.md`](specs/054-books-b0-inventory-contract/contracts/books-parity-contract.md)
 (the locked parity contract against the live deployment audit,
 [`docs/audits/2026-08-20-bookshelf-inventory.md`](docs/audits/2026-08-20-bookshelf-inventory.md)).
-Each milestone has its own dated plan under `docs/plans/`; this section is the terse pointer, not
-a restatement.
+Each milestone has its own plan under `specs/NNN-books-<phase>-<slug>/plan.md`; this section is
+the terse pointer, not a restatement.
 
 - **B0 — Inventory and parity contract.** Read-only audit of the live Bookshelf deployments;
   locked the catalog identity model (author/work/edition/file), the monitoring-state vocabulary,

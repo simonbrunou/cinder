@@ -191,8 +191,8 @@ Expected: PASS (both tests). The migration applies via the `ecto.migrate --quiet
 ```bash
 git add priv/repo/migrations/20260622140000_add_tv_pipeline_fields.exs \
         lib/cinder/catalog/grab.ex lib/cinder/catalog/episode.ex \
-        test/cinder/catalog/episode_test.exs docs/specs/2026-06-22-m5-design.md \
-        docs/plans/2026-06-22-m5a-tv-pipeline-data-model.md
+        test/cinder/catalog/episode_test.exs specs/010-m5-tv-acquisition-import/research.md \
+        specs/010-m5-tv-acquisition-import/plan.md
 git commit -m "M5a: grabs table + episode pipeline fields"
 ```
 

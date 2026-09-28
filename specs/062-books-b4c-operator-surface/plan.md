@@ -3,13 +3,13 @@
 **Status:** planned 2026-09-01, revised after two review rounds. Base: `origin/main` @ `9f33e7d2`
 (post-B4b).
 **Milestone:** the third and final slice of
-[B4](2026-08-20-readarr-replacement-roadmap.md#b4--e-book-search-scoring-download-validation-and-publication).
+[B4](../053-books-readarr-replacement/plan.md#b4--e-book-search-scoring-download-validation-and-publication).
 
 ## What B4b left, and what this slice owns
 
-[B4a](2026-08-30-books-b4a-ebook-release-search-and-scoring.md) landed the decision layer
+[B4a](../060-books-b4a-ebook-search-scoring/plan.md) landed the decision layer
 (`Acquisition.Books.candidates/2`, no `best_book_release/2`).
-[B4b](2026-08-31-books-b4b-ebook-download-and-publication.md) landed the acquisition-to-disk
+[B4b](../061-books-b4b-ebook-download-publication/plan.md) landed the acquisition-to-disk
 layer (`Download.grab_book_target/2`, `Download.BookPoller`, `Library.BookImport`, `book_grabs`,
 `book_files`). Both shipped with **no production caller** — B4a's decision layer had nothing
 calling `candidates/2`, and B4b's pipeline only runs once something calls `grab_book_target/2`.
@@ -37,7 +37,7 @@ operator can make that happen, because nothing calls `grab_book_target/2`.
 ### 1. Scope
 
 **`/books/:id` lands, keyed by `book_works.id`** — not by a target id. A work independently
-monitors `:ebook` and `:audiobook` ([parity contract](../specs/2026-08-20-books-parity-contract.md#monitoring-semantics)),
+monitors `:ebook` and `:audiobook` ([parity contract](../054-books-b0-inventory-contract/contracts/books-parity-contract.md#monitoring-semantics)),
 and `Books.get_target(id)` was already built B2b-era for a single target row, but B3b's own
 framing — "the admin pipeline view of a work Cinder already tracks... the books analogue of
 `/movies/:id`" — is unambiguous: the page is about the work, and it must be able to show an
@@ -499,7 +499,7 @@ gating code, the existing `live_session` entry is sufficient.
 - **B6 adoption/migration** is untouched; nothing here reads or writes Bookshelf-sourced data.
 - **The two B3b orphans stay parked.** Author aliases and operator metadata overrides were handed
   to "whichever milestone first ships an edit control"
-  (`docs/plans/2026-08-20-readarr-replacement-roadmap.md:335-338`). B4c ships **no** edit
+  (`specs/053-books-readarr-replacement/plan.md:335-338`). B4c ships **no** edit
   control — the manual-search panel is an *acquisition* action (pick a release, submit a
   download), not a metadata correction to the work/edition/author catalog. Neither orphan gets a
   caller here; they remain explicitly unclaimed for a future milestone (most likely B5, where

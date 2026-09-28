@@ -180,7 +180,7 @@ A single requested work is the safe default. Author monitoring is an admin-only 
 ### Amendments during execution (2026-08-24)
 
 Two items in the Work list above moved out of B1. Both are recorded here rather than silently
-dropped; see [`the B1 plan`](2026-08-24-books-b1-media-kind-foundation.md) for the reasoning.
+dropped; see [`the B1 plan`](../055-books-b1-media-kind-foundation/plan.md) for the reasoning.
 
 - **`lib/cinder/books/book_target.ex` and its guarded transition move to B2.** The parity contract
   locks monitoring at `(work, media_kind)`, and `works` does not exist until B2. A `book_targets`
@@ -244,7 +244,7 @@ that rebuilds a table referenced by a trigger inherits this hazard.
 B2a (#353) landed the catalog schemas and `book_targets`; B2b landed `Cinder.Books.Metadata`, the
 Open Library and Hardcover adapters, `Cinder.Books.Identity`, and `Cinder.Books.Refresher`. Two
 corrections to this milestone's plan, both recorded in
-[`the B2b plan`](2026-08-24-books-b2b-metadata-and-identity.md):
+[`the B2b plan`](../057-books-b2b-metadata-identity/plan.md):
 
 - **No Google Books adapter, in either slice.** The parity contract supersedes "optional Google
   Books fallback": keyless evaluation returned 40/40 HTTP 429, so it has no acceptance criterion.
@@ -301,7 +301,7 @@ search, which is B3) and a provider-side ISBN fetch (an edition-level signal for
 
 B3a landed the request data model, the approval path, and `/api/v1`; B3b owns Discover, the work
 detail route, and the shared request components. See
-[`the B3a plan`](2026-08-25-books-b3a-requests-and-approval.md). One correction to this
+[`the B3a plan`](../058-books-b3a-requests-approval/plan.md). One correction to this
 milestone's plan:
 
 - **The "stable book target key" is `target_type: "book"` plus `target_id: <book_works.id>` and a
@@ -319,7 +319,7 @@ moves again to B3b with the detail page that does.
 ### Amendments during execution (2026-08-25)
 
 B3b shipped Discover, `/book/:provider/:foreign_id`, and the shared request components. See
-[`the B3b plan`](2026-08-25-books-b3b-discovery-and-request-ui.md). Corrections to this
+[`the B3b plan`](../059-books-b3b-discovery-request-ui/plan.md). Corrections to this
 milestone's entry:
 
 - **`book_detail_live.ex` was not created; `book_discovery_live.ex` was.** The roadmap's name
@@ -400,9 +400,9 @@ B4a landed the decision layer: book indexer queries, the release parser, and the
 owns the download intent, the poller, archive validation, and publication. B4c owns the operator
 surface: the `/books/:id` admin pipeline view, manual release search, and the Grab wiring that
 finally gives `grab_book_target/2` a production caller. See
-[`the B4a plan`](2026-08-30-books-b4a-ebook-release-search-and-scoring.md),
-[`the B4b plan`](2026-08-31-books-b4b-ebook-download-and-publication.md), and
-[`the B4c plan`](2026-09-01-books-b4c-operator-surface.md).
+[`the B4a plan`](../060-books-b4a-ebook-search-scoring/plan.md),
+[`the B4b plan`](../061-books-b4b-ebook-download-publication/plan.md), and
+[`the B4c plan`](../062-books-b4c-operator-surface/plan.md).
 
 Two notes from executing B4a:
 
@@ -506,7 +506,7 @@ author monitoring policies — `book_author_policies`, the `bibliography/1` meta
 preview/confirm on `/books/:id`, and `Cinder.Books.BibliographyRefresher`. B5c landed the
 `?status=wanted|held` filter and inline pause/resume on `/library`, metadata-provider health, and
 the `:book_target_held` notifier event. See
-[`the B5 plan`](2026-09-01-books-b5-monitoring-and-operations.md).
+[`the B5 plan`](../063-books-b5-monitoring-operations/plan.md).
 
 Two roadmap B5 items were already shipped before B5 started, confirmed rather than reimplemented:
 the read-only `/library` books tab (#417) and the `:unmonitored` badge (#410, which discharged the
@@ -637,7 +637,7 @@ generalized migration-source dispatch. B6b landed the expanded provider-neutral 
 and `Cinder.Library.MigrationAdoption.Readarr`'s bounded, cached preview classification. B6c
 landed the `Cinder.Books.Adoption` write choke-point, the `/library/adopt` batch UI, and
 `docs/readarr-migration.md`. See
-[`the B6 plan`](2026-09-01-books-b6-migration-and-cutover.md).
+[`the B6 plan`](../064-books-b6-migration-cutover/plan.md).
 
 Three notes from executing B6a:
 
@@ -771,7 +771,7 @@ accept `m4b`/`mp3`. B7b landed grab dispatch, multi-track validation, and atomic
 landed the Audiobookshelf publisher with a retryable post-import scan. B7d landed the operator
 surface: manual search, Grab, replace, and deletion/recovery for audiobook targets on
 `/books/:id`. B7e landed audiobook migration adoption. See
-[`the B7 plan`](2026-09-02-books-b7-audiobooks.md).
+[`the B7 plan`](../065-books-b7-audiobooks/plan.md).
 
 Two notes from executing B7a:
 
@@ -915,7 +915,7 @@ crash/restart-recovery test. B8b landed the book operations log and its two (lat
 instrumented write sites, plus a read-only `/library` panel. B8c landed the cumulative
 security/robustness review pass. B8d landed the product-surface documentation and first-run
 validation. See
-[`the B8 plan`](2026-09-02-books-b8-hardening-and-signoff.md).
+[`the B8 plan`](../066-books-b8-hardening-signoff/plan.md).
 
 Three notes from executing B8b:
 

@@ -3518,7 +3518,7 @@ Claude-Session: https://claude.ai/code/session_01CEtMcQ5fgpREWrjcKe2vV5"
 
 ---
 
-Relevant absolute paths (in CT 113 at `/root/cinder`): context `lib/cinder/catalog.ex`, schemas `lib/cinder/catalog/{movie,series,grab,episode,season}.ex`, LiveViews `lib/cinder_web/live/{movies_live,grabs_live,series_live,series_detail_live}.ex`, router `lib/cinder_web/router.ex`, components `lib/cinder_web/components/core_components.ex`, tests `test/cinder/catalog_admin_test.exs` + `test/cinder_web/live/{movies_live,grabs_live,series_live,series_detail_live}_test.exs` + `test/cinder_web/components/status_badge_test.exs`. Spec: `/root/cinder/docs/superpowers/specs/2026-06-23-admin-crud-design.md`.
+Relevant absolute paths (in CT 113 at `/root/cinder`): context `lib/cinder/catalog.ex`, schemas `lib/cinder/catalog/{movie,series,grab,episode,season}.ex`, LiveViews `lib/cinder_web/live/{movies_live,grabs_live,series_live,series_detail_live}.ex`, router `lib/cinder_web/router.ex`, components `lib/cinder_web/components/core_components.ex`, tests `test/cinder/catalog_admin_test.exs` + `test/cinder_web/live/{movies_live,grabs_live,series_live,series_detail_live}_test.exs` + `test/cinder_web/components/status_badge_test.exs`. Spec: `/root/cinder/specs/013-admin-crud/research.md`.
 
 ---
 

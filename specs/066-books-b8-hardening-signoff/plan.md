@@ -1,15 +1,15 @@
 # Books B8 — Hardening, documentation, and production sign-off
 
 **Status:** planned 2026-09-02, ahead of B7 landing. Base: `main` @ `7c44d8dc` (post-B6c) plus the
-current (uncommitted) [B7 plan](2026-09-02-books-b7-audiobooks.md) draft, which this document
+current (uncommitted) [B7 plan](../065-books-b7-audiobooks/plan.md) draft, which this document
 treats as B8's contract for module names and file boundaries until B7 actually merges. **B8 is
 sequenced strictly after B7** (the roadmap's own dependency graph) — nothing here can start until
 B7's five slices land; every citation to a B7-owned module below is a forward reference to that
 plan, not to code that exists today, and is named as such rather than presented as already built.
-**Milestone:** [B8](2026-08-20-readarr-replacement-roadmap.md#b8--hardening-documentation-and-production-sign-off)
-of the [Readarr replacement roadmap](2026-08-20-readarr-replacement-roadmap.md).
-**Governing spec:** [the B0 parity contract](../specs/2026-08-20-books-parity-contract.md) and the
-[Bookshelf inventory audit](../audits/2026-08-20-bookshelf-inventory.md). B8 adds no new catalog
+**Milestone:** [B8](../053-books-readarr-replacement/plan.md#b8--hardening-documentation-and-production-sign-off)
+of the [Readarr replacement roadmap](../053-books-readarr-replacement/plan.md).
+**Governing spec:** [the B0 parity contract](../054-books-b0-inventory-contract/contracts/books-parity-contract.md) and the
+[Bookshelf inventory audit](../../docs/audits/2026-08-20-bookshelf-inventory.md). B8 adds no new catalog
 behavior the contract has not already locked; its job is to verify what B2–B7 built against that
 contract, close verified gaps, and retire the product surface's silence about books. §0 states
 plainly what no amount of B8 engineering closes.

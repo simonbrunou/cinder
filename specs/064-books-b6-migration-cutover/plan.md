@@ -1,10 +1,10 @@
 # Books B6 — Readarr migration, adoption preview, and e-book cutover
 
 **Status:** planned 2026-09-01. Base: `origin/main` (post-B5, all three B5 slices merged, PR #424).
-**Milestone:** [B6](2026-08-20-readarr-replacement-roadmap.md#b6--readarr-migration-adoption-preview-and-e-book-cutover)
-of the [Readarr replacement roadmap](2026-08-20-readarr-replacement-roadmap.md).
-**Governing spec:** [the B0 parity contract](../specs/2026-08-20-books-parity-contract.md) and the
-[Bookshelf inventory audit](../audits/2026-08-20-bookshelf-inventory.md) — between them they own the
+**Milestone:** [B6](../053-books-readarr-replacement/plan.md#b6--readarr-migration-adoption-preview-and-e-book-cutover)
+of the [Readarr replacement roadmap](../053-books-readarr-replacement/plan.md).
+**Governing spec:** [the B0 parity contract](../054-books-b0-inventory-contract/contracts/books-parity-contract.md) and the
+[Bookshelf inventory audit](../../docs/audits/2026-08-20-bookshelf-inventory.md) — between them they own the
 migration constraints quoted throughout. Decisions below are *taken* from those two documents, not
 chosen; §0 records the two places evidence runs out and a judgment call had to be made instead.
 

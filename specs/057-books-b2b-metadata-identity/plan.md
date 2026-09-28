@@ -1,9 +1,9 @@
 # Books B2b — metadata providers, identity resolution, and refresh
 
 **Date:** 2026-08-24
-**Roadmap item:** [`readarr-replacement-roadmap`](2026-08-20-readarr-replacement-roadmap.md), B2 (second of two slices)
-**Contract:** [`books parity contract`](../specs/2026-08-20-books-parity-contract.md)
-**Predecessor:** [`B2a`](2026-08-24-books-b2a-catalog-and-targets.md)
+**Roadmap item:** [`readarr-replacement-roadmap`](../053-books-readarr-replacement/plan.md), B2 (second of two slices)
+**Contract:** [`books parity contract`](../054-books-b0-inventory-contract/contracts/books-parity-contract.md)
+**Predecessor:** [`B2a`](../056-books-b2a-catalog-targets/plan.md)
 **Branch:** `feat/books-b2b-metadata-and-identity`
 
 ## Goal

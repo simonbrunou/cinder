@@ -2,16 +2,16 @@
 
 **Status:** Accepted for B0 on 2026-08-20
 Council review: n/a
-**Roadmap:** [`specs/053-books-readarr-replacement/plan.md`](../plans/2026-08-20-readarr-replacement-roadmap.md), milestone B0
+**Roadmap:** [`specs/053-books-readarr-replacement/plan.md`](../../053-books-readarr-replacement/plan.md), milestone B0
 **Evidence:**
-[`bookshelf-inventory-v1.json`](../audits/data/bookshelf-inventory-v1.json),
-[`bookshelf inventory audit`](../audits/2026-08-20-bookshelf-inventory.md),
-[`books parity matrix`](../audits/data/books-parity-matrix-v1.json),
-[`metadata provider decision`](../audits/data/books-provider-decision-v1.json),
-[`corpus-v1.json`](../../test/support/fixtures/books/corpus-v1.json),
-[`metadata-provider-pair-v1.json`](../../test/support/fixtures/books/metadata-provider-pair-v1.json),
-[`provider-v1.json`](../../test/support/fixtures/books/provider-v1.json), and
-[`bookshelf-api-v1.json`](../../test/support/fixtures/books/bookshelf-api-v1.json)
+[`bookshelf-inventory-v1.json`](../../../docs/audits/data/bookshelf-inventory-v1.json),
+[`bookshelf inventory audit`](../../../docs/audits/2026-08-20-bookshelf-inventory.md),
+[`books parity matrix`](../../../docs/audits/data/books-parity-matrix-v1.json),
+[`metadata provider decision`](../../../docs/audits/data/books-provider-decision-v1.json),
+[`corpus-v1.json`](../../../test/support/fixtures/books/corpus-v1.json),
+[`metadata-provider-pair-v1.json`](../../../test/support/fixtures/books/metadata-provider-pair-v1.json),
+[`provider-v1.json`](../../../test/support/fixtures/books/provider-v1.json), and
+[`bookshelf-api-v1.json`](../../../test/support/fixtures/books/bookshelf-api-v1.json)
 
 This contract defines the compatibility target for replacing the household's two
 Bookshelf/Readarr-fork instances. It intentionally adds no production book code. B1 and later
@@ -85,7 +85,7 @@ because a source row is monitored.
 ## Parity matrix
 
 The normative, machine-readable matrix is
-[`books-parity-matrix-v1.json`](../audits/data/books-parity-matrix-v1.json). Every currently relied-on
+[`books-parity-matrix-v1.json`](../../../docs/audits/data/books-parity-matrix-v1.json). Every currently relied-on
 behavior has one of the four roadmap dispositions plus an acceptance criterion and migration
 consequence:
 

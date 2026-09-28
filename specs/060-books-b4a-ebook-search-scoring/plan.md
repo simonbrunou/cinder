@@ -1,7 +1,7 @@
 # Books B4a — e-book release search, parsing, and scoring
 
 **Status:** planned 2026-08-30. Base: `origin/main` @ `7d3f0347`.
-**Milestone:** the first slice of [B4](2026-08-20-readarr-replacement-roadmap.md#b4--e-book-search-scoring-download-validation-and-publication).
+**Milestone:** the first slice of [B4](../053-books-readarr-replacement/plan.md#b4--e-book-search-scoring-download-validation-and-publication).
 
 ## Why this is a slice, not all of B4
 

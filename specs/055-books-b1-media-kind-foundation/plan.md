@@ -1,8 +1,8 @@
 # Books B1 — media-kind capability registry and profile foundation
 
 **Date:** 2026-08-24
-**Roadmap item:** [`readarr-replacement-roadmap`](2026-08-20-readarr-replacement-roadmap.md), B1
-**Contract:** [`books parity contract`](../specs/2026-08-20-books-parity-contract.md)
+**Roadmap item:** [`readarr-replacement-roadmap`](../053-books-readarr-replacement/plan.md), B1
+**Contract:** [`books parity contract`](../054-books-b0-inventory-contract/contracts/books-parity-contract.md)
 **Branch:** `feat/books-b1-media-kind-foundation`
 **Council review:** n/a
 

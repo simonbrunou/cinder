@@ -2,11 +2,11 @@
 
 **Status:** planned 2026-08-31. Base: `origin/main` @ `123f0c15`.
 **Milestone:** the second slice of
-[B4](2026-08-20-readarr-replacement-roadmap.md#b4--e-book-search-scoring-download-validation-and-publication).
+[B4](../053-books-readarr-replacement/plan.md#b4--e-book-search-scoring-download-validation-and-publication).
 
 ## What B4a left, and what this slice owns
 
-[B4a](2026-08-30-books-b4a-ebook-release-search-and-scoring.md) landed the **decision layer**:
+[B4a](../060-books-b4a-ebook-search-scoring/plan.md) landed the **decision layer**:
 `Cinder.Acquisition.Books.candidates/2` turns an approved book target into a ranked, explained
 list of candidate releases. It grabs nothing and writes nothing.
 

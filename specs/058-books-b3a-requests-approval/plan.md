@@ -1,9 +1,9 @@
 # Books B3a — book requests, approval, and target creation
 
 **Date:** 2026-08-25
-**Roadmap item:** [`readarr-replacement-roadmap`](2026-08-20-readarr-replacement-roadmap.md), B3 (first of two slices)
-**Contract:** [`books parity contract`](../specs/2026-08-20-books-parity-contract.md)
-**Predecessor:** [`B2b`](2026-08-24-books-b2b-metadata-and-identity.md)
+**Roadmap item:** [`readarr-replacement-roadmap`](../053-books-readarr-replacement/plan.md), B3 (first of two slices)
+**Contract:** [`books parity contract`](../054-books-b0-inventory-contract/contracts/books-parity-contract.md)
+**Predecessor:** [`B2b`](../057-books-b2b-metadata-identity/plan.md)
 **Branch:** `feat/books-b3a-requests-and-approval`
 Council review: skipped — this session's directive disallows subagent fan-out.
 

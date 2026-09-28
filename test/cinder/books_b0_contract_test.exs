@@ -66,7 +66,7 @@ defmodule Cinder.BooksB0ContractTest do
   # B8a traceability: every row whose disposition is "required for cutover" or "required
   # later" must map to at least one real test file/assertion that exercises its acceptance
   # criterion. This does not change the fixture's disposition vocabulary (§B8a of
-  # docs/plans/2026-09-02-books-b8-hardening-and-signoff.md is explicit that the matrix's
+  # specs/066-books-b8-hardening-signoff/plan.md is explicit that the matrix's
   # dispositions are frozen); it turns "no unacknowledged cutover requirement" into something
   # `mix test` enforces: deleting or renaming a covering test, or adding a new required row
   # with no mapping, fails this suite.

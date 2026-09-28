@@ -1,8 +1,8 @@
 # Books B2a — catalog schemas, identifiers, credits, and book targets
 
 **Date:** 2026-08-24
-**Roadmap item:** [`readarr-replacement-roadmap`](2026-08-20-readarr-replacement-roadmap.md), B2 (first of two slices)
-**Contract:** [`books parity contract`](../specs/2026-08-20-books-parity-contract.md)
+**Roadmap item:** [`readarr-replacement-roadmap`](../053-books-readarr-replacement/plan.md), B2 (first of two slices)
+**Contract:** [`books parity contract`](../054-books-b0-inventory-contract/contracts/books-parity-contract.md)
 **Branch:** `feat/books-b2a-catalog-and-targets`
 **Council review:** n/a
 
@@ -24,7 +24,7 @@ be reviewed on its own.
 - **No Google Books adapter, in either slice.** The parity contract supersedes the roadmap's
   "optional Google Books fallback": keyless evaluation returned 40/40 HTTP 429, so it has no
   acceptance criterion to build against
-  ([contract, Metadata provider decision](../specs/2026-08-20-books-parity-contract.md)).
+  ([contract, Metadata provider decision](../054-books-b0-inventory-contract/contracts/books-parity-contract.md)).
   Open Library primary plus a Hardcover-compatible secondary is the required pair.
 
 ## Design

@@ -2,9 +2,9 @@
 
 **Status:** planned 2026-09-01. Base: `origin/main` (post-B4c, post the two operator-surface
 fixes below).
-**Milestone:** [B5](2026-08-20-readarr-replacement-roadmap.md#b5--monitoring-wanted-state-author-policies-and-operations)
-of the [Readarr replacement roadmap](2026-08-20-readarr-replacement-roadmap.md).
-**Governing spec:** [the B0 parity contract](../specs/2026-08-20-books-parity-contract.md) — owns
+**Milestone:** [B5](../053-books-readarr-replacement/plan.md#b5--monitoring-wanted-state-author-policies-and-operations)
+of the [Readarr replacement roadmap](../053-books-readarr-replacement/plan.md).
+**Governing spec:** [the B0 parity contract](../054-books-b0-inventory-contract/contracts/books-parity-contract.md) — owns
 the monitoring-state vocabulary, the author-policy requirement, the accepted-format list, and the
 metadata-provider set. Decisions below are *taken* from it, not chosen; §0 records the one place
 it is silent.
@@ -13,7 +13,7 @@ it is silent.
 
 B4c shipped the operator surface for a *single* monitored e-book target: `/books/:id`, manual
 release search, Grab, and live download progress. Its own "What stays out" ([§10 of the B4c
-plan](2026-09-01-books-b4c-operator-surface.md#10-what-stays-out)) named four things explicitly
+plan](../062-books-b4c-operator-surface/plan.md#10-what-stays-out)) named four things explicitly
 as B5's to pick up — retry/blocklist-clearing for a `:held` target, "Find a better match" for an
 `:available` one, and the `/library` books tab — plus one obligation it flagged but could not
 discharge itself (the `:unmonitored` blank-badge case). Two of those are **already done**,
@@ -55,7 +55,7 @@ by grep, no `health/0` callback exists anywhere on `Cinder.Books.Metadata` or it
 
 The task that produced this plan asked for "the corpus precision threshold that gates automatic
 release selection," to be taken from the contract. It is not there. The parity contract's
-[metadata provider decision](../specs/2026-08-20-books-parity-contract.md#metadata-provider-decision)
+[metadata provider decision](../054-books-b0-inventory-contract/contracts/books-parity-contract.md#metadata-provider-decision)
 sets a 90% threshold for **work identity resolution** (Open Library + Hardcover measured
 92.5%) — that gates *which providers B2 must implement*, and it is already met and shipped. It
 says nothing about a precision bar for *matching a release to a chosen edition*, which is what
@@ -310,7 +310,7 @@ guarantees.
   a one-time confirm ("This replaces the current file — continue?") before forwarding
   `{:manual_grab, :book, target, release}` — reusing the exact confirm-then-forward idiom B4c
   explicitly declined to port from `ManualSearchComponent` because nothing needed it yet
-  (`2026-09-01-books-b4c-operator-surface.md:226-228`); it is needed now. `BookDetailLive`'s
+  (`specs/062-books-b4c-operator-surface/plan.md:226-228`); it is needed now. `BookDetailLive`'s
   `handle_info({:manual_grab, :book, target, release}, socket)` passes
   `replace: target.status == :available` through a new `Download.grab_book_target/3` (the
   existing 2-arity form becomes `grab_book_target(target, release, opts \\ [])`, backward
@@ -458,7 +458,7 @@ module guessing from spelling.
 
 ### 1. What the contract locks, what the roadmap adds
 
-The parity contract's monitoring semantics ([above](../specs/2026-08-20-books-parity-contract.md#monitoring-semantics))
+The parity contract's monitoring semantics ([above](../054-books-b0-inventory-contract/contracts/books-parity-contract.md#monitoring-semantics))
 locks the mechanism: "Author monitoring is only a bulk policy that can seed work-monitor
 decisions; it is not a permanent implicit request for every bibliography item," with a
 required preview/count and separate confirmation (parity matrix row "Automatic author
@@ -501,7 +501,7 @@ a profile row, including `book_targets.profile_id` itself, points there
 
 This table **does** therefore reference `media_profiles`, unlike an earlier draft's claim that it
 referenced neither `media_profiles` nor `book_targets`. That does not, on its own, trigger B1's
-seven-trigger hazard (`2026-08-20-readarr-replacement-roadmap.md:195-199`): that hazard is about
+seven-trigger hazard (`specs/053-books-readarr-replacement/plan.md:195-199`): that hazard is about
 **rebuilding** `media_profiles` itself in SQLite (`ALTER TABLE media_profiles RENAME TO ...`,
 which drops and must recreate every trigger whose body references it). This migration only adds a
 *new* table with an FK pointing at `media_profiles` — it does not alter, rename, or drop
@@ -679,7 +679,7 @@ already-monitored target. Admin-gated by `/books/:id`'s existing `:admin` live_s
 
 B4c already recommended this exact placement ("[the books tab] belongs with B5, which already
 owns Wanted/Missing and general books operational surfaces — a natural home for a listing view,"
-`2026-09-01-books-b4c-operator-surface.md:114-118`), and the tab now exists (§ above). Adding a
+`specs/062-books-b4c-operator-surface/plan.md:114-118`), and the tab now exists (§ above). Adding a
 `?status=` param is strictly less code than a new LiveView, and keeps one canonical books list
 instead of two that could drift.
 
@@ -832,7 +832,7 @@ is what keeps a re-parked movie's notification to "≤1/day at the defaults" rat
   select options, blocklist/retry flashes) goes through `gettext` and needs a real, non-fuzzy
   French translation in `priv/repo/../priv/gettext/fr/LC_MESSAGES/default.po` before that slice's
   `mix test` is green — `test/cinder_web/translations_complete_test.exs` enforces this, and (per
-  B4c's own experience, `2026-09-01-books-b4c-operator-surface.md`'s "Amendments" section) a
+  B4c's own experience, `specs/062-books-b4c-operator-surface/plan.md`'s "Amendments" section) a
   `gettext.extract --merge` fuzzy-match onto an unrelated existing string is not a substitute for
   a reviewed translation.
 - No slice runs a project-wide formatter/linter/build pass mid-flight; `mix test` (which already

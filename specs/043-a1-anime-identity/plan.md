@@ -920,7 +920,7 @@ gate pass; acquisition/download/import behavior remains unchanged for A2/A3.
 Check every completed step in this plan, then commit:
 
 ```bash
-git add ROADMAP.md docs/superpowers/plans/2026-07-13-a1-anime-identity-foundation.md
+git add ROADMAP.md specs/043-a1-anime-identity/plan.md
 git commit -m "docs: complete anime identity foundation"
 ```
 

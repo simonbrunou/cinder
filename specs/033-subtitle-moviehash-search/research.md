@@ -14,7 +14,7 @@ than the file we imported. The **OSDb moviehash** lets OpenSubtitles return subt
 *this exact rip* (`moviehash_match: true`). That sync accuracy is the whole payoff of this change.
 
 This design supersedes only the "id-based only" limitation in
-`2026-07-07-subtitles-engine-design.md`; everything else in that engine is unchanged.
+`specs/030-subtitles-engine/research.md`; everything else in that engine is unchanged.
 
 ## Scope
 

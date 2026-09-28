@@ -14,7 +14,6 @@ globs:
   - lib/cinder/library/**/readarr.ex
   - lib/cinder_web/live/book_*
   - specs/*books*/**
-  - specs/*books*/**
 ---
 
 **The track is finished.** B0–B8 all shipped and released in v3.0.0 (`CHANGELOG.md`, tagged
@@ -96,5 +95,5 @@ call inside a fix.
 section per milestone, each ending in a "Shipped as N slices" subsection plus the execution notes
 and amendments discovered while building it. **Those notes are authoritative** where they
 contradict the original plan prose — read them before reconstructing why something works the way
-it does. Per-slice plans are `docs/plans/<date>-books-<phase>-<slug>.md`. The roadmap is 1,100+
-lines: read only the section you need, never the whole file.
+it does. Per-slice plans are `specs/NNN-books-<phase>-<slug>/plan.md` (`specs/054-…` through
+`specs/066-…`). The roadmap is 1,100+ lines: read only the section you need, never the whole file.

@@ -894,7 +894,7 @@ Expected: exit 0 with compile warnings-as-errors, formatting, Credo strict, and 
 Run:
 
 ```bash
-rg -n "A2|Done when|phase == \"A2\"|acquisition-v1|anime_import_not_ready|waiting_for_preferred_group" ROADMAP.md docs/superpowers/specs/2026-07-13-a2-anime-acquisition-design.md test lib
+rg -n "A2|Done when|phase == \"A2\"|acquisition-v1|anime_import_not_ready|waiting_for_preferred_group" ROADMAP.md specs/044-a2-anime-acquisition/research.md test lib
 ```
 
 Expected: each design requirement has a production seam and a focused test; no A3 import activation exists.
