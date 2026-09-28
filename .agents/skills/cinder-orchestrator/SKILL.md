@@ -39,6 +39,7 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/cinder-agent/<run-id>/
   decisions.md
   design.md
   plan.md
+  tasks.md
   status.md
   claude-recon-session.txt
   units/
@@ -56,7 +57,7 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/cinder-agent/<run-id>/
 
 Use `<run-id> = YYYYMMDD-HHMM-<short-slug>` and a stable `<unit-id>` such as `01-book-domain`. A new PR unit always gets a new unit directory and therefore a fresh Codex thread. Never reuse a thread file or review artifacts across PR units.
 
-These files are coordination artifacts, not product documentation. After plan approval, implementation must add the approved design/plan under Cinder's normal `docs/specs/` and `docs/plans/` locations when the change warrants durable docs.
+These files are coordination artifacts, not product documentation. After plan approval, implementation must add the approved design/plan under the Spec Kit feature directory (`specs/NNN-slug/`, created via `/speckit.specify` then populated by `/speckit.plan` and `/speckit.tasks`) when the change warrants durable docs.
 
 Never store secrets, API tokens, credentials, or copied environment files in run state.
 
@@ -90,9 +91,14 @@ Resume the Claude reconnaissance session (same architectural context) and give i
 - a concrete `done when` for every unit, ending in Cinder's `mix test` gate;
 - which repo-local reviewer skills apply to each PR.
 
-Save the outputs as `design.md` and `plan.md`. Present a compact operator-facing summary and obtain **explicit approval** before any application-code worktree is created.
+Create the feature's Spec Kit directory with `/speckit.specify` (`specs/NNN-slug/spec.md`, numbered
+after the highest existing `specs/NNN-*`), then run `/speckit.plan` and `/speckit.tasks` to produce
+that directory's `plan.md` and `tasks.md`. Map Claude's architecture/non-goals/migration output into
+`spec.md`/`plan.md`, and the PR/task decomposition into `tasks.md`. Present a compact
+operator-facing summary and obtain **explicit approval** before any application-code worktree is
+created.
 
-If the operator changes scope, update decisions and have Claude revise the design/plan. Do not silently reinterpret the change.
+If the operator changes scope, update decisions and have Claude revise `spec.md`/`plan.md`/`tasks.md`. Do not silently reinterpret the change.
 
 ## Phase 4 — bounded Codex implementation
 

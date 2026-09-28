@@ -104,7 +104,7 @@ bash .agents/skills/cinder-orchestrator/scripts/claude-readonly.sh \
   "$(cat "$RUN_DIR/claude-recon-session.txt")"
 ```
 
-Split the returned Markdown into `design.md` and `plan.md` if useful; exact formatting is less important than preserving the approved content verbatim for Codex handoff.
+Create the feature's `specs/NNN-slug/` directory via `/speckit.specify`, then run `/speckit.plan` and `/speckit.tasks`. Split the returned Markdown into `spec.md`, `plan.md`, and `tasks.md` in that directory if useful; exact formatting is less important than preserving the approved content verbatim for Codex handoff.
 
 ## Implementation prompt — Codex, fresh per PR unit
 

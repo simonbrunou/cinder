@@ -20,7 +20,7 @@ globs:
 **The track is finished.** B0–B8 all shipped and released in v3.0.0 (`CHANGELOG.md`, tagged
 2026-09-03). There is no next phase and no "current slice" — work on these paths is incremental
 now: one issue, fix, or feature at a time, under AGENTS.md's normal workflow. Do not open a new
-`docs/plans/*-books-*.md` phase doc for a bug fix.
+`specs/NNN-*` Spec Kit feature directory for a bug fix.
 
 Two roadmap criteria remain open and **neither is closable by a commit**: the two-week
 Readarr/Bookshelf-stopped dogfood window and the explicit Bookshelf decommission that follows
