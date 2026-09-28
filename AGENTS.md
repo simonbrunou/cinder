@@ -17,8 +17,9 @@ Readarr-stopped dogfood window and the explicit Bookshelf decommission that foll
 
 `ROADMAP.md` is the **build record** (Phases 0–5, M0–M8, A0–A6, B0–B8), not a live plan — read it
 only when you need the history behind a decision. Do not auto-import it: at 1,100+ lines it adds
-stale context to every task. Per-feature design and plan docs live under `docs/specs/`,
-`docs/plans/`, `docs/audits/`, and `docs/superpowers/`.
+stale context to every task. Feature specs and plans live under `specs/NNN-slug/` (Spec Kit
+layout: `spec.md`, `plan.md`, `research.md`, `tasks.md`, …; a feature's historical design
+rationale is its own `research.md`); audits stay under `docs/audits/`.
 
 ## Stack
 
@@ -106,7 +107,13 @@ secret; the secret is `secret_key_base`.
 - Keep each unit of work focused: one issue, fix, or feature.
 - Audits and open-ended reviews deliver **GitHub issues**, not inline fixes. Each fix then gets
   its own scoped session and PR. Do not run "find and fix everything" rounds in one session.
-- For non-trivial work, write a plan and get agreement before executing.
+- Non-trivial work follows Spec Kit: `/speckit.specify` → optionally `/speckit.clarify` →
+  `/speckit.plan` → `/speckit.tasks`, with agreement on the resulting spec/plan before
+  `/speckit.implement`. Governing principles live in `.specify/memory/constitution.md`.
+  `/speckit.analyze`, `/speckit.checklist`, and `/speckit.converge` are optional checks along the
+  way; `/speckit.taskstoissues` turns an audit's task breakdown into filed GitHub issues. A
+  genuinely small, obvious fix skips this and goes straight to a branch + PR. New feature specs
+  are numbered sequentially after the highest existing `specs/NNN-*`.
 - Define "done when" up front as something `mix test` can decide, then loop until it is green.
 - Feature work goes on a branch and through a PR; `main` is PR-merged. Chores such as flake bumps
   may land directly, but a PR is the default.

@@ -697,7 +697,7 @@ fallback root stays Auto because its profile cannot be inferred safely.
 - **TVDB-split part files** (a season/episode file that TVDB numbers but TMDB folds into one episode —
   e.g. a supersized episode or a two-part finale) surface as an **additional part** on the combined
   TMDB episode rather than a new row, and are adopted only when you confirm them (see the 2026-07-27
-  addendum in `docs/specs/2026-07-22-159-tvdb-tmdb-cardinality-decision.md`).
+  addendum in `specs/049-tvdb-tmdb-cardinality-decision/research.md`).
 
 ## Deleting media
 

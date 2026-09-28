@@ -9,7 +9,7 @@ defmodule Cinder.Library.AudiobookServer.Audiobookshelf do
 
   **No B0 fixture exists for this adapter.** Unlike Bookshelf's captured `/api/v1`
   (`test/support/fixtures/books/bookshelf-api-v1.json`), the B0 audit captured zero Audiobookshelf
-  request/response evidence — see `docs/plans/2026-09-02-books-b7-audiobooks.md` §0.2. This module
+  request/response evidence — see `specs/065-books-b7-audiobooks/plan.md` §0.2. This module
   is built against Audiobookshelf's own documented, versioned API shape, never an invented one;
   its test stubs that documented shape directly via `Req.Test`, with no committed fixture to
   verify against.

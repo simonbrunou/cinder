@@ -23,7 +23,7 @@ inspecting the running app over guessing.
   `Cinder.Acquisition.Indexer`, `Cinder.Download.Client`, `Cinder.Library.MediaServer`), resolved
   from config at runtime and mocked with **Mox** in tests. **Tests never hit the network or a real
   service.**
-- **Every state change goes through the context choke-point** (`Catalog.transition` /
+- **Status and derived-state writes go through the context choke-point** (`Catalog.transition` /
   `transition_episode`) so SQLite WAL + `busy_timeout` stays correct under a racing poller.
 - New behaviour ⇒ a test. New service config ⇒ **not** a new env var: add a `Cinder.Settings`
   registry entry instead (config is in-app, overlaid on env bootstrap).
@@ -39,7 +39,9 @@ historical scope.
 Skills under `.agents/skills/`; dependency guidance is synced directly with
 `mix usage_rules.sync AGENTS.md --all --link-to-folder deps --remove-missing`. Client-specific
 files are thin adapters only: `.mcp.json` and `.codex/config.toml` connect Tidewave, while
-`CLAUDE.md` links to `AGENTS.md` for compatibility.
+`CLAUDE.md` links to `AGENTS.md` for compatibility. Spec Kit (`.specify/`, constitution at
+`.specify/memory/constitution.md`, commands under `.omp/commands/speckit.*.md`) drives non-trivial
+feature work; specs live in `specs/NNN-slug/`.
 
 ## Branches & PRs
 

@@ -1,7 +1,7 @@
 defmodule Cinder.Library.MigrationAdoption.Readarr do
   @moduledoc """
   Bounded, cached e-book library classification for adopting Bookshelf's existing library —
-  `docs/plans/2026-09-01-books-b6-migration-and-cutover.md` §B6b (`plan/2`, `summary/2`,
+  `specs/064-books-b6-migration-cutover/plan.md` §B6b (`plan/2`, `summary/2`,
   preview-only) and §B6c (`revalidate/1`, `adopt/2`, the write path via `Cinder.Books.Adoption`).
 
   A sibling extraction from `Cinder.Library.MigrationAdoption`, the same "carved out as plain

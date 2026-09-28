@@ -1,7 +1,7 @@
 defmodule Cinder.Books.Adoption do
   @moduledoc """
   The write choke-point for adopting an already-resolved Bookshelf work into the books catalog —
-  the only place B6 (the Readarr migration, `docs/plans/2026-09-01-books-b6-migration-and-cutover.md`
+  the only place B6 (the Readarr migration, `specs/064-books-b6-migration-cutover/plan.md`
   §B6c) writes anything. Lives in the books domain namespace, mirroring `Cinder.Catalog.Adoption`'s
   own location and its relationship to `Cinder.Library.MigrationAdoption`: adoption of a resolved
   work into the catalog is books business logic triggered by a migration, not migration-namespace

@@ -384,8 +384,8 @@ reaches `:available` attributed to the requester, with a notifier event emitted,
 enforcement is tested. — ***Dogfood checkpoint:*** run it privately as your household movie
 instance.
 
-**[done 2026-06-22]** Shipped (design: `docs/specs/2026-06-22-m3-design.md`, plan:
-`docs/plans/2026-06-22-m3-onboarding-requester-ux.md`). **Wizard:** `SetupLive` at `/setup`
+**[done 2026-06-22]** Shipped (design: `specs/008-m3-onboarding-requester-ux/research.md`, plan:
+`specs/008-m3-onboarding-requester-ux/plan.md`). **Wizard:** `SetupLive` at `/setup`
 (admin-gated) reuses the settings field markup (extracted to `CinderWeb.SettingsComponents`,
 shared with `/settings`), validates every service via `Health`, and only enables Finish once the
 loop is green — TMDB + indexer + media server + writable library + ≥1 download client — then sets
@@ -436,7 +436,7 @@ flags, **without touching the validated movie pipeline**. This is the deepest br
 persists the season/episode tree with monitor flags, and the **movie loop is untouched** (its
 tests still green).
 
-**[M4a done 2026-06-22 — data layer]** (design: `docs/specs/2026-06-22-m4-design.md`). Split M4
+**[M4a done 2026-06-22 — data layer]** (design: `specs/009-m4-tv-data-model-discovery/research.md`). Split M4
 into **M4a (data, shipped)** + **M4b (discovery UI, next session)**. Shipped: the
 `series`/`seasons`/`episodes` schema (one additive migration; movie loop untouched, poller stays
 movies-only) and `Catalog.add_series_to_watchlist/2` persisting the tree via one `cast_assoc`
@@ -497,8 +497,8 @@ the OTP skeleton (stateless, bounded-retry, isolated); rewrite only the work it 
 the correct hardlink layout against mocked FS + media server, mapping each pack file to its
 `Episode` row, and an unmatchable file parks gracefully.
 
-**[M5a done 2026-06-22 — data layer]** (design: `docs/specs/2026-06-22-m5-design.md`, plan:
-`docs/plans/2026-06-22-m5a-tv-pipeline-data-model.md`; PR #24). Split M5 (XL) into **M5a (data,
+**[M5a done 2026-06-22 — data layer]** (design: `specs/010-m5-tv-acquisition-import/research.md`, plan:
+`specs/010-m5-tv-acquisition-import/plan.md`; PR #24). Split M5 (XL) into **M5a (data,
 shipped)** + **M5b (acquisition logic)** + **M5c (poller + multi-file import; carries the Done
 when)**. M5a ships the **grab-centric** schema: episodes stay status-less (state is derived —
 `file_path` ⇒ available, `grab_id` ⇒ downloading, else monitored+aired+missing ⇒ wanted, per the
@@ -593,8 +593,8 @@ automatically. Leanest cut: **poll TMDB**, not per-tracker RSS.
 search-eligible and grabs automatically, and the wanted-episodes query is used (not a full
 scan). — ***Dogfood checkpoint:*** run movies+TV privately for ~2 weeks before packaging.
 
-**[done 2026-06-22]** (design: `docs/specs/2026-06-22-m6-design.md`, plan:
-`docs/plans/2026-06-22-m6-tv-monitoring-sweep-calendar.md`). A read of the TV subsystem showed
+**[done 2026-06-22]** (design: `specs/011-m6-tv-monitoring-sweep/research.md`, plan:
+`specs/011-m6-tv-monitoring-sweep/plan.md`). A read of the TV subsystem showed
 three of the five build-items were **already landed**: air-date eligibility (`wanted_episodes/0`
 already filters `air_date <= today` — with the derived-state episode model, "just-aired ⇒
 search-eligible" happens automatically as time passes, no flag to flip), monitor-strategy
@@ -790,7 +790,7 @@ is the as-of-2026-06-23 build record and is left unedited; this note supersedes 
 
 # Part III — Anime-aware media handling
 
-**Design:** `docs/superpowers/specs/2026-07-12-anime-media-handling-design.md`.
+**Design:** `specs/040-anime-media-handling/research.md`.
 
 Anime is a **per-title opt-in handling profile** (`Auto` / `Standard` / `Anime`) layered onto the
 existing movie and TV pipelines — not a third pipeline, not a separate library layout, not a new
@@ -844,7 +844,7 @@ and English-licensed name; Prowlarr's anime category and the fields Cinder needs
 the write-up records zero cases where the corpus data would have produced an automatic wrong
 mapping, plus the provider decision (TMDB alone vs. TMDB+AniDB) with its evidence.
 
-**[done 2026-07-12]** (plan: `docs/superpowers/plans/2026-07-12-a0-anime-corpus-provider-contracts.md`;
+**[done 2026-07-12]** (plan: `specs/041-a0-anime-corpus-contracts/plan.md`;
 audit: `docs/audits/2026-07-12-anime-provider-contracts.md`). Corpus v1 passed with zero known
 incorrect automatic mappings; TMDB was chosen as the only metadata provider for A1–A4 (no
 anime-identity signal strong enough on its own to justify a second provider — see A6). The probe
@@ -874,8 +874,8 @@ approval) and a later TMDB refresh doesn't silently switch it back or lose a man
 series with both a Japanese and an English title alias resolves a release under either name to the
 same episode; and a hand-corrected episode mapping survives the next provider refresh untouched.
 
-**[done 2026-07-13]** (design: `docs/superpowers/specs/2026-07-12-anime-media-handling-design.md`,
-plan: `docs/superpowers/plans/2026-07-13-a1-anime-identity-foundation.md`). Shipped the Build list
+**[done 2026-07-13]** (design: `specs/040-anime-media-handling/research.md`,
+plan: `specs/043-a1-anime-identity/plan.md`). Shipped the Build list
 above. `Auto` stays `Standard` unless explicitly confirmed, per the A0 finding that no metadata
 signal is strong enough to auto-detect anime safely. Acquisition, download, and import behavior are
 untouched at this point — A1 is identity-only.
@@ -904,8 +904,8 @@ without any TMDB season/episode math; a season pack from a group that isn't on t
 waits (without burning a retry) until the configured fallback delay passes, then grabs the
 next-best option; and an ordinary (non-anime) movie or TV search's results are unchanged.
 
-**[done 2026-07-13]** (design: `docs/superpowers/specs/2026-07-13-a2-anime-acquisition-design.md`,
-plan: `docs/superpowers/plans/2026-07-13-a2-anime-acquisition.md`). Shipped the Build list above; the
+**[done 2026-07-13]** (design: `specs/044-a2-anime-acquisition/research.md`,
+plan: `specs/044-a2-anime-acquisition/plan.md`). Shipped the Build list above; the
 A0 corpus's expected releases were selected correctly and the Standard movie/TV selection paths were
 unchanged. Episodic anime still has no safe import path, so none of this reaches the live
 `TvPoller` yet — snapshot-bearing episodic matches are held pending A3.
@@ -935,8 +935,8 @@ issue #123: a lone unparseable non-ignored file against a lone reserved episode 
 of held.)
 
 **[done 2026-07-13]** (design:
-`docs/superpowers/specs/2026-07-13-a3-safe-import-mapping-recovery-design.md`, plan:
-`docs/superpowers/plans/2026-07-13-a3-safe-import-mapping-recovery.md`). Shipped the Build list
+`specs/045-a3-anime-safe-import-recovery/research.md`, plan:
+`specs/045-a3-anime-safe-import-recovery/plan.md`). Shipped the Build list
 above, including the grab-local correction UI later replaced in A4.5. The versioned `import-v1.json`
 fixture (single/range/batch/many-to-many/mutated-inventory/cross-season cases) and the full suite
 passed with no partial-import cases.
@@ -969,8 +969,8 @@ the global Anime preferences apply the same way to a title just switched to Anim
 been Anime all along.
 
 **[done 2026-07-14]** (design:
-`docs/superpowers/specs/2026-07-13-a4-anime-specials-preferences-design.md`, plan:
-`docs/superpowers/plans/2026-07-13-a4-anime-specials-preferences.md`). Shipped the Build list above,
+`specs/046-a4-anime-specials-preferences/research.md`, plan:
+`specs/046-a4-anime-specials-preferences/plan.md`). Shipped the Build list above,
 including the per-title preference tier later dropped in A4.5. Gate evidence at the time: a focused
 21-file `mix test` run passed 572 tests, the explicit Standard/A2/A3 regression run passed 110, and
 the full suite passed 1,691. Live Jellyfin/Plex dogfood and provider sign-off were explicitly
@@ -1065,7 +1065,7 @@ passes after the new provider is wired in, and every A0–A5 fixture plus the st
 green.
 
 **[done 2026-07-19 — realized TMDB-internally, no second provider]** (design:
-`docs/superpowers/specs/2026-07-17-a6-alt-season-numbering-design.md`). Triggered live a second
+`specs/047-a6-alt-season-numbering/research.md`). Triggered live a second
 time by **Frieren** (TMDB 209867): TMDB folds all 38 episodes into Season 1 (deliberate "TV Bible"
 policy), while the TVDB-indexed NZBGeek answers `{Season:2}` — the last 10 episodes were
 unfindable. A live TMDB API probe (2026-07-17, run by the operator) showed TMDB's own **episode
@@ -1106,13 +1106,13 @@ phase until the current Done-when block is green.
 A separate track, planned and executed after Part III, replacing the household's two
 `pennydreadful/bookshelf:hardcover` (Readarr-protocol) instances — one fronting Booklore for
 e-books, one fronting Audiobookshelf for audiobooks. Full governing documents:
-[`docs/plans/2026-08-20-readarr-replacement-roadmap.md`](docs/plans/2026-08-20-readarr-replacement-roadmap.md)
+[`specs/053-books-readarr-replacement/plan.md`](specs/053-books-readarr-replacement/plan.md)
 (the milestone plan, B0–B8) and
-[`docs/specs/2026-08-20-books-parity-contract.md`](docs/specs/2026-08-20-books-parity-contract.md)
+[`specs/054-books-b0-inventory-contract/contracts/books-parity-contract.md`](specs/054-books-b0-inventory-contract/contracts/books-parity-contract.md)
 (the locked parity contract against the live deployment audit,
 [`docs/audits/2026-08-20-bookshelf-inventory.md`](docs/audits/2026-08-20-bookshelf-inventory.md)).
-Each milestone has its own dated plan under `docs/plans/`; this section is the terse pointer, not
-a restatement.
+Each milestone has its own plan under `specs/NNN-books-<phase>-<slug>/plan.md`; this section is
+the terse pointer, not a restatement.
 
 - **B0 — Inventory and parity contract.** Read-only audit of the live Bookshelf deployments;
   locked the catalog identity model (author/work/edition/file), the monitoring-state vocabulary,
@@ -1167,7 +1167,7 @@ people + collections, round-robin interleaved behind filter chips, with drill-in
 `/collection/tmdb/:id` (chronological parts) on a single `EntityDiscoveryLive`. Four new
 TMDB callbacks (`search_person`/`search_collection`/`get_person`/`get_collection`); the four
 search sides run as crash-isolated concurrent tasks. Design:
-`docs/specs/2026-07-23-people-collections-discovery-design.md` (2-round council review).
+`specs/050-people-collections-discovery/research.md` (2-round council review).
 
 **[shipped post-0.7.0] Release blocklist** — remember a rejected/failed release (by parsed
 release title, scoped per movie/series) so a title whose only available release is wrong-language
