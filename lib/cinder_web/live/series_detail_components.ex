@@ -554,18 +554,26 @@ defmodule CinderWeb.SeriesDetailComponents do
         </p>
         <%!-- One grid per season: the <ul> owns the column tracks and each <li> adopts them with
               `grid-cols-subgrid`, so air date / file info / status / actions line up down the
-              whole season instead of drifting with every title's width. Below lg the tracks are
-              inactive and the two wrappers lay the row out as two flex lines; at lg the wrappers
+              whole season instead of drifting with every title's width. Below 2xl the tracks are
+              inactive and the two wrappers lay the row out as two flex lines; at 2xl the wrappers
               collapse to `display: contents` and their children become the row's cells. Each of
               the eight cells renders unconditionally — an omitted cell would pull the ones after
-              it into the wrong track. --%>
-        <ul class="divide-y divide-base-200 xl:grid xl:grid-cols-[auto_auto_minmax(0,1fr)_auto_auto_auto_auto_auto]">
+              it into the wrong track.
+
+              2xl, not xl: beside the 16rem sidebar the eight tracks plus their gaps need ~1060px,
+              which a 1280px viewport (960px of content) cannot give. Measured there, the row
+              either starves the title to ~94px or wraps the action buttons on every row; the
+              two-line flow layout below the breakpoint is strictly better at that width. The
+              12rem floor on the title track keeps that failure mode from reappearing on a
+              pathological season: the content-sized tracks then run short of free space and the
+              language chips wrap, instead of the `1fr` absorbing every shrink. --%>
+        <ul class="divide-y divide-base-200 2xl:grid 2xl:grid-cols-[auto_auto_minmax(12rem,1fr)_auto_auto_auto_auto_auto]">
           <li
             :for={ep <- season.episodes}
             id={"episode-#{ep.id}"}
-            class="flex flex-col gap-2 py-2 xl:col-span-full xl:grid xl:grid-cols-subgrid xl:items-center xl:gap-x-4 xl:gap-y-1"
+            class="flex flex-col gap-2 py-2 2xl:col-span-full 2xl:grid 2xl:grid-cols-subgrid 2xl:items-center 2xl:gap-x-4 2xl:gap-y-1"
           >
-            <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 xl:contents">
+            <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 2xl:contents">
               <input
                 type="checkbox"
                 class="toggle shrink-0"
@@ -591,38 +599,44 @@ defmodule CinderWeb.SeriesDetailComponents do
               <span class="min-w-0 flex-1 truncate text-sm" title={media_title(ep, @locale)}>
                 {media_title(ep, @locale)}
               </span>
-              <span class="flex shrink-0 flex-wrap items-center gap-1 xl:flex-nowrap xl:justify-self-end">
+              <span class="flex shrink-0 flex-wrap items-center justify-end gap-1 2xl:justify-self-end">
                 <span
                   :for={l <- audio_badges(ep)}
                   class="badge badge-ghost badge-xs"
                   aria-label={gettext("audio %{lang}", lang: l)}
                 >{l}</span>
+                <%!-- The overflow/count chips carry their full language list as real (visually
+                      hidden) text, not as `aria-label`: a bare <span> maps to ARIA `generic`,
+                      which prohibits an accessible name, so a screen reader may drop it. `title`
+                      stays as the pointer affordance. --%>
                 <span
                   :if={audio_overflow(ep) > 0}
                   class="badge badge-ghost badge-xs"
                   title={audio_languages_label(ep)}
-                  aria-label={audio_languages_label(ep)}
-                >+{audio_overflow(ep)}</span>
+                >
+                  +{audio_overflow(ep)}<span class="sr-only">{audio_languages_label(ep)}</span>
+                </span>
                 <span
                   :if={subtitle_count(ep) > 0}
                   class="badge badge-outline badge-xs whitespace-nowrap"
                   title={subtitle_languages_label(ep)}
-                  aria-label={subtitle_languages_label(ep)}
-                >{subtitle_chip_label(ep)}</span>
+                >
+                  {subtitle_chip_label(ep)}<span class="sr-only">{subtitle_languages_label(ep)}</span>
+                </span>
               </span>
             </div>
-            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 pl-11 xl:contents">
-              <span class="whitespace-nowrap text-xs tabular-nums text-base-content/70 xl:justify-self-end">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 pl-11 2xl:contents">
+              <span class="whitespace-nowrap text-xs tabular-nums text-base-content/70 2xl:justify-self-end">
                 <time :if={ep.air_date} datetime={Date.to_iso8601(ep.air_date)}>
                   {format_date_year(ep.air_date)}
                 </time>
               </span>
-              <span class="whitespace-nowrap text-xs text-base-content/60 xl:justify-self-end">
+              <span class="whitespace-nowrap text-xs text-base-content/60 2xl:justify-self-end">
                 <span :if={ep.file_path && episode_file_info(ep) != ""}>
                   {episode_file_info(ep)}
                 </span>
               </span>
-              <span class="xl:justify-self-start">
+              <span class="2xl:justify-self-start">
                 <.status_badge
                   :if={episode_badge_status(ep, season, @profile_summary)}
                   id={"episode-status-#{ep.id}"}
@@ -630,7 +644,7 @@ defmodule CinderWeb.SeriesDetailComponents do
                   status={episode_badge_status(ep, season, @profile_summary)}
                 />
               </span>
-              <span class="flex flex-wrap items-center gap-2 xl:justify-self-end">
+              <span class="flex flex-wrap items-center gap-2 2xl:justify-self-end">
                 <.button
                   :if={ep.file_path}
                   type="button"
@@ -669,33 +683,32 @@ defmodule CinderWeb.SeriesDetailComponents do
                 </.button>
               </span>
             </div>
+            <%!-- Season 0 only. In the grid it starts at the title track rather than spanning
+                  from column 1, so it still reads as a note under the episode title. --%>
             <span
               :if={season.season_number == 0}
-              class="pl-11 text-xs text-base-content/60 sm:pl-[5.75rem] xl:col-span-full"
+              class="pl-11 text-xs text-base-content/60 sm:pl-[5.75rem] 2xl:col-start-3 2xl:col-end-[-1] 2xl:pl-0"
             >
               {classification_label(ep.classification)}
             </span>
-            <div
+            <.confirm_action
               :if={@confirming == {:episode_file, to_string(ep.id)}}
-              class="xl:col-span-full"
+              id={"confirm-delete-episode-file-#{ep.id}"}
+              class="2xl:col-span-full"
+              on_confirm="confirm_delete_episode_file"
+              on_cancel="dismiss_confirm"
+              value={ep.id}
+              confirm_label={gettext("Delete file")}
+              checkbox_event="toggle_confirm_opt"
+              checkbox_checked={@confirm_opt}
+              checkbox_label={gettext("Also stop monitoring this episode")}
             >
-              <.confirm_action
-                id={"confirm-delete-episode-file-#{ep.id}"}
-                on_confirm="confirm_delete_episode_file"
-                on_cancel="dismiss_confirm"
-                value={ep.id}
-                confirm_label={gettext("Delete file")}
-                checkbox_event="toggle_confirm_opt"
-                checkbox_checked={@confirm_opt}
-                checkbox_label={gettext("Also stop monitoring this episode")}
-              >
-                <:caveat>
-                  {gettext(
-                    "Delete the downloaded file for this episode? If it stays monitored it will be downloaded again. Stop monitoring it to keep it gone."
-                  )}
-                </:caveat>
-              </.confirm_action>
-            </div>
+              <:caveat>
+                {gettext(
+                  "Delete the downloaded file for this episode? If it stays monitored it will be downloaded again. Stop monitoring it to keep it gone."
+                )}
+              </:caveat>
+            </.confirm_action>
           </li>
         </ul>
       </details>
@@ -881,8 +894,9 @@ defmodule CinderWeb.SeriesDetailComponents do
   # The episode row's language cell has to stay bounded: a release can carry 30+ subtitle tracks,
   # and one badge per track overflowed the row and painted over the action buttons. Audio is the
   # part an operator scans, so up to @audio_badge_limit codes stay visible behind a "+N" chip;
-  # subtitles collapse to a single count chip. Both chips carry the full list as their
-  # label/tooltip; per-track detail belongs to /subtitle-sync.
+  # subtitles collapse to a single count chip. Nothing is actually hidden — both chips carry the
+  # full list as visually hidden text plus a tooltip, which is the only place it is listed: the
+  # subtitle-sync page shows managed sidecars, not the imported track languages.
   @audio_badge_limit 3
 
   defp audio_languages(%{file_path: nil}), do: []
@@ -905,8 +919,6 @@ defmodule CinderWeb.SeriesDetailComponents do
   defp subtitle_languages_label(ep),
     do: gettext("Subtitles: %{languages}", languages: Enum.join(subtitle_languages(ep), ", "))
 
-  defp subtitle_chip_label(ep) do
-    count = subtitle_count(ep)
-    ngettext("%{count} sub", "%{count} subs", count, count: count)
-  end
+  defp subtitle_chip_label(ep),
+    do: ngettext("%{count} sub", "%{count} subs", subtitle_count(ep))
 end

@@ -115,12 +115,13 @@ All notable changes to Cinder are documented here. The format follows
   (`sm:flex-nowrap` + `shrink-0`). A release carrying 28 subtitle tracks overflowed its cell by
   ~670 px and painted the codes straight through the air date, file info, status badge and the
   Delete file / Subtitle sync buttons, which drew on top of them in turn. Audio codes now stop at
-  three behind a `+N` chip and subtitles collapse to a single `28 subs` chip; both carry the full
-  language list as their label and tooltip, and per-track detail stays on the subtitle-sync page.
+  three behind a `+N` chip and subtitles collapse to a single `28 subs` chip; nothing is hidden,
+  since both chips carry the full language list as visually hidden text plus a pointer tooltip.
   The row itself is now one grid per season — the list owns the column tracks and each row adopts
   them with `grid-cols-subgrid` — so air date, file info, status and actions line up down the
-  whole season instead of drifting with each episode title's width. Below `xl` (where the sidebar
-  leaves too little room for eight columns) the row keeps its two-line flow layout.
+  whole season instead of drifting with each episode title's width. Below `2xl` (where the
+  sidebar leaves too little room for eight columns: at 1280 px the grid either starves the title
+  to ~94 px or wraps the buttons on every row) the row keeps its two-line flow layout.
 
 ## [3.0.1] - 2026-09-05
 

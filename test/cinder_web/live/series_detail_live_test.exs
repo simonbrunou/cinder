@@ -1141,7 +1141,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert html =~ "audio de"
     refute html =~ "audio es"
     refute html =~ "audio it"
-    assert html =~ "+2"
+    assert html =~ ~r/\+2\b/
     assert html =~ "Audio: en, fr, de, es, it"
 
     # 30 subtitle tracks stay one chip; a per-track badge list is what overflowed the row.
@@ -1211,7 +1211,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     {:ok, _lv, html} = live_series(conn, series)
     refute html =~ ~s(aria-label="audio)
-    assert html =~ "1 sub"
+    assert html =~ ~r/1 sub\b/
     assert html =~ "Subtitles: en"
   end
 
