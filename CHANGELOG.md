@@ -110,6 +110,18 @@ All notable changes to Cinder are documented here. The format follows
   The committed B0 fixture never caught this because the test stub dispatched on request path
   alone, so an unscoped GET was indistinguishable from a scoped one; the new tests assert the
   scope params are actually sent and that an unscoped GET is never a fallback.
+- **A polyglot episode no longer tears the season list apart.** Each imported subtitle track got
+  its own badge in the episode row, inside a flex column that could neither wrap nor shrink
+  (`sm:flex-nowrap` + `shrink-0`). A release carrying 28 subtitle tracks overflowed its cell by
+  ~670 px and painted the codes straight through the air date, file info, status badge and the
+  Delete file / Subtitle sync buttons, which drew on top of them in turn. Audio codes now stop at
+  three behind a `+N` chip and subtitles collapse to a single `28 subs` chip; nothing is hidden,
+  since both chips carry the full language list as visually hidden text plus a pointer tooltip.
+  The row itself is now one grid per season — the list owns the column tracks and each row adopts
+  them with `grid-cols-subgrid` — so air date, file info, status and actions line up down the
+  whole season instead of drifting with each episode title's width. Below `2xl` (where the
+  sidebar leaves too little room for eight columns: at 1280 px the grid either starves the title
+  to ~94 px or wraps the buttons on every row) the row keeps its two-line flow layout.
 
 ## [3.0.1] - 2026-09-05
 
