@@ -1081,7 +1081,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     refute has_element?(lv, "details[open]")
   end
 
-  test "shows audio + subtitle badges on a filed episode", %{conn: conn} do
+  test "shows audio badges and a condensed subtitle chip on a filed episode", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8200, title: "S", year: 2010})
 
     season =
@@ -1106,8 +1106,47 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     {:ok, _lv, html} = live_series(conn, series)
     assert html =~ "audio en"
     assert html =~ "audio fr"
-    assert html =~ "subtitle en"
-    assert html =~ "subtitle fr"
+    # Subtitles collapse to one count chip; the languages stay readable in its label.
+    assert html =~ "2 subs"
+    assert html =~ "Subtitles: en, fr"
+  end
+
+  test "caps audio badges and never renders one badge per subtitle track", %{conn: conn} do
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8206, title: "S", year: 2010})
+
+    season =
+      Repo.insert!(%Cinder.Catalog.Season{
+        series_id: series.id,
+        season_number: 1,
+        monitored: true
+      })
+
+    subtitles = Enum.map(1..30, &"l#{&1}")
+
+    Repo.insert!(%Cinder.Catalog.Episode{
+      season_id: season.id,
+      tmdb_episode_id: 8207,
+      episode_number: 1,
+      title: "Ep1",
+      monitored: true,
+      file_path: "/tmp/cinder-test-tv-library/S (2010)/Season 01/S (2010) - S01E01.mkv",
+      imported_audio_languages: ["en", "fr", "de", "es", "it"],
+      imported_embedded_subtitles: subtitles
+    })
+
+    {:ok, _lv, html} = live_series(conn, series)
+
+    # Three audio badges, then a "+2" chip — not one badge per language.
+    assert html =~ "audio en"
+    assert html =~ "audio de"
+    refute html =~ "audio es"
+    refute html =~ "audio it"
+    assert html =~ "+2"
+    assert html =~ "Audio: en, fr, de, es, it"
+
+    # 30 subtitle tracks stay one chip; a per-track badge list is what overflowed the row.
+    assert html =~ "30 subs"
+    refute html =~ ~s(>l30</span>)
   end
 
   test "shows an Available badge on a filed episode, no Wanted badge on an unmonitored one",
@@ -1149,7 +1188,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert html =~ "1/2 available"
   end
 
-  test "shows subtitle badges on a filed episode with empty/untagged audio", %{conn: conn} do
+  test "shows the subtitle chip on a filed episode with empty/untagged audio", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8204, title: "S", year: 2010})
 
     season =
@@ -1172,10 +1211,11 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     {:ok, _lv, html} = live_series(conn, series)
     refute html =~ ~s(aria-label="audio)
-    assert html =~ "subtitle en"
+    assert html =~ "1 sub"
+    assert html =~ "Subtitles: en"
   end
 
-  test "no audio/subtitle badges on a filed episode with no media info", %{conn: conn} do
+  test "no audio badges or subtitle chip on a filed episode with no media info", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8202, title: "S", year: 2010})
 
     season =
@@ -1196,7 +1236,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     {:ok, _lv, html} = live_series(conn, series)
     refute html =~ ~s(aria-label="audio)
-    refute html =~ ~s(aria-label="subtitle)
+    refute html =~ "Subtitles:"
   end
 
   test "renders the series descriptive metadata block", %{conn: conn} do

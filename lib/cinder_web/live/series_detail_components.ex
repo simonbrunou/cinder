@@ -552,74 +552,85 @@ defmodule CinderWeb.SeriesDetailComponents do
         <p :if={season.episodes == []} class="text-sm text-base-content/70">
           {gettext("No episodes yet.")}
         </p>
-        <ul class="divide-y divide-base-200">
-          <li :for={ep <- season.episodes} id={"episode-#{ep.id}"} class="flex flex-col gap-2 py-2">
-            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-              <div class="flex min-w-0 flex-wrap items-center gap-3 sm:flex-1 sm:flex-nowrap">
-                <input
-                  type="checkbox"
-                  class="toggle shrink-0"
-                  checked={ep.monitored}
-                  phx-click="toggle_episode"
-                  phx-value-id={ep.id}
-                  aria-label={
-                    gettext("Monitor %{season} episode %{number}",
-                      season: season_label(season.season_number),
-                      number: ep.episode_number
-                    )
-                  }
-                />
-                <span class="shrink-0 text-sm tabular-nums text-base-content/70">
-                  {Episode.code(season.season_number, ep.episode_number)}
-                </span>
+        <%!-- One grid per season: the <ul> owns the column tracks and each <li> adopts them with
+              `grid-cols-subgrid`, so air date / file info / status / actions line up down the
+              whole season instead of drifting with every title's width. Below lg the tracks are
+              inactive and the two wrappers lay the row out as two flex lines; at lg the wrappers
+              collapse to `display: contents` and their children become the row's cells. Each of
+              the eight cells renders unconditionally — an omitted cell would pull the ones after
+              it into the wrong track. --%>
+        <ul class="divide-y divide-base-200 xl:grid xl:grid-cols-[auto_auto_minmax(0,1fr)_auto_auto_auto_auto_auto]">
+          <li
+            :for={ep <- season.episodes}
+            id={"episode-#{ep.id}"}
+            class="flex flex-col gap-2 py-2 xl:col-span-full xl:grid xl:grid-cols-subgrid xl:items-center xl:gap-x-4 xl:gap-y-1"
+          >
+            <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 xl:contents">
+              <input
+                type="checkbox"
+                class="toggle shrink-0"
+                checked={ep.monitored}
+                phx-click="toggle_episode"
+                phx-value-id={ep.id}
+                aria-label={
+                  gettext("Monitor %{season} episode %{number}",
+                    season: season_label(season.season_number),
+                    number: ep.episode_number
+                  )
+                }
+              />
+              <span class="flex shrink-0 items-baseline gap-1 text-sm tabular-nums text-base-content/70">
+                {Episode.code(season.season_number, ep.episode_number)}
                 <span
                   :if={absolute_annotation(ep, @profile_summary)}
-                  class="shrink-0 text-xs tabular-nums text-base-content/40"
+                  class="text-xs tabular-nums text-base-content/40"
                 >
                   {absolute_annotation(ep, @profile_summary)}
                 </span>
-                <span class="min-w-0 flex-1 truncate text-sm" title={media_title(ep, @locale)}>
-                  {media_title(ep, @locale)}
-                </span>
+              </span>
+              <span class="min-w-0 flex-1 truncate text-sm" title={media_title(ep, @locale)}>
+                {media_title(ep, @locale)}
+              </span>
+              <span class="flex shrink-0 flex-wrap items-center gap-1 xl:flex-nowrap xl:justify-self-end">
                 <span
-                  :if={
-                    ep.file_path &&
-                      (ep.imported_audio_languages || []) ++
-                        (ep.imported_embedded_subtitles || []) ++
-                        (ep.imported_sidecar_subtitles || []) != []
-                  }
-                  class="ml-2 inline-flex shrink-0 basis-full flex-wrap gap-1 align-middle sm:basis-auto"
-                >
-                  <span
-                    :for={l <- ep.imported_audio_languages || []}
-                    class="badge badge-ghost badge-xs"
-                    aria-label={gettext("audio %{lang}", lang: l)}
-                  >{l}</span>
-                  <span
-                    :for={
-                      l <-
-                        (ep.imported_embedded_subtitles || []) ++
-                          (ep.imported_sidecar_subtitles || [])
-                    }
-                    class="badge badge-outline badge-xs"
-                    aria-label={gettext("subtitle %{lang}", lang: l)}
-                  >{l}</span>
-                </span>
-              </div>
-              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 pl-11 sm:pl-0">
-                <time
-                  :if={ep.air_date}
-                  datetime={Date.to_iso8601(ep.air_date)}
-                  class="text-xs tabular-nums text-base-content/70"
-                >
+                  :for={l <- audio_badges(ep)}
+                  class="badge badge-ghost badge-xs"
+                  aria-label={gettext("audio %{lang}", lang: l)}
+                >{l}</span>
+                <span
+                  :if={audio_overflow(ep) > 0}
+                  class="badge badge-ghost badge-xs"
+                  title={audio_languages_label(ep)}
+                  aria-label={audio_languages_label(ep)}
+                >+{audio_overflow(ep)}</span>
+                <span
+                  :if={subtitle_count(ep) > 0}
+                  class="badge badge-outline badge-xs whitespace-nowrap"
+                  title={subtitle_languages_label(ep)}
+                  aria-label={subtitle_languages_label(ep)}
+                >{subtitle_chip_label(ep)}</span>
+              </span>
+            </div>
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1 pl-11 xl:contents">
+              <span class="whitespace-nowrap text-xs tabular-nums text-base-content/70 xl:justify-self-end">
+                <time :if={ep.air_date} datetime={Date.to_iso8601(ep.air_date)}>
                   {format_date_year(ep.air_date)}
                 </time>
-                <span
-                  :if={ep.file_path && episode_file_info(ep) != ""}
-                  class="text-xs text-base-content/60"
-                >
+              </span>
+              <span class="whitespace-nowrap text-xs text-base-content/60 xl:justify-self-end">
+                <span :if={ep.file_path && episode_file_info(ep) != ""}>
                   {episode_file_info(ep)}
                 </span>
+              </span>
+              <span class="xl:justify-self-start">
+                <.status_badge
+                  :if={episode_badge_status(ep, season, @profile_summary)}
+                  id={"episode-status-#{ep.id}"}
+                  kind={:episode}
+                  status={episode_badge_status(ep, season, @profile_summary)}
+                />
+              </span>
+              <span class="flex flex-wrap items-center gap-2 xl:justify-self-end">
                 <.button
                   :if={ep.file_path}
                   type="button"
@@ -645,12 +656,6 @@ defmodule CinderWeb.SeriesDetailComponents do
                 >
                   {gettext("Subtitle sync")}
                 </.button>
-                <.status_badge
-                  :if={episode_badge_status(ep, season, @profile_summary)}
-                  id={"episode-status-#{ep.id}"}
-                  kind={:episode}
-                  status={episode_badge_status(ep, season, @profile_summary)}
-                />
                 <.button
                   :if={episode_searchable?(ep, season, @profile_summary)}
                   type="button"
@@ -662,31 +667,35 @@ defmodule CinderWeb.SeriesDetailComponents do
                 >
                   {gettext("Search")}
                 </.button>
-              </div>
+              </span>
             </div>
             <span
               :if={season.season_number == 0}
-              class="pl-11 text-xs text-base-content/60 sm:pl-[5.75rem]"
+              class="pl-11 text-xs text-base-content/60 sm:pl-[5.75rem] xl:col-span-full"
             >
               {classification_label(ep.classification)}
             </span>
-            <.confirm_action
+            <div
               :if={@confirming == {:episode_file, to_string(ep.id)}}
-              id={"confirm-delete-episode-file-#{ep.id}"}
-              on_confirm="confirm_delete_episode_file"
-              on_cancel="dismiss_confirm"
-              value={ep.id}
-              confirm_label={gettext("Delete file")}
-              checkbox_event="toggle_confirm_opt"
-              checkbox_checked={@confirm_opt}
-              checkbox_label={gettext("Also stop monitoring this episode")}
+              class="xl:col-span-full"
             >
-              <:caveat>
-                {gettext(
-                  "Delete the downloaded file for this episode? If it stays monitored it will be downloaded again. Stop monitoring it to keep it gone."
-                )}
-              </:caveat>
-            </.confirm_action>
+              <.confirm_action
+                id={"confirm-delete-episode-file-#{ep.id}"}
+                on_confirm="confirm_delete_episode_file"
+                on_cancel="dismiss_confirm"
+                value={ep.id}
+                confirm_label={gettext("Delete file")}
+                checkbox_event="toggle_confirm_opt"
+                checkbox_checked={@confirm_opt}
+                checkbox_label={gettext("Also stop monitoring this episode")}
+              >
+                <:caveat>
+                  {gettext(
+                    "Delete the downloaded file for this episode? If it stays monitored it will be downloaded again. Stop monitoring it to keep it gone."
+                  )}
+                </:caveat>
+              </.confirm_action>
+            </div>
           </li>
         </ul>
       </details>
@@ -867,5 +876,37 @@ defmodule CinderWeb.SeriesDetailComponents do
     [ep.imported_resolution, humanize_bytes(ep.imported_size)]
     |> Enum.reject(&is_nil/1)
     |> Enum.join(" · ")
+  end
+
+  # The episode row's language cell has to stay bounded: a release can carry 30+ subtitle tracks,
+  # and one badge per track overflowed the row and painted over the action buttons. Audio is the
+  # part an operator scans, so up to @audio_badge_limit codes stay visible behind a "+N" chip;
+  # subtitles collapse to a single count chip. Both chips carry the full list as their
+  # label/tooltip; per-track detail belongs to /subtitle-sync.
+  @audio_badge_limit 3
+
+  defp audio_languages(%{file_path: nil}), do: []
+  defp audio_languages(ep), do: ep.imported_audio_languages || []
+
+  defp subtitle_languages(%{file_path: nil}), do: []
+
+  defp subtitle_languages(ep),
+    do: (ep.imported_embedded_subtitles || []) ++ (ep.imported_sidecar_subtitles || [])
+
+  defp audio_badges(ep), do: ep |> audio_languages() |> Enum.take(@audio_badge_limit)
+
+  defp audio_overflow(ep), do: max(length(audio_languages(ep)) - @audio_badge_limit, 0)
+
+  defp audio_languages_label(ep),
+    do: gettext("Audio: %{languages}", languages: Enum.join(audio_languages(ep), ", "))
+
+  defp subtitle_count(ep), do: length(subtitle_languages(ep))
+
+  defp subtitle_languages_label(ep),
+    do: gettext("Subtitles: %{languages}", languages: Enum.join(subtitle_languages(ep), ", "))
+
+  defp subtitle_chip_label(ep) do
+    count = subtitle_count(ep)
+    ngettext("%{count} sub", "%{count} subs", count, count: count)
   end
 end
