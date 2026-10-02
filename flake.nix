@@ -19,7 +19,7 @@
         pkgs:
         let
           # Pin Elixir + OTP from one beam set so Elixir is built against exactly
-          # this OTP, matching CI (.github/workflows/ci.yml: OTP 29 / Elixir 1.20).
+          # this OTP, matching CI (.forgejo/workflows/ci.yml: OTP 29 / Elixir 1.20).
           # The bare `beamPackages.elixir` floated to the nixpkgs default (1.18.x),
           # which won't compile this project. If `nix develop` reports
           # `attribute 'elixir_1_20' missing`, the locked nixpkgs predates the 1.20

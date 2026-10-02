@@ -23,7 +23,7 @@ If `elixir` is **not found**, the flake dev shell isn't loaded. Fix it first:
 - prefix every command below with `nix develop --command ` (nix lives at
   `/nix/var/nix/profiles/default/bin/nix` if `nix` itself isn't on PATH).
 
-Confirm the version matches CI (`.github/workflows/ci.yml` — currently **Elixir 1.20 / OTP 29**).
+Confirm the version matches CI (`.forgejo/workflows/ci.yml` — currently **Elixir 1.20 / OTP 29**).
 
 ## 2. Clear the OTP-keyed build artifacts
 

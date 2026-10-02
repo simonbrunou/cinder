@@ -1,0 +1,6 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Same scope as the former .github/dependabot.yml: GitHub Actions pins only, weekly, no automerge. Runs on the self-hosted Forgejo (renovate/renovate-config); covers .forgejo/workflows and .github/workflows.",
+  "extends": ["config:recommended", "schedule:weekly"],
+  "enabledManagers": ["github-actions"]
+}

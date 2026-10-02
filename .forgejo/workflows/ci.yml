@@ -1,3 +1,11 @@
+# Runs on the self-hosted Forgejo (git.sbrn.eu), the source of truth; the GitHub
+# repository is a push mirror and runs no CI (release.yml still runs there, on
+# mirrored tags). Differences from the GitHub-hosted version:
+# - BEAM jobs say `runs-on: ubuntu-24.04`: for `ubuntu-latest` the runner sets
+#   ImageOS=ubuntu20, and setup-beam finds no OTP 29 build for Ubuntu 20.04;
+# - artifacts use Forgejo's upload-artifact fork (actions/upload-artifact v4+
+#   refuses to run off github.com);
+# - the container job drives the runner CT's Docker daemon (see that job).
 name: CI
 
 on:
@@ -15,7 +23,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       MIX_ENV: test
     steps:
@@ -54,14 +62,14 @@ jobs:
 
       - name: Upload mix test output
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: https://data.forgejo.org/forgejo/upload-artifact@cb8afe72b42edc798abfb8fcb556cf660d894245 # v5
         with:
           name: mix-test-output
           path: mix-test-output.log
           retention-days: 14
 
   dependency-audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -79,22 +87,30 @@ jobs:
 
   container:
     runs-on: ubuntu-latest
+    env:
+      # The job drives the runner CT's Docker daemon, shared by every job on the
+      # runner: names are per run so two concurrent runs never collide.
+      CINDER_IMAGE: cinder:ci-${{ github.run_id }}
+      CINDER_SMOKE_CONTAINER: cinder-ci-${{ github.run_id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - run: docker build --check .
-      - run: docker build -t cinder:ci .
+      - run: docker build -t "$CINDER_IMAGE" .
 
       - name: Boot a fresh instance
         env:
           CINDER_SMOKE_BOOTSTRAP_TOKEN: ci-only-not-a-real-bootstrap-token
+        # The container joins this job container's network namespace instead of
+        # publishing a port: a `-p 127.0.0.1:4000:4000` publish would land on the
+        # runner CT, not here. Sharing the namespace keeps 127.0.0.1:4000 local.
         run: |
-          docker run --detach --name cinder-ci -p 127.0.0.1:4000:4000 \
+          docker run --detach --name "$CINDER_SMOKE_CONTAINER" --network "container:$(hostname)" \
             -e SECRET_KEY_BASE=ci-only-not-a-real-secret-key-base-0123456789abcdefghijklmnopqrstuvwxyz \
             -e DATABASE_PATH=/data/cinder.db \
             -e PHX_HOST=127.0.0.1 \
             -e CINDER_BOOTSTRAP_TOKEN="$CINDER_SMOKE_BOOTSTRAP_TOKEN" \
-            cinder:ci
+            "$CINDER_IMAGE"
           for _ in {1..30}; do
             if curl --fail --silent http://127.0.0.1:4000/healthz; then
               ready=true
@@ -105,11 +121,13 @@ jobs:
           test "${ready:-false}" = true
 
           # The browser smoke exercises account bootstrap, not external-service setup.
-          docker exec cinder-ci /app/bin/cinder eval \
+          docker exec "$CINDER_SMOKE_CONTAINER" /app/bin/cinder eval \
             '{:ok, _} = Application.ensure_all_started(:cinder); Cinder.Settings.mark_setup_complete()'
 
           python3 -m venv "$RUNNER_TEMP/cinder-browser-smoke"
           "$RUNNER_TEMP/cinder-browser-smoke/bin/pip" install --disable-pip-version-check playwright==1.61.0
+          # GitHub-hosted runners ship Google Chrome; the self-hosted job image does not.
+          "$RUNNER_TEMP/cinder-browser-smoke/bin/playwright" install --with-deps chrome
 
       - name: Browser smoke
         env:
@@ -131,19 +149,29 @@ jobs:
           CINDER_SMOKE_BASE_URL: http://127.0.0.1:4000
           CINDER_SMOKE_EMAIL: browser-smoke@example.invalid
           CINDER_SMOKE_PASSWORD: ci-only-browser-smoke-password
-          CINDER_SMOKE_CONTAINER: cinder-ci
           CINDER_SMOKE_BROWSER_CHANNEL: chrome
         run: '"$RUNNER_TEMP/cinder-browser-smoke/bin/python" .github/scripts/browser_lifecycle.py'
 
       - name: Container logs and cleanup
         if: always()
         run: |
-          docker logs cinder-ci || true
-          docker rm --force cinder-ci || true
+          docker logs "$CINDER_SMOKE_CONTAINER" || true
+          docker rm --force "$CINDER_SMOKE_CONTAINER" || true
+
+      # trivy-action's own setup step checks out aquasecurity/trivy from github.com
+      # with this forge's job token, which github.com rejects. Install the same
+      # Trivy version directly and tell the action to skip its setup.
+      - name: Install Trivy
+        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/v0.70.0/contrib/install.sh | sh -s -- -b /usr/local/bin v0.70.0
 
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: cinder:ci
+          skip-setup-trivy: true
+          image-ref: ${{ env.CINDER_IMAGE }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: 1
+
+      - name: Remove the CI image
+        if: always()
+        run: docker image rm -f "$CINDER_IMAGE" || true
