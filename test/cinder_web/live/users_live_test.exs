@@ -188,7 +188,7 @@ defmodule CinderWeb.UsersLiveTest do
     # `Phoenix.LiveViewTest` does not simulate that transport teardown, so `victim_lv`
     # itself stays alive and keeps honoring its stale `current_scope` either way — the
     # broadcast below is the one signal a real connected tab actually reacts to.
-    assert_receive %Phoenix.Socket.Broadcast{event: "disconnect", topic: ^topic}, 200
+    assert_receive %Phoenix.Socket.Broadcast{event: "disconnect", topic: ^topic}
 
     victim_lv
     |> form("#locale_form", %{"user" => %{"locale" => "fr"}})

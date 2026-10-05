@@ -14,6 +14,11 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     end)
   end
 
+  # For the tests that read the stub's pid file: wide enough for the stub to start and write it
+  # on a loaded CI runner before the bound kills it (#636). Tests that only assert
+  # `{:error, :timeout}` keep their 150 ms bound, since a slow start can't change their result.
+  @pid_bound_ms 1_000
+
   @tag :tmp_dir
   test "health/0 is :ok when the binary runs and exits zero", %{tmp_dir: tmp} do
     path = Path.join(tmp, "ffprobe")
@@ -52,7 +57,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     File.write!(path, "#!/bin/sh\necho $$ > #{pidfile}\nexec sleep 30\n")
     File.chmod!(path, 0o755)
     Application.put_env(:cinder, :ffprobe_bin, path)
-    with_short_timeout(:ffprobe_health_timeout_ms, 150)
+    with_short_timeout(:ffprobe_health_timeout_ms, @pid_bound_ms)
 
     t0 = System.monotonic_time(:millisecond)
     assert Ffprobe.health() == {:error, :timeout}
@@ -406,12 +411,12 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   # SRT to stdout) is the real-world path most exposed to this: a corrupt/pathological stream can
   # make ffmpeg emit output continuously.
   @tag :tmp_dir
-  @tag timeout: 5_000
+  @tag timeout: 15_000
   test "extract_subtitle/2 still times out when the process emits data faster than any poll tick",
        %{tmp_dir: tmp} do
     pidfile = Path.join(tmp, "ffmpeg.pid")
     use_ffmpeg_bin(tmp, "echo $$ > #{pidfile}\nwhile :; do printf spam; done")
-    with_short_timeout(:ffmpeg_extract_timeout_ms, 150)
+    with_short_timeout(:ffmpeg_extract_timeout_ms, @pid_bound_ms)
 
     t0 = System.monotonic_time(:millisecond)
     assert Ffprobe.extract_subtitle("/media/movie.mkv", 2) == {:error, :timeout}
@@ -419,8 +424,8 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
 
     # Close to the configured bound (not merely "eventually finite") — proves the deadline fired
     # on schedule rather than being starved indefinitely by the continuous stream of data.
-    assert elapsed >= 150
-    assert elapsed < 1000
+    assert elapsed >= @pid_bound_ms
+    assert elapsed < @pid_bound_ms + 2_000
 
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)
@@ -448,7 +453,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
        %{tmp_dir: tmp} do
     pidfile = Path.join(tmp, "ffmpeg.pid")
     use_ffmpeg_bin(tmp, "echo $$ > #{pidfile}\nexec sleep 30")
-    with_short_timeout(:ffmpeg_extract_timeout_ms, 150)
+    with_short_timeout(:ffmpeg_extract_timeout_ms, @pid_bound_ms)
 
     assert Ffprobe.extract_subtitle("/media/movie.mkv", 2) == {:error, :timeout}
 

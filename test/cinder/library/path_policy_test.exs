@@ -363,7 +363,7 @@ defmodule Cinder.Library.PathPolicyTest do
       })
 
       task = Task.async(fn -> Library.delete_file(file) end)
-      assert_receive {:filesystem_barrier, pid, ref, :rm, ^file}, 1_000
+      assert_receive {:filesystem_barrier, pid, ref, :rm, ^file}, 15_000
       File.rename!(show, show <> ".old")
       File.ln_s!(outside_show, show)
       send(pid, {ref, :continue})

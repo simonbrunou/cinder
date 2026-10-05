@@ -232,7 +232,7 @@ defmodule Cinder.Notifier.WebhookTest do
       name = event |> elem(0) |> Atom.to_string()
 
       assert :ok = Discord.notify(event)
-      assert_receive :discord_posted, 500, "Discord did not post #{name}"
+      assert_receive :discord_posted, 5_000, "Discord did not post #{name}"
 
       assert :ok = Webhook.notify(event)
       assert_receive {:posted, %{"event" => ^name}, _headers}

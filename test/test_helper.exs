@@ -1,4 +1,6 @@
-ExUnit.start(assert_receive_timeout: 1_000)
+# A positive wait only costs time when the test is already failing, so the default is generous:
+# on the 3-core Forgejo CI runner a message a test waits for can take over a second (#636).
+ExUnit.start(assert_receive_timeout: 5_000)
 Ecto.Adapters.SQL.Sandbox.mode(Cinder.Repo, :manual)
 
 # Mox mocks for the external-service behaviours (real impls land per phase).

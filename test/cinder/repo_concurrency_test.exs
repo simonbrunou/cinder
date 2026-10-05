@@ -59,7 +59,7 @@ defmodule Cinder.RepoConcurrencyTest do
       # held it can't, so `yield` returns nil and the refute passes; it exits the window early
       # only if the INSERT raced an already-free lock or busy_timeout were 0 (turning the wait
       # into an error), which is exactly the failure this guards against.
-      assert_receive :writing, 1_000
+      assert_receive :writing
       refute Task.yield(writer, 50), "writer should still be blocked on the held lock"
 
       :ok = Sqlite3.execute(a, "COMMIT")

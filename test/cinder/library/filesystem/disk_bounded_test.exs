@@ -17,6 +17,14 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     :tv_library_path
   ]
 
+  # Wide enough for a stub to start on a loaded CI runner (#636): at 150 ms the bound sometimes
+  # killed a helper before it had written its pid file. The stubs sleep 3 s before writing their
+  # marker, so a helper the bound failed to kill is still alive while `process_gone?/1` polls; one
+  # that outlives the poll has written its marker by the time `process_gone?/1` returns true. The
+  # `< 3000` check and `process_gone?/1` carry the proof; the marker refute is a backstop.
+  @bound_ms 1_000
+  @marker_wait_ms 2_500
+
   setup do
     saved = Map.new(@env_keys, &{&1, Application.get_env(:cinder, &1)})
     path_env = System.get_env("PATH")
@@ -42,7 +50,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     pidfile = Path.join(tmp, "mkdir.pid")
     marker = Path.join(tmp, "mkdir_survived")
     hanging_helper!(tmp, pidfile, marker)
-    Application.put_env(:cinder, :disk_subprocess_timeout_ms, 150)
+    Application.put_env(:cinder, :disk_subprocess_timeout_ms, @bound_ms)
 
     path = Path.join(root, "workspace")
 
@@ -57,7 +65,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)
 
-    Process.sleep(1200)
+    Process.sleep(@marker_wait_ms)
     refute File.exists?(marker)
   end
 
@@ -67,14 +75,14 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
   # and never time out at all. Mirrors `Cinder.Library.MediaInfo.FfprobeTest`'s own max-speed
   # emitter test for `extract_subtitle/2`.
   @tag :tmp_dir
-  @tag timeout: 5_000
+  @tag timeout: 15_000
   test "run_rooted still times out when the helper emits data faster than any poll tick", %{
     tmp_dir: tmp
   } do
     root = library_root!(tmp)
     pidfile = Path.join(tmp, "spam.pid")
     spam_helper!(tmp, pidfile)
-    Application.put_env(:cinder, :disk_subprocess_timeout_ms, 150)
+    Application.put_env(:cinder, :disk_subprocess_timeout_ms, @bound_ms)
 
     path = Path.join(root, "workspace")
 
@@ -84,8 +92,8 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
 
     # Close to the configured bound (not merely "eventually finite") — proves the deadline fired
     # on schedule rather than being starved indefinitely by the continuous stream of data.
-    assert elapsed >= 150
-    assert elapsed < 1000
+    assert elapsed >= @bound_ms
+    assert elapsed < @bound_ms + 2_000
 
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)
@@ -100,7 +108,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     pidfile = Path.join(tmp, "sync.pid")
     marker = Path.join(tmp, "sync_survived")
     fake_bin!(tmp, "sync", pidfile, marker)
-    Application.put_env(:cinder, :disk_subprocess_timeout_ms, 150)
+    Application.put_env(:cinder, :disk_subprocess_timeout_ms, @bound_ms)
 
     target = Path.join(tmp, "unrooted-file")
     File.write!(target, "x")
@@ -114,7 +122,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)
 
-    Process.sleep(1200)
+    Process.sleep(@marker_wait_ms)
     refute File.exists?(marker)
   end
 
@@ -126,7 +134,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     pidfile = Path.join(tmp, "mv.pid")
     marker = Path.join(tmp, "mv_survived")
     fake_bin!(tmp, "mv", pidfile, marker)
-    Application.put_env(:cinder, :disk_subprocess_timeout_ms, 150)
+    Application.put_env(:cinder, :disk_subprocess_timeout_ms, @bound_ms)
 
     source = Path.join(tmp, "exchange-source")
     dest = Path.join(tmp, "exchange-destination")
@@ -143,7 +151,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)
 
-    Process.sleep(1200)
+    Process.sleep(@marker_wait_ms)
     refute File.exists?(marker)
   end
 
@@ -163,7 +171,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     pidfile = Path.join(tmp, "hold.pid")
     marker = Path.join(tmp, "hold_survived")
     hanging_helper!(tmp, pidfile, marker)
-    Application.put_env(:cinder, :disk_subprocess_timeout_ms, 150)
+    Application.put_env(:cinder, :disk_subprocess_timeout_ms, @bound_ms)
 
     path = Path.join(root, "subtitle.srt")
     File.write!(path, "subtitle")
@@ -175,7 +183,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)
 
-    Process.sleep(1200)
+    Process.sleep(@marker_wait_ms)
     refute File.exists?(marker)
   end
 
@@ -196,7 +204,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     pidfile = Path.join(tmp, "sync_parent.pid")
     marker = Path.join(tmp, "sync_parent_survived")
     hanging_sync_parent_helper!(tmp, pidfile, marker)
-    Application.put_env(:cinder, :disk_subprocess_timeout_ms, 150)
+    Application.put_env(:cinder, :disk_subprocess_timeout_ms, @bound_ms)
 
     path = Path.join(root, "subtitle.srt")
 
@@ -210,7 +218,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)
 
-    Process.sleep(1200)
+    Process.sleep(@marker_wait_ms)
     refute File.exists?(marker)
   end
 
@@ -240,7 +248,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     with open(#{inspect(pidfile)}, "w") as f:
         f.write(str(os.getpid()))
 
-    time.sleep(1)
+    time.sleep(3)
 
     with open(#{inspect(marker)}, "w") as f:
         f.write("")
@@ -281,7 +289,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     def hanging_sync_parent():
         with open(#{inspect(pidfile)}, "w") as f:
             f.write(str(os.getpid()))
-        time.sleep(1)
+        time.sleep(3)
         with open(#{inspect(marker)}, "w") as f:
             f.write("")
 
@@ -330,7 +338,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     File.write!(path, """
     #!/bin/sh
     echo $$ > #{shell_quote(pidfile)}
-    sleep 1
+    sleep 3
     touch #{shell_quote(marker)}
     exit 0
     """)

@@ -450,7 +450,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
     refute_receive {:started, "/library/bg.mkv", _}, 20
 
-    assert_receive {:started, "/library/bg.mkv", _}, 1000
+    assert_receive {:started, "/library/bg.mkv", _}
   end
 
   test "an explicit scope waiting behind a hung library scan still releases background work" do
@@ -490,7 +490,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     # Prove the hold was actually applied to the pending scope, otherwise this test would pass
     # even if a pending explicit scope received no hold at all.
     refute_receive {:started, "/library/bg.mkv", _}, 20
-    assert_receive {:started, "/library/bg.mkv", _}, 1000
+    assert_receive {:started, "/library/bg.mkv", _}
   end
 
   test "a failed explicit scan releases background work that was waiting for it" do
@@ -527,7 +527,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
 
     # The scan raises rather than yielding units; the queue must not stay stranded behind it.
     send(scanner, :release_scan)
-    assert_receive {:started, "/library/bg2.mkv", _}, 1000
+    assert_receive {:started, "/library/bg2.mkv", _}
     assert_eventually(fn -> Worker.status().counts.failed == 1 end)
   end
 
@@ -622,7 +622,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert :ok = Worker.enqueue_movie(1, worker)
     assert_receive {:scan_started, 1}
     assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
-    assert_receive {:started, "/library/bg.mkv", bg}, 1000
+    assert_receive {:started, "/library/bg.mkv", bg}
     send(bg, :release)
 
     # A later explicit request must arm a FRESH hold. If the expired deadline were left in place,
@@ -632,7 +632,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     refute_receive {:started, "/library/bg2.mkv", _}, 20
 
     # That fresh hold is itself bounded, so background work still resumes.
-    assert_receive {:started, "/library/bg2.mkv", bg2}, 1000
+    assert_receive {:started, "/library/bg2.mkv", bg2}
     send(bg2, :release)
   end
 
@@ -677,7 +677,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     Process.sleep(550)
     assert :ok = :sys.resume(worker)
 
-    assert_receive {:started, "/library/bg.mkv", _}, 1000
+    assert_receive {:started, "/library/bg.mkv", _}
   end
 
   test "a crashed explicit scan releases background work that was waiting for it" do
@@ -710,7 +710,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     refute_receive {:started, "/library/bg.mkv", _}, 50
 
     send(scanner, :release_scan)
-    assert_receive {:started, "/library/bg.mkv", _}, 1000
+    assert_receive {:started, "/library/bg.mkv", _}
     assert Process.alive?(worker)
   end
 
@@ -753,7 +753,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
     refute_receive {:started, "/library/bg.mkv", _}, 20
 
-    assert_receive {:started, "/library/bg.mkv", bg}, 1000
+    assert_receive {:started, "/library/bg.mkv", bg}
     send(bg, :release)
   end
 

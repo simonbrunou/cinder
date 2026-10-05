@@ -121,7 +121,7 @@ defmodule Cinder.PollerSupervisorTest do
         top
       end)
 
-    assert_receive {:EXIT, ^top, _reason}, 1_000
+    assert_receive {:EXIT, ^top, _reason}
     refute Process.alive?(top)
   end
 end

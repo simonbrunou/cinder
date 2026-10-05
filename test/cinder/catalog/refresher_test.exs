@@ -325,7 +325,7 @@ defmodule Cinder.Catalog.RefresherTest do
 
     start_supervised!({Refresher, interval: 60_000})
     refresh = Task.async(fn -> Refresher.poll() end)
-    assert_receive {:refresh_started, refresher_pid}, 1_000
+    assert_receive {:refresh_started, refresher_pid}
     assert {:ok, _} = Catalog.cancel_series(Repo.get!(Series, series.id), nil)
     send(refresher_pid, :continue)
     assert :ok = Task.await(refresh)

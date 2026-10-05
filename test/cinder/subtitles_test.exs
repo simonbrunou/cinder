@@ -306,7 +306,7 @@ defmodule Cinder.SubtitlesTest do
       assert :ok = Subtitles.fetch_after_import(fn -> %{} end, @video, :movies, ["fr"])
       assert :ok = Subtitles.fetch_after_import(fn -> %{} end, @video, :movies, ["en"])
 
-      assert_receive {:manifest_read_ready, first}, 1_000
+      assert_receive {:manifest_read_ready, first}
       refute_receive {:manifest_read_ready, _second}, 200
 
       # Each task reads the manifest twice inside its lock: the keep_verified? pre-check, then
@@ -314,18 +314,18 @@ defmodule Cinder.SubtitlesTest do
       # first task released the lock — that's the serialization being proven.
       first_ref = Process.monitor(first)
       send(first, :continue_manifest_read)
-      assert_receive {:manifest_read_ready, ^first}, 1_000
+      assert_receive {:manifest_read_ready, ^first}
       send(first, :continue_manifest_read)
 
-      assert_receive {:DOWN, ^first_ref, :process, ^first, :normal}, 1_000
+      assert_receive {:DOWN, ^first_ref, :process, ^first, :normal}
 
-      assert_receive {:manifest_read_ready, second}, 1_000
+      assert_receive {:manifest_read_ready, second}
       second_ref = Process.monitor(second)
       send(second, :continue_manifest_read)
-      assert_receive {:manifest_read_ready, ^second}, 1_000
+      assert_receive {:manifest_read_ready, ^second}
       send(second, :continue_manifest_read)
 
-      assert_receive {:DOWN, ^second_ref, :process, ^second, :normal}, 1_000
+      assert_receive {:DOWN, ^second_ref, :process, ^second, :normal}
 
       Agent.update(fs, &Map.delete(&1, :manifest_read_barrier))
 
@@ -1051,7 +1051,7 @@ defmodule Cinder.SubtitlesTest do
 
     task = Task.async(fn -> Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies) end)
 
-    assert_receive {:filesystem_barrier, pid, ref, :write, temporary}, 1_000
+    assert_receive {:filesystem_barrier, pid, ref, :write, temporary}, 15_000
     replace_parent(parent, outside, temporary)
     send(pid, {ref, :continue})
 
@@ -1108,7 +1108,7 @@ defmodule Cinder.SubtitlesTest do
 
     task = Task.async(fn -> Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies) end)
 
-    assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, manifest_temporary}, 1_000
+    assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, manifest_temporary}, 15_000
     assert File.exists?(target)
     assert String.contains?(manifest_temporary, ".cinder-subtitle-manifest-")
 

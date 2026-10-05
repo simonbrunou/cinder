@@ -54,12 +54,12 @@ defmodule Cinder.Subtitles.FetcherTest do
     enqueue(1, "/lib/a.mkv")
     enqueue(2, "/lib/b.mkv")
 
-    assert_receive {:search_started, 1, worker_1}, 1_000
+    assert_receive {:search_started, 1, worker_1}
     # The burst-prevention guarantee: unit 2's request is queued, NOT fired concurrently.
     refute_receive {:search_started, 2, _worker}, 200
 
     send(worker_1, :release)
-    assert_receive {:search_started, 2, worker_2}, 1_000
+    assert_receive {:search_started, 2, worker_2}
     send(worker_2, :release)
 
     # Drain before the next test resets Mox's global stubs out from under a lingering fetch.
@@ -78,7 +78,7 @@ defmodule Cinder.Subtitles.FetcherTest do
     enqueue(1, "/lib/a.mkv")
     enqueue(2, "/lib/b.mkv")
 
-    assert_receive :second_ran, 1_000
+    assert_receive :second_ran
     assert Process.alive?(fetcher)
 
     # Drain before the next test resets Mox's global stubs out from under a lingering fetch.

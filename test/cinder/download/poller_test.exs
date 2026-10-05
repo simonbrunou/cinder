@@ -1456,7 +1456,7 @@ defmodule Cinder.Download.PollerTest do
 
     reconcile = Task.async(fn -> Cinder.Library.reconcile_stages() end)
 
-    assert_receive {:import_stage_claim_barrier, pid, ref, stage_id, :rolling_back}, 1_000
+    assert_receive {:import_stage_claim_barrier, pid, ref, stage_id, :rolling_back}
     assert stage_id in Cinder.Library.stage_ids([stage])
 
     assert {:error, :stale_import_stage} =

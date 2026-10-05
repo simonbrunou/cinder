@@ -12,6 +12,13 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest do
 
   @env_keys [:anonymous_file_helper, :engine_workspace_subprocess_timeout_ms]
 
+  # Wide enough for the helpers to start on a loaded CI runner (#636). The bound also covers the
+  # `hold` that `run/5` starts before any seal, and at 150 ms that `hold` sometimes timed out
+  # first (`:anonymous_helper_timeout`), so the seal stage under test was never reached. The
+  # stubs sleep 3 s before writing their marker; see `DiskBoundedTest` for the same reasoning.
+  @bound_ms 1_000
+  @marker_wait_ms 2_500
+
   setup %{tmp_dir: tmp} do
     saved = Map.new(@env_keys, &{&1, Application.get_env(:cinder, &1)})
 
@@ -48,7 +55,7 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest do
     pidfile = Path.join(tmp, "seal.pid")
     marker = Path.join(tmp, "seal_survived")
     use_helper!(tmp, hold_source(), hanging_seal_source(pidfile, marker))
-    Application.put_env(:cinder, :engine_workspace_subprocess_timeout_ms, 150)
+    Application.put_env(:cinder, :engine_workspace_subprocess_timeout_ms, @bound_ms)
 
     t0 = System.monotonic_time(:millisecond)
 
@@ -60,7 +67,7 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest do
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)
 
-    Process.sleep(1200)
+    Process.sleep(@marker_wait_ms)
     refute File.exists?(marker)
   end
 
@@ -68,7 +75,7 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest do
   # keep resetting — mirrors `Cinder.Library.Filesystem.DiskBoundedTest`'s own max-speed emitter
   # test.
   @tag :tmp_dir
-  @tag timeout: 5_000
+  @tag timeout: 15_000
   test "seal/1 still times out when the helper emits data faster than any poll tick", %{
     reference: reference,
     input: input,
@@ -76,7 +83,7 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest do
   } do
     pidfile = Path.join(tmp, "seal-spam.pid")
     use_helper!(tmp, hold_source(), spam_seal_source(pidfile))
-    Application.put_env(:cinder, :engine_workspace_subprocess_timeout_ms, 150)
+    Application.put_env(:cinder, :engine_workspace_subprocess_timeout_ms, @bound_ms)
 
     t0 = System.monotonic_time(:millisecond)
 
@@ -87,8 +94,8 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest do
 
     # Close to the configured bound (not merely "eventually finite") — proves the deadline fired
     # on schedule rather than being starved indefinitely by the continuous stream of data.
-    assert elapsed >= 150
-    assert elapsed < 1000
+    assert elapsed >= @bound_ms
+    assert elapsed < @bound_ms + 2_000
 
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)
@@ -108,7 +115,7 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest do
     pidfile = Path.join(tmp, "hold.pid")
     marker = Path.join(tmp, "hold_survived")
     use_helper!(tmp, hanging_hold_source(pidfile, marker), "")
-    Application.put_env(:cinder, :engine_workspace_subprocess_timeout_ms, 150)
+    Application.put_env(:cinder, :engine_workspace_subprocess_timeout_ms, @bound_ms)
 
     t0 = System.monotonic_time(:millisecond)
 
@@ -120,7 +127,7 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest do
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)
 
-    Process.sleep(1200)
+    Process.sleep(@marker_wait_ms)
     refute File.exists?(marker)
   end
 
@@ -153,7 +160,7 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest do
     def seal(path):
         with open(#{inspect(pidfile)}, "w") as f:
             f.write(str(os.getpid()))
-        time.sleep(1)
+        time.sleep(3)
         with open(#{inspect(marker)}, "w") as f:
             f.write("")
     """
@@ -175,7 +182,7 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest do
     def hold():
         with open(#{inspect(pidfile)}, "w") as f:
             f.write(str(os.getpid()))
-        time.sleep(1)
+        time.sleep(3)
         with open(#{inspect(marker)}, "w") as f:
             f.write("")
     """

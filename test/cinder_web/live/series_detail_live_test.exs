@@ -625,7 +625,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     |> form("#series-scene-numbering-form", %{"group_id" => "group-a"})
     |> render_change()
 
-    assert_receive {:group_a_running, group_a_pid}, 1_000
+    assert_receive {:group_a_running, group_a_pid}
 
     view
     |> form("#series-scene-numbering-form", %{"group_id" => "group-b"})
@@ -644,7 +644,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     |> form("#series-scene-numbering-form", %{"group_id" => "group-a"})
     |> render_change()
 
-    assert_receive {:group_a_running, cleared_pid}, 1_000
+    assert_receive {:group_a_running, cleared_pid}
 
     view
     |> form("#series-scene-numbering-form", %{"group_id" => ""})
