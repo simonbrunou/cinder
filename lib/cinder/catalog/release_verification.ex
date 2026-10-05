@@ -179,16 +179,14 @@ defmodule Cinder.Catalog.ReleaseVerification do
     result =
       Repo.transaction(fn ->
         {claimed, _} =
-          Repo.update_all(
-            from(m in Movie,
-              where:
-                m.id == ^expected.id and m.status == ^expected.status and
-                  m.status in [:downloaded, :upgrading] and
-                  m.release_title == ^expected.release_title and
-                  m.release_policy_snapshot == ^expected.release_policy_snapshot
-            ),
-            set: [updated_at: Catalog.now()]
+          from(m in Movie,
+            where:
+              m.id == ^expected.id and m.status == ^expected.status and
+                m.status in [:downloaded, :upgrading] and
+                m.release_title == ^expected.release_title
           )
+          |> same_policy_snapshot(expected.release_policy_snapshot)
+          |> Repo.update_all(set: [updated_at: Catalog.now()])
 
         if claimed != 1, do: Repo.rollback(:stale_release)
         fresh = Repo.get!(Movie, expected.id)
@@ -229,6 +227,13 @@ defmodule Cinder.Catalog.ReleaseVerification do
       {:ok, updated}
     end
   end
+
+  # A standard movie has no frozen policy; its runtime check rejects through here too.
+  defp same_policy_snapshot(query, nil),
+    do: where(query, [m], is_nil(m.release_policy_snapshot))
+
+  defp same_policy_snapshot(query, snapshot),
+    do: where(query, [m], m.release_policy_snapshot == ^snapshot)
 
   @doc false
   def reject_grab_release(%Grab{} = expected, evidence) do

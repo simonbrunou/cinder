@@ -1842,6 +1842,63 @@ defmodule Cinder.Download.PollerTest do
     refute Repo.exists?(ImportStage)
   end
 
+  # A release can spell the right title and hold another film: every name check passes, but its
+  # length gives it away, far short of TMDB's 121 minutes. No release-policy snapshot here, unlike
+  # the anime case above.
+  test "a movie file far shorter than its TMDB runtime is rejected and another release grabbed" do
+    enable_policy_probe()
+    wrong = "Spider-Man.2002.1080p.BluRay.x264-MISLABELED"
+    right = "Spider-Man.2002.1080p.BluRay.x264-GRP"
+    source = "/downloads/#{wrong}.mkv"
+
+    movie =
+      movie_fixture(%{
+        title: "Spider-Man",
+        year: 2002,
+        imdb_id: "tt0145487",
+        runtime: 121,
+        status: :downloaded,
+        download_id: "hash-wrong-film",
+        download_protocol: :torrent,
+        release_title: wrong,
+        file_path: source
+      })
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+
+    stub(Cinder.Library.MediaInfoMock, :probe, fn ^source ->
+      {:ok, %{audio: ["eng"], subtitles: [], duration: 98 * 60.0}}
+    end)
+
+    expect(Cinder.Download.ClientMock, :remove, fn "hash-wrong-film", delete_files: true ->
+      :ok
+    end)
+
+    releases = [
+      %{title: wrong, size: 2_000_000_000, download_url: "magnet:?wrong"},
+      %{title: right, size: 2_000_000_000, download_url: "magnet:?right"}
+    ]
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt0145487" -> {:ok, releases} end)
+    selected = start_supervised!({Agent, fn -> nil end})
+
+    expect(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      Agent.update(selected, fn _ -> release.title end)
+      {:ok, "hash-right-film"}
+    end)
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+    assert :ok = Poller.poll()
+
+    assert Agent.get(selected, & &1) == right
+
+    assert %Movie{status: :downloading, download_id: "hash-right-film", file_path: nil} =
+             Repo.get!(Movie, movie.id)
+
+    assert Catalog.blocked_release_titles(movie) == [wrong]
+    refute Repo.exists?(ImportStage)
+  end
+
   test "a confirmed upgrade policy mismatch reverts without replacing live quality" do
     enable_policy_probe()
     source = "/downloads/Anime.Movie.Upgrade.mkv"
@@ -1878,6 +1935,52 @@ defmodule Cinder.Download.PollerTest do
 
     assert Catalog.blocked_release_titles(movie) == [movie.release_title]
     refute Repo.exists?(ImportStage)
+  end
+
+  # The upgrade side of the runtime check: a wrong film must never replace a good live file.
+  test "an upgrade far shorter than its TMDB runtime is rejected and the live file kept" do
+    enable_policy_probe()
+    wrong = "Spider-Man.2002.1080p.BluRay.x264-MISLABELED"
+    source = "/downloads/#{wrong}.mkv"
+
+    movie =
+      movie_fixture(%{
+        title: "Spider-Man",
+        year: 2002,
+        runtime: 121,
+        status: :upgrading,
+        download_id: "hash-wrong-upgrade",
+        download_protocol: :torrent,
+        release_title: wrong,
+        file_path: "/library/Spider-Man (2002).mkv",
+        imported_resolution: "720p"
+      })
+
+    expect(Cinder.Download.ClientMock, :status, fn "hash-wrong-upgrade" ->
+      {:ok, %{state: :completed, content_path: source}}
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+
+    stub(Cinder.Library.MediaInfoMock, :probe, fn ^source ->
+      {:ok, %{audio: ["eng"], subtitles: [], duration: 98 * 60.0}}
+    end)
+
+    expect(Cinder.Download.ClientMock, :remove, fn "hash-wrong-upgrade", delete_files: true ->
+      :ok
+    end)
+
+    start_supervised!({Poller, interval: 60_000})
+    assert :ok = Poller.poll()
+
+    assert %Movie{
+             status: :available,
+             release_title: nil,
+             file_path: "/library/Spider-Man (2002).mkv",
+             imported_resolution: "720p"
+           } = Repo.get!(Movie, movie.id)
+
+    assert Catalog.blocked_release_titles(movie) == [wrong]
   end
 
   test "an unavailable movie policy probe exhausts the bound without discarding content" do

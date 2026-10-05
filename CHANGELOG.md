@@ -7,6 +7,15 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **A movie download that turns out to be a different film is no longer imported.** A release
+  can spell the right title and hold another film, which no name check can see. Before import,
+  Cinder now compares the file's length (`ffprobe`) with the TMDB runtime. A file at least 15% and
+  10 minutes shorter is rejected: the release is blocklisted, its download removed, and the movie
+  searched again. An upgrade keeps the current file. A longer file always imports, because
+  extended cuts run long. Stacked CD1/CD2 parts count together. No TMDB runtime, no `ffprobe`, or
+  a file it can't time skips the check. The release-rejection step also only worked for
+  Anime-policy movies: its stale-row guard compared the policy column with `nil`, which Ecto
+  refuses; it now handles both.
 - **A movie search no longer grabs another film the indexer returned for its IMDb id.** A search
   for "Spider-Man: Brand New Day" downloaded "Spider-Island". Every result of the `{ImdbId:...}`
   search was trusted as the requested movie, but an indexer can ignore the id and answer with

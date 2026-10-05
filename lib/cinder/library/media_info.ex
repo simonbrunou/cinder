@@ -52,15 +52,20 @@ defmodule Cinder.Library.MediaInfo do
   player picks among them by viewer preference) all mean "not established", and callers must not
   warn on any of them.
   See `Cinder.Acquisition.Language.default_audio_mismatch?/3`.
+
+  `.duration` is the container's length in seconds, `nil` when the file doesn't say. A movie
+  import rejects a file far shorter than the movie's TMDB runtime: a release can spell the right
+  title and hold another film.
   """
-  # `default_audio` is `optional` so an existing Mox stub returning only audio/subtitles stays
-  # valid; every read goes through `Map.get(report, :default_audio)`.
+  # `default_audio` and `duration` are `optional` so an existing Mox stub returning only
+  # audio/subtitles stays valid; every read goes through `Map.get/2` or a match on the key.
   @callback probe(path :: String.t()) ::
               {:ok,
                %{
                  required(:audio) => [String.t()],
                  required(:subtitles) => [String.t()],
-                 optional(:default_audio) => String.t() | nil
+                 optional(:default_audio) => String.t() | nil,
+                 optional(:duration) => float() | nil
                }}
               | {:error, term()}
 

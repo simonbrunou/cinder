@@ -386,6 +386,18 @@ refused. Always on in the shipped image (there is no runtime toggle); setting a 
 preference to *Any* skips the check for that title, and an image without `ffprobe` skips it
 entirely (probes then import-permissive).
 
+## Movie length verification
+
+A release can carry the right name and hold a different film. Before importing a movie, Cinder
+also compares the file's length (from `ffprobe`) with the movie's TMDB runtime. A file at least
+**15% and 10 minutes shorter** is treated as another film: the release is blocklisted, its download
+removed, and the movie re-searches. An upgrade rejected this way keeps the current library file.
+Stacked releases (CD1, CD2) are judged on their combined length.
+
+Only a shorter file is rejected. Extended and director's cuts run longer, and PAL speed-up trims
+about 4%, so neither trips it. A movie without a TMDB runtime, a file `ffprobe` can't time, or an
+image without `ffprobe` imports without this check. TV episodes are not checked.
+
 ## Subtitles
 
 Cinder can fetch `.srt` subtitle sidecars for imported movies and episodes from

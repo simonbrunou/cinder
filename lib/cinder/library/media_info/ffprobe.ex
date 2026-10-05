@@ -6,7 +6,7 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   separately — `nil` unless every default-flagged track names the same language, since Matroska's
   FlagDefault means "eligible for automatic selection", not "this one plays" (issue #197).
 
-  Returns `{:ok, %{audio: codes, subtitles: codes, default_audio: code | nil}}` or
+  Returns `{:ok, %{audio: codes, subtitles: codes, default_audio: code | nil, duration: seconds | nil}}` or
   `{:error, reason}` when `ffprobe` is missing, exits non-zero, or is killed for exceeding its
   bound. The two probes degrade differently on that error: a `probe/1` error (or empty lists) is
   "can't verify" and the name-based audio check imports anyway, so a host without `ffprobe` never
@@ -23,7 +23,8 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   `probe/1`, `probe_policy/1`, `subtitle_tracks/1` and `extract_subtitle/2` all shell out to
   inspect an actual file's bytes, unlike `health/0`'s cheap `-version` no-file call.
   `probe/1`/`probe_policy/1` (via `Cinder.Library.capture_media/1`, `verify_audio/2`,
-  `verify_release_policy/2`, `reject_wrong_audio/2`) run synchronously inside
+  `reject_wrong_audio/2`, and `Cinder.Library.PolicyVerifier.verify_release/3` /
+  `verify_runtime/3`) run synchronously inside
   `Cinder.Download.Poller`/`Cinder.Download.TvPoller`'s single-process tick, and `isolate/2`'s
   bare `rescue` is not a timeout boundary — a hung `ffprobe` there used to stall every subsequent
   tick, import, and park for every movie and TV target, indefinitely.
@@ -234,26 +235,28 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   end
 
   # One line per stream: "codec_type,default,language" — `default` is the disposition flag (1/0),
-  # `language` empty (or the field absent) when the stream has no tag.
+  # `language` empty (or the field absent) when the stream has no tag. Then one line for the
+  # container: its duration in seconds ("7263.456000"), which the movie runtime check reads.
   defp args(path),
     do: ~w(-v error
-        -show_entries stream=codec_type:stream_disposition=default:stream_tags=language
+        -show_entries stream=codec_type:stream_disposition=default:stream_tags=language:format=duration
         -of csv=p=0) ++ [path]
 
   @doc false
   def parse(out) do
-    rows = parse_rows(out)
+    {rows, duration} = parse_output(out)
 
     %{
       audio: Enum.uniq(for({"audio", _default?, lang} <- rows, lang != nil, do: lang)),
       subtitles: Enum.uniq(for({"subtitle", _default?, lang} <- rows, lang != nil, do: lang)),
-      default_audio: default_audio(rows)
+      default_audio: default_audio(rows),
+      duration: duration
     }
   end
 
   @doc false
   def parse_policy(out) do
-    rows = parse_rows(out)
+    {rows, _duration} = parse_output(out)
 
     %{
       audio: Enum.uniq(for({"audio", _default?, lang} <- rows, is_binary(lang), do: lang)),
@@ -312,11 +315,19 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   def parse_subtitle_tracks(_), do: []
 
   # "audio,1,eng" -> {"audio", true, "eng"}; "video,0" / "audio,0,und" -> {_, _, nil}
-  # (dropped downstream).
-  defp parse_rows(out) do
+  # (dropped downstream). The container line is the bare duration: a stream row always leads with
+  # its codec_type, never a number. A container with no known duration prints "N/A", which lands
+  # as a typeless row every consumer ignores, so the duration stays nil.
+  defp parse_output(out) do
     out
     |> String.split(["\r\n", "\n"], trim: true)
-    |> Enum.map(&parse_row/1)
+    |> Enum.reduce({[], nil}, fn line, {rows, duration} ->
+      case Float.parse(String.trim(line)) do
+        {seconds, ""} -> {rows, seconds}
+        _stream_row -> {[parse_row(line) | rows], duration}
+      end
+    end)
+    |> then(fn {rows, duration} -> {Enum.reverse(rows), duration} end)
   end
 
   defp parse_row(line) do

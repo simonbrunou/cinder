@@ -80,6 +80,7 @@ defmodule Cinder.Library do
     with {:ok, root} <- Settings.library_root(:movies, movie),
          {:ok, sources, folder?} <- MovieSources.resolve(path),
          {:ok, reports} <- verify_movie_policy(movie, Enum.map(sources, &elem(&1, 0))),
+         :ok <- PolicyVerifier.verify_runtime(movie.runtime, sources, media_info()),
          {:ok, sources} <- stat_movie_sources(sources),
          parsed = Parser.parse(Path.basename(path)),
          new_q =
@@ -539,7 +540,7 @@ defmodule Cinder.Library do
 
   defp verify_movie_policy(%Movie{release_policy_snapshot: snapshot}, sources)
        when is_map(snapshot),
-       do: verify_release_policy(sources, snapshot)
+       do: PolicyVerifier.verify_release(sources, snapshot, media_info())
 
   defp verify_movie_policy(%Movie{} = movie, sources) do
     target = Language.target(movie.preferred_language, movie.original_language)
@@ -550,14 +551,6 @@ defmodule Cinder.Library do
         {:error, _reason} = error -> {:halt, error}
       end
     end)
-  end
-
-  defp verify_release_policy(paths, snapshot) do
-    case PolicyVerifier.verify_sources(paths, snapshot, media_info()) do
-      {:ok, reports} -> {:ok, reports}
-      {:mismatch, evidence} -> {:error, {:release_policy_mismatch, evidence}}
-      {:unavailable, reason} -> {:error, {:release_policy_unavailable, reason}}
-    end
   end
 
   defp media_info, do: Application.get_env(:cinder, :media_info)
@@ -840,7 +833,7 @@ defmodule Cinder.Library do
   defp verify_grab_policy(%Grab{release_policy_snapshot: snapshot}, to_import)
        when is_map(snapshot) do
     paths = to_import |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
-    verify_release_policy(paths, snapshot)
+    PolicyVerifier.verify_release(paths, snapshot, media_info())
   end
 
   defp verify_grab_policy(%Grab{}, _to_import), do: {:ok, %{}}

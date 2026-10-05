@@ -149,6 +149,94 @@ defmodule Cinder.LibraryMediaInfoTest do
     assert {:ok, %{dest: @dest}} = Library.stage_movie(movie)
   end
 
+  # A release can spell the right title and hold another film. Only a clearly SHORTER file is
+  # evidence of that (15% AND 10 minutes): an extended cut, PAL speed-up, or a short film a few
+  # minutes off must still import, and a file the probe can't time can't be judged at all.
+  test "rejects a movie file far shorter than its TMDB runtime, and nothing else" do
+    Cinder.LibraryStubs.stub_import_ok(1)
+    movie = %{french_movie() | preferred_language: "any"}
+
+    cases = [
+      {121, 98, :reject},
+      {121, 102, :reject},
+      {121, 104, :import},
+      {121, 116, :import},
+      {121, 160, :import},
+      {50, 42, :import},
+      {121, nil, :import},
+      {nil, 98, :import}
+    ]
+
+    for {tmdb, file, expected} <- cases do
+      duration = file && file * 60.0
+
+      stub(Cinder.Library.MediaInfoMock, :probe, fn @source ->
+        {:ok, %{audio: [], subtitles: [], duration: duration}}
+      end)
+
+      result = Library.stage_movie(%{movie | runtime: tmdb})
+
+      case expected do
+        :reject ->
+          assert {:error,
+                  {:release_policy_mismatch,
+                   %{tmdb_runtime_minutes: ^tmdb, file_runtime_minutes: ^file}}} = result,
+                 "#{file} min for a #{tmdb} min movie should be rejected"
+
+        :import ->
+          assert {:ok, %{dest: @dest} = stage} = result,
+                 "#{inspect(file)} min for a #{inspect(tmdb)} min movie should import"
+
+          Library.rollback_stage(stage)
+      end
+    end
+  end
+
+  # A CD1/CD2 stack is one film between its parts: judged part by part, every stacked movie would
+  # look half its length and be rejected.
+  test "judges a CD1/CD2 stack on its combined length" do
+    movie = %Movie{title: "Epic", year: 1960, tmdb_id: 1, file_path: "/dl/Epic", runtime: 121}
+    cd1 = "/dl/Epic/Epic.CD1.mkv"
+    cd2 = "/dl/Epic/Epic.CD2.mkv"
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _path -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl/Epic" ->
+      {:ok, [{cd2, 4_000}, {cd1, 3_000}]}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+      cond do
+        path == cd1 ->
+          {:ok, %File.Stat{size: 3_000, inode: 11, major_device: 1}}
+
+        path == cd2 ->
+          {:ok, %File.Stat{size: 4_000, inode: 12, major_device: 1}}
+
+        String.contains?(path, ".cinder-stage-") ->
+          size = if String.contains?(path, "-cd1"), do: 3_000, else: 4_000
+          {:ok, %File.Stat{size: size, inode: 20 + size, major_device: 1}}
+
+        true ->
+          {:error, :enoent}
+      end
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _path -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _source, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rename, fn _source, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
+
+    stub(Cinder.Library.MediaInfoMock, :probe, fn
+      ^cd1 -> {:ok, %{audio: [], subtitles: [], duration: 60 * 60.0}}
+      ^cd2 -> {:ok, %{audio: [], subtitles: [], duration: 61 * 60.0}}
+    end)
+
+    assert {:ok, stage} = Library.stage_movie(movie)
+    assert [_part] = stage.part_file_paths
+    Library.rollback_stage(stage)
+  end
+
   @gb 1_000_000_000
 
   test "stage_movie captures audio + embedded + sidecar languages into the returned quality" do

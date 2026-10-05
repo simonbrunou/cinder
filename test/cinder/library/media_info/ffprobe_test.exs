@@ -96,7 +96,8 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     assert Ffprobe.parse(out) == %{
              audio: ["fre", "tur", "eng"],
              subtitles: [],
-             default_audio: "tur"
+             default_audio: "tur",
+             duration: nil
            }
 
     assert %{audio: ["fre", "tur", "eng"], default_audio: "tur"} = Ffprobe.parse_policy(out)
@@ -106,12 +107,24 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   # flag, and flags that disagree. All must report nil rather than infer one.
   test "parse reports no default language when no audio track carries the disposition" do
     out = "audio,0,fre\naudio,0,eng\n"
-    assert Ffprobe.parse(out) == %{audio: ["fre", "eng"], subtitles: [], default_audio: nil}
+
+    assert Ffprobe.parse(out) == %{
+             audio: ["fre", "eng"],
+             subtitles: [],
+             default_audio: nil,
+             duration: nil
+           }
   end
 
   test "parse reports no default language when the default track is untagged" do
     out = "video,0,\naudio,1,und\naudio,0,fre\naudio,0,eng\n"
-    assert Ffprobe.parse(out) == %{audio: ["fre", "eng"], subtitles: [], default_audio: nil}
+
+    assert Ffprobe.parse(out) == %{
+             audio: ["fre", "eng"],
+             subtitles: [],
+             default_audio: nil,
+             duration: nil
+           }
 
     assert %{audio: ["fre", "eng"], audio_unknown?: true, default_audio: nil} =
              Ffprobe.parse_policy(out)
@@ -154,10 +167,33 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   # silently read as a disposition flag if args/1 and parse_row/1 ever drift.
   test "parse handles the two-field row real ffprobe emits for an untagged stream" do
     out = "video,0\naudio,1\naudio,0,eng\n"
-    assert Ffprobe.parse(out) == %{audio: ["eng"], subtitles: [], default_audio: nil}
+
+    assert Ffprobe.parse(out) == %{
+             audio: ["eng"],
+             subtitles: [],
+             default_audio: nil,
+             duration: nil
+           }
 
     assert %{audio: ["eng"], audio_unknown?: true, subtitle_unknown?: false} =
              Ffprobe.parse_policy(out)
+  end
+
+  # The container line real ffprobe 9.0 prints after the stream rows for `format=duration`: the
+  # bare seconds, or "N/A" when the input doesn't say. Neither may be read as a stream.
+  test "parse reads the container duration line apart from the stream rows" do
+    out = "video,0\naudio,1,eng\n7.023000\n"
+
+    assert Ffprobe.parse(out) == %{
+             audio: ["eng"],
+             subtitles: [],
+             default_audio: "eng",
+             duration: 7.023
+           }
+
+    assert %{audio: ["eng"], audio_unknown?: false} = Ffprobe.parse_policy(out)
+
+    assert %{audio: ["eng"], duration: nil} = Ffprobe.parse("video,0\naudio,1,eng\nN/A\n")
   end
 
   @tag :tmp_dir
