@@ -2,8 +2,10 @@ defmodule CinderWeb.ManualSearchComponent do
   @moduledoc """
   Interactive manual-search panel, shared by the movie and TV views. Queries the indexer
   asynchronously and lists every release with its scorer verdict, letting the user grab any one
-  (overriding the band/blocklist for selection). Grabs are forwarded to the parent LiveView, which
-  owns the Catalog writes, via `send(self(), {:manual_grab, mode, target, release})`. For an
+  (overriding the band/blocklist, and for a movie found by IMDb id the title guard: a release
+  naming none of its titles is flagged "title doesn't match"). Grabs are forwarded to the parent
+  LiveView, which owns the Catalog writes, via
+  `send(self(), {:manual_grab, mode, target, release})`. For an
   `:available` movie target a "Replace current file?" confirm gates the grab. An empty result
   shows "No releases found." TV season searches include wanted and already-available episodes,
   so fully imported seasons can open the panel for an operator-chosen upgrade.
@@ -160,7 +162,7 @@ defmodule CinderWeb.ManualSearchComponent do
        do: Acquisition.list_releases_by_title(target.title, target.year, opts)
 
   defp search(:standard, :movie, target, _season, opts),
-    do: Acquisition.list_releases(target.imdb_id, opts)
+    do: Acquisition.list_releases(target.imdb_id, Catalog.movie_acquisition_context(target), opts)
 
   defp search(:standard, :tv, target, season, opts) do
     episodes = Catalog.manual_search_episodes(target.id, season)
@@ -473,6 +475,8 @@ defmodule CinderWeb.ManualSearchComponent do
 
   defp verdict_reason({:rejected, :conflicting_standard_numbering}),
     do: gettext("conflicting episode numbering")
+
+  defp verdict_reason({:rejected, :title_mismatch}), do: gettext("title doesn't match")
 
   defp verdict_reason(_), do: ""
 end

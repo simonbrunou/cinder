@@ -382,21 +382,45 @@ defmodule Cinder.AcquisitionTest do
     assert :no_match = Acquisition.best_release("tt22084616", context, max_size: 20 * @gb)
   end
 
-  describe "list_releases/2" do
+  # Reported from a build without this guard (v3.0.1 has none): Spider-Man (2002) grabbed
+  # "Spider.2002...", another 2002 film the IMDb search returned. A name that spells only the
+  # START of the title ("spider" of "spiderman") is not the title, even with the right year.
+  test "best_release/3 rejects a release whose name is only a prefix of the movie's title" do
+    context =
+      movie_context(
+        imdb_id: "tt0145487",
+        title: "Spider-Man",
+        year: 2002,
+        aliases: [%{title: "Spiderman"}, %{title: "Spider-Man: The Motion Picture"}]
+      )
+
+    wrong = raw(title: "Spider.2002.1080p.BluRay.x264-HORROR", size: 15 * @gb)
+    right = raw(title: "Spiderman.2002.1080p.Bluray.x264-hV", size: 12 * @gb)
+
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt0145487" -> {:ok, [wrong, right]} end)
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt0145487" -> {:ok, [wrong]} end)
+
+    assert {:ok, %Release{group: "hV"}} =
+             Acquisition.best_release("tt0145487", context, max_size: 20 * @gb)
+
+    assert :no_match = Acquisition.best_release("tt0145487", context, max_size: 20 * @gb)
+  end
+
+  describe "list_releases/3" do
     test "returns every release annotated with its verdict, acceptable first" do
       Cinder.Acquisition.IndexerMock
       |> expect(:search, fn "tt1" ->
         {:ok,
          [
            %{
-             title: "Good 1080p",
+             title: "Movie Good 1080p",
              size: 5_000_000_000,
              seeders: 9,
              download_url: "u",
              protocol: :torrent
            },
            %{
-             title: "Huge 1080p",
+             title: "Movie Huge 1080p",
              size: 90_000_000_000,
              seeders: 9,
              download_url: "u",
@@ -406,17 +430,18 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{first, v1}, {_second, v2}]} =
-               Acquisition.list_releases("tt1",
+               Acquisition.list_releases("tt1", movie_context(),
                  protocols: [:torrent],
                  preferred_resolutions: ["1080p"],
                  max_size: 10_000_000_000
                )
 
       assert v1 == :ok
-      assert first.title == "Good 1080p"
+      assert first.title == "Movie Good 1080p"
       assert v2 == {:rejected, :out_of_band}
     end
 
+    # A wrong-protocol row can't be grabbed at all, so that verdict outranks a title mismatch.
     test "flags a release on an unconfigured protocol" do
       Cinder.Acquisition.IndexerMock
       |> expect(:search, fn _ ->
@@ -424,12 +449,29 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{_r, {:rejected, :wrong_protocol}}]} =
-               Acquisition.list_releases("tt1", protocols: [:torrent])
+               Acquisition.list_releases("tt1", movie_context(), protocols: [:torrent])
     end
 
     test "passes through an indexer error" do
       Cinder.Acquisition.IndexerMock |> expect(:search, fn _ -> {:error, :down} end)
-      assert Acquisition.list_releases("tt1", []) == {:error, :down}
+      assert Acquisition.list_releases("tt1", movie_context(), []) == {:error, :down}
+    end
+
+    # "Find a better match" on Spider-Man (2002) would list another film the `{ImdbId:...}` search
+    # returned ("Spider.2002...") as an ordinary acceptable row, ranked first as the bigger file.
+    # The row stays grabbable (the panel is the override surface), but it must say automatic
+    # selection would never pick it, and rank after real rows.
+    test "flags a result spelling none of the movie's titles and ranks it after acceptable rows" do
+      context = movie_context(imdb_id: "tt0145487", title: "Spider-Man", year: 2002)
+      wrong = raw(title: "Spider.2002.1080p.BluRay.x264-GRP", size: 9 * @gb)
+      right = raw(title: "Spiderman.2002.1080p.BluRay.x264-GRP", size: 6 * @gb)
+      expect(Cinder.Acquisition.IndexerMock, :search, fn "tt0145487" -> {:ok, [wrong, right]} end)
+
+      assert {:ok,
+              [
+                {%Release{title: "Spiderman.2002" <> _}, :ok},
+                {%Release{title: "Spider.2002" <> _}, {:rejected, :title_mismatch}}
+              ]} = Acquisition.list_releases("tt0145487", context, max_size: 20 * @gb)
     end
   end
 
@@ -509,7 +551,8 @@ defmodule Cinder.AcquisitionTest do
 
     # The guard is strict enough to fail closed on real conventions it can't parse (German scene
     # puts the language before the year). Fine for automatic selection — but the manual panel is
-    # the operator's override, so it must keep listing them, exactly as `list_releases/2` does.
+    # the operator's override, so it must keep listing them, unflagged: the name does spell "Dune",
+    # so a "title doesn't match" verdict would be false.
     test "list_releases_by_title/3 still lists a release the guard rejects" do
       expect(Cinder.Acquisition.IndexerMock, :search_movie_query, 2, fn _query, [] ->
         {:ok, [raw(title: "Dune.German.2021.AC3.BDRiP.x264-GRP")]}
@@ -517,8 +560,10 @@ defmodule Cinder.AcquisitionTest do
 
       assert :no_match = Acquisition.best_release_by_title("Dune", 2021, max_size: 20 * @gb)
 
-      assert {:ok, [{%Release{title: "Dune.German.2021.AC3.BDRiP.x264-GRP"}, _verdict}]} =
+      assert {:ok, [{%Release{title: "Dune.German.2021.AC3.BDRiP.x264-GRP"}, verdict}]} =
                Acquisition.list_releases_by_title("Dune", 2021, max_size: 20 * @gb)
+
+      refute verdict == {:rejected, :title_mismatch}
     end
   end
 

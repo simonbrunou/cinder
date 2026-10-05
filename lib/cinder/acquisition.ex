@@ -203,15 +203,22 @@ defmodule Cinder.Acquisition do
   @doc """
   Lists EVERY parsed release for `imdb_id`, each paired with the scorer's verdict (`:ok` or
   `{:rejected, reason}`), sorted acceptable-first then best-ranked. Unlike `best_release/3` it
-  neither title-guards, drops nor collapses — the interactive manual-search panel shows them all
-  and lets the user grab any (overriding the band/blocklist). `opts[:protocols]` adds a
+  neither drops nor collapses — the interactive manual-search panel shows them all and lets the
+  user grab any (overriding the band/blocklist and the title guard). A release the title guard
+  rejects for `context` (`Cinder.Catalog.movie_acquisition_context/1`'s map) is listed as
+  `{:rejected, :title_mismatch}`: unmarked, another film the indexer returned for the id reads as
+  a valid candidate, and sorts first when it is the bigger file. `opts[:protocols]` adds a
   `:wrong_protocol` verdict for releases with no configured client (still listed, but the panel
-  disables grab).
+  disables grab); it outranks a title mismatch.
   """
-  def list_releases(imdb_id, opts \\ []) do
+  def list_releases(imdb_id, context, opts \\ []) do
     case indexer().search(imdb_id) do
-      {:ok, raw} -> {:ok, annotate(Enum.map(raw, &Release.new/1), opts)}
-      {:error, _} = error -> error
+      {:ok, raw} ->
+        releases = Enum.map(raw, &Release.new/1)
+        {:ok, annotate(releases, opts, filter_id_scoped_movie(releases, context))}
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -235,7 +242,7 @@ defmodule Cinder.Acquisition do
   def title_guard(releases, :tv, series), do: filter_title(releases, series)
 
   @doc """
-  TV variant of `list_releases/2`. A `:standard_numbering` result from
+  TV variant of `list_releases/3`. A `:standard_numbering` result from
   `standard_tv_numbering/3` adds the same bounded alternate-season queries used by automatic
   acquisition and freezes each bridged release's resolved Catalog episode ids.
   """
@@ -340,12 +347,30 @@ defmodule Cinder.Acquisition do
     end
   end
 
-  defp annotate(releases, opts) do
+  # `title_matches` is the IMDb-scoped movie guard's survivors; nil flags nothing. Only that guard
+  # rejects on the name alone. The no-IMDb Title.Year guard also rejects a name with no year or
+  # the language before it, and the TV guard rejects for missing year evidence; a "title doesn't
+  # match" flag would misstate both. The anime searches title-guard before listing.
+  defp annotate(releases, opts, title_matches \\ nil) do
     protocols = Keyword.get(opts, :protocols)
+    title_matches = title_matches && MapSet.new(title_matches)
 
     releases
-    |> Enum.map(fn release -> {release, release_verdict(release, protocols, opts)} end)
+    |> Enum.map(fn release ->
+      verdict = release_verdict(release, protocols, opts)
+      {release, flag_title_mismatch(verdict, release, title_matches)}
+    end)
     |> Enum.sort_by(fn {release, verdict} -> {verdict != :ok, Scorer.rank_key(release, opts)} end)
+  end
+
+  # A row with no configured client can't be grabbed at all; that outranks naming another film.
+  defp flag_title_mismatch({:rejected, :wrong_protocol} = verdict, _release, _matches),
+    do: verdict
+
+  defp flag_title_mismatch(verdict, _release, nil), do: verdict
+
+  defp flag_title_mismatch(verdict, release, title_matches) do
+    if MapSet.member?(title_matches, release), do: verdict, else: {:rejected, :title_mismatch}
   end
 
   defp release_verdict(%Release{} = release, protocols, opts) do
@@ -693,7 +718,7 @@ defmodule Cinder.Acquisition do
 
   # The free-text movie search an absent IMDb id degrades to. Unguarded on purpose: automatic
   # selection filters below, but the manual panel must keep listing everything (see
-  # `list_releases/2`) — the guard is deliberately strict, so a title convention it fails closed on
+  # `list_releases/3`) — the guard is deliberately strict, so a title convention it fails closed on
   # is exactly when the operator needs to see and override the rows.
   defp title_search(title, year) do
     query = [title, year] |> Enum.reject(&is_nil/1) |> Enum.join(" ")
