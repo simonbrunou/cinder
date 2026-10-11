@@ -63,6 +63,10 @@ All notable changes to Cinder are documented here. The format follows
   other login behind the hashing. Each user now gets 10 attempts per 15 minutes before the
   password work; past that the same generic error as a wrong password is returned. A successful
   password change also no longer clears the address's IP-only login floor.
+- **Deleting your own account now closes your other open sessions (#647).** Self-service deletion
+  revoked the session tokens but only disconnected the current browser's socket, so a LiveView
+  already open on another device kept its mounted scope until it reconnected. It now broadcasts
+  the disconnect for every revoked session, like the password, email, role and admin-delete paths.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release

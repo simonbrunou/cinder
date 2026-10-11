@@ -517,6 +517,23 @@ defmodule CinderWeb.UserSessionControllerTest do
       refute Cinder.Repo.get(Cinder.Accounts.User, user.id)
     end
 
+    test "disconnects the user's other open sessions", %{conn: conn} do
+      _admin = admin_fixture()
+      user = user_fixture() |> set_password()
+
+      other_token = Cinder.Accounts.generate_user_session_token(user)
+      topic = "users_sessions:#{Base.url_encode64(other_token)}"
+      CinderWeb.Endpoint.subscribe(topic)
+
+      conn
+      |> log_in_user(user)
+      |> post(~p"/users/delete-account", %{
+        "delete_account" => %{"password" => valid_user_password()}
+      })
+
+      assert_receive %Phoenix.Socket.Broadcast{event: "disconnect", topic: ^topic}
+    end
+
     test "a wrong password does not delete the account", %{conn: conn} do
       _admin = admin_fixture()
       user = user_fixture() |> set_password()

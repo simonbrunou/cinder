@@ -175,7 +175,10 @@ defmodule CinderWeb.UserSessionController do
   defp delete_own_account(conn, user, password) do
     if Accounts.sudo_mode?(user) do
       case Accounts.delete_own_account(user, password) do
-        {:ok, _user, _revoked_tokens} ->
+        {:ok, _user, revoked_tokens} ->
+          # log_out_user/1 only disconnects this browser's socket; close every other device's too.
+          UserAuth.disconnect_sessions(revoked_tokens)
+
           conn
           |> put_flash(:info, gettext("Your account has been permanently deleted."))
           |> UserAuth.log_out_user()

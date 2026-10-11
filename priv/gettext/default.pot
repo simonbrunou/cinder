@@ -1332,7 +1332,7 @@ msgid "You must log in to access this page."
 msgstr ""
 
 #: lib/cinder_web/controllers/user_session_controller.ex:85
-#: lib/cinder_web/controllers/user_session_controller.ex:200
+#: lib/cinder_web/controllers/user_session_controller.ex:203
 #: lib/cinder_web/live/user_live/settings.ex:501
 #: lib/cinder_web/user_auth.ex:289
 #, elixir-autogen
@@ -4165,17 +4165,17 @@ msgstr ""
 
 #: lib/cinder_web/controllers/user_session_controller.ex:161
 #: lib/cinder_web/controllers/user_session_controller.ex:171
-#: lib/cinder_web/controllers/user_session_controller.ex:185
+#: lib/cinder_web/controllers/user_session_controller.ex:188
 #, elixir-autogen
 msgid "The password you entered is incorrect."
 msgstr ""
 
-#: lib/cinder_web/controllers/user_session_controller.ex:192
+#: lib/cinder_web/controllers/user_session_controller.ex:195
 #, elixir-autogen
 msgid "You are the last admin. Grant another user admin before deleting your account."
 msgstr ""
 
-#: lib/cinder_web/controllers/user_session_controller.ex:180
+#: lib/cinder_web/controllers/user_session_controller.ex:183
 #, elixir-autogen
 msgid "Your account has been permanently deleted."
 msgstr ""
