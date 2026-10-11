@@ -8,6 +8,8 @@ defmodule Cinder.Download.Torrent do
   qBittorrent's Web API torrent id.
   """
 
+  @max_depth 64
+
   @doc """
   Returns `{:ok, hex}` (lowercase 40-char hex) or `{:error, :bad_torrent}` for
   malformed / non-bencode input.
@@ -39,7 +41,7 @@ defmodule Cinder.Download.Torrent do
   # qBittorrent uses libtorrent's canonical id: truncated v2 when present,
   # otherwise v1. Unknown metainfo versions cannot safely be treated as v1.
   defp hash_algorithm(info) do
-    case decode(info, 0) do
+    case decode(info, 0, 0) do
       {%{"meta version" => 2}, next} when next == byte_size(info) ->
         {:ok, :sha256}
 
@@ -63,7 +65,7 @@ defmodule Cinder.Download.Torrent do
   """
   @spec embedded_urls(binary) :: [String.t()]
   def embedded_urls(bin) when is_binary(bin) do
-    case decode(bin, 0) do
+    case decode(bin, 0, 0) do
       {%{} = top, _next} ->
         top
         |> take_url_fields()
@@ -127,7 +129,7 @@ defmodule Cinder.Download.Torrent do
         {klen, kstart} = str_len(bin, off, 0)
         key = binary_part(bin, kstart, klen)
         vstart = kstart + klen
-        vend = skip(bin, vstart)
+        vend = skip(bin, vstart, 1)
         rebuild_dict(bin, vend, keep?, rebuild_pair(bin, key, off, vstart, vend, keep?, acc))
     end
   end
@@ -137,7 +139,7 @@ defmodule Cinder.Download.Torrent do
   defp rebuild_pair(_bin, "nodes", _off, _vstart, _vend, _keep?, acc), do: acc
 
   defp rebuild_pair(bin, key, _off, vstart, _vend, keep?, acc) when key in @url_fields do
-    {value, _next} = decode(bin, vstart)
+    {value, _next} = decode(bin, vstart, 1)
 
     case filter_url_field(key, value, keep?) do
       :drop -> acc
@@ -272,10 +274,10 @@ defmodule Cinder.Download.Torrent do
     do: ["d", dict |> Enum.sort() |> Enum.map(fn {k, v} -> [encode(k), encode(v)] end), "e"]
 
   # A generic bencode decoder (distinct from the byte-span walker below, which only ever
-  # needs to locate — not decode — the `info` value). Recursion depth tracks bencode nesting
-  # depth, same ceiling as `skip_container/2` below; both rely on the caller bounding total
-  # input size (qBittorrent caps a fetched .torrent at 10 MB) rather than limiting nesting.
-  defp decode(bin, off) do
+  # needs to locate — not decode — the `info` value). Nesting depth is capped at
+  # `@max_depth` (see `enter/1`); total input size is bounded by the caller (qBittorrent
+  # caps a fetched .torrent at 10 MB).
+  defp decode(bin, off, depth) do
     case :binary.at(bin, off) do
       ?i ->
         close = find(bin, off + 1, ?e)
@@ -283,10 +285,10 @@ defmodule Cinder.Download.Torrent do
         {int, close + 1}
 
       ?l ->
-        decode_list(bin, off + 1, [])
+        decode_list(bin, off + 1, [], enter(depth))
 
       ?d ->
-        decode_dict(bin, off + 1, %{})
+        decode_dict(bin, off + 1, %{}, enter(depth))
 
       c when c in ?0..?9 ->
         {len, start} = str_len(bin, off, 0)
@@ -294,18 +296,18 @@ defmodule Cinder.Download.Torrent do
     end
   end
 
-  defp decode_list(bin, off, acc) do
+  defp decode_list(bin, off, acc, depth) do
     case :binary.at(bin, off) do
       ?e ->
         {Enum.reverse(acc), off + 1}
 
       _ ->
-        {value, next} = decode(bin, off)
-        decode_list(bin, next, [value | acc])
+        {value, next} = decode(bin, off, depth)
+        decode_list(bin, next, [value | acc], depth)
     end
   end
 
-  defp decode_dict(bin, off, acc) do
+  defp decode_dict(bin, off, acc, depth) do
     case :binary.at(bin, off) do
       ?e ->
         {acc, off + 1}
@@ -313,8 +315,8 @@ defmodule Cinder.Download.Torrent do
       _ ->
         {klen, kstart} = str_len(bin, off, 0)
         key = binary_part(bin, kstart, klen)
-        {value, next} = decode(bin, kstart + klen)
-        decode_dict(bin, next, Map.put(acc, key, value))
+        {value, next} = decode(bin, kstart + klen, depth)
+        decode_dict(bin, next, Map.put(acc, key, value), depth)
     end
   end
 
@@ -333,7 +335,7 @@ defmodule Cinder.Download.Torrent do
     {klen, kstart} = str_len(bin, off, 0)
     key = binary_part(bin, kstart, klen)
     vstart = kstart + klen
-    vend = skip(bin, vstart)
+    vend = skip(bin, vstart, 1)
 
     if key == "info",
       do: info_value_span(bin, vstart, vend),
@@ -347,17 +349,15 @@ defmodule Cinder.Download.Torrent do
       else: :error
   end
 
-  # Offset just past the bencoded value starting at `off`.
-  defp skip(bin, off) do
+  # Offset just past the bencoded value starting at `off`. `depth` is the container nesting
+  # level of `off` (0 = outside any container).
+  defp skip(bin, off, depth) do
     case :binary.at(bin, off) do
       ?i ->
         find(bin, off + 1, ?e) + 1
 
-      ?l ->
-        skip_container(bin, off + 1)
-
-      ?d ->
-        skip_container(bin, off + 1)
+      c when c in [?l, ?d] ->
+        skip_container(bin, off + 1, enter(depth))
 
       c when c in ?0..?9 ->
         {len, rest} = str_len(bin, off, 0)
@@ -365,12 +365,19 @@ defmodule Cinder.Download.Torrent do
     end
   end
 
-  defp skip_container(bin, off) do
+  defp skip_container(bin, off, depth) do
     case :binary.at(bin, off) do
       ?e -> off + 1
-      _ -> skip_container(bin, skip(bin, off))
+      _ -> skip_container(bin, skip(bin, off, depth), depth)
     end
   end
+
+  # Bounds bencode nesting: a hostile body of ~10M `l` bytes would otherwise build one stack
+  # frame per byte before failing. The raise is rescued by every public entry point.
+  defp enter(depth) when depth >= @max_depth,
+    do: raise(ArgumentError, "bencode nesting exceeds #{@max_depth} levels")
+
+  defp enter(depth), do: depth + 1
 
   # Parse a `<len>:` byte-string prefix → {len, offset_after_colon}.
   defp str_len(bin, _off, acc) when acc > byte_size(bin),

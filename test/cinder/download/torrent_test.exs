@@ -71,6 +71,36 @@ defmodule Cinder.Download.TorrentTest do
     assert {:error, :bad_torrent} = Torrent.infohash("d4:infol1:aee")
   end
 
+  describe "nesting depth limit" do
+    defp nested(n), do: String.duplicate("l", n) <> String.duplicate("e", n)
+    defp deep_torrent(n), do: "d4:infod1:a" <> nested(n) <> "6:lengthi1eee"
+
+    test "accepts nesting up to 64 levels (top dict + info dict + 62 lists)" do
+      assert {:ok, _hash} = Torrent.infohash(deep_torrent(62))
+    end
+
+    test "rejects a well-formed torrent nested past 64 levels" do
+      assert {:error, :bad_torrent} = Torrent.infohash(deep_torrent(63))
+      assert {:error, :bad_torrent} = Torrent.infohash(deep_torrent(5_000))
+    end
+
+    test "rejects a hostile body of millions of unterminated list openers without recursing" do
+      body = "d1:a" <> String.duplicate("l", 5_000_000)
+      assert {:error, :bad_torrent} = Torrent.infohash(body)
+      assert {:error, :bad_torrent} = Torrent.sanitize_embedded_urls(body, &MapSet.new/1)
+      assert Torrent.embedded_urls(body) == []
+    end
+
+    test "sanitize_embedded_urls/2 rejects deep nesting in a skipped value" do
+      bytes = "d1:x" <> nested(200) <> "e"
+      assert {:error, :bad_torrent} = Torrent.sanitize_embedded_urls(bytes, &MapSet.new/1)
+    end
+
+    test "embedded_urls/1 returns [] for a deeply nested torrent" do
+      assert Torrent.embedded_urls("d8:announce11:http://x/an1:x" <> nested(200) <> "e") == []
+    end
+  end
+
   # Minimal bencode encoder for building metainfo fixtures without hand-counting byte lengths.
   defp benc(s) when is_binary(s), do: "#{byte_size(s)}:#{s}"
   defp benc(n) when is_integer(n), do: "i#{n}e"

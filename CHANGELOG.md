@@ -87,6 +87,10 @@ All notable changes to Cinder are documented here. The format follows
   could stall the download poller for days. Hosts are now deduplicated, only the first 50 unique
   ones are vetted (the rest of the endpoints are dropped), and the lookups run concurrently under
   one 8-second deadline; a host that has not resolved in time is dropped like a forbidden one.
+- **Bencode nesting is now limited to 64 levels (#653).** The `.torrent` parser recursed once per
+  nested list or dictionary, so a body of millions of `l` bytes inside the 10 MB download cap built
+  a stack of hundreds of megabytes in the poller before failing. A torrent nested deeper than 64
+  levels is now rejected immediately as a bad torrent.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release
