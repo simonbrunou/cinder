@@ -94,6 +94,17 @@ defmodule Cinder.Accounts.IpRateLimiterTest do
     assert IpRateLimiter.check_and_register(:login_pair, pair) == :blocked
   end
 
+  test "client_key/1 keeps IPv4, unmaps IPv4-mapped IPv6 and masks other IPv6 to /64" do
+    assert IpRateLimiter.client_key({203, 0, 113, 7}) == "203.0.113.7"
+    assert IpRateLimiter.client_key({0, 0, 0, 0, 0, 0xFFFF, 0xCB00, 0x7107}) == "203.0.113.7"
+
+    assert IpRateLimiter.client_key({0x2001, 0xDB8, 0, 1, 1, 2, 3, 4}) ==
+             IpRateLimiter.client_key({0x2001, 0xDB8, 0, 1, 0xFFFF, 0, 0, 9})
+
+    refute IpRateLimiter.client_key({0x2001, 0xDB8, 0, 1, 0, 0, 0, 1}) ==
+             IpRateLimiter.client_key({0x2001, 0xDB8, 0, 2, 0, 0, 0, 1})
+  end
+
   # Fills the bucket's whole budget so the next attempt is the over-budget one.
   defp exhaust(bucket, id) do
     for _ <- 1..10, do: IpRateLimiter.check_and_register(bucket, id)

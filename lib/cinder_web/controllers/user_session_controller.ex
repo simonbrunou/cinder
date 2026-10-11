@@ -69,7 +69,7 @@ defmodule CinderWeb.UserSessionController do
     |> redirect(to: ~p"/users/log-in")
   end
 
-  defp ip_string(conn), do: conn.remote_ip |> :inet.ntoa() |> to_string()
+  defp ip_string(conn), do: IpRateLimiter.client_key(conn.remote_ip)
 
   def update_password(conn, %{"user" => user_params} = params) do
     user = conn.assigns.current_scope.user

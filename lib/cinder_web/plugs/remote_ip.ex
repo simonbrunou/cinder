@@ -32,6 +32,8 @@ defmodule CinderWeb.Plugs.RemoteIp do
 
   import Plug.Conn
 
+  alias Cinder.Accounts.IpRateLimiter
+
   @header "cf-connecting-ip"
 
   @impl true
@@ -59,7 +61,7 @@ defmodule CinderWeb.Plugs.RemoteIp do
   """
   @spec session_client_ip(Plug.Conn.t()) :: %{String.t() => String.t()}
   def session_client_ip(%Plug.Conn{remote_ip: remote_ip}) do
-    %{"client_ip" => remote_ip |> :inet.ntoa() |> to_string()}
+    %{"client_ip" => IpRateLimiter.client_key(remote_ip)}
   end
 
   # Loopback, RFC1918 private, and link-local — the shapes a host-networked or

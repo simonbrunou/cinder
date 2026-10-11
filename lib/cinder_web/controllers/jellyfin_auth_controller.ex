@@ -114,7 +114,7 @@ defmodule CinderWeb.JellyfinAuthController do
   # overlapping. An ETS key is any Erlang term, and `{:jellyfin, _}` can never equal a binary.
   defp pair_key(conn, username), do: {ip_string(conn), {:jellyfin, String.downcase(username)}}
 
-  defp ip_string(conn), do: conn.remote_ip |> :inet.ntoa() |> to_string()
+  defp ip_string(conn), do: IpRateLimiter.client_key(conn.remote_ip)
 
   defp intent_for(conn) do
     if current_user(conn), do: :link, else: :login

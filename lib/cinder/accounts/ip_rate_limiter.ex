@@ -64,6 +64,21 @@ defmodule Cinder.Accounts.IpRateLimiter do
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @doc """
+  The limiter key for a client address (`conn.remote_ip`): IPv4 as its dotted string,
+  IPv4-mapped IPv6 as the embedded IPv4, any other IPv6 masked to its /64. One attacker
+  routinely controls a whole /64, so per-address keys would hand them a fresh budget per
+  request. Only limiter keys are grouped; `conn.remote_ip` itself is untouched.
+  """
+  @spec client_key(:inet.ip_address()) :: String.t()
+  def client_key({0, 0, 0, 0, 0, 0xFFFF, high, low}),
+    do: client_key({div(high, 256), rem(high, 256), div(low, 256), rem(low, 256)})
+
+  def client_key({a, b, c, d, _, _, _, _}),
+    do: {a, b, c, d, 0, 0, 0, 0} |> :inet.ntoa() |> to_string() |> Kernel.<>("/64")
+
+  def client_key({_, _, _, _} = ipv4), do: ipv4 |> :inet.ntoa() |> to_string()
+
+  @doc """
   Atomically records an attempt and reports whether `bucket`/`id` is now over budget.
 
   The increment is a single atomic `:ets.update_counter/4`, so N concurrent callers each get a

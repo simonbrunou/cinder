@@ -209,7 +209,7 @@ defmodule CinderWeb.UserLive.Registration do
   # The raw connection peer — the tunnel hop behind cloudflared, the real client IP off it.
   defp peer_ip(socket) do
     case get_connect_info(socket, :peer_data) do
-      %{address: address} -> address |> :inet.ntoa() |> to_string()
+      %{address: address} -> IpRateLimiter.client_key(address)
       _ -> "unknown"
     end
   end

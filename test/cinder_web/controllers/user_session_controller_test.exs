@@ -186,6 +186,30 @@ defmodule CinderWeb.UserSessionControllerTest do
       assert Phoenix.Flash.get(conn.assigns.flash, :error) == "Invalid email or password"
     end
 
+    test "addresses in one IPv6 /64 share the {ip, email} brute-force budget", %{
+      conn: conn,
+      user: user
+    } do
+      IpRateLimiter.reset()
+      on_exit(&IpRateLimiter.reset/0)
+      user = set_password(user)
+
+      for i <- 1..10 do
+        post(%{conn | remote_ip: {0x2001, 0xDB8, 0, 1, 0, 0, 0, i}}, ~p"/users/log-in", %{
+          "user" => %{"email" => user.email, "password" => "wrong_password"}
+        })
+      end
+
+      # A fresh address in the same /64 is already throttled: even the correct password fails.
+      conn =
+        post(%{conn | remote_ip: {0x2001, 0xDB8, 0, 1, 0, 0, 0, 99}}, ~p"/users/log-in", %{
+          "user" => %{"email" => user.email, "password" => valid_user_password()}
+        })
+
+      refute get_session(conn, :user_token)
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) == "Invalid email or password"
+    end
+
     test "logs the user in with return to", %{conn: conn, user: user} do
       user = set_password(user)
 

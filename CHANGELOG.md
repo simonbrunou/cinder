@@ -38,6 +38,10 @@ All notable changes to Cinder are documented here. The format follows
   in the authorization request, keeps it in the one-use session parameters, and checks the ID
   token against it. A token minted for another attempt, or replayed, is rejected as a normal
   failed sign-in instead of an error page.
+- **Login, Jellyfin and registration throttles can no longer be dodged from an IPv6 /64 (#640).**
+  Every limiter bucket keyed on the raw client address, so an attacker holding a /64 (a routine
+  VPS allocation) got a fresh budget per request. Limiter keys now group IPv6 by /64 and treat
+  IPv4-mapped IPv6 as the IPv4 address; IPv4 keys are unchanged.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release
