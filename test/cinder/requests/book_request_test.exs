@@ -477,6 +477,22 @@ defmodule Cinder.Requests.BookRequestTest do
     end
   end
 
+  describe "quota under auto_approve_all (#650)" do
+    test "a paused (unmonitored) book target stops holding the slot", %{work: work} do
+      Cinder.Settings.put("auto_approve_all", "true")
+      {:ok, user} = Cinder.Accounts.update_user_quota(admin_fixture(), user_fixture(), 1)
+
+      assert {:ok, %{status: :approved}} = Requests.create_request(user, attrs(work, :ebook))
+      other = work_fixture()
+      assert {:error, :quota_exceeded} = Requests.create_request(user, attrs(other, :ebook))
+
+      target = Repo.get_by!(BookTarget, work_id: work.id, media_kind: :ebook)
+      assert {:ok, _} = Books.pause_target(target)
+
+      assert {:ok, %{status: :approved}} = Requests.create_request(user, attrs(other, :ebook))
+    end
+  end
+
   describe "the resolution entry point gates the catalog write" do
     test "an over-quota request imports nothing", %{work: existing} do
       admin = admin_fixture()

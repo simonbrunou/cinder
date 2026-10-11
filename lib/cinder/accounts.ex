@@ -924,7 +924,7 @@ defmodule Cinder.Accounts do
   def count_pending_accounts, do: Repo.aggregate(from(u in User, where: not u.active), :count)
 
   @doc """
-  Updates a user's concurrent-pending request quota (nil = unlimited). Writes an audit row in
+  Updates a user's concurrent-outstanding request quota (nil = unlimited). Writes an audit row in
   the same transaction, like every other destructive admin action.
   """
   def update_user_quota(%User{} = actor, %User{} = target, quota) do

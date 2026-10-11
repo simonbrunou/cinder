@@ -166,7 +166,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
          put_flash(
            socket,
            :error,
-           gettext("You've reached your request limit. Wait for approvals to clear.")
+           gettext("You've reached your request limit. Wait for an earlier request to finish.")
          )}
 
       # Only the duplicate-pending unique constraint means "already requested"; any
@@ -256,7 +256,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         put_flash(
           socket,
           :error,
-          gettext("You've reached your request limit. Wait for approvals to clear.")
+          gettext("You've reached your request limit. Wait for an earlier request to finish.")
         )
 
       # Nothing landed for some other reason (rare: e.g. all duplicated by a concurrent click).

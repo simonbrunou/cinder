@@ -140,7 +140,7 @@ defmodule Cinder.Accounts.User do
     end
   end
 
-  @doc "Sets the per-user concurrent-pending request quota (nil = unlimited)."
+  @doc "Sets the per-user concurrent-outstanding request quota (nil = unlimited)."
   def quota_changeset(user, attrs) do
     user
     |> cast(attrs, [:request_quota])

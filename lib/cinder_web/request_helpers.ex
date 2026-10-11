@@ -112,7 +112,7 @@ defmodule CinderWeb.RequestHelpers do
         put_flash(
           socket,
           :error,
-          gettext("You've reached your request limit. Wait for approvals to clear.")
+          gettext("You've reached your request limit. Wait for an earlier request to finish.")
         )
 
       {:error, %Ecto.Changeset{} = cs} ->

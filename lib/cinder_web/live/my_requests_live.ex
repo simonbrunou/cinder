@@ -201,7 +201,7 @@ defmodule CinderWeb.MyRequestsLive do
       put_flash(
         socket,
         :error,
-        gettext("You've reached your request limit. Wait for approvals to clear.")
+        gettext("You've reached your request limit. Wait for an earlier request to finish.")
       )
 
   defp request_again_result(socket, title, {:error, _reason}),

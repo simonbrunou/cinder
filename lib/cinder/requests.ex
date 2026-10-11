@@ -8,7 +8,7 @@ defmodule Cinder.Requests do
   alias Cinder.Books
   alias Cinder.Books.Work
   alias Cinder.Catalog
-  alias Cinder.Catalog.Profile
+  alias Cinder.Catalog.{Movie, Profile, Season}
   alias Cinder.LibraryKind
   alias Cinder.Notifier
   alias Cinder.Repo
@@ -226,15 +226,13 @@ defmodule Cinder.Requests do
   end
 
   defp create_for_current_user(current, attrs) do
-    if current.role != :admin and over_quota?(current) do
+    auto_approve? = current.role == :admin or Settings.auto_approve_all?()
+
+    if current.role != :admin and over_quota?(current, auto_approve?) do
       {:error, :quota_exceeded}
     else
       with {:ok, attrs} <- snapshot_request(attrs) do
-        create_request_for(
-          current,
-          attrs,
-          current.role == :admin or Settings.auto_approve_all?()
-        )
+        create_request_for(current, attrs, auto_approve?)
       end
     end
   end
@@ -346,10 +344,10 @@ defmodule Cinder.Requests do
     end
   end
 
-  defp over_quota?(%User{request_quota: nil}), do: false
+  defp over_quota?(%User{request_quota: nil}, _auto_approve?), do: false
 
-  defp over_quota?(%User{request_quota: quota, id: id}) do
-    pending_count(id) >= quota
+  defp over_quota?(%User{request_quota: quota, id: id}, auto_approve?) do
+    outstanding_count(id, auto_approve?) >= quota
   end
 
   defp pending_over_quota?(%User{request_quota: nil}), do: false
@@ -359,12 +357,105 @@ defmodule Cinder.Requests do
     pending_count(id) > quota
   end
 
+  # The auto-approve counterpart of `pending_over_quota?/1`, run inside each approved-insert
+  # transaction AFTER the request's target is persisted (#650), so the new request is counted
+  # unless its target is already settled. Re-reads the user so a quota edited since the pre-check
+  # is honoured; `>` because the new row is included. Admins are never limited.
+  defp approved_quota_check(%User{role: :admin}), do: :ok
+
+  defp approved_quota_check(%User{id: id}) do
+    case Repo.get(User, id) do
+      nil ->
+        {:error, :invalid_requester}
+
+      %User{request_quota: nil} ->
+        :ok
+
+      %User{role: :admin} ->
+        :ok
+
+      %User{request_quota: quota} ->
+        if outstanding_count(id, true) > quota, do: {:error, :quota_exceeded}, else: :ok
+    end
+  end
+
   defp pending_count(user_id),
     do:
       Repo.aggregate(
         from(r in Request, where: r.user_id == ^user_id and r.status == :pending),
         :count
       )
+
+  # The quota is a "concurrent outstanding requests" limit. A pending request is outstanding;
+  # under `auto_approve_all` nothing ever sits pending, so an approved request whose target has
+  # not landed yet is outstanding too (#650). With auto-approve off the count is pending-only,
+  # as before.
+  defp outstanding_count(user_id, false), do: pending_count(user_id)
+
+  defp outstanding_count(user_id, true),
+    do: pending_count(user_id) + unfulfilled_approved_count(user_id)
+
+  # One user's approved requests still waiting on their target. A request stops counting when its
+  # target has landed (the same availability the My-requests badges use) OR has been settled by an
+  # operator so it can never land: a cancelled movie, an unmonitored season (`cancel_series/2`
+  # unmonitors the tree), a paused (`:unmonitored`) book target. Excluding settled states here,
+  # rather than reaping the request in Catalog/Books, keeps the change inside this module, leaves
+  # the requester's history intact, and covers any future way of settling a target. A landed
+  # movie being replaced (`:upgrading`, or an upgrade verification hold) still has its file, so it
+  # counts as fulfilled. A missing target row stays outstanding, and so does any other target type
+  # (fail closed).
+  defp unfulfilled_approved_count(user_id) do
+    rows =
+      Repo.all(
+        from r in Request,
+          where: r.user_id == ^user_id and r.status == :approved,
+          select: {r.target_type, r.target_id, r.season_number, r.media_kind}
+      )
+
+    movie_ids = for {"movie", id, _, _} <- rows, do: id
+
+    done_movies =
+      Repo.all(
+        from m in Movie,
+          where:
+            m.tmdb_id in ^movie_ids and
+              (m.status in [:available, :upgrading, :cancelled] or
+                 m.verification_hold_origin == :upgrade),
+          select: m.tmdb_id
+      )
+      |> MapSet.new()
+
+    series_ids = for({"season", id, _, _} <- rows, uniq: true, do: id)
+
+    available_seasons =
+      Enum.reduce(series_ids, MapSet.new(), &MapSet.union(&2, Catalog.available_season_keys(&1)))
+
+    monitored_seasons =
+      Repo.all(
+        from s in Season,
+          join: sr in assoc(s, :series),
+          where: sr.tmdb_id in ^series_ids and s.monitored == true,
+          select: {sr.tmdb_id, s.season_number}
+      )
+      |> MapSet.new()
+
+    book_states = for({"book", id, _, _} <- rows, uniq: true, do: id) |> Books.target_statuses()
+
+    Enum.count(rows, fn
+      {"movie", id, _, _} ->
+        not MapSet.member?(done_movies, id)
+
+      {"season", id, season, _} ->
+        MapSet.member?(monitored_seasons, {id, season}) and
+          not MapSet.member?(available_seasons, {id, season})
+
+      {"book", id, _, kind} ->
+        Map.get(book_states, {id, kind}) not in [:available, :unmonitored]
+
+      _other ->
+        true
+    end)
+  end
 
   def approve_request(
         %Request{status: :pending, target_type: "movie"} = request,
@@ -785,26 +876,30 @@ defmodule Cinder.Requests do
   # requester or (for an admin auto-approval) the approver — the same row for an admin request —
   # is refused rather than raised.
   defp insert_approved_book(user, attrs, approver_id, work, profile) do
-    Repo.transaction(fn ->
-      with {:ok, request} <-
-             %Request{}
-             |> Request.create_changeset(
-               Map.merge(attrs, %{
-                 user_id: user.id,
-                 status: :approved,
-                 approved_by_id: approver_id,
-                 proposed_profile_id: profile.id,
-                 proposed_media_profile: profile.handling
-               })
-             )
-             |> Repo.insert(),
-           {:ok, target} <-
-             Books.monitor_target(work, attrs.media_kind, profile, publish: false) do
-        {request, target}
-      else
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
+    Repo.transaction(
+      fn ->
+        with {:ok, request} <-
+               %Request{}
+               |> Request.create_changeset(
+                 Map.merge(attrs, %{
+                   user_id: user.id,
+                   status: :approved,
+                   approved_by_id: approver_id,
+                   proposed_profile_id: profile.id,
+                   proposed_media_profile: profile.handling
+                 })
+               )
+               |> Repo.insert(),
+             {:ok, target} <-
+               Books.monitor_target(work, attrs.media_kind, profile, publish: false),
+             :ok <- approved_quota_check(user) do
+          {request, target}
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end,
+      mode: :immediate
+    )
     |> case do
       {:ok, {approved, target}} ->
         Books.broadcast({:book_target_updated, target})
@@ -819,27 +914,31 @@ defmodule Cinder.Requests do
   end
 
   defp insert_approved_movie(user, attrs, approver_id, prepared, profile) do
-    Repo.transaction(fn ->
-      # Creation is announced post-commit, in finalize_movie_approval — nothing here broadcasts.
-      with {:ok, request} <-
-             %Request{}
-             |> Request.create_changeset(
-               Map.merge(attrs, %{
-                 user_id: user.id,
-                 status: :approved,
-                 approved_by_id: approver_id
-               })
-             )
-             |> Repo.insert(),
-           {:ok, movie, created} <-
-             Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases),
-           pre_request_profile = movie.media_profile,
-           {:ok, {movie, profile_changed?}} <- assign_selected_profile(movie, profile) do
-        {request, movie, created, profile_changed?, pre_request_profile}
-      else
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
+    Repo.transaction(
+      fn ->
+        # Creation is announced post-commit, in finalize_movie_approval — nothing here broadcasts.
+        with {:ok, request} <-
+               %Request{}
+               |> Request.create_changeset(
+                 Map.merge(attrs, %{
+                   user_id: user.id,
+                   status: :approved,
+                   approved_by_id: approver_id
+                 })
+               )
+               |> Repo.insert(),
+             {:ok, movie, created} <-
+               Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases),
+             pre_request_profile = movie.media_profile,
+             {:ok, {movie, profile_changed?}} <- assign_selected_profile(movie, profile),
+             :ok <- approved_quota_check(user) do
+          {request, movie, created, profile_changed?, pre_request_profile}
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end,
+      mode: :immediate
+    )
     |> finalize_movie_approval(prepared)
   rescue
     error in Ecto.ConstraintError -> refuse_insert(error, __STACKTRACE__, user, approver_id)
@@ -854,30 +953,34 @@ defmodule Cinder.Requests do
          handling,
          profile
        ) do
-    Repo.transaction(fn ->
-      with {:ok, request} <-
-             %Request{}
-             |> Request.create_changeset(
-               Map.merge(attrs, %{
-                 user_id: user.id,
-                 status: :approved,
-                 approved_by_id: approver_id
-               })
-             )
-             |> Repo.insert(),
-           {:ok, series} <-
-             Catalog.persist_requested_series(
-               prepared,
-               attrs[:season_number],
-               preferred,
-               handling
-             ),
-           {:ok, {series, _profile_changed?}} <- assign_selected_profile(series, profile) do
-        {request, series}
-      else
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
+    Repo.transaction(
+      fn ->
+        with {:ok, request} <-
+               %Request{}
+               |> Request.create_changeset(
+                 Map.merge(attrs, %{
+                   user_id: user.id,
+                   status: :approved,
+                   approved_by_id: approver_id
+                 })
+               )
+               |> Repo.insert(),
+             {:ok, series} <-
+               Catalog.persist_requested_series(
+                 prepared,
+                 attrs[:season_number],
+                 preferred,
+                 handling
+               ),
+             {:ok, {series, _profile_changed?}} <- assign_selected_profile(series, profile),
+             :ok <- approved_quota_check(user) do
+          {request, series}
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end,
+      mode: :immediate
+    )
     |> finalize_series_approval()
   rescue
     error in Ecto.ConstraintError -> refuse_insert(error, __STACKTRACE__, user, approver_id)

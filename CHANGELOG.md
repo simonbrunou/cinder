@@ -114,6 +114,13 @@ All notable changes to Cinder are documented here. The format follows
   account created by a Plex sign-in, or imported, then promoted) has no password they know and is
   locked out after this change. Set a password for every such admin before upgrading (`/users` →
   Reset password, or the `bin/cinder rpc` command in `docs/operating.md` if it is the only admin).
+- **Request quotas now hold under auto-approve (#650).** With `auto_approve_all` on, a user's
+  requests never sat pending, so any quota above 0 never fired and a user could approve unlimited
+  downloads. While auto-approve is on, the quota now counts pending requests plus approved ones
+  whose movie, season or book has not become available yet, so it limits concurrent outstanding
+  requests. A slot frees as soon as the title lands, or when an admin cancels the movie or
+  series or pauses the book; a landed movie being upgraded doesn't count. With auto-approve off
+  nothing changes, and admins are never limited.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release

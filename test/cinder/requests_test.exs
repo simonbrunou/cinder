@@ -583,6 +583,148 @@ defmodule Cinder.RequestsTest do
              Requests.create_request(user, Map.put(@attrs, :target_id, 606))
   end
 
+  describe "quota under auto_approve_all (#650)" do
+    setup do
+      Cinder.Settings.put("auto_approve_all", "true")
+      admin = admin_fixture()
+      {:ok, user} = Cinder.Accounts.update_user_quota(admin, user_fixture(), 1)
+      %{user: user, admin: admin}
+    end
+
+    test "an approved, not-yet-available request counts against the quota", %{user: user} do
+      assert {:ok, %{status: :approved}} = Requests.create_request(user, @attrs)
+
+      assert {:error, :quota_exceeded} =
+               Requests.create_request(user, Map.put(@attrs, :target_id, 604))
+
+      assert Catalog.get_movie_by_tmdb_id(604) == nil
+      assert [%{target_id: 603}] = Requests.list_for_user(user)
+    end
+
+    test "the slot frees once the movie is available", %{user: user} do
+      assert {:ok, _} = Requests.create_request(user, @attrs)
+
+      assert {:error, :quota_exceeded} =
+               Requests.create_request(user, Map.put(@attrs, :target_id, 604))
+
+      movie = Catalog.get_movie_by_tmdb_id(603)
+      {:ok, _} = Catalog.transition(movie, %{status: :available})
+
+      assert {:ok, %{status: :approved}} =
+               Requests.create_request(user, Map.put(@attrs, :target_id, 604))
+    end
+
+    defp stub_got do
+      stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+        {:ok,
+         %{
+           tmdb_id: 1399,
+           tvdb_id: 1,
+           title: "GoT",
+           year: 2011,
+           poster_path: nil,
+           seasons: [%{season_number: 1}, %{season_number: 2}]
+         }}
+      end)
+
+      stub(Cinder.Catalog.TMDBMock, :get_season, fn 1399, n, _locale ->
+        {:ok,
+         %{
+           season_number: n,
+           episodes: [
+             %{tmdb_episode_id: n, episode_number: 1, title: "e", air_date: ~D[2011-01-01]}
+           ]
+         }}
+      end)
+
+      stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn 1399 -> {:ok, []} end)
+      stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn 1399 -> {:ok, []} end)
+    end
+
+    test "a cancelled movie stops holding the slot", %{user: user, admin: admin} do
+      assert {:ok, _} = Requests.create_request(user, @attrs)
+
+      assert {:error, :quota_exceeded} =
+               Requests.create_request(user, Map.put(@attrs, :target_id, 604))
+
+      assert {:ok, _} = Catalog.cancel_movie(Catalog.get_movie_by_tmdb_id(603), admin)
+
+      assert {:ok, %{status: :approved}} =
+               Requests.create_request(user, Map.put(@attrs, :target_id, 604))
+    end
+
+    test "a landed movie being upgraded still counts as fulfilled", %{user: user} do
+      assert {:ok, _} = Requests.create_request(user, @attrs)
+      movie = Catalog.get_movie_by_tmdb_id(603)
+      {:ok, movie} = Catalog.transition(movie, %{status: :available})
+      {:ok, _} = Catalog.transition(movie, %{status: :upgrading})
+
+      assert {:ok, %{status: :approved}} =
+               Requests.create_request(user, Map.put(@attrs, :target_id, 604))
+
+      # An upgrade parked on a verification hold keeps its file too.
+      {:ok, other} = Catalog.transition(Catalog.get_movie_by_tmdb_id(604), %{status: :available})
+
+      Repo.update_all(from(m in Movie, where: m.id == ^other.id),
+        set: [status: :import_failed, verification_hold_origin: :upgrade]
+      )
+
+      assert {:ok, %{status: :approved}} =
+               Requests.create_request(user, Map.put(@attrs, :target_id, 605))
+    end
+
+    test "a cancelled series stops holding the slot", %{user: user, admin: admin} do
+      stub_got()
+      season = %{target_type: "season", target_id: 1399, season_number: 2, title: "GoT"}
+      assert {:ok, %{status: :approved}} = Requests.create_request(user, season)
+
+      assert {:error, :quota_exceeded} =
+               Requests.create_request(user, %{season | season_number: 1})
+
+      assert {:ok, _} = Catalog.cancel_series(Catalog.get_series_by_tmdb_id(1399), admin)
+
+      assert {:ok, %{status: :approved}} = Requests.create_request(user, @attrs)
+    end
+
+    test "a season request counts until the season has landed", %{user: user} do
+      stub_got()
+      season = %{target_type: "season", target_id: 1399, season_number: 2, title: "GoT"}
+      assert {:ok, %{status: :approved}} = Requests.create_request(user, season)
+
+      assert {:error, :quota_exceeded} =
+               Requests.create_request(user, %{season | season_number: 1})
+
+      series = Catalog.get_series_by_tmdb_id(1399)
+      tree = Catalog.get_series_with_tree(series.id)
+
+      for e <- Enum.find(tree.seasons, &(&1.season_number == 2)).episodes do
+        Repo.update_all(from(x in Cinder.Catalog.Episode, where: x.id == ^e.id),
+          set: [file_path: "/lib/got/s02e01.mkv"]
+        )
+      end
+
+      assert {:ok, %{status: :approved}} =
+               Requests.create_request(user, %{season | season_number: 1})
+    end
+
+    test "an admin is never limited", %{admin: admin} do
+      {:ok, admin} = Cinder.Accounts.update_user_quota(admin, admin, 0)
+      assert {:ok, _} = Requests.create_request(admin, @attrs)
+      assert {:ok, _} = Requests.create_request(admin, Map.put(@attrs, :target_id, 604))
+    end
+
+    test "with auto_approve_all off only pending requests count", %{user: user} do
+      assert {:ok, %{status: :approved}} = Requests.create_request(user, @attrs)
+      Cinder.Settings.put("auto_approve_all", "false")
+
+      assert {:ok, %{status: :pending}} =
+               Requests.create_request(user, Map.put(@attrs, :target_id, 604))
+
+      assert {:error, :quota_exceeded} =
+               Requests.create_request(user, Map.put(@attrs, :target_id, 605))
+    end
+  end
+
   test "a pending request emits a notifier event attributed to the requester" do
     Cinder.TestNotifier.subscribe()
     user = user_fixture()

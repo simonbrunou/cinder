@@ -1,8 +1,9 @@
 defmodule CinderWeb.UsersLive do
   @moduledoc """
   Admin user list with per-user request quota, mounted at `/users`. Quota is the
-  concurrent-pending limit enforced in `Cinder.Requests.create_request/2`
-  (blank = unlimited). Admin-gated by the `:admin` live_session.
+  concurrent-outstanding-request limit enforced in `Cinder.Requests.create_request/2`: pending
+  requests, plus — while `auto_approve_all` is on — approved requests whose title has not yet
+  become available (blank = unlimited). Admin-gated by the `:admin` live_session.
 
   Also hosts the media-server user import: fetch the configured server's account list
   (`Cinder.Accounts.list_media_server_users/0`), tick the ones to onboard, and create a
