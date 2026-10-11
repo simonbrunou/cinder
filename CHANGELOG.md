@@ -81,6 +81,12 @@ All notable changes to Cinder are documented here. The format follows
   (http/https only for web seeds), normalizes magnet keys before matching, and removes
   `x.pe`, `dht` and `nodes`. Transmission also rejects a magnet it cannot parse instead of
   forwarding it raw. The infohash is unchanged.
+- **DNS work for embedded trackers is now bounded (#644).** Cinder resolved every tracker and
+  web-seed hostname in a magnet or `.torrent` one after another, with no limit, while holding the
+  per-grab lock — a crafted torrent with hundreds of thousands of hostnames and a slow nameserver
+  could stall the download poller for days. Hosts are now deduplicated, only the first 50 unique
+  ones are vetted (the rest of the endpoints are dropped), and the lookups run concurrently under
+  one 8-second deadline; a host that has not resolved in time is dropped like a forbidden one.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release

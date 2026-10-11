@@ -142,9 +142,9 @@ defmodule Cinder.Download.TorrentTest do
         ])
 
       {:ok, original_hash} = Torrent.infohash(bytes)
-      keep? = fn url -> not String.contains?(url, "bad.example") end
+      vet = fn hosts -> hosts |> Enum.reject(&(&1 == "bad.example")) |> MapSet.new() end
 
-      assert {:ok, clean} = Torrent.sanitize_embedded_urls(bytes, keep?)
+      assert {:ok, clean} = Torrent.sanitize_embedded_urls(bytes, vet)
       assert Torrent.embedded_urls(clean) == ["http://good.example/ann"]
       assert Torrent.infohash(clean) == {:ok, original_hash}
     end
@@ -156,12 +156,31 @@ defmodule Cinder.Download.TorrentTest do
           {"url-list", "http://seed.a/files/"}
         ])
 
-      assert {:ok, ^bytes} = Torrent.sanitize_embedded_urls(bytes, fn _url -> true end)
+      assert {:ok, ^bytes} = Torrent.sanitize_embedded_urls(bytes, &MapSet.new/1)
     end
 
     test "errors on non-torrent input rather than crashing" do
       assert {:error, :bad_torrent} =
-               Torrent.sanitize_embedded_urls("<html>nope</html>", fn _url -> true end)
+               Torrent.sanitize_embedded_urls("<html>nope</html>", &MapSet.new/1)
+    end
+
+    test "hands the vetter every surviving host, lower-cased, in document order" do
+      bytes =
+        torrent_with([
+          {"announce", "http://A.example/ann"},
+          {"announce-list", [["udp://b.example:1/x", "ftp://skip.example/x"]]},
+          {"url-list", ["https://c.example/f", "http://192.168.1.10:80?@x/y"]}
+        ])
+
+      test_pid = self()
+
+      vet = fn hosts ->
+        send(test_pid, {:vetted, hosts})
+        MapSet.new(hosts)
+      end
+
+      assert {:ok, _clean} = Torrent.sanitize_embedded_urls(bytes, vet)
+      assert_received {:vetted, ["a.example", "b.example", "c.example"]}
     end
 
     test "fails closed: drops unparseable, hostless, userinfo, and wrong-scheme endpoints" do
@@ -179,7 +198,7 @@ defmodule Cinder.Download.TorrentTest do
 
       {:ok, hash} = Torrent.infohash(bytes)
 
-      assert {:ok, clean} = Torrent.sanitize_embedded_urls(bytes, fn _host -> true end)
+      assert {:ok, clean} = Torrent.sanitize_embedded_urls(bytes, &MapSet.new/1)
 
       assert Enum.sort(Torrent.embedded_urls(clean)) ==
                ["https://seed.example/files/", "udp://tracker.example:1337/announce"]
@@ -200,7 +219,8 @@ defmodule Cinder.Download.TorrentTest do
           "&x.pe.1=192.168.1.10:6881&DHT.2=192.168.1.10:6881" <>
           "&x.pe=192.168.1.10:6881&dht=192.168.1.10:6881&tr=#{enc("udp://good.example:1/a")}"
 
-      assert {:ok, clean} = Torrent.sanitize_magnet(magnet, &(&1 == "good.example"))
+      vet = fn hosts -> MapSet.new(Enum.filter(hosts, &(&1 == "good.example"))) end
+      assert {:ok, clean} = Torrent.sanitize_magnet(magnet, vet)
 
       assert URI.decode_query(URI.parse(clean).query) ==
                %{
@@ -216,7 +236,7 @@ defmodule Cinder.Download.TorrentTest do
           "&tr=#{enc("http://attacker.tld:80?@192.168.1.10:8080/announce")}" <>
           "&ws=#{enc("udp://good.example/x")}&xs=#{enc("ftp://good.example/x")}"
 
-      assert {:ok, clean} = Torrent.sanitize_magnet(magnet, fn _ -> true end)
+      assert {:ok, clean} = Torrent.sanitize_magnet(magnet, &MapSet.new/1)
 
       assert URI.decode_query(URI.parse(clean).query) == %{
                "xt" => "urn:btih:0123456789abcdef0123456789abcdef01234567"
@@ -227,12 +247,10 @@ defmodule Cinder.Download.TorrentTest do
       assert {:error, :bad_magnet} =
                Torrent.sanitize_magnet(
                  "magnet:?xt=urn:btih:ab&tr=http://10.0.0.1:80/x?a=>",
-                 fn _ ->
-                   true
-                 end
+                 &MapSet.new/1
                )
 
-      assert {:error, :bad_magnet} = Torrent.sanitize_magnet("magnet:", fn _ -> true end)
+      assert {:error, :bad_magnet} = Torrent.sanitize_magnet("magnet:", &MapSet.new/1)
     end
 
     defp enc(s), do: URI.encode_www_form(s)

@@ -24,7 +24,7 @@ defmodule Cinder.Download.Client.QBittorrent do
   """
   @behaviour Cinder.Download.Client
 
-  alias Cinder.Download.{PathMapping, Torrent}
+  alias Cinder.Download.{EndpointVetter, PathMapping, Torrent}
   alias Cinder.HTTPPolicy
 
   @default_base_url "http://localhost:8080"
@@ -58,13 +58,11 @@ defmodule Cinder.Download.Client.QBittorrent do
   def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
 
   defp add_magnet(magnet, hash, opts) do
-    case Torrent.sanitize_magnet(magnet, &keep_host?/1) do
+    case Torrent.sanitize_magnet(magnet, &vet_hosts/1) do
       {:ok, clean} -> post_magnet(clean, hash, opts)
       {:error, :bad_magnet} -> {:error, :unsupported_download_url}
     end
   end
-
-  defp keep_host?(host), do: validate_embedded_host(host) == :ok
 
   defp post_magnet(magnet, hash, opts) do
     case action(
@@ -89,14 +87,10 @@ defmodule Cinder.Download.Client.QBittorrent do
   # Public releases routinely embed dead (NXDOMAIN) and parked-to-loopback tracker
   # hostnames, so every endpoint qBittorrent would dial on Cinder's behalf is vetted
   # individually and failures are REMOVED before hand-off. `Torrent` filters them
-  # fail-closed (parse, scheme, userinfo); this vets the surviving host's address only
-  # (`HTTPPolicy.validate_untrusted_host/2`), not the full HTTP-specific URL policy.
-  defp validate_embedded_host(host) do
-    case Keyword.get(config(), :url_resolver) do
-      resolver when is_function(resolver, 1) -> HTTPPolicy.validate_untrusted_host(host, resolver)
-      nil -> HTTPPolicy.validate_untrusted_host(host)
-    end
-  end
+  # fail-closed (parse, scheme, userinfo); `EndpointVetter` then checks the surviving
+  # hosts' addresses (`HTTPPolicy.validate_untrusted_host/2`) under a hard bound on DNS work.
+  defp vet_hosts(hosts),
+    do: EndpointVetter.allowed_hosts(hosts, Keyword.get(config(), :url_resolver))
 
   # qBittorrent < 5.1 answers torrents/add with a plaintext body ("Ok."/"Fails.");
   # 5.1+ (WebAPI 2.11.4+) answers with a decoded JSON map carrying per-torrent counts.
@@ -123,7 +117,7 @@ defmodule Cinder.Download.Client.QBittorrent do
 
   defp add_torrent_bytes(bytes, opts) do
     with {:ok, hash} <- Torrent.infohash(bytes),
-         {:ok, clean} <- Torrent.sanitize_embedded_urls(bytes, &keep_host?/1) do
+         {:ok, clean} <- Torrent.sanitize_embedded_urls(bytes, &vet_hosts/1) do
       upload_and_confirm(clean, hash, opts)
     end
   end

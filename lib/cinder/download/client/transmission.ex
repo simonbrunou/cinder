@@ -9,7 +9,7 @@ defmodule Cinder.Download.Client.Transmission do
   @behaviour Cinder.Download.Client
 
   alias Cinder.Download.Client.Fetch
-  alias Cinder.Download.{PathMapping, Torrent}
+  alias Cinder.Download.{EndpointVetter, PathMapping, Torrent}
   alias Cinder.HTTPPolicy
 
   @default_url "http://localhost:9091/transmission/rpc"
@@ -25,7 +25,7 @@ defmodule Cinder.Download.Client.Transmission do
 
   @impl true
   def add(%{download_url: "magnet:" <> _ = magnet}, opts) do
-    case Torrent.sanitize_magnet(magnet, &keep_host?/1) do
+    case Torrent.sanitize_magnet(magnet, &vet_hosts/1) do
       {:ok, clean} -> add_arguments(%{"filename" => clean}, opts)
       {:error, :bad_magnet} -> {:error, :unsupported_download_url}
     end
@@ -51,7 +51,7 @@ defmodule Cinder.Download.Client.Transmission do
   def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
 
   defp add_torrent(bytes, opts) do
-    with {:ok, clean} <- Torrent.sanitize_embedded_urls(bytes, &keep_host?/1) do
+    with {:ok, clean} <- Torrent.sanitize_embedded_urls(bytes, &vet_hosts/1) do
       add_arguments(%{"metainfo" => Base.encode64(clean)}, opts)
     end
   end
@@ -336,15 +336,7 @@ defmodule Cinder.Download.Client.Transmission do
   defp rpc_response({:ok, %{status: status}}), do: {:error, {:transmission_status, status}}
   defp rpc_response({:error, reason}), do: {:error, reason}
 
-  defp keep_host?(host) do
-    case config()[:url_resolver] do
-      resolver when is_function(resolver, 1) ->
-        HTTPPolicy.validate_untrusted_host(host, resolver) == :ok
-
-      nil ->
-        HTTPPolicy.validate_untrusted_host(host) == :ok
-    end
-  end
+  defp vet_hosts(hosts), do: EndpointVetter.allowed_hosts(hosts, config()[:url_resolver])
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
 end

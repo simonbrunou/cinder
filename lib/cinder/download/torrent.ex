@@ -92,21 +92,31 @@ defmodule Cinder.Download.Torrent do
   @doc """
   Rewrites the `.torrent`'s endpoint fields (`announce`, `announce-list`, `url-list`,
   `httpseeds`), keeping only URLs that parse, carry a valid scheme (http/https/udp for
-  trackers, http/https for web seeds), have no `@`, and whose host `keep?.(host)` approves;
-  a field left empty is omitted. The top-level `nodes` key is dropped. Every other
+  trackers, http/https for web seeds), have no `@`, and whose (lower-cased) host is in the
+  set returned by `vet.(hosts)`; a field left empty is omitted. `vet` receives every
+  candidate host once, in document order, so it can dedupe, cap and bound the lookups
+  (see `Cinder.Download.EndpointVetter`). The top-level `nodes` key is dropped. Every other
   top-level value — the `info` dict above all — is spliced through byte-verbatim, so the
   torrent id is unchanged. Returns `{:ok, bytes}` or `{:error, :bad_torrent}`.
   """
-  @spec sanitize_embedded_urls(binary, (String.t() -> boolean)) ::
+  @spec sanitize_embedded_urls(binary, ([String.t()] -> MapSet.t(String.t()))) ::
           {:ok, binary} | {:error, :bad_torrent}
-  def sanitize_embedded_urls(<<?d, _::binary>> = bin, keep?) do
-    {:ok, IO.iodata_to_binary(rebuild_dict(bin, 1, keep?, ["d"]))}
+  def sanitize_embedded_urls(<<?d, _::binary>> = bin, vet) do
+    syntactic = IO.iodata_to_binary(rebuild_dict(bin, 1, fn _host -> true end, ["d"]))
+    allowed = vet.(embedded_hosts(syntactic))
+    {:ok, IO.iodata_to_binary(rebuild_dict(bin, 1, &MapSet.member?(allowed, &1), ["d"]))}
   rescue
     # Same rationale as infohash/1: never raise on attacker-controlled bytes.
     _ -> {:error, :bad_torrent}
   end
 
-  def sanitize_embedded_urls(_bin, _keep?), do: {:error, :bad_torrent}
+  def sanitize_embedded_urls(_bin, _vet), do: {:error, :bad_torrent}
+
+  defp embedded_hosts(bin) do
+    bin
+    |> embedded_urls()
+    |> Enum.map(&(&1 |> URI.parse() |> Map.fetch!(:host) |> String.downcase()))
+  end
 
   defp rebuild_dict(bin, off, keep?, acc) do
     case :binary.at(bin, off) do
@@ -188,29 +198,42 @@ defmodule Cinder.Download.Torrent do
          {:ok, %URI{scheme: scheme, host: host}} <- URI.new(url),
          true <- is_binary(scheme) and String.downcase(scheme) in schemes,
          true <- is_binary(host) and host != "" do
-      {:ok, host}
+      {:ok, String.downcase(host)}
     else
       _ -> :error
     end
   end
 
   @doc """
-  Filters a magnet URI's endpoint params. `tr` is kept when `keep?.(host)` approves its
-  tracker host; `ws`/`as`/`xs` likewise (http/https only). Keys are matched
-  case-insensitively by the segment before the first dot, so `TR`, `tr.1`, `tr.` and `tr.x`
-  are all trackers. `x.pe`, `x.pe.*`, `dht` and `dht.*` are dropped outright. Every other
-  param (`xt`, `dn`, ...) is untouched, so the infohash is unchanged. Returns
+  Filters a magnet URI's endpoint params. `tr` is kept when its tracker host is in the set
+  returned by `vet.(hosts)` (`vet` receives every candidate host, in order, so it can
+  dedupe, cap and bound lookups); `ws`/`as`/`xs` likewise (http/https only). Keys are
+  matched case-insensitively by the segment before the first dot, so `TR`, `tr.1`, `tr.`
+  and `tr.x` are all trackers. `x.pe`, `x.pe.*`, `dht` and `dht.*` are dropped outright.
+  Every other param (`xt`, `dn`, ...) is untouched, so the infohash is unchanged. Returns
   `{:error, :bad_magnet}` when the magnet cannot be parsed.
   """
-  @spec sanitize_magnet(String.t(), (String.t() -> boolean)) ::
+  @spec sanitize_magnet(String.t(), ([String.t()] -> MapSet.t(String.t()))) ::
           {:ok, String.t()} | {:error, :bad_magnet}
-  def sanitize_magnet(magnet, keep?) when is_binary(magnet) do
+  def sanitize_magnet(magnet, vet) when is_binary(magnet) do
     case URI.new(magnet) do
       {:ok, %URI{query: query} = uri} when is_binary(query) ->
+        pairs = Enum.to_list(URI.query_decoder(query))
+
+        hosts =
+          for {key, value} <- pairs,
+              kind = magnet_key(key),
+              kind in ~w(tr ws as xs),
+              {:ok, host} <- [endpoint_host(value, endpoint_schemes(kind))],
+              do: host
+
+        allowed = vet.(hosts)
+
         clean =
-          query
-          |> URI.query_decoder()
-          |> Enum.filter(fn {key, value} -> keep_magnet_param?(key, value, keep?) end)
+          pairs
+          |> Enum.filter(fn {key, value} ->
+            keep_magnet_param?(magnet_key(key), value, allowed)
+          end)
           |> URI.encode_query()
 
         {:ok, URI.to_string(%{uri | query: clean})}
@@ -222,19 +245,22 @@ defmodule Cinder.Download.Torrent do
     ArgumentError -> {:error, :bad_magnet}
   end
 
-  # Clients disagree on suffixes (`tr.1`, `tr.`, `tr.x`), so classify by the segment before
-  # the first dot, lower-cased: `tr.`/`ws.`/`as.`/`xs.` anything is that endpoint kind.
-  defp keep_magnet_param?(key, value, keep?) do
-    key = String.downcase(key)
-
-    case {key, key |> String.split(".", parts: 2) |> hd()} do
-      {"x.pe", _} -> false
-      {"x.pe." <> _, _} -> false
-      {_, "dht"} -> false
-      {_, kind} when kind in ~w(tr ws as xs) -> endpoint_ok?(kind, value, keep?)
-      _other -> true
+  # Clients disagree on suffixes (`tr.1`, `tr.`, `tr.x`), so a key is classified by its
+  # lower-cased segment before the first dot (`x.pe` and `x.pe.*` are one kind of their own).
+  defp magnet_key(key) do
+    case String.downcase(key) do
+      "x.pe" -> "x.pe"
+      "x.pe." <> _ -> "x.pe"
+      k -> k |> String.split(".", parts: 2) |> hd()
     end
   end
+
+  defp keep_magnet_param?(kind, _value, _allowed) when kind in ~w(x.pe dht), do: false
+
+  defp keep_magnet_param?(kind, value, allowed) when kind in ~w(tr ws as xs),
+    do: endpoint_ok?(kind, value, &MapSet.member?(allowed, &1))
+
+  defp keep_magnet_param?(_kind, _value, _allowed), do: true
 
   defp encode(value) when is_binary(value),
     do: [Integer.to_string(byte_size(value)), ":", value]
