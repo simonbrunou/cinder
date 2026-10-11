@@ -34,8 +34,15 @@ defmodule Cinder.MixProject do
   # config block, and `igniter` 0.8.4 resolves `req` — the HTTP client behind every external
   # service — from 0.6.2 up to 0.7.4, whose breaking changes (the `run_finch`/`run_plug` steps
   # becoming adapter modules) deserve their own change, not a drive-by inside an audit fix.
+  #
+  # CVE-2026-95105 (Cloak, HIGH): `Cloak.Ciphers.AES.CTR` stores ciphertext with no MAC, so
+  # anyone who can write the encrypted store can bit-flip a known plaintext. Cinder never
+  # configures that cipher: `Cinder.Vault`'s only cipher is `Cloak.Ciphers.AES.GCM`
+  # (config/runtime.exs), which authenticates the ciphertext and makes a tampered secret decode
+  # to `:error` (`Cinder.Settings.Crypto.decrypt_secret/1`). No fixed Cloak release exists;
+  # if one ships, take it and drop this entry. Do not add a CTR cipher to the vault.
   defp hex do
-    [ignore_advisories: ["CVE-2026-82710", "CVE-2026-82584"]]
+    [ignore_advisories: ["CVE-2026-82710", "CVE-2026-82584", "CVE-2026-95105"]]
   end
 
   # Package metadata. Not published to Hex; present for discoverability + SPDX licensing.

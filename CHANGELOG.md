@@ -6,6 +6,14 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- **`decimal` 3.1.1 → 3.2.0 (CVE-2026-97853).** `Decimal.round/3` allocated memory in
+  proportion to its `places` argument. Cinder's own code never calls `Decimal.round`, so this is
+  hygiene, but the advisory failed the required `mix hex.audit` CI check.
+- **Cloak CVE-2026-95105 acknowledged, not reachable.** The advisory covers Cloak's unauthenticated
+  `AES.CTR` cipher. Cinder's vault only configures `AES.GCM`, and no fixed Cloak release exists,
+  so `mix.exs` lists it in `ignore_advisories` with the reasoning.
+
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release
   can spell the right title and hold another film, which no name check can see. Before import,
