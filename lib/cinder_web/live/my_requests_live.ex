@@ -68,8 +68,18 @@ defmodule CinderWeb.MyRequestsLive do
 
         request ->
           case Requests.cancel_own_request(request, user) do
-            {:ok, _} -> socket |> load() |> put_flash(:info, gettext("Request cancelled."))
-            {:error, _} -> put_flash(socket, :error, gettext("Couldn't cancel that request."))
+            {:ok, _} ->
+              socket |> load() |> put_flash(:info, gettext("Request cancelled."))
+
+            {:error, :rate_limited} ->
+              put_flash(
+                socket,
+                :error,
+                gettext("You've cancelled too many requests. Try again later.")
+              )
+
+            {:error, _} ->
+              put_flash(socket, :error, gettext("Couldn't cancel that request."))
           end
       end
 

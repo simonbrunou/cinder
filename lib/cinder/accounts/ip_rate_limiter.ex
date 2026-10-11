@@ -15,15 +15,18 @@ defmodule Cinder.Accounts.IpRateLimiter do
       can't evade by changing the one thing the pair keys on, 1-minute window.
     * `:registration` — IP-keyed (no account exists yet, so there is no per-account key),
       1-minute window.
+    * `:request_cancel` — a requester cancelling their own pending requests, keyed on the user
+      id, 1-hour window. Creating then cancelling frees the quota slot but still fires a TMDB
+      lookup and an admin notification, so cancelling is capped (#657).
 
-  The IP-only buckets are config-gated via `Application.get_env(:cinder,
+  The other buckets are config-gated via `Application.get_env(:cinder,
   :ip_rate_limiting, true)` (default ON; `config/test.exs` defaults it OFF) because every
-  `ConnCase`/`LiveViewTest` request shares the same test-harness peer address — an
-  always-on global IP bucket would let unrelated tests exhaust each other's budget. Tests
-  that exercise those buckets flip the flag on locally and restore it in `on_exit`,
-  matching the existing `secure_cookies` toggle pattern. `:login_pair` has a different
-  per-bucket default: always on, flag ignored — its keys carry the email, so tests never
-  trample each other.
+  `ConnCase`/`LiveViewTest` request shares the same test-harness peer address (and the SQL
+  sandbox reuses user ids across tests) — an always-on global bucket would let unrelated tests
+  exhaust each other's budget. Tests that exercise those buckets flip the flag on locally and
+  restore it in `on_exit`, matching the existing `secure_cookies` toggle pattern.
+  `:login_pair` has a different per-bucket default: always on, flag ignored — its keys carry
+  the email, so tests never trample each other.
 
   Only the race-safe API lives here: `check_and_register/2` (one atomic
   increment-and-check), `clear/2`, `reset/0`. A separate blocked?/register pair leaves the
@@ -50,7 +53,12 @@ defmodule Cinder.Accounts.IpRateLimiter do
 
   @table :cinder_ip_attempts
   @limit 10
-  @window_ms %{login_pair: 15 * 60 * 1000, login: 60_000, registration: 60_000}
+  @window_ms %{
+    login_pair: 15 * 60 * 1000,
+    login: 60_000,
+    registration: 60_000,
+    request_cancel: 60 * 60 * 1000
+  }
   @sweep_ms 60_000
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -101,8 +109,8 @@ defmodule Cinder.Accounts.IpRateLimiter do
     :ok
   end
 
-  # Per-bucket default for the test flag: :login_pair is always on (see @moduledoc), the
-  # IP-only buckets honor :ip_rate_limiting.
+  # Per-bucket default for the test flag: :login_pair is always on (see @moduledoc), every other
+  # bucket honors :ip_rate_limiting.
   defp enabled?(:login_pair), do: true
   defp enabled?(_bucket), do: Application.get_env(:cinder, :ip_rate_limiting, true)
 

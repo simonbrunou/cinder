@@ -2,6 +2,7 @@ defmodule Cinder.Requests do
   @moduledoc "Request/approval gate: the single caller allowed to create a movie row from a user action."
   import Ecto.Query
   require Logger
+  alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Accounts.User
   alias Cinder.Audit
   alias Cinder.Books
@@ -669,20 +670,35 @@ defmodule Cinder.Requests do
   distinguishing "not yours" from "already decided" would leak whether the target row
   exists at all. Not admin-audited: this is a requester acting on their own row, not a
   destructive admin action.
+
+  Non-admins are limited to 10 cancellations per hour (`Cinder.Accounts.IpRateLimiter`'s
+  `:request_cancel` bucket, keyed on the user id): each create fires a TMDB lookup and an admin
+  notification, and cancelling frees the quota slot, so an unbounded add→cancel loop would flood
+  the admin channel. Past the limit the row is left in place and `{:error, :rate_limited}` is
+  returned.
   """
-  def cancel_own_request(%Request{id: id}, %User{id: user_id}) do
-    Repo.delete_all(
-      from(r in Request,
-        where: r.id == ^id and r.user_id == ^user_id and r.status == :pending,
-        select: r
+  def cancel_own_request(%Request{id: id}, %User{id: user_id} = user) do
+    if cancel_limited?(user) do
+      {:error, :rate_limited}
+    else
+      Repo.delete_all(
+        from(r in Request,
+          where: r.id == ^id and r.user_id == ^user_id and r.status == :pending,
+          select: r
+        )
       )
-    )
-    |> case do
-      {1, [fresh]} -> {:ok, fresh}
-      {0, _} -> {:error, :not_pending}
+      |> case do
+        {1, [fresh]} -> {:ok, fresh}
+        {0, _} -> {:error, :not_pending}
+      end
+      |> Util.tap_ok(&broadcast({:request_deleted, &1}))
     end
-    |> Util.tap_ok(&broadcast({:request_deleted, &1}))
   end
+
+  defp cancel_limited?(%User{role: :admin}), do: false
+
+  defp cancel_limited?(%User{id: user_id}),
+    do: IpRateLimiter.check_and_register(:request_cancel, user_id) == :blocked
 
   @doc """
   Deletes the `:approved` request row(s) for a catalog target being deleted, joining the

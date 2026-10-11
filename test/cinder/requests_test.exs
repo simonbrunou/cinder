@@ -1,6 +1,7 @@
 defmodule Cinder.RequestsTest do
   use Cinder.DataCase, async: false
   import Mox
+  alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
   alias Cinder.Catalog.TitleAlias
@@ -914,6 +915,41 @@ defmodule Cinder.RequestsTest do
 
       assert {:error, :not_pending} = Requests.cancel_own_request(denied, user)
       assert Repo.get(Cinder.Requests.Request, req.id)
+    end
+
+    # The :request_cancel bucket is keyed on the user id, which the SQL sandbox reuses across
+    # tests, so it follows :ip_rate_limiting (off in test) and these tests opt in.
+    defp enable_rate_limiting do
+      previous = Application.get_env(:cinder, :ip_rate_limiting)
+      Application.put_env(:cinder, :ip_rate_limiting, true)
+      IpRateLimiter.reset()
+
+      on_exit(fn ->
+        IpRateLimiter.reset()
+
+        if is_nil(previous),
+          do: Application.delete_env(:cinder, :ip_rate_limiting),
+          else: Application.put_env(:cinder, :ip_rate_limiting, previous)
+      end)
+    end
+
+    test "a non-admin is rate-limited on cancels, and the pending row stays (#657)" do
+      enable_rate_limiting()
+      user = user_fixture()
+
+      for n <- 1..10 do
+        {:ok, req} = Requests.create_request(user, Map.put(@attrs, :target_id, 1000 + n))
+        assert {:ok, _} = Requests.cancel_own_request(req, user)
+      end
+
+      {:ok, req} = Requests.create_request(user, @attrs)
+      assert {:error, :rate_limited} = Requests.cancel_own_request(req, user)
+      assert Repo.get(Cinder.Requests.Request, req.id)
+
+      # The budget is per user.
+      other = user_fixture()
+      {:ok, other_req} = Requests.create_request(other, Map.put(@attrs, :target_id, 604))
+      assert {:ok, _} = Requests.cancel_own_request(other_req, other)
     end
   end
 

@@ -4,6 +4,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
   import Mox
   import Phoenix.LiveViewTest
 
+  alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, Grabs}
   alias Cinder.Requests
@@ -208,6 +209,41 @@ defmodule CinderWeb.MyRequestsLiveTest do
 
     refute has_element?(lv, "#request-#{req.id}")
     assert Cinder.Repo.get(Cinder.Requests.Request, req.id) == nil
+  end
+
+  test "a rate-limited cancel shows a flash and keeps the pending request", %{conn: conn} do
+    previous = Application.get_env(:cinder, :ip_rate_limiting)
+    Application.put_env(:cinder, :ip_rate_limiting, true)
+    IpRateLimiter.reset()
+
+    on_exit(fn ->
+      IpRateLimiter.reset()
+
+      if is_nil(previous),
+        do: Application.delete_env(:cinder, :ip_rate_limiting),
+        else: Application.put_env(:cinder, :ip_rate_limiting, previous)
+    end)
+
+    user = Cinder.AccountsFixtures.user_fixture()
+
+    {:ok, req} =
+      Requests.create_request(user, %{target_type: "movie", target_id: 42, title: "Keep me"})
+
+    for _ <- 1..10, do: IpRateLimiter.check_and_register(:request_cancel, user.id)
+
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+    lv |> element("#cancel-request-#{req.id}") |> render_click()
+
+    html =
+      lv
+      |> element("#confirm-cancel-request-#{req.id} button", "Cancel request")
+      |> render_click()
+
+    assert html =~ "cancelled too many requests"
+    assert has_element?(lv, "#request-#{req.id}")
+    assert Cinder.Repo.get(Cinder.Requests.Request, req.id)
   end
 
   test "a denied request offers Request again, which re-submits through the gate", %{conn: conn} do

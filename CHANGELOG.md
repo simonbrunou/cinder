@@ -16,6 +16,11 @@ All notable changes to Cinder are documented here. The format follows
 - **Oversized indexer titles are dropped before parsing (#656).** Prowlarr results with a title
   longer than 1024 bytes are ignored, so one poisoned result can no longer keep the release
   parser busy and stall the movie/TV pipeline. The episode-tail parser is also linear now.
+- **Cancelling requests is now rate-limited per user (#657).** Creating a pending request fires a
+  TMDB lookup and an admin notification, and cancelling it freed the quota slot at once, so a
+  scripted add→cancel loop could flood the admin channel. Non-admins may now cancel 10 pending
+  requests per hour; past that the request stays and My requests says so. Creating requests is
+  not limited.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release
