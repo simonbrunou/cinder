@@ -33,10 +33,22 @@ defmodule Cinder.Accounts.OIDC do
       redirect_uri: redirect_uri,
       http_adapter: {Cinder.Accounts.OIDC.HTTPAdapter, source_origin: issuer()},
       authorization_params: [scope: "email profile"],
-      nonce: true,
       code_verifier: true
     ]
   end
+
+  @doc false
+  # Assent copies `:nonce` verbatim into the authorize URL and `session_params` and never
+  # generates one itself, so it is made here: a fresh unguessable value per authorization start.
+  # Only the start gets it — `config/1` (used on the callback) carries no nonce, because the
+  # callback must validate the ID token against the one stored in `session_params`.
+  def authorize_config(redirect_uri) do
+    redirect_uri
+    |> config()
+    |> Keyword.put(:nonce, generate_nonce())
+  end
+
+  defp generate_nonce, do: 32 |> :crypto.strong_rand_bytes() |> Base.url_encode64(padding: false)
 
   @doc false
   def account(%{} = claims) do

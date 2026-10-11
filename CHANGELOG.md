@@ -31,6 +31,13 @@ All notable changes to Cinder are documented here. The format follows
   signs in with their current method, and only a brand-new email creates an OIDC account (pending
   admin approval, as before). An account with no other way to sign in can still be claimed by
   its verified email.
+- **OpenID Connect sign-in now sends a real random nonce.** Assent never generates the nonce
+  itself, so Cinder was sending the literal value `true`: a spec-compliant provider echoed it back
+  and the callback crashed with a server error, so OIDC sign-in could not succeed (#648). Cinder
+  now creates a fresh random nonce (32 bytes, URL-safe base64) for every sign-in attempt, sends it
+  in the authorization request, keeps it in the one-use session parameters, and checks the ID
+  token against it. A token minted for another attempt, or replayed, is rejected as a normal
+  failed sign-in instead of an error page.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release

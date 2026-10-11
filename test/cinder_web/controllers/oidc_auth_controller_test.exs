@@ -25,7 +25,7 @@ defmodule CinderWeb.OIDCAuthControllerTest do
   test "start stores Assent's one-use state and redirects to the provider", %{conn: conn} do
     expect(Cinder.Accounts.OIDCMock, :authorize_url, fn config ->
       assert config[:base_url] == "https://id.example.com"
-      assert config[:nonce]
+      assert is_binary(config[:nonce]) and byte_size(config[:nonce]) >= 32
       assert config[:code_verifier]
       assert config[:authorization_params] == [scope: "email profile"]
 
@@ -49,6 +49,8 @@ defmodule CinderWeb.OIDCAuthControllerTest do
 
     expect(Cinder.Accounts.OIDCMock, :callback, fn config, params ->
       assert config[:session_params] == %{state: "state", nonce: "nonce"}
+      # The callback validates against the stored nonce; it must not mint a new one.
+      refute Keyword.has_key?(config, :nonce)
       assert params["state"] == "state"
       assert params["code"] == "code"
 

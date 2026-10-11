@@ -14,7 +14,7 @@ defmodule CinderWeb.OIDCAuthController do
   end
 
   defp start_authorization(conn) do
-    case OIDC.impl().authorize_url(OIDC.config(callback_url())) do
+    case OIDC.impl().authorize_url(OIDC.authorize_config(callback_url())) do
       {:ok, %{url: url, session_params: session_params}} when is_map(session_params) ->
         if OIDC.secure_endpoint?(url) do
           conn
