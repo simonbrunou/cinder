@@ -58,6 +58,11 @@ All notable changes to Cinder are documented here. The format follows
   any other reverse proxy every visitor looks local and this rule does nothing. Behind cloudflared
   such users need remote access enabled in Jellyfin. A missing policy counts as remote access
   off. Linking Jellyfin from the settings page follows the same rules.
+- **Password change and account deletion are throttled per user (#645).** Both POSTs ran bcrypt
+  with no limiter, so a self-registered, never-approved account could flood them and queue every
+  other login behind the hashing. Each user now gets 10 attempts per 15 minutes before the
+  password work; past that the same generic error as a wrong password is returned. A successful
+  password change also no longer clears the address's IP-only login floor.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release

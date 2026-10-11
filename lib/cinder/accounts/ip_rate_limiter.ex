@@ -18,6 +18,11 @@ defmodule Cinder.Accounts.IpRateLimiter do
     * `:request_cancel` — a requester cancelling their own pending requests, keyed on the user
       id, 1-hour window. Creating then cancelling frees the quota slot but still fires a TMDB
       lookup and an admin notification, so cancelling is capped (#657).
+    * `:user_password` — per-user cap (keyed on the user id) on the authenticated
+      password-hashing POSTs (`/users/update-password`, `/users/delete-account`), checked
+      before the bcrypt work so a self-registered account cannot queue unbounded hashing on
+      the dirty CPU schedulers; 15-minute window. Honors `:ip_rate_limiting` like the IP buckets
+      (user ids repeat across sandboxed tests, so an always-on key would bleed between tests).
 
   The other buckets are config-gated via `Application.get_env(:cinder,
   :ip_rate_limiting, true)` (default ON; `config/test.exs` defaults it OFF) because every
@@ -57,7 +62,8 @@ defmodule Cinder.Accounts.IpRateLimiter do
     login_pair: 15 * 60 * 1000,
     login: 60_000,
     registration: 60_000,
-    request_cancel: 60 * 60 * 1000
+    request_cancel: 60 * 60 * 1000,
+    user_password: 15 * 60 * 1000
   }
   @sweep_ms 60_000
 

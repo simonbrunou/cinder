@@ -316,8 +316,8 @@ defmodule CinderWeb.UserSessionControllerTest do
         })
       end
 
-      # update_password expires every session token then re-logs-in through create/3 —
-      # a blocked pair there would lock the user out of the password they JUST set.
+      # update_password expires every session token and signs the user straight back in — a
+      # blocked pair must not lock them out of the password they JUST set.
       conn =
         conn
         |> log_in_user(user)
@@ -331,6 +331,59 @@ defmodule CinderWeb.UserSessionControllerTest do
 
       assert get_session(conn, :user_token)
       assert redirected_to(conn) == ~p"/users/settings"
+    end
+
+    test "a password change does not reset the address's IP-only login floor", %{
+      conn: conn,
+      user: user
+    } do
+      enable_ip_rate_limiting()
+
+      user = set_password(user)
+      ip = "127.0.0.1"
+      for _ <- 1..10, do: IpRateLimiter.check_and_register(:login, ip)
+
+      conn =
+        conn
+        |> log_in_user(user)
+        |> post(~p"/users/update-password", %{
+          "user" => %{
+            "password" => "brand new pass phrase!",
+            "password_confirmation" => "brand new pass phrase!"
+          }
+        })
+
+      # The floor is still full, yet the user who just changed their password stays signed in.
+      assert get_session(conn, :user_token)
+      assert redirected_to(conn) == ~p"/users/settings"
+      assert IpRateLimiter.check_and_register(:login, ip) == :blocked
+    end
+
+    test "update-password is throttled per user before any password work", %{
+      conn: conn,
+      user: user
+    } do
+      enable_ip_rate_limiting()
+      user = set_password(user)
+      conn = log_in_user(conn, user)
+
+      for _ <- 1..10 do
+        post(conn, ~p"/users/update-password", %{
+          "user" => %{"password" => "short", "password_confirmation" => "short"}
+        })
+      end
+
+      conn =
+        post(conn, ~p"/users/update-password", %{
+          "user" => %{
+            "password" => "brand new pass phrase!",
+            "password_confirmation" => "brand new pass phrase!"
+          }
+        })
+
+      assert redirected_to(conn) == ~p"/users/settings"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) == "Password update failed."
+      assert Cinder.Accounts.get_user_by_email_and_password(user.email, valid_user_password())
     end
 
     test "update-password redirects to reauth instead of crashing when sudo has expired", %{
@@ -480,6 +533,29 @@ defmodule CinderWeb.UserSessionControllerTest do
       assert Cinder.Repo.get(Cinder.Accounts.User, user.id)
     end
 
+    test "delete-account is throttled per user: even the right password is refused after 10 tries",
+         %{conn: conn} do
+      enable_ip_rate_limiting()
+      _admin = admin_fixture()
+      user = user_fixture() |> set_password()
+      conn = log_in_user(conn, user)
+
+      for _ <- 1..10 do
+        post(conn, ~p"/users/delete-account", %{
+          "delete_account" => %{"password" => "wrong-password!!"}
+        })
+      end
+
+      conn =
+        post(conn, ~p"/users/delete-account", %{
+          "delete_account" => %{"password" => valid_user_password()}
+        })
+
+      assert redirected_to(conn) == ~p"/users/settings"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "incorrect"
+      assert Cinder.Repo.get(Cinder.Accounts.User, user.id)
+    end
+
     test "the last admin cannot self-delete", %{conn: conn} do
       admin = admin_fixture() |> set_password()
 
@@ -528,5 +604,20 @@ defmodule CinderWeb.UserSessionControllerTest do
       refute get_session(conn, :user_token)
       assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "Logged out successfully"
     end
+  end
+
+  # The IP-keyed and per-user buckets are off in the test env (see IpRateLimiter's moduledoc).
+  defp enable_ip_rate_limiting do
+    previous = Application.get_env(:cinder, :ip_rate_limiting)
+    Application.put_env(:cinder, :ip_rate_limiting, true)
+    IpRateLimiter.reset()
+
+    on_exit(fn ->
+      IpRateLimiter.reset()
+
+      if is_nil(previous),
+        do: Application.delete_env(:cinder, :ip_rate_limiting),
+        else: Application.put_env(:cinder, :ip_rate_limiting, previous)
+    end)
   end
 end

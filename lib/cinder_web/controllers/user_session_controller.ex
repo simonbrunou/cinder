@@ -9,6 +9,8 @@ defmodule CinderWeb.UserSessionController do
   # :registration's bucket) and the {ip, email} brute-force guard.
   @ip_bucket :login
   @pair_bucket :login_pair
+  # Per-user cap on the authenticated password-hashing POSTs (update_password, delete_account).
+  @user_bucket :user_password
 
   def create(conn, params) do
     create(conn, params, gettext("Welcome back!"))
@@ -71,40 +73,53 @@ defmodule CinderWeb.UserSessionController do
 
   defp ip_string(conn), do: IpRateLimiter.client_key(conn.remote_ip)
 
-  def update_password(conn, %{"user" => user_params} = params) do
+  def update_password(conn, %{"user" => user_params}) do
     user = conn.assigns.current_scope.user
 
     # Sudo recheck: this POST can arrive after the sudo window lapses (a stale settings tab, or a
     # direct request), so redirect to reauth rather than crashing on a `true = ...` match (finding
     # 7 — mirrors with_sudo_mode/2 in UserLive.Settings).
-    if Accounts.sudo_mode?(user) do
-      case Accounts.update_user_password(user, user_params) do
-        {:ok, {_user, expired_tokens}} ->
-          # disconnect all existing LiveViews with old sessions
-          UserAuth.disconnect_sessions(expired_tokens)
+    cond do
+      not Accounts.sudo_mode?(user) ->
+        conn
+        |> put_flash(:error, gettext("You must re-authenticate to access this page."))
+        |> redirect(to: ~p"/users/log-in")
 
-          # This authenticated, sudo-gated path pipes into the rate-limited create/3 below AFTER
-          # committing the new password and expiring every session token — a blocked {ip, email}
-          # pair (or a blocked IP-only bucket) here would lock the user out of the password they
-          # just set. Clear both: the user has already proven possession of the account.
-          IpRateLimiter.clear(@pair_bucket, pair_key(ip_string(conn), user.email))
-          IpRateLimiter.clear(@ip_bucket, ip_string(conn))
+      # A per-user cap before the password hashing below: a pending (never approved) account can
+      # otherwise flood this authenticated POST and queue bcrypt on the dirty CPU schedulers.
+      user_throttled?(user) ->
+        conn
+        |> put_flash(:error, gettext("Password update failed."))
+        |> redirect(to: ~p"/users/settings")
 
-          conn
-          |> put_session(:user_return_to, ~p"/users/settings")
-          |> create(params, gettext("Password updated successfully!"))
-
-        {:error, changeset} ->
-          conn
-          |> put_flash(:error, password_update_error_message(changeset))
-          |> redirect(to: ~p"/users/settings")
-      end
-    else
-      conn
-      |> put_flash(:error, gettext("You must re-authenticate to access this page."))
-      |> redirect(to: ~p"/users/log-in")
+      true ->
+        update_password_for(conn, user, user_params)
     end
   end
+
+  defp update_password_for(conn, user, user_params) do
+    case Accounts.update_user_password(user, user_params) do
+      {:ok, {user, expired_tokens}} ->
+        # disconnect all existing LiveViews with old sessions
+        UserAuth.disconnect_sessions(expired_tokens)
+
+        # Every session token was just expired, so issue a fresh one directly. Going back
+        # through create/3 would re-run the login limiters and could sign out a user who just
+        # proved possession (and costs a second bcrypt verify).
+        conn
+        |> put_session(:user_return_to, ~p"/users/settings")
+        |> put_flash(:info, gettext("Password updated successfully!"))
+        |> UserAuth.log_in_user(user, user_params)
+
+      {:error, changeset} ->
+        conn
+        |> put_flash(:error, password_update_error_message(changeset))
+        |> redirect(to: ~p"/users/settings")
+    end
+  end
+
+  defp user_throttled?(user),
+    do: IpRateLimiter.check_and_register(@user_bucket, user.id) == :blocked
 
   # Renders the changeset's own validation messages (min length, confirmation mismatch, etc.)
   # instead of a canned string that may not match why this particular submission failed.
@@ -139,6 +154,25 @@ defmodule CinderWeb.UserSessionController do
   def delete_account(conn, %{"delete_account" => %{"password" => password}}) do
     user = conn.assigns.current_scope.user
 
+    # A per-user cap before the bcrypt check in delete_own_account/2 (see update_password/2);
+    # blocked gets the same generic error as a wrong password.
+    if user_throttled?(user) do
+      conn
+      |> put_flash(:error, gettext("The password you entered is incorrect."))
+      |> redirect(to: ~p"/users/settings")
+    else
+      delete_own_account(conn, user, password)
+    end
+  end
+
+  # A forged/malformed POST without the password field fails closed.
+  def delete_account(conn, _params) do
+    conn
+    |> put_flash(:error, gettext("The password you entered is incorrect."))
+    |> redirect(to: ~p"/users/settings")
+  end
+
+  defp delete_own_account(conn, user, password) do
     if Accounts.sudo_mode?(user) do
       case Accounts.delete_own_account(user, password) do
         {:ok, _user, _revoked_tokens} ->
@@ -166,12 +200,5 @@ defmodule CinderWeb.UserSessionController do
       |> put_flash(:error, gettext("You must re-authenticate to access this page."))
       |> redirect(to: ~p"/users/log-in")
     end
-  end
-
-  # A forged/malformed POST without the password field fails closed.
-  def delete_account(conn, _params) do
-    conn
-    |> put_flash(:error, gettext("The password you entered is incorrect."))
-    |> redirect(to: ~p"/users/settings")
   end
 end
