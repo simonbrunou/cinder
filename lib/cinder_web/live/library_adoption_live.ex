@@ -619,7 +619,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
     do: gettext("This title is held and needs an operator decision first.")
 
   defp reason_text(:outside_library_root),
-    do: gettext("This file is outside the configured books library root.")
+    do: gettext("This file is outside the configured library root.")
 
   defp reason_text(_reason), do: gettext("No safe match was found.")
 

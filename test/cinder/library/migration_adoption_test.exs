@@ -17,7 +17,74 @@ defmodule Cinder.Library.MigrationAdoptionTest do
 
   setup do
     stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:ok, %File.Stat{type: :regular}} end)
+
+    # The fixtures' provider paths live under /radarr and /sonarr: make those the library roots.
+    for {key, root} <- [movies_library_path: "/radarr", tv_library_path: "/sonarr"] do
+      previous = Application.get_env(:cinder, key)
+      Application.put_env(:cinder, key, root)
+      on_exit(fn -> Application.put_env(:cinder, key, previous) end)
+    end
+
     :ok
+  end
+
+  # #654: provider-reported paths must stay inside the configured library roots of their kind,
+  # exactly like filesystem-scan adoption — Radarr against movies roots, Sonarr against TV roots.
+  describe "provider paths outside the library roots" do
+    for {label, path} <- [
+          {"under another library's root", "/sonarr/Movie One.mkv"},
+          {"escaping with ../", "/radarr/../etc/Movie One.mkv"}
+        ] do
+      test "a Radarr movie #{label} is blocked and never adopted" do
+        snapshot =
+          "unique"
+          |> fixture_snapshot()
+          |> Map.update!(:movies, &Enum.take(&1, 1))
+          |> Map.update!(:files, fn files ->
+            for %{provider_id: 501} = file <- files, do: %{file | path: unquote(path)}
+          end)
+          |> Map.merge(%{series: [], episodes: []})
+
+        stub(RadarrMigrationSourceMock, :snapshot, fn -> {:ok, snapshot} end)
+        stub(Cinder.Catalog.TMDBMock, :get_movie, fn 10 -> {:ok, movie_details(10)} end)
+
+        assert {:ok, preview} = Adoption.preview_migration(:radarr)
+
+        assert [%{status: :blocked, reason: :outside_library_root, key: key} = candidate] =
+                 preview.candidates
+
+        # Even a hand-built "ready" candidate for the same path is refused at revalidation.
+        forged = %{candidate | status: :ready, reason: nil}
+
+        assert %{adopted: 0, adopted_keys: []} =
+                 Adoption.adopt_migration(:radarr, [%{key: key, candidate: forged}])
+
+        refute Catalog.get_movie_by_tmdb_id(10)
+      end
+    end
+
+    test "Sonarr episode files under the movies root are blocked and never adopted" do
+      snapshot =
+        "n_to_one"
+        |> fixture_snapshot()
+        |> Map.update!(:files, fn files ->
+          for %{kind: :episode} = file <- files,
+              do: %{file | path: "/radarr/" <> Path.basename(file.path)}
+        end)
+
+      stub(SonarrMigrationSourceMock, :snapshot, fn -> {:ok, snapshot} end)
+      stub_n_to_one_tmdb()
+
+      assert {:ok, preview} = Adoption.preview_migration(:sonarr)
+      assert [_ | _] = preview.candidates
+
+      assert Enum.all?(preview.candidates, fn candidate ->
+               candidate.status == :blocked and candidate.reason == :outside_library_root
+             end)
+
+      commands = for c <- preview.candidates, do: %{key: c.key, candidate: %{c | status: :ready}}
+      assert %{adopted: 0, adopted_keys: []} = Adoption.adopt_migration(:sonarr, commands)
+    end
   end
 
   test "a Radarr fixture previews and adopts a movie by TMDB id" do
@@ -481,7 +548,7 @@ defmodule Cinder.Library.MigrationAdoptionTest do
   end
 
   defp sonarr_series(id, tvdb_id, title),
-    do: %{"id" => id, "tvdbId" => tvdb_id, "title" => title, "path" => "/tv/#{title}"}
+    do: %{"id" => id, "tvdbId" => tvdb_id, "title" => title, "path" => "/sonarr/#{title}"}
 
   defp sonarr_episode(series_id) do
     file_id = series_id * 100

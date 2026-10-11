@@ -221,7 +221,7 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
   test "Radarr migration mode previews and confirms through the existing adoption route", %{
     conn: conn
   } do
-    path = "/radarr/Dune (2021)/Dune.mkv"
+    path = "/tmp/cinder-test-library/Dune (2021)/Dune.mkv"
 
     expect(Cinder.Library.RadarrMigrationSourceMock, :snapshot, fn ->
       {:ok,
@@ -266,7 +266,7 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
   end
 
   test "select all after deselecting adopts the ready migration candidate", %{conn: conn} do
-    path = "/radarr/Dune (2021)/Dune.mkv"
+    path = "/tmp/cinder-test-library/Dune (2021)/Dune.mkv"
 
     stub(Cinder.Library.RadarrMigrationSourceMock, :snapshot, fn ->
       {:ok,
@@ -319,7 +319,12 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
 
     files =
       for i <- 1..60,
-          do: %{provider_id: 5000 + i, kind: :movie, path: "/radarr/M#{i}.mkv", size: 10}
+          do: %{
+            provider_id: 5000 + i,
+            kind: :movie,
+            path: "/tmp/cinder-test-library/M#{i}.mkv",
+            size: 10
+          }
 
     stub(Cinder.Library.RadarrMigrationSourceMock, :snapshot, fn ->
       {:ok, %{movies: movies, series: [], episodes: [], files: files}}
@@ -459,8 +464,18 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
            }
          ],
          files: [
-           %{provider_id: 602, kind: :episode, path: "/sonarr/Show.S04E15.mkv", size: 10},
-           %{provider_id: 603, kind: :episode, path: "/sonarr/Show.S04E16.mkv", size: 10}
+           %{
+             provider_id: 602,
+             kind: :episode,
+             path: "/tmp/cinder-test-tv-library/Show.S04E15.mkv",
+             size: 10
+           },
+           %{
+             provider_id: 603,
+             kind: :episode,
+             path: "/tmp/cinder-test-tv-library/Show.S04E16.mkv",
+             size: 10
+           }
          ]
        }}
     end)
@@ -517,8 +532,18 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
            }
          ],
          files: [
-           %{provider_id: 602, kind: :episode, path: "/sonarr/Show.S04E15.mkv", size: 10},
-           %{provider_id: 603, kind: :episode, path: "/sonarr/Show.S04E16.mkv", size: 10}
+           %{
+             provider_id: 602,
+             kind: :episode,
+             path: "/tmp/cinder-test-tv-library/Show.S04E15.mkv",
+             size: 10
+           },
+           %{
+             provider_id: 603,
+             kind: :episode,
+             path: "/tmp/cinder-test-tv-library/Show.S04E16.mkv",
+             size: 10
+           }
          ]
        }}
     end)
@@ -1199,10 +1224,30 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
            }
          ],
          files: [
-           %{provider_id: 602, kind: :episode, path: "/sonarr/Show.S04E15.mkv", size: 10},
-           %{provider_id: 603, kind: :episode, path: "/sonarr/Show.S04E16.mkv", size: 10},
-           %{provider_id: 604, kind: :episode, path: "/sonarr/Show.S05E10.mkv", size: 10},
-           %{provider_id: 605, kind: :episode, path: "/sonarr/Show.S05E11.mkv", size: 10}
+           %{
+             provider_id: 602,
+             kind: :episode,
+             path: "/tmp/cinder-test-tv-library/Show.S04E15.mkv",
+             size: 10
+           },
+           %{
+             provider_id: 603,
+             kind: :episode,
+             path: "/tmp/cinder-test-tv-library/Show.S04E16.mkv",
+             size: 10
+           },
+           %{
+             provider_id: 604,
+             kind: :episode,
+             path: "/tmp/cinder-test-tv-library/Show.S05E10.mkv",
+             size: 10
+           },
+           %{
+             provider_id: 605,
+             kind: :episode,
+             path: "/tmp/cinder-test-tv-library/Show.S05E11.mkv",
+             size: 10
+           }
          ]
        }}
     end)

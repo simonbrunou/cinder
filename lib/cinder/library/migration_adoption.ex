@@ -6,9 +6,12 @@ defmodule Cinder.Library.MigrationAdoption do
   alias Cinder.Catalog
   alias Cinder.Catalog.Adoption, as: CatalogAdoption
   alias Cinder.Catalog.{Episode, Movie, Series}
+  alias Cinder.Library
   alias Cinder.Library.MigrationAdoption.Readarr
   alias Cinder.Library.MigrationReconciler
+  alias Cinder.Library.PathPolicy
   alias Cinder.Repo
+  alias Cinder.Settings
 
   @statuses [:ready, :needs_decision, :blocked, :already_managed]
 
@@ -269,7 +272,15 @@ defmodule Cinder.Library.MigrationAdoption do
     end
   end
 
-  defp movie_path_status(%Movie{} = movie, path, managed) do
+  # Provider-reported paths are untrusted input: like filesystem-scan adoption, a movie file must
+  # be a regular video file inside a configured movies root, or the candidate never adopts.
+  defp movie_path_status(movie, path, managed) do
+    if path_ok?(path, :movies, managed),
+      do: movie_ownership_status(movie, path, managed),
+      else: {:blocked, :outside_library_root}
+  end
+
+  defp movie_ownership_status(%Movie{} = movie, path, managed) do
     cond do
       path in Movie.file_paths(movie) -> {:already_managed, nil}
       movie.file_path not in [nil, ""] -> {:blocked, :identity_conflict}
@@ -278,7 +289,7 @@ defmodule Cinder.Library.MigrationAdoption do
     end
   end
 
-  defp movie_path_status(nil, path, managed) do
+  defp movie_ownership_status(nil, path, managed) do
     if Map.has_key?(managed.paths, normalize_path(path)),
       do: {:blocked, :path_conflict},
       else: {:ready, nil}
@@ -491,6 +502,12 @@ defmodule Cinder.Library.MigrationAdoption do
   defp load_cinder_series(nil), do: nil
 
   defp episode_file_status(candidate, managed, cinder_series) do
+    if path_ok?(candidate.file.path, :tv, managed),
+      do: episode_ownership_status(candidate, managed, cinder_series),
+      else: {:blocked, :outside_library_root}
+  end
+
+  defp episode_ownership_status(candidate, managed, cinder_series) do
     with %{targets: targets_by_tmdb} <- Map.get(cinder_series, candidate.series_provider_id),
          {:ok, targets} <- episode_targets(targets_by_tmdb, candidate.episodes) do
       path = candidate.file.path
@@ -636,6 +653,12 @@ defmodule Cinder.Library.MigrationAdoption do
   end
 
   defp n_to_one_status(primary, extras, managed, cinder_series) do
+    if Enum.all?([primary | extras], &path_ok?(&1.file.path, :tv, managed)),
+      do: n_to_one_ownership_status(primary, extras, managed, cinder_series),
+      else: {:blocked, :outside_library_root}
+  end
+
+  defp n_to_one_ownership_status(primary, extras, managed, cinder_series) do
     case Map.get(cinder_series, primary.series_provider_id) do
       %{targets: targets_by_tmdb} ->
         case episode_targets(targets_by_tmdb, primary.episodes) do
@@ -679,9 +702,10 @@ defmodule Cinder.Library.MigrationAdoption do
   end
 
   defp revalidate_selected(source, selected) do
-    {present, missing} = Enum.split_with(selected, &candidate_files_valid?/1)
+    roots = library_roots()
+    {present, missing} = Enum.split_with(selected, &candidate_files_valid?(&1, source, roots))
 
-    case Repo.transaction(fn -> revalidate_catalog(source, present) end) do
+    case Repo.transaction(fn -> revalidate_catalog(source, present, roots) end) do
       {:ok, {valid, stale}} ->
         {valid, candidate_keys(missing ++ stale)}
 
@@ -700,11 +724,19 @@ defmodule Cinder.Library.MigrationAdoption do
   # of what it resolves to — this codebase's own import writes only ever hardlink, never
   # symlink, so a symlink at a candidate's path is never something Cinder itself produced and is
   # never treated as legitimate here either.
-  defp candidate_files_valid?({candidate, _choice}) do
+  #
+  # For Radarr/Sonarr the path must also still be a vetted library file of its kind
+  # (`library_file?/2`) — provider-reported paths are untrusted (#654). All filesystem I/O lives
+  # here, before the write transaction.
+  defp candidate_files_valid?({candidate, _choice}, source, roots) do
     candidate
     |> candidate_paths()
-    |> Enum.all?(&regular_file?/1)
+    |> Enum.all?(&(regular_file?(&1) and provider_path_vetted?(&1, source, roots)))
   end
+
+  defp provider_path_vetted?(path, :radarr, roots), do: library_file?(path, roots.movies)
+  defp provider_path_vetted?(path, :sonarr, roots), do: library_file?(path, roots.tv)
+  defp provider_path_vetted?(_path, _source, _roots), do: true
 
   defp regular_file?(path) when is_binary(path) and path != "" do
     match?({:ok, %File.Stat{type: :regular}}, filesystem().lstat(path))
@@ -721,11 +753,12 @@ defmodule Cinder.Library.MigrationAdoption do
 
   defp candidate_keys(items), do: Enum.map(items, fn {candidate, _choice} -> candidate.key end)
 
-  defp revalidate_catalog(:radarr, selected) do
-    managed = managed_state(Enum.flat_map(selected, &candidate_paths(elem(&1, 0))))
+  defp revalidate_catalog(:radarr, selected, roots) do
+    managed = managed_state(Enum.flat_map(selected, &candidate_paths(elem(&1, 0))), roots)
 
     Enum.split_with(selected, fn {candidate, _choice} ->
       Map.get(candidate.details, :tmdb_id) == candidate.tmdb_id and
+        expanded_paths?(candidate) and
         movie_path_status(
           Catalog.get_movie_by_tmdb_id(candidate.tmdb_id),
           candidate.path,
@@ -734,8 +767,8 @@ defmodule Cinder.Library.MigrationAdoption do
     end)
   end
 
-  defp revalidate_catalog(:sonarr, selected) do
-    managed = managed_state(Enum.flat_map(selected, &candidate_paths(elem(&1, 0))))
+  defp revalidate_catalog(:sonarr, selected, roots) do
+    managed = managed_state(Enum.flat_map(selected, &candidate_paths(elem(&1, 0))), roots)
     cinder_series = targeted_cinder_series_index(selected)
 
     Enum.split_with(selected, fn {candidate, _choice} ->
@@ -748,14 +781,14 @@ defmodule Cinder.Library.MigrationAdoption do
   # are not atomic" defense the :radarr/:sonarr clauses above give via `movie_path_status/3`/
   # `episode_file_status/3` — reusing `Readarr`'s own `winner_status/5` cond-chain rather than a
   # second one.
-  defp revalidate_catalog(:readarr, selected), do: Readarr.revalidate(selected)
+  defp revalidate_catalog(:readarr, selected, _roots), do: Readarr.revalidate(selected)
 
   # `adopt/2` is reachable for any source once its list of commands passes `is_list/1` — including
   # a source `plan/4` never produces candidates for, via the direct `candidate:`-embedded command
   # shape `candidates_from_commands/1` accepts without calling `preview/1` first. Every candidate is
   # treated as stale (not adopted, reported via `stale_keys`) rather than raising. Mirrors `plan/4`'s
   # own catch-all above.
-  defp revalidate_catalog(_source, selected), do: {[], selected}
+  defp revalidate_catalog(_source, selected, _roots), do: {[], selected}
 
   defp targeted_cinder_series_index(selected) do
     selected
@@ -773,7 +806,9 @@ defmodule Cinder.Library.MigrationAdoption do
   end
 
   defp episode_candidate_current?(%{status: :ready} = candidate, managed, cinder_series),
-    do: episode_file_status(candidate, managed, cinder_series) == {:ready, nil}
+    do:
+      expanded_paths?(candidate) and
+        episode_file_status(candidate, managed, cinder_series) == {:ready, nil}
 
   defp episode_candidate_current?(
          %{status: :needs_decision} = candidate,
@@ -785,7 +820,7 @@ defmodule Cinder.Library.MigrationAdoption do
         member.file.provider_id == candidate.primary_file.provider_id
       end)
 
-    if primary do
+    if primary && expanded_paths?(candidate) do
       extras = Enum.reject(candidate.members, &(&1.key == primary.key))
       n_to_one_status(primary, extras, managed, cinder_series) == {:needs_decision, nil}
     else
@@ -1035,8 +1070,54 @@ defmodule Cinder.Library.MigrationAdoption do
     |> Enum.sort_by(&{&1.title, &1.provider_id})
   end
 
+  # Paths are expanded once here, so only the expanded form is ever planned, compared and stored.
   defp files_by_id(files, kind) do
-    for %{kind: ^kind} = file <- files, into: %{}, do: {file.provider_id, file}
+    for %{kind: ^kind} = file <- files, into: %{} do
+      {file.provider_id, Map.update!(file, :path, &expand_path/1)}
+    end
+  end
+
+  defp expand_path(path) when is_binary(path) and path != "", do: Path.expand(path)
+  defp expand_path(path), do: path
+
+  # Adoption writes only the expanded path (`files_by_id/2`); anything else came from outside a
+  # preview and is not trusted.
+  defp expanded_paths?(candidate),
+    do: Enum.all?(candidate_paths(candidate), &(&1 == expand_path(&1)))
+
+  # The same gate filesystem-scan adoption applies (`Cinder.Library.Adoption`): a regular video
+  # file under a configured root of the candidate's kind. The lexical root check is pure and runs
+  # everywhere; the `lstat`-walking `library_file?/2` only where `managed.verify_files` is set
+  # (planning). Revalidation runs inside the write transaction, so it does its filesystem check
+  # beforehand in `candidate_files_valid?/2` (#455: no filesystem I/O under SQLite's write lock).
+  defp path_ok?(path, kind, managed) do
+    roots = Map.fetch!(managed.roots, kind)
+
+    in_roots?(path, roots) and (not managed.verify_files or library_file?(path, roots))
+  end
+
+  defp in_roots?(path, roots) when is_binary(path) and path != "",
+    do: Enum.any?(roots, &PathPolicy.contained?(path, &1))
+
+  defp in_roots?(_path, _roots), do: false
+
+  defp library_file?(path, roots) do
+    in_roots?(path, roots) and
+      match?(
+        {:ok, _expanded},
+        Library.path_policy().source_file(path, roots, Library.video_extensions(),
+          filesystem: filesystem()
+        )
+      )
+  end
+
+  # Expanded roots per library kind, resolved once per plan/revalidation.
+  defp library_roots do
+    destinations = Settings.library_destinations()
+
+    for kind <- [:movies, :tv], into: %{} do
+      {kind, for(%{kind: ^kind, path: root} <- destinations, do: Path.expand(root))}
+    end
   end
 
   defp unresolved_by_id(unresolved, kind) do
@@ -1067,10 +1148,10 @@ defmodule Cinder.Library.MigrationAdoption do
           path <- Episode.file_paths(episode),
           do: {normalize_path(path), {:episode, episode.id}}
 
-    %{paths: Map.new(movies ++ episodes)}
+    %{paths: Map.new(movies ++ episodes), roots: library_roots(), verify_files: true}
   end
 
-  defp managed_state(paths) do
+  defp managed_state(paths, roots) do
     query_paths =
       paths
       |> Enum.flat_map(&[&1, normalize_path(&1)])
@@ -1113,7 +1194,7 @@ defmodule Cinder.Library.MigrationAdoption do
             do: {normalize_path(path), {:episode, episode.id}}
       end)
 
-    %{paths: Map.new(movies ++ episodes)}
+    %{paths: Map.new(movies ++ episodes), roots: roots, verify_files: false}
   end
 
   defp normalize_path(path), do: Path.expand(path)

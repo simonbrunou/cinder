@@ -99,6 +99,11 @@ All notable changes to Cinder are documented here. The format follows
   node until restart. These requests now use a one-shot connection that is closed after the
   response; address pinning, SNI/certificate verification, the byte cap and the deadline are
   unchanged (#652).
+- **Radarr/Sonarr migration adoption only trusts files inside your library roots (#654).** A
+  provider-reported file path is now checked the way filesystem-scan adoption checks it: a regular
+  video file under a configured movies root (Radarr) or TV root (Sonarr), both at preview and again
+  just before the write. A path under another root, outside every root, or escaping with `../` is
+  blocked as "outside the configured library root", and only the expanded path is stored.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release

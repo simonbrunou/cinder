@@ -7255,11 +7255,6 @@ msgstr "Aperçu %{name}"
 msgid "Resolving identities… %{resolved} of %{total} matched, continuing…"
 msgstr "Résolution des identités… %{resolved} sur %{total} trouvées, poursuite en cours…"
 
-#: lib/cinder_web/live/library_adoption_live.ex:622
-#, elixir-autogen, elixir-format
-msgid "This file is outside the configured books library root."
-msgstr "Ce fichier se trouve hors de la racine de bibliothèque de livres configurée."
-
 #: lib/cinder_web/live/library_adoption_live.ex:619
 #, elixir-autogen, elixir-format
 msgid "This title is held and needs an operator decision first."
@@ -7491,3 +7486,8 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "Too many email change requests. Try again later."
 msgstr "Trop de demandes de changement d'e-mail. Réessayez plus tard."
+
+#: lib/cinder_web/live/library_adoption_live.ex:622
+#, elixir-autogen, elixir-format
+msgid "This file is outside the configured library root."
+msgstr "Ce fichier se trouve hors de la racine de bibliothèque configurée."

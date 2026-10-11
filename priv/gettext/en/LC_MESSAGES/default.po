@@ -6932,11 +6932,6 @@ msgstr ""
 msgid "Resolving identities… %{resolved} of %{total} matched, continuing…"
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex:622
-#, elixir-autogen, elixir-format
-msgid "This file is outside the configured books library root."
-msgstr ""
-
 #: lib/cinder_web/live/library_adoption_live.ex:619
 #, elixir-autogen, elixir-format
 msgid "This title is held and needs an operator decision first."
@@ -7157,4 +7152,9 @@ msgstr ""
 #: lib/cinder_web/live/user_live/settings.ex:495
 #, elixir-autogen, elixir-format
 msgid "Too many email change requests. Try again later."
+msgstr ""
+
+#: lib/cinder_web/live/library_adoption_live.ex:622
+#, elixir-autogen, elixir-format
+msgid "This file is outside the configured library root."
 msgstr ""
