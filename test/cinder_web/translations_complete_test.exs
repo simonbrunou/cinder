@@ -44,6 +44,9 @@ defmodule CinderWeb.TranslationsCompleteTest do
              Enum.join(gaps, "\n")
   end
 
+  # The subprocess recompiles the project. On the 3-core CI runner with another test job running
+  # alongside, that took longer than ExUnit's 60 s default (#677).
+  @tag timeout: 300_000
   @tag :gettext_extract
   test "the gettext catalog is up to date with the source" do
     {out, status} =
