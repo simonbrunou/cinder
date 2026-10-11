@@ -43,6 +43,7 @@ defmodule CinderWeb.OIDCAuthController do
          {:ok, user} <- Accounts.login_or_register_oidc_user(account) do
       CinderWeb.UserAuth.log_in_user(conn, user)
     else
+      {:error, :identity_conflict} -> conflict(conn)
       _ -> failed(conn)
     end
   end
@@ -52,6 +53,20 @@ defmodule CinderWeb.OIDCAuthController do
   defp failed(conn) do
     conn
     |> put_flash(:error, gettext("OpenID sign-in failed. Please try again."))
+    |> redirect(to: ~p"/users/log-in")
+  end
+
+  # The verified email already belongs to an account with its own sign-in method. Attaching the
+  # identity there is refused (Accounts.login_or_register_oidc_user/1), so say what to do instead.
+  # Reaching this needs a provider-verified email, so it reveals nothing to a stranger.
+  defp conflict(conn) do
+    conn
+    |> put_flash(
+      :error,
+      gettext(
+        "An account already exists for this email. Sign in the way you did before, or ask an administrator."
+      )
+    )
     |> redirect(to: ~p"/users/log-in")
   end
 end

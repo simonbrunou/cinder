@@ -1613,17 +1613,73 @@ defmodule Cinder.AccountsTest do
       assert user.oidc_name == "OIDC User"
     end
 
-    test "a verified OIDC email may attach to the existing account with that email" do
-      admin = admin_fixture(email: "owner@example.com")
+    # SECURITY (pre-account hijack): registration is open and auto-confirms, so anyone can
+    # register `victim@…` with a password they know. The victim's first IdP sign-in must not
+    # attach their identity to that attacker-controlled row, nor log them into it.
+    test "an OIDC identity is never attached to an existing account that has a password" do
+      _admin = admin_fixture()
 
-      assert {:ok, linked} =
+      {:ok, attacker_row} =
+        Accounts.register_user(%{email: "v@x.example", password: "hunter2hunter2"})
+
+      assert {:error, :identity_conflict} =
+               Accounts.login_or_register_oidc_user(
+                 oidc_account(%{email: "V@x.example", subject: "victim-sub"})
+               )
+
+      refute Repo.reload!(attacker_row).oidc_subject
+      refute Repo.get_by(User, oidc_subject: "victim-sub")
+    end
+
+    test "an OIDC identity is never attached to the admin account either" do
+      admin = admin_fixture(email: "owner@example.com") |> set_password()
+
+      assert {:error, :identity_conflict} =
                Accounts.login_or_register_oidc_user(
                  oidc_account(%{email: "OWNER@example.com", subject: "admin-sub"})
                )
 
-      assert linked.id == admin.id
-      assert linked.role == :admin
-      assert linked.oidc_subject == "admin-sub"
+      refute Repo.reload!(admin).oidc_subject
+    end
+
+    test "an account with a Plex or Jellyfin sign-in is never attached to" do
+      _admin = admin_fixture()
+
+      plex =
+        user_fixture()
+        |> Ecto.Changeset.change(plex_id: 90_001)
+        |> Repo.update!()
+
+      jellyfin =
+        user_fixture()
+        |> Ecto.Changeset.change(jellyfin_user_id: "jf-oidc-1")
+        |> Repo.update!()
+
+      for user <- [plex, jellyfin] do
+        assert {:error, :identity_conflict} =
+                 Accounts.login_or_register_oidc_user(
+                   oidc_account(%{email: user.email, subject: "sub-#{user.id}"})
+                 )
+
+        refute Repo.reload!(user).oidc_subject
+      end
+    end
+
+    # A row with no way in at all (e.g. a media-server import that reported no usable id) cannot
+    # have been claimed by an attacker, so the IdP's verified email may still claim it.
+    test "a verified OIDC email attaches to an existing account that has no other way in" do
+      _admin = admin_fixture()
+
+      # `user_fixture/1` rows have no password, Plex link or Jellyfin link.
+      orphan = user_fixture(email: "orphan@example.com")
+
+      assert {:ok, linked} =
+               Accounts.login_or_register_oidc_user(
+                 oidc_account(%{email: "ORPHAN@example.com", subject: "orphan-sub"})
+               )
+
+      assert linked.id == orphan.id
+      assert linked.oidc_subject == "orphan-sub"
     end
 
     test "an unverified email cannot attach or create an account" do

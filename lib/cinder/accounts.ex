@@ -174,10 +174,14 @@ defmodule Cinder.Accounts do
 
   @doc """
   Resolves a standards-verified OIDC identity to a Cinder user. The stable key is the provider's
-  `{issuer, subject}` pair. A first login may attach that pair to an existing account only when
-  the provider explicitly marks the same email verified; unlike Plex/Jellyfin, that is an inbox
-  ownership assertion by the operator-chosen identity provider. An unlinked identity otherwise
-  creates the same inactive regular-user account as the other external sign-in paths.
+  `{issuer, subject}` pair. A first login never attaches that pair to an existing account that
+  already has another way in (a password, a Plex or a Jellyfin link): registration, Plex sign-up
+  and media-server import all confirm an address nobody proved they own, so the provider's
+  "verified email" would hand the real owner's identity to whoever claimed the address first.
+  Such a collision is refused with `{:error, :identity_conflict}`; only a row with no other
+  sign-in method (nobody could have claimed it) may be claimed by the verified email. An unlinked
+  identity otherwise creates the same inactive regular-user account as the other external
+  sign-in paths.
 
   OIDC never creates the bootstrap admin. Once linked, issuer + subject are sufficient for later
   logins; a provider changing or omitting its email claim cannot strand the account.
@@ -201,13 +205,25 @@ defmodule Cinder.Accounts do
   defp attach_or_create_oidc_user(%{email: email, email_verified: true} = account)
        when is_binary(email) and email != "" do
     case Repo.get_by(User, email: String.trim(email)) do
-      %User{oidc_subject: nil} = user -> update_oidc_identity(user, account)
-      %User{} -> Repo.rollback(:identity_conflict)
-      nil -> create_oidc_user(account)
+      %User{oidc_subject: nil} = user ->
+        if other_sign_in_method?(user),
+          do: Repo.rollback(:identity_conflict),
+          else: update_oidc_identity(user, account)
+
+      %User{} ->
+        Repo.rollback(:identity_conflict)
+
+      nil ->
+        create_oidc_user(account)
     end
   end
 
   defp attach_or_create_oidc_user(_account), do: Repo.rollback(:verified_email_required)
+
+  defp other_sign_in_method?(%User{} = user) do
+    user.hashed_password not in [nil, ""] or not is_nil(user.plex_id) or
+      user.jellyfin_user_id not in [nil, ""]
+  end
 
   defp update_oidc_identity(user, account) do
     user

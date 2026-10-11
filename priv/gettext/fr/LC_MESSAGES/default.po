@@ -6307,7 +6307,7 @@ msgstr "Secret client OpenID Connect"
 msgid "OpenID Connect issuer URL"
 msgstr "URL de l’émetteur OpenID Connect"
 
-#: lib/cinder_web/controllers/oidc_auth_controller.ex:54
+#: lib/cinder_web/controllers/oidc_auth_controller.ex:55
 #, elixir-autogen
 msgid "OpenID sign-in failed. Please try again."
 msgstr "La connexion OpenID a échoué. Veuillez réessayer."
@@ -7478,3 +7478,8 @@ msgstr "Sous-titres : %{languages}"
 #, elixir-autogen, elixir-format
 msgid "You've cancelled too many requests. Try again later."
 msgstr "Vous avez annulé trop de demandes. Réessayez plus tard."
+
+#: lib/cinder_web/controllers/oidc_auth_controller.ex:66
+#, elixir-autogen, elixir-format
+msgid "An account already exists for this email. Sign in the way you did before, or ask an administrator."
+msgstr "Un compte existe déjà pour cette adresse e-mail. Connectez-vous comme avant, ou demandez à un administrateur."

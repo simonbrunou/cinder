@@ -21,6 +21,16 @@ All notable changes to Cinder are documented here. The format follows
   scripted add→cancel loop could flood the admin channel. Non-admins may now cancel 10 pending
   requests per hour; past that the request stays and My requests says so. Creating requests is
   not limited.
+- **OpenID Connect sign-in no longer attaches to an existing account with the same email.**
+  Registration, Plex sign-up and media-server import all confirm an address nobody proved they
+  own, so a first OIDC sign-in with a provider-verified email could be handed an account an
+  attacker had registered under the victim's address beforehand (#641). Cinder now refuses to
+  link an OIDC identity to any existing account that has a password, a Plex link or a Jellyfin
+  link, and shows "An account already exists for this email. Sign in the way you did before, or
+  ask an administrator." There is no OIDC link option in Settings yet: an existing user
+  signs in with their current method, and only a brand-new email creates an OIDC account (pending
+  admin approval, as before). An account with no other way to sign in can still be claimed by
+  its verified email.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release

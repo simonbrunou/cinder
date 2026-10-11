@@ -123,4 +123,31 @@ defmodule CinderWeb.OIDCAuthControllerTest do
     assert redirected_to(conn) == ~p"/users/log-in"
     refute Repo.get_by(User, email: "unverified@example.com")
   end
+
+  # SECURITY: an existing password account with the same verified email is never linked or
+  # signed into; the visitor is told how to proceed.
+  test "a verified email owned by a password account is refused and not linked", %{conn: conn} do
+    owner = admin_fixture(email: "owner@example.com") |> set_password()
+
+    expect(Cinder.Accounts.OIDCMock, :callback, fn _config, _params ->
+      {:ok,
+       %{
+         user: %{
+           "sub" => "oidc-collision",
+           "email" => "owner@example.com",
+           "email_verified" => true
+         }
+       }}
+    end)
+
+    conn =
+      conn
+      |> init_test_session(%{oidc_session_params: %{state: "state"}})
+      |> get(~p"/auth/oidc/callback?state=state&code=code")
+
+    refute get_session(conn, :user_token)
+    assert redirected_to(conn) == ~p"/users/log-in"
+    assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "ask an administrator"
+    refute Repo.reload!(owner).oidc_subject
+  end
 end

@@ -103,9 +103,12 @@ terminate at a reverse proxy):
   Production callback URLs require the TLS reverse proxy and correct `PHX_HOST` described above.
   The client secret is encrypted at rest and never echoed back by the settings form; provider
   access/refresh tokens are not stored. On first sign-in, a standard boolean
-  `email_verified: true` claim is required: its email may attach the stable issuer/subject identity
-  to an existing account, or creates an inactive regular user for admin approval. OIDC never
-  creates the first admin. Once linked, later sign-ins use issuer + subject and do not depend on an
+  `email_verified: true` claim is required: its email creates an inactive regular user for admin
+  approval. OIDC never creates the first admin, and never attaches to an existing account that
+  has a password, a Plex link or a Jellyfin link (the sign-in is refused with a message to use the
+  existing method or ask an administrator): an address someone registered earlier was never proven
+  to belong to them. Only an account with no other way to sign in can be claimed by its verified
+  email. Once linked, later sign-ins use issuer + subject and do not depend on an
   unchanged email claim. Providers that omit `email_verified` cannot create or attach accounts.
 - **Sign in with Jellyfin:** once a Jellyfin server is configured (`JELLYFIN_URL` or the
   `/settings` equivalent), the log-in page shows a "Sign in with Jellyfin" username/password form,
