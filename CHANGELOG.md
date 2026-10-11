@@ -91,6 +91,14 @@ All notable changes to Cinder are documented here. The format follows
   nested list or dictionary, so a body of millions of `l` bytes inside the 10 MB download cap built
   a stack of hundreds of megabytes in the poller before failing. A torrent nested deeper than 64
   levels is now rejected immediately as a bad torrent.
+- **Requests to untrusted hosts no longer leak a connection pool per hostname.** Downloads from
+  redirect-mode indexer URLs, OpenSubtitles download hosts and OIDC cross-origin endpoints are
+  pinned to the vetted IP address while keeping the original hostname for TLS. Req started a
+  permanent Finch pool (about eight processes plus ETS tables) and new atoms for every distinct
+  hostname, so a hostile indexer redirecting each grab through fresh subdomains could grow the
+  node until restart. These requests now use a one-shot connection that is closed after the
+  response; address pinning, SNI/certificate verification, the byte cap and the deadline are
+  unchanged (#652).
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release

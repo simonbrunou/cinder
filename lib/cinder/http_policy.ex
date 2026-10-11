@@ -11,6 +11,8 @@ defmodule Cinder.HTTPPolicy do
   validated address while preserving the original hostname for Host, SNI, and certificate checks.
   """
 
+  alias Cinder.HTTPPolicy.PinnedAdapter
+
   @max_log_bytes 500
   @default_request_timeout_ms 60_000
 
@@ -135,7 +137,13 @@ defmodule Cinder.HTTPPolicy do
     end
   end
 
-  @doc "Applies a request target without discarding caller connection options."
+  @doc """
+  Applies a request target without discarding caller connection options.
+
+  A pinned target also installs `Cinder.HTTPPolicy.PinnedAdapter`, which connects to the vetted
+  address over a one-shot connection instead of Req's Finch pool (Req starts a permanent pool and
+  a new atom for every distinct `connect_options`, i.e. for every untrusted hostname).
+  """
   @spec request_options(request_target(), keyword()) :: keyword()
   def request_options(target, options) do
     connect_options =
@@ -153,6 +161,13 @@ defmodule Cinder.HTTPPolicy do
     |> Keyword.put(:url, target.url)
     |> Keyword.put(:connect_options, connect_options)
     |> Keyword.put(:headers, headers)
+    |> put_pinned_adapter(target)
+  end
+
+  defp put_pinned_adapter(options, %{connect_options: connect_options}) do
+    if Keyword.has_key?(connect_options, :hostname),
+      do: Keyword.put(options, :adapter, &PinnedAdapter.run/1),
+      else: options
   end
 
   @doc """
