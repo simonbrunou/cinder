@@ -26,7 +26,7 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
       _admin = admin_fixture()
 
       expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn "viewer", "s3cret" ->
-        {:ok, %{id: "jf-1", name: "viewer"}}
+        {:ok, %{id: "jf-1", name: "viewer", remote_access: true}}
       end)
 
       conn = post(conn, ~p"/auth/jellyfin", credentials("viewer", "s3cret"))
@@ -45,7 +45,7 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
       _admin = admin_fixture()
 
       expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, 2, fn _u, _p ->
-        {:ok, %{id: "jf-2", name: "repeat"}}
+        {:ok, %{id: "jf-2", name: "repeat", remote_access: true}}
       end)
 
       post(conn, ~p"/auth/jellyfin", credentials("repeat", "s3cret"))
@@ -80,7 +80,7 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
       admin = admin_fixture(email: "someone@example.com")
 
       expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn _u, _p ->
-        {:ok, %{id: "jf-3", name: "someone"}}
+        {:ok, %{id: "jf-3", name: "someone", remote_access: true}}
       end)
 
       conn = post(conn, ~p"/auth/jellyfin", credentials("someone", "s3cret"))
@@ -104,7 +104,7 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
       admin = admin_fixture(email: "collide@jellyfin.invalid")
 
       expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn _u, _p ->
-        {:ok, %{id: "jf-4", name: "collide"}}
+        {:ok, %{id: "jf-4", name: "collide", remote_access: true}}
       end)
 
       conn = post(conn, ~p"/auth/jellyfin", credentials("collide", "s3cret"))
@@ -145,6 +145,98 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
       assert redirected_to(conn) == ~p"/users/log-in"
     end
 
+    # SECURITY: Jellyfin signs a passwordless user in on an empty password, and the request
+    # comes from Cinder's LAN address — so an empty password must never be forwarded at all (an
+    # unexpected Mox call fails the test), yet still spends the throttle budget.
+    test "an empty password is refused without calling Jellyfin and still counts as an attempt",
+         %{conn: conn} do
+      conn = post(conn, ~p"/auth/jellyfin", credentials("viewer", ""))
+
+      refute get_session(conn, :user_token)
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Jellyfin sign-in failed"
+      assert redirected_to(conn) == ~p"/users/log-in"
+
+      for _ <- 1..9, do: post(conn, ~p"/auth/jellyfin", credentials("viewer", ""))
+
+      # The 11th attempt — correct this time — is throttled: without the empty ones counting it
+      # would reach the (unexpecting) mock and fail the test.
+      conn = post(conn, ~p"/auth/jellyfin", credentials("viewer", "s3cret"))
+      refute get_session(conn, :user_token)
+    end
+
+    # SECURITY: `EnableRemoteAccess: false` means Jellyfin itself would refuse this user from the
+    # internet; Cinder's request comes from the LAN, so the controller enforces it against the
+    # browser's address instead.
+    test "a remote-access-disabled user is refused from a public address, allowed from a LAN one",
+         %{conn: conn} do
+      _admin = admin_fixture()
+
+      expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, 2, fn _u, _p ->
+        {:ok, %{id: "jf-lan", name: "lan-only", remote_access: false}}
+      end)
+
+      public =
+        post(
+          %{conn | remote_ip: {203, 0, 113, 7}},
+          ~p"/auth/jellyfin",
+          credentials("lan-only", "s3cret")
+        )
+
+      refute get_session(public, :user_token)
+      assert Phoenix.Flash.get(public.assigns.flash, :error) =~ "Jellyfin sign-in failed"
+      assert redirected_to(public) == ~p"/users/log-in"
+      refute Repo.get_by(User, jellyfin_user_id: "jf-lan")
+
+      lan =
+        post(
+          %{conn | remote_ip: {192, 168, 1, 20}},
+          ~p"/auth/jellyfin",
+          credentials("lan-only", "s3cret")
+        )
+
+      assert get_session(lan, :user_token)
+      assert Repo.get_by(User, jellyfin_user_id: "jf-lan")
+    end
+
+    test "an account that omits the remote-access flag fails closed from a public address",
+         %{conn: conn} do
+      _admin = admin_fixture()
+
+      expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn _u, _p ->
+        {:ok, %{id: "jf-noflag", name: "noflag"}}
+      end)
+
+      conn =
+        post(
+          %{conn | remote_ip: {203, 0, 113, 7}},
+          ~p"/auth/jellyfin",
+          credentials("noflag", "s3cret")
+        )
+
+      refute get_session(conn, :user_token)
+      refute Repo.get_by(User, jellyfin_user_id: "jf-noflag")
+    end
+
+    # The normal deployment: an internet visitor behind cloudflared (public address) whose
+    # Jellyfin policy allows remote access must still sign in.
+    test "a remote-access-enabled user signs in from a public address", %{conn: conn} do
+      _admin = admin_fixture()
+
+      expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn _u, _p ->
+        {:ok, %{id: "jf-remote", name: "remote", remote_access: true}}
+      end)
+
+      conn =
+        post(
+          %{conn | remote_ip: {203, 0, 113, 7}},
+          ~p"/auth/jellyfin",
+          credentials("remote", "s3cret")
+        )
+
+      assert get_session(conn, :user_token)
+      assert Repo.get_by(User, jellyfin_user_id: "jf-remote")
+    end
+
     test "attempts past the {ip, username} budget are blocked without reaching Jellyfin", %{
       conn: conn
     } do
@@ -175,7 +267,7 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
       assert IpRateLimiter.check_and_register(:login_pair, victim_key) == :blocked
 
       expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn _u, _p ->
-        {:ok, %{id: "jf-5", name: "victim"}}
+        {:ok, %{id: "jf-5", name: "victim", remote_access: true}}
       end)
 
       conn = post(conn, ~p"/auth/jellyfin", credentials("victim@example.com", "s3cret"))
@@ -214,7 +306,7 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
       count_before = Repo.aggregate(User, :count)
 
       expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn "linkee", "s3cret" ->
-        {:ok, %{id: "jf-100", name: "linkee"}}
+        {:ok, %{id: "jf-100", name: "linkee", remote_access: true}}
       end)
 
       conn =
@@ -258,7 +350,7 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
       user = user_fixture()
 
       expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn _u, _p ->
-        {:ok, %{id: "jf-200", name: "taken"}}
+        {:ok, %{id: "jf-200", name: "taken", remote_access: true}}
       end)
 
       conn =
@@ -268,6 +360,36 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
 
       assert redirected_to(conn) == ~p"/users/settings"
       assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Could not link"
+      refute Repo.reload!(user).jellyfin_user_id
+    end
+
+    test "a remote-access-disabled user cannot be linked from a public address", %{conn: conn} do
+      user = user_fixture()
+
+      expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn _u, _p ->
+        {:ok, %{id: "jf-lan", name: "lan-only", remote_access: false}}
+      end)
+
+      conn =
+        %{conn | remote_ip: {203, 0, 113, 7}}
+        |> log_in_user(user)
+        |> post(~p"/auth/jellyfin", credentials("lan-only", "s3cret"))
+
+      assert redirected_to(conn) == ~p"/users/settings"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Jellyfin sign-in failed"
+      refute Repo.reload!(user).jellyfin_user_id
+    end
+
+    test "an empty password is never forwarded when linking", %{conn: conn} do
+      user = user_fixture()
+
+      conn =
+        conn
+        |> log_in_user(user)
+        |> post(~p"/auth/jellyfin", credentials("linkee", ""))
+
+      assert redirected_to(conn) == ~p"/users/settings"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Jellyfin sign-in failed"
       refute Repo.reload!(user).jellyfin_user_id
     end
   end

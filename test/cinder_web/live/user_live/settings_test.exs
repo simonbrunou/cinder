@@ -416,7 +416,7 @@ defmodule CinderWeb.UserLive.SettingsTest do
       user = user_fixture()
 
       Mox.expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn "jf-me", "s3cret" ->
-        {:ok, %{id: "jf-settings-1", name: "jf-me"}}
+        {:ok, %{id: "jf-settings-1", name: "jf-me", remote_access: true}}
       end)
 
       conn = log_in_user(conn, user)

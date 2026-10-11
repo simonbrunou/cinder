@@ -13,8 +13,17 @@ defmodule Cinder.Accounts.JellyfinAuth do
 
   alias Cinder.Util
 
-  @callback authenticate(String.t(), String.t()) ::
-              {:ok, %{id: String.t(), name: String.t() | nil}} | {:error, term()}
+  @typedoc """
+  `remote_access` is the user's `Policy.EnableRemoteAccess`: `false` means Jellyfin itself only
+  lets that user sign in from the local network, which Cinder (a LAN client) can't see through,
+  so the caller must compare it with the browser's address; a missing flag is `false`. Impls
+  return `{:error, _}` — never `{:ok, _}` — for a disabled user or one reported without a
+  password. They do NOT prove the user has a password: Jellyfin signs a passwordless user in on
+  an empty password, so the caller must refuse an empty password before calling.
+  """
+  @type account :: %{id: String.t(), name: String.t() | nil, remote_access: boolean()}
+
+  @callback authenticate(String.t(), String.t()) :: {:ok, account()} | {:error, term()}
 
   @doc """
   True when a Jellyfin server is configured (non-blank `:url`).

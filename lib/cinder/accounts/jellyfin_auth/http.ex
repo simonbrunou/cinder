@@ -10,7 +10,10 @@ defmodule Cinder.Accounts.JellyfinAuth.HTTP do
   Validated against a live Jellyfin only at dogfood.
 
   Emby exposes the same endpoint, the same `Pw` body and the same `x-emby-authorization`
-  header, so pointing the URL at an Emby server should work — free, untested, not built for.
+  header, so pointing the URL at an Emby server may work — untested, not built for. The
+  post-authentication checks below assume Jellyfin's `UserDto` contract (`Policy.IsDisabled`,
+  `Policy.EnableRemoteAccess`); an Emby server that answers differently is refused (a missing
+  `EnableRemoteAccess` counts as remote access off), not let through.
   """
   @behaviour Cinder.Accounts.JellyfinAuth
 
@@ -36,13 +39,37 @@ defmodule Cinder.Accounts.JellyfinAuth.HTTP do
     |> result()
     |> case do
       {:ok, %{"User" => %{"Id" => id} = user}} when is_binary(id) and id != "" ->
-        {:ok, %{id: id, name: user["Name"]}}
+        account(id, user)
 
       {:ok, _other} ->
         {:error, :unexpected_response}
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # Cinder asks Jellyfin to check the credentials from its own LAN address, so Jellyfin's
+  # per-user rules would otherwise apply to Cinder instead of to the visitor. Jellyfin signs a
+  # passwordless user in on an empty `Pw` — the controller refuses an empty password before this
+  # call, and that refusal is the guarantee (a passwordless user only authenticates with an empty
+  # `Pw`). `HasPassword` is marked obsolete and always `true` on current Jellyfin, so it is
+  # honoured only when a server explicitly reports `false`; a missing value never refuses.
+  # A disabled user is refused on an explicit `IsDisabled: true`. The remote-access flag is handed
+  # to the controller to compare with the browser's own address, and fails closed: anything but
+  # an explicit `true` (including a missing policy) counts as remote access off.
+  defp account(id, user) do
+    policy = if is_map(user["Policy"]), do: user["Policy"], else: %{}
+
+    cond do
+      user["HasPassword"] == false ->
+        {:error, :passwordless}
+
+      policy["IsDisabled"] == true ->
+        {:error, :disabled}
+
+      true ->
+        {:ok, %{id: id, name: user["Name"], remote_access: policy["EnableRemoteAccess"] == true}}
     end
   end
 

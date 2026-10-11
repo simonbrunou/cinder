@@ -50,8 +50,10 @@ terminate at a reverse proxy):
 - **Direct LAN exposure breaks the `cf-connecting-ip` trust model.** `CinderWeb.Plugs.RemoteIp`
   honours that header from any loopback/RFC1918 peer, which is safe only while cloudflared (or a
   proxy that strips it) is the sole thing reaching port 4000. Bind `4000:4000` to the LAN and every
-  LAN host can spoof it to dodge the per-IP login/registration throttles (rate-limit evasion only,
-  not an auth bypass): keep the loopback binding, or strip the header at your reverse proxy.
+  LAN host can spoof it to dodge the per-IP login/registration throttles (rate-limit evasion only):
+  keep the loopback binding, or strip the header at your reverse proxy. The same address also
+  feeds the "remote access disabled" rule of Sign in with Jellyfin (see below): behind a proxy
+  that doesn't forward the real client address, every visitor looks like a LAN host to it.
 - **Registration is rate-limited per source IP:** at most 10 registration attempts per minute per
   IP (blocked attempts get a generic "too many attempts" flash). Behind a reverse proxy or tunnel
   that doesn't forward the real client IP, every visitor shares one bucket — see the login-limiter
@@ -118,8 +120,18 @@ terminate at a reverse proxy):
   admin approval), never an email-based login into an existing one, and attaching Jellyfin to an
   existing account is an explicit action from Account settings. Jellyfin exposes no email address,
   so a created account gets a placeholder `…@jellyfin.invalid` one with email notifications off
-  until its owner sets a real address. Attempts are rate-limited exactly like password login. Emby
-  serves the same endpoint and should work if you point `JELLYFIN_URL` at one — untested.
+  until its owner sets a real address. Attempts are rate-limited exactly like password login.
+  Cinder asks Jellyfin to check the credentials from its own LAN address, so it re-applies
+  Jellyfin's per-user rules itself: an empty password is never forwarded (Jellyfin signs a
+  passwordless user in on an empty password), a disabled Jellyfin user is refused, and a user whose
+  Jellyfin policy turns **remote access off** signs in only when the address Cinder sees for the
+  browser is loopback or private. That address is the real visitor only behind cloudflared (via
+  `cf-connecting-ip`) or when browsers reach port 4000 directly; behind any other reverse proxy
+  every visitor looks local, so that rule does nothing there. Conversely, behind cloudflared a
+  LAN-only Jellyfin user who opens Cinder through its public hostname arrives with their public
+  address, so such users need remote access enabled in Jellyfin to use this button. Emby serves
+  the same endpoint and may work if you point `JELLYFIN_URL` at one — untested, and the checks
+  above assume Jellyfin's user record, so an Emby server that answers differently is refused.
   One wrinkle for early installs: an account imported from Jellyfin before Cinder started recording
   the Jellyfin id at import time carries no id, so its owner's first "Sign in with Jellyfin" creates
   a *second*, pending account instead of logging them in, and re-running the import will not repair

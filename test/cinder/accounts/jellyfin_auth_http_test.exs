@@ -24,12 +24,56 @@ defmodule Cinder.Accounts.JellyfinAuth.HTTPTest do
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
       |> Req.Test.json(%{
-        "User" => %{"Id" => "abc123", "Name" => "viewer"},
+        "User" => %{
+          "Id" => "abc123",
+          "Name" => "viewer",
+          "HasPassword" => true,
+          "Policy" => %{"IsDisabled" => false, "EnableRemoteAccess" => true}
+        },
         "AccessToken" => "jf-token"
       })
     end)
 
-    assert {:ok, %{id: "abc123", name: "viewer"}} = HTTP.authenticate("viewer", "s3cret")
+    assert {:ok, %{id: "abc123", name: "viewer", remote_access: true}} =
+             HTTP.authenticate("viewer", "s3cret")
+  end
+
+  defp stub_user(user) do
+    Req.Test.stub(Cinder.JellyfinAuthStub, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Req.Test.json(%{"User" => Map.merge(%{"Id" => "abc123", "Name" => "viewer"}, user)})
+    end)
+  end
+
+  defp policy(overrides),
+    do: %{"IsDisabled" => false, "EnableRemoteAccess" => true} |> Map.merge(overrides)
+
+  # SECURITY: Jellyfin signs a passwordless user in on an empty password, from Cinder's LAN
+  # address. The controller's empty-password refusal is the guarantee; `HasPassword` is obsolete
+  # (always true on current Jellyfin), so it only refuses when a server explicitly says `false`.
+  test "authenticate/2 refuses a user reported without a password, but not one that omits it" do
+    stub_user(%{"HasPassword" => false, "Policy" => policy(%{})})
+    assert {:error, :passwordless} = HTTP.authenticate("viewer", "s3cret")
+
+    stub_user(%{"Policy" => policy(%{})})
+    assert {:ok, %{id: "abc123"}} = HTTP.authenticate("viewer", "s3cret")
+  end
+
+  test "authenticate/2 refuses an explicitly disabled user" do
+    stub_user(%{"HasPassword" => true, "Policy" => policy(%{"IsDisabled" => true})})
+    assert {:error, :disabled} = HTTP.authenticate("viewer", "s3cret")
+  end
+
+  test "authenticate/2 reports remote_access false when remote access is off or not stated" do
+    stub_user(%{"HasPassword" => true, "Policy" => policy(%{"EnableRemoteAccess" => false})})
+    assert {:ok, %{remote_access: false}} = HTTP.authenticate("viewer", "s3cret")
+
+    stub_user(%{"HasPassword" => true, "Policy" => %{"IsDisabled" => false}})
+    assert {:ok, %{remote_access: false}} = HTTP.authenticate("viewer", "s3cret")
+
+    stub_user(%{"HasPassword" => true})
+    assert {:ok, %{remote_access: false}} = HTTP.authenticate("viewer", "s3cret")
   end
 
   test "authenticate/2 maps a 401 to {:error, :invalid_credentials}" do

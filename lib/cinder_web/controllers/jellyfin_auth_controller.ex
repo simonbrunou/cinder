@@ -18,6 +18,12 @@ defmodule CinderWeb.JellyfinAuthController do
   (`UserSessionController.create/2`): this is the same online-guessing surface, and a
   successful guess here can also *create* an account.
 
+  Jellyfin sees the sign-in as coming from Cinder's own LAN address, so the controller re-applies
+  what Jellyfin would have enforced for the browser itself: an empty password is never
+  forwarded, and a user whose policy disables remote access is refused unless the browser's
+  address is loopback/private (`JellyfinAuth.HTTP` also refuses a user the server reports as
+  disabled or passwordless).
+
   Every failure path is a generic flash + redirect — never leaking Jellyfin or internal error
   detail — to `/users/log-in` for `:login`, `/users/settings` for `:link`.
   """
@@ -26,6 +32,7 @@ defmodule CinderWeb.JellyfinAuthController do
   alias Cinder.Accounts
   alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Accounts.JellyfinAuth
+  alias CinderWeb.Plugs.RemoteIp
 
   @ip_bucket :login
   @pair_bucket :login_pair
@@ -44,6 +51,12 @@ defmodule CinderWeb.JellyfinAuthController do
       throttled?(conn, username) ->
         error_redirect(conn, intent, gettext("Jellyfin sign-in failed. Please try again."))
 
+      # Jellyfin lets a passwordless user in with an empty password, and Cinder's own LAN
+      # position would make that a sign-in for anyone on the internet. Rejected after the throttle
+      # so it still spends the budget, and before any upstream call.
+      password == "" ->
+        error_redirect(conn, intent, gettext("Jellyfin sign-in failed. Please try again."))
+
       true ->
         authenticate(conn, intent, username, password)
     end
@@ -59,13 +72,23 @@ defmodule CinderWeb.JellyfinAuthController do
   end
 
   defp authenticate(conn, intent, username, password) do
-    case JellyfinAuth.impl().authenticate(username, password) do
-      {:ok, account} ->
-        resolve(conn, intent, account, username)
-
+    with {:ok, account} <- JellyfinAuth.impl().authenticate(username, password),
+         :ok <- check_remote_access(conn, account) do
+      resolve(conn, intent, account, username)
+    else
       {:error, _reason} ->
         error_redirect(conn, intent, gettext("Jellyfin sign-in failed. Please try again."))
     end
+  end
+
+  # Jellyfin authenticated this request from Cinder's LAN address, so a user whose policy only
+  # allows local-network sign-in (`remote_access: false`) must not get through for a visitor who
+  # isn't on the local network. `conn.remote_ip` is already the cloudflared-resolved client. A
+  # missing flag fails closed.
+  defp check_remote_access(conn, account) do
+    if Map.get(account, :remote_access) == true or RemoteIp.private_peer?(conn.remote_ip),
+      do: :ok,
+      else: {:error, :remote_access_denied}
   end
 
   defp resolve(conn, :login, account, username) do

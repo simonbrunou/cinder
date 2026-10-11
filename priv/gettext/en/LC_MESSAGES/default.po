@@ -5239,7 +5239,7 @@ msgstr ""
 msgid "The media server reported no users."
 msgstr ""
 
-#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:96
+#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:119
 #, elixir-autogen
 msgid "Could not link your Jellyfin account. Please try again."
 msgstr ""
@@ -5260,15 +5260,16 @@ msgstr ""
 msgid "Jellyfin password"
 msgstr ""
 
-#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:45
-#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:57
-#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:67
-#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:79
+#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:52
+#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:58
+#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:70
+#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:80
+#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:102
 #, elixir-autogen
 msgid "Jellyfin sign-in failed. Please try again."
 msgstr ""
 
-#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:42
+#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:49
 #, elixir-autogen
 msgid "Jellyfin sign-in is not configured."
 msgstr ""
@@ -5284,7 +5285,7 @@ msgstr ""
 msgid "Link Jellyfin account"
 msgstr ""
 
-#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:139
+#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:162
 #, elixir-autogen
 msgid "Please re-enter your password before linking your Jellyfin account."
 msgstr ""
@@ -5304,7 +5305,7 @@ msgstr ""
 msgid "Your Jellyfin account has been unlinked."
 msgstr ""
 
-#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:89
+#: lib/cinder_web/controllers/jellyfin_auth_controller.ex:112
 #, elixir-autogen
 msgid "Your Jellyfin account is now linked."
 msgstr ""

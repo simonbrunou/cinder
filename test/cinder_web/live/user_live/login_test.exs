@@ -91,7 +91,7 @@ defmodule CinderWeb.UserLive.LoginTest do
       _admin = admin_fixture()
 
       Mox.expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn "viewer", "s3cret" ->
-        {:ok, %{id: "jf-login-1", name: "viewer"}}
+        {:ok, %{id: "jf-login-1", name: "viewer", remote_access: true}}
       end)
 
       {:ok, lv, _html} = live(conn, ~p"/users/log-in")

@@ -46,6 +46,18 @@ All notable changes to Cinder are documented here. The format follows
   reasons and error details are externally sourced, and Discord renders embed text as markdown, so
   a title like `[click](https://evil.example)` could plant a masked link in the admin channel. All
   such text is now backslash-escaped, and `://` is broken so bare URLs no longer auto-link.
+- **Sign in with Jellyfin no longer lets an internet visitor in as a passwordless or LAN-only
+  Jellyfin user.** Cinder asks Jellyfin to check the credentials from its own LAN address, so
+  Jellyfin's "passwordless users sign in with an empty password" and "remote access disabled" rules
+  were being applied to Cinder instead of to the visitor (#642). An empty password is now refused
+  before Jellyfin is contacted, and still counts against the sign-in throttle; that refusal is
+  what stops a passwordless user, since Jellyfin only lets one in on an empty password (a user
+  Jellyfin explicitly reports without a password, or as disabled, is refused too). A user whose
+  Jellyfin policy turns remote access off now signs in only from a loopback or private address
+  as Cinder sees it: the real visitor behind cloudflared or with direct port access, but behind
+  any other reverse proxy every visitor looks local and this rule does nothing. Behind cloudflared
+  such users need remote access enabled in Jellyfin. A missing policy counts as remote access
+  off. Linking Jellyfin from the settings page follows the same rules.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release

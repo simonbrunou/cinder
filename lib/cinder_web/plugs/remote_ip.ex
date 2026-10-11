@@ -64,21 +64,24 @@ defmodule CinderWeb.Plugs.RemoteIp do
     %{"client_ip" => IpRateLimiter.client_key(remote_ip)}
   end
 
-  # Loopback, RFC1918 private, and link-local — the shapes a host-networked or
-  # Docker-networked cloudflared peer can take. Deliberately narrower than
-  # `Cinder.HTTPPolicy`'s SSRF forbidden-address list: this only needs to recognize "this is
-  # our own reverse proxy," not defend against every special-use range.
-  defp private_peer?({127, _, _, _}), do: true
-  defp private_peer?({10, _, _, _}), do: true
-  defp private_peer?({172, b, _, _}) when b in 16..31, do: true
-  defp private_peer?({192, 168, _, _}), do: true
-  defp private_peer?({169, 254, _, _}), do: true
-  defp private_peer?({0, 0, 0, 0, 0, 0, 0, 1}), do: true
+  @doc """
+  True for loopback, RFC1918 private, and link-local addresses — the shapes a host-networked or
+  Docker-networked cloudflared peer takes, and equally a LAN browser. Deliberately narrower than
+  `Cinder.HTTPPolicy`'s SSRF forbidden-address list: this only needs to recognize "this is on
+  our own network", not defend against every special-use range.
+  """
+  @spec private_peer?(:inet.ip_address()) :: boolean()
+  def private_peer?({127, _, _, _}), do: true
+  def private_peer?({10, _, _, _}), do: true
+  def private_peer?({172, b, _, _}) when b in 16..31, do: true
+  def private_peer?({192, 168, _, _}), do: true
+  def private_peer?({169, 254, _, _}), do: true
+  def private_peer?({0, 0, 0, 0, 0, 0, 0, 1}), do: true
 
-  defp private_peer?({0, 0, 0, 0, 0, 0xFFFF, high, low}),
+  def private_peer?({0, 0, 0, 0, 0, 0xFFFF, high, low}),
     do: private_peer?({div(high, 256), rem(high, 256), div(low, 256), rem(low, 256)})
 
-  defp private_peer?({first, _, _, _, _, _, _, _}) when first in 0xFC00..0xFDFF, do: true
-  defp private_peer?({first, _, _, _, _, _, _, _}) when first in 0xFE80..0xFEBF, do: true
-  defp private_peer?(_address), do: false
+  def private_peer?({first, _, _, _, _, _, _, _}) when first in 0xFC00..0xFDFF, do: true
+  def private_peer?({first, _, _, _, _, _, _, _}) when first in 0xFE80..0xFEBF, do: true
+  def private_peer?(_address), do: false
 end
