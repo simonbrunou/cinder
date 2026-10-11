@@ -73,6 +73,14 @@ All notable changes to Cinder are documented here. The format follows
   household SMTP relay. A taken and a free address now get the same message and only a free one
   is mailed (the confirmation step still rejects a taken address). Each user may request 5 email
   changes per hour.
+- **Tracker and web-seed filtering now fails closed (#643).** A magnet or `.torrent` could slip a
+  LAN address past the endpoint vetting: an unparseable URL, `http://evil:80?@192.168.1.10/`
+  (host differs between Cinder and libtorrent), an upper-case `TR=` or numbered `tr.1=` key, or
+  the `x.pe`/`dht` params and a `.torrent`'s `nodes` list. Cinder now drops any embedded URL
+  that does not parse, has no host, contains `@`, or uses a scheme other than http/https/udp
+  (http/https only for web seeds), normalizes magnet keys before matching, and removes
+  `x.pe`, `dht` and `nodes`. Transmission also rejects a magnet it cannot parse instead of
+  forwarding it raw. The infohash is unchanged.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release

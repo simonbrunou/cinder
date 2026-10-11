@@ -24,8 +24,12 @@ defmodule Cinder.Download.Client.Transmission do
   def add(release), do: add(release, [])
 
   @impl true
-  def add(%{download_url: "magnet:" <> _ = magnet}, opts),
-    do: add_arguments(%{"filename" => sanitize_magnet(magnet)}, opts)
+  def add(%{download_url: "magnet:" <> _ = magnet}, opts) do
+    case Torrent.sanitize_magnet(magnet, &keep_host?/1) do
+      {:ok, clean} -> add_arguments(%{"filename" => clean}, opts)
+      {:error, :bad_magnet} -> {:error, :unsupported_download_url}
+    end
+  end
 
   def add(%{download_url: url} = release, opts) when is_binary(url) do
     fetch_opts = [
@@ -47,7 +51,7 @@ defmodule Cinder.Download.Client.Transmission do
   def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
 
   defp add_torrent(bytes, opts) do
-    with {:ok, clean} <- Torrent.sanitize_embedded_urls(bytes, &keep_endpoint?/1) do
+    with {:ok, clean} <- Torrent.sanitize_embedded_urls(bytes, &keep_host?/1) do
       add_arguments(%{"metainfo" => Base.encode64(clean)}, opts)
     end
   end
@@ -332,44 +336,15 @@ defmodule Cinder.Download.Client.Transmission do
   defp rpc_response({:ok, %{status: status}}), do: {:error, {:transmission_status, status}}
   defp rpc_response({:error, reason}), do: {:error, reason}
 
-  defp sanitize_magnet(magnet) do
-    case URI.new(magnet) do
-      {:ok, %URI{query: query} = uri} when is_binary(query) ->
-        clean =
-          query
-          |> URI.query_decoder()
-          |> Enum.filter(fn
-            {key, url} when key in ~w(tr ws as xs) -> keep_endpoint?(url)
-            _pair -> true
-          end)
-          |> URI.encode_query()
+  defp keep_host?(host) do
+    case config()[:url_resolver] do
+      resolver when is_function(resolver, 1) ->
+        HTTPPolicy.validate_untrusted_host(host, resolver) == :ok
 
-        URI.to_string(%{uri | query: clean})
-
-      _ ->
-        magnet
-    end
-  rescue
-    _ -> magnet
-  end
-
-  defp keep_endpoint?(url) when is_binary(url) do
-    case URI.new(url) do
-      {:ok, %URI{host: host}} when is_binary(host) and host != "" ->
-        case config()[:url_resolver] do
-          resolver when is_function(resolver, 1) ->
-            HTTPPolicy.validate_untrusted_host(host, resolver) == :ok
-
-          nil ->
-            HTTPPolicy.validate_untrusted_host(host) == :ok
-        end
-
-      _ ->
-        true
+      nil ->
+        HTTPPolicy.validate_untrusted_host(host) == :ok
     end
   end
-
-  defp keep_endpoint?(_url), do: true
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
 end

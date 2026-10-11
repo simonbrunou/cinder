@@ -91,10 +91,11 @@ defmodule Cinder.Download.Torrent do
 
   @doc """
   Rewrites the `.torrent`'s endpoint fields (`announce`, `announce-list`, `url-list`,
-  `httpseeds`), keeping only URLs `keep?.(url)` approves; a field left empty is omitted.
-  Every other top-level value — the `info` dict above all — is spliced through
-  byte-verbatim, so the torrent id is unchanged. Returns `{:ok, bytes}` or
-  `{:error, :bad_torrent}`.
+  `httpseeds`), keeping only URLs that parse, carry a valid scheme (http/https/udp for
+  trackers, http/https for web seeds), have no `@`, and whose host `keep?.(host)` approves;
+  a field left empty is omitted. The top-level `nodes` key is dropped. Every other
+  top-level value — the `info` dict above all — is spliced through byte-verbatim, so the
+  torrent id is unchanged. Returns `{:ok, bytes}` or `{:error, :bad_torrent}`.
   """
   @spec sanitize_embedded_urls(binary, (String.t() -> boolean)) ::
           {:ok, binary} | {:error, :bad_torrent}
@@ -123,6 +124,8 @@ defmodule Cinder.Download.Torrent do
 
   # One key/value pair's contribution to the rebuilt dict: url fields re-encode filtered
   # (or vanish), everything else splices through byte-verbatim.
+  defp rebuild_pair(_bin, "nodes", _off, _vstart, _vend, _keep?, acc), do: acc
+
   defp rebuild_pair(bin, key, _off, vstart, _vend, keep?, acc) when key in @url_fields do
     {value, _next} = decode(bin, vstart)
 
@@ -136,16 +139,19 @@ defmodule Cinder.Download.Torrent do
     do: [binary_part(bin, off, vend - off) | acc]
 
   # announce (and url-list's legacy single-string form): one URL, kept or dropped whole.
-  defp filter_url_field(_key, url, keep?) when is_binary(url),
-    do: if(keep?.(url), do: {:keep, url}, else: :drop)
+  defp filter_url_field(key, url, keep?) when is_binary(url),
+    do: if(endpoint_ok?(key, url, keep?), do: {:keep, url}, else: :drop)
 
   # announce-list is a list of tiers (lists of URLs); empty tiers vanish with their URLs.
   defp filter_url_field("announce-list", tiers, keep?) when is_list(tiers) do
     kept =
       tiers
       |> Enum.map(fn
-        tier when is_list(tier) -> Enum.filter(tier, &(is_binary(&1) and keep?.(&1)))
-        _other -> []
+        tier when is_list(tier) ->
+          Enum.filter(tier, &(is_binary(&1) and endpoint_ok?("announce-list", &1, keep?)))
+
+        _other ->
+          []
       end)
       |> Enum.reject(&(&1 == []))
 
@@ -153,13 +159,82 @@ defmodule Cinder.Download.Torrent do
   end
 
   # url-list / httpseeds: flat lists of URLs.
-  defp filter_url_field(_key, urls, keep?) when is_list(urls) do
-    kept = Enum.filter(urls, &(is_binary(&1) and keep?.(&1)))
+  defp filter_url_field(key, urls, keep?) when is_list(urls) do
+    kept = Enum.filter(urls, &(is_binary(&1) and endpoint_ok?(key, &1, keep?)))
     if kept == [], do: :drop, else: {:keep, kept}
   end
 
   # A malformed endpoint field (wrong bencode type) carries nothing vettable — drop it.
   defp filter_url_field(_key, _value, _keep?), do: :drop
+
+  # Fail closed: an embedded URL survives only if Cinder can parse it with the same host a
+  # download client would dial (no userinfo trick, no unparseable authority), uses a scheme
+  # valid for that field, and `keep?.(host)` approves the host.
+  defp endpoint_ok?(field, url, keep?) do
+    case endpoint_host(url, endpoint_schemes(field)) do
+      {:ok, host} -> keep?.(host)
+      :error -> false
+    end
+  end
+
+  # Trackers speak http/https/udp; web seeds / http sources are http(s) only.
+  defp endpoint_schemes(field) when field in ["announce", "announce-list", "tr"],
+    do: ~w(http https udp)
+
+  defp endpoint_schemes(_field), do: ~w(http https)
+
+  defp endpoint_host(url, schemes) do
+    with false <- String.contains?(url, "@"),
+         {:ok, %URI{scheme: scheme, host: host}} <- URI.new(url),
+         true <- is_binary(scheme) and String.downcase(scheme) in schemes,
+         true <- is_binary(host) and host != "" do
+      {:ok, host}
+    else
+      _ -> :error
+    end
+  end
+
+  @doc """
+  Filters a magnet URI's endpoint params. `tr` is kept when `keep?.(host)` approves its
+  tracker host; `ws`/`as`/`xs` likewise (http/https only). Keys are matched
+  case-insensitively by the segment before the first dot, so `TR`, `tr.1`, `tr.` and `tr.x`
+  are all trackers. `x.pe`, `x.pe.*`, `dht` and `dht.*` are dropped outright. Every other
+  param (`xt`, `dn`, ...) is untouched, so the infohash is unchanged. Returns
+  `{:error, :bad_magnet}` when the magnet cannot be parsed.
+  """
+  @spec sanitize_magnet(String.t(), (String.t() -> boolean)) ::
+          {:ok, String.t()} | {:error, :bad_magnet}
+  def sanitize_magnet(magnet, keep?) when is_binary(magnet) do
+    case URI.new(magnet) do
+      {:ok, %URI{query: query} = uri} when is_binary(query) ->
+        clean =
+          query
+          |> URI.query_decoder()
+          |> Enum.filter(fn {key, value} -> keep_magnet_param?(key, value, keep?) end)
+          |> URI.encode_query()
+
+        {:ok, URI.to_string(%{uri | query: clean})}
+
+      _ ->
+        {:error, :bad_magnet}
+    end
+  rescue
+    ArgumentError -> {:error, :bad_magnet}
+  end
+
+  # Clients disagree on suffixes (`tr.1`, `tr.`, `tr.x`), so classify by the segment before
+  # the first dot, lower-cased: `tr.`/`ws.`/`as.`/`xs.` anything is that endpoint kind.
+  defp keep_magnet_param?(key, value, keep?) do
+    key = String.downcase(key)
+
+    case {key, key |> String.split(".", parts: 2) |> hd()} do
+      {"x.pe", _} -> false
+      {"x.pe." <> _, _} -> false
+      {_, "dht"} -> false
+      {_, kind} when kind in ~w(tr ws as xs) -> endpoint_ok?(kind, value, keep?)
+      _other -> true
+    end
+  end
 
   defp encode(value) when is_binary(value),
     do: [Integer.to_string(byte_size(value)), ":", value]

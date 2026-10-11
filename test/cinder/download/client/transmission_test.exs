@@ -66,6 +66,15 @@ defmodule Cinder.Download.Client.TransmissionTest do
              )
   end
 
+  test "add/2 rejects an unparseable magnet instead of forwarding it raw" do
+    stub_rpc(fn _conn, _request ->
+      flunk("an unparseable magnet must never reach Transmission")
+    end)
+
+    bad = "magnet:?xt=urn:btih:#{@hash}&tr=http://192.168.1.10:8123/x?a=>"
+    assert {:error, :unsupported_download_url} = Transmission.add(%{download_url: bad})
+  end
+
   test "add/2 fetches and submits bounded torrent bytes without a network request" do
     infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
     torrent_bytes = "d8:announce11:http://x/an4:info" <> infoval <> "e"

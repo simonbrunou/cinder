@@ -58,36 +58,13 @@ defmodule Cinder.Download.Client.QBittorrent do
   def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
 
   defp add_magnet(magnet, hash, opts) do
-    post_magnet(sanitize_magnet(magnet), hash, opts)
-  end
-
-  # Public releases routinely embed dead (NXDOMAIN) and parked-to-loopback tracker
-  # hostnames; rejecting the whole add on one poisoned endpoint bricks most real-world
-  # magnets/.torrents. Instead every endpoint qBittorrent would dial on Cinder's behalf
-  # is vetted individually and the failures are REMOVED before hand-off — qBittorrent
-  # never sees a forbidden endpoint at all, which is strictly stronger containment than
-  # the old reject-the-add stance (a poisoned endpoint in an otherwise-good release now
-  # yields the release without the poison, not a dead grab).
-  defp sanitize_magnet(magnet) do
-    case URI.new(magnet) do
-      {:ok, %URI{query: query} = uri} when is_binary(query) ->
-        clean =
-          query
-          |> URI.query_decoder()
-          |> Enum.filter(fn
-            {key, url} when key in ~w(tr ws as xs) -> keep_endpoint?(url)
-            _pair -> true
-          end)
-          |> URI.encode_query()
-
-        URI.to_string(%{uri | query: clean})
-
-      _no_query ->
-        magnet
+    case Torrent.sanitize_magnet(magnet, &keep_host?/1) do
+      {:ok, clean} -> post_magnet(clean, hash, opts)
+      {:error, :bad_magnet} -> {:error, :unsupported_download_url}
     end
   end
 
-  defp keep_endpoint?(url), do: validate_embedded_url(url) == :ok
+  defp keep_host?(host), do: validate_embedded_host(host) == :ok
 
   defp post_magnet(magnet, hash, opts) do
     case action(
@@ -109,22 +86,11 @@ defmodule Cinder.Download.Client.QBittorrent do
     end
   end
 
-  # A magnet's URL-bearing params are endpoints qBittorrent dials that Cinder never requests
-  # itself, so they'd otherwise bypass HTTPPolicy entirely: `tr` (trackers), `ws` (web seeds,
-  # BEP 19), and `as`/`xs` (acceptable/exact HTTP sources). `dn`/`xt`/`kt` carry no fetchable URL.
-  # Trackers/web-seeds are frequently non-HTTP (`udp://…`), so this checks the address only
+  # Public releases routinely embed dead (NXDOMAIN) and parked-to-loopback tracker
+  # hostnames, so every endpoint qBittorrent would dial on Cinder's behalf is vetted
+  # individually and failures are REMOVED before hand-off. `Torrent` filters them
+  # fail-closed (parse, scheme, userinfo); this vets the surviving host's address only
   # (`HTTPPolicy.validate_untrusted_host/2`), not the full HTTP-specific URL policy.
-  defp validate_embedded_url(url) when is_binary(url) do
-    case URI.new(url) do
-      {:ok, %URI{host: host}} when is_binary(host) and host != "" -> validate_embedded_host(host)
-      # No parseable host (a malformed entry, or a non-URL string some clients tuck into
-      # url-list) — nothing to check; qBittorrent can't dial an address that isn't there.
-      _ -> :ok
-    end
-  end
-
-  defp validate_embedded_url(_url), do: :ok
-
   defp validate_embedded_host(host) do
     case Keyword.get(config(), :url_resolver) do
       resolver when is_function(resolver, 1) -> HTTPPolicy.validate_untrusted_host(host, resolver)
@@ -157,7 +123,7 @@ defmodule Cinder.Download.Client.QBittorrent do
 
   defp add_torrent_bytes(bytes, opts) do
     with {:ok, hash} <- Torrent.infohash(bytes),
-         {:ok, clean} <- Torrent.sanitize_embedded_urls(bytes, &keep_endpoint?/1) do
+         {:ok, clean} <- Torrent.sanitize_embedded_urls(bytes, &keep_host?/1) do
       upload_and_confirm(clean, hash, opts)
     end
   end

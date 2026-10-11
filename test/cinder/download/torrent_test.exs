@@ -163,5 +163,78 @@ defmodule Cinder.Download.TorrentTest do
       assert {:error, :bad_torrent} =
                Torrent.sanitize_embedded_urls("<html>nope</html>", fn _url -> true end)
     end
+
+    test "fails closed: drops unparseable, hostless, userinfo, and wrong-scheme endpoints" do
+      bytes =
+        torrent_with([
+          {"announce", "http://192.168.1.10:8123/x?a=>"},
+          {"announce-list",
+           [
+             ["http://attacker.tld:80?@192.168.1.10:8080/announce", "ftp://good.example/a"],
+             ["udp://tracker.example:1337/announce", "http:///nohost", "garbage"]
+           ]},
+          {"url-list", ["udp://seed.example/x", "https://seed.example/files/"]},
+          {"nodes", [["192.168.1.10", 6881]]}
+        ])
+
+      {:ok, hash} = Torrent.infohash(bytes)
+
+      assert {:ok, clean} = Torrent.sanitize_embedded_urls(bytes, fn _host -> true end)
+
+      assert Enum.sort(Torrent.embedded_urls(clean)) ==
+               ["https://seed.example/files/", "udp://tracker.example:1337/announce"]
+
+      refute clean =~ "nodes"
+      assert Torrent.infohash(clean) == {:ok, hash}
+    end
+  end
+
+  describe "sanitize_magnet/2" do
+    @xt "xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
+
+    test "normalizes keys, drops x.pe and dht, keeps other params" do
+      magnet =
+        "magnet:?#{@xt}&dn=Movie&TR=#{enc("udp://192.168.1.10:1/a")}&tr.1=#{enc("udp://192.168.1.10:1/b")}" <>
+          "&tr.=#{enc("udp://192.168.1.10:1/c")}&TR.=#{enc("udp://192.168.1.10:1/d")}" <>
+          "&tr.x=#{enc("udp://192.168.1.10:1/e")}&ws.=#{enc("http://192.168.1.10/f")}" <>
+          "&x.pe.1=192.168.1.10:6881&DHT.2=192.168.1.10:6881" <>
+          "&x.pe=192.168.1.10:6881&dht=192.168.1.10:6881&tr=#{enc("udp://good.example:1/a")}"
+
+      assert {:ok, clean} = Torrent.sanitize_magnet(magnet, &(&1 == "good.example"))
+
+      assert URI.decode_query(URI.parse(clean).query) ==
+               %{
+                 "xt" => "urn:btih:0123456789abcdef0123456789abcdef01234567",
+                 "dn" => "Movie",
+                 "tr" => "udp://good.example:1/a"
+               }
+    end
+
+    test "drops unparseable, userinfo, and wrong-scheme endpoints" do
+      magnet =
+        "magnet:?#{@xt}&tr=#{enc("http://192.168.1.10:8123/x?a=>")}" <>
+          "&tr=#{enc("http://attacker.tld:80?@192.168.1.10:8080/announce")}" <>
+          "&ws=#{enc("udp://good.example/x")}&xs=#{enc("ftp://good.example/x")}"
+
+      assert {:ok, clean} = Torrent.sanitize_magnet(magnet, fn _ -> true end)
+
+      assert URI.decode_query(URI.parse(clean).query) == %{
+               "xt" => "urn:btih:0123456789abcdef0123456789abcdef01234567"
+             }
+    end
+
+    test "rejects a magnet it cannot parse" do
+      assert {:error, :bad_magnet} =
+               Torrent.sanitize_magnet(
+                 "magnet:?xt=urn:btih:ab&tr=http://10.0.0.1:80/x?a=>",
+                 fn _ ->
+                   true
+                 end
+               )
+
+      assert {:error, :bad_magnet} = Torrent.sanitize_magnet("magnet:", fn _ -> true end)
+    end
+
+    defp enc(s), do: URI.encode_www_form(s)
   end
 end
