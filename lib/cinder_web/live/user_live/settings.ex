@@ -159,16 +159,28 @@ defmodule CinderWeb.UserLive.Settings do
               variant="neutral"
               class="mt-2"
               data-confirm={
-                gettext(
-                  "Unlink your Plex account? You'll need to link it again to sign in with Plex."
-                )
+                if @current_scope.user.role == :admin do
+                  gettext(
+                    "Unlink your Plex account? Plex watchlist sync will stop until you link it again."
+                  )
+                else
+                  gettext(
+                    "Unlink your Plex account? You'll need to link it again to sign in with Plex."
+                  )
+                end
               }
             >
               {gettext("Unlink")}
             </.button>
           <% else %>
             <p class="mt-2">
-              {gettext("Sign in faster next time by linking your Plex account.")}
+              <%= if @current_scope.user.role == :admin do %>
+                {gettext(
+                  "Link your Plex account to use Plex features such as watchlist sync. Administrators sign in with their password, not with Plex."
+                )}
+              <% else %>
+                {gettext("Sign in faster next time by linking your Plex account.")}
+              <% end %>
             </p>
             <.plex_button href={~p"/auth/plex"} label={gettext("Link Plex account")} class="mt-2" />
           <% end %>

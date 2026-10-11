@@ -104,6 +104,16 @@ All notable changes to Cinder are documented here. The format follows
   video file under a configured movies root (Radarr) or TV root (Sonarr), both at preview and again
   just before the write. A path under another root, outside every root, or escaping with `../` is
   blocked as "outside the configured library root", and only the expanded path is stored.
+- **Admins can no longer sign in with Plex.** The Plex PIN flow does not tie the browser that
+  approves the PIN to the one that redeems it, so an attacker could start a sign-in, relay the
+  plex.tv link to a household member, and receive that member's session once they clicked
+  "approve" (#649). A Plex sign-in that resolves to an admin account is now refused with a message
+  to use the password; no session is created and no Plex token is stored. Regular users sign in
+  with Plex as before, and an admin can still link Plex from Account settings (the watchlist and
+  server access keep working). **Upgrade note:** an admin who only ever signed in with Plex (an
+  account created by a Plex sign-in, or imported, then promoted) has no password they know and is
+  locked out after this change. Set a password for every such admin before upgrading (`/users` →
+  Reset password, or the `bin/cinder rpc` command in `docs/operating.md` if it is the only admin).
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release

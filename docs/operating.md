@@ -82,7 +82,25 @@ terminate at a reverse proxy):
   ownership and that would let anyone with mere watch access log in as whoever happens to share it.
   A Plex Home managed account with no email can't sign in this way. To attach Plex to an existing
   account (e.g. an admin who registered by password), log in normally and link it from Account
-  settings (`/users/settings`).
+  settings (`/users/settings`). **Admins never sign in with Plex:** a plex.tv PIN approval can be
+  relayed (an attacker starts the flow and talks a linked member into approving the link), and the
+  resulting session would be fresh enough to change the password or email. An admin who tries is
+  sent back to the log-in page and told to use their password; a linked admin keeps the Plex
+  features (watchlist sync, server access), and linking from settings stays allowed.
+  **Before upgrading, make sure every admin has a password they know.** An account created by a
+  Plex sign-in holds a random password and an imported one has none, so such an account that was
+  promoted to admin can no longer sign in. Another admin fixes it from `/users`: **Reset
+  password** on that row, enter a password of 12–72 bytes, and **Set password**. If it was the
+  only admin, nobody can do that from the UI and the instance is locked out of administration
+  until you set the password from the release shell (this also signs the account out everywhere):
+
+  ```sh
+  docker compose exec cinder bin/cinder rpc \
+    'u = Cinder.Repo.get_by!(Cinder.Accounts.User, email: "admin@example.com"); IO.inspect(Cinder.Accounts.update_user_password(u, %{password: "a-passphrase-of-12-to-72-bytes"}) |> elem(0))'
+  ```
+
+  It prints `:ok` on success and `:error` if the password is too short or too long. The password
+  lands in your shell history, so change it again from Account settings afterwards.
 - **Plex watchlist sync (opt-in, per user):** a Plex-linked user can switch on "Request titles I
   add to my Plex watchlist" in Account settings (`/users/settings`); it is off by default and only
   that account's owner can turn it on — there is no household-wide switch. A background sweep

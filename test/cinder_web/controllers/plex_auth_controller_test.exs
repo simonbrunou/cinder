@@ -103,6 +103,57 @@ defmodule CinderWeb.PlexAuthControllerTest do
       refute user.plex_watchlist_sync
     end
 
+    # SECURITY: an attacker can relay the plex.tv PIN link to an admin who has linked Plex;
+    # approving it must not hand the attacker an admin session (or a stored token).
+    test "an admin with a linked Plex account is refused: no session, no token, flash", %{
+      conn: conn
+    } do
+      admin = admin_fixture() |> Ecto.Changeset.change(plex_id: 777) |> Repo.update!()
+
+      expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 98 -> {:ok, "admin-plex-token"} end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :account, fn "admin-plex-token" ->
+        {:ok, %{id: 777, email: "admin-plex@example.com", username: "the-admin"}}
+      end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
+      expect(Cinder.Accounts.PlexAuthMock, :server_ids, fn _token -> {:ok, ["machine-1"]} end)
+
+      conn =
+        conn
+        |> init_test_session(%{})
+        |> put_session(:plex_pin_id, 98)
+        |> get(~p"/auth/plex/callback")
+
+      refute get_session(conn, :user_token)
+      assert redirected_to(conn) == ~p"/users/log-in"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Sign in with your password"
+      assert Cinder.Accounts.plex_token(Repo.reload!(admin)) == nil
+    end
+
+    test "a :user with a linked Plex account still signs in", %{conn: conn} do
+      member = user_fixture() |> Ecto.Changeset.change(plex_id: 778) |> Repo.update!()
+
+      expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 97 -> {:ok, "member-plex-token"} end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :account, fn "member-plex-token" ->
+        {:ok, %{id: 778, email: "member@example.com", username: "member"}}
+      end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
+      expect(Cinder.Accounts.PlexAuthMock, :server_ids, fn _token -> {:ok, ["machine-1"]} end)
+
+      conn =
+        conn
+        |> init_test_session(%{})
+        |> put_session(:plex_pin_id, 97)
+        |> get(~p"/auth/plex/callback")
+
+      assert get_session(conn, :user_token)
+      assert redirected_to(conn) == ~p"/"
+      assert Cinder.Accounts.plex_token(Repo.reload!(member)) == "member-plex-token"
+    end
+
     test "with {:error, :pending} shows a flash error and does not log in", %{conn: conn} do
       expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 99 -> {:error, :pending} end)
 
@@ -187,6 +238,32 @@ defmodule CinderWeb.PlexAuthControllerTest do
       assert linked.plex_id == 9001
       assert Cinder.Accounts.plex_token(linked) == "link-token"
       refute linked.plex_watchlist_sync
+    end
+
+    test "an admin can still link Plex from settings (:link is not a sign-in)", %{conn: conn} do
+      admin = admin_fixture()
+
+      expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 96 -> {:ok, "admin-link-token"} end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :account, fn "admin-link-token" ->
+        {:ok, %{id: 9100, email: "admin-link@example.com", username: "the-admin"}}
+      end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
+      expect(Cinder.Accounts.PlexAuthMock, :server_ids, fn _token -> {:ok, ["machine-1"]} end)
+
+      conn =
+        conn
+        |> log_in_user(admin)
+        |> put_session(:plex_pin_id, 96)
+        |> put_session(:plex_intent, :link)
+        |> get(~p"/auth/plex/callback")
+
+      assert redirected_to(conn) == ~p"/users/settings"
+      assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "linked"
+      linked = Repo.reload!(admin)
+      assert linked.plex_id == 9100
+      assert Cinder.Accounts.plex_token(linked) == "admin-link-token"
     end
 
     test "SECURITY: with :link intent but a non-sudo-fresh session, does not link and shows a re-auth error",

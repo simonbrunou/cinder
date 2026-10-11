@@ -997,6 +997,20 @@ defmodule Cinder.AccountsTest do
       assert matched.id == user.id
     end
 
+    # SECURITY: a relayed plex.tv PIN approval would otherwise give the attacker a sudo-fresh
+    # session as the approving Plex user. An admin never signs in through Plex.
+    test "refuses a plex_id that belongs to an admin and writes nothing" do
+      admin =
+        admin_fixture()
+        |> Ecto.Changeset.change(plex_id: 1003, plex_username: "old-name")
+        |> Repo.update!()
+
+      assert {:error, :admin_password_required} =
+               Accounts.login_or_register_plex_user(%{id: 1003, email: nil, username: "new-name"})
+
+      assert Repo.reload!(admin).plex_username == "old-name"
+    end
+
     # A malformed plex.tv response with no integer id must fail closed, not fall through to
     # Repo.get_by(User, plex_id: nil) (= `WHERE plex_id IS NULL`), which would match an
     # arbitrary password-only user or raise MultipleResultsError.

@@ -63,8 +63,10 @@ access to that server (owner or shared user) may sign in; a Plex account Cinder 
 gets a new regular-user account, provided it carries an email address no Cinder user already
 holds. A managed Plex Home account with no email, or one whose email collides with an existing
 user, is refused rather than logged in — Cinder never logs into an existing account by email, only
-by a linked Plex id. To attach Plex to an existing account (e.g. your admin), log in normally and
-link it from Account settings, or import the account from `/users` before its first sign-in.
+by a linked Plex id. An admin account is never signed into through Plex, even when Plex is linked
+(a plex.tv approval can be relayed to someone else): admins use their password. To attach Plex to
+an existing account (e.g. your admin, for the watchlist), log in normally and link it from Account
+settings, or import the account from `/users` before its first sign-in.
 
 Jellyfin works the same way: configure `JELLYFIN_URL` (or the `/settings` field) and a **"Sign in
 with Jellyfin"** username/password form appears on the log-in page, checked against your own

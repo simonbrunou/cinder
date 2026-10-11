@@ -6,7 +6,8 @@ defmodule CinderWeb.PlexAuthController do
 
     * `:login` (no current user) — resolves the linked account via
       `Accounts.login_or_register_plex_user/1` (plex_id match or create; never an email lookup)
-      and logs the resulting user in.
+      and logs the resulting user in. An admin is never logged in this way (a relayed PIN approval
+      would otherwise yield a sudo-fresh admin session); they use their password.
     * `:link` (a current user) — attaches the Plex identity to THAT user's own account via
       `Accounts.link_plex_to_user/2` and never logs anyone in.
 
@@ -94,6 +95,13 @@ defmodule CinderWeb.PlexAuthController do
       Accounts.store_plex_token(user, token)
       CinderWeb.UserAuth.log_in_user(conn, user)
     else
+      {:error, :admin_password_required} ->
+        error_redirect(
+          conn,
+          :login,
+          gettext("Administrators can't sign in with Plex. Sign in with your password instead.")
+        )
+
       {:error, :no_email} ->
         error_redirect(
           conn,

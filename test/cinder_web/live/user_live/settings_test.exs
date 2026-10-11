@@ -393,6 +393,20 @@ defmodule CinderWeb.UserLive.SettingsTest do
       assert html =~ ~s(href="/auth/plex")
     end
 
+    # Plex sign-in is refused for admins, so the page must not promise it to them.
+    test "an admin is not promised Plex sign-in, a user is", %{conn: conn} do
+      {:ok, _lv, admin_html} =
+        conn |> log_in_user(admin_fixture()) |> live(~p"/users/settings")
+
+      assert admin_html =~ "Administrators sign in with their password"
+      refute admin_html =~ "Sign in faster next time by linking your Plex account"
+
+      {:ok, _lv, user_html} =
+        build_conn() |> log_in_user(user_fixture()) |> live(~p"/users/settings")
+
+      assert user_html =~ "Sign in faster next time by linking your Plex account"
+    end
+
     test "a linked user sees the linked state and can unlink", %{conn: conn} do
       user = user_fixture()
 

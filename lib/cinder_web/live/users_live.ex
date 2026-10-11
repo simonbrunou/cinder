@@ -473,7 +473,7 @@ defmodule CinderWeb.UsersLive do
           <h2 class="font-semibold">{gettext("Import from media server")}</h2>
           <p class="text-sm text-base-content/60">
             {gettext(
-              "Imported accounts have no password: they sign in through the media server, or you set one here."
+              "Imported accounts have no password: they sign in through the media server, or you set one here. An account you promote to admin can only sign in with a password."
             )}
           </p>
           <p :if={@import_users == []} class="text-sm text-base-content/60">

@@ -118,11 +118,18 @@ defmodule Cinder.Accounts do
   account, see `link_plex_to_user/2` (the authenticated `/users/settings` flow, run by the
   account's own logged-in owner).
 
+  An admin never signs in this way: a plex.tv PIN approval can be relayed (an attacker starts the
+  flow and gets the linked member to click "approve" on the link), and the resulting session is
+  sudo-fresh, so the role is read from the persisted row and an admin match is refused with
+  `{:error, :admin_password_required}` before anything is written. Linking Plex to an admin
+  account (`link_plex_to_user/2`) is unaffected.
+
   A managed Plex Home account with no email can't be matched or created, so it's rejected with
   `{:error, :no_email}`.
   """
   def login_or_register_plex_user(%{id: plex_id} = account) when is_integer(plex_id) do
     case Repo.get_by(User, plex_id: plex_id) do
+      %User{role: :admin} -> {:error, :admin_password_required}
       %User{} = user -> refresh_plex_username(user, account)
       nil -> create_plex_user(account)
     end
@@ -530,7 +537,9 @@ defmodule Cinder.Accounts do
   Imported accounts carry **no password**: they can only be entered through the media-server
   sign-in path (the imported `plex_id` / `jellyfin_user_id` is what makes "Sign in with Plex" /
   "Sign in with Jellyfin" resolve to this account rather than create a second one) or after an
-  admin sets a password on `/users`. They land `active: true` — selecting someone for import IS
+  admin sets a password on `/users`. That holds only while the account is a `:user`: Plex sign-in
+  refuses an admin (see `login_or_register_plex_user/1`), so an imported account promoted to admin
+  must be given a password first. They land `active: true` — selecting someone for import IS
   the admin approval, and routing them back through the pending queue would defeat the point of
   a bulk import.
   """
