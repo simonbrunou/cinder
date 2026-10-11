@@ -51,7 +51,7 @@ defmodule Cinder.Notifier.DiscordTest do
     assert_receive {:posted, %{"embeds" => [embed]}}
     assert embed["title"] == "Movie failed"
     assert embed["description"] =~ "Dune (2021)"
-    assert embed["description"] =~ ":no_match"
+    assert embed["description"] =~ ~S(:no\_match)
     assert embed["color"] == 0xE74C3C
   end
 
@@ -78,8 +78,31 @@ defmodule Cinder.Notifier.DiscordTest do
     assert_receive {:posted, %{"embeds" => [embed]}}
     assert embed["title"] == "⏸️ Book target held"
     assert embed["description"] =~ "The Dispossessed"
-    assert embed["description"] =~ "download_failed"
+    assert embed["description"] =~ ~S(download\_failed)
     assert embed["color"] == 0xF39C12
+  end
+
+  test "externally sourced titles and hold reasons cannot render masked links or autolinks" do
+    expect_post()
+
+    request = %{request_with("kim") | title: "X [click](https://evil.example)"}
+
+    assert :ok = Discord.notify({:request_created, request})
+    assert_receive {:posted, %{"embeds" => [embed]}}
+    assert embed["description"] =~ ~S"X \[click\]\(https:"
+    refute embed["description"] =~ "https://"
+
+    target = %{
+      work: %{title: "Book"},
+      media_kind: :ebook,
+      hold_reason: "see [here](https://evil.example) <https://evil.example>"
+    }
+
+    assert :ok = Discord.notify({:book_target_held, target})
+    assert_receive {:posted, %{"embeds" => [embed]}}
+    assert embed["description"] =~ ~S"see \[here\]\(https:"
+    refute embed["description"] =~ "https://"
+    assert embed["description"] =~ ~S(\<https:)
   end
 
   test "maintenance_completed posts a green embed with the operation name" do
@@ -107,7 +130,7 @@ defmodule Cinder.Notifier.DiscordTest do
     assert :ok = Discord.notify({:maintenance_completed, :unknown_action})
 
     assert_receive {:posted, %{"embeds" => [embed]}}
-    assert embed["description"] == ":unknown_action"
+    assert embed["description"] == ~S(:unknown\_action)
   end
 
   test "request_approved posts a green embed naming the requester (no email)" do

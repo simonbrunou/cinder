@@ -140,7 +140,7 @@ defmodule Cinder.Notifier.Discord do
       title: "⏸️ Book target held",
       description:
         "#{book_title(target)} (#{LibraryKind.format_label(target.media_kind)}) — " <>
-          target.hold_reason,
+          escape(target.hold_reason),
       color: @orange
     }
 
@@ -152,14 +152,14 @@ defmodule Cinder.Notifier.Discord do
       with_poster(
         %{
           title: "📺 Season now available",
-          description: "#{season.title} — Season #{season.season_number}",
+          description: "#{escape(season.title)} — Season #{season.season_number}",
           color: @green
         },
         season.poster_path
       )
 
   defp embed({:grab_failed, grab, reason}),
-    do: %{title: "TV grab ##{grab.id} failed", description: inspect(reason), color: @red}
+    do: %{title: "TV grab ##{grab.id} failed", description: detail(reason), color: @red}
 
   # A newly created operator-action hold: something is queued waiting for an admin to act (@blue,
   # neither success nor failure). No requester PII — a grab is operator-facing, identified by id.
@@ -189,7 +189,7 @@ defmodule Cinder.Notifier.Discord do
   defp embed({:maintenance_failed, key, reason}),
     do: %{
       title: "Maintenance failed",
-      description: "#{maintenance_name(key)} — #{inspect(reason)}",
+      description: "#{maintenance_name(key)} — #{detail(reason)}",
       color: @red
     }
 
@@ -200,26 +200,28 @@ defmodule Cinder.Notifier.Discord do
 
   # --- helpers ---
 
-  defp maintenance_name(key), do: Map.get(@maintenance_names, key, inspect(key))
+  defp maintenance_name(key), do: Map.get(@maintenance_names, key, detail(key))
 
   defp hold_summary(:needs_mapping), do: "needs episode mapping"
   defp hold_summary(:verification_blocked), do: "failed release verification"
   defp hold_summary(:residual_files), do: "has files awaiting a fold/part decision"
-  defp hold_summary(other), do: "needs attention (#{inspect(other)})"
+  defp hold_summary(other), do: "needs attention (#{detail(other)})"
 
   defp failure_embed(title, movie, reason) do
     with_poster(
-      %{title: title, description: "#{title_year(movie)} — #{inspect(reason)}", color: @red},
+      %{title: title, description: "#{title_year(movie)} — #{detail(reason)}", color: @red},
       movie.poster_path
     )
   end
 
-  defp title_year(%{title: title, year: year}) when not is_nil(year), do: "#{title} (#{year})"
-  defp title_year(%{title: title}), do: title
+  defp title_year(%{title: title, year: year}) when not is_nil(year),
+    do: "#{escape(title)} (#{year})"
+
+  defp title_year(%{title: title}), do: escape(title)
 
   # Defensive: the poller reloads the target before notifying, but a work deleted in that window
   # must not raise inside a notification transport.
-  defp book_title(%{work: %{title: title}}) when is_binary(title), do: title
+  defp book_title(%{work: %{title: title}}) when is_binary(title), do: escape(title)
   defp book_title(%{id: id}), do: "book target ##{id}"
 
   # A season request's own :title column holds only the series name, so rendering it bare would
@@ -238,9 +240,9 @@ defmodule Cinder.Notifier.Discord do
   # `detail` — user free-text stays off the admin channel).
   defp issue_line(%{target_type: "season", season_number: n, title: t, category: c})
        when not is_nil(n),
-       do: "#{t} — Season #{n} · #{issue_category(c)}"
+       do: "#{escape(t)} — Season #{n} · #{issue_category(c)}"
 
-  defp issue_line(%{title: t, category: c}), do: "#{t} · #{issue_category(c)}"
+  defp issue_line(%{title: t, category: c}), do: "#{escape(t)} · #{issue_category(c)}"
 
   # Plain English, matching the other embed labels (the household channel is single-locale).
   defp issue_category(:wrong_content), do: "Wrong content"
@@ -255,7 +257,7 @@ defmodule Cinder.Notifier.Discord do
 
     case Util.blank_to_nil(reason) do
       nil -> base
-      reason -> "#{base} (#{reason})"
+      reason -> "#{base} (#{escape(reason)})"
     end
   end
 
@@ -289,7 +291,9 @@ defmodule Cinder.Notifier.Discord do
   # particular means no URL scheme can survive, so no renderer can be talked into making a link
   # regardless of which syntax it supports. An ordinary username is unaffected.
   #
-  # Titles are not sanitized — those come from TMDB, not from a user.
+  # Titles, hold reasons and error details are NOT run through this whitelist (it would mangle
+  # them) but through escape/1 below: they are externally sourced too (TMDB/provider/indexer
+  # text), so they get the same markdown treatment in a form that keeps them readable.
   defp sanitize(text) do
     text
     |> String.replace(~r/[^A-Za-z0-9._%+'@-]/, "")
@@ -302,6 +306,19 @@ defmodule Cinder.Notifier.Discord do
     # lands mid-word but renders identically.
     |> String.replace(~r/@(everyone|here)/i, "@​\\1")
   end
+
+  # Backslash-escapes every Discord markdown metacharacter so externally sourced text renders as
+  # literal text (no masked links, autolinks, headings, quotes, spoilers, mentions). A bare URL
+  # would still be auto-linked by Discord, so "://" is broken with a zero-width space.
+  defp escape(text) do
+    text
+    |> to_string()
+    |> String.replace(~r/[\\*_~`|>\[\]()<#]/, "\\\\\\0")
+    |> String.replace("://", ":\u200B//")
+    |> String.replace(~r/@(everyone|here)/i, "@\u200B\\1")
+  end
+
+  defp detail(term), do: term |> inspect() |> escape()
 
   # A blank poster_path (nil or "") yields no thumbnail: an empty string would otherwise build a
   # bare base URL with no image path and render as a broken thumbnail in Discord.
@@ -316,7 +333,7 @@ defmodule Cinder.Notifier.Discord do
         Episode.code(ep.season.season_number, ep.episode_number)
       end)
 
-    {"#{series.title} — #{codes}", series.poster_path}
+    {"#{escape(series.title)} — #{codes}", series.poster_path}
   end
 
   defp episodes_summary(episodes), do: {"#{length(episodes)} episode(s)", nil}

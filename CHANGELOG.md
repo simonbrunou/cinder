@@ -42,6 +42,10 @@ All notable changes to Cinder are documented here. The format follows
   Every limiter bucket keyed on the raw client address, so an attacker holding a /64 (a routine
   VPS allocation) got a fresh budget per request. Limiter keys now group IPv6 by /64 and treat
   IPv4-mapped IPv6 as the IPv4 address; IPv4 keys are unchanged.
+- **Discord notification text is markdown-escaped (#651).** Request titles, book titles, hold
+  reasons and error details are externally sourced, and Discord renders embed text as markdown, so
+  a title like `[click](https://evil.example)` could plant a masked link in the admin channel. All
+  such text is now backslash-escaped, and `://` is broken so bare URLs no longer auto-link.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release
