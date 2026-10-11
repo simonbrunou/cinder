@@ -2,9 +2,11 @@ defmodule CinderWeb.UserLive.SettingsTest do
   use CinderWeb.ConnCase
 
   alias Cinder.Accounts
+  alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Accounts.Scope
   alias CinderWeb.UserLive.Settings
   import Phoenix.LiveViewTest
+  import Swoosh.TestAssertions
   import Cinder.AccountsFixtures
 
   # The mount-time :require_sudo_mode gate and the per-event rechecks below share the same
@@ -121,8 +123,76 @@ defmodule CinderWeb.UserLive.SettingsTest do
         })
         |> render_submit()
 
-      assert result =~ "A link to confirm your email"
+      assert result =~ "If that address is available, a link to confirm your email"
       assert Cinder.Repo.get_by(Cinder.Accounts.User, email: user.email)
+    end
+
+    test "a taken address gets the same response as a free one and no email", %{
+      conn: conn,
+      user: user
+    } do
+      other = user_fixture()
+      {:ok, lv, _html} = live(conn, ~p"/users/settings")
+
+      free =
+        lv
+        |> form("#email_form", %{"user" => %{"email" => unique_user_email()}})
+        |> render_submit()
+
+      assert_email_sent()
+
+      taken = lv |> form("#email_form", %{"user" => %{"email" => other.email}}) |> render_submit()
+
+      refute taken =~ "has already been taken"
+      assert taken =~ "If that address is available"
+      assert free =~ "If that address is available"
+      refute_email_sent()
+      assert Cinder.Repo.get_by(Cinder.Accounts.User, email: user.email)
+    end
+
+    test "a case-only change of one's own address still sends the confirmation", %{
+      conn: conn,
+      user: user
+    } do
+      {:ok, lv, _html} = live(conn, ~p"/users/settings")
+
+      lv
+      |> form("#email_form", %{"user" => %{"email" => String.upcase(user.email)}})
+      |> render_submit()
+
+      assert_email_sent()
+    end
+
+    test "email change requests are limited per user", %{conn: conn} do
+      previous = Application.get_env(:cinder, :ip_rate_limiting)
+      Application.put_env(:cinder, :ip_rate_limiting, true)
+      IpRateLimiter.reset()
+
+      on_exit(fn ->
+        IpRateLimiter.reset()
+
+        if is_nil(previous),
+          do: Application.delete_env(:cinder, :ip_rate_limiting),
+          else: Application.put_env(:cinder, :ip_rate_limiting, previous)
+      end)
+
+      {:ok, lv, _html} = live(conn, ~p"/users/settings")
+
+      for _ <- 1..5 do
+        lv
+        |> form("#email_form", %{"user" => %{"email" => unique_user_email()}})
+        |> render_submit()
+
+        assert_email_sent()
+      end
+
+      result =
+        lv
+        |> form("#email_form", %{"user" => %{"email" => unique_user_email()}})
+        |> render_submit()
+
+      assert result =~ "Too many email change requests"
+      refute_email_sent()
     end
 
     test "renders errors with invalid data (phx-change)", %{conn: conn} do

@@ -982,6 +982,13 @@ defmodule Cinder.Accounts do
   end
 
   @doc """
+  Whether an account other than `user_id` already holds `email` (the column is
+  case-insensitive, so the requester's own row is excluded: a case-only change is allowed).
+  """
+  def email_registered?(email, user_id) when is_binary(email),
+    do: Repo.exists?(from(u in User, where: u.email == ^email and u.id != ^user_id))
+
+  @doc """
   Updates the user email using the given token.
 
   If the token matches, the user email is updated and the token is deleted.

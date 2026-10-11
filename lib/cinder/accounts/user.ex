@@ -38,6 +38,9 @@ defmodule Cinder.Accounts.User do
     * `:validate_unique` - Set to false if you don't want to validate the
       uniqueness of the email, useful when displaying live validations.
       Defaults to `true`.
+    * `:validate_changed` - Whether to reject an email equal to the current one. Defaults to
+      the value of `:validate_unique`; the settings form sets it explicitly so it can skip the
+      uniqueness check (which would reveal registered addresses) and still reject a no-op.
   """
   def email_changeset(user, attrs, opts \\ []) do
     user
@@ -69,13 +72,14 @@ defmodule Cinder.Accounts.User do
 
     changeset = unique_constraint(changeset, :email)
 
-    if Keyword.get(opts, :validate_unique, true) do
-      changeset
-      |> unsafe_validate_unique(:email, Cinder.Repo)
-      |> validate_email_changed()
-    else
-      changeset
-    end
+    unique? = Keyword.get(opts, :validate_unique, true)
+
+    changeset =
+      if unique?, do: unsafe_validate_unique(changeset, :email, Cinder.Repo), else: changeset
+
+    if Keyword.get(opts, :validate_changed, unique?),
+      do: validate_email_changed(changeset),
+      else: changeset
   end
 
   defp validate_email_changed(changeset) do

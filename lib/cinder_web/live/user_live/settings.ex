@@ -4,6 +4,7 @@ defmodule CinderWeb.UserLive.Settings do
   on_mount {CinderWeb.UserAuth, :require_sudo_mode}
 
   alias Cinder.Accounts
+  alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Accounts.JellyfinAuth
   alias Cinder.Accounts.PlexAuth
   alias CinderWeb.UserAuth
@@ -363,16 +364,12 @@ defmodule CinderWeb.UserLive.Settings do
       %{"user" => user_params} = params
       user = socket.assigns.current_scope.user
 
-      case Accounts.change_user_email(user, user_params) do
+      case Accounts.change_user_email(user, user_params,
+             validate_unique: false,
+             validate_changed: true
+           ) do
         %{valid?: true} = changeset ->
-          Accounts.deliver_user_update_email_instructions(
-            Ecto.Changeset.apply_action!(changeset, :insert),
-            user.email,
-            &url(~p"/users/settings/confirm-email/#{&1}")
-          )
-
-          info = gettext("A link to confirm your email change has been sent to the new address.")
-          {:noreply, socket |> put_flash(:info, info)}
+          request_email_change(socket, user, changeset)
 
         changeset ->
           {:noreply, assign(socket, :email_form, to_form(changeset, action: :insert))}
@@ -486,6 +483,33 @@ defmodule CinderWeb.UserLive.Settings do
 
   # Client event frames are forgeable — ignore anything unrecognized rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # No uniqueness error at request time (it would enumerate registered addresses to any pending
+  # account): a taken address gets the same flash as a free one but no mail — the confirm step
+  # (Accounts.update_user_email/2) still rejects it. A per-user cap bounds the mail relay.
+  defp request_email_change(socket, user, changeset) do
+    new_email = Ecto.Changeset.get_field(changeset, :email)
+
+    if IpRateLimiter.check_and_register(:user_email, user.id) == :blocked do
+      {:noreply,
+       put_flash(socket, :error, gettext("Too many email change requests. Try again later."))}
+    else
+      unless Accounts.email_registered?(new_email, user.id) do
+        Accounts.deliver_user_update_email_instructions(
+          Ecto.Changeset.apply_action!(changeset, :insert),
+          user.email,
+          &url(~p"/users/settings/confirm-email/#{&1}")
+        )
+      end
+
+      info =
+        gettext(
+          "If that address is available, a link to confirm your email change has been sent to it."
+        )
+
+      {:noreply, put_flash(socket, :info, info)}
+    end
+  end
 
   # Per-event sudo recheck for the sensitive settings actions (email/password change, Plex
   # unlink). The mount-time :require_sudo_mode gate only covers the moment the socket connects;

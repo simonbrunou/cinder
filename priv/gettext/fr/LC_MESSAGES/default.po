@@ -48,13 +48,6 @@ msgstr "%{title} est déjà demandé."
 msgid "1080p, 720p"
 msgstr "1080p, 720p"
 
-#: lib/cinder_web/live/user_live/settings.ex:374
-#, elixir-autogen
-msgid "A link to confirm your email change has been sent to the new address."
-msgstr ""
-"Un lien de confirmation du changement d'adresse e-mail a été envoyé à la "
-"nouvelle adresse."
-
 #: lib/cinder_web/components/layouts.ex:183
 #: lib/cinder_web/user_auth.ex:431
 #, elixir-autogen
@@ -279,7 +272,7 @@ msgstr "Confirmer"
 msgid "Confirm deny"
 msgstr "Confirmer le refus"
 
-#: lib/cinder_web/live/user_live/settings.ex:86
+#: lib/cinder_web/live/user_live/settings.ex:87
 #: lib/cinder_web/live/users_live.ex:697
 #, elixir-autogen
 msgid "Confirm new password"
@@ -541,18 +534,18 @@ msgstr "Modifier l'e-mail"
 
 #: lib/cinder_web/live/user_live/login.ex:42
 #: lib/cinder_web/live/user_live/registration.ex:77
-#: lib/cinder_web/live/user_live/settings.ex:49
+#: lib/cinder_web/live/user_live/settings.ex:50
 #: lib/cinder_web/live/users_live.ex:533
 #, elixir-autogen
 msgid "Email"
 msgstr "E-mail"
 
-#: lib/cinder_web/live/user_live/settings.ex:292
+#: lib/cinder_web/live/user_live/settings.ex:293
 #, elixir-autogen
 msgid "Email change link is invalid or it has expired."
 msgstr "Le lien de changement d'e-mail est invalide ou a expiré."
 
-#: lib/cinder_web/live/user_live/settings.ex:289
+#: lib/cinder_web/live/user_live/settings.ex:290
 #, elixir-autogen
 msgid "Email changed successfully."
 msgstr "E-mail changé avec succès."
@@ -610,7 +603,7 @@ msgstr "E-mail ou mot de passe invalide"
 #: lib/cinder_web/components/layouts.ex:345
 #: lib/cinder_web/live/book_detail_live.ex:628
 #: lib/cinder_web/live/movie_detail_live.ex:559
-#: lib/cinder_web/live/user_live/settings.ex:31
+#: lib/cinder_web/live/user_live/settings.ex:32
 #, elixir-autogen
 msgid "Language"
 msgstr "Langue"
@@ -661,7 +654,7 @@ msgstr "Se déconnecter"
 msgid "Logged out successfully."
 msgstr "Déconnexion réussie."
 
-#: lib/cinder_web/live/user_live/settings.ex:18
+#: lib/cinder_web/live/user_live/settings.ex:19
 #, elixir-autogen
 msgid "Manage your account email address and password settings"
 msgstr "Gérez l'adresse e-mail et le mot de passe de votre compte"
@@ -753,7 +746,7 @@ msgstr "Films disponibles"
 msgid "My requests"
 msgstr "Mes demandes"
 
-#: lib/cinder_web/live/user_live/settings.ex:78
+#: lib/cinder_web/live/user_live/settings.ex:79
 #: lib/cinder_web/live/users_live.ex:688
 #: lib/cinder_web/live/users_live.ex:689
 #, elixir-autogen
@@ -1048,8 +1041,8 @@ msgstr "Enregistrer les paramètres"
 #: lib/cinder_web/live/series_detail_components.ex:353
 #: lib/cinder_web/live/series_detail_components.ex:389
 #: lib/cinder_web/live/settings_live.ex:192
-#: lib/cinder_web/live/user_live/settings.ex:38
-#: lib/cinder_web/live/user_live/settings.ex:90
+#: lib/cinder_web/live/user_live/settings.ex:39
+#: lib/cinder_web/live/user_live/settings.ex:91
 #: lib/cinder_web/live/users_live.ex:613
 #: lib/cinder_web/live/users_live.ex:634
 #, elixir-autogen
@@ -1351,7 +1344,7 @@ msgstr "Vous devez vous connecter pour accéder à cette page."
 
 #: lib/cinder_web/controllers/user_session_controller.ex:85
 #: lib/cinder_web/controllers/user_session_controller.ex:203
-#: lib/cinder_web/live/user_live/settings.ex:501
+#: lib/cinder_web/live/user_live/settings.ex:525
 #: lib/cinder_web/user_auth.ex:289
 #, elixir-autogen
 msgid "You must re-authenticate to access this page."
@@ -1410,7 +1403,7 @@ msgid "Any language"
 msgstr "Toutes les langues"
 
 #: lib/cinder_web/components/core_components.ex:1164
-#: lib/cinder_web/live/user_live/settings.ex:35
+#: lib/cinder_web/live/user_live/settings.ex:36
 #, elixir-autogen
 msgid "French"
 msgstr "Français"
@@ -1465,7 +1458,7 @@ msgstr "%{title} : Saison %{number}"
 msgid "A download client (torrent or usenet)"
 msgstr "Un client de téléchargement (torrent ou usenet)"
 
-#: lib/cinder_web/live/user_live/settings.ex:17
+#: lib/cinder_web/live/user_live/settings.ex:18
 #, elixir-autogen
 msgid "Account settings"
 msgstr "Paramètres du compte"
@@ -1503,7 +1496,7 @@ msgstr "Échec de l'authentification"
 msgid "Bulk approve failed. Please try again."
 msgstr "Échec de l'approbation groupée. Veuillez réessayer."
 
-#: lib/cinder_web/live/user_live/settings.ex:54
+#: lib/cinder_web/live/user_live/settings.ex:55
 #, elixir-autogen
 msgid "Change email"
 msgstr "Changer l'e-mail"
@@ -1513,7 +1506,7 @@ msgstr "Changer l'e-mail"
 msgid "Change role for %{email}, currently %{role}"
 msgstr "Changer le rôle de %{email}, actuellement %{role}"
 
-#: lib/cinder_web/live/user_live/settings.ex:54
+#: lib/cinder_web/live/user_live/settings.ex:55
 #, elixir-autogen
 msgid "Changing…"
 msgstr "Changement…"
@@ -1804,7 +1797,7 @@ msgstr "Clé API SABnzbd"
 msgid "SABnzbd URL"
 msgstr "URL SABnzbd"
 
-#: lib/cinder_web/live/user_live/settings.ex:91
+#: lib/cinder_web/live/user_live/settings.ex:92
 #, elixir-autogen
 msgid "Save password"
 msgstr "Enregistrer le mot de passe"
@@ -2988,41 +2981,41 @@ msgstr "ou"
 msgid "Could not link your Plex account. Please try again."
 msgstr "Impossible de lier votre compte Plex. Veuillez réessayer."
 
-#: lib/cinder_web/live/user_live/settings.ex:172
+#: lib/cinder_web/live/user_live/settings.ex:173
 #, elixir-autogen
 msgid "Link Plex account"
 msgstr "Lier un compte Plex"
 
-#: lib/cinder_web/live/user_live/settings.ex:124
-#: lib/cinder_web/live/user_live/settings.ex:186
+#: lib/cinder_web/live/user_live/settings.ex:125
+#: lib/cinder_web/live/user_live/settings.ex:187
 #, elixir-autogen
 msgid "Linked as %{username}."
 msgstr "Lié en tant que %{username}."
 
-#: lib/cinder_web/live/user_live/settings.ex:126
-#: lib/cinder_web/live/user_live/settings.ex:188
+#: lib/cinder_web/live/user_live/settings.ex:127
+#: lib/cinder_web/live/user_live/settings.ex:189
 #, elixir-autogen
 msgid "Linked."
 msgstr "Lié."
 
-#: lib/cinder_web/live/user_live/settings.ex:119
+#: lib/cinder_web/live/user_live/settings.ex:120
 #, elixir-autogen
 msgid "Plex account"
 msgstr "Compte Plex"
 
-#: lib/cinder_web/live/user_live/settings.ex:170
+#: lib/cinder_web/live/user_live/settings.ex:171
 #, elixir-autogen
 msgid "Sign in faster next time by linking your Plex account."
 msgstr ""
 "Connectez-vous plus rapidement la prochaine fois en liant votre compte Plex."
 
-#: lib/cinder_web/live/user_live/settings.ex:166
-#: lib/cinder_web/live/user_live/settings.ex:201
+#: lib/cinder_web/live/user_live/settings.ex:167
+#: lib/cinder_web/live/user_live/settings.ex:202
 #, elixir-autogen
 msgid "Unlink"
 msgstr "Délier"
 
-#: lib/cinder_web/live/user_live/settings.ex:454
+#: lib/cinder_web/live/user_live/settings.ex:451
 #, elixir-autogen
 msgid "Your Plex account has been unlinked."
 msgstr "Votre compte Plex a été délié."
@@ -3037,7 +3030,7 @@ msgstr "Votre compte Plex est maintenant lié."
 msgid "Please re-enter your password before linking your Plex account."
 msgstr "Veuillez ressaisir votre mot de passe avant de lier votre compte Plex."
 
-#: lib/cinder_web/live/user_live/settings.ex:461
+#: lib/cinder_web/live/user_live/settings.ex:458
 #, elixir-autogen
 msgid "Could not unlink your Plex account. Please try again."
 msgstr "Impossible de dissocier votre compte Plex. Veuillez réessayer."
@@ -3676,22 +3669,22 @@ msgstr ""
 msgid "Default request quota"
 msgstr "Quota de demandes par défaut"
 
-#: lib/cinder_web/live/user_live/settings.ex:34
+#: lib/cinder_web/live/user_live/settings.ex:35
 #, elixir-autogen
 msgid "English"
 msgstr "Anglais"
 
-#: lib/cinder_web/live/user_live/settings.ex:341
+#: lib/cinder_web/live/user_live/settings.ex:342
 #, elixir-autogen
 msgid "Language updated."
 msgstr "Langue mise à jour."
 
-#: lib/cinder_web/live/user_live/settings.ex:39
+#: lib/cinder_web/live/user_live/settings.ex:40
 #, elixir-autogen
 msgid "Save language"
 msgstr "Enregistrer la langue"
 
-#: lib/cinder_web/live/user_live/settings.ex:32
+#: lib/cinder_web/live/user_live/settings.ex:33
 #, elixir-autogen
 msgid "Use session or browser language"
 msgstr "Utiliser la langue de la session ou du navigateur"
@@ -3930,12 +3923,12 @@ msgstr "%{title} Saison %{season}"
 msgid "%{title} is ready to watch"
 msgstr "%{title} est disponible"
 
-#: lib/cinder_web/live/user_live/settings.ex:425
+#: lib/cinder_web/live/user_live/settings.ex:422
 #, elixir-autogen
 msgid "Could not update your notification preference."
 msgstr "Impossible de mettre à jour votre préférence de notification."
 
-#: lib/cinder_web/live/user_live/settings.ex:109
+#: lib/cinder_web/live/user_live/settings.ex:110
 #, elixir-autogen
 msgid "Email me when a request is approved or ready to watch"
 msgstr "M'envoyer un e-mail quand une demande est approuvée ou disponible"
@@ -4239,41 +4232,41 @@ msgstr ""
 "Plusieurs fichiers revendiquent cet épisode ; résolvez d'abord les doublons "
 "sur le disque."
 
-#: lib/cinder_web/live/user_live/settings.ex:266
+#: lib/cinder_web/live/user_live/settings.ex:267
 #, elixir-autogen
 msgid "Confirm your current password"
 msgstr "Confirmez votre mot de passe actuel"
 
-#: lib/cinder_web/live/user_live/settings.ex:252
+#: lib/cinder_web/live/user_live/settings.ex:253
 #, elixir-autogen
 msgid "Danger zone"
 msgstr "Zone de danger"
 
-#: lib/cinder_web/live/user_live/settings.ex:275
+#: lib/cinder_web/live/user_live/settings.ex:276
 #, elixir-autogen
 msgid "Delete my account"
 msgstr "Supprimer mon compte"
 
-#: lib/cinder_web/live/user_live/settings.ex:242
+#: lib/cinder_web/live/user_live/settings.ex:243
 #, elixir-autogen
 msgid "Download a copy of your account and request history as a JSON file."
 msgstr ""
 "Téléchargez une copie de votre compte et de votre historique de demandes au "
 "format JSON."
 
-#: lib/cinder_web/live/user_live/settings.ex:245
+#: lib/cinder_web/live/user_live/settings.ex:246
 #, elixir-autogen
 msgid "Download my data"
 msgstr "Télécharger mes données"
 
-#: lib/cinder_web/live/user_live/settings.ex:254
+#: lib/cinder_web/live/user_live/settings.ex:255
 #, elixir-autogen
 msgid "Permanently delete your account and all of your requests. This cannot be undone."
 msgstr ""
 "Supprimez définitivement votre compte et toutes vos demandes. Cette action "
 "est irréversible."
 
-#: lib/cinder_web/live/user_live/settings.ex:273
+#: lib/cinder_web/live/user_live/settings.ex:274
 #, elixir-autogen
 msgid "Permanently delete your account? This cannot be undone."
 msgstr "Supprimer définitivement votre compte ? Cette action est irréversible."
@@ -4297,7 +4290,7 @@ msgstr ""
 msgid "Your account has been permanently deleted."
 msgstr "Votre compte a été définitivement supprimé."
 
-#: lib/cinder_web/live/user_live/settings.ex:240
+#: lib/cinder_web/live/user_live/settings.ex:241
 #, elixir-autogen
 msgid "Your data"
 msgstr "Vos données"
@@ -5433,18 +5426,18 @@ msgstr "Le serveur multimédia n'a signalé aucun utilisateur."
 msgid "Could not link your Jellyfin account. Please try again."
 msgstr "Impossible de lier votre compte Jellyfin. Veuillez réessayer."
 
-#: lib/cinder_web/live/user_live/settings.ex:481
+#: lib/cinder_web/live/user_live/settings.ex:478
 #, elixir-autogen
 msgid "Could not unlink your Jellyfin account. Please try again."
 msgstr "Impossible de dissocier votre compte Jellyfin. Veuillez réessayer."
 
-#: lib/cinder_web/live/user_live/settings.ex:181
+#: lib/cinder_web/live/user_live/settings.ex:182
 #, elixir-autogen
 msgid "Jellyfin account"
 msgstr "Compte Jellyfin"
 
 #: lib/cinder_web/live/user_live/login.ex:100
-#: lib/cinder_web/live/user_live/settings.ex:226
+#: lib/cinder_web/live/user_live/settings.ex:227
 #, elixir-autogen
 msgid "Jellyfin password"
 msgstr "Mot de passe Jellyfin"
@@ -5464,12 +5457,12 @@ msgid "Jellyfin sign-in is not configured."
 msgstr "La connexion Jellyfin n'est pas configurée."
 
 #: lib/cinder_web/live/user_live/login.ex:92
-#: lib/cinder_web/live/user_live/settings.ex:218
+#: lib/cinder_web/live/user_live/settings.ex:219
 #, elixir-autogen
 msgid "Jellyfin username"
 msgstr "Nom d'utilisateur Jellyfin"
 
-#: lib/cinder_web/live/user_live/settings.ex:231
+#: lib/cinder_web/live/user_live/settings.ex:232
 #, elixir-autogen
 msgid "Link Jellyfin account"
 msgstr "Lier un compte Jellyfin"
@@ -5480,7 +5473,7 @@ msgid "Please re-enter your password before linking your Jellyfin account."
 msgstr ""
 "Veuillez ressaisir votre mot de passe avant de lier votre compte Jellyfin."
 
-#: lib/cinder_web/live/user_live/settings.ex:205
+#: lib/cinder_web/live/user_live/settings.ex:206
 #, elixir-autogen
 msgid "Sign in faster next time by linking your Jellyfin account."
 msgstr ""
@@ -5492,7 +5485,7 @@ msgstr ""
 msgid "Sign in with Jellyfin"
 msgstr "Se connecter avec Jellyfin"
 
-#: lib/cinder_web/live/user_live/settings.ex:474
+#: lib/cinder_web/live/user_live/settings.ex:471
 #, elixir-autogen
 msgid "Your Jellyfin account has been unlinked."
 msgstr "Votre compte Jellyfin a été délié."
@@ -5502,12 +5495,12 @@ msgstr "Votre compte Jellyfin a été délié."
 msgid "Your Jellyfin account is now linked."
 msgstr "Votre compte Jellyfin est maintenant lié."
 
-#: lib/cinder_web/live/user_live/settings.ex:443
+#: lib/cinder_web/live/user_live/settings.ex:440
 #, elixir-autogen
 msgid "Could not update your Plex watchlist preference."
 msgstr "Impossible de mettre à jour votre préférence de liste de suivi Plex."
 
-#: lib/cinder_web/live/user_live/settings.ex:147
+#: lib/cinder_web/live/user_live/settings.ex:148
 #, elixir-autogen
 msgid "Link your Plex account again to sync your Plex watchlist."
 msgstr ""
@@ -5518,12 +5511,12 @@ msgstr ""
 msgid "Plex watchlist sync"
 msgstr "Synchronisation de la liste de suivi Plex"
 
-#: lib/cinder_web/live/user_live/settings.ex:151
+#: lib/cinder_web/live/user_live/settings.ex:152
 #, elixir-autogen
 msgid "Relink Plex account"
 msgstr "Relier le compte Plex"
 
-#: lib/cinder_web/live/user_live/settings.ex:141
+#: lib/cinder_web/live/user_live/settings.ex:142
 #, elixir-autogen
 msgid "Request titles I add to my Plex watchlist"
 msgstr "Demander les titres que j'ajoute à ma liste de suivi Plex"
@@ -7450,12 +7443,12 @@ msgstr "Recherche de livres…"
 msgid "Testing…"
 msgstr "Test en cours…"
 
-#: lib/cinder_web/live/user_live/settings.ex:196
+#: lib/cinder_web/live/user_live/settings.ex:197
 #, elixir-autogen, elixir-format
 msgid "Unlink your Jellyfin account? You'll need to link it again to sign in with Jellyfin."
 msgstr "Dissocier votre compte Jellyfin ? Vous devrez le relier pour vous connecter avec Jellyfin."
 
-#: lib/cinder_web/live/user_live/settings.ex:161
+#: lib/cinder_web/live/user_live/settings.ex:162
 #, elixir-autogen, elixir-format
 msgid "Unlink your Plex account? You'll need to link it again to sign in with Plex."
 msgstr "Dissocier votre compte Plex ? Vous devrez le relier pour vous connecter avec Plex."
@@ -7486,3 +7479,15 @@ msgstr "Vous avez annulé trop de demandes. Réessayez plus tard."
 #, elixir-autogen, elixir-format
 msgid "An account already exists for this email. Sign in the way you did before, or ask an administrator."
 msgstr "Un compte existe déjà pour cette adresse e-mail. Connectez-vous comme avant, ou demandez à un administrateur."
+
+#: lib/cinder_web/live/user_live/settings.ex:506
+#, elixir-autogen, elixir-format
+msgid "If that address is available, a link to confirm your email change has been sent to it."
+msgstr ""
+"Si cette adresse est disponible, un lien pour confirmer le changement "
+"d'adresse e-mail lui a été envoyé."
+
+#: lib/cinder_web/live/user_live/settings.ex:495
+#, elixir-autogen, elixir-format
+msgid "Too many email change requests. Try again later."
+msgstr "Trop de demandes de changement d'e-mail. Réessayez plus tard."

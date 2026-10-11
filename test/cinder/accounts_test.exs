@@ -300,6 +300,17 @@ defmodule Cinder.AccountsTest do
       assert Repo.get_by(UserToken, user_id: user.id)
     end
 
+    test "does not update email if the address was taken after the request", %{
+      user: user,
+      token: token,
+      email: email
+    } do
+      _other = user_fixture(%{email: email})
+
+      assert Accounts.update_user_email(user, token) == {:error, :transaction_aborted}
+      assert Repo.get!(User, user.id).email == user.email
+    end
+
     test "does not update email if token expired", %{user: user, token: token} do
       {1, nil} = Repo.update_all(UserToken, set: [inserted_at: ~N[2020-01-01 00:00:00]])
 

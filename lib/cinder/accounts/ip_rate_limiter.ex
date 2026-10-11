@@ -23,6 +23,10 @@ defmodule Cinder.Accounts.IpRateLimiter do
       before the bcrypt work so a self-registered account cannot queue unbounded hashing on
       the dirty CPU schedulers; 15-minute window. Honors `:ip_rate_limiting` like the IP buckets
       (user ids repeat across sandboxed tests, so an always-on key would bleed between tests).
+    * `:user_email` — per-user cap (keyed on the user id) on email-change requests from
+      `/users/settings`, 5 per hour, so a pending account cannot use the confirmation mail as a
+      relay to attacker-chosen addresses. Honors `:ip_rate_limiting` like the IP buckets (user ids
+      repeat across sandboxed tests, so an always-on key would bleed between tests).
 
   The other buckets are config-gated via `Application.get_env(:cinder,
   :ip_rate_limiting, true)` (default ON; `config/test.exs` defaults it OFF) because every
@@ -58,12 +62,14 @@ defmodule Cinder.Accounts.IpRateLimiter do
 
   @table :cinder_ip_attempts
   @limit 10
+  @limits %{user_email: 5}
   @window_ms %{
     login_pair: 15 * 60 * 1000,
     login: 60_000,
     registration: 60_000,
     request_cancel: 60 * 60 * 1000,
-    user_password: 15 * 60 * 1000
+    user_password: 15 * 60 * 1000,
+    user_email: 60 * 60 * 1000
   }
   @sweep_ms 60_000
 
@@ -93,7 +99,7 @@ defmodule Cinder.Accounts.IpRateLimiter do
   """
   def check_and_register(bucket, id) do
     if enabled?(bucket) do
-      if do_register(bucket, id) > @limit, do: :blocked, else: :ok
+      if do_register(bucket, id) > Map.get(@limits, bucket, @limit), do: :blocked, else: :ok
     else
       :ok
     end
