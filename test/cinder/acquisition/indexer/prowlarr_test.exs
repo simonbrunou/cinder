@@ -115,6 +115,19 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
     assert result.published_at == ~U[2026-07-13 10:00:00Z]
   end
 
+  test "search_movie_query/2 drops results whose title exceeds the length bound" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      Req.Test.json(conn, [
+        %{"title" => String.duplicate("A", 100_000), "downloadUrl" => "http://prowlarr:9696/x"},
+        %{"title" => String.duplicate("A", 1025), "downloadUrl" => "http://prowlarr:9696/y"},
+        %{"title" => String.duplicate("A", 1024), "downloadUrl" => "http://prowlarr:9696/z"}
+      ])
+    end)
+
+    assert {:ok, [%{download_url: "http://prowlarr:9696/z"}]} =
+             Prowlarr.search_movie_query("x", [])
+  end
+
   test "search_tv_query/2 uses tvsearch and drops entries without a usable URL" do
     Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
       assert conn.params["query"] == "ワンピース 1122"

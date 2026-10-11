@@ -13,6 +13,9 @@ All notable changes to Cinder are documented here. The format follows
 - **Cloak CVE-2026-95105 acknowledged, not reachable.** The advisory covers Cloak's unauthenticated
   `AES.CTR` cipher. Cinder's vault only configures `AES.GCM`, and no fixed Cloak release exists,
   so `mix.exs` lists it in `ignore_advisories` with the reasoning.
+- **Oversized indexer titles are dropped before parsing (#656).** Prowlarr results with a title
+  longer than 1024 bytes are ignored, so one poisoned result can no longer keep the release
+  parser busy and stall the movie/TV pipeline. The episode-tail parser is also linear now.
 
 ### Fixed
 - **A movie download that turns out to be a different film is no longer imported.** A release

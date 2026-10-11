@@ -24,6 +24,10 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   alias Cinder.Util
 
   @default_base_url "http://localhost:9696"
+
+  # Real release names run well under 300 bytes; this leaves generous headroom while keeping a
+  # poisoned multi-KB title out of the parsers (#656).
+  @max_title_bytes 1024
   @max_response_bytes 4 * 1024 * 1024
 
   # Newznab/Torznab standard category for Books/EBook. Deliberately NOT the 7000 Books parent,
@@ -264,6 +268,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
 
   defp normalize(result) when is_map(result) do
     with title when is_binary(title) <- Util.blank_to_nil(result["title"]),
+         true <- byte_size(title) <= @max_title_bytes,
          download_url when is_binary(download_url) <-
            Util.blank_to_nil(result["downloadUrl"]) || Util.blank_to_nil(result["magnetUrl"]) do
       [

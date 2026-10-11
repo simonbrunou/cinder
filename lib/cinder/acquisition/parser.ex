@@ -507,14 +507,14 @@ defmodule Cinder.Acquisition.Parser do
         n = String.to_integer(num)
 
         if is_integer(last) and n > last and ep?(n),
-          do: {:cont, {acc ++ Enum.to_list((last + 1)..n//1), n}},
+          do: {:cont, {Enum.reverse(Enum.to_list((last + 1)..n//1), acc), n}},
           else: {:halt, {acc, last}}
 
       [_, _, num], {acc, last} ->
         n = String.to_integer(num)
-        if ep?(n), do: {:cont, {acc ++ [n], max(n, last || n)}}, else: {:halt, {acc, last}}
+        if ep?(n), do: {:cont, {[n | acc], max(n, last || n)}}, else: {:halt, {acc, last}}
     end)
-    |> then(fn {episodes, _last} -> Enum.uniq(episodes) end)
+    |> then(fn {episodes, _last} -> episodes |> Enum.reverse() |> Enum.uniq() end)
   end
 
   # A sane SxxEyy episode number: 1..99. Bounds the tail so an attached resolution

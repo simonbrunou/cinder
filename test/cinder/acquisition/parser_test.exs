@@ -497,6 +497,15 @@ defmodule Cinder.Acquisition.ParserTest do
       assert %{season: 1, episodes: [3]} = Parser.parse("Show.S01E03-E01.1080p")
     end
 
+    test "a very long episode tail parses in linear time and keeps the episode list" do
+      title = "Show.S01" <> String.duplicate("E1", 50_000)
+
+      {micros, parsed} = :timer.tc(fn -> Parser.parse(title) end)
+
+      assert %{season: 1, episodes: [1]} = parsed
+      assert micros < 1_000_000
+    end
+
     test "a dot- or space-separated single episode is not mistaken for a season pack" do
       assert %{season: 1, episodes: [2]} = Parser.parse("Show.S01.E02.1080p.x265-GRP")
       assert %{season: 1, episodes: [2]} = Parser.parse("Show S01 E02 1080p")
