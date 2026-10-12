@@ -328,10 +328,18 @@ defmodule Cinder.Acquisition do
     end)
   end
 
-  @doc "Lists Anime movie releases with manual, overridable policy verdicts."
+  @doc """
+  Lists Anime movie releases with manual, overridable policy verdicts. An IMDb-scoped row the
+  automatic title guard rejects stays listed as `{:rejected, :title_mismatch}`, like the standard
+  panel, so the operator can still override a name the guard cannot match.
+  """
   def list_anime_movie_releases(imdb_id, context, opts) do
-    with {:ok, releases, _failed?} <- Anime.search_movie(indexer(), imdb_id, context, opts) do
-      {:ok, releases |> Anime.manual_movie_candidates(opts) |> annotate(opts)}
+    search_opts = Keyword.put(opts, :keep_id_scoped_mismatches, true)
+
+    with {:ok, releases, _failed?} <- Anime.search_movie(indexer(), imdb_id, context, search_opts) do
+      candidates = Anime.manual_movie_candidates(releases, opts)
+      kept = Enum.filter(candidates, &Anime.title_guard_keeps?(&1, context))
+      {:ok, annotate(candidates, opts, kept)}
     end
   end
 
@@ -740,7 +748,8 @@ defmodule Cinder.Acquisition do
   # guard fails closed on — language before the year ("Dune.German.2021"), an edition tag, a site
   # prefix, no year at all. A movie with no usable needle (a non-Latin title and no Latin alias)
   # has nothing to compare names against, so the id scope stays the only evidence.
-  defp filter_id_scoped_movie(candidates, context) do
+  @doc false
+  def filter_id_scoped_movie(candidates, context) do
     needles =
       [context.title | context.localized_titles ++ Enum.map(context.aliases, & &1.title)]
       |> Enum.map(&title_needle/1)

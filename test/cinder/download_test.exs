@@ -132,6 +132,62 @@ defmodule Cinder.DownloadTest do
     assert %Movie{release_policy_snapshot: %{"version" => 1}} = Repo.get!(Movie, movie.id)
   end
 
+  describe "an IMDb-scoped result naming another film (#624)" do
+    @wrong_film %{
+      title: "[Group] Weathering With You (2019) [1080p]",
+      size: 8_000_000_000,
+      download_url: "magnet:?xt=urn:btih:wrong-film",
+      protocol: :torrent
+    }
+
+    test "is never grabbed by an Anime-profile movie" do
+      movie =
+        movie_fixture(%{
+          imdb_id: "tt-anime-wrong",
+          title: "Your Name",
+          year: 2016,
+          media_profile: :anime
+        })
+
+      expect(Cinder.Acquisition.IndexerMock, :search, fn "tt-anime-wrong" ->
+        {:ok, [@wrong_film]}
+      end)
+
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, _opts ->
+        {:ok, []}
+      end)
+
+      deny(Cinder.Download.ClientMock, :add, 2)
+
+      assert {:ok, %Movie{status: :no_match}} = Download.start(movie)
+    end
+
+    test "is not grabbed through the Auto Anime fallback after Standard rejected it" do
+      movie =
+        movie_fixture(%{
+          imdb_id: "tt-auto-wrong",
+          title: "Your Name",
+          year: 2016,
+          original_language: "ja",
+          media_profile: :auto
+        })
+
+      movie = movie |> Movie.metadata_changeset(%{genres: ["Animation"]}) |> Repo.update!()
+
+      expect(Cinder.Acquisition.IndexerMock, :search, 2, fn "tt-auto-wrong" ->
+        {:ok, [@wrong_film]}
+      end)
+
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, _opts ->
+        {:ok, []}
+      end)
+
+      deny(Cinder.Download.ClientMock, :add, 2)
+
+      assert {:ok, %Movie{status: :no_match}} = Download.start(movie)
+    end
+  end
+
   test "explicit Standard Japanese animation does not use the Anime fallback" do
     movie =
       movie_fixture(%{

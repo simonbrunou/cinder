@@ -1,6 +1,7 @@
 defmodule Cinder.Acquisition.Anime do
   @moduledoc "Bounded anime-aware query planning and release aggregation."
 
+  alias Cinder.Acquisition
   alias Cinder.Acquisition.{AnimeParser, AnimePreferences, Language, Release, Scorer}
   alias Cinder.Catalog.{AnimeResolver, Episode, TitleAlias}
   alias Cinder.Download.Intent
@@ -16,7 +17,7 @@ defmodule Cinder.Acquisition.Anime do
   @precedence_rank %{manual: 0, curated: 1, inferred: 2}
   @kind_rank %{scene: 0, licensed: 1, romaji: 2, native: 3, alternative: 4}
 
-  def search_movie(indexer, imdb_id, context, _opts) do
+  def search_movie(indexer, imdb_id, context, opts) do
     free_text_queries =
       Enum.map(search_titles(context), fn title ->
         query = "#{title} #{context.year}"
@@ -25,11 +26,15 @@ defmodule Cinder.Acquisition.Anime do
       end)
 
     # No IMDb id (issue #195): the free-text queries carry the search alone, and every result then
-    # faces the title guard `:id_scoped` results are exempt from.
+    # faces the free-text guard (title plus exact year).
     id_queries =
       if imdb_id, do: [{:id_scoped, fn -> indexer.search(imdb_id) end}], else: []
 
-    run_queries(id_queries ++ free_text_queries, context)
+    run_queries(
+      id_queries ++ free_text_queries,
+      context,
+      opts[:keep_id_scoped_mismatches] == true
+    )
   end
 
   def search_episodes(_indexer, _context, [], _opts), do: {:ok, [], false}
@@ -38,7 +43,7 @@ defmodule Cinder.Acquisition.Anime do
     context
     |> episode_queries(indexer, wanted_ids)
     |> Enum.take(@max_queries)
-    |> run_queries(context)
+    |> run_queries(context, false)
   end
 
   def best_episodes(indexer, context, wanted_ids, opts \\ []) do
@@ -1009,9 +1014,9 @@ defmodule Cinder.Acquisition.Anime do
   # Nothing left to ask (no IMDb id and every title over the codepoint limit). Return an empty
   # pool rather than raising on `hd(failures)` — a raise here only gets logged by the poller's
   # isolate, so it would re-run every tick with nothing parked.
-  defp run_queries([], _context), do: {:ok, [], false}
+  defp run_queries([], _context, _keep_id_scoped?), do: {:ok, [], false}
 
-  defp run_queries(queries, context) do
+  defp run_queries(queries, context, keep_id_scoped?) do
     outcomes = Enum.map(queries, &run_query/1)
     successes = for {:ok, releases} <- outcomes, do: releases
     failures = for {:error, reason} <- outcomes, do: reason
@@ -1021,7 +1026,12 @@ defmodule Cinder.Acquisition.Anime do
         {:error, hd(failures)}
 
       _ ->
-        releases = successes |> List.flatten() |> deduplicate() |> apply_title_guard(context)
+        releases =
+          successes
+          |> List.flatten()
+          |> deduplicate()
+          |> apply_title_guard(context, keep_id_scoped?)
+
         {:ok, releases, failures != []}
     end
   end
@@ -1086,12 +1096,39 @@ defmodule Cinder.Acquisition.Anime do
   # parser's scrub instead of a third copy. Only the guard's local view is sanitized; `release.title`
   # itself is never mutated, so it stays intact for display, `mapping_snapshot`, and downstream
   # parsing (which already sanitizes independently via `AnimeParser.parse/2`).
-  defp apply_title_guard(releases, context) do
+  defp apply_title_guard(releases, context, keep_id_scoped?) do
     Enum.filter(releases, fn release ->
-      :id_scoped in release.query_origins or
-        free_text_match?(AnimeParser.sanitize(release.title), context)
+      title = AnimeParser.sanitize(release.title)
+
+      if :id_scoped in release.query_origins,
+        do: keep_id_scoped? or id_scoped_match?(release, title, context),
+        else: free_text_match?(title, context)
     end)
   end
+
+  @doc """
+  Whether the title guard would keep this movie release in an automatic search. The manual panel
+  lists id-scoped rows the guard rejects (so the operator can override) and uses this to mark them.
+  """
+  def title_guard_keeps?(%Release{} = release, context) do
+    title = AnimeParser.sanitize(release.title)
+
+    if :id_scoped in release.query_origins,
+      do: id_scoped_match?(release, title, context),
+      else: free_text_match?(title, context)
+  end
+
+  # An IMDb-scoped movie result is scope, not identity proof (#624, like #623 for the standard
+  # path): an indexer can ignore the id and answer with keyword matches. It must still spell the
+  # movie's title, a localized title or an alias (native/romaji titles live there), by the same
+  # lenient whole-token guard the standard path uses — no exact-year requirement, and a movie with
+  # no usable title keeps its id-scoped results. Episodic results keep the exemption.
+  defp id_scoped_match?(release, release_title, %{kind: :movie} = context) do
+    Acquisition.filter_id_scoped_movie([release], context) != [] or
+      known_title_match?(release_title, context)
+  end
+
+  defp id_scoped_match?(_release, _release_title, _context), do: true
 
   defp free_text_match?(release_title, %{kind: :movie} = context) do
     known_title_match?(release_title, context) and exact_movie_year?(release_title, context.year)

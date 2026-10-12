@@ -3,6 +3,7 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
 
   import Mox
 
+  alias Cinder.Acquisition
   alias Cinder.Acquisition.Anime
   alias Cinder.Acquisition.IndexerMock
   alias Cinder.Catalog.Episode
@@ -88,6 +89,58 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
 
     assert {:ok, [release], false} = Anime.search_movie(IndexerMock, "tt1", context, [])
     assert release.title == "Your Name (2016) [1080p]"
+  end
+
+  test "id-scoped movie results must name the title or an alias, without the year requirement (#624)" do
+    context = movie_context([alias_map("Kimi no Na wa", :romaji), alias_map("君の名は。", :native)])
+
+    expect(IndexerMock, :search, fn "tt1" ->
+      {:ok,
+       [
+         raw("[Group] Weathering With You (2019) [1080p]", "wrong-film"),
+         raw("[Group] Kimi no Na wa [1080p]", "romaji-no-year"),
+         raw("[Group] 君の名は。 (2016) [1080p]", "native"),
+         raw("[Group] Your Name v2 [1080p]", "canonical-v2")
+       ]}
+    end)
+
+    expect(IndexerMock, :search_movie_query, 3, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, releases, false} = Anime.search_movie(IndexerMock, "tt1", context, [])
+
+    assert Enum.map(releases, & &1.download_url) == ["romaji-no-year", "native", "canonical-v2"]
+  end
+
+  test "a movie with no usable title or alias keeps its id-scoped results (#624)" do
+    context = %{movie_context([]) | title: "君の名は。"}
+
+    expect(IndexerMock, :search, fn "tt1" ->
+      {:ok, [raw("[Group] Anything Else (2019) [1080p]", "kept")]}
+    end)
+
+    expect(IndexerMock, :search_movie_query, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, [release], false} = Anime.search_movie(IndexerMock, "tt1", context, [])
+    assert release.download_url == "kept"
+  end
+
+  test "the Anime manual list keeps a guard-rejected id-scoped row as title_mismatch (#624)" do
+    context = movie_context([])
+
+    expect(IndexerMock, :search, fn "tt1" ->
+      {:ok,
+       [
+         raw("[Group] Weathering With You (2019) [1080p]", "other-film"),
+         raw("[Group] Your Name (2016) [1080p]", "right-film")
+       ]}
+    end)
+
+    expect(IndexerMock, :search_movie_query, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, rows} = Acquisition.list_anime_movie_releases("tt1", context, [])
+
+    verdicts = Map.new(rows, fn {release, verdict} -> {release.download_url, verdict} end)
+    assert verdicts == %{"right-film" => :ok, "other-film" => {:rejected, :title_mismatch}}
   end
 
   test "TVDB search remains ID-scoped and propagates canonical title and season" do
@@ -313,6 +366,7 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
       title: "Your Name",
       year: 2016,
       aliases: aliases,
+      localized_titles: [],
       profile: %{effective: :anime}
     }
   end

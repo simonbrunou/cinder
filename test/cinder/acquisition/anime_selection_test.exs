@@ -1385,7 +1385,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
   end
 
   test "public Anime movie search uses complete audio claims instead of legacy singular language" do
-    context = %{kind: :movie, title: "Suzume", year: 2022, aliases: []}
+    context = %{kind: :movie, title: "Suzume", year: 2022, aliases: [], localized_titles: []}
 
     expect(IndexerMock, :search, fn "tt4425200" ->
       {:ok,
