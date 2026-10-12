@@ -148,19 +148,23 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
     # SECURITY: Jellyfin signs a passwordless user in on an empty password, and the request
     # comes from Cinder's LAN address — so an empty password must never be forwarded at all (an
     # unexpected Mox call fails the test), yet still spends the throttle budget.
+    #
+    # The username is unique to this test: the {ip, username} bucket is always on and this test
+    # leaves it blocked for 15 minutes, so a shared name would block a later test's sign-in
+    # (#686).
     test "an empty password is refused without calling Jellyfin and still counts as an attempt",
          %{conn: conn} do
-      conn = post(conn, ~p"/auth/jellyfin", credentials("viewer", ""))
+      conn = post(conn, ~p"/auth/jellyfin", credentials("empty-password-user", ""))
 
       refute get_session(conn, :user_token)
       assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Jellyfin sign-in failed"
       assert redirected_to(conn) == ~p"/users/log-in"
 
-      for _ <- 1..9, do: post(conn, ~p"/auth/jellyfin", credentials("viewer", ""))
+      for _ <- 1..9, do: post(conn, ~p"/auth/jellyfin", credentials("empty-password-user", ""))
 
       # The 11th attempt — correct this time — is throttled: without the empty ones counting it
       # would reach the (unexpecting) mock and fail the test.
-      conn = post(conn, ~p"/auth/jellyfin", credentials("viewer", "s3cret"))
+      conn = post(conn, ~p"/auth/jellyfin", credentials("empty-password-user", "s3cret"))
       refute get_session(conn, :user_token)
     end
 
