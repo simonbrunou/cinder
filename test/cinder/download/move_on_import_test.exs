@@ -338,6 +338,36 @@ defmodule Cinder.Download.MoveOnImportTest do
       refute_receive {:rm_rf, "/tmp/cinder-test-library/M {tmdb-11}/M {tmdb-11}.mkv"}
     end
 
+    # Issue #658: SABnzbd reports a single-file job's `storage` as the FILE inside its
+    # "<title>.cinder-<key>" job folder, so deleting the file alone left the folder behind.
+    test "a single-file usenet import leaves neither the file nor its .cinder-<key> job folder (issue #658)" do
+      enable()
+      movie = usenet_movie(13, "nzo-13")
+      folder = "/downloads/M.cinder-57431e49-0b5c-4d2e-9f6a-3c1d2e4f5a6b"
+      file = folder <> "/M.mkv"
+      parent = self()
+
+      stub(Cinder.Download.SabnzbdClientMock, :status, fn "nzo-13" ->
+        {:ok, %{state: :completed, content_path: file}}
+      end)
+
+      stub_single_file_import()
+      echo_remove(Cinder.Download.SabnzbdClientMock)
+      echo_rm_rf()
+
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn dir ->
+        send(parent, {:rmdir, dir})
+        :ok
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+
+      assert :ok = Poller.poll()
+      assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+      assert_receive {:rm_rf, ^file}
+      assert_receive {:rmdir, ^folder}
+    end
+
     test "an already-gone download-side source doesn't fail the import; movie still :available" do
       enable()
       movie = usenet_movie(12, "nzo-12")

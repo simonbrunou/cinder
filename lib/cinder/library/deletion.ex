@@ -88,6 +88,11 @@ defmodule Cinder.Library.Deletion do
   root are deletable, so a misreporting client can't wipe the whole downloads dir). A path outside
   the roots, a root itself, a symlink anywhere in it, or an entry that is neither a regular file
   nor a directory fails closed with `{:error, :unsafe_delete}`.
+
+  When the deleted entry sat inside a Cinder-named `<title>.cinder-<key>` job folder (a
+  single-file job's `content_path` is the file, not the folder — issue #658), that now-empty
+  parent is removed too: only if it passes the same containment check and is empty. A non-empty
+  parent, or one not named like a Cinder job folder, is left alone.
   """
   @spec delete_download_source(String.t() | nil) :: :ok | {:error, term()}
   def delete_download_source(path) when path in [nil, ""], do: :ok
@@ -101,11 +106,47 @@ defmodule Cinder.Library.Deletion do
 
   defp do_delete_download_source(path, roots) do
     with :ok <- Library.path_policy().deletable_source(path, roots, filesystem: fs()) do
-      case fs().rm_rf(Path.expand(path)) do
-        {:ok, _paths} -> :ok
+      expanded = Path.expand(path)
+
+      case fs().rm_rf(expanded) do
+        {:ok, _paths} -> prune_empty_job_folder(Path.dirname(expanded), roots)
         {:error, reason, _path} -> {:error, reason}
       end
     end
+  end
+
+  @job_folder_key ~r/(?:^|[. ])cinder-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i
+
+  @doc """
+  The operation key of a Cinder-named usenet job folder, or `:error` for any other name.
+
+  SABnzbd and NZBGet name the job `<title>.cinder-<key>` (or the bare `cinder-<key>` when the
+  release title sanitizes to nothing), `<key>` being an `Ecto.UUID`, and the client's job folder
+  carries that name. SABnzbd's `replace_dots` folder option turns the separator into a space
+  (`<title> cinder-<key>`), so either is accepted. A single-file job's `content_path` is the file
+  inside that folder (issue #658), so the folder is recognised by name alone.
+  """
+  @spec job_folder_key(String.t()) :: {:ok, String.t()} | :error
+  def job_folder_key(name) do
+    case Regex.run(@job_folder_key, name) do
+      [_whole, key] -> {:ok, key}
+      nil -> :error
+    end
+  end
+
+  # A single-file job's `content_path` is the file INSIDE its `<title>.cinder-<key>` job folder, so
+  # deleting the file leaves the emptied folder behind (issue #658). Remove that parent too, but
+  # only when it is Cinder-named, passes the same strict-containment / no-symlink check as the
+  # source itself (never an import root, never outside one), and is empty: `rmdir` refuses a
+  # non-empty directory, which is the emptiness check, with no race between check and delete.
+  # Best-effort like `prune_empty_dirs/1`: a failure here never fails the delete that succeeded.
+  defp prune_empty_job_folder(dir, roots) do
+    with {:ok, _key} <- job_folder_key(Path.basename(dir)),
+         :ok <- Library.path_policy().deletable_source(dir, roots, filesystem: fs()) do
+      _ = fs().rmdir(dir)
+    end
+
+    :ok
   end
 
   defp safe_directory?(dir) do

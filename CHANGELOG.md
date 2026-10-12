@@ -290,6 +290,12 @@ All notable changes to Cinder are documented here. The format follows
   whole season instead of drifting with each episode title's width. Below `2xl` (where the
   sidebar leaves too little room for eight columns: at 1280 px the grid either starves the title
   to ~94 px or wraps the buttons on every row) the row keeps its two-line flow layout.
+- **A single-file usenet import no longer leaves its empty job folder behind (#658).** With
+  `move_on_import` on, SABnzbd reports a single-file download as the file inside its
+  `<title>.cinder-<key>` job folder, so deleting the source removed the file and left the empty
+  folder in the import root (hundreds of them piled up). The cleanup now also removes that parent,
+  but only when it is a Cinder-named job folder strictly inside an explicit import root, is not
+  reached through a symlink, and is empty once the file is gone; any other parent is left alone.
 
 ## [3.0.1] - 2026-09-05
 

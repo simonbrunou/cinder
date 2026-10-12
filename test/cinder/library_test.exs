@@ -1738,6 +1738,106 @@ defmodule Cinder.LibraryTest do
     end
   end
 
+  describe "delete_download_source/1 job-folder pruning (issue #658)" do
+    @key "57431e49-0b5c-4d2e-9f6a-3c1d2e4f5a6b"
+    @job "/downloads/Show S01E08.cinder-#{@key}"
+
+    setup do
+      saved_path_policy = Application.get_env(:cinder, :path_policy)
+      saved_explicit_roots = Application.get_env(:cinder, :explicit_import_roots)
+
+      Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
+      Application.put_env(:cinder, :explicit_import_roots, ["/downloads"])
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn _path ->
+        {:ok, %File.Stat{type: :directory}}
+      end)
+
+      on_exit(fn ->
+        restore_env(:path_policy, saved_path_policy)
+        restore_env(:explicit_import_roots, saved_explicit_roots)
+      end)
+
+      :ok
+    end
+
+    test "a file inside a .cinder-<key> job folder is removed along with the emptied folder" do
+      file = @job <> "/Show S01E08.mkv"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^file -> {:ok, [file]} end)
+      expect(Cinder.Library.FilesystemMock, :rmdir, fn @job -> :ok end)
+
+      assert :ok = Cinder.Library.delete_download_source(file)
+    end
+
+    test "the bare cinder-<key> name (empty release title) is a job folder too" do
+      folder = "/downloads/cinder-#{@key}"
+      file = folder <> "/a.mkv"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^file -> {:ok, [file]} end)
+      expect(Cinder.Library.FilesystemMock, :rmdir, fn ^folder -> :ok end)
+
+      assert :ok = Cinder.Library.delete_download_source(file)
+    end
+
+    test "SABnzbd's replace_dots spelling (<title> cinder-<key>) is a job folder too" do
+      folder = "/downloads/Show S01E08 cinder-#{@key}"
+      file = folder <> "/a.mkv"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^file -> {:ok, [file]} end)
+      expect(Cinder.Library.FilesystemMock, :rmdir, fn ^folder -> :ok end)
+
+      assert :ok = Cinder.Library.delete_download_source(file)
+    end
+
+    test "a non-empty job folder is left alone (rmdir refuses) and the delete still succeeds" do
+      file = @job <> "/Show S01E08.mkv"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^file -> {:ok, [file]} end)
+      expect(Cinder.Library.FilesystemMock, :rmdir, fn @job -> {:error, :eexist} end)
+
+      assert :ok = Cinder.Library.delete_download_source(file)
+    end
+
+    test "a parent that is not a .cinder-<key> folder is left alone (no rmdir)" do
+      for parent <- [
+            "/downloads/Show S01E08",
+            "/downloads/Show.cinder-123",
+            "/downloads/Show.cinder-#{@key}-extra",
+            "/downloads/Showcinder-#{@key}"
+          ] do
+        file = parent <> "/Show.mkv"
+        expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^file -> {:ok, [file]} end)
+
+        assert :ok = Cinder.Library.delete_download_source(file)
+      end
+
+      # no rmdir expectation -> Mox fails the call if pruning were attempted.
+    end
+
+    test "an import root named like a job folder is never removed" do
+      Application.put_env(:cinder, :explicit_import_roots, ["/downloads/root.cinder-#{@key}"])
+      file = "/downloads/root.cinder-#{@key}/Show.mkv"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^file -> {:ok, [file]} end)
+
+      assert :ok = Cinder.Library.delete_download_source(file)
+    end
+
+    test "a job folder that is a symlink refuses the whole delete (no rm_rf, no rmdir)" do
+      file = @job <> "/Show.mkv"
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn
+        @job -> {:ok, %File.Stat{type: :symlink}}
+        _path -> {:ok, %File.Stat{type: :directory}}
+      end)
+
+      assert {:error, :unsafe_delete} = Cinder.Library.delete_download_source(file)
+    end
+
+    test "a failed rm_rf does not touch the parent" do
+      file = @job <> "/Show.mkv"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^file -> {:error, :eacces, file} end)
+
+      assert {:error, :eacces} = Cinder.Library.delete_download_source(file)
+    end
+  end
+
   defp anime_fixture(id), do: Enum.find(@anime_cases, &(&1["id"] == id))
 
   defp normalize_fixture_mtimes(fixture) do
