@@ -136,6 +136,64 @@ defmodule Cinder.Library.PolicyVerifierTest do
              )
   end
 
+  describe "waive_unavailable" do
+    test "skips checks whose outcome is unknown, but a decidable mismatch still rejects" do
+      waive = [waive_unavailable: true]
+      media_info = Cinder.Library.MediaInfoMock
+
+      assert {:ok, %{}} = PolicyVerifier.verify_sources(["a.mkv"], policy_snapshot(), nil, waive)
+
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, fn "a.mkv" -> {:error, :timeout} end)
+
+      assert {:ok, %{}} =
+               PolicyVerifier.verify_sources(["a.mkv"], policy_snapshot(), media_info, waive)
+
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, fn "a.mkv" ->
+        {:ok, policy_report(audio: [], subtitles: ["eng"], audio_unknown?: true)}
+      end)
+
+      assert {:ok, %{}} =
+               PolicyVerifier.verify_sources(
+                 ["a.mkv"],
+                 policy_snapshot(["ja"], []),
+                 media_info,
+                 waive
+               )
+
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, fn "a.mkv" ->
+        {:ok, policy_report(audio: ["en"], subtitles: [])}
+      end)
+
+      assert {:mismatch, %{source: "a.mkv", missing_audio: ["ja"]}} =
+               PolicyVerifier.verify_sources(
+                 ["a.mkv"],
+                 policy_snapshot(["ja"], []),
+                 media_info,
+                 waive
+               )
+    end
+
+    test "an unknown source does not hide a mismatch in a later source" do
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, 2, fn
+        "a.mkv" -> {:ok, policy_report(audio: [], audio_unknown?: true)}
+        "b.mkv" -> {:ok, policy_report(audio: ["en"])}
+      end)
+
+      assert {:mismatch, %{source: "b.mkv", missing_audio: ["ja"]}} =
+               PolicyVerifier.verify_sources(
+                 ["a.mkv", "b.mkv"],
+                 policy_snapshot(["ja"], []),
+                 Cinder.Library.MediaInfoMock,
+                 waive_unavailable: true
+               )
+    end
+
+    test "is off by default" do
+      assert {:unavailable, :media_info_not_configured} =
+               PolicyVerifier.verify_sources(["a.mkv"], policy_snapshot(), nil, [])
+    end
+  end
+
   defp verify(report) do
     expect(Cinder.Library.MediaInfoMock, :probe_policy, fn "a.mkv" -> {:ok, report} end)
     PolicyVerifier.verify_sources(["a.mkv"], policy_snapshot(), Cinder.Library.MediaInfoMock)

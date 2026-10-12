@@ -1387,9 +1387,10 @@ defmodule Cinder.Catalog do
 
   @doc "Atomically holds a downloaded resolved grab after its final verification attempt."
   defdelegate hold_grab_verification(grab), to: ReleaseVerification
-
   @doc "Atomically releases a verification hold and resets only its verification attempts."
   defdelegate retry_grab_verification(grab), to: ReleaseVerification
+  defdelegate import_grab_anyway(grab, actor), to: ReleaseVerification
+  defdelegate block_cancelled_hold(grab), to: ReleaseVerification
 
   defdelegate cancel_grab(grab), to: Grabs
   defdelegate cancel_mapping_grab(grab), to: Grabs
@@ -1424,7 +1425,6 @@ defmodule Cinder.Catalog do
   episode ownership before blocklisting, fencing cleanup, and deleting it.
   """
   defdelegate reject_grab_release(expected, evidence), to: ReleaseVerification
-  defdelegate block_cancelled_hold(grab), to: ReleaseVerification
 
   defdelegate block_release(movie, reason), to: Grabs
   defdelegate block_release_and_confirm(movie, reason), to: Grabs

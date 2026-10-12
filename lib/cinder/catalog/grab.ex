@@ -30,6 +30,10 @@ defmodule Cinder.Catalog.Grab do
 
     field :mapping_issue, :map
 
+    # Set only by the operator's "Import anyway" on a verification hold (GitHub #630): this grab's
+    # import skips the release-policy checks whose outcome was unknown. Never copied to another grab.
+    field :verification_waived, :boolean, default: false
+
     # Set by the unattended upgrade sweep: this grab's swaps are decided at import, per episode,
     # against what each one already holds. False (the manual path, and every grab predating #250)
     # forces the swap — the operator picked that release, possibly for something ranking can't see.

@@ -1,7 +1,7 @@
 defmodule Cinder.Library.PolicyVerifier do
   @moduledoc """
   Verifies a downloaded release against its actual files before import: frozen Anime audio and
-  embedded-subtitle requirements (`verify_sources/3`), and a movie's length against its TMDB
+  embedded-subtitle requirements (`verify_sources/4`), and a movie's length against its TMDB
   runtime (`verify_runtime/3`).
 
   The verifier is pure apart from the injected MediaInfo probe and a warning on a runtime
@@ -14,27 +14,32 @@ defmodule Cinder.Library.PolicyVerifier do
 
   @type reports :: %{String.t() => Cinder.Library.MediaInfo.probe_report()}
 
-  @spec verify_sources([String.t()], map() | nil, module() | nil) ::
+  @doc """
+  `opts[:waive_unavailable]` (default `false`) skips every check whose outcome could not be
+  determined (an unprobeable or untagged track, a failed probe, no media-info backend), while a
+  decidable mismatch still rejects. Only an operator's per-grab "Import anyway" sets it.
+  """
+  @spec verify_sources([String.t()], map() | nil, module() | nil, keyword()) ::
           {:ok, reports()} | {:mismatch, map()} | {:unavailable, term()}
-  def verify_sources(paths, snapshot, media_info) do
+  def verify_sources(paths, snapshot, media_info, opts \\ []) do
     paths = Enum.uniq(paths)
 
     if hard_requirements?(snapshot) do
-      verify_all(paths, snapshot, media_info)
+      verify_all(paths, snapshot, media_info, Keyword.get(opts, :waive_unavailable, false))
     else
       {:ok, %{}}
     end
   end
 
   @doc """
-  `verify_sources/3` as a stage error: a mismatch the poller rejects (blocklist, re-search), or an
+  `verify_sources/4` as a stage error: a mismatch the poller rejects (blocklist, re-search), or an
   unavailable verdict it retries and then holds as "needs verification".
   """
-  @spec verify_release([String.t()], map() | nil, module() | nil) ::
+  @spec verify_release([String.t()], map() | nil, module() | nil, keyword()) ::
           {:ok, reports()}
           | {:error, {:release_policy_mismatch, map()} | {:release_policy_unavailable, term()}}
-  def verify_release(paths, snapshot, media_info) do
-    case verify_sources(paths, snapshot, media_info) do
+  def verify_release(paths, snapshot, media_info, opts \\ []) do
+    case verify_sources(paths, snapshot, media_info, opts) do
       {:ok, reports} -> {:ok, reports}
       {:mismatch, evidence} -> {:error, {:release_policy_mismatch, evidence}}
       {:unavailable, reason} -> {:error, {:release_policy_unavailable, reason}}
@@ -106,13 +111,15 @@ defmodule Cinder.Library.PolicyVerifier do
 
   defp hard_requirements?(_snapshot), do: false
 
-  defp verify_all(_paths, _snapshot, nil), do: {:unavailable, :media_info_not_configured}
+  defp verify_all(_paths, _snapshot, nil, waive_unavailable?),
+    do: if(waive_unavailable?, do: {:ok, %{}}, else: {:unavailable, :media_info_not_configured})
 
-  defp verify_all(paths, snapshot, media_info) do
+  defp verify_all(paths, snapshot, media_info, waive_unavailable?) do
     Enum.reduce_while(paths, {:ok, %{}}, fn source, {:ok, reports} ->
       case verify_source(source, snapshot, media_info) do
         {:ok, report} -> {:cont, {:ok, Map.put(reports, source, report)}}
         {:mismatch, _evidence} = mismatch -> {:halt, mismatch}
+        {:unavailable, _reason} when waive_unavailable? -> {:cont, {:ok, reports}}
         {:unavailable, _reason} = unavailable -> {:halt, unavailable}
       end
     end)

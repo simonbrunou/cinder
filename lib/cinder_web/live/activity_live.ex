@@ -9,7 +9,8 @@ defmodule CinderWeb.ActivityLive do
   download, so the freed episodes' re-grab doesn't collide with it). A mapping hold shows its
   reason inline and offers Retry import (`Catalog.retry_grab_mapping/1`, resolves next poller
   tick) or Discard (the state-guarded `Catalog.cancel_mapping_grab/1`); verification holds reuse
-  the regular durable cancel path and add only a guarded retry. Titles held at search time on
+  the regular durable cancel path and add a guarded retry plus a confirmed, audited "Import
+  anyway" (`Catalog.import_grab_anyway/2`). Titles held at search time on
   unsatisfiable Anime preferences (`anime_hold_reason`) show a "Needs preferences" badge with
   the reason — movies in the pipeline list, series in their own section (a held series has no
   movie row or grab to hang the badge on); no action needed here, the sweep clears the hold
@@ -102,6 +103,9 @@ defmodule CinderWeb.ActivityLive do
   def handle_event("ask_cancel_mapping", %{"id" => id}, socket) when is_binary(id),
     do: {:noreply, assign(socket, confirming: "mapping:#{id}")}
 
+  def handle_event("ask_import_anyway", %{"id" => id}, socket) when is_binary(id),
+    do: {:noreply, assign(socket, confirming: "import:#{id}")}
+
   def handle_event("dismiss_confirm", _params, socket),
     do: {:noreply, assign(socket, confirming: nil)}
 
@@ -156,6 +160,24 @@ defmodule CinderWeb.ActivityLive do
 
     {:noreply,
      socket
+     |> refresh_grabs()
+     |> put_flash(level, msg)}
+  end
+
+  def handle_event("confirm_import_anyway", %{"id" => id}, socket) when is_binary(id) do
+    {level, msg} =
+      with {id, ""} <- Integer.parse(id),
+           %{} = grab <- Catalog.get_grab(id),
+           {:ok, _released} <-
+             Catalog.import_grab_anyway(grab, socket.assigns.current_scope.user) do
+        {:info, gettext("Import will run shortly without the checks that could not be run.")}
+      else
+        _ -> {:error, gettext("The download is no longer held for verification.")}
+      end
+
+    {:noreply,
+     socket
+     |> assign(confirming: nil)
      |> refresh_grabs()
      |> put_flash(level, msg)}
   end
@@ -591,6 +613,16 @@ defmodule CinderWeb.ActivityLive do
                 {gettext("Retry verification")}
               </.button>
               <.button
+                :if={g.mapping_status == :verification_blocked}
+                id={"import-anyway-grab-#{g.id}"}
+                type="button"
+                size="xs"
+                phx-click="ask_import_anyway"
+                phx-value-id={g.id}
+              >
+                {gettext("Import anyway")}
+              </.button>
+              <.button
                 :if={g.mapping_status != :needs_mapping}
                 id={
                   if g.mapping_status == :verification_blocked,
@@ -832,6 +864,21 @@ defmodule CinderWeb.ActivityLive do
             >
               <:caveat>
                 {gettext("Discard this download? Its episodes will return to the wanted queue.")}
+              </:caveat>
+            </.confirm_action>
+            <.confirm_action
+              :if={@confirming == "import:#{g.id}" and g.mapping_status == :verification_blocked}
+              id={"confirm-import-anyway-grab-#{g.id}"}
+              on_confirm="confirm_import_anyway"
+              on_cancel="dismiss_confirm"
+              value={g.id}
+              confirm_label={gettext("Import anyway")}
+              variant="warning"
+            >
+              <:caveat>
+                {gettext(
+                  "Import this download without the audio and subtitle checks Cinder could not run? A file that clearly fails them is still rejected."
+                )}
               </:caveat>
             </.confirm_action>
             <.confirm_action

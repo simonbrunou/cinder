@@ -170,6 +170,44 @@ defmodule Cinder.Catalog.ReleaseVerification do
   end
 
   @doc false
+  # The operator's "Import anyway" on a TV verification hold (GitHub #630): releases the hold like
+  # `retry_grab_verification/1`, but also flags THIS grab row `verification_waived`, so its next
+  # import skips the checks whose outcome was unknown (`PolicyVerifier`'s `:waive_unavailable`; a
+  # decidable mismatch still rejects). The claim is guarded on the live hold, so a grab the poller
+  # or a concurrent Retry already released is `:verification_not_held`; the audit row commits with
+  # the flip or not at all, and the one broadcast follows the commit.
+  def import_grab_anyway(%Grab{} = grab, actor) do
+    result =
+      Repo.transaction(fn ->
+        case Repo.update_all(
+               from(g in Grab,
+                 where: g.id == ^grab.id and g.mapping_status == :verification_blocked,
+                 select: g
+               ),
+               set: [
+                 mapping_status: :resolved,
+                 verification_waived: true,
+                 download_attempts: 0,
+                 updated_at: Catalog.now()
+               ]
+             ) do
+          {1, [released]} ->
+            Audit.log_or_rollback(actor, :import_grab_anyway, released, %{
+              release_title: released.release_title,
+              from: :verification_blocked
+            })
+
+            released
+
+          {0, _} ->
+            Repo.rollback(:verification_not_held)
+        end
+      end)
+
+    with {:ok, released} <- result, do: broadcast_grab_and_ok(released)
+  end
+
+  @doc false
   # Called by `Catalog.Grabs.cancel_grab/1` inside its transaction, after the cancel claim, before
   # the delete unlinks the episodes. Reads the live row rather than the caller's struct, so a grab
   # the poller or a Retry just resolved is never blocklisted. Non-raising (`block_grab_release/2`).

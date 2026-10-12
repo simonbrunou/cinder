@@ -1094,6 +1094,181 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get!(Episode, episode.id).file_path =~ "S01E01"
   end
 
+  # GitHub #630: a release whose only audio track carries no language tag can never pass the frozen
+  # `ja` requirement (`{:unprobeable_audio, _}`), so Retry verification re-holds forever. "Import
+  # anyway" waives the checks whose outcome is unknown for THAT grab only.
+  defp use_media_info_mock do
+    saved = Application.get_env(:cinder, :media_info)
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+
+    on_exit(fn ->
+      if saved,
+        do: Application.put_env(:cinder, :media_info, saved),
+        else: Application.delete_env(:cinder, :media_info)
+    end)
+  end
+
+  defp stub_probe(report) do
+    stub(Cinder.Library.MediaInfoMock, :probe_policy, fn _path -> {:ok, report} end)
+
+    stub(Cinder.Library.MediaInfoMock, :probe, fn _path ->
+      {:ok, %{audio: report.audio, subtitles: report.subtitles}}
+    end)
+  end
+
+  @untagged_audio %{audio: [], subtitles: ["eng"], audio_unknown?: true, subtitle_unknown?: false}
+
+  defp held_ja_grab(episode, source, title) do
+    grab = downloaded_policy_grab(episode, source, title)
+
+    Repo.update_all(from(g in Grab, where: g.id == ^grab.id),
+      set: [
+        mapping_status: :verification_blocked,
+        download_attempts: 10,
+        release_policy_snapshot: %{
+          policy_snapshot(title)
+          | "required_audio_languages" => ["ja"]
+        }
+      ]
+    )
+
+    Repo.reload!(grab)
+  end
+
+  defp import_anyway_setup(tmp) do
+    %{downloads: downloads} = use_real_tv_library(tmp)
+    Application.put_env(:cinder, :path_policy, Cinder.Test.PermissivePathPolicy)
+    use_media_info_mock()
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
+    {series, season_fixture(series), downloads}
+  end
+
+  @tag :tmp_dir
+  test "Import anyway imports a verification-held grab with untagged audio and audits it", %{
+    tmp_dir: tmp
+  } do
+    {series, season, downloads} = import_anyway_setup(tmp)
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    episode = episode(season, 1)
+    source = Path.join(downloads, "Show.S01E01.1080p.mkv")
+    File.write!(source, "untagged audio")
+    title = "[Group] Show S01E01 [1080p]"
+    held = held_ja_grab(episode, source, title)
+    stub_probe(@untagged_audio)
+    start_supervised!({TvPoller, interval: 60_000})
+
+    # Still held: Retry would re-probe the same bytes, and the poller skips a held grab.
+    assert :ok = TvPoller.poll()
+    assert %Grab{mapping_status: :verification_blocked} = Repo.get!(Grab, held.id)
+    assert Repo.reload!(episode).file_path == nil
+
+    assert {:ok, released} = Catalog.import_grab_anyway(held, admin)
+
+    assert %Grab{mapping_status: :resolved, verification_waived: true, download_attempts: 0} =
+             released
+
+    assert :ok = TvPoller.poll()
+
+    refute Repo.get(Grab, held.id)
+    assert Repo.reload!(episode).file_path =~ "S01E01"
+    assert Catalog.blocked_release_titles_for_series(series.id) == []
+
+    assert %{actor_id: actor_id, entity_type: "Grab", detail: detail} =
+             Repo.get_by!(Cinder.Audit.AdminAudit,
+               action: "import_grab_anyway",
+               entity_id: held.id
+             )
+
+    assert actor_id == admin.id
+    assert detail["release_title"] == title
+  end
+
+  @tag :tmp_dir
+  test "the Import anyway waiver does not carry over to another grab of the same release", %{
+    tmp_dir: tmp
+  } do
+    {_series, season, downloads} = import_anyway_setup(tmp)
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    title = "[Group] Show S01E0X [1080p]"
+    waived_episode = episode(season, 1)
+    other_episode = episode(season, 2)
+    waived_source = Path.join(downloads, "Show.S01E01.1080p.mkv")
+    other_source = Path.join(downloads, "Show.S01E02.1080p.mkv")
+    File.write!(waived_source, "one")
+    File.write!(other_source, "two")
+    waived = held_ja_grab(waived_episode, waived_source, title)
+    other = downloaded_policy_grab(other_episode, other_source, title)
+
+    Repo.update_all(from(g in Grab, where: g.id == ^other.id),
+      set: [
+        release_policy_snapshot: %{
+          policy_snapshot(title)
+          | "required_audio_languages" => ["ja"]
+        }
+      ]
+    )
+
+    stub_probe(@untagged_audio)
+    assert {:ok, _} = Catalog.import_grab_anyway(waived, admin)
+    start_supervised!({TvPoller, interval: 60_000})
+
+    assert :ok = TvPoller.poll()
+
+    # The waived grab imported; the identical release on another grab was verified normally, so
+    # the unverifiable audio is still retried (and would hold again), never waved through.
+    refute Repo.get(Grab, waived.id)
+    assert Repo.reload!(waived_episode).file_path =~ "S01E01"
+
+    assert %Grab{verification_waived: false, mapping_status: :resolved, download_attempts: 1} =
+             Repo.get!(Grab, other.id)
+
+    assert Repo.reload!(other_episode).file_path == nil
+  end
+
+  @tag :tmp_dir
+  test "Import anyway still rejects a file whose audio provably mismatches", %{tmp_dir: tmp} do
+    {series, season, downloads} = import_anyway_setup(tmp)
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    episode = episode(season, 1)
+    source = Path.join(downloads, "Show.S01E01.1080p.mkv")
+    File.write!(source, "english only")
+    title = "[Group] Show S01E01 [1080p]"
+    held = held_ja_grab(episode, source, title)
+    stub_probe(%{audio: ["en"], subtitles: [], audio_unknown?: false, subtitle_unknown?: false})
+
+    remote_id = held.download_id
+    expect(Cinder.Download.ClientMock, :remove, fn ^remote_id, delete_files: true -> :ok end)
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season -> {:ok, []} end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+      {:ok, []}
+    end)
+
+    assert {:ok, _} = Catalog.import_grab_anyway(held, admin)
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    refute Repo.get(Grab, held.id)
+    assert Repo.reload!(episode).file_path == nil
+    assert Catalog.blocked_release_titles_for_series(series.id) == [title]
+  end
+
+  test "Import anyway on a grab that is not held changes nothing and writes no audit row" do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
+    episode = episode(season_fixture(series), 1)
+    grab = downloaded_policy_grab(episode, "/downloads/Show.S01E01.mkv", "[Group] Show S01E01")
+
+    assert {:error, :verification_not_held} = Catalog.import_grab_anyway(grab, admin)
+
+    assert %Grab{verification_waived: false, download_attempts: 0} = Repo.get!(Grab, grab.id)
+
+    refute Repo.exists?(
+             from a in Cinder.Audit.AdminAudit, where: a.action == "import_grab_anyway"
+           )
+  end
+
   defp anime_assignment(series, episodes, title \\ "[Group] Show S01E25-S02E01 [1080p]") do
     candidate = title |> raw_release("anime-assignment") |> Release.new()
     context = Catalog.anime_series_acquisition_context(series)

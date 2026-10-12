@@ -6,6 +6,17 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **"Import anyway" on a TV verification hold (GitHub #630).** A release whose only audio track
+  has no language tag could never pass the frozen Japanese-audio check, so Retry verification
+  re-held it forever and the file had to be remuxed by hand. A grab held as "Needs verification"
+  now has an admin-only **Import anyway** button (with a confirm step) on `/activity`. It records
+  an audit entry naming the release and the admin, then imports the held files with the checks
+  Cinder could not run waived for that grab only. A file that clearly fails the policy (a known
+  audio language that is not the required one) is still rejected, and a re-grab of the same
+  release is verified normally. Movie holds are unchanged. See
+  `specs/067-tv-verification-import-anyway/spec.md`.
+
 ### Security
 - **`decimal` 3.1.1 → 3.2.0 (CVE-2026-97853).** `Decimal.round/3` allocated memory in
   proportion to its `places` argument. Cinder's own code never calls `Decimal.round`, so this is

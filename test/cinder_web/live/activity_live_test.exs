@@ -663,6 +663,65 @@ defmodule CinderWeb.ActivityLiveTest do
            )
   end
 
+  test "an admin can Import anyway on a verification hold, after a confirm, and it is audited", %{
+    conn: conn,
+    user: admin
+  } do
+    held =
+      verification_grab!()
+      |> Ecto.Changeset.change(release_title: "[Group] Severance S01E01")
+      |> Repo.update!()
+
+    plain = grab!()
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+    assert has_element?(view, "#import-anyway-grab-#{held.id}", "Import anyway")
+    refute has_element?(view, "#import-anyway-grab-#{plain.id}")
+
+    # Nothing is written until the confirm.
+    view |> element("#import-anyway-grab-#{held.id}") |> render_click()
+    assert has_element?(view, "#confirm-import-anyway-grab-#{held.id}")
+    assert %Grab{mapping_status: :verification_blocked} = Repo.get!(Grab, held.id)
+
+    view
+    |> element("#confirm-import-anyway-grab-#{held.id} button", "Import anyway")
+    |> render_click()
+
+    assert %Grab{mapping_status: :resolved, verification_waived: true} = Repo.get!(Grab, held.id)
+    refute has_element?(view, "#import-anyway-grab-#{held.id}")
+    refute has_element?(view, "#confirm-import-anyway-grab-#{held.id}")
+    assert render(view) =~ "Import will run shortly"
+
+    assert %{actor_id: actor_id, detail: detail} =
+             Repo.get_by!(Cinder.Audit.AdminAudit,
+               action: "import_grab_anyway",
+               entity_id: held.id
+             )
+
+    assert actor_id == admin.id
+    assert detail["release_title"] == held.release_title
+  end
+
+  test "a stale Import anyway confirm cannot waive a grab a concurrent Retry already released", %{
+    conn: conn
+  } do
+    held = verification_grab!()
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+    view |> element("#import-anyway-grab-#{held.id}") |> render_click()
+    assert {:ok, _retried} = Catalog.retry_grab_verification(held)
+
+    render_click(view, "confirm_import_anyway", %{"id" => to_string(held.id)})
+
+    assert %Grab{mapping_status: :resolved, verification_waived: false} = Repo.get!(Grab, held.id)
+
+    refute Repo.exists?(
+             from a in Cinder.Audit.AdminAudit, where: a.action == "import_grab_anyway"
+           )
+
+    assert render(view) =~ "no longer held for verification"
+  end
+
   test "a stale held confirmation cannot discard a grab a concurrent Retry already released", %{
     conn: conn
   } do

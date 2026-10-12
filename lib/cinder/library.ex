@@ -830,10 +830,13 @@ defmodule Cinder.Library do
   defp attach_preflight_grab({:needs_mapping, preflight}, grab, _folder?),
     do: {:needs_mapping, Map.put(preflight, :grab, grab)}
 
-  defp verify_grab_policy(%Grab{release_policy_snapshot: snapshot}, to_import)
+  defp verify_grab_policy(%Grab{release_policy_snapshot: snapshot} = grab, to_import)
        when is_map(snapshot) do
     paths = to_import |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
-    PolicyVerifier.verify_release(paths, snapshot, media_info())
+
+    PolicyVerifier.verify_release(paths, snapshot, media_info(),
+      waive_unavailable: grab.verification_waived
+    )
   end
 
   defp verify_grab_policy(%Grab{}, _to_import), do: {:ok, %{}}
