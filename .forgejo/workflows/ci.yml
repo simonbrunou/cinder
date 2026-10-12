@@ -37,13 +37,26 @@ jobs:
           otp-version: "29"
           elixir-version: "1.20"
 
-      # Cache deps only — not _build — so a fresh compile each run can't pass on
-      # stale beams (no incremental-compile false-greens).
+      # Dependency sources, shared with the dependency-audit job (same key).
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: deps
           key: ${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-mix-${{ hashFiles('**/mix.lock') }}
           restore-keys: ${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-mix-
+
+      # Compiled dependencies: building them took 1m45s of this job (2026-10-12). Exact key
+      # only, no restore-keys: a mix.lock change rebuilds every dependency rather than
+      # restoring an older build. Cinder's own beams (_build/test/lib/cinder) are never
+      # cached, so the app still compiles from scratch every run (no incremental-compile
+      # false-greens). The `/*` matters: an exclusion only drops a path the glob matched
+      # itself, so with a bare `_build/test/lib` the whole directory, Cinder included, was
+      # archived (observed in this PR's first runs).
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            _build/test/lib/*
+            !_build/test/lib/cinder
+          key: ${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-deps-build-test-${{ hashFiles('**/mix.lock') }}
 
       - run: mix deps.get
 
@@ -74,9 +87,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
+        id: beam
         with:
           otp-version: "29"
           elixir-version: "1.20"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: deps
+          key: ${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-mix-${{ hashFiles('**/mix.lock') }}
+          restore-keys: ${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-mix-
+
+      # `mix deps.audit` is a task from a dependency, so Mix compiles every dependency
+      # (dev env) before it runs: 2m34s of a 3-minute job (2026-10-12). Same rules as the
+      # test job's build cache.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            _build/dev/lib/*
+            !_build/dev/lib/cinder
+          key: ${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-deps-build-dev-${{ hashFiles('**/mix.lock') }}
 
       - run: mix deps.get
       # hex.audit = retired packages; deps.audit (mix_audit) = CVEs vs the Elixir
