@@ -34,6 +34,10 @@ All notable changes to Cinder are documented here. The format follows
   tests run about 30% faster. Python writes that cache to `priv/__pycache__` in the release on
   first use; where the directory is read-only the helper still works and compiles on each
   start, as before.
+- **The release is built with Elixir 1.20.4 and Erlang/OTP 29.1.1 (was 1.20.1 / 29.0.2), on
+  Debian trixie 2026-10-05.** These are the versions the test suite already ran on in CI. CI now
+  pins the same exact versions instead of the latest 29.x / 1.20.x, and both files say to bump
+  them together.
 
 ### Removed
 - **`railpack.json`.** Cinder is built from the `Dockerfile` (the production deploy, the
