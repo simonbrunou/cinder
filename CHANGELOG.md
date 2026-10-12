@@ -35,6 +35,13 @@ All notable changes to Cinder are documented here. The format follows
   first use; where the directory is read-only the helper still works and compiles on each
   start, as before.
 
+### Removed
+- **`railpack.json`.** Cinder is built from the `Dockerfile` (the production deploy, the
+  published image and the CI container job all use it). The Railpack config had not been
+  updated since July: an image built from it had no Python, so subtitle sync and the
+  subtitle and sidecar writes inside library folders failed, and Railpack cannot run the app
+  as an unprivileged user the way the Dockerfile does. Build with the `Dockerfile` instead.
+
 ### Security
 - **`decimal` 3.1.1 → 3.2.0 (CVE-2026-97853).** `Decimal.round/3` allocated memory in
   proportion to its `places` argument. Cinder's own code never calls `Decimal.round`, so this is
