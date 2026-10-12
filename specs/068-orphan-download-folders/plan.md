@@ -29,7 +29,7 @@
 
 - Bulk clear covers `empty` and `library_copy`; `unmatched` is single-folder only, behind a confirm.
   A forged event for any other folder/class is a no-op in the LiveView and a skip in the context.
-- The client snapshot is taken once per `clear/2` call; DB references, survey and class are re-read per
+- The client snapshot is taken once per `clear/3` call; DB references, survey and class are re-read per
   folder right before its delete. A later job can only reserve a new key, whose intent row the
   per-folder read sees.
 - Book and audiobook files count as references but are not hash candidates: a video is never one.

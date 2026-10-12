@@ -6,7 +6,7 @@ defmodule CinderWeb.DownloadFoldersLive do
 
   Report-first. The scan and every clear run in `start_async` tasks — a download folder can hold
   terabytes — and the page only ever sends back the key of a folder it listed; the context
-  re-validates and re-checks everything at delete time (`Cinder.Download.OrphanFolders.clear/2`).
+  re-validates and re-checks everything at delete time (`Cinder.Download.OrphanFolders.clear/3`).
   Bulk clearing covers the safe classes only; an `unmatched` folder is cleared one at a time after
   an explicit confirmation.
   """
@@ -125,6 +125,10 @@ defmodule CinderWeb.DownloadFoldersLive do
 
   defp folder(_socket, _key), do: nil
 
+  # Nothing cleared means no success flash: French plural form 0 also covers n = 0, so
+  # "Cleared 0" would read as "1 dossier supprimé" next to the failure flash.
+  defp flash_clear_result(socket, [], skipped), do: flash_skipped(socket, skipped)
+
   defp flash_clear_result(socket, cleared, skipped) do
     socket
     |> put_flash(
@@ -181,6 +185,13 @@ defmodule CinderWeb.DownloadFoldersLive do
   defp error_message(:import_roots_not_explicit) do
     gettext(
       "Cinder only scans and clears folders you listed under “Download folders” in Settings. Without that setting it cannot tell which folders are its own, so it does nothing."
+    )
+  end
+
+  defp error_message({:client_list_failed, protocol, {:unhealthy, _reason}}) do
+    gettext(
+      "The %{protocol} download client failed its health check, so Cinder cannot tell which folders are in use and clears nothing. Check it with its Test button in Settings.",
+      protocol: protocol
     )
   end
 

@@ -250,6 +250,7 @@ defmodule CinderWeb.DownloadFoldersLiveTest do
                "1 folder could not be deleted (permission or path check failed); see the log."
 
       refute html =~ "changed or is in use again"
+      refute html =~ "Cleared"
       assert log =~ "orphan download folder not deleted: #{folder.path}"
     end
 
@@ -266,6 +267,28 @@ defmodule CinderWeb.DownloadFoldersLiveTest do
 
       # A forged bulk clear finds no listing to act on either.
       render_click(lv, "clear_safe", %{})
+      assert File.dir?(empty.path)
+    end
+
+    test "a client failing its health check says so and points at its Test button", ctx do
+      empty = job_folder(ctx.downloads)
+      stub(SabnzbdClientMock, :health, fn -> {:error, :bad_api_key} end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          {:ok, lv, _html} = live(ctx.conn, ~p"/settings/download-folders")
+          render_async(lv)
+
+          assert has_element?(
+                   lv,
+                   "#folders-error",
+                   "usenet download client failed its health check"
+                 )
+
+          refute has_element?(lv, "#clear-safe")
+        end)
+
+      assert log =~ "usenet download client is unhealthy, download folders refused: :bad_api_key"
       assert File.dir?(empty.path)
     end
 

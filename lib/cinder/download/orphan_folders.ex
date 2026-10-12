@@ -7,7 +7,7 @@ defmodule Cinder.Download.OrphanFolders do
   that name. A failed import, a rejected grab or a download client that already forgot the job
   leaves the folder (sometimes a full copy of a library file) with no record pointing at it, and
   nothing else sweeps it. This module is the **report-first** answer: `scan/0` lists such folders
-  with a class, `clear/2` removes chosen ones. It never runs on its own.
+  with a class, `clear/3` removes chosen ones. It never runs on its own.
 
   ## Classes
 
@@ -32,7 +32,7 @@ defmodule Cinder.Download.OrphanFolders do
 
   ## Safety
 
-  `clear/2` re-surveys the folder, re-classifies it and re-reads the database references
+  `clear/3` re-surveys the folder, re-classifies it and re-reads the database references
   immediately before each delete, and deletes through `Cinder.Library.delete_download_source/1`
   — strictly inside an **explicit** import root, no symlinks, never a root itself. The client
   snapshot is taken once per call, which is sound because a folder only exists under a key whose
@@ -310,8 +310,15 @@ defmodule Cinder.Download.OrphanFolders do
     case Download.client_for(protocol) do
       {:ok, client} ->
         case client.health() do
-          {:error, reason} -> {:error, {:unhealthy, reason}}
-          _ok_or_warning -> client.list_managed()
+          {:error, reason} ->
+            Logger.warning(
+              "#{protocol} download client is unhealthy, download folders refused: #{inspect(reason)}"
+            )
+
+            {:error, {:unhealthy, reason}}
+
+          _ok_or_warning ->
+            client.list_managed()
         end
 
       :error ->

@@ -1117,7 +1117,7 @@ msgid "Set up Cinder"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:153
-#: lib/cinder_web/live/download_folders_live.ex:242
+#: lib/cinder_web/live/download_folders_live.ex:253
 #: lib/cinder_web/live/profiles_live.ex:143
 #: lib/cinder_web/live/settings_live.ex:137
 #: lib/cinder_web/user_auth.ex:418
@@ -3972,7 +3972,7 @@ msgstr ""
 msgid "Exact title and year matches are selected by default."
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:355
+#: lib/cinder_web/live/download_folders_live.ex:366
 #: lib/cinder_web/live/library_adoption_live.ex:913
 #: lib/cinder_web/live/library_adoption_live.ex:979
 #: lib/cinder_web/live/library_live.ex:566
@@ -7196,67 +7196,67 @@ msgstr ""
 msgid "The download is no longer held for verification."
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:283
+#: lib/cinder_web/live/download_folders_live.ex:294
 #, elixir-autogen, elixir-format
 msgid "%{count} job folder is still in use and was left out."
 msgid_plural "%{count} job folders are still in use and were left out."
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/download_folders_live.ex:173
+#: lib/cinder_web/live/download_folders_live.ex:177
 #, elixir-autogen, elixir-format
 msgid "1 folder could not be deleted (permission or path check failed); see the log."
 msgid_plural "%{count} folders could not be deleted (permission or path check failed); see the log."
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/download_folders_live.ex:157
+#: lib/cinder_web/live/download_folders_live.ex:161
 #, elixir-autogen, elixir-format
 msgid "1 folder was left alone because it changed or is in use again."
 msgid_plural "%{count} folders were left alone because they changed or are in use again."
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/download_folders_live.ex:215
+#: lib/cinder_web/live/download_folders_live.ex:226
 #, elixir-autogen, elixir-format
 msgid "Changed in the last hour"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:182
+#: lib/cinder_web/live/download_folders_live.ex:186
 #, elixir-autogen, elixir-format
 msgid "Cinder only scans and clears folders you listed under “Download folders” in Settings. Without that setting it cannot tell which folders are its own, so it does nothing."
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:248
+#: lib/cinder_web/live/download_folders_live.ex:259
 #, elixir-autogen, elixir-format
 msgid "Cinder's own job folders in your download folders that no download, grab, movie or book refers to any more. Nothing is removed unless you clear it here."
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:305
+#: lib/cinder_web/live/download_folders_live.ex:316
 #, elixir-autogen, elixir-format
 msgid "Clear 1 empty or duplicate folder"
 msgid_plural "Clear %{count} empty or duplicate folders"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/download_folders_live.ex:319
+#: lib/cinder_web/live/download_folders_live.ex:330
 #, elixir-autogen, elixir-format
 msgid "Clear folders"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:132
+#: lib/cinder_web/live/download_folders_live.ex:136
 #, elixir-autogen, elixir-format
 msgid "Cleared 1 download folder."
 msgid_plural "Cleared %{count} download folders."
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/download_folders_live.ex:217
+#: lib/cinder_web/live/download_folders_live.ex:228
 #, elixir-autogen, elixir-format
 msgid "Contains a special file"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:216
+#: lib/cinder_web/live/download_folders_live.ex:227
 #, elixir-autogen, elixir-format
 msgid "Contains a symlink"
 msgstr ""
@@ -7266,110 +7266,115 @@ msgstr ""
 msgid "Couldn't clear the download folders."
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:197
+#: lib/cinder_web/live/download_folders_live.ex:208
 #, elixir-autogen, elixir-format
 msgid "Couldn't scan the download folders."
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:366
+#: lib/cinder_web/live/download_folders_live.ex:377
 #, elixir-autogen, elixir-format
 msgid "Delete %{name}"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:382
+#: lib/cinder_web/live/download_folders_live.ex:393
 #, elixir-autogen, elixir-format
 msgid "Delete %{name}? It holds a video that matches nothing in your library and may never have been imported. This cannot be undone."
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:323
+#: lib/cinder_web/live/download_folders_live.ex:334
 #, elixir-autogen, elixir-format
 msgid "Delete 1 folder that is empty or only holds copies of files already in your library? This cannot be undone."
 msgid_plural "Delete %{count} folders that are empty or only hold copies of files already in your library? This cannot be undone."
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/download_folders_live.ex:379
+#: lib/cinder_web/live/download_folders_live.ex:390
 #, elixir-autogen, elixir-format
 msgid "Delete folder"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:368
+#: lib/cinder_web/live/download_folders_live.ex:379
 #, elixir-autogen, elixir-format
 msgid "Delete…"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:199
+#: lib/cinder_web/live/download_folders_live.ex:210
 #, elixir-autogen, elixir-format
 msgid "Empty"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:293
+#: lib/cinder_web/live/download_folders_live.ex:304
 #, elixir-autogen, elixir-format
 msgid "Every Cinder job folder in your download folders is still in use."
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:210
+#: lib/cinder_web/live/download_folders_live.ex:221
 #, elixir-autogen, elixir-format
 msgid "Every video is identical to a file already in your library."
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:213
+#: lib/cinder_web/live/download_folders_live.ex:224
 #, elixir-autogen, elixir-format
 msgid "Holds a video that matches no library file. It may never have been imported."
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:246
+#: lib/cinder_web/live/download_folders_live.ex:257
 #: lib/cinder_web/live/settings_live.ex:160
 #, elixir-autogen, elixir-format
 msgid "Leftover download folders"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:200
+#: lib/cinder_web/live/download_folders_live.ex:211
 #, elixir-autogen, elixir-format
 msgid "Library copy"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:207
+#: lib/cinder_web/live/download_folders_live.ex:218
 #, elixir-autogen, elixir-format
 msgid "No files inside."
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:292
+#: lib/cinder_web/live/download_folders_live.ex:303
 #, elixir-autogen, elixir-format
 msgid "No leftover job folders"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:201
+#: lib/cinder_web/live/download_folders_live.ex:212
 #, elixir-autogen, elixir-format
 msgid "Not in the library"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:261
+#: lib/cinder_web/live/download_folders_live.ex:272
 #, elixir-autogen, elixir-format
 msgid "Scan again"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:188
+#: lib/cinder_web/live/download_folders_live.ex:199
 #, elixir-autogen, elixir-format
 msgid "The %{protocol} download client could not list its jobs, so Cinder cannot tell which folders are in use and clears nothing. Try again once it is reachable."
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:195
+#: lib/cinder_web/live/download_folders_live.ex:206
 #, elixir-autogen, elixir-format
 msgid "The download folder %{root} could not be read."
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:219
+#: lib/cinder_web/live/download_folders_live.ex:230
 #, elixir-autogen, elixir-format
 msgid "Too many files to check"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:218
+#: lib/cinder_web/live/download_folders_live.ex:229
 #, elixir-autogen, elixir-format
 msgid "Unreadable"
 msgstr ""
 
-#: lib/cinder_web/live/download_folders_live.ex:268
+#: lib/cinder_web/live/download_folders_live.ex:279
 #, elixir-autogen, elixir-format
 msgid "Working through the download folders…"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:192
+#, elixir-autogen, elixir-format
+msgid "The %{protocol} download client failed its health check, so Cinder cannot tell which folders are in use and clears nothing. Check it with its Test button in Settings."
 msgstr ""
