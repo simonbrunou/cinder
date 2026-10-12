@@ -488,6 +488,13 @@ defmodule CinderWeb.UserAuth do
   defp admin?(%Cinder.Accounts.Scope{user: %{role: :admin}}), do: true
   defp admin?(_), do: false
 
+  @doc """
+  Whether the current scope passes every hook `ActivityBeaconLive` mounts with (active admin).
+  The root layout gates the sticky `live_render` on this: a child LiveView that redirects
+  raises on the dead render.
+  """
+  def beacon?(scope), do: active?(scope) and admin?(scope)
+
   # A request event may have changed the pending count: re-read it into the assign the nav badge
   # renders from. Any other message passes through untouched.
   defp pending_requests_badge_hook({event, _payload}, socket)

@@ -18,6 +18,20 @@ defmodule CinderWeb.PendingApprovalLiveTest do
     assert has_element?(live_view, "#pending-logout[href='/users/log-out']", "Log out")
   end
 
+  test "a deactivated admin gets the waiting room, not a 500 from the sticky beacon", %{
+    conn: conn
+  } do
+    inactive = admin_fixture() |> Ecto.Changeset.change(active: false) |> Cinder.Repo.update!()
+    conn = log_in_user(conn, inactive)
+
+    assert redirected_to(get(conn, ~p"/")) == "/pending"
+
+    html = html_response(get(conn, ~p"/pending"), 200)
+    assert html =~ ~s(id="pending-approval")
+    assert html =~ ~s(id="pending-logout")
+    refute html =~ "activity-beacon"
+  end
+
   test "redirects to / as soon as an admin activates the waiting account", %{conn: conn} do
     admin = admin_fixture()
     inactive = user_fixture() |> Ecto.Changeset.change(active: false) |> Cinder.Repo.update!()

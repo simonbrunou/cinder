@@ -123,6 +123,10 @@ All notable changes to Cinder are documented here. The format follows
   nothing changes, and admins are never limited.
 
 ### Fixed
+- **A deactivated admin account no longer gets a server error on every page (#627).** The root
+  layout mounted the activity beacon for any admin, but the beacon rejects inactive accounts, and
+  a child LiveView cannot redirect, so even the approval waiting room crashed. The layout now
+  uses the same check as the beacon, so the waiting room and its log-out button render.
 - **A movie download that turns out to be a different film is no longer imported.** A release
   can spell the right title and hold another film, which no name check can see. Before import,
   Cinder now compares the file's length (`ffprobe`) with the TMDB runtime. A file at least 15% and
