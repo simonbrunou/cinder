@@ -35,6 +35,9 @@ cinder-*.tar
 npm-debug.log
 /assets/node_modules/
 
+# Python bytecode cache, written when Cinder runs priv/rooted_fs_main.py.
+__pycache__/
+
 # Database files
 *.db
 *.db-*

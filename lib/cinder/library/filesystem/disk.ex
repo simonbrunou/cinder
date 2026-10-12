@@ -573,11 +573,13 @@ defmodule Cinder.Library.Filesystem.Disk do
   defp rooted_reason(%{"reason" => reason}),
     do: Map.get(@posix_reasons, reason, {:rooted_error, reason})
 
+  # The launcher imports `rooted_fs.py` so its bytecode is cached; every operation starts a
+  # new helper process, and compiling the module on each start cost ~4.6 ms of ~28 (#707).
   defp rooted_helper do
     Application.get_env(
       :cinder,
       :rooted_filesystem_helper,
-      Path.join(:code.priv_dir(:cinder), "rooted_fs.py")
+      Path.join(:code.priv_dir(:cinder), "rooted_fs_main.py")
     )
   end
 
@@ -656,7 +658,7 @@ defmodule Cinder.Library.Filesystem.Disk do
 
   # Kills the OS process behind `port` by pid before closing it (#590) — `Port.close/1` alone
   # does not terminate a child stuck in a blocking syscall against a wedged mount (the
-  # `python3 priv/rooted_fs.py hold ...` process this closes was never proven to have reached
+  # `python3 priv/rooted_fs_main.py hold ...` process this closes was never proven to have reached
   # its own graceful `sys.stdin.buffer.read()` shutdown wait, especially on the timeout path
   # above). Delegates to `Cinder.BoundedCommand.kill_and_close/1`, the same
   # `Port.info(port, :os_pid)` + `kill -KILL` idiom issue #510 already proved for three other

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Linux root-contained filesystem helper for Cinder subtitle effects."""
+"""Linux root-contained filesystem helper for Cinder subtitle effects.
+
+Cinder starts it through rooted_fs_main.py, one process per operation. Keep the imports
+few: every start pays for them (#707).
+"""
 
 import ctypes
 import errno
 import json
 import os
-import platform
 import posixpath
-import secrets
 import stat
 import sys
 import time
@@ -25,7 +27,7 @@ RENAME_EXCHANGE = 0x02
 RENAME_NOREPLACE = 0x01
 SYS_OPENAT2 = 437
 SYS_RENAMEAT2 = {"x86_64": 316, "amd64": 316, "aarch64": 276, "arm64": 276}.get(
-    platform.machine().lower()
+    os.uname().machine.lower()
 )
 MERGERFS_FULLPATH = "user.mergerfs.fullpath"
 MERGERFS_BASEPATH = "user.mergerfs.basepath"
@@ -525,7 +527,7 @@ def quarantine_duplicate(branch, backing_relative, expected):
         resolve=RESOLVE_NO_XDEV,
     )
     try:
-        private = f".{name}.cinder-duplicate-{secrets.token_hex(16)}"
+        private = f".{name}.cinder-duplicate-{os.urandom(16).hex()}"
         rename_noreplace(parent, name, private)
         try:
             fd = os.open(private, O_PATH | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
@@ -861,7 +863,7 @@ def mkdir_near(args):
 
     try:
         old_umask = os.umask(0o077)
-        private = f".{basename}.cinder-create-{secrets.token_hex(16)}"
+        private = f".{basename}.cinder-create-{os.urandom(16).hex()}"
         try:
             os.mkdir(private, int(args[3], 8), dir_fd=parent)
         finally:
@@ -947,7 +949,7 @@ def main():
         raise OSError(errno.EINVAL, "invalid arguments")
 
 
-if __name__ == "__main__":
+def run():
     operation = sys.argv[1] if len(sys.argv) > 1 else "unknown"
     try:
         main()
@@ -955,3 +957,7 @@ if __name__ == "__main__":
         phase = "post_effect" if isinstance(exc, EffectCommittedError) else "pre_effect"
         fail(operation, phase, exc)
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    run()

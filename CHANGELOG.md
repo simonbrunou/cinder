@@ -25,6 +25,16 @@ All notable changes to Cinder are documented here. The format follows
   touches anything outside your configured download folders, and refuses to clear at all when a
   download client cannot list its jobs. Nothing is removed automatically.
 
+### Changed
+- **The filesystem helper starts faster (#707).** Subtitle and sidecar reads, writes, renames and
+  deletes inside a library folder each start a short-lived Python helper (`priv/rooted_fs.py`).
+  It now starts through `priv/rooted_fs_main.py`, which imports the helper so Python reuses its
+  compiled bytecode instead of recompiling it each time, and the helper no longer imports
+  `secrets` or `platform`. A start takes about 20 ms instead of 28 ms, and the subtitle-sync
+  tests run about 30% faster. Python writes that cache to `priv/__pycache__` in the release on
+  first use; where the directory is read-only the helper still works and compiles on each
+  start, as before.
+
 ### Security
 - **`decimal` 3.1.1 → 3.2.0 (CVE-2026-97853).** `Decimal.round/3` allocated memory in
   proportion to its `places` argument. Cinder's own code never calls `Decimal.round`, so this is
