@@ -46,7 +46,9 @@ defmodule Cinder.Download.Client do
   Each entry is `%{id:, operation_key:, state:}`, where `:state` uses the same
   `:downloading | :completed | :error` vocabulary as `status/1`. Torrent clients may also
   include `:ratio` and `:seeding_time` (seconds) so the opt-in cleaner can remove completed
-  downloads after either limit. An entry whose marker can't be parsed back to a key is omitted
+  downloads after either limit. Usenet clients include `:completed_at` (Unix seconds, from the
+  client's history) on finished entries, so the cleaner can leave a just-completed job alone
+  while its import finishes. An entry whose marker can't be parsed back to a key is omitted
   rather than reported keyless.
   """
   @callback list_managed() ::

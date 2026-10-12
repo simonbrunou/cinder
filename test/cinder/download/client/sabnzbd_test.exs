@@ -1001,6 +1001,95 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:ok, []} = Sabnzbd.list_managed()
   end
 
+  test "list_managed/0 reports a finished job's completion time from its history slot" do
+    stub(fn conn ->
+      body =
+        case conn.params["mode"] do
+          "queue" ->
+            %{"queue" => %{"slots" => [], "noofslots" => 0}}
+
+          "history" ->
+            %{
+              "history" => %{
+                "slots" => [
+                  %{
+                    "name" => "Show.cinder-#{@key}",
+                    "nzo_id" => "nzo-h",
+                    "status" => "Completed",
+                    "completed" => 1_760_000_000
+                  }
+                ],
+                "noofslots" => 1
+              }
+            }
+        end
+
+      Req.Test.json(conn, body)
+    end)
+
+    assert {:ok, [%{id: "nzo-h", state: :completed, completed_at: 1_760_000_000}]} =
+             Sabnzbd.list_managed()
+  end
+
+  # #684: SABnzbd answers one page (10 slots) unless told otherwise, so a sweep that stopped at
+  # the first response could never see an orphan older than the newest 10 Cinder jobs.
+  test "list_managed/0 pages through more Cinder history entries than fit one page" do
+    keys = for _ <- 1..250, do: Ecto.UUID.generate()
+
+    history =
+      keys
+      |> Enum.with_index()
+      |> Enum.map(fn {key, i} ->
+        %{"name" => "Show.#{i}.cinder-#{key}", "nzo_id" => "nzo-#{i}", "status" => "Completed"}
+      end)
+
+    stub(fn conn ->
+      params = conn.params
+
+      body =
+        case params["mode"] do
+          "queue" ->
+            %{"queue" => %{"slots" => [], "noofslots" => 0}}
+
+          "history" ->
+            start = String.to_integer(params["start"] || "0")
+            limit = String.to_integer(params["limit"] || "10")
+
+            %{
+              "history" => %{
+                "slots" => history |> Enum.drop(start) |> Enum.take(limit),
+                "noofslots" => length(history)
+              }
+            }
+        end
+
+      Req.Test.json(conn, body)
+    end)
+
+    assert {:ok, entries} = Sabnzbd.list_managed()
+    assert Enum.map(entries, & &1.id) == for(i <- 0..249, do: "nzo-#{i}")
+    assert Enum.all?(entries, &(&1.state == :completed))
+  end
+
+  test "list_managed/0 stops paging when SABnzbd misreports its total" do
+    stub(fn conn ->
+      mode = conn.params["mode"]
+      start = String.to_integer(conn.params["start"])
+
+      # Always a full page of fresh slots and a total that never gets reached.
+      slots =
+        for i <- start..(start + String.to_integer(conn.params["limit"]) - 1) do
+          %{"name" => "S.cinder-#{Ecto.UUID.generate()}", "nzo_id" => "nzo-#{i}"}
+        end
+
+      Req.Test.json(conn, %{mode => %{"slots" => slots, "noofslots" => 1_000_000_000}})
+    end)
+
+    # Returns (bounded) instead of looping forever; the exact cap is an implementation detail.
+    assert {:ok, entries} = Sabnzbd.list_managed()
+    assert length(entries) > 1_000
+  end
+
   test "list_managed/0 tolerates a 200 with no slots" do
     stub(fn conn -> Req.Test.json(conn, %{}) end)
 

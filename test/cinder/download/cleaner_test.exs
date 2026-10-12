@@ -78,6 +78,126 @@ defmodule Cinder.Download.CleanerTest do
     assert :ok = Cleaner.poll()
   end
 
+  describe "completed usenet entries (#684)" do
+    # A usenet job reports neither a ratio nor a seeding time and has nothing to seed, so once no
+    # intent/movie/grab/book grab claims it the payload is dead weight — where the operator asked
+    # for removal after a Usenet import, and once the client says it completed long enough ago
+    # that its import is certainly done.
+    setup do
+      saved = Application.get_env(:cinder, :move_on_import)
+      Application.put_env(:cinder, :move_on_import, true)
+
+      on_exit(fn ->
+        if is_nil(saved),
+          do: Application.delete_env(:cinder, :move_on_import),
+          else: Application.put_env(:cinder, :move_on_import, saved)
+      end)
+
+      stub(ClientMock, :list_managed, fn -> {:ok, []} end)
+      :ok
+    end
+
+    defp completed_usenet(attrs) do
+      entry(Map.merge(%{state: :completed, completed_at: System.os_time(:second) - 7200}, attrs))
+    end
+
+    # `Download.best_effort_remove/2` swallows a Mox.UnexpectedCallError, so a missing `remove`
+    # expectation can't prove a "keeps" test: record every removal and refute it explicitly.
+    defp record_removals(mock) do
+      parent = self()
+
+      stub(mock, :remove, fn id, opts ->
+        send(parent, {:removed, id, opts})
+        :ok
+      end)
+    end
+
+    test "removes an unclaimed completed usenet entry together with its files" do
+      stub(SabnzbdClientMock, :list_managed, fn ->
+        {:ok, [completed_usenet(%{id: "nzo-done"})]}
+      end)
+
+      record_removals(SabnzbdClientMock)
+
+      assert :ok = Cleaner.poll()
+      assert_received {:removed, "nzo-done", opts}
+      assert Keyword.fetch!(opts, :delete_files)
+    end
+
+    test "keeps a completed usenet entry a movie, grab or intent still claims" do
+      key = Ecto.UUID.generate()
+
+      Repo.insert!(%Intent{
+        operation_key: key,
+        kind: :movie,
+        target_id: 1,
+        protocol: :usenet,
+        release: %{"title" => "R"},
+        status: :submitted,
+        remote_id: "nzo-intent"
+      })
+
+      movie_fixture(%{status: :downloaded, download_id: "nzo-movie", download_protocol: :usenet})
+
+      stub(SabnzbdClientMock, :list_managed, fn ->
+        {:ok,
+         [
+           completed_usenet(%{id: "nzo-intent", operation_key: key}),
+           completed_usenet(%{id: "nzo-movie"})
+         ]}
+      end)
+
+      record_removals(SabnzbdClientMock)
+
+      assert :ok = Cleaner.poll()
+      refute_received {:removed, _id, _opts}
+    end
+
+    test "keeps a completed usenet entry while move_on_import is off" do
+      Application.put_env(:cinder, :move_on_import, false)
+
+      stub(SabnzbdClientMock, :list_managed, fn ->
+        {:ok, [completed_usenet(%{id: "nzo-kept"})]}
+      end)
+
+      record_removals(SabnzbdClientMock)
+
+      assert :ok = Cleaner.poll()
+      refute_received {:removed, _id, _opts}
+    end
+
+    # An import releases its owner before it finishes linking sidecars, so a just-completed job
+    # can look unowned while its import is still running.
+    test "keeps a just-completed usenet entry and one reporting no completion time" do
+      stub(SabnzbdClientMock, :list_managed, fn ->
+        {:ok,
+         [
+           completed_usenet(%{id: "nzo-fresh", completed_at: System.os_time(:second) - 60}),
+           Map.delete(completed_usenet(%{id: "nzo-untimed"}), :completed_at)
+         ]}
+      end)
+
+      record_removals(SabnzbdClientMock)
+
+      assert :ok = Cleaner.poll()
+      refute_received {:removed, _id, _opts}
+    end
+
+    test "still leaves a completed torrent below its limits alone" do
+      configure_limits(ratio_limit: "2", seed_time_limit_hours: "48")
+
+      # Replaces setup's empty torrent listing with the one under test.
+      stub(ClientMock, :list_managed, fn ->
+        {:ok, [entry(%{id: "young", state: :completed, ratio: 1.0, seeding_time: 3600})]}
+      end)
+
+      record_removals(ClientMock)
+
+      assert :ok = Cleaner.poll()
+      refute_received {:removed, _id, _opts}
+    end
+  end
+
   test "removes an unclaimed completed torrent after the opt-in ratio is reached" do
     configure_limits(ratio_limit: "1.5")
 

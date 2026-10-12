@@ -155,6 +155,28 @@ defmodule Cinder.Download.Client.NzbgetTest do
     assert :ok = Nzbget.remove("42")
   end
 
+  test "list_managed/0 reports a finished job's completion time from its history entry" do
+    stub(fn conn, request ->
+      case request["method"] do
+        "listgroups" ->
+          result(conn, [])
+
+        "history" ->
+          result(conn, [
+            %{
+              "NZBID" => 43,
+              "Name" => "Movie.cinder-#{@key}",
+              "Status" => "SUCCESS/ALL",
+              "HistoryTime" => 1_760_000_000
+            }
+          ])
+      end
+    end)
+
+    assert {:ok, [%{id: "43", state: :completed, completed_at: 1_760_000_000}]} =
+             Nzbget.list_managed()
+  end
+
   test "health/0 probes the authenticated version endpoint and path mapping" do
     configure_path_mapping(nil, nil)
     stub(fn conn, %{"method" => "version"} -> result(conn, "25.4") end)

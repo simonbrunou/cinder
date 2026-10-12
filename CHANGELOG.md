@@ -151,6 +151,13 @@ All notable changes to Cinder are documented here. The format follows
   transaction, and the confirm text says the release will not be picked again. A plain Delete of a
   downloading grab is unchanged. A blocked release can still be grabbed on purpose from the
   series' manual search.
+- **Rejected downloads no longer pile up on disk (#684).** When Cinder blocklists a release it
+  gives up on, a TV grab parked after an empty import or a movie upgrade reverted on a permanent
+  failure, it now removes the SABnzbd/NZBGet job and the downloaded files, under the same
+  "Remove download after a Usenet import" rule as a successful import. Torrents are left to keep
+  seeding. The orphan sweep also removes a completed Usenet job nothing owns anymore (when that
+  setting is on), and sees every Cinder job in SABnzbd instead of only the 10 newest history
+  entries, so rejected downloads already sitting there are cleaned up too.
 - **A movie download that turns out to be a different film is no longer imported.** A release
   can spell the right title and hold another film, which no name check can see. Before import,
   Cinder now compares the file's length (`ffprobe`) with the TMDB runtime. A file at least 15% and

@@ -817,4 +817,213 @@ defmodule Cinder.Download.MoveOnImportTest do
       assert_receive {:removed, "nzo-tv-reject", [delete_files: true]}
     end
   end
+
+  # #684: a release the pollers blocklist (parked TV grab, reverted movie upgrade) leaves its
+  # download behind — nothing owns it, and the Cleaner never reaped a completed one. The client job
+  # and payload are removed under the same rule as a successful import (usenet + `move_on_import`).
+  describe "rejected downloads (#684)" do
+    defp unmatched_pack_grab(protocol, download_id, content_path) do
+      {_series, season} = series_tree()
+      e1 = episode(season, 1)
+      {:ok, grab} = Catalog.create_grab(download_id, protocol, [e1.id], "Show.S01.Pack-GRP")
+      {:ok, _} = Catalog.mark_grab_downloaded(grab, content_path)
+
+      # No file in the pack matches the wanted episode -> :no_files_matched (blocklists + parks).
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+        {:ok, [{Path.join(content_path, "Show.S01E99.mkv"), 3_000_000_000}]}
+      end)
+
+      {grab, e1}
+    end
+
+    defp upgrading_movie(tmdb_id, protocol, download_id) do
+      movie_fixture(%{
+        tmdb_id: tmdb_id,
+        title: "M",
+        status: :upgrading,
+        download_id: download_id,
+        download_protocol: protocol,
+        release_title: "Bad.1080p-GRP",
+        file_path: "/lib/M (2020)/M (2020).mkv"
+      })
+    end
+
+    # The replacement download yields no video file -> :no_video_file, a permanent import error.
+    defp stub_no_video_file_download(mock, download_id, content_path) do
+      stub(mock, :status, fn ^download_id ->
+        {:ok, %{state: :completed, content_path: content_path}}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+        {:ok, [{Path.join(content_path, "readme.nfo"), 12}]}
+      end)
+    end
+
+    # Client/payload removals are swallowed by `Download.best_effort_remove/2` and
+    # `best_effort_delete_source/1`, so a mock that raises can't prove a "keeps" test: record
+    # every removal and refute the messages.
+    defp record_removals(mock) do
+      echo_remove(mock)
+      echo_rm_rf()
+    end
+
+    defp refute_removals do
+      refute_received {:removed, _id, _opts}
+      refute_received {:rm_rf, _path}
+    end
+
+    test "a usenet grab parked :no_files_matched leaves a cleanup intent and its payload is deleted" do
+      enable()
+      {grab, e1} = unmatched_pack_grab(:usenet, "nzo-parked", "/dl/parked-pack")
+      # A failing client keeps the fenced intent visible; the payload goes regardless.
+      stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> {:error, :timeout} end)
+      echo_rm_rf()
+      start_supervised!({TvPoller, interval: 60_000})
+
+      assert :ok = TvPoller.poll()
+
+      refute Repo.get(Grab, grab.id)
+
+      assert %Intent{status: :cleanup_pending, protocol: :usenet, episode_ids: [episode_id]} =
+               Repo.get_by!(Intent, remote_id: "nzo-parked")
+
+      assert episode_id == e1.id
+      assert_receive {:rm_rf, "/dl/parked-pack"}
+    end
+
+    test "a usenet grab parked :no_files_matched removes its client job and payload" do
+      enable()
+      unmatched_pack_grab(:usenet, "nzo-parked-2", "/dl/parked-pack-2")
+      echo_remove(Cinder.Download.SabnzbdClientMock)
+      echo_rm_rf()
+      start_supervised!({TvPoller, interval: 60_000})
+
+      assert :ok = TvPoller.poll()
+
+      assert_receive {:removed, "nzo-parked-2", [delete_files: true]}
+      assert_receive {:rm_rf, "/dl/parked-pack-2"}
+      refute Repo.get_by(Intent, remote_id: "nzo-parked-2")
+    end
+
+    test "a torrent grab parked :no_files_matched keeps its payload and keeps seeding" do
+      enable()
+      {grab, _e1} = unmatched_pack_grab(:torrent, "hash-parked", "/dl/seeding-pack")
+      record_removals(Cinder.Download.ClientMock)
+      start_supervised!({TvPoller, interval: 60_000})
+
+      assert :ok = TvPoller.poll()
+
+      refute Repo.get(Grab, grab.id)
+      assert Repo.all(Intent) == []
+      refute_removals()
+    end
+
+    test "a usenet grab parked :no_files_matched keeps its payload while move_on_import is off" do
+      unmatched_pack_grab(:usenet, "nzo-off", "/dl/off-pack")
+      record_removals(Cinder.Download.SabnzbdClientMock)
+      start_supervised!({TvPoller, interval: 60_000})
+
+      assert :ok = TvPoller.poll()
+
+      assert Repo.all(Intent) == []
+      refute_removals()
+    end
+
+    test "a usenet upgrade reverted on a permanent import error leaves a cleanup intent and its payload is deleted" do
+      enable()
+      movie = upgrading_movie(61, :usenet, "nzo-up-bad")
+      source = "/downloads/cinder-bad"
+      stub_no_video_file_download(Cinder.Download.SabnzbdClientMock, "nzo-up-bad", source)
+      stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> {:error, :timeout} end)
+      echo_rm_rf()
+      start_supervised!({Poller, interval: 60_000})
+
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :available, download_id: nil, file_path: "/lib/M (2020)/M (2020).mkv"} =
+               Repo.get!(Movie, movie.id)
+
+      assert %Intent{status: :cleanup_pending, protocol: :usenet} =
+               Repo.get_by!(Intent, remote_id: "nzo-up-bad")
+
+      assert_receive {:rm_rf, ^source}
+      refute_receive {:rm_rf, "/lib/M (2020)/M (2020).mkv"}
+    end
+
+    test "a usenet upgrade reverted on a permanent import error removes its client job" do
+      enable()
+      upgrading_movie(62, :usenet, "nzo-up-bad-2")
+      source = "/downloads/cinder-bad-2"
+      stub_no_video_file_download(Cinder.Download.SabnzbdClientMock, "nzo-up-bad-2", source)
+      echo_remove(Cinder.Download.SabnzbdClientMock)
+      echo_rm_rf()
+      start_supervised!({Poller, interval: 60_000})
+
+      assert :ok = Poller.poll()
+
+      assert_receive {:removed, "nzo-up-bad-2", [delete_files: true]}
+      assert_receive {:rm_rf, ^source}
+    end
+
+    test "a torrent upgrade reverted on a permanent import error keeps its payload and keeps seeding" do
+      enable()
+      movie = upgrading_movie(63, :torrent, "hash-up-bad")
+      stub_no_video_file_download(Cinder.Download.ClientMock, "hash-up-bad", "/downloads/seeding")
+      record_removals(Cinder.Download.ClientMock)
+      start_supervised!({Poller, interval: 60_000})
+
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :available, download_id: nil} = Repo.get!(Movie, movie.id)
+      assert Repo.all(Intent) == []
+      refute_removals()
+    end
+
+    # Not a blocklisted release: it may be re-picked, so neither its job nor its payload is touched.
+    test "a usenet grab parked after a transient import error keeps its job and payload" do
+      enable()
+      {series, season} = series_tree()
+      e1 = episode(season, 1)
+      {:ok, grab} = Catalog.create_grab("nzo-transient", :usenet, [e1.id], "Show.S01.Pack-GRP")
+      {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/transient-pack")
+      Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [download_attempts: 9])
+
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:error, :eacces} end)
+      record_removals(Cinder.Download.SabnzbdClientMock)
+      start_supervised!({TvPoller, interval: 60_000})
+
+      assert :ok = TvPoller.poll()
+
+      refute Repo.get(Grab, grab.id)
+      assert Catalog.blocked_release_titles_for_series(series.id) == []
+      refute_removals()
+    end
+
+    test "a usenet upgrade reverted after a transient import error keeps its job and payload" do
+      enable()
+      movie = upgrading_movie(64, :usenet, "nzo-up-transient")
+      {:ok, _} = Catalog.transition(movie, %{status: :upgrading, import_attempts: 9})
+
+      stub_no_video_file_download(
+        Cinder.Download.SabnzbdClientMock,
+        "nzo-up-transient",
+        "/downloads/cinder-transient"
+      )
+
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:error, :eacces} end)
+      record_removals(Cinder.Download.SabnzbdClientMock)
+      start_supervised!({Poller, interval: 60_000})
+
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :available, download_id: nil} = Repo.get!(Movie, movie.id)
+      assert Catalog.blocked_release_titles(Repo.get!(Movie, movie.id)) == []
+      refute_removals()
+    end
+  end
 end

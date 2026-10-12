@@ -697,10 +697,10 @@ defmodule Cinder.Download.Poller do
         )
 
       {:error, reason} when reason in @permanent_import_errors ->
-        revert_upgrade(movie, reason)
+        revert_upgrade(movie, reason, content_path)
 
       {:error, reason} ->
-        retry_or_revert(movie, reason)
+        retry_or_revert(movie, reason, content_path)
     end
   end
 
@@ -741,7 +741,9 @@ defmodule Cinder.Download.Poller do
   end
 
   # Bounded retry on the upgrade's download/transient-import side; after @max_attempts, revert.
-  defp retry_or_revert(movie, reason) do
+  # `content_path` is the replacement download's source when known (nil from the client-status
+  # branches, which have none).
+  defp retry_or_revert(movie, reason, content_path \\ nil) do
     attempts = (movie.import_attempts || 0) + 1
 
     if attempts >= @max_attempts do
@@ -750,7 +752,7 @@ defmodule Cinder.Download.Poller do
           hold_policy_verification(movie, :upgrade, attempts, reason)
 
         _reason ->
-          revert_upgrade(movie, reason)
+          revert_upgrade(movie, reason, content_path)
       end
     else
       Logger.info(
@@ -774,18 +776,28 @@ defmodule Cinder.Download.Poller do
   # still-present release_title BEFORE the revert clears it), then revert to :available clearing the
   # upgrade's download fields. Blocklist only genuine release failures (mirrors park/3) so a config
   # glitch (:no_client) doesn't blocklist a good release.
-  defp revert_upgrade(movie, reason) do
+  #
+  # `content_path` is the replacement download's source when the caller has it (see
+  # `finish_upgrade/2`: never persisted on the row), `nil` otherwise.
+  defp revert_upgrade(movie, reason, content_path \\ nil) do
     # :blocked_content joins the two deterministic sets: a proven-fake replacement must be blocked,
     # or the next upgrade hunt (or manual search) re-picks the very same release.
-    if reason == :blocked_content or reason in @permanent_import_errors or
-         reason in @download_failure_errors,
-       do: Catalog.block_release(movie, :upgrade_failed)
+    blocked? =
+      reason == :blocked_content or reason in @permanent_import_errors or
+        reason in @download_failure_errors
 
-    # :blocked_content is the one reason whose movie still carries an active remote job that
-    # needs removing — the others never removed anything from the client, so plain
-    # `Catalog.transition/3` (field-clear only) is enough for them.
+    if blocked?, do: Catalog.block_release(movie, :upgrade_failed)
+
+    # A blocklisted replacement is never re-picked, so its download is dead weight: the client job
+    # is fenced+removed in the same transaction as the revert (`revert_upgrade_and_remove/1`) and
+    # its payload deleted afterwards — under the same `move_on_import` / usenet-only rule as
+    # `Download.remove_after_import/4`, so a torrent keeps seeding (#684). `:blocked_content` is the
+    # exception that already removed its job (and files) from any client. The other reasons never
+    # touch the client, so a plain field-clearing `Catalog.transition/3` is enough for them.
+    remove_payload? = blocked? and Download.move_on_import_removal?(movie.download_protocol)
+
     revert_result =
-      if reason == :blocked_content,
+      if reason == :blocked_content or remove_payload?,
         do: Catalog.revert_upgrade_and_remove(movie),
         else:
           Catalog.transition(
@@ -800,6 +812,12 @@ defmodule Cinder.Download.Poller do
           )
 
     with {:ok, reverted} <- revert_result do
+      # `movie.download_protocol`: `reverted` has cleared it. The job is already gone; only the
+      # payload is left, and `remove_after_import/4` with no download id deletes exactly that. A
+      # non-blocklisted revert may be re-picked, so its payload stays.
+      if remove_payload?,
+        do: Download.remove_after_import(movie.download_protocol, nil, content_path)
+
       Logger.warning("movie #{movie.id} upgrade reverted to :available (#{inspect(reason)})")
       Notifier.notify({:movie_upgrade_failed, reverted, reason})
     end

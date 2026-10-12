@@ -863,24 +863,34 @@ defmodule Cinder.Download.TvPoller do
     # so it cannot abort the park (a raise here would re-park the grab every tick). :no_files_matched
     # is the deterministic empty-import; :blocked_content is the deterministic fake-content check
     # (both park on first sighting); the download-side reasons only reach park post-exhaustion.
-    if code in [:no_files_matched, :blocked_content] or code in @download_failure_errors do
-      Catalog.block_grab_release(grab, code)
-    end
+    blocked? = code in [:no_files_matched, :blocked_content] or code in @download_failure_errors
+    if blocked?, do: Catalog.block_grab_release(grab, code)
 
     # park_grab IS finish_grab(grab, []) — if the finalize transaction itself is what keeps
     # failing, notifying here would fire {:grab_failed} every 5s tick forever. Warn instead;
     # the grab stays visible in /activity and the warning names why it won't finalize.
     #
-    # :blocked_content is the one reason whose grab is still an active remote job that needs
-    # removing — the others never removed anything from the client, so plain `park_grab/1`
-    # (grab-delete only) is enough for them.
+    # A blocklisted release is never re-picked, so its download is dead weight: the grab's client
+    # job is fenced+removed in the same transaction as the grab delete (`park_grab_and_remove/1`),
+    # and its payload deleted afterwards — under the same `move_on_import` / usenet-only rule as
+    # `Download.remove_after_import/4`, so a torrent keeps seeding (#684). `:blocked_content` is
+    # the exception that already removed its job (and files) from any client. The other, non-
+    # blocklisted reasons only ever delete the grab.
+    remove_payload? = blocked? and Download.move_on_import_removal?(grab.download_protocol)
+
     park_result =
-      if code == :blocked_content,
+      if code == :blocked_content or remove_payload?,
         do: Catalog.park_grab_and_remove(grab),
         else: Catalog.park_grab(grab)
 
     case park_result do
       {:ok, _} ->
+        # The client job is already fenced and removed above; only the payload is left, and
+        # `remove_after_import/4` with no download id deletes exactly that. A non-blocklisted
+        # park may be re-picked, so its payload stays.
+        if remove_payload?,
+          do: Download.remove_after_import(grab.download_protocol, nil, grab.content_path)
+
         :telemetry.execute([:cinder, :park], %{count: 1}, %{kind: :episode, reason: code})
         Notifier.notify({:grab_failed, grab, code})
 

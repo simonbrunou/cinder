@@ -1288,8 +1288,8 @@ defmodule Cinder.Catalog.Grabs do
 
   `opts[:fence_client]` additionally fences a durable cleanup intent for the grab's
   `download_id`/`download_protocol` in the same transaction as the delete, removed from the
-  client after commit — `park_grab_and_remove/1`'s one caller (the `:blocked_content` park, whose
-  grab is still an active remote job).
+  client after commit — `park_grab_and_remove/1`'s use (the `:blocked_content` park, whose grab
+  is still an active remote job, and a blocklisted park whose download `move_on_import` removes).
   """
   def finish_grab(%Grab{} = grab, imported \\ []), do: finish_grab(grab, imported, [])
 
@@ -1410,8 +1410,8 @@ defmodule Cinder.Catalog.Grabs do
   def park_grab(%Grab{} = grab), do: finish_grab(grab, [])
 
   @doc """
-  Parks a grab like `park_grab/1`, but also fences+removes the grab's still-active client
-  download (`finish_grab/4`'s `:fence_client` opt) — for the `:blocked_content` park only.
+  Parks a grab like `park_grab/1`, but also fences+removes its active client download
+  (`finish_grab/4`'s `:fence_client`) — `:blocked_content` and blocklisted `move_on_import` parks.
   """
   def park_grab_and_remove(%Grab{} = grab), do: finish_grab(grab, [], [], fence_client: true)
 

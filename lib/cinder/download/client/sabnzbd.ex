@@ -355,15 +355,48 @@ defmodule Cinder.Download.Client.Sabnzbd do
     end
   end
 
+  # SABnzbd answers `mode=queue`/`mode=history` with ONE page (10 slots by default) unless asked
+  # otherwise, so a sweep that must see every Cinder job pages with `start`/`limit` until the
+  # reported `noofslots` total is covered. A short or empty page also ends the walk, and
+  # `@max_pages` bounds it if the server misreports its total — the Cleaner then simply sees the
+  # newest `@max_pages * @page_size` entries rather than looping forever.
+  @page_size 100
+  @max_pages 100
+
   defp managed_slots(mode, classify) do
-    case get(mode: mode, search: "cinder-") do
+    with {:ok, slots} <- paged_slots(mode, 0, 0, []) do
+      {:ok, Enum.flat_map(slots, &managed_entry(&1, classify))}
+    end
+  end
+
+  defp paged_slots(_mode, @max_pages, _start, acc), do: {:ok, acc}
+
+  defp paged_slots(mode, page, start, acc) do
+    case get(mode: mode, search: "cinder-", start: start, limit: @page_size) do
       {:ok, %{status: 200, body: body}} ->
-        {:ok, body |> all_slots(mode) |> Enum.flat_map(&managed_entry(&1, classify))}
+        slots = all_slots(body, mode)
+        fetched = start + length(slots)
+        acc = acc ++ slots
+
+        if length(slots) < @page_size or fetched >= total_slots(body, mode, fetched),
+          do: {:ok, acc},
+          else: paged_slots(mode, page + 1, fetched, acc)
 
       other ->
         error(other)
     end
   end
+
+  # `noofslots` is the matching total (before paging). Absent/non-integer: assume the page just
+  # read is not known to be the last, so the short-page rule alone decides.
+  defp total_slots(%{} = body, mode, fallback) do
+    case body do
+      %{^mode => %{"noofslots" => total}} when is_integer(total) -> total
+      _ -> fallback + 1
+    end
+  end
+
+  defp total_slots(_body, _mode, fallback), do: fallback + 1
 
   # Mirrors find_slot/3's tolerance: a 200 with missing/malformed slots means "nothing here",
   # not an error — a sweep must not be stranded by an empty queue.
@@ -379,7 +412,13 @@ defmodule Cinder.Download.Client.Sabnzbd do
   defp managed_entry(slot, classify) do
     with {:ok, id} <- remote_id(slot),
          key when is_binary(key) <- slot_operation_key(slot) do
-      [%{id: id, operation_key: key, state: classify.(slot).state}]
+      entry = %{id: id, operation_key: key, state: classify.(slot).state}
+
+      # History slots carry the completion time (Unix seconds); queue slots have none.
+      case slot["completed"] do
+        completed when is_integer(completed) -> [Map.put(entry, :completed_at, completed)]
+        _ -> [entry]
+      end
     else
       _ -> []
     end

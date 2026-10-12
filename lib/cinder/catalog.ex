@@ -955,10 +955,10 @@ defmodule Cinder.Catalog do
 
   @doc """
   Reverts a failed upgrade like `abort_upgrade/2`, but CAS-guarded on the caller's tick-start
-  status (`Cinder.Download.Poller`'s one caller, the blocked-content check) instead of
-  unconditional, so a concurrent user Cancel/Discard/Delete always wins. Fences BEFORE the
-  write, in the SAME transaction, so a stale-status miss rolls back the fence too — no orphan
-  cleanup intent survives pointing at a movie someone else already fenced or deleted.
+  status (`Poller.revert_upgrade/3`: blocked content or a blocklisted release) instead of
+  unconditional, so a concurrent user Cancel/Discard/Delete always wins. Fences BEFORE the write,
+  in the SAME transaction, so a stale-status miss rolls back the fence too — no orphan cleanup
+  intent survives pointing at a movie someone else already fenced or deleted.
   """
   def revert_upgrade_and_remove(%Movie{} = movie) do
     result =

@@ -123,7 +123,13 @@ defmodule Cinder.Download.Client.Nzbget do
   defp managed_entry(item, classify) do
     with [id] <- remote_id(item),
          key when is_binary(key) <- operation_key(item) do
-      [%{id: id, operation_key: key, state: classify.(item).state}]
+      entry = %{id: id, operation_key: key, state: classify.(item).state}
+
+      # History items carry `HistoryTime` (Unix seconds); queue items have none.
+      case item["HistoryTime"] do
+        completed when is_integer(completed) -> [Map.put(entry, :completed_at, completed)]
+        _ -> [entry]
+      end
     else
       _ -> []
     end

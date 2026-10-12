@@ -16,6 +16,11 @@ defmodule Cinder.Download.Cleaner do
   is removed only after import has released every Cinder owner and the client reports that at
   least one configured limit has been reached. Missing client metrics fail closed.
 
+  A completed **usenet** entry has nothing to seed, so it is removed once nothing owns it and the
+  client reports it completed over an hour ago (an import may still be finishing just after the
+  owner is released) — but only while the "Remove download after a Usenet import" setting
+  (`move_on_import`) is on, the same rule `Cinder.Download.remove_after_import/4` applies.
+
   **On by default** — the shipped `config/config.exs` sets `enabled: true`. (`enabled?/0`'s own
   fallback is `false`, so an install with no config block at all stays off — fail-safe, mirroring
   `Cinder.Download.StallReaper`.)
@@ -33,6 +38,10 @@ defmodule Cinder.Download.Cleaner do
   alias Cinder.Repo
 
   @default_interval :timer.hours(1)
+
+  # Far longer than any one import (even a season pack's per-file stage commits and media-server
+  # refreshes), so a sweep can't reap a download whose import is still wrapping up.
+  @usenet_grace_seconds 3600
 
   use Cinder.Download.PollerSkeleton,
     log_prefix: "cleaner",
@@ -54,7 +63,7 @@ defmodule Cinder.Download.Cleaner do
     with {:ok, client} <- Download.client_for(protocol),
          {:ok, entries} <- client.list_managed() do
       entries
-      |> Enum.filter(&reapable?/1)
+      |> Enum.filter(&reapable?(&1, protocol))
       |> unclaimed(protocol)
       |> Enum.each(&reap(client, &1))
     else
@@ -148,7 +157,7 @@ defmodule Cinder.Download.Cleaner do
   end
 
   defp reap(client, entry) do
-    reason = if entry.state == :completed, do: "torrent cleanup limit reached", else: "orphaned"
+    reason = if entry.state == :completed, do: "completed", else: "orphaned"
 
     Logger.warning(
       "cleaner removing #{reason} #{entry.state} download #{entry.id} " <>
@@ -158,14 +167,30 @@ defmodule Cinder.Download.Cleaner do
     Download.best_effort_remove(client, entry.id)
   end
 
-  defp reapable?(%{state: state}) when state in [:downloading, :error], do: true
+  defp reapable?(%{state: state}, _protocol) when state in [:downloading, :error], do: true
 
-  defp reapable?(%{state: :completed} = entry) do
-    reached?(Map.get(entry, :ratio), ratio_limit()) or
+  # A completed usenet job has nothing to seed, so once no intent/movie/grab/book grab claims it
+  # its payload is dead weight — but only where the operator asked for removal after import
+  # (`move_on_import`); with it off, imported downloads are meant to stay on disk. A completed
+  # torrent is kept until a configured ratio/seed-time limit says it is done seeding.
+  #
+  # An import releases its durable owner (grab deleted / movie flipped `:available`) BEFORE it
+  # links sidecars from the source and creates its own removal intent, so a job that completed
+  # moments ago can look unowned while its import is still finishing. A usenet entry therefore
+  # has to have completed more than `@usenet_grace_seconds` ago, per the client's own completion
+  # time; an entry that reports none fails closed (kept).
+  defp reapable?(%{state: :completed} = entry, protocol) do
+    (Download.move_on_import_removal?(protocol) and usenet_grace_elapsed?(entry)) or
+      reached?(Map.get(entry, :ratio), ratio_limit()) or
       reached?(Map.get(entry, :seeding_time), seed_time_limit_seconds())
   end
 
-  defp reapable?(_entry), do: false
+  defp reapable?(_entry, _protocol), do: false
+
+  defp usenet_grace_elapsed?(%{completed_at: completed_at}) when is_integer(completed_at),
+    do: System.os_time(:second) - completed_at >= @usenet_grace_seconds
+
+  defp usenet_grace_elapsed?(_entry), do: false
 
   defp reached?(value, limit) when is_number(value) and is_number(limit), do: value >= limit
   defp reached?(_value, _limit), do: false
