@@ -698,20 +698,35 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     cap = Cinder.Books.max_bibliography_candidates()
     total = cap + 5
 
-    stub_readarr_snapshot(total)
+    test_pid = self()
+
+    # Park the first batch inside its `snapshot/0` call until the Cancel click has been processed.
+    # Without this the batch is an unsynchronised task racing the test process: if it lands before
+    # Cancel does, the LiveView has already auto-advanced into a second batch, and Cancel then
+    # (by design) keeps that in-flight batch too — `total` blocked candidates instead of `cap`.
+    stub_readarr_snapshot(total, fn ->
+      send(test_pid, {:batch_in_flight, self()})
+
+      receive do
+        :release -> :ok
+      end
+    end)
+
     stub(Cinder.Books.PrimaryMetadataMock, :search, fn _query -> {:ok, []} end)
     stub(Cinder.Books.SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
 
     {:ok, view, _html} = live(conn, ~p"/library/adopt")
     view |> element("#scan-readarr") |> render_click()
 
-    # Cancel immediately, before the already-launched first batch's async task has reported
-    # back — `cancelling?` is set synchronously by this click (`render_click` only returns after
-    # the LiveView has processed and re-rendered), so whenever that batch's own `handle_async`
-    # lands it is guaranteed to observe it and stop, never starting a second batch.
+    assert_receive {:batch_in_flight, batch}
+
+    # `cancelling?` is set synchronously by this click (`render_click` only returns after the
+    # LiveView has processed and re-rendered), so once the parked batch is released its own
+    # `handle_async` is guaranteed to observe it and stop, never starting a second batch.
     assert has_element?(view, "#cancel-readarr-scan")
     view |> element("#cancel-readarr-scan") |> render_click()
 
+    send(batch, :release)
     render_async(view)
 
     assert Process.alive?(view.pid)
@@ -1285,8 +1300,9 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
   # `total` file-bearing, all-unresolvable (no metadata match) works — cheap to build and to
   # classify (every one lands `:blocked, {:unresolved_identity, _}`), which is all the batching
   # mechanism itself needs to exercise: it operates on the classified candidate COUNT, not on
-  # what any one candidate's status is.
-  defp stub_readarr_snapshot(total) do
+  # what any one candidate's status is. `on_snapshot` runs inside each `snapshot/0` call (i.e. in
+  # the batch's own task), so a test can park a batch there.
+  defp stub_readarr_snapshot(total, on_snapshot \\ fn -> :ok end) do
     works =
       for i <- 1..total,
           do: %{
@@ -1309,6 +1325,8 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
           }
 
     stub(Cinder.Library.ReadarrMigrationSourceMock, :snapshot, fn ->
+      on_snapshot.()
+
       {:ok,
        %{
          movies: [],
