@@ -461,7 +461,14 @@ def case_6_cached_failure_before_listener_attach(page):
         fail_img = page.locator(f"#movie-{fail_id} img[data-poster]")
         ok_img = page.locator(f"#movie-{ok_id} img[data-poster]")
         expect(fail_img).to_have_class(re.compile(r"\bposter-broken\b"), timeout=5_000)
-        expect(ok_img).to_have_class(re.compile(r"\bposter-shown\b"), timeout=5_000)
+        # The control is asserted by outcome (loaded and fully opaque), never by `.poster-shown`.
+        # app.js adds that class only on its fade-in branch (the image was still loading when a
+        # sweep ran) and LiveView's join patch then resets every client-added class on the
+        # morphed <img>, so whether it is present depends on whether the image finished before
+        # or after the join, not on anything a user sees. A poster that already finished
+        # loading is deliberately left unfaded: a cached grid renders instantly.
+        expect(ok_img).to_have_js_property("naturalWidth", 1, timeout=5_000)
+        expect(ok_img).to_have_css("opacity", "1", timeout=5_000)
 
         # Read the final computed state before the bracket exits and the real poller resumes:
         # once resumed, its very next tick can touch these still-:requested movies and cause a
