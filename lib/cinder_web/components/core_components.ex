@@ -163,8 +163,10 @@ defmodule CinderWeb.CoreComponents do
   end
 
   defp button_variant("primary"), do: "btn-primary"
-  # plain daisyUI button (subtle surface) — the unobtrusive secondary action
-  defp button_variant("neutral"), do: nil
+  # plain daisyUI button — the unobtrusive secondary action. daisyUI fills it with base-200, the
+  # same surface as the cards it sits on, so the border carries the button outline. Disabled keeps
+  # daisyUI's own borderless look.
+  defp button_variant("neutral"), do: "border-base-content/20 disabled:border-transparent"
   defp button_variant("ghost"), do: "btn-ghost"
   defp button_variant("danger"), do: "btn-error"
   defp button_variant("warning"), do: "btn-warning"

@@ -659,7 +659,7 @@ defmodule CinderWeb.ActivityLive do
               :if={Catalog.unresolved_grab_files(g) != []}
               id={"discard-grab-files-#{g.id}"}
               type="button"
-              variant="ghost"
+              variant="neutral"
               size="xs"
               class="mt-2"
               phx-click="ask_discard_files"
@@ -762,7 +762,7 @@ defmodule CinderWeb.ActivityLive do
                   <div>
                     <.button
                       type="button"
-                      variant="ghost"
+                      variant="neutral"
                       size="sm"
                       phx-click="ask_discard_file"
                       phx-value-id={f.id}
@@ -783,7 +783,7 @@ defmodule CinderWeb.ActivityLive do
                   <div>
                     <.button
                       type="button"
-                      variant="ghost"
+                      variant="neutral"
                       size="sm"
                       phx-click="hold_grab_file"
                       phx-value-id={f.id}
@@ -808,7 +808,7 @@ defmodule CinderWeb.ActivityLive do
                 <div class="mt-2 flex flex-wrap gap-2">
                   <.button
                     type="button"
-                    variant="ghost"
+                    variant="neutral"
                     size="sm"
                     phx-click="ask_discard_file"
                     phx-value-id={f.id}
@@ -818,7 +818,7 @@ defmodule CinderWeb.ActivityLive do
                   </.button>
                   <.button
                     type="button"
-                    variant="ghost"
+                    variant="neutral"
                     size="sm"
                     phx-click="hold_grab_file"
                     phx-value-id={f.id}

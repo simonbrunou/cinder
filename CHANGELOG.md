@@ -142,6 +142,10 @@ All notable changes to Cinder are documented here. The format follows
   nothing changes, and admins are never limited.
 
 ### Fixed
+- **Secondary buttons now look like buttons in the dark theme.** The plain (neutral) button used
+  the same fill as the cards it sits on, and the Activity page's "Discard", "Hold" and "Discard
+  all" were borderless ghost buttons, so all of them read as bold labels rather than buttons.
+  Neutral buttons now have a visible outline, and those three Activity actions use them.
 - **A deactivated admin account no longer gets a server error on every page (#627).** The root
   layout mounted the activity beacon for any admin, but the beacon rejects inactive accounts, and
   a child LiveView cannot redirect, so even the approval waiting room crashed. The layout now
