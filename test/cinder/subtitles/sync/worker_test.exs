@@ -5,6 +5,9 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
 
   alias Cinder.Subtitles.Sync.Worker
 
+  # The explicit-scan hold the worker is started with in the tests that exercise its expiry.
+  @hold_ms 50
+
   setup do
     :persistent_term.erase({Worker, :status})
     on_exit(fn -> :persistent_term.erase({Worker, :status}) end)
@@ -429,7 +432,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     end
 
     analyze = fn video ->
-      send(owner, {:started, video, self()})
+      send(owner, {:started, video, self(), System.monotonic_time(:millisecond)})
       [%{status: :aligned, label: video}]
     end
 
@@ -440,17 +443,18 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
          interval: :timer.hours(1),
          scan: scan,
          analyze: analyze,
-         explicit_scan_hold: 50}
+         explicit_scan_hold: @hold_ms}
       )
 
     # This scan never returns and never raises, so only the bounded hold can release the queue.
+    requested_at = System.monotonic_time(:millisecond)
     assert :ok = Worker.enqueue_series(5, worker)
     assert_receive :scan_started
 
     assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
-    refute_receive {:started, "/library/bg.mkv", _}, 20
 
-    assert_receive {:started, "/library/bg.mkv", _}
+    assert_receive {:started, "/library/bg.mkv", _, started_at}
+    assert_held_since(started_at, requested_at)
   end
 
   test "an explicit scope waiting behind a hung library scan still releases background work" do
@@ -466,7 +470,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     end
 
     analyze = fn video ->
-      send(owner, {:started, video, self()})
+      send(owner, {:started, video, self(), System.monotonic_time(:millisecond)})
       [%{status: :aligned, label: video}]
     end
 
@@ -477,20 +481,21 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
          interval: :timer.hours(1),
          scan: scan,
          analyze: analyze,
-         explicit_scan_hold: 50}
+         explicit_scan_hold: @hold_ms}
       )
 
     # The library scan hangs, so the explicit scope sits in pending_scans and its units never
     # materialize. The hold must still expire rather than stranding the background queue.
     assert :ok = Worker.enqueue_library(worker)
     assert_receive :library_scan_started
+    requested_at = System.monotonic_time(:millisecond)
     assert :ok = Worker.enqueue_series(5, worker)
 
     assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    assert_receive {:started, "/library/bg.mkv", _, started_at}
     # Prove the hold was actually applied to the pending scope, otherwise this test would pass
     # even if a pending explicit scope received no hold at all.
-    refute_receive {:started, "/library/bg.mkv", _}, 20
-    assert_receive {:started, "/library/bg.mkv", _}
+    assert_held_since(started_at, requested_at)
   end
 
   test "a failed explicit scan releases background work that was waiting for it" do
@@ -601,7 +606,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     end
 
     analyze = fn video ->
-      send(owner, {:started, video, self()})
+      send(owner, {:started, video, self(), System.monotonic_time(:millisecond)})
 
       receive do
         :release -> [%{status: :aligned, label: video}]
@@ -615,24 +620,25 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
          interval: :timer.hours(1),
          scan: scan,
          analyze: analyze,
-         explicit_scan_hold: 50}
+         explicit_scan_hold: @hold_ms}
       )
 
     # First explicit request hangs, so its hold expires and background work proceeds.
     assert :ok = Worker.enqueue_movie(1, worker)
     assert_receive {:scan_started, 1}
     assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
-    assert_receive {:started, "/library/bg.mkv", bg}
+    assert_receive {:started, "/library/bg.mkv", bg, _}
     send(bg, :release)
 
     # A later explicit request must arm a FRESH hold. If the expired deadline were left in place,
     # hold_explicitly/2 would decline to re-arm and this background unit would start immediately.
+    requested_at = System.monotonic_time(:millisecond)
     assert :ok = Worker.enqueue_movie(2, worker)
     assert :ok = Worker.enqueue_units([%{video_path: "/library/bg2.mkv", label: "BG2"}], worker)
-    refute_receive {:started, "/library/bg2.mkv", _}, 20
 
     # That fresh hold is itself bounded, so background work still resumes.
-    assert_receive {:started, "/library/bg2.mkv", bg2}
+    assert_receive {:started, "/library/bg2.mkv", bg2, started_at}
+    assert_held_since(started_at, requested_at)
     send(bg2, :release)
   end
 
@@ -667,7 +673,9 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert_receive :explicit_scan_started
 
     assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
-    refute_receive {:started, "/library/bg.mkv", _}, 20
+    # enqueue_units/2 is a call that publishes before replying, so this is the held state itself
+    # rather than a window in which the unit might not have started yet.
+    assert %{state: :idle, queued: 1} = Worker.status()
 
     # Freeze the GenServer before expiry, queue the library cast first, then let the hold timer
     # arrive. On resume the cast observes an expired deadline whose release message is already
@@ -723,7 +731,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     end
 
     analyze = fn video ->
-      send(owner, {:started, video, self()})
+      send(owner, {:started, video, self(), System.monotonic_time(:millisecond)})
 
       receive do
         :release -> [%{status: :aligned, label: video}]
@@ -737,7 +745,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
          interval: :timer.hours(1),
          scan: scan,
          analyze: analyze,
-         explicit_scan_hold: 50}
+         explicit_scan_hold: @hold_ms}
       )
 
     # The hold expires with NOTHING queued, so the only chance to clear the deadline is a
@@ -749,11 +757,12 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
 
     # A later explicit request must still arm a fresh hold rather than inherit that dead deadline.
     Process.sleep(60)
+    requested_at = System.monotonic_time(:millisecond)
     assert :ok = Worker.enqueue_movie(2, worker)
     assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
-    refute_receive {:started, "/library/bg.mkv", _}, 20
 
-    assert_receive {:started, "/library/bg.mkv", bg}
+    assert_receive {:started, "/library/bg.mkv", bg, started_at}
+    assert_held_since(started_at, requested_at)
     send(bg, :release)
   end
 
@@ -888,5 +897,19 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
       Process.sleep(10)
       assert_eventually(fun, attempts - 1)
     end
+  end
+
+  # Background work is held by a wall-clock deadline armed when the worker handles the explicit
+  # request. A short refute_receive window races that deadline whenever the runner stalls the test
+  # process past it (#683). Instead the analyzer stamps the moment the unit actually starts and
+  # this checks that stamp is at least the hold after the request: the worker never starts held
+  # work before its deadline, so a stalled test process cannot fail it, while a worker that skips
+  # the hold stamps a start within a millisecond of the request and does.
+  defp assert_held_since(started_at, requested_at) do
+    elapsed = started_at - requested_at
+
+    assert elapsed >= @hold_ms,
+           "background work started #{elapsed}ms after the explicit request, inside the " <>
+             "#{@hold_ms}ms hold"
   end
 end
