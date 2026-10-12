@@ -27,6 +27,36 @@ defmodule Cinder.LibrarySubtitlesTest do
   @tv_lib "/tmp/cinder-test-tv-library"
   @gb 1_000_000_000
 
+  # Stands in for an earlier module's fire-and-forget import that leaves a job in the shared
+  # Fetcher: the job reads the wanted languages only once its criteria thunk returns, i.e. late
+  # enough to land after this module's setup has switched subtitles on (see the drain below).
+  setup context do
+    if context[:stale_fetcher_job] do
+      Subtitles.fetch_after_import(
+        fn ->
+          Process.sleep(300)
+          %{tmdb_id: 1, season: 1, episode: 1}
+        end,
+        "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv",
+        :tv,
+        []
+      )
+    end
+
+    :ok
+  end
+
+  # #685: the Fetcher is one process shared by the whole suite and most import tests enqueue onto
+  # it without waiting. A job left over from an earlier test or module can still be in flight when
+  # the setup below switches subtitles on and the test installs its expectations; its provider
+  # search then consumes one of THIS test's expected calls and the test's own fetch never reaches
+  # the provider. Let every previously-enqueued job finish first, while subtitles are still off
+  # and no expectations exist.
+  setup do
+    await_subtitle_tasks()
+    :ok
+  end
+
   setup do
     saved = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
     subtitle_fs = start_supervised!({Agent, fn -> %{} end})
@@ -135,7 +165,7 @@ defmodule Cinder.LibrarySubtitlesTest do
         assert {:ok, %{dest: ^dest, quality: quality} = stage} = Library.stage_movie(movie)
         assert quality.sidecar_subtitles == []
         assert :ok = commit!(stage)
-        assert_receive :subtitle_search, 2_000
+        assert_receive :subtitle_search
         await_subtitle_tasks()
       end)
 
@@ -185,7 +215,7 @@ defmodule Cinder.LibrarySubtitlesTest do
       capture_log(fn ->
         assert {:ok, [{7, ^dest, quality}], []} = Library.import_episodes("/dl", [episode])
         assert quality.sidecar_subtitles == []
-        assert_receive :subtitle_search, 2_000
+        assert_receive :subtitle_search
         await_subtitle_tasks()
       end)
 
@@ -232,7 +262,7 @@ defmodule Cinder.LibrarySubtitlesTest do
       assert imported |> Enum.map(&{elem(&1, 0), elem(&1, 1)}) |> Enum.sort() ==
                [{7, dest}, {8, dest}]
 
-      assert_receive {:subtitle_search, %{season: 1, episode: 1}}, 2_000
+      assert_receive {:subtitle_search, %{season: 1, episode: 1}}
       await_subtitle_tasks()
       refute_received {:subtitle_search, _}
     end)
@@ -322,8 +352,8 @@ defmodule Cinder.LibrarySubtitlesTest do
     assert :ok = commit!(stage)
 
     assert_receive :movie_scan
-    assert_receive :subtitle_search, 2_000
-    assert_receive :movie_scan, 2_000
+    assert_receive :subtitle_search
+    assert_receive :movie_scan
 
     assert Enum.any?(Agent.get(fs, &Map.get(&1, :writes, [])), fn {_path, content} ->
              content =~ "release_sidecar"
@@ -400,13 +430,41 @@ defmodule Cinder.LibrarySubtitlesTest do
     assert :ok = commit!(stage)
 
     assert_receive :movie_scan
-    assert_receive :subtitle_search, 2_000
-    assert_receive :subtitle_search, 2_000
+    assert_receive :subtitle_search
+    assert_receive :subtitle_search
     await_subtitle_tasks()
 
     assert_receive {:subtitle_path, ^dest1}
     assert_receive {:subtitle_path, ^dest2}
     refute_received :movie_scan
+  end
+
+  # #685: the shared Fetcher can still hold a job an earlier test or module enqueued without
+  # waiting for it. Run late, that job's provider search used to eat one of THIS test's expected
+  # calls, so the test's own fetch (here, and in the multipart test above) never reached the
+  # provider and no :subtitle_search ever arrived.
+  @tag :stale_fetcher_job
+  test "a Fetcher job left by an earlier test cannot consume this test's provider expectation" do
+    parent = self()
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn %{imdb_id: "tt0113277", languages: ["en"]} ->
+      send(parent, :subtitle_search)
+      {:error, :down}
+    end)
+
+    capture_log(fn ->
+      assert :ok =
+               Subtitles.fetch_after_import(
+                 fn -> %{imdb_id: "tt0113277"} end,
+                 "#{@lib}/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv",
+                 :movies,
+                 []
+               )
+
+      await_subtitle_tasks()
+    end)
+
+    assert_received :subtitle_search
   end
 
   test "folder episode import passes linked sidecars to the TV subtitle task", %{subtitle_fs: fs} do
@@ -484,8 +542,8 @@ defmodule Cinder.LibrarySubtitlesTest do
     assert {:ok, [{7, ^dest, quality}], []} = Library.import_episodes("/dl", [episode])
     assert quality.sidecar_subtitles == ["en"]
     assert_receive :tv_scan
-    assert_receive :subtitle_search, 2_000
-    assert_receive :tv_scan, 2_000
+    assert_receive :subtitle_search
+    assert_receive :tv_scan
 
     assert Enum.any?(Agent.get(fs, &Map.get(&1, :writes, [])), fn {_path, content} ->
              content =~ "release_sidecar"
@@ -559,7 +617,7 @@ defmodule Cinder.LibrarySubtitlesTest do
         assert {:ok, [{7, ^dest, quality}], []} = Library.import_episodes("/dl/grab", [episode])
         assert quality.sidecar_subtitles == ["en", "fr"]
         assert_receive :tv_scan
-        assert_receive :subtitle_search, 2_000
+        assert_receive :subtitle_search
         await_subtitle_tasks()
       end)
 
@@ -635,7 +693,7 @@ defmodule Cinder.LibrarySubtitlesTest do
     capture_log(fn ->
       assert {:ok, [{7, ^dest, quality}], []} = Library.import_episodes("/dl/grab", [episode])
       assert quality.sidecar_subtitles == ["en"]
-      assert_receive :subtitle_search, 2_000
+      assert_receive :subtitle_search
       await_subtitle_tasks()
     end)
 
