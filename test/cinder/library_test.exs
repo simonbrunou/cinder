@@ -1349,7 +1349,9 @@ defmodule Cinder.LibraryTest do
     test "two files parsing the same episode: the sample-named one loses even though it's larger (#604)" do
       # A pack's real episode can be smaller than a mislabeled sample/preview sharing its SxxEyy
       # token — size-only largest-wins would silently import the sample under the episode's
-      # canonical name. Prefer the non-sample candidate first, same rule MovieSources uses.
+      # canonical name. Prefer the non-sample candidate first, same rule MovieSources uses. The
+      # losing sample is not an unidentified video, so it is dropped rather than returned as
+      # unmatched (which would hold the grab for an operator decision).
       stub_dir([
         {"/dl/Show.S01E05.1080p.WEB-GRP.mkv", 60_000_000},
         {"/dl/Show.S01E05.sample.mkv", 90_000_000}
@@ -1357,16 +1359,26 @@ defmodule Cinder.LibraryTest do
 
       stub_link_ok()
 
-      log =
-        capture_log(fn ->
-          assert {:ok, [{1, dest, _q}], ["/dl/Show.S01E05.sample.mkv"]} =
-                   Library.import_episodes("/dl", [ep(1, 5)])
+      assert {:ok, [{1, dest, _q}], []} = Library.import_episodes("/dl", [ep(1, 5)])
 
-          assert dest ==
-                   "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E05.mkv"
-        end)
+      assert dest ==
+               "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E05.mkv"
+    end
 
-      assert log =~ "unmatched"
+    test "a sample naming an episode outside the grab still comes back unmatched" do
+      # Only a sample superseded by a real file is dropped; one naming an episode outside the grab
+      # is still an unidentified video and stays visible.
+      stub_dir([
+        {"/dl/Show.S01E01.mkv", 3 * @gb},
+        {"/dl/Sample/sample-show.s01e02.mkv", 50_000_000}
+      ])
+
+      stub_link_ok()
+
+      capture_log(fn ->
+        assert {:ok, [{1, _dest, _q}], ["/dl/Sample/sample-show.s01e02.mkv"]} =
+                 Library.import_episodes("/dl", [ep(1, 1)])
+      end)
     end
 
     test "two non-sample files parsing the same episode: largest still wins (#604)" do
@@ -1410,20 +1422,14 @@ defmodule Cinder.LibraryTest do
       assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E04.mkv"
     end
 
-    test "video+sample with no SxxEyy: largest-wins assigns the episode, skips the sample" do
+    test "video+sample with no SxxEyy: largest-wins assigns the episode, drops the sample" do
       stub_dir([{"/dl/show.finale.mkv", 9 * @gb}, {"/dl/sample.mkv", 50_000_000}])
       stub_link_ok()
 
-      log =
-        capture_log(fn ->
-          assert {:ok, [{1, dest, _q}], ["/dl/sample.mkv"]} =
-                   Library.import_episodes("/dl", [ep(1, 3)])
+      assert {:ok, [{1, dest, _q}], []} = Library.import_episodes("/dl", [ep(1, 3)])
 
-          assert dest ==
-                   "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
-        end)
-
-      assert log =~ "import skipped 1 unmatched file(s): [\"/dl/sample.mkv\"]"
+      assert dest ==
+               "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
     end
 
     test "lone-episode grab does NOT fall back when a file names a different specific episode" do

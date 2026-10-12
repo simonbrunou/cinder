@@ -21,6 +21,7 @@ defmodule Cinder.Library do
   alias Cinder.Library.{
     AnimeInventory,
     AnimePreflight,
+    EpisodeSources,
     ImportStage,
     MovieSources,
     Naming,
@@ -561,7 +562,8 @@ defmodule Cinder.Library do
   `[{episode_id, dest_path, quality}]` where `quality = %{resolution:, size:, language:}`,
   `unmatched` the video files that mapped to no episode (logged,
   not an error: graceful park) — or `{:error, reason}` on a transient filesystem error (the grab
-  retries). One best-effort scan fires when anything imported.
+  retries). One best-effort scan fires when anything imported. A sample-named file that lost every
+  episode it names to a real (non-sample) file is dropped (logged), not returned as unmatched.
 
   Layout: `Show (Year)/Season NN/Show (Year) - SxxEyy.ext`. Files are matched by parsing `SxxEyy`
   from each name and intersecting with the grab's native episode numbers or exact persisted
@@ -604,6 +606,9 @@ defmodule Cinder.Library do
 
   `release_title:` is the grab's release name, which is what confirms such a file really belongs
   to this pack (`names_series?/3`, #265).
+
+  A sample-named file that lost every episode it names to a real file is dropped the same way, so
+  a release's `Sample/` clip doesn't become an operator decision either.
   """
   @spec stage_episodes(String.t() | nil, [Episode.t()], keyword()) ::
           {:ok, [{integer(), map()}], [String.t()]} | {:error, term()}
@@ -622,8 +627,7 @@ defmodule Cinder.Library do
       {to_import, unmatched} =
         videos
         |> match_episodes(episodes)
-        |> dedupe_per_episode()
-        |> resolve(videos, episodes)
+        |> EpisodeSources.pick(videos, episodes)
         |> reject_wrong_audio(episodes)
         |> drop_already_held(videos, already_held, release_title)
 
@@ -846,8 +850,7 @@ defmodule Cinder.Library do
       {to_import, unmatched} =
         videos
         |> match_episodes(episodes)
-        |> dedupe_per_episode()
-        |> resolve(videos, episodes)
+        |> EpisodeSources.pick(videos, episodes)
         |> reject_wrong_audio(episodes)
 
       case link_all(to_import, root, episode_target(episodes), folder?) do
@@ -1090,48 +1093,6 @@ defmodule Cinder.Library do
         episode
     end)
   end
-
-  # One source per episode: prefer a non-sample-named candidate via `MovieSources.sample_name?/2`,
-  # falling back to largest-wins only when every candidate is sample-named; path breaks ties for a
-  # dest stable across retries. Losers fall through to `resolve` as unmatched (logged) — never
-  # link two different sources onto one episode's dest (the second would collide). Group by
-  # episode, not source, so a double-episode file still maps to both.
-  defp dedupe_per_episode(matches) do
-    matches
-    |> Enum.group_by(fn {ep, _path, _size} -> ep.id end)
-    |> Enum.map(fn {_id, group} ->
-      real = Enum.reject(group, fn {_e, p, s} -> MovieSources.sample_name?(p, s) end)
-      candidates = if real == [], do: group, else: real
-      {ep, path, _size} = Enum.max_by(candidates, fn {_e, p, s} -> {s, p} end)
-      {ep, path}
-    end)
-  end
-
-  # Decide the import set + the leftover (unmatched) video files for logging.
-  defp resolve([], videos, episodes) do
-    if single_ep_fallback?(episodes, videos) do
-      # Largest wins (skips samples/extras); path breaks ties so the dest is stable across retries.
-      {path, _size} = Enum.max_by(videos, fn {p, size} -> {size, p} end)
-      {[{hd(episodes), path}], paths(videos) -- [path]}
-    else
-      {[], paths(videos)}
-    end
-  end
-
-  defp resolve(matched, videos, _episodes) do
-    matched_paths = matched |> Enum.map(fn {_ep, p} -> p end) |> MapSet.new()
-    {matched, Enum.reject(paths(videos), &MapSet.member?(matched_paths, &1))}
-  end
-
-  # Fall back to largest-wins only for a lone-episode grab whose files name NO specific episode
-  # (so we never mistake a clearly-numbered other episode for ours). See
-  # Cinder.Library.AnimePreflight.infer_lone_file/3 for anime's stricter analogue.
-  defp single_ep_fallback?([_one], [_ | _] = videos),
-    do: Enum.all?(videos, fn {p, _size} -> is_nil(Parser.parse(Path.basename(p)).episodes) end)
-
-  defp single_ep_fallback?(_episodes, _videos), do: false
-
-  defp paths(videos), do: Enum.map(videos, fn {p, _size} -> p end)
 
   # Hardlink each match into its tmdb-tagged dest, resolving a same-episode collision by upgrade
   # decision (replace if the new file is better, else keep). One source covering several episodes

@@ -151,6 +151,34 @@ defmodule Cinder.Download.GrabResolutionTest do
     refute File.exists?(release_dir)
   end
 
+  # A release's `Sample/` clip names the same SxxEyy as the real file. It loses the per-episode
+  # pick and used to come back as an undecided residual: a "Needs mapping" card for a preview clip.
+  @tag :tmp_dir
+  test "a sample of an imported episode closes the grab instead of holding it for review", %{
+    tmp_dir: tmp
+  } do
+    %{downloads: downloads, tv: tv} = use_real_tv_library(tmp)
+    release_dir = Path.join(downloads, "Show.S01E01.1080p.WEB-GRP")
+    File.mkdir_p!(Path.join(release_dir, "Sample"))
+    File.write!(Path.join(release_dir, "Show.S01E01.1080p.WEB-GRP.mkv"), "primary")
+    File.write!(Path.join(release_dir, "Sample/sample-show.s01e01.1080p.web-grp.mkv"), "x")
+
+    series = series_fixture(%{tvdb_id: 99, monitor_strategy: :all})
+    season = season_fixture(series)
+    episode = episode_fixture(season, %{episode_number: 1, tmdb_episode_id: 101})
+    {:ok, grab} = Catalog.create_grab("sample-#{System.unique_integer()}", :usenet, [episode.id])
+    {:ok, _grab} = Catalog.mark_grab_downloaded(grab, release_dir)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    refute Repo.get(Grab, grab.id)
+    assert Repo.all(GrabFile) == []
+    assert %Episode{file_path: file_path} = Repo.reload!(episode)
+    assert File.read!(file_path) == "primary"
+    assert length(Path.wildcard(Path.join([tv, "**", "*.mkv"]))) == 1
+  end
+
   defp mixed_grab(tmp, residual_names) do
     %{downloads: downloads, tv: tv} = use_real_tv_library(tmp)
     release_dir = Path.join(downloads, "Show.S01")

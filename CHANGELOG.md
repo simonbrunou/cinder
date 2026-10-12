@@ -159,6 +159,12 @@ All notable changes to Cinder are documented here. The format follows
   transaction, and the confirm text says the release will not be picked again. A plain Delete of a
   downloading grab is unchanged. A blocked release can still be grabbed on purpose from the
   series' manual search.
+- **A TV release's sample clip no longer holds the download for review.** A `Sample/` clip that
+  names the same episode as the real file lost the pick correctly, but then came back as an
+  unmatched video, so the grab sat at "Needs mapping" until someone discarded the clip by hand.
+  A sample-named file (the `sample`/`preview` token and at most 100 MB) whose episodes all went
+  to a real file is now dropped and logged, and the grab closes normally. A sample naming an
+  episode the download wasn't grabbed for still shows up for review.
 - **Rejected downloads no longer pile up on disk (#684).** When Cinder blocklists a release it
   gives up on, a TV grab parked after an empty import or a movie upgrade reverted on a permanent
   failure, it now removes the SABnzbd/NZBGet job and the downloaded files, under the same

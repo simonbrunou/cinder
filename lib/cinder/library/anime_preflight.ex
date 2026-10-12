@@ -82,7 +82,7 @@ defmodule Cinder.Library.AnimePreflight do
   # %{resolution: :unmatched} both for a name that parsed no coordinates at all AND for a name
   # that parsed coordinates with no matching snapshot mapping — inference must fire only for the
   # former, else a lone file that names a DIFFERENT episode than the one reserved gets
-  # force-assigned to it. `single_ep_fallback?/2` in library.ex is the standard-TV sibling; this
+  # force-assigned to it. `EpisodeSources`' `single_ep_fallback?/2` is the standard-TV sibling; this
   # is the stricter anime analogue — exactly one non-ignored file (no largest-wins across
   # several) and no tolerance beyond what's already excluded upstream (extras, ignorable
   # samples/previews), per anime's never-guess invariant.

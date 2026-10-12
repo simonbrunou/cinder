@@ -98,8 +98,8 @@ defmodule Cinder.Library.MovieSources do
   # (that one also weighs a size ratio against the largest sibling; this one doesn't need to,
   # so the two stay separate predicates). A movie whose real title happens to contain
   # "sample"/"preview" as a word is never penalized just for its name: only an actually-small
-  # file is ever excluded from feature-candidacy here. Shared with `Library.dedupe_per_episode/1`
-  # (TV season-pack dedupe), the one other caller with the identical token+size rule.
+  # file is ever excluded from feature-candidacy here. Shared with `EpisodeSources.pick/3`
+  # (TV per-episode dedupe), the one other caller with the identical token+size rule.
   @sample_token ~r/(?:^|[\s._\-\[\]()])(?:sample|preview)(?:$|[\s._\-\[\]()])/i
   @sample_max_bytes 100 * 1024 * 1024
 
