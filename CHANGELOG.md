@@ -16,6 +16,14 @@ All notable changes to Cinder are documented here. The format follows
   audio language that is not the required one) is still rejected, and a re-grab of the same
   release is verified normally. Movie holds are unchanged. See
   `specs/067-tv-verification-import-anyway/spec.md`.
+- **A panel to clear leftover download folders (#658).** Settings → Leftover download folders
+  lists the `<title>.cinder-<key>` folders in your download folders that no download client,
+  grab, movie, book or pending download refers to any more, with their size and a class: empty,
+  an exact copy of a file already in your library (same size and moviehash), or not in the
+  library. Empty folders and library copies clear in bulk after a confirmation; a folder that
+  matches nothing is deleted one at a time. Each delete re-checks the folder first, never
+  touches anything outside your configured download folders, and refuses to clear at all when a
+  download client cannot list its jobs. Nothing is removed automatically.
 
 ### Security
 - **`decimal` 3.1.1 → 3.2.0 (CVE-2026-97853).** `Decimal.round/3` allocated memory in

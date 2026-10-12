@@ -149,7 +149,7 @@ msgstr ""
 msgid "Attempting to reconnect"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:208
+#: lib/cinder_web/live/settings_live.ex:215
 #, elixir-autogen
 msgid "Auto-approve all requests (skip the approval queue)"
 msgstr ""
@@ -959,7 +959,7 @@ msgstr ""
 #: lib/cinder_web/components/layouts.ex:120
 #: lib/cinder_web/live/book_detail_live.ex:506
 #: lib/cinder_web/live/requests_live.ex:357
-#: lib/cinder_web/live/settings_live.ex:198
+#: lib/cinder_web/live/settings_live.ex:205
 #: lib/cinder_web/user_auth.ex:419
 #, elixir-autogen
 msgid "Requests"
@@ -1016,7 +1016,7 @@ msgstr ""
 msgid "Save email"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:193
+#: lib/cinder_web/live/settings_live.ex:200
 #, elixir-autogen
 msgid "Save settings"
 msgstr ""
@@ -1026,7 +1026,7 @@ msgstr ""
 #: lib/cinder_web/live/series_detail_components.ex:243
 #: lib/cinder_web/live/series_detail_components.ex:353
 #: lib/cinder_web/live/series_detail_components.ex:389
-#: lib/cinder_web/live/settings_live.ex:192
+#: lib/cinder_web/live/settings_live.ex:199
 #: lib/cinder_web/live/user_live/settings.ex:39
 #: lib/cinder_web/live/user_live/settings.ex:91
 #: lib/cinder_web/live/users_live.ex:614
@@ -1117,6 +1117,7 @@ msgid "Set up Cinder"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:153
+#: lib/cinder_web/live/download_folders_live.ex:242
 #: lib/cinder_web/live/profiles_live.ex:143
 #: lib/cinder_web/live/settings_live.ex:137
 #: lib/cinder_web/user_auth.ex:418
@@ -3473,7 +3474,7 @@ msgstr ""
 msgid "Pending approval"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:216
+#: lib/cinder_web/live/settings_live.ex:223
 #, elixir-autogen
 msgid "This also auto-approves requests from anyone who self-registers once their account is approved. Keep it off while registration enrollment is public."
 msgstr ""
@@ -3971,6 +3972,7 @@ msgstr ""
 msgid "Exact title and year matches are selected by default."
 msgstr ""
 
+#: lib/cinder_web/live/download_folders_live.ex:355
 #: lib/cinder_web/live/library_adoption_live.ex:913
 #: lib/cinder_web/live/library_adoption_live.ex:979
 #: lib/cinder_web/live/library_live.ex:566
@@ -4746,14 +4748,14 @@ msgid_plural "%{count} stored secrets can't be decrypted. The encryption key cha
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/settings_live.ex:165
+#: lib/cinder_web/live/settings_live.ex:172
 #, elixir-autogen
 msgid "1 stored secret could not be decrypted. The encryption key changed; re-enter it below."
 msgid_plural "%{count} stored secrets could not be decrypted. The encryption key changed; re-enter them below."
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/settings_live.ex:172
+#: lib/cinder_web/live/settings_live.ex:179
 #, elixir-autogen
 msgid "Affected: %{fields}"
 msgstr ""
@@ -5113,52 +5115,52 @@ msgstr ""
 msgid "Webhook URL"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:270
+#: lib/cinder_web/live/settings_live.ex:277
 #, elixir-autogen
 msgid "API access"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:300
+#: lib/cinder_web/live/settings_live.ex:307
 #, elixir-autogen
 msgid "Copy this key now. It will not be shown again."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:323
+#: lib/cinder_web/live/settings_live.ex:330
 #, elixir-autogen
 msgid "Generate API key"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:306
+#: lib/cinder_web/live/settings_live.ex:313
 #, elixir-autogen
 msgid "No key is set, so the API rejects every request."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:322
+#: lib/cinder_web/live/settings_live.ex:329
 #, elixir-autogen
 msgid "Regenerate API key"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:318
+#: lib/cinder_web/live/settings_live.ex:325
 #, elixir-autogen
 msgid "Regenerate the API key? The current key stops working immediately."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:336
+#: lib/cinder_web/live/settings_live.ex:343
 #, elixir-autogen
 msgid "Revoke API key"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:331
+#: lib/cinder_web/live/settings_live.ex:338
 #, elixir-autogen
 msgid "Revoke the API key? Every dashboard widget and bot using it stops working immediately."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:285
+#: lib/cinder_web/live/settings_live.ex:292
 #, elixir-autogen
 msgid "Send the key in the %{header} request header."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:288
+#: lib/cinder_web/live/settings_live.ex:295
 #, elixir-autogen
 msgid "These routes also sit behind the optional HTTP Basic gate, so if you enabled it, API clients must send those credentials too."
 msgstr ""
@@ -5361,17 +5363,17 @@ msgstr ""
 msgid "Those files were already decided."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:238
+#: lib/cinder_web/live/settings_live.ex:245
 #, elixir-autogen
 msgid "A periodic sweep re-searches the library and, when it finds a better release, downloads it and replaces the file you have. Off by default."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:224
+#: lib/cinder_web/live/settings_live.ex:231
 #, elixir-autogen
 msgid "Library upgrades"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:234
+#: lib/cinder_web/live/settings_live.ex:241
 #, elixir-autogen
 msgid "Look for better releases of titles already in the library"
 msgstr ""
@@ -5910,7 +5912,7 @@ msgstr ""
 msgid "Preferred terms are ranked in listed order; blocked terms reject titles containing a phrase (case-insensitive). The cutoff stops automatic movie searches at that resolution, and TV season searches once every held episode reaches it. Manual search stays available."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:272
+#: lib/cinder_web/live/settings_live.ex:279
 #, elixir-autogen
 msgid "A JSON API for dashboard widgets and trusted automation. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one. Anyone holding the key can read and change the request queue, so treat it as an admin credential."
 msgstr ""
@@ -5945,17 +5947,17 @@ msgstr ""
 msgid "Uses the standard %{kind} folder"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:342
+#: lib/cinder_web/live/settings_live.ex:349
 #, elixir-autogen
 msgid "Database backup"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:344
+#: lib/cinder_web/live/settings_live.ex:351
 #, elixir-autogen
 msgid "Download a consistent snapshot of Cinder's database. Keep your SECRET_KEY_BASE with the backup or encrypted settings cannot be restored. Media files are not included."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:361
+#: lib/cinder_web/live/settings_live.ex:368
 #, elixir-autogen
 msgid "Download database backup"
 msgstr ""
@@ -6015,7 +6017,7 @@ msgstr ""
 msgid "Sign in with OpenID"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:349
+#: lib/cinder_web/live/settings_live.ex:356
 #, elixir-autogen
 msgid "Automatic verified snapshots run about daily and keep the newest %{count} in %{path}."
 msgstr ""
@@ -6695,24 +6697,24 @@ msgstr ""
 msgid "No books yet"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:257
+#: lib/cinder_web/live/settings_live.ex:264
 #, elixir-autogen, elixir-format
 msgid "1 file is hidden from your media server:"
 msgid_plural "%{count} files are hidden from your media server:"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/settings_live.ex:248
+#: lib/cinder_web/live/settings_live.ex:255
 #, elixir-autogen, elixir-format
 msgid "Jellyfin and Plex skip any folder whose name starts with a dot while scanning. New imports no longer produce one, but a title imported before this fix can still be sitting under one, invisible to your media server with nothing else reporting why. This list is read-only; renaming a folder and fixing the affected title's path is a manual step."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:246
+#: lib/cinder_web/live/settings_live.ex:253
 #, elixir-autogen, elixir-format
 msgid "Library visibility"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:253
+#: lib/cinder_web/live/settings_live.ex:260
 #, elixir-autogen, elixir-format
 msgid "None found."
 msgstr ""
@@ -7192,4 +7194,182 @@ msgstr ""
 #: lib/cinder_web/live/activity_live.ex:175
 #, elixir-autogen, elixir-format
 msgid "The download is no longer held for verification."
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:283
+#, elixir-autogen, elixir-format
+msgid "%{count} job folder is still in use and was left out."
+msgid_plural "%{count} job folders are still in use and were left out."
+msgstr[0] ""
+msgstr[1] ""
+
+#: lib/cinder_web/live/download_folders_live.ex:173
+#, elixir-autogen, elixir-format
+msgid "1 folder could not be deleted (permission or path check failed); see the log."
+msgid_plural "%{count} folders could not be deleted (permission or path check failed); see the log."
+msgstr[0] ""
+msgstr[1] ""
+
+#: lib/cinder_web/live/download_folders_live.ex:157
+#, elixir-autogen, elixir-format
+msgid "1 folder was left alone because it changed or is in use again."
+msgid_plural "%{count} folders were left alone because they changed or are in use again."
+msgstr[0] ""
+msgstr[1] ""
+
+#: lib/cinder_web/live/download_folders_live.ex:215
+#, elixir-autogen, elixir-format
+msgid "Changed in the last hour"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:182
+#, elixir-autogen, elixir-format
+msgid "Cinder only scans and clears folders you listed under “Download folders” in Settings. Without that setting it cannot tell which folders are its own, so it does nothing."
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:248
+#, elixir-autogen, elixir-format
+msgid "Cinder's own job folders in your download folders that no download, grab, movie or book refers to any more. Nothing is removed unless you clear it here."
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:305
+#, elixir-autogen, elixir-format
+msgid "Clear 1 empty or duplicate folder"
+msgid_plural "Clear %{count} empty or duplicate folders"
+msgstr[0] ""
+msgstr[1] ""
+
+#: lib/cinder_web/live/download_folders_live.ex:319
+#, elixir-autogen, elixir-format
+msgid "Clear folders"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:132
+#, elixir-autogen, elixir-format
+msgid "Cleared 1 download folder."
+msgid_plural "Cleared %{count} download folders."
+msgstr[0] ""
+msgstr[1] ""
+
+#: lib/cinder_web/live/download_folders_live.ex:217
+#, elixir-autogen, elixir-format
+msgid "Contains a special file"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:216
+#, elixir-autogen, elixir-format
+msgid "Contains a symlink"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:56
+#, elixir-autogen, elixir-format
+msgid "Couldn't clear the download folders."
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:197
+#, elixir-autogen, elixir-format
+msgid "Couldn't scan the download folders."
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:366
+#, elixir-autogen, elixir-format
+msgid "Delete %{name}"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:382
+#, elixir-autogen, elixir-format
+msgid "Delete %{name}? It holds a video that matches nothing in your library and may never have been imported. This cannot be undone."
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:323
+#, elixir-autogen, elixir-format
+msgid "Delete 1 folder that is empty or only holds copies of files already in your library? This cannot be undone."
+msgid_plural "Delete %{count} folders that are empty or only hold copies of files already in your library? This cannot be undone."
+msgstr[0] ""
+msgstr[1] ""
+
+#: lib/cinder_web/live/download_folders_live.ex:379
+#, elixir-autogen, elixir-format
+msgid "Delete folder"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:368
+#, elixir-autogen, elixir-format
+msgid "Delete…"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:199
+#, elixir-autogen, elixir-format
+msgid "Empty"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:293
+#, elixir-autogen, elixir-format
+msgid "Every Cinder job folder in your download folders is still in use."
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:210
+#, elixir-autogen, elixir-format
+msgid "Every video is identical to a file already in your library."
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:213
+#, elixir-autogen, elixir-format
+msgid "Holds a video that matches no library file. It may never have been imported."
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:246
+#: lib/cinder_web/live/settings_live.ex:160
+#, elixir-autogen, elixir-format
+msgid "Leftover download folders"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:200
+#, elixir-autogen, elixir-format
+msgid "Library copy"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:207
+#, elixir-autogen, elixir-format
+msgid "No files inside."
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:292
+#, elixir-autogen, elixir-format
+msgid "No leftover job folders"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:201
+#, elixir-autogen, elixir-format
+msgid "Not in the library"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:261
+#, elixir-autogen, elixir-format
+msgid "Scan again"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:188
+#, elixir-autogen, elixir-format
+msgid "The %{protocol} download client could not list its jobs, so Cinder cannot tell which folders are in use and clears nothing. Try again once it is reachable."
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:195
+#, elixir-autogen, elixir-format
+msgid "The download folder %{root} could not be read."
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:219
+#, elixir-autogen, elixir-format
+msgid "Too many files to check"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:218
+#, elixir-autogen, elixir-format
+msgid "Unreadable"
+msgstr ""
+
+#: lib/cinder_web/live/download_folders_live.ex:268
+#, elixir-autogen, elixir-format
+msgid "Working through the download folders…"
 msgstr ""

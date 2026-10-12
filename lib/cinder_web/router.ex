@@ -114,6 +114,7 @@ defmodule CinderWeb.Router do
       live "/subtitle-sync", SubtitleSyncLive
       live "/settings", SettingsLive
       live "/settings/profiles", ProfilesLive
+      live "/settings/download-folders", DownloadFoldersLive
       live "/requests", RequestsLive
       live "/issues", IssuesLive
       live "/users", UsersLive
