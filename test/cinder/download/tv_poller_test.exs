@@ -937,6 +937,66 @@ defmodule Cinder.Download.TvPollerTest do
              Catalog.retry_grab_verification(retried)
   end
 
+  # GitHub #629: cancelling a verification hold used to leave the release un-blocklisted, so the
+  # next sweep re-grabbed the very same title and it landed in the same hold.
+  test "cancelling a verification hold blocklists the release so the sweep does not re-grab it" do
+    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
+    episode = episode(season_fixture(series), 1)
+    title = "[Group] Show S01E01 [1080p]"
+    grab = downloaded_policy_grab(episode, "/downloads/Show.S01E01.1080p.mkv", title)
+
+    Repo.update_all(from(g in Grab, where: g.id == ^grab.id),
+      set: [mapping_status: :verification_blocked, download_attempts: 10]
+    )
+
+    remote_id = grab.download_id
+    expect(Cinder.Download.ClientMock, :remove, fn ^remote_id, delete_files: true -> :ok end)
+
+    assert {:ok, _} = Catalog.cancel_grab(Repo.get!(Grab, grab.id))
+
+    refute Repo.get(Grab, grab.id)
+    assert Repo.reload!(episode).grab_id == nil
+    assert Catalog.blocked_release_titles_for_series(series.id) == [title]
+
+    releases = [raw_release(title, "cancelled-release")]
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+      {:ok, releases}
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+      {:ok, releases}
+    end)
+
+    added = start_supervised!({Agent, fn -> [] end})
+
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      Agent.update(added, &[release.title | &1])
+      {:ok, "hash-should-not-exist"}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+
+    assert Agent.get(added, & &1) == []
+    refute Repo.exists?(Grab)
+    assert Repo.reload!(episode).grab_id == nil
+  end
+
+  test "deleting a grab that is not held for verification does not blocklist its release" do
+    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
+    episode = episode(season_fixture(series), 1)
+    grab = downloaded_policy_grab(episode, "/downloads/Show.S01E01.mkv", "[Group] Show S01E01")
+
+    remote_id = grab.download_id
+    expect(Cinder.Download.ClientMock, :remove, fn ^remote_id, delete_files: true -> :ok end)
+
+    assert {:ok, _} = Catalog.cancel_grab(grab)
+
+    refute Repo.get(Grab, grab.id)
+    assert Catalog.blocked_release_titles_for_series(series.id) == []
+  end
+
   test "verification hold rejects a stale resolved observation" do
     series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
     episode = episode(season_fixture(series), 1)

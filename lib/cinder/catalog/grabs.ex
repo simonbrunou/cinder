@@ -478,8 +478,7 @@ defmodule Cinder.Catalog.Grabs do
 
   @doc """
   Aborts one grab as a user action. Its delete and durable cleanup fence commit together; remote
-  cleanup runs afterward and retries from the fence on failure. Its episodes then re-enter the
-  wanted sweep and re-search cleanly.
+  cleanup retries from the fence. Episodes rejoin the sweep; a verification hold is blocklisted.
   """
   def cancel_grab(%Grab{} = grab), do: cancel_grab(grab, :any_state)
 
@@ -504,6 +503,7 @@ defmodule Cinder.Catalog.Grabs do
           {1, _} ->
             episode_ids = episode_ids_for_grab(grab.id)
             series_id = series_id_for_grab(grab.id)
+            Cinder.Catalog.block_cancelled_hold(grab)
 
             intent_ids =
               Download.fence_episode_cleanup(episode_ids, [grab_cleanup_spec(grab, episode_ids)])

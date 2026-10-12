@@ -169,6 +169,19 @@ defmodule Cinder.Catalog.ReleaseVerification do
     end
   end
 
+  @doc false
+  # Called by `Catalog.Grabs.cancel_grab/1` inside its transaction, after the cancel claim, before
+  # the delete unlinks the episodes. Reads the live row rather than the caller's struct, so a grab
+  # the poller or a Retry just resolved is never blocklisted. Non-raising (`block_grab_release/2`).
+  def block_cancelled_hold(%Grab{id: id}) do
+    case Repo.one(
+           from g in Grab, where: g.id == ^id and g.mapping_status == :verification_blocked
+         ) do
+      nil -> :ok
+      held -> Catalog.block_grab_release(held, :verification_cancelled)
+    end
+  end
+
   defp broadcast_grab_and_ok(grab) do
     Catalog.broadcast_series(Catalog.series_id_for_grab(grab.id))
     {:ok, grab}

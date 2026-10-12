@@ -646,6 +646,7 @@ defmodule CinderWeb.ActivityLiveTest do
 
     {:ok, view, _html} = live(conn, ~p"/activity")
     view |> element("#cancel-verification-grab-#{held.id}") |> render_click()
+    assert has_element?(view, "#confirm-delete-grab-#{held.id}", "will not be picked again")
 
     view
     |> element("#confirm-delete-grab-#{held.id} button", "Cancel download")

@@ -133,6 +133,13 @@ All notable changes to Cinder are documented here. The format follows
   name. A release must now spell the movie's title or one of its aliases (native and romaji
   titles count); the exact-year requirement of free-text results does not apply. A movie with no
   usable title or alias keeps its IMDb-scoped results.
+- **Cancelling a TV verification hold no longer loops (GitHub #629).** "Cancel download" on a
+  grab held as "Needs verification" returned its episodes to the wanted queue without blocklisting
+  the release, so the next sweep re-grabbed the same title and it landed in the same hold. The
+  cancel now blocklists that release for the series (reason `verification_cancelled`) in the same
+  transaction, and the confirm text says the release will not be picked again. A plain Delete of a
+  downloading grab is unchanged. A blocked release can still be grabbed on purpose from the
+  series' manual search.
 - **A movie download that turns out to be a different film is no longer imported.** A release
   can spell the right title and hold another film, which no name check can see. Before import,
   Cinder now compares the file's length (`ffprobe`) with the TMDB runtime. A file at least 15% and

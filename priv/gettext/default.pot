@@ -1553,7 +1553,7 @@ msgstr ""
 msgid "Delete the downloaded file for this episode? If it stays monitored it will be downloaded again. Stop monitoring it to keep it gone."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:852
+#: lib/cinder_web/live/activity_live.ex:855
 #, elixir-autogen
 msgid "Delete this download? Its episodes are unlinked."
 msgstr ""
@@ -2602,11 +2602,6 @@ msgstr ""
 msgid "Cancel download"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:851
-#, elixir-autogen
-msgid "Cancel this download? Its episodes will return to the wanted queue."
-msgstr ""
-
 #: lib/cinder_web/components/core_components.ex:822
 #: lib/cinder_web/live/series_detail_components.ex:148
 #, elixir-autogen
@@ -3113,17 +3108,17 @@ msgstr ""
 msgid "A download needs attention."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:898
+#: lib/cinder_web/live/activity_live.ex:901
 #, elixir-autogen
 msgid "Background sweeps"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:915
+#: lib/cinder_web/live/activity_live.ex:918
 #, elixir-autogen
 msgid "Last run: %{when}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:919
+#: lib/cinder_web/live/activity_live.ex:922
 #, elixir-autogen
 msgid "Next: %{when}"
 msgstr ""
@@ -5381,7 +5376,7 @@ msgstr ""
 msgid "Look for better releases of titles already in the library"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:916
+#: lib/cinder_web/live/activity_live.ex:919
 #, elixir-autogen
 msgid "Off. Turn it on in Settings."
 msgstr ""
@@ -5659,13 +5654,13 @@ msgstr ""
 msgid "The installer set this one-time password using CINDER_BOOTSTRAP_TOKEN. It is only required to create the first admin account."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:883
+#: lib/cinder_web/live/activity_live.ex:886
 #: lib/cinder_web/live/subtitle_sync_live.ex:227
 #, elixir-autogen
 msgid "%{aligned} aligned · %{corrected} corrected · %{review} review"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:864
+#: lib/cinder_web/live/activity_live.ex:867
 #: lib/cinder_web/live/subtitle_sync_live.ex:224
 #, elixir-autogen
 msgid "%{count} queued"
@@ -5681,7 +5676,7 @@ msgstr ""
 msgid "Aligned via %{method}: %{delay} ms, rate %{rate}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:873
+#: lib/cinder_web/live/activity_live.ex:876
 #, elixir-autogen
 msgid "Analyze library"
 msgstr ""
@@ -5696,7 +5691,7 @@ msgstr ""
 msgid "Analyze this scope"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:880
+#: lib/cinder_web/live/activity_live.ex:883
 #: lib/cinder_web/live/subtitle_sync_live.ex:635
 #, elixir-autogen
 msgid "Analyzing %{label}"
@@ -5777,7 +5772,7 @@ msgstr ""
 msgid "Reset"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:876
+#: lib/cinder_web/live/activity_live.ex:879
 #, elixir-autogen
 msgid "Review and adjust"
 msgstr ""
@@ -5820,7 +5815,7 @@ msgstr ""
 msgid "Subtitle sync"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:862
+#: lib/cinder_web/live/activity_live.ex:865
 #: lib/cinder_web/live/subtitle_sync_live.ex:20
 #: lib/cinder_web/live/subtitle_sync_live.ex:207
 #, elixir-autogen
@@ -5852,7 +5847,7 @@ msgstr ""
 msgid "Worker idle"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:928
+#: lib/cinder_web/live/activity_live.ex:931
 #: lib/cinder_web/live/subtitle_sync_live.ex:646
 #, elixir-autogen
 msgid "low confidence"
@@ -6046,7 +6041,7 @@ msgstr ""
 msgid "IANA name used to decide when an episode's local air date has arrived"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:900
+#: lib/cinder_web/live/activity_live.ex:903
 #, elixir-autogen
 msgid "Scheduled maintenance runs on its own. These tasks retry failed searches, look for better releases, remove unneeded partial downloads, update series, back up the database, find missing subtitles, and sync Plex watchlists."
 msgstr ""
@@ -7171,4 +7166,9 @@ msgstr ""
 #: lib/cinder_web/request_helpers.ex:115
 #, elixir-autogen, elixir-format
 msgid "You've reached your request limit. Wait for an earlier request to finish."
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex:852
+#, elixir-autogen, elixir-format
+msgid "Cancel this download? Its episodes will return to the wanted queue, and this release will not be picked again."
 msgstr ""

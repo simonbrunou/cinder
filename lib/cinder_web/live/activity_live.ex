@@ -848,7 +848,10 @@ defmodule CinderWeb.ActivityLive do
             >
               <:caveat>
                 {if g.mapping_status == :verification_blocked,
-                  do: gettext("Cancel this download? Its episodes will return to the wanted queue."),
+                  do:
+                    gettext(
+                      "Cancel this download? Its episodes will return to the wanted queue, and this release will not be picked again."
+                    ),
                   else: gettext("Delete this download? Its episodes are unlinked.")}
               </:caveat>
             </.confirm_action>

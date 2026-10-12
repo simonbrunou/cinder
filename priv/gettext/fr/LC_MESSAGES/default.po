@@ -1571,7 +1571,7 @@ msgstr ""
 "Supprimer le fichier téléchargé de cet épisode ? S'il reste suivi, il sera "
 "de nouveau téléchargé. Arrêtez le suivi pour qu'il le reste."
 
-#: lib/cinder_web/live/activity_live.ex:852
+#: lib/cinder_web/live/activity_live.ex:855
 #, elixir-autogen
 msgid "Delete this download? Its episodes are unlinked."
 msgstr "Supprimer ce téléchargement ? Ses épisodes sont dissociés."
@@ -2636,12 +2636,6 @@ msgstr "Modification de l’alias %{title}"
 msgid "Cancel download"
 msgstr "Annuler le téléchargement"
 
-#: lib/cinder_web/live/activity_live.ex:851
-#, elixir-autogen
-msgid "Cancel this download? Its episodes will return to the wanted queue."
-msgstr ""
-"Annuler ce téléchargement ? Ses épisodes retourneront dans la file d’attente."
-
 #: lib/cinder_web/components/core_components.ex:822
 #: lib/cinder_web/live/series_detail_components.ex:148
 #, elixir-autogen
@@ -3179,17 +3173,17 @@ msgstr "%{n} min"
 msgid "A download needs attention."
 msgstr "Un téléchargement requiert votre attention."
 
-#: lib/cinder_web/live/activity_live.ex:898
+#: lib/cinder_web/live/activity_live.ex:901
 #, elixir-autogen
 msgid "Background sweeps"
 msgstr "Tâches de fond"
 
-#: lib/cinder_web/live/activity_live.ex:915
+#: lib/cinder_web/live/activity_live.ex:918
 #, elixir-autogen
 msgid "Last run: %{when}"
 msgstr "Dernière exécution : %{when}"
 
-#: lib/cinder_web/live/activity_live.ex:919
+#: lib/cinder_web/live/activity_live.ex:922
 #, elixir-autogen
 msgid "Next: %{when}"
 msgstr "Prochaine : %{when}"
@@ -5589,7 +5583,7 @@ msgstr ""
 "Rechercher de meilleures versions des titres déjà présents dans la "
 "bibliothèque"
 
-#: lib/cinder_web/live/activity_live.ex:916
+#: lib/cinder_web/live/activity_live.ex:919
 #, elixir-autogen
 msgid "Off. Turn it on in Settings."
 msgstr "Désactivé. À activer dans les Paramètres."
@@ -5913,13 +5907,13 @@ msgstr ""
 "avec CINDER_BOOTSTRAP_TOKEN. Il est uniquement requis pour créer le premier "
 "compte administrateur."
 
-#: lib/cinder_web/live/activity_live.ex:883
+#: lib/cinder_web/live/activity_live.ex:886
 #: lib/cinder_web/live/subtitle_sync_live.ex:227
 #, elixir-autogen
 msgid "%{aligned} aligned · %{corrected} corrected · %{review} review"
 msgstr "%{aligned} alignés · %{corrected} corrigés · %{review} à vérifier"
 
-#: lib/cinder_web/live/activity_live.ex:864
+#: lib/cinder_web/live/activity_live.ex:867
 #: lib/cinder_web/live/subtitle_sync_live.ex:224
 #, elixir-autogen
 msgid "%{count} queued"
@@ -5935,7 +5929,7 @@ msgstr "Ajuster"
 msgid "Aligned via %{method}: %{delay} ms, rate %{rate}"
 msgstr "Aligné via %{method} : %{delay} ms, facteur %{rate}"
 
-#: lib/cinder_web/live/activity_live.ex:873
+#: lib/cinder_web/live/activity_live.ex:876
 #, elixir-autogen
 msgid "Analyze library"
 msgstr "Analyser la médiathèque"
@@ -5950,7 +5944,7 @@ msgstr "Analyser la saison %{number}"
 msgid "Analyze this scope"
 msgstr "Analyser cette sélection"
 
-#: lib/cinder_web/live/activity_live.ex:880
+#: lib/cinder_web/live/activity_live.ex:883
 #: lib/cinder_web/live/subtitle_sync_live.ex:635
 #, elixir-autogen
 msgid "Analyzing %{label}"
@@ -6035,7 +6029,7 @@ msgstr "Facteur"
 msgid "Reset"
 msgstr "Réinitialiser"
 
-#: lib/cinder_web/live/activity_live.ex:876
+#: lib/cinder_web/live/activity_live.ex:879
 #, elixir-autogen
 msgid "Review and adjust"
 msgstr "Vérifier et ajuster"
@@ -6078,7 +6072,7 @@ msgstr "Analyse des sous-titres de la médiathèque mise en attente."
 msgid "Subtitle sync"
 msgstr "Synchronisation des sous-titres"
 
-#: lib/cinder_web/live/activity_live.ex:862
+#: lib/cinder_web/live/activity_live.ex:865
 #: lib/cinder_web/live/subtitle_sync_live.ex:20
 #: lib/cinder_web/live/subtitle_sync_live.ex:207
 #, elixir-autogen
@@ -6110,7 +6104,7 @@ msgstr "Vidéo 2 (s)"
 msgid "Worker idle"
 msgstr "Traitement en attente"
 
-#: lib/cinder_web/live/activity_live.ex:928
+#: lib/cinder_web/live/activity_live.ex:931
 #: lib/cinder_web/live/subtitle_sync_live.ex:646
 #, elixir-autogen
 msgid "low confidence"
@@ -6333,7 +6327,7 @@ msgstr ""
 "Nom IANA utilisé pour déterminer si la date de diffusion locale d’un épisode "
 "est arrivée"
 
-#: lib/cinder_web/live/activity_live.ex:900
+#: lib/cinder_web/live/activity_live.ex:903
 #, elixir-autogen
 msgid "Scheduled maintenance runs on its own. These tasks retry failed searches, look for better releases, remove unneeded partial downloads, update series, back up the database, find missing subtitles, and sync Plex watchlists."
 msgstr ""
@@ -7513,3 +7507,10 @@ msgid "You've reached your request limit. Wait for an earlier request to finish.
 msgstr ""
 "Vous avez atteint votre limite de demandes. Attendez qu'une demande "
 "précédente se termine."
+
+#: lib/cinder_web/live/activity_live.ex:852
+#, elixir-autogen, elixir-format
+msgid "Cancel this download? Its episodes will return to the wanted queue, and this release will not be picked again."
+msgstr ""
+"Annuler ce téléchargement ? Ses épisodes retourneront dans la file d’attente "
+"et cette release ne sera plus sélectionnée."

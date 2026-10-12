@@ -1424,6 +1424,7 @@ defmodule Cinder.Catalog do
   episode ownership before blocklisting, fencing cleanup, and deleting it.
   """
   defdelegate reject_grab_release(expected, evidence), to: ReleaseVerification
+  defdelegate block_cancelled_hold(grab), to: ReleaseVerification
 
   defdelegate block_release(movie, reason), to: Grabs
   defdelegate block_release_and_confirm(movie, reason), to: Grabs
