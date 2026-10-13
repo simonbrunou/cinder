@@ -457,11 +457,13 @@ Cinder also aligns its managed sidecars without exposing half-written files. Ali
 on a film-rate release), *and* a shift that changes partway through — ad breaks cut out of the
 video, a theatrical/extended cut mismatch, a recap trimmed off the front, discs concatenated into
 one file. Those are the cases where the opening scene looks perfect and the last act is a minute
-out. A sidecar that is already correct is left byte-identical. When a sidecar is corrected the
-original is kept next to it as a hidden `.<name>.cinder-sync-original` file, so **Reset** in
-`/subtitle-sync` always restores exactly what was downloaded. Upgrading re-checks sidecars that a
-previous version had recorded as aligned, since it can now fix drift those passes had to leave
-alone.
+out. A correction keeps every line in its original order: where the timing changes, a line can
+move earlier only by the pause in front of it, so two lines that were not on screen together in
+the download are never shown together. A sidecar that is already correct is left
+byte-identical. When a sidecar is corrected the original is kept next to it as a hidden
+`.<name>.cinder-sync-original` file, so **Reset** in `/subtitle-sync` always restores exactly
+what was downloaded. Upgrading re-checks sidecars that a previous version had recorded as
+aligned, since it can now fix drift those passes had to leave alone.
 
 If `/media` is a mergerfs mount, bind every backing branch into the Cinder container read-write at
 the same absolute path mergerfs reports (for example, `/mnt/media1:/mnt/media1`); the single

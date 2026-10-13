@@ -46,6 +46,26 @@ All notable changes to Cinder are documented here. The format follows
   subtitle and sidecar writes inside library folders failed, and Railpack cannot run the app
   as an unprivileged user the way the Dockerfile does. Build with the `Dockerfile` instead.
 
+### Fixed
+- **Corrected subtitles no longer show two lines at once and then go blank.** Piecewise
+  alignment could move a run of lines onto speech that other lines already covered. On Lucifer
+  S1–S3 a cold open landed 20 s late on top of its own scene, a "previously on" recap landed on
+  the theme song, and credit lines landed on dialogue. On screen, a correct line had a line from
+  later in the scene stacked under it, and then nothing until the scene ended. Alignment now
+  keeps lines in their original order: where the timing changes, a line can move earlier only
+  by the pause in front of it. A cut that removed dialogue now shows the next lines late until
+  the next pause, instead of stacking them. Measured on Lucifer S1–S3 English sidecars, scored
+  against the English track embedded in each video, on the lines placed by both versions:
+  - Embedded track as the reference (55 episodes, 25,736 lines): stacked lines 1,434 → 0,
+    lines within 3 s 96.5% → 99.3%, lines more than 10 s off 645 → 84.
+  - The audio as the reference (16 episodes, 8,295 lines): lines within 3 s 40.5% → 96.9%,
+    lines more than 10 s off 4,217 → 34. In the four episodes inspected, the old search cut
+    the file into 18–22 segments, two of them on top of a 4% framerate stretch the video
+    does not have; the new one keeps the rate at 1.000–1.001 with 1–6 segments.
+
+  Every automatic correction is restored from its original and re-analyzed (sync metadata
+  version 4). Manual corrections are left alone.
+
 ### Security
 - **`decimal` 3.1.1 → 3.2.0 (CVE-2026-97853).** `Decimal.round/3` allocated memory in
   proportion to its `places` argument. Cinder's own code never calls `Decimal.round`, so this is

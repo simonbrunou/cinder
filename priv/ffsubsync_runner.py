@@ -6,7 +6,8 @@ import logging
 import os
 import sys
 
-from ffsubsync import ffsubsync, generic_subtitles
+import numpy as np
+from ffsubsync import ffsubsync, generic_subtitles, split_aligner
 
 # Message templates (not rendered messages) of the ffsubsync 0.5.1 log records that carry the
 # metrics `run()` does not return. Matching the template, and only for ffsubsync's own loggers,
@@ -104,6 +105,119 @@ def install_output_format(format_name):
     generic_subtitles.GenericSubtitlesFile.write_file = write_file
 
 
+def order_preserving_split_offsets(
+    reference,
+    cues,
+    *,
+    sample_rate,
+    start_seconds,
+    split_penalty,
+    max_offset_samples,
+    length_penalty=0.0,
+    offset_step_samples=1.0,
+    return_score=False,
+    log_segments=True,
+):
+    """`split_aligner.compute_split_offsets`, constrained so cues never overlap or reorder.
+
+    The engine's piecewise search lets any cue take any offset for the price of a split, so a
+    run of cues can jump onto speech that other cues already cover: a cold open moved 20s late
+    over its own scene, a "previously on" recap stacked on the theme song, a credit line dropped
+    onto dialogue. Each leaves two lines on screen at once and then nothing where the moved lines
+    belonged. Here a split may move a cue earlier relative to the cues before it by at most the
+    silence in front of it; moving later (inserted content) stays free. A cut that removed
+    dialogue, not just a pause, therefore shows the next lines late until a later pause absorbs
+    the shift, instead of stacking them on the lines before it. The constraint reads cues in
+    start order: a file may list some out of order (signs or songs appended after the dialogue in
+    an SRT converted from ASS), so the search runs on start-sorted cues and reports offsets in
+    file order. The rating and the backtrack are the engine's own, unchanged.
+    """
+    n = len(cues)
+    if n == 0:
+        return ([], 0.0) if return_score else []
+
+    starts, ends, is_speech = split_aligner._cue_sample_bounds(cues, sample_rate, start_seconds)
+    order = np.argsort(starts, kind="stable")
+    starts, ends, is_speech = starts[order], ends[order], is_speech[order]
+    guards = np.minimum(ends - starts, float(split_aligner._MAX_GUARD_SAMPLES))
+
+    step = float(offset_step_samples)
+    if step <= 0:
+        step = 1.0
+    n_off = int(round(2 * max_offset_samples / step)) + 1
+    offsets = -float(max_offset_samples) + step * np.arange(n_off)
+    indices = np.arange(n_off)
+
+    ref = (np.asarray(reference, dtype=np.float64) > 0).astype(np.float64)
+    cumsum = np.concatenate([np.zeros(1), np.cumsum(ref)])
+    pad = max_offset_samples + split_aligner._MAX_GUARD_SAMPLES + 2
+    padded = np.concatenate([np.zeros(pad), cumsum, np.full(pad, cumsum[-1])])
+    max_pos = len(padded) - 1
+
+    def interp(pos):
+        pos = np.clip(pos, 0.0, float(max_pos))
+        lo = np.floor(pos).astype(np.int64)
+        np.clip(lo, 0, max_pos - 1, out=lo)
+        frac = pos - lo
+        return padded[lo] * (1.0 - frac) + padded[lo + 1] * frac
+
+    def rating_row(i):
+        if not is_speech[i]:
+            return np.zeros(n_off)
+        start_pos = starts[i] + offsets + pad
+        end_pos = ends[i] + offsets + pad
+        cs = interp(start_pos)
+        ce = interp(end_pos)
+        overlap = ce - cs
+        if length_penalty and guards[i] > 0:
+            gl = cs - interp(start_pos - guards[i])
+            gr = interp(end_pos + guards[i]) - ce
+            return overlap - length_penalty * (gl + gr)
+        return overlap
+
+    # dp[o] = best total rating for cues[0..i] with cue i at offsets[o]. Cue i may follow a
+    # predecessor at offsets[p] by jumping only when p <= o + slack: the predecessor's best
+    # placement among those is a running maximum over the ascending offset grid. Ties resolve to
+    # the lowest offset, as the engine's `np.argmax` does.
+    dp = rating_row(0)
+    back = np.full((n, n_off), -1, dtype=np.int32)
+    covered_until = ends[0]
+    for i in range(1, n):
+        slack = int(np.floor(max(starts[i] - covered_until, 0.0) / step))
+        covered_until = max(covered_until, ends[i])
+        best = np.maximum.accumulate(dp)
+        rises = dp > np.concatenate(([-np.inf], best[:-1]))
+        best_idx = np.maximum.accumulate(np.where(rises, indices, 0))
+        reachable = np.minimum(indices + slack, n_off - 1)
+        jump_value = best[reachable] - split_penalty
+        jumped = jump_value > dp
+        back[i] = np.where(jumped, best_idx[reachable], -1)
+        dp = rating_row(i) + np.where(jumped, jump_value, dp)
+
+    best_total = float(dp.max())
+
+    offset_idx = np.empty(n, dtype=np.int64)
+    cur = int(np.argmax(dp))
+    for i in range(n - 1, -1, -1):
+        offset_idx[i] = cur
+        if i > 0:
+            b = int(back[i, cur])
+            cur = b if b >= 0 else cur
+
+    file_order = np.empty(n, dtype=np.float64)
+    file_order[order] = offsets[offset_idx]
+    result = file_order.tolist()
+    if log_segments:
+        split_aligner.log_split_segments(result, sample_rate)
+    if return_score:
+        return result, best_total
+    return result
+
+
+def install_order_preserving_split():
+    ffsubsync.compute_split_offsets = order_preserving_split_offsets
+
+
 def report(token, result, collector):
     """Emit one metrics line, prefixed with the caller's per-run token.
 
@@ -152,6 +266,7 @@ def main():
     install_input_format(options.cinder_input_format)
     install_reference_format(options.cinder_reference_format)
     install_output_format(options.cinder_output_format)
+    install_order_preserving_split()
     sys.argv = [sys.argv[0], *remaining]
 
     collector = MetricsCollector()

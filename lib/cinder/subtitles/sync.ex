@@ -21,7 +21,9 @@ defmodule Cinder.Subtitles.Sync do
   # sidecars are restored from their originals and re-analyzed instead of being trusted forever.
   # 3: piecewise alignment, a subtitle reference the engine reads as subtitles, and framerate
   # corrections beyond ±5% — v2 results left structural and NTSC-ratio drift in place.
-  @sync_version 3
+  # 4: piecewise alignment keeps cues in order — v3 could move a run of cues onto speech other
+  # cues already covered, showing two lines at once and then nothing.
+  @sync_version 4
   @type item :: map()
   @doc "Manifest-managed OpenSubtitles sidecars belonging to one video."
   @spec discover(String.t()) :: [item()]
