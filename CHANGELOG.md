@@ -65,6 +65,18 @@ All notable changes to Cinder are documented here. The format follows
 
   Every automatic correction is restored from its original and re-analyzed (sync metadata
   version 4). Manual corrections are left alone.
+- **A sung theme no longer drags a cold open out of place.** When the reference is the video's
+  own subtitle track, alignment now ignores song lyrics (`♪ … ♪`) and placeholder lines with no
+  words on both sides. ffsubsync counted them as dialogue, so an SDH track that subtitles a song
+  wall to wall read as continuous speech, and Lucifer S01E01's cold open landed 16 s late on its
+  own theme. Measured on Lucifer S1–S3 the same way as above (55 episodes, 26,299 lines): lines
+  within 3 s 99.2% → 99.4%, lines more than 10 s off 103 → 63. S01E01 goes from 89.9% to
+  96.6%, two episodes improve by more than a point, and none get worse. Against the audio,
+  lyric lines still count, since singing is audible: filtering them there cost one episode 5
+  points, and alignment against audio writes the same bytes as before. When one side is nothing
+  but lyrics (a sung-through musical), the filter would leave it no speech, so that file is
+  aligned the old way. Automatic corrections are re-analyzed once more (sync metadata
+  version 5).
 
 ### Security
 - **`decimal` 3.1.1 → 3.2.0 (CVE-2026-97853).** `Decimal.round/3` allocated memory in

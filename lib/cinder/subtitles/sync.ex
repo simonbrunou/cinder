@@ -23,7 +23,9 @@ defmodule Cinder.Subtitles.Sync do
   # corrections beyond ±5% — v2 results left structural and NTSC-ratio drift in place.
   # 4: piecewise alignment keeps cues in order — v3 could move a run of cues onto speech other
   # cues already covered, showing two lines at once and then nothing.
-  @sync_version 4
+  # 5: song lyrics are not speech when the reference is a subtitle track — an SDH reference
+  # read a sung theme as continuous dialogue and pulled a cold open onto it.
+  @sync_version 5
   @type item :: map()
   @doc "Manifest-managed OpenSubtitles sidecars belonging to one video."
   @spec discover(String.t()) :: [item()]

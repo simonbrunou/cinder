@@ -4,10 +4,11 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 
 import numpy as np
-from ffsubsync import ffsubsync, generic_subtitles, split_aligner
+from ffsubsync import ffsubsync, generic_subtitles, speech_transformers, split_aligner
 
 # Message templates (not rendered messages) of the ffsubsync 0.5.1 log records that carry the
 # metrics `run()` does not return. Matching the template, and only for ffsubsync's own loggers,
@@ -218,6 +219,110 @@ def install_order_preserving_split():
     ffsubsync.compute_split_offsets = order_preserving_split_offsets
 
 
+# ASS override blocks (`{\an8}`, `{\i1}`): positioning and styling, never speech. SDH tracks put
+# them in front of cues, which hides a bracketed sound cue (`{\an8}[music]`) from the engine.
+_ASS_OVERRIDE = re.compile(r"\{\\[^}]*\}")
+_LINE_BREAK = re.compile(r"\\[Nn]|\r?\n")
+_engine_is_metadata = speech_transformers._is_metadata
+
+
+def _non_dialogue_line(line):
+    line = speech_transformers._MARKUP_TAG.sub("", line).strip()
+    if not any(ch.isalnum() for ch in line):
+        return True
+    if any(ch in speech_transformers._NON_DIALOGUE_SYMBOLS for ch in line):
+        return True
+    closer = speech_transformers._PAIRED_NESTER.get(line[0])
+    return closer is not None and line[-1] == closer
+
+
+def is_metadata(content, is_beginning_or_end):
+    """The engine's non-speech test, plus song lyrics and placeholder lines.
+
+    The engine counts a cue as speech unless all of it is bracketed or made of music symbols, so
+    a sung line ("♪ I got bills to pay ♪") and a placeholder ("_") count as dialogue. An SDH
+    reference that subtitles a song wall to wall then reads as continuous speech, and dialogue
+    overlaps it about equally well wherever it is placed: Lucifer S01E01's cold open landed
+    16-20 s late on its own theme song. A cue is non-speech here when every line of it is
+    non-dialogue: no letter or digit, a music symbol anywhere, or wholly bracketed.
+    """
+    content = _ASS_OVERRIDE.sub("", content)
+    if _engine_is_metadata(content, is_beginning_or_end):
+        return True
+    return all(_non_dialogue_line(line) for line in _LINE_BREAK.split(content))
+
+
+def _use_metadata_check(check):
+    speech_transformers._is_metadata = check
+    split_aligner._is_metadata = check
+
+
+def install_lyric_filter():
+    """Treat song lyrics as non-speech whenever the reference is a subtitle track.
+
+    Subtitle tracks disagree about songs: an SDH track subtitles every lyric, a regular one
+    subtitles none, so a lyric line on either side is timing with no counterpart on the other.
+    Audio is different: the voice detector hears singing, so a sidecar's lyric lines are real
+    anchors there and stay speech. The reference is fitted first (a video reference reads its
+    embedded subtitle track when it has one, and only then falls back to the audio); the filter
+    stays on for the sidecar and the piecewise search only if that fit never used the audio.
+
+    When either side is nothing but lyrics (a sung-through musical, a songs-only track), the
+    filter would leave it no speech at all: the engine then scores silence against silence,
+    accepts the result and moves every line to the edge of the search window. That run uses the
+    engine's own check on both sides instead, refitting the reference if it was already read.
+    """
+    state = {"heard_audio": False, "reference_fit": None}
+    fit_using_audio = speech_transformers.VideoSpeechTransformer._fit_using_audio
+
+    def fit_using_audio_marked(self, fname):
+        state["heard_audio"] = True
+        return fit_using_audio(self, fname)
+
+    def use_engine_check():
+        _use_metadata_check(_engine_is_metadata)
+        fit, fit_args, fit_kwargs = state["reference_fit"]
+        fit(*fit_args, **fit_kwargs)
+
+    speech_transformers.VideoSpeechTransformer._fit_using_audio = fit_using_audio_marked
+    make_reference_pipe = ffsubsync.make_reference_pipe
+
+    def make_reference_pipe_without_lyrics(*args, **kwargs):
+        pipe = make_reference_pipe(*args, **kwargs)
+        fit = pipe.fit
+
+        def fit_without_lyrics(*fit_args, **fit_kwargs):
+            _use_metadata_check(is_metadata)
+            try:
+                fit(*fit_args, **fit_kwargs)
+            finally:
+                if state["heard_audio"]:
+                    _use_metadata_check(_engine_is_metadata)
+            if not state["heard_audio"]:
+                state["reference_fit"] = (fit, fit_args, fit_kwargs)
+                if not np.any(pipe.transform(*fit_args) > 0):
+                    use_engine_check()
+            return pipe
+
+        pipe.fit = fit_without_lyrics
+        return pipe
+
+    ffsubsync.make_reference_pipe = make_reference_pipe_without_lyrics
+    get_srt_pipe_maker = ffsubsync.get_srt_pipe_maker
+
+    # The sidecar is parsed once here; the parser caches it for every pipeline built after.
+    def get_srt_pipe_maker_checked(args, srtin):
+        maker = get_srt_pipe_maker(args, srtin)
+        if speech_transformers._is_metadata is is_metadata:
+            subs = maker(1.0).named_steps["parse"].fit(srtin).subs_
+            last = len(subs) - 1
+            if all(is_metadata(sub.content, i in (0, last)) for i, sub in enumerate(subs)):
+                use_engine_check()
+        return maker
+
+    ffsubsync.get_srt_pipe_maker = get_srt_pipe_maker_checked
+
+
 def report(token, result, collector):
     """Emit one metrics line, prefixed with the caller's per-run token.
 
@@ -267,6 +372,7 @@ def main():
     install_reference_format(options.cinder_reference_format)
     install_output_format(options.cinder_output_format)
     install_order_preserving_split()
+    install_lyric_filter()
     sys.argv = [sys.argv[0], *remaining]
 
     collector = MetricsCollector()

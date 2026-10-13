@@ -459,11 +459,15 @@ video, a theatrical/extended cut mismatch, a recap trimmed off the front, discs 
 one file. Those are the cases where the opening scene looks perfect and the last act is a minute
 out. A correction keeps every line in its original order: where the timing changes, a line can
 move earlier only by the pause in front of it, so two lines that were not on screen together in
-the download are never shown together. A sidecar that is already correct is left
-byte-identical. When a sidecar is corrected the original is kept next to it as a hidden
-`.<name>.cinder-sync-original` file, so **Reset** in `/subtitle-sync` always restores exactly
-what was downloaded. Upgrading re-checks sidecars that a previous version had recorded as
-aligned, since it can now fix drift those passes had to leave alone.
+the download are never shown together. The reference is one of the video's text subtitle tracks
+when it has any (the same language first), otherwise its audio. Against a subtitle track, sung
+lines (`♪ … ♪`) and placeholder lines with no words are ignored on both sides, because one track
+may subtitle a song that the other leaves out; against audio they still count, since singing is
+audible. A sidecar that is already correct is left byte-identical. When a sidecar is corrected
+the original is kept next to it as a hidden `.<name>.cinder-sync-original` file, so **Reset** in
+`/subtitle-sync` always restores exactly what was downloaded. Upgrading re-checks sidecars that a
+previous version had recorded as aligned, since it can now fix drift those passes had to leave
+alone.
 
 If `/media` is a mergerfs mount, bind every backing branch into the Cinder container read-write at
 the same absolute path mergerfs reports (for example, `/mnt/media1:/mnt/media1`); the single

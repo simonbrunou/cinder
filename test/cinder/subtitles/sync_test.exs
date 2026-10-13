@@ -419,7 +419,7 @@ defmodule Cinder.Subtitles.SyncTest do
     assert File.read!(path) == original
     assert File.read!(backup) == ""
 
-    assert %{method: "audio", status: "aligned", version: 4} =
+    assert %{method: "audio", status: "aligned", version: 5} =
              Manifest.sync(Manifest.read(video), "en")
   end
 
@@ -457,7 +457,7 @@ defmodule Cinder.Subtitles.SyncTest do
     assert [%{method: "audio", status: :aligned}] = Sync.analyze_video(video)
     assert File.read!(path) == original
 
-    assert %{method: "audio", status: "aligned", version: 4} =
+    assert %{method: "audio", status: "aligned", version: 5} =
              Manifest.sync(Manifest.read(video), "en")
   end
 
