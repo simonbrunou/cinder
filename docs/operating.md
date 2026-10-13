@@ -464,14 +464,30 @@ when it has any (the same language first), otherwise its audio. Against a subtit
 lines (`♪ … ♪`) and placeholder lines with no words are ignored on both sides, because one track
 may subtitle a song that the other leaves out; against audio they still count, since singing is
 audible. After alignment, an `.srt`/`.vtt` sidecar also gets the timing rules of the Netflix
-[Timed Text Style Guide](https://partnerhelp.netflixstudios.com/hc/en-us/articles/360051554394-Timed-Text-Style-Guide-Subtitle-Timing-Guidelines)
-that need no watching. A gap under half a second between two lines closes to 2 frames, an
-overlap or a gap under 2 frames opens to 2 frames, and a line lasts at least 20 frames. Only
-out-times move, and frames follow the video's frame rate. A sidecar that is already correct and
-already follows those rules is left byte-identical. When a sidecar is corrected the original is
-kept next to it as a hidden `.<name>.cinder-sync-original` file, so **Reset** in `/subtitle-sync`
-always restores exactly what was downloaded. Upgrading re-checks sidecars that a previous version
-had recorded as aligned, since it can now fix drift those passes had to leave alone.
+[Timed Text Style Guide](https://partnerhelp.netflixstudios.com/hc/en-us/articles/360051554394-Timed-Text-Style-Guide-Subtitle-Timing-Guidelines).
+A gap under half a second between two lines closes to 2 frames, an overlap or a gap under 2
+frames opens to 2 frames, and a line lasts at least 20 frames. Frames follow the video's frame
+rate.
+
+When the video's shot changes are known, lines are also timed to the edit:
+- a line starting within half a second after a cut starts on it;
+- a line running across a cut that starts just before it moves to the cut, or to half a second
+  before it;
+- a line ending within half a second before a cut ends 2 frames before it;
+- a line ending less than half a second into the next shot ends 2 frames before the cut (or half
+  a second after it when that would make it too fast to read).
+
+Finding the cuts decodes the whole video, about 7 minutes of CPU per 45-minute episode on two
+cores, at low priority. It runs for a fresh download and for an explicit sync from
+`/subtitle-sync`, and the result is kept per file. A routine library scan uses kept cuts only.
+Syncing a title from `/subtitle-sync` therefore adds cuts to sidecars that were aligned without
+them.
+
+A sidecar that is already correct and already follows those rules is left byte-identical. When
+a sidecar is corrected the original is kept next to it as a hidden `.<name>.cinder-sync-original`
+file, so **Reset** in `/subtitle-sync` always restores exactly what was downloaded. Upgrading
+re-checks sidecars that a previous version had recorded as aligned, since it can now fix drift
+those passes had to leave alone.
 
 If `/media` is a mergerfs mount, bind every backing branch into the Cinder container read-write at
 the same absolute path mergerfs reports (for example, `/mnt/media1:/mnt/media1`); the single

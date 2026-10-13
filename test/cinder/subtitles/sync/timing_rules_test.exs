@@ -100,4 +100,58 @@ defmodule Cinder.Subtitles.Sync.TimingRulesTest do
 
     assert TimingRules.rewrite(ass, ".ass", frame_rate: @fps) == {:ok, ass}
   end
+
+  describe "with shot changes" do
+    # Half a second is 12 frames (500 ms), three quarters of it 9 frames (375 ms).
+    defp cut(cues, cuts, texts \\ nil),
+      do: TimingRules.times(cues, @fps, shot_changes: cuts, texts: texts)
+
+    test "a line starting within half a second after a cut starts on it" do
+      assert cut([{10_200, 11_500}], [10_000]) == [{10_000, 11_500}]
+      assert cut([{10_600, 11_500}], [10_000]) == [{10_600, 11_500}]
+    end
+
+    test "a line running across a cut it starts just before moves to the cut or half a second before it" do
+      assert cut([{9_900, 11_500}], [10_000]) == [{10_000, 11_500}]
+      assert cut([{9_600, 11_500}], [10_000]) == [{9_500, 11_500}]
+      # A line that ends before the cut is not dialogue running across it.
+      assert cut([{9_900, 9_990}], [10_000]) == [{9_900, 10_734}]
+    end
+
+    test "an in-time does not move earlier when the line before could not keep 20 frames" do
+      assert cut([{9_400, 9_900}, {10_200, 11_500}], [10_000]) == [
+               {9_400, 10_117},
+               {10_200, 11_500}
+             ]
+    end
+
+    test "a line ending just before a cut ends 2 frames before it, with the next line on the cut" do
+      assert cut([{1_000, 3_000}, {3_400, 5_000}], [3_300]) == [{1_000, 3_217}, {3_300, 5_000}]
+    end
+
+    test "a line ending just after a cut ends 2 frames before it when it stays readable" do
+      assert cut([{1_000, 3_100}], [3_000], ["Hi."]) == [{1_000, 2_917}]
+
+      long = String.duplicate("Too many words. ", 4)
+      assert cut([{1_000, 3_100}], [3_000], [long]) == [{1_000, 3_500}]
+    end
+
+    # A sound cue beside dialogue starting at the same time: ending it before the cut would leave
+    # it under 20 frames, and the fallback must not cap it at the next line's in-time either.
+    test "simultaneous lines crossing a cut keep their length" do
+      assert cut([{1_000, 2_000}, {1_000, 2_500}], [1_800]) == [{1_000, 2_000}, {1_000, 2_500}]
+    end
+
+    test "rewrite/3 reads each line's text for its reading speed" do
+      source =
+        srt([{1_000, 3_100, String.duplicate("Too many words. ", 4)}, {5_000, 6_000, "Hi."}])
+
+      assert TimingRules.rewrite(source, ".srt", frame_rate: @fps, shot_changes: [3_000, 6_050]) ==
+               {:ok,
+                srt([
+                  {1_000, 3_500, String.duplicate("Too many words. ", 4)},
+                  {5_000, 5_967, "Hi."}
+                ])}
+    end
+  end
 end

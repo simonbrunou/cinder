@@ -286,6 +286,74 @@ defmodule Cinder.Subtitles.SyncTest do
     assert File.read!(path) == original
   end
 
+  # A line ending 300 ms before a cut, with nothing after it, ends 2 frames (83 ms) before the cut.
+  test "an explicit request finds the video's cuts once and times the sidecar to them", %{
+    video: video
+  } do
+    path = sidecar(video, "en", ".srt")
+    original = "1\n00:00:01,000 --> 00:00:03,000\nOne\n\n"
+    File.write!(path, original)
+
+    assert :ok =
+             Manifest.put(
+               video,
+               moviehash!(video),
+               "en",
+               "opensubtitles_hash",
+               path,
+               digest(original)
+             )
+
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+    expect(Cinder.Library.MediaInfoMock, :shot_changes, fn ^video -> {:ok, [3_300]} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, input, output ->
+      File.write!(output, File.read!(input))
+      {:ok, %{score: 30.0, offset_ms: 0, rate: 1.0}}
+    end)
+
+    assert [%{status: :corrected}] = Sync.analyze_video(video, shot_changes: :detect)
+    assert File.read!(path) == "1\n00:00:01,000 --> 00:00:03,217\nOne\n\n"
+    assert %{shot_changes: true} = Manifest.sync(Manifest.read(video), "en")
+
+    # The cuts are cached: a second explicit request neither decodes the video nor re-aligns.
+    assert [%{status: :aligned}] = Sync.analyze_video(video, shot_changes: :detect)
+  end
+
+  test "a routine scan never decodes the video, and redoes a result once its cuts are cached", %{
+    video: video
+  } do
+    path = sidecar(video, "en", ".srt")
+    original = "1\n00:00:01,000 --> 00:00:03,000\nOne\n\n"
+    File.write!(path, original)
+
+    assert :ok =
+             Manifest.put(
+               video,
+               moviehash!(video),
+               "en",
+               "opensubtitles_hash",
+               path,
+               digest(original)
+             )
+
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, 2, fn _reference, input, output ->
+      File.write!(output, File.read!(input))
+      {:ok, %{score: 30.0, offset_ms: 0, rate: 1.0}}
+    end)
+
+    assert [%{status: :aligned}] = Sync.analyze_video(video)
+    refute Map.has_key?(Manifest.sync(Manifest.read(video), "en"), :shot_changes)
+
+    Repo.insert!(%Cinder.Subtitles.ShotChanges{moviehash: moviehash!(video), times_ms: [3_300]})
+
+    assert [%{status: :corrected}] = Sync.analyze_video(video)
+    assert File.read!(path) == "1\n00:00:01,000 --> 00:00:03,217\nOne\n\n"
+    assert %{shot_changes: true} = Manifest.sync(Manifest.read(video), "en")
+  end
+
   test "a piecewise correction whose global offset reads as a no-op is still applied", %{
     video: video
   } do

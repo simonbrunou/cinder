@@ -89,6 +89,12 @@ defmodule Cinder.Library.MediaInfo do
   """
   @callback frame_rate(path :: String.t()) :: {:ok, float()} | {:error, term()}
 
+  @doc """
+  Shot changes (cuts) in the video, in milliseconds, ascending. A full decode of the video: a few
+  minutes of CPU per episode, so callers cache it (`Cinder.Subtitles.ShotChanges`).
+  """
+  @callback shot_changes(path :: String.t()) :: {:ok, [non_neg_integer()]} | {:error, term()}
+
   @doc "Reachability check for `/status` and the settings \"Test connection\" button."
   @callback health() :: :ok | {:error, term()}
 end

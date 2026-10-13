@@ -143,6 +143,34 @@ defmodule Cinder.Subtitles.Sync.Timing do
   end
 
   @doc """
+  Text of every cue of an `.srt` or `.vtt` file (the lines after its timing row, up to a blank
+  line or the next cue), in the order `cue_times/2` lists the cues.
+  """
+  @spec cue_texts(binary(), String.t()) :: {:ok, [String.t()]} | {:error, atom()}
+  def cue_texts(source, extension) when is_binary(source) and is_binary(extension) do
+    with {:ok, style, body} <- arrow_body(source, extension) do
+      {texts, current} =
+        body
+        |> String.split(~r/\r\n|\n|\r/)
+        |> Enum.reduce({[], nil}, &collect_text(&1, &2, style))
+
+      {:ok, texts |> push_text(current) |> Enum.reverse()}
+    end
+  end
+
+  defp collect_text(line, {texts, current}, style) do
+    cond do
+      row_times(line, style) != [] -> {push_text(texts, current), []}
+      is_nil(current) -> {texts, nil}
+      String.trim(line) == "" -> {push_text(texts, current), nil}
+      true -> {texts, [line | current]}
+    end
+  end
+
+  defp push_text(texts, nil), do: texts
+  defp push_text(texts, lines), do: [lines |> Enum.reverse() |> Enum.join("\n") | texts]
+
+  @doc """
   Rewrites every cue row of an `.srt` or `.vtt` file with the given `{in_ms, out_ms}` list, one
   entry per cue in file order (as `cue_times/2` returns them). Everything else is kept byte for
   byte, including a BOM and line endings.

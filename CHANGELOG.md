@@ -41,6 +41,31 @@ All notable changes to Cinder are documented here. The format follows
   A sidecar the rules change is now corrected (with its original kept) even when the alignment
   itself was too small to apply. Every automatic correction is redone once (sync metadata
   version 6). See `specs/069-subtitle-timing-rules`.
+- **Corrected subtitles are timed to the video's shot changes.** When the cuts of a video are
+  known, the Netflix shot-change rules apply on top of the gap and duration rules:
+  - A line starting within half a second after a cut starts on it.
+  - A line running across a cut it starts just before moves to the cut, or to half a second
+    before it.
+  - A line ending within half a second before a cut ends 2 frames before it.
+  - A line ending less than half a second into the next shot ends 2 frames before the cut, or
+    half a second after it when the shorter line would read faster than 17 characters per
+    second.
+
+  A rule that would leave a line, or the one before it, shorter than 20 frames is skipped.
+  Measured on four Lucifer and Castle episodes (4,920 lines), with cuts detected on prod:
+  - In-times within half a second of a cut: 35% → 1.1%.
+  - Out-times within half a second of a cut: 38% → 1.9%.
+  - Against Lucifer's WEB track, the median in-time error drops from 187 to 167 ms.
+  - Castle's broadcast track is not timed to cuts (36% of its own lines fall in those zones), so
+    there the lines move away from it by design, within half a second (p90 191 → 327 ms).
+
+  Finding the cuts decodes the whole video with ffmpeg `scdet`, 6–8 CPU-minutes per 45-minute
+  episode on the 2-core box, at low priority. It runs for a fresh download and for an explicit
+  sync from `/subtitle-sync`, and the cuts are cached per file (moviehash, new
+  `subtitle_shot_changes` table). Routine library scans read the cache and never decode, so
+  there is no silent weeks-long backfill: syncing a title from `/subtitle-sync` adds cuts to its
+  sidecars. A result recorded without cuts is redone once they are cached. A fresh download's
+  sidecar now runs ahead of queued library work instead of behind it.
 
 ### Changed
 - **The filesystem helper starts faster (#707).** Subtitle and sidecar reads, writes, renames and

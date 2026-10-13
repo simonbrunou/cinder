@@ -461,6 +461,11 @@ defmodule Cinder.Subtitles.Manifest do
       |> maybe_put_expected_sha256(sync)
       |> maybe_put_operation_id(sync)
       |> maybe_put_piecewise(sync)
+      # Whether the timing rules had the video's shot changes. Absent on results from before cuts
+      # were known, which a later request that knows them redoes.
+      |> then(
+        &if(value(sync, :shot_changes) == true, do: Map.put(&1, :shot_changes, true), else: &1)
+      )
 
     if valid_sync?(normalized),
       do: {:ok, %{normalized | rate: normalized.rate * 1.0}},

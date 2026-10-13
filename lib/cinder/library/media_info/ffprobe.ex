@@ -147,6 +147,10 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   # bound's value.
   @subtitle_tracks_timeout_ms 1_800_000
   @extract_timeout_ms 1_800_000
+  # Shot detection decodes every frame of the video: 51 s per 300 s of 1080p h264 on the 2-core
+  # prod box (measured 2026-10-13), so about 7 minutes per 45-minute episode and 20+ for a long
+  # film. 90 minutes leaves room for a 3-hour film on a busy box.
+  @shot_changes_timeout_ms 5_400_000
 
   # Bounded wait for a killed process to actually exit before giving up on it and closing the
   # port out from under it regardless — mirrors `BookArchive.Rar`'s `@reap_wait_ms` /
@@ -257,6 +261,55 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     ~w(-v error -select_streams v
       -show_entries stream=avg_frame_rate,r_frame_rate:stream_disposition=attached_pic
       -of json) ++ [path]
+  end
+
+  @impl true
+  def shot_changes(path) do
+    {executable, prefix} = niced(ffmpeg_executable!())
+
+    case run_bounded(executable, prefix ++ shot_change_args(path), shot_changes_timeout_ms(),
+           stderr_to_stdout: true
+         ) do
+      {:ok, out, 0} -> {:ok, parse_shot_changes(out)}
+      {:ok, out, code} -> {:error, {:ffmpeg_exit, code, tail(out)}}
+      {:error, _reason} = error -> error
+    end
+  rescue
+    e -> {:error, e}
+  end
+
+  # The main picture only (`V` skips cover art), scaled down before `scdet` compares frames, with
+  # the loop filter skipped: none of that moves a cut, all of it saves decode time. `-nostats`
+  # keeps the progress line out of the output, so what comes back is the cut log.
+  defp shot_change_args(path) do
+    ~w(-nostdin -hide_banner -nostats -v info -skip_loop_filter all -flags2 +fast -i) ++
+      [path] ++ ~w(-map 0:V:0 -an -sn -dn -vf scale=320:-2,scdet=threshold=10 -f null -)
+  end
+
+  @doc false
+  def parse_shot_changes(out) do
+    ~r/lavfi\.scd\.time: (\d+(?:\.\d+)?)/
+    |> Regex.scan(out, capture: :all_but_first)
+    |> Enum.map(fn [seconds] ->
+      {value, _rest} = Float.parse(seconds)
+      round(value * 1000)
+    end)
+    |> Enum.sort()
+    |> Enum.dedup()
+  end
+
+  # A whole-video decode runs at low priority so imports, ffprobe checks and the web UI keep the
+  # CPU they need.
+  defp niced(executable) do
+    case System.find_executable("nice") do
+      nil -> {executable, []}
+      nice -> {nice, ["-n", "10", executable]}
+    end
+  end
+
+  defp tail(out) do
+    out = String.trim(out)
+    if byte_size(out) > 1000, do: binary_part(out, byte_size(out) - 1000, 1000), else: out
   end
 
   # The average rate is the real frame duration; `r_frame_rate` is only the timebase-friendly rate
@@ -473,6 +526,9 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   defp extract_timeout_ms,
     do: Application.get_env(:cinder, :ffmpeg_extract_timeout_ms, @extract_timeout_ms)
+
+  defp shot_changes_timeout_ms,
+    do: Application.get_env(:cinder, :ffmpeg_shot_changes_timeout_ms, @shot_changes_timeout_ms)
 
   defp ffmpeg_executable! do
     case System.find_executable(ffmpeg_bin()) do

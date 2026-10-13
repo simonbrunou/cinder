@@ -11,6 +11,7 @@ defmodule Cinder.Subtitles.Sync do
     Backup,
     EngineWorkspace,
     Output,
+    Record,
     Reference,
     ReplacementCleanup,
     Scope,
@@ -60,30 +61,34 @@ defmodule Cinder.Subtitles.Sync do
   @spec unit_for_video_path(String.t(), :movies | :tv) :: map() | nil
   defdelegate unit_for_video_path(video_path, kind), to: Scope
 
-  @doc "Runs automatic analysis for every managed sidecar belonging to a video."
-  @spec analyze_video(String.t()) :: [map()]
-  def analyze_video(video_path) do
+  @doc """
+  Runs automatic analysis for every managed sidecar belonging to a video. `shot_changes: :detect`
+  finds the video's cuts when none are cached (minutes of CPU); the default `:cached` only reads
+  them, and redoes a result once cuts it did not have become known.
+  """
+  @spec analyze_video(String.t(), keyword()) :: [map()]
+  def analyze_video(video_path, opts \\ []) do
     :global.trans({{Cinder.Subtitles, video_path}, self()}, fn ->
-      do_analyze_video(video_path)
+      do_analyze_video(video_path, opts)
     end)
   end
 
-  defp do_analyze_video(video_path) do
+  defp do_analyze_video(video_path, opts) when is_list(opts) do
     case discover(video_path) do
       [] ->
         []
 
       _items ->
-        analyze_managed_video(video_path)
+        analyze_managed_video(video_path, opts)
     end
   end
 
-  defp analyze_managed_video(video_path) do
+  defp analyze_managed_video(video_path, opts) do
     case current_moviehash(video_path) do
       {:ok, moviehash} ->
         with :ok <- reconcile_reset_cleanups(video_path, moviehash),
              :ok <- ReplacementCleanup.reconcile(video_path) do
-          do_analyze_video(video_path, moviehash)
+          do_analyze_video(video_path, moviehash, opts)
         else
           {:error, reason} -> failed_reconciliation(video_path, reason)
         end
@@ -96,8 +101,10 @@ defmodule Cinder.Subtitles.Sync do
   defp failed_reconciliation(video_path, reason),
     do: Enum.map(discover(video_path), &result(&1, :failed, nil, %{reason: reason}))
 
-  defp do_analyze_video(video_path, moviehash) do
-    items = Enum.map(discover(video_path), &prepare_item(&1, moviehash))
+  defp do_analyze_video(video_path, moviehash, opts) do
+    discovered = discover(video_path)
+    shots = Output.shot_changes(video_path, moviehash, discovered, opts)
+    items = Enum.map(discovered, &prepare_item(&1, moviehash, shots))
 
     needed? = Enum.any?(items, &analysis_needed?/1)
     resolver = Reference.resolver(if(needed?, do: media_info()), video_path)
@@ -114,11 +121,18 @@ defmodule Cinder.Subtitles.Sync do
   defp analysis_needed?(%{sync: %{status: status}}), do: status not in ["aligned", "review"]
   defp analysis_needed?(_item), do: true
 
-  defp prepare_item(item, hash), do: item |> reset_obsolete(hash) |> prepare_replacement(hash)
+  defp prepare_item(item, hash, shots) do
+    item
+    |> reset_obsolete(hash, shots)
+    |> prepare_replacement(hash)
+    |> Map.put(:shot_changes, shots)
+  end
 
-  defp reset_obsolete(%{sync: %{version: @sync_version}} = item, _moviehash), do: item
+  defp reset_obsolete(%{sync: %{version: @sync_version} = sync} = item, _moviehash, shots)
+       when is_nil(shots) or is_map_key(sync, :shot_changes),
+       do: item
 
-  defp reset_obsolete(%{sync: %{method: method}} = item, moviehash)
+  defp reset_obsolete(%{sync: %{method: method}} = item, moviehash, _shots)
        when method in ~w(audio embedded) do
     with :ok <- reset_resolved(item, moviehash),
          {:ok, fresh} <- resolve(item.video_path, item.id),
@@ -126,7 +140,7 @@ defmodule Cinder.Subtitles.Sync do
          else: (_ -> Map.put(item, :auto_review_reason, :obsolete_automatic_reset_failed))
   end
 
-  defp reset_obsolete(item, _moviehash), do: item
+  defp reset_obsolete(item, _moviehash, _shots), do: item
 
   defp moviehash_unavailable(video_path) do
     Enum.map(discover(video_path), fn item ->
@@ -437,21 +451,30 @@ defmodule Cinder.Subtitles.Sync do
     do: :erlang.raise(kind, reason, stacktrace)
 
   defp handle_engine_result(item, moviehash, method, source, engine_result, output_result) do
+    shots = %{shot_changes: not is_nil(Map.get(item, :shot_changes))}
+
     case engine_result do
       {:ok, metrics} ->
         case output_result do
           {:ok, adjusted} ->
-            apply_engine_output(item, moviehash, method, source, adjusted, metrics)
+            apply_engine_output(
+              item,
+              moviehash,
+              method,
+              source,
+              adjusted,
+              Map.merge(metrics, shots)
+            )
 
           {:error, reason} ->
             result(item, :failed, method, %{reason: reason})
         end
 
       {:review, metrics} ->
-        record_review(item, moviehash, method, source, metrics)
+        record_review(item, moviehash, method, source, Map.merge(metrics, shots))
 
       {:error, _reason} ->
-        record_review(item, moviehash, method, source, %{reason: :engine_failed})
+        record_review(item, moviehash, method, source, Map.put(shots, :reason, :engine_failed))
     end
   end
 
@@ -459,8 +482,11 @@ defmodule Cinder.Subtitles.Sync do
     extension = Path.extname(item.sidecar_path)
 
     with :ok <- Timing.validate(adjusted, extension),
-         frame_rate = Map.get(item, :frame_rate),
-         {:ok, adjusted} <- Output.automatic(source, adjusted, metrics, extension, frame_rate),
+         opts = [
+           frame_rate: Map.get(item, :frame_rate),
+           shot_changes: Map.get(item, :shot_changes)
+         ],
+         {:ok, adjusted} <- Output.automatic(source, adjusted, metrics, extension, opts),
          :ok <- verify_analysis_inputs(item, moviehash, source) do
       apply_verified_engine_output(item, moviehash, method, source, adjusted, metrics)
     else
@@ -1243,47 +1269,10 @@ defmodule Cinder.Subtitles.Sync do
       do: "replacement_cleanup_failed"
   end
 
-  defp metadata(status, method, moviehash, source, applied, metrics) do
-    %{
-      version: @sync_version,
-      status: status,
-      method: method,
-      moviehash: moviehash,
-      source_sha256: sha256(source),
-      applied_sha256: sha256(applied),
-      offset_ms: Map.get(metrics, :offset_ms, 0),
-      rate: Map.get(metrics, :rate, 1.0) * 1.0,
-      score: Map.get(metrics, :score),
-      reason: reason(Map.get(metrics, :reason))
-    }
-    |> maybe_put_piecewise(metrics)
-  end
+  defp metadata(status, method, moviehash, source, applied, metrics),
+    do: Record.metadata(@sync_version, status, method, moviehash, source, applied, metrics)
 
-  # Only a piecewise alignment carries these, and only then are they worth recording: `offset_ms`
-  # above is the global search that preceded the splits, so on its own it reports a 40s tail
-  # correction as "0 ms". The segment count and the largest applied shift are what make the row
-  # readable in `/subtitle-sync`.
-  defp maybe_put_piecewise(metadata, %{segments: segments, max_offset_ms: max_offset_ms})
-       when is_integer(segments) and segments > 1 and is_integer(max_offset_ms) do
-    Map.merge(metadata, %{segments: segments, max_offset_ms: max_offset_ms})
-  end
-
-  defp maybe_put_piecewise(metadata, _metrics), do: metadata
-
-  defp result(item, status, method, metadata) do
-    %{
-      id: item.id,
-      label: item.label,
-      video_path: item.video_path,
-      status: status,
-      method: method,
-      offset_ms: Map.get(metadata, :offset_ms, 0),
-      rate: Map.get(metadata, :rate, 1.0),
-      score: Map.get(metadata, :score),
-      reason: Map.get(metadata, :reason)
-    }
-    |> maybe_put_piecewise(metadata)
-  end
+  defp result(item, status, method, metadata), do: Record.result(item, status, method, metadata)
 
   @doc false
   def verify_bound_source_identity(path, expected_identity) do
@@ -1458,10 +1447,6 @@ defmodule Cinder.Subtitles.Sync do
   end
 
   defp sha256(content), do: :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
-  defp reason(nil), do: nil
-  defp reason(value) when is_atom(value), do: Atom.to_string(value)
-  defp reason(value) when is_binary(value), do: value
-  defp reason(value), do: inspect(value)
 
   # `function_exported?/3` answers for *loaded* modules only, and code loading is lazy: probing
   # before the engine module has ever been called reports no `sync/5` and silently drops the

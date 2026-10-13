@@ -61,14 +61,18 @@ defmodule Cinder.Subtitles.Sync.Worker do
   def enqueue_season(id, server \\ __MODULE__), do: enqueue({:season, id}, server)
   def enqueue_episode(id, server \\ __MODULE__), do: enqueue({:episode, id}, server)
 
-  @doc "Enqueues one freshly downloaded sidecar's video when the supervised worker is enabled."
+  @doc """
+  Enqueues one freshly downloaded sidecar's video when the supervised worker is enabled. It runs
+  ahead of routine library work, like an explicit request, and it also finds the video's shot
+  changes: a new sidecar should be right the first time, not after the next full sweep.
+  """
   def enqueue_after_download(video_path, kind, server \\ __MODULE__) do
     if worker_alive?(server) do
       unit =
         Sync.unit_for_video_path(video_path, kind) ||
           %{video_path: video_path, label: Path.basename(video_path)}
 
-      GenServer.cast(server, {:enqueue_units, [unit]})
+      GenServer.cast(server, {:enqueue_fresh, unit})
     end
 
     :ok
@@ -94,7 +98,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
       pending_scans: [],
       task_supervisor: task_supervisor,
       scan: Keyword.get(opts, :scan, &Sync.units/1),
-      analyze: Keyword.get(opts, :analyze, &Sync.analyze_video/1),
+      analyze: Keyword.get(opts, :analyze, &Sync.analyze_video/2),
       interval: Keyword.get(opts, :interval, @default_interval),
       hold: Keyword.get(opts, :explicit_scan_hold, @explicit_scan_hold),
       hold_until: nil,
@@ -128,6 +132,9 @@ defmodule Cinder.Subtitles.Sync.Worker do
 
   def handle_cast({:enqueue_units, units}, state),
     do: {:noreply, enqueue_valid_units(units, state)}
+
+  def handle_cast({:enqueue_fresh, unit}, state),
+    do: {:noreply, enqueue_valid_units([unit], state, :priority)}
 
   @impl true
   def handle_info(:scan, state) do
@@ -216,12 +223,12 @@ defmodule Cinder.Subtitles.Sync.Worker do
   # the worker down and discard it until the next periodic scan. The scan path records its
   # rejection as a failed unit; here the caller is answered with :ok either way, so the log is
   # the only trace that something was thrown away.
-  defp enqueue_valid_units(units, state) do
+  defp enqueue_valid_units(units, state, mode \\ :background) do
     {valid, dropped} = split_valid_units(units)
     log_dropped_units(dropped)
 
     valid
-    |> add_units(state, :background)
+    |> add_units(state, mode)
     |> start_next()
   end
 
@@ -301,10 +308,10 @@ defmodule Cinder.Subtitles.Sync.Worker do
     state = sync_hold(state)
 
     case next_unit(state) do
-      {unit, state} ->
+      {unit, shot_changes, state} ->
         task =
           Task.Supervisor.async_nolink(state.task_supervisor, fn ->
-            state.analyze.(unit.video_path)
+            run_analysis(state.analyze, unit, shot_changes)
           end)
 
         publish(%{state | current: unit, task: task})
@@ -316,10 +323,18 @@ defmodule Cinder.Subtitles.Sync.Worker do
 
   defp start_next(state), do: publish(sync_hold(state))
 
+  # A unit from the priority queue (an explicit request or a fresh download) finds the video's shot
+  # changes when none are cached; routine library work only reads the cache. Decoding a whole video
+  # costs minutes of CPU, so the library is never swept through that unasked.
+  defp run_analysis(analyze, unit, shot_changes) when is_function(analyze, 2),
+    do: analyze.(unit.video_path, shot_changes: shot_changes)
+
+  defp run_analysis(analyze, unit, _shot_changes), do: analyze.(unit.video_path)
+
   defp next_unit(state) do
     case :queue.out(state.priority) do
       {{:value, unit}, priority} ->
-        {unit,
+        {unit, :detect,
          %{
            state
            | priority: priority,
@@ -341,7 +356,8 @@ defmodule Cinder.Subtitles.Sync.Worker do
     else
       case :queue.out(state.queue) do
         {{:value, unit}, queue} ->
-          {unit, %{state | queue: queue, queued: MapSet.delete(state.queued, unit.video_path)}}
+          {unit, :cached,
+           %{state | queue: queue, queued: MapSet.delete(state.queued, unit.video_path)}}
 
         {:empty, _queue} ->
           :empty

@@ -373,6 +373,20 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     assert Ffprobe.parse_frame_rate(%{"streams" => [%{"avg_frame_rate" => "0/0"}]}) == nil
   end
 
+  # ffmpeg's scdet reports each cut on stderr among its other log lines; a cut can be reported
+  # twice and out of order when filters flush. What comes back is each cut once, in ms, ascending.
+  @tag :tmp_dir
+  test "shot_changes/1 reads the cuts scdet logs, once each, in milliseconds", %{tmp_dir: tmp} do
+    use_ffmpeg_bin(tmp, """
+    printf 'Input #0, matroska,webm\\n' >&2
+    printf '[Parsed_scdet_1 @ 0x1] lavfi.scd.score: 42.1, lavfi.scd.time: 50.592\\n' >&2
+    printf '[Parsed_scdet_1 @ 0x1] lavfi.scd.score: 23.4, lavfi.scd.time: 40.374\\n' >&2
+    printf '[Parsed_scdet_1 @ 0x1] lavfi.scd.score: 23.4, lavfi.scd.time: 40.374\\n' >&2
+    """)
+
+    assert Ffprobe.shot_changes("/media/movie.mkv") == {:ok, [40_374, 50_592]}
+  end
+
   @tag :tmp_dir
   test "extract_subtitle/2 returns stdout without successful-process stderr", %{tmp_dir: tmp} do
     use_ffmpeg_bin(tmp, "printf 'subtitle bytes'; printf 'diagnostic' >&2")
