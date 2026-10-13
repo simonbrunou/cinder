@@ -106,6 +106,7 @@ defmodule Cinder.Subtitles.SyncTest do
     Application.put_env(:cinder, :tv_library_path, tv)
     Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
     Application.put_env(:cinder, :subtitle_sync_engine, Cinder.Subtitles.Sync.EngineMock)
+    stub(Cinder.Library.MediaInfoMock, :frame_rate, fn _video -> {:ok, 24_000 / 1001} end)
 
     on_exit(fn ->
       Enum.each(saved, fn
@@ -219,6 +220,70 @@ defmodule Cinder.Subtitles.SyncTest do
     assert File.read!(path) == original
     assert File.stat!(path).mtime == before
     refute File.exists?(Sync.backup_path(path))
+  end
+
+  # An alignment too small to apply still leaves the downloaded timing to the Netflix rules: a
+  # gap of 200 ms between two lines (3-11 frames) closes to 2 frames (83 ms at 24000/1001 fps).
+  test "a small automatic correction still applies the timing rules to the downloaded timing", %{
+    video: video
+  } do
+    path = sidecar(video, "en", ".srt")
+
+    original =
+      "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n2\n00:00:02,200 --> 00:00:03,300\nTwo\n\n"
+
+    File.write!(path, original)
+
+    assert :ok =
+             Manifest.put(
+               video,
+               moviehash!(video),
+               "en",
+               "opensubtitles_hash",
+               path,
+               digest(original)
+             )
+
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, _input, output ->
+      File.write!(output, String.replace(original, "00:00:01,000", "00:00:01,040"))
+      {:ok, %{score: 30.0, offset_ms: 40, rate: 1.0}}
+    end)
+
+    assert [%{status: :corrected}] = Sync.analyze_video(video)
+    assert File.read!(path) == String.replace(original, "00:00:02,000", "00:00:02,117")
+    assert File.read!(Sync.backup_path(path)) == original
+  end
+
+  # A sidecar downloaded before downloads were validated can break the stricter grammar the rules
+  # read (here an empty cue). A small alignment keeps it as downloaded, as before the rules.
+  test "a small alignment of a sidecar the rules cannot read is still recorded aligned", %{
+    video: video
+  } do
+    path = sidecar(video, "en", ".srt")
+    original = "1\n00:00:01,000 --> 00:00:02,000\n\n\n2\n00:00:03,000 --> 00:00:04,000\nTwo\n\n"
+    File.write!(path, original)
+
+    assert :ok =
+             Manifest.put(
+               video,
+               moviehash!(video),
+               "en",
+               "opensubtitles_hash",
+               path,
+               digest(original)
+             )
+
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, _input, output ->
+      File.write!(output, "1\n00:00:03,000 --> 00:00:04,000\nTwo\n\n")
+      {:ok, %{score: 30.0, offset_ms: 0, rate: 1.0}}
+    end)
+
+    assert [%{status: :aligned}] = Sync.analyze_video(video)
+    assert File.read!(path) == original
   end
 
   test "a piecewise correction whose global offset reads as a no-op is still applied", %{
@@ -419,7 +484,7 @@ defmodule Cinder.Subtitles.SyncTest do
     assert File.read!(path) == original
     assert File.read!(backup) == ""
 
-    assert %{method: "audio", status: "aligned", version: 5} =
+    assert %{method: "audio", status: "aligned", version: 6} =
              Manifest.sync(Manifest.read(video), "en")
   end
 
@@ -457,7 +522,7 @@ defmodule Cinder.Subtitles.SyncTest do
     assert [%{method: "audio", status: :aligned}] = Sync.analyze_video(video)
     assert File.read!(path) == original
 
-    assert %{method: "audio", status: "aligned", version: 5} =
+    assert %{method: "audio", status: "aligned", version: 6} =
              Manifest.sync(Manifest.read(video), "en")
   end
 

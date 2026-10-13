@@ -234,6 +234,59 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     e -> {:error, e}
   end
 
+  @impl true
+  def frame_rate(path) do
+    case run_bounded(bin(), frame_rate_args(path), probe_timeout_ms(), stderr_to_stdout: true) do
+      {:ok, out, 0} ->
+        with {:ok, metadata} <- Jason.decode(out),
+             fps when is_float(fps) <- parse_frame_rate(metadata),
+             do: {:ok, fps},
+             else: (_ -> {:error, :unknown_frame_rate})
+
+      {:ok, out, code} ->
+        {:error, {:ffprobe_exit, code, String.trim(out)}}
+
+      {:error, _reason} = error ->
+        error
+    end
+  rescue
+    e -> {:error, e}
+  end
+
+  defp frame_rate_args(path) do
+    ~w(-v error -select_streams v
+      -show_entries stream=avg_frame_rate,r_frame_rate:stream_disposition=attached_pic
+      -of json) ++ [path]
+  end
+
+  # The average rate is the real frame duration; `r_frame_rate` is only the timebase-friendly rate
+  # (60000/1001 for some telecined 23.976 content), so it is the fallback when the container does
+  # not know the average ("0/0"). Cover art is a video stream too, flagged `attached_pic`.
+  @doc false
+  def parse_frame_rate(%{"streams" => streams}) when is_list(streams) do
+    streams
+    |> Enum.reject(&disposition?(&1, "attached_pic"))
+    |> Enum.find_value(fn stream ->
+      rational(stream["avg_frame_rate"]) || rational(stream["r_frame_rate"])
+    end)
+  end
+
+  def parse_frame_rate(_metadata), do: nil
+
+  defp rational(value) when is_binary(value) do
+    with [numerator, denominator] <- String.split(value, "/"),
+         {n, ""} <- Integer.parse(numerator),
+         {d, ""} <- Integer.parse(denominator),
+         true <- d > 0 and n > 0,
+         fps when fps >= 1.0 and fps <= 300.0 <- n / d do
+      fps
+    else
+      _ -> nil
+    end
+  end
+
+  defp rational(_value), do: nil
+
   # One line per stream: "codec_type,default,language" — `default` is the disposition flag (1/0),
   # `language` empty (or the field absent) when the stream has no tag. Then one line for the
   # container: its duration in seconds ("7263.456000"), which the movie runtime check reads.

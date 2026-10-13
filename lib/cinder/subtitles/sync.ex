@@ -10,6 +10,7 @@ defmodule Cinder.Subtitles.Sync do
     AtomicFile,
     Backup,
     EngineWorkspace,
+    Output,
     Reference,
     ReplacementCleanup,
     Scope,
@@ -25,7 +26,8 @@ defmodule Cinder.Subtitles.Sync do
   # cues already covered, showing two lines at once and then nothing.
   # 5: song lyrics are not speech when the reference is a subtitle track — an SDH reference
   # read a sung theme as continuous dialogue and pulled a cold open onto it.
-  @sync_version 5
+  # 6: the Netflix timing rules (2-frame gaps, chaining, 20-frame minimum) on every result.
+  @sync_version 6
   @type item :: map()
   @doc "Manifest-managed OpenSubtitles sidecars belonging to one video."
   @spec discover(String.t()) :: [item()]
@@ -97,13 +99,14 @@ defmodule Cinder.Subtitles.Sync do
   defp do_analyze_video(video_path, moviehash) do
     items = Enum.map(discover(video_path), &prepare_item(&1, moviehash))
 
-    resolver =
-      Reference.resolver(if(Enum.any?(items, &analysis_needed?/1), do: media_info()), video_path)
+    needed? = Enum.any?(items, &analysis_needed?/1)
+    resolver = Reference.resolver(if(needed?, do: media_info()), video_path)
+    frame_rate = if needed?, do: Output.frame_rate(media_info(), video_path)
 
     Enum.map(items, fn item ->
       {reference, reference_source} = resolver.(item.language)
 
-      analyze_item(item, moviehash, reference, reference_source)
+      analyze_item(Map.put(item, :frame_rate, frame_rate), moviehash, reference, reference_source)
     end)
   end
 
@@ -453,7 +456,11 @@ defmodule Cinder.Subtitles.Sync do
   end
 
   defp apply_engine_output(item, moviehash, method, source, adjusted, metrics) do
-    with :ok <- Timing.validate(adjusted, Path.extname(item.sidecar_path)),
+    extension = Path.extname(item.sidecar_path)
+
+    with :ok <- Timing.validate(adjusted, extension),
+         frame_rate = Map.get(item, :frame_rate),
+         {:ok, adjusted} <- Output.automatic(source, adjusted, metrics, extension, frame_rate),
          :ok <- verify_analysis_inputs(item, moviehash, source) do
       apply_verified_engine_output(item, moviehash, method, source, adjusted, metrics)
     else
@@ -465,13 +472,11 @@ defmodule Cinder.Subtitles.Sync do
     end
   end
 
-  defp apply_verified_engine_output(item, moviehash, method, source, adjusted, metrics) do
-    if source == adjusted or insignificant_correction?(metrics) do
-      record_aligned(item, moviehash, method, source, source, metrics, :aligned)
-    else
-      apply_correction(item, moviehash, method, source, adjusted, metrics)
-    end
-  end
+  defp apply_verified_engine_output(item, moviehash, method, source, source, metrics),
+    do: record_aligned(item, moviehash, method, source, source, metrics, :aligned)
+
+  defp apply_verified_engine_output(item, moviehash, method, source, adjusted, metrics),
+    do: apply_correction(item, moviehash, method, source, adjusted, metrics)
 
   defp apply_correction(item, moviehash, method, source, adjusted, metrics) do
     metadata = metadata("aligned", method, moviehash, source, adjusted, metrics)
@@ -1171,16 +1176,6 @@ defmodule Cinder.Subtitles.Sync do
   defp current_sync?(item, moviehash, current_hash) do
     item.sync.moviehash == moviehash and
       current_hash == item.sync.applied_sha256
-  end
-
-  # Skips rewriting a sidecar (and taking a backup) for a shift nobody can perceive. A piecewise
-  # alignment reports the largest shift it actually applied: its `offset_ms` is only the global
-  # search that preceded the splits and can read as ~0 while the tail of the file moves by tens
-  # of seconds, so trusting it here would discard exactly the corrections that matter most.
-  defp insignificant_correction?(metrics) do
-    offset_ms = Map.get(metrics, :max_offset_ms) || Map.get(metrics, :offset_ms, 0)
-
-    abs(offset_ms) <= 100 and abs(Map.get(metrics, :rate, 1.0) - 1.0) <= 0.0005
   end
 
   defp syncable_track?(track) do

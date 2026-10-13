@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sys
+from datetime import timedelta
 
 import numpy as np
 from ffsubsync import ffsubsync, generic_subtitles, speech_transformers, split_aligner
@@ -89,9 +90,9 @@ def install_output_format(format_name):
     original_write_file = generic_subtitles.GenericSubtitlesFile.write_file
 
     def write_file(subtitles, path):
+        subtitles = _from_zero(subtitles)
         if not path or os.path.splitext(path)[1]:
             return original_write_file(subtitles, path)
-
         original_splitext = os.path.splitext
         os.path.splitext = lambda value: (
             (value, "." + format_name)
@@ -104,6 +105,27 @@ def install_output_format(format_name):
             os.path.splitext = original_splitext
 
     generic_subtitles.GenericSubtitlesFile.write_file = write_file
+
+
+def _from_zero(subtitles):
+    """A line the shift pushed across 0:00 starts at 0:00 instead.
+
+    `srt`'s writer silently drops every line with a negative start, so a first line placed a
+    fraction of a second too early ("Previously on...") vanished from the output although the
+    video has it. Only a line still running at 0:00 is kept: one that ends before it is a line
+    the video does not have (a recap its cut trims off), and dropping it stays right.
+    """
+    zero = timedelta(0)
+    if all(sub.start >= zero or sub.end <= zero for sub in subtitles):
+        return subtitles
+    return subtitles.clone_props_for_subs(
+        [
+            generic_subtitles.GenericSubtitle(zero, sub.end, sub.inner)
+            if sub.start < zero < sub.end
+            else sub
+            for sub in subtitles
+        ]
+    )
 
 
 def order_preserving_split_offsets(
@@ -208,15 +230,29 @@ def order_preserving_split_offsets(
     file_order = np.empty(n, dtype=np.float64)
     file_order[order] = offsets[offset_idx]
     result = file_order.tolist()
+    time_order = offsets[offset_idx].tolist()
+    _TIME_ORDERED[id(result)] = (result, time_order)
     if log_segments:
-        split_aligner.log_split_segments(result, sample_rate)
+        split_aligner.log_split_segments(time_order, sample_rate)
     if return_score:
         return result, best_total
     return result
 
 
+# The engine logs the segments of the result it applies, and those log lines are the segment
+# metrics Cinder records. It passes the file-order list this search returned, so a file listing
+# lines out of order would read as more segments than it has: log the same offsets in time order.
+_TIME_ORDERED = {}
+
+
+def _log_segments_in_time_order(offsets, sample_rate):
+    result, time_order = _TIME_ORDERED.get(id(offsets), (None, offsets))
+    split_aligner.log_split_segments(time_order if result is offsets else offsets, sample_rate)
+
+
 def install_order_preserving_split():
     ffsubsync.compute_split_offsets = order_preserving_split_offsets
+    ffsubsync.log_split_segments = _log_segments_in_time_order
 
 
 # ASS override blocks (`{\an8}`, `{\i1}`): positioning and styling, never speech. SDH tracks put

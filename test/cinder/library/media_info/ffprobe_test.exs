@@ -347,6 +347,32 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
            ]
   end
 
+  # The average rate is the real frame duration; a telecined file can report 60000/1001 as
+  # `r_frame_rate`, which would make every frame-based subtitle rule 2.5x too tight. Cover art is
+  # also a video stream, and an unknown average ("0/0") must fall back rather than divide by zero.
+  test "parse_frame_rate/1 reads the real video's average rate, skipping cover art" do
+    assert Ffprobe.parse_frame_rate(%{
+             "streams" => [
+               %{
+                 "avg_frame_rate" => "90000/1",
+                 "r_frame_rate" => "90000/1",
+                 "disposition" => %{"attached_pic" => 1}
+               },
+               %{
+                 "avg_frame_rate" => "24000/1001",
+                 "r_frame_rate" => "60000/1001",
+                 "disposition" => %{"attached_pic" => 0}
+               }
+             ]
+           }) == 24_000 / 1001
+
+    assert Ffprobe.parse_frame_rate(%{
+             "streams" => [%{"avg_frame_rate" => "0/0", "r_frame_rate" => "25/1"}]
+           }) == 25.0
+
+    assert Ffprobe.parse_frame_rate(%{"streams" => [%{"avg_frame_rate" => "0/0"}]}) == nil
+  end
+
   @tag :tmp_dir
   test "extract_subtitle/2 returns stdout without successful-process stderr", %{tmp_dir: tmp} do
     use_ffmpeg_bin(tmp, "printf 'subtitle bytes'; printf 'diagnostic' >&2")

@@ -463,11 +463,15 @@ the download are never shown together. The reference is one of the video's text 
 when it has any (the same language first), otherwise its audio. Against a subtitle track, sung
 lines (`♪ … ♪`) and placeholder lines with no words are ignored on both sides, because one track
 may subtitle a song that the other leaves out; against audio they still count, since singing is
-audible. A sidecar that is already correct is left byte-identical. When a sidecar is corrected
-the original is kept next to it as a hidden `.<name>.cinder-sync-original` file, so **Reset** in
-`/subtitle-sync` always restores exactly what was downloaded. Upgrading re-checks sidecars that a
-previous version had recorded as aligned, since it can now fix drift those passes had to leave
-alone.
+audible. After alignment, an `.srt`/`.vtt` sidecar also gets the timing rules of the Netflix
+[Timed Text Style Guide](https://partnerhelp.netflixstudios.com/hc/en-us/articles/360051554394-Timed-Text-Style-Guide-Subtitle-Timing-Guidelines)
+that need no watching. A gap under half a second between two lines closes to 2 frames, an
+overlap or a gap under 2 frames opens to 2 frames, and a line lasts at least 20 frames. Only
+out-times move, and frames follow the video's frame rate. A sidecar that is already correct and
+already follows those rules is left byte-identical. When a sidecar is corrected the original is
+kept next to it as a hidden `.<name>.cinder-sync-original` file, so **Reset** in `/subtitle-sync`
+always restores exactly what was downloaded. Upgrading re-checks sidecars that a previous version
+had recorded as aligned, since it can now fix drift those passes had to leave alone.
 
 If `/media` is a mergerfs mount, bind every backing branch into the Cinder container read-write at
 the same absolute path mergerfs reports (for example, `/mnt/media1:/mnt/media1`); the single

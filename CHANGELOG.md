@@ -24,6 +24,23 @@ All notable changes to Cinder are documented here. The format follows
   matches nothing is deleted one at a time. Each delete re-checks the folder first, never
   touches anything outside your configured download folders, and refuses to clear at all when a
   download client cannot list its jobs. Nothing is removed automatically.
+- **Corrected subtitles follow the Netflix timing rules for gaps and duration.** After
+  alignment, every automatically corrected `.srt`/`.vtt` sidecar gets the rules of the Netflix
+  Timed Text Style Guide that need no watching:
+  - A gap under half a second between two lines closes to 2 frames.
+  - An overlap, or a gap under 2 frames, opens to 2 frames.
+  - A line lasts at least 20 frames.
+
+  Only out-times move. Frames come from the video's frame rate, which ffprobe now reports. The
+  benchmark was 91 aligned sidecars from Lucifer, Castle and Stranger Things (77,474 lines):
+  - Gaps of 3–11 frames: 8.4% → 0.0%.
+  - Gaps under 2 frames: 49% → 0.7%. What remains are overlaps that would only open by cutting a
+    line under 20 frames.
+  - In-times moved: none.
+
+  A sidecar the rules change is now corrected (with its original kept) even when the alignment
+  itself was too small to apply. Every automatic correction is redone once (sync metadata
+  version 6). See `specs/069-subtitle-timing-rules`.
 
 ### Changed
 - **The filesystem helper starts faster (#707).** Subtitle and sidecar reads, writes, renames and
@@ -77,6 +94,14 @@ All notable changes to Cinder are documented here. The format follows
   but lyrics (a sung-through musical), the filter would leave it no speech, so that file is
   aligned the old way. Automatic corrections are re-analyzed once more (sync metadata
   version 5).
+- **A first line placed a moment before 0:00 is no longer deleted.** When alignment shifted an
+  episode's opening line ("Previously on Lucifer…") to a negative time, ffsubsync's SRT writer
+  silently dropped it. 16 of 55 Lucifer S1–S3 episodes lost that line, although the video has
+  it. A line still running at 0:00 now starts at 0:00. A line that ends before 0:00 is one the
+  video's cut does not have (a trimmed recap), so it is still dropped. The `segments` count in
+  `/subtitle-sync` also no longer over-counts a file that lists lines out of order. Sidecars
+  that the timing rules cannot read (an empty cue, `.` before the milliseconds, from before
+  downloads were validated) keep their aligned timing without the rules.
 
 ### Security
 - **`decimal` 3.1.1 → 3.2.0 (CVE-2026-97853).** `Decimal.round/3` allocated memory in

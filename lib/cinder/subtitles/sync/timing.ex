@@ -129,6 +129,93 @@ defmodule Cinder.Subtitles.Sync.Timing do
 
   def from_anchors(_anchors), do: {:error, :invalid_anchors}
 
+  @doc """
+  In-time and out-time (ms) of every cue of an `.srt` or `.vtt` file, in file order. The cue rows
+  are the ones `retime/4` rewrites, so `put_cue_times/3` takes the same list back.
+  """
+  @spec cue_times(binary(), String.t()) ::
+          {:ok, [{non_neg_integer(), non_neg_integer()}]} | {:error, atom()}
+  def cue_times(source, extension) when is_binary(source) and is_binary(extension) do
+    with {:ok, style, body} <- arrow_body(source, extension) do
+      {:ok,
+       body |> String.split(~r/(\r\n|\n|\r)/, trim: false) |> Enum.flat_map(&row_times(&1, style))}
+    end
+  end
+
+  @doc """
+  Rewrites every cue row of an `.srt` or `.vtt` file with the given `{in_ms, out_ms}` list, one
+  entry per cue in file order (as `cue_times/2` returns them). Everything else is kept byte for
+  byte, including a BOM and line endings.
+  """
+  @spec put_cue_times(binary(), String.t(), [{non_neg_integer(), non_neg_integer()}]) ::
+          {:ok, binary()} | {:error, atom()}
+  def put_cue_times(source, extension, times)
+      when is_binary(source) and is_binary(extension) and is_list(times) do
+    with {:ok, style, body} <- arrow_body(source, extension),
+         true <- Enum.all?(times, &valid_cue_time?/1) || {:error, :invalid_adjustment},
+         {parts, []} <-
+           body
+           |> String.split(~r/(\r\n|\n|\r)/, include_captures: true, trim: false)
+           |> Enum.map_reduce(times, &put_row_times(&1, &2, style)),
+         true <- length(times) == length(Enum.flat_map(parts, &row_times(&1, style))) do
+      bom = binary_part(source, 0, byte_size(source) - byte_size(body))
+      {:ok, bom <> IO.iodata_to_binary(parts)}
+    else
+      {:error, _reason} = error -> error
+      _mismatch -> {:error, :cue_count_mismatch}
+    end
+  rescue
+    ArgumentError -> {:error, :invalid_adjustment}
+  end
+
+  defp row_times(line, style) do
+    {regex, precision} = arrow_regex(style)
+    if cue_row?(line, style), do: List.wrap(pair_times(line, regex, precision)), else: []
+  end
+
+  defp put_row_times(line, [{start_ms, finish_ms} | rest] = times, style) do
+    {regex, precision} = arrow_regex(style)
+
+    if row_times(line, style) == [],
+      do: {line, times},
+      else:
+        {rewrite_pair(line, regex, precision, style, fn _, _ -> {start_ms, finish_ms} end), rest}
+  end
+
+  defp put_row_times(line, [], _style), do: {line, []}
+
+  # The structure check runs on the text after a BOM, the same as `retime/4` does.
+  defp arrow_body(source, extension) do
+    body =
+      case source do
+        <<0xEF, 0xBB, 0xBF, rest::binary>> -> rest
+        _ -> source
+      end
+
+    extension = String.downcase(extension)
+
+    style =
+      case extension do
+        ".srt" -> :srt
+        ".vtt" -> :vtt
+        _ -> nil
+      end
+
+    cond do
+      is_nil(style) -> {:error, :unsupported_format}
+      valid_structure?(body, extension) -> {:ok, style, body}
+      true -> {:error, :invalid_subtitle}
+    end
+  end
+
+  defp arrow_regex(:srt), do: {@srt, 3}
+  defp arrow_regex(:vtt), do: {@vtt, 3}
+
+  defp valid_cue_time?({start_ms, finish_ms}),
+    do: valid_timestamp_ms?(start_ms) and valid_timestamp_ms?(finish_ms) and finish_ms > start_ms
+
+  defp valid_cue_time?(_time), do: false
+
   defp valid_structure?(source, extension), do: TimingGrammar.valid?(source, extension)
 
   defp retime_arrow_cues(source, regex, precision, offset_ms, rate, style) do
@@ -221,21 +308,45 @@ defmodule Cinder.Subtitles.Sync.Timing do
   # first start/end pair on a structural cue row, and replace from right to left so byte offsets stay
   # valid. Clamping a negative shift still leaves a positive-duration cue.
   defp retime_pair(line, regex, precision, offset_ms, rate, style) do
-    matches =
-      regex
-      |> Regex.scan(line, return: :index)
-      |> Enum.take(2)
-      |> Enum.map(fn [{start, length} | _captures] ->
-        whole = binary_part(line, start, length)
-        {start, length, Regex.named_captures(regex, whole)}
-      end)
+    rewrite_pair(line, regex, precision, style, fn start_ms, finish_ms ->
+      start_ms = adjust(start_ms, offset_ms, rate)
+      finish_ms = adjust(finish_ms, offset_ms, rate)
+      tick_ms = if precision == 2, do: 10, else: 1
+      {start_ms, max(finish_ms, start_ms + tick_ms)}
+    end)
+  end
+
+  defp pair_matches(line, regex) do
+    regex
+    |> Regex.scan(line, return: :index)
+    |> Enum.take(2)
+    |> Enum.map(fn [{start, length} | _captures] ->
+      whole = binary_part(line, start, length)
+      {start, length, Regex.named_captures(regex, whole)}
+    end)
+  end
+
+  defp pair_times(line, regex, precision) do
+    case pair_matches(line, regex) do
+      [{_, _, start_captures}, {_, _, finish_captures}] ->
+        {to_milliseconds(start_captures, precision), to_milliseconds(finish_captures, precision)}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp rewrite_pair(line, regex, precision, style, fun) do
+    matches = pair_matches(line, regex)
 
     case matches do
       [{_, _, start_captures}, {_, _, finish_captures}] ->
-        start_ms = start_captures |> to_milliseconds(precision) |> adjust(offset_ms, rate)
-        finish_ms = finish_captures |> to_milliseconds(precision) |> adjust(offset_ms, rate)
-        tick_ms = if precision == 2, do: 10, else: 1
-        finish_ms = max(finish_ms, start_ms + tick_ms)
+        {start_ms, finish_ms} =
+          fun.(
+            to_milliseconds(start_captures, precision),
+            to_milliseconds(finish_captures, precision)
+          )
+
         ensure_renderable!(start_ms, style)
         ensure_renderable!(finish_ms, style)
 

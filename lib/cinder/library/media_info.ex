@@ -83,6 +83,12 @@ defmodule Cinder.Library.MediaInfo do
   @callback extract_subtitle(path :: String.t(), index :: non_neg_integer()) ::
               {:ok, binary()} | {:error, term()}
 
+  @doc """
+  Frames per second of the video (the first video stream that is not cover art), for timing
+  subtitles in frames: `Cinder.Subtitles.Sync.TimingRules`.
+  """
+  @callback frame_rate(path :: String.t()) :: {:ok, float()} | {:error, term()}
+
   @doc "Reachability check for `/status` and the settings \"Test connection\" button."
   @callback health() :: :ok | {:error, term()}
 end
