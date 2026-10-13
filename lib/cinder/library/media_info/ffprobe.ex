@@ -413,12 +413,22 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
         language: subtitle_language(stream),
         default?: disposition?(stream, "default"),
         forced?: disposition?(stream, "forced"),
+        hearing_impaired?: hearing_impaired?(stream),
         packet_count: packet_count(stream)
       }
     end
   end
 
   def parse_subtitle_tracks(_), do: []
+
+  # The disposition flag where the muxer set it, else the track title: most releases mark their SDH
+  # track only by name ("English (SDH)", "English [CC]", "Anglais (malentendants)").
+  @hearing_impaired_title ~r/\b(sdh|cc|hi|hoh|hearing|deaf|malentendants?|sme)\b/i
+
+  defp hearing_impaired?(stream) do
+    disposition?(stream, "hearing_impaired") or
+      Regex.match?(@hearing_impaired_title, get_in(stream, ["tags", "title"]) || "")
+  end
 
   # "audio,1,eng" -> {"audio", true, "eng"}; "video,0" / "audio,0,und" -> {_, _, nil}
   # (dropped downstream). The container line is the bare duration: a stream row always leads with
@@ -453,7 +463,7 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   defp subtitle_track_args(path) do
     ~w(-v error -count_packets -select_streams s
-      -show_entries stream=index,codec_name,nb_read_packets:stream_disposition=default,forced:stream_tags=language
+      -show_entries stream=index,codec_name,nb_read_packets:stream_disposition=default,forced,hearing_impaired:stream_tags=language,title
       -of json) ++ [path]
   end
 

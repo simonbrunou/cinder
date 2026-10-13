@@ -28,6 +28,9 @@ defmodule Cinder.Library.MediaInfo do
           required(:language) => String.t(),
           required(:default?) => boolean(),
           required(:forced?) => boolean(),
+          # SDH/CC: the disposition flag, or a title that says so. Optional so existing stubs that
+          # predate it stay valid; a missing key reads as false.
+          optional(:hearing_impaired?) => boolean(),
           optional(:packet_count) => non_neg_integer()
         }
 

@@ -222,6 +222,23 @@ defmodule Cinder.Subtitles.SyncTest do
     refute File.exists?(Sync.backup_path(path))
   end
 
+  # The video's own track is timed to this cut already: no engine run, only the timing rules, with
+  # the extracted original kept for Reset like any automatic correction.
+  test "the video's own track gets the timing rules without an alignment", %{video: video} do
+    path = sidecar(video, "en", ".srt")
+
+    original =
+      "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n2\n00:00:02,200 --> 00:00:03,300\nTwo\n\n"
+
+    File.write!(path, original)
+    assert :ok = Manifest.put(video, moviehash!(video), "en", "own_track", path, digest(original))
+
+    assert [%{status: :corrected, method: "native"}] = Sync.analyze_video(video)
+    assert File.read!(path) == String.replace(original, "00:00:02,000", "00:00:02,117")
+    assert File.read!(Sync.backup_path(path)) == original
+    assert [%{status: :aligned, method: "native"}] = Sync.analyze_video(video)
+  end
+
   # An alignment too small to apply still leaves the downloaded timing to the Netflix rules: a
   # gap of 200 ms between two lines (3-11 frames) closes to 2 frames (83 ms at 24000/1001 fps).
   test "a small automatic correction still applies the timing rules to the downloaded timing", %{

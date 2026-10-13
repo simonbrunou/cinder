@@ -54,20 +54,30 @@ stacked PRs in that order.
 
 ## PR C: the video's own track
 
-- **Track details.** `subtitle_tracks/1` also reports `hearing_impaired?` (disposition) and
-  `title`.
-- **Fetch order.** Before searching OpenSubtitles, `Cinder.Subtitles` looks for an own track:
-  - exact language, not forced, a text codec, at least 200 packets;
-  - a non-SDH track is preferred (no disposition, and the title does not mark SDH/CC/HI), then
-    the one with the most packets.
-  - The track is extracted and committed with origin `embedded`.
-  - It replaces a managed OpenSubtitles sidecar. Unmanaged files are never touched.
-- **Stability.** An `embedded` track is stable for its `video_moviehash`, so sweeps stop
-  re-extracting it. A video whose import probe recorded no embedded track in that language is
-  not probed again.
-- **Timing rules for own tracks.** `embedded`-origin tracks join sync with the method `native`:
-  no engine run, only the timing-rule pass (and cuts when known), with the same backup, journal
-  and reset guarantees as other automatic corrections.
+- **Track details.** `subtitle_tracks/1` also reports `hearing_impaired?`: the disposition flag,
+  or a title naming SDH/CC/HI.
+- **Fetch order.** Before searching OpenSubtitles, `Cinder.Subtitles` looks for an own track
+  (`Cinder.Subtitles.OwnTrack`):
+  - exact language, not forced, a text codec, at least 200 cues;
+  - a track not for the hearing impaired is preferred, then the one with the most cues.
+  - The track is extracted and committed with the new origin `own_track`.
+  - It replaces a managed sidecar unless that one was retimed by hand. Unmanaged files are never
+    touched. A hash-matched OpenSubtitles sidecar is already stable and is not revisited.
+  - The older `embedded` origin stays the last-resort fallback when OpenSubtitles has nothing.
+- **Cost bounds.** Listing tracks and extracting one each read the whole file (45–135 s on prod).
+  - Tracks are listed only when the import probe saw a stream in that language
+    (`imported_embedded_subtitles`, passed in the search criteria).
+  - The list is kept per moviehash (`subtitle_track_probes` table, `Cinder.Subtitles.TrackProbe`).
+  - `own_track` is stable for its moviehash, so it is never extracted again.
+  - A library sweep spends at most 6 hours per run on new own-track work, then carries on with
+    OpenSubtitles alone.
+- **Timing rules for own tracks.** `own_track` sidecars join sync with the method `native`:
+  - There is no engine run and no reference extraction, only the timing-rule pass (with cuts
+    when cached).
+  - They get the same backup, journal and reset guarantees as other automatic corrections.
+  - One found at import is queued like a fresh download, which detects cuts. One found by a
+    sweep is queued in the background with cached cuts only, so the library rollout does not
+    trigger weeks of shot detection.
 
 ## Verification
 

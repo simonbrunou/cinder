@@ -110,6 +110,9 @@ defmodule Cinder.LibrarySubtitlesTest do
       end
     end)
 
+    # An import now looks for the video's own track first (spec 069): these files carry none.
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn _video -> {:ok, []} end)
+
     {:ok, subtitle_fs: subtitle_fs}
   end
 
@@ -193,8 +196,10 @@ defmodule Cinder.LibrarySubtitlesTest do
       {:ok, [{"/dl/Show.S01E03.1080p.mkv", 9 * @gb}]}
     end)
 
-    expect(Cinder.Library.FilesystemMock, :lstat, fn "/dl/Show.S01E03.1080p.mkv" ->
-      {:ok, %File.Stat{size: 9 * @gb, inode: 1}}
+    # The source file, then the subtitle fetch checking for an existing sidecar.
+    stub(Cinder.Library.FilesystemMock, :lstat, fn
+      "/dl/Show.S01E03.1080p.mkv" -> {:ok, %File.Stat{size: 9 * @gb, inode: 1}}
+      _sidecar -> {:error, :enoent}
     end)
 
     expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
@@ -241,8 +246,9 @@ defmodule Cinder.LibrarySubtitlesTest do
       {:ok, [{"/dl/Show.S01E01-E02.1080p.mkv", 9 * @gb}]}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :lstat, fn "/dl/Show.S01E01-E02.1080p.mkv" ->
-      {:ok, %File.Stat{size: 9 * @gb, inode: 1}}
+    stub(Cinder.Library.FilesystemMock, :lstat, fn
+      "/dl/Show.S01E01-E02.1080p.mkv" -> {:ok, %File.Stat{size: 9 * @gb, inode: 1}}
+      _sidecar -> {:error, :enoent}
     end)
 
     expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)

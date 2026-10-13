@@ -11,15 +11,22 @@ defmodule Cinder.Subtitles do
   alias Cinder.Catalog.{Episode, Movie, Series}
   alias Cinder.Library.{PathPolicy, Sidecars}
   alias Cinder.Settings
-  alias Cinder.Subtitles.{Fetcher, Manifest, Moviehash, Srt}
+  alias Cinder.Subtitles.{Fetcher, Manifest, Moviehash, OwnTrack, Srt, TrackProbe}
   alias Cinder.Subtitles.Sync
   alias Cinder.Subtitles.Sync.Timing
   alias Cinder.Subtitles.Sync.Worker
 
-  @doc "Subtitle-search criteria for a movie: imdb + tmdb id (the provider prefers imdb)."
+  @doc """
+  Subtitle-search criteria for a movie: imdb + tmdb id (the provider prefers imdb), plus the
+  subtitle languages the import probe found in the file (`Cinder.Subtitles.OwnTrack`).
+  """
   @spec movie_criteria(Movie.t()) :: map()
-  def movie_criteria(%Movie{imdb_id: imdb_id, tmdb_id: tmdb_id}),
-    do: %{imdb_id: imdb_id, tmdb_id: tmdb_id}
+  def movie_criteria(%Movie{imdb_id: imdb_id, tmdb_id: tmdb_id} = movie),
+    do: %{
+      imdb_id: imdb_id,
+      tmdb_id: tmdb_id,
+      embedded_subtitles: movie.imported_embedded_subtitles
+    }
 
   @doc """
   Subtitle-search criteria for an episode: series tmdb id + season/episode numbers.
@@ -38,7 +45,13 @@ defmodule Cinder.Subtitles do
         } = episode
       ) do
     {q_season, q_episode} = scene_numbering(episode) || {season, number}
-    %{tmdb_id: tmdb_id, season: q_season, episode: q_episode}
+
+    %{
+      tmdb_id: tmdb_id,
+      season: q_season,
+      episode: q_episode,
+      embedded_subtitles: episode.imported_embedded_subtitles
+    }
   end
 
   # The scene {season, episode} from the highest-precedence "scene" coordinate mapping this
@@ -139,7 +152,13 @@ defmodule Cinder.Subtitles do
     if Manifest.stable?(state, moviehash, language) and sidecar_exists?(target) do
       {:ok, cache}
     else
-      search(criteria_base, video_path, kind, language, moviehash, state, cache)
+      case own_track(criteria_base, video_path, kind, language, moviehash, state, cache) do
+        {:committed, cache} ->
+          {:ok, cache}
+
+        {:none, cache} ->
+          search(criteria_base, video_path, kind, language, moviehash, state, cache)
+      end
     end
   rescue
     error ->
@@ -153,6 +172,41 @@ defmodule Cinder.Subtitles do
 
       {:ok, cache}
   end
+
+  # The video's own full track in `language` replaces a downloaded sidecar (spec 069, option C).
+  # Only for a file whose import probe saw a stream in that language, so the track probe (a full
+  # read of the file) does not run on every sweep for every video; once committed it is stable for
+  # this moviehash and never re-extracted. A sidecar the operator retimed by hand is kept.
+  #
+  # A track found at import is timed like a fresh download (shot changes detected); one a library
+  # sweep finds for a file already in the library is queued behind other work with cached shot
+  # changes only, since the first sweep after this change finds one for thousands of files.
+  defp own_track(criteria_base, video_path, kind, language, moviehash, state, cache) do
+    target = sidecar_path(video_path, language)
+
+    if OwnTrack.wanted?(criteria_base, language) and own_track_time?(criteria_base) and
+         writable?(state, language, sidecar_exists?(target)) and
+         get_in(state, [:tracks, language, :sync, :method]) != "manual" do
+      {tracks, cache} = subtitle_tracks(video_path, moviehash, cache)
+      enqueue = if Map.get(criteria_base, :fresh), do: :fresh, else: :background
+
+      with %{} = track <- OwnTrack.select(tracks, language),
+           {:ok, content} <- extract(video_path, track),
+           :ok <- Timing.validate(content, ".srt") do
+        commit(video_path, kind, language, moviehash, "own_track", target, content, enqueue)
+        {:committed, cache}
+      else
+        _none -> {:none, cache}
+      end
+    else
+      {:none, cache}
+    end
+  end
+
+  # A library sweep bounds the time it spends on own tracks (`Cinder.Subtitles.Sweeper`); an import
+  # is never bounded.
+  defp own_track_time?(%{own_track_until: until}), do: System.monotonic_time(:millisecond) < until
+  defp own_track_time?(_criteria), do: true
 
   defp search(criteria_base, video_path, kind, language, moviehash, state, cache) do
     criteria = Map.put(criteria_base, :languages, [language])
@@ -250,7 +304,7 @@ defmodule Cinder.Subtitles do
     exists? = sidecar_exists?(target)
 
     if writable?(state, language, exists?) do
-      {source, cache} = local_source(video_path, language, target, cache)
+      {source, cache} = local_source(video_path, language, moviehash, target, cache)
 
       case source do
         {:direct, content, origin} ->
@@ -272,8 +326,8 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  defp local_source(video_path, language, target, cache) do
-    {tracks, cache} = subtitle_tracks(video_path, cache)
+  defp local_source(video_path, language, moviehash, target, cache) do
+    {tracks, cache} = subtitle_tracks(video_path, moviehash, cache)
 
     # Language.raw_track_satisfies?/2, not exact equality against the raw track code: a "cn"
     # (Cantonese) request must still accept a generically-tagged "chi"/"zho" track (#573), the
@@ -308,27 +362,27 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  defp subtitle_tracks(video_path, %{tracks: :unknown} = cache) do
-    tracks =
-      case media_info() do
-        nil ->
-          []
-
-        impl ->
-          case impl.subtitle_tracks(video_path) do
-            {:ok, tracks} ->
-              tracks
-
-            other ->
-              Logger.warning("subtitle track probe failed for #{video_path}: #{inspect(other)}")
-              []
-          end
-      end
-
+  # Kept per file (`TrackProbe`): the probe reads the whole file, and the own-track check asks on
+  # every sweep.
+  defp subtitle_tracks(video_path, moviehash, %{tracks: :unknown} = cache) do
+    tracks = probe_tracks(media_info(), video_path, moviehash)
     {tracks, %{cache | tracks: tracks}}
   end
 
-  defp subtitle_tracks(_video_path, %{tracks: tracks} = cache), do: {tracks, cache}
+  defp subtitle_tracks(_video_path, _moviehash, %{tracks: tracks} = cache), do: {tracks, cache}
+
+  defp probe_tracks(nil, _video_path, _moviehash), do: []
+
+  defp probe_tracks(impl, video_path, moviehash) do
+    case TrackProbe.tracks(moviehash, fn -> impl.subtitle_tracks(video_path) end) do
+      {:ok, tracks} ->
+        tracks
+
+      other ->
+        Logger.warning("subtitle track probe failed for #{video_path}: #{inspect(other)}")
+        []
+    end
+  end
 
   defp default_srt(video_path, tracks, %{default_srt: :unknown} = cache) do
     result =
@@ -462,7 +516,7 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  defp commit(video_path, kind, language, moviehash, origin, target, content) do
+  defp commit(video_path, kind, language, moviehash, origin, target, content, enqueue \\ :fresh) do
     previous_state = Manifest.read(video_path)
 
     previous_sync =
@@ -482,7 +536,7 @@ defmodule Cinder.Subtitles do
            ) do
         :ok ->
           reconcile_replaced_backup(video_path, language, target, previous_sync)
-          after_commit(video_path, kind, language, origin)
+          after_commit(video_path, kind, language, origin, enqueue)
 
         error ->
           rollback_sidecar(target, previous)
@@ -524,9 +578,17 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  defp after_commit(video_path, kind, language, origin) do
-    if origin in ["opensubtitles_hash", "opensubtitles_id"] do
-      Worker.enqueue_after_download(video_path, kind)
+  defp after_commit(video_path, kind, language, origin, enqueue) do
+    cond do
+      origin in ["opensubtitles_hash", "opensubtitles_id"] or
+          (origin == "own_track" and enqueue == :fresh) ->
+        Worker.enqueue_after_download(video_path, kind)
+
+      origin == "own_track" ->
+        Worker.enqueue_in_background(video_path, kind)
+
+      true ->
+        :ok
     end
 
     Cinder.Library.refresh(kind, video_path)
@@ -662,7 +724,8 @@ defmodule Cinder.Subtitles do
   @spec fetch_now((-> map()), String.t(), :movies | :tv, [String.t()]) :: :ok | :quota_exceeded
   def fetch_now(criteria_fun, video_path, kind, release_sidecar_languages) do
     mark_release_sidecars(video_path, release_sidecar_languages)
-    fetch_missing(criteria_fun.(), video_path, kind)
+    # An import: a track found in the new file is timed like a fresh download (`own_track/7`).
+    fetch_missing(Map.put(criteria_fun.(), :fresh, true), video_path, kind)
   rescue
     error -> Logger.warning("subtitle fetch crashed for #{video_path}: #{inspect(error)}")
   catch
@@ -746,7 +809,8 @@ defmodule Cinder.Subtitles do
   defp unchanged_provider_track?(state, language, target) do
     case get_in(state, [:tracks, language]) do
       %{origin: origin, managed_sha256: managed_sha256} = track
-      when origin in ["opensubtitles_hash", "opensubtitles_id"] and is_binary(managed_sha256) ->
+      when origin in ["opensubtitles_hash", "opensubtitles_id", "own_track"] and
+             is_binary(managed_sha256) ->
         matches_recorded_bytes?(current_sidecar_sha256(target), managed_sha256, track)
 
       _ ->

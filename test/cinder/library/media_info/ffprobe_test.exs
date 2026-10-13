@@ -288,7 +288,14 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
                }
              ]
            }) == [
-             %{index: 2, language: "eng", default?: true, forced?: false, packet_count: 0}
+             %{
+               index: 2,
+               language: "eng",
+               default?: true,
+               forced?: false,
+               hearing_impaired?: false,
+               packet_count: 0
+             }
            ]
   end
 
@@ -319,9 +326,30 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
                }
              ]
            }) == [
-             %{index: 2, language: "chi", default?: false, forced?: false, packet_count: 0},
-             %{index: 3, language: "zho", default?: false, forced?: false, packet_count: 0},
-             %{index: 4, language: "yue", default?: false, forced?: false, packet_count: 0}
+             %{
+               index: 2,
+               language: "chi",
+               default?: false,
+               forced?: false,
+               hearing_impaired?: false,
+               packet_count: 0
+             },
+             %{
+               index: 3,
+               language: "zho",
+               default?: false,
+               forced?: false,
+               hearing_impaired?: false,
+               packet_count: 0
+             },
+             %{
+               index: 4,
+               language: "yue",
+               default?: false,
+               forced?: false,
+               hearing_impaired?: false,
+               packet_count: 0
+             }
            ]
   end
 
@@ -342,9 +370,44 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
                }
              ]
            }) == [
-             %{index: 2, language: "und", default?: false, forced?: false, packet_count: 18},
-             %{index: 4, language: "und", default?: false, forced?: false, packet_count: 0}
+             %{
+               index: 2,
+               language: "und",
+               default?: false,
+               forced?: false,
+               hearing_impaired?: false,
+               packet_count: 18
+             },
+             %{
+               index: 4,
+               language: "und",
+               default?: false,
+               forced?: false,
+               hearing_impaired?: false,
+               packet_count: 0
+             }
            ]
+  end
+
+  # Most releases flag their SDH track only by its title; a word that merely contains "cc" or "hi"
+  # ("Chinese", "Accents") must not count.
+  test "parse_subtitle_tracks/1 reads a hearing-impaired track from its disposition or title" do
+    track = fn index, extra ->
+      Map.merge(%{"index" => index, "codec_name" => "subrip", "disposition" => %{}}, extra)
+    end
+
+    tracks =
+      Ffprobe.parse_subtitle_tracks(%{
+        "streams" => [
+          track.(2, %{"disposition" => %{"hearing_impaired" => 1}}),
+          track.(3, %{"tags" => %{"title" => "English (SDH)"}}),
+          track.(4, %{"tags" => %{"title" => "Anglais [CC]"}}),
+          track.(5, %{"tags" => %{"title" => "Chinese Accents"}}),
+          track.(6, %{})
+        ]
+      })
+
+    assert Enum.map(tracks, & &1.hearing_impaired?) == [true, true, true, false, false]
   end
 
   # The average rate is the real frame duration; a telecined file can report 60000/1001 as

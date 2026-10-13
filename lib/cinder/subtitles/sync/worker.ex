@@ -66,13 +66,23 @@ defmodule Cinder.Subtitles.Sync.Worker do
   ahead of routine library work, like an explicit request, and it also finds the video's shot
   changes: a new sidecar should be right the first time, not after the next full sweep.
   """
-  def enqueue_after_download(video_path, kind, server \\ __MODULE__) do
+  def enqueue_after_download(video_path, kind, server \\ __MODULE__),
+    do: enqueue_video(video_path, kind, :enqueue_fresh, server)
+
+  @doc """
+  Enqueues one video's sidecars behind queued library work, using only cached shot changes: for
+  sidecars a library sweep wrote for files already in the library, which could number thousands.
+  """
+  def enqueue_in_background(video_path, kind, server \\ __MODULE__),
+    do: enqueue_video(video_path, kind, :enqueue_units, server)
+
+  defp enqueue_video(video_path, kind, message, server) do
     if worker_alive?(server) do
       unit =
         Sync.unit_for_video_path(video_path, kind) ||
           %{video_path: video_path, label: Path.basename(video_path)}
 
-      GenServer.cast(server, {:enqueue_fresh, unit})
+      GenServer.cast(server, {message, if(message == :enqueue_units, do: [unit], else: unit)})
     end
 
     :ok

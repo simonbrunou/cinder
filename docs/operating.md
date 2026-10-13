@@ -452,6 +452,18 @@ Sidecars are named `<video basename>.<lang>.srt` — e.g. `Movie (2020) {tmdb-1}
 `Show (Year) {tmdb-2} - S01E02.fr.srt` — the convention both Jellyfin and Plex auto-detect next to
 the video file, with no library scan configuration required.
 
+**The video's own track comes first.** When the file carries a full text subtitle track in a
+wanted language, Cinder writes that track as the sidecar instead of downloading one. It is timed to
+exactly this cut, so a scene the release trimmed has no leftover lines. A full track means the
+exact language, not forced, and at least 200 lines; one not marked for the hearing impaired
+(SDH/CC) is preferred. It replaces a downloaded sidecar Cinder manages, except one retimed by hand
+in `/subtitle-sync`. Once written, it is kept for that file and not extracted again. Listing a
+file's tracks reads the whole file. Cinder does it at import, and in the 12h sweep only when the
+import probe saw a stream in that language; the answer is kept per file. A sweep spends at most 6
+hours on new own-track work. Own tracks get the timing rules below without an alignment (method
+`native` in `/subtitle-sync`). Those a sweep finds for files already in the library are queued
+behind other subtitle work and use cached shot changes only.
+
 Cinder also aligns its managed sidecars without exposing half-written files. Alignment is
 **piecewise**: it corrects a constant delay, a framerate mismatch (including NTSC-timed subtitles
 on a film-rate release), *and* a shift that changes partway through — ad breaks cut out of the

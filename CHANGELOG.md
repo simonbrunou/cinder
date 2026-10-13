@@ -66,6 +66,28 @@ All notable changes to Cinder are documented here. The format follows
   there is no silent weeks-long backfill: syncing a title from `/subtitle-sync` adds cuts to its
   sidecars. A result recorded without cuts is redone once they are cached. A fresh download's
   sidecar now runs ahead of queued library work instead of behind it.
+- **The video's own subtitle track is preferred over a download.** When a file carries a full
+  text subtitle track in a wanted language, Cinder writes that track as the sidecar instead of
+  searching OpenSubtitles. A full track is the exact language, not forced, with at least 200
+  lines, preferring one not marked for the hearing impaired.
+
+  The track is timed to exactly this cut, so a scene the release trimmed leaves no lines behind.
+  This was the remaining Lucifer S01E01 defect: about 20 lines showed up to 20 s late after a
+  cut. Lucifer S1 English is downloaded today (`opensubtitles_id`), and its WEB files carry the
+  official English track.
+
+  It replaces a managed downloaded sidecar unless that one was retimed by hand. Hash-matched
+  downloads stay as they are. Own tracks get the Netflix timing rules without an alignment
+  (method `native`) and are never extracted again for the same file.
+
+  Finding one reads the whole file twice (45–135 s each on prod):
+  - Cinder looks at import, and in a sweep only when the import probe saw a stream in that
+    language.
+  - It keeps the track list per file (new `subtitle_track_probes` table).
+  - A library sweep spends at most 6 hours per run on this.
+  - [Estimate] On prod, about 3,700 files have an English stream and 2,000 a French one. Moving
+    them over takes the sweeps roughly two weeks of background reads.
+  - Those sidecars use cached shot changes only; an explicit `/subtitle-sync` request adds cuts.
 
 ### Changed
 - **The filesystem helper starts faster (#707).** Subtitle and sidecar reads, writes, renames and

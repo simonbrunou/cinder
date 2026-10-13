@@ -6,9 +6,13 @@ defmodule Cinder.Subtitles.Manifest do
   alias Cinder.Library.PathPolicy
   alias Cinder.Settings
 
-  @origins ~w(opensubtitles_hash opensubtitles_id embedded translated release_sidecar)
+  # `own_track`: the video's own full subtitle track in that language, extracted by
+  # `Cinder.Subtitles` in preference to a download (spec 069). `embedded` is the older last-resort
+  # extraction when OpenSubtitles has nothing, which stays open to a later download.
+  @origins ~w(opensubtitles_hash opensubtitles_id own_track embedded translated release_sidecar)
   @sync_statuses ~w(aligned review applying)
-  @sync_methods ~w(embedded audio manual)
+  # `native`: the timing rules on the video's own track, with no alignment to run.
+  @sync_methods ~w(embedded audio native manual)
   @sidecar_extensions ~w(.srt .ass .ssa .sub .vtt)
   @sha256 ~r/\A[0-9a-f]{64}\z/
 
@@ -60,6 +64,14 @@ defmodule Cinder.Subtitles.Manifest do
       track = %{origin: to_string(origin)}
       track = if file, do: Map.put(track, :file, file), else: track
       track = if managed_sha256, do: Map.put(track, :managed_sha256, managed_sha256), else: track
+
+      # An own track belongs to the file it came out of: the manifest-wide hash is rewritten by
+      # every language's write, so after an upgrade at the same path it would vouch for a track
+      # extracted from the replaced file.
+      track =
+        if to_string(origin) == "own_track" and is_binary(moviehash),
+          do: Map.put(track, :source_moviehash, moviehash),
+          else: track
 
       track =
         if replacement_cleanup_sync,
@@ -281,7 +293,10 @@ defmodule Cinder.Subtitles.Manifest do
 
   @spec stable?(map(), String.t() | nil, String.t()) :: boolean()
   def stable?(state, moviehash, language) when is_binary(moviehash) do
-    state.video_moviehash == moviehash and verified?(state, language)
+    case get_in(state, [:tracks, language]) do
+      %{origin: "own_track"} = track -> Map.get(track, :source_moviehash) == moviehash
+      _track -> state.video_moviehash == moviehash and verified?(state, language)
+    end
   end
 
   def stable?(_state, _moviehash, _language), do: false
@@ -295,8 +310,9 @@ defmodule Cinder.Subtitles.Manifest do
 
   # Hash-verified origin regardless of whether the stored moviehash still matches — callers that
   # can't compute a current hash use this to avoid downgrading a verified entry they can't check.
+  # The video's own track is verified by construction: it came out of that very file.
   @spec verified?(map(), String.t()) :: boolean()
-  def verified?(state, language), do: origin(state, language) == "opensubtitles_hash"
+  def verified?(state, language), do: origin(state, language) in ~w(opensubtitles_hash own_track)
 
   defp decode(json, video_path) do
     with {:ok, %{"video_moviehash" => moviehash, "tracks" => tracks}}
@@ -324,6 +340,7 @@ defmodule Cinder.Subtitles.Manifest do
           |> Map.merge(normalize_optional_replacement_cleanup_sync(track))
           |> Map.merge(normalize_optional_reset_cleanup_sync(track))
           |> Map.merge(normalize_optional_backup_tombstone(track))
+          |> Map.merge(normalize_optional_source_moviehash(track))
 
         {:cont, {:ok, Map.put(acc, language, normalized)}}
 
@@ -331,6 +348,12 @@ defmodule Cinder.Subtitles.Manifest do
         {:halt, :error}
     end)
   end
+
+  defp normalize_optional_source_moviehash(%{"source_moviehash" => moviehash})
+       when is_binary(moviehash),
+       do: %{source_moviehash: moviehash}
+
+  defp normalize_optional_source_moviehash(_track), do: %{}
 
   defp normalize_optional_sync(%{"sync_invalid?" => true}), do: %{sync_invalid?: true}
 

@@ -18,7 +18,7 @@ defmodule Cinder.Subtitles.Sync do
     Timing
   }
 
-  @managed_origins ~w(opensubtitles_hash opensubtitles_id)
+  @managed_origins ~w(opensubtitles_hash opensubtitles_id own_track)
   # Bumped whenever the alignment an automatic pass would produce changes, so already-"aligned"
   # sidecars are restored from their originals and re-analyzed instead of being trusted forever.
   # 3: piecewise alignment, a subtitle reference the engine reads as subtitles, and framerate
@@ -107,15 +107,20 @@ defmodule Cinder.Subtitles.Sync do
     items = Enum.map(discovered, &prepare_item(&1, moviehash, shots))
 
     needed? = Enum.any?(items, &analysis_needed?/1)
-    resolver = Reference.resolver(if(needed?, do: media_info()), video_path)
+    aligning? = Enum.any?(items, &(analysis_needed?(&1) and not native?(&1, moviehash)))
+    resolver = Reference.resolver(if(aligning?, do: media_info()), video_path)
     frame_rate = if needed?, do: Output.frame_rate(media_info(), video_path)
 
     Enum.map(items, fn item ->
-      {reference, reference_source} = resolver.(item.language)
+      {reference, reference_source} =
+        if native?(item, moviehash), do: {nil, nil}, else: resolver.(item.language)
 
       analyze_item(Map.put(item, :frame_rate, frame_rate), moviehash, reference, reference_source)
     end)
   end
+
+  defp native?(item, moviehash),
+    do: item.origin == "own_track" and item.source_moviehash == moviehash
 
   defp analysis_needed?(%{auto_review_reason: _reason}), do: false
   defp analysis_needed?(%{sync: %{status: status}}), do: status not in ["aligned", "review"]
@@ -133,7 +138,7 @@ defmodule Cinder.Subtitles.Sync do
        do: item
 
   defp reset_obsolete(%{sync: %{method: method}} = item, moviehash, _shots)
-       when method in ~w(audio embedded) do
+       when method in ~w(audio embedded native) do
     with :ok <- reset_resolved(item, moviehash),
          {:ok, fresh} <- resolve(item.video_path, item.id),
          do: fresh,
@@ -305,6 +310,20 @@ defmodule Cinder.Subtitles.Sync do
     end
   end
 
+  # The video's own track is already timed to this cut: it gets the timing rules, no alignment. One
+  # extracted from a file since replaced at the same path is aligned like any other sidecar.
+  defp analyze_item(%{origin: "own_track", source_moviehash: moviehash} = item, moviehash, _, _) do
+    case safe_source(item.sidecar_path) do
+      {:ok, input_path} ->
+        input_path
+        |> with_bound([:read, :raw, :binary], &apply_native(item, moviehash, &1))
+        |> normalize_engine_result(item, "native")
+
+      {:error, reason} ->
+        result(item, :failed, "native", %{reason: reason})
+    end
+  end
+
   defp analyze_item(item, moviehash, :embedded, reference_path) do
     case run_engine(item, moviehash, "embedded", reference_path) do
       %{reason: reason} = result
@@ -329,6 +348,13 @@ defmodule Cinder.Subtitles.Sync do
 
   defp analyze_item(item, moviehash, _reference, _reference_path),
     do: run_engine(item, moviehash, "audio", item.video_path)
+
+  defp apply_native(item, moviehash, input) do
+    with {:ok, source} <- File.read(input.path) do
+      metrics = %{offset_ms: 0, rate: 1.0, shot_changes: is_list(Map.get(item, :shot_changes))}
+      apply_engine_output(item, moviehash, "native", source, source, metrics)
+    end
+  end
 
   defp run_engine(item, moviehash, method, {:content, content} = reference)
        when is_binary(content) do
@@ -1254,6 +1280,7 @@ defmodule Cinder.Subtitles.Sync do
       sidecar_path: sidecar_path,
       language: language,
       origin: track.origin,
+      source_moviehash: Map.get(track, :source_moviehash),
       managed_sha256: track.managed_sha256,
       sync: Map.get(track, :sync),
       review_reason: cleanup_review_reason(track, sidecar_path),

@@ -695,6 +695,224 @@ defmodule Cinder.SubtitlesTest do
     assert %{tracks: %{"fr" => %{origin: "embedded"}}} = Manifest.read(@video)
   end
 
+  describe "the video's own track" do
+    setup do
+      Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+      zeros = <<0::size(65_536 * 8)>>
+
+      stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ ->
+        {:ok, {131_072, zeros, zeros}}
+      end)
+
+      :ok
+    end
+
+    # A full French dialogue track comes with the video: it replaces a download, the one not for
+    # the hearing impaired wins over the longer SDH one, a forced signs track never qualifies, and
+    # once written it is stable for this file, so the next sweep neither probes nor searches.
+    test "is preferred over a download and then left alone", %{fs: fs} do
+      video = @video
+
+      expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+        {:ok,
+         [
+           %{index: 2, language: "fre", default?: true, forced?: true, packet_count: 40},
+           %{
+             index: 3,
+             language: "fre",
+             default?: false,
+             forced?: false,
+             hearing_impaired?: true,
+             packet_count: 900
+           },
+           %{
+             index: 4,
+             language: "fre",
+             default?: false,
+             forced?: false,
+             hearing_impaired?: false,
+             packet_count: 850
+           }
+         ]}
+      end)
+
+      expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 4 ->
+        {:ok, "1\n00:00:01,000 --> 00:00:02,000\nOWN TRACK\n\n"}
+      end)
+
+      expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+      criteria = %{imdb_id: "tt1", embedded_subtitles: ["eng", "fre"]}
+      assert :ok = Subtitles.fetch_missing(criteria, @video, :movies)
+
+      assert Agent.get(fs, &Map.fetch!(&1, "/lib/M/M.fr.srt")) ==
+               "1\n00:00:01,000 --> 00:00:02,000\nOWN TRACK\n\n"
+
+      assert %{tracks: %{"fr" => %{origin: "own_track"}}} = Manifest.read(@video)
+      assert :ok = Subtitles.fetch_missing(criteria, @video, :movies)
+    end
+
+    # Listing tracks reads the whole file. A video whose French stream is only a forced signs track
+    # (or image-based) never yields an own track, and must not be read again on every sweep.
+    test "probes a file once, even when it has no qualifying track" do
+      video = @video
+
+      expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+        {:ok, [%{index: 2, language: "fre", default?: false, forced?: true, packet_count: 40}]}
+      end)
+
+      expect(Cinder.Subtitles.ProviderMock, :search, 2, fn _ -> {:error, :down} end)
+      criteria = %{imdb_id: "tt1", embedded_subtitles: ["fre"]}
+
+      capture_log(fn ->
+        assert :ok = Subtitles.fetch_missing(criteria, @video, :movies)
+        assert :ok = Subtitles.fetch_missing(criteria, @video, :movies)
+      end)
+    end
+
+    # At import the criteria come from the record as it was before the file landed, so its
+    # recorded streams say nothing about the new file: the tracks are looked at regardless.
+    test "is looked for at import even when the record has no streams recorded yet", %{fs: fs} do
+      video = @video
+
+      expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+        {:ok, [%{index: 3, language: "fre", default?: false, forced?: false, packet_count: 700}]}
+      end)
+
+      expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 3 ->
+        {:ok, "1\n00:00:01,000 --> 00:00:02,000\nOWN TRACK\n\n"}
+      end)
+
+      expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+      Subtitles.fetch_now(
+        fn -> %{imdb_id: "tt1", embedded_subtitles: nil} end,
+        @video,
+        :movies,
+        []
+      )
+
+      assert Agent.get(fs, &Map.fetch!(&1, "/lib/M/M.fr.srt")) ==
+               "1\n00:00:01,000 --> 00:00:02,000\nOWN TRACK\n\n"
+    end
+
+    # Another language's write after an upgrade at the same path updates the manifest-wide hash;
+    # an own track extracted from the replaced file must still count as stale.
+    test "is extracted again from a file that replaced the one it came from", %{fs: fs} do
+      video = @video
+      zeros = <<0::size(65_536 * 8)>>
+      current = Moviehash.compute(131_072, zeros, zeros)
+
+      Agent.update(
+        fs,
+        &Map.put(&1, "/lib/M/M.fr.srt", "1\n00:00:01,000 --> 00:00:02,000\nOLD\n\n")
+      )
+
+      Agent.update(fs, fn files ->
+        Map.put(
+          files,
+          Manifest.path(@video),
+          Jason.encode!(%{
+            video_moviehash: current,
+            tracks: %{"fr" => %{origin: "own_track", source_moviehash: "0123456789abcdef"}}
+          })
+        )
+      end)
+
+      expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+        {:ok, [%{index: 3, language: "fre", default?: false, forced?: false, packet_count: 700}]}
+      end)
+
+      expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 3 ->
+        {:ok, "1\n00:00:01,500 --> 00:00:02,500\nNEW\n\n"}
+      end)
+
+      expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+      assert :ok =
+               Subtitles.fetch_missing(
+                 %{imdb_id: "tt1", embedded_subtitles: ["fre"]},
+                 @video,
+                 :movies
+               )
+
+      assert Agent.get(fs, &Map.fetch!(&1, "/lib/M/M.fr.srt")) ==
+               "1\n00:00:01,500 --> 00:00:02,500\nNEW\n\n"
+
+      assert %{tracks: %{"fr" => %{source_moviehash: ^current}}} = Manifest.read(@video)
+    end
+
+    test "is not looked for once a sweep has spent its own-track time" do
+      expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:error, :down} end)
+      spent = System.monotonic_time(:millisecond) - 1
+
+      capture_log(fn ->
+        assert :ok =
+                 Subtitles.fetch_missing(
+                   %{imdb_id: "tt1", embedded_subtitles: ["fre"], own_track_until: spent},
+                   @video,
+                   :movies
+                 )
+      end)
+    end
+
+    test "is not probed for when the import saw no stream in that language" do
+      expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:error, :down} end)
+
+      capture_log(fn ->
+        assert :ok =
+                 Subtitles.fetch_missing(
+                   %{imdb_id: "tt1", embedded_subtitles: ["eng"]},
+                   @video,
+                   :movies
+                 )
+      end)
+    end
+
+    test "never replaces a sidecar the operator retimed by hand", %{fs: fs} do
+      content = "1\n00:00:01,000 --> 00:00:02,000\nRETIMED\n\n"
+      Agent.update(fs, &Map.put(&1, "/lib/M/M.fr.srt", content))
+
+      Agent.update(fs, fn files ->
+        Map.put(
+          files,
+          Manifest.path(@video),
+          Jason.encode!(%{
+            video_moviehash: nil,
+            tracks: %{
+              "fr" => %{
+                origin: "opensubtitles_id",
+                sync: %{
+                  version: 6,
+                  status: "aligned",
+                  method: "manual",
+                  moviehash: nil,
+                  source_sha256: String.duplicate("a", 64),
+                  applied_sha256: String.duplicate("b", 64),
+                  offset_ms: 500,
+                  rate: 1.0
+                }
+              }
+            }
+          })
+        )
+      end)
+
+      expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:error, :down} end)
+
+      capture_log(fn ->
+        assert :ok =
+                 Subtitles.fetch_missing(
+                   %{imdb_id: "tt1", embedded_subtitles: ["fre"]},
+                   @video,
+                   :movies
+                 )
+      end)
+
+      assert Agent.get(fs, &Map.fetch!(&1, "/lib/M/M.fr.srt")) == content
+    end
+  end
+
   test "a cn (Cantonese) target selects a generically-tagged chi embedded track, not a fallback translation (#573)",
        %{fs: fs} do
     video = @video
