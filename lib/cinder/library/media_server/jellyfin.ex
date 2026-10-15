@@ -15,6 +15,8 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
 
   @max_response_bytes 4 * 1024 * 1024
   @inventory_limit 5_000
+  # Episodes per page of the season read: a few hundred bytes each without images or user data.
+  @episode_page 2_000
 
   @impl true
   def scan(_kind), do: config() |> request(:post, "/Library/Refresh") |> result()
@@ -66,19 +68,81 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
         {:error, :not_configured}
 
       _ ->
-        config
-        |> request(:get, "/Items",
-          params: [
-            {"Recursive", "true"},
-            {"IncludeItemTypes", item_type},
-            {"Fields", "ProviderIds"},
-            {"EnableTotalRecordCount", "true"},
-            {"Limit", Integer.to_string(@inventory_limit)}
-          ]
-        )
-        |> inventory()
+        with {:ok, items} <- inventory(config, item_type, "ProviderIds") do
+          {:ok, Enum.flat_map(items, &item/1)}
+        end
     end
   end
+
+  @impl true
+  # A Season's `ChildCount` is only filled in for a user-bound request, and Cinder authenticates
+  # with an API key (no user), so the counts come from the episodes themselves, joined to the
+  # series inventory by `SeriesId`. `ExcludeLocationTypes=Virtual` drops the placeholder episodes
+  # Jellyfin invents when "display missing episodes" is on. Unvalidated against a live Jellyfin.
+  def list_seasons do
+    config = config()
+
+    case Keyword.get(config, :url) do
+      url when url in [nil, ""] ->
+        {:error, :not_configured}
+
+      _ ->
+        with {:ok, series} <- inventory(config, "Series", "ProviderIds"),
+             {:ok, episodes} <- episodes(config, 0, []) do
+          {:ok, count_seasons(series, episodes)}
+        end
+    end
+  end
+
+  # Paged: a household library can hold more episodes than one bounded response should carry.
+  # A page that leaves the running total short of `TotalRecordCount` is a partial inventory.
+  defp episodes(config, start, acc) do
+    params = [
+      {"Recursive", "true"},
+      {"IncludeItemTypes", "Episode"},
+      {"ExcludeLocationTypes", "Virtual"},
+      {"EnableImages", "false"},
+      {"EnableUserData", "false"},
+      {"EnableTotalRecordCount", "true"},
+      {"StartIndex", Integer.to_string(start)},
+      {"Limit", Integer.to_string(@episode_page)}
+    ]
+
+    with {:ok, items, total} <- config |> request(:get, "/Items", params: params) |> page() do
+      fetched = start + length(items)
+
+      cond do
+        fetched == total -> {:ok, items ++ acc}
+        items != [] and fetched < total -> episodes(config, fetched, items ++ acc)
+        true -> {:error, :partial_inventory}
+      end
+    end
+  end
+
+  defp count_seasons(series, episodes) do
+    shows = for show <- series, %{} = item <- item(show), into: %{}, do: {show["Id"], item}
+
+    counts =
+      Enum.reduce(episodes, %{}, fn
+        %{"SeriesId" => series_id, "ParentIndexNumber" => number} = episode, acc
+        when is_integer(number) and number > 0 ->
+          Map.update(acc, {series_id, number}, span(episode), &(&1 + span(episode)))
+
+        _episode, acc ->
+          acc
+      end)
+
+    for {{series_id, number}, count} <- counts, {:ok, show} <- [Map.fetch(shows, series_id)] do
+      %{item_id: show.id, tmdb_id: show.tmdb_id, season_number: number, episode_count: count}
+    end
+  end
+
+  # One file holding E01-E02 is a single episode item with an `IndexNumberEnd`.
+  defp span(%{"IndexNumber" => first, "IndexNumberEnd" => last})
+       when is_integer(first) and is_integer(last) and last >= first,
+       do: last - first + 1
+
+  defp span(_episode), do: 1
 
   @impl true
   def deep_link("jellyfin:" <> id) when id != "" do
@@ -101,10 +165,24 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
   defp users({:ok, %{status: status}}), do: {:error, {:jellyfin_status, status}}
   defp users({:error, reason}), do: {:error, reason}
 
+  defp inventory(config, item_type, fields) do
+    config
+    |> request(:get, "/Items",
+      params: [
+        {"Recursive", "true"},
+        {"IncludeItemTypes", item_type},
+        {"Fields", fields},
+        {"EnableTotalRecordCount", "true"},
+        {"Limit", Integer.to_string(@inventory_limit)}
+      ]
+    )
+    |> inventory()
+  end
+
   defp inventory({:ok, %{status: status, body: %{"Items" => items, "TotalRecordCount" => total}}})
        when status in 200..299 and is_list(items) and is_integer(total) and
               total == length(items),
-       do: {:ok, Enum.flat_map(items, &item/1)}
+       do: {:ok, items}
 
   defp inventory({:ok, %{status: status, body: %{"Items" => items}}})
        when status in 200..299 and is_list(items),
@@ -115,6 +193,12 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
 
   defp inventory({:ok, %{status: status}}), do: {:error, {:jellyfin_status, status}}
   defp inventory({:error, reason}), do: {:error, reason}
+
+  defp page({:ok, %{status: status, body: %{"Items" => items, "TotalRecordCount" => total}}})
+       when status in 200..299 and is_list(items) and is_integer(total),
+       do: {:ok, items, total}
+
+  defp page(response), do: inventory(response)
 
   defp item(%{"Id" => id, "ProviderIds" => %{"Tmdb" => raw}})
        when is_binary(id) and id != "" and is_binary(raw) do

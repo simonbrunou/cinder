@@ -41,6 +41,23 @@ defmodule Cinder.Library.MediaServer do
   @doc "Lists a complete, bounded inventory for one configured library kind."
   @callback list_items(kind :: atom()) :: {:ok, [item()]} | {:error, term()}
 
+  @typedoc """
+  One season present in the configured TV library: the show's exact TMDB match, its opaque
+  item id (for `c:deep_link/1`), and how many episodes the server holds for the season.
+  """
+  @type season :: %{
+          item_id: String.t(),
+          tmdb_id: pos_integer(),
+          season_number: pos_integer(),
+          episode_count: non_neg_integer()
+        }
+
+  @doc """
+  Lists a complete, bounded season inventory for the TV library, specials excluded. Like
+  `c:list_items/1`, any partial read is an error rather than a short list.
+  """
+  @callback list_seasons() :: {:ok, [season()]} | {:error, term()}
+
   @doc "Builds a browser deep link for one opaque item id, without network I/O."
   @callback deep_link(item_id :: String.t()) :: String.t() | nil
 

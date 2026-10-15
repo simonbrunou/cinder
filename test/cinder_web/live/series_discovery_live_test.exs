@@ -4,6 +4,8 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
   import Mox
   import Cinder.CatalogFixtures
 
+  alias Cinder.Catalog.MediaServerSeasons
+
   setup :set_mox_global
 
   setup do
@@ -295,6 +297,104 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
 
     refute has_element?(lv, "button", "Request all seasons")
+  end
+
+  defp stub_season_episode_counts do
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+      {:ok,
+       %{
+         tmdb_id: 1399,
+         tvdb_id: 1,
+         title: "GoT",
+         year: 2011,
+         poster_path: nil,
+         seasons: [
+           %{season_number: 1, episode_count: 10},
+           %{season_number: 2, episode_count: 10},
+           %{season_number: 3, episode_count: nil}
+         ]
+       }}
+    end)
+  end
+
+  defp server_season(number, count),
+    do: %{
+      tmdb_id: 1399,
+      season_number: number,
+      episode_count: count,
+      item_id: "plex:machine-1:77"
+    }
+
+  test "a season already on the media server reads Available for a show Cinder never added", %{
+    conn: conn
+  } do
+    stub_season_episode_counts()
+    put_media_server_web_url("https://plex.example.com")
+
+    {:ok, :replaced} =
+      MediaServerSeasons.replace([
+        server_season(1, 10),
+        server_season(2, 4),
+        server_season(3, 6)
+      ])
+
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+
+    # Every TMDB episode is on the server: Available, no Request button.
+    assert has_element?(lv, "#seriesdiscovery-season-status-1", "Available")
+    refute has_element?(lv, ~s(button[phx-value-season="1"]))
+
+    # Partly there: the count shows and the season stays requestable.
+    assert has_element?(lv, "#seriesdiscovery-season-progress-2", "4 of 10 episodes available")
+    assert has_element?(lv, ~s(button[phx-value-season="2"]), "Request")
+
+    # TMDB gives no episode total: the count alone, never Available.
+    assert has_element?(lv, "#seriesdiscovery-season-progress-3", "6 episodes available")
+    assert has_element?(lv, ~s(button[phx-value-season="3"]), "Request")
+
+    # The server item deep-links even though Cinder has no series row to reconcile.
+    assert has_element?(
+             lv,
+             ~s(a[href="https://plex.example.com/web/index.html#!/server/machine-1/details?key=%2Flibrary%2Fmetadata%2F77"]),
+             "Open in Plex"
+           )
+
+    lv |> element("button", "Request all seasons") |> render_click()
+    render_async(lv)
+
+    assert Cinder.Requests.list_for_user(user) |> Enum.map(& &1.season_number) |> Enum.sort() ==
+             [2, 3]
+  end
+
+  test "a season Cinder has partly imported shows its episode count", %{conn: conn} do
+    stub_season_episode_counts()
+
+    series = series_fixture(%{tmdb_id: 1399})
+    season = season_fixture(series, %{season_number: 1})
+    episode_fixture(season, %{episode_number: 1, file_path: "/tv/got-s01e01.mkv"})
+    episode_fixture(season, %{episode_number: 2, air_date: ~D[2011-04-24]})
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+
+    assert has_element?(lv, "#seriesdiscovery-season-progress-1", "1 of 10 episodes available")
+    assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+    refute has_element?(lv, "#seriesdiscovery-season-progress-2")
+  end
+
+  test "a changed media-server inventory updates an open page", %{conn: conn} do
+    stub_season_episode_counts()
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+    assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 10)])
+
+    assert render(lv) =~ "seriesdiscovery-season-status-1"
+    refute has_element?(lv, ~s(button[phx-value-season="1"]))
   end
 
   # Bug C: a forged/absent season_number that is not in the show must be rejected.

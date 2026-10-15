@@ -112,6 +112,87 @@ defmodule Cinder.Library.MediaServer.JellyfinTest do
     assert {:error, :not_configured} = Jellyfin.list_items(:movies)
   end
 
+  # Season `ChildCount` is empty for an API-key (user-less) request, so seasons are counted from
+  # their real (non-virtual) episodes, read page by page.
+  defp stub_episodes(pages) do
+    Req.Test.stub(Cinder.JellyfinStub, fn conn ->
+      assert conn.request_path == "/Items"
+      params = Plug.Conn.fetch_query_params(conn).query_params
+
+      case params["IncludeItemTypes"] do
+        "Series" ->
+          Req.Test.json(conn, %{
+            "TotalRecordCount" => 2,
+            "Items" => [
+              %{"Id" => "series-1", "ProviderIds" => %{"Tmdb" => "1399"}},
+              %{"Id" => "series-2", "ProviderIds" => %{"Tvdb" => "121361"}}
+            ]
+          })
+
+        "Episode" ->
+          assert params["ExcludeLocationTypes"] == "Virtual"
+          assert params["EnableImages"] == "false"
+          assert params["Limit"] == "2000"
+          {total, items} = Map.fetch!(pages, params["StartIndex"])
+          Req.Test.json(conn, %{"TotalRecordCount" => total, "Items" => items})
+      end
+    end)
+  end
+
+  test "list_seasons/0 counts each season's real episodes across pages" do
+    stub_episodes(%{
+      "0" =>
+        {4,
+         [
+           %{"SeriesId" => "series-1", "ParentIndexNumber" => 1, "IndexNumber" => 1},
+           # One file holding E02-E03.
+           %{
+             "SeriesId" => "series-1",
+             "ParentIndexNumber" => 1,
+             "IndexNumber" => 2,
+             "IndexNumberEnd" => 3
+           }
+         ]},
+      "2" =>
+        {4,
+         [
+           %{"SeriesId" => "series-1", "ParentIndexNumber" => 0, "IndexNumber" => 1},
+           %{"SeriesId" => "series-2", "ParentIndexNumber" => 1, "IndexNumber" => 1}
+         ]}
+    })
+
+    # Specials and the series without a TMDB id are dropped.
+    assert Jellyfin.list_seasons() ==
+             {:ok,
+              [
+                %{
+                  item_id: "jellyfin:series-1",
+                  tmdb_id: 1399,
+                  season_number: 1,
+                  episode_count: 3
+                }
+              ]}
+  end
+
+  test "list_seasons/0 rejects a page that leaves the episode inventory short" do
+    stub_episodes(%{
+      "0" => {3, [%{"SeriesId" => "series-1", "ParentIndexNumber" => 1, "IndexNumber" => 1}]},
+      "1" => {3, []}
+    })
+
+    assert {:error, :partial_inventory} = Jellyfin.list_seasons()
+  end
+
+  test "list_seasons/0 returns :not_configured without making a request" do
+    put_config(url: nil)
+
+    Req.Test.stub(Cinder.JellyfinStub, fn _conn ->
+      raise "should not call an unconfigured server"
+    end)
+
+    assert {:error, :not_configured} = Jellyfin.list_seasons()
+  end
+
   test "scan/1 surfaces a non-2xx status as an error" do
     Req.Test.stub(Cinder.JellyfinStub, fn conn ->
       conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")

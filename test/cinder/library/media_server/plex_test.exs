@@ -124,6 +124,113 @@ defmodule Cinder.Library.MediaServer.PlexTest do
     end
   end
 
+  # Real Plex shapes (probed 2026-10-15): the `type=3` listing has no `leafCount`; the batched
+  # `/library/metadata/<keys>` read does.
+  defp stub_seasons(listed, metadata_fun) do
+    Req.Test.stub(Cinder.PlexStub, fn conn ->
+      case {conn.request_path, conn.query_string} do
+        {"/identity", _} ->
+          Req.Test.json(conn, %{"MediaContainer" => %{"machineIdentifier" => "machine-1"}})
+
+        {"/library/sections/2/all", "type=3"} ->
+          Req.Test.json(conn, %{
+            "MediaContainer" => %{"totalSize" => length(listed), "Metadata" => listed}
+          })
+
+        {"/library/sections/2/all", "includeGuids=1"} ->
+          Req.Test.json(conn, %{
+            "MediaContainer" => %{
+              "totalSize" => 2,
+              "Metadata" => [
+                %{"ratingKey" => "44", "type" => "show", "Guid" => [%{"id" => "tmdb://1399"}]},
+                %{"ratingKey" => "45", "type" => "show", "Guid" => [%{"id" => "tvdb://1"}]}
+              ]
+            }
+          })
+
+        {"/library/metadata/" <> keys, _} ->
+          Req.Test.json(conn, %{"MediaContainer" => %{"Metadata" => metadata_fun.(keys)}})
+      end
+    end)
+  end
+
+  test "list_seasons/0 joins batched season episode counts to the show's TMDB id" do
+    listed = [
+      %{"ratingKey" => "100", "type" => "season", "parentRatingKey" => "44", "index" => 1},
+      %{"ratingKey" => "101", "type" => "season", "parentRatingKey" => "44", "index" => 0},
+      %{"ratingKey" => "102", "type" => "season", "parentRatingKey" => "45", "index" => 1},
+      %{"ratingKey" => "103", "type" => "season", "parentRatingKey" => "44", "index" => 2}
+    ]
+
+    stub_seasons(listed, fn keys ->
+      assert keys == "100,101,102,103"
+
+      [
+        %{"type" => "season", "parentRatingKey" => "44", "index" => 1, "leafCount" => 8},
+        %{"type" => "season", "parentRatingKey" => "44", "index" => 0, "leafCount" => 2},
+        %{"type" => "season", "parentRatingKey" => "45", "index" => 1, "leafCount" => 6},
+        %{"type" => "season", "parentRatingKey" => "44", "index" => 2, "leafCount" => 0}
+      ]
+    end)
+
+    # Specials, the show without a TMDB id and the empty season are all dropped.
+    assert Plex.list_seasons() ==
+             {:ok,
+              [%{item_id: "plex:machine-1:44", tmdb_id: 1399, season_number: 1, episode_count: 8}]}
+  end
+
+  test "list_seasons/0 batches metadata reads and rejects a short or count-less batch" do
+    listed =
+      for n <- 1..150,
+          do: %{
+            "ratingKey" => "#{1000 + n}",
+            "type" => "season",
+            "parentRatingKey" => "44",
+            "index" => n
+          }
+
+    test_pid = self()
+
+    stub_seasons(listed, fn keys ->
+      keys = String.split(keys, ",")
+      send(test_pid, {:batch, length(keys)})
+
+      for key <- keys,
+          do: %{
+            "type" => "season",
+            "parentRatingKey" => "44",
+            "index" => String.to_integer(key) - 1000,
+            "leafCount" => 1
+          }
+    end)
+
+    assert {:ok, seasons} = Plex.list_seasons()
+    assert length(seasons) == 150
+    assert_received {:batch, 100}
+    assert_received {:batch, 50}
+
+    stub_seasons(listed, fn keys ->
+      keys |> String.split(",") |> tl() |> Enum.map(&%{"k" => &1})
+    end)
+
+    assert {:error, :partial_inventory} = Plex.list_seasons()
+
+    # A season without an episode count is a shape Cinder doesn't understand: fail, don't drop.
+    stub_seasons(listed, fn keys ->
+      for key <- String.split(keys, ","),
+          do: %{"type" => "season", "parentRatingKey" => "44", "index" => 1, "k" => key}
+    end)
+
+    assert {:error, :unexpected_response} = Plex.list_seasons()
+  end
+
+  test "list_seasons/0 returns :not_configured without hitting Plex when the URL is blank" do
+    put_config(url: "")
+    Req.Test.stub(Cinder.PlexStub, fn _conn -> raise "should not call an unconfigured Plex" end)
+
+    assert {:error, :not_configured} = Plex.list_seasons()
+  end
+
   test "scan/1 surfaces a non-2xx status as an error" do
     Req.Test.stub(Cinder.PlexStub, fn conn ->
       conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")

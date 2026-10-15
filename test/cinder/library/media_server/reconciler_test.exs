@@ -5,6 +5,7 @@ defmodule Cinder.Library.MediaServer.ReconcilerTest do
   import Mox
 
   alias Cinder.Catalog
+  alias Cinder.Catalog.MediaServerSeasons
   alias Cinder.Library.MediaServer.Reconciler
   alias Cinder.Library.MediaServerMock
 
@@ -30,6 +31,8 @@ defmodule Cinder.Library.MediaServer.ReconcilerTest do
       :movies -> {:ok, [%{tmdb_id: current.tmdb_id, id: "plex:machine:new"}]}
       :tv -> {:ok, [%{tmdb_id: series.tmdb_id, id: "plex:machine:show"}]}
     end)
+
+    expect(MediaServerMock, :list_seasons, fn -> {:ok, []} end)
 
     {:ok, pid} = start_supervised({Reconciler, name: :media_server_reconciler_test})
     assert :ok = Reconciler.poll(pid)
@@ -57,6 +60,8 @@ defmodule Cinder.Library.MediaServer.ReconcilerTest do
       :tv -> {:ok, [%{tmdb_id: series.tmdb_id, id: "jellyfin:series-new"}]}
     end)
 
+    expect(MediaServerMock, :list_seasons, fn -> {:ok, []} end)
+
     {:ok, pid} = start_supervised({Reconciler, name: :media_server_reconciler_crash_test})
     assert :ok = Reconciler.poll(pid)
 
@@ -80,11 +85,58 @@ defmodule Cinder.Library.MediaServer.ReconcilerTest do
       :tv -> {:ok, []}
     end)
 
+    expect(MediaServerMock, :list_seasons, fn -> {:ok, []} end)
+
     {:ok, pid} = start_supervised({Reconciler, name: :media_server_reconciler_partial_test})
     assert :ok = Reconciler.poll(pid)
 
     assert Catalog.get_movie_by_tmdb_id(movie.tmdb_id).media_server_item_id ==
              "plex:machine:old"
+  end
+
+  defp season(tmdb_id, number, count, item_id),
+    do: %{tmdb_id: tmdb_id, season_number: number, episode_count: count, item_id: item_id}
+
+  defp poll_seasons(name, result) do
+    expect(MediaServerMock, :list_items, 2, fn _kind -> {:ok, []} end)
+    expect(MediaServerMock, :list_seasons, fn -> result end)
+
+    pid = start_supervised!({Reconciler, name: name}, id: name)
+    assert :ok = Reconciler.poll(pid)
+    stop_supervised!(name)
+  end
+
+  test "a complete season inventory replaces the stored one and broadcasts only on change" do
+    assert {:ok, :replaced} = MediaServerSeasons.replace([season(9, 1, 3, "plex:m:9")])
+    Catalog.subscribe_series()
+
+    # The same show listed twice keeps the season with more episodes.
+    inventory = [season(1399, 1, 10, "plex:m:44"), season(1399, 1, 4, "plex:m:45")]
+    poll_seasons(:media_server_seasons_test, {:ok, inventory})
+
+    assert [%{season_number: 1, episode_count: 10, item_id: "plex:m:44"}] =
+             MediaServerSeasons.for_series(1399)
+
+    assert MediaServerSeasons.for_series(9) == []
+    assert MediaServerSeasons.series_tmdb_ids() == MapSet.new([1399])
+    assert_receive :media_server_seasons_updated
+
+    poll_seasons(:media_server_seasons_again_test, {:ok, inventory})
+    refute_receive :media_server_seasons_updated
+  end
+
+  test "a failed season read keeps the inventory; an unconfigured server clears it" do
+    assert {:ok, :replaced} = MediaServerSeasons.replace([season(9, 1, 3, "plex:m:9")])
+
+    poll_seasons(:media_server_seasons_partial_test, {:error, :partial_inventory})
+    assert [%{episode_count: 3}] = MediaServerSeasons.for_series(9)
+
+    poll_seasons(:media_server_seasons_section_test, {:error, {:plex_section_unset, :tv}})
+    assert MediaServerSeasons.for_series(9) == []
+
+    assert {:ok, :replaced} = MediaServerSeasons.replace([season(9, 1, 3, "plex:m:9")])
+    poll_seasons(:media_server_seasons_unconfigured_test, {:error, :not_configured})
+    assert MediaServerSeasons.for_series(9) == []
   end
 
   test "is supervised only when polling is enabled" do

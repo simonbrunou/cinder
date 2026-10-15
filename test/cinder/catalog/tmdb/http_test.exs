@@ -247,7 +247,10 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
         "poster_path" => "/bb.jpg",
         "original_language" => "fr",
         "external_ids" => %{"tvdb_id" => 81_189, "imdb_id" => "tt0903747"},
-        "seasons" => [%{"season_number" => 0}, %{"season_number" => 1}]
+        "seasons" => [
+          %{"season_number" => 0},
+          %{"season_number" => 1, "episode_count" => 7}
+        ]
       })
     end)
 
@@ -259,7 +262,10 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
               year: 2008,
               poster_path: "/bb.jpg",
               original_language: "fr",
-              seasons: [%{season_number: 0}, %{season_number: 1}]
+              seasons: [
+                %{season_number: 0, episode_count: nil},
+                %{season_number: 1, episode_count: 7}
+              ]
             }} = HTTP.get_series(1396)
   end
 

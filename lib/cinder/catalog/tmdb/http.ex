@@ -684,7 +684,11 @@ defmodule Cinder.Catalog.TMDB.HTTP do
       genres: genre_names(body["genres"]),
       vote_average: body["vote_average"],
       first_air_date: date_from(body["first_air_date"]),
-      seasons: for(s <- body["seasons"] || [], do: %{season_number: s["season_number"]})
+      seasons:
+        for(
+          s <- body["seasons"] || [],
+          do: %{season_number: s["season_number"], episode_count: s["episode_count"]}
+        )
     }
 
     maybe_put_localizations(base, body)

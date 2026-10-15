@@ -16,6 +16,7 @@ defmodule CinderWeb.RequestHelpers do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Catalog
+  alias Cinder.Catalog.MediaServerSeasons
   alias Cinder.LibraryKind
   alias Cinder.Requests
 
@@ -166,12 +167,15 @@ defmodule CinderWeb.RequestHelpers do
   end
 
   @doc """
-  Series-level availability for the TV badge: the tmdb_ids with ≥1 imported season. Cheap to
-  recompute on its own so a `series`-topic event needn't rebuild the whole request state.
+  Series-level availability for the TV badge: the tmdb_ids with ≥1 imported season, or with ≥1
+  season on the media server (a show Cinder never added included). Cheap to recompute on its own
+  so a `series`-topic event needn't rebuild the whole request state.
   """
   def assign_available_series(socket) do
+    imported = MapSet.new(Catalog.available_season_keys(), fn {tid, _n} -> tid end)
+
     assign(socket,
-      available_series: MapSet.new(Catalog.available_season_keys(), fn {tid, _n} -> tid end)
+      available_series: MapSet.union(imported, MediaServerSeasons.series_tmdb_ids())
     )
   end
 

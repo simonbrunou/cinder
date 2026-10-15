@@ -32,12 +32,12 @@ msgid "%{n}/%{m} monitored"
 msgstr ""
 
 #: lib/cinder_web/live/my_requests_live.ex:191
-#: lib/cinder_web/request_helpers.ex:100
+#: lib/cinder_web/request_helpers.ex:101
 #, elixir-autogen
 msgid "%{title} added."
 msgstr ""
 
-#: lib/cinder_web/request_helpers.ex:122
+#: lib/cinder_web/request_helpers.ex:123
 #, elixir-autogen
 msgid "%{title} is already requested."
 msgstr ""
@@ -478,11 +478,11 @@ msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:99
 #: lib/cinder_web/live/book_discovery_live.ex:231
-#: lib/cinder_web/live/discover_live.ex:437
-#: lib/cinder_web/live/entity_discovery_live.ex:134
-#: lib/cinder_web/live/entity_discovery_live.ex:182
+#: lib/cinder_web/live/discover_live.ex:441
+#: lib/cinder_web/live/entity_discovery_live.ex:138
+#: lib/cinder_web/live/entity_discovery_live.ex:186
 #: lib/cinder_web/live/movie_discovery_live.ex:266
-#: lib/cinder_web/live/series_discovery_live.ex:409
+#: lib/cinder_web/live/series_discovery_live.ex:494
 #: lib/cinder_web/user_auth.ex:414
 #: lib/cinder_web/user_auth.ex:428
 #, elixir-autogen
@@ -710,8 +710,8 @@ msgid "Movie pipeline"
 msgstr ""
 
 #: lib/cinder_web/live/dashboard_live.ex:324
-#: lib/cinder_web/live/discover_live.ex:473
-#: lib/cinder_web/live/discover_live.ex:637
+#: lib/cinder_web/live/discover_live.ex:477
+#: lib/cinder_web/live/discover_live.ex:641
 #: lib/cinder_web/live/library_live.ex:532
 #: lib/cinder_web/live/library_live.ex:611
 #: lib/cinder_web/live/profiles_live.ex:271
@@ -770,7 +770,7 @@ msgstr ""
 msgid "No match"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:667
+#: lib/cinder_web/live/discover_live.ex:671
 #: lib/cinder_web/live/library_live.ex:615
 #: lib/cinder_web/live/library_live.ex:718
 #: lib/cinder_web/live/library_live.ex:815
@@ -919,7 +919,7 @@ msgid "Remove download after a Usenet import"
 msgstr ""
 
 #: lib/cinder_web/live/book_discovery_live.ex:319
-#: lib/cinder_web/live/series_discovery_live.ex:552
+#: lib/cinder_web/live/series_discovery_live.ex:642
 #, elixir-autogen
 msgid "Request"
 msgstr ""
@@ -950,8 +950,8 @@ msgid "Requested movies move through here."
 msgstr ""
 
 #: lib/cinder_web/live/book_discovery_live.ex:332
-#: lib/cinder_web/live/series_discovery_live.ex:491
-#: lib/cinder_web/live/series_discovery_live.ex:548
+#: lib/cinder_web/live/series_discovery_live.ex:576
+#: lib/cinder_web/live/series_discovery_live.ex:638
 #, elixir-autogen
 msgid "Requesting…"
 msgstr ""
@@ -1037,13 +1037,13 @@ msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:762
 #: lib/cinder_web/components/core_components.ex:815
-#: lib/cinder_web/live/discover_live.ex:673
-#: lib/cinder_web/live/discover_live.ex:679
+#: lib/cinder_web/live/discover_live.ex:677
+#: lib/cinder_web/live/discover_live.ex:683
 #, elixir-autogen
 msgid "Search failed"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:491
+#: lib/cinder_web/live/discover_live.ex:495
 #, elixir-autogen
 msgid "Search results"
 msgstr ""
@@ -1063,12 +1063,12 @@ msgstr ""
 msgid "Season %{number}"
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:180
+#: lib/cinder_web/live/series_discovery_live.ex:183
 #, elixir-autogen
 msgid "Season %{number} is already requested."
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:144
+#: lib/cinder_web/live/series_discovery_live.ex:147
 #, elixir-autogen
 msgid "Season %{number} of %{title} added."
 msgstr ""
@@ -1096,7 +1096,7 @@ msgstr ""
 
 #: lib/cinder_web/live/series_detail_live.ex:50
 #: lib/cinder_web/live/series_detail_live.ex:627
-#: lib/cinder_web/live/series_discovery_live.ex:69
+#: lib/cinder_web/live/series_discovery_live.ex:72
 #, elixir-autogen
 msgid "Series not found."
 msgstr ""
@@ -1155,13 +1155,13 @@ msgstr ""
 msgid "Specials"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:674
+#: lib/cinder_web/live/discover_live.ex:678
 #, elixir-autogen
 msgid "TMDB didn't respond. Try again."
 msgstr ""
 
 #: lib/cinder_web/live/series_detail_components.ex:417
-#: lib/cinder_web/live/series_discovery_live.ex:482
+#: lib/cinder_web/live/series_discovery_live.ex:567
 #, elixir-autogen
 msgid "TMDB returned no season data for this series."
 msgstr ""
@@ -1174,8 +1174,8 @@ msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1051
 #: lib/cinder_web/live/dashboard_live.ex:325
-#: lib/cinder_web/live/discover_live.ex:474
-#: lib/cinder_web/live/discover_live.ex:637
+#: lib/cinder_web/live/discover_live.ex:478
+#: lib/cinder_web/live/discover_live.ex:641
 #: lib/cinder_web/live/profiles_live.ex:272
 #: lib/cinder_web/live/series_detail_components.ex:779
 #: lib/cinder_web/settings_labels.ex:47
@@ -1418,7 +1418,7 @@ msgid "%{count} selected"
 msgstr ""
 
 #: lib/cinder_web/live/my_requests_live.ex:197
-#: lib/cinder_web/request_helpers.ex:107
+#: lib/cinder_web/request_helpers.ex:108
 #, elixir-autogen
 msgid "%{title} requested. Awaiting approval."
 msgstr ""
@@ -1512,7 +1512,7 @@ msgstr ""
 msgid "Couldn't approve that request. Please try again."
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:226
+#: lib/cinder_web/live/series_discovery_live.ex:229
 #, elixir-autogen
 msgid "Couldn't complete that request. Please try again."
 msgstr ""
@@ -1523,13 +1523,13 @@ msgid "Couldn't reopen that request."
 msgstr ""
 
 #: lib/cinder_web/live/book_discovery_live.ex:149
-#: lib/cinder_web/live/discover_live.ex:329
-#: lib/cinder_web/live/entity_discovery_live.ex:116
+#: lib/cinder_web/live/discover_live.ex:333
+#: lib/cinder_web/live/entity_discovery_live.ex:120
 #: lib/cinder_web/live/movie_discovery_live.ex:212
 #: lib/cinder_web/live/my_requests_live.ex:162
 #: lib/cinder_web/live/my_requests_live.ex:208
-#: lib/cinder_web/request_helpers.ex:127
-#: lib/cinder_web/request_helpers.ex:135
+#: lib/cinder_web/request_helpers.ex:128
+#: lib/cinder_web/request_helpers.ex:136
 #, elixir-autogen
 msgid "Couldn't request %{title}. Try again."
 msgstr ""
@@ -1772,7 +1772,7 @@ msgstr ""
 msgid "Save password"
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:156
+#: lib/cinder_web/live/series_discovery_live.ex:159
 #, elixir-autogen
 msgid "Season %{number} of %{title} requested. Awaiting approval."
 msgstr ""
@@ -2054,7 +2054,7 @@ msgstr ""
 
 #: lib/cinder_web/live/entity_discovery_live.ex:43
 #: lib/cinder_web/live/movie_discovery_live.ex:63
-#: lib/cinder_web/live/series_discovery_live.ex:63
+#: lib/cinder_web/live/series_discovery_live.ex:66
 #, elixir-autogen
 msgid "Couldn't reach TMDB. Please try again in a moment."
 msgstr ""
@@ -2099,7 +2099,7 @@ msgstr ""
 msgid "May"
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:479
+#: lib/cinder_web/live/series_discovery_live.ex:564
 #, elixir-autogen
 msgid "No requestable seasons"
 msgstr ""
@@ -2130,7 +2130,7 @@ msgstr ""
 msgid "That download is already gone."
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:483
+#: lib/cinder_web/live/series_discovery_live.ex:568
 #, elixir-autogen
 msgid "This series only has specials, which can't be requested yet."
 msgstr ""
@@ -2168,7 +2168,7 @@ msgstr ""
 #: lib/cinder_web/live/book_discovery_live.ex:284
 #: lib/cinder_web/live/movie_detail_live.ex:364
 #: lib/cinder_web/live/movie_discovery_live.ex:312
-#: lib/cinder_web/live/series_discovery_live.ex:441
+#: lib/cinder_web/live/series_discovery_live.ex:526
 #, elixir-autogen
 msgid "No description available."
 msgstr ""
@@ -3274,7 +3274,7 @@ msgstr ""
 msgid "Year (newest first)"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:472
+#: lib/cinder_web/live/discover_live.ex:476
 #, elixir-autogen
 msgid "All"
 msgstr ""
@@ -3284,7 +3284,7 @@ msgstr ""
 msgid "Couldn't retry that movie."
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:467
+#: lib/cinder_web/live/discover_live.ex:471
 #, elixir-autogen
 msgid "Filter by type"
 msgstr ""
@@ -3309,7 +3309,7 @@ msgstr ""
 msgid "…"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:533
+#: lib/cinder_web/live/discover_live.ex:537
 #, elixir-autogen
 msgid "Trending this week"
 msgstr ""
@@ -3339,7 +3339,7 @@ msgstr ""
 msgid "Collection not found."
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:476
+#: lib/cinder_web/live/discover_live.ex:480
 #, elixir-autogen
 msgid "Collections"
 msgstr ""
@@ -3369,17 +3369,17 @@ msgstr ""
 msgid "Lighting"
 msgstr ""
 
-#: lib/cinder_web/live/entity_discovery_live.ex:154
+#: lib/cinder_web/live/entity_discovery_live.ex:158
 #, elixir-autogen
 msgid "No credits found"
 msgstr ""
 
-#: lib/cinder_web/live/entity_discovery_live.ex:195
+#: lib/cinder_web/live/entity_discovery_live.ex:199
 #, elixir-autogen
 msgid "No movies found"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:475
+#: lib/cinder_web/live/discover_live.ex:479
 #, elixir-autogen
 msgid "People"
 msgstr ""
@@ -3399,7 +3399,7 @@ msgstr ""
 msgid "Producer"
 msgstr ""
 
-#: lib/cinder_web/live/entity_discovery_live.ex:148
+#: lib/cinder_web/live/entity_discovery_live.ex:152
 #, elixir-autogen
 msgid "Showing top 60 of %{total}"
 msgstr ""
@@ -3409,12 +3409,12 @@ msgstr ""
 msgid "Sound"
 msgstr ""
 
-#: lib/cinder_web/live/entity_discovery_live.ex:155
+#: lib/cinder_web/live/entity_discovery_live.ex:159
 #, elixir-autogen
 msgid "TMDB returned no movie or TV credits for this person."
 msgstr ""
 
-#: lib/cinder_web/live/entity_discovery_live.ex:196
+#: lib/cinder_web/live/entity_discovery_live.ex:200
 #, elixir-autogen
 msgid "TMDB returned no movies for this collection."
 msgstr ""
@@ -3511,14 +3511,14 @@ msgstr ""
 
 #: lib/cinder_web/live/movie_discovery_live.ex:328
 #: lib/cinder_web/live/my_requests_live.ex:418
-#: lib/cinder_web/live/series_discovery_live.ex:455
+#: lib/cinder_web/live/series_discovery_live.ex:540
 #, elixir-autogen
 msgid "Open in %{server}"
 msgstr ""
 
 #: lib/cinder_web/live/movie_discovery_live.ex:332
 #: lib/cinder_web/live/my_requests_live.ex:422
-#: lib/cinder_web/live/series_discovery_live.ex:459
+#: lib/cinder_web/live/series_discovery_live.ex:544
 #, elixir-autogen
 msgid "(opens in a new tab)"
 msgstr ""
@@ -3604,7 +3604,7 @@ msgstr ""
 msgid "Animation"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:629
+#: lib/cinder_web/live/discover_live.ex:633
 #, elixir-autogen
 msgid "Browse by genre"
 msgstr ""
@@ -3680,7 +3680,7 @@ msgstr ""
 msgid "Mystery"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:581
+#: lib/cinder_web/live/discover_live.ex:585
 #, elixir-autogen
 msgid "Now playing"
 msgstr ""
@@ -3690,7 +3690,7 @@ msgstr ""
 msgid "Pending accounts"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:549
+#: lib/cinder_web/live/discover_live.ex:553
 #, elixir-autogen
 msgid "Popular movies"
 msgstr ""
@@ -3720,7 +3720,7 @@ msgstr ""
 msgid "Thriller"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:565
+#: lib/cinder_web/live/discover_live.ex:569
 #, elixir-autogen
 msgid "Top rated movies"
 msgstr ""
@@ -4179,7 +4179,7 @@ msgstr ""
 msgid "Action & Adventure"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:634
+#: lib/cinder_web/live/discover_live.ex:638
 #, elixir-autogen
 msgid "Genre media type"
 msgstr ""
@@ -4199,7 +4199,7 @@ msgstr ""
 msgid "News"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:597
+#: lib/cinder_web/live/discover_live.ex:601
 #, elixir-autogen
 msgid "Popular TV"
 msgstr ""
@@ -4224,7 +4224,7 @@ msgstr ""
 msgid "Talk"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:613
+#: lib/cinder_web/live/discover_live.ex:617
 #, elixir-autogen
 msgid "Top rated TV"
 msgstr ""
@@ -4285,7 +4285,7 @@ msgstr ""
 msgid "Approval, availability, and failure alerts stay off until you add an email (SMTP) or Discord webhook. Set those up in the Notifications section above now, or later in Settings — this step is optional and won't block Finish."
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:104
+#: lib/cinder_web/live/series_discovery_live.ex:107
 #, elixir-autogen
 msgid "Every season is already requested or available."
 msgstr ""
@@ -4310,12 +4310,12 @@ msgstr ""
 msgid "Request again"
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:492
+#: lib/cinder_web/live/series_discovery_live.ex:577
 #, elixir-autogen
 msgid "Request all not-yet-requested seasons"
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:496
+#: lib/cinder_web/live/series_discovery_live.ex:581
 #, elixir-autogen
 msgid "Request all seasons"
 msgstr ""
@@ -4335,21 +4335,21 @@ msgstr ""
 msgid "Your request for %{title} was declined"
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:272
+#: lib/cinder_web/live/series_discovery_live.ex:275
 #, elixir-autogen
 msgid "Added %{count} season of %{title}."
 msgid_plural "Added %{count} seasons of %{title}."
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:282
+#: lib/cinder_web/live/series_discovery_live.ex:285
 #, elixir-autogen
 msgid "Requested %{count} season of %{title}. Awaiting approval."
 msgid_plural "Requested %{count} seasons of %{title}. Awaiting approval."
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:293
+#: lib/cinder_web/live/series_discovery_live.ex:296
 #, elixir-autogen
 msgid "Stopped at your request limit; %{count} season not submitted."
 msgid_plural "Stopped at your request limit; %{count} seasons not submitted."
@@ -4714,6 +4714,7 @@ msgid "%{code}: %{title} (TMDB %{id})"
 msgstr ""
 
 #: lib/cinder_web/live/my_requests_live.ex:332
+#: lib/cinder_web/live/series_discovery_live.ex:473
 #, elixir-autogen
 msgid "%{available} of %{count} episode available"
 msgid_plural "%{available} of %{count} episodes available"
@@ -5635,18 +5636,18 @@ msgstr ""
 msgid "ffprobe media analysis tool"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:690
+#: lib/cinder_web/live/discover_live.ex:694
 #, elixir-autogen
 msgid "Add your API key in Settings →"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:689
+#: lib/cinder_web/live/discover_live.ex:693
 #, elixir-autogen
 msgid "Add your API key in Setup →"
 msgstr ""
 
 #: lib/cinder_web/live/discover_live.ex:224
-#: lib/cinder_web/live/discover_live.ex:680
+#: lib/cinder_web/live/discover_live.ex:684
 #, elixir-autogen
 msgid "TMDB isn't configured yet."
 msgstr ""
@@ -6431,16 +6432,16 @@ msgstr ""
 msgid "Audiobook requests aren't available yet."
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:477
-#: lib/cinder_web/live/discover_live.ex:509
-#: lib/cinder_web/live/discover_live.ex:514
+#: lib/cinder_web/live/discover_live.ex:481
+#: lib/cinder_web/live/discover_live.ex:513
+#: lib/cinder_web/live/discover_live.ex:518
 #: lib/cinder_web/live/library_live.ex:548
 #: lib/cinder_web/live/library_live.ex:808
 #, elixir-autogen, elixir-format
 msgid "Books"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:525
+#: lib/cinder_web/live/discover_live.ex:529
 #, elixir-autogen, elixir-format
 msgid "Books are temporarily unavailable"
 msgstr ""
@@ -6475,12 +6476,12 @@ msgstr ""
 msgid "Loading book…"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:527
+#: lib/cinder_web/live/discover_live.ex:531
 #, elixir-autogen, elixir-format
 msgid "Movie and TV results are still available. Try the book search again later."
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:668
+#: lib/cinder_web/live/discover_live.ex:672
 #, elixir-autogen, elixir-format
 msgid "No movies, shows, or books matched that search."
 msgstr ""
@@ -6495,17 +6496,17 @@ msgstr ""
 msgid "Request eBook"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:442
+#: lib/cinder_web/live/discover_live.ex:446
 #, elixir-autogen, elixir-format
 msgid "Search movies, TV, and books"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:438
+#: lib/cinder_web/live/discover_live.ex:442
 #, elixir-autogen, elixir-format
 msgid "Search movies, TV, and books. Request what you want."
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:450
+#: lib/cinder_web/live/discover_live.ex:454
 #, elixir-autogen, elixir-format
 msgid "Search movies, TV, and books…"
 msgstr ""
@@ -7080,7 +7081,7 @@ msgstr ""
 msgid "Dismissing…"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:510
+#: lib/cinder_web/live/discover_live.ex:514
 #, elixir-autogen, elixir-format
 msgid "Searching books…"
 msgstr ""
@@ -7163,9 +7164,9 @@ msgid "Unlink your Plex account? Plex watchlist sync will stop until you link it
 msgstr ""
 
 #: lib/cinder_web/live/my_requests_live.ex:204
-#: lib/cinder_web/live/series_discovery_live.ex:169
-#: lib/cinder_web/live/series_discovery_live.ex:259
-#: lib/cinder_web/request_helpers.ex:115
+#: lib/cinder_web/live/series_discovery_live.ex:172
+#: lib/cinder_web/live/series_discovery_live.ex:262
+#: lib/cinder_web/request_helpers.ex:116
 #, elixir-autogen, elixir-format
 msgid "You've reached your request limit. Wait for an earlier request to finish."
 msgstr ""
@@ -7378,3 +7379,10 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "The %{protocol} download client failed its health check, so Cinder cannot tell which folders are in use and clears nothing. Check it with its Test button in Settings."
 msgstr ""
+
+#: lib/cinder_web/live/series_discovery_live.ex:481
+#, elixir-autogen, elixir-format
+msgid "%{count} episode available"
+msgid_plural "%{count} episodes available"
+msgstr[0] ""
+msgstr[1] ""

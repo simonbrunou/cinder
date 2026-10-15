@@ -104,6 +104,10 @@ defmodule CinderWeb.EntityDiscoveryLive do
     {:noreply, assign_available_series(socket)}
   end
 
+  def handle_info(:media_server_seasons_updated, socket) do
+    {:noreply, assign_available_series(socket)}
+  end
+
   def handle_info(_message, socket), do: {:noreply, socket}
 
   @impl true

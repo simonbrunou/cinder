@@ -30,9 +30,10 @@ defmodule Cinder.Catalog.TMDB do
               {:ok, [map()]} | {:error, term()}
 
   @doc """
-  Series details + the list of season numbers. Returns
+  Series details + the list of seasons. Returns
   `%{tmdb_id, tvdb_id, title, year, poster_path, original_language, overview, genres,
-  vote_average, first_air_date, cast, seasons: [%{season_number}]}`. `tvdb_id` is `nil` when TMDB
+  vote_average, first_air_date, cast, seasons: [%{season_number, episode_count}]}`
+  (`episode_count` counts announced episodes too, and is `nil` when TMDB omits it). `tvdb_id` is `nil` when TMDB
   has no `external_ids` block; `genres` is a list of names, `first_air_date` a `Date` or `nil`;
   `cast` is top-billed `%{tmdb_id, name, character, profile_path}` (render-only, never persisted).
   """

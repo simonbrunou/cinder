@@ -1124,13 +1124,19 @@ defmodule Cinder.Catalog.SeriesCatalog do
   active `grab_id`). Drives the requester-facing "X of Y episodes" indicator on `/my-requests`
   while a season is still filling in — the partial-progress complement to the terminal
   `available_season_keys/0`, which only reports fully-landed seasons. Season 0 (specials) is
-  excluded, matching `available_seasons_query/1`.
+  excluded, matching `available_seasons_query/1`. Pass `tmdb_id` to scope to one series.
   """
-  def season_progress_keys do
-    from(e in Episode,
-      join: s in assoc(e, :season),
-      join: sr in assoc(s, :series),
-      where: s.season_number > 0,
+  def season_progress_keys(tmdb_id \\ nil) do
+    query =
+      from(e in Episode,
+        join: s in assoc(e, :season),
+        join: sr in assoc(s, :series),
+        where: s.season_number > 0
+      )
+
+    query = if tmdb_id, do: where(query, [_e, _s, sr], sr.tmdb_id == ^tmdb_id), else: query
+
+    from([e, s, sr] in query,
       group_by: [sr.tmdb_id, s.season_number],
       select: {
         sr.tmdb_id,

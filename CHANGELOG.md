@@ -7,6 +7,14 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **The season request page shows what is already on Plex/Jellyfin.** `/series/tmdb/:id` used to
+  mark a season Available only once Cinder itself had imported all of it, so a season already on
+  the media server (or a show Cinder never added) still offered Request. The 15-minute media-server
+  inventory now also reads the TV library's seasons and episode counts. A season the server holds
+  in full (at least TMDB's episode count) reads **Available** with no Request button and is skipped
+  by **Request all seasons**; a partly present season, on the server or in Cinder, shows "N of M
+  episodes available" and stays requestable. **Open in Plex/Jellyfin** deep-links such shows too,
+  and a TV card on Discover reads Available once the server holds any season of it.
 - **"Import anyway" on a TV verification hold (GitHub #630).** A release whose only audio track
   has no language tag could never pass the frozen Japanese-audio check, so Retry verification
   re-held it forever and the file had to be remuxed by hand. A grab held as "Needs verification"

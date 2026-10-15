@@ -18,6 +18,9 @@ defmodule Cinder.Library.MediaServer.Plex do
 
   @max_response_bytes 4 * 1024 * 1024
   @inventory_limit 5_000
+  # Season keys per batched metadata read: ~160 KB of JSON per 100 seasons on a real library,
+  # well inside @max_response_bytes, and a URL far below any server limit.
+  @season_batch 100
   @identifier ~r/^[A-Za-z0-9_-]+$/
   @plex_tv_url "https://plex.tv"
 
@@ -45,9 +48,9 @@ defmodule Cinder.Library.MediaServer.Plex do
     # A nil/blank base_url makes Req raise rather than return {:error,_}, which
     # Cinder.Health would rescue into an opaque "Check failed". Guard it so an
     # unconfigured Plex shows a clean "Not configured" (mirrors Jellyfin).
-    case Keyword.get(config, :url) do
-      url when url in [nil, ""] -> {:error, :not_configured}
-      _ -> check_all_sections(config)
+    case url(config) do
+      {:ok, _url} -> check_all_sections(config)
+      error -> error
     end
   end
 
@@ -81,6 +84,37 @@ defmodule Cinder.Library.MediaServer.Plex do
          {:ok, machine_id} <- machine_id(config),
          {:ok, metadata} <- inventory(config, section) do
       {:ok, Enum.flat_map(metadata, &item(&1, machine_id, kind))}
+    end
+  end
+
+  @impl true
+  # Plex's season listing (`type=3`) carries no episode count, so the counts come from a batched
+  # `/library/metadata/<key>,<key>,…` read of those seasons, joined back to the show inventory's
+  # TMDB ids by `parentRatingKey`.
+  def list_seasons do
+    config = Application.get_env(:cinder, __MODULE__, [])
+
+    with {:ok, _url} <- url(config),
+         {:ok, section} <- section(config, :tv),
+         {:ok, machine_id} <- machine_id(config),
+         {:ok, shows} <- inventory(config, section),
+         {:ok, listed} <- inventory(config, section, [{"type", "3"}]),
+         {:ok, seasons} <- season_metadata(config, listed) do
+      show_items =
+        for %{"ratingKey" => key} = show <- shows,
+            item <- item(show, machine_id, :tv),
+            into: %{},
+            do: {key, item}
+
+      {:ok,
+       for %{"type" => "season", "parentRatingKey" => show_key, "index" => number} = season <-
+             seasons,
+           is_integer(number) and number > 0,
+           count = season["leafCount"],
+           count > 0,
+           {:ok, show} <- [Map.fetch(show_items, show_key)] do
+         %{item_id: show.id, tmdb_id: show.tmdb_id, season_number: number, episode_count: count}
+       end}
     end
   end
 
@@ -134,7 +168,7 @@ defmodule Cinder.Library.MediaServer.Plex do
     end
   end
 
-  defp inventory(config, section) do
+  defp inventory(config, section, params \\ [{"includeGuids", "1"}]) do
     config
     |> request(:get, "/library/sections/#{section}/all",
       headers: [
@@ -142,9 +176,55 @@ defmodule Cinder.Library.MediaServer.Plex do
         {"x-plex-container-start", "0"},
         {"x-plex-container-size", Integer.to_string(@inventory_limit)}
       ],
-      params: [{"includeGuids", "1"}]
+      params: params
     )
     |> inventory_result()
+  end
+
+  defp season_metadata(config, listed) do
+    listed
+    |> Enum.flat_map(fn
+      %{"type" => "season", "ratingKey" => key} when is_binary(key) ->
+        if Regex.match?(@identifier, key), do: [key], else: []
+
+      _ ->
+        []
+    end)
+    |> Enum.chunk_every(@season_batch)
+    |> Enum.reduce_while({:ok, []}, fn keys, {:ok, acc} ->
+      case season_batch(config, keys) do
+        {:ok, metadata} -> {:cont, {:ok, metadata ++ acc}}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  # One season vanishing between the listing and this read returns a short batch; that is a
+  # partial inventory like any other, so the reconciler keeps the previous one. A season without
+  # an episode count is a response shape Cinder doesn't understand: fail loudly rather than drop it.
+  defp season_batch(config, keys) do
+    config
+    |> request(:get, "/library/metadata/" <> Enum.join(keys, ","),
+      headers: [{"accept", "application/json"}]
+    )
+    |> case do
+      {:ok, %{status: status, body: %{"MediaContainer" => %{"Metadata" => metadata}}}}
+      when status in 200..299 and is_list(metadata) ->
+        cond do
+          length(metadata) != length(keys) -> {:error, :partial_inventory}
+          Enum.all?(metadata, &leaf_count?/1) -> {:ok, metadata}
+          true -> {:error, :unexpected_response}
+        end
+
+      {:ok, %{status: status}} when status in 200..299 ->
+        {:error, :unexpected_response}
+
+      {:ok, %{status: status}} ->
+        {:error, {:plex_status, status}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp inventory_result({:ok, %{status: status, body: %{"MediaContainer" => container}}})
@@ -209,6 +289,16 @@ defmodule Cinder.Library.MediaServer.Plex do
       URI.parse(url).host == "app.plex.tv" -> url <> "/desktop/"
       String.ends_with?(url, "/web/index.html") -> url
       true -> url <> "/web/index.html"
+    end
+  end
+
+  defp leaf_count?(%{"leafCount" => count}) when is_integer(count), do: true
+  defp leaf_count?(_season), do: false
+
+  defp url(config) do
+    case Keyword.get(config, :url) do
+      url when url in [nil, ""] -> {:error, :not_configured}
+      url -> {:ok, url}
     end
   end
 

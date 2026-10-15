@@ -354,6 +354,21 @@ defmodule CinderWeb.DiscoverLiveTest do
     assert has_element?(lv, ~s(#results a[href="/series/tmdb/1399"]))
   end
 
+  test "a TV card reads Available live once the media server holds a season of it", %{conn: conn} do
+    stub_tv([@got])
+    {:ok, lv, _html} = live(conn, ~p"/")
+    lv |> form("#search-form", %{"query" => "thrones"}) |> render_change()
+    refute has_element?(lv, "#results", "Available")
+
+    {:ok, :replaced} =
+      Catalog.MediaServerSeasons.replace([
+        %{tmdb_id: 1399, season_number: 1, episode_count: 10, item_id: "plex:machine-1:77"}
+      ])
+
+    assert has_element?(lv, "#results", "Available")
+    assert has_element?(lv, ~s(#results a[href="/series/tmdb/1399"]))
+  end
+
   test "a book request never badges the movie card that shares its id", %{conn: _conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     conn = log_in_user(Phoenix.ConnTest.build_conn(), user)

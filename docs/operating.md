@@ -364,6 +364,13 @@ and clear vanished ones, which turns the existing **Open in Plex/Jellyfin** butt
 deep link. Failed or partial reads leave the previous ids untouched; Cinder never guesses by title
 or year. This worker is disabled with the other pollers when `start_poller` is false.
 
+The same pass reads the TV library's seasons and their episode counts (on Plex, one season listing
+plus a batched metadata read per 100 seasons; on Jellyfin, a paged read of the real, non-virtual
+episodes) and stores them by the show's TMDB id, whether or not Cinder tracks the show. The season request page then marks a season **Available** when the server
+holds at least as many episodes as TMDB lists for it, shows "N of M episodes available" for a
+partial one, and leaves Request off available seasons. A failed or partial read keeps the previous
+inventory; an unconfigured server (or Plex TV section) clears it.
+
 ### Quarantined import recovery
 
 Cinder journals every staged import so a crash cannot confuse an uncommitted file with one the
