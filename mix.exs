@@ -41,8 +41,27 @@ defmodule Cinder.MixProject do
   # (config/runtime.exs), which authenticates the ciphertext and makes a tampered secret decode
   # to `:error` (`Cinder.Settings.Crypto.decrypt_secret/1`). No fixed Cloak release exists;
   # if one ships, take it and drop this entry. Do not add a CTR cipher to the vault.
+  #
+  # CVE-2026-105659 (Bandit, HIGH): HTTP/2 send deadlines restart on every `WINDOW_UPDATE`, so a
+  # peer trickling tiny window updates pins a stream process indefinitely (remote DoS). Every
+  # Hex release of Bandit through 1.12.5 is affected; the fix (mtrudel/bandit d88b2195, 2026-10-12)
+  # is not released. Production is not reachable over HTTP/2 at Bandit: the endpoint is plain
+  # `http:` (config/runtime.exs: no `https:`, so no ALPN h2; Bandit would accept h2c
+  # prior-knowledge, but no client sends it), the container publishes only on the host's
+  # 127.0.0.1:4000, and its two clients are Traefik (no `h2c` scheme on the service, so it
+  # proxies HTTP/1.1) and a cloudflared tunnel to `http://127.0.0.1:4000` (HTTP/1.1). A client's
+  # HTTP/2 ends at Traefik/Cloudflare. A self-hoster who exposes Bandit directly should front it
+  # with a proxy. Revisit when Bandit > 1.12.5
+  # ships on Hex: `mix deps.update bandit`, then drop this entry.
   defp hex do
-    [ignore_advisories: ["CVE-2026-82710", "CVE-2026-82584", "CVE-2026-95105"]]
+    [
+      ignore_advisories: [
+        "CVE-2026-82710",
+        "CVE-2026-82584",
+        "CVE-2026-95105",
+        "CVE-2026-105659"
+      ]
+    ]
   end
 
   # Package metadata. Not published to Hex; present for discoverability + SPDX licensing.

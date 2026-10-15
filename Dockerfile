@@ -76,7 +76,14 @@ FROM ${RUNNER_IMAGE} AS final
 # `priv/ffsubsync_runner.py` on this venv's interpreter (never the `ffsubsync` console script,
 # which cannot carry the formats or report metrics). The venv keeps the pinned Python runtime
 # dependency isolated from Debian's system packages; coreutils supplies `timeout`.
-RUN apt-get update \
+# Debian ships security fixes into the same suite under an unchanged base-image tag, so a layer
+# cached from before an advisory keeps the vulnerable packages even though the RUN below runs
+# `apt-get upgrade` (Trivy then fails `container` on curl, librsvg2... that are already fixed).
+# The RUN echoes APT_REFRESH, so changing it rebuilds the layer: set it to today's date when
+# `container` flags OS packages that a fresh `apt-get upgrade` fixes.
+ARG APT_REFRESH=2026-10-15
+RUN echo "Debian packages refreshed ${APT_REFRESH}" \
+  && apt-get update \
   && apt-get upgrade -y \
   && apt-get install -y --no-install-recommends libstdc++6 openssl libncurses6 locales ca-certificates ffmpeg curl coreutils python3 python3-venv gcc python3-dev \
   && python3 -m venv /opt/ffsubsync \
