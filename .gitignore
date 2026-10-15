@@ -46,8 +46,10 @@ __pycache__/
 # Local env (the quickstart puts SECRET_KEY_BASE here — never commit it)
 .env
 
-# Personal agent-client layer
-/.claude/
+# Personal agent-client layer. Claude Code reads repo skills only from
+# .claude/skills, so that one entry is a tracked link to .agents/skills.
+/.claude/*
+!/.claude/skills
 
 # Nix / direnv
 .direnv/
