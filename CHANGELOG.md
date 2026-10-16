@@ -119,6 +119,11 @@ All notable changes to Cinder are documented here. The format follows
   as an unprivileged user the way the Dockerfile does. Build with the `Dockerfile` instead.
 
 ### Fixed
+- **Live updates no longer close the mobile menu or open series sections.** Every page refresh
+  pushed by the server (download progress on Activity, a series update) snapped the mobile nav
+  drawer shut, so on a phone you could not leave Activity from the menu. The series page's Title
+  aliases, Alternate numbering and Season offset sections closed the same way. Alternate
+  numbering closed itself as soon as its episode groups loaded.
 - **The container image picks up Debian security updates again.** The runtime layer's
   `apt-get upgrade` was served from the build cache, so curl and librsvg2 fixes published after
   the layer was first built never landed and Trivy failed `container`. An `APT_REFRESH` build

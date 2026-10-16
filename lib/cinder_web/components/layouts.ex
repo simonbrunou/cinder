@@ -54,11 +54,14 @@ defmodule CinderWeb.Layouts do
     </a>
 
     <div :if={@signed_in?} class="drawer lg:drawer-open">
+      <%!-- The open state lives only in the browser. Without ignore, every page patch re-applies
+           the server's unchecked input and snaps the mobile drawer shut. --%>
       <input
         id="nav-drawer"
         type="checkbox"
         class="drawer-toggle"
         aria-label={gettext("Toggle navigation menu")}
+        phx-update="ignore"
       />
 
       <div class="drawer-content flex min-h-screen flex-col">

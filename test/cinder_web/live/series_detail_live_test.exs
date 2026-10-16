@@ -196,6 +196,18 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert has_element?(view, "#series-detail-language-form option[value='dual'][selected]")
   end
 
+  # Guard only: morphdom strips a browser-set `open` on any patch, which LiveViewTest can't run.
+  # DisclosureState re-asserts it. The commit adding this test has the browser proof.
+  test "live updates leave the open settings disclosures alone", %{conn: conn} do
+    series = series_fixture(media_profile: :anime)
+    {:ok, view, _} = live_series(conn, series)
+
+    for id <-
+          ~w(series-title-aliases-panel series-alternate-numbering-panel series-season-offset-panel) do
+      assert has_element?(view, ~s(details##{id}[phx-hook="DisclosureState"]))
+    end
+  end
+
   test "the Monitoring pick reapplies the strategy over the episode tree", %{conn: conn} do
     series = series_fixture()
     season = season_fixture(series, %{season_number: 1})

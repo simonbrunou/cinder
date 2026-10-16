@@ -183,6 +183,13 @@ defmodule CinderWeb.AppShellTest do
       assert html =~ ~s(class="flex h-dvh w-64 flex-col)
       assert html =~ "overflow-y-auto"
     end
+
+    # Guard only: the open state is a browser-side `checked` that morphdom resets on any patch
+    # of the layout, which LiveViewTest can't run. The commit adding this test has the browser proof.
+    test "live updates leave the open mobile drawer alone", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/activity")
+      assert has_element?(lv, ~s(#nav-drawer[phx-update="ignore"]))
+    end
   end
 
   describe "auth pages (unauthenticated)" do

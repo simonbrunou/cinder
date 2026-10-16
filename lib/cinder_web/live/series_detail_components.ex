@@ -201,7 +201,7 @@ defmodule CinderWeb.SeriesDetailComponents do
         </form>
       </div>
 
-      <details class="mb-6">
+      <details id="series-title-aliases-panel" phx-hook="DisclosureState" class="mb-6">
         <summary class="cursor-pointer border-b border-base-300 pb-2 text-lg font-semibold">
           {gettext("Title aliases")}
         </summary>
@@ -310,7 +310,12 @@ defmodule CinderWeb.SeriesDetailComponents do
         </div>
       </details>
 
-      <details :if={@profile_summary.effective == :anime} class="mb-6">
+      <details
+        :if={@profile_summary.effective == :anime}
+        id="series-alternate-numbering-panel"
+        phx-hook="DisclosureState"
+        class="mb-6"
+      >
         <summary
           class="cursor-pointer border-b border-base-300 pb-2 text-lg font-semibold"
           phx-click="load_episode_groups"
@@ -363,7 +368,12 @@ defmodule CinderWeb.SeriesDetailComponents do
         </p>
       </details>
 
-      <details :if={@profile_summary.effective == :anime} class="mb-6">
+      <details
+        :if={@profile_summary.effective == :anime}
+        id="series-season-offset-panel"
+        phx-hook="DisclosureState"
+        class="mb-6"
+      >
         <summary class="cursor-pointer border-b border-base-300 pb-2 text-lg font-semibold">
           {gettext("Season offset")}
         </summary>
