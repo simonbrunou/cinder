@@ -1,0 +1,96 @@
+# Architecture invariants
+
+## Stack
+
+- One self-hosted instance per household: low concurrency, a single admin who approves, a handful
+  of requesters. Design and defaults target that scale, not multi-tenant SaaS.
+- Ecto with `ecto_sqlite3` is the only database engine. Cinder uses SQLite on purpose, not
+  Postgres.
+- The UI is Phoenix LiveView (HEEx) with Tailwind v4, daisyUI (the Phoenix 1.8 default) and
+  heroicons. There is no React, so shadcn does not apply. State renders through the shared
+  `status_badge` primitive: icon, text and color, never color alone.
+
+## External services go through behaviours
+
+Every external service (TMDB, Prowlarr, torrent and Usenet clients, Jellyfin/Plex,
+Audiobookshelf, Booklore) is reached only through a behaviour, never directly from a context:
+`Cinder.Catalog.TMDB`, `Cinder.Acquisition.Indexer`, `Cinder.Download.Client`,
+`Cinder.Library.MediaServer`, `Cinder.Books.Metadata`, `Cinder.Library.AudiobookServer`.
+
+- Resolve the implementation at runtime with `Application.fetch_env!/2`, never `compile_env!/2`.
+  The Mox mock is defined at runtime, so compile-time resolution breaks
+  `compile --warnings-as-errors`.
+- Search indexers by IMDb id rather than free-text title. `Catalog.get_movie/1` carries
+  `imdb_id` through for this.
+
+## Status writes go through the choke-points
+
+A movie's `:status` and an episode's derived state (`file_path`, `part_file_paths`, `grab_id`)
+are written only inside `Cinder.Catalog` and its submodules under `lib/cinder/catalog/`:
+
+- `Catalog.transition/3`. Its `expect:` form is the race-safe poller write.
+- `Catalog.transition_episode/3`.
+- Audited siblings that each own one lifecycle: grabs, upgrades, release verification, adoption,
+  deletion, TMDB refresh.
+
+Books and audiobooks follow the same rule through `Cinder.Books.transition_target/3` and
+`BookTargetTransition.guarded/4`, plus their audited siblings: `hold_target/4`, `pause_target/1`,
+`monitor_target/4`, `import_resolution/1`, `Files.record_import/3`, `Grabs`.
+
+Each transition emits exactly one broadcast, after commit, never inside the enclosing
+`Repo.transaction`.
+
+Direct `Repo` writes are not banned. Creation, deletion, monitor flags, language, counters and
+the TMDB/metadata refresh are sanctioned direct writes inside `Catalog` and `Books`. Find the
+current write sites by searching for `Repo\.(insert|update|delete|update_all)` across
+`lib/cinder/catalog.ex` and `lib/cinder/catalog/` rather than recalling them. Include
+`catalog.ex`, because the choke-points themselves live there.
+
+Callers hold no `Repo` mutations of their own: `lib/cinder/download/*` (including
+`Cinder.Download.BookPoller`), `acquisition.ex` and `lib/cinder/library/*`. The sanctioned
+exceptions each own one table and nothing derived:
+
+- `lib/cinder/library/import_stage.ex` owns `import_stages`.
+- `lib/cinder/library/sidecar_quarantine.ex` owns `sidecar_quarantines`.
+- `lib/cinder/download.ex` writes only its own `download_intents` tables.
+
+A new exception is legitimate only when a plan calls it out. When it lands, add it to this list
+and to `.omp/rules/catalog-write-choke-points.md`.
+
+The reason: SQLite runs WAL with `busy_timeout: 5000` in dev, test and runtime, so a web write
+racing the poller waits instead of failing with "database busy". That holds only while writes go
+through the choke-points.
+
+## The approval gate lives in the data model
+
+`Cinder.Requests` is the only path that creates a `:requested` movie or series row, or a book
+target, from a user action, the API included. A non-admin request writes only a `:pending`
+`Request` row until an admin approves it or `auto_approve_all` is on. `auto_approve_all` is a
+live-read DB setting (`nil` means false) that an admin writes in `/settings`.
+
+The gate sits upstream of row creation because the poller consumes any `:requested` or wanted
+row with no further auth check. Once the row exists, the pipeline grabs it.
+
+- Movie creation is a separate insert: `Catalog.add_movie/1`, and
+  `Catalog.find_or_create_at_requested/2`, the only one reachable from a user action, gated by
+  `Cinder.Requests`.
+- `Cinder.Requests` announces creation after commit (`{:movie_created, movie}`) so open `/` views
+  update. The Catalog insert never broadcasts mid-transaction.
+- `/api/v1` request mutations route through `Cinder.Requests`. API actions never write request
+  lifecycle state directly.
+
+## Background work is supervised and bounded
+
+Download polling, import and the book/audiobook pollers run under the supervision tree, not in
+the request path. Crash recovery is a feature: prove it with a test.
+
+Every call a poller makes has a bound:
+
+- Provider HTTP goes through `Cinder.HTTPPolicy.bounded_request/2`, which enforces a size ceiling
+  and receive and hard-deadline timeouts.
+- A subprocess (ffprobe, archive listing) runs inside `Task.async` + `Task.yield(timeout)` +
+  `Task.shutdown(:brutal_kill)`, with the missing-binary rescue inside the task.
+- Archive extraction carries entry-count and expanded-size ceilings.
+
+The reason: one unbounded call in a single-tick poller freezes every target sharing that tick,
+not just the file or request in flight.

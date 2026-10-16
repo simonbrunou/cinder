@@ -33,7 +33,7 @@ If a new slice genuinely needs a **new** sanctioned direct-write site — a modu
 own table and nothing derived, the way `import_stage.ex` owns `import_stages` — that is a
 legitimate outcome, not a violation. Two conditions: call it out explicitly in the plan
 rather than slipping it in, and when it lands add it to the exception list above *and* to
-the corresponding paragraph in `AGENTS.md`. A rule that has silently gone stale is worse
+the exception list in `docs/agents/architecture.md`. A rule that has silently gone stale is worse
 than no rule, because it trains you to dismiss it.
 
 This is **not** a blanket "no direct `Repo` writes" rule — creation, deletion, monitor

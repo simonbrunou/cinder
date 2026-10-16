@@ -30,18 +30,19 @@ inspecting the running app over guessing.
 - Keep diffs minimal and trace each change to the request; `credo --strict` and warnings-as-errors
   must stay clean.
 
-See [`AGENTS.md`](AGENTS.md) for fuller architecture notes and [`ROADMAP.md`](ROADMAP.md) for
-historical scope.
+See [`docs/agents/architecture.md`](docs/agents/architecture.md) for fuller architecture notes
+and [`ROADMAP.md`](ROADMAP.md) for historical scope.
 
 ### Agent configuration
 
-`AGENTS.md` is the shared instruction source. Project-specific workflows live as portable Agent
-Skills under `.agents/skills/`; dependency guidance is synced directly with
+`AGENTS.md` is the shared instruction source; it links topic docs under `docs/agents/`.
+Project-specific workflows live as portable Agent Skills under `.agents/skills/`; dependency
+guidance is synced directly with
 `mix usage_rules.sync AGENTS.md --all --link-to-folder deps --remove-missing`. Client-specific
 files are thin adapters only: `.mcp.json` and `.codex/config.toml` connect Tidewave, while
-`CLAUDE.md` links to `AGENTS.md` for compatibility. Spec Kit (`.specify/`, constitution at
-`.specify/memory/constitution.md`, commands under `.omp/commands/speckit.*.md`) drives non-trivial
-feature work; specs live in `specs/NNN-slug/`.
+`CLAUDE.md` links to `AGENTS.md` for compatibility. Non-trivial feature work is planned as Forgejo
+issues with Matt Pocock's skills (`/to-spec`, `/to-tickets`; see `docs/agents/workflow.md`).
+`specs/NNN-slug/` is the frozen record of the features planned earlier with Spec Kit.
 
 ## Branches & PRs
 

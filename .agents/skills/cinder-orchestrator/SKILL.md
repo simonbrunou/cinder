@@ -57,7 +57,7 @@ ${XDG_STATE_HOME:-$HOME/.local/state}/cinder-agent/<run-id>/
 
 Use `<run-id> = YYYYMMDD-HHMM-<short-slug>` and a stable `<unit-id>` such as `01-book-domain`. A new PR unit always gets a new unit directory and therefore a fresh Codex thread. Never reuse a thread file or review artifacts across PR units.
 
-These files are coordination artifacts, not product documentation. After plan approval, implementation must add the approved design/plan under the Spec Kit feature directory (`specs/NNN-slug/`, created via `/speckit.specify` then populated by `/speckit.plan` and `/speckit.tasks`) when the change warrants durable docs.
+These files are coordination artifacts, not product documentation. After plan approval, the approved design/plan is published as Forgejo issues (a spec issue plus one ticket per PR/task unit; see `docs/agents/issue-tracker.md`) when the change warrants durable docs.
 
 Never store secrets, API tokens, credentials, or copied environment files in run state.
 
@@ -91,10 +91,10 @@ Resume the Claude reconnaissance session (same architectural context) and give i
 - a concrete `done when` for every unit, ending in Cinder's `mix test` gate;
 - which repo-local reviewer skills apply to each PR.
 
-Create the feature's Spec Kit directory with `/speckit.specify` (`specs/NNN-slug/spec.md`, numbered
-after the highest existing `specs/NNN-*`), then run `/speckit.plan` and `/speckit.tasks` to produce
-that directory's `plan.md` and `tasks.md`. Map Claude's architecture/non-goals/migration output into
-`spec.md`/`plan.md`, and the PR/task decomposition into `tasks.md`. Present a compact
+Publish the spec as a Forgejo issue, then split it into one ticket per PR/task unit with blocking
+edges. Follow `~/.agents/skills/to-spec/SKILL.md` and `~/.agents/skills/to-tickets/SKILL.md` by
+reading them: both are user-invoked skills, so the Skill tool cannot call them. Map Claude's architecture/non-goals/migration output
+into the spec issue, and the PR/task decomposition into the tickets. Present a compact
 operator-facing summary and obtain **explicit approval** before any application-code worktree is
 created.
 

@@ -104,7 +104,7 @@ bash .agents/skills/cinder-orchestrator/scripts/claude-readonly.sh \
   "$(cat "$RUN_DIR/claude-recon-session.txt")"
 ```
 
-Create the feature's `specs/NNN-slug/` directory via `/speckit.specify`, then run `/speckit.plan` and `/speckit.tasks`. Split the returned Markdown into `spec.md`, `plan.md`, and `tasks.md` in that directory if useful; exact formatting is less important than preserving the approved content verbatim for Codex handoff.
+Publish the spec as a Forgejo issue, then create one ticket per PR/task unit, following `~/.agents/skills/to-spec/SKILL.md` and `~/.agents/skills/to-tickets/SKILL.md` (read them; they are user-invoked, so the Skill tool cannot call them). Exact formatting is less important than preserving the approved content verbatim for Codex handoff.
 
 ## Implementation prompt — Codex, fresh per PR unit
 
