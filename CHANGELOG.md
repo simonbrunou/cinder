@@ -166,10 +166,10 @@ All notable changes to Cinder are documented here. The format follows
 - **`decimal` 3.1.1 → 3.2.0 (CVE-2026-97853).** `Decimal.round/3` allocated memory in
   proportion to its `places` argument. Cinder's own code never calls `Decimal.round`, so this is
   hygiene, but the advisory failed the required `mix hex.audit` CI check.
-- **Bandit CVE-2026-105659 acknowledged, not reachable.** Bandit's HTTP/2 send deadlines restart on
-  every `WINDOW_UPDATE`, letting a peer pin stream processes. No Hex release is fixed yet.
-  Production serves Bandit over plain HTTP/1.1 behind Traefik and a Cloudflare tunnel, so
-  `mix.exs` lists the advisory in `ignore_advisories` until a fixed Bandit ships.
+- **`bandit` 1.12.5 → 1.13.1 (CVE-2026-105659, CVE-2026-105660).** Bandit's HTTP/2 send
+  deadlines restarted on every `WINDOW_UPDATE`, letting a peer pin stream processes, and an
+  HTTP/1 request target could set `conn.host` and `conn.port` without validation. 1.13.0 fixes
+  both, so `mix.exs` no longer ignores CVE-2026-105659. `thousand_island` moves to 1.6.0 with it.
 - **Cloak CVE-2026-95105 acknowledged, not reachable.** The advisory covers Cloak's unauthenticated
   `AES.CTR` cipher. Cinder's vault only configures `AES.GCM`, and no fixed Cloak release exists,
   so `mix.exs` lists it in `ignore_advisories` with the reasoning.
