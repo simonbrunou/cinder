@@ -1,5 +1,5 @@
 ---
-description: External services (TMDB, Prowlarr, torrent/Usenet clients, Jellyfin/Plex) are reachable only through behaviours resolved at runtime; tests never touch the network.
+description: External services are reachable only through behaviours resolved at runtime; tests never touch the network.
 globs:
   - lib/cinder/catalog/**
   - lib/cinder/acquisition/**
@@ -8,24 +8,7 @@ globs:
   - test/**
 ---
 
-Every external service sits behind a behaviour. Never call TMDB / Prowlarr / qBittorrent /
-SABnzbd / Jellyfin / Plex directly from a context.
-
-- `Cinder.Catalog.TMDB`
-- `Cinder.Acquisition.Indexer`
-- `Cinder.Download.Client`
-- `Cinder.Library.MediaServer`
-
-`{:req, "~> 0.5"}` is the HTTP client, and it belongs **inside an adapter** that implements
-one of those behaviours — not in a context module.
-
-**Resolve the implementation with `Application.fetch_env!/2`, never `compile_env!/2`.** The
-Mox mock is defined at runtime, so compile-time resolution breaks
-`mix compile --warnings-as-errors`, which is the first step of `mix test`. This is a real
-failure, not a style preference.
-
-`config/test.exs` points each behaviour at its Mox mock. **Tests never hit the network or a
-real service.** If a test needs service behaviour, set an expectation on the mock.
-
-Related: prefer searching indexers by IMDb id over free-text title — `Catalog.get_movie/1`
-carries `imdb_id` through for exactly this.
+Every external service sits behind a behaviour, resolved with `Application.fetch_env!/2`, and
+tests use its Mox mock. Before calling a service or writing a test against one, read "External
+services go through behaviours" in `docs/agents/architecture.md` for the behaviour list and the
+reason, and `docs/agents/testing.md` for the mock rules.

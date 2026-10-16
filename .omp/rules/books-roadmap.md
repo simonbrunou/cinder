@@ -16,15 +16,9 @@ globs:
   - specs/*books*/**
 ---
 
-**The track is finished.** B0–B8 all shipped and released in v3.0.0 (`CHANGELOG.md`, tagged
-2026-09-03). There is no next phase and no "current slice" — work on these paths is incremental
-now: one issue, fix, or feature at a time, under AGENTS.md's normal workflow. `specs/` is frozen
-history: plan new work as Forgejo issues (`/to-spec`), not a new `specs/NNN-*` directory.
-
-Two roadmap criteria remain open and **neither is closable by a commit**: the two-week
-Readarr/Bookshelf-stopped dogfood window and the explicit Bookshelf decommission that follows
-sign-off. Both are operator actions — `docs/books-dogfood-checklist.md` and
-`docs/readarr-migration.md#decommissioning-bookshelf-after-sign-off`.
+**The track is finished** and released in v3.0.0. Work on these paths is incremental: one issue,
+fix or feature at a time. `docs/agents/history.md` has the status, including the two open roadmap
+items, which are operator actions that no commit can close.
 
 ## Where the code lives
 
@@ -41,36 +35,18 @@ sign-off. Both are operator actions — `docs/books-dogfood-checklist.md` and
 
 ## Invariants an incremental change must not break
 
-- **Write choke-points, same discipline as the video catalog.** A `book_targets` status or
-  derived-state write goes through `Cinder.Books.transition_target/3` →
-  `Cinder.Books.BookTargetTransition.guarded/4` (its `:expect` is the race-safe poller write), or
-  one of the audited siblings that owns a lifecycle (`hold_target/4`, `pause_target/1`,
-  `monitor_target/4`, `import_resolution/1`). Imported files go through
-  `Cinder.Books.Files.record_import/3` and `record_import_set/3`. Every `book_grabs` mutation
-  lives in `Cinder.Books.Grabs`. `Cinder.Download.BookPoller` and `Cinder.Download` hold **no**
-  `Repo` writes of their own — keep it that way.
-- **The approval gate is the same one.** A user-facing book or audiobook request goes through
-  `Cinder.Requests`; nothing else may create a target from a user action.
-- **External services stay behind behaviours** resolved with `Application.fetch_env!/2`:
-  `Cinder.Books.Metadata`, `Cinder.Acquisition.Indexer`, `Cinder.Download.Client`,
-  `Cinder.Library.AudiobookServer`. Tests use the Mox mocks, never the network. See
-  `rule://external-services-via-behaviours`.
-- **There is no automatic release search for books, and that is deliberate.**
-  `lib/cinder/download/book_poller.ex:18-21` states it: `Cinder.Acquisition.Books` exports no
-  `best_book_release/2`, because the roadmap gates automatic selection on a measured corpus
-  precision threshold. An admin picks a release in manual search on `/books/:id`; the unattended
-  pipeline takes over only after that. Do not "fix" this as a missing feature — adding automatic
-  selection is a product decision with a stated prerequisite, not a bug.
-- **Bounded work everywhere.** Provider HTTP goes through `Cinder.HTTPPolicy.bounded_request/2`
-  (4 MB ceiling, 15s receive, 60s hard deadline). Archive extraction carries entry-count and
-  expanded-size ceilings (`library/book_archive/{zip,rar}.ex`). Any subprocess uses the
-  `Task.async` + `Task.yield(timeout)` + `Task.shutdown(:brutal_kill)` idiom, with the
-  missing-binary `rescue` **inside** the task — see `AudioProbe.Ffprobe.probe/1`
-  (`@probe_timeout 10_000`) and `BookArchive.Rar.list_entries/3` (`@list_timeout_ms 5_000`).
-  The whole `BookPoller` tick is one synchronous `GenServer` call, so an unbounded call there
-  freezes every book and audiobook target, not just the one file. The one accepted exception is
-  the video-shared `Cinder.Library.MediaInfo.Ffprobe` — tracked in issue #447, do not widen it.
-  Evidence for all of the above: `docs/audits/2026-09-02-books-bounded-work-audit.md`.
+The write choke-points, the approval gate, the external-service behaviours and bounded work are
+the same rules as for video, in `docs/agents/architecture.md`; its Books paragraph lists the book
+choke-points. The books-specific parts:
+
+- **No automatic release search, by design** (see `docs/agents/history.md`). The
+  `Cinder.Download.BookPoller` moduledoc states it: `Cinder.Acquisition.Books` exports no
+  `best_book_release/2`. An admin picks a release in manual search on `/books/:id`; the
+  unattended pipeline takes over only after that.
+- **The whole `BookPoller` tick is one synchronous `GenServer` call**, so an unbounded call there
+  freezes every book and audiobook target, not just one file. The books-side bounded calls are
+  `AudioProbe.Ffprobe.probe/1`, `BookArchive.Rar.list_entries/3`, and the archive ceilings in
+  `library/book_archive/{zip,rar}.ex`. Evidence: `docs/audits/2026-09-02-books-bounded-work-audit.md`.
 
 ## Decisions that are already settled — do not re-derive them
 
@@ -96,4 +72,4 @@ section per milestone, each ending in a "Shipped as N slices" subsection plus th
 and amendments discovered while building it. **Those notes are authoritative** where they
 contradict the original plan prose — read them before reconstructing why something works the way
 it does. Per-slice plans are `specs/NNN-books-<phase>-<slug>/plan.md` (`specs/054-…` through
-`specs/066-…`). The roadmap is 1,100+ lines: read only the section you need, never the whole file.
+`specs/066-…`).

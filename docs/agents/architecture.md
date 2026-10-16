@@ -20,6 +20,8 @@ Audiobookshelf, Booklore) is reached only through a behaviour, never directly fr
 - Resolve the implementation at runtime with `Application.fetch_env!/2`, never `compile_env!/2`.
   The Mox mock is defined at runtime, so compile-time resolution breaks
   `compile --warnings-as-errors`.
+- Req is the HTTP client. It belongs inside an adapter that implements one of these behaviours,
+  not in a context module.
 - Search indexers by IMDb id rather than free-text title. `Catalog.get_movie/1` carries
   `imdb_id` through for this.
 
@@ -35,7 +37,8 @@ are written only inside `Cinder.Catalog` and its submodules under `lib/cinder/ca
 
 Books and audiobooks follow the same rule through `Cinder.Books.transition_target/3` and
 `BookTargetTransition.guarded/4`, plus their audited siblings: `hold_target/4`, `pause_target/1`,
-`monitor_target/4`, `import_resolution/1`, `Files.record_import/3`, `Grabs`.
+`monitor_target/4`, `import_resolution/1`, `Files.record_import/3` and `record_import_set/3`.
+Every `book_grabs` mutation lives in `Cinder.Books.Grabs`.
 
 Each transition emits exactly one broadcast, after commit, never inside the enclosing
 `Repo.transaction`.
@@ -54,8 +57,7 @@ exceptions each own one table and nothing derived:
 - `lib/cinder/library/sidecar_quarantine.ex` owns `sidecar_quarantines`.
 - `lib/cinder/download.ex` writes only its own `download_intents` tables.
 
-A new exception is legitimate only when a plan calls it out. When it lands, add it to this list
-and to `.omp/rules/catalog-write-choke-points.md`.
+A new exception is legitimate only when a plan calls it out. When it lands, add it to this list.
 
 The reason: SQLite runs WAL with `busy_timeout: 5000` in dev, test and runtime, so a web write
 racing the poller waits instead of failing with "database busy". That holds only while writes go
@@ -88,8 +90,11 @@ Every call a poller makes has a bound:
 
 - Provider HTTP goes through `Cinder.HTTPPolicy.bounded_request/2`, which enforces a size ceiling
   and receive and hard-deadline timeouts.
-- A subprocess (ffprobe, archive listing) runs inside `Task.async` + `Task.yield(timeout)` +
-  `Task.shutdown(:brutal_kill)`, with the missing-binary rescue inside the task.
+- A subprocess goes through `Cinder.BoundedCommand.run/4`: a supervised `Port` killed with
+  `SIGKILL` by its OS pid on timeout. `Task.shutdown(:brutal_kill)` kills only the Elixir task,
+  so a child that never reads stdin (ffprobe, ffmpeg) keeps running and leaks one process per
+  retry. `MediaInfo.Ffprobe`, `AudioProbe.Ffprobe` and `BookArchive.Rar` carry older private
+  copies of the same idiom.
 - Archive extraction carries entry-count and expanded-size ceilings.
 
 The reason: one unbounded call in a single-tick poller freezes every target sharing that tick,

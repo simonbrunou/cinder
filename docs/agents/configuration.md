@@ -15,6 +15,14 @@ A registry-driven loader `Application.put_env`s stored values onto a one-time bo
 at boot (a one-shot supervised child, after PubSub and before the poller) and on every save. So
 DB overrides env, a cleared setting reverts to env, and contexts read the same keys unchanged.
 
+The env readers already exist, so a change usually edits one of them rather than adding a call
+site:
+
+- `config/runtime.exs` reads the boot-only keys.
+- `lib/cinder/application.ex` loads the bootstrap snapshot and checks `RELEASE_NAME`.
+- `lib/cinder/settings.ex` applies the env-as-bootstrap overlay.
+- `lib/cinder_web/router.ex` reads the `CINDER_BASIC_AUTH_*` pair for the Basic gate.
+
 ## Secrets
 
 - Secret rows are Cloak-encrypted at rest, with a key derived from `SECRET_KEY_BASE`.

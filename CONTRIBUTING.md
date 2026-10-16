@@ -46,14 +46,13 @@ issues with Matt Pocock's skills (`/to-spec`, `/to-tickets`; see `docs/agents/wo
 
 ## Branches & PRs
 
-Work one focused change per branch off `main`, keep `mix test` green, and open a PR. `main` is
-guarded by CI (compile/format/credo/test on every push + PR).
+Work one focused change per branch off `main`, keep `mix test` green, and open a PR on Forgejo
+(`origin`, git.sbrn.eu/simonbrunou/cinder). GitHub is a push mirror of Forgejo, so PRs and issues
+go to Forgejo only.
 
-Merging a PR that touches `.github/workflows/` — every dependabot Actions bump does — needs a
-token with the `workflow` scope. Without it `gh pr merge` fails with *"refusing to allow a
-Personal Access Token to create or update workflow `.github/workflows/…` without `workflow`
-scope"*. Either `gh auth refresh -s workflow` once, or merge that one locally over SSH
-(`git merge --no-ff` the PR branch, then push `main`), which the scope check does not cover.
+`main` is protected: a PR merges once the three jobs in `.forgejo/workflows/ci.yml` pass on it
+(`test`, `container`, `dependency-audit`). Renovate (`renovate.json`) opens the dependency-update
+PRs.
 
 ## Releasing (maintainers)
 
