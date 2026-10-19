@@ -168,6 +168,10 @@ All notable changes to Cinder are documented here. The format follows
   downloads were validated) keep their aligned timing without the rules.
 
 ### Security
+- **Debian `libexpat1` 2.8.3 → 2.9.0 in the container image (CVE-2026-66046 and four more).**
+  Debian trixie-security fixed five HIGH expat advisories after the runtime layer was last
+  rebuilt, and Trivy failed `container` on every PR. `APT_REFRESH` is bumped so the layer's
+  `apt-get upgrade` runs again.
 - **`decimal` 3.1.1 → 3.2.0 (CVE-2026-97853).** `Decimal.round/3` allocated memory in
   proportion to its `places` argument. Cinder's own code never calls `Decimal.round`, so this is
   hygiene, but the advisory failed the required `mix hex.audit` CI check.

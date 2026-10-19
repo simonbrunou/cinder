@@ -81,7 +81,7 @@ FROM ${RUNNER_IMAGE} AS final
 # `apt-get upgrade` (Trivy then fails `container` on curl, librsvg2... that are already fixed).
 # The RUN echoes APT_REFRESH, so changing it rebuilds the layer: set it to today's date when
 # `container` flags OS packages that a fresh `apt-get upgrade` fixes.
-ARG APT_REFRESH=2026-10-15
+ARG APT_REFRESH=2026-10-19
 RUN echo "Debian packages refreshed ${APT_REFRESH}" \
   && apt-get update \
   && apt-get upgrade -y \
