@@ -12,6 +12,7 @@ defmodule CinderWeb.BookDiscoveryLive do
   alias Cinder.Catalog
   alias Cinder.LibraryKind
   alias Cinder.Requests
+  alias Cinder.Requests.Target
 
   @book_kinds LibraryKind.books()
 
@@ -161,17 +162,16 @@ defmodule CinderWeb.BookDiscoveryLive do
         assign(socket, book_states: %{}, local_work_id: nil)
 
       work_id ->
-        request_states =
-          user
-          |> Requests.list_for_user()
-          |> Enum.filter(&(&1.target_type == "book" and &1.target_id == work_id))
-          |> latest_status_by(& &1.media_kind)
-
+        request_states = user |> Requests.list_for_user() |> latest_status_by(&Target.key/1)
         target_states = Books.target_statuses([work_id])
 
         states =
           Map.new(@book_kinds, fn kind ->
-            {kind, book_badge_state(request_states[kind], target_states[{work_id, kind}])}
+            {kind,
+             book_badge_state(
+               request_states[{:book, work_id, kind}],
+               target_states[{work_id, kind}]
+             )}
           end)
 
         assign(socket, book_states: states, local_work_id: work_id)

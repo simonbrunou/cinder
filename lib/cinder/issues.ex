@@ -6,17 +6,17 @@ defmodule Cinder.Issues do
   request model are untouched.
 
   Reports are requester-owned and rate-bounded (`@max_open_per_user` open reports). Creation is
-  gated on the target being genuinely available (a movie at `:available`, or a fully-available
-  season) so a report can only be filed for content the household can actually watch. PubSub +
-  post-commit `Cinder.Notifier` events mirror the requests idiom.
+  gated on the target being watchable (`Cinder.Requests.Target`: a movie at `:available` or
+  `:upgrading`, or a fully-available season) so a report can only be filed for content the
+  household can actually watch. PubSub + post-commit `Cinder.Notifier` events mirror the requests
+  idiom.
   """
   import Ecto.Query
   alias Cinder.Accounts.User
-  alias Cinder.Catalog
-  alias Cinder.Catalog.{Movie, Series}
   alias Cinder.Issues.IssueReport
   alias Cinder.Notifier
   alias Cinder.Repo
+  alias Cinder.Requests.Target
   alias Cinder.Util
 
   @topic "issues"
@@ -29,7 +29,7 @@ defmodule Cinder.Issues do
 
   @doc """
   Files a report for `user`. Refuses when the user is already at their open-report cap
-  (`{:error, :too_many_open}`) or when the target isn't available to them
+  (`{:error, :too_many_open}`) or when the target isn't watchable
   (`{:error, :not_available}`). The target's `title` is snapshotted from the catalog (canonical,
   not client-supplied) so the admin queue renders without a join. Broadcasts and notifies
   post-commit.
@@ -38,36 +38,31 @@ defmodule Cinder.Issues do
     if open_count(user) >= @max_open_per_user do
       {:error, :too_many_open}
     else
-      case available_snapshot(attrs) do
+      case watchable_snapshot(attrs) do
         {:ok, snapshot} -> insert_report(user, attrs, snapshot)
         :error -> {:error, :not_available}
       end
     end
   end
 
-  # Availability doubles as the "is this yours to report" gate: in a single household, an
-  # available title is watchable by every member, so availability is exactly access.
-  defp available_snapshot(%{target_type: "movie", target_id: id}) when is_integer(id) do
-    case Catalog.get_movie_by_tmdb_id(id) do
-      %Movie{status: :available, title: title} ->
+  # Watchability doubles as the "is this yours to report" gate: in a single household, a title on
+  # the media server is watchable by every member, so watchability is exactly access. My requests
+  # and the movie page offer the report from the same `Target` rule.
+  defp watchable_snapshot(%{target_type: _, target_id: _} = attrs) do
+    case Target.resolve([attrs]) do
+      [{_attrs, %Target{watchable?: true, key: {:movie, id}, title: title}}] ->
         {:ok, %{target_type: "movie", target_id: id, season_number: nil, title: title}}
+
+      [{_attrs, %Target{watchable?: true, key: {:season, id, n}, title: title}}]
+      when is_binary(title) ->
+        {:ok, %{target_type: "season", target_id: id, season_number: n, title: title}}
 
       _ ->
         :error
     end
   end
 
-  defp available_snapshot(%{target_type: "season", target_id: id, season_number: n})
-       when is_integer(id) and is_integer(n) do
-    with true <- MapSet.member?(Catalog.available_season_keys(id), {id, n}),
-         %Series{title: title} <- Catalog.get_series_by_tmdb_id(id) do
-      {:ok, %{target_type: "season", target_id: id, season_number: n, title: title}}
-    else
-      _ -> :error
-    end
-  end
-
-  defp available_snapshot(_), do: :error
+  defp watchable_snapshot(_attrs), do: :error
 
   defp insert_report(user, attrs, snapshot) do
     attrs

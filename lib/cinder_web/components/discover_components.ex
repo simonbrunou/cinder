@@ -7,6 +7,8 @@ defmodule CinderWeb.DiscoverComponents do
   """
   use CinderWeb, :html
 
+  alias Cinder.Requests.Target
+
   attr :id, :string, required: true
   attr :results, :list, required: true
   attr :request_status, :map, required: true
@@ -342,21 +344,25 @@ defmodule CinderWeb.DiscoverComponents do
   defp genre_label(other), do: other
 
   @doc """
-  Composite per-user state for a movie card.
+  Composite per-user state for a movie card. `request_status` is keyed by
+  `Cinder.Requests.Target.key/1`; `movie_status` by the movie's tmdb_id.
 
-  Precedence: an available movie outranks a stale denied/approved request. An
+  Precedence: a watchable movie outranks a stale denied/approved request. An
   `:upgrading` movie still has a playable library file, so it reads as available
-  (and must not re-show the Request affordance).
+  (and must not re-show the Request affordance) — `Target.watchable_movie_status?/1`,
+  the same rule My requests and `Cinder.Issues` apply.
 
   Public so `MovieDiscoveryLive` renders the same badge as the grid card from one
   source of truth, rather than re-deriving the precedence.
   """
   def title_state(tmdb_id, request_status, movie_status) do
+    request = request_status[{:movie, tmdb_id}]
+
     cond do
-      movie_status[tmdb_id] in [:available, :upgrading] -> :available
-      request_status[tmdb_id] == :pending -> :pending
-      request_status[tmdb_id] == :approved -> :approved
-      request_status[tmdb_id] == :denied -> :denied
+      Target.watchable_movie_status?(movie_status[tmdb_id]) -> :available
+      request == :pending -> :pending
+      request == :approved -> :approved
+      request == :denied -> :denied
       true -> :none
     end
   end

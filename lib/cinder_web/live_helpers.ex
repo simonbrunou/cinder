@@ -53,7 +53,8 @@ defmodule CinderWeb.LiveHelpers do
 
   @doc """
   Reduces request rows (newest-first) to a `key => status` map, keeping the first
-  (newest) status seen per key. `key_fun` picks the key (e.g. `& &1.target_id`).
+  (newest) status seen per key. `key_fun` picks the key (e.g. `&Cinder.Requests.Target.key/1`,
+  never a raw `target_id`, whose meaning differs per target type).
   """
   def latest_status_by(items, key_fun) do
     Enum.reduce(items, %{}, fn r, acc -> Map.put_new(acc, key_fun.(r), r.status) end)

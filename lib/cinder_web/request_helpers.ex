@@ -19,6 +19,7 @@ defmodule CinderWeb.RequestHelpers do
   alias Cinder.Catalog.MediaServerSeasons
   alias Cinder.LibraryKind
   alias Cinder.Requests
+  alias Cinder.Requests.Target
 
   # Every managed media kind, not just the video pair: `profile_kind/1` resolves a book request to
   # `:ebook`/`:audiobook`, and a narrower guard here would silently drop the admin's pick and make
@@ -139,29 +140,29 @@ defmodule CinderWeb.RequestHelpers do
   end
 
   @doc """
-  The user's request status per movie (latest wins) plus the global movie pipeline
+  The user's newest request status per target key (`Cinder.Requests.Target.key/1`, so a book's
+  work id never badges the movie card that shares its number) plus the global movie pipeline
   status per tmdb_id; together they drive the per-title movie badge.
+
+  TV cards mirror the movie badge, but a series' state is per-season: `series_request_status`
+  keys the newest season request by its series tmdb_id, and a series reads available once any of
+  its seasons has imported.
   """
   def assign_request_state(socket) do
     user = socket.assigns.current_scope.user
     requests = Requests.list_for_user(user)
 
-    # Movie requests only. `request_status` keys the MOVIE badge by tmdb_id, and `target_id` is
-    # per-target-type: a season request carries a series tmdb_id (see `series_request_status`
-    # below) and a book request carries a local `book_works.id`. Keying across all of them lets
-    # an unrelated request badge — and suppress the Add form on — a movie card that happens to
-    # share the number.
-    movie_requests = Enum.filter(requests, &(&1.target_type == "movie"))
-    request_status = latest_status_by(movie_requests, & &1.target_id)
-
-    # TV cards mirror the movie badge, but a series' state is per-season: key the newest season
-    # request by the series tmdb_id (a season request's target_id), and treat a series as
-    # available once any of its seasons has imported.
-    season_requests = Enum.filter(requests, &(&1.target_type == "season"))
-    series_request_status = latest_status_by(season_requests, & &1.target_id)
+    # `requests` is newest first, so the first status kept per series is the newest.
+    series_request_status =
+      for r <- requests, {:season, tmdb_id, _n} <- [Target.key(r)], reduce: %{} do
+        acc -> Map.put_new(acc, tmdb_id, r.status)
+      end
 
     socket
-    |> assign(request_status: request_status, series_request_status: series_request_status)
+    |> assign(
+      request_status: latest_status_by(requests, &Target.key/1),
+      series_request_status: series_request_status
+    )
     |> assign_available_series()
     |> assign_movie_status()
   end

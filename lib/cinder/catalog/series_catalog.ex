@@ -1086,16 +1086,12 @@ defmodule Cinder.Catalog.SeriesCatalog do
   (that would hide the Request affordance for a season that's 90% absent). Drives the
   requester-facing season badges — availability outranks a stale request status
   (mirroring the movie `title_state` precedence), otherwise a fully imported season
-  reads "Approved"/"Denied" forever. Pass `tmdb_id` to scope to one series.
+  reads "Approved"/"Denied" forever. Pass a `tmdb_id`, or a list of them, to scope the read.
   """
   def available_season_keys(tmdb_id \\ nil) do
-    today = Settings.household_date()
-
-    query = available_seasons_query(today)
-
-    query = if tmdb_id, do: where(query, [_e, _s, sr], sr.tmdb_id == ^tmdb_id), else: query
-
-    query
+    Settings.household_date()
+    |> available_seasons_query()
+    |> scope_to_series(tmdb_id)
     |> select([_e, s, sr], {sr.tmdb_id, s.season_number})
     |> Repo.all()
     |> MapSet.new()
@@ -1124,7 +1120,8 @@ defmodule Cinder.Catalog.SeriesCatalog do
   active `grab_id`). Drives the requester-facing "X of Y episodes" indicator on `/my-requests`
   while a season is still filling in — the partial-progress complement to the terminal
   `available_season_keys/0`, which only reports fully-landed seasons. Season 0 (specials) is
-  excluded, matching `available_seasons_query/1`. Pass `tmdb_id` to scope to one series.
+  excluded, matching `available_seasons_query/1`. Pass a `tmdb_id`, or a list of them, to scope
+  the read.
   """
   def season_progress_keys(tmdb_id \\ nil) do
     query =
@@ -1133,8 +1130,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
         join: sr in assoc(s, :series),
         where: s.season_number > 0
       )
-
-    query = if tmdb_id, do: where(query, [_e, _s, sr], sr.tmdb_id == ^tmdb_id), else: query
+      |> scope_to_series(tmdb_id)
 
     from([e, s, sr] in query,
       group_by: [sr.tmdb_id, s.season_number],
@@ -1152,6 +1148,15 @@ defmodule Cinder.Catalog.SeriesCatalog do
        %{total: total, available: available, downloading: downloading > 0}}
     end)
   end
+
+  # `nil` reads every series. A list lets `Cinder.Requests.Target` batch one read across the
+  # series a page's requests name.
+  defp scope_to_series(query, nil), do: query
+
+  defp scope_to_series(query, tmdb_ids) when is_list(tmdb_ids),
+    do: where(query, [_e, _s, sr], sr.tmdb_id in ^tmdb_ids)
+
+  defp scope_to_series(query, tmdb_id), do: where(query, [_e, _s, sr], sr.tmdb_id == ^tmdb_id)
 
   @doc "Count of still-wanted episodes in one season of `series_id` (see `wanted_episodes/0`)."
   def count_wanted_episodes(series_id, season_number) do

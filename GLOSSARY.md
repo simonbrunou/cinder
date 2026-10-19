@@ -49,6 +49,31 @@ An in-flight download that has made no forward progress for longer than Cinder i
 wait.
 _Avoid_: dead download, stuck download
 
+### Requests
+
+**Request target**:
+The thing a request asks for: a movie, one season of a series, or a book in one media kind. A
+request names it by an id that means something different per kind: a movie's TMDB id, the series'
+TMDB id plus a season number, or a local book work id plus a media kind.
+_Avoid_: request item, requested title
+
+**Target key**:
+The typed key for a request target (`{:movie, tmdb_id}`, `{:season, tmdb_id, number}`,
+`{:book, work_id, kind}`), so ids from different kinds never meet in one map.
+_Avoid_: target id
+
+**Watchable**:
+A request target the household can watch on the media server now: a movie at `:available` or
+`:upgrading`, or a season whose aired episodes have all landed. A book is never watchable; it lands
+in Booklore or Audiobookshelf instead.
+_Avoid_: available (on its own, it also names the book and movie badge states)
+
+**Outstanding target**:
+A request target an approved request still waits on: it has not landed and no operator has stopped
+it. It holds one of its requester's quota slots under `auto_approve_all`. A season whose row no
+longer exists is not outstanding.
+_Avoid_: unfulfilled target, open request
+
 ### Settings
 
 **Setting definition**:

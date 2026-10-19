@@ -16,6 +16,7 @@ defmodule CinderWeb.DiscoverLive do
   alias Cinder.Catalog
   alias Cinder.Catalog.Genres
   alias Cinder.LibraryKind
+  alias Cinder.Requests.Target
   alias Cinder.Settings
 
   require Logger
@@ -370,15 +371,17 @@ defmodule CinderWeb.DiscoverLive do
     request_states =
       socket.assigns.current_scope.user
       |> Cinder.Requests.list_for_user()
-      |> Enum.filter(&(&1.target_type == "book"))
-      |> latest_status_by(&{&1.target_id, &1.media_kind})
+      |> latest_status_by(&Target.key/1)
 
     states =
       for book <- socket.assigns.book_results,
           kind <- @book_kinds,
           work_id = work_ids[{to_string(book.provider), book.foreign_id}],
           state =
-            book_badge_state(request_states[{work_id, kind}], target_states[{work_id, kind}]),
+            book_badge_state(
+              request_states[{:book, work_id, kind}],
+              target_states[{work_id, kind}]
+            ),
           state != :none,
           into: %{} do
         {{to_string(book.provider), book.foreign_id, kind}, state}

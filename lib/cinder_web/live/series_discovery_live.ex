@@ -19,6 +19,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   alias Cinder.Catalog
   alias Cinder.Catalog.MediaServerSeasons
   alias Cinder.Requests
+  alias Cinder.Requests.Target
   alias Cinder.Settings
 
   require Logger
@@ -412,7 +413,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     requests_by_season =
       user
       |> Requests.list_for_user()
-      |> Enum.filter(&(&1.target_type == "season" and &1.target_id == tmdb_id))
+      |> Enum.filter(&match?({:season, ^tmdb_id, _n}, Target.key(&1)))
       |> latest_status_by(& &1.season_number)
 
     assign(socket, requests_by_season: requests_by_season)

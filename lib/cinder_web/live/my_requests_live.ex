@@ -23,6 +23,7 @@ defmodule CinderWeb.MyRequestsLive do
   import CinderWeb.IssueComponents, only: [report_form: 1, report_status: 1]
 
   alias Cinder.{Books, Catalog, Issues, Requests, Settings}
+  alias Cinder.Requests.Target
 
   @impl true
   def mount(_params, _session, socket) do
@@ -207,50 +208,45 @@ defmodule CinderWeb.MyRequestsLive do
   defp request_again_result(socket, title, {:error, _reason}),
     do: put_flash(socket, :error, gettext("Couldn't request %{title}. Try again.", title: title))
 
+  # `requests` stays for the event handlers' `find_by_id/2`; `rows` pairs each request with its
+  # target, which the template reads instead of indexing catalog maps by a raw `target_id`.
   defp load(socket) do
     user = socket.assigns.current_scope.user
-    movies = Catalog.list_movies()
-    series = Catalog.list_series()
     requests = Requests.list_for_user(user)
 
     socket
     |> assign(
       requests: requests,
-      movies_by_tmdb: Map.new(movies, &{&1.tmdb_id, &1}),
-      series_by_tmdb: Map.new(series, &{&1.tmdb_id, &1}),
-      available_seasons: Catalog.available_season_keys(),
-      season_progress: Catalog.season_progress_keys(),
-      latest_report_by_target: latest_reports(user),
-      book_target_states: book_target_states(requests)
+      rows: Target.resolve(requests),
+      latest_report_by_target: latest_reports(user)
     )
     |> assign_media_server()
   end
 
-  # Every book target this user's own requests point at, keyed the same `{work_id, media_kind}`
-  # pair `Books.target_statuses/1` and `book_badge_state/2` already use on Discover/the work
-  # page — never the shared movies_by_tmdb/series_by_tmdb id spaces, which collide with a book's
-  # local book_works.id.
-  defp book_target_states(requests) do
-    requests
-    |> Enum.filter(&(&1.target_type == "book"))
-    |> Enum.map(& &1.target_id)
-    |> Enum.uniq()
-    |> Books.target_statuses()
-  end
+  # The `kind={:request}` badge state for one of MY requests, computed once per row. It drives the
+  # badge, "Request again" and the denial-reason line.
+  #
+  # A book row's `:denied` is short-circuited HERE, not in the shared `book_badge_state/2` (Codex
+  # review on PR #557): this is the one surface answering "what happened to each of MY own past
+  # requests," a history question, so a denied row keeps reading Denied even once a DIFFERENT
+  # request folds the shared target to :available/:held/:monitored — it still renders its own
+  # denial reason and "Request again" action. Every other book-badge surface (Discover, book
+  # detail, library) answers a different, current-state question — "is this book available right
+  # now" — where the household-shared target correctly outranks any one user's denied request, so
+  # that behavior stays in the shared function, not here.
+  #
+  # A landed season outranks a stale request status (mirrors the movie title_state precedence): a
+  # fully imported season must not keep reading "Denied" — one badge, not contradictory stacked
+  # ones, and no stale denial-reason line.
+  defp request_badge(%{status: :denied}, %Target{key: {:book, _work_id, _kind}}), do: :denied
 
-  # A book row's own status — never another request row's, even one racing to re-request the
-  # same target. `:denied` is short-circuited HERE, not in the shared `book_badge_state/2`
-  # (Codex review on PR #557): this is the one surface answering "what happened to each of MY
-  # own past requests," a history question, so a denied row keeps reading Denied even once a
-  # DIFFERENT request folds the shared target to :available/:held/:monitored — it still renders
-  # its own denial reason and "Request again" action. Every other book-badge surface
-  # (Discover, book detail, library) answers a different, current-state question — "is this
-  # book available right now" — where the household-shared target correctly outranks any one
-  # user's denied request, so that behavior stays in the shared function, not here.
-  defp book_badge(%{target_type: "book", status: :denied}, _book_target_states), do: :denied
+  defp request_badge(r, %Target{key: {:book, _work_id, _kind}} = target),
+    do: book_badge_state(r.status, target.book_status)
 
-  defp book_badge(%{target_type: "book"} = r, book_target_states),
-    do: book_badge_state(r.status, book_target_states[{r.target_id, r.media_kind}])
+  defp request_badge(_r, %Target{key: {:season, _tmdb_id, _n}, watchable?: true}),
+    do: :available
+
+  defp request_badge(r, _target), do: r.status
 
   # The caller's newest report per target (`list_for_user` is desc by id, so the first seen per
   # key is the latest) — drives the per-row "Reported/Resolved/Dismissed" pill and whether the
@@ -258,10 +254,8 @@ defmodule CinderWeb.MyRequestsLive do
   defp latest_reports(user) do
     user
     |> Issues.list_for_user()
-    |> Enum.reduce(%{}, fn report, acc -> Map.put_new(acc, report_key(report), report) end)
+    |> Enum.reduce(%{}, fn report, acc -> Map.put_new(acc, Target.key(report), report) end)
   end
-
-  defp report_key(%{target_type: type, target_id: id, season_number: n}), do: {type, id, n}
 
   defp assign_media_server(socket) do
     case Settings.media_server_web_link() do
@@ -273,52 +267,23 @@ defmodule CinderWeb.MyRequestsLive do
     end
   end
 
-  # Same collision hazard as `row_available?/3`, plus books have no media-server item until B7.
-  defp title_web_link(%{target_type: "book"}, _movie, _series_by_tmdb, _media_server_link),
-    do: nil
-
-  defp title_web_link(request, movie, series_by_tmdb, media_server_link) do
-    item_id =
-      if request.target_type == "movie" do
-        movie && movie.media_server_item_id
-      else
-        case series_by_tmdb[request.target_id] do
-          nil -> nil
-          series -> series.media_server_item_id
-        end
-      end
-
-    case Settings.media_server_web_link(media_server_link, item_id) do
+  # Only a watchable target links out. The gate matters for books: they have no media-server
+  # item, and `media_server_web_link/2` answers a nil item id with the server's front door.
+  defp title_web_link(%Target{watchable?: true} = target, media_server_link) do
+    case Settings.media_server_web_link(media_server_link, target.media_server_item_id) do
       {_server, url} -> url
       nil -> nil
     end
   end
 
+  defp title_web_link(_target, _media_server_link), do: nil
+
   # Product names, deliberately not gettext'd.
   defp server_name(:plex), do: "Plex"
   defp server_name(:jellyfin), do: "Jellyfin"
 
-  defp season_row?(%{target_type: "season"}), do: true
-  defp season_row?(_), do: false
-
-  # Progress for a season request row, keyed by `{series tmdb_id, season_number}`; nil for a
-  # movie row or a season with no episodes yet (still pending an admin's approval).
-  defp season_progress(%{target_type: "season", target_id: t, season_number: n}, progress),
-    do: Map.get(progress, {t, n})
-
-  defp season_progress(_r, _progress), do: nil
-
-  # Whether the whole row's content has landed — a fully-available season, or an available movie.
-  # A book row never is: `movies_by_tmdb` is keyed by TMDB id and a book's `target_id` is a local
-  # `book_works.id`, so the catch-all below would report a colliding movie's availability.
-  defp row_available?(%{target_type: "book"}, _movie, _available_seasons), do: false
-
-  defp row_available?(%{target_type: "season"} = r, _movie, available_seasons),
-    do: effective_status(r, available_seasons) == :available
-
-  defp row_available?(_r, movie, _available_seasons),
-    do: not is_nil(movie) and movie_badge_status(movie) == :available
-
+  # These read `Target`'s `season_progress`, which is nil for a movie or book row and for a season
+  # with no episodes yet (still pending an admin's approval).
   defp season_downloading?(%{downloading: true}), do: true
   defp season_downloading?(_), do: false
 
@@ -336,15 +301,6 @@ defmodule CinderWeb.MyRequestsLive do
       available: available
     )
   end
-
-  # Availability outranks a stale season request status (mirrors the movie title_state
-  # precedence): a fully imported season must not keep reading "Denied" — one badge,
-  # not contradictory stacked ones, and no stale denial-reason line.
-  defp effective_status(%{target_type: "season", target_id: t, season_number: n} = r, available) do
-    if MapSet.member?(available, {t, n}), do: :available, else: r.status
-  end
-
-  defp effective_status(r, _available), do: r.status
 
   @impl true
   def render(assigns) do
@@ -369,31 +325,25 @@ defmodule CinderWeb.MyRequestsLive do
       />
 
       <ul id="my-requests" class="space-y-3">
-        <li :for={r <- @requests} id={"request-#{r.id}"} class="rounded-box bg-base-200/50 p-4">
+        <li :for={{r, t} <- @rows} id={"request-#{r.id}"} class="rounded-box bg-base-200/50 p-4">
+          <% movie = t.movie %>
+          <% badge = request_badge(r, t) %>
+          <% media_server_url = title_web_link(t, @media_server_link) %>
+          <% report = @latest_report_by_target[t.key] %>
+          <% open_report? = match?(%{status: :open}, report) %>
           <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <% movie = @movies_by_tmdb[r.target_id] %>
-            <% movie_row? = r.target_type == "movie" and not is_nil(movie) %>
-            <% season_progress = season_progress(r, @season_progress) %>
-            <% available? = row_available?(r, movie, @available_seasons) %>
-            <% media_server_url = title_web_link(r, movie, @series_by_tmdb, @media_server_link) %>
-            <% report = @latest_report_by_target[report_key(r)] %>
-            <% open_report? = match?(%{status: :open}, report) %>
             <span class="min-w-0 break-words font-semibold">
               {request_title(r, @locale)}
             </span>
             <span :if={r.year} class="text-base-content/70">({r.year})</span>
-            <% request_status =
-              if r.target_type == "book",
-                do: book_badge(r, @book_target_states),
-                else: effective_status(r, @available_seasons) %>
             <.status_badge
               id={"myrequests-request-status-#{r.id}"}
               kind={:request}
-              status={request_status}
+              status={badge}
             />
             <.report_status :if={report} status={report.status} />
             <.status_badge
-              :if={movie_row?}
+              :if={movie}
               id={"myrequests-movie-status-#{r.id}"}
               kind={:movie}
               status={movie_badge_status(movie)}
@@ -402,12 +352,12 @@ defmodule CinderWeb.MyRequestsLive do
               eta={movie.download_eta}
             />
             <.status_badge
-              :if={season_row?(r) and not available? and season_downloading?(season_progress)}
+              :if={not t.watchable? and season_downloading?(t.season_progress)}
               kind={:episode}
               status={:downloading}
             />
             <.button
-              :if={available? and media_server_url}
+              :if={media_server_url}
               href={media_server_url}
               target="_blank"
               rel="noopener"
@@ -433,7 +383,7 @@ defmodule CinderWeb.MyRequestsLive do
               {gettext("Cancel request")}
             </.button>
             <.button
-              :if={effective_status(r, @available_seasons) == :denied}
+              :if={badge == :denied}
               id={"request-again-#{r.id}"}
               variant="ghost"
               size="sm"
@@ -446,32 +396,32 @@ defmodule CinderWeb.MyRequestsLive do
             </.button>
           </div>
           <p
-            :if={effective_status(r, @available_seasons) == :denied and r.denial_reason}
+            :if={badge == :denied and r.denial_reason}
             class="mt-1 flex items-start gap-1.5 text-sm text-error"
           >
             <.icon name="hero-x-circle" class="mt-0.5 size-4 shrink-0" />
             <span class="min-w-0 break-words"><span class="font-medium">{gettext("Reason:")}</span> {r.denial_reason}</span>
           </p>
           <p
-            :if={movie_row? and movie_badge_status(movie) == :anime_hold}
+            :if={movie && movie_badge_status(movie) == :anime_hold}
             id={"request-#{r.id}-hold-reason"}
             class="mt-1 text-sm text-base-content/70"
           >
             {anime_hold_reason(movie.anime_hold_reason)}
           </p>
           <p
-            :if={movie_row? and movie_badge_status(movie) != :anime_hold and pipeline_hint(movie)}
+            :if={movie && movie_badge_status(movie) != :anime_hold && pipeline_hint(movie)}
             id={"request-#{r.id}-hint"}
             class="mt-1 text-sm text-base-content/70"
           >
             {pipeline_hint(movie)}
           </p>
           <p
-            :if={season_incomplete?(season_progress)}
+            :if={season_incomplete?(t.season_progress)}
             id={"request-#{r.id}-season-progress"}
             class="mt-1 text-sm text-base-content/70"
           >
-            {season_progress_hint(season_progress)}
+            {season_progress_hint(t.season_progress)}
           </p>
           <p class="mt-1 text-xs text-base-content/60">
             {gettext("Requested %{time_ago}", time_ago: relative_time(r.inserted_at))}
@@ -492,7 +442,7 @@ defmodule CinderWeb.MyRequestsLive do
           </.confirm_action>
 
           <.button
-            :if={available? and not open_report? and @reporting != to_string(r.id)}
+            :if={t.watchable? and not open_report? and @reporting != to_string(r.id)}
             id={"report-issue-#{r.id}"}
             variant="ghost"
             size="sm"

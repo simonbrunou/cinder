@@ -42,6 +42,33 @@ defmodule Cinder.IssuesTest do
       assert report.title == "Dune"
     end
 
+    # The movie page offers "Report an issue" on an upgrading movie: its library file still plays.
+    test "creates a report for a movie being upgraded" do
+      user = user_fixture()
+      movie = available_movie(%{title: "Upgrading"})
+      {:ok, movie} = Cinder.Catalog.transition(movie, %{status: :upgrading})
+
+      assert {:ok, %{title: "Upgrading"}} = Issues.create_report(user, report_attrs(movie))
+    end
+
+    test "rejects a movie held for verification after an upgrade" do
+      user = user_fixture()
+      movie = available_movie()
+
+      Repo.update_all(from(m in Cinder.Catalog.Movie, where: m.id == ^movie.id),
+        set: [status: :import_failed, verification_hold_origin: :upgrade]
+      )
+
+      assert {:error, :not_available} = Issues.create_report(user, report_attrs(movie))
+    end
+
+    test "rejects a book, which never lands on the media server" do
+      user = user_fixture()
+      attrs = %{target_type: "book", target_id: 1, media_kind: :ebook, category: "other"}
+
+      assert {:error, :not_available} = Issues.create_report(user, attrs)
+    end
+
     test "creates a report for a fully-available season" do
       user = user_fixture()
       {series, _season} = available_season()

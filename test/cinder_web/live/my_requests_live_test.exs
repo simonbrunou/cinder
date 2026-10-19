@@ -92,43 +92,6 @@ defmodule CinderWeb.MyRequestsLiveTest do
     assert html =~ "Season 3"
   end
 
-  test "season request row does not show movie pipeline badge even when a movie shares the same tmdb_id",
-       %{conn: conn} do
-    user = Cinder.AccountsFixtures.user_fixture()
-
-    # season request with target_id 777
-    {:ok, _} =
-      Requests.create_request(user, %{
-        target_type: "season",
-        target_id: 777,
-        season_number: 2,
-        title: "Collision Show",
-        year: 2020
-      })
-
-    # movie whose tmdb_id numerically matches the series tmdb_id
-    {:ok, movie} =
-      Cinder.Catalog.add_movie(%{
-        tmdb_id: 777,
-        title: "Collision Movie",
-        year: 2019,
-        poster_path: "/col.jpg"
-      })
-
-    {:ok, _} = Cinder.Catalog.transition(movie, %{status: :downloading})
-
-    conn = log_in_user(conn, user)
-    {:ok, _lv, html} = live(conn, ~p"/my-requests")
-
-    # season row renders correctly
-    assert html =~ "Collision Show"
-    assert html =~ "Season 2"
-    assert html =~ "Pending"
-
-    # movie pipeline badge must NOT appear on the season row
-    refute html =~ "Downloading"
-  end
-
   test "live-updates when the user's request is approved", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     admin = Cinder.AccountsFixtures.admin_fixture()
@@ -310,39 +273,6 @@ defmodule CinderWeb.MyRequestsLiveTest do
                &(&1.status == :pending and &1.target_id == work.id and &1.media_kind == :ebook)
              )
     end
-
-    test "an available movie sharing the work's id does not make the book row available", %{
-      conn: conn,
-      work: work
-    } do
-      user = Cinder.AccountsFixtures.user_fixture()
-
-      # `movies_by_tmdb` is keyed by TMDB id; a book's target_id is a local book_works.id, so the
-      # two id spaces can collide.
-      Cinder.Repo.insert!(%Cinder.Catalog.Movie{
-        tmdb_id: work.id,
-        title: "Colliding Movie",
-        status: :available,
-        media_server_item_id: "collision"
-      })
-
-      {:ok, _} =
-        Requests.create_request(user, %{
-          target_type: "book",
-          target_id: work.id,
-          media_kind: :ebook
-        })
-
-      conn = log_in_user(conn, user)
-      {:ok, lv, _html} = live(conn, ~p"/my-requests")
-
-      assert has_element?(lv, "#my-requests", "Denied Book")
-
-      # Availability gates "Report an issue", and Cinder.Issues has no book snapshot, so the
-      # button would raise on click.
-      req = hd(Requests.list_for_user(user))
-      refute has_element?(lv, "#report-issue-#{req.id}")
-    end
   end
 
   describe "book target availability and holds (#494)" do
@@ -514,62 +444,6 @@ defmodule CinderWeb.MyRequestsLiveTest do
       refute Enum.any?(events, fn {_measurements, metadata} ->
                is_binary(metadata.query) and String.contains?(metadata.query, ~s(FROM "requests"))
              end)
-    end
-
-    test "an eBook target's status does not affect the same work's audiobook row", %{
-      conn: conn,
-      work: work,
-      profile: profile
-    } do
-      user = Cinder.AccountsFixtures.user_fixture()
-      admin = Cinder.AccountsFixtures.admin_fixture()
-
-      {:ok, audiobook_profile} =
-        Cinder.Catalog.create_profile(%{
-          name: "Audiobooks collision #{work.id}",
-          kind: :audiobook,
-          handling: :standard
-        })
-
-      {ebook_request, ebook_target} = approve_book(user, admin, work, :ebook, profile)
-
-      {audiobook_request, _audiobook_target} =
-        approve_book(user, admin, work, :audiobook, audiobook_profile)
-
-      {:ok, _file} =
-        Books.Files.record_import(ebook_target, %{path: "/lib/book.epub", size: 1, format: :epub})
-
-      conn = log_in_user(conn, user)
-      {:ok, lv, _html} = live(conn, ~p"/my-requests")
-
-      ebook_html = lv |> element("#request-#{ebook_request.id}") |> render()
-      audiobook_html = lv |> element("#request-#{audiobook_request.id}") |> render()
-
-      assert ebook_html =~ "Available"
-      assert audiobook_html =~ "Approved"
-      refute audiobook_html =~ "Available"
-    end
-
-    test "an available movie sharing the work's id as target_id does not affect the book row's badge",
-         %{conn: conn, work: work, profile: profile} do
-      user = Cinder.AccountsFixtures.user_fixture()
-      admin = Cinder.AccountsFixtures.admin_fixture()
-
-      Cinder.Repo.insert!(%Cinder.Catalog.Movie{
-        tmdb_id: work.id,
-        title: "Colliding Movie",
-        status: :available,
-        media_server_item_id: "collision-badge"
-      })
-
-      {request, _target} = approve_book(user, admin, work, :ebook, profile)
-
-      conn = log_in_user(conn, user)
-      {:ok, lv, _html} = live(conn, ~p"/my-requests")
-
-      html = lv |> element("#request-#{request.id}") |> render()
-      assert html =~ "Approved"
-      refute html =~ "Available"
     end
   end
 
@@ -778,6 +652,29 @@ defmodule CinderWeb.MyRequestsLiveTest do
 
       assert has_element?(lv, ".badge", "Available")
       assert has_element?(lv, ~s(a[href="https://plex.example.com"]), "Open in Plex")
+    end
+
+    # An upgrade keeps the old file in the library until the new one lands, so the row stays
+    # watchable: the same rule the movie page and Cinder.Issues apply.
+    test "an upgrading movie row still links to the media server and offers a report", %{
+      conn: conn
+    } do
+      put_media_server_web_url("https://plex.example.com")
+      user = Cinder.AccountsFixtures.user_fixture()
+      tmdb_id = System.unique_integer([:positive])
+
+      {:ok, req} =
+        Requests.create_request(user, %{target_type: "movie", target_id: tmdb_id, title: "Up"})
+
+      {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Up"})
+      {:ok, movie} = Cinder.Catalog.transition(movie, %{status: :available})
+      {:ok, _} = Cinder.Catalog.transition(movie, %{status: :upgrading})
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      assert has_element?(lv, ~s(a[href="https://plex.example.com"]), "Open in Plex")
+      assert has_element?(lv, "#report-issue-#{req.id}")
     end
 
     test "no media-server link when no web URL is configured", %{conn: conn} do

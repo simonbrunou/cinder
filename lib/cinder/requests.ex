@@ -8,11 +8,11 @@ defmodule Cinder.Requests do
   alias Cinder.Books
   alias Cinder.Books.Work
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Movie, Profile, Season}
+  alias Cinder.Catalog.Profile
   alias Cinder.LibraryKind
   alias Cinder.Notifier
   alias Cinder.Repo
-  alias Cinder.Requests.Request
+  alias Cinder.Requests.{Request, Target}
   alias Cinder.Settings
   alias Cinder.Util
 
@@ -393,68 +393,19 @@ defmodule Cinder.Requests do
   defp outstanding_count(user_id, false), do: pending_count(user_id)
 
   defp outstanding_count(user_id, true),
-    do: pending_count(user_id) + unfulfilled_approved_count(user_id)
+    do: pending_count(user_id) + outstanding_approved_count(user_id)
 
-  # One user's approved requests still waiting on their target. A request stops counting when its
-  # target has landed (the same availability the My-requests badges use) OR has been settled by an
-  # operator so it can never land: a cancelled movie, an unmonitored season (`cancel_series/2`
-  # unmonitors the tree), a paused (`:unmonitored`) book target. Excluding settled states here,
-  # rather than reaping the request in Catalog/Books, keeps the change inside this module, leaves
-  # the requester's history intact, and covers any future way of settling a target. A landed
-  # movie being replaced (`:upgrading`, or an upgrade verification hold) still has its file, so it
-  # counts as fulfilled. A missing target row stays outstanding, and so does any other target type
-  # (fail closed).
-  defp unfulfilled_approved_count(user_id) do
-    rows =
-      Repo.all(
-        from r in Request,
-          where: r.user_id == ^user_id and r.status == :approved,
-          select: {r.target_type, r.target_id, r.season_number, r.media_kind}
-      )
-
-    movie_ids = for {"movie", id, _, _} <- rows, do: id
-
-    done_movies =
-      Repo.all(
-        from m in Movie,
-          where:
-            m.tmdb_id in ^movie_ids and
-              (m.status in [:available, :upgrading, :cancelled] or
-                 m.verification_hold_origin == :upgrade),
-          select: m.tmdb_id
-      )
-      |> MapSet.new()
-
-    series_ids = for({"season", id, _, _} <- rows, uniq: true, do: id)
-
-    available_seasons =
-      Enum.reduce(series_ids, MapSet.new(), &MapSet.union(&2, Catalog.available_season_keys(&1)))
-
-    monitored_seasons =
-      Repo.all(
-        from s in Season,
-          join: sr in assoc(s, :series),
-          where: sr.tmdb_id in ^series_ids and s.monitored == true,
-          select: {sr.tmdb_id, s.season_number}
-      )
-      |> MapSet.new()
-
-    book_states = for({"book", id, _, _} <- rows, uniq: true, do: id) |> Books.target_statuses()
-
-    Enum.count(rows, fn
-      {"movie", id, _, _} ->
-        not MapSet.member?(done_movies, id)
-
-      {"season", id, season, _} ->
-        MapSet.member?(monitored_seasons, {id, season}) and
-          not MapSet.member?(available_seasons, {id, season})
-
-      {"book", id, _, kind} ->
-        Map.get(book_states, {id, kind}) not in [:available, :unmonitored]
-
-      _other ->
-        true
-    end)
+  # One user's approved requests whose target is still outstanding: not landed, and not settled by
+  # an operator. `Cinder.Requests.Target` holds the rule beside the watchable rule My requests,
+  # Discover and Issues read. It is deliberately broader: an upgrade held for verification and a
+  # cancelled movie stop holding a slot without ever being watchable. Excluding settled targets
+  # here, rather than reaping the request in Catalog/Books, leaves the requester's history intact.
+  # Counts rows, not targets.
+  defp outstanding_approved_count(user_id) do
+    from(r in Request, where: r.user_id == ^user_id and r.status == :approved)
+    |> Repo.all()
+    |> Target.resolve()
+    |> Enum.count(fn {_request, target} -> target.outstanding? end)
   end
 
   def approve_request(
