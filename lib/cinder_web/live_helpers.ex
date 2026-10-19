@@ -128,18 +128,13 @@ defmodule CinderWeb.LiveHelpers do
   The lifecycle atom for a `<.status_badge kind={:grab}>` from a grab row: the badge for the
   grab's `Catalog.grab_hold/1` class (a residual-files hold wears the `:needs_mapping` badge),
   else `:downloading` (no delivered content yet) or `:downloaded` (content in hand, waiting to
-  import). The hold classification itself lives in the Catalog — this only picks badges.
-  Shared by `/activity` and the beacon.
+  import). A hold wins whatever `content_path` says, so the beacon's attention count matches
+  `Grabs.count_grab_holds/0`. The hold classification itself lives in the Catalog — this only
+  picks badges. Shared by `/activity` and the beacon.
   """
-  def grab_state(%{content_path: nil} = grab) do
-    case Catalog.grab_hold(grab) do
-      hold when hold in [:needs_mapping, :verification_blocked] -> hold
-      _residual_or_none -> :downloading
-    end
-  end
-
   def grab_state(grab) do
     case Catalog.grab_hold(grab) do
+      nil when is_nil(grab.content_path) -> :downloading
       nil -> :downloaded
       :residual_files -> :needs_mapping
       hold -> hold

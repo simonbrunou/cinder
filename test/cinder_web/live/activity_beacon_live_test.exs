@@ -2,9 +2,12 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
   use CinderWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import Cinder.CatalogFixtures
 
   alias Cinder.Accounts
   alias Cinder.Catalog
+  alias Cinder.Catalog.{Grab, GrabFile}
+  alias Cinder.Repo
 
   setup :register_and_log_in_admin
 
@@ -21,6 +24,59 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
       session: Map.put(extra_session, "user_token", token)
     )
   end
+
+  # The nav badge and the pill each carry "N need attention" as their accessible name; with
+  # nothing to attend to, neither renders one.
+  defp assert_attention(conn, admin, n) do
+    {:ok, nav, _html} = live(conn, ~p"/calendar")
+    {:ok, pill, _html} = mount_beacon(admin)
+
+    if n == 0 do
+      refute has_element?(nav, ~s(a[href="/activity"] .badge))
+      refute has_element?(pill, ~s(a[aria-label*="need attention"]))
+    else
+      assert has_element?(nav, ~s(a[href="/activity"] .badge[aria-label="#{n} need attention"]))
+      assert has_element?(pill, ~s(a[aria-label="Pipeline: #{n} need attention"]))
+    end
+  end
+
+  defp seed({:parked, status}), do: movie_fixture(status: status)
+
+  defp seed({:verification_hold, origin}) do
+    from = if origin == :download, do: :downloaded, else: :upgrading
+    movie = movie_fixture(status: from, download_id: "v", release_title: "Rel")
+    {:ok, _held} = Catalog.hold_movie_verification(movie, origin, 1)
+  end
+
+  defp seed({:grab_hold, mapping_status}) do
+    Repo.insert!(%Grab{
+      download_id: "held",
+      download_protocol: :torrent,
+      mapping_status: mapping_status
+    })
+  end
+
+  # Unreachable in production (grab_files are inventoried only after `content_path` is set), but
+  # /activity still offers the residual-file actions for it.
+  defp seed(:residual_grab_without_content) do
+    grab = Repo.insert!(%Grab{download_id: "res", download_protocol: :usenet})
+
+    Repo.insert!(%GrabFile{
+      grab_id: grab.id,
+      relative_path: "x.mkv",
+      size: 1,
+      device: 1,
+      inode: 1
+    })
+  end
+
+  defp seed(:in_flight_movie), do: movie_fixture(status: :downloading, download_id: "d")
+
+  defp seed(:anime_held_movie),
+    do: {:ok, _} = Catalog.set_anime_hold(movie_fixture(), "subtitle_language_required")
+
+  defp seed(:anime_held_series),
+    do: {:ok, _} = Catalog.set_anime_hold(series_fixture(), "original_language_required")
 
   test "counts an in-flight movie as active", %{user: admin} do
     {:ok, _movie} = Catalog.add_movie(%{tmdb_id: 1, title: "Dune"})
@@ -60,6 +116,45 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
     html = render(view)
     assert html =~ "needs attention"
     assert html =~ "1 need attention"
+  end
+
+  test "an anime hold neither toasts nor counts as attention: it offers no action", %{
+    user: admin
+  } do
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 6, title: "Akira"})
+    {:ok, view, _html} = mount_beacon(admin)
+
+    {:ok, _held} = Catalog.set_anime_hold(movie, "subtitle_language_required")
+
+    refute has_element?(view, "#activity-beacon-toasts .alert")
+    refute has_element?(view, ~s(a[aria-label*="need attention"]))
+  end
+
+  # #732: the pill and the Activity nav badge read "N need attention" off one rule, the nav's
+  # `Catalog.count_operator_holds/0` (an item counts when /activity offers an action for it).
+  # Each item is seeded alone, so an over-count on one side can't cancel an under-count on the
+  # other.
+  describe "the pill agrees with the Activity nav badge" do
+    for {item, expected} <- [
+          {{:parked, :no_match}, 1},
+          {{:parked, :search_failed}, 1},
+          {{:parked, :import_failed}, 1},
+          {{:verification_hold, :download}, 1},
+          {{:verification_hold, :upgrade}, 1},
+          {{:grab_hold, :needs_mapping}, 1},
+          {{:grab_hold, :verification_blocked}, 1},
+          {:residual_grab_without_content, 1},
+          {:in_flight_movie, 0},
+          {:anime_held_movie, 0},
+          {:anime_held_series, 0}
+        ] do
+      test "#{inspect(item)} counts #{expected}", %{conn: conn, user: admin} do
+        seed(unquote(Macro.escape(item)))
+
+        assert Catalog.count_operator_holds() == unquote(expected)
+        assert_attention(conn, admin, unquote(expected))
+      end
+    end
   end
 
   test "does not re-toast on a repeat broadcast of the same status", %{user: admin} do

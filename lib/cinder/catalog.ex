@@ -649,12 +649,12 @@ defmodule Cinder.Catalog do
   Total items needing an operator action, for the admin Activity nav badge: parked/held movies
   that show a Retry (`#{inspect(@retryable)}`) plus grabs classified into a hold by
   `grab_hold/1` (`Grabs.count_grab_holds/0`, that classification in query form).
-  `CinderWeb.ActivityLive` renders actions from the same classification, so the badge and the
-  page agree; `0` means "no badge".
+  `CinderWeb.ActivityLive` renders actions from the same classification and
+  `CinderWeb.ActivityBeaconLive`'s pill counts it per item, so all three agree; `0` = no badge.
 
   `@retryable` is the movie hold set on purpose: a movie verification hold parks at
-  `:import_failed` (with `verification_hold_origin`), already in this set, and `anime_hold`
-  movies (`:requested`/`:searching` + a hold reason) show no action, so they are excluded.
+  `:import_failed` (with `verification_hold_origin`), already in this set, and anime-held movies
+  and series (a hold reason, no pipeline failure) show no action, so they are excluded.
   """
   def count_operator_holds do
     movie_holds = Repo.aggregate(from(m in Movie, where: m.status in @retryable), :count)
