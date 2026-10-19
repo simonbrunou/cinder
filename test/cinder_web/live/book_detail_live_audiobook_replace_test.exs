@@ -27,6 +27,11 @@ defmodule CinderWeb.BookDetailLiveAudiobookReplaceTest do
   setup :set_mox_global
   setup :verify_on_exit!
 
+  # `BookPoller` vets the client's file list before it records a completed download (#731).
+  setup do
+    Cinder.PollerHelpers.stub_clean_content()
+  end
+
   @moduletag :tmp_dir
 
   test "a manual replace resets audiobookshelf_scanned_at, and the next scan tick re-stamps it",

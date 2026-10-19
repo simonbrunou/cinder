@@ -116,7 +116,7 @@ defmodule Cinder.Download.BookPoller do
   defp advance(%BookGrab{} = grab) do
     case client_status(grab) do
       {:ok, %{state: :completed, content_path: path}} when is_binary(path) and path != "" ->
-        mark_downloaded(grab, path)
+        vetted(grab, fn -> mark_downloaded(grab, path) end)
 
       # Completed with no path: the client cannot tell us where the payload is, so there is
       # nothing to import. Treated as a failed download rather than an import failure — the same
@@ -128,7 +128,7 @@ defmodule Cinder.Download.BookPoller do
         retry_or_fail(grab, Map.get(status, :reason) || :download_failed)
 
       {:ok, status} ->
-        track_or_reap(grab, status)
+        vetted(grab, fn -> track_and_reap(grab, status) end)
 
       # The job is gone from the client — a household member deleted it, or the client's history
       # rolled over. Terminal, not transient: no future tick can find it, and with no search pass
@@ -160,22 +160,23 @@ defmodule Cinder.Download.BookPoller do
     end
   end
 
-  # An in-flight download gets the same two safety gates the movie and TV pollers apply, wired the
-  # same way they wire them:
+  # The content gate the movie and TV pollers apply (their `vetted/3`). `ContentPolicy.vet/2`
+  # inspects the file names the client will deliver and refuses a payload carrying blocked content
+  # (an executable alongside the book). It has to run BEFORE `mark_downloaded/2` — `BookSources`
+  # would silently filter that executable at import time and publish the book anyway, so the
+  # blocked-content verdict the B4b plan requires would never be reached.
   #
-  # - `ContentPolicy.vet/2` inspects the file names the client will deliver and refuses a payload
-  #   carrying blocked content (an executable alongside the book). Doing this DURING the download
-  #   is the point — `BookSources` would silently filter that executable at import time and
-  #   publish the book anyway, so the blocked-content verdict the B4b plan requires would never
-  #   be reached. It is best-effort by contract: a client that cannot answer yet returns `{:ok,
-  #   []}` and any error is "no opinion". The verdict's `detail` names the offending file and is
-  #   carried into the hold reason — `ContentPolicy.detail/1` sanitizes it for exactly that.
-  # - `StallReaper.reap?/4` ends a job that reports `:downloading` forever with no speed and no
-  #   progress, which is exactly what `BookGrab.download_progress_at` is maintained for.
-  defp track_or_reap(grab, status) do
+  # It gates the completed state as well as the in-flight ones (#731): an e-book is small enough to
+  # finish between two ticks, so the first status this poller sees is often `:completed`, and
+  # vetting only the in-flight states missed exactly that payload.
+  #
+  # It is best-effort by contract: a client that cannot answer yet returns `{:ok, []}` and any
+  # error is "no opinion". The verdict's `detail` names the offending file and is carried into the
+  # hold reason — `ContentPolicy.detail/1` sanitizes it for exactly that.
+  defp vetted(grab, continue) do
     case blocked_content(grab) do
       {:blocked, detail} -> fail_download(grab, {:blocked_content, detail})
-      :ok -> track_and_reap(grab, status)
+      :ok -> continue.()
     end
   end
 
@@ -186,6 +187,9 @@ defmodule Cinder.Download.BookPoller do
     end
   end
 
+  # `StallReaper.reap?/4` ends a job that reports `:downloading` forever with no speed and no
+  # progress, which is exactly what `BookGrab.download_progress_at` is maintained for.
+  #
   # Metrics first, reap second, on the clock the write returns — `track_and_reap/2` in
   # `Download.Poller` and `Download.TvPoller`, matched deliberately.
   #

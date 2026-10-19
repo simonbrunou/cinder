@@ -119,6 +119,13 @@ All notable changes to Cinder are documented here. The format follows
   as an unprivileged user the way the Dockerfile does. Build with the `Dockerfile` instead.
 
 ### Fixed
+- **A book download that finishes between two polls still gets the blocked-content check.** The
+  book poller checked a download's file list only while it was still downloading. An e-book
+  small enough to complete inside one 5-second tick skipped the check: the executable next to it
+  was dropped at import and the book was published, but the release was neither held nor
+  blocklisted. Completed e-book and audiobook downloads now get the same check, as movies and
+  episodes already did. A usenet job that finishes inside one poll is still not checked, for any
+  kind: SABnzbd lists no files once the job is in history (#749).
 - **Live updates no longer close the mobile menu or open series sections.** Every page refresh
   pushed by the server (download progress on Activity, a series update) snapped the mobile nav
   drawer shut, so on a phone you could not leave Activity from the menu. The series page's Title

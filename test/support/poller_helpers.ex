@@ -6,8 +6,9 @@ defmodule Cinder.PollerHelpers do
   @doc """
   Stubs both download clients' `files/1` with an empty (clean) list.
 
-  Every in-flight download is content-vetted by `Cinder.Download.ContentPolicy`, which is on by
-  default — so without this, any test that advances a `:downloading` unit hits an unstubbed mock.
+  Every download is content-vetted by `Cinder.Download.ContentPolicy`, which is on by default,
+  both while `:downloading` and when first seen `:completed` — so without this, any test that
+  advances a unit through either state hits an unstubbed mock.
   A `Mox.stub` is not verified and `expect` overrides it, so the fake-content tests still assert
   their own file lists; this only spares every *other* poller test from describing one.
   """

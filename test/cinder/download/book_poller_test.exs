@@ -26,8 +26,8 @@ defmodule Cinder.Download.BookPollerTest do
   setup :verify_on_exit!
 
   setup do
-    # The in-flight content gate asks the client what files the job will deliver. Default to a
-    # clean payload; the blocked-content test overrides this with its own expectation.
+    # The content gate asks the client what files the job will deliver, both in flight and on
+    # completion. Default to a clean payload; the blocked-content tests override this stub.
     stub(Cinder.Download.ClientMock, :files, fn _id -> {:ok, ["The Dispossessed.epub"]} end)
     :persistent_term.erase({BookPoller, :audiobookshelf_scan_failed})
     on_exit(fn -> :persistent_term.erase({BookPoller, :audiobookshelf_scan_failed}) end)
@@ -208,8 +208,8 @@ defmodule Cinder.Download.BookPollerTest do
       %{target: target} = downloading(ctx, "book.epub")
 
       # The client reports the job will deliver an executable alongside the book. Vetting has to
-      # happen HERE, during the download: `BookSources` silently filters non-book files at import
-      # time, so the book would otherwise publish and the blocked payload never be reported.
+      # happen before import: `BookSources` silently filters non-book files at import time, so the
+      # book would otherwise publish and the blocked payload never be reported.
       stub(Cinder.Download.ClientMock, :files, fn _id ->
         {:ok, ["The Dispossessed.epub", "setup.exe"]}
       end)
@@ -228,6 +228,31 @@ defmodule Cinder.Download.BookPollerTest do
       # exactly this surface, and without it an operator is told "blocked_content" about a payload
       # they cannot inspect — the grab that carried the download id is deleted by the same hold.
       assert target.hold_reason == "blocked_content: download contains setup.exe"
+      assert Repo.all(BookGrab) == []
+    end
+
+    # #731: an e-book is small enough to finish between two ticks, so the first status this poller
+    # ever sees is `:completed`. Vetting only the in-flight states let exactly that payload reach
+    # import, where `BookSources` filtered the executable and published the book unheld.
+    test "a payload carrying blocked content is refused when first seen completed", ctx do
+      %{target: target, release_dir: release_dir} = downloading(ctx, "The Dispossessed.epub")
+      File.write!(Path.join(release_dir, "setup.exe"), "MZ")
+
+      stub(Cinder.Download.ClientMock, :files, fn _id ->
+        {:ok, ["The Dispossessed.epub", "setup.exe"]}
+      end)
+
+      complete_download(release_dir)
+      expect(Cinder.Download.ClientMock, :remove, fn "remote-1", _opts -> :ok end)
+
+      poll!()
+
+      target = Repo.reload!(target)
+      assert target.status == :held
+      assert target.hold_reason == "blocked_content: download contains setup.exe"
+      refute target.hold_transient
+      assert Books.blocked_release_titles(target.id) == ["The Dispossessed EPUB"]
+      assert Repo.all(BookFile) == []
       assert Repo.all(BookGrab) == []
     end
 
