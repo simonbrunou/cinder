@@ -31,7 +31,7 @@ defmodule Cinder.Download.BookPoller do
   alias Cinder.Books.{BookGrab, BookTarget}
   alias Cinder.Disk
   alias Cinder.Download
-  alias Cinder.Download.{ContentPolicy, StallReaper}
+  alias Cinder.Download.Watch
   alias Cinder.Library
   alias Cinder.Library.{AudiobookImport, AudiobookServer, BookImport}
   alias Cinder.Notifier
@@ -113,44 +113,46 @@ defmodule Cinder.Download.BookPoller do
 
   # --- download phase ---
 
+  # `Download.Watch` owns everything up to the verdict (client, status, content vetting, metrics,
+  # the stall reaper); this maps each verdict onto the grab and its target.
   defp advance(%BookGrab{} = grab) do
-    case client_status(grab) do
-      {:ok, %{state: :completed, content_path: path}} when is_binary(path) and path != "" ->
-        vetted(grab, fn -> mark_downloaded(grab, path) end)
+    case Watch.check(grab, &Books.Grabs.track/2) do
+      {:completed, path} ->
+        mark_downloaded(grab, path)
 
-      # Completed with no path: the client cannot tell us where the payload is, so there is
-      # nothing to import. Treated as a failed download rather than an import failure — the same
-      # call the movie poller makes.
-      {:ok, %{state: :completed}} ->
-        retry_or_fail(grab, :missing_content_path)
+      # Completed with no path, a client-reported failure, or a job the client no longer knows
+      # (a household member deleted it, or the client's history rolled over). Each is treated as a
+      # failed download rather than an import failure, bounded rather than immediate — see
+      # `retry_or_fail/2`. A vanished job is terminal: with no search pass in this slice the
+      # target would sit `:monitored` holding a grab forever, refusing any new grab.
+      {:failed, reason} ->
+        retry_or_fail(grab, reason)
 
-      {:ok, %{state: :error} = status} ->
-        retry_or_fail(grab, Map.get(status, :reason) || :download_failed)
+      # Refused BEFORE `mark_downloaded/2`: `BookSources` would silently filter the executable at
+      # import time and publish the book anyway, so the blocked-content verdict the B4b plan
+      # requires would never be reached. The detail names the offending file and is carried into
+      # the hold reason.
+      {:blocked_content, _detail} = reason ->
+        fail_download(grab, reason)
 
-      {:ok, status} ->
-        vetted(grab, fn -> track_and_reap(grab, status) end)
+      :stalled ->
+        fail_download(grab, :stalled)
 
-      # The job is gone from the client — a household member deleted it, or the client's history
-      # rolled over. Terminal, not transient: no future tick can find it, and with no search pass
-      # in this slice the target would sit `:monitored` holding a grab forever, refusing any new
-      # grab. Bounded rather than immediate, though — see `retry_or_fail/2`.
-      {:error, :not_found} ->
-        retry_or_fail(grab, :download_missing)
-
-      # A genuine transient client/network error must not drop a live download: leave the grab
-      # alone and re-derive next tick.
-      {:error, reason} ->
-        Logger.info("book grab #{grab.id} status unavailable: #{inspect(reason)}")
+      :downloading ->
         :ok
+
+      # A missing client or a transient client/network error must not drop a live download: leave
+      # the grab alone and re-derive next tick.
+      :no_client ->
+        status_unavailable(grab, :no_client)
+
+      {:unreachable, reason} ->
+        status_unavailable(grab, reason)
     end
   end
 
-  defp client_status(%BookGrab{download_id: id, download_protocol: protocol}) do
-    case Download.client_for(protocol) do
-      {:ok, client} -> client.status(id)
-      :error -> {:error, :no_client}
-    end
-  end
+  defp status_unavailable(grab, reason),
+    do: Logger.info("book grab #{grab.id} status unavailable: #{inspect(reason)}")
 
   defp mark_downloaded(grab, path) do
     case Books.Grabs.mark_downloaded(grab, path) do
@@ -160,82 +162,10 @@ defmodule Cinder.Download.BookPoller do
     end
   end
 
-  # The content gate the movie and TV pollers apply (their `vetted/3`). `ContentPolicy.vet/2`
-  # inspects the file names the client will deliver and refuses a payload carrying blocked content
-  # (an executable alongside the book). It has to run BEFORE `mark_downloaded/2` — `BookSources`
-  # would silently filter that executable at import time and publish the book anyway, so the
-  # blocked-content verdict the B4b plan requires would never be reached.
-  #
-  # It gates the completed state as well as the in-flight ones (#731): an e-book is small enough to
-  # finish between two ticks, so the first status this poller sees is often `:completed`, and
-  # vetting only the in-flight states missed exactly that payload.
-  #
-  # It is best-effort by contract: a client that cannot answer yet returns `{:ok, []}` and any
-  # error is "no opinion". The verdict's `detail` names the offending file and is carried into the
-  # hold reason — `ContentPolicy.detail/1` sanitizes it for exactly that.
-  defp vetted(grab, continue) do
-    case blocked_content(grab) do
-      {:blocked, detail} -> fail_download(grab, {:blocked_content, detail})
-      :ok -> continue.()
-    end
-  end
-
-  defp blocked_content(%BookGrab{download_id: id, download_protocol: protocol}) do
-    case Download.client_for(protocol) do
-      {:ok, client} -> ContentPolicy.vet(client, id)
-      :error -> :ok
-    end
-  end
-
-  # `StallReaper.reap?/4` ends a job that reports `:downloading` forever with no speed and no
-  # progress, which is exactly what `BookGrab.download_progress_at` is maintained for.
-  #
-  # Metrics first, reap second, on the clock the write returns — `track_and_reap/2` in
-  # `Download.Poller` and `Download.TvPoller`, matched deliberately.
-  #
-  # Reaping on the struct as loaded at tick start kills healthy downloads: after the app is down
-  # longer than `max_downloading_timeout` (24h by default) the row's `download_progress_at` is
-  # stale by definition, and checking it BEFORE recording this tick's genuine progress reaps a
-  # job that is downloading fine. `Books.Grabs.track/2` advances the clock only on real forward
-  # motion, so the post-write value is the honest one.
-  defp track_and_reap(grab, status) do
-    case Books.Grabs.track(grab, track_attrs(status)) do
-      {:ok, tracked} ->
-        maybe_reap(grab, tracked.download_progress_at, status)
-
-      # Never silent: a rejected metrics write freezes the progress clock, and a frozen clock is
-      # what the absolute cap reads.
-      {:error, reason} ->
-        Logger.warning("book grab #{grab.id} progress not recorded: #{inspect(reason)}")
-        :ok
-    end
-  end
-
-  defp track_attrs(status) do
-    %{
-      download_progress: Map.get(status, :progress),
-      download_speed: Map.get(status, :speed),
-      download_eta: Map.get(status, :eta)
-    }
-  end
-
-  # `StallReaper.enabled?()` is the operator switch, and it is checked here for the same reason
-  # both siblings check it: `reap?/4` is a pure predicate that knows nothing about the config, so
-  # calling it unguarded reaped book downloads on an install that had turned reaping off.
-  #
-  # The seed window keeps the tick-start `updated_at` and the absolute cap uses the post-write
-  # progress clock — `TvPoller.maybe_reap/3`'s split, unchanged.
-  defp maybe_reap(grab, download_progress_at, status) do
-    if StallReaper.enabled?() and
-         StallReaper.reap?(grab.updated_at, download_progress_at, status, DateTime.utc_now()),
-       do: fail_download(grab, :stalled),
-       else: :ok
-  end
-
   # The download-phase failure budget, on the same `import_attempts` column the import phase uses.
-  # One counter across both phases is the movie poller's own arrangement (`poller.ex:216-221`), and
-  # the two cannot interleave here: a grab is in the download phase only while `content_path` is
-  # nil, and `Books.Grabs.mark_downloaded/2` resets the counter on the edge between them — the
+  # One counter across both phases is the movie poller's own arrangement (`Poller.fail_download/2`),
+  # and the two cannot interleave here: a grab is in the download phase only while `content_path`
+  # is nil, and `Books.Grabs.mark_downloaded/2` resets the counter on the edge between them — the
   # download→import reset `Catalog.Grabs` documents at the same boundary.
   #
   # Bounded rather than immediate because every verdict routed here is derived from a SUCCESSFUL

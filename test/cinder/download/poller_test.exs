@@ -3093,6 +3093,41 @@ defmodule Cinder.Download.PollerTest do
       assert "Bad.1080p-GRP" in Catalog.blocked_release_titles(reloaded)
     end
 
+    # The watch keeps the client's own error text (`{:download_error, detail}`); the revert still
+    # has to recognise it as a download failure, or the dead replacement is never blocklisted and
+    # the next upgrade hunt re-picks it.
+    test "an upgrade whose client keeps failing with a reason reverts and blocklists the release" do
+      Cinder.TestNotifier.subscribe()
+
+      movie =
+        movie_fixture(%{
+          tmdb_id: 74,
+          status: :upgrading,
+          download_id: "dl-paused",
+          download_protocol: :torrent,
+          release_title: "Paused.2160p-GRP",
+          file_path: "/lib/M (2020)/M (2020).mkv"
+        })
+
+      # One tick short of the bound, so this tick's failure is the one that reverts.
+      {:ok, movie} =
+        Catalog.transition(movie, %{status: :upgrading, import_attempts: 9}, expect: :upgrading)
+
+      stub(Cinder.Download.ClientMock, :status, fn "dl-paused" ->
+        {:ok, %{state: :error, reason: "Paused on duplicate"}}
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+      capture_log(fn -> assert :ok = Poller.poll() end)
+
+      reloaded = Repo.get!(Movie, movie.id)
+      assert reloaded.status == :available
+      assert reloaded.file_path == "/lib/M (2020)/M (2020).mkv"
+      assert Catalog.blocked_release_titles(reloaded) == ["Paused.2160p-GRP"]
+      # The notification keeps the classifying code; the client's text goes to the log.
+      assert_receive {:notify, {:movie_upgrade_failed, %Movie{}, :download_error}}
+    end
+
     test "an upgrade with no configured client reverts to :available without blocklisting" do
       # Drop usenet so the upgrade's status poll can't resolve a client (a config glitch, not a
       # release failure): it must revert the file-safe upgrade but NOT blocklist a good release.
@@ -3295,20 +3330,8 @@ defmodule Cinder.Download.PollerTest do
       assert Keyword.get(opts, :delete_files) == true
     end
 
-    test "does not reap while the reaper is disabled (the default)" do
-      movie = stalled_downloading_movie(71, "hash-off", "Some.Release.1080p")
-
-      stub(Cinder.Download.ClientMock, :status, fn "hash-off" ->
-        {:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 0}}
-      end)
-
-      start_supervised!({Poller, interval: 60_000})
-      assert :ok = Poller.poll()
-
-      assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
-      assert Repo.all(Cinder.Catalog.BlockedRelease) == []
-    end
-
+    # The reaper's on/off switch and its clocks are `Download.Watch`'s, pinned in `WatchTest`; these
+    # pin what a stalled verdict does to a movie and an upgrade.
     test "does not reap a seeded stall inside the (long) stall window" do
       # 0 no-seeders window, but a 1h stall window and a seeded swarm: not yet reapable.
       enable_reaper!(stall_timeout: :timer.hours(1))
@@ -3486,41 +3509,6 @@ defmodule Cinder.Download.PollerTest do
       assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
     end
 
-    test "genuine completion progress resets the absolute-cap clock before reaping" do
-      enable_reaper!(
-        stall_timeout: :timer.hours(2),
-        no_seeders_timeout: :timer.hours(2),
-        max_downloading_timeout: :timer.hours(1)
-      )
-
-      movie = stalled_downloading_movie(77, "hash-progressing", "Progressing.Release.1080p")
-
-      assert {:ok, tracked} =
-               Catalog.update_movie_download_metrics(movie, %{
-                 download_progress: 0.4,
-                 download_speed: 1_024,
-                 download_eta: 500
-               })
-
-      past = DateTime.add(Catalog.now(), -2, :hour)
-
-      Repo.update_all(from(m in Movie, where: m.id == ^movie.id),
-        set: [download_progress_at: past]
-      )
-
-      stub(Cinder.Download.ClientMock, :status, fn "hash-progressing" ->
-        {:ok, %{state: :downloading, progress: 0.41, speed: 2_048, eta: 400, seeders: 5}}
-      end)
-
-      start_supervised!({Poller, interval: 60_000})
-      assert :ok = Poller.poll()
-
-      progressed = Repo.get!(Movie, tracked.id)
-      assert progressed.status == :downloading
-      assert progressed.download_progress == 0.41
-      assert DateTime.after?(progressed.download_progress_at, past)
-    end
-
     test "updated_at still freezes for the seed-window derivation" do
       # Reaper OFF: the torrent-only short window keeps its existing derived activity clock.
       movie = stalled_downloading_movie(74, "hash-freeze", "Whatever.1080p")
@@ -3541,6 +3529,8 @@ defmodule Cinder.Download.PollerTest do
     end
   end
 
+  # Which states are vetted and how a client with no file list is read are `Download.Watch`'s rules,
+  # pinned in `WatchTest`; these pin what a blocked-content verdict does to a movie and an upgrade.
   describe "content policy" do
     setup do
       movie = downloading_movie(90, "hash-fake", release_title: "Movie.2024.1080p-FAKE")
@@ -3579,28 +3569,6 @@ defmodule Cinder.Download.PollerTest do
 
       assert %Movie{status: :downloading, download_progress: 0.9} = Repo.get!(Movie, movie.id)
       assert Repo.all(Cinder.Catalog.BlockedRelease) == []
-    end
-
-    # The regression that matters most: a fake payload is ~1 MB, so it is routinely :completed by
-    # the time the first tick looks at it. Vetting only the :downloading branch would let exactly
-    # the case this check exists for walk straight into the importer.
-    test "a fake caught only once COMPLETED is still rejected, never imported", %{movie: movie} do
-      stub(Cinder.Download.ClientMock, :status, fn "hash-fake" ->
-        {:ok, %{state: :completed, content_path: "/downloads/Movie.2024.1080p"}}
-      end)
-
-      expect(Cinder.Download.ClientMock, :files, fn "hash-fake" ->
-        {:ok, ["Movie.2024.1080p/Movie.2024.1080p.mkv.lnk"]}
-      end)
-
-      # No import stubs: reaching the importer at all would raise UnexpectedCall.
-      start_supervised!({Poller, interval: 60_000})
-      assert :ok = Poller.poll()
-
-      assert %Movie{status: :requested, content_path: nil} = Repo.get!(Movie, movie.id)
-
-      assert [%{release_title: "Movie.2024.1080p-FAKE", reason: "blocked_content"}] =
-               Repo.all(Cinder.Catalog.BlockedRelease)
     end
 
     test "a fake replacement reverts an upgrade, live library file untouched" do
@@ -3727,7 +3695,7 @@ defmodule Cinder.Download.PollerTest do
 
       test_pid = self()
       # #414 review: a concurrent Cancel/Discard-upgrade (or Delete) can commit between the
-      # poller's tick-start read and vetted_upgrade/3's blocked verdict — simulated here by
+      # poller's tick-start read and Download.Watch's blocked-content verdict — simulated here by
       # aborting the upgrade from inside the files/1 expectation, the exact point
       # ContentPolicy.vet/2's client I/O sits. abort_upgrade/2's own cleanup removes the
       # replacement job immediately, so the LOSING racer (this tick's revert) must find nothing
@@ -3771,16 +3739,6 @@ defmodule Cinder.Download.PollerTest do
       refute_receive {:removed, "hash-upgrade-fake-3", _opts}, 0
       assert Repo.all(Intent) == []
       assert Repo.get!(Movie, movie.id).status == :available
-    end
-
-    test "a client that cannot list files leaves the download alone", %{movie: movie} do
-      expect(Cinder.Download.ClientMock, :files, fn "hash-fake" -> {:error, :econnrefused} end)
-
-      start_supervised!({Poller, interval: 60_000})
-      assert :ok = Poller.poll()
-
-      assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
-      assert Repo.all(Cinder.Catalog.BlockedRelease) == []
     end
   end
 end

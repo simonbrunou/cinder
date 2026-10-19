@@ -132,15 +132,8 @@ defmodule Cinder.Download.PollerSkeleton do
 
           # --- shared pipeline helpers (movie + TV pollers) --------------------------------------
 
-          # The download client's `:error` status may carry a human-facing `:reason` (SABnzbd's
-          # paused state or fail_message). Surface it as the park detail while keeping
-          # `:download_error` as the classifying code the blocklist/membership checks key on —
-          # `reason_code/1` unwraps it back to that atom at the park sites.
-          defp download_error_reason(%{reason: detail}) when is_binary(detail) and detail != "",
-            do: {:download_error, detail}
-
-          defp download_error_reason(_status), do: :download_error
-
+          # A reason may carry a human detail (`Download.Watch`'s `{:download_error, "paused"}`);
+          # unwrap the classifying code the blocklist/membership checks and notifications key on.
           defp reason_code({code, _detail}), do: code
           defp reason_code(code), do: code
 

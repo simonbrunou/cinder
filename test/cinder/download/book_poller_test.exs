@@ -204,7 +204,10 @@ defmodule Cinder.Download.BookPollerTest do
       refute Repo.get_by(Intent, kind: :book_target, target_id: target.id, remote_id: "nzo-book")
     end
 
-    test "a payload carrying blocked content is refused mid-download", ctx do
+    # Whether the payload is caught in flight or first seen `:completed` (#731: an e-book is small
+    # enough to finish between two ticks) is `Download.Watch`'s rule, pinned in `WatchTest`; this
+    # pins what the blocked-content verdict does to a book target.
+    test "a payload carrying blocked content is refused", ctx do
       %{target: target} = downloading(ctx, "book.epub")
 
       # The client reports the job will deliver an executable alongside the book. Vetting has to
@@ -228,28 +231,7 @@ defmodule Cinder.Download.BookPollerTest do
       # exactly this surface, and without it an operator is told "blocked_content" about a payload
       # they cannot inspect — the grab that carried the download id is deleted by the same hold.
       assert target.hold_reason == "blocked_content: download contains setup.exe"
-      assert Repo.all(BookGrab) == []
-    end
-
-    # #731: an e-book is small enough to finish between two ticks, so the first status this poller
-    # ever sees is `:completed`. Vetting only the in-flight states let exactly that payload reach
-    # import, where `BookSources` filtered the executable and published the book unheld.
-    test "a payload carrying blocked content is refused when first seen completed", ctx do
-      %{target: target, release_dir: release_dir} = downloading(ctx, "The Dispossessed.epub")
-      File.write!(Path.join(release_dir, "setup.exe"), "MZ")
-
-      stub(Cinder.Download.ClientMock, :files, fn _id ->
-        {:ok, ["The Dispossessed.epub", "setup.exe"]}
-      end)
-
-      complete_download(release_dir)
-      expect(Cinder.Download.ClientMock, :remove, fn "remote-1", _opts -> :ok end)
-
-      poll!()
-
-      target = Repo.reload!(target)
-      assert target.status == :held
-      assert target.hold_reason == "blocked_content: download contains setup.exe"
+      # Deterministic, so not worth an unattended re-look, and never re-picked.
       refute target.hold_transient
       assert Books.blocked_release_titles(target.id) == ["The Dispossessed EPUB"]
       assert Repo.all(BookFile) == []
@@ -582,7 +564,8 @@ defmodule Cinder.Download.BookPollerTest do
 
       target = Repo.reload!(target)
       assert target.status == :held
-      assert target.hold_reason == "download_missing"
+      # The same reason the movie and TV pollers persist (`Download.Watch`'s vocabulary).
+      assert target.hold_reason == "torrent_not_found"
       assert Repo.all(BookGrab) == []
     end
 
@@ -616,8 +599,9 @@ defmodule Cinder.Download.BookPollerTest do
       target = Repo.reload!(target)
       assert target.status == :held
       # Rendered, not inspected: a client's own error text is what a household member reads off
-      # the target, and `inspect/1` would show it quoted.
-      assert target.hold_reason == "unpacking failed"
+      # the target, and `inspect/1` would show it quoted. The `download_error` code in front is
+      # the reason every kind persists for a client-reported failure.
+      assert target.hold_reason == "download_error: unpacking failed"
       refute Repo.get(BookGrab, grab.id)
     end
 
@@ -633,27 +617,8 @@ defmodule Cinder.Download.BookPollerTest do
       assert Repo.get(BookGrab, grab.id)
     end
 
-    test "a stalled download is left alone while the stall reaper is switched off", ctx do
-      %{grab: grab, target: target} = downloading(ctx, "book.epub")
-
-      # Zero speed, zero seeders, no progress for 40 minutes — past `no_seeders_timeout`. The
-      # operator has reaping switched off (the shipped default is on; `config/test.exs` turns it
-      # off), so nothing may be reaped. `StallReaper.reap?/4` is a pure predicate that knows
-      # nothing about the config, so calling it unguarded ignored that switch for books alone.
-      #
-      # No `remove` expectation: reaching the client would fail this test.
-      stall(grab, minutes: 40)
-
-      expect(Cinder.Download.ClientMock, :status, fn "remote-1" ->
-        {:ok, %{state: :downloading, progress: 0.5, speed: 0, seeders: 0}}
-      end)
-
-      poll!()
-
-      assert Repo.reload!(target).status == :monitored
-      assert Repo.get(BookGrab, grab.id)
-    end
-
+    # The reaper's on/off switch and its clocks are `Download.Watch`'s, pinned in `WatchTest`; this
+    # pins what a stalled verdict does to a book target.
     test "a stalled download is reaped once the stall reaper is switched on", ctx do
       %{grab: grab, target: target} = downloading(ctx, "book.epub")
 
@@ -672,29 +637,6 @@ defmodule Cinder.Download.BookPollerTest do
       assert target.status == :held
       assert target.hold_reason == "stalled"
       assert Repo.all(BookGrab) == []
-    end
-
-    test "a download that resumed after a long outage is not reaped by the absolute cap", ctx do
-      %{grab: grab, target: target} = downloading(ctx, "book.epub")
-
-      # The app was down for two days while the download kept going. The progress clock on the row
-      # is stale by definition, so reading it BEFORE recording this tick's status reaps a healthy
-      # job: `max_downloading_timeout` defaults to 24h. Recording first — what `Poller` and
-      # `TvPoller` both do — advances the clock on this tick's real forward motion, and the cap
-      # then reads the honest value.
-      #
-      # No `remove` expectation: reaping this download would fail the test.
-      stall_reaper(enabled: true)
-      stall(grab, minutes: 48 * 60)
-
-      expect(Cinder.Download.ClientMock, :status, fn "remote-1" ->
-        {:ok, %{state: :downloading, progress: 0.5, speed: 1_000, seeders: 12}}
-      end)
-
-      poll!()
-
-      assert Repo.reload!(target).status == :monitored
-      assert Repo.reload!(grab).download_progress == 0.5
     end
   end
 
@@ -776,7 +718,7 @@ defmodule Cinder.Download.BookPollerTest do
 
       target = Repo.reload!(target)
       assert target.status == :held
-      assert target.hold_reason == "missing_content_path"
+      assert target.hold_reason == "no_content_path"
     end
 
     test "import holds (no attempt bump, no park) when the books root is nearly full", ctx do

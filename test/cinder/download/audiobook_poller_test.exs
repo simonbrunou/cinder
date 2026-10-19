@@ -142,33 +142,6 @@ defmodule Cinder.Download.AudiobookPollerTest do
     end
   end
 
-  describe "content gate" do
-    # #731: audiobooks go through the same `BookPoller` download phase as e-books, so a payload
-    # first seen `:completed` has to meet the same blocked-content verdict as one caught
-    # mid-download.
-    test "a payload carrying blocked content is refused when first seen completed", ctx do
-      %{target: target, release_dir: release_dir} =
-        downloading(ctx, %{"The Dispossessed.m4b" => m4b_bytes(), "setup.exe" => "MZ"})
-
-      stub(Cinder.Download.ClientMock, :files, fn _id ->
-        {:ok, ["The Dispossessed.m4b", "setup.exe"]}
-      end)
-
-      complete_download(release_dir)
-      expect(Cinder.Download.ClientMock, :remove, fn "remote-1", _opts -> :ok end)
-
-      capture_log(fn -> poll!() end)
-
-      target = Repo.reload!(target)
-      assert target.status == :held
-      assert target.hold_reason == "blocked_content: download contains setup.exe"
-      refute target.hold_transient
-      assert Books.blocked_release_titles(target.id) == ["The Dispossessed Audiobook"]
-      assert Repo.all(BookFile) == []
-      assert Repo.all(BookGrab) == []
-    end
-  end
-
   describe "post-import cleanup fencing" do
     test "a failed post-import client removal survives as a durable cleanup record, and a later pass drains it",
          ctx do

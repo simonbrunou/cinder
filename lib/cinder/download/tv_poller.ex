@@ -13,7 +13,7 @@ defmodule Cinder.Download.TvPoller do
 
   Holds no in-flight state: every tick re-derives its work from the DB, so it recovers cleanly
   after a crash/restart — the same OTP payoff the movie poller proves. State and the download
-  client are shared with the movie pipeline (`Cinder.Download.client_for/1`); episode/grab writes
+  watch are shared with the movie pipeline (`Cinder.Download.Watch.check/2`); episode/grab writes
   go through `Cinder.Catalog` choke-points, so the WAL + `busy_timeout` correctness holds.
 
   Bounded retry uses the grab's `download_attempts` counter; `mark_grab_downloaded` resets it at
@@ -30,7 +30,7 @@ defmodule Cinder.Download.TvPoller do
   alias Cinder.{Acquisition, Catalog, Disk, Download, Library, Notifier, Settings}
   alias Cinder.Acquisition.AnimePreferences
   alias Cinder.Catalog.{Episode, Grab, Grabs, MediaProfile}
-  alias Cinder.Download.{ContentPolicy, StallReaper}
+  alias Cinder.Download.Watch
   alias Cinder.HTTPPolicy
   alias Cinder.Repo
 
@@ -38,7 +38,7 @@ defmodule Cinder.Download.TvPoller do
   @search_retry_after 60
 
   # Download-side failures that only reach park after exhausting @max_attempts retries
-  # (advance_with/2) — symmetric with the movie poller's @download_failure_errors. Past
+  # (advance/1) — symmetric with the movie poller's @download_failure_errors. Past
   # exhaustion the release itself is the problem, so the grab's release is blocklisted.
   @download_failure_errors [:download_error, :torrent_not_found, :no_content_path]
 
@@ -66,99 +66,57 @@ defmodule Cinder.Download.TvPoller do
         do: isolate("grab #{grab.id}", fn -> advance(grab) end)
   end
 
+  # `Download.Watch` owns everything up to the verdict (client, status, content vetting, metrics,
+  # the stall reaper); this maps each verdict onto the grab's own transition.
   defp advance(grab) do
-    case Download.client_for(grab.download_protocol) do
-      {:ok, client} -> advance_with(grab, client)
-      # No client for this grab's protocol (e.g. removed from config mid-download): bound it so
-      # it parks instead of re-raising every tick.
-      :error -> retry_or_park(grab, :no_client)
-    end
-  end
-
-  defp advance_with(grab, client) do
-    case client.status(grab.download_id) do
-      {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
-        vetted(grab, client, fn -> Catalog.mark_grab_downloaded(grab, path) end)
+    case Watch.check(grab, &Catalog.update_grab_download_metrics/2) do
+      {:completed, path} ->
+        Catalog.mark_grab_downloaded(grab, path)
 
       # Completed but no usable path / errored / vanished: anomalous, so bound it rather than
-      # re-polling forever. A still-downloading or transient client error just waits (no bump).
-      {:ok, %{state: :completed}} ->
-        retry_or_park(grab, :no_content_path)
+      # re-polling forever.
+      {:failed, reason} ->
+        retry_or_park(grab, reason)
 
-      {:ok, %{state: :error} = status} ->
-        retry_or_park(grab, download_error_reason(status))
+      # Deterministic: a fake's file list won't improve, so a blocked verdict skips retry_or_park's
+      # attempt budget and parks on the first sighting. #413: the client removal used to be a bare
+      # best-effort call fired BEFORE the park deleted the grab (the grab's only durable record of
+      # `download_id`/`download_protocol`) — a transient removal failure leaked the remote job
+      # forever. `park/2` now routes `:blocked_content` through `Catalog.park_grab_and_remove/1`,
+      # which fences a `:cleanup_pending` intent and deletes the grab in the SAME transaction (no
+      # crash window between them), then makes the immediate best-effort removal attempt after
+      # commit; a crash or failure there just leaves the fenced row for the next tick's
+      # `reconcile_pending_intents/1` to retry. The delete still lands before the removal attempt,
+      # so the payload still stops arriving as soon as this tick's cleanup runs.
+      {:blocked_content, _detail} = reason ->
+        park(grab, reason)
 
-      {:error, :not_found} ->
-        retry_or_park(grab, :torrent_not_found)
+      :stalled ->
+        reap(grab)
 
-      {:ok, %{state: :downloading} = status} ->
-        vetted(grab, client, fn -> track_and_reap(grab, status) end)
+      # No client for this grab's protocol (e.g. removed from config mid-download): bound it so
+      # it parks instead of re-raising every tick.
+      :no_client ->
+        retry_or_park(grab, :no_client)
 
-      {:error, _reason} ->
-        Catalog.update_grab_download_metrics(grab, %{
-          download_speed: nil,
-          download_eta: nil
-        })
+      # Still in transit, or a transient client error: wait, no bump.
+      :downloading ->
+        :ok
 
-      _ ->
+      {:unreachable, _reason} ->
         :ok
     end
   end
 
-  # Gates BOTH in-flight states, not just :downloading — a fake payload is small enough to COMPLETE
-  # inside a single tick, so vetting only the downloading branch would miss exactly the case the
-  # check exists for and hand the payload to the importer.
-  #
-  # Deterministic: a fake's file list won't improve, so a blocked verdict skips retry_or_park's
-  # attempt budget and parks on the first sighting. #413: the client removal used to be a bare
-  # best-effort call fired BEFORE the park deleted the grab (the grab's only durable record of
-  # `download_id`/`download_protocol`) — a transient removal failure leaked the remote job
-  # forever. `park/2` now routes `:blocked_content` through `Catalog.park_grab_and_remove/1`,
-  # which fences a `:cleanup_pending` intent and deletes the grab in the SAME transaction (no
-  # crash window between them), then makes the immediate best-effort removal attempt after
-  # commit; a crash or failure there just leaves the fenced row for the next tick's
-  # `reconcile_pending_intents/1` to retry. The delete still lands before the removal attempt, so
-  # the payload still stops arriving as soon as this tick's cleanup runs.
-  defp vetted(grab, client, continue) do
-    case ContentPolicy.vet(client, grab.download_id) do
-      {:blocked, detail} ->
-        park(grab, {:blocked_content, detail})
+  defp reap(grab) do
+    case Catalog.reap_stalled_grab(grab) do
+      {:ok, _reaped} ->
+        Logger.warning(
+          "tv grab #{grab.id} reaped: stalled download removed; episodes re-searching"
+        )
 
-      :ok ->
-        continue.()
-    end
-  end
-
-  # ponytail: keep the seed window on tick-start `updated_at`; use the returned monotonic progress
-  # clock for the absolute cap so speed/ETA churn cannot disguise a wedged ordinary or upgrade grab.
-  defp maybe_reap(grab, download_progress_at, status) do
-    if StallReaper.enabled?() and
-         StallReaper.reap?(
-           grab.updated_at,
-           download_progress_at,
-           status,
-           DateTime.utc_now()
-         ) do
-      case Catalog.reap_stalled_grab(grab) do
-        {:ok, _reaped} ->
-          Logger.warning(
-            "tv grab #{grab.id} reaped: stalled download removed; episodes re-searching"
-          )
-
-        {:error, _reason} ->
-          :ok
-      end
-    end
-  end
-
-  defp track_and_reap(grab, status) do
-    case Catalog.update_grab_download_metrics(grab, %{
-           download_progress: Map.get(status, :progress),
-           download_speed: Map.get(status, :speed),
-           download_eta: Map.get(status, :eta)
-         }) do
-      {:ok, tracked} -> maybe_reap(grab, tracked.download_progress_at, status)
-      {:error, reason} -> {:error, reason}
+      {:error, _reason} ->
+        :ok
     end
   end
 

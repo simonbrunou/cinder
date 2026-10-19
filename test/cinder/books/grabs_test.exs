@@ -42,6 +42,39 @@ defmodule Cinder.Books.GrabsTest do
     assert id == updated.id
   end
 
+  # `Download.Watch` reaps on the clock this write returns, so only real forward motion may move it:
+  # speed and ETA jitter on a frozen download must not postpone its reap.
+  test "only forward completion progress advances the progress clock", %{grab: grab} do
+    {:ok, first} =
+      Grabs.track(grab, %{download_progress: 0.42, download_speed: 1_500, download_eta: 90})
+
+    past = DateTime.add(DateTime.utc_now(:second), -25, :hour)
+
+    Cinder.Repo.update_all(from(g in Cinder.Books.BookGrab, where: g.id == ^first.id),
+      set: [download_progress_at: past]
+    )
+
+    stale = Cinder.Repo.reload!(first)
+
+    assert {:ok, jittered} =
+             Grabs.track(stale, %{
+               download_progress: 0.42,
+               download_speed: 1_024,
+               download_eta: 500
+             })
+
+    assert jittered.download_progress_at == past
+
+    assert {:ok, progressed} =
+             Grabs.track(jittered, %{
+               download_progress: 0.43,
+               download_speed: 1_024,
+               download_eta: 490
+             })
+
+    assert DateTime.after?(progressed.download_progress_at, past)
+  end
+
   test "an identical snapshot writes and broadcasts nothing", %{grab: grab} do
     {:ok, first} =
       Grabs.track(grab, %{download_progress: 0.2, download_speed: 500, download_eta: 90})

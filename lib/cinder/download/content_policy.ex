@@ -110,9 +110,9 @@ defmodule Cinder.Download.ContentPolicy do
   defp downcase(extensions), do: Enum.map(extensions, &String.downcase/1)
 
   @doc """
-  `check/1` over the file list `client` reports for `download_id` — what both pollers call on an
-  in-flight download. `:ok` when disabled, when the client has no opinion, and when the client
-  call fails outright.
+  `check/1` over the file list `client` reports for `download_id` — what
+  `Cinder.Download.Watch.check/2` calls on every in-flight download. `:ok` when disabled, when the
+  client has no opinion, and when the client call fails outright.
 
   ## ponytail: one client call per in-flight download per tick
 

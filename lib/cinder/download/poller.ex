@@ -24,7 +24,7 @@ defmodule Cinder.Download.Poller do
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
   alias Cinder.Download
-  alias Cinder.Download.{ContentPolicy, StallReaper}
+  alias Cinder.Download.Watch
   alias Cinder.Library
   alias Cinder.Notifier
 
@@ -139,70 +139,48 @@ defmodule Cinder.Download.Poller do
   # :downloaded status on completion) — its own path swaps the file atomically instead.
   defp advance(%Movie{status: :upgrading} = movie), do: advance_upgrade(movie)
 
+  # `Download.Watch` owns everything up to the verdict (client, status, content vetting, metrics,
+  # the stall reaper); this maps each verdict onto the movie's own transition.
   defp advance(movie) do
-    case Download.client_for(movie.download_protocol) do
-      {:ok, client} ->
-        advance_with(movie, client)
+    case Watch.check(movie, &Catalog.update_movie_download_metrics/2) do
+      {:completed, path} ->
+        Catalog.transition(
+          movie,
+          %{status: :downloaded, content_path: path, import_attempts: 0},
+          expect: movie.status
+        )
 
-      # No client configured for this movie's protocol (e.g. a protocol removed
-      # from config mid-download). Bound it through retry_or_fail so it parks at
-      # a terminal state instead of re-raising every tick forever.
-      :error ->
-        retry_or_fail(movie, :no_client, :import_attempts, :import_failed)
-    end
-  end
-
-  defp advance_with(movie, client) do
-    case client.status(movie.download_id) do
-      {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
-        vetted(movie, client, fn ->
-          Catalog.transition(
-            movie,
-            %{status: :downloaded, content_path: path, import_attempts: 0},
-            expect: movie.status
-          )
-        end)
-
-      {:ok, %{state: :completed}} ->
-        # Completed but no usable content_path. A genuinely-slow download is
-        # :downloading (not :completed), so this is anomalous — bound it so it
-        # can't sit at :downloading and re-poll forever (normally the path
-        # appears within a tick or two and the clause above fires).
+      # Completed but no usable content_path. A genuinely-slow download is :downloading (not
+      # :completed), so this is anomalous — bound it so it can't sit at :downloading and re-poll
+      # forever (normally the path appears within a tick or two and the clause above fires).
+      {:failed, :no_content_path} ->
         retry_or_fail(movie, :no_content_path, :import_attempts, :import_failed)
 
-      {:ok, %{state: :error} = status} ->
-        fail_download(movie, download_error_reason(status))
+      {:failed, reason} ->
+        fail_download(movie, reason)
 
-      {:error, :not_found} ->
-        fail_download(movie, :torrent_not_found)
+      # Deterministic (the file list won't improve), so it skips fail_download/2's 3-tick
+      # tolerance — which exists for client-API blips — and re-queues on the first sighting:
+      # blocklist the release, and the next tick grabs the next-best candidate.
+      {:blocked_content, _detail} = reason ->
+        requeue_failed(movie, reason)
 
-      {:ok, %{state: :downloading} = status} ->
-        vetted(movie, client, fn -> track_and_reap(movie, status, &maybe_reap/3) end)
+      :stalled ->
+        reap(movie)
 
-      {:error, _reason} ->
-        Catalog.update_movie_download_metrics(movie, %{
-          download_speed: nil,
-          download_eta: nil
-        })
+      # No client configured for this movie's protocol (e.g. a protocol removed from config
+      # mid-download). Bound it through retry_or_fail so it parks at a terminal state instead of
+      # re-raising every tick forever.
+      :no_client ->
+        retry_or_fail(movie, :no_client, :import_attempts, :import_failed)
 
-      # Still stalled or in transit: leave it and retry next tick (a slow download
-      # must not count toward the bound).
-      _ ->
+      # Still in transit, or the client could not answer: leave it and retry next tick (a slow
+      # download or a client blip must not count toward the bound).
+      :downloading ->
         :ok
-    end
-  end
 
-  # Gates BOTH in-flight states, not just :downloading. A fake payload is small — a 1 MB .lnk
-  # often completes inside a single 5s tick — so vetting only the :downloading branch would miss
-  # exactly the case the check exists for and hand the payload to the importer.
-  #
-  # A blocked verdict is deterministic (the file list won't improve), so it skips fail_download/2's
-  # 3-tick tolerance — which exists for client-API blips — and re-queues on the first sighting:
-  # blocklist the release, and the next tick grabs the next-best candidate.
-  defp vetted(movie, client, continue) do
-    case ContentPolicy.vet(client, movie.download_id) do
-      {:blocked, detail} -> requeue_failed(movie, {:blocked_content, detail})
-      :ok -> continue.()
+      {:unreachable, _reason} ->
+        :ok
     end
   end
 
@@ -286,29 +264,18 @@ defmodule Cinder.Download.Poller do
     )
   end
 
-  # ponytail: the torrent seed window deliberately keeps the tick-start `updated_at` derivation.
-  # The absolute cap uses the returned progress clock, so this tick's genuine progress prevents a
-  # false reap while speed/ETA-only writes cannot postpone it.
-  defp maybe_reap(movie, download_progress_at, status) do
-    if StallReaper.enabled?() and
-         StallReaper.reap?(
-           movie.updated_at,
-           download_progress_at,
-           status,
-           DateTime.utc_now()
-         ) do
-      case Catalog.requeue_failed_movie(movie, :stalled) do
-        {:ok, _reaped} ->
-          # Best-effort and post-commit, off the pre-clear struct (the re-queued row has
-          # release_title nil): a stall is a timeout, not a proven-bad release, and retry_movie/1
-          # clears :stalled rows — so unlike the dead-download path this one doesn't gate on it.
-          Catalog.block_release(movie, :stalled)
-          Logger.warning("movie #{movie.id} reaped: stalled download removed; re-searching")
+  defp reap(movie) do
+    case Catalog.requeue_failed_movie(movie, :stalled) do
+      {:ok, _reaped} ->
+        # Best-effort and post-commit, off the pre-clear struct (the re-queued row has
+        # release_title nil): a stall is a timeout, not a proven-bad release, and retry_movie/1
+        # clears :stalled rows — so unlike the dead-download path this one doesn't gate on it.
+        Catalog.block_release(movie, :stalled)
+        Logger.warning("movie #{movie.id} reaped: stalled download removed; re-searching")
 
-        # Left :downloading mid-tick (user cancel/complete) — skip, re-derive next tick.
-        {:error, _reason} ->
-          :ok
-      end
+      # Left :downloading mid-tick (user cancel/complete) — skip, re-derive next tick.
+      {:error, _reason} ->
+        :ok
     end
   end
 
@@ -531,100 +498,57 @@ defmodule Cinder.Download.Poller do
   # with the live file untouched. Mirrors the :downloading advance bound (@max_attempts via
   # import_attempts) but reverts instead of parking — the movie already has a usable file.
 
+  # The same watch as a fresh download (a replacement is chosen the same way, so it can be a fake
+  # or stall the same way), mapped onto reverts that leave the live library file untouched.
   defp advance_upgrade(movie) do
-    case Download.client_for(movie.download_protocol) do
-      {:ok, client} -> advance_upgrade_with(movie, client)
-      # No client for this protocol (a config glitch, not a release failure): revert without
-      # blocklisting (revert_upgrade gates the blocklist), live file untouched.
-      :error -> revert_upgrade(movie, :no_client)
-    end
-  end
+    case Watch.check(movie, &Catalog.update_movie_download_metrics/2) do
+      {:completed, path} ->
+        finish_upgrade(movie, path)
 
-  defp advance_upgrade_with(movie, client) do
-    case client.status(movie.download_id) do
-      {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
-        vetted_upgrade(movie, client, fn -> finish_upgrade(movie, path) end)
+      {:failed, reason} ->
+        retry_or_revert(movie, reason)
 
-      {:ok, %{state: :completed}} ->
-        retry_or_revert(movie, :no_content_path)
-
-      {:ok, %{state: :error}} ->
-        retry_or_revert(movie, :download_error)
-
-      {:error, :not_found} ->
-        retry_or_revert(movie, :torrent_not_found)
-
-      {:ok, %{state: :downloading} = status} ->
-        vetted_upgrade(movie, client, fn ->
-          track_and_reap(movie, status, &maybe_reap_upgrade/3)
-        end)
-
-      {:error, _reason} ->
-        Catalog.update_movie_download_metrics(movie, %{
-          download_speed: nil,
-          download_eta: nil
-        })
-
-      # Still stalled or in transit: wait, no write, live file untouched.
-      _ ->
-        :ok
-    end
-  end
-
-  # The upgrade path needs its own vetting: a replacement download is chosen the same way a fresh
-  # one is, so it can be a fake the same way — and here the stakes are higher, because the movie
-  # already HAS a good file. Blocked reverts immediately (no retry budget; the file list is
-  # deterministic), taking the live library file with it untouched.
-  #
-  # #414: the client removal used to be a bare best-effort call fired BEFORE the revert cleared
-  # download_id/download_protocol (the movie's only durable record of the replacement job) — a
-  # transient removal failure leaked the remote job forever. revert_upgrade/2 now routes
-  # `:blocked_content` through `Catalog.revert_upgrade_and_remove/1`, which fences a
-  # `:cleanup_pending` intent and clears the fields in the SAME transaction (no crash window
-  # between them), then makes the immediate best-effort removal attempt after commit; a crash or
-  # failure there just leaves the fenced row for the next tick's `reconcile_pending_intents/1`.
-  defp vetted_upgrade(movie, client, continue) do
-    case ContentPolicy.vet(client, movie.download_id) do
-      {:blocked, detail} ->
+      # Higher stakes than a fresh grab, because the movie already HAS a good file. Blocked
+      # reverts immediately (no retry budget; the file list is deterministic).
+      #
+      # #414: the client removal used to be a bare best-effort call fired BEFORE the revert
+      # cleared download_id/download_protocol (the movie's only durable record of the replacement
+      # job) — a transient removal failure leaked the remote job forever. revert_upgrade/2 now
+      # routes `:blocked_content` through `Catalog.revert_upgrade_and_remove/1`, which fences a
+      # `:cleanup_pending` intent and clears the fields in the SAME transaction (no crash window
+      # between them), then makes the immediate best-effort removal attempt after commit; a crash
+      # or failure there just leaves the fenced row for the next tick's
+      # `reconcile_pending_intents/1`.
+      {:blocked_content, detail} ->
         Logger.warning("movie #{movie.id} upgrade rejected: #{detail}")
         revert_upgrade(movie, :blocked_content)
 
-      :ok ->
-        continue.()
+      :stalled ->
+        reap_upgrade(movie)
+
+      # No client for this protocol (a config glitch, not a release failure): revert without
+      # blocklisting (revert_upgrade gates the blocklist), live file untouched.
+      :no_client ->
+        revert_upgrade(movie, :no_client)
+
+      # Still in transit, or the client could not answer: wait, live file untouched.
+      :downloading ->
+        :ok
+
+      {:unreachable, _reason} ->
+        :ok
     end
   end
 
   # A stalled upgrade is reaped WITHOUT touching the live library file: reap_stalled_upgrade removes
   # the stuck replacement download, blocklists it (:stalled), and reverts the movie to :available.
-  # Same split activity/progress clocks as maybe_reap/3.
-  defp maybe_reap_upgrade(movie, download_progress_at, status) do
-    if StallReaper.enabled?() and
-         StallReaper.reap?(
-           movie.updated_at,
-           download_progress_at,
-           status,
-           DateTime.utc_now()
-         ) do
-      case Catalog.reap_stalled_upgrade(movie) do
-        {:ok, _reverted} ->
-          Logger.warning(
-            "movie #{movie.id} upgrade reaped: stalled replacement removed; reverted"
-          )
+  defp reap_upgrade(movie) do
+    case Catalog.reap_stalled_upgrade(movie) do
+      {:ok, _reverted} ->
+        Logger.warning("movie #{movie.id} upgrade reaped: stalled replacement removed; reverted")
 
-        {:error, _reason} ->
-          :ok
-      end
-    end
-  end
-
-  defp track_and_reap(movie, status, reap) do
-    case Catalog.update_movie_download_metrics(movie, %{
-           download_progress: Map.get(status, :progress),
-           download_speed: Map.get(status, :speed),
-           download_eta: Map.get(status, :eta)
-         }) do
-      {:ok, tracked} -> reap.(movie, tracked.download_progress_at, status)
-      {:error, reason} -> {:error, reason}
+      {:error, _reason} ->
+        :ok
     end
   end
 
@@ -780,11 +704,15 @@ defmodule Cinder.Download.Poller do
   # `content_path` is the replacement download's source when the caller has it (see
   # `finish_upgrade/2`: never persisted on the row), `nil` otherwise.
   defp revert_upgrade(movie, reason, content_path \\ nil) do
+    # `reason` may carry the client's detail (`{:download_error, "paused"}`); membership and the
+    # notification key on the classifying code, as park/4's do, and the detail goes to the log.
+    code = reason_code(reason)
+
     # :blocked_content joins the two deterministic sets: a proven-fake replacement must be blocked,
     # or the next upgrade hunt (or manual search) re-picks the very same release.
     blocked? =
-      reason == :blocked_content or reason in @permanent_import_errors or
-        reason in @download_failure_errors
+      code == :blocked_content or code in @permanent_import_errors or
+        code in @download_failure_errors
 
     if blocked?, do: Catalog.block_release(movie, :upgrade_failed)
 
@@ -797,7 +725,7 @@ defmodule Cinder.Download.Poller do
     remove_payload? = blocked? and Download.move_on_import_removal?(movie.download_protocol)
 
     revert_result =
-      if reason == :blocked_content or remove_payload?,
+      if code == :blocked_content or remove_payload?,
         do: Catalog.revert_upgrade_and_remove(movie),
         else:
           Catalog.transition(
@@ -819,7 +747,7 @@ defmodule Cinder.Download.Poller do
         do: Download.remove_after_import(movie.download_protocol, nil, content_path)
 
       Logger.warning("movie #{movie.id} upgrade reverted to :available (#{inspect(reason)})")
-      Notifier.notify({:movie_upgrade_failed, reverted, reason})
+      Notifier.notify({:movie_upgrade_failed, reverted, code})
     end
   end
 
