@@ -11,6 +11,8 @@ defmodule Cinder.Subtitles.Moviehash do
 
   import Bitwise
 
+  alias Cinder.Subtitles.SafeFile
+
   @u64 0xFFFF_FFFF_FFFF_FFFF
 
   @doc "Pure OSDb hash of a file's `size` and its 65536-byte `head`/`tail` chunks."
@@ -26,9 +28,19 @@ defmodule Cinder.Subtitles.Moviehash do
   @doc "Hash of the file at `path`, or `:too_small` / `{:error, _}` (best-effort — never raises for the caller to handle)."
   @spec of_file(String.t()) :: {:ok, String.t()} | :too_small | {:error, term()}
   def of_file(path) do
-    case fs().moviehash_data(path) do
+    case SafeFile.fs().moviehash_data(path) do
       {:ok, {size, head, tail}} -> {:ok, compute(size, head, tail)}
       other -> other
+    end
+  end
+
+  @doc "Whether the file at `path` still hashes to `expected`: the same video, not a replacement."
+  @spec verify(String.t(), String.t()) :: :ok | {:error, :video_changed | :moviehash_unavailable}
+  def verify(path, expected) do
+    case of_file(path) do
+      {:ok, ^expected} -> :ok
+      {:ok, _other} -> {:error, :video_changed}
+      _unavailable -> {:error, :moviehash_unavailable}
     end
   end
 
@@ -37,6 +49,4 @@ defmodule Cinder.Subtitles.Moviehash do
       acc -> acc + word
     end
   end
-
-  defp fs, do: Application.fetch_env!(:cinder, :filesystem)
 end

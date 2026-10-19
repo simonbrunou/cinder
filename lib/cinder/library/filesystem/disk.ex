@@ -514,8 +514,8 @@ defmodule Cinder.Library.Filesystem.Disk do
   # unparseable/empty output already conservatively resolves to `{:error, {:effect_committed,
   # operation, {:helper_outcome_unknown, _}}}` — the exact "we cannot prove this did or didn't
   # land" shape every caller of a rooted mutation (`Cinder.Subtitles`, `Cinder.Library.Sidecars`,
-  # `Cinder.Subtitles.Sync.AtomicFile`, ...) already handles, so a killed-mid-effect helper gains
-  # no new error clause anywhere. Every OTHER operation (today: only `"sync_parent"`, an `fsync`
+  # `Cinder.Subtitles.SidecarTransaction.AtomicFile`, ...) already handles, so a killed-mid-effect
+  # helper gains no new error clause anywhere. Every OTHER operation (today: only `"sync_parent"`, an `fsync`
   # that commits no filesystem effect of its own) is not conservatively-ambiguous the same way —
   # collapsing its timeout into the same malformed-output bucket a corrupt/buggy helper produces
   # would make a wedged mount indistinguishable from a broken helper in the logs an operator

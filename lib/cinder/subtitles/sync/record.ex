@@ -4,6 +4,8 @@ defmodule Cinder.Subtitles.Sync.Record do
   worker and `/subtitle-sync` show.
   """
 
+  alias Cinder.Subtitles.SafeFile
+
   @doc "The manifest `sync` map of one analysis or correction."
   @spec metadata(pos_integer(), String.t(), String.t(), String.t(), binary(), binary(), map()) ::
           map()
@@ -13,8 +15,8 @@ defmodule Cinder.Subtitles.Sync.Record do
       status: status,
       method: method,
       moviehash: moviehash,
-      source_sha256: sha256(source),
-      applied_sha256: sha256(applied),
+      source_sha256: SafeFile.sha256(source),
+      applied_sha256: SafeFile.sha256(applied),
       offset_ms: Map.get(metrics, :offset_ms, 0),
       rate: Map.get(metrics, :rate, 1.0) * 1.0,
       score: Map.get(metrics, :score),
@@ -57,7 +59,6 @@ defmodule Cinder.Subtitles.Sync.Record do
   defp put_shot_changes(map, %{shot_changes: true}), do: Map.put(map, :shot_changes, true)
   defp put_shot_changes(map, _metrics), do: map
 
-  defp sha256(content), do: :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
   defp reason(nil), do: nil
   defp reason(value) when is_atom(value), do: Atom.to_string(value)
   defp reason(value) when is_binary(value), do: value

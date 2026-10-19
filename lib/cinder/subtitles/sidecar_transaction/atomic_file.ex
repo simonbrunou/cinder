@@ -1,4 +1,4 @@
-defmodule Cinder.Subtitles.Sync.AtomicFile do
+defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   @moduledoc """
   Publishes subtitle bytes with a descriptor-bound exchange and verified rollback.
 
@@ -8,8 +8,7 @@ defmodule Cinder.Subtitles.Sync.AtomicFile do
 
   require Logger
 
-  alias Cinder.Library.PathPolicy
-  alias Cinder.Settings
+  import Cinder.Subtitles.SafeFile, only: [fs: 0, safe_destination: 1, sha256: 1]
 
   @operation_id ~r/\A[A-Za-z0-9_-]{22}\z/
 
@@ -773,9 +772,6 @@ defmodule Cinder.Subtitles.Sync.AtomicFile do
   defp finish_atomic_operation({:error, _reason} = error, directory, path, staged),
     do: finish_atomic_operation({:not_exchanged, error}, directory, path, staged)
 
-  defp safe_destination(path),
-    do: path_policy().destination(path, Settings.video_library_roots(), filesystem: fs())
-
   defp reversal_operation_id(target, expected_sha256, content_sha256) do
     :crypto.hash(:sha256, [target, 0, expected_sha256, 0, content_sha256])
     |> binary_part(0, 16)
@@ -788,16 +784,8 @@ defmodule Cinder.Subtitles.Sync.AtomicFile do
   defp workspace_path(target, operation_id),
     do: Path.join(Path.dirname(target), ".cinder-subtitle-sync-cas-#{operation_id}")
 
-  defp sha256(content), do: :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
-
   defp temporary(path, prefix, extension) do
     token = Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
     Path.join(Path.dirname(path), "#{prefix}#{token}#{extension}")
   end
-
-  defp fs,
-    do: Application.get_env(:cinder, :filesystem, Cinder.Library.Filesystem.Disk)
-
-  defp path_policy,
-    do: Application.get_env(:cinder, :path_policy, PathPolicy)
 end

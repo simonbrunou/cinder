@@ -9,12 +9,13 @@ defmodule Cinder.Subtitles do
   require Logger
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog.{Episode, Movie, Series}
-  alias Cinder.Library.{PathPolicy, Sidecars}
-  alias Cinder.Settings
-  alias Cinder.Subtitles.{Fetcher, Manifest, Moviehash, OwnTrack, Srt, TrackProbe}
-  alias Cinder.Subtitles.Sync
-  alias Cinder.Subtitles.Sync.Timing
-  alias Cinder.Subtitles.Sync.Worker
+  alias Cinder.Library.Sidecars
+  alias Cinder.Subtitles.{Fetcher, Manifest, Moviehash, OwnTrack, SidecarTransaction}
+  alias Cinder.Subtitles.{Srt, TrackProbe}
+  alias Cinder.Subtitles.Sync.{Timing, Worker}
+
+  # Book roots must never authorize subtitle sidecar reads, writes or deletes.
+  import Cinder.Subtitles.SafeFile, only: [fs: 0, safe_destination: 1, sha256: 1]
 
   @doc """
   Subtitle-search criteria for a movie: imdb + tmdb id (the provider prefers imdb), plus the
@@ -517,64 +518,19 @@ defmodule Cinder.Subtitles do
   end
 
   defp commit(video_path, kind, language, moviehash, origin, target, content, enqueue \\ :fresh) do
-    previous_state = Manifest.read(video_path)
+    sidecar = %{video_path: video_path, sidecar_path: target, language: language}
 
-    previous_sync =
-      Manifest.replacement_cleanup_sync(previous_state, language) ||
-        Manifest.sync(previous_state, language)
-
-    with {:ok, previous} <- sidecar_snapshot(target),
-         :ok <- write_subtitle(target, content) do
-      case Manifest.put(
-             video_path,
-             moviehash,
-             language,
-             origin,
-             target,
-             sha256(content),
-             previous_sync
-           ) do
-        :ok ->
-          reconcile_replaced_backup(video_path, language, target, previous_sync)
-          after_commit(video_path, kind, language, origin, enqueue)
-
-        error ->
-          rollback_sidecar(target, previous)
-
-          Logger.warning(
-            "subtitle provenance write failed for #{video_path} (#{language}): #{inspect(error)}"
-          )
-      end
-    else
-      error ->
-        Logger.warning("subtitle write failed for #{video_path} (#{language}): #{inspect(error)}")
-    end
-  end
-
-  defp cleanup_replaced_backup(video_path, language, target, previous_sync) do
-    case Sync.discard_replacement(video_path, language, target, previous_sync) do
+    case SidecarTransaction.replace(sidecar, content, origin, moviehash) do
       :ok ->
-        :ok
+        after_commit(video_path, kind, language, origin, enqueue)
 
-      {:error, reason} ->
-        Logger.warning("subtitle backup cleanup failed for #{target}: #{inspect(reason)}")
-        {:error, reason}
-    end
-  end
-
-  defp reconcile_replaced_backup(_video_path, _language, _target, nil), do: :ok
-
-  defp reconcile_replaced_backup(video_path, language, target, previous_sync) do
-    with :ok <- cleanup_replaced_backup(video_path, language, target, previous_sync),
-         :ok <- Manifest.clear_replacement_cleanup(video_path, language) do
-      :ok
-    else
-      {:error, reason} ->
+      {:error, {:manifest, error}} ->
         Logger.warning(
-          "subtitle replacement cleanup remains journaled for #{target}: #{inspect(reason)}"
+          "subtitle provenance write failed for #{video_path} (#{language}): #{inspect(error)}"
         )
 
-        {:error, reason}
+      {:error, {:write, error}} ->
+        Logger.warning("subtitle write failed for #{video_path} (#{language}): #{inspect(error)}")
     end
   end
 
@@ -595,49 +551,6 @@ defmodule Cinder.Subtitles do
     Logger.info("wrote #{language} subtitle for #{video_path}")
   end
 
-  defp sidecar_snapshot(target) do
-    with {:ok, target} <- safe_destination(target) do
-      case fs().read(target) do
-        {:ok, content} -> {:ok, {:existing, content}}
-        {:error, :enoent} -> {:ok, :missing}
-        error -> {:error, error}
-      end
-    end
-  end
-
-  defp rollback_sidecar(target, :missing) do
-    case safe_remove(target) do
-      :ok -> :ok
-      error -> Logger.warning("subtitle rollback rejected: #{inspect(error)}")
-    end
-  end
-
-  defp rollback_sidecar(target, {:existing, content}) do
-    case write_subtitle(target, content) do
-      :ok -> :ok
-      error -> Logger.warning("subtitle rollback failed for #{target}: #{inspect(error)}")
-    end
-  end
-
-  defp write_subtitle(target, content) do
-    temporary =
-      Path.join(
-        Path.dirname(target),
-        ".cinder-subtitle-#{System.unique_integer([:positive])}"
-      )
-
-    result =
-      with {:ok, target} <- safe_destination(target),
-           {:ok, temporary} <- safe_destination(temporary),
-           :ok <- fs().write(temporary, content),
-           :ok <- fs().chmod(temporary, 0o644) do
-        rename_subtitle(temporary, target, IO.iodata_to_binary(content))
-      end
-
-    if result != :ok, do: safe_remove(temporary)
-    result
-  end
-
   defp normalize_sidecar_mode(target) do
     case safe_destination(target) do
       {:ok, target} ->
@@ -654,28 +567,6 @@ defmodule Cinder.Subtitles do
 
       error ->
         Logger.warning("subtitle permission repair rejected: #{inspect(error)}")
-    end
-  end
-
-  defp rename_subtitle(temporary, target, expected) do
-    result =
-      with {:ok, temporary} <- safe_destination(temporary),
-           {:ok, target} <- safe_destination(target) do
-        fs().rename(temporary, target)
-      end
-
-    case result do
-      :ok ->
-        :ok
-
-      {:error, {:effect_committed, "rename", _reason}} = error ->
-        verified = fs().read(target) == {:ok, expected}
-        _ = safe_remove(temporary)
-        if verified, do: :ok, else: error
-
-      error ->
-        _ = safe_remove(temporary)
-        error
     end
   end
 
@@ -848,28 +739,9 @@ defmodule Cinder.Subtitles do
   defp local_cache,
     do: %{tracks: :unknown, default_srt: :unknown, sidecars: :unknown, sidecar_srt: :unknown}
 
-  defp sha256(content) do
-    content
-    |> IO.iodata_to_binary()
-    |> then(&:crypto.hash(:sha256, &1))
-    |> Base.encode16(case: :lower)
-  end
-
   defp provider, do: Application.fetch_env!(:cinder, :subtitles_provider)
   defp translator, do: Application.fetch_env!(:cinder, :subtitles_translator)
   defp media_info, do: Application.get_env(:cinder, :media_info)
-  defp fs, do: Application.fetch_env!(:cinder, :filesystem)
-  defp path_policy, do: Application.get_env(:cinder, :path_policy, PathPolicy)
-
-  # Book roots must never authorize subtitle sidecar writes or deletes.
-  defp safe_destination(path),
-    do: path_policy().destination(path, Settings.video_library_roots(), filesystem: fs())
-
-  defp safe_remove(path) do
-    with :ok <-
-           path_policy().deletable_file(path, Settings.video_library_roots(), filesystem: fs()),
-         do: fs().rm(path)
-  end
 
   defp provider_config,
     do: Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])

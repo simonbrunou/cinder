@@ -3,7 +3,7 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
 
   alias Cinder.Library.Filesystem.Disk
   alias Cinder.Library.PathPolicy
-  alias Cinder.Subtitles.Sync.AtomicFile
+  alias Cinder.Subtitles.SidecarTransaction.AtomicFile
   alias Cinder.Test.BarrierFilesystem
 
   setup %{tmp_dir: tmp} do
@@ -116,6 +116,22 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
     assert File.read!(Path.join(outside, "staged.srt")) == "outside new"
     assert File.read!(Path.join(moved, "subtitle.srt")) == "inside old"
     assert File.read!(Path.join(moved, "staged.srt")) == "inside new"
+  end
+
+  @tag :tmp_dir
+  test "exchange returns an error when mv cannot execute", %{tmp_dir: tmp} do
+    source = Path.join(tmp, "exchange-source")
+    destination = Path.join(tmp, "exchange-destination")
+    File.write!(source, "source")
+    File.write!(destination, "destination")
+    path = System.get_env("PATH")
+    System.put_env("PATH", "")
+    on_exit(fn -> System.put_env("PATH", path) end)
+
+    assert {:error, {:exchange_exec_failed, _reason}} = Disk.exchange(source, destination)
+
+    assert File.read!(source) == "source"
+    assert File.read!(destination) == "destination"
   end
 
   defp prepare_swap(root, tmp, basename, inside, outside_content) do

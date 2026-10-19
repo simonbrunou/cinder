@@ -3,8 +3,7 @@ defmodule Cinder.Subtitles.Manifest do
 
   require Logger
 
-  alias Cinder.Library.PathPolicy
-  alias Cinder.Settings
+  import Cinder.Subtitles.SafeFile, only: [fs: 0, safe_destination: 1, safe_remove: 1]
 
   # `own_track`: the video's own full subtitle track in that language, extracted by
   # `Cinder.Subtitles` in preference to a download (spec 069). `embedded` is the older last-resort
@@ -570,15 +569,4 @@ defmodule Cinder.Subtitles.Manifest do
 
   defp origin(state, language), do: get_in(state, [:tracks, language, :origin])
   defp empty, do: %{video_moviehash: nil, tracks: %{}}
-  defp fs, do: Application.fetch_env!(:cinder, :filesystem)
-  defp path_policy, do: Application.get_env(:cinder, :path_policy, PathPolicy)
-
-  defp safe_destination(path),
-    do: path_policy().destination(path, Settings.video_library_roots(), filesystem: fs())
-
-  defp safe_remove(path) do
-    with :ok <-
-           path_policy().deletable_file(path, Settings.video_library_roots(), filesystem: fs()),
-         do: fs().rm(path)
-  end
 end

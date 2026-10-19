@@ -8,7 +8,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
   alias Cinder.Catalog.{Episode, Season, Series}
   alias Cinder.Repo
   alias Cinder.Subtitles
-  alias Cinder.Subtitles.{Manifest, Sync}
+  alias Cinder.Subtitles.{Manifest, SidecarTransaction, Sync}
   alias Cinder.Subtitles.Sync.Worker
 
   @moduletag :tmp_dir
@@ -514,7 +514,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     movies: movies
   } do
     {movie, _video, sidecar, item} = managed_movie!(movies, "Quarantined")
-    File.write!(Sync.backup_path(sidecar), "unproven backup")
+    File.write!(SidecarTransaction.backup_path(sidecar), "unproven backup")
 
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
     render_async(view)
@@ -778,7 +778,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
     corrected = File.read!(sidecar)
     metadata = Manifest.sync(Manifest.read(video), "en")
-    File.rm!(Sync.backup_path(sidecar))
+    File.rm!(SidecarTransaction.backup_path(sidecar))
 
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
     render_async(view)

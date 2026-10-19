@@ -2,21 +2,9 @@ defmodule Cinder.Subtitles.Sync do
   @moduledoc "Synchronizes Cinder-managed adjacent subtitle sidecars."
   require Logger
 
-  alias Cinder.Library.{Filesystem, PathPolicy, Sidecars}
-  alias Cinder.Settings
-  alias Cinder.Subtitles.{Manifest, Moviehash}
-
-  alias Cinder.Subtitles.Sync.{
-    AtomicFile,
-    Backup,
-    EngineWorkspace,
-    Output,
-    Record,
-    Reference,
-    ReplacementCleanup,
-    Scope,
-    Timing
-  }
+  alias Cinder.Library.Sidecars
+  alias Cinder.Subtitles.{Manifest, Moviehash, SafeFile, SidecarTransaction}
+  alias Cinder.Subtitles.Sync.{EngineWorkspace, Output, Record, Reference, Scope, Timing}
 
   @managed_origins ~w(opensubtitles_hash opensubtitles_id own_track)
   # Bumped whenever the alignment an automatic pass would produce changes, so already-"aligned"
@@ -86,10 +74,8 @@ defmodule Cinder.Subtitles.Sync do
   defp analyze_managed_video(video_path, opts) do
     case current_moviehash(video_path) do
       {:ok, moviehash} ->
-        with :ok <- reconcile_reset_cleanups(video_path, moviehash),
-             :ok <- ReplacementCleanup.reconcile(video_path) do
-          do_analyze_video(video_path, moviehash, opts)
-        else
+        case SidecarTransaction.reconcile(video_path, moviehash) do
+          :ok -> do_analyze_video(video_path, moviehash, opts)
           {:error, reason} -> failed_reconciliation(video_path, reason)
         end
 
@@ -139,7 +125,7 @@ defmodule Cinder.Subtitles.Sync do
 
   defp reset_obsolete(%{sync: %{method: method}} = item, moviehash, _shots)
        when method in ~w(audio embedded native) do
-    with :ok <- reset_resolved(item, moviehash),
+    with :ok <- SidecarTransaction.restore_original(item, moviehash),
          {:ok, fresh} <- resolve(item.video_path, item.id),
          do: fresh,
          else: (_ -> Map.put(item, :auto_review_reason, :obsolete_automatic_reset_failed))
@@ -256,7 +242,7 @@ defmodule Cinder.Subtitles.Sync do
     :global.trans({{Cinder.Subtitles, video_path}, self()}, fn ->
       with {:ok, item} <- resolve(video_path, id),
            {:ok, moviehash} <- current_moviehash(video_path) do
-        reset_resolved(item, moviehash)
+        SidecarTransaction.restore_original(item, moviehash)
       else
         {:error, :too_small} -> {:error, :moviehash_unavailable}
         {:error, _reason} = error -> error
@@ -265,38 +251,6 @@ defmodule Cinder.Subtitles.Sync do
   end
 
   def reset(_item), do: {:error, :unknown_item}
-
-  defp reset_resolved(%{reset_cleanup_sync: %{moviehash: moviehash} = sync} = item, moviehash),
-    do: complete_reset_cleanup(item, sync)
-
-  defp reset_resolved(%{reset_cleanup_sync: %{}}, _moviehash),
-    do: {:error, :reset_video_changed}
-
-  defp reset_resolved(item, moviehash), do: reset_prepared(prepare_replacement(item, moviehash))
-
-  defp reset_prepared(%{auto_review_reason: reason}), do: {:error, reason}
-  defp reset_prepared(item), do: reset_item(item)
-
-  @doc "Hidden original adjacent to a corrected sidecar."
-  @spec backup_path(String.t()) :: String.t()
-  def backup_path(sidecar_path) do
-    Path.join(
-      Path.dirname(sidecar_path),
-      ".#{Path.basename(sidecar_path)}.cinder-sync-original"
-    )
-  end
-
-  def discard_replacement(video_path, language, sidecar_path, sync) do
-    backup = backup_path(sidecar_path)
-    tombstone = Manifest.backup_tombstone(Manifest.read(video_path), language)
-
-    cond do
-      not active_backup?(backup) -> :ok
-      is_nil(sync) -> {:error, :unexpected_backup}
-      regular_file?(backup) -> retire_owned_backup(backup, sync, tombstone)
-      true -> {:error, :unexpected_backup}
-    end
-  end
 
   defp analyze_item(%{auto_review_reason: reason} = item, _moviehash, _reference, _path),
     do: record_blocked_review(item, reason)
@@ -313,7 +267,7 @@ defmodule Cinder.Subtitles.Sync do
   # The video's own track is already timed to this cut: it gets the timing rules, no alignment. One
   # extracted from a file since replaced at the same path is aligned like any other sidecar.
   defp analyze_item(%{origin: "own_track", source_moviehash: moviehash} = item, moviehash, _, _) do
-    case safe_source(item.sidecar_path) do
+    case SafeFile.safe_source(item.sidecar_path) do
       {:ok, input_path} ->
         input_path
         |> with_bound([:read, :raw, :binary], &apply_native(item, moviehash, &1))
@@ -358,7 +312,7 @@ defmodule Cinder.Subtitles.Sync do
 
   defp run_engine(item, moviehash, method, {:content, content} = reference)
        when is_binary(content) do
-    case safe_source(item.sidecar_path) do
+    case SafeFile.safe_source(item.sidecar_path) do
       {:ok, input_path} ->
         input_path
         |> with_bound([:read, :raw, :binary], fn input ->
@@ -372,8 +326,8 @@ defmodule Cinder.Subtitles.Sync do
   end
 
   defp run_engine(item, moviehash, method, reference_path) do
-    with {:ok, reference_path} <- safe_source(reference_path),
-         {:ok, input_path} <- safe_source(item.sidecar_path) do
+    with {:ok, reference_path} <- SafeFile.safe_source(reference_path),
+         {:ok, input_path} <- SafeFile.safe_source(item.sidecar_path) do
       bind_engine_inputs(reference_path, input_path, fn reference, input ->
         invoke_bound_engine(item, moviehash, method, reference, input)
       end)
@@ -432,9 +386,8 @@ defmodule Cinder.Subtitles.Sync do
     end
   end
 
-  @doc false
-  def with_bound(path, modes, callback) do
-    case fs().open_bound(path, modes) do
+  defp with_bound(path, modes, callback) do
+    case SafeFile.fs().open_bound(path, modes) do
       {:ok, bound} -> finish_bound(bound, callback)
       {:error, _reason} = error -> error
     end
@@ -448,7 +401,7 @@ defmodule Cinder.Subtitles.Sync do
         kind, reason -> {:raised, kind, reason, __STACKTRACE__}
       end
 
-    close_result = fs().close_bound(bound)
+    close_result = SafeFile.fs().close_bound(bound)
     finish_bound_operation(operation, close_result)
   end
 
@@ -460,14 +413,6 @@ defmodule Cinder.Subtitles.Sync do
     )
 
     result
-  end
-
-  defp finish_bound_operation({:returned, {:committed, _result} = committed}, {:error, reason}) do
-    Logger.warning(
-      "descriptor close failed after committed subtitle publication: #{inspect(reason)}"
-    )
-
-    committed
   end
 
   defp finish_bound_operation({:returned, _result}, {:error, reason}),
@@ -512,9 +457,9 @@ defmodule Cinder.Subtitles.Sync do
            frame_rate: Map.get(item, :frame_rate),
            shot_changes: Map.get(item, :shot_changes)
          ],
-         {:ok, adjusted} <- Output.automatic(source, adjusted, metrics, extension, opts),
-         :ok <- verify_analysis_inputs(item, moviehash, source) do
-      apply_verified_engine_output(item, moviehash, method, source, adjusted, metrics)
+         {:ok, adjusted} <- Output.automatic(source, adjusted, metrics, extension, opts) do
+      record = metadata("aligned", method, moviehash, source, adjusted, metrics)
+      publish(item, method, source, adjusted, record)
     else
       {:error, :invalid_subtitle} ->
         result(item, :failed, method, %{reason: :invalid_engine_output})
@@ -524,172 +469,15 @@ defmodule Cinder.Subtitles.Sync do
     end
   end
 
-  defp apply_verified_engine_output(item, moviehash, method, source, source, metrics),
-    do: record_aligned(item, moviehash, method, source, source, metrics, :aligned)
-
-  defp apply_verified_engine_output(item, moviehash, method, source, adjusted, metrics),
-    do: apply_correction(item, moviehash, method, source, adjusted, metrics)
-
-  defp apply_correction(item, moviehash, method, source, adjusted, metrics) do
-    metadata = metadata("aligned", method, moviehash, source, adjusted, metrics)
-
-    case Backup.ensure(item, source) do
-      {:ok, backup_created?} ->
-        begin_automatic_correction(
-          item,
-          metadata,
-          source,
-          adjusted,
-          backup_created?,
-          method
-        )
-
-      {:error, reason} ->
-        result(item, :failed, method, %{reason: reason})
-    end
-  end
-
-  defp begin_automatic_correction(item, metadata, source, adjusted, backup_created?, method) do
-    pending =
-      metadata
-      |> Map.put(:status, "applying")
-      |> Map.put(:expected_sha256, sha256(source))
-      |> Map.put(:operation_id, operation_id())
-
-    case verify_video_moviehash(item.video_path, metadata.moviehash) do
-      :ok ->
-        persist_pending_automatic(
-          item,
-          pending,
-          metadata,
-          source,
-          adjusted,
-          backup_created?,
-          method
-        )
-
-      {:error, reason} ->
-        cleanup_unpublished_correction(item, backup_created?, method, reason)
-    end
-  end
-
-  defp persist_pending_automatic(
-         item,
-         pending,
-         metadata,
-         source,
-         adjusted,
-         backup_created?,
-         method
-       ) do
-    case Manifest.put_sync(item.video_path, item.language, pending) do
-      :ok ->
-        publish_automatic_correction(
-          item,
-          metadata,
-          source,
-          adjusted,
-          backup_created?,
-          method,
-          pending.operation_id
-        )
-
-      {:error, reason} ->
-        cleanup_unpublished_correction(item, backup_created?, method, {:manifest, reason})
-    end
-  end
-
-  defp publish_automatic_correction(
-         item,
-         metadata,
-         source,
-         adjusted,
-         backup_created?,
-         method,
-         operation_id
-       ) do
-    case atomic_write(item.sidecar_path, adjusted, source, operation_id) do
-      :ok ->
-        persist_correction(item, metadata, source, adjusted, backup_created?, method)
-
-      {:error, {:publication_committed, _detail} = reason} ->
-        result(item, :failed, method, %{reason: reason})
-
-      {:error, reason} ->
-        abort_prepared_automatic(item, backup_created?, method, reason)
-    end
-  end
-
-  defp abort_prepared_automatic(item, backup_created?, method, reason) do
-    case abort_prepared_correction(item, backup_created?) do
-      :ok ->
-        result(item, :failed, method, %{reason: reason})
-
-      {:error, cleanup_reason} ->
-        result(item, :failed, method, %{reason: {:apply_abort_failed, reason, cleanup_reason}})
-    end
-  end
-
-  defp persist_correction(item, metadata, source, adjusted, backup_created?, method) do
-    case verify_video_moviehash(item.video_path, metadata.moviehash) do
-      :ok ->
-        persist_verified_correction(item, metadata, source, adjusted, backup_created?, method)
-
-      {:error, reason} ->
-        analysis_failure(item, source, adjusted, backup_created?, method, reason)
-    end
-  end
-
-  defp persist_verified_correction(item, metadata, source, adjusted, backup_created?, method) do
-    case Manifest.put_sync(item.video_path, item.language, metadata) do
-      :ok ->
-        result(%{item | sync: metadata}, :corrected, method, metadata)
-
-      {:error, reason} ->
-        manifest_failure(item, source, adjusted, backup_created?, method, reason)
-    end
-  end
-
-  defp analysis_failure(item, previous, adjusted, backup_created?, method, reason) do
-    case rollback_prepared_correction(item, previous, adjusted, backup_created?) do
-      :ok ->
-        result(item, :failed, method, %{reason: reason})
-
-      {:error, rollback_reason} ->
-        result(item, :failed, method, %{
-          reason: {:analysis_and_rollback_failed, reason, rollback_reason}
-        })
-    end
-  end
-
-  defp record_aligned(item, moviehash, method, source, adjusted, metrics, status) do
-    metadata = metadata("aligned", method, moviehash, source, adjusted, metrics)
-
-    case verify_analysis_inputs(item, moviehash, source) do
-      :ok -> persist_aligned(item, status, method, metadata)
-      {:error, reason} -> result(item, :failed, method, %{reason: reason})
-    end
-  end
-
-  defp persist_aligned(item, status, method, metadata) do
-    case Manifest.put_sync(item.video_path, item.language, metadata) do
-      :ok -> result(%{item | sync: metadata}, status, method, metadata)
-      {:error, reason} -> result(item, :failed, method, %{reason: {:manifest, reason}})
-    end
-  end
-
   defp record_review(item, moviehash, method, source, metrics) do
-    case verify_analysis_inputs(item, moviehash, source) do
-      :ok ->
-        metadata = metadata("review", method, moviehash, source, source, metrics)
+    record = metadata("review", method, moviehash, source, source, metrics)
+    publish(item, method, source, source, record)
+  end
 
-        case Manifest.put_sync(item.video_path, item.language, metadata) do
-          :ok -> result(%{item | sync: metadata}, :review, method, metadata)
-          {:error, reason} -> result(item, :failed, method, %{reason: {:manifest, reason}})
-        end
-
-      {:error, reason} ->
-        result(item, :failed, method, %{reason: reason})
+  defp publish(item, method, source, content, record) do
+    case SidecarTransaction.publish(item, source, content, record) do
+      {:ok, status, item} -> result(item, status, method, record)
+      {:error, reason} -> result(item, :failed, method, %{reason: reason})
     end
   end
 
@@ -698,528 +486,48 @@ defmodule Cinder.Subtitles.Sync do
   end
 
   defp record_blocked_review(item, reason) do
-    metadata = %{item.sync | status: "review", reason: Atom.to_string(reason)}
+    case SidecarTransaction.hold_for_review(item, reason) do
+      {:ok, item} ->
+        result(item, :review, item.sync.method, item.sync)
 
-    case Manifest.put_sync(item.video_path, item.language, metadata) do
-      :ok ->
-        result(%{item | sync: metadata}, :review, metadata.method, metadata)
-
-      {:error, manifest_reason} ->
-        result(item, :failed, metadata.method, %{reason: {:manifest, manifest_reason}})
+      {:error, manifest_error} ->
+        result(item, :failed, item.sync.method, %{reason: manifest_error})
     end
   end
 
   defp apply_manual(item, moviehash, offset_ms, rate, expected_sha256) do
-    item = prepare_replacement(item, moviehash)
-
-    case item do
-      %{auto_review_reason: reason} -> {:error, reason}
-      _ -> apply_ready_manual(item, moviehash, offset_ms, rate, expected_sha256)
+    case SidecarTransaction.recover(item, moviehash) do
+      {:ok, item} -> apply_ready_manual(item, moviehash, offset_ms, rate, expected_sha256)
+      {:review, reason, _item} -> {:error, reason}
     end
   end
 
   defp apply_ready_manual(item, moviehash, offset_ms, rate, expected_sha256) do
-    with {:ok, current} <- safe_read(item.sidecar_path),
+    extension = Path.extname(item.sidecar_path)
+
+    with {:ok, current} <- SafeFile.safe_read(item.sidecar_path),
          :ok <- verify_source_fingerprint(current, expected_sha256),
-         {:ok, source} <- manual_source(item, current),
-         {:ok, adjusted} <-
-           Timing.retime(source, Path.extname(item.sidecar_path), offset_ms, rate) do
-      status = if adjusted == current, do: :aligned, else: :corrected
+         {:ok, source} <- SidecarTransaction.original(item, current),
+         {:ok, adjusted} <- Timing.retime(source, extension, offset_ms, rate) do
+      record =
+        metadata("aligned", "manual", moviehash, source, adjusted, %{
+          offset_ms: offset_ms,
+          rate: rate
+        })
 
-      persist_manual(item, moviehash, source, current, adjusted, offset_ms, rate, status)
-    end
-  end
-
-  defp manual_source(item, current) do
-    backup = backup_path(item.sidecar_path)
-
-    cond do
-      not active_backup?(backup) ->
-        {:ok, current}
-
-      not immutable_backup_expected?(item.sync) ->
-        {:error, :unexpected_backup}
-
-      true ->
-        with {:ok, source} <- safe_read(backup),
-             :ok <- verify_backup_provenance(item.sync, source) do
-          {:ok, source}
-        end
-    end
-  end
-
-  defp verify_backup_provenance(%{source_sha256: expected}, source) do
-    if sha256(source) == expected, do: :ok, else: {:error, :backup_mismatch}
-  end
-
-  defp verify_backup_provenance(nil, _source), do: {:error, :unexpected_backup}
-
-  defp persist_manual(item, moviehash, source, current, adjusted, offset_ms, rate, :aligned) do
-    metadata =
-      metadata("aligned", "manual", moviehash, source, adjusted, %{
-        offset_ms: offset_ms,
-        rate: rate
-      })
-
-    with :ok <- verify_current_content(item.sidecar_path, current),
-         :ok <- verify_video_moviehash(item.video_path, moviehash) do
-      case Manifest.put_sync(item.video_path, item.language, metadata) do
-        :ok -> {:ok, :aligned, %{item | sync: metadata}}
-        {:error, reason} -> {:error, {:manifest, reason}}
-      end
-    end
-  end
-
-  defp persist_manual(item, moviehash, source, current, adjusted, offset_ms, rate, :corrected) do
-    metadata =
-      metadata("aligned", "manual", moviehash, source, adjusted, %{
-        offset_ms: offset_ms,
-        rate: rate
-      })
-
-    case Backup.ensure(item, source) do
-      {:ok, backup_created?} ->
-        begin_manual_correction(item, current, adjusted, backup_created?, metadata)
-
-      {:error, _reason} = error ->
-        error
-    end
-  end
-
-  defp begin_manual_correction(item, current, adjusted, backup_created?, metadata) do
-    pending =
-      metadata
-      |> Map.put(:status, "applying")
-      |> Map.put(:expected_sha256, sha256(current))
-      |> Map.put(:operation_id, operation_id())
-
-    case verify_video_moviehash(item.video_path, metadata.moviehash) do
-      :ok ->
-        persist_pending_manual(item, pending, current, adjusted, backup_created?, metadata)
-
-      {:error, reason} ->
-        cleanup_unpublished_manual(item, backup_created?, reason)
-    end
-  end
-
-  defp persist_pending_manual(item, pending, current, adjusted, backup_created?, metadata) do
-    case Manifest.put_sync(item.video_path, item.language, pending) do
-      :ok ->
-        publish_manual_correction(
-          item,
-          current,
-          adjusted,
-          backup_created?,
-          metadata,
-          pending.operation_id
-        )
-
-      {:error, reason} ->
-        cleanup_unpublished_manual(item, backup_created?, {:manifest, reason})
-    end
-  end
-
-  defp publish_manual_correction(
-         item,
-         current,
-         adjusted,
-         backup_created?,
-         metadata,
-         operation_id
-       ) do
-    case atomic_write(item.sidecar_path, adjusted, current, operation_id) do
-      :ok ->
-        persist_manual_correction(item, current, adjusted, backup_created?, metadata)
-
-      {:error, {:publication_committed, _detail} = reason} ->
-        {:error, reason}
-
-      {:error, reason} ->
-        abort_prepared_manual(item, backup_created?, reason)
-    end
-  end
-
-  defp abort_prepared_manual(item, backup_created?, reason) do
-    case abort_prepared_correction(item, backup_created?) do
-      :ok -> {:error, reason}
-      {:error, cleanup_reason} -> {:error, {:apply_abort_failed, reason, cleanup_reason}}
-    end
-  end
-
-  defp persist_manual_correction(item, current, adjusted, backup_created?, metadata) do
-    case verify_video_moviehash(item.video_path, metadata.moviehash) do
-      :ok ->
-        persist_verified_manual_correction(
-          item,
-          current,
-          adjusted,
-          backup_created?,
-          metadata
-        )
-
-      {:error, reason} ->
-        rollback_manual(item, current, adjusted, backup_created?, reason)
-    end
-  end
-
-  defp persist_verified_manual_correction(item, current, adjusted, backup_created?, metadata) do
-    case Manifest.put_sync(item.video_path, item.language, metadata) do
-      :ok ->
-        {:ok, :corrected, %{item | sync: metadata}}
-
-      {:error, reason} ->
-        rollback_manual(item, current, adjusted, backup_created?, {:manifest, reason})
-    end
-  end
-
-  defp rollback_manual(item, current, adjusted, backup_created?, failure_reason) do
-    case rollback_prepared_correction(item, current, adjusted, backup_created?) do
-      :ok ->
-        {:error, failure_reason}
-
-      {:error, rollback_reason} ->
-        {:error, manual_rollback_failure(failure_reason, rollback_reason)}
-    end
-  end
-
-  defp manual_rollback_failure({:manifest, reason}, rollback_reason),
-    do: {:manifest_and_rollback_failed, reason, rollback_reason}
-
-  defp manual_rollback_failure(reason, rollback_reason),
-    do: {:correction_and_rollback_failed, reason, rollback_reason}
-
-  defp reconcile_reset_cleanups(video_path, moviehash) do
-    video_path
-    |> Manifest.read()
-    |> Map.fetch!(:tracks)
-    |> Enum.reduce_while(:ok, fn entry, :ok ->
-      reconcile_reset_entry(entry, video_path, moviehash)
-    end)
-  end
-
-  defp reconcile_reset_entry(
-         {_language, %{reset_cleanup_sync_invalid?: true}},
-         _video_path,
-         _moviehash
-       ),
-       do: {:halt, {:error, :invalid_reset_cleanup_journal}}
-
-  defp reconcile_reset_entry(
-         {language, %{file: file, reset_cleanup_sync: sync}},
-         video_path,
-         moviehash
-       ) do
-    if sync.moviehash == moviehash do
-      item = %{
-        video_path: video_path,
-        sidecar_path: Path.join(Path.dirname(video_path), file),
-        language: language,
-        sync: sync,
-        reset_cleanup_sync: sync
-      }
-
-      case complete_reset_cleanup(item, sync) do
-        :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:reset_cleanup_failed, reason}}}
-      end
-    else
-      {:halt, {:error, :reset_video_changed}}
-    end
-  end
-
-  defp reconcile_reset_entry({_language, %{reset_cleanup_sync: _sync}}, _path, _hash),
-    do: {:halt, {:error, :invalid_reset_cleanup_journal}}
-
-  defp reconcile_reset_entry({_language, _track}, _video_path, _moviehash), do: {:cont, :ok}
-
-  defp reset_item(%{sync: nil}), do: :ok
-
-  defp reset_item(item) do
-    with :ok <- Manifest.begin_reset_cleanup(item.video_path, item.language, item.sync),
-         do: complete_reset_cleanup(%{item | reset_cleanup_sync: item.sync}, item.sync)
-  end
-
-  defp complete_reset_cleanup(item, sync) do
-    backup = backup_path(item.sidecar_path)
-    tombstone = Manifest.backup_tombstone(Manifest.read(item.video_path), item.language)
-
-    with :ok <- ReplacementCleanup.reconcile_reversal(%{item | sync: sync}),
-         :ok <- restore_for_reset(item, backup, sync),
-         :ok <- retire_reset_backup(backup, sync, tombstone),
-         do: Manifest.finish_reset_cleanup(item.video_path, item.language)
-  end
-
-  defp retire_reset_backup(backup, sync, tombstone) do
-    cond do
-      immutable_backup_expected?(sync) -> retire_owned_backup(backup, sync, tombstone)
-      regular_file?(backup) and is_map(tombstone) -> retire_owned_backup(backup, sync, tombstone)
-      regular_file?(backup) -> {:error, :unexpected_backup}
-      true -> :ok
-    end
-  end
-
-  defp restore_for_reset(item, backup, sync) do
-    with {:ok, current} <- safe_read(item.sidecar_path) do
-      restore_current_for_reset(item, backup, sync, current, sha256(current))
-    end
-  end
-
-  defp restore_current_for_reset(_item, _backup, %{source_sha256: source}, _current, source),
-    do: :ok
-
-  defp restore_current_for_reset(
-         item,
-         backup,
-         %{source_sha256: source, applied_sha256: applied} = sync,
-         current,
-         applied
-       )
-       when source != applied do
-    if regular_file?(backup) do
-      with {:ok, original} <- safe_read(backup),
-           :ok <- verify_backup_provenance(sync, original),
-           do: atomic_write(item.sidecar_path, original, current)
-    else
-      {:error, :missing_backup}
-    end
-  end
-
-  defp restore_current_for_reset(_item, _backup, _sync, _current, _hash),
-    do: {:error, :concurrent_change}
-
-  defp prepare_replacement(%{sync: nil} = item, _moviehash) do
-    case file_sha256_result(item.sidecar_path) do
-      {:ok, current_hash} when current_hash == item.managed_sha256 ->
-        proof = %{source_sha256: item.managed_sha256}
-
-        case discard_replacement(item.video_path, item.language, item.sidecar_path, proof) do
-          :ok -> item
-          {:error, _reason} -> block_cleanup(item)
-        end
-
-      {:ok, _other_hash} ->
-        Map.put(item, :auto_review_reason, :externally_modified)
-
-      {:error, _reason} ->
-        block_cleanup(item)
+      SidecarTransaction.publish(item, current, adjusted, record)
     end
   end
 
   defp prepare_replacement(item, moviehash) do
-    case ReplacementCleanup.reconcile_reversal(item) do
-      :ok -> prepare_reconciled_replacement(item, moviehash)
-      {:error, _reason} -> Map.put(item, :auto_review_reason, :apply_recovery_failed)
+    case SidecarTransaction.recover(item, moviehash) do
+      {:ok, item} -> item
+      {:review, reason, item} -> Map.put(item, :auto_review_reason, reason)
     end
   end
-
-  defp prepare_reconciled_replacement(item, moviehash) do
-    case file_sha256_result(item.sidecar_path) do
-      {:ok, current_hash} -> prepare_replacement(item, moviehash, current_hash)
-      {:error, _reason} -> block_cleanup(item)
-    end
-  end
-
-  defp prepare_replacement(item, moviehash, current_hash) do
-    cond do
-      item.sync.status == "applying" and item.sync.moviehash == moviehash ->
-        recover_pending_correction(item, current_hash)
-
-      current_sync?(item, moviehash, current_hash) ->
-        item
-
-      current_hash == item.sync.source_sha256 ->
-        clean_replacement(item, current_hash)
-
-      item.sync.moviehash == moviehash ->
-        Map.put(item, :auto_review_reason, :externally_modified)
-
-      current_hash in [item.sync.source_sha256, item.sync.applied_sha256] ->
-        clean_replacement(item, current_hash)
-
-      true ->
-        Map.put(item, :auto_review_reason, :externally_modified)
-    end
-  end
-
-  defp recover_pending_correction(item, current_hash) do
-    cond do
-      current_hash == item.sync.applied_sha256 ->
-        finalize_pending_correction(item)
-
-      item.sync.method == "manual" and current_hash == item.sync.expected_sha256 ->
-        resume_pending_manual(item)
-
-      current_hash == item.sync.expected_sha256 ->
-        retry_pending_correction(item)
-
-      true ->
-        Map.put(item, :auto_review_reason, :externally_modified)
-    end
-  end
-
-  defp resume_pending_manual(item) do
-    backup = backup_path(item.sidecar_path)
-
-    with :ok <- verify_pending_backup(item),
-         {:ok, current} <- safe_read(item.sidecar_path),
-         true <- sha256(current) == item.sync.expected_sha256,
-         {:ok, source} <- safe_read(backup),
-         {:ok, adjusted} <-
-           Timing.retime(
-             source,
-             Path.extname(item.sidecar_path),
-             item.sync.offset_ms,
-             item.sync.rate
-           ),
-         true <- sha256(adjusted) == item.sync.applied_sha256,
-         :ok <- verify_video_moviehash(item.video_path, item.sync.moviehash),
-         :ok <- atomic_write(item.sidecar_path, adjusted, current, item.sync.operation_id),
-         :ok <- verify_video_moviehash(item.video_path, item.sync.moviehash) do
-      finalize_pending_correction(item)
-    else
-      _ -> Map.put(item, :auto_review_reason, :apply_recovery_failed)
-    end
-  end
-
-  defp finalize_pending_correction(item) do
-    metadata =
-      item.sync
-      |> Map.delete(:expected_sha256)
-      |> Map.delete(:operation_id)
-      |> Map.put(:status, "aligned")
-
-    with :ok <- verify_pending_backup(item),
-         :ok <- cleanup_pending_workspace(item),
-         :ok <- Manifest.put_sync(item.video_path, item.language, metadata) do
-      %{item | sync: metadata}
-    else
-      {:error, _reason} -> Map.put(item, :auto_review_reason, :apply_recovery_failed)
-    end
-  end
-
-  defp retry_pending_correction(item) do
-    with :ok <- verify_pending_backup(item),
-         :ok <-
-           AtomicFile.recover(
-             item.sidecar_path,
-             item.sync.operation_id,
-             item.sync.expected_sha256,
-             item.sync.applied_sha256
-           ),
-         :ok <- verify_video_moviehash(item.video_path, item.sync.moviehash) do
-      finalize_pending_correction(item)
-    else
-      {:error, _reason} -> Map.put(item, :auto_review_reason, :apply_recovery_failed)
-    end
-  end
-
-  defp cleanup_pending_workspace(item) do
-    AtomicFile.cleanup_pending(
-      item.sidecar_path,
-      item.sync.operation_id,
-      item.sync.expected_sha256,
-      item.sync.applied_sha256
-    )
-  end
-
-  defp verify_pending_backup(item) do
-    backup = backup_path(item.sidecar_path)
-
-    if regular_file?(backup) do
-      with {:ok, original} <- safe_read(backup),
-           do: verify_backup_provenance(item.sync, original)
-    else
-      {:error, :missing_backup}
-    end
-  end
-
-  defp clean_replacement(item, current_hash) do
-    backup = backup_path(item.sidecar_path)
-
-    with :ok <- restore_applied_original(item, backup, current_hash),
-         :ok <- Manifest.begin_replacement_cleanup(item.video_path, item.language, item.sync) do
-      finish_replacement_cleanup(%{item | sync: nil}, item.sync)
-    else
-      {:error, _reason} -> block_cleanup(item)
-    end
-  end
-
-  defp finish_replacement_cleanup(item, sync) do
-    with :ok <- discard_replacement(item.video_path, item.language, item.sidecar_path, sync),
-         :ok <- Manifest.clear_replacement_cleanup(item.video_path, item.language) do
-      item
-    else
-      {:error, _reason} -> block_cleanup(item)
-    end
-  end
-
-  @doc false
-  def immutable_backup_expected?(%{source_sha256: source, applied_sha256: applied})
-      when is_binary(source) and byte_size(source) == 64 and is_binary(applied) and
-             byte_size(applied) == 64,
-      do: source != applied
-
-  def immutable_backup_expected?(_sync), do: false
-
-  defp retire_owned_backup(backup, sync, %{identity: identity})
-       when is_list(identity) and length(identity) == 3 do
-    expected_identity = List.to_tuple(identity)
-
-    with_bound(backup, [:read, :raw, :binary], fn bound ->
-      with true <- Filesystem.identity?(bound, expected_identity) || {:error, :unexpected_backup},
-           {:ok, content} <- File.read(bound.path),
-           :ok <- retire_backup_content(bound, content, sync) do
-        verify_bound_source_identity(backup, bound.identity)
-      end
-    end)
-  end
-
-  defp retire_owned_backup(_backup, _sync, _tombstone),
-    do: {:error, :missing_backup_tombstone}
-
-  defp retire_backup_content(_bound, "", _sync), do: :ok
-
-  defp retire_backup_content(bound, content, sync) do
-    with :ok <- verify_backup_provenance(sync, content) do
-      case fs().discard_bound(bound) do
-        :ok -> verify_discarded_backup(bound)
-        {:error, {:effect_committed, _operation, _reason}} -> verify_discarded_backup(bound)
-        {:error, _reason} = error -> error
-      end
-    end
-  end
-
-  defp verify_discarded_backup(bound) do
-    case File.read(bound.path) do
-      {:ok, ""} -> :ok
-      {:ok, _other} -> {:error, :backup_retirement_mismatch}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp restore_applied_original(item, backup, current_hash) do
-    cond do
-      current_hash != item.sync.applied_sha256 ->
-        :ok
-
-      item.sync.source_sha256 == item.sync.applied_sha256 ->
-        :ok
-
-      not regular_file?(backup) ->
-        {:error, :missing_backup}
-
-      true ->
-        with {:ok, current} <- safe_read(item.sidecar_path),
-             {:ok, original} <- safe_read(backup),
-             :ok <- verify_backup_provenance(item.sync, original),
-             do: atomic_write(item.sidecar_path, original, current)
-    end
-  end
-
-  defp block_cleanup(item), do: Map.put(item, :auto_review_reason, :replacement_cleanup_failed)
 
   defp current_sync?(item, moviehash) do
-    case file_sha256_result(item.sidecar_path) do
+    case SafeFile.file_sha256(item.sidecar_path) do
       {:ok, current_hash} -> current_sync?(item, moviehash, current_hash)
       {:error, _reason} -> false
     end
@@ -1258,7 +566,7 @@ defmodule Cinder.Subtitles.Sync do
   defp verify_source_fingerprint(_source, nil), do: :ok
 
   defp verify_source_fingerprint(source, expected) when is_binary(expected) do
-    if sha256(source) == expected, do: :ok, else: {:error, :sidecar_changed}
+    if SafeFile.sha256(source) == expected, do: :ok, else: {:error, :sidecar_changed}
   end
 
   defp verify_source_fingerprint(_source, _expected), do: {:error, :invalid_fingerprint}
@@ -1292,7 +600,7 @@ defmodule Cinder.Subtitles.Sync do
   end
 
   defp cleanup_review_reason(track, sidecar_path) do
-    if is_nil(Map.get(track, :sync)) and active_backup?(backup_path(sidecar_path)),
+    if is_nil(Map.get(track, :sync)) and SidecarTransaction.stranded_backup?(sidecar_path),
       do: "replacement_cleanup_failed"
   end
 
@@ -1300,142 +608,6 @@ defmodule Cinder.Subtitles.Sync do
     do: Record.metadata(@sync_version, status, method, moviehash, source, applied, metrics)
 
   defp result(item, status, method, metadata), do: Record.result(item, status, method, metadata)
-
-  @doc false
-  def verify_bound_source_identity(path, expected_identity) do
-    with_bound(path, [:read, :raw, :binary], fn rebound ->
-      if rebound.identity == expected_identity, do: :ok, else: {:error, :concurrent_change}
-    end)
-  end
-
-  defp manifest_failure(item, previous, adjusted, backup_created?, method, reason) do
-    case rollback_prepared_correction(item, previous, adjusted, backup_created?) do
-      :ok ->
-        result(item, :failed, method, %{reason: {:manifest, reason}})
-
-      {:error, rollback_reason} ->
-        result(item, :failed, method, %{
-          reason: {:manifest_and_rollback_failed, reason, rollback_reason}
-        })
-    end
-  end
-
-  defp rollback_correction(item, previous, expected_applied) do
-    with {:ok, current} <- safe_read(item.sidecar_path),
-         true <- current == expected_applied,
-         do: atomic_write(item.sidecar_path, previous, expected_applied),
-         else: (
-           false -> {:error, :concurrent_change}
-           {:error, _reason} = error -> error
-         )
-  end
-
-  defp rollback_prepared_correction(item, previous, expected_applied, backup_created?) do
-    with :ok <- rollback_correction(item, previous, expected_applied),
-         :ok <- restore_previous_sync(item),
-         do: remove_new_backup(item, backup_created?)
-  end
-
-  defp cleanup_unpublished_correction(item, backup_created?, method, reason) do
-    case cleanup_before_publication(item, backup_created?) do
-      :ok ->
-        result(item, :failed, method, %{reason: reason})
-
-      {:error, cleanup_reason} ->
-        result(item, :failed, method, %{
-          reason: {:prepublication_cleanup_failed, reason, cleanup_reason}
-        })
-    end
-  end
-
-  defp cleanup_unpublished_manual(item, backup_created?, reason) do
-    case cleanup_before_publication(item, backup_created?) do
-      :ok ->
-        {:error, reason}
-
-      {:error, cleanup_reason} ->
-        {:error, {:prepublication_cleanup_failed, reason, cleanup_reason}}
-    end
-  end
-
-  defp cleanup_before_publication(item, backup_created?) do
-    with :ok <- restore_previous_sync(item),
-         do: remove_new_backup(item, backup_created?)
-  end
-
-  defp abort_prepared_correction(item, _backup_created?), do: restore_previous_sync(item)
-
-  defp restore_previous_sync(%{sync: nil} = item),
-    do: Manifest.clear_sync(item.video_path, item.language)
-
-  defp restore_previous_sync(item),
-    do: Manifest.put_sync(item.video_path, item.language, item.sync)
-
-  defp remove_new_backup(item, true) do
-    backup = backup_path(item.sidecar_path)
-    tombstone = Manifest.backup_tombstone(Manifest.read(item.video_path), item.language)
-
-    with {:ok, current} <- safe_read(item.sidecar_path),
-         do: retire_owned_backup(backup, %{source_sha256: sha256(current)}, tombstone)
-  end
-
-  defp remove_new_backup(_item, false), do: :ok
-
-  defp atomic_write(target, content, expected_current),
-    do: AtomicFile.write(target, content, expected_current)
-
-  defp atomic_write(target, content, expected_current, operation_id),
-    do: AtomicFile.write(target, content, expected_current, operation_id)
-
-  defp operation_id,
-    do: Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
-
-  @doc false
-  def safe_read(path) do
-    with {:ok, path} <- safe_source(path), do: fs().read(path)
-  end
-
-  defp verify_current_content(path, expected) do
-    case safe_read(path) do
-      {:ok, ^expected} -> :ok
-      {:ok, _changed} -> {:error, :concurrent_change}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp regular_file?(path) do
-    with {:ok, path} <- safe_source(path),
-         {:ok, %File.Stat{type: :regular}} <- fs().lstat(path),
-         do: true,
-         else: (_ -> false)
-  end
-
-  defp active_backup?(path) do
-    case safe_destination(path) do
-      {:ok, path} ->
-        case fs().lstat(path) do
-          {:ok, %File.Stat{type: :regular, size: 0}} -> false
-          {:error, :enoent} -> false
-          _other -> true
-        end
-
-      {:error, _reason} ->
-        true
-    end
-  end
-
-  defp safe_source(path) do
-    path_policy().source_file(
-      path,
-      Settings.video_library_roots(),
-      [String.downcase(Path.extname(path))],
-      filesystem: fs()
-    )
-  end
-
-  @doc false
-  def safe_destination(path),
-    do: path_policy().destination(path, Settings.video_library_roots(), filesystem: fs())
 
   defp current_moviehash(video_path) do
     case Moviehash.of_file(video_path) do
@@ -1446,34 +618,12 @@ defmodule Cinder.Subtitles.Sync do
     end
   end
 
-  defp verify_analysis_inputs(item, moviehash, source) do
-    with :ok <- verify_current_content(item.sidecar_path, source),
-         do: verify_video_moviehash(item.video_path, moviehash)
-  end
-
-  defp verify_video_moviehash(video_path, expected) do
-    case current_moviehash(video_path) do
-      {:ok, ^expected} -> :ok
-      {:ok, _other} -> {:error, :video_changed}
-      {:error, _reason} -> {:error, :moviehash_unavailable}
-    end
-  end
-
   defp file_sha256(path) do
-    case file_sha256_result(path) do
+    case SafeFile.file_sha256(path) do
       {:ok, hash} -> hash
       {:error, _reason} -> nil
     end
   end
-
-  defp file_sha256_result(path) do
-    case safe_read(path) do
-      {:ok, content} -> {:ok, sha256(content)}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp sha256(content), do: :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
 
   # `function_exported?/3` answers for *loaded* modules only, and code loading is lazy: probing
   # before the engine module has ever been called reports no `sync/5` and silently drops the
@@ -1492,7 +642,4 @@ defmodule Cinder.Subtitles.Sync do
     do: Application.get_env(:cinder, :subtitle_sync_engine, Cinder.Subtitles.Sync.Ffsubsync)
 
   defp media_info, do: Application.get_env(:cinder, :media_info)
-  @doc false
-  def fs, do: Application.fetch_env!(:cinder, :filesystem)
-  defp path_policy, do: Application.get_env(:cinder, :path_policy, PathPolicy)
 end
