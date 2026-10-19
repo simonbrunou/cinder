@@ -6,7 +6,7 @@ defmodule Cinder.CatalogTest do
   import Mox
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, Season, Series}
+  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, MovieLifecycle, Season, Series}
 
   setup :verify_on_exit!
 
@@ -41,92 +41,23 @@ defmodule Cinder.CatalogTest do
     end
   end
 
-  describe "transition/2, list_by_status/1, subscribe/0" do
-    test "transition/2 updates status + download_id and broadcasts the change" do
-      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 1, title: "M"})
-      Catalog.subscribe()
-
-      assert {:ok, %Movie{status: :downloading, download_id: "h"}} =
-               Catalog.transition(movie, %{status: :downloading, download_id: "h"})
-
-      assert_receive {:movie_updated, %Movie{id: id, status: :downloading}}
-      assert id == movie.id
-    end
-
-    test "transition/2 emits [:cinder, :transition] with kind: :movie and the target status" do
-      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4244, title: "M"})
-
-      {result, events} =
-        Cinder.TelemetryHelpers.capture([:cinder, :transition], fn ->
-          Catalog.transition(movie, %{status: :downloading, download_id: "h"})
-        end)
-
-      assert {:ok, %Movie{status: :downloading}} = result
-      assert [{%{count: 1}, %{kind: :movie, to: :downloading}}] = events
-    end
-
-    test "transition/3 with expect: emits [:cinder, :transition] on the guarded write path" do
-      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4245, title: "M"})
-      {:ok, searching} = Catalog.transition(movie, %{status: :searching})
-
-      {result, events} =
-        Cinder.TelemetryHelpers.capture([:cinder, :transition], fn ->
-          Catalog.transition(searching, %{status: :downloading}, expect: :searching)
-        end)
-
-      assert {:ok, %Movie{status: :downloading}} = result
-      assert [{%{count: 1}, %{kind: :movie, to: :downloading}}] = events
-    end
-
-    test "transition/2 rejects an unknown status" do
+  # The lifecycle edges, their race guard and their publication are tested on
+  # `Cinder.Catalog.MovieLifecycle` (movie_lifecycle_test.exs).
+  describe "Movie.transition_changeset/2, list_by_status/1" do
+    test "rejects an unknown status" do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 2, title: "M"})
 
-      assert {:error, changeset} = Catalog.transition(movie, %{status: :bogus})
+      changeset = Movie.transition_changeset(movie, %{status: :bogus})
       assert %{status: ["is invalid"]} = errors_on(changeset)
     end
 
-    test "transition/2 accepts :cancelled as a valid status" do
-      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4242, title: "M"})
-
-      assert {:ok, %Movie{status: :cancelled}} =
-               Catalog.transition(movie, %{status: :cancelled})
-    end
-
-    test "transition/2 rejects an illegal from→to pair before writing" do
-      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4246, title: "M"})
-      {:ok, available} = Catalog.transition(movie, %{status: :available})
-
-      # :available can only ever go to :upgrading — not straight back to :downloading.
-      assert {:error, {:illegal_transition, :available, :downloading}} =
-               Catalog.transition(available, %{status: :downloading, download_id: "h"})
-
-      # Rejected before writing: the row is untouched.
-      assert Repo.get!(Movie, movie.id).status == :available
-    end
-
-    test "transition/3 with expect: also rejects an illegal from→to pair before writing" do
-      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4247, title: "M"})
-      {:ok, available} = Catalog.transition(movie, %{status: :available})
-
-      assert {:error, {:illegal_transition, :available, :downloading}} =
-               Catalog.transition(available, %{status: :downloading, download_id: "h"},
-                 expect: :available
-               )
-
-      assert Repo.get!(Movie, movie.id).status == :available
-    end
-
-    test "transition/2 rejects a negative search_attempts or import_attempts" do
+    test "rejects a negative search_attempts or import_attempts" do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4248, title: "M"})
 
-      assert {:error, changeset} =
-               Catalog.transition(movie, %{status: :searching, search_attempts: -1})
-
+      changeset = Movie.transition_changeset(movie, %{status: :searching, search_attempts: -1})
       assert %{search_attempts: ["must be greater than or equal to 0"]} = errors_on(changeset)
 
-      assert {:error, changeset} =
-               Catalog.transition(movie, %{status: :downloaded, import_attempts: -1})
-
+      changeset = Movie.transition_changeset(movie, %{status: :downloaded, import_attempts: -1})
       assert %{import_attempts: ["must be greater than or equal to 0"]} = errors_on(changeset)
     end
 
@@ -138,74 +69,10 @@ defmodule Cinder.CatalogTest do
       end
     end
 
-    test "transition/3 with expect: writes only when the DB status still matches" do
-      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4243, title: "M"})
-      {:ok, searching} = Catalog.transition(movie, %{status: :searching})
-
-      assert {:ok, %Movie{status: :downloading}} =
-               Catalog.transition(searching, %{status: :downloading, download_id: "h"},
-                 expect: :searching
-               )
-    end
-
-    test "transition/3 with expect: skips a stale write (poller vs user-cancel race)" do
-      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4244, title: "M"})
-      {:ok, searching} = Catalog.transition(movie, %{status: :searching})
-
-      # The user cancels while the poller's unit is in flight with the :searching struct…
-      {:ok, _} = Catalog.transition(searching, %{status: :cancelled})
-
-      # …so the poller's write-back misses and the cancel stands.
-      assert {:error, :stale_status} =
-               Catalog.transition(searching, %{status: :downloading, download_id: "h"},
-                 expect: :searching
-               )
-
-      assert Repo.get!(Movie, movie.id).status == :cancelled
-    end
-
-    test "guarded transition broadcasts exactly once and a stale guard stays silent" do
-      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4245, title: "M"})
-      Catalog.subscribe()
-
-      {:ok, searching} = Catalog.transition(movie, %{status: :searching})
-      assert_receive {:movie_updated, %Movie{id: id, status: :searching}}
-      assert id == movie.id
-
-      assert {:ok, %Movie{status: :downloading}} =
-               Catalog.transition(searching, %{status: :downloading, download_id: "guarded"},
-                 expect: :searching
-               )
-
-      assert_receive {:movie_updated, %Movie{id: ^id, status: :downloading}}
-      refute_receive {:movie_updated, %Movie{id: ^id}}
-
-      # :no_match (not :downloaded) — the point is any legal-but-different target still misses
-      # the stale compare-and-swap; an illegal target would be rejected by the transition matrix
-      # before ever reaching that check, which isn't what this test is probing.
-      assert {:error, :stale_status} =
-               Catalog.transition(searching, %{status: :no_match}, expect: :searching)
-
-      refute_receive {:movie_updated, %Movie{id: ^id}}
-      assert Repo.get!(Movie, id).status == :downloading
-    end
-
-    test "transition/2 persists file_path" do
-      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 9001, title: "Heat"})
-
-      assert {:ok, %Movie{file_path: "/downloads/Heat.1995.mkv"}} =
-               Catalog.transition(movie, %{
-                 status: :downloaded,
-                 file_path: "/downloads/Heat.1995.mkv"
-               })
-
-      assert %Movie{file_path: "/downloads/Heat.1995.mkv"} = Repo.get!(Movie, movie.id)
-    end
-
     test "list_by_status/1 returns only movies in that status" do
       {:ok, _a} = Catalog.add_movie(%{tmdb_id: 4, title: "A"})
       {:ok, b} = Catalog.add_movie(%{tmdb_id: 5, title: "B"})
-      {:ok, _} = Catalog.transition(b, %{status: :downloading, download_id: "h"})
+      {:ok, _} = seed_movie_state(b, %{status: :downloading, download_id: "h"})
 
       assert [%Movie{tmdb_id: 5}] = Catalog.list_by_status(:downloading)
       assert [%Movie{tmdb_id: 4}] = Catalog.list_by_status(:requested)
@@ -257,7 +124,7 @@ defmodule Cinder.CatalogTest do
         {:ok, movie} = Catalog.add_movie(%{tmdb_id: tmdb_id, title: "M"})
 
         {:ok, movie} =
-          Catalog.transition(movie, %{
+          seed_movie_state(movie, %{
             status: parked,
             search_attempts: 7,
             import_attempts: 4,
@@ -274,7 +141,7 @@ defmodule Cinder.CatalogTest do
                   download_id: nil,
                   download_protocol: nil,
                   file_path: nil
-                } = retried} = Catalog.retry_movie(movie)
+                } = retried} = MovieLifecycle.retry(movie)
 
         expected_id = retried.id
         assert_receive {:movie_updated, %Movie{id: ^expected_id, status: :requested}}
@@ -283,9 +150,9 @@ defmodule Cinder.CatalogTest do
 
     test "refuses to retry a movie that is not in a parked state" do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 8100, title: "M"})
-      {:ok, downloading} = Catalog.transition(movie, %{status: :downloading, download_id: "h"})
+      {:ok, downloading} = seed_movie_state(movie, %{status: :downloading, download_id: "h"})
 
-      assert {:error, :not_retryable} = Catalog.retry_movie(downloading)
+      assert {:error, :not_retryable} = MovieLifecycle.retry(downloading)
       assert Catalog.get_movie_by_id(movie.id).status == :downloading
     end
 
@@ -293,11 +160,13 @@ defmodule Cinder.CatalogTest do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 8200, title: "M"})
 
       {:ok, movie} =
-        Catalog.transition(movie, %{status: :import_failed, release_title: "Bad.Release.1080p"})
+        seed_movie_state(movie, %{status: :import_failed, release_title: "Bad.Release.1080p"})
 
       :ok = Catalog.block_release(movie, :wrong_audio_language)
 
-      assert {:ok, %Movie{status: :requested, release_title: nil}} = Catalog.retry_movie(movie)
+      assert {:ok, %Movie{status: :requested, release_title: nil}} =
+               MovieLifecycle.retry(movie)
+
       # The blocklist row survives the retry, keyed by movie_id (clearing it would re-grab).
       assert Catalog.blocked_release_titles(movie) == ["Bad.Release.1080p"]
     end
@@ -315,9 +184,9 @@ defmodule Cinder.CatalogTest do
   describe "search_failed terminal + search_attempts" do
     test "transition can set :search_failed and persist search_attempts" do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 7002, title: "M"})
-      {:ok, m} = Catalog.transition(movie, %{status: :searching, search_attempts: 3})
+      {:ok, m} = seed_movie_state(movie, %{status: :searching, search_attempts: 3})
       assert m.search_attempts == 3
-      {:ok, m} = Catalog.transition(m, %{status: :search_failed})
+      {:ok, m} = seed_movie_state(m, %{status: :search_failed})
       assert m.status == :search_failed
     end
   end
@@ -333,7 +202,7 @@ defmodule Cinder.CatalogTest do
 
     test "reuses an existing movie without resetting its status" do
       {:ok, movie} = Catalog.add_movie(@attrs)
-      {:ok, movie} = Catalog.transition(movie, %{status: :available})
+      {:ok, movie} = seed_movie_state(movie, %{status: :available})
       assert {:ok, found, :existing} = Catalog.find_or_create_at_requested(@attrs)
       assert found.id == movie.id
       assert found.status == :available
@@ -343,28 +212,6 @@ defmodule Cinder.CatalogTest do
       Catalog.subscribe()
       {:ok, _movie, :created} = Catalog.find_or_create_at_requested(@attrs)
       refute_receive {:movie_created, _}
-    end
-  end
-
-  describe "find_or_create_at_available/2" do
-    test "refuses to adopt over a completed acquisition" do
-      attrs = %{tmdb_id: 7003, title: "M"}
-
-      movie =
-        movie_fixture(%{
-          tmdb_id: attrs.tmdb_id,
-          title: attrs.title,
-          status: :downloaded,
-          download_id: "active-download",
-          download_protocol: :torrent,
-          content_path: "/downloads/M.mkv"
-        })
-
-      assert {:error, :acquisition_in_progress} =
-               Catalog.find_or_create_at_available(attrs, "/library/M.mkv")
-
-      assert %Movie{status: :downloaded, file_path: nil, download_id: "active-download"} =
-               Repo.reload!(movie)
     end
   end
 
@@ -466,11 +313,11 @@ defmodule Cinder.CatalogTest do
   describe "cancellable?/1" do
     test "is true for active statuses and false for terminal/parked ones" do
       for s <- [:requested, :searching, :downloading, :downloaded] do
-        assert Catalog.cancellable?(%Movie{status: s}), "expected #{s} cancellable"
+        assert MovieLifecycle.cancellable?(%Movie{status: s}), "expected #{s} cancellable"
       end
 
       for s <- [:available, :no_match, :search_failed, :import_failed, :cancelled] do
-        refute Catalog.cancellable?(%Movie{status: s}), "expected #{s} NOT cancellable"
+        refute MovieLifecycle.cancellable?(%Movie{status: s}), "expected #{s} NOT cancellable"
       end
     end
   end
@@ -492,7 +339,7 @@ defmodule Cinder.CatalogTest do
   describe "set_movie_language/2" do
     test "re-queues a parked movie" do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 7, title: "X"})
-      {:ok, movie} = Catalog.transition(movie, %{status: :no_match})
+      {:ok, movie} = seed_movie_state(movie, %{status: :no_match})
 
       {:ok, updated} = Catalog.set_movie_language(movie, "french")
 
@@ -503,7 +350,7 @@ defmodule Cinder.CatalogTest do
 
     test "re-queues a search_failed movie" do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 9, title: "Z"})
-      {:ok, movie} = Catalog.transition(movie, %{status: :search_failed})
+      {:ok, movie} = seed_movie_state(movie, %{status: :search_failed})
 
       {:ok, updated} = Catalog.set_movie_language(movie, "french")
 
@@ -514,7 +361,7 @@ defmodule Cinder.CatalogTest do
 
     test "on an available movie only updates the field" do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 8, title: "Y"})
-      {:ok, movie} = Catalog.transition(movie, %{status: :available})
+      {:ok, movie} = seed_movie_state(movie, %{status: :available})
 
       {:ok, updated} = Catalog.set_movie_language(movie, "any")
 
@@ -573,9 +420,9 @@ defmodule Cinder.CatalogTest do
       assert Catalog.blocked_release_titles(movie) == ["Bad.Release.1080p"]
     end
 
-    # block_release_and_confirm/2 is what bounds Poller.requeue_failed/2's re-queue loop: the
-    # poller re-queues a dead download only on :ok, and parks on :error, because without the row
-    # it would re-grab the same dead release every cycle forever.
+    # block_release_and_confirm/2 is what bounds MovieLifecycle.record_failure/2's re-queue loop:
+    # a failed download re-queues only on :ok, and parks on :error, because without the row it
+    # would re-grab the same failed release every cycle forever.
     test "block_release_and_confirm/2 returns :ok once the row is readable back" do
       movie = Repo.insert!(%Movie{tmdb_id: 9010, title: "M", release_title: "Rel.1080p-GRP"})
 
@@ -695,14 +542,14 @@ defmodule Cinder.CatalogTest do
         )
 
       Cinder.Download.ClientMock |> expect(:remove, fn "dl-3", _ -> :ok end)
-      assert {:ok, reverted} = Catalog.abort_upgrade(movie, nil)
+      assert {:ok, reverted} = MovieLifecycle.abort_upgrade(movie, nil)
       assert reverted.status == :available
       assert reverted.download_id == nil
       assert reverted.file_path == "/lib/M (2020)/M (2020).mkv"
     end
 
     test "rejects a non-upgrading movie" do
-      assert Catalog.abort_upgrade(movie_fixture(status: :available), nil) ==
+      assert MovieLifecycle.abort_upgrade(movie_fixture(status: :available), nil) ==
                {:error, :not_upgrading}
     end
 
@@ -719,8 +566,9 @@ defmodule Cinder.CatalogTest do
       Repo.delete!(movie)
 
       # No expect/2 on the client — verify_on_exit! fails if abort_upgrade attempted remote
-      # cleanup against a row that's already gone.
-      assert {:error, :stale_entry} = Catalog.abort_upgrade(movie, nil)
+      # cleanup against a row that's already gone. The compare-and-swap misses like any other
+      # moved-on upgrade.
+      assert {:error, :not_upgrading} = MovieLifecycle.abort_upgrade(movie, nil)
     end
   end
 
@@ -748,13 +596,13 @@ defmodule Cinder.CatalogTest do
         reason: "wrong_audio_language"
       })
 
-      assert {:ok, %Movie{status: :requested}} = Catalog.retry_movie(movie)
+      assert {:ok, %Movie{status: :requested}} = MovieLifecycle.retry(movie)
       assert Catalog.blocked_release_titles(movie) == ["Wrong.Lang.1080p"]
     end
 
     test "retry_movie does not clear the :stalled blocklist when the guarded transition misses" do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 8300, title: "M"})
-      {:ok, parked} = Catalog.transition(movie, %{status: :no_match})
+      {:ok, parked} = seed_movie_state(movie, %{status: :no_match})
 
       Repo.insert!(%BlockedRelease{
         movie_id: movie.id,
@@ -763,22 +611,12 @@ defmodule Cinder.CatalogTest do
       })
 
       # The movie re-enters the pipeline concurrently (now :downloading in the DB)…
-      {:ok, _} = Catalog.transition(parked, %{status: :downloading, download_id: "h"})
+      {:ok, _} = seed_movie_state(parked, %{status: :downloading, download_id: "h"})
 
       # …so a retry on the stale :no_match snapshot misses and must NOT clear the blocklist
       # (the clear runs only after the guarded transition commits).
-      assert {:error, :stale_status} = Catalog.retry_movie(parked)
+      assert {:error, :stale_status} = MovieLifecycle.retry(parked)
       assert Catalog.blocked_release_titles(movie) == ["Stalled.One.1080p"]
-    end
-
-    test "requeue_failed_movie refuses a movie that is not :downloading" do
-      assert {:error, :not_reapable} =
-               Catalog.requeue_failed_movie(movie_fixture(%{status: :available}))
-    end
-
-    test "reap_stalled_upgrade refuses a movie that is not :upgrading" do
-      movie = movie_fixture(%{status: :downloading, download_id: "x"})
-      assert {:error, :not_reapable} = Catalog.reap_stalled_upgrade(movie)
     end
 
     test "search_episode_now clears the series' :stalled blocklist rows, keeps deterministic ones" do

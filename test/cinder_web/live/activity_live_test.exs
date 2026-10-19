@@ -6,7 +6,7 @@ defmodule CinderWeb.ActivityLiveTest do
   import Mox
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, GrabFile}
+  alias Cinder.Catalog.{Episode, Grab, GrabFile, MovieLifecycle}
   alias Cinder.Download.Intent
   alias Cinder.Download.TvPoller
   alias Cinder.Library.ImportStage
@@ -70,12 +70,12 @@ defmodule CinderWeb.ActivityLiveTest do
     # Management moved to the detail page — the row links there.
     assert has_element?(lv, ~s|#movie-#{movie.id} a[href="/movies/#{movie.id}"]|)
 
-    {:ok, movie} = Catalog.transition(movie, %{status: :downloading})
+    {:ok, movie} = seed_movie_state(movie, %{status: :downloading})
     assert render(lv) =~ "progress-info"
 
     # Reaching a terminal-done state drops the row off the live pipeline (it's in /library now).
-    {:ok, movie} = Catalog.transition(movie, %{status: :downloaded})
-    {:ok, _} = Catalog.transition(movie, %{status: :available})
+    {:ok, movie} = seed_movie_state(movie, %{status: :downloaded})
+    {:ok, _} = seed_movie_state(movie, %{status: :available})
     refute has_element?(lv, "#movie-#{movie.id}")
   end
 
@@ -201,7 +201,7 @@ defmodule CinderWeb.ActivityLiveTest do
     grab = grab!()
 
     metrics = %{download_progress: 0.42, download_speed: 1_500_000, download_eta: 90}
-    {:ok, _} = Catalog.update_movie_download_metrics(movie, metrics)
+    {:ok, _} = MovieLifecycle.track(movie, metrics)
     {:ok, _} = Catalog.update_grab_download_metrics(grab, metrics)
 
     {:ok, lv, _html} = live(conn, ~p"/activity")

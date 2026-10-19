@@ -30,10 +30,14 @@ Audiobookshelf, Booklore) is reached only through a behaviour, never directly fr
 A movie's `:status` and an episode's derived state (`file_path`, `part_file_paths`, `grab_id`)
 are written only inside `Cinder.Catalog` and its submodules under `lib/cinder/catalog/`:
 
-- `Catalog.transition/3`. Its `expect:` form is the race-safe poller write.
-- `Catalog.transition_episode/3`.
-- Audited siblings that each own one lifecycle: grabs, upgrades, release verification, adoption,
-  deletion, TMDB refresh.
+- `Cinder.Catalog.MovieLifecycle` for every movie status write, upgrades and adoption included.
+  Each event is a named verb (`attach/2`, `import_staged/2`, `record_failure/2`, `cancel/2`, ...)
+  whose write is a compare-and-swap on the struct the caller read: that is the race-safe poller
+  write. `record_submission_failure/3` and `adopt/3` read their own row inside their transaction
+  instead. `MovieLifecycle.transitions/0` lists every legal movie edge.
+- `Catalog.transition_episode/3`. Its `expect:` form is the race-safe poller write.
+- Audited siblings that each own one lifecycle: TV grabs, TV release verification, episode
+  adoption, deletion, TMDB refresh.
 
 Books and audiobooks follow the same rule through `Cinder.Books.transition_target/3` and
 `BookTargetTransition.guarded/4`, plus their audited siblings: `hold_target/4`, `pause_target/1`,

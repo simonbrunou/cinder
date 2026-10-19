@@ -27,7 +27,7 @@ defmodule CinderWeb.MovieDetailLive do
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
-  alias Cinder.Catalog.Movie
+  alias Cinder.Catalog.{Movie, MovieLifecycle}
   alias CinderWeb.AliasHelpers
 
   @picks Language.preferences()
@@ -83,7 +83,7 @@ defmodule CinderWeb.MovieDetailLive do
   def handle_event("confirm_cancel", _params, socket) do
     actor = socket.assigns.current_scope.user
 
-    case Catalog.cancel_movie(socket.assigns.movie, actor) do
+    case MovieLifecycle.cancel(socket.assigns.movie, actor) do
       {:ok, _} ->
         {:noreply,
          socket
@@ -130,7 +130,7 @@ defmodule CinderWeb.MovieDetailLive do
     # A guarded miss (the movie already re-entered the pipeline) must not be silent —
     # the badge visibly doesn't reset otherwise.
     socket =
-      case Catalog.retry_movie(socket.assigns.movie) do
+      case MovieLifecycle.retry(socket.assigns.movie) do
         {:error, _} ->
           put_flash(socket, :error, gettext("Couldn't retry: that movie has already moved on."))
 
@@ -143,7 +143,7 @@ defmodule CinderWeb.MovieDetailLive do
 
   def handle_event("cancel_upgrade", _params, socket) do
     socket =
-      case Catalog.abort_upgrade(socket.assigns.movie, socket.assigns.current_scope.user) do
+      case MovieLifecycle.abort_upgrade(socket.assigns.movie, socket.assigns.current_scope.user) do
         {:error, _} ->
           put_flash(
             socket,
@@ -262,7 +262,7 @@ defmodule CinderWeb.MovieDetailLive do
 
       <div class="mb-4 flex flex-wrap items-center gap-2">
         <.button
-          :if={Catalog.cancellable?(@movie)}
+          :if={MovieLifecycle.cancellable?(@movie)}
           type="button"
           variant="warning"
           size="sm"
@@ -271,7 +271,7 @@ defmodule CinderWeb.MovieDetailLive do
           {gettext("Cancel")}
         </.button>
         <.button
-          :if={not Catalog.cancellable?(@movie)}
+          :if={not MovieLifecycle.cancellable?(@movie)}
           type="button"
           variant="danger"
           size="sm"
@@ -603,9 +603,9 @@ defmodule CinderWeb.MovieDetailLive do
   end
 
   # Re-read the row fresh from the DB — used after the async refresh, a `:movie_updated`
-  # broadcast, and every write. A status transition through the unguarded `transition/2` echoes the
-  # caller's in-memory struct, which may predate this row's metadata refresh (enrich doesn't
-  # broadcast); re-reading pulls both the current status and the persisted metadata. A row deleted
+  # broadcast, and every write. A write's result may come from the caller's in-memory struct, which
+  # may predate this row's metadata refresh (enrich doesn't broadcast); re-reading pulls both the
+  # current status and the persisted metadata. A row deleted
   # mid-flight leaves the current assign in place (the `:movie_deleted` handler drives the redirect).
   defp assign_fresh(socket, id) do
     case Catalog.get_movie_by_id(id) do
@@ -630,7 +630,7 @@ defmodule CinderWeb.MovieDetailLive do
   defp profile_form(movie),
     do: to_form(%{"profile_id" => Map.get(movie, :profile_id) || "auto"})
 
-  defp parked?(status), do: status in Catalog.parked_statuses()
+  defp parked?(status), do: status in MovieLifecycle.parked_statuses()
 
   defp has_file?(%Movie{file_path: fp}), do: is_binary(fp) and fp != ""
 

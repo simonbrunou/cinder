@@ -3,7 +3,7 @@ defmodule Cinder.RepoConcurrencyTest do
   Proves the WAL + busy_timeout pin (M0): a writer racing a held write lock waits
   it out instead of erroring with "database busy".
 
-  Why not drive this through `Catalog.transition`: the Ecto SQL Sandbox multiplexes
+  Why not drive this through a `MovieLifecycle` verb: the Ecto SQL Sandbox multiplexes
   a single connection, so two writers through `Cinder.Repo` serialize at the
   connection layer and never reach SQLite's busy handler — the race we care about
   can't happen there. So the behaviour is proven against two real connections

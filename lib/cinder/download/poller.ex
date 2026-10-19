@@ -1,32 +1,29 @@
 defmodule Cinder.Download.Poller do
   @moduledoc """
-  Polls the pipeline on each tick:
+  Polls the movie pipeline on each tick:
 
-  1. **advance_downloading** — checks in-flight downloads; `:downloading` →
-     `:downloaded` (or `:import_failed` if the torrent completes with no path). A
-     client-reported dead download re-queues to `:requested` with the release
-     blocklisted, so the next tick grabs the next-best (`fail_download/2`).
-  2. **import_downloaded** — imports `:downloaded` movies into the library →
-     `:available` (or `:import_failed` for a release with no usable file).
+  1. **advance_downloading** — watches in-flight downloads (`:downloading`, and `:upgrading`
+     replacements) through `Cinder.Download.Watch` and maps each verdict onto the movie
+     lifecycle: a completed download is marked `:downloaded` (an upgrade imports at once), any
+     trouble goes to `Cinder.Catalog.MovieLifecycle.record_failure/2`.
+  2. **import_downloaded** — stages `:downloaded` movies into the library and records the result:
+     `MovieLifecycle.import_staged/2`, `reject/2` for a proven policy mismatch, or
+     `record_failure/2`.
   3. **search_requested** — sweeps `:requested` and `:searching` movies through
-     `Download.start/1` (indexer search + client add), advancing them toward
-     `:downloading`. Backoff: a just-failed movie is skipped until
-     `search_retry_after` seconds have elapsed. Bounded retry: after
-     `@max_attempts` transient failures the movie parks at `:search_failed`.
-     Permanent errors (`:unsupported_download_url`, `:bad_torrent`) park
-     immediately.
+     `Download.start/1` (indexer search + client add). Backoff: a just-failed movie is skipped
+     until `search_retry_after` seconds have elapsed; its failure is recorded once.
 
-  Holds no in-flight state: every tick re-derives its work from the DB, so it
-  recovers cleanly after a crash/restart. That is the OTP payoff Phase 3 proves.
+  What a failure means (count it, park, re-queue, revert or hold) is the lifecycle's decision,
+  not the poller's. Holds no in-flight state: every tick re-derives its work from the DB, so it
+  recovers cleanly after a crash/restart.
   """
   require Logger
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.Movie
+  alias Cinder.Catalog.{Movie, MovieLifecycle}
   alias Cinder.Download
   alias Cinder.Download.Watch
   alias Cinder.Library
-  alias Cinder.Notifier
 
   @default_interval 5_000
   @search_retry_after 60
@@ -49,9 +46,6 @@ defmodule Cinder.Download.Poller do
   end
 
   defp advance_downloading do
-    # :upgrading is swept alongside :downloading — an :available movie re-downloading a chosen
-    # replacement. It dispatches to its OWN advance clause (never the :downloading one, which would
-    # wrongly reset status/import_attempts and stage the new file before the atomic swap).
     movies = Catalog.list_by_status(:downloading) ++ Catalog.list_by_status(:upgrading)
     for movie <- movies, do: isolate("movie #{movie.id}", fn -> advance(movie) end)
   end
@@ -71,11 +65,6 @@ defmodule Cinder.Download.Poller do
       isolate("movie #{movie.id}", fn -> search_one(movie) end)
     end
   end
-
-  # Permanent search failures — retrying can't help, so park immediately (mirrors
-  # @permanent_import_errors). :unsupported_download_url = unknown URL scheme;
-  # :bad_torrent = the fetched .torrent was malformed/not bencode.
-  @permanent_search_errors [:unsupported_download_url, :bad_torrent]
 
   defp search_one(movie) do
     case Download.start(movie) do
@@ -111,208 +100,65 @@ defmodule Cinder.Download.Poller do
            ] ->
         :ok
 
-      {:error, reason} when reason in @permanent_search_errors ->
-        Logger.warning("movie #{movie.id} search failed permanently: #{inspect(reason)}")
-        write_back_search(movie, &park(&1, :search_failed, reason))
-
       {:error, reason} ->
-        unless Download.movie_retry_accounted?(movie.id) do
-          write_back_search(movie, &retry_or_fail(&1, reason, :search_attempts, :search_failed))
-        end
+        write_back_search(movie, reason)
     end
   end
 
   # Search-pass write-backs re-read the row first: Download.start advances it to
   # :searching mid-unit, and a concurrent user action (cancel/delete) may have taken
   # it out of the search pass entirely — then skip; the next tick re-derives. The
-  # fresh status feeds each guarded transition's expect:, preserving :searching
+  # fresh row is the lifecycle's compare-and-swap expectation, preserving :searching
   # instead of reverting it to :requested.
-  defp write_back_search(movie, fun) do
+  defp write_back_search(movie, reason) do
     case Catalog.get_movie_by_id(movie.id) do
-      %Movie{status: status} = fresh when status in [:requested, :searching] -> fun.(fresh)
-      _ -> :ok
+      %Movie{status: status} = fresh when status in [:requested, :searching] ->
+        MovieLifecycle.record_failure(fresh, reason)
+
+      _ ->
+        :ok
     end
   end
 
-  # An :upgrading movie re-downloads a user-chosen replacement while its file_path STILL points at
-  # the live library file. It must never reuse the clause below (which stamps content_path and the
-  # :downloaded status on completion) — its own path swaps the file atomically instead.
-  defp advance(%Movie{status: :upgrading} = movie), do: advance_upgrade(movie)
-
   # `Download.Watch` owns everything up to the verdict (client, status, content vetting, metrics,
-  # the stall reaper); this maps each verdict onto the movie's own transition.
+  # the stall reaper); the lifecycle owns what each verdict does to the movie.
   defp advance(movie) do
-    case Watch.check(movie, &Catalog.update_movie_download_metrics/2) do
+    case Watch.check(movie, &MovieLifecycle.track/2) do
       {:completed, path} ->
-        Catalog.transition(
-          movie,
-          %{status: :downloaded, content_path: path, import_attempts: 0},
-          expect: movie.status
-        )
-
-      # Completed but no usable content_path. A genuinely-slow download is :downloading (not
-      # :completed), so this is anomalous — bound it so it can't sit at :downloading and re-poll
-      # forever (normally the path appears within a tick or two and the clause above fires).
-      {:failed, :no_content_path} ->
-        retry_or_fail(movie, :no_content_path, :import_attempts, :import_failed)
-
-      {:failed, reason} ->
-        fail_download(movie, reason)
-
-      # Deterministic (the file list won't improve), so it skips fail_download/2's 3-tick
-      # tolerance — which exists for client-API blips — and re-queues on the first sighting:
-      # blocklist the release, and the next tick grabs the next-best candidate.
-      {:blocked_content, _detail} = reason ->
-        requeue_failed(movie, reason)
-
-      :stalled ->
-        reap(movie)
-
-      # No client configured for this movie's protocol (e.g. a protocol removed from config
-      # mid-download). Bound it through retry_or_fail so it parks at a terminal state instead of
-      # re-raising every tick forever.
-      :no_client ->
-        retry_or_fail(movie, :no_client, :import_attempts, :import_failed)
+        complete(movie, path)
 
       # Still in transit, or the client could not answer: leave it and retry next tick (a slow
-      # download or a client blip must not count toward the bound).
+      # download or a client blip must not count toward any budget).
       :downloading ->
         :ok
 
       {:unreachable, _reason} ->
         :ok
+
+      failure ->
+        MovieLifecycle.record_failure(movie, failure)
     end
   end
 
-  # A client-reported failure is terminal for THAT download — no number of status re-polls revives
-  # an aborted NZB or a job the client no longer knows about. The old path burned all 10
-  # import_attempts against the dead download in ~50s and parked :import_failed, so a fully
-  # mechanical recovery needed a human to press Retry. Spend a few ticks first (a client-API blip
-  # reads the same as a dead job), then re-queue instead: blocklist the release and reset to
-  # :requested so the next tick grabs the next-best.
-  #
-  # The counter is `import_attempts`, the SHARED download-phase failure budget — the
-  # :no_content_path branch above bumps the same field while the movie is also :downloading. So it
-  # counts ticks spent failing in the download phase, not three of *this* reason: a download that
-  # already failed twice to yield a path and now reports :error re-queues on the first tick. That's
-  # the right call (it has been going wrong a while), just not a per-reason tolerance.
-  @download_error_attempts 3
-
-  defp fail_download(movie, reason) do
-    attempts = (movie.import_attempts || 0) + 1
-
-    if attempts < @download_error_attempts,
-      do: retry_download(movie, reason, attempts),
-      else: requeue_failed(movie, reason)
+  # An :upgrading movie keeps its live file_path the whole time, so its completed replacement
+  # imports at once by forced replace (the user chose this release) instead of passing through
+  # :downloaded. The replacement's source is set on this local struct only; the row's
+  # content_path stays nil through :upgrading.
+  defp complete(%Movie{status: :upgrading} = movie, content_path) do
+    Library.with_stage_handoff(fn ->
+      upgrade = %{movie | content_path: content_path}
+      upgrade |> Library.stage_movie(replace: true) |> record_import(upgrade)
+    end)
   end
 
-  defp requeue_failed(movie, reason) do
-    code = reason_code(reason)
-
-    # The blocklist row is what bounds this loop — each dead release shrinks the candidate pool
-    # until Download.start parks :no_match — and the writer is best-effort by design: it swallows
-    # insert failures because it runs in the poller's isolated park path, where raising would
-    # re-fire every tick. So write the row BEFORE the reset and only re-queue once it is confirmed
-    # present; otherwise this movie would re-grab the same dead release every cycle forever. The
-    # check has to happen here rather than after, because the transition matrix has no edge out of
-    # `:requested` — once re-queued the movie can no longer be parked.
-    #
-    # This also covers a movie with no release_title at all (nothing to block ⇒ nothing to bound
-    # the loop ⇒ :error). Download.attach_movie always stamps one, so that is belt-and-braces.
-    case Catalog.block_release_and_confirm(movie, code) do
-      :ok ->
-        requeue_blocked(movie, reason, code)
-
-      :error ->
-        Logger.warning(
-          "movie #{movie.id} download failed (#{inspect(reason)}); " <>
-            "release could not be blocklisted, so re-queueing would loop; parking"
-        )
-
-        park(movie, :import_failed, reason)
-    end
-  end
-
-  defp requeue_blocked(movie, reason, code) do
-    case Catalog.requeue_failed_movie(movie, code) do
-      {:ok, _requeued} ->
-        Logger.warning(
-          "movie #{movie.id} download failed (#{inspect(reason)}); blocklisted, re-searching"
-        )
-
-      # Left :downloading mid-tick (user cancel/complete) — re-derive next tick.
-      {:error, _reason} ->
-        :ok
-    end
-  end
-
-  defp retry_download(movie, reason, attempts) do
-    Logger.info(
-      "movie #{movie.id} download error #{attempts}/#{@download_error_attempts} " <>
-        "(#{inspect(reason)}); will re-check"
-    )
-
-    Catalog.transition(
-      movie,
-      %{
-        import_attempts: attempts,
-        status: movie.status,
-        download_speed: nil,
-        download_eta: nil
-      },
-      expect: movie.status
-    )
-  end
-
-  defp reap(movie) do
-    case Catalog.requeue_failed_movie(movie, :stalled) do
-      {:ok, _reaped} ->
-        # Best-effort and post-commit, off the pre-clear struct (the re-queued row has
-        # release_title nil): a stall is a timeout, not a proven-bad release, and retry_movie/1
-        # clears :stalled rows — so unlike the dead-download path this one doesn't gate on it.
-        Catalog.block_release(movie, :stalled)
-        Logger.warning("movie #{movie.id} reaped: stalled download removed; re-searching")
-
-      # Left :downloading mid-tick (user cancel/complete) — skip, re-derive next tick.
-      {:error, _reason} ->
-        :ok
-    end
-  end
-
-  # Deterministic failures — the release itself is unusable, so retrying can't
-  # help. Park them at :import_failed immediately. Other (transient) failures
-  # are retried up to @max_attempts before being parked, so a permanent-but-not-
-  # pre-classified condition (a read-only mount, a completed torrent that never
-  # yields a path) can't loop and re-log forever.
-  # :wrong_audio_language is the MediaInfo check rejecting a confirmed wrong-language file — the
-  # file's audio won't change, so re-importing it can't help; park at :import_failed. A /status
-  # Retry re-searches and the name filter usually then prefers a correctly-tagged release; a soft
-  # Original/Any pick whose only candidates are wrong-language can re-grab the same file, but Retry
-  # is manual so that can't loop on its own.
-  @permanent_import_errors [
-    :no_file_path,
-    :no_video_file,
-    :wrong_audio_language,
-    :ambiguous_multipart_movie,
-    :unsupported_archive,
-    :unsupported_disc
-  ]
-
-  # Download-side failures whose terminal handling blocklists the release. Each only gets here
-  # after a retry bound, so a single network blip can never block a good release. On the fresh-grab
-  # side only :no_content_path still reaches `park/3` (via `retry_or_fail`'s exhaustion) — the two
-  # client-reported ones are handled by `fail_download/2`, which blocklists and re-queues rather
-  # than parking. They stay listed because the *upgrade* path consults this same set from
-  # `revert_upgrade/2` (reached via `retry_or_revert/2`, a different function) to decide whether a
-  # reverted upgrade's replacement release is worth blocking.
-  @download_failure_errors [:download_error, :torrent_not_found, :no_content_path]
+  defp complete(movie, content_path), do: MovieLifecycle.mark_downloaded(movie, content_path)
 
   defp import_one(movie) do
     # Pre-import disk guard on the movies library root. Hold (no attempt bump, no park) on a full
     # disk — the download is done and waiting, so don't burn the import budget on a fixable
     # condition. Throttled so a persistently full disk doesn't flood the log.
     if Cinder.Disk.import_space_available?(:movies, movie) do
-      movie |> Library.stage_movie() |> import_one_result(movie)
+      movie |> Library.stage_movie() |> record_import(movie)
     else
       warn_throttled(
         {:disk_import, movie.id},
@@ -321,443 +167,29 @@ defmodule Cinder.Download.Poller do
     end
   end
 
-  defp import_one_result({:error, {:release_policy_mismatch, evidence}}, movie) do
-    reject_release(
-      movie,
-      evidence,
-      Movie.download_source(movie),
-      &Catalog.reject_movie_release/2
+  defp record_import({:ok, stage}, movie), do: MovieLifecycle.import_staged(movie, stage)
+
+  # A provable policy violation: the lifecycle blocklists the release and moves the movie on.
+  defp record_import({:error, {:release_policy_mismatch, evidence}}, movie),
+    do: MovieLifecycle.reject(movie, evidence)
+
+  # Hold (no attempt bump, no park) until the roots are configured: the file is downloaded and
+  # waiting, so don't burn the retry budget on a fixable misconfig. The cause is visible — /status
+  # shows the library red (Health.check_service({:library, :movies})).
+  defp record_import({:error, :library_not_configured}, movie) do
+    Logger.warning(
+      "holding #{phase(movie)} for movie #{movie.id}: movies_library_path not set; configure it in /settings"
     )
   end
 
-  defp import_one_result(result, movie) do
-    case result do
-      {:ok, %{dest: dest, quality: q} = stage} ->
-        # On the (rare) transition error, leave the movie :downloaded for next-tick
-        # retry rather than raising — matching the poller's ignore-and-retry convention.
-        # file_path becomes the library destination (the imported hardlink) and content_path is
-        # cleared, so a later delete_files unlinks the actual library file, not the download copy.
-        case Catalog.transition(
-               movie,
-               Map.merge(
-                 %{
-                   status: :available,
-                   file_path: dest,
-                   part_file_paths: Map.get(stage, :part_file_paths, []),
-                   content_path: nil
-                 },
-                 imported_attrs(q)
-               ),
-               expect: movie.status,
-               import_stage_ids: Library.stage_ids([stage])
-             ) do
-          {:ok, available} ->
-            finish_stage(stage, :commit)
-            Notifier.notify({:movie_available, available})
-            # After the DB commit (the file is recorded as imported): a best-effort, gated
-            # remove of the source download, fenced (#415) so a transient client failure
-            # survives as a retryable `download_intents` row instead of being discarded — the
-            # movie row itself is the durable owner (this transition never clears
-            # download_id/download_protocol), so fencing off the just-committed `available` here,
-            # after commit, loses nothing to a crash.
-            # The source MUST be read off `movie` (the pre-transition struct), never `available`:
-            # `available.content_path` is nil (cleared above), so `Movie.download_source/1` would
-            # fall back to `file_path` — which on `available` IS the just-imported library file.
-            # Reading off the post-transition struct here would delete the library copy, not the
-            # download.
-            Download.remove_after_import(
-              movie.download_protocol,
-              movie.download_id,
-              Movie.download_source(movie),
-              fence: {:movie, available}
-            )
-
-          # Cancelled/deleted while the import unit was hardlinking: no row will ever
-          # point at dest, so unlink it or the media server scans an orphaned file.
-          {:error, :stale_status} ->
-            Logger.info("movie #{movie.id} left the import pass mid-import; unlinking #{dest}")
-            finish_stage(stage, :rollback)
-
-          {:error, _} ->
-            finish_stage(stage, :rollback)
-        end
-
-      {:error, :library_not_configured} ->
-        # Hold (no attempt bump, no park) until the movie library root is configured: the file is
-        # downloaded and waiting, so don't burn the retry budget on a fixable misconfig. The cause
-        # is visible — /status shows the library red (Health.check_service({:library, :movies})).
-        Logger.warning(
-          "holding import for movie #{movie.id}: movies_library_path not set; configure it in /settings"
-        )
-
-      {:error, :download_roots_not_configured} ->
-        Logger.warning(
-          "holding import for movie #{movie.id}: download import roots not configured; configure them in /settings"
-        )
-
-      {:error, reason} when reason in @permanent_import_errors ->
-        Logger.warning("import permanently failed for movie #{movie.id}: #{inspect(reason)}")
-        park(movie, :import_failed, reason)
-
-      {:error, reason} ->
-        # An unavailable policy probe is deliberately transient here: exhausting the bound parks
-        # the movie without classifying, blocklisting, or cleaning up a possibly valid release.
-        retry_or_fail(movie, reason, :import_attempts, :import_failed)
-    end
-  end
-
-  defp imported_attrs(q) do
-    %{
-      imported_resolution: q.resolution,
-      imported_size: q.size,
-      imported_language: q.language,
-      imported_source: q.source,
-      imported_audio_languages: q.audio_languages,
-      imported_default_audio_language: q.default_audio_language,
-      imported_embedded_subtitles: q.embedded_subtitles,
-      imported_sidecar_subtitles: q.sidecar_subtitles
-    }
-  end
-
-  # Bounded retry: keep the movie where it is and try again next tick, but after
-  # @max_attempts park it at `terminal_status` so a persistent failure surfaces a
-  # terminal state instead of looping (and re-logging) forever.
-  defp retry_or_fail(movie, reason, attempts_field, terminal_status) do
-    attempts = (Map.get(movie, attempts_field) || 0) + 1
-
-    if attempts >= @max_attempts do
-      Logger.warning(
-        "movie #{movie.id} #{attempts_field} exhausted after #{attempts}: #{inspect(reason)}"
-      )
-
-      case reason do
-        {:release_policy_unavailable, _reason} ->
-          hold_policy_verification(movie, :download, attempts, reason)
-
-        _reason ->
-          park(movie, terminal_status, reason)
-      end
-    else
-      Logger.info(
-        "movie #{movie.id} #{attempts_field} #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
-      )
-
-      # Dynamic key MUST come before keyword pairs in a map literal.
-      Catalog.transition(
-        movie,
-        %{
-          attempts_field => attempts,
-          status: movie.status,
-          download_speed: nil,
-          download_eta: nil
-        },
-        expect: movie.status
-      )
-    end
-  end
-
-  # A terminal failure park: transition once (the choke-point) then notify. Keeps
-  # every "movie gave up" path emitting the same event with no per-site duplication.
-  # `reason` may carry a human detail (`{:download_error, "paused"}`); `reason_code/1` unwraps
-  # the classifying atom for telemetry/notify/blocklist, `reason_detail/1` persists the detail
-  # as `failure_reason` so /activity can show it (nil for parks with no detail — self-clearing).
-  defp park(movie, status, reason, attrs \\ %{}) do
-    code = reason_code(reason)
-
-    attrs = attrs |> Map.put(:status, status) |> Map.put(:failure_reason, reason_detail(reason))
-
-    with {:ok, parked} <- Catalog.transition(movie, attrs, expect: movie.status) do
-      :telemetry.execute([:cinder, :park], %{count: 1}, %{kind: :movie, reason: code})
-      Notifier.notify({:movie_failed, parked, code})
-
-      # Best-effort, AFTER the park commits (a side effect like the notify above): record the
-      # failed release so the next search/Retry doesn't re-grab it. Only deterministic import
-      # failures and exhausted download-side failures qualify; block_release is a nil-guarded
-      # no-op for pre-grab parks (no release_title was ever written) and never raises.
-      if code in @permanent_import_errors or code in @download_failure_errors do
-        Catalog.block_release(parked, code)
-      end
-    end
-  end
-
-  # Only binary details survive the :string cast in transition_changeset; a non-binary
-  # detail (e.g. {:prowlarr_status, 500}) would fail the cast and silently no-op the park.
-  defp reason_detail({_code, detail}) when is_binary(detail), do: detail
-  defp reason_detail(_reason), do: nil
-
-  defp hold_policy_verification(movie, origin, attempts, reason) do
-    with {:ok, held} <- Catalog.hold_movie_verification(movie, origin, attempts) do
-      Notifier.notify({:movie_failed, held, reason})
-    end
-  end
-
-  # --- upgrade: re-download + atomic replace of an :available movie's file -----------------------
-  #
-  # An :upgrading movie keeps its live file_path the entire time; only the success transition
-  # (after Library.stage_movie's atomic replace) rewrites it. Every failure reverts to :available
-  # with the live file untouched. Mirrors the :downloading advance bound (@max_attempts via
-  # import_attempts) but reverts instead of parking — the movie already has a usable file.
-
-  # The same watch as a fresh download (a replacement is chosen the same way, so it can be a fake
-  # or stall the same way), mapped onto reverts that leave the live library file untouched.
-  defp advance_upgrade(movie) do
-    case Watch.check(movie, &Catalog.update_movie_download_metrics/2) do
-      {:completed, path} ->
-        finish_upgrade(movie, path)
-
-      {:failed, reason} ->
-        retry_or_revert(movie, reason)
-
-      # Higher stakes than a fresh grab, because the movie already HAS a good file. Blocked
-      # reverts immediately (no retry budget; the file list is deterministic).
-      #
-      # #414: the client removal used to be a bare best-effort call fired BEFORE the revert
-      # cleared download_id/download_protocol (the movie's only durable record of the replacement
-      # job) — a transient removal failure leaked the remote job forever. revert_upgrade/2 now
-      # routes `:blocked_content` through `Catalog.revert_upgrade_and_remove/1`, which fences a
-      # `:cleanup_pending` intent and clears the fields in the SAME transaction (no crash window
-      # between them), then makes the immediate best-effort removal attempt after commit; a crash
-      # or failure there just leaves the fenced row for the next tick's
-      # `reconcile_pending_intents/1`.
-      {:blocked_content, detail} ->
-        Logger.warning("movie #{movie.id} upgrade rejected: #{detail}")
-        revert_upgrade(movie, :blocked_content)
-
-      :stalled ->
-        reap_upgrade(movie)
-
-      # No client for this protocol (a config glitch, not a release failure): revert without
-      # blocklisting (revert_upgrade gates the blocklist), live file untouched.
-      :no_client ->
-        revert_upgrade(movie, :no_client)
-
-      # Still in transit, or the client could not answer: wait, live file untouched.
-      :downloading ->
-        :ok
-
-      {:unreachable, _reason} ->
-        :ok
-    end
-  end
-
-  # A stalled upgrade is reaped WITHOUT touching the live library file: reap_stalled_upgrade removes
-  # the stuck replacement download, blocklists it (:stalled), and reverts the movie to :available.
-  defp reap_upgrade(movie) do
-    case Catalog.reap_stalled_upgrade(movie) do
-      {:ok, _reverted} ->
-        Logger.warning("movie #{movie.id} upgrade reaped: stalled replacement removed; reverted")
-
-      {:error, _reason} ->
-        :ok
-    end
-  end
-
-  # Import the completed download by FORCED replace (the user chose this release). On success the
-  # library file is swapped (replace/2) and the movie returns :available carrying the new quality;
-  # if the new dest filename differs (a different container) the old file is removed best-effort so
-  # the library never holds two files. Any failure reverts to :available, live file intact.
-  #
-  # Unlike the fresh-grab path, the new download's source is never written onto the row as
-  # `content_path` — only threaded as a local variable through this call chain (finish_upgrade →
-  # finish_upgrade_result → finalize_upgrade/reject_release). The override below routes that source
-  # through the model's primary field (`content_path`, per `Movie.download_source/1`) on this LOCAL
-  # struct only; the row's `content_path` column stays nil through :upgrading, deliberately (there is
-  # no :downloaded-equivalent status to persist it at without adding a write — and thus a new
-  # stale_status failure mode — at a point that today has none).
-  defp finish_upgrade(movie, content_path) do
-    Library.with_stage_handoff(fn ->
-      %{movie | content_path: content_path}
-      |> Library.stage_movie(replace: true)
-      |> finish_upgrade_result(movie, content_path)
-    end)
-  end
-
-  defp finish_upgrade_result(
-         {:error, {:release_policy_mismatch, evidence}},
-         movie,
-         content_path
-       ) do
-    reject_release(movie, evidence, content_path, &Catalog.reject_movie_release/2)
-  end
-
-  defp finish_upgrade_result(result, movie, content_path) do
-    case result do
-      {:ok, %{dest: dest, quality: q} = stage} ->
-        movie
-        |> Catalog.transition(
-          Map.merge(
-            %{
-              status: :available,
-              file_path: dest,
-              part_file_paths: Map.get(stage, :part_file_paths, [])
-            },
-            imported_attrs(q)
-          ),
-          expect: movie.status,
-          import_stage_ids: Library.stage_ids([stage])
-        )
-        |> case do
-          {:ok, available} ->
-            finish_stage(stage, :commit)
-            finalize_upgrade(movie, available, content_path)
-
-          {:error, :stale_status} ->
-            compensate_aborted_upgrade(movie, stage)
-
-          {:error, _} ->
-            finish_stage(stage, :rollback)
-        end
-
-      {:error, :library_not_configured} ->
-        # Hold (no attempt bump, no revert) until the movie library root is configured: the file is
-        # downloaded and waiting, so don't burn the retry budget on a fixable misconfig.
-        Logger.warning(
-          "holding upgrade for movie #{movie.id}: movies_library_path not set; configure it in /settings"
-        )
-
-      {:error, :download_roots_not_configured} ->
-        Logger.warning(
-          "holding upgrade for movie #{movie.id}: download import roots not configured; configure them in /settings"
-        )
-
-      {:error, reason} when reason in @permanent_import_errors ->
-        revert_upgrade(movie, reason, content_path)
-
-      {:error, reason} ->
-        retry_or_revert(movie, reason, content_path)
-    end
-  end
-
-  defp compensate_aborted_upgrade(movie, stage) do
-    Logger.info("movie #{movie.id} upgrade aborted mid-swap; restoring the prior library file")
-    finish_stage(stage, :rollback)
-  end
-
-  # A provable policy violation (mismatch) is a discard: the release is blocklisted and the movie
-  # detached from it (Catalog.reject_movie_release), so — unlike the verification-hold path, which
-  # must keep the file for an operator to inspect — the download-side source is no longer needed
-  # and is deleted the same way a successful import's is (issue #115's gap, mirrored here so a
-  # rejected release doesn't leak its download either). `content_path` is the rejected download's
-  # source: `Movie.download_source(movie)` (its own `content_path`, deploy-compat-falling-back to
-  # `file_path`) for a fresh grab, the new download's path (not the old live library file) for an
-  # upgrade. download_id is nil here on purpose — the reject already fences + cleans up the
-  # client-tracked job via Catalog.reject_movie_release; passing the real id would remove it twice.
-  # `reject_release/4` (the shared movie/TV helper) lives in `Cinder.Download.PollerSkeleton`.
-
-  # Post-commit side effects, all best-effort (none can unwind the committed upgrade): remove the
-  # superseded file only when the dest path actually changed (a same-path replace already overwrote
-  # it), drop the source download (fenced, #415 — `available`, the just-committed row, is the
-  # durable owner: this transition never clears download_id/download_protocol, so fencing after
-  # commit loses nothing to a crash), and notify. content_path is the NEW download's source — movie
-  # (the original, pre-upgrade struct) keeps file_path pointing at the OLD live library file, so it
-  # must never stand in for the source here.
-  defp finalize_upgrade(movie, available, content_path) do
-    movie
-    |> Movie.file_paths()
-    |> Kernel.--(Movie.file_paths(available))
-    |> Enum.each(&best_effort_remove_old/1)
-
-    Download.remove_after_import(movie.download_protocol, movie.download_id, content_path,
-      fence: {:movie, available}
+  defp record_import({:error, :download_roots_not_configured}, movie) do
+    Logger.warning(
+      "holding #{phase(movie)} for movie #{movie.id}: download import roots not configured; configure them in /settings"
     )
-
-    Notifier.notify({:movie_available, available})
   end
 
-  # Bounded retry on the upgrade's download/transient-import side; after @max_attempts, revert.
-  # `content_path` is the replacement download's source when known (nil from the client-status
-  # branches, which have none).
-  defp retry_or_revert(movie, reason, content_path \\ nil) do
-    attempts = (movie.import_attempts || 0) + 1
+  defp record_import({:error, reason}, movie), do: MovieLifecycle.record_failure(movie, reason)
 
-    if attempts >= @max_attempts do
-      case reason do
-        {:release_policy_unavailable, _reason} ->
-          hold_policy_verification(movie, :upgrade, attempts, reason)
-
-        _reason ->
-          revert_upgrade(movie, reason, content_path)
-      end
-    else
-      Logger.info(
-        "movie #{movie.id} upgrade #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
-      )
-
-      Catalog.transition(
-        movie,
-        %{
-          import_attempts: attempts,
-          status: :upgrading,
-          download_speed: nil,
-          download_eta: nil
-        },
-        expect: movie.status
-      )
-    end
-  end
-
-  # Abort the upgrade WITHOUT touching the live file: blocklist the failed release (read off the
-  # still-present release_title BEFORE the revert clears it), then revert to :available clearing the
-  # upgrade's download fields. Blocklist only genuine release failures (mirrors park/3) so a config
-  # glitch (:no_client) doesn't blocklist a good release.
-  #
-  # `content_path` is the replacement download's source when the caller has it (see
-  # `finish_upgrade/2`: never persisted on the row), `nil` otherwise.
-  defp revert_upgrade(movie, reason, content_path \\ nil) do
-    # `reason` may carry the client's detail (`{:download_error, "paused"}`); membership and the
-    # notification key on the classifying code, as park/4's do, and the detail goes to the log.
-    code = reason_code(reason)
-
-    # :blocked_content joins the two deterministic sets: a proven-fake replacement must be blocked,
-    # or the next upgrade hunt (or manual search) re-picks the very same release.
-    blocked? =
-      code == :blocked_content or code in @permanent_import_errors or
-        code in @download_failure_errors
-
-    if blocked?, do: Catalog.block_release(movie, :upgrade_failed)
-
-    # A blocklisted replacement is never re-picked, so its download is dead weight: the client job
-    # is fenced+removed in the same transaction as the revert (`revert_upgrade_and_remove/1`) and
-    # its payload deleted afterwards — under the same `move_on_import` / usenet-only rule as
-    # `Download.remove_after_import/4`, so a torrent keeps seeding (#684). `:blocked_content` is the
-    # exception that already removed its job (and files) from any client. The other reasons never
-    # touch the client, so a plain field-clearing `Catalog.transition/3` is enough for them.
-    remove_payload? = blocked? and Download.move_on_import_removal?(movie.download_protocol)
-
-    revert_result =
-      if code == :blocked_content or remove_payload?,
-        do: Catalog.revert_upgrade_and_remove(movie),
-        else:
-          Catalog.transition(
-            movie,
-            %{
-              status: :available,
-              download_id: nil,
-              download_protocol: nil,
-              release_title: nil
-            },
-            expect: movie.status
-          )
-
-    with {:ok, reverted} <- revert_result do
-      # `movie.download_protocol`: `reverted` has cleared it. The job is already gone; only the
-      # payload is left, and `remove_after_import/4` with no download id deletes exactly that. A
-      # non-blocklisted revert may be re-picked, so its payload stays.
-      if remove_payload?,
-        do: Download.remove_after_import(movie.download_protocol, nil, content_path)
-
-      Logger.warning("movie #{movie.id} upgrade reverted to :available (#{inspect(reason)})")
-      Notifier.notify({:movie_upgrade_failed, reverted, code})
-    end
-  end
-
-  defp best_effort_remove_old(path) do
-    case Library.delete_file(path) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("upgrade: couldn't remove old file #{inspect(path)}: #{inspect(reason)}")
-    end
-  end
+  defp phase(%Movie{status: :upgrading}), do: "upgrade"
+  defp phase(_movie), do: "import"
 end

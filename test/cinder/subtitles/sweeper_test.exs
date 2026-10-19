@@ -84,7 +84,7 @@ defmodule Cinder.Subtitles.SweeperTest do
     primary_sidecar = Path.rootname(primary) <> ".en.srt"
     part_sidecar = Path.rootname(part) <> ".en.srt"
     movie = movie_fixture(status: :available, file_path: primary, imdb_id: "tt1", tmdb_id: 1)
-    assert {:ok, _movie} = Catalog.transition(movie, %{part_file_paths: [part]})
+    assert {:ok, _movie} = seed_movie_state(movie, %{part_file_paths: [part]})
 
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
 

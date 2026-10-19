@@ -3,10 +3,12 @@ defmodule CinderWeb.MyRequestsLiveTest do
 
   import Mox
   import Phoenix.LiveViewTest
+  import Cinder.CatalogFixtures, only: [seed_movie_state: 2]
 
   alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, Grabs}
+  alias Cinder.Catalog.MovieLifecycle
   alias Cinder.Requests
 
   setup do
@@ -58,10 +60,10 @@ defmodule CinderWeb.MyRequestsLiveTest do
       })
 
     {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Progress", year: 2001})
-    {:ok, movie} = Cinder.Catalog.transition(movie, %{status: :downloading})
+    {:ok, movie} = seed_movie_state(movie, %{status: :downloading})
 
     {:ok, _} =
-      Cinder.Catalog.update_movie_download_metrics(movie, %{
+      MovieLifecycle.track(movie, %{
         download_progress: 0.42,
         download_speed: 1_500_000,
         download_eta: 90
@@ -150,7 +152,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
       })
 
     {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Solaris", year: 1972})
-    {:ok, _movie} = Cinder.Catalog.transition(movie, %{status: :no_match})
+    {:ok, _movie} = seed_movie_state(movie, %{status: :no_match})
 
     conn = log_in_user(conn, user)
     {:ok, _lv, html} = live(conn, ~p"/my-requests")
@@ -547,7 +549,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
         })
 
       {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Watchable", year: 2020})
-      {:ok, _} = Cinder.Catalog.transition(movie, %{status: :available})
+      {:ok, _} = seed_movie_state(movie, %{status: :available})
 
       conn = log_in_user(conn, user)
       {:ok, lv, html} = live(conn, ~p"/my-requests")
@@ -570,7 +572,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
         })
 
       {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Deep linked"})
-      {:ok, _} = Cinder.Catalog.transition(movie, %{status: :available})
+      {:ok, _} = seed_movie_state(movie, %{status: :available})
 
       assert {:ok, [_]} =
                Cinder.Catalog.reconcile_media_server_items(:movies, [
@@ -600,7 +602,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
         })
 
       {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Switched server"})
-      {:ok, _} = Cinder.Catalog.transition(movie, %{status: :available})
+      {:ok, _} = seed_movie_state(movie, %{status: :available})
 
       conn = log_in_user(conn, user)
       {:ok, lv, _html} = live(conn, ~p"/my-requests")
@@ -667,8 +669,8 @@ defmodule CinderWeb.MyRequestsLiveTest do
         Requests.create_request(user, %{target_type: "movie", target_id: tmdb_id, title: "Up"})
 
       {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Up"})
-      {:ok, movie} = Cinder.Catalog.transition(movie, %{status: :available})
-      {:ok, _} = Cinder.Catalog.transition(movie, %{status: :upgrading})
+      {:ok, movie} = seed_movie_state(movie, %{status: :available})
+      {:ok, _} = seed_movie_state(movie, %{status: :upgrading})
 
       conn = log_in_user(conn, user)
       {:ok, lv, _html} = live(conn, ~p"/my-requests")
@@ -685,7 +687,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
         Requests.create_request(user, %{target_type: "movie", target_id: tmdb_id, title: "NoLink"})
 
       {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "NoLink"})
-      {:ok, _} = Cinder.Catalog.transition(movie, %{status: :available})
+      {:ok, _} = seed_movie_state(movie, %{status: :available})
 
       conn = log_in_user(conn, user)
       {:ok, lv, _html} = live(conn, ~p"/my-requests")
@@ -703,7 +705,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
         Requests.create_request(user, %{target_type: "movie", target_id: tmdb_id, title: "Dune"})
 
       {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Dune"})
-      {:ok, _} = Cinder.Catalog.transition(movie, %{status: :available})
+      {:ok, _} = seed_movie_state(movie, %{status: :available})
 
       %{conn: log_in_user(conn, user), tmdb_id: tmdb_id}
     end

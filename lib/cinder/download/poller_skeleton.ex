@@ -10,12 +10,10 @@ defmodule Cinder.Download.PollerSkeleton do
 
   - The pipeline pollers (`Cinder.Download.Poller`, `Cinder.Download.TvPoller`) use
     `stateful: true` (the default): a `do_poll/1` pass receiving the state, the search
-    backoff `search_due?/2` fed by `@search_retry_after`, a shared `@max_attempts` bound,
-    and the `finish_stage/2` + `reject_release/4` helpers their (structurally identical)
-    import-stage-cleanup and release-policy-mismatch paths share — `reject_release/4`
-    takes the Catalog reject function (`&Catalog.reject_movie_release/2` vs
-    `&Catalog.reject_grab_release/2`) as its last argument since that's the one thing
-    that differs between the two pollers.
+    backoff `search_due?/2` fed by `@search_retry_after`, an `@max_attempts` bound, and the
+    `finish_stage/2` + `reject_release/4` helpers for the import-stage cleanup and
+    release-policy-mismatch paths. Only the TV poller still uses the last three: the movie
+    poller hands the same decisions to `Cinder.Catalog.MovieLifecycle`.
 
         @default_interval 5_000
         @search_retry_after 60
@@ -153,9 +151,8 @@ defmodule Cinder.Download.PollerSkeleton do
             result
           end
 
-          # A provable release-policy mismatch: reject via the caller's Catalog function (movie
-          # vs grab — the one thing that differs between the two pollers, passed as
-          # `reject_fun`), then best-effort remove the now-unneeded download source.
+          # A provable release-policy mismatch: reject via the caller's Catalog function
+          # (`reject_fun`), then best-effort remove the now-unneeded download source.
           # `:stale_release` means the item moved on concurrently — nothing left to reject.
           defp reject_release(item, evidence, content_path, reject_fun) do
             case reject_fun.(item, evidence) do

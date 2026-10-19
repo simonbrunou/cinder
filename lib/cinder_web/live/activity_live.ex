@@ -23,7 +23,7 @@ defmodule CinderWeb.ActivityLive do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.Episode
+  alias Cinder.Catalog.{Episode, MovieLifecycle}
   alias Cinder.Catalog.UpgradeHunter
   alias Cinder.Download.TvPoller
   alias Cinder.Subtitles.Sync.Worker
@@ -40,7 +40,7 @@ defmodule CinderWeb.ActivityLive do
 
     {:ok,
      assign(socket,
-       movies: Enum.filter(Catalog.list_movies(), &Catalog.in_pipeline?/1),
+       movies: Enum.filter(Catalog.list_movies(), &MovieLifecycle.in_pipeline?/1),
        grabs: grabs,
        grab_file_forms: grab_file_forms(grabs),
        grab_file_errors: %{},
@@ -54,7 +54,7 @@ defmodule CinderWeb.ActivityLive do
   @impl true
   def handle_info({:movie_updated, movie}, socket) do
     movies =
-      if Catalog.in_pipeline?(movie),
+      if MovieLifecycle.in_pipeline?(movie),
         do: upsert_by_id(socket.assigns.movies, movie),
         else: Enum.reject(socket.assigns.movies, &(&1.id == movie.id))
 
@@ -202,7 +202,7 @@ defmodule CinderWeb.ActivityLive do
     socket =
       with {_id, ""} <- Integer.parse(id),
            %{} = movie <- find_by_id(socket.assigns.movies, id) do
-        case Catalog.retry_movie(movie) do
+        case MovieLifecycle.retry(movie) do
           {:error, _} ->
             put_flash(socket, :error, gettext("Couldn't retry: that movie has already moved on."))
 
@@ -511,11 +511,11 @@ defmodule CinderWeb.ActivityLive do
             >
               {m.failure_reason || pipeline_hint(m)}
             </p>
-            <%!-- Retry shows exactly where retry_movie/1 can succeed: a verification hold
+            <%!-- Retry shows exactly where MovieLifecycle.retry/1 can succeed: a verification hold
             parks at :import_failed (in the set), an anime hold rides :requested/:searching
-            (out of it, no action to offer) — see Catalog.parked_statuses/0. --%>
+            (out of it, no action to offer) — see MovieLifecycle.parked_statuses/0. --%>
             <.button
-              :if={m.status in Catalog.parked_statuses()}
+              :if={m.status in MovieLifecycle.parked_statuses()}
               id={"retry-movie-#{m.id}"}
               size="sm"
               phx-click="retry"

@@ -231,7 +231,7 @@ defmodule Cinder.Catalog.ProfilesTest do
     movie = movie_fixture(%{file_path: "#{root}/Movie/Movie.mkv"})
 
     assert {:ok, movie} =
-             Catalog.transition(movie, %{
+             seed_movie_state(movie, %{
                status: movie.status,
                part_file_paths: ["#{root}/Movie/Movie-cd2.mkv"]
              })
@@ -245,7 +245,7 @@ defmodule Cinder.Catalog.ProfilesTest do
     split_stack = movie_fixture(%{file_path: "#{root}/Split/Split.mkv"})
 
     assert {:ok, split_stack} =
-             Catalog.transition(split_stack, %{
+             seed_movie_state(split_stack, %{
                status: split_stack.status,
                part_file_paths: ["/tmp/outside-profile/Split-cd2.mkv"]
              })
@@ -296,7 +296,7 @@ defmodule Cinder.Catalog.ProfilesTest do
 
   test "profile assignment is blocked while an acquisition can still import into the old root" do
     movie = movie_fixture()
-    assert {:ok, movie} = Catalog.transition(movie, %{status: :searching})
+    assert {:ok, movie} = seed_movie_state(movie, %{status: :searching})
 
     assert {:error, :acquisition_in_progress} =
              Catalog.assign_profile(movie, profile!(:movies, :anime))

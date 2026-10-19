@@ -4,7 +4,7 @@ defmodule Cinder.Download.ReleasePolicyCleanupTest do
   import Mox
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie}
+  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, MovieLifecycle}
   alias Cinder.Download.Intent
   alias Cinder.Library.ImportStage
   alias Cinder.Repo
@@ -18,7 +18,7 @@ defmodule Cinder.Download.ReleasePolicyCleanupTest do
     movie = policy_movie(:downloaded, "hash-rejected-movie")
     expect_cleanup_failure(movie.download_id)
 
-    assert {:ok, requested} = Catalog.reject_movie_release(movie, mismatch_evidence())
+    assert {:ok, requested} = MovieLifecycle.reject(movie, mismatch_evidence())
 
     assert %Movie{
              status: :requested,
@@ -41,7 +41,7 @@ defmodule Cinder.Download.ReleasePolicyCleanupTest do
     movie = policy_movie(:upgrading, "hash-rejected-upgrade")
     expect_cleanup_failure(movie.download_id)
 
-    assert {:ok, available} = Catalog.reject_movie_release(movie, mismatch_evidence())
+    assert {:ok, available} = MovieLifecycle.reject(movie, mismatch_evidence())
 
     assert %Movie{
              status: :available,
@@ -73,7 +73,7 @@ defmodule Cinder.Download.ReleasePolicyCleanupTest do
       Repo.update_all(from(m in Movie, where: m.id == ^movie.id), set: updates)
 
       assert {:error, :stale_release} =
-               Catalog.reject_movie_release(movie, mismatch_evidence())
+               MovieLifecycle.reject(movie, mismatch_evidence())
 
       assert Repo.aggregate(BlockedRelease, :count, :id) == 0
       refute cleanup_pending_for?(movie.download_id)
@@ -200,7 +200,7 @@ defmodule Cinder.Download.ReleasePolicyCleanupTest do
     expect_cleanup_failure(movie.download_id)
 
     assert {:ok, %Movie{status: :requested}} =
-             Catalog.reject_movie_release(movie, mismatch_evidence())
+             MovieLifecycle.reject(movie, mismatch_evidence())
 
     assert %Intent{
              status: :cleanup_pending,
@@ -236,7 +236,7 @@ defmodule Cinder.Download.ReleasePolicyCleanupTest do
       })
 
     {:ok, movie} =
-      Catalog.transition(movie, %{
+      seed_movie_state(movie, %{
         status: status,
         release_policy_snapshot: policy_snapshot(movie.release_title),
         search_attempts: 4,

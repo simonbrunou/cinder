@@ -4,6 +4,7 @@ defmodule CinderWeb.DiscoverLiveTest do
   import Phoenix.LiveViewTest
   import ExUnit.CaptureLog
   import Mox
+  import Cinder.CatalogFixtures, only: [seed_movie_state: 2]
 
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
@@ -674,7 +675,7 @@ defmodule CinderWeb.DiscoverLiveTest do
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
 
     {:ok, _} =
-      Catalog.transition(movie, %{
+      seed_movie_state(movie, %{
         status: :available,
         download_id: "h",
         download_protocol: :torrent,

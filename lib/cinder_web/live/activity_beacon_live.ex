@@ -29,6 +29,7 @@ defmodule CinderWeb.ActivityBeaconLive do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Catalog
+  alias Cinder.Catalog.MovieLifecycle
 
   @toast_ttl :timer.seconds(6)
 
@@ -36,7 +37,7 @@ defmodule CinderWeb.ActivityBeaconLive do
   # "in flight" from the rest; an anime hold's badge (:anime_hold replaces :requested/:searching)
   # leaves the active set. hold? is the nav badge's own rule, `Catalog.count_operator_holds/0`,
   # per item, read from the same Catalog sources: a movie parked on a Retry
-  # (`Catalog.parked_statuses/0`) or a grab in any `Catalog.grab_hold/1` class. An anime hold
+  # (`MovieLifecycle.parked_statuses/0`) or a grab in any `Catalog.grab_hold/1` class. An anime hold
   # offers no action, so it never counts.
   @active_grab [:downloading, :downloaded]
 
@@ -99,7 +100,7 @@ defmodule CinderWeb.ActivityBeaconLive do
   defp grab_map, do: Map.new(Catalog.list_grabs(), &{&1.id, grab_entry(&1)})
 
   defp movie_entry(movie),
-    do: {movie_badge_status(movie), movie.status in Catalog.parked_statuses()}
+    do: {movie_badge_status(movie), movie.status in MovieLifecycle.parked_statuses()}
 
   defp grab_entry(grab), do: {grab_state(grab), Catalog.grab_hold(grab) != nil}
 
@@ -107,7 +108,7 @@ defmodule CinderWeb.ActivityBeaconLive do
     %{movies: movies, grabs: grabs} = socket.assigns
 
     active =
-      count_badges(movies, Catalog.pipeline_statuses()) + count_badges(grabs, @active_grab)
+      count_badges(movies, MovieLifecycle.pipeline_statuses()) + count_badges(grabs, @active_grab)
 
     assign(socket, active: active, attention: count_holds(movies) + count_holds(grabs))
   end

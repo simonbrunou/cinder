@@ -5,7 +5,7 @@ defmodule CinderWeb.HealthController do
   enabled poller has ticked recently (or polling is disabled) AND the database volume has room;
   otherwise 503 with a short plain-text reason. Two failure modes it catches that would otherwise
   read "ok": a wedged/crash-looping poller, and a FULL database volume — when the volume holding
-  `cinder.db` + its `-wal` fills, every `Catalog.transition` write raises SQLITE_FULL, the
+  `cinder.db` + its `-wal` fills, every pipeline status write raises SQLITE_FULL, the
   pollers' `isolate` swallows it, and their ticks keep completing, so the staleness check alone
   would stay green while the pipeline is wedged.
   """

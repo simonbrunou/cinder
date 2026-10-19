@@ -25,7 +25,7 @@ defmodule Cinder.Download.Watch do
   change stays behind the Catalog and Books choke-points the pollers call. The writer is called as
   `track.(download, attrs)` with `attrs` a subset of `download_progress`, `download_speed` and
   `download_eta`, and must answer `{:ok, record}` with the record's `download_progress_at` after
-  the write, or `{:error, reason}`: `Catalog.update_movie_download_metrics/2`,
+  the write, or `{:error, reason}`: `Catalog.MovieLifecycle.track/2`,
   `Catalog.update_grab_download_metrics/2` and `Books.Grabs.track/2` all do.
 
   Nothing here raises on a client or writer answer. A raise inside a poller's `isolate/2` would

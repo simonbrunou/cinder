@@ -3,126 +3,8 @@ defmodule Cinder.Catalog.Adoption do
 
   import Ecto.Query
 
-  alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Identity, Movie, Profiles, Season, Series, SeriesCatalog}
+  alias Cinder.Catalog.{Episode, Identity, Profiles, Season, Series, SeriesCatalog}
   alias Cinder.Repo
-
-  # #455: `validator` (`revalidate_candidate/3`) lstat-walks every path component down to the
-  # candidate file (up to `PathPolicy`'s `@max_depth 64`), then the file itself, to prove it
-  # hasn't changed since it was scanned. That is filesystem I/O that can stall on a network-mounted
-  # library root; it used to run *inside* `Repo.transaction(mode: :immediate)`, holding SQLite's
-  # one DATABASE-WIDE write lock for the whole stall — queuing every unrelated writer (both
-  # pollers' `Catalog.transition`/`expect:` writes, any concurrent admin action) behind it for up
-  # to `busy_timeout: 5_000`.
-  #
-  # The fix resolves the profile and runs `validator` here, before any transaction opens, then
-  # hands off to `do_adopt_movie_at_available/4`, which re-resolves the profile (a single indexed
-  # `Repo.get`, not filesystem I/O) fresh inside a transaction scoped to only the DB write — this
-  # is the "re-validate on a losing race" half of the guarantee, catching a profile that was
-  # deleted/changed in the gap. The filesystem check itself is not re-run inside the transaction
-  # (that would reopen the exact stall this closes); the residual race window — the file changing
-  # between `validator` returning and the transaction's `BEGIN IMMEDIATE` — shrinks from
-  # "however long the lstat walk takes" (unbounded on a bad mount) to the time between two
-  # back-to-back function calls with no I/O in between (low milliseconds at worst), and the DB
-  # write's own guards (`Movie.file_paths(movie) != []`, the status check,
-  # `Catalog.validate_movie_transition/3`) still fail safe on any *catalog-side* change in that
-  # gap, exactly as they did before.
-  @doc false
-  def adopt_movie_at_available(attrs, file_path, profile_id, legacy_handling, validator)
-      when is_map(attrs) and is_binary(file_path) and file_path != "" and
-             is_function(validator, 1) do
-    with {:ok, profile, _handling} <-
-           Profiles.resolve_assignment(profile_id, :movies, legacy_handling),
-         :ok <- validator.(profile) do
-      do_adopt_movie_at_available(attrs, file_path, profile_id, legacy_handling)
-    else
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  def adopt_movie_at_available(_attrs, _file_path, _profile_id, _legacy_handling, _validator),
-    do: {:error, :invalid_file_path}
-
-  defp do_adopt_movie_at_available(attrs, file_path, profile_id, legacy_handling) do
-    result =
-      Repo.transaction(
-        fn ->
-          with {:ok, profile, handling} <-
-                 Profiles.resolve_assignment(profile_id, :movies, legacy_handling),
-               {:ok, movie, marker} <-
-                 adopt_movie_in_transaction(attrs, file_path, profile, handling) do
-            {movie, marker}
-          else
-            {:error, reason} -> Repo.rollback(reason)
-          end
-        end,
-        mode: :immediate
-      )
-
-    case result do
-      {:ok, {movie, :existing}} ->
-        Catalog.publish_guarded_movie_transition({:ok, movie})
-        {:ok, movie, :existing}
-
-      {:ok, {movie, :created}} ->
-        {:ok, movie, :created}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp adopt_movie_in_transaction(attrs, file_path, profile, handling) do
-    case Repo.get_by(Movie, tmdb_id: Map.get(attrs, :tmdb_id)) do
-      %Movie{} = movie ->
-        adopt_existing_movie_in_transaction(movie, file_path, profile, handling)
-
-      nil ->
-        attrs =
-          attrs
-          |> Map.put(:profile_id, profile && profile.id)
-          |> Map.put(:media_profile, handling)
-
-        case %Movie{status: :available, file_path: file_path}
-             |> Movie.changeset(attrs)
-             |> Repo.insert() do
-          {:ok, movie} -> {:ok, movie, :created}
-          {:error, reason} -> {:error, reason}
-        end
-    end
-  end
-
-  defp adopt_existing_movie_in_transaction(%Movie{} = movie, file_path, profile, handling) do
-    cond do
-      Movie.file_paths(movie) != [] ->
-        {:error, :already_has_file}
-
-      movie.status in [:searching, :downloading, :downloaded, :upgrading] ->
-        {:error, :acquisition_in_progress}
-
-      true ->
-        with :ok <- Profiles.ensure_assignment_safe(movie, profile, handling),
-             {:ok, changeset} <-
-               Catalog.validate_movie_transition(
-                 movie,
-                 %{status: :available, file_path: file_path},
-                 movie.status
-               ),
-             {:ok, updated} <-
-               changeset
-               |> Ecto.Changeset.change(
-                 profile_id: profile && profile.id,
-                 media_profile: handling
-               )
-               |> Ecto.Changeset.foreign_key_constraint(:profile_id)
-               |> Ecto.Changeset.check_constraint(:profile_id,
-                 name: :movies_profile_integrity
-               )
-               |> Repo.update() do
-          {:ok, updated, :existing}
-        end
-    end
-  end
 
   @doc """
   Atomically adopts a list of episode primary/part files. Every action succeeds or every episode
@@ -152,8 +34,10 @@ defmodule Cinder.Catalog.Adoption do
     end
   end
 
-  # See `adopt_movie_at_available/5` above for the #455 rationale; same shape here: the profile is
-  # resolved and `validator` (filesystem I/O) runs before any transaction, and
+  # #455: `validator` (`revalidate_candidate/3`) lstat-walks every path component of each candidate,
+  # filesystem I/O that can stall on a network-mounted library root. Run inside the `:immediate`
+  # transaction it would hold SQLite's database-wide write lock for the whole stall, queuing every
+  # other writer. So the profile is resolved and `validator` runs before any transaction, and
   # `do_adopt_series_files/4` re-resolves both the profile and the series fresh (indexed
   # `Repo.get`s, not filesystem I/O) inside a transaction scoped to only the DB writes.
   @doc false

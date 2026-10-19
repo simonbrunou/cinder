@@ -50,9 +50,9 @@ defmodule Cinder.LibraryTest do
   end
 
   # Commits a `stage_movie`/`stage_episodes` result the way production does: the DB write
-  # (`Catalog.transition(..., import_stage_ids: ...)`) marks the journal row `:committed` before
-  # `commit_stage/1` is allowed to run its post-commit effects — mirror that ordering here without
-  # a full Catalog.transition, since these unit tests assert on the library layer only.
+  # (`MovieLifecycle.import_staged/2`) marks the journal row `:committed` before `commit_stage/1`
+  # is allowed to run its post-commit effects — mirror that ordering here without a lifecycle
+  # write, since these unit tests assert on the library layer only.
   defp commit!(stage) do
     ImportStage.mark_committed!(Library.stage_ids([stage]))
     Library.commit_stage(stage)

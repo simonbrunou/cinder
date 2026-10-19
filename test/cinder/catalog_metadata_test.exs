@@ -174,7 +174,7 @@ defmodule Cinder.CatalogMetadataTest do
       test_pid = self()
 
       expect(Cinder.Catalog.TMDBMock, :get_movie, fn _ ->
-        {:ok, transitioned} = Catalog.transition(movie, %{status: :downloading})
+        {:ok, transitioned} = seed_movie_state(movie, %{status: :downloading})
         send(test_pid, {:transitioned, transitioned.updated_at})
         {:ok, details}
       end)

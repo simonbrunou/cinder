@@ -23,8 +23,9 @@ inspecting the running app over guessing.
   `Cinder.Acquisition.Indexer`, `Cinder.Download.Client`, `Cinder.Library.MediaServer`), resolved
   from config at runtime and mocked with **Mox** in tests. **Tests never hit the network or a real
   service.**
-- **Status and derived-state writes go through the context choke-point** (`Catalog.transition` /
-  `transition_episode`) so SQLite WAL + `busy_timeout` stays correct under a racing poller.
+- **Status and derived-state writes go through the context choke-points**
+  (`Catalog.MovieLifecycle` / `Catalog.transition_episode`) so SQLite WAL + `busy_timeout` stays
+  correct under a racing poller.
 - New behaviour ⇒ a test. New service config ⇒ **not** a new env var: add a setting definition to
   `Cinder.Settings.Registry` instead (config is in-app, overlaid on env bootstrap).
 - Keep diffs minimal and trace each change to the request; `credo --strict` and warnings-as-errors

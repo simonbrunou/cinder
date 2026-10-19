@@ -113,7 +113,7 @@ defmodule Cinder.Library.BookImport do
     replace? = Keyword.get(opts, :replace, false)
 
     # The journal row must be marked `:committed` inside the same transaction as the catalog
-    # write, exactly as `Catalog.transition(..., import_stage_ids:)` does for a movie: that
+    # write, exactly as `MovieLifecycle.import_staged/2` does for a movie: that
     # ordering is what makes a crash between the two recoverable in the right direction. A
     # rollback after this point would be undoing a committed import, so `ImportStage.mark_committed!/1`
     # runs inside `record_import/3`'s transaction and aborts it on a stale stage.

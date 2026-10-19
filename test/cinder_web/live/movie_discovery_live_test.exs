@@ -3,6 +3,7 @@ defmodule CinderWeb.MovieDiscoveryLiveTest do
 
   import Phoenix.LiveViewTest
   import Mox
+  import Cinder.CatalogFixtures, only: [seed_movie_state: 2]
 
   alias Cinder.Catalog
   alias Cinder.Requests
@@ -238,7 +239,7 @@ defmodule CinderWeb.MovieDiscoveryLiveTest do
       {:ok, movie} =
         Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Inception", year: 2010, status: :requested})
 
-      {:ok, movie} = Catalog.transition(movie, %{status: :available})
+      {:ok, movie} = seed_movie_state(movie, %{status: :available})
       movie
     end
 
@@ -324,7 +325,7 @@ defmodule CinderWeb.MovieDiscoveryLiveTest do
       {:ok, lv, _html} = live(conn, ~p"/movie/tmdb/27205")
       refute has_element?(lv, "a", "Open in Plex")
 
-      {:ok, _} = Catalog.transition(movie, %{status: :available})
+      {:ok, _} = seed_movie_state(movie, %{status: :available})
 
       assert render_async(lv) =~ "Open in Plex"
       assert has_element?(lv, ~s(a[href="https://plex.example.com"]), "Open in Plex")

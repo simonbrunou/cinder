@@ -2,7 +2,7 @@ defmodule Cinder.Catalog.MovieTest do
   use Cinder.DataCase, async: true
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.Movie
+  alias Cinder.Catalog.{Movie, MovieLifecycle}
 
   import Cinder.CatalogFixtures
   import Ecto.Changeset
@@ -64,28 +64,27 @@ defmodule Cinder.Catalog.MovieTest do
       movie = movie_fixture(%{status: :downloading})
 
       assert {:ok, movie} =
-               Catalog.update_movie_download_metrics(movie, %{
+               MovieLifecycle.track(movie, %{
                  download_progress: 0.42,
                  download_speed: 1_500_000,
                  download_eta: 90
                })
 
-      assert {:ok, updated} = Catalog.transition(movie, %{status: :downloaded})
+      assert {:ok, updated} = seed_movie_state(movie, %{status: :downloaded})
       assert %{download_progress: nil, download_speed: nil, download_eta: nil} = updated
     end
 
-    test "a guarded transition clears metrics written after its snapshot" do
+    test "a lifecycle write clears metrics written after its snapshot" do
       movie = movie_fixture(%{status: :downloading})
 
       assert {:ok, _} =
-               Catalog.update_movie_download_metrics(movie, %{
+               MovieLifecycle.track(movie, %{
                  download_progress: 0.42,
                  download_speed: 1_500_000,
                  download_eta: 90
                })
 
-      assert {:ok, updated} =
-               Catalog.transition(movie, %{status: :downloaded}, expect: :downloading)
+      assert {:ok, updated} = MovieLifecycle.mark_downloaded(movie, "/downloads/M")
 
       assert %{download_progress: nil, download_speed: nil, download_eta: nil} = updated
     end
@@ -95,9 +94,9 @@ defmodule Cinder.Catalog.MovieTest do
       Catalog.subscribe()
       metrics = %{download_progress: 0.42, download_speed: 1_500_000, download_eta: 90}
 
-      assert {:ok, updated} = Catalog.update_movie_download_metrics(movie, metrics)
+      assert {:ok, updated} = MovieLifecycle.track(movie, metrics)
       assert_receive {:movie_updated, ^updated}
-      assert {:ok, ^updated} = Catalog.update_movie_download_metrics(updated, metrics)
+      assert {:ok, ^updated} = MovieLifecycle.track(updated, metrics)
       refute_receive {:movie_updated, _}
     end
 
@@ -105,7 +104,7 @@ defmodule Cinder.Catalog.MovieTest do
       movie = movie_fixture(%{status: :downloading})
 
       assert {:ok, movie} =
-               Catalog.update_movie_download_metrics(movie, %{
+               MovieLifecycle.track(movie, %{
                  download_progress: 0.42,
                  download_speed: 1_500_000,
                  download_eta: 90
@@ -120,7 +119,7 @@ defmodule Cinder.Catalog.MovieTest do
       movie = Repo.get!(Movie, movie.id)
 
       assert {:ok, jittered} =
-               Catalog.update_movie_download_metrics(movie, %{
+               MovieLifecycle.track(movie, %{
                  download_progress: 0.42,
                  download_speed: 1_024,
                  download_eta: 500
@@ -129,7 +128,7 @@ defmodule Cinder.Catalog.MovieTest do
       assert jittered.download_progress_at == past
 
       assert {:ok, progressed} =
-               Catalog.update_movie_download_metrics(jittered, %{
+               MovieLifecycle.track(jittered, %{
                  download_progress: 0.43,
                  download_speed: 1_024,
                  download_eta: 490
@@ -144,11 +143,11 @@ defmodule Cinder.Catalog.MovieTest do
       # {:downloading, :upgrading} isn't a real pipeline edge (a movie only ever reaches
       # :upgrading from :available) — this exercises Movie.transition_changeset/2's metric-reset
       # rule directly (any status change away from the exact prior in-flight status clears
-      # progress/speed/eta), not Catalog's pipeline-legality gate, so it bypasses
-      # Catalog.transition/2 the same way the casts-imported_source tests above do.
+      # progress/speed/eta), not the lifecycle's legality gate, so it seeds the row directly the
+      # same way the casts-imported_source tests above do.
       for {from, to} <- [{:downloading, :upgrading}, {:upgrading, :downloading}] do
         movie = movie_fixture(%{status: from})
-        assert {:ok, movie} = Catalog.update_movie_download_metrics(movie, metrics)
+        assert {:ok, movie} = MovieLifecycle.track(movie, metrics)
 
         changeset = Movie.transition_changeset(movie, %{status: to})
         assert changeset.valid?
@@ -159,10 +158,10 @@ defmodule Cinder.Catalog.MovieTest do
 
     test "a stale movie metric write returns stale_status" do
       movie = movie_fixture(%{status: :downloading})
-      assert {:ok, _} = Catalog.transition(movie, %{status: :cancelled})
+      assert {:ok, _} = seed_movie_state(movie, %{status: :cancelled})
 
       assert {:error, :stale_status} =
-               Catalog.update_movie_download_metrics(movie, %{
+               MovieLifecycle.track(movie, %{
                  download_progress: 0.42,
                  download_speed: 1_500_000,
                  download_eta: 90

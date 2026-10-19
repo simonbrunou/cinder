@@ -5,9 +5,9 @@ defmodule Cinder.Catalog do
   TMDB is reached only through the `Cinder.Catalog.TMDB` behaviour, resolved from
   config (`config :cinder, :tmdb`) so tests use a Mox mock and never hit the network.
 
-  This module is the public facade over the whole catalog: movie CRUD, the pipeline
-  transition matrix (the single state-change choke-point for movies and episodes),
-  deletion/audit, and broadcasts stay here. Discovery, the TV grab lifecycle, and
+  This module is the public facade over the whole catalog: movie CRUD, the episode
+  state-change choke-point, deletion/audit, and broadcasts stay here. Every movie status
+  write lives in `Cinder.Catalog.MovieLifecycle`, which callers use directly. Discovery, the TV grab lifecycle, and
   series/season/episode management were carved out into sibling modules as plain
   code motion (`Cinder.Catalog.Discovery`, `Cinder.Catalog.Grabs`,
   `Cinder.Catalog.SeriesCatalog`, `Cinder.Catalog.SceneNumbering`,
@@ -28,6 +28,7 @@ defmodule Cinder.Catalog do
     Identity,
     MediaProfiles,
     Movie,
+    MovieLifecycle,
     Profiles,
     ReleaseVerification,
     SceneNumbering,
@@ -38,16 +39,11 @@ defmodule Cinder.Catalog do
   }
 
   alias Cinder.Download
-  alias Cinder.Download.Intent
   alias Cinder.Library
-  alias Cinder.Library.ImportStage
-  alias Cinder.Notifier
   alias Cinder.Repo
   alias Cinder.Requests
 
   @topic "movies"
-  @download_metric_fields [:download_progress, :download_speed, :download_eta]
-  @max_search_attempts 10
 
   ## Discovery — TMDB search/trending/rails/localized lookups.
   # Carved out to `Cinder.Catalog.Discovery`; see that module for the implementation.
@@ -185,7 +181,7 @@ defmodule Cinder.Catalog do
   Refreshes a movie's descriptive TMDB metadata (overview/runtime/genres/rating/release date).
   Returns the refreshed `%Movie{}`; on a TMDB error it logs and returns the row unchanged so the
   detail page still renders. Descriptive, not pipeline state — writes via
-  `Movie.metadata_changeset/2`, never `transition/2`.
+  `Movie.metadata_changeset/2`, never a `Cinder.Catalog.MovieLifecycle` verb.
 
   """
   def enrich_movie(%Movie{} = movie),
@@ -269,490 +265,33 @@ defmodule Cinder.Catalog do
   defdelegate list_episodes_with_file(), to: SeriesCatalog
   defdelegate list_episodes_with_file(series_id), to: SeriesCatalog
 
-  # --- pipeline status classification --------------------------------------------------------
-  #
-  # The complete split of `Cinder.Catalog.Movie`'s status enum, owned here next to the
-  # transition matrix so views never re-derive it (each once kept its own copy, in opposite
-  # encodings, and the two drifted independently):
-  #   active — in-flight pipeline work:         @pipeline_statuses
-  #   parked — failed, awaiting a user retry:   @parked_statuses
-  #   done   — terminal, nothing left to do:    :available, :cancelled
-  # `catalog_pipeline_status_test.exs` asserts the three sets cover the enum exactly, so a
-  # status added to `Movie` fails the suite until it is classified here.
-  @pipeline_statuses [:requested, :searching, :downloading, :downloaded, :upgrading]
-  @parked_statuses [:no_match, :search_failed, :import_failed]
-
-  @doc """
-  The statuses with active in-flight pipeline work, in pipeline order. Excludes both the
-  parked failures (`#{inspect(@parked_statuses)}`) and the terminal-done pair
-  (`:available` / `:cancelled`).
-  """
-  def pipeline_statuses, do: @pipeline_statuses
-
-  @doc """
-  The statuses parked on a failure that needs a user retry. Disjoint from
-  `pipeline_statuses/0`; together with the terminal-done pair (`:available` /
-  `:cancelled`) the three sets cover the status enum exactly. This is also the set
-  `retry_movie/1` accepts, so a view gating a Retry control on membership here offers
-  it exactly where the action can succeed.
-  """
-  def parked_statuses, do: @parked_statuses
-
-  @doc """
-  True while a movie still belongs on live pipeline surfaces: in an active status
-  (`pipeline_statuses/0`) or parked on a failure that needs a retry. False once
-  terminal-done — `:available` (it lives in the library) or `:cancelled`.
-  """
-  def in_pipeline?(%{status: status}),
-    do: status in @pipeline_statuses or status in @parked_statuses
-
-  # --- pipeline state matrix -----------------------------------------------------------------
-  #
-  # The legal from→to graph for movie pipeline transitions, inventoried from every real (lib/)
-  # caller of transition/2,3: Cinder.Download.start/1 (search → downloading/no_match/
-  # search_failed), Cinder.Download.Poller's advance/import/upgrade passes (downloading →
-  # downloaded/import_failed/requested, downloaded → available/import_failed, available ⇄
-  # upgrading), retry_movie/1 (a parked status → requested), and reconcile_movie/1's manual/
-  # restart-recovery re-grab (a parked status → downloading). A self-transition (status
-  # unchanged) is always legal — many writers re-affirm the current status while only touching a
-  # counter or download-metric field (retry_or_fail/2, update_movie_download_metrics/2).
-  #
-  # `:requested` is kept a permissive source for every other status: real callers only ever jump
-  # :requested → :searching/:downloading/:search_failed (the last via a poller write-back park when
-  # Download.start/1 failed before reaching :searching, e.g. :tmdb_unavailable) and :requested →
-  # :cancelled (transition/2's own documented contract — see catalog_test.exs "accepts :cancelled
-  # as a valid status"), but the test suite also uses the unguarded API as a one-hop fixture
-  # shortcut (test/support/catalog_fixtures.ex's movie_fixture/1) to seed a movie directly at
-  # :available/:downloaded/:upgrading/:import_failed without walking the whole pipeline.
-  # Allowing that here is a deliberate, flagged accommodation of test/fixture convenience, not a
-  # real pipeline edge.
-  #
-  # `:downloading`/`:downloaded` → `:cancelled`: real per `@cancellable_movie_statuses` (a
-  # `:downloading` or freshly-`:downloaded` movie can be cancelled) — production reaches it via
-  # `cancel_movie/2`'s own `do_cancel_txn/2` (see the bypass note below), but the pair itself is a
-  # genuine, intentional business rule, so it is listed here too rather than only tolerated.
-  #
-  # Bypasses NOT covered by this matrix: abort_upgrade/2 and Cinder.Catalog.ReleaseVerification's
-  # hold/reject/retry writers build `Movie.transition_changeset/2` directly. cancel_movie/2 uses
-  # guarded_movie_transition/3, enforcing its function-head guard against the current database row.
-  @movie_transitions %{
-    searching: [:downloading, :no_match, :search_failed, :cancelled],
-    downloading: [:downloaded, :import_failed, :requested, :cancelled],
-    downloaded: [:available, :import_failed, :cancelled],
-    available: [:upgrading],
-    upgrading: [:available],
-    no_match: [:requested, :downloading],
-    search_failed: [:requested, :downloading],
-    import_failed: [:requested, :downloading],
-    cancelled: []
-  }
-
-  defp legal_movie_transition?(from, to) when from == to, do: true
-  defp legal_movie_transition?(:requested, _to), do: true
-  defp legal_movie_transition?(from, to), do: to in Map.get(@movie_transitions, from, [])
-
-  # Builds + matrix-checks the transition changeset without writing: {:ok, changeset} once the
-  # changeset is valid AND `from → to` is legal, else {:error, invalid_changeset} or
-  # {:error, {:illegal_transition, from, to}}. Shared by the unguarded and guarded write paths so
-  # neither can drift from the other's notion of "legal."
-  @doc false
-  def validate_movie_transition(movie, attrs, from) do
-    case Movie.transition_changeset(movie, attrs) do
-      %{valid?: false} = invalid -> {:error, invalid}
-      %{valid?: true} = changeset -> check_movie_transition(changeset, from)
-    end
-  end
-
-  defp check_movie_transition(changeset, from) do
-    to = Ecto.Changeset.get_field(changeset, :status)
-
-    if legal_movie_transition?(from, to),
-      do: {:ok, changeset},
-      else: {:error, {:illegal_transition, from, to}}
-  end
-
-  @doc """
-  Applies a pipeline state transition and, on success, broadcasts
-  `{:movie_updated, movie}` on the `"movies"` topic. This is the single
-  choke-point for state changes — every transition broadcasts exactly once.
-  `attrs` must set `:status`; it may also set `:download_id`, `:download_protocol`,
-  `:imdb_id`, `:file_path`, `:content_path`, `:import_attempts`, and `:search_attempts`.
-
-  Rejects an illegal from→to pair (per `@movie_transitions`) with
-  `{:error, {:illegal_transition, from, to}}` before writing.
-  """
-  def transition(movie, attrs, opts \\ [])
-
-  def transition(%Movie{status: from} = movie, attrs, []) do
-    with {:ok, changeset} <- validate_movie_transition(movie, attrs, from),
-         {:ok, updated} <- Repo.update(changeset) do
-      broadcast({:movie_updated, updated})
-      emit_transition(:movie, updated.status)
-      {:ok, updated}
-    end
-  end
-
-  # Guarded variant (`expect: status`): the write lands only if the row's status in the
-  # DB still matches — one atomic conditional UPDATE. The pollers pass the status they
-  # read at tick start, so a write-back after seconds of indexer/client I/O can never
-  # resurrect a movie the user cancelled (or otherwise re-decided) in that window.
-  # Returns {:error, :stale_status} on a miss; callers treat it as "skip, re-derive
-  # next tick". `select: m` makes SQLite RETURNING hand back the post-update row, so
-  # the broadcast payload is the fresh DB state, not the poller's tick-start snapshot
-  # patched in memory (views upsert the payload directly into their assigns).
-  def transition(%Movie{} = movie, attrs, expect: expected) do
-    movie
-    |> run_guarded_movie_transition(attrs, expected)
-    |> publish_guarded_movie_transition()
-  end
-
-  def transition(%Movie{} = movie, attrs, opts) when is_list(opts) do
-    expected = Keyword.fetch!(opts, :expect)
-    stage_ids = Keyword.get(opts, :import_stage_ids, [])
-
-    movie
-    |> run_guarded_movie_transition(attrs, expected, fn _updated ->
-      ImportStage.mark_committed!(stage_ids)
-    end)
-    |> publish_guarded_movie_transition()
-  end
-
-  @doc false
-  def account_movie_intent_retry(
-        %Intent{kind: :movie, status: :reserved} = intent,
-        retry_attrs,
-        reason
-      )
-      when is_map(retry_attrs) do
-    result =
-      Repo.transaction(fn ->
-        case claim_intent_retry_generation(intent, retry_attrs) do
-          {:ok, claimed} -> account_claimed_movie_retry(claimed)
-          :stale_generation -> :stale_generation
-        end
-      end)
-
-    publish_movie_intent_retry(result, reason)
-  end
-
-  defp claim_intent_retry_generation(intent, retry_attrs) do
-    observed_attempt = intent.attempt_count || 0
-
-    case Repo.update_all(
-           from(i in Intent,
-             where:
-               i.id == ^intent.id and i.status == :reserved and
-                 i.attempt_count == ^observed_attempt,
-             select: i
-           ),
-           set: Map.to_list(retry_attrs) ++ [updated_at: now()]
-         ) do
-      {1, [claimed]} -> {:ok, claimed}
-      {0, _} -> :stale_generation
-    end
-  end
-
-  defp account_claimed_movie_retry(%Intent{target_id: movie_id}) do
-    case Repo.get(Movie, movie_id) do
-      %Movie{status: status} = movie when status in [:requested, :searching] ->
-        account_active_movie_retry(movie)
-
-      _other ->
-        {:retry, nil}
-    end
-  end
-
-  defp account_active_movie_retry(movie) do
-    attempts = (movie.search_attempts || 0) + 1
-
-    if attempts >= @max_search_attempts do
-      case guarded_movie_transition(movie, %{status: :search_failed}, movie.status) do
-        {:ok, parked} ->
-          intent_ids = Download.fence_movie_cleanup(parked, include_remote: false)
-          {:parked, parked, intent_ids}
-
-        {:error, reason} ->
-          Repo.rollback(reason)
-      end
-    else
-      case guarded_movie_transition(
-             movie,
-             %{status: movie.status, search_attempts: attempts},
-             movie.status
-           ) do
-        {:ok, updated} -> {:retry, updated}
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end
-  end
-
-  # Transaction-safe state-change primitive: every guarded movie writer uses this exact changeset
-  # and compare-and-swap update. It performs no publication, so callers publish only after their
-  # encompassing transaction commits. The matrix check runs on the caller-declared `expected`
-  # status (not a fresh read of `movie.status`, which may already be stale) — a pair the matrix
-  # rejects short-circuits before ever attempting the DB write; a pair the matrix allows still
-  # goes through the ordinary compare-and-swap, so a genuinely stale row (status moved on
-  # concurrently) keeps returning {:error, :stale_status} exactly as before.
-  defp guarded_movie_transition(movie, attrs, expected) do
-    with {:ok, changeset} <- validate_movie_transition(movie, attrs, expected) do
-      case Repo.update_all(
-             from(m in Movie, where: m.id == ^movie.id and m.status == ^expected, select: m),
-             set: Map.to_list(changeset.changes) ++ [updated_at: now()]
-           ) do
-        {1, [updated]} -> {:ok, updated}
-        {0, _} -> {:error, :stale_status}
-      end
-    end
-  end
-
-  defp publish_movie_intent_retry({:ok, {:retry, nil}}, _reason), do: :ok
-  defp publish_movie_intent_retry({:ok, :stale_generation}, _reason), do: :ok
-
-  defp publish_movie_intent_retry({:ok, {:retry, updated}}, _reason) do
-    broadcast({:movie_updated, updated})
-    :ok
-  end
-
-  defp publish_movie_intent_retry({:ok, {:parked, parked, intent_ids}}, reason) do
-    broadcast({:movie_updated, parked})
-    Notifier.notify({:movie_failed, parked, reason})
-    Download.cleanup_intents(intent_ids)
-    :ok
-  end
-
-  defp publish_movie_intent_retry({:error, reason}, _submission_reason), do: {:error, reason}
-
-  defp run_guarded_movie_transition(
-         movie,
-         attrs,
-         expected,
-         after_update \\ fn _updated -> :ok end
-       ) do
-    Repo.transaction(fn ->
-      case guarded_movie_transition(movie, attrs, expected) do
-        {:ok, updated} ->
-          after_update.(updated)
-          updated
-
-        {:error, reason} ->
-          Repo.rollback(reason)
-      end
-    end)
-  end
-
-  @doc false
-  def publish_guarded_movie_transition({:ok, updated}) do
-    broadcast({:movie_updated, updated})
-    emit_transition(:movie, updated.status)
-    {:ok, updated}
-  end
-
-  def publish_guarded_movie_transition({:error, reason}), do: {:error, reason}
-
-  # `[:cinder, :transition]` fires once per successful write at Catalog's pipeline-state
-  # choke-points (`transition/2,3`, `transition_episode/2`, and atomic episode adoption) — never
-  # at a call site, so instrumentation can't drift from "every writer goes through Catalog".
-  defp emit_transition(kind, to_status) when kind in [:movie, :episode] do
+  # `[:cinder, :transition]` fires once per successful episode write at Catalog's choke-points
+  # (`transition_episode/2,3`, and atomic episode adoption) — never at a call site, so
+  # instrumentation can't drift from "every writer goes through Catalog". Movie writes emit it from
+  # `Cinder.Catalog.MovieLifecycle`.
+  defp emit_transition(:episode = kind, to_status) do
     :telemetry.execute([:cinder, :transition], %{count: 1}, %{kind: kind, to: to_status})
-  end
-
-  @doc "Updates a downloading movie's progress snapshot without broadcasting equal values."
-  def update_movie_download_metrics(%Movie{} = movie, attrs) do
-    changes = metric_changes(movie, attrs)
-
-    if changes == %{} do
-      {:ok, movie}
-    else
-      transition(movie, Map.put(changes, :status, movie.status), expect: movie.status)
-    end
   end
 
   @doc "Updates an in-flight grab's progress snapshot and broadcasts its owning series."
   defdelegate update_grab_download_metrics(grab, attrs), to: Grabs
 
-  defp metric_changes(record, attrs) do
-    attrs =
-      attrs
-      |> Map.take(@download_metric_fields)
-      |> keep_progress_high_water(record.download_progress)
-
-    Map.reject(attrs, fn {field, value} -> Map.get(record, field) == value end)
-  end
-
-  defp keep_progress_high_water(%{download_progress: progress} = attrs, previous)
-       when is_number(progress) and (is_nil(previous) or progress >= previous),
-       do: attrs
-
-  defp keep_progress_high_water(attrs, _previous), do: Map.delete(attrs, :download_progress)
-
-  # Parked terminal states a user can re-queue — the same set `parked_statuses/0`
-  # exposes (retryable *is* the parked classification; tying them keeps that true).
-  # An in-flight movie must never be yanked back to :requested, so retry guards on
-  # status server-side (the /status button is a client-sent event — don't trust it
-  # to only fire for parked rows).
-  @retryable @parked_statuses
-
-  @doc """
-  Re-queues a parked movie: resets it to `:requested` and zeroes the attempt
-  counters so the poller picks it up fresh. Returns `{:error, :not_retryable}`
-  for any non-parked movie. Replaces the old IEx reset.
-  """
-  def retry_movie(%Movie{status: :import_failed, verification_hold_origin: origin} = movie)
-      when origin in [:download, :upgrade] do
-    status = if origin == :download, do: :downloaded, else: :upgrading
-
-    ReleaseVerification.transition_verification_hold(movie, %{
-      status: status,
-      import_attempts: 0,
-      verification_hold_origin: nil
-    })
-  end
-
-  def retry_movie(%Movie{status: status} = movie) when status in @retryable do
-    # Clear the stale download fields: a re-queued movie has no download yet, so leaving an old
-    # download_id/protocol/file_path/content_path/release_title on a :requested row is misleading
-    # and a latent misroute if anything reads them before re-download.
-    # expect: — the caller's struct is a client-rendered snapshot; if the movie already re-entered
-    # the pipeline (re-searched, downloading), the retry must miss rather than yank an in-flight
-    # movie back and orphan its download.
-    result =
-      transition(
-        movie,
-        %{
-          status: :requested,
-          search_attempts: 0,
-          import_attempts: 0,
-          download_id: nil,
-          download_protocol: nil,
-          release_title: nil,
-          release_policy_snapshot: nil,
-          file_path: nil,
-          content_path: nil
-        },
-        expect: movie.status
-      )
-
-    # Only after the re-queue commits: clear this movie's `:stalled` blocklist rows so the operator
-    # gets one fresh chance at a stall-reaped release (a stall is a timeout, not a proven-bad
-    # release; still dead ⇒ the reaper re-reaps and re-blocks). The deterministic rows
-    # (:wrong_audio_language/:bad_torrent/…) PERSIST — clearing those would reintroduce the re-grab
-    # loop. Post-commit so a `:stale_status` miss (the movie already left the parked state) leaves
-    # no side effect, matching `reap_stalled_movie/1` and `park/3`.
-    with {:ok, _requested} <- result, do: clear_stalled_blocklist(movie: movie.id)
-
-    result
-  end
-
-  def retry_movie(%Movie{}), do: {:error, :not_retryable}
-
   @doc """
   Total items needing an operator action, for the admin Activity nav badge: parked/held movies
-  that show a Retry (`#{inspect(@retryable)}`) plus grabs classified into a hold by
+  that show a Retry (`MovieLifecycle.parked_statuses/0`) plus grabs classified into a hold by
   `grab_hold/1` (`Grabs.count_grab_holds/0`, that classification in query form).
   `CinderWeb.ActivityLive` renders actions from the same classification and
   `CinderWeb.ActivityBeaconLive`'s pill counts it per item, so all three agree; `0` = no badge.
 
-  `@retryable` is the movie hold set on purpose: a movie verification hold parks at
+  The parked set is the movie hold set on purpose: a movie verification hold parks at
   `:import_failed` (with `verification_hold_origin`), already in this set, and anime-held movies
   and series (a hold reason, no pipeline failure) show no action, so they are excluded.
   """
   def count_operator_holds do
-    movie_holds = Repo.aggregate(from(m in Movie, where: m.status in @retryable), :count)
+    parked = MovieLifecycle.parked_statuses()
+    movie_holds = Repo.aggregate(from(m in Movie, where: m.status in ^parked), :count)
     movie_holds + Grabs.count_grab_holds()
   end
-
-  @doc """
-  Re-queues a `:downloading` movie whose download died: one transaction guard-resets it to
-  `:requested` (clearing the dead download fields, bumping `search_attempts` for backoff) and fences
-  the client download for removal; after commit the client job + reserved intent are torn down and
-  the reset is announced under `reason`. Returns `{:error, :stale_status}` if the movie left
-  `:downloading` mid-tick (the poller ignores it and re-derives next tick). Mirrors the
-  guarded-write + post-commit-publish pattern of `account_active_movie_retry/1`; the fence reads the
-  **pre-clear** struct (its `download_id`).
-
-  **The caller owns the blocklist**, and must write it off the pre-clear struct (`requested` has
-  `release_title` nil). That row is what bounds a re-queue loop — each dead release shrinks the
-  candidate pool until `Download.start/1` parks `:no_match` — but the two callers need opposite
-  handling of a write that fails, so neither policy belongs in here:
-
-    * the stall reaper blocks `:stalled` post-commit, best-effort (a stall is a timeout, not a
-      proven-bad release, and `retry_movie/1` clears those rows for a fresh chance);
-    * the poller's terminal client-failure path blocks `:download_error`/`:torrent_not_found`
-      **before** calling this and refuses to re-queue unless the row landed, because there the
-      loop has no other bound.
-  """
-  def requeue_failed_movie(movie, reason \\ :stalled)
-
-  def requeue_failed_movie(%Movie{status: :downloading} = movie, reason) do
-    result =
-      Repo.transaction(fn ->
-        case guarded_movie_transition(
-               movie,
-               %{
-                 status: :requested,
-                 search_attempts: (movie.search_attempts || 0) + 1,
-                 download_id: nil,
-                 download_protocol: nil,
-                 release_title: nil,
-                 release_policy_snapshot: nil,
-                 content_path: nil
-               },
-               :downloading
-             ) do
-          {:ok, requested} -> {requested, Download.fence_movie_cleanup(movie)}
-          {:error, reason} -> Repo.rollback(reason)
-        end
-      end)
-
-    with {:ok, {requested, intent_ids}} <- result do
-      Download.cleanup_intents(intent_ids)
-      broadcast({:movie_updated, requested})
-      Notifier.notify({:movie_failed, requested, reason})
-      {:ok, requested}
-    end
-  end
-
-  def requeue_failed_movie(%Movie{}, _reason), do: {:error, :not_reapable}
-
-  @doc """
-  Reaps a stalled `:upgrading` movie (the stall reaper): reverts it to `:available` keeping the live
-  library file (`file_path`/`imported_*` untouched), fences the stuck replacement download for
-  removal, and blocklists the release `:stalled`. Mirrors `abort_upgrade/2` but guarded (a
-  concurrent completion/abort makes it a `{:error, :stale_status}` no-op) and blocklisting. Removes
-  the client job — unlike a plain revert, which would strand the dead replacement torrent.
-  """
-  def reap_stalled_upgrade(%Movie{status: :upgrading} = movie) do
-    result =
-      Repo.transaction(fn ->
-        case guarded_movie_transition(
-               movie,
-               %{
-                 status: :available,
-                 download_id: nil,
-                 download_protocol: nil,
-                 release_title: nil,
-                 release_policy_snapshot: nil
-               },
-               :upgrading
-             ) do
-          {:ok, reverted} -> {reverted, Download.fence_movie_cleanup(movie)}
-          {:error, reason} -> Repo.rollback(reason)
-        end
-      end)
-
-    with {:ok, {reverted, intent_ids}} <- result do
-      Download.cleanup_intents(intent_ids)
-      block_release(movie, :stalled)
-      broadcast({:movie_updated, reverted})
-      Notifier.notify({:movie_upgrade_failed, reverted, :stalled})
-      {:ok, reverted}
-    end
-  end
-
-  def reap_stalled_upgrade(%Movie{}), do: {:error, :not_reapable}
-
-  @doc "Atomically parks an unverifiable Movie release without clearing its frozen ownership."
-  defdelegate hold_movie_verification(movie, origin, attempts), to: ReleaseVerification
 
   ## Manual grab + the grab lifecycle — carved out to `Cinder.Catalog.Grabs`.
 
@@ -782,7 +321,7 @@ defmodule Cinder.Catalog do
     case write_movie_language(movie, language) do
       {:ok, updated} ->
         if updated.status in @language_retry_statuses do
-          retry_movie(updated)
+          MovieLifecycle.retry(updated)
         else
           broadcast({:movie_updated, updated})
           {:ok, updated}
@@ -847,147 +386,6 @@ defmodule Cinder.Catalog do
   """
   defdelegate set_series_language(series, language), to: SeriesCatalog
 
-  # The active set a movie can be cancelled out of (mirrors @retryable's shape).
-  # transition/2 does NOT validate transitions, so cancel/delete must guard on this
-  # explicitly. delete_movie/2 (Phase 2) shares it: an active row with a download_id
-  # must be cancelled (which removes the client download), never bare-deleted.
-  @cancellable_movie_statuses [:requested, :searching, :downloading, :downloaded]
-
-  @doc "True if `movie` is in an active status that can be cancelled (`#{inspect(@cancellable_movie_statuses)}`)."
-  def cancellable?(%Movie{status: :import_failed, verification_hold_origin: :download}), do: true
-  def cancellable?(%Movie{status: status}), do: status in @cancellable_movie_statuses
-
-  @doc """
-  Cancels an in-flight movie: removes the orphaned client download (if any) and transitions
-  it to `:cancelled`. Guards `cancellable?/1` server-side (`transition/2` does not validate the
-  transition). Returns `{:error, :not_cancellable}` for a terminal/available/parked movie.
-
-  The `:cancelled` transition, audit row, and durable cleanup fence are written in one transaction.
-  Client I/O runs only after commit; failures leave the fence for background reconciliation.
-  """
-  def cancel_movie(
-        %Movie{status: :import_failed, verification_hold_origin: :download} = movie,
-        actor
-      ),
-      do: ReleaseVerification.clear_verification_hold(movie, actor, :cancelled, :cancel_movie)
-
-  def cancel_movie(%Movie{} = movie, actor) do
-    if cancellable?(movie) do
-      with {:ok, {updated, intent_ids}} <- do_cancel_txn(movie, actor) do
-        Download.cleanup_intents(intent_ids)
-        broadcast({:movie_updated, updated})
-        {:ok, updated}
-      end
-    else
-      {:error, :not_cancellable}
-    end
-  end
-
-  defp do_cancel_txn(movie, actor) do
-    Repo.transaction(fn ->
-      case guarded_movie_transition(
-             movie,
-             %{status: :cancelled, release_policy_snapshot: nil},
-             movie.status
-           ) do
-        {:ok, updated} ->
-          intent_ids = Download.fence_movie_cleanup(updated)
-          Audit.log_or_rollback(actor, :cancel_movie, updated, %{from: movie.status})
-          {updated, intent_ids}
-
-        {:error, :stale_status} ->
-          Repo.rollback(:not_cancellable)
-
-        {:error, reason} ->
-          Repo.rollback(reason)
-      end
-    end)
-  end
-
-  @doc """
-  Aborts an in-flight movie upgrade: removes the replacement download (best-effort) and reverts
-  the movie to `:available`, keeping the existing library file. Distinct from `cancel_movie/2` —
-  an `:upgrading` movie must NOT become `:cancelled` (it still has a good file). Returns
-  `{:error, :not_upgrading}` otherwise.
-
-  The `:available` revert, audit row, and durable cleanup fence are written in one transaction.
-  Client I/O runs only after commit; failures leave the fence for background reconciliation.
-  """
-  def abort_upgrade(%Movie{status: :upgrading} = movie, actor) do
-    result =
-      Repo.transaction(fn ->
-        cleanup_source = Repo.get(Movie, movie.id) || Repo.rollback(:stale_entry)
-
-        case cleanup_source
-             |> Movie.transition_changeset(%{
-               status: :available,
-               download_id: nil,
-               download_protocol: nil,
-               release_title: nil,
-               release_policy_snapshot: nil
-             })
-             |> Repo.update() do
-          {:ok, updated} ->
-            updated = Repo.get!(Movie, updated.id)
-            intent_ids = Download.fence_movie_cleanup(cleanup_source)
-            Audit.log_or_rollback(actor, :abort_upgrade, updated, %{from: :upgrading})
-            {updated, intent_ids}
-
-          {:error, changeset} ->
-            Repo.rollback(changeset)
-        end
-      end)
-
-    with {:ok, {updated, intent_ids}} <- result do
-      Download.cleanup_intents(intent_ids)
-      broadcast({:movie_updated, updated})
-      {:ok, updated}
-    end
-  end
-
-  def abort_upgrade(
-        %Movie{status: :import_failed, verification_hold_origin: :upgrade} = movie,
-        actor
-      ),
-      do: ReleaseVerification.clear_verification_hold(movie, actor, :available, :abort_upgrade)
-
-  def abort_upgrade(%Movie{}, _actor), do: {:error, :not_upgrading}
-
-  @doc """
-  Reverts a failed upgrade like `abort_upgrade/2`, but CAS-guarded on the caller's tick-start
-  status (`Poller.revert_upgrade/3`: blocked content or a blocklisted release) instead of
-  unconditional, so a concurrent user Cancel/Discard/Delete always wins. Fences BEFORE the write,
-  in the SAME transaction, so a stale-status miss rolls back the fence too — no orphan cleanup
-  intent survives pointing at a movie someone else already fenced or deleted.
-  """
-  def revert_upgrade_and_remove(%Movie{} = movie) do
-    result =
-      Repo.transaction(fn ->
-        intent_ids = Download.fence_movie_cleanup(movie)
-
-        case guarded_movie_transition(
-               movie,
-               %{
-                 status: :available,
-                 download_id: nil,
-                 download_protocol: nil,
-                 release_title: nil
-               },
-               movie.status
-             ) do
-          {:ok, updated} -> {updated, intent_ids}
-          {:error, reason} -> Repo.rollback(reason)
-        end
-      end)
-
-    with {:ok, {updated, intent_ids}} <- result do
-      Download.cleanup_intents(intent_ids)
-      broadcast({:movie_updated, updated})
-      emit_transition(:movie, updated.status)
-      {:ok, updated}
-    end
-  end
-
   @doc """
   Deletes a movie's DB row. An active row's tracked download is captured in a durable cleanup
   fence in the same transaction, then removed after commit. Broadcasts
@@ -1008,7 +406,7 @@ defmodule Cinder.Catalog do
       Requests.reap_approved_for_target(["movie"], fresh.tmdb_id)
 
       include_remote? =
-        cancellable?(fresh) or fresh.status == :upgrading or
+        MovieLifecycle.cancellable?(fresh) or fresh.status == :upgrading or
           fresh.verification_hold_origin in [:download, :upgrade]
 
       Download.fence_movie_cleanup(fresh, include_remote: include_remote?)
@@ -1151,33 +549,6 @@ defmodule Cinder.Catalog do
     end
   end
 
-  @doc """
-  Adoption entry for movies: returns an existing row after transitioning it to `:available`, or
-  inserts a new row already at `:available` with `file_path` set.
-
-  A fresh row is never visible at `:requested`, so the movie poller cannot claim an on-disk file
-  for download between creation and adoption. No broadcast on the create path — the caller
-  announces `:created` after this insert commits, mirroring `find_or_create_at_requested/2`.
-  """
-  def find_or_create_at_available(attrs, file_path)
-      when is_binary(file_path) and file_path != "" do
-    case get_movie_by_tmdb_id(attrs.tmdb_id) do
-      %Movie{} = movie -> transition_existing_movie_to_available(movie, file_path)
-      nil -> do_insert_at_available(attrs, file_path)
-    end
-  end
-
-  def find_or_create_at_available(_attrs, _file_path), do: {:error, :invalid_file_path}
-
-  defdelegate adopt_movie_at_available(
-                attrs,
-                file_path,
-                profile_id,
-                legacy_handling,
-                validator
-              ),
-              to: Cinder.Catalog.Adoption
-
   @doc "Fetches requested-movie details and aliases before any Catalog write."
   def prepare_requested_movie(attrs) do
     tmdb_id = Map.fetch!(attrs, :tmdb_id)
@@ -1230,50 +601,13 @@ defmodule Cinder.Catalog do
     end
   end
 
-  defp do_insert_at_available(attrs, file_path) do
-    result =
-      %Movie{status: :available, file_path: file_path}
-      |> Movie.changeset(attrs)
-      |> Repo.insert()
-
-    case result do
-      {:ok, movie} ->
-        {:ok, movie, :created}
-
-      {:error, reason} ->
-        case get_movie_by_tmdb_id(attrs.tmdb_id) do
-          %Movie{} = movie -> transition_existing_movie_to_available(movie, file_path)
-          nil -> {:error, reason}
-        end
-    end
-  end
-
-  defp transition_existing_movie_to_available(
-         %Movie{file_path: existing_path},
-         _file_path
-       )
-       when existing_path not in [nil, ""],
-       do: {:error, :already_has_file}
-
-  defp transition_existing_movie_to_available(%Movie{status: status}, _file_path)
-       when status in [:searching, :downloading, :downloaded, :upgrading],
-       do: {:error, :acquisition_in_progress}
-
-  defp transition_existing_movie_to_available(%Movie{} = movie, file_path) do
-    case transition(movie, %{status: :available, file_path: file_path}, expect: movie.status) do
-      {:ok, updated} -> {:ok, updated, :existing}
-      {:error, :stale_status} -> {:error, :acquisition_in_progress}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
   @doc false
   def broadcast(message), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, message)
 
   @doc "Broadcasts `{:movie_deleted, id}` on the `\"movies\"` topic so open views drop the row."
   def broadcast_movie_deleted(id), do: broadcast({:movie_deleted, id})
 
-  @doc "Broadcasts `{:movie_created, movie}` on the `\"movies\"` topic — called after a creation transaction commits (Catalog creation itself never broadcasts; see `find_or_create_at_requested/2` and `find_or_create_at_available/2`)."
+  @doc "Broadcasts `{:movie_created, movie}` on the `\"movies\"` topic — called after a creation transaction commits (Catalog creation itself never broadcasts; see `find_or_create_at_requested/2`)."
   def broadcast_movie_created(%Movie{} = movie), do: broadcast({:movie_created, movie})
 
   ## TV series/season/episode CRUD, monitoring, refresh — carved out to
@@ -1413,12 +747,6 @@ defmodule Cinder.Catalog do
   defdelegate episode_ids_for_grab(grab_id), to: Grabs
   defdelegate series_id_for_grab(grab_id), to: Grabs
   defdelegate grab_cleanup_spec(grab, episode_ids), to: Grabs
-
-  @doc """
-  Atomically rejects one confirmed movie release: exact-title blocklist, durable remote cleanup,
-  and guarded requeue. Upgrade rejection keeps the live library file and imported quality.
-  """
-  defdelegate reject_movie_release(expected, evidence), to: ReleaseVerification
 
   @doc """
   Atomically rejects one confirmed episodic release, guarding the resolved grab and its exact

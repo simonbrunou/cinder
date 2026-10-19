@@ -46,7 +46,7 @@ defmodule Cinder.IssuesTest do
     test "creates a report for a movie being upgraded" do
       user = user_fixture()
       movie = available_movie(%{title: "Upgrading"})
-      {:ok, movie} = Cinder.Catalog.transition(movie, %{status: :upgrading})
+      {:ok, movie} = seed_movie_state(movie, %{status: :upgrading})
 
       assert {:ok, %{title: "Upgrading"}} = Issues.create_report(user, report_attrs(movie))
     end

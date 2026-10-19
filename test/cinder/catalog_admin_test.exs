@@ -7,7 +7,7 @@ defmodule Cinder.CatalogAdminTest do
   import ExUnit.CaptureLog
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Movie, Series}
+  alias Cinder.Catalog.{Movie, MovieLifecycle, Series}
   alias Cinder.Requests.Request
 
   import Cinder.CatalogFixtures
@@ -22,7 +22,7 @@ defmodule Cinder.CatalogAdminTest do
         movie_fixture()
         |> then(
           &elem(
-            Catalog.transition(&1, %{
+            seed_movie_state(&1, %{
               status: :downloading,
               download_id: "HASH-1",
               download_protocol: :torrent
@@ -36,7 +36,9 @@ defmodule Cinder.CatalogAdminTest do
         :ok
       end)
 
-      assert {:ok, %Movie{status: :cancelled}} = Catalog.cancel_movie(movie, actor)
+      assert {:ok, %Movie{status: :cancelled}} =
+               MovieLifecycle.cancel(movie, actor)
+
       assert Repo.get!(Movie, movie.id).status == :cancelled
     end
 
@@ -44,13 +46,14 @@ defmodule Cinder.CatalogAdminTest do
       actor = Cinder.AccountsFixtures.admin_fixture()
       movie = movie_fixture()
       # No expect/0 on the client → if cancel_movie called it, verify_on_exit! would fail.
-      assert {:ok, %Movie{status: :cancelled}} = Catalog.cancel_movie(movie, actor)
+      assert {:ok, %Movie{status: :cancelled}} =
+               MovieLifecycle.cancel(movie, actor)
     end
 
     test "a non-cancellable (terminal/available) movie returns {:error, :not_cancellable}" do
       actor = Cinder.AccountsFixtures.admin_fixture()
-      movie = movie_fixture() |> then(&elem(Catalog.transition(&1, %{status: :available}), 1))
-      assert {:error, :not_cancellable} = Catalog.cancel_movie(movie, actor)
+      movie = movie_fixture() |> then(&elem(seed_movie_state(&1, %{status: :available}), 1))
+      assert {:error, :not_cancellable} = MovieLifecycle.cancel(movie, actor)
       assert Repo.get!(Movie, movie.id).status == :available
     end
 
@@ -59,18 +62,16 @@ defmodule Cinder.CatalogAdminTest do
       stale = movie_fixture()
 
       assert {:ok, available} =
-               Catalog.transition(stale, %{status: :available, file_path: "/library/movie.mkv"},
-                 expect: :requested
-               )
+               seed_movie_state(stale, %{status: :available, file_path: "/library/movie.mkv"})
 
-      assert {:error, :not_cancellable} = Catalog.cancel_movie(stale, actor)
+      assert {:error, :not_cancellable} = MovieLifecycle.cancel(stale, actor)
       assert %Movie{status: :available, file_path: "/library/movie.mkv"} = Repo.reload!(available)
     end
 
     test "writes an admin_audit row for the cancel (in-txn)" do
       actor = Cinder.AccountsFixtures.admin_fixture()
       movie = movie_fixture()
-      assert {:ok, _} = Catalog.cancel_movie(movie, actor)
+      assert {:ok, _} = MovieLifecycle.cancel(movie, actor)
 
       audit = Repo.one!(Cinder.Audit.AdminAudit)
       assert audit.action == "cancel_movie"
@@ -86,7 +87,7 @@ defmodule Cinder.CatalogAdminTest do
         movie_fixture()
         |> then(
           &elem(
-            Catalog.transition(&1, %{
+            seed_movie_state(&1, %{
               status: :downloading,
               download_id: "HASH-DOWN",
               download_protocol: :torrent
@@ -98,7 +99,9 @@ defmodule Cinder.CatalogAdminTest do
       # Client is down — cancel must still succeed and clear the movie.
       expect(Cinder.Download.ClientMock, :remove, fn "HASH-DOWN", _opts -> {:error, :down} end)
 
-      assert {:ok, %Movie{status: :cancelled}} = Catalog.cancel_movie(movie, actor)
+      assert {:ok, %Movie{status: :cancelled}} =
+               MovieLifecycle.cancel(movie, actor)
+
       assert Repo.get!(Movie, movie.id).status == :cancelled
     end
 
@@ -110,7 +113,7 @@ defmodule Cinder.CatalogAdminTest do
         {:error, :down}
       end)
 
-      assert {:ok, cancelled} = Catalog.cancel_movie(movie, actor)
+      assert {:ok, cancelled} = MovieLifecycle.cancel(movie, actor)
       assert cancelled.status == :cancelled
       assert cancelled.download_id == nil
       assert cancelled.release_title == nil
@@ -132,7 +135,7 @@ defmodule Cinder.CatalogAdminTest do
         {:error, :down}
       end)
 
-      assert {:ok, available} = Catalog.abort_upgrade(movie, nil)
+      assert {:ok, available} = MovieLifecycle.abort_upgrade(movie, nil)
       assert available.status == :available
       assert available.download_id == nil
       assert available.release_title == nil
@@ -152,12 +155,9 @@ defmodule Cinder.CatalogAdminTest do
       actor = Cinder.AccountsFixtures.admin_fixture()
       stale = verification_held_movie(:download)
 
-      assert {:ok, current} =
-               Catalog.transition(stale, %{status: :import_failed, release_title: "Concurrent"},
-                 expect: :import_failed
-               )
+      assert {:ok, current} = seed_movie_state(stale, %{release_title: "Concurrent"})
 
-      assert {:error, :stale_status} = Catalog.cancel_movie(stale, actor)
+      assert {:error, :not_cancellable} = MovieLifecycle.cancel(stale, actor)
       assert Repo.reload!(current).release_title == "Concurrent"
       assert Repo.reload!(current).download_id == "HASH-HELD-download"
       assert Repo.reload!(current).verification_hold_origin == :download
@@ -169,13 +169,18 @@ defmodule Cinder.CatalogAdminTest do
       movie = movie_fixture(%{status: :downloading})
 
       assert {:ok, movie} =
-               Catalog.update_movie_download_metrics(movie, %{
+               MovieLifecycle.track(movie, %{
                  download_progress: 0.42,
                  download_speed: 1_500_000,
                  download_eta: 90
                })
 
-      assert {:ok, updated} = Catalog.cancel_movie(movie, Cinder.AccountsFixtures.admin_fixture())
+      assert {:ok, updated} =
+               MovieLifecycle.cancel(
+                 movie,
+                 Cinder.AccountsFixtures.admin_fixture()
+               )
+
       assert %{download_progress: nil, download_speed: nil, download_eta: nil} = updated
     end
 
@@ -183,13 +188,13 @@ defmodule Cinder.CatalogAdminTest do
       movie = movie_fixture(%{status: :upgrading})
 
       assert {:ok, movie} =
-               Catalog.update_movie_download_metrics(movie, %{
+               MovieLifecycle.track(movie, %{
                  download_progress: 0.42,
                  download_speed: 1_500_000,
                  download_eta: 90
                })
 
-      assert {:ok, updated} = Catalog.abort_upgrade(movie, nil)
+      assert {:ok, updated} = MovieLifecycle.abort_upgrade(movie, nil)
       assert %{download_progress: nil, download_speed: nil, download_eta: nil} = updated
     end
 
@@ -263,7 +268,7 @@ defmodule Cinder.CatalogAdminTest do
 
     test "deletes an idle movie and broadcasts {:movie_deleted, id}" do
       actor = Cinder.AccountsFixtures.admin_fixture()
-      movie = movie_fixture() |> then(&elem(Catalog.transition(&1, %{status: :available}), 1))
+      movie = movie_fixture() |> then(&elem(seed_movie_state(&1, %{status: :available}), 1))
       id = movie.id
       Catalog.subscribe()
 
@@ -279,7 +284,7 @@ defmodule Cinder.CatalogAdminTest do
         movie_fixture()
         |> then(
           &elem(
-            Catalog.transition(&1, %{
+            seed_movie_state(&1, %{
               status: :downloading,
               download_id: "HASH-2",
               download_protocol: :usenet
@@ -301,16 +306,12 @@ defmodule Cinder.CatalogAdminTest do
       stale = movie_fixture(%{status: :available})
 
       assert {:ok, %Movie{status: :upgrading}} =
-               Catalog.transition(
-                 stale,
-                 %{
-                   status: :upgrading,
-                   download_id: "HASH-LATE-ATTACH",
-                   download_protocol: :torrent,
-                   release_title: "Movie.Upgrade"
-                 },
-                 expect: :available
-               )
+               MovieLifecycle.attach(stale, %{
+                 download_id: "HASH-LATE-ATTACH",
+                 download_protocol: :torrent,
+                 release_title: "Movie.Upgrade",
+                 release_policy_snapshot: nil
+               })
 
       expect(Cinder.Download.ClientMock, :remove, fn "HASH-LATE-ATTACH", _opts -> :ok end)
 
@@ -337,7 +338,7 @@ defmodule Cinder.CatalogAdminTest do
         movie_fixture()
         |> then(
           &elem(
-            Catalog.transition(&1, %{
+            seed_movie_state(&1, %{
               status: :downloading,
               download_id: "HASH-DEL",
               download_protocol: :torrent
@@ -372,19 +373,16 @@ defmodule Cinder.CatalogAdminTest do
     test "held Retry rejects a stale snapshot without clearing preserved ownership" do
       stale = verification_held_movie(:download)
 
-      assert {:ok, current} =
-               Catalog.transition(stale, %{status: :import_failed, release_title: "Concurrent"},
-                 expect: :import_failed
-               )
+      assert {:ok, current} = seed_movie_state(stale, %{release_title: "Concurrent"})
 
-      assert {:error, :stale_status} = Catalog.retry_movie(stale)
+      assert {:error, :stale_status} = MovieLifecycle.retry(stale)
       assert Repo.reload!(current).download_id == "HASH-HELD-download"
       assert Repo.reload!(current).verification_hold_origin == :download
     end
 
     test "deleting an already-deleted movie returns {:error, :stale_entry} (no raise)" do
       actor = Cinder.AccountsFixtures.admin_fixture()
-      movie = movie_fixture() |> then(&elem(Catalog.transition(&1, %{status: :available}), 1))
+      movie = movie_fixture() |> then(&elem(seed_movie_state(&1, %{status: :available}), 1))
       # Another session already deleted the row.
       Repo.delete!(movie)
 
@@ -1211,7 +1209,7 @@ defmodule Cinder.CatalogAdminTest do
       })
 
     {:ok, held} =
-      Catalog.transition(movie, %{
+      seed_movie_state(movie, %{
         status: :import_failed,
         import_attempts: 10,
         verification_hold_origin: origin,

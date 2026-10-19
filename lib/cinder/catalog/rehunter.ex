@@ -9,13 +9,13 @@ defmodule Cinder.Catalog.Rehunter do
   clicking Retry. This sweep is that click, on a timer:
 
   - **movies** in `:no_match` / `:search_failed` untouched since the cooldown go back to
-    `:requested` via `Catalog.retry_movie/1` (which also clears their `:stalled` blocklist rows).
+    `:requested` via `MovieLifecycle.retry/1` (which also clears their `:stalled` blocklist rows).
   - **episodes** at the attempt cap get `search_attempts` zeroed via
     `Catalog.rehunt_parked_episodes/1`, re-entering the TV sweep.
 
-  `:import_failed` is deliberately **excluded** even though it is a `Catalog.parked_statuses/0`
+  `:import_failed` is deliberately **excluded** even though it is a `MovieLifecycle.parked_statuses/0`
   member: that is a broken import, not a missing release — re-searching cannot help, and
-  `retry_movie/1` gives it verification-hold semantics instead of a re-queue.
+  `MovieLifecycle.retry/1` gives it verification-hold semantics instead of a re-queue.
 
   **On by default** — the shipped `config/config.exs` sets `enabled: true`; set `enabled: false` to
   disable. (`enabled?/0`'s own fallback is `false`, so an install with no config block at all stays
@@ -31,7 +31,7 @@ defmodule Cinder.Catalog.Rehunter do
   import Ecto.Query
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.Movie
+  alias Cinder.Catalog.{Movie, MovieLifecycle}
   alias Cinder.Repo
 
   @default_interval :timer.hours(6)
@@ -73,10 +73,10 @@ defmodule Cinder.Catalog.Rehunter do
     for movie <- movies, do: isolate("movie #{movie.id}", fn -> rehunt_movie(movie) end)
   end
 
-  # `retry_movie/1` is guarded (`expect:`), so a movie that left the parked state concurrently
+  # `MovieLifecycle.retry/1` is a compare-and-swap, so a movie that left the parked state concurrently
   # simply misses rather than being yanked out of a live pipeline.
   defp rehunt_movie(movie) do
-    case Catalog.retry_movie(movie) do
+    case MovieLifecycle.retry(movie) do
       {:ok, _requeued} ->
         Logger.info("rehunter re-queued movie #{movie.id} from #{movie.status}")
 

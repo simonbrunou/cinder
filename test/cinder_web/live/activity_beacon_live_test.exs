@@ -45,7 +45,13 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
   defp seed({:verification_hold, origin}) do
     from = if origin == :download, do: :downloaded, else: :upgrading
     movie = movie_fixture(status: from, download_id: "v", release_title: "Rel")
-    {:ok, _held} = Catalog.hold_movie_verification(movie, origin, 1)
+
+    {:ok, _held} =
+      seed_movie_state(movie, %{
+        status: :import_failed,
+        import_attempts: 1,
+        verification_hold_origin: origin
+      })
   end
 
   defp seed({:grab_hold, mapping_status}) do

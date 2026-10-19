@@ -6,7 +6,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Movie, TitleAlias}
+  alias Cinder.Catalog.{Movie, MovieLifecycle, TitleAlias}
   alias Cinder.Repo
 
   @moduletag :capture_log
@@ -387,8 +387,8 @@ defmodule CinderWeb.MovieDetailLiveTest do
   test "a stale {:movie_updated} broadcast doesn't blank the metadata (re-reads fresh)", %{
     conn: conn
   } do
-    # `movie` is captured pre-enrichment (vote_average/overview nil) — the same stale snapshot an
-    # unguarded transition/2 echoes on its broadcast.
+    # `movie` is captured pre-enrichment (vote_average/overview nil) — a stale snapshot like the
+    # one seed_movie_state/2 echoes on its broadcast.
     movie = movie_fixture(%{title: "Inception"})
     stub_details(movie.tmdb_id)
 
@@ -396,7 +396,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert render_async(lv) =~ "A thief who steals corporate secrets"
 
     # Unguarded transition on the stale struct broadcasts {:movie_updated, stale} (nil metadata).
-    {:ok, _} = Catalog.transition(movie, %{status: :downloading})
+    {:ok, _} = seed_movie_state(movie, %{status: :downloading})
     html = render(lv)
 
     assert html =~ "A thief who steals corporate secrets",
@@ -409,7 +409,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
     movie = movie_fixture(%{status: :downloading})
 
     {:ok, _} =
-      Catalog.update_movie_download_metrics(movie, %{
+      MovieLifecycle.track(movie, %{
         download_progress: 0.42,
         download_speed: 1_500_000,
         download_eta: 90
@@ -459,7 +459,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
   test "deletes an inactive movie and redirects to the library", %{conn: conn} do
     movie = movie_fixture(%{title: "Old"})
-    {:ok, _} = Catalog.transition(movie, %{status: :cancelled})
+    {:ok, _} = seed_movie_state(movie, %{status: :cancelled})
     {:ok, lv, _html} = live_movie(conn, movie)
 
     lv |> element("button", "Delete") |> render_click()
@@ -513,7 +513,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
   test "a parked movie shows Retry that re-queues it to :requested", %{conn: conn} do
     movie = movie_fixture(%{title: "Tenet"})
-    {:ok, _} = Catalog.transition(movie, %{status: :no_match})
+    {:ok, _} = seed_movie_state(movie, %{status: :no_match})
 
     {:ok, lv, _html} = live_movie(conn, movie)
     lv |> element("button", "Retry") |> render_click()
@@ -567,7 +567,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
   test "an in-flight movie shows no Retry button", %{conn: conn} do
     movie = movie_fixture(%{title: "Sicario"})
-    {:ok, _} = Catalog.transition(movie, %{status: :downloading, download_id: "h"})
+    {:ok, _} = seed_movie_state(movie, %{status: :downloading, download_id: "h"})
 
     {:ok, lv, _html} = live_movie(conn, movie)
     refute has_element?(lv, "button", "Retry")
@@ -677,7 +677,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
       })
 
     {:ok, held} =
-      Catalog.transition(movie, %{
+      seed_movie_state(movie, %{
         status: :import_failed,
         import_attempts: 10,
         verification_hold_origin: origin,

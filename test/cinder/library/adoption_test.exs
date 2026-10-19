@@ -5,7 +5,7 @@ defmodule Cinder.Library.AdoptionTest do
   import Mox
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Movie, Series}
+  alias Cinder.Catalog.{Episode, Movie, MovieLifecycle, Series}
   alias Cinder.Library.Adoption
   alias Cinder.Repo
 
@@ -308,12 +308,9 @@ defmodule Cinder.Library.AdoptionTest do
       |> Map.merge(%{imdb_id: "tt0000033", localizations: %{}})
 
     assert {:error, :inventory_changed} =
-             Catalog.adopt_movie_at_available(
-               attrs,
-               "/tmp/cinder-atomic-movies/Atomic/Atomic.mkv",
-               profile.id,
-               :anime,
-               fn _profile -> {:error, :inventory_changed} end
+             MovieLifecycle.adopt(attrs, "/tmp/cinder-atomic-movies/Atomic/Atomic.mkv",
+               profile: {profile.id, :anime},
+               revalidate: fn _profile -> {:error, :inventory_changed} end
              )
 
     assert %Movie{
@@ -355,12 +352,9 @@ defmodule Cinder.Library.AdoptionTest do
 
     adopt_task =
       Task.async(fn ->
-        Catalog.adopt_movie_at_available(
-          attrs,
-          "/tmp/cinder-atomic-movies/Reserved/Reserved.mkv",
-          profile.id,
-          :anime,
-          validator
+        MovieLifecycle.adopt(attrs, "/tmp/cinder-atomic-movies/Reserved/Reserved.mkv",
+          profile: {profile.id, :anime},
+          revalidate: validator
         )
       end)
 

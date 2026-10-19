@@ -14,7 +14,7 @@ defmodule CinderWeb.DashboardLive do
     only: [default_profile_id: 2, normalize_profile: 2, profile_kind: 1, profiles_for: 2]
 
   alias Cinder.{Accounts, Catalog, Disk, Health, Library, Notifier, Requests}
-  alias Cinder.Catalog.Refresher
+  alias Cinder.Catalog.{MovieLifecycle, Refresher}
   alias Cinder.Download.{Poller, TvPoller}
   alias Cinder.Subtitles.Sweeper
 
@@ -187,8 +187,9 @@ defmodule CinderWeb.DashboardLive do
       stats: %{
         movies_total: counts |> Map.values() |> Enum.sum(),
         movies_available: Map.get(counts, :available, 0),
-        in_pipeline: Enum.sum(Enum.map(Catalog.pipeline_statuses(), &Map.get(counts, &1, 0))),
-        parked: Enum.sum(Enum.map(Catalog.parked_statuses(), &Map.get(counts, &1, 0))),
+        in_pipeline:
+          Enum.sum(Enum.map(MovieLifecycle.pipeline_statuses(), &Map.get(counts, &1, 0))),
+        parked: Enum.sum(Enum.map(MovieLifecycle.parked_statuses(), &Map.get(counts, &1, 0))),
         series_total: Catalog.count_series(),
         tv_wanted: Catalog.count_wanted_episodes(),
         downloading: Catalog.count_grabs_downloading(),

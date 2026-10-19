@@ -49,6 +49,37 @@ An in-flight download that has made no forward progress for longer than Cinder i
 wait.
 _Avoid_: dead download, stuck download
 
+### Movies
+
+**Movie lifecycle**:
+The statuses a movie moves through from request to library, and the named events that move it
+between them.
+_Avoid_: pipeline state machine, status flow
+
+**Parked movie**:
+A movie stopped on a failure until someone retries it: no match, search failed or import failed.
+_Avoid_: failed movie, stuck movie
+
+**Verification hold**:
+An import failure that keeps its download because Cinder could not check the release against the
+movie's policy, waiting for the operator to retry, cancel or abort it.
+_Avoid_: policy hold, verification block
+
+**Re-queue**:
+Sending a movie whose download died back to requested, with that release blocklisted, so the next
+search picks another one.
+_Avoid_: reset, re-search
+
+**Upgrade revert**:
+Returning an upgrading movie to available with its existing library file, after the replacement
+failed.
+_Avoid_: upgrade rollback, upgrade cancel
+
+**Failure budget**:
+How many failures of one kind a movie may take in its current phase before Cinder parks,
+re-queues or reverts it.
+_Avoid_: retry limit, max attempts
+
 ### Requests
 
 **Request target**:

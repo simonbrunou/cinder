@@ -2,8 +2,7 @@ defmodule Cinder.CatalogPipelineStatusTest do
   # Pure unit tests for the pipeline-status classification — no DB, no fixtures.
   use ExUnit.Case, async: true
 
-  alias Cinder.Catalog
-  alias Cinder.Catalog.Movie
+  alias Cinder.Catalog.{Movie, MovieLifecycle}
 
   @active [:requested, :searching, :downloading, :downloaded, :upgrading]
   @parked [:no_match, :search_failed, :import_failed]
@@ -11,19 +10,20 @@ defmodule Cinder.CatalogPipelineStatusTest do
 
   describe "pipeline_statuses/0" do
     test "returns exactly the active in-flight statuses, in pipeline order" do
-      assert Catalog.pipeline_statuses() == @active
+      assert MovieLifecycle.pipeline_statuses() == @active
     end
   end
 
   describe "parked_statuses/0" do
     test "returns exactly the parked failure statuses" do
-      assert Catalog.parked_statuses() == @parked
+      assert MovieLifecycle.parked_statuses() == @parked
     end
 
-    test "is the set retry_movie/1 accepts (Retry shows exactly where it can succeed)" do
+    test "is the set retry/1 accepts (Retry shows exactly where it can succeed)" do
       for status <- Ecto.Enum.values(Movie, :status) -- @parked do
-        assert Catalog.retry_movie(%Movie{id: 0, status: status}) == {:error, :not_retryable},
-               "expected #{inspect(status)} to be rejected by retry_movie/1"
+        assert MovieLifecycle.retry(%Movie{id: 0, status: status}) ==
+                 {:error, :not_retryable},
+               "expected #{inspect(status)} to be rejected by retry/1"
       end
     end
   end
@@ -31,28 +31,28 @@ defmodule Cinder.CatalogPipelineStatusTest do
   describe "in_pipeline?/1" do
     test "true for every active status" do
       for status <- @active do
-        assert Catalog.in_pipeline?(%{status: status}),
+        assert MovieLifecycle.in_pipeline?(%{status: status}),
                "expected #{inspect(status)} to be in the pipeline"
       end
     end
 
     test "true for every parked failure (they need a retry, so they stay on live surfaces)" do
       for status <- @parked do
-        assert Catalog.in_pipeline?(%{status: status}),
+        assert MovieLifecycle.in_pipeline?(%{status: status}),
                "expected #{inspect(status)} to be in the pipeline"
       end
     end
 
     test "false for the terminal-done statuses" do
       for status <- @done do
-        refute Catalog.in_pipeline?(%{status: status}),
+        refute MovieLifecycle.in_pipeline?(%{status: status}),
                "expected #{inspect(status)} to be terminal-done"
       end
     end
 
     test "accepts a Movie struct" do
-      assert Catalog.in_pipeline?(%Movie{status: :downloading})
-      refute Catalog.in_pipeline?(%Movie{status: :available})
+      assert MovieLifecycle.in_pipeline?(%Movie{status: :downloading})
+      refute MovieLifecycle.in_pipeline?(%Movie{status: :available})
     end
   end
 

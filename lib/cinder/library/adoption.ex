@@ -9,7 +9,7 @@ defmodule Cinder.Library.Adoption do
 
   alias Cinder.Acquisition.Parser
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Movie, Profile, Series}
+  alias Cinder.Catalog.{Episode, Movie, MovieLifecycle, Profile, Series}
   alias Cinder.Library
   alias Cinder.Locales
   alias Cinder.Settings
@@ -665,15 +665,11 @@ defmodule Cinder.Library.Adoption do
          false <- managed?(managed, path),
          {:ok, profile, media_profile} <- validated_destination(candidate, :movies),
          {:ok, details} <- Catalog.get_movie(tmdb_id),
-         {:ok, movie, created} <-
-           Catalog.adopt_movie_at_available(
-             movie_attrs(details, media_profile, profile),
-             path,
-             Map.get(candidate, :profile_id),
-             adoption_profile(candidate),
-             &revalidate_candidate(candidate, :movies, &1)
-           ),
-         :ok <- announce_movie_creation(movie, created == :created) do
+         {:ok, _movie, _marker} <-
+           MovieLifecycle.adopt(movie_attrs(details, media_profile, profile), path,
+             profile: {Map.get(candidate, :profile_id), adoption_profile(candidate)},
+             revalidate: &revalidate_candidate(candidate, :movies, &1)
+           ) do
       {:adopted, [path]}
     else
       _ -> :skipped
@@ -694,9 +690,6 @@ defmodule Cinder.Library.Adoption do
     |> Map.put(:media_profile, media_profile)
     |> Map.put(:profile_id, profile && profile.id)
   end
-
-  defp announce_movie_creation(movie, true), do: Catalog.broadcast_movie_created(movie)
-  defp announce_movie_creation(_movie, false), do: :ok
 
   defp adopt_series(candidate, managed) do
     files =

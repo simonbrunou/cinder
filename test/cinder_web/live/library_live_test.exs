@@ -7,6 +7,7 @@ defmodule CinderWeb.LibraryLiveTest do
   alias Cinder.Books
   alias Cinder.Books.Grabs
   alias Cinder.Catalog
+  alias Cinder.Catalog.MovieLifecycle
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -119,7 +120,7 @@ defmodule CinderWeb.LibraryLiveTest do
     movie = movie_fixture(%{title: "Anime Movie", status: :import_failed})
 
     {:ok, movie} =
-      Catalog.transition(movie, %{
+      seed_movie_state(movie, %{
         status: :import_failed,
         verification_hold_origin: :download
       })
@@ -133,7 +134,7 @@ defmodule CinderWeb.LibraryLiveTest do
     movie = movie_fixture(%{status: :downloading})
 
     {:ok, _} =
-      Catalog.update_movie_download_metrics(movie, %{
+      MovieLifecycle.track(movie, %{
         download_progress: 0.42,
         download_speed: 1_500_000,
         download_eta: 90
@@ -155,7 +156,7 @@ defmodule CinderWeb.LibraryLiveTest do
 
   test "deletes an inactive movie through the confirm step", %{conn: conn} do
     movie = movie_fixture(%{title: "Old"})
-    {:ok, _} = Catalog.transition(movie, %{status: :cancelled})
+    {:ok, _} = seed_movie_state(movie, %{status: :cancelled})
     {:ok, lv, _html} = live(conn, ~p"/library")
 
     lv |> element("#movie-#{movie.id} button", "Delete") |> render_click()
@@ -212,7 +213,7 @@ defmodule CinderWeb.LibraryLiveTest do
     lv |> form("#library-filter-form", %{"filter" => "dune"}) |> render_change()
 
     # upsert_by_id/2 prepends when absent: against a filtered assign this row would pop back in.
-    {:ok, _} = Catalog.transition(hidden, %{status: :cancelled})
+    {:ok, _} = seed_movie_state(hidden, %{status: :cancelled})
 
     html = render(lv)
     assert html =~ ~s|id="movie-#{keep.id}"|
@@ -627,16 +628,16 @@ defmodule CinderWeb.LibraryLiveTest do
       # `-id` tiebreak alone, since dropping the guard leaves both movies on an equal size.
       kept = available_movie!("/tmp/kept.mkv", %{title: "Kept", imported_size: 9_000_000})
 
-      # retry_movie/1 clears file_path but leaves imported_size behind. Parked directly via a raw
-      # changeset (like available_movie!/2 above) — :available -> :import_failed isn't a real
+      # MovieLifecycle.retry/1 clears file_path but leaves imported_size behind. Parked directly via
+      # a raw changeset (like available_movie!/2 above) — :available -> :import_failed isn't a real
       # pipeline edge (a live movie only reaches :import_failed via the verification-hold path,
-      # which carries its own origin-tagged guard), so this doesn't go through Catalog.transition.
+      # which carries its own origin-tagged guard), so this doesn't go through the lifecycle.
       movie = available_movie!("/tmp/gone.mkv", %{title: "Gone", imported_size: 9_000_000})
 
       {:ok, failed} =
         movie |> Ecto.Changeset.change(status: :import_failed) |> Cinder.Repo.update()
 
-      {:ok, movie} = Catalog.retry_movie(failed)
+      {:ok, movie} = MovieLifecycle.retry(failed)
       assert movie.file_path == nil and movie.imported_size == 9_000_000
 
       {:ok, lv, _html} = live(conn, ~p"/library?sort=size")

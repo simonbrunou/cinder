@@ -40,7 +40,7 @@ defmodule Cinder.CatalogFixtures do
   Defaults `tmdb_id` to a fresh unique integer and `title` to "Inception"; any
   other key is passed through to `Catalog.add_movie/1`. Pipeline keys
   (`:status`, `:download_id`, `:file_path`, `:download_protocol`) are applied via
-  a single `Catalog.transition/2` after creation, so a downloading/downloaded
+  a single `seed_movie_state/2` after creation, so a downloading/downloaded
   fixture is a one-liner.
   """
   def movie_fixture(attrs \\ %{}) do
@@ -57,13 +57,29 @@ defmodule Cinder.CatalogFixtures do
       if map_size(pipeline) == 0 do
         movie
       else
-        {:ok, movie} = Catalog.transition(movie, pipeline)
+        {:ok, movie} = seed_movie_state(movie, pipeline)
         movie
       end
 
     if media_profile,
       do: Repo.update!(Movie.profile_changeset(movie, %{media_profile: media_profile})),
       else: movie
+  end
+
+  @doc """
+  Test-only seeding path: writes `attrs` (pipeline fields, `:status` included) straight onto
+  `movie` and broadcasts `{:movie_updated, movie}`, so an open LiveView sees the change.
+
+  It skips the movie lifecycle on purpose: no transition matrix, no compare-and-swap and no
+  `[:cinder, :transition]` telemetry. Use it to put a row where a test needs it, or to play a
+  concurrent writer. To test a lifecycle edge, call the `Cinder.Catalog.MovieLifecycle` verb.
+  Returns `{:ok, movie}`, or `{:error, changeset}` for an invalid status or counter.
+  """
+  def seed_movie_state(%Movie{} = movie, attrs) do
+    with {:ok, seeded} <- movie |> Movie.transition_changeset(Map.new(attrs)) |> Repo.update() do
+      Catalog.broadcast({:movie_updated, seeded})
+      {:ok, seeded}
+    end
   end
 
   @doc """

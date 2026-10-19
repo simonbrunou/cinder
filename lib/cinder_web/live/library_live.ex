@@ -47,6 +47,7 @@ defmodule CinderWeb.LibraryLive do
   alias Cinder.Books
   alias Cinder.Books.{BookTarget, Grabs}
   alias Cinder.Catalog
+  alias Cinder.Catalog.MovieLifecycle
 
   @impl true
   def mount(params, _session, socket) do
@@ -93,7 +94,7 @@ defmodule CinderWeb.LibraryLive do
     actor = socket.assigns.current_scope.user
 
     with movie when not is_nil(movie) <- find_movie(socket, id),
-         {:ok, _} <- Catalog.cancel_movie(movie, actor) do
+         {:ok, _} <- MovieLifecycle.cancel(movie, actor) do
       {:noreply,
        socket
        |> assign(confirming: nil, movies: Catalog.list_movies())
@@ -349,7 +350,7 @@ defmodule CinderWeb.LibraryLive do
   defp desc_key(value, id), do: {is_nil(value), -(value || 0), -id}
 
   # Bytes on disk. A movie carries its own size; a series' is summed per-file in SQL. The
-  # `file_path` guard keeps both tabs meaning the same thing — `Catalog.retry_movie/1` clears
+  # `file_path` guard keeps both tabs meaning the same thing — `MovieLifecycle.retry/1` clears
   # `file_path` but leaves `imported_size`, so a retried movie would otherwise sort by (and print)
   # bytes it no longer has, while the series aggregate is already `file_path`-guarded.
   defp item_size(%{file_path: nil}, _sizes), do: nil
@@ -660,7 +661,7 @@ defmodule CinderWeb.LibraryLive do
 
             <div class="flex flex-wrap gap-2">
               <.button
-                :if={Catalog.cancellable?(m)}
+                :if={MovieLifecycle.cancellable?(m)}
                 type="button"
                 variant="warning"
                 size="sm"
@@ -670,7 +671,7 @@ defmodule CinderWeb.LibraryLive do
                 {gettext("Cancel")}
               </.button>
               <.button
-                :if={not Catalog.cancellable?(m)}
+                :if={not MovieLifecycle.cancellable?(m)}
                 type="button"
                 variant="danger"
                 size="sm"

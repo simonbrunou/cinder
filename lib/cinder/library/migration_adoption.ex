@@ -5,7 +5,7 @@ defmodule Cinder.Library.MigrationAdoption do
 
   alias Cinder.Catalog
   alias Cinder.Catalog.Adoption, as: CatalogAdoption
-  alias Cinder.Catalog.{Episode, Movie, Series}
+  alias Cinder.Catalog.{Episode, Movie, MovieLifecycle, Series}
   alias Cinder.Library
   alias Cinder.Library.MigrationAdoption.Readarr
   alias Cinder.Library.MigrationReconciler
@@ -718,7 +718,7 @@ defmodule Cinder.Library.MigrationAdoption do
   # succeeds on. A bare `match?({:ok, %File.Stat{}}, ...)` accepted a directory or a symlink
   # alike (#514): a file replaced with either after preview, or a provider's mapped path
   # resolving to the wrong filesystem object, still passed this gate and went on to
-  # `Catalog.find_or_create_at_available`, making a non-media path "available." `type: :regular`
+  # `MovieLifecycle.adopt/3`, making a non-media path "available." `type: :regular`
   # mirrors the ordinary (non-migration) adoption path's own `validate_candidate_file/3`
   # (`lib/cinder/library/adoption.ex`), which rejects a symlink exactly the same way regardless
   # of what it resolves to — this codebase's own import writes only ever hardlink, never
@@ -883,10 +883,8 @@ defmodule Cinder.Library.MigrationAdoption do
   defp adopt_selected(summary, _source, _selected), do: summary
 
   defp adopt_movie_candidate(summary, candidate) do
-    case Catalog.find_or_create_at_available(movie_attrs(candidate.details), candidate.path) do
-      {:ok, movie, marker} ->
-        announce_movie(movie, marker)
-
+    case MovieLifecycle.adopt(movie_attrs(candidate.details), candidate.path) do
+      {:ok, _movie, _marker} ->
         summary
         |> Map.update!(:adopted, &(&1 + 1))
         |> add_adopted_keys([candidate.key])
@@ -895,9 +893,6 @@ defmodule Cinder.Library.MigrationAdoption do
         add_failure(summary, %{path: candidate.path, reason: reason})
     end
   end
-
-  defp announce_movie(movie, :created), do: Catalog.broadcast_movie_created(movie)
-  defp announce_movie(_movie, :existing), do: :ok
 
   defp adopt_series_items(summary, [{first, _choice} | _rest] = items) do
     existing? = match?(%Series{}, Catalog.get_series_by_tmdb_id(first.series.tmdb_id))

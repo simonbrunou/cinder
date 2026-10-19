@@ -200,7 +200,7 @@ defmodule Cinder.Download.TvPoller do
   # (retry_or_hold_verification) never reaches here and must keep the files for operator inspection.
   # download_id is nil here on purpose: reject_grab_release already fences + cleans up the
   # client-tracked job, so passing the real id would remove it a second time.
-  # `reject_release/4` (the shared movie/TV helper) lives in `Cinder.Download.PollerSkeleton`.
+  # `reject_release/4` lives in `Cinder.Download.PollerSkeleton`.
 
   defp import_standard_grab(grab) do
     case Library.stage_episodes(grab.content_path, grab.episodes,
@@ -806,8 +806,8 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
-  # Single terminal-park choke-point: drop the grab and notify, mirroring the movie poller's
-  # park/3. Both TV terminal-park sites (empty import, retry exhaustion) route through here so a
+  # Single terminal-park choke-point: drop the grab and notify, mirroring the movie lifecycle's
+  # park. Both TV terminal-park sites (empty import, retry exhaustion) route through here so a
   # failed grab is never silent — symmetric with {:movie_failed, _, _}.
   defp park(grab, reason) do
     # `reason` may carry a human detail (`{:download_error, "paused"}`) — it rode through the retry

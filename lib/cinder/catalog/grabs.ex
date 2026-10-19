@@ -20,6 +20,7 @@ defmodule Cinder.Catalog.Grabs do
     GrabFile,
     Identity,
     Movie,
+    MovieLifecycle,
     Season,
     Series
   }
@@ -34,10 +35,6 @@ defmodule Cinder.Catalog.Grabs do
   @download_metric_fields [:download_progress, :download_speed, :download_eta]
   @max_search_attempts 10
 
-  # Parked terminal states a user can re-queue (mirrors Cinder.Catalog's own copy —
-  # manual_grab_movie/2's guard needs it here too).
-  @retryable [:no_match, :search_failed, :import_failed]
-
   # #274. A blocklist reason that bounds the UPGRADE sweep alone. Every other reason means "this
   # release is bad for this title"; this one means only "it did not beat what we already hold", so
   # it must stay invisible to the wanted-episode sweep and the manual panel — see
@@ -48,24 +45,16 @@ defmodule Cinder.Catalog.Grabs do
   @doc """
   Grabs a specific user-chosen `release` for `movie`. An `:available` movie enters `:upgrading`
   (its library `file_path` and `imported_*` are preserved — the poller's upgrade clause swaps the
-  file only on a successful re-import). A parked movie (`#{inspect(@retryable)}`) enters
-  `:downloading` on the normal import path. Any other status returns `{:error, :not_grabbable}`
-  (rejecting in-flight/`:upgrading`/`:cancelled`, which also blocks a double-click). A movie deleted
-  mid-action surfaces `{:error, :stale_entry}`.
+  file only on a successful re-import). A parked movie that is not on a verification hold enters
+  `:downloading` on the normal import path (`MovieLifecycle.grabbable?/1`). Any other status
+  returns `{:error, :not_grabbable}` (rejecting in-flight/`:upgrading`/`:cancelled`, which also
+  blocks a double-click). A movie deleted mid-action surfaces `{:error, :stale_entry}`.
   """
-  def manual_grab_movie(%Movie{status: :available} = movie, %Release{} = release) do
-    Download.grab_movie(movie, release)
+  def manual_grab_movie(%Movie{} = movie, %Release{} = release) do
+    if MovieLifecycle.grabbable?(movie),
+      do: Download.grab_movie(movie, release),
+      else: {:error, :not_grabbable}
   end
-
-  def manual_grab_movie(
-        %Movie{status: status, verification_hold_origin: nil} = movie,
-        %Release{} = release
-      )
-      when status in @retryable do
-    Download.grab_movie(movie, release)
-  end
-
-  def manual_grab_movie(%Movie{}, %Release{}), do: {:error, :not_grabbable}
 
   @doc """
   Grabs a user-chosen `release` for one `season_number` of `series`. Recomputes the season's
@@ -544,8 +533,9 @@ defmodule Cinder.Catalog.Grabs do
   @doc """
   `block_release/2`, then confirms the row is readable back under the movie's exact
   `release_title`: `:ok` if it landed, `:error` if it did not. For the one caller that cannot
-  proceed without the row — `Cinder.Download.Poller.requeue_failed/2`, where the blocklist is the
-  only bound on a re-queue loop, so a missing row means re-grabbing the same dead release forever.
+  proceed without the row — `Cinder.Catalog.MovieLifecycle.record_failure/2`'s re-queue, where the
+  blocklist is the only bound on a re-queue loop, so a missing row means re-grabbing the same
+  failed release forever.
   Everyone else calls `block_release/2` and ignores the outcome (deliberately non-raising, see
   above). A nil `release_title` is `:error` — nothing to block means nothing to bound the loop.
   """

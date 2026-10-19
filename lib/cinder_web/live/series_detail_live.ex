@@ -3,7 +3,7 @@ defmodule CinderWeb.SeriesDetailLive do
   Admin-only series detail at `/series/:id`: the season/episode tree with per-episode
   monitor toggles and a per-season bulk control. Writes go straight through
   `Catalog.set_episode_monitored/2` / `set_season_monitored/2` (monitor flags aren't
-  pipeline state, so no `Catalog.transition`). Subscribes to the `"series"` topic so a
+  pipeline state, so no `Catalog.transition_episode`). Subscribes to the `"series"` topic so a
   second open tab reflects a toggle.
   """
   use CinderWeb, :live_view

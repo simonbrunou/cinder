@@ -3,11 +3,12 @@ defmodule Cinder.RequestsTest do
   import Mox
   alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Catalog
-  alias Cinder.Catalog.Movie
+  alias Cinder.Catalog.{Movie, MovieLifecycle}
   alias Cinder.Catalog.TitleAlias
   alias Cinder.Requests
   alias Ecto.Adapters.SQL.Sandbox
   import Cinder.AccountsFixtures
+  import Cinder.CatalogFixtures, only: [seed_movie_state: 2]
 
   @attrs %{
     target_type: "movie",
@@ -166,7 +167,7 @@ defmodule Cinder.RequestsTest do
     user = user_fixture()
     admin = admin_fixture()
     {:ok, movie} = Catalog.add_movie(%{tmdb_id: 603, title: "The Matrix"})
-    {:ok, movie} = Catalog.transition(movie, %{status: :no_match, search_attempts: 3})
+    {:ok, movie} = seed_movie_state(movie, %{status: :no_match, search_attempts: 3})
 
     attrs = Map.merge(@attrs, %{preferred_language: "french"})
     {:ok, req} = Requests.create_request(user, attrs)
@@ -410,7 +411,7 @@ defmodule Cinder.RequestsTest do
     admin = admin_fixture()
     {:ok, req} = Requests.create_request(user, @attrs)
     {:ok, movie} = Catalog.add_movie(%{tmdb_id: 603, title: "The Matrix"})
-    {:ok, _} = Catalog.transition(movie, %{status: :available})
+    {:ok, _} = seed_movie_state(movie, %{status: :available})
     Catalog.subscribe()
     {:ok, _} = Requests.approve_request(req, admin, :standard)
     assert [%Movie{status: :available}] = Catalog.list_by_status(:available)
@@ -608,7 +609,7 @@ defmodule Cinder.RequestsTest do
                Requests.create_request(user, Map.put(@attrs, :target_id, 604))
 
       movie = Catalog.get_movie_by_tmdb_id(603)
-      {:ok, _} = Catalog.transition(movie, %{status: :available})
+      {:ok, _} = seed_movie_state(movie, %{status: :available})
 
       assert {:ok, %{status: :approved}} =
                Requests.create_request(user, Map.put(@attrs, :target_id, 604))
@@ -647,7 +648,8 @@ defmodule Cinder.RequestsTest do
       assert {:error, :quota_exceeded} =
                Requests.create_request(user, Map.put(@attrs, :target_id, 604))
 
-      assert {:ok, _} = Catalog.cancel_movie(Catalog.get_movie_by_tmdb_id(603), admin)
+      assert {:ok, _} =
+               MovieLifecycle.cancel(Catalog.get_movie_by_tmdb_id(603), admin)
 
       assert {:ok, %{status: :approved}} =
                Requests.create_request(user, Map.put(@attrs, :target_id, 604))
@@ -656,14 +658,14 @@ defmodule Cinder.RequestsTest do
     test "a landed movie being upgraded still counts as fulfilled", %{user: user} do
       assert {:ok, _} = Requests.create_request(user, @attrs)
       movie = Catalog.get_movie_by_tmdb_id(603)
-      {:ok, movie} = Catalog.transition(movie, %{status: :available})
-      {:ok, _} = Catalog.transition(movie, %{status: :upgrading})
+      {:ok, movie} = seed_movie_state(movie, %{status: :available})
+      {:ok, _} = seed_movie_state(movie, %{status: :upgrading})
 
       assert {:ok, %{status: :approved}} =
                Requests.create_request(user, Map.put(@attrs, :target_id, 604))
 
       # An upgrade parked on a verification hold keeps its file too.
-      {:ok, other} = Catalog.transition(Catalog.get_movie_by_tmdb_id(604), %{status: :available})
+      {:ok, other} = seed_movie_state(Catalog.get_movie_by_tmdb_id(604), %{status: :available})
 
       Repo.update_all(from(m in Movie, where: m.id == ^other.id),
         set: [status: :import_failed, verification_hold_origin: :upgrade]

@@ -5,7 +5,7 @@ defmodule Cinder.Download.IntentTest do
 
   alias Cinder.Acquisition.{Anime, Release}
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Grab, Movie}
+  alias Cinder.Catalog.{Grab, Movie, MovieLifecycle}
   alias Cinder.Download
   alias Cinder.Download.Intent
   alias Cinder.Download.IntentEpisode
@@ -253,12 +253,13 @@ defmodule Cinder.Download.IntentTest do
     retryable = movie_fixture(%{status: :no_match})
 
     assert {:ok, retryable} =
-             Catalog.transition(retryable, %{
+             seed_movie_state(retryable, %{
                status: :no_match,
                release_policy_snapshot: release_policy_snapshot("Stale.Release")
              })
 
-    assert {:ok, %Movie{release_policy_snapshot: nil}} = Catalog.retry_movie(retryable)
+    assert {:ok, %Movie{release_policy_snapshot: nil}} =
+             MovieLifecycle.retry(retryable)
   end
 
   test "episodic reservation persists an immutable snapshot after Catalog evidence changes" do
@@ -581,7 +582,7 @@ defmodule Cinder.Download.IntentTest do
     assert {:ok, stale} =
              reserve_marked_movie_intent(cancelled, release, snapshot, "hash-policy-stale-movie")
 
-    assert {:ok, _cancelled} = Catalog.transition(cancelled, %{status: :cancelled})
+    assert {:ok, _cancelled} = seed_movie_state(cancelled, %{status: :cancelled})
 
     expect(Cinder.Download.ClientMock, :remove, fn "hash-policy-stale-movie", _opts -> :ok end)
 
@@ -785,7 +786,7 @@ defmodule Cinder.Download.IntentTest do
 
   test "a committed movie retry generation is charged once across crash replay" do
     movie = movie_fixture(%{status: :searching})
-    {:ok, movie} = Catalog.transition(movie, %{status: :searching, search_attempts: 3})
+    {:ok, movie} = seed_movie_state(movie, %{status: :searching, search_attempts: 3})
     {:ok, intent} = reserve_movie_intent(movie.id)
 
     expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> {:error, :timeout} end)
@@ -804,7 +805,7 @@ defmodule Cinder.Download.IntentTest do
 
   test "concurrent reconciliation charges one movie attempt for one intent generation" do
     movie = movie_fixture(%{status: :searching})
-    {:ok, movie} = Catalog.transition(movie, %{status: :searching, search_attempts: 3})
+    {:ok, movie} = seed_movie_state(movie, %{status: :searching, search_attempts: 3})
     {:ok, intent} = reserve_movie_intent(movie.id)
     {:ok, calls} = Agent.start_link(fn -> 0 end)
 
@@ -828,7 +829,7 @@ defmodule Cinder.Download.IntentTest do
     Catalog.subscribe()
 
     movie = movie_fixture(%{status: :searching})
-    {:ok, movie} = Catalog.transition(movie, %{status: :searching, search_attempts: 9})
+    {:ok, movie} = seed_movie_state(movie, %{status: :searching, search_attempts: 9})
     {:ok, intent} = reserve_movie_intent(movie.id)
 
     stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> {:error, :timeout} end)
@@ -851,7 +852,7 @@ defmodule Cinder.Download.IntentTest do
     Cinder.TestNotifier.subscribe()
 
     movie = movie_fixture(%{status: :searching})
-    {:ok, movie} = Catalog.transition(movie, %{status: :searching, search_attempts: 9})
+    {:ok, movie} = seed_movie_state(movie, %{status: :searching, search_attempts: 9})
     {:ok, intent} = reserve_movie_intent(movie.id)
     {:ok, calls} = Agent.start_link(fn -> 0 end)
     Catalog.subscribe()
@@ -948,7 +949,7 @@ defmodule Cinder.Download.IntentTest do
 
     submit = Task.async(fn -> Download.reconcile_intent(intent) end)
     assert_receive {:lookup_blocked, lookup_pid}
-    cancel = Task.async(fn -> Catalog.cancel_movie(movie, actor) end)
+    cancel = Task.async(fn -> MovieLifecycle.cancel(movie, actor) end)
     Process.sleep(25)
     send(lookup_pid, :continue)
 
@@ -972,7 +973,7 @@ defmodule Cinder.Download.IntentTest do
       end
     end)
 
-    {pid, ref} = spawn_monitor(fn -> Catalog.cancel_movie(movie, actor) end)
+    {pid, ref} = spawn_monitor(fn -> MovieLifecycle.cancel(movie, actor) end)
     assert_receive {:remove_observed_movie, :cancelled}
     assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
     assert Repo.get!(Intent, intent.id).status == :cleanup_pending
@@ -1095,7 +1096,7 @@ defmodule Cinder.Download.IntentTest do
 
     submit = Task.async(fn -> Download.reconcile_intent(intent) end)
     assert_receive {:submission_lookup_blocked, lookup_pid}
-    cancel = Task.async(fn -> Catalog.cancel_movie(movie, actor) end)
+    cancel = Task.async(fn -> MovieLifecycle.cancel(movie, actor) end)
 
     assert eventually(fn -> Repo.get!(Cinder.Catalog.Movie, movie.id).status == :cancelled end)
     send(lookup_pid, :continue)
@@ -1123,7 +1124,7 @@ defmodule Cinder.Download.IntentTest do
 
     submit = Task.async(fn -> Download.reconcile_intent(intent) end)
     assert_receive {:movie_remote_accepted, add_pid}
-    cancel = Task.async(fn -> Catalog.cancel_movie(movie, actor) end)
+    cancel = Task.async(fn -> MovieLifecycle.cancel(movie, actor) end)
     assert eventually(fn -> Repo.get!(Cinder.Catalog.Movie, movie.id).status == :cancelled end)
     send(add_pid, :return_remote)
 
@@ -1256,7 +1257,7 @@ defmodule Cinder.Download.IntentTest do
     {pid, ref} =
       spawn_monitor(fn ->
         {:ok, downloading} =
-          Catalog.transition(movie, %{
+          seed_movie_state(movie, %{
             status: :downloading,
             download_id: "hash-owned",
             download_protocol: :torrent
@@ -1330,7 +1331,7 @@ defmodule Cinder.Download.IntentTest do
     actor = Cinder.AccountsFixtures.admin_fixture()
 
     assert {:ok, movie} =
-             Catalog.transition(movie, %{
+             seed_movie_state(movie, %{
                status: :searching,
                release_policy_snapshot: release_policy_snapshot("Cancelled.Release")
              })
@@ -1344,7 +1345,9 @@ defmodule Cinder.Download.IntentTest do
 
     expect(Cinder.Download.ClientMock, :remove, fn "hash-cancel", _opts -> :ok end)
 
-    assert {:ok, %Movie{release_policy_snapshot: nil}} = Catalog.cancel_movie(movie, actor)
+    assert {:ok, %Movie{release_policy_snapshot: nil}} =
+             MovieLifecycle.cancel(movie, actor)
+
     refute Repo.get(Intent, intent.id)
   end
 

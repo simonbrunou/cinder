@@ -91,7 +91,7 @@ defmodule CinderWeb.Telemetry do
           "The time the connection spent waiting before being checked out for the query"
       ),
 
-      # Domain Metrics — the Catalog.transition/transition_episode choke-points, the shared
+      # Domain Metrics — the MovieLifecycle/transition_episode choke-points, the shared
       # poller skeleton's per-tick timing, each poller's terminal-park choke-point, and outbound
       # HTTP through Cinder.HTTPPolicy.bounded_request/2,3.
       counter("cinder.transition.count",

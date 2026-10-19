@@ -11,7 +11,7 @@ either has the same chance of being caught before review as everything else in t
 Driving mechanism: `docker exec <container> /app/bin/cinder rpc '<expr>'`, never `eval`. `eval`
 boots a disconnected temporary node (`:nonode@nohost`) whose Catalog broadcasts can never reach
 the real server's mounted LiveViews. `rpc` executes *in* the running `:cinder@<host>` node, so a
-`Catalog.transition/3` issued this way broadcasts on the real "movies" PubSub topic and patches
+`Catalog.MovieLifecycle` verb issued this way broadcasts on the real "movies" PubSub topic and patches
 the real, already-mounted `/library` page open in the browser — the same mechanism #592's author
 used to hand-verify the kindle flare while writing it.
 
@@ -132,14 +132,36 @@ def seed_movie(title, poster_path=None, imdb_suffix=None):
     )
 
 
-def transition(movie_id, fields, expect_status):
-    """Drives the real Catalog choke-point (`Catalog.transition/3`) against a seeded row, exactly
-    as the app's own pollers/live views do — broadcasts `{:movie_updated, movie}` on "movies"."""
+def lifecycle(movie_id, verb_call):
+    """Drives the real movie lifecycle (`Cinder.Catalog.MovieLifecycle`) against a seeded row,
+    exactly as the app's own pollers/live views do: `verb_call` runs on the freshly read `movie`
+    and broadcasts `{:movie_updated, movie}` on "movies"."""
     rpc(
         f"movie = Cinder.Repo.get!(Cinder.Catalog.Movie, {movie_id}); "
-        f"{{:ok, _}} = Cinder.Catalog.transition(movie, %{{{fields}}}, expect: :{expect_status}); "
+        f"{{:ok, _}} = Cinder.Catalog.MovieLifecycle.{verb_call}; "
         f'IO.puts("RPCRESULT:ok")'
     )
+
+
+def start_search(movie_id):
+    """:requested -> :searching."""
+    lifecycle(movie_id, "start_search(movie, movie.imdb_id)")
+
+
+def start_download(movie_id, progress):
+    """:searching -> :downloading, then one progress write. The download fields stay nil, so a
+    poller tick after the case sees no client for the row, as before."""
+    lifecycle(
+        movie_id,
+        "attach(movie, %{download_id: nil, download_protocol: nil, release_title: nil, "
+        "release_policy_snapshot: nil})",
+    )
+    track_progress(movie_id, progress)
+
+
+def track_progress(movie_id, progress):
+    """A same-status progress-only update on a :downloading row."""
+    lifecycle(movie_id, f"track(movie, %{{download_progress: {progress}}})")
 
 
 def broadcast_movie_created(movie_id):
@@ -277,7 +299,7 @@ def case_1_no_flare_on_initial_load(page):
     """No flare on initial page load — the `mounted()` first-sighting guard."""
     with SuspendedPoller():
         movie_id = seed_movie("Case1 Initial Load")
-        transition(movie_id, "status: :searching", expect_status="requested")
+        start_search(movie_id)
 
     goto_library(page)
     badge_id = f"library-movie-status-{movie_id}"
@@ -313,7 +335,7 @@ def case_2_exactly_one_flare_on_transition(page):
                 f"<{before_tag}>"
             )
 
-        transition(movie_id, "status: :searching", expect_status="requested")
+        start_search(movie_id)
         wait_for_data_kindle(page, movie_id, "v && v.includes('Searching')")
         page.wait_for_timeout(SETTLE_MS)
 
@@ -344,13 +366,9 @@ def _seed_and_advance_to_downloading(page, title):
     goto_library(page)
     expect(badge_locator(page, movie_id)).to_be_visible(timeout=10_000)
 
-    transition(movie_id, "status: :searching", expect_status="requested")
+    start_search(movie_id)
     wait_for_badge_text(page, movie_id, "Searching")
-    transition(
-        movie_id,
-        "status: :downloading, download_progress: 0.1",
-        expect_status="searching",
-    )
+    start_download(movie_id, 0.1)
     wait_for_badge_text(page, movie_id, "Downloading")
     page.wait_for_timeout(SETTLE_MS)
 
@@ -367,11 +385,7 @@ def case_3_no_flare_on_progress_only_update(page):
             page, "Case3 Progress Tick"
         )
 
-        transition(
-            movie_id,
-            "status: :downloading, download_progress: 0.6",
-            expect_status="downloading",
-        )
+        track_progress(movie_id, 0.6)
         wait_for_badge_text(page, movie_id, "60%")
         page.wait_for_timeout(SETTLE_MS)
 
@@ -394,11 +408,7 @@ def case_4_no_false_flare_after_error_kind(page):
             "{ detail: { kind: 'error' } }))"
         )
 
-        transition(
-            movie_id,
-            "status: :downloading, download_progress: 0.6",
-            expect_status="downloading",
-        )
+        track_progress(movie_id, 0.6)
         wait_for_badge_text(page, movie_id, "60%")
         page.wait_for_timeout(SETTLE_MS)
 
@@ -497,7 +507,7 @@ def case_7_reduced_motion_static_alternative(page):
         goto_library(page)
         expect(badge_locator(page, movie_id)).to_be_visible(timeout=10_000)
 
-        transition(movie_id, "status: :searching", expect_status="requested")
+        start_search(movie_id)
         wait_for_badge_text(page, movie_id, "Searching")
         page.wait_for_timeout(SETTLE_MS)
 

@@ -18,8 +18,8 @@ defmodule Cinder.Accounts.Janitor do
   tick rather than crash-looping the worker.
 
   These are ordinary bulk `Repo.delete_all` writes, accounts-side — like `Cinder.Accounts`'s own
-  token deletes they do NOT go through `Catalog.transition`, which is the movie/episode pipeline
-  status choke-point only.
+  token deletes they do NOT go through `Catalog.MovieLifecycle` or `Catalog.transition_episode/3`,
+  the movie/episode pipeline status choke-points.
 
   Lifecycle is `Cinder.Download.PollerSkeleton` (`stateful: false`). The interval is module config:
   `config :cinder, #{inspect(__MODULE__)}, interval: <ms>`; the audit window is

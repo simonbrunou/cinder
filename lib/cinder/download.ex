@@ -13,10 +13,10 @@ defmodule Cinder.Download do
   import Ecto.Query
 
   require Logger
-  alias Cinder.{Acquisition, Books, Catalog, Library, Notifier, Repo, Settings, Vault}
+  alias Cinder.{Acquisition, Books, Catalog, Library, Repo, Settings, Vault}
   alias Cinder.Acquisition.{AnimePreferences, AudiobookRelease, BookRelease, Release}
   alias Cinder.Books.{BookGrab, BookTarget}
-  alias Cinder.Catalog.{Grab, MediaProfile, Movie}
+  alias Cinder.Catalog.{Grab, MediaProfile, Movie, MovieLifecycle}
   alias Cinder.Download.{Intent, IntentEpisode}
 
   @retry_base_seconds 5
@@ -472,13 +472,25 @@ defmodule Cinder.Download do
     )
   end
 
+  @doc """
+  True while a download intent for `movie_id` can still attach a download to that movie: reserved,
+  or submitted and not yet reconciled. A `:cleanup_pending` intent only removes its remote job.
+  """
+  def movie_intent_pending?(movie_id) do
+    Repo.exists?(
+      from i in Intent,
+        where:
+          i.kind == :movie and i.target_id == ^movie_id and i.status in [:reserved, :submitted]
+    )
+  end
+
   @doc false
   def pending_episode_ids do
     Repo.all(from r in IntentEpisode, select: r.episode_id) |> MapSet.new()
   end
 
   # `opts[:expect_remote_id]` (issue #415) is a generation guard for the post-commit fence path
-  # only: every EXISTING caller (`Catalog.cancel_movie/2`, `abort_upgrade/2`, `delete_movie/3`,
+  # only: every EXISTING caller (`MovieLifecycle.cancel/2`, `abort_upgrade/2`, `delete_movie/3`,
   # `ReleaseVerification`) fences BEFORE the target becomes grabbable again, inside the same
   # transaction as the write that makes it so — nothing can race a new reservation in, so "the"
   # intent for this `target_id` is unambiguously the one being torn down. `Download`'s post-commit
@@ -822,13 +834,33 @@ defmodule Cinder.Download do
 
     case intent do
       %Intent{kind: :movie, status: :reserved} ->
-        Catalog.account_movie_intent_retry(intent, retry_attrs, reason)
+        MovieLifecycle.record_submission_failure(intent.target_id, reason, fn ->
+          claim_retry_generation(intent, retry_attrs)
+        end)
 
       %Intent{} ->
         intent |> Intent.changeset(retry_attrs) |> Repo.update()
     end
 
     {:error, reason}
+  end
+
+  # Counts this failure once: the reserved intent's attempt count must still be the one this
+  # process read, so a concurrent reconcile that already counted it leaves `:stale`.
+  defp claim_retry_generation(intent, retry_attrs) do
+    observed_attempt = intent.attempt_count || 0
+
+    case Repo.update_all(
+           from(i in Intent,
+             where:
+               i.id == ^intent.id and i.status == :reserved and
+                 i.attempt_count == ^observed_attempt
+           ),
+           set: Map.to_list(retry_attrs) ++ [updated_at: DateTime.utc_now(:second)]
+         ) do
+      {1, _} -> :ok
+      {0, _} -> :stale
+    end
   end
 
   defp retry_error(reason) when is_atom(reason), do: inspect(reason)
@@ -1025,39 +1057,26 @@ defmodule Cinder.Download do
       %Movie{download_id: ^remote_id} = movie ->
         complete_intent(intent, movie)
 
-      %Movie{status: status} = movie when status in [:requested, :searching] ->
-        attach_movie(intent, movie, %{status: :downloading})
-
-      %Movie{status: status} = movie when status in [:no_match, :search_failed, :import_failed] ->
-        attach_movie(intent, movie, %{status: :downloading, search_attempts: 0})
-
-      %Movie{status: :available} = movie ->
-        attach_movie(intent, movie, %{status: :upgrading})
+      %Movie{} = movie ->
+        attach_movie(intent, movie)
 
       nil ->
         cleanup_failed_ownership(intent, :stale_entry)
-
-      _ ->
-        cleanup_failed_ownership(intent, :stale_target)
     end
   end
 
-  defp attach_movie(intent, movie, attrs) do
-    attrs =
-      Map.merge(attrs, %{
-        download_id: intent.remote_id,
-        download_protocol: intent.protocol,
-        release_title: intent.release["title"],
-        release_policy_snapshot: intent.release_policy_snapshot,
-        import_attempts: 0
-      })
+  defp attach_movie(intent, movie) do
+    download = %{
+      download_id: intent.remote_id,
+      download_protocol: intent.protocol,
+      release_title: intent.release["title"],
+      release_policy_snapshot: intent.release_policy_snapshot
+    }
 
-    case Catalog.transition(movie, attrs, expect: movie.status) do
+    case MovieLifecycle.attach(movie, download) do
       {:ok, updated} -> complete_intent(intent, updated)
       {:error, _} -> cleanup_failed_ownership(intent, :stale_target)
     end
-  rescue
-    Ecto.StaleEntryError -> cleanup_failed_ownership(intent, :stale_entry)
   end
 
   defp reconcile_episodes(%Intent{remote_id: remote_id} = intent) do
@@ -1140,27 +1159,20 @@ defmodule Cinder.Download do
   end
 
   defp do_start(movie) do
-    # Every transition below is guarded on the status this unit read (expect:) so a
+    # Every MovieLifecycle verb below is a compare-and-swap on the struct this unit read, so a
     # user cancel landing during the indexer/client I/O is never overwritten; a
     # {:error, :stale_status} skips the unit — the next tick re-derives.
     with {:ok, imdb_id} <- ensure_imdb_id(movie),
-         {:ok, movie} <-
-           Catalog.transition(movie, %{status: :searching, imdb_id: imdb_id},
-             expect: movie.status
-           ) do
+         {:ok, movie} <- MovieLifecycle.start_search(movie, imdb_id) do
       case search_movie(movie, imdb_id) do
         {:ok, release} ->
           grab_if_space(movie, release)
 
         :no_match ->
-          Catalog.transition(
-            movie,
-            %{status: :no_match, release_policy_snapshot: nil},
-            expect: movie.status
-          )
+          MovieLifecycle.no_match(movie, :no_match)
 
         :no_language_match ->
-          park_no_language(movie)
+          MovieLifecycle.no_match(movie, :no_language_match)
 
         {:waiting_for_preferred_group, %{retry_at: retry_at}} ->
           Logger.info("movie #{movie.id} waiting for preferred anime group until #{retry_at}")
@@ -1277,7 +1289,7 @@ defmodule Cinder.Download do
   fence-then-`cleanup_intents/1` pair `Cinder.Catalog`/`Cinder.Catalog.Grabs` already use for
   delete/cancel/reap, just called AFTER this tick's import already committed rather than inside
   its transaction. That ordering is safe here specifically because the durable owner survives
-  the import: a movie row is never deleted by import (only `Catalog.abort_upgrade/2` and
+  the import: a movie row is never deleted by import (only `MovieLifecycle.abort_upgrade/2` and
   `delete_movie/3` ever clear its `download_id`, and both already fence first), and an episode's
   grab is captured by the caller BEFORE `Catalog.Grabs` deletes it — a retry can never fire
   against a payload the import is still reading, because the fenced intent does not exist until
@@ -1388,18 +1400,6 @@ defmodule Cinder.Download do
       )
 
       :ok
-  end
-
-  defp park_no_language(movie) do
-    with {:ok, parked} <-
-           Catalog.transition(
-             movie,
-             %{status: :no_match, release_policy_snapshot: nil},
-             expect: movie.status
-           ) do
-      Notifier.notify({:movie_failed, parked, :no_language_match})
-      {:ok, parked}
-    end
   end
 
   defp ensure_imdb_id(%Movie{imdb_id: imdb_id}) when is_binary(imdb_id) and imdb_id != "" do

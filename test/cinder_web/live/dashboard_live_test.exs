@@ -7,6 +7,7 @@ defmodule CinderWeb.DashboardLiveTest do
 
   alias Cinder.{Accounts, Catalog, Requests}
   alias Cinder.Accounts.Scope
+  alias Cinder.Catalog.MovieLifecycle
 
   import Cinder.CatalogFixtures
 
@@ -300,7 +301,7 @@ defmodule CinderWeb.DashboardLiveTest do
       movie = movie_fixture(%{status: :downloading})
 
       {:ok, _} =
-        Catalog.update_movie_download_metrics(movie, %{
+        MovieLifecycle.track(movie, %{
           download_progress: 0.42,
           download_speed: 1_500_000,
           download_eta: 90
@@ -449,7 +450,7 @@ defmodule CinderWeb.DashboardLiveTest do
           title: "Blade Runner"
         })
 
-      {:ok, _} = Catalog.transition(movie, %{status: :upgrading})
+      {:ok, _} = seed_movie_state(movie, %{status: :upgrading})
       {:ok, lv, _html} = live(conn, ~p"/dashboard")
 
       # With exactly one movie — the :upgrading one — the in-pipeline stat must read 1.

@@ -137,7 +137,7 @@ defmodule Cinder.Download.MoveOnImportTest do
       })
 
     {:ok, movie} =
-      Catalog.transition(movie, %{
+      seed_movie_state(movie, %{
         status: :downloaded,
         release_policy_snapshot: release_policy_snapshot(movie.release_title)
       })
@@ -385,7 +385,7 @@ defmodule Cinder.Download.MoveOnImportTest do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 2, title: "M"})
 
       {:ok, movie} =
-        Catalog.transition(movie, %{
+        seed_movie_state(movie, %{
           status: :downloading,
           download_id: "hash-2",
           download_protocol: :torrent
@@ -548,7 +548,7 @@ defmodule Cinder.Download.MoveOnImportTest do
       enable_media_info()
       source = "/downloads/cinder-hold/Anime.Movie.mkv"
       movie = usenet_policy_movie(22, "nzo-hold", source)
-      {:ok, movie} = Catalog.transition(movie, %{status: :downloaded, import_attempts: 9})
+      {:ok, movie} = seed_movie_state(movie, %{status: :downloaded, import_attempts: 9})
 
       expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
       expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source -> {:error, :timeout} end)
@@ -1037,7 +1037,7 @@ defmodule Cinder.Download.MoveOnImportTest do
     test "a usenet upgrade reverted after a transient import error keeps its job and payload" do
       enable()
       movie = upgrading_movie(64, :usenet, "nzo-up-transient")
-      {:ok, _} = Catalog.transition(movie, %{status: :upgrading, import_attempts: 9})
+      {:ok, _} = seed_movie_state(movie, %{status: :upgrading, import_attempts: 9})
 
       stub_no_video_file_download(
         Cinder.Download.SabnzbdClientMock,
