@@ -70,6 +70,6 @@ defmodule Cinder.Acquisition.BookRelease do
       published_at: Map.get(indexer_map, :published_at),
       query_origins: Map.get(indexer_map, :query_origins)
     }
-    |> struct(BookParser.parse(title))
+    |> struct(BookParser.parse(title, :ebook))
   end
 end

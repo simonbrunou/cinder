@@ -51,11 +51,11 @@ defmodule Cinder.Library.BookSources do
 
   `Title.epub` + `Title.mobi` is one release offering two readable copies — the same fact
   `Cinder.Acquisition.BookScorer` already accepts a multi-format release on. Files that share a
-  normalized stem collapse to the single best-ranked format (`BookScorer.accepted_formats/0`,
-  most-preferred first), so the allow-list and the preference order have one definition across
-  the scorer and the importer.
+  normalized stem collapse to the single best-ranked format
+  (`Cinder.Acquisition.BookKind.accepted_formats(:ebook)`, most-preferred first), so the
+  allow-list and the preference order have one definition across the scorer and the importer.
   """
-  alias Cinder.Acquisition.BookScorer
+  alias Cinder.Acquisition.BookKind
   alias Cinder.Library
   alias Cinder.Library.BookArchive
 
@@ -64,7 +64,7 @@ defmodule Cinder.Library.BookSources do
 
   @doc "The file extensions an import accepts, most-preferred format first."
   @spec accepted_extensions() :: [String.t()]
-  def accepted_extensions, do: Enum.map(BookScorer.accepted_formats(), &".#{&1}")
+  def accepted_extensions, do: Enum.map(BookKind.accepted_formats(:ebook), &".#{&1}")
 
   @doc """
   The book equivalent of `Cinder.Library.safe_source_file/1`.
@@ -269,17 +269,17 @@ defmodule Cinder.Library.BookSources do
   defp magic?(<<_head::binary-size(60), "TPZ3", _rest::binary>>, :azw3), do: true
   defp magic?(_prefix, _format), do: false
 
-  # The format preference order is the scorer's, by index — one definition of "epub beats mobi"
-  # rather than a second list here that could drift from the one releases are scored on.
+  # The format preference order is the e-book kind's, by index — one definition of "epub beats
+  # mobi" rather than a second list here that could drift from the one releases are scored on.
   defp format_rank(path),
-    do: Enum.find_index(BookScorer.accepted_formats(), &(&1 == format(path)))
+    do: Enum.find_index(BookKind.accepted_formats(:ebook), &(&1 == format(path)))
 
   # Looked up in the allow-list rather than converted from the string: `String.to_existing_atom/1`
   # on a path extension turns attacker-influenced filenames into atom lookups, and every caller
   # here has already passed `accepted_file?/1`, so the lookup always hits.
   defp format(path) do
     extension = String.downcase(Path.extname(path))
-    Enum.find(BookScorer.accepted_formats(), &(".#{&1}" == extension))
+    Enum.find(BookKind.accepted_formats(:ebook), &(".#{&1}" == extension))
   end
 
   defp accepted_file?(path),

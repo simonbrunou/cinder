@@ -1,7 +1,13 @@
 defmodule Cinder.Acquisition.BookParser do
   @moduledoc """
-  Extracts book-release attributes (`formats`, `language`, `retail?`, `collection?`) from a
-  release name. Pure and best-effort — an unrecognized field is `nil`/`false`/`[]`.
+  Extracts book-release attributes (`formats`, `language`, `retail?`, `collection?`,
+  `abridged?`, and for an audiobook `narrator`) from a release name. Pure and best-effort — an
+  unrecognized field is `nil`/`false`/`[]`.
+
+  One parser serves the whole book family. What differs between an e-book and an audiobook
+  release name is vocabulary — which container tokens exist, which extra words may sit in a tag
+  region, whether a narrator credit is read — and `Cinder.Acquisition.BookKind` holds it as data.
+  The tag-region discipline below is the same for both.
 
   ## Why this is not `Cinder.Acquisition.Parser`
 
@@ -9,7 +15,7 @@ defmodule Cinder.Acquisition.BookParser do
   can anchor on the year/resolution marker and treat everything past it as the tag region. A book
   release name has no such anchor — `Ursula K. Le Guin - The Dispossessed (epub)` carries no year,
   no resolution, and its "tags" are one parenthesised word. So the region rules differ, and the
-  tokens differ (there is no book codec, and no video format is an e-book format).
+  tokens differ (there is no book codec, and no video format is a book format).
 
   What the two **do** share is the language vocabulary, which is derived from
   `Cinder.Acquisition.Parser.language_tags/0` rather than restated here — two hand-synced language
@@ -22,10 +28,11 @@ defmodule Cinder.Acquisition.BookParser do
   stated, so `formats` is a list, ordered as the recognizer lists them (stable, not
   release-order).
 
-  Formats outside the e-book profile — PDF, CBZ, DJVU — are recognized *on purpose*. The scorer
-  needs to tell "this is a PDF scan, refused" from "no format stated at all", and it can only do
-  that if the parser names the format it refuses. A recognizer that only knew the accepted
-  formats would collapse both into one silent miss.
+  Formats outside the kind's accepted set — PDF, CBZ, DJVU for an e-book, FLAC or an EPUB for an
+  audiobook — are recognized *on purpose*. The scorer needs to tell "this is a PDF scan, refused"
+  from "no format stated at all", and it can only do that if the parser names the format it
+  refuses. A recognizer that only knew the accepted formats would collapse both into one silent
+  miss.
 
   ## Language is only read from the tag region
 
@@ -42,27 +49,46 @@ defmodule Cinder.Acquisition.BookParser do
   naming; `\\bita\\b` and `\\bvf\\b` in a book title are far likelier to be a fragment of a name
   than an Italian or French marker, and an untagged release is handled gracefully downstream while
   a wrongly-tagged one is rejected.
+
+  ## Narrator is informational only
+
+  For a kind whose releases are `narrated?`, `narrator` is read from a
+  `"(Narrated by Ray Porter)"` / `"[Read by ...]"` group only — the same tag-region discipline
+  `language/2` follows: an audiobook's own title can contain "read by" as prose, but the
+  bracketed form is a credit. It is never a scorer gate — see `Cinder.Acquisition.BookScorer`.
   """
 
-  alias Cinder.Acquisition.Parser
+  alias Cinder.Acquisition.{BookKind, Parser}
 
-  # Extension-style format tokens. Ordered most-specific-first so `azw3` is not swallowed by
-  # `azw`. The value is the canonical atom the scorer's allow-list is written in.
-  @formats [
-    {~r/\bepub\b/i, :epub},
-    {~r/\bazw3\b/i, :azw3},
-    {~r/\bazw\b/i, :azw},
-    {~r/\bmobi\b/i, :mobi},
-    {~r/\bpdf\b/i, :pdf},
-    {~r/\bdjvu\b/i, :djvu},
-    {~r/\bfb2\b/i, :fb2},
-    {~r/\blit\b/i, :lit},
-    {~r/\bcbz\b/i, :cbz},
-    {~r/\bcbr\b/i, :cbr},
-    {~r/\brtf\b/i, :rtf}
-  ]
+  @kinds BookKind.all()
 
-  @format_anchor ~r/\b(?:epub|azw3|azw|mobi|pdf|djvu|fb2|lit|cbr|cbz|rtf)\b/i
+  # Extension-style format tokens per kind, in `BookKind`'s recognizer order. The value is the
+  # canonical atom the scorer's allow-list is written in. Every format atom IS its token, so the
+  # anchor (the first format token anywhere in the name) is derived from the same list; with `\b`
+  # on both sides the alternation order cannot make `azw` swallow `azw3`.
+  @formats Map.new(@kinds, fn kind ->
+             {kind,
+              Enum.map(
+                BookKind.fetch!(kind).known_formats,
+                &{Regex.compile!("\\b#{&1}\\b", "i"), &1}
+              )}
+           end)
+
+  @format_anchors Map.new(@kinds, fn kind ->
+                    tokens = Enum.join(BookKind.fetch!(kind).known_formats, "|")
+                    {kind, Regex.compile!("\\b(?:#{tokens})\\b", "i")}
+                  end)
+
+  # Words a tag region may carry besides formats, languages and edition markers: the family-wide
+  # `book`/`retail`/`v2`, plus the kind's own (`ebook`/`scan`/`ocr`, `audiobook`/`rip`/`narrated`).
+  @tag_words Map.new(@kinds, fn kind ->
+               words =
+                 Enum.join(["book", "retail", "v\\d+" | BookKind.fetch!(kind).tag_words], "|")
+
+               {kind, Regex.compile!("^(?:#{words})$", "i")}
+             end)
+
+  @narrated_kinds Enum.filter(@kinds, &BookKind.fetch!(&1).narrated?)
 
   # A retail release came from the publisher's own file rather than a scan or a conversion.
   @retail ~r/\bretail\b/i
@@ -120,32 +146,43 @@ defmodule Cinder.Acquisition.BookParser do
 
   @multi ~r/\bmulti(?:lingual)?\b/i
 
+  # "(Narrated by Ray Porter)" / "[Read by Ray Porter]" — parenthesized/bracketed only, so a
+  # title's own prose ("A Story Read by Firelight") is never mistaken for a narrator credit.
+  @narrator ~r/[\[\(](?:narrated|read)\s+by\s+([^\]\)]+)[\]\)]/i
+
   @doc """
-  Parses a book release name into the `Cinder.Acquisition.BookRelease` name-derived fields.
+  Parses a release name of book kind `kind` into the name-derived fields of its release struct
+  (`Cinder.Acquisition.BookRelease` for `:ebook`, `Cinder.Acquisition.AudiobookRelease` for
+  `:audiobook`).
+
+  The result carries a `narrator` key only for a `narrated?` kind, so it never names a field the
+  kind's release struct does not have.
   """
-  @spec parse(String.t() | any()) :: %{
-          formats: [atom()],
-          language: String.t() | nil,
-          retail?: boolean(),
-          collection?: boolean(),
-          collection_numbers: [String.t()] | nil,
-          abridged?: boolean()
+  @spec parse(String.t() | any(), BookKind.media_kind()) :: %{
+          required(:formats) => [atom()],
+          required(:language) => String.t() | nil,
+          required(:retail?) => boolean(),
+          required(:collection?) => boolean(),
+          required(:collection_numbers) => [String.t()] | nil,
+          required(:abridged?) => boolean(),
+          optional(:narrator) => String.t() | nil
         }
-  def parse(name) when is_binary(name) do
+  def parse(name, kind) when is_binary(name) and kind in @kinds do
     {collection?, collection_numbers} = collection_evidence(name)
 
     %{
-      formats: formats(name),
-      language: language(name),
+      formats: formats(name, kind),
+      language: language(name, kind),
       retail?: Regex.match?(@retail, name),
       collection?: collection?,
       collection_numbers: collection_numbers,
       abridged?: Regex.match?(@abridged, name)
     }
+    |> put_narrator(name, kind)
   end
 
-  def parse(_name),
-    do: %{
+  def parse(name, kind) when kind in @kinds do
+    %{
       formats: [],
       language: nil,
       retail?: false,
@@ -153,10 +190,25 @@ defmodule Cinder.Acquisition.BookParser do
       collection_numbers: nil,
       abridged?: false
     }
+    |> put_narrator(name, kind)
+  end
 
-  @doc "Every format token the parser recognizes, in preference-neutral recognizer order."
-  @spec known_formats() :: [atom()]
-  def known_formats, do: Enum.map(@formats, fn {_regex, format} -> format end) |> Enum.uniq()
+  defp put_narrator(parsed, name, kind) when kind in @narrated_kinds,
+    do: Map.put(parsed, :narrator, narrator(name))
+
+  defp put_narrator(parsed, _name, _kind), do: parsed
+
+  defp narrator(name) when is_binary(name) do
+    case Regex.run(@narrator, name, capture: :all_but_first) do
+      [captured] -> captured |> String.trim() |> presence()
+      nil -> nil
+    end
+  end
+
+  defp narrator(_name), do: nil
+
+  defp presence(""), do: nil
+  defp presence(value), do: value
 
   # A keyword marker is unambiguous evidence on its own. A bare numeric range gets no benefit of
   # the doubt when a keyword marker ALSO matched — that is real additional evidence of a pack, not
@@ -182,7 +234,7 @@ defmodule Cinder.Acquisition.BookParser do
     end)
   end
 
-  # Formats are read from the TAG REGION, not the whole name — the same discipline `language/1`
+  # Formats are read from the TAG REGION, not the whole name — the same discipline `language/2`
   # follows, and for the same reason. A book ABOUT a format carries the word in its title:
   # "Matt Garrish - EPUB 3 Best Practices" was parsed `formats: [:epub]` on the strength of its
   # own title, so an untagged release of it claimed to be an EPUB. Worse, `@edition_annotations`
@@ -190,27 +242,28 @@ defmodule Cinder.Acquisition.BookParser do
   # even when the request named it exactly.
   #
   # A bare extension suffix ("Author - Title.epub") has no bracket to sit in, so the trailing
-  # region covers it; `tag_region/1` treats an anchor in the leading third as a prefix, which is
+  # region covers it; `tag_region/2` treats an anchor in the leading third as a prefix, which is
   # what keeps "[EPUB] Author - Title" working.
-  defp formats(name) do
-    region = format_region(name)
+  defp formats(name, kind) do
+    region = format_region(name, kind)
 
     @formats
+    |> Map.fetch!(kind)
     |> Enum.flat_map(fn {regex, format} ->
       if Regex.match?(regex, region), do: [format], else: []
     end)
     |> Enum.uniq()
   end
 
-  # `tag_region/1` starts AFTER the format anchor, because for a language the format word itself
+  # `tag_region/2` starts AFTER the format anchor, because for a language the format word itself
   # carries nothing. Formats need the anchor included, so this is the tag region plus the anchored
   # token: bracketed groups, and the tail from the first format token onwards ("Beloved.epub",
   # "... EPUB-GROUP"). A leading format prefix ("[EPUB] Author - Title") is already covered by the
   # bracketed half, so it is not scanned twice.
-  defp format_region(name) do
+  defp format_region(name, kind) do
     bracketed = bracketed_region(name)
 
-    bracketed <> " " <> anchored_region(name)
+    bracketed <> " " <> anchored_region(name, kind)
   end
 
   # From the first format token to the end — but ONLY when everything following it is itself
@@ -219,13 +272,13 @@ defmodule Cinder.Acquisition.BookParser do
   # the TITLE talking about a format — "Matt Garrish - EPUB 3 Best Practices" — and reading it as
   # a tag both invents a format the release never claimed and makes the book unmatchable, since
   # the scorer discounts format words as metadata in the title remainder.
-  defp anchored_region(name) do
-    case Regex.run(@format_anchor, name, return: :index) do
+  defp anchored_region(name, kind) do
+    case Regex.run(Map.fetch!(@format_anchors, kind), name, return: :index) do
       [{start, length} | _rest] ->
         region = binary_part(name, start, byte_size(name) - start)
         tail = binary_part(name, start + length, byte_size(name) - start - length)
 
-        if tag_tail?(tail), do: region, else: ""
+        if tag_tail?(tail, kind), do: region, else: ""
 
       nil ->
         ""
@@ -236,27 +289,27 @@ defmodule Cinder.Acquisition.BookParser do
   # ordinary prose. Numbers count as tags ("EPUB 3" is the exception this exists to catch, but a
   # bare year or volume number after a tag is normal), so the discriminator is alphabetic words
   # that are not themselves recognized metadata.
-  defp tag_tail?(tail) do
+  defp tag_tail?(tail, kind) do
     # A trailing scene group ("-BitBook", "-GRP") is an arbitrary name by definition, so it can
     # never be on a known-word list. It is recognized by POSITION instead — last, after a
     # hyphen — and dropped before the remaining words are checked.
     tail
     |> String.replace(~r/-[A-Za-z0-9]+\s*$/, " ")
     |> String.split(~r/[^A-Za-z]+/, trim: true)
-    |> Enum.all?(&tag_word?/1)
+    |> Enum.all?(&tag_word?(&1, kind))
   end
 
-  defp tag_word?(word) do
-    Regex.match?(@format_anchor, word) or Regex.match?(@retail, word) or
+  defp tag_word?(word, kind) do
+    Regex.match?(Map.fetch!(@format_anchors, kind), word) or Regex.match?(@retail, word) or
       Regex.match?(@abridged, word) or String.match?(word, ~r/^(?:un)?abridged$/i) or
-      word =~ ~r/^(?:ebook|book|retail|scan|ocr|v\d+)$/i or
+      Regex.match?(Map.fetch!(@tag_words, kind), word) or
       Regex.match?(@multi, word) or word =~ ~r/^multilingual$/i or
       Enum.any?(@languages, fn {regex, _tag} -> Regex.match?(regex, word) end) or
       String.length(word) <= 2
   end
 
-  defp language(name) do
-    region = tag_region(name)
+  defp language(name, kind) do
+    region = tag_region(name, kind)
 
     if Regex.match?(@multi, region),
       do: "MULTI",
@@ -276,10 +329,10 @@ defmodule Cinder.Acquisition.BookParser do
   # No brackets and no format token ⇒ `""`, so nothing is tagged. That is the deliberate outcome:
   # a name with no tag region at all is all title, and reading a language out of a title is the
   # failure this whole split exists to prevent.
-  defp tag_region(name) do
+  defp tag_region(name, kind) do
     bracketed = bracketed_region(name)
 
-    bracketed <> " " <> trailing_region(name, bracketed)
+    bracketed <> " " <> trailing_region(name, bracketed, kind)
   end
 
   defp bracketed_region(name) do
@@ -302,15 +355,17 @@ defmodule Cinder.Acquisition.BookParser do
   # which is exactly the invented `:language_mismatch` this module's `@moduledoc` says the tag
   # region exists to prevent. If the format is bracketed, `bracketed` already covers the tag
   # region and the trailing scan has nothing left to contribute.
-  defp trailing_region(name, bracketed) do
-    if Regex.match?(@format_anchor, bracketed) do
+  defp trailing_region(name, bracketed, kind) do
+    anchor = Map.fetch!(@format_anchors, kind)
+
+    if Regex.match?(anchor, bracketed) do
       # The format was a bracketed tag, so the anchor scan would put the whole TITLE in the tag
       # region ("[EPUB] ... The English Patient" -> ENGLISH). But text after the LAST bracket is
       # still tag territory — "Les Miserables (epub) FRENCH" is a real shape, and skipping it
       # turned a correctly-tagged French release into a language mismatch.
-      after_last_bracket(name)
+      after_last_bracket(name, kind)
     else
-      Regex.split(@format_anchor, name, parts: 2) |> after_anchor(name)
+      Regex.split(anchor, name, parts: 2) |> after_anchor(name)
     end
   end
 
@@ -327,21 +382,21 @@ defmodule Cinder.Acquisition.BookParser do
   #
   # Word COUNT was the wrong test: it let "[EPUB] The Japanese Lover" through (three title words
   # after a leading format tag, read as JAPANESE), and it dropped a real tag sitting between two
-  # bracket groups. Whether the words ARE tags is the question, and `tag_word?/1` already answers
+  # bracket groups. Whether the words ARE tags is the question, and `tag_word?/2` already answers
   # it for the format scan. A title word is not a tag, so a title never enters the region — which
   # is the whole point of the split.
-  defp after_last_bracket(name) do
+  defp after_last_bracket(name, kind) do
     ~r/[\[\(\{][^\]\)\}]*[\]\)\}]/
     |> Regex.split(name, trim: true)
-    |> Enum.filter(&bare_tag_run?/1)
+    |> Enum.filter(&bare_tag_run?(&1, kind))
     |> Enum.join(" ")
   end
 
   # Every alphabetic word in the run is a known tag word. An empty run (pure punctuation) carries
   # nothing and is harmless either way.
-  defp bare_tag_run?(run) do
+  defp bare_tag_run?(run, kind) do
     words = String.split(run, ~r/[^A-Za-z]+/, trim: true)
 
-    words != [] and Enum.all?(words, &tag_word?/1)
+    words != [] and Enum.all?(words, &tag_word?(&1, kind))
   end
 end

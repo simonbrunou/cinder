@@ -1,18 +1,18 @@
 defmodule Cinder.Acquisition.TitleNoise do
   @moduledoc """
-  Strips release-name noise that could be mistaken for a wanted title's own number, shared
-  between `Cinder.Acquisition.BookScorer` and `Cinder.Acquisition.AudiobookScorer`.
+  Strips release-name noise that could be mistaken for a wanted title's own number, for
+  `Cinder.Acquisition.BookScorer`.
 
   This is pure text normalization with no format-specific policy: it takes a release title that
-  has already had its bracketed groups and trailing scene tag resolved (each scorer's own job,
-  since the e-book and audiobook profiles disagree on what a bracket may legitimately contain —
-  a narrator credit is audiobook-only evidence, for one), plus the `work` being scored against,
-  and decides which bare digits are release-side series/edition-position noise versus which
-  belong to the wanted title itself. The two scorers called an identical copy of this mechanism
-  before this module existed; a subtlety fixed in one copy and not the other is exactly the class
-  of bug two copies of an algorithm this fiddly will eventually produce (and did, once, before
-  this extraction — an inconsistent digit-value check on one branch that the other branches had
-  already been upgraded past).
+  has already had its bracketed groups and trailing scene tag resolved (the scorer's job, since
+  the e-book and audiobook kinds disagree on what a bracket may legitimately contain — a narrator
+  credit is audiobook-only evidence, for one), plus the `work` being scored against, and decides
+  which bare digits are release-side series/edition-position noise versus which belong to the
+  wanted title itself. The e-book and audiobook scorers each called an identical copy of this
+  mechanism before this module existed; a subtlety fixed in one copy and not the other is exactly
+  the class of bug two copies of an algorithm this fiddly will eventually produce (and did, once,
+  before this extraction — an inconsistent digit-value check on one branch that the other
+  branches had already been upgraded past). The two scorers have since merged into one (#734).
 
   ## Why any of this exists
 
@@ -63,11 +63,10 @@ defmodule Cinder.Acquisition.TitleNoise do
   Returns `nil` for anything else so a caller building a series-name pattern skips the entry
   gracefully rather than crashing on the real shape.
 
-  Exported so `BookScorer.series_tokens/1` and `AudiobookScorer.series_tokens/1` — which forgive
-  a leftover title word that names a series this work belongs to, a separate, older mechanism
-  this module does not otherwise touch — can read the same series-name text this module resolves
-  ordinals against, rather than keeping a second, potentially-diverging copy of this one-line
-  extraction.
+  Exported so `BookScorer.series_tokens/1` — which forgives a leftover title word that names a
+  series this work belongs to, a separate, older mechanism this module does not otherwise touch —
+  can read the same series-name text this module resolves ordinals against, rather than keeping a
+  second, potentially-diverging copy of this one-line extraction.
   """
   @spec series_name(String.t() | map() | any()) :: String.t() | nil
   def series_name(%{name: name}) when is_binary(name), do: name

@@ -75,8 +75,8 @@ defmodule Cinder.BooksB0ContractTest do
       {"test/cinder/books/schema_test.exs", "works and editions keep separate identities"}
     ],
     "eBook quality and format profile" => [
-      {"test/cinder/acquisition/book_scorer_test.exs",
-       "accepts AZW3 and MOBI, the other two profile formats"}
+      {"test/cinder/acquisition/book_scorer_kind_test.exs",
+       "accepts AZW3 and MOBI, the other two accepted formats"}
     ],
     "audiobook target and Spoken profile" => [
       {"test/cinder/books/schema_test.exs",

@@ -25,7 +25,7 @@ defmodule Cinder.Books.BookFile do
 
   import Ecto.Changeset
 
-  alias Cinder.Acquisition.{AudiobookScorer, BookScorer}
+  alias Cinder.Acquisition.BookKind
   alias Cinder.Books.{BookTarget, Edition}
 
   schema "book_files" do
@@ -35,7 +35,7 @@ defmodule Cinder.Books.BookFile do
     field :size, :integer
 
     field :format, Ecto.Enum,
-      values: BookScorer.accepted_formats() ++ AudiobookScorer.accepted_formats()
+      values: BookKind.accepted_formats(:ebook) ++ BookKind.accepted_formats(:audiobook)
 
     field :narrator, :string
     field :duration_seconds, :integer

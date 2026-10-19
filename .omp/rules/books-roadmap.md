@@ -26,7 +26,7 @@ items, which are operator actions that no commit can close.
 | ------- | ------- |
 | Catalog + context | `lib/cinder/books.ex`, `lib/cinder/books/` (`work`, `edition`, `author`, `credit`, `identifier`, `series_membership`, `book_target`, `book_file`, `book_grab`) |
 | Metadata | `Cinder.Books.Metadata` + `metadata/open_library.ex`, `metadata/hardcover.ex`; `identity.ex`, `title_fold.ex`, `refresher.ex`, `bibliography_refresher.ex` |
-| Decision layer | `Cinder.Acquisition.{Books,BookParser,BookScorer,BookRelease}` and `{Audiobooks,AudiobookParser,AudiobookScorer,AudiobookRelease}` |
+| Decision layer | `Cinder.Acquisition.{BookScorer,BookParser,BookKind}` (one judge and parser for both kinds), `{Books,BookRelease}` and `{Audiobooks,AudiobookRelease}` |
 | Download | `Cinder.Download.BookPoller` (single tick, all book + audiobook targets) |
 | Import + publish | `library/book_import.ex`, `audiobook_import.ex`, `book_naming.ex`, `audiobook_naming.ex`, `book_sources.ex`, `audiobook_sources.ex`, `book_archive/{zip,rar}.ex`, `audio_probe/`, `audiobook_server/audiobookshelf.ex` |
 | Migration | `library/migration_source/readarr.ex`, `library/migration_adoption/readarr.ex`, `books/adoption.ex` |

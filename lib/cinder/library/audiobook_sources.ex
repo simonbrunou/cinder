@@ -8,9 +8,9 @@ defmodule Cinder.Library.AudiobookSources do
   and archive-entry/size-ceiling guarantees are identical infrastructure, not reimplemented here.
   The one real change to shared infrastructure is `BookArchive.extract_and_resolve/3` (arity grew
   from 2 to thread `opts` to the extractors) — see its own moduledoc; this module is the one
-  caller that raises `max_expanded_size` to the audiobook profile's own 8 GB ceiling
-  (`Cinder.Acquisition.AudiobookScorer.size_band/0`) rather than the e-book-tuned 1 GB extractor
-  default.
+  caller that raises `max_expanded_size` to the audiobook kind's own 8 GB ceiling
+  (`Cinder.Acquisition.BookKind.size_band(:audiobook)`) rather than the e-book-tuned 1 GB
+  extractor default.
 
   ## Pipeline
 
@@ -60,23 +60,23 @@ defmodule Cinder.Library.AudiobookSources do
   exhaustion test can prove the skip behavior deterministically without a real 60-second wait.
   """
 
-  alias Cinder.Acquisition.AudiobookScorer
+  alias Cinder.Acquisition.BookKind
   alias Cinder.Library
   alias Cinder.Library.BookArchive
 
   import Bitwise
 
-  @accepted_extensions ~w(.m4b .mp3)
-  @accepted_formats [:m4b, :mp3]
+  @accepted_formats BookKind.accepted_formats(:audiobook)
+  @accepted_extensions Enum.map(@accepted_formats, &".#{&1}")
 
-  # Recognized-but-not-accepted audio containers — `Cinder.Acquisition.AudiobookParser`'s own
+  # Recognized-but-not-accepted audio containers — the audiobook `BookKind`'s own
   # recognized-but-rejected audio vocabulary (`.m4a`/`.aac`/`.flac`/`.ogg`/`.wma`), minus the
   # e-book formats it also recognizes (those are a different mixed-folder shape,
   # `:unsupported_archive`'s territory, not this list's), plus `.wav`/`.aiff`/`.aif`/`.aifc` —
   # real uncompressed audio containers a rip can legitimately carry (`.aifc` is AIFF-C, the
-  # compressed-audio variant of the same container, with its own standard extension), which that
-  # parser's own release-title vocabulary has no reason to name (a release title essentially
-  # never says "wav" or "aiff"), but which must not silently vanish here the same way a stray
+  # compressed-audio variant of the same container, with its own standard extension), which the
+  # release-name vocabulary has no reason to name (a release title essentially never says "wav"
+  # or "aiff"), but which must not silently vanish here the same way a stray
   # `.flac` mustn't (#504).
   @other_audio_extensions ~w(.m4a .aac .flac .ogg .wma .wav .aiff .aif .aifc)
 
@@ -184,7 +184,7 @@ defmodule Cinder.Library.AudiobookSources do
     end
   end
 
-  defp max_expanded_size, do: AudiobookScorer.size_band() |> elem(1)
+  defp max_expanded_size, do: BookKind.size_band(:audiobook) |> elem(1)
 
   defp scratch_path?(path), do: BookArchive.scratch_dir_name() in Path.split(path)
 

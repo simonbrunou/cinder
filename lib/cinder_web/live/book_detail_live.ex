@@ -9,11 +9,10 @@ defmodule CinderWeb.BookDetailLive do
 
   The manual-search-and-Grab panel is offered for a `:monitored` `:ebook` or `:audiobook` target
   with no `BookGrab` already in flight (B7d) — an `:available` target instead offers "Find a
-  better match", and a `:held` or already-downloading target renders read-only either way. Each
-  kind renders through its own component (`CinderWeb.BookManualSearchComponent` /
-  `CinderWeb.AudiobookManualSearchComponent` — different acquisition module, different candidate
-  shape, see B7d's own plan §2 for why they stay separate rather than one component branching on
-  kind). Every write reaches either `Cinder.Download.grab_book_target/3` or
+  better match", and a `:held` or already-downloading target renders read-only either way. Both
+  kinds render through `CinderWeb.BookManualSearchComponent`, which picks the kind's search from
+  the target (#734 superseded B7d's two sibling components). Every write reaches either
+  `Cinder.Download.grab_book_target/3` or
   `Cinder.Books.set_target_language/2` (the ebook-only language picker
   `Cinder.Acquisition.BookScorer.check_language/2` scores against on the next search — see #404;
   an audiobook target has no language picker of its own, per B7d's own "no narrator/language UI
@@ -677,16 +676,8 @@ defmodule CinderWeb.BookDetailLive do
             </.button>
 
             <.live_component
-              :if={@searching? == target.id and target.media_kind == :ebook}
+              :if={@searching? == target.id}
               module={CinderWeb.BookManualSearchComponent}
-              id={"ms-book-#{target.id}"}
-              target={target}
-              work={@work}
-            />
-
-            <.live_component
-              :if={@searching? == target.id and target.media_kind == :audiobook}
-              module={CinderWeb.AudiobookManualSearchComponent}
               id={"ms-book-#{target.id}"}
               target={target}
               work={@work}

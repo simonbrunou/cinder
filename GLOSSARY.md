@@ -5,6 +5,24 @@ downloads it and imports it into the library a media server reads.
 
 ## Language
 
+### Books
+
+**Book family**:
+E-books and audiobooks taken together. A work is requested, judged and imported the same way in
+either form, with only the book kind's own rules differing.
+_Avoid_: books (when it means e-books only)
+
+**Book kind**:
+The form a work is acquired in: e-book or audiobook. Each kind has its own accepted formats, size
+band and release-name vocabulary.
+_Avoid_: profile, media profile (a library root and its quality settings), format (a container
+such as EPUB or M4B)
+
+**Release judge**:
+The decision that accepts or rejects one release for one work, always with a named reason, and
+ranks the accepted ones.
+_Avoid_: filter, matcher
+
 ### Downloads
 
 **In-flight download**:

@@ -13,11 +13,11 @@ defmodule Cinder.Acquisition.AudiobookRelease do
 
   `narrator` is a best-effort, informational-only field parsed from `"(Narrated by Ray Porter)"` /
   `"[Read by ...]"` patterns in the release name. It is never a scorer gate — see
-  `Cinder.Acquisition.AudiobookScorer`'s moduledoc for why.
+  `Cinder.Acquisition.BookScorer`'s moduledoc for why.
 
   `query_origins` records identity-scoped and free-text provenance exactly as `BookRelease` does.
   """
-  alias Cinder.Acquisition.AudiobookParser
+  alias Cinder.Acquisition.BookParser
 
   @type t :: %__MODULE__{
           title: String.t(),
@@ -73,6 +73,6 @@ defmodule Cinder.Acquisition.AudiobookRelease do
       published_at: Map.get(indexer_map, :published_at),
       query_origins: Map.get(indexer_map, :query_origins)
     }
-    |> struct(AudiobookParser.parse(title))
+    |> struct(BookParser.parse(title, :audiobook))
   end
 end

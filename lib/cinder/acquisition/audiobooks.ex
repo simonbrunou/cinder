@@ -35,7 +35,7 @@ defmodule Cinder.Acquisition.Audiobooks do
 
   require Logger
 
-  alias Cinder.Acquisition.{AudiobookRelease, AudiobookScorer}
+  alias Cinder.Acquisition.{AudiobookRelease, BookScorer}
   alias Cinder.Books.{Edition, Identifier, Work}
 
   @max_identifier_queries 3
@@ -74,7 +74,7 @@ defmodule Cinder.Acquisition.Audiobooks do
   Searches, then evaluates every candidate against `work`.
 
   Returns `{:ok, %{accepted: [...], rejected: [...], complete?: boolean}}` — see
-  `Cinder.Acquisition.AudiobookScorer.evaluate_all/3` for the two lists, and `search/1` for
+  `Cinder.Acquisition.BookScorer.evaluate_all/3` for the two lists, and `search/1` for
   `complete?`. `opts` are the scorer's (`:language`, `:blocked_terms`).
   """
   @spec candidates(Work.t() | map(), keyword()) :: {:ok, map()} | {:error, term()}
@@ -82,7 +82,7 @@ defmodule Cinder.Acquisition.Audiobooks do
     normalized = normalize(work)
 
     with {:ok, releases, complete?} <- search(normalized) do
-      result = AudiobookScorer.evaluate_all(releases, normalized, opts)
+      result = BookScorer.evaluate_all(releases, normalized, opts)
       {:ok, Map.put(result, :complete?, complete?)}
     end
   end

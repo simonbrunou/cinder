@@ -139,6 +139,11 @@ smallest and least urgent piece.
 
 ### 1. Why new modules, not extended `Books`/`BookParser`/`BookScorer`
 
+> **Superseded by #734.** The "future e-book-only tweak" this section guarded against never came:
+> every commit to `AudiobookScorer` also touched `BookScorer`, and the differences turned out to be
+> data. `BookScorer` and `BookParser` now serve both kinds, with the per-kind data in
+> `Cinder.Acquisition.BookKind`; `AudiobookScorer` and `AudiobookParser` are gone.
+
 Same judgment B4a already made for `BookParser`/`BookScorer` against the video `Parser`/`Scorer`
 ("the region rules differ, and the tokens differ"), and the one B4c's own §4 named explicitly
 ("forced reuse that needs media-kind conditionals threaded through it"). `BookScorer`'s size band,
@@ -968,6 +973,9 @@ match. `book_grab_flash/3`'s fallback branch (re-reading `hold_reason` off the t
 pattern-matching every error atom) also needs no change — it was written kind-agnostic already.
 
 ### 2. `CinderWeb.AudiobookManualSearchComponent` — a new component, not a bolt-on
+
+> **Superseded by #734.** `CinderWeb.BookManualSearchComponent` now serves both kinds and picks
+> the search module from the target's media kind.
 
 Same B4c-§4 judgment as `BookManualSearchComponent` itself made against the video
 `ManualSearchComponent`: different acquisition module (`Cinder.Acquisition.Audiobooks`, not

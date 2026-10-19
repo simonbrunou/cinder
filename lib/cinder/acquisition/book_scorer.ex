@@ -2,6 +2,13 @@ defmodule Cinder.Acquisition.BookScorer do
   @moduledoc """
   Judges one book release against one requested work, and ranks the survivors.
 
+  One judge for the whole book family. The book kind comes from the release struct — a
+  `Cinder.Acquisition.BookRelease` is an e-book, a `Cinder.Acquisition.AudiobookRelease` an
+  audiobook — so a release can never be judged against the other kind's rules, and everything
+  that differs between the kinds (formats, size band, edition vocabulary, the narrator credit) is
+  data in `Cinder.Acquisition.BookKind`. The check chain, the ranking and the rejection
+  vocabulary below are the same for both.
+
   `evaluate/3` returns `{:accept, evidence}` or `{:reject, reason}` — never a bare boolean and
   never a silent drop. The B4 contract requires that "wrong title/author/language/format and
   ambiguous edition releases are rejected with deterministic reasons", and a rejection reason a
@@ -17,12 +24,11 @@ defmodule Cinder.Acquisition.BookScorer do
   which is distinguishable from an EPUB by size. So:
 
   - no recognized format ⇒ `:format_unknown`;
-  - a recognized format outside the profile ⇒ `:format_rejected`;
+  - a recognized format outside the kind's accepted set ⇒ `:format_rejected`;
   - no author evidence ⇒ `:author_mismatch`;
   - no title evidence ⇒ `:title_mismatch`.
 
-  Format acceptance follows the parity contract's e-book profile — EPUB, AZW3 and MOBI, EPUB
-  preferred, no conversion.
+  Format acceptance and the size band are each kind's own — see `Cinder.Acquisition.BookKind`.
 
   ## Author and title evidence
 
@@ -55,13 +61,15 @@ defmodule Cinder.Acquisition.BookScorer do
   a manual pick and says exactly why; an accepted wrong one puts the wrong book in the library.
   B4a is manual-selection-only, so the cheap side of that trade is the safe one.
 
-  ## Size band
+  ## Narrator credit is never a gate
 
-  64 KB – 200 MB, module attributes rather than settings. `movies_min_size` has no meaning for a
-  book and the settings registry deliberately generates size bands for video kinds only
-  (`LibraryKind.video?/1`). The floor rejects the placeholder/stub torrent; the ceiling rejects the
-  multi-gigabyte "complete works" pack, which is a different release from the one requested even
-  when it is a genuine one.
+  An audiobook release may name its narrator ("(Narrated by Ray Porter)"). That group is dropped
+  before the title check — a narrator's name is not part of the work's identity, and leaving it
+  in would turn an unrecognized narrator into a `:title_mismatch` — and the credit rides through
+  to `evidence.narrator` for display only. It never changes accept/reject: narrator evidence in a
+  release name is real but unreliable (many releases omit it, some misattribute a series narrator
+  to a guest reader), and there is no corpus measurement of narrator-name precision to gate a
+  rejection on.
 
   ## Ranking
 
@@ -72,17 +80,12 @@ defmodule Cinder.Acquisition.BookScorer do
   order is total and does not depend on indexer result order.
   """
 
-  alias Cinder.Acquisition.BookParser
+  alias Cinder.Acquisition.AudiobookRelease
+  alias Cinder.Acquisition.BookKind
   alias Cinder.Acquisition.BookRelease
   alias Cinder.Acquisition.Parser
   alias Cinder.Acquisition.TitleNoise
   alias Cinder.Books.TitleFold
-
-  # The parity contract's e-book profile, best first. EPUB preferred; no conversion.
-  @accepted_formats [:epub, :azw3, :mobi]
-
-  @min_size 64 * 1024
-  @max_size 200 * 1024 * 1024
 
   # An untagged release is this language by scene convention — see `check_language/2`.
   @default_language "en"
@@ -91,37 +94,42 @@ defmodule Cinder.Acquisition.BookScorer do
   @function_words ~w(a an the of and or in on to for from with without at by is are its it
                      how why what when who where life story history guide)
 
-  # The single words in `BookParser`'s collection patterns. A work whose own title contains one of
-  # these is asking for something that legitimately reads as a collection, so the marker stops
-  # being evidence against the release. Multi-word patterns ("complete series", "Books 1-5") are
-  # deliberately absent: no single work is titled that.
+  # The single words in `Cinder.Acquisition.BookParser`'s collection patterns. A work whose own
+  # title contains one of these is asking for something that legitimately reads as a collection,
+  # so the marker stops being evidence against the release. Multi-word patterns ("complete
+  # series", "Books 1-5") are deliberately absent: no single work is titled that.
   @collection_words ~w(omnibus anthology collection collections boxset boxsets complete)
 
-  # Leftover words that are release metadata rather than part of a work's identity. Kept small and
-  # literal: every entry here is a word this scorer will ignore when deciding whether a release
-  # names a DIFFERENT book, so a loose entry ("book", "novel") would re-admit the sequels the
-  # remainder test exists to reject.
+  # Leftover words that are release metadata rather than part of a work's identity, for every
+  # book kind. Each kind adds its own `BookKind` `edition_words` and its parser's format tokens.
+  # Kept small and literal: every entry here is a word this scorer will ignore when deciding
+  # whether a release names a DIFFERENT book, so a loose entry ("book", "novel") would re-admit the
+  # sequels the remainder test exists to reject.
   #
   # `abridged` is here AND is a rejection reason of its own (`check_abridgement/2`): it is not part
   # of the work's NAME — "Beloved Abridged" is not a different book from "Beloved" — but it is a
   # different TEXT, so it belongs to the edition gate rather than the title gate. Leaving it out
   # here made it read as a title token and produced a misleading `:title_mismatch`.
   @edition_annotations ~w(
-    retail ebook epub azw3 azw mobi pdf djvu fb2 lit cbz cbr rtf
-    edition ed abridged unabridged illustrated annotated revised reprint
+    retail edition ed abridged unabridged illustrated annotated revised reprint
     v1 v2 v3 vol volume by
   )
 
-  # The parser's own format vocabulary, so a format token can never read as a title word.
-  @format_tokens BookParser.known_formats() |> Enum.map(&Atom.to_string/1)
+  # A narrator-credit bracket group ("Narrated by Ray Porter", "Read by ...") for a `narrated?`
+  # kind — see the moduledoc.
+  @narrator_group ~r/^\s*(?:narrated|read)\s+by\s+.+$/i
 
+  @type release :: BookRelease.t() | AudiobookRelease.t()
+
+  # `narrator` is present only for an audiobook release.
   @type evidence :: %{
-          format: atom(),
-          formats: [atom()],
-          language: String.t() | nil,
-          retail?: boolean(),
-          size: non_neg_integer() | nil,
-          query_origins: [atom()] | nil
+          required(:format) => atom(),
+          required(:formats) => [atom()],
+          required(:language) => String.t() | nil,
+          required(:retail?) => boolean(),
+          required(:size) => non_neg_integer() | nil,
+          required(:query_origins) => [atom()] | nil,
+          optional(:narrator) => String.t() | nil
         }
 
   # The single source of truth for every rejection reason `evaluate/3` can return. `@type reason`
@@ -148,14 +156,6 @@ defmodule Cinder.Acquisition.BookScorer do
 
   @type reason :: unquote(Enum.reduce(@reasons, &{:|, [], [&1, &2]}))
 
-  @doc "The e-book formats the profile accepts, most preferred first."
-  @spec accepted_formats() :: [atom()]
-  def accepted_formats, do: @accepted_formats
-
-  @doc "The inclusive size band, in bytes, as `{min, max}`."
-  @spec size_band() :: {pos_integer(), pos_integer()}
-  def size_band, do: {@min_size, @max_size}
-
   @doc """
   Every rejection reason `evaluate/3` can return — `@reasons`, the module attribute `@type
   reason` is itself generated from, made callable at runtime.
@@ -168,7 +168,7 @@ defmodule Cinder.Acquisition.BookScorer do
   def reasons, do: @reasons
 
   @doc """
-  Judges `release` against `work`.
+  Judges `release` against `work`, under the rules of the release's book kind.
 
   `work` is a map with `:title` and `:authors` (a list of display names — normally the work's
   credited authors). `opts`:
@@ -187,30 +187,43 @@ defmodule Cinder.Acquisition.BookScorer do
   Rules are checked cheapest-and-most-decisive first, so the reason a caller renders is the most
   informative one available rather than whichever check happened to run first.
   """
-  @spec evaluate(BookRelease.t(), map(), keyword()) ::
-          {:accept, evidence()} | {:reject, reason()}
-  def evaluate(%BookRelease{} = release, work, opts \\ []) do
+  @spec evaluate(release(), map(), keyword()) :: {:accept, evidence()} | {:reject, reason()}
+  def evaluate(release, work, opts \\ []) do
+    rules = rules_for(release)
+
     with :ok <- check_not_blocklisted(release, Keyword.get(opts, :release_blocklist) || []),
          :ok <- check_blocked(release, Keyword.get(opts, :blocked_terms) || []),
-         {:ok, format} <- check_format(release),
+         {:ok, format} <- check_format(release, rules),
          :ok <- check_protocol(release, Keyword.get(opts, :protocols)),
          :ok <- check_author(release, Map.get(work, :authors) || []),
          :ok <- check_collection(release, work),
          :ok <- check_abridgement(release, work),
-         :ok <- check_title(release, work),
+         :ok <- check_title(release, work, rules),
          :ok <- check_language(release, Keyword.get(opts, :language)),
-         :ok <- check_size(release) do
-      {:accept,
-       %{
-         format: format,
-         formats: release.formats || [],
-         language: release.language,
-         retail?: release.retail? || false,
-         size: release.size,
-         query_origins: release.query_origins
-       }}
+         :ok <- check_size(release, rules) do
+      {:accept, evidence(release, format, rules)}
     end
   end
+
+  # The struct IS the kind: two clauses, so a release of a struct this judge does not know raises
+  # here rather than being judged under some other kind's rules.
+  defp rules_for(%BookRelease{}), do: BookKind.fetch!(:ebook)
+  defp rules_for(%AudiobookRelease{}), do: BookKind.fetch!(:audiobook)
+
+  defp evidence(release, format, %BookKind{narrated?: narrated?}) do
+    %{
+      format: format,
+      formats: release.formats || [],
+      language: release.language,
+      retail?: release.retail? || false,
+      size: release.size,
+      query_origins: release.query_origins
+    }
+    |> put_narrator(release, narrated?)
+  end
+
+  defp put_narrator(evidence, release, true), do: Map.put(evidence, :narrator, release.narrator)
+  defp put_narrator(evidence, _release, false), do: evidence
 
   @doc """
   Evaluates every release and partitions the results.
@@ -220,9 +233,9 @@ defmodule Cinder.Acquisition.BookScorer do
   answer, not debugging residue — it is what the operator reads when the release they expected is
   not in the accepted list.
   """
-  @spec evaluate_all([BookRelease.t()], map(), keyword()) :: %{
-          accepted: [{BookRelease.t(), evidence()}],
-          rejected: [{BookRelease.t(), reason()}]
+  @spec evaluate_all([release()], map(), keyword()) :: %{
+          accepted: [{release(), evidence()}],
+          rejected: [{release(), reason()}]
         }
   def evaluate_all(releases, work, opts \\ []) do
     {accepted, rejected} =
@@ -242,12 +255,15 @@ defmodule Cinder.Acquisition.BookScorer do
   end
 
   # Ascending sort, so every component is written "smaller is better".
-  defp rank(%BookRelease{} = release, evidence, wanted_language) do
+  defp rank(release, evidence, wanted_language) do
+    %BookKind{accepted_formats: accepted_formats, size_band: {_min, max_size}} =
+      rules_for(release)
+
     {
-      Enum.find_index(@accepted_formats, &(&1 == evidence.format)),
+      Enum.find_index(accepted_formats, &(&1 == evidence.format)),
       language_rank(evidence.language, wanted_language),
       if(evidence.retail?, do: 0, else: 1),
-      release.size || @max_size,
+      release.size || max_size,
       published_rank(release.published_at),
       release.title || ""
     }
@@ -284,7 +300,7 @@ defmodule Cinder.Acquisition.BookScorer do
   # per-target evidence outranks the household-wide substring block.
   defp check_not_blocklisted(_release, []), do: :ok
 
-  defp check_not_blocklisted(%BookRelease{title: title}, blocklist) do
+  defp check_not_blocklisted(%{title: title}, blocklist) do
     down = String.downcase(title || "")
 
     if Enum.any?(blocklist, &(String.downcase(&1 || "") == down)),
@@ -294,7 +310,7 @@ defmodule Cinder.Acquisition.BookScorer do
 
   defp check_blocked(_release, []), do: :ok
 
-  defp check_blocked(%BookRelease{title: title}, terms) do
+  defp check_blocked(%{title: title}, terms) do
     down = String.downcase(title || "")
 
     if Enum.any?(terms, &blocked_term?(down, &1)),
@@ -314,21 +330,21 @@ defmodule Cinder.Acquisition.BookScorer do
   # tagged it EPUB, and nothing in the name says which. Size cannot separate them either. Taking
   # the EPUB on faith is exactly the guessed import the contract forbids, so it is refused for
   # operator review with its own reason.
-  defp check_format(%BookRelease{formats: formats}) do
+  defp check_format(%{formats: formats}, %BookKind{accepted_formats: accepted_formats}) do
     formats = formats || []
-    {accepted, rejected} = Enum.split_with(formats, &(&1 in @accepted_formats))
+    {accepted, rejected} = Enum.split_with(formats, &(&1 in accepted_formats))
 
     cond do
       formats == [] -> {:reject, :format_unknown}
       accepted == [] -> {:reject, :format_rejected}
       rejected != [] -> {:reject, :format_contradictory}
-      true -> {:ok, Enum.find(@accepted_formats, &(&1 in accepted))}
+      true -> {:ok, Enum.find(accepted_formats, &(&1 in accepted))}
     end
   end
 
   defp check_author(_release, []), do: {:reject, :author_mismatch}
 
-  defp check_author(%BookRelease{title: title}, authors) do
+  defp check_author(%{title: title}, authors) do
     release_tokens = tokens(title)
 
     if Enum.any?(authors, &author_present?(&1, release_tokens)),
@@ -341,17 +357,17 @@ defmodule Cinder.Acquisition.BookScorer do
     author_tokens != [] and author_tokens -- release_tokens == []
   end
 
-  defp check_title(%BookRelease{title: release_title}, work) do
+  defp check_title(%{title: release_title}, work, rules) do
     wanted = work |> Map.fetch!(:title) |> tokens() |> drop_article()
 
     core =
       release_title
-      |> strip_noise(work)
+      |> strip_noise(work, rules)
       |> tokens()
       |> subtract_matched_author(Map.get(work, :authors) || [])
       |> drop_article()
 
-    leftovers = Enum.reject(core -- wanted, &metadata_token?(&1, work))
+    leftovers = Enum.reject(core -- wanted, &metadata_token?(&1, work, rules))
 
     cond do
       # Folding to ASCII DISCARDS non-Latin script rather than failing on it, so a title that is
@@ -371,7 +387,7 @@ defmodule Cinder.Acquisition.BookScorer do
       leftovers == [] ->
         :ok
 
-      subtitle_only?(release_title, wanted, leftovers, work) ->
+      subtitle_only?(release_title, wanted, leftovers, work, rules) ->
         :ok
 
       true ->
@@ -381,16 +397,16 @@ defmodule Cinder.Acquisition.BookScorer do
 
   # Everything a release name carries that is not part of any work's identity: bracketed groups
   # (year, format, tracker, translator), a trailing scene `-GROUP` tag, and series-position
-  # idioms ("Book 1", "Vol. 2", "#3", a bare "01" between separators) -- the latter shared with
-  # AudiobookScorer via `TitleNoise`, see its moduledoc for why any of this exists.
-  defp strip_noise(nil, _work), do: ""
+  # idioms ("Book 1", "Vol. 2", "#3", a bare "01" between separators) -- the latter via
+  # `TitleNoise`, see its moduledoc for why any of this exists.
+  defp strip_noise(nil, _work, _rules), do: ""
 
-  defp strip_noise(title, work) do
+  defp strip_noise(title, work, rules) do
     title
     # A release-side leading/trailing space (some indexers preserve it verbatim) must not shift
     # the "start of string" TitleNoise's "ed"/author-collision guard anchors on.
     |> String.trim()
-    |> drop_bracketed_groups(work)
+    |> drop_bracketed_groups(work, rules)
     |> TitleNoise.strip(work)
   end
 
@@ -398,7 +414,9 @@ defmodule Cinder.Acquisition.BookScorer do
   # and "Dune (Book Two of the Chronicles)" both erased to "Dune" and were accepted for a request
   # for Dune. A bracket is only noise when we can say what is inside it.
   #
-  # Two groups are droppable:
+  # Three groups are droppable:
+  #   * for a `narrated?` kind, a narrator credit ("Narrated by Ray Porter", "Read by ..."),
+  #     whether or not the narrator's NAME is itself recognized metadata — see the moduledoc;
   #   * every token is recognized metadata — "(epub)", "(2019, retail)", "(Stormlight Archive)";
   #   * a single unknown token that follows a metadata group — the trailing tracker/scene tag
   #     ("[MyAnonaMouse]", "[BitBook]"), which by convention comes after the format.
@@ -406,25 +424,28 @@ defmodule Cinder.Acquisition.BookScorer do
   # Anything else stays in the string as title evidence, so the remainder test judges it. Position
   # is what separates the two single-token cases: a sequel name sits where the title is, before
   # the format tag, while a tracker tag trails it.
-  defp drop_bracketed_groups(title, work) do
+  defp drop_bracketed_groups(title, work, rules) do
     ~r/[\[\(\{]([^\]\)\}]*)[\]\)\}]?/
     |> Regex.split(title, include_captures: true, trim: true)
-    |> Enum.reduce({[], false}, &keep_segment(&1, &2, work))
+    |> Enum.reduce({[], false}, &keep_segment(&1, &2, work, rules))
     |> then(fn {kept, _seen} -> kept |> Enum.reverse() |> Enum.join() end)
   end
 
-  defp keep_segment(segment, {kept, metadata_seen?}, work) do
+  defp keep_segment(segment, {kept, metadata_seen?}, work, rules) do
     case Regex.run(~r/^[\[\(\{]([^\]\)\}]*)[\]\)\}]?$/, segment) do
-      [_group, inner] -> keep_group(inner, kept, metadata_seen?, work)
+      [_group, inner] -> keep_group(inner, {kept, metadata_seen?}, work, rules)
       nil -> {[segment | kept], metadata_seen?}
     end
   end
 
-  defp keep_group(inner, kept, metadata_seen?, work) do
+  defp keep_group(inner, {kept, metadata_seen?}, work, rules) do
     inner_tokens = tokens(inner)
 
     cond do
-      inner_tokens != [] and Enum.all?(inner_tokens, &metadata_token?(&1, work)) ->
+      rules.narrated? and Regex.match?(@narrator_group, inner) ->
+        {[" " | kept], true}
+
+      inner_tokens != [] and Enum.all?(inner_tokens, &metadata_token?(&1, work, rules)) ->
         {[" " | kept], true}
 
       metadata_seen? and tracker_tag?(inner) ->
@@ -461,8 +482,8 @@ defmodule Cinder.Acquisition.BookScorer do
   # The head check alone was not enough: a colon is also how a SEQUEL is written. "Dune: Messiah"
   # passed it, which is the same wrong-work accept the remainder test exists to stop. So the tail
   # must also LOOK like a subtitle — see `descriptive_subtitle?/1`.
-  defp subtitle_only?(release_title, wanted, leftovers, work) do
-    case String.split(strip_noise(release_title, work), ~r/:/, parts: 2) do
+  defp subtitle_only?(release_title, wanted, leftovers, work, rules) do
+    case String.split(strip_noise(release_title, work, rules), ~r/:/, parts: 2) do
       [head, subtitle] ->
         head_tokens =
           head
@@ -471,7 +492,7 @@ defmodule Cinder.Acquisition.BookScorer do
           |> drop_article()
 
         wanted -- head_tokens == [] and
-          Enum.all?(head_tokens -- wanted, &metadata_token?(&1, work)) and
+          Enum.all?(head_tokens -- wanted, &metadata_token?(&1, work, rules)) and
           leftovers != [] and
           descriptive_subtitle?(subtitle, wanted)
 
@@ -527,15 +548,17 @@ defmodule Cinder.Acquisition.BookScorer do
     end
   end
 
-  # A leftover token that does not name a different work: a year, a format the parser knows, an
-  # edition annotation, or a word from a series this work belongs to. `series` is whatever the
-  # caller loaded (`Cinder.Books.Work`'s `series_memberships`); absent, series-named releases
-  # simply fail closed like any other unrecognized word.
-  defp metadata_token?(token, work) do
+  # A leftover token that does not name a different work: a year, a format the kind's parser
+  # knows (so a format token can never read as a title word), an edition annotation, or a word
+  # from a series this work belongs to. `series` is whatever the caller loaded
+  # (`Cinder.Books.Work`'s `series_memberships`); absent, series-named releases simply fail closed
+  # like any other unrecognized word.
+  defp metadata_token?(token, work, rules) do
     token in @edition_annotations or
+      token in rules.edition_words or
       language_token?(token) or
       Regex.match?(~r/^(?:19|20)\d{2}$/, token) or
-      token in @format_tokens or
+      Enum.any?(rules.known_formats, &(Atom.to_string(&1) == token)) or
       token in series_tokens(work)
   end
 
@@ -552,7 +575,7 @@ defmodule Cinder.Acquisition.BookScorer do
   # every one of them permanently unrequestable, with a reason that blamed the release for saying
   # what the work is called. So the marker is ignored when the wanted title carries the same word,
   # and still refuses a pack that volunteers one the request never mentioned.
-  defp check_collection(%BookRelease{collection?: true} = release, work) do
+  defp check_collection(%{collection?: true} = release, work) do
     wanted_tokens = work |> Map.fetch!(:title) |> tokens()
     wanted = MapSet.new(wanted_tokens)
 
@@ -568,7 +591,7 @@ defmodule Cinder.Acquisition.BookScorer do
     end
   end
 
-  defp check_collection(%BookRelease{}, _work), do: :ok
+  defp check_collection(_release, _work), do: :ok
 
   # The release's own numeric span is forgiven only when it IS the wanted title's own number,
   # written the way a release punctuation-normalizes it: the exact digits, in the exact order,
@@ -579,9 +602,9 @@ defmodule Cinder.Acquisition.BookScorer do
   # title's own number elsewhere ("Numeric Work 1/3 1-3") -- shows up TWICE, once as the title's
   # own rendering and once as a genuinely redundant extra span, which the second test catches
   # (Codex review): a real numeric title needs its number only once.
-  defp numeric_range_forgiven?(%BookRelease{collection_numbers: nil}, _wanted_tokens), do: false
+  defp numeric_range_forgiven?(%{collection_numbers: nil}, _wanted_tokens), do: false
 
-  defp numeric_range_forgiven?(%BookRelease{collection_numbers: numbers} = release, wanted_tokens) do
+  defp numeric_range_forgiven?(%{collection_numbers: numbers} = release, wanted_tokens) do
     span = length(numbers)
 
     wanted_tokens
@@ -603,30 +626,30 @@ defmodule Cinder.Acquisition.BookScorer do
   # explained rejection rather than a silent fallback. Accepted only when the request itself asks
   # for one (`abridged: true`), which nothing in B4a sets yet; the flag exists so B4b's edition
   # matching has somewhere to say so rather than having to re-litigate this.
-  defp check_abridgement(%BookRelease{abridged?: true}, work) do
+  defp check_abridgement(%{abridged?: true}, work) do
     if Map.get(work, :abridged) == true, do: :ok, else: {:reject, :abridged_edition}
   end
 
-  defp check_abridgement(%BookRelease{}, _work), do: :ok
+  defp check_abridgement(_release, _work), do: :ok
 
   # The graceful-degradation guard `Cinder.Acquisition` applies on every video path: a release whose
   # protocol has no configured download client can never be grabbed, so offering it as a candidate
   # would strand the operator at the moment they picked it. `nil` protocols ⇒ no gate, matching
   # `Cinder.Acquisition.release_verdict/3`, which also skips the check for an untagged release.
   defp check_protocol(_release, nil), do: :ok
-  defp check_protocol(%BookRelease{protocol: nil}, _protocols), do: :ok
+  defp check_protocol(%{protocol: nil}, _protocols), do: :ok
 
-  defp check_protocol(%BookRelease{protocol: protocol}, protocols) when is_list(protocols) do
+  defp check_protocol(%{protocol: protocol}, protocols) when is_list(protocols) do
     if protocol in protocols, do: :ok, else: {:reject, :wrong_protocol}
   end
 
-  defp check_protocol(%BookRelease{}, _protocols), do: :ok
+  defp check_protocol(_release, _protocols), do: :ok
 
   # No requested language ⇒ no gate. An untagged release passes a gate that IS set: a book release
   # rarely marks its language at all, and the marker's absence is not evidence of a wrong one.
   # A release tagged with a DIFFERENT language is rejected — that is a positive contradiction.
   defp check_language(_release, nil), do: :ok
-  defp check_language(%BookRelease{language: "MULTI"}, _wanted), do: :ok
+  defp check_language(%{language: "MULTI"}, _wanted), do: :ok
 
   # An untagged release is English by convention (a non-English release is tagged; English is the
   # unmarked default), so it satisfies an English request and NOTHING ELSE. Passing every request
@@ -634,13 +657,13 @@ defmodule Cinder.Acquisition.BookScorer do
   # almost certainly English. `Cinder.Acquisition.Language.satisfies_lang?/2` has drawn this exact
   # line for video since the "untagged assumed to be the original" bug, and books had silently
   # taken the weaker rule.
-  defp check_language(%BookRelease{language: nil}, wanted) do
+  defp check_language(%{language: nil}, wanted) do
     if tag_for(wanted) == tag_for(@default_language),
       do: :ok,
       else: {:reject, :language_mismatch}
   end
 
-  defp check_language(%BookRelease{language: language}, wanted) do
+  defp check_language(%{language: language}, wanted) do
     if language == tag_for(wanted), do: :ok, else: {:reject, :language_mismatch}
   end
 
@@ -665,10 +688,13 @@ defmodule Cinder.Acquisition.BookScorer do
 
   # A nil size passes the band: the indexer simply did not report one, and refusing every release
   # from an indexer that omits `size` would be a size rule silently acting as an indexer filter.
-  defp check_size(%BookRelease{size: nil}), do: :ok
+  defp check_size(%{size: nil}, _rules), do: :ok
 
-  defp check_size(%BookRelease{size: size}) when size >= @min_size and size <= @max_size, do: :ok
-  defp check_size(%BookRelease{}), do: {:reject, :size_out_of_band}
+  defp check_size(%{size: size}, %BookKind{size_band: {min, max}})
+       when size >= min and size <= max,
+       do: :ok
+
+  defp check_size(_release, _rules), do: {:reject, :size_out_of_band}
 
   defdelegate tokens(string), to: TitleFold
 

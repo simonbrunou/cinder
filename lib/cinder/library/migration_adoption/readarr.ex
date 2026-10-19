@@ -51,7 +51,7 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
 
   import Ecto.Query
 
-  alias Cinder.Acquisition.{AudiobookScorer, BookScorer}
+  alias Cinder.Acquisition.BookKind
   alias Cinder.Books
   alias Cinder.Books.Adoption, as: BooksAdoption
   alias Cinder.Books.{BookFile, BookTarget, Edition, Identifier}
@@ -61,14 +61,14 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
   alias Cinder.Repo
   alias Cinder.Settings
 
-  # The parity contract's e-book and audiobook profiles, most preferred first within each —
-  # reusing `BookScorer`'s/`AudiobookScorer`'s own lists rather than duplicating them, so the
-  # release scorer and the migration classifier can never drift on what "accepted" means.
+  # The e-book and audiobook kinds' accepted formats, most preferred first within each —
+  # reusing `BookKind`'s own lists rather than duplicating them, so the release scorer and the
+  # migration classifier can never drift on what "accepted" means.
   # Combined for `accepted_format?/1`'s "is this file classifiable at all" gate; kept as two
   # separate lists for `media_kind_for/1`, which decides WHICH kind's target a classified file
   # belongs to (B7e — the Bookshelf audiobook instance reports `m4b`/`mp3`, not e-book formats).
-  @ebook_formats Enum.map(BookScorer.accepted_formats(), &to_string/1)
-  @audiobook_formats Enum.map(AudiobookScorer.accepted_formats(), &to_string/1)
+  @ebook_formats Enum.map(BookKind.accepted_formats(:ebook), &to_string/1)
+  @audiobook_formats Enum.map(BookKind.accepted_formats(:audiobook), &to_string/1)
   @accepted_formats @ebook_formats ++ @audiobook_formats
 
   # A file whose format resolves to neither kind stays `:unsupported_format`, exactly as before

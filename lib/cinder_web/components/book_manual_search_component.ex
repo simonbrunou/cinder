@@ -1,19 +1,25 @@
 defmodule CinderWeb.BookManualSearchComponent do
   @moduledoc """
-  Manual release-search panel for one monitored `:ebook` book target — the books analogue of
-  `CinderWeb.ManualSearchComponent`, but not built on it: `Acquisition.Books.candidates/2` already
-  returns the partitioned `%{accepted:, rejected:, complete?:}` answer, not the flat verdict list
-  the movie/TV panel folds at render time, and every non-async internal of that component (anime
-  policy, TV seasons, the language-pool sweep, video-only rejection atoms) has no book equivalent.
-  What is reused is the pattern: run the search off-process with `start_async`, render
-  loading/error/loaded states, and forward a chosen release to the parent LiveView with
+  Manual release-search panel for one monitored book target, e-book or audiobook — the books
+  analogue of `CinderWeb.ManualSearchComponent`, but not built on it: the book search modules
+  already return the partitioned `%{accepted:, rejected:, complete?:}` answer, not the flat
+  verdict list the movie/TV panel folds at render time, and every non-async internal of that
+  component (anime policy, TV seasons, the language-pool sweep, video-only rejection atoms) has no
+  book equivalent. What is reused is the pattern: run the search off-process with `start_async`,
+  render loading/error/loaded states, and forward a chosen release to the parent LiveView with
   `send(self(), {:manual_grab, :book, target, release})` rather than writing anything itself.
 
+  The target's media kind picks the search: `Acquisition.Books.candidates/2` for an `:ebook`
+  target, `Acquisition.Audiobooks.candidates/2` for an `:audiobook` one. Both are judged by
+  `Cinder.Acquisition.BookScorer`, so both speak its one closed rejection vocabulary; the only
+  row the kinds render differently is an audiobook's narrator credit, shown when the evidence
+  carries one.
+
   Required assigns: `id`, `target` (a `%Cinder.Books.BookTarget{}`), `work` (the fully-preloaded
-  `%Cinder.Books.Work{}` `Acquisition.Books.candidates/2` wants — editions/credits/series
-  preloaded, e.g. from `Cinder.Books.get_work/1`). A `results:` assign (the raw
-  `Acquisition.Books.candidates/2` map) is consumed directly and skips the async fetch — useful
-  for tests, mirroring `CinderWeb.ManualSearchComponent`'s own `results:` escape hatch.
+  `%Cinder.Books.Work{}` the search wants — editions/credits/series preloaded, e.g. from
+  `Cinder.Books.get_work/1`). A `results:` assign (the raw `candidates/2` map) is consumed
+  directly and skips the async fetch — useful for tests, mirroring
+  `CinderWeb.ManualSearchComponent`'s own `results:` escape hatch.
 
   `/books/:id` has one fixed target per media kind and no season selector, so the target itself
   never changes underneath one panel instance — but its `preferred_language` can, from the same
@@ -28,7 +34,7 @@ defmodule CinderWeb.BookManualSearchComponent do
 
   require Logger
 
-  alias Cinder.Acquisition.Books
+  alias Cinder.Acquisition.{Audiobooks, Books}
   alias Cinder.Download
 
   @impl true
@@ -78,7 +84,7 @@ defmodule CinderWeb.BookManualSearchComponent do
 
   defp preseeded?(assigns), do: Map.has_key?(assigns, :results) and not is_nil(assigns[:results])
 
-  # The only two `Books.candidates/2` inputs that can change while one panel instance stays
+  # The only two `candidates/2` inputs that can change while one panel instance stays
   # mounted: the target never swaps under a fixed `/books/:id` panel, but `preferred_language`
   # does, from the page's own language picker (`BookDetailLive.handle_event("change_language",
   # ...)`, which broadcasts and reloads `@target`).
@@ -105,14 +111,19 @@ defmodule CinderWeb.BookManualSearchComponent do
   defp start_search(socket) do
     %{work: work, target: target} = socket.assigns
 
+    search = search_module(target)
+
     start_async(socket, :search, fn ->
-      Books.candidates(work,
+      search.candidates(work,
         protocols: Download.available_protocols(),
         language: target.preferred_language,
         release_blocklist: Cinder.Books.blocked_release_titles(target.id)
       )
     end)
   end
+
+  defp search_module(%{media_kind: :ebook}), do: Books
+  defp search_module(%{media_kind: :audiobook}), do: Audiobooks
 
   @impl true
   def handle_async(:search, {:ok, {:ok, result}}, socket),
@@ -183,6 +194,9 @@ defmodule CinderWeb.BookManualSearchComponent do
             <span :if={evidence.retail?} class="badge badge-xs badge-success">
               {gettext("retail")}
             </span>
+            <span :if={narrator_label(evidence[:narrator])} class="text-xs text-base-content/60">
+              {narrator_label(evidence[:narrator])}
+            </span>
             <span :if={humanize_bytes(evidence.size)} class="text-xs text-base-content/60">
               {humanize_bytes(evidence.size)}
             </span>
@@ -223,6 +237,12 @@ defmodule CinderWeb.BookManualSearchComponent do
 
   defp release_language_label(language) when language in [nil, ""], do: gettext("untagged")
   defp release_language_label(language), do: language
+
+  # An audiobook's narrator credit: informational only, never a filter or a sort key (see
+  # `Cinder.Acquisition.BookScorer`). An e-book's evidence has no narrator, and a blank/unparsed
+  # one renders nothing at all, not an empty "Narrated by" label.
+  defp narrator_label(narrator) when narrator in [nil, ""], do: nil
+  defp narrator_label(narrator), do: gettext("Narrated by %{narrator}", narrator: narrator)
 
   # One clause per `Cinder.Acquisition.BookScorer.reasons/0` atom — kept in sync by
   # `test/cinder_web/components/book_manual_search_component_test.exs`'s exhaustiveness test,

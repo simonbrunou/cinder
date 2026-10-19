@@ -5,10 +5,10 @@ defmodule Cinder.Acquisition.TitleNoiseTest do
 
   # Each test here pins one specific regex/conditional branch in TitleNoise directly, so a
   # regression in one branch fails a named test rather than hiding behind the many indirect paths
-  # through BookScorer/AudiobookScorer's evaluate/3. The scorer-level tests (book_scorer_test.exs,
-  # audiobook_scorer_test.exs) additionally prove the mechanism integrates correctly end to end —
-  # both kinds of coverage are kept; see "a series ordinal that coincidentally equals the wanted
-  # number is not title evidence" in those files for the single most important end-to-end
+  # through BookScorer's evaluate/3. The scorer-level tests (book_scorer_test.exs, run for both
+  # book kinds) additionally prove the mechanism integrates correctly end to end — both kinds of
+  # coverage are kept; see "a series ordinal that coincidentally equals the wanted number is not
+  # title evidence" in that file for the single most important end-to-end
   # negative-direction case (an unrelated book in a shared series, whose ordinal numerically
   # coincides with the wanted title's own number, is still rejected).
 

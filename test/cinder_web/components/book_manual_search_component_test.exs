@@ -46,7 +46,7 @@ defmodule CinderWeb.BookManualSearchComponentTest do
 
   import Phoenix.LiveViewTest
 
-  alias Cinder.Acquisition.{BookRelease, BookScorer}
+  alias Cinder.Acquisition.{AudiobookRelease, BookRelease, BookScorer}
   alias Cinder.Books.BookTarget
   alias CinderWeb.BookManualSearchComponent
   alias Phoenix.LiveView.Socket
@@ -73,6 +73,29 @@ defmodule CinderWeb.BookManualSearchComponentTest do
         attrs
       )
 
+  defp render_audiobook_panel(results) do
+    render_component(BookManualSearchComponent, %{
+      id: "ms",
+      target: %BookTarget{id: 1, media_kind: :audiobook, status: :monitored},
+      work: %{title: "Title", authors: ["Author"]},
+      results: results
+    })
+  end
+
+  defp audiobook_evidence(attrs),
+    do:
+      Map.merge(
+        %{
+          format: :m4b,
+          formats: [:m4b],
+          language: nil,
+          retail?: false,
+          size: 629_145_600,
+          narrator: nil
+        },
+        attrs
+      )
+
   test "an accepted row shows format, language, retail and size with a Grab button" do
     html =
       render_panel(%{
@@ -90,6 +113,51 @@ defmodule CinderWeb.BookManualSearchComponentTest do
     assert html =~ "retail"
     assert html =~ "6.0 MB"
     assert html =~ "Grab"
+  end
+
+  describe "an audiobook target" do
+    test "an accepted row also shows the narrator credit" do
+      html =
+        render_audiobook_panel(%{
+          accepted: [
+            {AudiobookRelease.new(%{title: "Author - Title (M4B) [retail]", download_url: "u"}),
+             audiobook_evidence(%{retail?: true, narrator: "Ray Porter"})}
+          ],
+          rejected: [],
+          complete?: true
+        })
+
+      assert html =~ "M4B"
+      assert html =~ "retail"
+      assert html =~ "Narrated by Ray Porter"
+      assert html =~ "600.0 MB"
+      assert html =~ "Grab"
+    end
+
+    test "an unparsed narrator renders no narrator line at all, not a blank label" do
+      html =
+        render_audiobook_panel(%{
+          accepted: [
+            {AudiobookRelease.new(%{title: "Author - Title (M4B)", download_url: "u"}),
+             audiobook_evidence(%{narrator: nil})}
+          ],
+          rejected: [],
+          complete?: true
+        })
+
+      refute html =~ "Narrated by"
+    end
+  end
+
+  test "an e-book row has no narrator line" do
+    html =
+      render_panel(%{
+        accepted: [{release("Author - Title (EPUB)"), evidence()}],
+        rejected: [],
+        complete?: true
+      })
+
+    refute html =~ "Narrated by"
   end
 
   test "an untagged release renders as untagged, not blank" do

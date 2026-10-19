@@ -8,7 +8,7 @@ defmodule Cinder.Library.BookSourcesTest do
   """
   use ExUnit.Case, async: false
 
-  alias Cinder.Acquisition.BookScorer
+  alias Cinder.Acquisition.BookKind
   alias Cinder.Library.BookSources
 
   setup %{tmp_dir: tmp} do
@@ -358,9 +358,9 @@ defmodule Cinder.Library.BookSourcesTest do
     end
   end
 
-  test "accepted_extensions/0 tracks the scorer's format list" do
+  test "accepted_extensions/0 tracks the e-book kind's format list" do
     assert BookSources.accepted_extensions() ==
-             Enum.map(BookScorer.accepted_formats(), &".#{&1}")
+             Enum.map(BookKind.accepted_formats(:ebook), &".#{&1}")
   end
 
   describe "format signatures" do
