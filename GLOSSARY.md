@@ -31,6 +31,18 @@ An in-flight download that has made no forward progress for longer than Cinder i
 wait.
 _Avoid_: dead download, stuck download
 
+### Settings
+
+**Setting definition**:
+Everything Cinder knows about one settings key: its shape, the `/settings` group it sits in, its
+label, how a rejected value is explained, the env key it overlays and what it falls back to.
+_Avoid_: config field, registry entry
+
+**Bootstrap**:
+The env value a setting falls back to when no row is stored, captured once before the first
+overlay so a cleared setting reverts to it.
+_Avoid_: default, base config
+
 ### Subtitles
 
 **Sidecar**:

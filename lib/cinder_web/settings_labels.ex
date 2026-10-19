@@ -1,129 +1,31 @@
 defmodule CinderWeb.SettingsLabels do
   @moduledoc """
-  Translates the user-facing labels that originate in the `Cinder.Settings` domain module —
-  config-field labels, group headers, download-client toggles, library-kind names. The domain
-  stays gettext-free: it emits stable English strings that double as the gettext msgids, and
-  this web-layer helper translates them at render time via `t/1`.
+  Translates the user-facing strings that originate in the `Cinder.Settings` domain module:
+  setting labels, rejection messages, help text, group headers, download-client options and
+  library-kind names. The domain stays gettext-free: it emits stable English strings that double
+  as the gettext msgids, and this web-layer helper translates them at render time via `t/1`.
 
-  `known/0` is the registration list: every label the domain can emit, each wrapped in
-  `gettext_noop/1` so `mix gettext.extract` captures it (the calls are dynamic, so the extractor
-  can't see the msgids otherwise). A label missing from `known/0` renders untranslated, so
-  `no_hardcoded_strings_test` asserts the domain's label set is a subset of it — a new setting
-  can't silently ship an English-only label.
+  `known/0` registers every string `Cinder.Settings.Registry.msgids/0` lists. The calls are
+  dynamic, so the extractor can't see the msgids on its own; a private macro expands one literal
+  `gettext_noop/1` per string at compile time, and `mix gettext.extract` (which recompiles) records
+  each one. A new setting definition is therefore registered without editing this module.
   """
   use Gettext, backend: CinderWeb.Gettext
 
-  @doc "Translate a `Cinder.Settings` English label to the active locale (passthrough if unknown)."
+  @doc """
+  Translate a `Cinder.Settings` English label to the active locale (passthrough if unknown). A
+  `{template, bindings}` label translates the template and every binding value.
+  """
+  def t({template, bindings}) when is_binary(template) do
+    Gettext.gettext(CinderWeb.Gettext, template, Map.new(bindings, fn {k, v} -> {k, t(v)} end))
+  end
+
   def t(label) when is_binary(label), do: Gettext.gettext(CinderWeb.Gettext, label)
 
-  @doc "Every label the domain can emit, registered for extraction. Keep in sync with `Cinder.Settings`."
-  def known do
-    [
-      # group headers — Settings.groups/0
-      gettext_noop("TMDB"),
-      gettext_noop("Indexer"),
-      gettext_noop("Migration sources"),
-      gettext_noop("Download clients"),
-      gettext_noop("Media server"),
-      gettext_noop("Audiobookshelf"),
-      gettext_noop("Library paths"),
-      gettext_noop("Release size bands"),
-      gettext_noop("Subtitles"),
-      gettext_noop("Books metadata"),
-      gettext_noop("Notifications"),
-      gettext_noop("Accounts"),
-      # download-client toggles — Settings.toggles/0
-      gettext_noop("Enable qBittorrent (torrent)"),
-      gettext_noop("Enable SABnzbd (usenet)"),
-      gettext_noop("Torrent client"),
-      gettext_noop("Usenet client"),
-      gettext_noop("Disabled"),
-      gettext_noop("qBittorrent"),
-      gettext_noop("Transmission"),
-      gettext_noop("SABnzbd"),
-      gettext_noop("NZBGet"),
-      # library kinds — Settings.library_kinds/0 — and the "<kind> library" test-badge labels
-      gettext_noop("Movies"),
-      gettext_noop("TV"),
-      gettext_noop("Ebooks"),
-      gettext_noop("Audiobooks"),
-      gettext_noop("Movies library"),
-      gettext_noop("TV library"),
-      gettext_noop("Ebooks library"),
-      gettext_noop("Audiobooks library"),
-      # static config-field labels — Settings.config_fields/0
-      gettext_noop("TMDB API read token (v4 bearer)"),
-      gettext_noop("Prowlarr URL"),
-      gettext_noop("Prowlarr API key"),
-      gettext_noop("Radarr URL"),
-      gettext_noop("Radarr API key"),
-      gettext_noop("Radarr remote path prefix"),
-      gettext_noop("Radarr local path prefix"),
-      gettext_noop("Sonarr URL"),
-      gettext_noop("Sonarr API key"),
-      gettext_noop("Sonarr remote path prefix"),
-      gettext_noop("Sonarr local path prefix"),
-      gettext_noop("Readarr URL"),
-      gettext_noop("Readarr API key"),
-      gettext_noop("Readarr remote path prefix"),
-      gettext_noop("Readarr local path prefix"),
-      gettext_noop("qBittorrent URL"),
-      gettext_noop("qBittorrent username"),
-      gettext_noop("qBittorrent password"),
-      gettext_noop("qBittorrent remote path prefix"),
-      gettext_noop("qBittorrent local path prefix"),
-      gettext_noop("Transmission RPC URL"),
-      gettext_noop("Transmission username"),
-      gettext_noop("Transmission password"),
-      gettext_noop("Transmission remote path prefix"),
-      gettext_noop("Transmission local path prefix"),
-      gettext_noop("SABnzbd URL"),
-      gettext_noop("SABnzbd API key"),
-      gettext_noop("SABnzbd remote path prefix"),
-      gettext_noop("SABnzbd local path prefix"),
-      gettext_noop("NZBGet JSON-RPC URL"),
-      gettext_noop("NZBGet username"),
-      gettext_noop("NZBGet password"),
-      gettext_noop("NZBGet remote path prefix"),
-      gettext_noop("NZBGet local path prefix"),
-      gettext_noop("Remove completed torrents at ratio"),
-      gettext_noop("Remove completed torrents after seed hours"),
-      gettext_noop("Jellyfin URL"),
-      gettext_noop("Jellyfin API key"),
-      gettext_noop("Plex URL"),
-      gettext_noop("Plex token"),
-      gettext_noop("Jellyfin web URL"),
-      gettext_noop("Plex web URL"),
-      gettext_noop("Audiobookshelf URL"),
-      gettext_noop("Audiobookshelf API key"),
-      gettext_noop("Audiobookshelf library id"),
-      gettext_noop("Discord webhook URL"),
-      gettext_noop("Webhook URL"),
-      gettext_noop("Webhook Authorization header"),
-      gettext_noop("SMTP host"),
-      gettext_noop("SMTP port"),
-      gettext_noop("SMTP username"),
-      gettext_noop("SMTP password"),
-      gettext_noop("SMTP from address"),
-      gettext_noop("OpenSubtitles API key"),
-      gettext_noop("OpenSubtitles username"),
-      gettext_noop("OpenSubtitles password"),
-      gettext_noop("Subtitle languages (comma-separated, e.g. en,fr)"),
-      gettext_noop("LibreTranslate URL"),
-      gettext_noop("LibreTranslate API key"),
-      gettext_noop("LibreTranslate batch size (cues)"),
-      gettext_noop("LibreTranslate timeout (milliseconds)"),
-      gettext_noop("Open Library URL"),
-      gettext_noop("Hardcover metadata proxy URL"),
-      gettext_noop("Hardcover metadata proxy API key"),
-      gettext_noop("OpenID Connect issuer URL"),
-      gettext_noop("OpenID Connect client ID"),
-      gettext_noop("OpenID Connect client secret"),
-      gettext_noop("Default request quota"),
-      gettext_noop("Household timezone"),
-      # generated per-kind Plex section labels — Settings.config_fields/0
-      gettext_noop("Plex Movies library section (numeric id)"),
-      gettext_noop("Plex TV library section (numeric id)")
-    ]
+  defmacrop registered do
+    for msgid <- Cinder.Settings.Registry.msgids(), do: quote(do: gettext_noop(unquote(msgid)))
   end
+
+  @doc "Every string the settings domain can emit, registered for extraction."
+  def known, do: registered()
 end

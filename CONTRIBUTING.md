@@ -25,8 +25,8 @@ inspecting the running app over guessing.
   service.**
 - **Status and derived-state writes go through the context choke-point** (`Catalog.transition` /
   `transition_episode`) so SQLite WAL + `busy_timeout` stays correct under a racing poller.
-- New behaviour ⇒ a test. New service config ⇒ **not** a new env var: add a `Cinder.Settings`
-  registry entry instead (config is in-app, overlaid on env bootstrap).
+- New behaviour ⇒ a test. New service config ⇒ **not** a new env var: add a setting definition to
+  `Cinder.Settings.Registry` instead (config is in-app, overlaid on env bootstrap).
 - Keep diffs minimal and trace each change to the request; `credo --strict` and warnings-as-errors
   must stay clean.
 

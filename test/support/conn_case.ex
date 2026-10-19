@@ -83,45 +83,15 @@ defmodule CinderWeb.ConnCase do
     Cinder.AccountsFixtures.override_token_authenticated_at(token, authenticated_at)
   end
 
-  @reset_env_keys [
-    Cinder.Catalog.TMDB.HTTP,
-    Cinder.Acquisition.Indexer.Prowlarr,
-    Cinder.Download.Client.QBittorrent,
-    Cinder.Download.Client.Sabnzbd,
-    Cinder.Library.MediaServer.Jellyfin,
-    Cinder.Library.MediaServer.Plex,
-    Cinder.Mailer,
-    Cinder.Notifier.Webhook,
-    Cinder.Subtitles.Provider.OpenSubtitles,
-    Cinder.Catalog.UpgradeHunter,
-    :media_server,
-    :download_clients,
-    :qbittorrent_remote_path_prefix,
-    :qbittorrent_local_path_prefix,
-    :sabnzbd_remote_path_prefix,
-    :sabnzbd_local_path_prefix,
-    :anime_preferences,
-    :import_roots,
-    :disk_df_bin,
-    :disk_probe_killer,
-    :disk_probe_shell,
-    :disk_probe_timeout,
-    :disk_stats_stub,
-    :explicit_import_roots,
-    :movies_library_path,
-    :movies_anime_library_path,
-    :movies_min_size,
-    :movies_max_size,
-    :movies_preferred_resolutions,
-    :tv_library_path,
-    :tv_anime_library_path,
-    :tv_min_size,
-    :tv_max_size,
-    :tv_preferred_resolutions,
-    :books_library_path,
-    :audiobooks_library_path,
-    :default_request_quota
-  ]
+  # Every key a settings save overlays, plus the disk-probe stubs some LiveView tests plant.
+  @reset_env_keys Cinder.Settings.env_keys() ++
+                    [
+                      :disk_df_bin,
+                      :disk_probe_killer,
+                      :disk_probe_shell,
+                      :disk_probe_timeout,
+                      :disk_stats_stub
+                    ]
 
   @doc """
   Setup helper that snapshots the service-config `:cinder` env keys and restores

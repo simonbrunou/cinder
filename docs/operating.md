@@ -195,7 +195,7 @@ unlike `movies_library_path`/`tv_library_path`, which a `docker-compose.yml` dep
 once and never touch again, the two book roots (and every other book/audiobook setting) must be
 typed into the wizard or `/settings` directly. This follows the project's own configuration rule:
 every external service Cinder gained after the original movies/TV core is a `Cinder.Settings`
-registry entry, never a new service environment variable.
+setting definition, never a new service environment variable.
 
 ### Download clients and completed-torrent cleanup
 

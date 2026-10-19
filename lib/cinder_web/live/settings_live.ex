@@ -181,7 +181,7 @@ defmodule CinderWeb.SettingsLive do
                 Enum.map_join(
                   @undecryptable_secrets,
                   ", ",
-                  &SettingsLabels.t(Settings.field_label(&1))
+                  &SettingsLabels.t(Settings.describe(&1).label)
                 )
             )}
           </p>

@@ -19,19 +19,13 @@ defmodule Cinder.Settings do
   alias Cinder.Library.MediaServer.{Jellyfin, Plex}
   alias Cinder.LibraryKind
   alias Cinder.Repo
-  alias Cinder.Settings.Crypto
-  alias Cinder.Settings.Registry
-  alias Cinder.Settings.Setting
+  alias Cinder.Settings.{Crypto, Definition, Overlay, Registry, Setting, Shape}
   alias Cinder.Util
 
   @media_server_key "media_server_type"
-  @media_server_options ["jellyfin", "plex"]
   @import_roots_key "import_roots"
   @ffprobe_bin_key "ffprobe_bin"
-  @smtp_host_key "smtp_host"
   @smtp_ssl_key "smtp_ssl"
-
-  @bytes_per_gb 1_000_000_000
 
   # --- boot loader: one-shot supervised child, runs synchronously before the poller ---
 
@@ -46,36 +40,54 @@ defmodule Cinder.Settings do
     :ignore
   end
 
-  # --- registry accessors: the field/group/toggle definitions live in
-  # `Cinder.Settings.Registry`; re-exported here unchanged so the LiveView,
-  # `CinderWeb.SettingsLabels`, and the tests keep the same `Cinder.Settings.*` API. ---
+  # --- setting definitions: one `Cinder.Settings.Definition` per key, catalogued in
+  # `Cinder.Settings.Registry` ---
 
+  @doc "Every setting definition, in `/settings` render order, optionally filtered by field."
+  defdelegate definitions(filter \\ []), to: Registry
   defdelegate groups(), to: Registry
-  defdelegate config_fields(), to: Registry
   defdelegate migration_sources(), to: Registry
-  defdelegate config_fields(group), to: Registry
-  defdelegate path_mapping_fields(), to: Registry
-  defdelegate download_fields(), to: Registry
   defdelegate download_client_choices(), to: Registry
-  defdelegate global_fields(), to: Registry
-  defdelegate global_fields(group), to: Registry
-  defdelegate toggles(), to: Registry
-  defdelegate anime_fields(), to: Registry
   defdelegate library_kinds(), to: Registry
-  defdelegate flat_keys(), to: Registry
-  defdelegate library_path_key(kind), to: Registry
-  defdelegate anime_library_path_key(kind), to: Registry
-  defdelegate min_size_key(kind), to: Registry
-  defdelegate max_size_key(kind), to: Registry
-  defdelegate preferred_resolutions_key(kind), to: Registry
-  defdelegate preferred_sources_key(kind), to: Registry
-  defdelegate preferred_terms_key(kind), to: Registry
-  defdelegate blocked_terms_key(kind), to: Registry
-  defdelegate upgrade_cutoff_key(kind), to: Registry
-  defdelegate release_resolutions(), to: Registry
+  defdelegate media_server_options(), to: Registry
+
+  @doc "The settings key of a per-kind definition, e.g. `kind_key(:tv, :min_size)`."
+  defdelegate kind_key(kind, slot), to: Definition
+
+  @doc """
+  How `key` reads to the operator: the group its disclosure is, its self-describing label (an
+  English msgid or `{template, bindings}`, translated by `CinderWeb.SettingsLabels.t/1`) and the
+  message a rejected value shows. An unregistered key describes as itself, with no group.
+  """
+  @spec describe(String.t()) :: %{
+          key: String.t(),
+          group: atom() | nil,
+          label: Definition.label(),
+          message: String.t() | nil
+        }
+  def describe(key) do
+    case Registry.definition(key) do
+      %Definition{} = definition ->
+        %{
+          key: key,
+          group: definition.group,
+          label: definition.label || key,
+          message: Definition.message(definition)
+        }
+
+      nil ->
+        %{key: key, group: nil, label: key, message: nil}
+    end
+  end
+
+  @doc "Every `:cinder` env key `load_into_env/0` writes, in write order."
+  @spec env_keys() :: [atom()]
+  defdelegate env_keys(), to: Overlay
+
+  @doc "The resolutions an upgrade cutoff may name."
+  def release_resolutions, do: Parser.resolutions()
 
   def media_server_key, do: @media_server_key
-  def media_server_options, do: @media_server_options
   def import_roots_key, do: @import_roots_key
   def ffprobe_bin_key, do: @ffprobe_bin_key
   def smtp_ssl_key, do: @smtp_ssl_key
@@ -84,7 +96,7 @@ defmodule Cinder.Settings do
   def default_request_quota do
     :cinder
     |> Application.get_env(:default_request_quota)
-    |> positive_integer()
+    |> Shape.positive_integer()
   end
 
   @doc "Validated IANA timezone used for household calendar-day decisions."
@@ -107,12 +119,7 @@ defmodule Cinder.Settings do
     end
   end
 
-  @doc false
-  def valid_timezone?(zone) when is_binary(zone) do
-    match?({:ok, _local}, DateTime.shift_zone(DateTime.utc_now(), String.trim(zone)))
-  end
-
-  def valid_timezone?(_zone), do: false
+  defp valid_timezone?(zone), do: Shape.valid_timezone?(zone)
 
   # --- reads ---
 
@@ -129,20 +136,6 @@ defmodule Cinder.Settings do
   @spec undecryptable_secret_keys() :: [String.t()]
   def undecryptable_secret_keys do
     for %Setting{is_secret: true} = row <- all(), not Crypto.decryptable?(row), do: row.key
-  end
-
-  @doc """
-  The English label for a settings `key` (falls back to the key itself when unregistered).
-  Translate for display via `CinderWeb.SettingsLabels.t/1`.
-  """
-  @spec field_label(String.t()) :: String.t()
-  def field_label(key) do
-    fields = config_fields() ++ global_fields() ++ download_client_choices()
-
-    case Enum.find(fields, &(&1.key == key)) do
-      %{label: label} -> label
-      _ -> key
-    end
   end
 
   @doc "Returns true if the auto-approve-all setting is explicitly enabled."
@@ -226,7 +219,7 @@ defmodule Cinder.Settings do
   def import_roots do
     case Application.get_env(:cinder, :import_roots) do
       roots when is_list(roots) -> roots
-      _ -> inferred_import_roots()
+      _ -> Overlay.inferred_import_roots()
     end
   end
 
@@ -421,48 +414,28 @@ defmodule Cinder.Settings do
   """
   def form_state do
     rows = rows_by_key()
+    lookup = &decoded_for(rows, &1)
 
     values =
-      for f <- config_fields() ++ global_fields(), not f.secret, into: %{} do
-        {f.key, decoded_for(rows, f.key) || ""}
+      for %Definition{} = definition <- form_definitions(),
+          not Definition.secret?(definition),
+          into: %{} do
+        value = Shape.form_value(definition.shape, lookup.(definition.key), lookup)
+        {definition.key, value}
       end
-
-    values =
-      values
-      |> Map.put(
-        @media_server_key,
-        decoded_for(rows, @media_server_key) || default_media_server_type()
-      )
-      |> put_download_choices(rows)
-      |> then(fn v ->
-        Enum.reduce(flat_keys(), v, fn key, acc ->
-          Map.put(acc, key, decoded_for(rows, key) || "")
-        end)
-      end)
-      |> Map.put(@import_roots_key, decoded_for(rows, @import_roots_key) || "")
-      |> Map.put(@ffprobe_bin_key, decoded_for(rows, @ffprobe_bin_key) || "")
-      |> then(fn values ->
-        Enum.reduce(anime_fields(), values, fn field, values ->
-          Map.put(values, field.key, decoded_for(rows, field.key) || "")
-        end)
-      end)
-      |> Map.merge(toggle_values(rows))
-      |> Map.put("move_on_import", decoded_for(rows, "move_on_import") == "true")
-      |> Map.put(@smtp_ssl_key, decoded_for(rows, @smtp_ssl_key) == "true")
 
     secrets_set =
-      for f <- config_fields(),
-          f.secret,
-          not is_nil(decoded_for(rows, f.key)),
-          into: MapSet.new() do
-        f.key
-      end
+      for %Definition{key: key} = definition <- form_definitions(),
+          Definition.secret?(definition),
+          not is_nil(lookup.(key)),
+          into: MapSet.new(),
+          do: key
 
     %{
       values: values,
       secrets_set: secrets_set,
-      placeholders: placeholders(rows),
-      secrets_from_env: secrets_from_env(rows),
+      placeholders: placeholders(lookup),
+      secrets_from_env: secrets_from_env(lookup),
       clear_secrets: MapSet.new(),
       invalid_keys: MapSet.new()
     }
@@ -471,30 +444,20 @@ defmodule Cinder.Settings do
   def form_state(params, invalid_keys \\ []) when is_map(params) do
     state = form_state()
 
-    text_keys =
-      for(f <- config_fields() ++ global_fields(), not f.secret, do: f.key) ++
-        flat_keys() ++
-        [@import_roots_key, @ffprobe_bin_key] ++ Enum.map(anime_fields(), & &1.key)
-
     values =
-      text_keys
-      |> Enum.uniq()
-      |> Enum.reduce(state.values, fn key, values ->
-        case params[key] do
-          value when is_binary(value) -> Map.put(values, key, value)
-          _ -> values
-        end
-      end)
-      |> preserve_media_server(params)
-      |> preserve_download_choices(params)
-      |> preserve_booleans(params)
+      for %Definition{key: key} = definition <- form_definitions(),
+          not Definition.secret?(definition),
+          {:ok, value} <- [Shape.resubmitted(definition.shape, key, params)],
+          reduce: state.values do
+        values -> Map.put(values, key, value)
+      end
 
     clear_secrets =
-      for field <- config_fields(),
-          field.secret,
-          truthy?(params["clear_" <> field.key]),
+      for %Definition{key: key} = definition <- form_definitions(),
+          Definition.secret?(definition),
+          Shape.truthy?(params["clear_" <> key]),
           into: MapSet.new(),
-          do: field.key
+          do: key
 
     %{
       state
@@ -504,78 +467,37 @@ defmodule Cinder.Settings do
     }
   end
 
-  defp preserve_media_server(values, %{@media_server_key => value})
-       when value in @media_server_options,
-       do: Map.put(values, @media_server_key, value)
+  # The definitions the main settings form shows: everything but the keys edited elsewhere.
+  defp form_definitions, do: Enum.reject(definitions(), &(&1.save == :direct))
 
-  defp preserve_media_server(values, _params), do: values
-
-  defp preserve_download_choices(values, params) do
-    Enum.reduce(download_client_choices(), values, fn choice, values ->
-      preserve_download_choice(values, choice, params[choice.key])
-    end)
+  # Effective env value shown as a placeholder for each non-secret definition that asks for one
+  # and has no DB row (the service creds, the library roots and ffprobe_bin; the band defaults
+  # are raw bytes, stated in the group's help text instead of echoed as a placeholder).
+  defp placeholders(lookup) do
+    for %Definition{env_placeholder: true, key: key} = definition <- definitions(),
+        is_nil(lookup.(key)),
+        value = effective_value(definition),
+        not is_nil(value),
+        into: %{},
+        do: {key, value}
   end
 
-  defp preserve_download_choice(values, choice, value) when is_binary(value) do
-    if choice_option(choice, value), do: Map.put(values, choice.key, value), else: values
-  end
-
-  defp preserve_download_choice(values, _choice, _value), do: values
-
-  defp preserve_booleans(values, params) do
-    keys = Enum.map(toggles(), & &1.key) ++ ["move_on_import", @smtp_ssl_key]
-
-    Enum.reduce(keys, values, fn key, values ->
-      if Map.has_key?(params, key),
-        do: Map.put(values, key, truthy?(params[key])),
-        else: values
-    end)
-  end
-
-  defp truthy?(value), do: value in [true, "true", "1", "on"]
-
-  # Effective env value to show as a placeholder for each non-secret field with no DB row
-  # (config creds + the env-backed library_path roots and ffprobe_bin; the band defaults are
-  # raw bytes — stated in the group's help text instead of echoed as a placeholder).
-  defp placeholders(rows) do
-    field_pairs = for f <- config_fields(), not f.secret, do: {f.key, effective_field_value(f)}
-
-    flat_pairs =
-      for k <- library_path_keys() ++ [@ffprobe_bin_key], do: {k, effective_flat_value(k)}
-
-    (field_pairs ++ flat_pairs)
-    |> Enum.reject(fn {key, value} -> is_nil(value) or not is_nil(decoded_for(rows, key)) end)
-    |> Map.new()
-  end
-
-  # Secret fields with no DB row but a value seeded from env — marked "set via environment"
+  # Secret definitions with no DB row but a value seeded from env, marked "set via environment"
   # in the UI (the value itself is never echoed).
-  defp secrets_from_env(rows) do
-    for f <- config_fields(),
-        f.secret,
-        is_nil(decoded_for(rows, f.key)),
-        not is_nil(effective_field_value(f)),
-        into: MapSet.new() do
-      f.key
-    end
+  defp secrets_from_env(lookup) do
+    for %Definition{key: key} = definition <- definitions(),
+        Definition.secret?(definition),
+        is_nil(lookup.(key)),
+        not is_nil(effective_value(definition)),
+        into: MapSet.new(),
+        do: key
   end
 
-  defp library_path_keys do
-    Enum.flat_map(LibraryKind.all(), &library_path_keys/1)
-  end
+  defp effective_value(%Definition{target: {:module, module, field}}),
+    do: :cinder |> Application.get_env(module, []) |> Keyword.get(field) |> Util.blank_to_nil()
 
-  defp library_path_keys(kind) do
-    [library_path_key(kind)] ++
-      if LibraryKind.handling?(kind, :anime), do: [anime_library_path_key(kind)], else: []
-  end
-
-  defp effective_field_value(%{module: module, field: field}) do
-    :cinder |> Application.get_env(module, []) |> Keyword.get(field) |> Util.blank_to_nil()
-  end
-
-  defp effective_flat_value(key) do
-    :cinder |> Application.get_env(:"#{key}") |> Util.blank_to_nil()
-  end
+  defp effective_value(%Definition{target: {:env, env_key}}),
+    do: :cinder |> Application.get_env(env_key) |> Util.blank_to_nil()
 
   @topic "settings"
 
@@ -640,12 +562,14 @@ defmodule Cinder.Settings do
   back as if accepted while the scorer runs unbounded — except an explicit 0,
   the documented unbounded opt-out (blank reverts to the shipped default band).
   `/` is never accepted as an import root. Returns `:ok`, or
-  `{:error, invalid_keys}` with nothing saved.
+  `{:error, invalid_keys}` with nothing saved, the keys in `/settings` render order.
   """
   def save_form(params) do
     case invalid_values(params) do
       [] ->
-        {puts, deletes} = plan(params)
+        {puts, deletes} =
+          Enum.reduce(definitions(), {%{}, []}, &Shape.plan(&1, params, &2))
+
         save(puts, deletes)
 
       invalid ->
@@ -653,143 +577,40 @@ defmodule Cinder.Settings do
     end
   end
 
+  # Only a validated definition can reject a value, so every rejected key has the group, label and
+  # message `describe/1` promises (the cross-product test in definition_test fences this).
   defp invalid_values(params) do
-    invalid_positive_integer_config_values(params) ++
-      invalid_band_values(params) ++
-      invalid_cutoff_values(params) ++
-      invalid_import_roots(params) ++
-      invalid_library_roots(params) ++
-      invalid_timezone_values(params) ++
-      invalid_anime_values(params) ++
-      invalid_download_choices(params) ++ invalid_torrent_cleanup(params)
-  end
-
-  defp invalid_positive_integer_config_values(params) do
-    for %{key: key, type: :positive_integer} <- config_fields(),
-        value = String.trim(params[key] || ""),
-        value != "",
-        is_nil(positive_integer(value)),
+    for %Definition{key: key} = definition <- definitions(),
+        Definition.validated?(definition),
+        Shape.invalid?(definition.shape, params[key]) or
+          fails_check?(definition.check, definition, params),
         do: key
   end
 
-  defp invalid_download_choices(params) do
-    for choice <- download_client_choices(),
-        value = params[choice.key],
-        not is_nil(value),
-        is_nil(choice_option(choice, value)),
-        do: choice.key
-  end
+  defp fails_check?(nil, _definition, _params), do: false
 
-  defp invalid_torrent_cleanup(params) do
-    for key <- ["torrent_cleanup_ratio", "torrent_cleanup_seed_hours"],
-        value = String.trim(params[key] || ""),
-        value != "",
-        not positive_number_string?(value),
-        do: key
-  end
-
-  defp positive_number_string?(value) do
-    case Float.parse(value) do
-      {number, ""} when number > 0 -> true
-      _ -> false
+  defp fails_check?(:cutoff_in_preferred, %Definition{key: key, kind: kind}, params) do
+    with {:ok, value} <- Map.fetch(params, key),
+         cutoff when cutoff != "" <- (value || "") |> String.trim() |> String.downcase() do
+      cutoff not in effective_preferred_resolutions(params, kind)
+    else
+      _absent_or_blank -> false
     end
   end
 
-  defp invalid_timezone_values(%{"household_timezone" => value}) do
-    value = String.trim(value || "")
-    if value != "" and not valid_timezone?(value), do: ["household_timezone"], else: []
-  end
-
-  defp invalid_timezone_values(_params), do: []
-
-  defp invalid_library_roots(params) do
-    for kind <- LibraryKind.all(),
-        key <- library_path_keys(kind),
-        Map.has_key?(params, key),
-        value = String.trim(params[key] || ""),
-        value != "" and Path.expand(value) == "/",
-        do: key
-  end
-
-  defp invalid_import_roots(%{@import_roots_key => value}) do
-    if "/" in split_import_roots(value || ""), do: [@import_roots_key], else: []
-  end
-
-  defp invalid_import_roots(_params), do: []
-
-  defp invalid_band_values(params) do
-    for kind <- LibraryKind.video(),
-        key <- [min_size_key(kind), max_size_key(kind)],
-        value = String.trim(params[key] || ""),
-        value != "",
-        is_nil(parse_gb(value)),
-        not unbounded_band?(value) do
-      key
-    end
-  end
-
-  defp invalid_cutoff_values(params) do
-    for kind <- LibraryKind.video(),
-        key = upgrade_cutoff_key(kind),
-        Map.has_key?(params, key),
-        cutoff = params[key] |> String.trim() |> String.downcase(),
-        cutoff != "",
-        preferred = effective_preferred_resolutions(params, kind),
-        cutoff not in Parser.resolutions() or cutoff not in preferred do
-      key
-    end
+  defp fails_check?(:languages_for_require, _definition, params) do
+    effective_embedded_subtitle_mode(params) == :require and
+      effective_subtitle_languages(params) == []
   end
 
   defp effective_preferred_resolutions(params, kind) do
-    case Map.fetch(params, preferred_resolutions_key(kind)) do
+    case Map.fetch(params, kind_key(kind, :preferred_resolutions)) do
       {:ok, value} ->
-        parse_csv_list(value) || Scorer.default_preferred()
+        Shape.parse_csv_list(value) || Scorer.default_preferred()
 
       :error ->
         Application.get_env(:cinder, :"#{kind}_preferred_resolutions") ||
           Scorer.default_preferred()
-    end
-  end
-
-  # An explicit 0 is the unbounded opt-out (blank means "use the shipped default"), so it is
-  # valid where the other parse_gb-nil values ("abc", "-2") stay rejected.
-  defp unbounded_band?(value) do
-    case Float.parse(value) do
-      {gb, ""} -> gb == 0
-      _ -> false
-    end
-  end
-
-  defp invalid_anime_values(params) do
-    enum_keys =
-      for %{key: key, type: :select, options: options} <- anime_fields(),
-          Map.has_key?(params, key),
-          value = String.trim(params[key] || ""),
-          value != "",
-          value not in options,
-          do: key
-
-    delay_key = "anime_group_fallback_delay"
-    delay = String.trim(params[delay_key] || "")
-
-    delay_keys =
-      if Map.has_key?(params, delay_key) and delay != "" and not valid_anime_hours?(delay),
-        do: [delay_key],
-        else: []
-
-    subtitle_keys =
-      if effective_embedded_subtitle_mode(params) == :require and
-           effective_subtitle_languages(params) == [],
-         do: ["anime_embedded_subtitle_mode"],
-         else: []
-
-    Enum.uniq(enum_keys ++ delay_keys ++ subtitle_keys)
-  end
-
-  defp valid_anime_hours?(value) do
-    case Integer.parse(value) do
-      {hours, ""} when hours >= 0 -> true
-      _ -> false
     end
   end
 
@@ -798,7 +619,7 @@ defmodule Cinder.Settings do
       {:ok, value} ->
         case String.trim(value || "") do
           "require" -> :require
-          "" -> base(:anime_preferences)[:embedded_subtitle_mode]
+          "" -> Overlay.base(:anime_preferences)[:embedded_subtitle_mode]
           _value -> :other
         end
 
@@ -812,14 +633,14 @@ defmodule Cinder.Settings do
       case Map.fetch(params, "subtitle_languages") do
         {:ok, value} when is_binary(value) and byte_size(value) > 0 ->
           if String.trim(value) == "",
-            do: base(Cinder.Subtitles.Provider.OpenSubtitles)[:languages] || "",
+            do: Overlay.base(Cinder.Subtitles.Provider.OpenSubtitles)[:languages] || "",
             else: value
 
         {:ok, value} when is_list(value) ->
           value
 
         {:ok, _blank} ->
-          base(Cinder.Subtitles.Provider.OpenSubtitles)[:languages] || ""
+          Overlay.base(Cinder.Subtitles.Provider.OpenSubtitles)[:languages] || ""
 
         :error ->
           :cinder
@@ -830,38 +651,21 @@ defmodule Cinder.Settings do
     normalize_anime_languages(languages)
   end
 
+  defp normalize_anime_languages(languages) when is_binary(languages) do
+    languages |> String.split(",") |> AnimePreferences.normalize_languages()
+  end
+
+  defp normalize_anime_languages(languages), do: AnimePreferences.normalize_languages(languages)
+
   # --- env overlay ---
 
   @doc """
   Overlays stored settings onto the `:cinder` Application env. Never raises — a
-  decode/DB failure degrades to the env bootstrap and is logged.
+  decode/DB failure degrades to the env bootstrap and is logged. The write order lives in
+  `Cinder.Settings.Overlay`; `env_keys/0` lists every key it writes.
   """
   def load_into_env do
-    rows = rows_by_key()
-    # apply_explicit_import_roots writes the only fail-OPEN env key (:explicit_import_roots
-    # authorizes rm_rf), so it runs first — a partial load failure below can then only leave it
-    # in its just-written (correct) or boot-nil (fail-closed) state, never stale-authorized after
-    # a revoke.
-    apply_explicit_import_roots(rows)
-    apply_config_fields(rows)
-    # Reads the Cinder.Mailer keyword list apply_config_fields just wrote (relay/port/username/
-    # password/from), so it must run after — position-enforced like apply_import_roots below.
-    apply_mailer(rows)
-    apply_anime_config(rows)
-    apply_media_server(rows)
-    apply_download_clients(rows)
-    apply_library_config(rows)
-    apply_path_mapping_config(rows)
-    # apply_import_roots (the read-scope :import_roots key) must run here: its
-    # inferred_import_roots/0 fallback reads the :"#{root_role}_library_path" env keys that
-    # apply_library_config just wrote above — position-enforced only, a future reorder must not
-    # move this ahead of apply_library_config.
-    apply_import_roots(rows)
-    apply_move_on_import(rows)
-    apply_upgrade_hunt(rows)
-    apply_ffprobe_bin(rows)
-    apply_default_request_quota(rows)
-    apply_household_timezone(rows)
+    Overlay.apply(rows_by_key())
     :ok
   rescue
     e ->
@@ -878,440 +682,9 @@ defmodule Cinder.Settings do
       :ok
   end
 
-  defp apply_config_fields(rows) do
-    config_fields()
-    |> Enum.group_by(& &1.module)
-    |> Enum.each(fn {module, fields} ->
-      db_values =
-        fields
-        |> Enum.map(fn f -> {f.field, field_value(rows, f)} end)
-        |> Enum.reject(fn {_field, value} -> is_nil(value) end)
-
-      # Always re-apply base ⊕ db (not just when db is non-empty): merging onto the
-      # captured bootstrap is what lets a removed/blanked setting revert to the env
-      # default instead of stranding the last overlaid value.
-      Application.put_env(:cinder, module, Keyword.merge(base(module), db_values))
-    end)
-  end
-
-  # Layers :adapter and :ssl onto the Cinder.Mailer config apply_config_fields just wrote
-  # (relay/port/username/password/from, all plain config-field entries). The adapter only
-  # switches to SMTP once a host is actually configured — an unconfigured install keeps
-  # whatever the bootstrap shipped (Swoosh.Adapters.Local in dev, .Test in test), so a blank
-  # smtp_host can never crash the mailer on a missing :relay. Both Swoosh's SMTP adapter and
-  # the Local/Test adapters accept extra unknown keys, so :from (read by Cinder.Mailer.from/0,
-  # not the adapter itself) and a temporarily-stale :ssl on a non-SMTP adapter are harmless.
-  defp apply_mailer(rows) do
-    current = Application.get_env(:cinder, Cinder.Mailer, [])
-    host = decoded_for(rows, @smtp_host_key)
-    smtp? = is_binary(host) and host != ""
-
-    adapter =
-      if smtp? do
-        Swoosh.Adapters.SMTP
-      else
-        Keyword.get(base(Cinder.Mailer), :adapter)
-      end
-
-    # :ssl must be a real boolean — gen_smtp pattern-matches `true` strictly, so the
-    # string "true" would silently disable implicit TLS.
-    ssl? = decoded_for(rows, @smtp_ssl_key) == "true"
-
-    Application.put_env(
-      :cinder,
-      Cinder.Mailer,
-      Keyword.merge(current, [adapter: adapter, ssl: ssl?] ++ mailer_tls_overlay(rows, host))
-    )
-  end
-
-  # gen_smtp's defaults are `tls: :if_available` (STARTTLS silently downgradable by a
-  # MITM stripping the advertisement) with no certificate verification. Credentials must
-  # never cross the wire in cleartext: with a password configured STARTTLS is mandatory,
-  # and whenever TLS engages the relay certificate is verified against the system store.
-  # A password-less LAN relay keeps opportunistic TLS so bare-postfix setups still work.
-  defp mailer_tls_overlay(rows, host) when is_binary(host) and host != "" do
-    tls = if decoded_for(rows, "smtp_password") in [nil, ""], do: :if_available, else: :always
-
-    [
-      tls: tls,
-      tls_options: [
-        verify: :verify_peer,
-        cacerts: :public_key.cacerts_get(),
-        server_name_indication: String.to_charlist(host),
-        depth: 3
-      ]
-    ]
-  end
-
-  defp mailer_tls_overlay(_rows, _host), do: []
-
-  defp apply_anime_config(rows) do
-    base = base(:anime_preferences)
-
-    config = [
-      embedded_subtitle_mode:
-        anime_enum(
-          rows,
-          "anime_embedded_subtitle_mode",
-          base[:embedded_subtitle_mode]
-        ),
-      preferred_groups: anime_csv(rows, "anime_preferred_groups", base[:preferred_groups] || []),
-      blocked_groups: anime_csv(rows, "anime_blocked_groups", base[:blocked_groups] || []),
-      group_fallback_delay:
-        anime_hours(rows, "anime_group_fallback_delay", base[:group_fallback_delay] || 86_400)
-    ]
-
-    Application.put_env(:cinder, :anime_preferences, config)
-  end
-
-  defp anime_enum(rows, key, fallback) do
-    value = decoded_for(rows, key)
-    field = Enum.find(anime_fields(), &(&1.key == key))
-
-    if value in field.options, do: String.to_existing_atom(value), else: fallback
-  end
-
-  defp anime_csv(rows, key, fallback) do
-    case decoded_for(rows, key) do
-      nil -> AnimePreferences.normalize_groups(fallback)
-      value -> value |> String.split(",") |> AnimePreferences.normalize_groups()
-    end
-  end
-
-  defp anime_hours(rows, key, fallback) do
-    case Integer.parse(decoded_for(rows, key) || "") do
-      {hours, ""} when hours >= 0 -> hours * 60 * 60
-      _ -> fallback
-    end
-  end
-
-  defp normalize_anime_languages(languages) when is_binary(languages) do
-    languages |> String.split(",") |> AnimePreferences.normalize_languages()
-  end
-
-  defp normalize_anime_languages(languages), do: AnimePreferences.normalize_languages(languages)
-
-  # The setting picks the impl; with no setting fall back to the PLEX_URL bootstrap, then
-  # to the captured base (config.exs default in prod, the Mox mock in tests). `fallback`
-  # is computed every load (so base/1 is captured before any overlay, like the other
-  # apply_* paths) — otherwise an explicit-then-cleared setting would revert to the last
-  # impl instead of the bootstrap default.
-  defp apply_media_server(rows) do
-    fallback =
-      if System.get_env("PLEX_URL"),
-        do: Cinder.Library.MediaServer.Plex,
-        else: base(:media_server)
-
-    impl =
-      case decoded_for(rows, @media_server_key) do
-        "plex" -> Cinder.Library.MediaServer.Plex
-        "jellyfin" -> Cinder.Library.MediaServer.Jellyfin
-        _ -> fallback
-      end
-
-    Application.put_env(:cinder, :media_server, impl)
-  end
-
-  # Every media kind gets a standard root; only video kinds get Anime roots and release rules.
-  # A DB value overlays the bootstrap; a cleared root reverts to it (base/1 snapshots the
-  # pre-overlay env once).
-  defp apply_library_config(rows) do
-    for kind <- LibraryKind.all(), do: apply_kind_config(rows, kind)
-    :ok
-  end
-
-  defp apply_path_mapping_config(rows) do
-    Enum.each(path_mapping_fields(), fn field ->
-      Application.put_env(:cinder, field.env_key, decoded_for(rows, field.key))
-    end)
-  end
-
-  defp apply_explicit_import_roots(rows) do
-    Application.put_env(:cinder, :explicit_import_roots, explicit_roots_from(rows))
-  end
-
-  defp apply_import_roots(rows) do
-    Application.put_env(
-      :cinder,
-      :import_roots,
-      explicit_roots_from(rows) || inferred_import_roots()
-    )
-  end
-
-  defp explicit_roots_from(rows) do
-    case decoded_for(rows, @import_roots_key) do
-      nil -> nil
-      value -> parse_import_roots(value)
-    end
-  end
-
-  defp apply_kind_config(rows, kind) do
-    root_role = LibraryKind.root_role(kind)
-    root_env = :"#{root_role}_library_path"
-
-    # Capture the bootstrap snapshot EAGERLY, before the `||` — otherwise the `||` short-circuits
-    # past base_path/1 whenever a value is set, so base/1 first records the env lazily during a
-    # *delete*, snapshotting the already-overlaid value instead of the true pre-overlay bootstrap
-    # (a cleared setting would then revert to the overlaid value, not the env default).
-    fallback = base_path(root_env)
-    root = decoded_for(rows, "#{root_role}_library_path") || fallback
-
-    Application.put_env(:cinder, root_env, root)
-
-    if LibraryKind.video?(kind), do: apply_video_kind_config(rows, kind)
-  end
-
-  defp apply_video_kind_config(rows, kind) do
-    root_role = LibraryKind.root_role(kind)
-    anime_root_env = :"#{root_role}_anime_library_path"
-    anime_root = decoded_for(rows, "#{root_role}_anime_library_path")
-    min_size = band_size(rows, "#{kind}_min_size")
-    max_size = band_size(rows, "#{kind}_max_size")
-    preferred = parse_csv_list(decoded_for(rows, "#{kind}_preferred_resolutions"))
-    sources = parse_csv_list(decoded_for(rows, "#{kind}_preferred_sources"))
-    preferred_terms = parse_csv_list(decoded_for(rows, "#{kind}_preferred_terms"))
-    blocked_terms = parse_csv_list(decoded_for(rows, "#{kind}_blocked_terms"))
-
-    cutoff =
-      rows
-      |> decoded_for("#{kind}_upgrade_cutoff")
-      |> then(&if(is_binary(&1), do: String.downcase(String.trim(&1)), else: nil))
-      |> then(&if(&1 in Parser.resolutions(), do: &1, else: nil))
-
-    Application.put_env(:cinder, anime_root_env, anime_root)
-    Application.put_env(:cinder, :"#{kind}_min_size", min_size)
-    Application.put_env(:cinder, :"#{kind}_max_size", max_size)
-    Application.put_env(:cinder, :"#{kind}_preferred_resolutions", preferred)
-    Application.put_env(:cinder, :"#{kind}_preferred_sources", sources)
-    Application.put_env(:cinder, :"#{kind}_preferred_terms", preferred_terms)
-    Application.put_env(:cinder, :"#{kind}_blocked_terms", blocked_terms)
-    Application.put_env(:cinder, :"#{kind}_upgrade_cutoff", cutoff)
-  end
-
-  # Standalone global boolean — not a config field, toggle, or flat key, so it gets its own
-  # tiny overlay. No base/1 snapshot: an unset/cleared row reverts via the inline `false` default
-  # everywhere it's read (Application.get_env(:cinder, :move_on_import, false)).
-  defp apply_move_on_import(rows) do
-    Application.put_env(:cinder, :move_on_import, decoded_for(rows, "move_on_import") == "true")
-  end
-
-  # The quality-upgrade sweep's on/off switch. A standalone boolean like move_on_import above, but
-  # module-scoped: it overlays `:enabled` onto the captured `config.exs` bootstrap for
-  # `Cinder.Catalog.UpgradeHunter`, which is where `UpgradeHunter.enabled?/0` already reads — so the
-  # sweep needs no change and any sibling key in that block (interval, batch) survives the overlay.
-  # It is not a `config_fields/0` entry: those are text-valued (a stored "false" would land in the
-  # env as the truthy STRING "false"), and not a `toggles/0` entry: those are download-client
-  # protocol switches that default to ON and only feed the `:download_clients` map. An unset/cleared
-  # row leaves the bootstrap untouched, so it reverts to the shipped `enabled: false`.
-  defp apply_upgrade_hunt(rows) do
-    module = Cinder.Catalog.UpgradeHunter
-    base = base(module)
-
-    config =
-      case decoded_for(rows, "upgrade_hunt_enabled") do
-        nil -> base
-        value -> Keyword.put(base, :enabled, value == "true")
-      end
-
-    Application.put_env(:cinder, module, config)
-  end
-
-  # A flat string with an env bootstrap (`config :cinder, ffprobe_bin: "ffprobe"`), mirroring
-  # apply_kind_config/2's library_path handling: a DB value overlays the captured bootstrap, a
-  # cleared setting reverts to it.
-  defp apply_ffprobe_bin(rows) do
-    Application.put_env(
-      :cinder,
-      :ffprobe_bin,
-      decoded_for(rows, @ffprobe_bin_key) || base(:ffprobe_bin)
-    )
-  end
-
-  defp apply_default_request_quota(rows) do
-    fallback = positive_integer(base(:default_request_quota))
-
-    quota =
-      if Map.has_key?(rows, Registry.default_request_quota_key()),
-        do: positive_integer(decoded_for(rows, Registry.default_request_quota_key())),
-        else: fallback
-
-    Application.put_env(:cinder, :default_request_quota, quota)
-  end
-
-  defp apply_household_timezone(rows) do
-    fallback = base(:household_timezone)
-    zone = decoded_for(rows, "household_timezone") || fallback
-    zone = if is_binary(zone), do: String.trim(zone), else: zone
-
-    Application.put_env(
-      :cinder,
-      :household_timezone,
-      if(valid_timezone?(zone), do: zone, else: "Etc/UTC")
-    )
-  end
-
-  # base/1 defaults to [] for unset keys; a library path is a flat string, so coerce an unset
-  # bootstrap (e.g. MOVIES_LIBRARY_PATH absent → []) to nil. Health then reports :not_configured
-  # rather than crashing on a list-typed path.
-  defp base_path(env_key) do
-    case base(env_key) do
-      path when is_binary(path) -> path
-      _ -> nil
-    end
-  end
-
-  # A band with no DB row falls back to the shipped config.exs default (a fresh install starts
-  # bounded); a stored value coerces via parse_gb, so an explicit 0 opts out to nil = unbounded.
-  # The fallback is captured eagerly, before the row lookup, for the same reason as base_path
-  # in apply_kind_config: a lazy capture during a later delete would snapshot the overlaid value.
-  defp band_size(rows, key) do
-    fallback = base_band(:"#{key}")
-
-    case decoded_for(rows, key) do
-      nil -> fallback
-      value -> parse_gb(value)
-    end
-  end
-
-  # base/1 defaults to [] for unset keys; a band is bytes-or-nil, so coerce anything else to nil.
-  defp base_band(env_key) do
-    case base(env_key) do
-      bytes when is_integer(bytes) and bytes > 0 -> bytes
-      _ -> nil
-    end
-  end
-
-  # A GB string → bytes. Blank/non-numeric/≤0 ⇒ nil (unbounded): a 0 or negative band would
-  # silently reject every release, so it degrades to "no limit" rather than "grab nothing".
-  defp parse_gb(nil), do: nil
-
-  defp parse_gb(value) do
-    case Float.parse(String.trim(value)) do
-      {gb, ""} when gb > 0 -> round(gb * @bytes_per_gb)
-      _ -> nil
-    end
-  end
-
-  # "1080p, 720P" → ["1080p", "720p"] / "BluRay, web" → ["bluray", "web"]. Downcased to match the
-  # parser's lower-case tokens; blank/empty ⇒ nil so the scorer's per-field default applies.
-  defp parse_csv_list(nil), do: nil
-
-  defp parse_csv_list(value) do
-    case value
-         |> String.split(",")
-         |> Enum.map(&(&1 |> String.trim() |> String.downcase()))
-         |> Enum.reject(&(&1 == "")) do
-      [] -> nil
-      list -> list
-    end
-  end
-
-  defp positive_integer(value) when is_integer(value) and value > 0, do: value
-
-  defp positive_integer(value) when is_binary(value) do
-    case Integer.parse(String.trim(value)) do
-      {integer, ""} when integer > 0 -> integer
-      _ -> nil
-    end
-  end
-
-  defp positive_integer(_value), do: nil
-
-  defp parse_import_roots(value) do
-    roots = split_import_roots(value)
-    if "/" in roots, do: [], else: roots
-  end
-
-  defp split_import_roots(value) do
-    value
-    |> String.split(~r/[,\n]/)
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.map(&Path.expand/1)
-    |> Enum.uniq()
-  end
-
-  defp inferred_import_roots do
-    roots =
-      Cinder.Library.kinds()
-      |> Enum.map(&Application.get_env(:cinder, :"#{LibraryKind.root_role(&1)}_library_path"))
-      |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
-      |> Enum.map(&Path.expand/1)
-
-    infer_common_root(roots, length(Cinder.Library.kinds()))
-  end
-
-  defp infer_common_root(roots, expected_count)
-       when length(roots) == expected_count do
-    [first | rest] = roots
-
-    common =
-      rest
-      |> Enum.reduce(Path.split(first), &common_path_parts/2)
-      |> Path.join()
-
-    if common == "/" or common in roots, do: [], else: [common]
-  end
-
-  defp infer_common_root(_roots, _expected_count), do: []
-
-  defp common_path_parts(path, parts) do
-    parts
-    |> Enum.zip(Path.split(path))
-    |> Enum.take_while(fn {left, right} -> left == right end)
-    |> Enum.map(&elem(&1, 0))
-  end
-
-  # A saved choice selects exactly one implementation per protocol. Until a choice is saved,
-  # preserve the bootstrap map (including test mocks) and honor the old 1.1 enable row.
-  defp apply_download_clients(rows) do
-    base_map = base(:download_clients)
-
-    map =
-      for choice <- download_client_choices(),
-          module = selected_download_client(rows, choice, base_map),
-          not is_nil(module),
-          into: %{} do
-        {choice.protocol, module}
-      end
-
-    Application.put_env(:cinder, :download_clients, map)
-  end
-
-  defp selected_download_client(rows, choice, base_map) do
-    case choice_option(choice, decoded_for(rows, choice.key)) do
-      %{module: module} ->
-        module
-
-      nil ->
-        if enabled?(decoded_for(rows, choice.legacy_key)), do: base_map[choice.protocol]
-    end
-  end
-
-  # One-time snapshot of the bootstrap config for `key`, so the overlay is always
-  # computed from the original env, not the already-overlaid (mutated) value.
-  defp base(key) do
-    pt_key = {__MODULE__, :base, key}
-
-    case :persistent_term.get(pt_key, :__none__) do
-      :__none__ ->
-        value = Application.get_env(:cinder, key, [])
-        :persistent_term.put(pt_key, value)
-        value
-
-      value ->
-        value
-    end
-  end
-
   # --- helpers ---
 
   defp rows_by_key, do: all() |> Map.new(&{&1.key, &1})
-
-  defp field_value(rows, field), do: coerce_field_value(field, decoded_for(rows, field.key))
-
-  defp coerce_field_value(%{type: :positive_integer}, value), do: positive_integer(value)
-  defp coerce_field_value(_field, value), do: value
 
   defp decoded_for(rows, key) do
     case Map.get(rows, key) do
@@ -1323,38 +696,12 @@ defmodule Cinder.Settings do
   # Secret encode/decode lives in Cinder.Settings.Crypto (code motion, 1500-line cap).
   defp decode_setting(setting), do: Crypto.decode_setting(setting)
 
-  defp toggle_values(rows) do
-    for t <- toggles(), into: %{} do
-      {t.key, enabled?(decoded_for(rows, t.key))}
+  defp secret?(key) do
+    case Registry.definition(key) do
+      %Definition{} = definition -> Definition.secret?(definition)
+      nil -> false
     end
   end
-
-  defp enabled?(nil), do: true
-  defp enabled?(value), do: value in ["true", "1", "on"]
-
-  defp put_download_choices(values, rows) do
-    Enum.reduce(download_client_choices(), values, fn choice, values ->
-      Map.put(values, choice.key, download_choice_value(rows, choice))
-    end)
-  end
-
-  defp download_choice_value(rows, choice) do
-    case choice_option(choice, decoded_for(rows, choice.key)) do
-      %{value: value} ->
-        value
-
-      nil ->
-        if enabled?(decoded_for(rows, choice.legacy_key)), do: choice.default, else: "disabled"
-    end
-  end
-
-  defp choice_option(choice, value), do: Enum.find(choice.options, &(&1.value == value))
-
-  defp default_media_server_type do
-    if System.get_env("PLEX_URL"), do: "plex", else: "jellyfin"
-  end
-
-  defp secret?(key), do: MapSet.member?(Registry.secret_keys(), key)
 
   defp upsert(key, value) do
     stored = Crypto.store_value(secret?(key), value)
@@ -1368,75 +715,6 @@ defmodule Cinder.Settings do
     case Repo.get_by(Setting, key: key) do
       nil -> :ok
       setting -> Repo.delete!(setting)
-    end
-  end
-
-  defp plan(params) do
-    config_plan =
-      Enum.reduce(config_fields() ++ global_fields(), {%{}, []}, &plan_config(&1, params, &2))
-
-    {puts, deletes} = Enum.reduce(flat_keys(), config_plan, &plan_flat(&1, params, &2))
-    {puts, deletes} = plan_flat(@import_roots_key, params, {puts, deletes})
-    {puts, deletes} = plan_flat(@ffprobe_bin_key, params, {puts, deletes})
-
-    {puts, deletes} =
-      Enum.reduce(download_client_choices(), {puts, deletes}, fn choice, acc ->
-        plan_flat(choice.key, params, acc)
-      end)
-
-    {puts, deletes} =
-      Enum.reduce(anime_fields(), {puts, deletes}, &plan_flat(&1.key, params, &2))
-
-    puts =
-      puts
-      |> Map.put(@media_server_key, media_server_choice(params))
-      |> Map.put("move_on_import", params["move_on_import"] || "false")
-      |> Map.put(@smtp_ssl_key, params[@smtp_ssl_key] || "false")
-
-    {puts, deletes}
-  end
-
-  # Validate against the whitelist so a crafted/buggy submit can't persist a junk impl
-  # string (which apply_media_server would silently ignore, leaving the dropdown unselected).
-  defp media_server_choice(params) do
-    case params[@media_server_key] do
-      choice when choice in @media_server_options -> choice
-      _ -> default_media_server_type()
-    end
-  end
-
-  # A flat key (not a @config_fields entry) is planned exactly like a non-secret field:
-  # present-but-blank clears (reverts to env bootstrap / unbounded), absent leaves it untouched.
-  defp plan_flat(key, params, acc), do: plan_config(%{secret: false, key: key}, params, acc)
-
-  # A field absent from params is left unchanged; only a present-but-blank value clears it
-  # (so a partial/programmatic save can't silently wipe unrelated non-secret settings).
-  defp plan_config(%{secret: false, key: key}, params, {puts, deletes}) do
-    if Map.has_key?(params, key) do
-      # `|| ""` keeps a present-but-nil value (a programmatic caller) safe — String.trim/1
-      # would raise on nil; this matches the secret clause's handling.
-      case String.trim(params[key] || "") do
-        "" -> {puts, [key | deletes]}
-        value -> {Map.put(puts, key, value), deletes}
-      end
-    else
-      {puts, deletes}
-    end
-  end
-
-  defp plan_config(%{secret: true, key: key}, params, {puts, deletes}) do
-    cond do
-      # A typed replacement wins over a ticked Clear box: deleting the old secret AND
-      # dropping the newly typed one would leave the service silently unauthenticated
-      # behind a "Settings saved." flash.
-      String.trim(params[key] || "") != "" ->
-        {Map.put(puts, key, String.trim(params[key])), deletes}
-
-      params["clear_" <> key] ->
-        {puts, [key | deletes]}
-
-      true ->
-        {puts, deletes}
     end
   end
 end

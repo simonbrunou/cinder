@@ -13,70 +13,9 @@ defmodule Cinder.SettingsTest do
 
   setup :verify_on_exit!
 
-  # Every :cinder key load_into_env/0 may write; snapshot and restore so a test can't
-  # leak an overlay into the rest of the suite.
-  @env_keys [
-    Cinder.Catalog.TMDB.HTTP,
-    Cinder.Acquisition.Indexer.Prowlarr,
-    Cinder.Library.MigrationSource.Radarr,
-    Cinder.Library.MigrationSource.Sonarr,
-    Cinder.Library.MigrationSource.Readarr,
-    Cinder.Download.Client.QBittorrent,
-    Cinder.Download.Client.Sabnzbd,
-    Cinder.Download.Client.Transmission,
-    Cinder.Download.Client.Nzbget,
-    Cinder.Download.Cleaner,
-    Cinder.Library.MediaServer.Jellyfin,
-    Cinder.Library.MediaServer.Plex,
-    Cinder.Library.AudiobookServer.Audiobookshelf,
-    Cinder.Notifier.Discord,
-    Cinder.Notifier.Webhook,
-    Cinder.Mailer,
-    Cinder.Subtitles.Provider.OpenSubtitles,
-    Cinder.Subtitles.Translator.LibreTranslate,
-    Cinder.Books.Metadata.OpenLibrary,
-    Cinder.Books.Metadata.Hardcover,
-    Cinder.Accounts.OIDC,
-    Cinder.Catalog.UpgradeHunter,
-    :media_server,
-    :download_clients,
-    :qbittorrent_remote_path_prefix,
-    :qbittorrent_local_path_prefix,
-    :sabnzbd_remote_path_prefix,
-    :sabnzbd_local_path_prefix,
-    :transmission_remote_path_prefix,
-    :transmission_local_path_prefix,
-    :nzbget_remote_path_prefix,
-    :nzbget_local_path_prefix,
-    :movies_library_path,
-    :movies_anime_library_path,
-    :movies_min_size,
-    :movies_max_size,
-    :movies_preferred_resolutions,
-    :movies_preferred_sources,
-    :movies_preferred_terms,
-    :movies_blocked_terms,
-    :movies_upgrade_cutoff,
-    :tv_library_path,
-    :tv_anime_library_path,
-    :tv_min_size,
-    :tv_max_size,
-    :tv_preferred_resolutions,
-    :tv_preferred_sources,
-    :tv_preferred_terms,
-    :tv_blocked_terms,
-    :tv_upgrade_cutoff,
-    :books_library_path,
-    :books_anime_library_path,
-    :audiobooks_library_path,
-    :import_roots,
-    :explicit_import_roots,
-    :move_on_import,
-    :ffprobe_bin,
-    :anime_preferences,
-    :default_request_quota,
-    :household_timezone
-  ]
+  # Every :cinder key load_into_env/0 writes, plus the books Anime root one test plants on purpose;
+  # snapshot and restore so a test can't leak an overlay into the rest of the suite.
+  @env_keys Settings.env_keys() ++ [:books_anime_library_path]
 
   setup do
     saved = Map.new(@env_keys, fn k -> {k, Application.get_env(:cinder, k)} end)
@@ -110,16 +49,83 @@ defmodule Cinder.SettingsTest do
     end)
   end
 
+  describe "env_keys/0" do
+    # Measured against the overlay before the setting definitions existed, so a key the overlay
+    # writes but env_keys/0 forgets (or the reverse) fails here, and the restore above stays whole.
+    @written ~w(
+      anime_preferences audiobooks_library_path books_library_path default_request_quota
+      download_clients explicit_import_roots ffprobe_bin household_timezone import_roots
+      media_server move_on_import movies_anime_library_path movies_blocked_terms
+      movies_library_path movies_max_size movies_min_size movies_preferred_resolutions
+      movies_preferred_sources movies_preferred_terms movies_upgrade_cutoff
+      nzbget_local_path_prefix nzbget_remote_path_prefix qbittorrent_local_path_prefix
+      qbittorrent_remote_path_prefix sabnzbd_local_path_prefix sabnzbd_remote_path_prefix
+      transmission_local_path_prefix transmission_remote_path_prefix tv_anime_library_path
+      tv_blocked_terms tv_library_path tv_max_size tv_min_size tv_preferred_resolutions
+      tv_preferred_sources tv_preferred_terms tv_upgrade_cutoff
+    )a ++
+               [
+                 Cinder.Accounts.OIDC,
+                 Cinder.Acquisition.Indexer.Prowlarr,
+                 Cinder.Books.Metadata.Hardcover,
+                 Cinder.Books.Metadata.OpenLibrary,
+                 Cinder.Catalog.TMDB.HTTP,
+                 Cinder.Catalog.UpgradeHunter,
+                 Cinder.Download.Cleaner,
+                 Cinder.Download.Client.Nzbget,
+                 Cinder.Download.Client.QBittorrent,
+                 Cinder.Download.Client.Sabnzbd,
+                 Cinder.Download.Client.Transmission,
+                 Cinder.Library.AudiobookServer.Audiobookshelf,
+                 Cinder.Library.MediaServer.Jellyfin,
+                 Cinder.Library.MediaServer.Plex,
+                 Cinder.Library.MigrationSource.Radarr,
+                 Cinder.Library.MigrationSource.Readarr,
+                 Cinder.Library.MigrationSource.Sonarr,
+                 Cinder.Mailer,
+                 Cinder.Notifier.Discord,
+                 Cinder.Notifier.Webhook,
+                 Cinder.Subtitles.Provider.OpenSubtitles,
+                 Cinder.Subtitles.Translator.LibreTranslate
+               ]
+
+    test "names every :cinder key load_into_env/0 writes, and no other" do
+      # Capture every bootstrap snapshot from the real env before deleting anything, so base/1
+      # can never record a deleted key as its bootstrap for the rest of the run.
+      Settings.load_into_env()
+      everything = Application.get_all_env(:cinder)
+
+      on_exit(fn ->
+        Enum.each(Application.get_all_env(:cinder), fn {key, _} ->
+          Application.delete_env(:cinder, key)
+        end)
+
+        Application.put_all_env(cinder: everything)
+      end)
+
+      Enum.each(everything, fn {key, _} -> Application.delete_env(:cinder, key) end)
+      Settings.load_into_env()
+      written = Application.get_all_env(:cinder) |> Keyword.keys()
+
+      assert Enum.sort(written) == Enum.sort(@written)
+      assert Enum.sort(Settings.env_keys()) == Enum.sort(@written)
+    end
+  end
+
   describe "storage" do
     test "book kinds register roots without video policy keys" do
-      keys = Settings.flat_keys()
+      keys = Enum.map(Settings.definitions(), & &1.key)
 
       assert "books_library_path" in keys
       assert "audiobooks_library_path" in keys
 
       # Video-policy and Plex keys derive from the media kind, the Anime root from the root
       # role — so each negative must be spelled the way its own derivation would spell it, or
-      # it refutes a string no implementation can emit and fences nothing.
+      # it refutes a string no implementation can emit and fences nothing. The video kinds'
+      # Plex sections are the positive control.
+      assert "movies_plex_section" in keys
+      assert "tv_plex_section" in keys
+
       for kind <- ~w(ebook audiobook), root <- ~w(books audiobooks) do
         for key <- ~w(
           #{kind}_min_size
@@ -129,21 +135,12 @@ defmodule Cinder.SettingsTest do
           #{kind}_preferred_terms
           #{kind}_blocked_terms
           #{kind}_upgrade_cutoff
+          #{kind}_plex_section
           #{root}_anime_library_path
         ) do
           refute key in keys
         end
       end
-
-      # Plex sections are NOT flat keys — they live in config_fields/0, so refuting them above
-      # would pass no matter what plex_section_fields/0 generated. Assert against the registry
-      # that actually carries them, with the video kinds as the positive control.
-      config_keys = Enum.map(Settings.config_fields(), & &1.key)
-
-      assert "movies_plex_section" in config_keys
-      assert "tv_plex_section" in config_keys
-      refute "ebook_plex_section" in config_keys
-      refute "audiobook_plex_section" in config_keys
     end
 
     test "book roots are managed library destinations but not video roots" do
@@ -561,9 +558,9 @@ defmodule Cinder.SettingsTest do
       assert Settings.undecryptable_secret_keys() == []
     end
 
-    test "field_label/1 resolves a secret key to its label, else the key itself" do
-      assert Settings.field_label("prowlarr_api_key") == "Prowlarr API key"
-      assert Settings.field_label("unknown_key") == "unknown_key"
+    test "describe/1 names an undecryptable secret by its label, else the key itself" do
+      assert Settings.describe("prowlarr_api_key").label == "Prowlarr API key"
+      assert Settings.describe("unknown_key").label == "unknown_key"
     end
 
     test "Health.check_all surfaces a failing 'Stored credentials' row naming the count" do
@@ -724,7 +721,7 @@ defmodule Cinder.SettingsTest do
                group_fallback_delay: 43_200
              }
 
-      for field <- Settings.anime_fields() do
+      for field <- Settings.definitions(group: :anime) do
         refute Repo.get_by!(Setting, key: field.key).is_secret
       end
 
@@ -1081,6 +1078,18 @@ defmodule Cinder.SettingsTest do
       assert Application.fetch_env!(:cinder, :tv_library_path) == bootstrap
     end
 
+    test "ffprobe_bin base snapshot is captured eagerly (clearing reverts even with no prior capture)" do
+      # Same regression as the library roots: with no snapshot yet, a put must record the true
+      # bootstrap, or the later delete snapshots the overlaid path and reverts to it.
+      bootstrap = Application.fetch_env!(:cinder, :ffprobe_bin)
+      erase_base_snapshot(:ffprobe_bin)
+
+      Settings.put("ffprobe_bin", "/usr/local/bin/ffprobe")
+      Settings.delete("ffprobe_bin")
+
+      assert Application.fetch_env!(:cinder, :ffprobe_bin) == bootstrap
+    end
+
     test "tv size band: GB strings coerce to bytes; zero/negative opt out; clearing reverts" do
       Settings.put("tv_max_size", "5")
       assert Application.get_env(:cinder, :tv_max_size) == 5_000_000_000
@@ -1325,7 +1334,7 @@ defmodule Cinder.SettingsTest do
           ] do
         assert {:error, [_ | _]} = Settings.save_form(params)
 
-        for field <- Settings.anime_fields() do
+        for field <- Settings.definitions(group: :anime) do
           assert Settings.get(field.key) == nil
         end
       end
@@ -1416,6 +1425,29 @@ defmodule Cinder.SettingsTest do
 
       assert Settings.get("prowlarr_url") == "http://keep"
       assert Settings.get("jellyfin_url") == "http://j"
+    end
+
+    test "never writes the keys edited outside the form, even when a submit names them" do
+      # A form save writes its checkboxes as params[key] || "false", so a key wrongly planned by
+      # the form would be switched off by every save that lacks its box.
+      for key <- ~w(auto_approve_all upgrade_hunt_enabled setup_complete) do
+        Settings.put(key, "true")
+      end
+
+      assert :ok =
+               Settings.save_form(%{
+                 "auto_approve_all" => "",
+                 "upgrade_hunt_enabled" => "",
+                 "setup_complete" => "",
+                 "qbittorrent_enabled" => "false",
+                 "media_server_type" => "jellyfin"
+               })
+
+      for key <- ~w(auto_approve_all upgrade_hunt_enabled setup_complete) do
+        assert Settings.get(key) == "true"
+      end
+
+      assert Settings.get("qbittorrent_enabled") == nil
     end
 
     test "tolerates a present-but-nil non-secret value (clears, does not crash)" do

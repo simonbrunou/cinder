@@ -8,8 +8,16 @@ is up or are fixed per deployment: `SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_HOST
 
 Everything else (external-service URLs, API keys, the media-server choice) lives in the
 `Cinder.Settings` store: DB-backed, editable in `/settings`, overlaid on env as bootstrap. A new
-service config value gets a `Cinder.Settings` registry entry, never a new `System.get_env` call
-site.
+service config value gets a setting definition in `Cinder.Settings.Registry`, never a new
+`System.get_env` call site.
+
+A setting definition (`Cinder.Settings.Definition`) carries everything about one key: its shape,
+group, label, rejection message, env target and bootstrap fallback. A plain text, secret or
+positive-integer setting is one `field/3` entry plus its French msgstr after
+`mix gettext.extract --merge`. That entry renders in its group, validates, saves, overlays the
+env, joins `Cinder.Settings.env_keys/0` (which the test env snapshots derive from) and registers
+its strings in `CinderWeb.SettingsLabels.known/0`. Edit `settings_components.ex` only when the
+setting needs custom rendering, and `Cinder.Settings.Shape` only for a new shape.
 
 A registry-driven loader `Application.put_env`s stored values onto a one-time bootstrap snapshot
 at boot (a one-shot supervised child, after PubSub and before the poller) and on every save. So
@@ -20,7 +28,8 @@ site:
 
 - `config/runtime.exs` reads the boot-only keys.
 - `lib/cinder/application.ex` loads the bootstrap snapshot and checks `RELEASE_NAME`.
-- `lib/cinder/settings.ex` applies the env-as-bootstrap overlay.
+- `lib/cinder/settings/overlay.ex` applies the env-as-bootstrap overlay, including the `PLEX_URL`
+  media-server fallback.
 - `lib/cinder_web/router.ex` reads the `CINDER_BASIC_AUTH_*` pair for the Basic gate.
 
 ## Secrets

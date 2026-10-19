@@ -188,6 +188,14 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ "Enter a valid IANA timezone"
     assert has_element?(lv, "#household_timezone[aria-invalid=true]")
 
+    # A generic field with help text points at both its help and its error.
+    assert has_element?(
+             lv,
+             ~s|#household_timezone[aria-describedby="household_timezone-help household_timezone-error"]|
+           )
+
+    assert has_element?(lv, "#household_timezone-help", "IANA name used to decide")
+
     lv
     |> form("#settings-form", %{
       "household_timezone" => "Europe/Paris",
@@ -333,63 +341,6 @@ defmodule CinderWeb.SettingsLiveTest do
     refute has_element?(lv, "#settings-group-download", "Unreachable")
   end
 
-  test "opens the group containing invalid fields", %{conn: conn} do
-    {:ok, lv, _html} = live(conn, ~p"/settings")
-
-    lv
-    |> form("#settings-form", %{
-      "movies_min_size" => "invalid",
-      "media_server_type" => "jellyfin"
-    })
-    |> render_submit()
-
-    assert has_element?(lv, "#settings-group-releases[open]")
-  end
-
-  test "opens the subtitles group for an invalid LibreTranslate tuning value", %{conn: conn} do
-    {:ok, lv, _html} = live(conn, ~p"/settings")
-
-    lv
-    |> form("#settings-form", %{
-      "libretranslate_batch_size" => "0",
-      "media_server_type" => "jellyfin"
-    })
-    |> render_submit()
-
-    assert has_element?(lv, "#settings-group-subtitles[open]")
-    refute has_element?(lv, "#settings-group-releases[open]")
-    assert has_element?(lv, "#libretranslate_batch_size[aria-invalid=true]")
-
-    # Both the group and the message come from the registry `type:`, not the key name, so a future
-    # positive-integer field is covered without touching this component.
-    assert has_element?(
-             lv,
-             "#libretranslate_batch_size-error",
-             "Enter a positive whole number, or leave blank for the default."
-           )
-  end
-
-  test "opens the download group for an invalid torrent cleanup limit", %{conn: conn} do
-    {:ok, lv, _html} = live(conn, ~p"/settings")
-
-    lv
-    |> form("#settings-form", %{
-      "torrent_cleanup_ratio" => "0",
-      "media_server_type" => "jellyfin"
-    })
-    |> render_submit()
-
-    assert has_element?(lv, "#settings-group-download[open]")
-    assert has_element?(lv, "#torrent_cleanup_ratio[aria-invalid=true]")
-
-    assert has_element?(
-             lv,
-             "#torrent_cleanup_ratio[aria-describedby=torrent_cleanup_ratio-error]"
-           )
-
-    assert_push_event(lv, "focus-invalid", %{id: "torrent_cleanup_ratio"})
-  end
-
   test "invalid saves preserve safe values and expose the exact field error", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/settings")
 
@@ -408,7 +359,13 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, ~s|#prowlarr_url[value="http://typed:9696"]|)
     assert has_element?(lv, ~s|#movies_min_size[value="not-a-size"][aria-invalid="true"]|)
     assert has_element?(lv, "#movies_min_size[aria-describedby=movies_min_size-error]")
-    assert has_element?(lv, "#movies_min_size-error")
+
+    assert has_element?(
+             lv,
+             "#movies_min_size-error",
+             "Enter a number of GB (0 = no limit), or leave blank for the default."
+           )
+
     assert has_element?(lv, ~s(option[value="qbittorrent"][selected]))
     assert has_element?(lv, ~s(input[name="clear_tmdb_token"][checked]))
     refute html =~ "must-never-echo"

@@ -11,6 +11,7 @@ defmodule CinderWeb.SettingsComponents do
   import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1, icon: 1, input: 1]
 
   alias Cinder.{LibraryKind, Settings}
+  alias Cinder.Settings.Definition
   alias CinderWeb.SettingsLabels
 
   @doc """
@@ -19,36 +20,12 @@ defmodule CinderWeb.SettingsComponents do
   """
   def invalid_band_message(invalid_keys) do
     gettext("Not saved. Check: %{fields}.",
-      fields: Enum.map_join(invalid_keys, ", ", &invalid_field_label/1)
+      fields: Enum.map_join(invalid_keys, ", ", &SettingsLabels.t(Settings.describe(&1).label))
     )
   end
 
-  defp invalid_groups(keys) do
-    anime_keys = MapSet.new(Settings.anime_fields(), & &1.key)
-
-    download_keys =
-      Settings.download_fields()
-      |> Enum.map(& &1.key)
-      |> Kernel.++(Enum.map(Settings.download_client_choices(), & &1.key))
-      |> MapSet.new()
-
-    # The registry already records each config field's group; consult it before falling back, so a
-    # new validated field opens its own section instead of wrongly opening :releases.
-    config_groups = Map.new(Settings.config_fields(), &{&1.key, &1.group})
-
-    keys
-    |> Enum.map(fn key ->
-      cond do
-        key == "household_timezone" -> :accounts
-        key == Settings.import_roots_key() -> :library
-        library_path_key?(key) -> :library
-        MapSet.member?(anime_keys, key) -> :anime
-        MapSet.member?(download_keys, key) -> :download
-        true -> Map.get(config_groups, key, :releases)
-      end
-    end)
-    |> MapSet.new()
-  end
+  # Each rejected key opens the disclosure its setting definition names.
+  defp invalid_groups(keys), do: MapSet.new(keys, &Settings.describe(&1).group)
 
   attr :form, :map, required: true
   attr :health, :map, required: true
@@ -172,40 +149,40 @@ defmodule CinderWeb.SettingsComponents do
             class="space-y-2"
           >
             <div class="form-control">
-              <label class="label" for={Settings.library_path_key(kind)}>
+              <label class="label" for={Settings.kind_key(kind, :library_path)}>
                 <span class="label-text">{gettext("%{kind} library folder",
                   kind: SettingsLabels.t(kind_label)
                 )}</span>
               </label>
               <input
                 type="text"
-                id={Settings.library_path_key(kind)}
-                name={Settings.library_path_key(kind)}
-                value={@form.values[Settings.library_path_key(kind)]}
+                id={Settings.kind_key(kind, :library_path)}
+                name={Settings.kind_key(kind, :library_path)}
+                value={@form.values[Settings.kind_key(kind, :library_path)]}
                 placeholder={
-                  @form.placeholders[Settings.library_path_key(kind)] ||
+                  @form.placeholders[Settings.kind_key(kind, :library_path)] ||
                     "/media/#{LibraryKind.root_role(kind)}"
                 }
                 autocomplete="off"
-                aria-invalid={invalid?(@form, Settings.library_path_key(kind)) && "true"}
+                aria-invalid={invalid?(@form, Settings.kind_key(kind, :library_path)) && "true"}
                 aria-describedby={
-                  if invalid?(@form, Settings.library_path_key(kind)),
-                    do: "library-paths-help #{Settings.library_path_key(kind)}-error",
+                  if invalid?(@form, Settings.kind_key(kind, :library_path)),
+                    do: "library-paths-help #{Settings.kind_key(kind, :library_path)}-error",
                     else: "library-paths-help"
                 }
                 class={[
                   "input w-full",
-                  invalid?(@form, Settings.library_path_key(kind)) && "input-error"
+                  invalid?(@form, Settings.kind_key(kind, :library_path)) && "input-error"
                 ]}
               />
               <.field_error
-                :if={invalid?(@form, Settings.library_path_key(kind))}
-                field={Settings.library_path_key(kind)}
+                :if={invalid?(@form, Settings.kind_key(kind, :library_path))}
+                field={Settings.kind_key(kind, :library_path)}
               />
             </div>
 
             <div :if={video?} class="form-control">
-              <label class="label" for={Settings.anime_library_path_key(kind)}>
+              <label class="label" for={Settings.kind_key(kind, :anime_library_path)}>
                 <span class="label-text">
                   {gettext("Anime %{kind} library folder (optional)",
                     kind: SettingsLabels.t(kind_label)
@@ -214,31 +191,31 @@ defmodule CinderWeb.SettingsComponents do
               </label>
               <input
                 type="text"
-                id={Settings.anime_library_path_key(kind)}
-                name={Settings.anime_library_path_key(kind)}
-                value={@form.values[Settings.anime_library_path_key(kind)]}
+                id={Settings.kind_key(kind, :anime_library_path)}
+                name={Settings.kind_key(kind, :anime_library_path)}
+                value={@form.values[Settings.kind_key(kind, :anime_library_path)]}
                 placeholder={
                   gettext("Uses the standard %{kind} folder", kind: SettingsLabels.t(kind_label))
                 }
                 autocomplete="off"
-                aria-invalid={invalid?(@form, Settings.anime_library_path_key(kind)) && "true"}
+                aria-invalid={invalid?(@form, Settings.kind_key(kind, :anime_library_path)) && "true"}
                 aria-describedby={
-                  if invalid?(@form, Settings.anime_library_path_key(kind)),
+                  if invalid?(@form, Settings.kind_key(kind, :anime_library_path)),
                     do:
-                      "#{Settings.anime_library_path_key(kind)}-help #{Settings.anime_library_path_key(kind)}-error",
-                    else: "#{Settings.anime_library_path_key(kind)}-help"
+                      "#{Settings.kind_key(kind, :anime_library_path)}-help #{Settings.kind_key(kind, :anime_library_path)}-error",
+                    else: "#{Settings.kind_key(kind, :anime_library_path)}-help"
                 }
                 class={[
                   "input w-full",
-                  invalid?(@form, Settings.anime_library_path_key(kind)) && "input-error"
+                  invalid?(@form, Settings.kind_key(kind, :anime_library_path)) && "input-error"
                 ]}
               />
               <.field_error
-                :if={invalid?(@form, Settings.anime_library_path_key(kind))}
-                field={Settings.anime_library_path_key(kind)}
+                :if={invalid?(@form, Settings.kind_key(kind, :anime_library_path))}
+                field={Settings.kind_key(kind, :anime_library_path)}
               />
               <p
-                id={"#{Settings.anime_library_path_key(kind)}-help"}
+                id={"#{Settings.kind_key(kind, :anime_library_path)}-help"}
                 class="mt-1 text-xs opacity-70"
               >
                 {gettext(
@@ -302,144 +279,147 @@ defmodule CinderWeb.SettingsComponents do
           >
             <p class="text-sm font-medium">{SettingsLabels.t(kind_label)}</p>
             <div class="form-control">
-              <label class="label" for={Settings.min_size_key(kind)}>
+              <label class="label" for={Settings.kind_key(kind, :min_size)}>
                 <span class="label-text">{gettext("Min size (GB)")}</span>
               </label>
               <input
                 type="text"
-                id={Settings.min_size_key(kind)}
-                name={Settings.min_size_key(kind)}
-                value={@form.values[Settings.min_size_key(kind)]}
+                id={Settings.kind_key(kind, :min_size)}
+                name={Settings.kind_key(kind, :min_size)}
+                value={@form.values[Settings.kind_key(kind, :min_size)]}
                 inputmode="decimal"
                 autocomplete="off"
                 class={[
                   "input w-full",
-                  invalid?(@form, Settings.min_size_key(kind)) && "input-error"
+                  invalid?(@form, Settings.kind_key(kind, :min_size)) && "input-error"
                 ]}
-                aria-invalid={invalid?(@form, Settings.min_size_key(kind)) && "true"}
+                aria-invalid={invalid?(@form, Settings.kind_key(kind, :min_size)) && "true"}
                 aria-describedby={
-                  invalid?(@form, Settings.min_size_key(kind)) &&
-                    "#{Settings.min_size_key(kind)}-error"
+                  invalid?(@form, Settings.kind_key(kind, :min_size)) &&
+                    "#{Settings.kind_key(kind, :min_size)}-error"
                 }
               />
               <.field_error
-                :if={invalid?(@form, Settings.min_size_key(kind))}
-                field={Settings.min_size_key(kind)}
+                :if={invalid?(@form, Settings.kind_key(kind, :min_size))}
+                field={Settings.kind_key(kind, :min_size)}
               />
             </div>
             <div class="form-control">
-              <label class="label" for={Settings.max_size_key(kind)}>
+              <label class="label" for={Settings.kind_key(kind, :max_size)}>
                 <span class="label-text">{gettext("Max size (GB)")}</span>
               </label>
               <input
                 type="text"
-                id={Settings.max_size_key(kind)}
-                name={Settings.max_size_key(kind)}
-                value={@form.values[Settings.max_size_key(kind)]}
+                id={Settings.kind_key(kind, :max_size)}
+                name={Settings.kind_key(kind, :max_size)}
+                value={@form.values[Settings.kind_key(kind, :max_size)]}
                 inputmode="decimal"
                 autocomplete="off"
                 class={[
                   "input w-full",
-                  invalid?(@form, Settings.max_size_key(kind)) && "input-error"
+                  invalid?(@form, Settings.kind_key(kind, :max_size)) && "input-error"
                 ]}
-                aria-invalid={invalid?(@form, Settings.max_size_key(kind)) && "true"}
+                aria-invalid={invalid?(@form, Settings.kind_key(kind, :max_size)) && "true"}
                 aria-describedby={
-                  invalid?(@form, Settings.max_size_key(kind)) &&
-                    "#{Settings.max_size_key(kind)}-error"
+                  invalid?(@form, Settings.kind_key(kind, :max_size)) &&
+                    "#{Settings.kind_key(kind, :max_size)}-error"
                 }
               />
               <.field_error
-                :if={invalid?(@form, Settings.max_size_key(kind))}
-                field={Settings.max_size_key(kind)}
+                :if={invalid?(@form, Settings.kind_key(kind, :max_size))}
+                field={Settings.kind_key(kind, :max_size)}
               />
             </div>
             <div class="form-control">
-              <label class="label" for={Settings.preferred_resolutions_key(kind)}>
+              <label class="label" for={Settings.kind_key(kind, :preferred_resolutions)}>
                 <span class="label-text">{gettext("Preferred resolutions (comma-separated)")}</span>
               </label>
               <input
                 type="text"
-                id={Settings.preferred_resolutions_key(kind)}
-                name={Settings.preferred_resolutions_key(kind)}
-                value={@form.values[Settings.preferred_resolutions_key(kind)]}
+                id={Settings.kind_key(kind, :preferred_resolutions)}
+                name={Settings.kind_key(kind, :preferred_resolutions)}
+                value={@form.values[Settings.kind_key(kind, :preferred_resolutions)]}
                 placeholder={gettext("1080p, 720p")}
                 autocomplete="off"
                 class="input w-full"
               />
             </div>
             <div class="form-control">
-              <label class="label" for={Settings.preferred_sources_key(kind)}>
+              <label class="label" for={Settings.kind_key(kind, :preferred_sources)}>
                 <span class="label-text">{gettext("Preferred sources (comma-separated)")}</span>
               </label>
               <input
                 type="text"
-                id={Settings.preferred_sources_key(kind)}
-                name={Settings.preferred_sources_key(kind)}
-                value={@form.values[Settings.preferred_sources_key(kind)]}
+                id={Settings.kind_key(kind, :preferred_sources)}
+                name={Settings.kind_key(kind, :preferred_sources)}
+                value={@form.values[Settings.kind_key(kind, :preferred_sources)]}
                 placeholder={gettext("bluray, webdl")}
                 autocomplete="off"
                 class="input w-full"
               />
             </div>
             <div class="form-control">
-              <label class="label" for={Settings.preferred_terms_key(kind)}>
+              <label class="label" for={Settings.kind_key(kind, :preferred_terms)}>
                 <span class="label-text">{gettext("Preferred terms (comma-separated)")}</span>
               </label>
               <input
                 type="text"
-                id={Settings.preferred_terms_key(kind)}
-                name={Settings.preferred_terms_key(kind)}
-                value={@form.values[Settings.preferred_terms_key(kind)]}
+                id={Settings.kind_key(kind, :preferred_terms)}
+                name={Settings.kind_key(kind, :preferred_terms)}
+                value={@form.values[Settings.kind_key(kind, :preferred_terms)]}
                 placeholder={gettext("proper, repack")}
                 autocomplete="off"
                 class="input w-full"
               />
             </div>
             <div class="form-control">
-              <label class="label" for={Settings.blocked_terms_key(kind)}>
+              <label class="label" for={Settings.kind_key(kind, :blocked_terms)}>
                 <span class="label-text">{gettext("Blocked terms (comma-separated)")}</span>
               </label>
               <input
                 type="text"
-                id={Settings.blocked_terms_key(kind)}
-                name={Settings.blocked_terms_key(kind)}
-                value={@form.values[Settings.blocked_terms_key(kind)]}
+                id={Settings.kind_key(kind, :blocked_terms)}
+                name={Settings.kind_key(kind, :blocked_terms)}
+                value={@form.values[Settings.kind_key(kind, :blocked_terms)]}
                 placeholder={gettext("cam, telesync")}
                 autocomplete="off"
                 class="input w-full"
               />
             </div>
             <div class="form-control">
-              <label class="label" for={Settings.upgrade_cutoff_key(kind)}>
+              <label class="label" for={Settings.kind_key(kind, :upgrade_cutoff)}>
                 <span class="label-text">{gettext("Automatic upgrade cutoff")}</span>
               </label>
               <select
-                id={Settings.upgrade_cutoff_key(kind)}
-                name={Settings.upgrade_cutoff_key(kind)}
+                id={Settings.kind_key(kind, :upgrade_cutoff)}
+                name={Settings.kind_key(kind, :upgrade_cutoff)}
                 class={[
                   "select w-full",
-                  invalid?(@form, Settings.upgrade_cutoff_key(kind)) && "select-error"
+                  invalid?(@form, Settings.kind_key(kind, :upgrade_cutoff)) && "select-error"
                 ]}
-                aria-invalid={invalid?(@form, Settings.upgrade_cutoff_key(kind)) && "true"}
+                aria-invalid={invalid?(@form, Settings.kind_key(kind, :upgrade_cutoff)) && "true"}
                 aria-describedby={
-                  invalid?(@form, Settings.upgrade_cutoff_key(kind)) &&
-                    "#{Settings.upgrade_cutoff_key(kind)}-error"
+                  invalid?(@form, Settings.kind_key(kind, :upgrade_cutoff)) &&
+                    "#{Settings.kind_key(kind, :upgrade_cutoff)}-error"
                 }
               >
-                <option value="" selected={@form.values[Settings.upgrade_cutoff_key(kind)] == ""}>
+                <option
+                  value=""
+                  selected={@form.values[Settings.kind_key(kind, :upgrade_cutoff)] == ""}
+                >
                   {gettext("No cutoff")}
                 </option>
                 <option
                   :for={resolution <- Settings.release_resolutions()}
                   value={resolution}
-                  selected={@form.values[Settings.upgrade_cutoff_key(kind)] == resolution}
+                  selected={@form.values[Settings.kind_key(kind, :upgrade_cutoff)] == resolution}
                 >
                   {resolution}
                 </option>
               </select>
               <.field_error
-                :if={invalid?(@form, Settings.upgrade_cutoff_key(kind))}
-                field={Settings.upgrade_cutoff_key(kind)}
+                :if={invalid?(@form, Settings.kind_key(kind, :upgrade_cutoff))}
+                field={Settings.kind_key(kind, :upgrade_cutoff)}
               />
             </div>
           </div>
@@ -744,10 +724,7 @@ defmodule CinderWeb.SettingsComponents do
 
   def services_for(_group), do: []
 
-  defp fields_for(:download), do: Settings.download_fields()
-
-  defp fields_for(group),
-    do: Settings.config_fields(group) ++ Settings.global_fields(group)
+  defp fields_for(group), do: Settings.definitions(group: group, render: :field)
 
   # phx-value is client-controlled; only known services resolve to a check target.
   def decode_service("tmdb"), do: :tmdb
@@ -770,10 +747,12 @@ defmodule CinderWeb.SettingsComponents do
     end)
   end
 
-  attr :field, :map, required: true
+  attr :field, Definition, required: true
   attr :form, :map, required: true
 
   defp setting_field(assigns) do
+    assigns = assign(assigns, :secret, Definition.secret?(assigns.field))
+
     ~H"""
     <div class="form-control mb-2">
       <label class="label" for={@field.key}>
@@ -781,24 +760,24 @@ defmodule CinderWeb.SettingsComponents do
       </label>
 
       <input
-        :if={not @field.secret}
+        :if={not @secret}
         type="text"
         id={@field.key}
         name={@field.key}
         value={@form.values[@field.key]}
         placeholder={@form.placeholders[@field.key] || @field.placeholder}
-        inputmode={Map.get(@field, :inputmode)}
+        inputmode={@field.inputmode}
         autocomplete="off"
         aria-invalid={invalid?(@form, @field.key) && "true"}
         aria-describedby={
           cond do
-            invalid?(@form, @field.key) and Map.has_key?(@field, :help) ->
+            invalid?(@form, @field.key) and @field.help ->
               "#{@field.key}-help #{@field.key}-error"
 
             invalid?(@form, @field.key) ->
               "#{@field.key}-error"
 
-            Map.has_key?(@field, :help) ->
+            @field.help ->
               "#{@field.key}-help"
 
             true ->
@@ -809,19 +788,19 @@ defmodule CinderWeb.SettingsComponents do
       />
 
       <.field_error
-        :if={not @field.secret and invalid?(@form, @field.key)}
+        :if={not @secret and invalid?(@form, @field.key)}
         field={@field.key}
       />
 
       <p
-        :if={Map.has_key?(@field, :help)}
+        :if={@field.help}
         id={"#{@field.key}-help"}
         class="mt-1 text-xs opacity-70"
       >
-        {path_mapping_help(@field.help)}
+        {SettingsLabels.t(@field.help)}
       </p>
 
-      <div :if={@field.secret}>
+      <div :if={@secret}>
         <input
           type="password"
           id={@field.key}
@@ -866,114 +845,12 @@ defmodule CinderWeb.SettingsComponents do
 
   defp invalid?(form, key), do: MapSet.member?(form.invalid_keys, key)
 
-  defp path_mapping_help(:remote),
-    do: gettext("Path prefix as the download client reports it")
-
-  defp path_mapping_help(:local),
-    do: gettext("The same directory as Cinder sees it")
-
-  defp path_mapping_help(:timezone),
-    do: gettext("IANA name used to decide when an episode's local air date has arrived")
-
   defp field_errors(form, key) do
     if invalid?(form, key), do: [invalid_field_message(key)], else: []
   end
 
-  defp invalid_field_message(key) when key == "import_roots",
-    do: gettext("The top-level folder (/) is not allowed.")
-
-  defp invalid_field_message(key) when key == "anime_group_fallback_delay",
-    do: gettext("Enter a non-negative whole number of hours.")
-
-  defp invalid_field_message(key) when key == "anime_embedded_subtitle_mode",
-    do: gettext("Choose a valid mode and at least one subtitle language when required.")
-
-  defp invalid_field_message("household_timezone"),
-    do: gettext("Enter a valid IANA timezone, such as Europe/Paris.")
-
-  defp invalid_field_message(key) when key in ["torrent_client", "usenet_client"],
-    do: gettext("Choose a listed download client.")
-
-  defp invalid_field_message(key)
-       when key in ["torrent_cleanup_ratio", "torrent_cleanup_seed_hours"],
-       do: gettext("Enter a positive number, or leave blank to disable.")
-
-  defp invalid_field_message(key) when is_binary(key) do
-    cond do
-      library_path_key?(key) ->
-        gettext("The top-level folder (/) is not allowed.")
-
-      # Keyed off the registry `type:`, not the key name, so any future positive-integer field
-      # gets the right message instead of falling through to the generic one.
-      positive_integer_config_key?(key) ->
-        gettext("Enter a positive whole number, or leave blank for the default.")
-
-      true ->
-        invalid_release_field_message(key)
-    end
-  end
-
-  defp positive_integer_config_key?(key),
-    do: Enum.any?(Settings.config_fields(), &(&1.key == key and &1[:type] == :positive_integer))
-
-  defp invalid_release_field_message(key) do
-    if Enum.any?(
-         Settings.library_kinds(),
-         &(&1.video? and key == Settings.upgrade_cutoff_key(&1.kind))
-       ),
-       do: gettext("Choose a cutoff included in the preferred resolutions list."),
-       else: gettext("Enter a number of GB (0 = no limit), or leave blank for the default.")
-  end
-
-  defp invalid_field_label(key) when key == "import_roots",
-    do: gettext("Download folders")
-
-  defp invalid_field_label("anime_embedded_subtitle_mode"),
-    do: gettext("Anime: Embedded subtitles")
-
-  defp invalid_field_label("anime_group_fallback_delay"),
-    do: gettext("Anime: Preferred-group fallback delay")
-
-  defp invalid_field_label("household_timezone"), do: gettext("Household timezone")
-
-  defp invalid_field_label(key) do
-    Enum.find_value(Settings.library_kinds(), &invalid_kind_field_label(key, &1)) ||
-      SettingsLabels.t(Settings.field_label(key))
-  end
-
-  defp invalid_kind_field_label(key, %{kind: kind, label: label, video?: false}) do
-    if key == Settings.library_path_key(kind),
-      do: gettext("%{kind} library folder", kind: SettingsLabels.t(label))
-  end
-
-  defp invalid_kind_field_label(key, %{kind: kind, label: label, video?: true}) do
-    cond do
-      key == Settings.library_path_key(kind) ->
-        gettext("%{kind} library folder", kind: SettingsLabels.t(label))
-
-      key == Settings.anime_library_path_key(kind) ->
-        gettext("Anime %{kind} library folder", kind: SettingsLabels.t(label))
-
-      key == Settings.min_size_key(kind) ->
-        gettext("%{kind}: Min size (GB)", kind: SettingsLabels.t(label))
-
-      key == Settings.max_size_key(kind) ->
-        gettext("%{kind}: Max size (GB)", kind: SettingsLabels.t(label))
-
-      key == Settings.upgrade_cutoff_key(kind) ->
-        gettext("%{kind}: Automatic upgrade cutoff", kind: SettingsLabels.t(label))
-
-      true ->
-        nil
-    end
-  end
-
-  defp library_path_key?(key) do
-    Enum.any?(Settings.library_kinds(), fn %{kind: kind, video?: video?} ->
-      key == Settings.library_path_key(kind) or
-        (video? and key == Settings.anime_library_path_key(kind))
-    end)
-  end
+  # The rejection message comes from the key's setting definition, never from its name.
+  defp invalid_field_message(key), do: SettingsLabels.t(Settings.describe(key).message)
 
   defp secret_placeholder(field, form) do
     cond do

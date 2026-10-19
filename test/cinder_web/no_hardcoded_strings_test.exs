@@ -41,22 +41,27 @@ defmodule CinderWeb.NoHardcodedStringsTest do
              Enum.join(offenders, "\n")
   end
 
-  # The Cinder.Settings labels render via dynamic {@field.label}, so the HEEx scan can't see into
-  # them; CinderWeb.SettingsLabels.t/1 translates them at render and known/0 registers each msgid
-  # for extraction. A label the domain emits but known/0 omits renders untranslated — so assert
-  # the domain's label set is covered.
+  # The Cinder.Settings strings render via dynamic {SettingsLabels.t(...)}, so the HEEx scan can't
+  # see into them; CinderWeb.SettingsLabels.t/1 translates them at render and known/0 expands one
+  # gettext_noop/1 per string for extraction. A string the domain emits but known/0 omits renders
+  # untranslated, so assert every one a setting definition, group, client option or library kind
+  # can hand the view is covered.
   test "every Cinder.Settings label is registered for translation in SettingsLabels" do
     alias Cinder.Settings
+    alias Cinder.Settings.Definition
+
+    definition_strings =
+      for definition <- Settings.definitions(),
+          string <- [definition.label, Definition.message(definition), definition.help],
+          string <- expand(string),
+          do: string
 
     emitted =
       (Enum.map(Settings.groups(), fn {_g, label} -> label end) ++
-         Enum.map(Settings.toggles(), & &1.label) ++
+         definition_strings ++
          Enum.flat_map(Settings.download_client_choices(), fn choice ->
            [choice.label | Enum.map(choice.options, & &1.label)]
          end) ++
-         Enum.map(Settings.config_fields(), & &1.label) ++
-         Enum.map(Settings.path_mapping_fields(), & &1.label) ++
-         Enum.map(Settings.global_fields(), & &1.label) ++
          Enum.map(Settings.library_kinds(), & &1.label) ++
          Enum.map(Settings.library_kinds(), &"#{&1.label} library"))
       |> MapSet.new()
@@ -67,6 +72,10 @@ defmodule CinderWeb.NoHardcodedStringsTest do
            "Settings labels not registered in CinderWeb.SettingsLabels.known/0 (they would render " <>
              "untranslated):\n" <> Enum.join(MapSet.to_list(missing), "\n")
   end
+
+  defp expand(nil), do: []
+  defp expand({template, bindings}), do: [template | Keyword.values(bindings)]
+  defp expand(string), do: [string]
 
   # --- flash scan: a regex over whole-file content, like no_em_dash ---------------------------
 

@@ -35,8 +35,8 @@ defmodule Cinder.LibraryKindTest do
       assert LibraryKind.root_role(kind) == kind
     end
 
-    assert Settings.library_path_key(:ebook) == "books_library_path"
-    assert Settings.library_path_key(:movies) == "movies_library_path"
+    assert Settings.kind_key(:ebook, :library_path) == "books_library_path"
+    assert Settings.kind_key(:movies, :library_path) == "movies_library_path"
     refute :books in LibraryKind.all()
     refute :ebook in Enum.map(LibraryKind.all(), &LibraryKind.root_role/1)
   end
