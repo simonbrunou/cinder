@@ -1784,6 +1784,42 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert has_element?(lv, "#ms-season-#{season.id} button", "Grab")
   end
 
+  # The anime season panel renders the release judge's rows: a release with no stable episode
+  # mapping is listed with its reason and no Grab button, since a grab could link no episode.
+  test "an anime season's panel lists the judge's rows and withholds Grab from unmapped ones",
+       %{conn: conn} do
+    series =
+      series_with_wanted_episode(search_attempts: 0)
+      |> Ecto.Changeset.change(media_profile: :anime)
+      |> Repo.update!()
+
+    season = first_season(series.id)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Test Show", 1 ->
+      {:ok,
+       [
+         %{title: "[Group] Test Show S01E07 [1080p]", size: 2_000_000_000, download_url: "u7"},
+         %{title: "[Group] Test Show S01E01 [1080p]", size: 2_000_000_000, download_url: "u1"}
+       ]}
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts -> {:ok, []} end)
+
+    {:ok, lv, _html} = live_series(conn, series)
+    lv |> element("button[phx-click=tv_manual_search]", "Find a better match") |> render_click()
+
+    html = render_async(lv)
+    assert html =~ "[Group] Test Show S01E07 [1080p]"
+    assert html =~ "stable episode mapping required"
+
+    # One Grab button (`element/3` raises on two), on the mapped release: acceptable rows rank first.
+    assert lv |> element("#ms-season-#{season.id} button", "Grab") |> render() =~
+             ~s(phx-value-index="0")
+
+    assert [_, first_row | _] = String.split(html, ~s(<li class="flex))
+    assert first_row =~ "[Group] Test Show S01E01 [1080p]"
+  end
+
   test "grabbing a better match keeps an available episode live under an upgrade grab", %{
     conn: conn
   } do

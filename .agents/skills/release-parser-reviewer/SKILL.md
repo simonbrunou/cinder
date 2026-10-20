@@ -21,13 +21,18 @@ You have no memory between runs. Orient first, every run.
 3. The subsystem (read only what the diff touches):
    - `lib/cinder/acquisition/parser.ex` — release name -> resolution/source/codec/group/
      language/season/episodes. `lib/cinder/acquisition/release.ex` — the `%Release{}` struct.
-   - `lib/cinder/acquisition/scorer.ex` — `select/2` (movie) + `select_for/4` (TV set-cover).
+   - `lib/cinder/acquisition/scorer.ex` — `select/2` (movie) + `select_for/4` (TV set-cover),
+     `select_for_ids/3` and `verdict_for_ids/2` (anime stable-id cover and its one-release verdict).
    - `lib/cinder/acquisition.ex` — `best_release/3`, `best_releases/4`, `judge_movie/3`,
-     `judge_season/4`, `search`/`search_tv`, the title-match guards behind `title_guard/2`.
+     `judge_season/4`, `best_anime_movie/3`, `judge_anime_movie/3`, `judge_anime_episodes/3`,
+     `search`/`search_tv`, the title-match guards behind `title_guard/2`.
    - `lib/cinder/acquisition/release_judge.ex` — the stages the sweep and the manual panel share
-     (protocol → title guard → language), `kept` (the selection pool, in indexer order) and the
-     language stage (`language_stage/3`). `lib/cinder/acquisition/household_policy.ex` —
-     `for_target/2` and `band/1`.
+     (protocol → title guard → language; anime episodes: protocol → role → language → mapping),
+     `kept` (the selection pool, in indexer order), the private language stage and `pick/1`.
+     `lib/cinder/acquisition/household_policy.ex` — `for_target/2` and `band/1`.
+   - `lib/cinder/acquisition/anime.ex` — the anime searches, `movie_verdict/2`/`select_movie/2`
+     and `episode_verdict/2`/`cover_episodes/3` (the anime selection the judge's `kept` rows are
+     judged by), and `episode_candidates/3` (parse, resolve, freeze the mapping snapshot).
    - `lib/cinder/library.ex` — `stage_movie/1,2` (the movie path), `stage_episodes/3` (the
      standard-TV path: file->episode mapping), `stage_anime_episodes/2` and
      `stage_grab_file_part/3`. Each returns a `Cinder.Library.StagedImport` whose record the
@@ -77,10 +82,14 @@ NOT identity proof: a release must spell the title, a localized title, or an ali
 whole-token run anywhere in the name. The exception is an all-digit title ("2012"), which must
 lead the name so that another release's year can't match it. There is no year requirement, and
 the guard is skipped only when no title yields a usable needle. Do not drop this guard or make it
-a bare substring match. `nfd/1` (`acquisition.ex`)
-must tolerate malformed UTF-8 (a garbled indexer title must not crash or stall the
-season). Language stage (`ReleaseJudge.language_stage/3`): soft Original/Any falls back to
-unfiltered; an explicit pick is strict (parks on no match). `kept` must stay in indexer order:
+a bare substring match. The anime movie search keeps every IMDb-scoped result and the judge's
+`{:anime_movie, context}` title stage drops the ones naming another film (`Anime.names_movie?/2`,
+or the `{:imdb, context}` spelling); its free-text results stay guarded in the search. `nfd/1`
+(`acquisition.ex`) must tolerate malformed UTF-8 (a garbled indexer title must not crash or stall
+the season). Language stage (private in `ReleaseJudge`): soft Original/Any falls back to
+unfiltered; an explicit pick is strict (parks on no match); off for anime under an anime policy.
+An anime episode the cover takes must carry the mapping snapshot the judge froze for its whole
+resolved id list. `kept` must stay in indexer order:
 `Scorer` breaks ties by input order. `HouseholdPolicy.band/1` returns only non-nil keys so it
 can't clobber Scorer defaults.
 

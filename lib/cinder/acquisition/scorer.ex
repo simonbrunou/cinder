@@ -126,16 +126,30 @@ defmodule Cinder.Acquisition.Scorer do
   predicates with `select/2`, so the panel verdict and the auto-pick can never drift.
   """
   def verdict(%Release{} = release, opts \\ []) do
-    {min_size, max_size, preferred, sources, release_blocklist, _preferred_terms, blocked_terms} =
-      rules(opts)
-
     # The TV band is per-episode: a multi-episode release is judged against the episodes it
     # NAMES, a whole-season pack against `opts[:pack_episode_count]`. This approximates
     # select_for's still-wanted k (a release naming already-imported episodes bands wider
     # here than the sweep would — the panel is the manual-override surface, so the lenient
     # direction is acceptable). Without scaling, every pack in the manual-search panel
     # shows {:rejected, :out_of_band} while the auto-pick accepts it.
-    k = episodes_multiplier(release, opts)
+    classify(release, episodes_multiplier(release, opts), opts)
+  end
+
+  @doc """
+  `verdict/2` for a release the stable-id cover takes alone: its size band is scaled by the stable
+  episode ids it resolves to, exactly as `select_for_ids/3` scales it, not by the episodes its name
+  lists. For a release whose ids are non-empty, unique and all still wanted (every release the
+  anime release judge freezes a mapping for), this is `:ok` exactly when
+  `select_for_ids([release], wanted_ids, opts)` matches.
+  """
+  def verdict_for_ids(%Release{} = release, opts \\ []) do
+    ids = release.resolved_episode_ids || []
+    classify(release, max(length(ids), carried(release, opts)), opts)
+  end
+
+  defp classify(release, k, opts) do
+    {min_size, max_size, preferred, sources, release_blocklist, _preferred_terms, blocked_terms} =
+      rules(opts)
 
     cond do
       not within_band?(release, scale_band(min_size, k), scale_band(max_size, k)) ->
@@ -220,8 +234,8 @@ defmodule Cinder.Acquisition.Scorer do
   there — which is exactly why `keep_untagged` is opt-in and only the movie pool passes it.
 
   It is skipped entirely under an `:anime_policy`. The anime pools deliberately never run
-  `Language.filter/3` (`Cinder.Acquisition.Anime.language_pool/2` and `anime_movie_pool/2` return
-  candidates untouched) while still carrying `:preferred_language`/`:original_language` in `opts`,
+  `Language.filter/3` (the release judge turns its language stage off under an anime policy)
+  while still carrying `:preferred_language`/`:original_language` in `opts`,
   so ranking on the parsed name here would demote the untagged releases that make up most of an
   anime pool — letting a crude `MULTI`/`JAPANESE` token outrank resolution and override the
   evidence-based `AnimePreferences` policy that replaced exactly that heuristic.

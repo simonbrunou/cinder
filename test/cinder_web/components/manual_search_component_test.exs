@@ -286,6 +286,10 @@ defmodule CinderWeb.ManualSearchComponentTest do
           row(
             %Release{title: "Unresolved", resolution: "1080p", protocol: :torrent},
             {:rejected, :unsafe_anime_mapping}
+          ),
+          row(
+            %Release{title: "OVA", resolution: "1080p", protocol: :torrent},
+            {:rejected, :special_release}
           )
         ]
       })
@@ -296,8 +300,9 @@ defmodule CinderWeb.ManualSearchComponentTest do
     assert html =~ "awaiting preferred group"
     assert html =~ "publication time required"
     assert html =~ "stable episode mapping required"
+    assert html =~ "special, manual grab only"
 
-    for index <- 0..4, do: assert(html =~ ~s(phx-value-index="#{index}"))
+    for index <- [0, 1, 2, 3, 4, 6], do: assert(html =~ ~s(phx-value-index="#{index}"))
     refute html =~ ~s(phx-value-index="5")
   end
 

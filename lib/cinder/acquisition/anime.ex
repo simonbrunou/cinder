@@ -1,7 +1,6 @@
 defmodule Cinder.Acquisition.Anime do
   @moduledoc "Bounded anime-aware query planning and release aggregation."
 
-  alias Cinder.Acquisition
   alias Cinder.Acquisition.{AnimeParser, AnimePreferences, Release, ReleaseJudge, Scorer}
   alias Cinder.Catalog.{AnimeResolver, Episode, TitleAlias}
   alias Cinder.Download.Intent
@@ -17,7 +16,7 @@ defmodule Cinder.Acquisition.Anime do
   @precedence_rank %{manual: 0, curated: 1, inferred: 2}
   @kind_rank %{scene: 0, licensed: 1, romaji: 2, native: 3, alternative: 4}
 
-  def search_movie(indexer, imdb_id, context, opts) do
+  def search_movie(indexer, imdb_id, context, _opts) do
     free_text_queries =
       Enum.map(search_titles(context), fn title ->
         query = "#{title} #{context.year}"
@@ -30,11 +29,7 @@ defmodule Cinder.Acquisition.Anime do
     id_queries =
       if imdb_id, do: [{:id_scoped, fn -> indexer.search(imdb_id) end}], else: []
 
-    run_queries(
-      id_queries ++ free_text_queries,
-      context,
-      opts[:keep_id_scoped_mismatches] == true
-    )
+    run_queries(id_queries ++ free_text_queries, context)
   end
 
   def search_episodes(_indexer, _context, [], _opts), do: {:ok, [], false}
@@ -43,81 +38,179 @@ defmodule Cinder.Acquisition.Anime do
     context
     |> episode_queries(indexer, wanted_ids)
     |> Enum.take(@max_queries)
-    |> run_queries(context, false)
+    |> run_queries(context)
   end
 
-  def best_episodes(indexer, context, wanted_ids, opts \\ []) do
-    case search_episodes(indexer, context, wanted_ids, opts) do
-      {:ok, releases, failed?} ->
-        result = select_episodes(releases, context, wanted_ids, opts)
-        required_ids = Keyword.get(opts, :required_episode_ids, wanted_ids)
+  @doc """
+  Runs the anime movie queries (`search_movie/4`) and judges every result
+  (`Cinder.Acquisition.ReleaseJudge`, guard `{:anime_movie, context}`). The sweep picks from it
+  (`Cinder.Acquisition.best_anime_movie/3`) and the manual-search panel lists it.
 
-        if failed? and not complete_result?(result, required_ids),
-          do: {:error, :incomplete_search},
-          else: result
+  Returns `{:ok, judged, incomplete?}`, `incomplete?` true when some query failed, or
+  `{:error, term}` when every query failed.
+  """
+  def judge_movie(indexer, imdb_id, context, opts) do
+    with {:ok, releases, incomplete?} <- search_movie(indexer, imdb_id, context, opts),
+         do: {:ok, ReleaseJudge.judge(releases, {:anime_movie, context}, opts), incomplete?}
+  end
 
-      {:error, _reason} = error ->
-        error
+  @doc """
+  Runs the anime episode queries (`search_episodes/4`) and judges every result
+  (`Cinder.Acquisition.ReleaseJudge`, guard `{:anime_episodes, context, wanted_ids}`). The sweep
+  picks from it (`best_episodes/4`) and the manual-search panel lists it.
+
+  Returns `{:ok, judged, incomplete?}`, `incomplete?` true when some query failed, or
+  `{:error, term}` when every query failed.
+  """
+  def judge_episodes(indexer, context, wanted_ids, opts) do
+    with {:ok, releases, incomplete?} <- search_episodes(indexer, context, wanted_ids, opts) do
+      judged = ReleaseJudge.judge(releases, {:anime_episodes, context, wanted_ids}, opts)
+      {:ok, judged, incomplete?}
     end
   end
 
-  def select_episodes(releases, context, wanted_ids, opts \\ []) do
-    candidates =
-      releases
-      |> resolved_candidates(context, wanted_ids, opts)
-      |> filter_policy(opts)
-      |> filter_candidates(opts)
+  @doc """
+  The releases the anime sweep grabs for `wanted_ids`: `judge_episodes/4`'s pick
+  (`Cinder.Acquisition.ReleaseJudge.pick/1`). When some query failed and the pick doesn't cover
+  `opts[:required_episode_ids]` (default `wanted_ids`), `{:error, :incomplete_search}`: the
+  release it needed may be behind the failure.
+  """
+  def best_episodes(indexer, context, wanted_ids, opts \\ []) do
+    with {:ok, judged, incomplete?} <- judge_episodes(indexer, context, wanted_ids, opts) do
+      result = ReleaseJudge.pick(judged)
+      required_ids = Keyword.get(opts, :required_episode_ids, wanted_ids)
 
-    hard_valid =
-      Enum.filter(candidates, fn candidate ->
-        match?({:ok, _selection}, Scorer.select_for_ids([candidate], wanted_ids, opts))
-      end)
+      if incomplete? and not complete_result?(result, required_ids),
+        do: {:error, :incomplete_search},
+        else: result
+    end
+  end
+
+  @doc """
+  What the anime sweep would grab from `releases` already in hand: the release judge's pick over
+  them, as `best_episodes/4` takes it from a search.
+  """
+  def select_episodes(releases, context, wanted_ids, opts \\ []) do
+    releases
+    |> ReleaseJudge.judge({:anime_episodes, context, wanted_ids}, opts)
+    |> ReleaseJudge.pick()
+  end
+
+  @doc """
+  The stable-ID cover the anime sweep runs over the release judge's `kept`: the releases
+  `episode_verdict/2` accepts (and `opts[:candidate_filter]`, the upgrade sweep's, keeps) cover
+  `wanted_ids` (`Cinder.Acquisition.Scorer.select_for_ids/3`), each assignment frozen with its
+  mapping snapshot and the policy it was taken under. Under preferred groups, wanted ids only a
+  release still in its group wait could cover are waited for (`waiting`) rather than covered by
+  another group's release.
+
+  Returns `{:ok, %{assignments: assignments, waiting: waiting}}`,
+  `{:waiting_for_preferred_group, waiting}` or `:no_match`.
+  """
+  def cover_episodes(kept, wanted_ids, opts) do
+    entries =
+      kept
+      |> filter_candidates(opts)
+      |> Enum.flat_map(&timed_entry(&1, episode_status(&1, opts)))
 
     if waits_for_preferred_group?(opts),
-      do: select_with_waiting(hard_valid, context, wanted_ids, opts),
-      else: select_immediately(hard_valid, context, wanted_ids, opts)
+      do: select_with_waiting(entries, wanted_ids, opts),
+      else:
+        select_immediately(
+          for(%{status: :eligible} = entry <- entries, do: entry.release),
+          wanted_ids,
+          opts
+        )
   end
 
+  @doc """
+  Why the sweep would skip one anime episode release the release judge kept (its stable ids all
+  wanted): the anime policy (`Cinder.Acquisition.AnimePreferences.verdict/2`), then the
+  household's quality rules for the release alone, banded by its stable ids as the cover bands it
+  (`Cinder.Acquisition.Scorer.verdict_for_ids/2`), then the group wait. `cover_episodes/3` covers
+  only with releases this calls `:ok`, or waits for one it calls `:awaiting_preferred_group`.
+  """
+  def episode_verdict(release, opts), do: status_verdict(episode_status(release, opts))
+
+  defp episode_status(release, opts) do
+    policy = Keyword.get(opts, :anime_policy)
+
+    with :ok <- policy_verdict(release, policy),
+         :ok <- Scorer.verdict_for_ids(release, opts),
+         do: group_wait(release, policy, opts)
+  end
+
+  @doc """
+  The anime movie the sweep takes from `releases` (the release judge's `kept`): the best-ranked
+  one `movie_verdict/2` accepts, frozen with the policy it was taken under. With none, the
+  earliest end of a group wait (`{:waiting_for_preferred_group, %{retry_at: retry_at}}`), or
+  `:no_match`.
+  """
   def select_movie(releases, opts \\ []) do
-    hard_valid =
-      releases
-      |> Enum.map(&fill_movie_group/1)
-      |> filter_policy(opts)
-      |> Enum.filter(&(Scorer.verdict(&1, opts) == :ok))
+    statuses = releases |> movie_candidates() |> Enum.map(&{&1, movie_status(&1, opts)})
+    eligible = for {release, :eligible} <- statuses, do: release
 
-    result =
-      if waits_for_preferred_group?(opts),
-        do: select_timed_movie(hard_valid, opts),
-        else: Scorer.select(hard_valid, opts)
-
-    cond do
-      result == :no_match and Keyword.get(opts, :incomplete_search?, false) ->
-        {:error, :incomplete_search}
-
-      match?({:ok, %Release{}}, result) ->
-        mark_policy(result, opts)
-
-      true ->
-        result
+    case Scorer.select(eligible, opts) do
+      {:ok, release} -> {:ok, mark_policy(release, opts)}
+      :no_match -> movie_waiting_result(for {_release, {:delayed, at}} <- statuses, do: at)
     end
   end
 
-  @doc "Parses Anime movie traits for manual annotation without filtering operator choices."
-  def manual_movie_candidates(releases, _opts), do: Enum.map(releases, &fill_movie_group/1)
+  @doc """
+  Why the sweep would skip one anime movie release, the release judge's verdict on a row it kept:
+  the anime policy (`Cinder.Acquisition.AnimePreferences.verdict/2`), then the household's quality
+  rules (`Cinder.Acquisition.Scorer.verdict/2`), then the group wait. `select_movie/2` takes only
+  a release this calls `:ok`.
+  """
+  def movie_verdict(release, opts), do: status_verdict(movie_status(release, opts))
 
-  @doc "Resolves manual Anime candidates and freezes exact stable-ID mappings when safe."
-  def manual_episode_candidates(releases, context, wanted_ids, _opts) do
+  defp status_verdict(:eligible), do: :ok
+  defp status_verdict({:delayed, _retry_at}), do: {:rejected, :awaiting_preferred_group}
+  defp status_verdict(:undated), do: {:rejected, :publication_time_required}
+  defp status_verdict({:rejected, _reason} = rejected), do: rejected
+
+  defp movie_status(release, opts) do
+    policy = Keyword.get(opts, :anime_policy)
+
+    with :ok <- policy_verdict(release, policy),
+         :ok <- Scorer.verdict(release, opts),
+         do: group_wait(release, policy, opts)
+  end
+
+  defp policy_verdict(_release, nil), do: :ok
+  defp policy_verdict(release, policy), do: AnimePreferences.verdict(release, policy)
+
+  defp group_wait(_release, nil, _opts), do: :eligible
+
+  defp group_wait(release, policy, opts) do
+    now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
+    AnimePreferences.group_wait(release, policy, now)
+  end
+
+  @doc "Reads each movie release's group from its name when the indexer gave none."
+  def movie_candidates(releases), do: Enum.map(releases, &fill_movie_group/1)
+
+  @doc """
+  Parses each release (coordinates, role, group) and, when it resolves to wanted stable episode
+  ids, freezes its mapping snapshot. A release that resolves to nothing, to an id outside
+  `wanted_ids`, or to a mapping whose snapshot can't be frozen keeps `resolved_episode_ids` and
+  `mapping_snapshot` nil.
+
+  The release judge reads every anime episode release through this, for the sweep and the
+  manual-search panel alike, and a manual grab re-checks its release through it.
+  """
+  def episode_candidates(releases, context, wanted_ids) do
     Enum.map(releases, fn release ->
       parsed = parse_anime_release(release, context)
 
       case resolve_release(parsed, context, wanted_ids) do
-        [resolved] -> freeze_manual_candidate(parsed, resolved, context)
+        [resolved] -> freeze_mapping(parsed, resolved, context)
         [] -> parsed
       end
     end)
   end
 
-  defp freeze_manual_candidate(parsed, resolved, context) do
+  defp freeze_mapping(parsed, resolved, context) do
     snapshot = build_mapping_snapshot(resolved, resolved.resolved_episode_ids, context)
 
     if is_map(snapshot) and
@@ -178,20 +271,6 @@ defmodule Cinder.Acquisition.Anime do
       }
     }
   end
-
-  defp resolved_candidates(releases, context, wanted_ids, opts) do
-    releases
-    |> filter_protocols(Keyword.get(opts, :protocols))
-    |> Enum.map(&parse_anime_release(&1, context))
-    |> Enum.filter(&(&1.role == :story))
-    |> language_pool(opts)
-    |> Enum.flat_map(&resolve_release(&1, context, wanted_ids))
-  end
-
-  defp filter_protocols(releases, protocols) when is_list(protocols),
-    do: Enum.filter(releases, &(&1.protocol in protocols))
-
-  defp filter_protocols(releases, _protocols), do: releases
 
   defp parse_anime_release(release, context) do
     parser_context = %{
@@ -391,22 +470,6 @@ defmodule Cinder.Acquisition.Anime do
 
   defp fill_movie_group(release), do: release
 
-  # With no anime policy the name's language tag decides, by the release judge's rule; a strict
-  # pick that removes every candidate leaves nothing to cover.
-  defp language_pool(candidates, opts) do
-    case Keyword.get(opts, :anime_policy) do
-      nil -> candidates |> ReleaseJudge.language_stage(opts, []) |> elem(1)
-      _policy -> candidates
-    end
-  end
-
-  defp filter_policy(candidates, opts) do
-    case Keyword.get(opts, :anime_policy) do
-      nil -> candidates
-      policy -> Enum.filter(candidates, &AnimePreferences.release_allowed?(&1, policy))
-    end
-  end
-
   defp filter_candidates(candidates, opts) do
     case Keyword.get(opts, :candidate_filter) do
       nil -> candidates
@@ -552,50 +615,24 @@ defmodule Cinder.Acquisition.Anime do
     }
   end
 
-  defp select_immediately([], _context, _wanted_ids, _opts), do: :no_match
-
-  defp select_immediately(candidates, context, wanted_ids, opts) do
-    candidates
-    |> validated_assignments(wanted_ids, context, opts)
-    |> selection_result(nil)
-  end
+  defp select_immediately(candidates, wanted_ids, opts),
+    do: candidates |> assignments(wanted_ids, opts) |> selection_result(nil)
 
   # The group wait (`AnimePreferences.group_wait/3`) only shapes selection when the policy names
   # preferred groups; without one, every candidate is taken on its merits at once.
   defp waits_for_preferred_group?(opts),
     do: match?(%{preferred_groups: [_ | _]}, Keyword.get(opts, :anime_policy))
 
-  defp select_timed_movie(candidates, opts) do
-    entries = timed_entries(candidates, opts)
-    eligible = for %{status: :eligible, release: release} <- entries, do: release
-
-    case Scorer.select(eligible, opts) do
-      {:ok, _release} = selected ->
-        selected
-
-      :no_match ->
-        delayed = Enum.filter(entries, &(&1.status == :delayed))
-        movie_waiting_result(delayed)
-    end
-  end
-
   defp movie_waiting_result([]), do: :no_match
 
-  defp movie_waiting_result(delayed) do
-    retry_at = delayed |> Enum.map(& &1.retry_at) |> Enum.min(DateTime)
-    {:waiting_for_preferred_group, %{retry_at: retry_at}}
-  end
+  defp movie_waiting_result(retry_ats),
+    do: {:waiting_for_preferred_group, %{retry_at: Enum.min(retry_ats, DateTime)}}
 
-  defp select_with_waiting(candidates, context, wanted_ids, opts) do
-    entries =
-      candidates
-      |> timed_entries(opts)
-      |> Enum.filter(&valid_timed_entry_snapshot?(&1, context))
-
+  defp select_with_waiting(entries, wanted_ids, opts) do
     outcomes =
       entries
       |> coverage_components()
-      |> Enum.map(&select_component(&1, context, wanted_ids, opts))
+      |> Enum.map(&select_component(&1, wanted_ids, opts))
 
     assignments = Enum.flat_map(outcomes, & &1.assignments)
     waiting_outcomes = Enum.filter(outcomes, & &1.waiting)
@@ -618,36 +655,21 @@ defmodule Cinder.Acquisition.Anime do
     selection_result(assignments, waiting)
   end
 
-  defp timed_entries(candidates, opts) do
-    policy = Keyword.fetch!(opts, :anime_policy)
-    now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
-    Enum.flat_map(candidates, &timed_entry(&1, AnimePreferences.group_wait(&1, policy, now)))
-  end
-
-  defp timed_entry(release, wait) do
+  # A release the cover may take now, or one in its group wait. Anything else (rejected, or
+  # undated under preferred groups) takes no part in the cover.
+  defp timed_entry(release, status) do
     ids = MapSet.new(release.resolved_episode_ids || [])
 
-    case wait do
+    case status do
       :eligible ->
         [%{release: release, ids: ids, status: :eligible, retry_at: nil}]
 
       {:delayed, retry_at} ->
         [%{release: release, ids: ids, status: :delayed, retry_at: retry_at}]
 
-      :undated ->
+      _skipped ->
         []
     end
-  end
-
-  defp valid_timed_entry_snapshot?(entry, context) do
-    episode_ids =
-      entry.release.resolved_episode_ids
-      |> List.wrap()
-      |> Enum.filter(&MapSet.member?(entry.ids, &1))
-
-    snapshot = build_mapping_snapshot(entry.release, episode_ids, context)
-
-    is_map(snapshot) and Intent.valid_mapping_snapshot?(snapshot, :episode, episode_ids)
   end
 
   defp coverage_components(entries), do: build_components(entries, [])
@@ -679,11 +701,11 @@ defmodule Cinder.Acquisition.Anime do
   defp component_ids(entries),
     do: Enum.reduce(entries, MapSet.new(), &MapSet.union(&1.ids, &2))
 
-  defp select_component(component, context, wanted_ids, opts) do
+  defp select_component(component, wanted_ids, opts) do
     eligible = for %{status: :eligible, release: release} <- component.entries, do: release
     delayed = Enum.filter(component.entries, &(&1.status == :delayed))
     component_wanted = Enum.filter(wanted_ids, &MapSet.member?(component.ids, &1))
-    selected_assignments = validated_assignments(eligible, component_wanted, context, opts)
+    selected_assignments = assignments(eligible, component_wanted, opts)
     covered = selected_assignments |> Enum.flat_map(& &1.episode_ids) |> MapSet.new()
 
     if MapSet.equal?(covered, component.ids) do
@@ -707,48 +729,26 @@ defmodule Cinder.Acquisition.Anime do
     end
   end
 
-  defp validated_assignments([], _wanted_ids, _context, _opts), do: []
+  # Every candidate carries the mapping snapshot the release judge froze for its whole resolved id
+  # list, and `Scorer.select_for_ids/3` only ever assigns a release that whole list, so the
+  # snapshot is the assignment's.
+  defp assignments([], _wanted_ids, _opts), do: []
 
-  defp validated_assignments(candidates, wanted_ids, context, opts) do
+  defp assignments(candidates, wanted_ids, opts) do
     case Scorer.select_for_ids(candidates, wanted_ids, opts) do
       {:ok, selections} ->
-        {accepted, rejected} = assignments_with_rejections(selections, context, opts)
-
-        case rejected do
-          [] ->
-            accepted
-
-          rejected ->
-            candidates
-            |> reject_candidates(rejected)
-            |> validated_assignments(wanted_ids, context, opts)
-        end
+        Enum.map(selections, fn {release, episode_ids} ->
+          %{
+            release: mark_policy(release, opts),
+            episode_ids: episode_ids,
+            mapping_snapshot: release.mapping_snapshot
+          }
+        end)
 
       :no_match ->
         []
     end
   end
-
-  defp reject_candidates(candidates, rejected) do
-    Enum.reject(candidates, fn candidate -> Enum.any?(rejected, &(&1 == candidate)) end)
-  end
-
-  defp assignments_with_rejections(selections, context, opts) do
-    Enum.reduce(selections, {[], []}, fn {release, episode_ids}, {accepted, rejected} ->
-      snapshot = build_mapping_snapshot(release, episode_ids, context)
-
-      if is_map(snapshot) and Intent.valid_mapping_snapshot?(snapshot, :episode, episode_ids) do
-        marked = release |> Map.put(:mapping_snapshot, snapshot) |> mark_policy(opts)
-        assignment = %{release: marked, episode_ids: episode_ids, mapping_snapshot: snapshot}
-        {[assignment | accepted], rejected}
-      else
-        {accepted, [release | rejected]}
-      end
-    end)
-    |> then(fn {accepted, rejected} -> {Enum.reverse(accepted), rejected} end)
-  end
-
-  defp mark_policy({:ok, release}, opts), do: {:ok, mark_policy(release, opts)}
 
   defp mark_policy(%Release{} = release, opts) do
     case Keyword.get(opts, :anime_policy) do
@@ -992,9 +992,9 @@ defmodule Cinder.Acquisition.Anime do
   # Nothing left to ask (no IMDb id and every title over the codepoint limit). Return an empty
   # pool rather than raising on `hd(failures)` — a raise here only gets logged by the poller's
   # isolate, so it would re-run every tick with nothing parked.
-  defp run_queries([], _context, _keep_id_scoped?), do: {:ok, [], false}
+  defp run_queries([], _context), do: {:ok, [], false}
 
-  defp run_queries(queries, context, keep_id_scoped?) do
+  defp run_queries(queries, context) do
     outcomes = Enum.map(queries, &run_query/1)
     successes = for {:ok, releases} <- outcomes, do: releases
     failures = for {:error, reason} <- outcomes, do: reason
@@ -1008,7 +1008,7 @@ defmodule Cinder.Acquisition.Anime do
           successes
           |> List.flatten()
           |> deduplicate()
-          |> apply_title_guard(context, keep_id_scoped?)
+          |> apply_title_guard(context)
 
         {:ok, releases, failures != []}
     end
@@ -1074,39 +1074,33 @@ defmodule Cinder.Acquisition.Anime do
   # parser's scrub instead of a third copy. Only the guard's local view is sanitized; `release.title`
   # itself is never mutated, so it stays intact for display, `mapping_snapshot`, and downstream
   # parsing (which already sanitizes independently via `AnimeParser.parse/2`).
-  defp apply_title_guard(releases, context, keep_id_scoped?) do
+  #
+  # The search guards only its free-text results, which answer a title and may name anything. An
+  # id-scoped result is the indexer's answer for the id: for a movie the release judge's title
+  # guard checks its name (`names_movie?/2`), so the manual-search panel can still list one naming
+  # another film for the operator to override; an episodic one is held to its stable-ID mapping.
+  defp apply_title_guard(releases, context) do
     Enum.filter(releases, fn release ->
-      title = AnimeParser.sanitize(release.title)
-
-      if :id_scoped in release.query_origins,
-        do: keep_id_scoped? or id_scoped_match?(release, title, context),
-        else: free_text_match?(title, context)
+      :id_scoped in release.query_origins or
+        free_text_match?(AnimeParser.sanitize(release.title), context)
     end)
   end
 
   @doc """
-  Whether the title guard would keep this movie release in an automatic search. The manual panel
-  lists id-scoped rows the guard rejects (so the operator can override) and uses this to mark them.
+  The anime movie title guard for one release. A free-text result has to lead with the title or an
+  alias and carry the exact year. An IMDb-scoped one is scope, not identity proof (#624, like #623
+  for the standard path): an indexer can ignore the id and answer with keyword matches, so it still
+  has to lead with the title or an alias (native and romaji titles live there), with no year
+  requirement. `Cinder.Acquisition.title_guard/2` also keeps an IMDb-scoped one the standard guard
+  keeps, and is this guard's one caller, for the release judge.
   """
-  def title_guard_keeps?(%Release{} = release, context) do
+  def names_movie?(%Release{} = release, context) do
     title = AnimeParser.sanitize(release.title)
 
-    if :id_scoped in release.query_origins,
-      do: id_scoped_match?(release, title, context),
+    if :id_scoped in (release.query_origins || []),
+      do: known_title_match?(title, context),
       else: free_text_match?(title, context)
   end
-
-  # An IMDb-scoped movie result is scope, not identity proof (#624, like #623 for the standard
-  # path): an indexer can ignore the id and answer with keyword matches. It must still spell the
-  # movie's title, a localized title or an alias (native/romaji titles live there), by the same
-  # lenient whole-token guard the standard path uses — no exact-year requirement, and a movie with
-  # no usable title keeps its id-scoped results. Episodic results keep the exemption.
-  defp id_scoped_match?(release, release_title, %{kind: :movie} = context) do
-    Acquisition.title_guard([release], {:imdb, context}) != [] or
-      known_title_match?(release_title, context)
-  end
-
-  defp id_scoped_match?(_release, _release_title, _context), do: true
 
   defp free_text_match?(release_title, %{kind: :movie} = context) do
     known_title_match?(release_title, context) and exact_movie_year?(release_title, context.year)

@@ -10,10 +10,11 @@ downloads it and imports it into the library a media server reads.
 **Release judge**:
 The decision that accepts or rejects each release one search returned for one request target,
 always with a named reason, and ranks the accepted ones. The manual-search panel lists it. For a
-movie or a TV season automatic selection takes its pick from the same judge, so the two can't
-disagree, and it also names the stage that dropped a release before scoring: no download client
-for its protocol, a name that isn't the target's, or the audio pick. Books have no automatic
-selection.
+movie, a TV season or an anime title automatic selection takes its pick from the same judge, so
+the two can't disagree, and it also names the stage that dropped a release before scoring: no
+download client for its protocol, a name that isn't the target's, the audio pick, or for anime
+episodes a release that isn't a story episode or doesn't map to the wanted episodes. Books have
+no automatic selection.
 _Avoid_: filter, matcher, release decision
 
 **Household policy**:

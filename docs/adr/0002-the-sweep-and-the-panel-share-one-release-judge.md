@@ -8,9 +8,13 @@ re-simulated the sweep to decide its language badges. So for movies and TV seaso
 judge (`Cinder.Acquisition.ReleaseJudge`) runs every stage once, in one order, and returns a row
 for each release: kept, or the stage that dropped it, plus the verdict and language fact the panel
 shows. The movie sweep takes its pick from the record, the TV sweep runs its set-cover over the
-record's kept releases, and the panel renders the rows (#746).
+record's kept releases, and the panel renders the rows (#746). The anime movie and episode
+searches joined it in #775: their sweeps take the pick from the same record the panel renders.
 
-The judge is pure: it takes parsed releases, and `Cinder.Acquisition` keeps the indexer searches.
+The judge never searches: it takes the releases a search returned, and `Cinder.Acquisition` and
+`Cinder.Acquisition.Anime` keep the indexer searches. Under an anime policy it reads the clock
+once, so the group-wait verdicts and the pick agree. For anime episodes the judge first parses
+each release and freezes its stable-id mapping, because its role and mapping stages read them.
 The sweep and the panel still search differently for a season: both add alternate-numbered
 seasons, but from different parts of the numbering bridge, and only the panel drops duplicates and
 freezes bridged episode ids. So the judging is shared and the inputs are not.
@@ -21,11 +25,19 @@ freezes bridged episode ids. So the judging is shared and the inputs are not.
   because the two searches differ, the query would carry an automatic/manual switch.
 - A stage list as data, with one shape per target kind and a separate panel projection: three
   shapes don't need it yet, and it would add a "release decision" term next to the release judge.
+  #775 took a stage list once the anime kinds made five guards: one list for anime episodes, which
+  need stages of their own (role, mapping), and one for every other guard. It still has no
+  separate projection and no new term.
 - Keeping the panel's simulation of the sweep: it had drifted twice on the language badge alone.
 
 ## Consequences
 
-The panel's verdict column is unchanged: only the IMDb-scoped guard says "title doesn't match",
-because the Title.Year and season guards also reject for year evidence. A TV row's verdict still
-bands a pack by an approximate episode count, while the set-cover bands by the still-wanted count.
-The anime movie and episode searches keep their own composition until #775.
+The panel's verdict column is unchanged: only the IMDb-scoped and anime movie guards say "title
+doesn't match", because the Title.Year and season guards also reject for year evidence. A TV row's
+verdict still bands a pack by an approximate episode count, while the set-cover bands by the
+still-wanted count.
+
+An anime row the judge keeps carries the anime selection's own verdict: the anime policy, then the
+quality rules, then the group wait. The group wait stays a verdict rather than a stage that drops
+rows, because the episode cover needs the delayed releases, in indexer order, to know which
+episodes to wait for.

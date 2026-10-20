@@ -2,6 +2,7 @@ defmodule Cinder.AcquisitionTest do
   use ExUnit.Case, async: true
 
   import Mox
+  import Cinder.AnimeFixtures, only: [neutral_anime_policy: 1]
 
   alias Cinder.Acquisition
   alias Cinder.Acquisition.Anime
@@ -76,19 +77,7 @@ defmodule Cinder.AcquisitionTest do
   end
 
   # A resolved anime policy that contradicts nothing, so only the group wait decides.
-  defp anime_policy(overrides) do
-    Map.merge(
-      %{
-        required_audio_languages: [],
-        subtitle_languages: [],
-        embedded_subtitle_mode: :allow,
-        preferred_groups: [],
-        blocked_groups: [],
-        group_fallback_delay: 86_400
-      },
-      Map.new(overrides)
-    )
-  end
+  defp anime_policy(overrides), do: neutral_anime_policy(overrides)
 
   test "best_anime_releases/3 exposes stable-ID selection without changing the TV poller API" do
     context = %{

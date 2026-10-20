@@ -1,19 +1,22 @@
 defmodule CinderWeb.ManualSearchComponent do
   @moduledoc """
   Interactive manual-search panel, shared by the movie and TV views. Queries the indexer
-  asynchronously and lists every release with its scorer verdict, letting the user grab any one
-  (overriding the band/blocklist, and for a movie found by IMDb id the title guard: a release
-  naming none of its titles is flagged "title doesn't match"). Grabs are forwarded to the parent
+  asynchronously and lists every release with the release judge's verdict, letting the user grab
+  any one (overriding the band/blocklist, an anime policy, and for a movie found by IMDb id the
+  title guard: a release naming none of its titles is flagged "title doesn't match"), except a
+  release with no client for its protocol or, for anime episodes, no stable episode mapping.
+  Grabs are forwarded to the parent
   LiveView, which owns the Catalog writes, via
   `send(self(), {:manual_grab, mode, target, release})`. For an
   `:available` movie target a "Replace current file?" confirm gates the grab. An empty result
   shows "No releases found." TV season searches include wanted and already-available episodes,
   so fully imported seasons can open the panel for an operator-chosen upgrade.
 
-  The rows are the sweep's own release judge (`Cinder.Acquisition.ReleaseJudge`), so the panel
-  renders what automatic selection decided rather than re-deriving it. Every row carries a
-  language badge, untagged included: untagged means English by scene convention and is precisely
-  the row an audio pick decides. A release the sweep rejects on language is badged `warning`
+  The rows are the sweep's own release judge (`Cinder.Acquisition.ReleaseJudge`), anime titles
+  included, so the panel renders what automatic selection decided rather than re-deriving it.
+  Outside an anime policy, every row carries a language badge, untagged included: untagged means
+  English by scene convention and is precisely the row an audio pick decides. A release the
+  sweep rejects on language is badged `warning`
   (icon + `sr-only` text, not colour alone) and ranked below one that satisfies the pick, but
   never hidden: the panel is the override surface.
 
@@ -131,24 +134,24 @@ defmodule CinderWeb.ManualSearchComponent do
 
   defp search(:anime, :movie, target, _season, opts) do
     with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()),
-         {:ok, pairs} <-
-           Acquisition.list_anime_movie_releases(
+         {:ok, judged, _incomplete?} <-
+           Acquisition.judge_anime_movie(
              target.imdb_id,
              Catalog.movie_acquisition_context(target),
              opts ++ [anime_policy: policy]
            ),
-         do: {:ok, anime_rows(pairs)}
+         do: {:ok, judged.rows}
   end
 
   defp search(:anime, :tv, target, season, opts) do
     with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()),
-         {:ok, pairs} <-
-           Acquisition.list_anime_episode_releases(
+         {:ok, judged, _incomplete?} <-
+           Acquisition.judge_anime_episodes(
              Catalog.anime_series_acquisition_context(target),
              manual_episode_ids(target, season),
              opts ++ [anime_policy: policy]
            ),
-         do: {:ok, anime_rows(pairs)}
+         do: {:ok, judged.rows}
   end
 
   defp search(:standard, :movie, target, _season, opts) do
@@ -176,14 +179,6 @@ defmodule CinderWeb.ManualSearchComponent do
     with {:ok, judged} <- Acquisition.judge_season(target, season, numbering, opts),
          do: {:ok, judged.rows}
   end
-
-  # The anime searches don't go through the release judge yet (#775). Anime resolves audio through
-  # its policy, never the name's tag, so no row carries a language fact.
-  defp anime_rows(pairs),
-    do:
-      Enum.map(pairs, fn {release, verdict} ->
-        %{release: release, verdict: verdict, audio: nil}
-      end)
 
   defp manual_episode_ids(series, season_number) do
     series.id
@@ -358,6 +353,8 @@ defmodule CinderWeb.ManualSearchComponent do
 
   defp verdict_reason({:rejected, :unsafe_anime_mapping}),
     do: gettext("stable episode mapping required")
+
+  defp verdict_reason({:rejected, :special_release}), do: gettext("special, manual grab only")
 
   defp verdict_reason({:rejected, :conflicting_standard_numbering}),
     do: gettext("conflicting episode numbering")

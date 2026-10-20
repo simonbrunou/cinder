@@ -2,6 +2,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
   use ExUnit.Case, async: true
 
   import Mox
+  import Cinder.AnimeFixtures, only: [neutral_anime_policy: 1]
 
   alias Cinder.Acquisition
   alias Cinder.Acquisition.Anime
@@ -111,7 +112,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert :no_match = Anime.select_episodes([release], context, [2], [])
 
     assert [%Release{mapping_snapshot: nil, resolved_episode_ids: nil}] =
-             Anime.manual_episode_candidates([release], context, [2], [])
+             Anime.episode_candidates([release], context, [2])
   end
 
   test "a longer canonical title outranks a blocked retained alias prefix" do
@@ -149,7 +150,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     release = Release.new(raw("OVA 2 [1080p]", "typed-special-without-title"))
 
     assert [%Release{mapping_snapshot: nil, resolved_episode_ids: nil}] =
-             Anime.manual_episode_candidates([release], context, [11], [])
+             Anime.episode_candidates([release], context, [11])
   end
 
   test "automatic and manual standard selection preserve bounded metadata and checksums" do
@@ -181,7 +182,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       assert Intent.valid_mapping_snapshot?(snapshot, :episode, [11])
 
       assert [%Release{mapping_snapshot: manual_snapshot, resolved_episode_ids: [11]}] =
-               Anime.manual_episode_candidates([release], context, [11], [])
+               Anime.episode_candidates([release], context, [11])
 
       assert Intent.valid_mapping_snapshot?(manual_snapshot, :episode, [11])
     end
@@ -218,7 +219,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       assert :no_match = Anime.select_episodes([release], context, [11], [])
 
       assert [%Release{mapping_snapshot: nil, resolved_episode_ids: nil}] =
-               Anime.manual_episode_candidates([release], context, [11], [])
+               Anime.episode_candidates([release], context, [11])
     end
   end
 
@@ -236,7 +237,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       assert :no_match = Anime.select_episodes([release], context, [1, 2, 3], [])
 
       assert [%Release{mapping_snapshot: nil, resolved_episode_ids: nil}] =
-               Anime.manual_episode_candidates([release], context, [1, 2, 3], [])
+               Anime.episode_candidates([release], context, [1, 2, 3])
     end
   end
 
@@ -261,7 +262,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       release = Release.new(raw(title, title))
 
       assert [%Release{mapping_snapshot: manual_snapshot, resolved_episode_ids: [11]}] =
-               Anime.manual_episode_candidates([release], context, [11], [])
+               Anime.episode_candidates([release], context, [11])
 
       assert Intent.valid_mapping_snapshot?(manual_snapshot, :episode, [11])
     end
@@ -344,7 +345,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert selected.download_url == "valid-lower-ranked-snapshot"
 
     assert [%Release{mapping_snapshot: nil, resolved_episode_ids: nil}] =
-             Anime.manual_episode_candidates([release], context, [11], [])
+             Anime.episode_candidates([release], context, [11])
 
     now = ~U[2026-08-05 12:00:00Z]
 
@@ -548,7 +549,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       assert :no_match = Anime.select_episodes([malformed], context, [11, 12], [])
 
       assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
-               Anime.manual_episode_candidates([malformed], context, [11, 12], [])
+               Anime.episode_candidates([malformed], context, [11, 12])
     end
 
     for {title, url} <- [
@@ -559,7 +560,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       assert :no_match = Anime.select_episodes([malformed], context, [11], [])
 
       assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
-               Anime.manual_episode_candidates([malformed], context, [11], [])
+               Anime.episode_candidates([malformed], context, [11])
     end
   end
 
@@ -719,7 +720,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
              }
            ]
 
-    assert [manual] = Anime.manual_episode_candidates([release], context, [17], [])
+    assert [manual] = Anime.episode_candidates([release], context, [17])
     assert manual.coordinates == [scoped_coordinate]
     assert manual.resolved_episode_ids == [17]
     assert manual.mapping_snapshot == assignment.mapping_snapshot
@@ -730,7 +731,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert :no_match = Anime.select_episodes([incomplete_batch], context, [17], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
-             Anime.manual_episode_candidates([incomplete_batch], context, [17], [])
+             Anime.episode_candidates([incomplete_batch], context, [17])
   end
 
   test "a scoped range cannot cross into a different subgroup title" do
@@ -766,7 +767,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert :no_match = Anime.select_episodes([release], context, [1, 2], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
-             Anime.manual_episode_candidates([release], context, [1, 2], [])
+             Anime.episode_candidates([release], context, [1, 2])
 
     safe_context =
       update_in(context.mappings, fn mappings ->
@@ -789,7 +790,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       assert :no_match = Anime.select_episodes([malformed], safe_context, [1, 2], [])
 
       assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
-               Anime.manual_episode_candidates([malformed], safe_context, [1, 2], [])
+               Anime.episode_candidates([malformed], safe_context, [1, 2])
     end
 
     malicious_context = %{
@@ -809,7 +810,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert :no_match = Anime.select_episodes([malicious], malicious_context, [3], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
-             Anime.manual_episode_candidates([malicious], malicious_context, [3], [])
+             Anime.episode_candidates([malicious], malicious_context, [3])
 
     assert {:ok, %{assignments: [%{release: selected}]}} =
              Anime.select_episodes([release], safe_context, [1, 2], [])
@@ -878,7 +879,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert :no_match = Anime.select_episodes([unsafe], context, [2, 3, 4, 5], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
-             Anime.manual_episode_candidates([unsafe], context, [2, 3, 4, 5], [])
+             Anime.episode_candidates([unsafe], context, [2, 3, 4, 5])
 
     safe = Release.new(raw("[DB] Show - 05 [1080p]", "safe-capped-context"))
 
@@ -932,7 +933,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert :no_match = Anime.select_episodes([unsafe], context, [2], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
-             Anime.manual_episode_candidates([unsafe], context, [2], [])
+             Anime.episode_candidates([unsafe], context, [2])
   end
 
   test "an omitted longer alias blocks the canonical title at the parser cap" do
@@ -967,7 +968,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert :no_match = Anime.select_episodes([unsafe], context, [2, 3, 4, 5], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
-             Anime.manual_episode_candidates([unsafe], context, [2, 3, 4, 5], [])
+             Anime.episode_candidates([unsafe], context, [2, 3, 4, 5])
 
     unsafe_standard =
       Release.new(raw("[DB] Foo - The Arc S01E02 [1080p]", "blocked-standard-prefix"))
@@ -975,7 +976,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert :no_match = Anime.select_episodes([unsafe_standard], context, [2], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
-             Anime.manual_episode_candidates([unsafe_standard], context, [2], [])
+             Anime.episode_candidates([unsafe_standard], context, [2])
 
     safe = Release.new(raw("[DB] A1 - 05 [1080p]", "safe-canonical-blocker-context"))
 
@@ -1074,7 +1075,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert Intent.valid_mapping_snapshot?(selected.mapping_snapshot, :episode, [5])
 
     assert [%{resolved_episode_ids: [5], mapping_snapshot: manual_snapshot}] =
-             Anime.manual_episode_candidates([release], context, [5], [])
+             Anime.episode_candidates([release], context, [5])
 
     assert manual_snapshot == selected.mapping_snapshot
   end
@@ -1120,7 +1121,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
              Anime.select_episodes([release], context, [17], [])
 
     assert [%{resolved_episode_ids: [17], mapping_snapshot: snapshot}] =
-             Anime.manual_episode_candidates([release], context, [17], [])
+             Anime.episode_candidates([release], context, [17])
 
     assert Intent.valid_mapping_snapshot?(snapshot, :episode, [17])
   end
@@ -1520,7 +1521,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
     assert :no_match = Anime.select_episodes([release], context, [11, 12], opts)
 
-    assert [manual] = Anime.manual_episode_candidates([release], context, [11, 12], opts)
+    assert [manual] = Anime.episode_candidates([release], context, [11, 12])
     assert manual.resolved_episode_ids == [11, 12]
     assert manual.mapping_snapshot["version"] == 3
     assert manual.mapping_snapshot["reserved_episode_ids"] == [11, 12]
@@ -1534,7 +1535,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert :no_match = Anime.select_episodes([invalid], context, [11, 12], opts)
 
     assert [%Release{title: title}] =
-             Anime.manual_episode_candidates([invalid], context, [11, 12], opts)
+             Anime.episode_candidates([invalid], context, [11, 12])
 
     assert title =~ "invalid-date"
   end
@@ -1736,19 +1737,8 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     }
   end
 
-  defp policy(overrides) do
-    Map.merge(
-      %{
-        required_audio_languages: [],
-        subtitle_languages: [],
-        embedded_subtitle_mode: :allow,
-        preferred_groups: [],
-        blocked_groups: [],
-        group_fallback_delay: 0
-      },
-      Map.new(overrides)
-    )
-  end
+  # The neutral policy with no group wait, unless a test sets one.
+  defp policy(overrides), do: neutral_anime_policy([group_fallback_delay: 0] ++ overrides)
 
   defp snapshot_mapping(mapping) do
     %{

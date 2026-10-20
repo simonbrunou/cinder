@@ -627,8 +627,8 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert Catalog.get_movie_by_id(movie.id).status == :upgrading
   end
 
-  # The anime search still returns `{release, verdict}` pairs (#775); the panel turns them into the
-  # same rows the release judge builds, with no language badge.
+  # The anime movie panel renders the release judge's rows. The anime policy judges audio from
+  # release evidence, so no row carries a language badge.
   test "an anime movie's panel lists its releases as rows", %{conn: conn} do
     movie =
       movie_fixture(%{

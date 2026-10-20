@@ -1,6 +1,8 @@
 defmodule Cinder.Acquisition.AnimePreferencesTest do
   use Cinder.DataCase, async: true
 
+  import Cinder.AnimeFixtures, only: [neutral_anime_policy: 1]
+
   alias Cinder.Acquisition.{AnimePreferences, Language, Release}
   alias Cinder.Catalog.Series
   alias Cinder.Download.Intent
@@ -105,14 +107,11 @@ defmodule Cinder.Acquisition.AnimePreferencesTest do
   end
 
   test "a required chi subtitle setting accepts a release whose subtitles parse as zh (#519)" do
-    policy = %{
-      required_audio_languages: [],
-      subtitle_languages: AnimePreferences.normalize_languages(["chi"]),
-      embedded_subtitle_mode: :require,
-      preferred_groups: [],
-      blocked_groups: [],
-      group_fallback_delay: 86_400
-    }
+    policy =
+      neutral_anime_policy(
+        subtitle_languages: AnimePreferences.normalize_languages(["chi"]),
+        embedded_subtitle_mode: :require
+      )
 
     assert policy.subtitle_languages == ["zh"]
 

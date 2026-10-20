@@ -106,9 +106,14 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
 
     expect(IndexerMock, :search_movie_query, 3, fn _query, categories: [5070] -> {:ok, []} end)
 
-    assert {:ok, releases, false} = Anime.search_movie(IndexerMock, "tt1", context, [])
+    # The release judge's title stage holds the IMDb-scoped guard; the search keeps every result.
+    assert {:ok, judged, false} = Acquisition.judge_anime_movie("tt1", context, [])
 
-    assert Enum.map(releases, & &1.download_url) == ["romaji-no-year", "native", "canonical-v2"]
+    assert Enum.map(judged.kept, & &1.download_url) == [
+             "romaji-no-year",
+             "native",
+             "canonical-v2"
+           ]
   end
 
   test "a movie with no usable title or alias keeps its id-scoped results (#624)" do
@@ -120,7 +125,7 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
 
     expect(IndexerMock, :search_movie_query, fn _query, categories: [5070] -> {:ok, []} end)
 
-    assert {:ok, [release], false} = Anime.search_movie(IndexerMock, "tt1", context, [])
+    assert {:ok, %{kept: [release]}, false} = Acquisition.judge_anime_movie("tt1", context, [])
     assert release.download_url == "kept"
   end
 
@@ -137,10 +142,44 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
 
     expect(IndexerMock, :search_movie_query, fn _query, categories: [5070] -> {:ok, []} end)
 
-    assert {:ok, rows} = Acquisition.list_anime_movie_releases("tt1", context, [])
+    assert {:ok, judged, false} = Acquisition.judge_anime_movie("tt1", context, [])
 
-    verdicts = Map.new(rows, fn {release, verdict} -> {release.download_url, verdict} end)
+    verdicts = Map.new(judged.rows, &{&1.release.download_url, &1.verdict})
     assert verdicts == %{"right-film" => :ok, "other-film" => {:rejected, :title_mismatch}}
+    assert Enum.map(judged.kept, & &1.download_url) == ["right-film"]
+  end
+
+  test "the anime movie sweep never takes the id-scoped row the panel lists as title_mismatch" do
+    context = movie_context([])
+
+    expect(IndexerMock, :search, fn "tt1" ->
+      {:ok, [raw("[Group] Weathering With You (2019) [1080p]", "other-film")]}
+    end)
+
+    expect(IndexerMock, :search_movie_query, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert :no_match = Acquisition.best_anime_movie("tt1", context, [])
+  end
+
+  test "an anime movie search with a failed query can't call a miss no match" do
+    context = movie_context([])
+
+    expect(IndexerMock, :search, fn "tt1" -> {:error, :timeout} end)
+    expect(IndexerMock, :search_movie_query, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:error, :incomplete_search} = Acquisition.best_anime_movie("tt1", context, [])
+  end
+
+  test "an anime movie search with a failed query still takes what it found" do
+    context = movie_context([])
+
+    expect(IndexerMock, :search, fn "tt1" -> {:error, :timeout} end)
+
+    expect(IndexerMock, :search_movie_query, fn _query, categories: [5070] ->
+      {:ok, [raw("[Group] Your Name (2016) [1080p]", "found")]}
+    end)
+
+    assert {:ok, %{download_url: "found"}} = Acquisition.best_anime_movie("tt1", context, [])
   end
 
   test "TVDB search remains ID-scoped and propagates canonical title and season" do

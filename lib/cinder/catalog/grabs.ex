@@ -109,7 +109,7 @@ defmodule Cinder.Catalog.Grabs do
 
   defp do_manual_grab_anime_tv(%{context: context, candidate_ids: candidate_ids}, release) do
     [current_release] =
-      Anime.manual_episode_candidates([release], context, candidate_ids, [])
+      Anime.episode_candidates([release], context, candidate_ids)
 
     with true <- safe_anime_mapping?(current_release),
          true <-

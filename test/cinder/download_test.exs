@@ -9,6 +9,7 @@ defmodule Cinder.DownloadTest do
   alias Cinder.Download
   alias Cinder.Repo
 
+  import Cinder.AnimeFixtures, only: [neutral_anime_policy: 1]
   import Cinder.CatalogFixtures
 
   setup :verify_on_exit!
@@ -220,14 +221,7 @@ defmodule Cinder.DownloadTest do
 
     assert {:waiting_for_preferred_group, %{retry_at: ~U[2026-07-14 12:00:00Z]}} =
              Anime.select_movie([fallback],
-               anime_policy: %{
-                 required_audio_languages: [],
-                 subtitle_languages: [],
-                 embedded_subtitle_mode: :allow,
-                 preferred_groups: ["trusted"],
-                 blocked_groups: [],
-                 group_fallback_delay: 86_400
-               },
+               anime_policy: neutral_anime_policy(preferred_groups: ["trusted"]),
                now: now
              )
 

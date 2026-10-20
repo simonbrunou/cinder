@@ -526,6 +526,57 @@ defmodule Cinder.Acquisition.ScorerTest do
     end
   end
 
+  describe "verdict_for_ids/2" do
+    # The anime panel shows this verdict and the anime sweep filters by it before its cover, so
+    # for a release whose ids are all wanted it has to agree with the cover taking it alone, on
+    # every rule and whatever episode list the release's name parses to.
+    test "is :ok exactly when the stable-id cover takes the release alone" do
+      opts = [
+        min_size: 1 * @gb,
+        max_size: 3 * @gb,
+        preferred_resolutions: ["1080p"],
+        preferred_sources: ["webdl"],
+        release_blocklist: ["blocked"],
+        blocked_terms: ["cam"]
+      ]
+
+      for ids <- [[11], [11, 12], [11, 12, 13, 14]],
+          episodes <- [nil, [1], [1, 2, 3, 4, 5, 6]],
+          season <- [nil, 1],
+          size <- [nil, div(@gb, 2), 2 * @gb, 5 * @gb, 11 * @gb, 13 * @gb],
+          title <- ["fine", "blocked", "a cam rip"],
+          resolution <- ["1080p", "720p"],
+          source <- [nil, "webdl", "hdtv"],
+          pack_count <- [nil, 6] do
+        release =
+          release(
+            title: title,
+            resolved_episode_ids: ids,
+            episodes: episodes,
+            season: season,
+            size: size,
+            resolution: resolution,
+            source: source
+          )
+
+        opts = if pack_count, do: [{:pack_episode_count, pack_count} | opts], else: opts
+        taken? = match?({:ok, _}, Scorer.select_for_ids([release], ids, opts))
+
+        assert Scorer.verdict_for_ids(release, opts) == :ok == taken?, inspect(release)
+      end
+    end
+
+    test "bands by the stable ids, not the episodes the name lists" do
+      release =
+        release(resolved_episode_ids: [11, 12, 13], episodes: [1], resolution: "1080p")
+
+      assert Scorer.verdict_for_ids(%{release | size: 5 * @gb}, max_size: 2 * @gb) == :ok
+
+      assert Scorer.verdict(%{release | size: 5 * @gb}, max_size: 2 * @gb) ==
+               {:rejected, :out_of_band}
+    end
+  end
+
   describe "source_rank/2 (public for Library.Upgrade)" do
     test "index in the preference list; nil/unlisted sorts last" do
       assert Scorer.source_rank("bluray", ["bluray", "webdl"]) == 0
