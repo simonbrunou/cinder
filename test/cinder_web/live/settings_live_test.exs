@@ -40,7 +40,7 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#movies_anime_library_path-help", "Leave blank")
     assert has_element?(lv, "#books_library_path[name=books_library_path]")
     assert has_element?(lv, "#audiobooks_library_path[name=audiobooks_library_path]")
-    assert has_element?(lv, "button[phx-value-service=ebook_library]", "Test Ebooks library")
+    assert has_element?(lv, "button[phx-value-target=ebook_library]", "Test Ebooks library")
     # Positive control: Plex section inputs do render here, so the refutes below are live.
     assert has_element?(lv, "#movies_plex_section")
 
@@ -321,6 +321,38 @@ defmodule CinderWeb.SettingsLiveTest do
 
     assert has_element?(lv, "#settings-group-migration", "OK")
     assert has_element?(lv, "#settings-group-migration", "Unreachable")
+  end
+
+  test "the Books group tests each metadata provider", %{conn: conn} do
+    stub(Cinder.Books.PrimaryMetadataMock, :provider, fn -> :openlibrary end)
+    stub(Cinder.Books.SecondaryMetadataMock, :provider, fn -> :hardcover end)
+    stub(Cinder.Books.PrimaryMetadataMock, :health, fn -> :ok end)
+    stub(Cinder.Books.SecondaryMetadataMock, :health, fn -> {:error, :econnrefused} end)
+
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    assert has_element?(
+             lv,
+             "#settings-group-books button[phx-value-target=openlibrary]",
+             "Test Open Library"
+           )
+
+    lv |> element("#settings-group-books button", "Test Open Library") |> render_click()
+    assert has_element?(lv, "#settings-group-books", "OK")
+    refute has_element?(lv, "#settings-group-books", "Unreachable")
+
+    lv |> element("#settings-group-books button", "Test Hardcover") |> render_click()
+    assert has_element?(lv, "#settings-group-books", "Unreachable")
+  end
+
+  test "a Test event for an id no probe target has changes nothing", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+    before = render(lv)
+
+    for forged <- ["nope", "check_all", %{"x" => 1}, ["tmdb"]] do
+      render_hook(lv, "test", %{"target" => forged})
+      assert render(lv) == before
+    end
   end
 
   test "shows a reachable SABnzbd configuration warning", %{conn: conn} do

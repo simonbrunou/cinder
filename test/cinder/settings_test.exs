@@ -1502,17 +1502,17 @@ defmodule Cinder.SettingsTest do
     end
   end
 
-  describe "Health.check_service/1" do
+  describe "Health.check/1" do
     test "probes the configured impl for each service" do
       stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
       stub(Cinder.Acquisition.IndexerMock, :health, fn -> {:error, :down} end)
       stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)
       stub(Cinder.Download.ClientMock, :health, fn -> :ok end)
 
-      assert Health.check_service(:tmdb) == :ok
-      assert Health.check_service(:indexer) == {:error, :down}
-      assert Health.check_service(:media_server) == :ok
-      assert Health.check_service({:download, :torrent}) == :ok
+      assert Health.check("tmdb") == :ok
+      assert Health.check("indexer") == {:error, :down}
+      assert Health.check("media_server") == :ok
+      assert Health.check("torrent") == :ok
     end
   end
 

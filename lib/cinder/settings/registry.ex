@@ -590,7 +590,7 @@ defmodule Cinder.Settings.Registry do
              Enum.flat_map(@download_client_choices, fn choice ->
                Enum.map(choice.options, & &1.label)
              end) ++
-             Enum.flat_map(@library_kinds, &[&1.label, "#{&1.label} library"]))
+             Enum.map(@library_kinds, & &1.label))
           |> Enum.flat_map(fn
             nil -> []
             {template, bindings} -> [template | Keyword.values(bindings)]

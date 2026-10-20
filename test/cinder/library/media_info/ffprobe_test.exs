@@ -68,7 +68,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   end
 
   @tag :tmp_dir
-  test "Health.check_service(:media_info) delegates to the configured impl's health/0", %{
+  test "Health.check(\"media_info\") delegates to the configured impl's health/0", %{
     tmp_dir: tmp
   } do
     path = Path.join(tmp, "ffprobe")
@@ -80,7 +80,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     Application.put_env(:cinder, :media_info, Ffprobe)
     on_exit(fn -> restore_bin(:media_info, media_info) end)
 
-    assert Cinder.Health.check_service(:media_info) == :ok
+    assert Cinder.Health.check("media_info") == :ok
   end
 
   test "parse buckets audio + subtitle streams by codec_type, dropping und/empty" do

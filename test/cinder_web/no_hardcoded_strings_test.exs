@@ -44,9 +44,9 @@ defmodule CinderWeb.NoHardcodedStringsTest do
   # The Cinder.Settings strings render via dynamic {SettingsLabels.t(...)}, so the HEEx scan can't
   # see into them; CinderWeb.SettingsLabels.t/1 translates them at render and known/0 expands one
   # gettext_noop/1 per string for extraction. A string the domain emits but known/0 omits renders
-  # untranslated, so assert every one a setting definition, group, client option or library kind
-  # can hand the view is covered.
-  test "every Cinder.Settings label is registered for translation in SettingsLabels" do
+  # untranslated, so assert every one a setting definition, group, client option, library kind or
+  # Cinder.Health probe target / dashboard row can hand the view is covered.
+  test "every Cinder.Settings and Cinder.Health label is registered for translation in SettingsLabels" do
     alias Cinder.Settings
     alias Cinder.Settings.Definition
 
@@ -63,7 +63,8 @@ defmodule CinderWeb.NoHardcodedStringsTest do
            [choice.label | Enum.map(choice.options, & &1.label)]
          end) ++
          Enum.map(Settings.library_kinds(), & &1.label) ++
-         Enum.map(Settings.library_kinds(), &"#{&1.label} library"))
+         Enum.map(Cinder.Health.targets(), & &1.label) ++
+         Cinder.Health.msgids())
       |> MapSet.new()
 
     missing = MapSet.difference(emitted, MapSet.new(CinderWeb.SettingsLabels.known()))

@@ -99,19 +99,19 @@ defmodule CinderWeb.SetupLiveTest do
 
     {:ok, lv, _html} = live(conn, ~p"/setup")
 
-    assert has_element?(lv, "button[phx-value-service=ebook_library]", "Test Ebooks library")
+    assert has_element?(lv, "button[phx-value-target=ebook_library]", "Test Ebooks library")
 
     assert has_element?(
              lv,
-             "button[phx-value-service=audiobook_library]",
+             "button[phx-value-target=audiobook_library]",
              "Test Audiobooks library"
            )
 
-    # The checklist now lists all four library-path rows, book and video alike.
-    assert has_element?(lv, "#setup-checklist", "Movies library path")
-    assert has_element?(lv, "#setup-checklist", "TV library path")
-    assert has_element?(lv, "#setup-checklist", "Ebooks library path")
-    assert has_element?(lv, "#setup-checklist", "Audiobooks library path")
+    # The checklist lists all four library roots, book and video alike.
+    assert has_element?(lv, "#setup-checklist", "Movies library")
+    assert has_element?(lv, "#setup-checklist", "TV library")
+    assert has_element?(lv, "#setup-checklist", "Ebooks library")
+    assert has_element?(lv, "#setup-checklist", "Audiobooks library")
 
     # Neither book root is configured yet: Finish stays locked exactly like an unset/unwritable
     # video root would, proving the requirement is enforced and not merely displayed.
@@ -149,7 +149,10 @@ defmodule CinderWeb.SetupLiveTest do
       assert has_element?(lv, "#settings-group-#{group}[data-setup-step=\"#{step}\"]")
     end
 
-    for group <- ~w(migration releases subtitles notifications accounts) do
+    # The heading says "five": a sixth required group must update that copy too.
+    refute has_element?(lv, "#setup-step-6")
+
+    for group <- ~w(migration audiobook_server releases subtitles books notifications accounts) do
       assert has_element?(lv, "#settings-group-#{group}[data-setup-optional=true]", "Optional")
     end
   end
@@ -314,6 +317,38 @@ defmodule CinderWeb.SetupLiveTest do
     |> render_submit()
 
     assert has_element?(lv, "#finish-setup:not([disabled])")
+  end
+
+  test "the checklist has a row per required target and one for the download clients", %{
+    conn: conn
+  } do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+
+    for label <- ["TMDB", "Prowlarr", "Media server", "Movies library", "Download clients"] do
+      assert has_element?(lv, "#setup-checklist li", label)
+    end
+
+    assert has_element?(lv, "#setup-checklist li", "connect at least one")
+    assert has_element?(lv, "#setup-checklist li:nth-child(8)")
+    refute has_element?(lv, "#setup-checklist li:nth-child(9)")
+  end
+
+  test "a Test event for an id no probe target has changes nothing", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+    before = render(lv)
+
+    for forged <- ["nope", %{"x" => 1}] do
+      render_hook(lv, "test", %{"target" => forged})
+      assert render(lv) == before
+    end
+
+    refute has_element?(lv, "#finish-setup:not([disabled])")
   end
 
   test "a per-service Test button updates that service's badge", %{conn: conn} do

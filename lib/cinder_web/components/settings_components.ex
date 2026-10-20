@@ -3,14 +3,15 @@ defmodule CinderWeb.SettingsComponents do
   Shared rendering for the grouped external-service config fields, used by both the
   `/settings` page and the first-run `/setup` wizard. The parent LiveView owns the
   `"test"` event and supplies `form` (from `Settings.form_state/0`) and `health`
-  (a `%{service_key => :ok | {:error, term()}}` map).
+  (a `%{probe_target_id => :ok | {:warning, term()} | {:error, term()}}` map). Each group's
+  Test buttons are its `Cinder.Health.targets/1`.
   """
   use Phoenix.Component
   use Gettext, backend: CinderWeb.Gettext
 
   import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1, icon: 1, input: 1]
 
-  alias Cinder.{LibraryKind, Settings}
+  alias Cinder.{Health, LibraryKind, Settings}
   alias Cinder.Settings.Definition
   alias CinderWeb.SettingsLabels
 
@@ -42,6 +43,7 @@ defmodule CinderWeb.SettingsComponents do
       assigns
       |> assign(:first_group, first_group)
       |> assign(:invalid_groups, invalid_groups(assigns.form.invalid_keys))
+      |> assign(:setup_steps, setup_steps())
 
     ~H"""
     <details
@@ -50,20 +52,20 @@ defmodule CinderWeb.SettingsComponents do
       open={group == @first_group or MapSet.member?(@invalid_groups, group)}
       phx-hook="DisclosureState"
       data-force-open={to_string(MapSet.member?(@invalid_groups, group))}
-      data-setup-step={@show_setup_guidance && setup_step(group)}
-      data-setup-optional={@show_setup_guidance && to_string(is_nil(setup_step(group)))}
+      data-setup-step={@show_setup_guidance && @setup_steps[group]}
+      data-setup-optional={@show_setup_guidance && to_string(is_nil(@setup_steps[group]))}
       class="collapse collapse-arrow rounded-box bg-base-200"
     >
       <summary class="collapse-title flex min-h-11 cursor-pointer items-center gap-2 text-lg font-semibold focus-visible:outline-2 focus-visible:outline-(--color-focus-ring)">
         <span
-          :if={@show_setup_guidance && setup_step(group)}
+          :if={@show_setup_guidance && @setup_steps[group]}
           class="badge badge-primary badge-sm font-bold"
         >
-          {setup_step(group)}
+          {@setup_steps[group]}
         </span>
         <span>{SettingsLabels.t(label)}</span>
         <span
-          :if={@show_setup_guidance && is_nil(setup_step(group))}
+          :if={@show_setup_guidance && is_nil(@setup_steps[group])}
           class="badge badge-ghost badge-sm font-normal"
         >
           {gettext("Optional")}
@@ -466,7 +468,7 @@ defmodule CinderWeb.SettingsComponents do
 
         <div class="mt-3 flex flex-wrap items-center gap-3">
           <div
-            :for={{svc, svc_label} <- services_for(group)}
+            :for={target <- Health.targets(group: group)}
             class="flex flex-wrap items-center gap-x-2 gap-y-1"
             role="status"
             aria-live="polite"
@@ -477,12 +479,12 @@ defmodule CinderWeb.SettingsComponents do
               size="sm"
               class="min-h-11"
               phx-click="test"
-              phx-value-service={svc}
+              phx-value-target={target.id}
               phx-disable-with={gettext("Testing…")}
             >
-              {gettext("Test %{service}", service: svc_label)}
+              {gettext("Test %{service}", service: SettingsLabels.t(target.label))}
             </.button>
-            <.test_badge :if={@health[svc]} result={@health[svc]} />
+            <.test_badge :if={@health[target.id]} result={@health[target.id]} />
           </div>
         </div>
       </div>
@@ -568,12 +570,22 @@ defmodule CinderWeb.SettingsComponents do
     """
   end
 
-  defp setup_step(:tmdb), do: 1
-  defp setup_step(:indexer), do: 2
-  defp setup_step(:download), do: 3
-  defp setup_step(:media_server), do: 4
-  defp setup_step(:library), do: 5
-  defp setup_step(_group), do: nil
+  @doc """
+  The `{group, label}` settings groups the first-run wizard numbers, in page order: each holds a
+  probe target setup requires (`Cinder.Health.Target` `setup: :required | :any`).
+  """
+  def setup_groups do
+    for {group, _label} = entry <- Settings.groups(),
+        Enum.any?(Health.targets(group: group), &(&1.setup != :optional)),
+        do: entry
+  end
+
+  # `%{group => step number}` for the numbered groups.
+  defp setup_steps do
+    setup_groups()
+    |> Enum.with_index(1)
+    |> Map.new(fn {{group, _label}, step} -> {group, step} end)
+  end
 
   defp setup_section_description(:tmdb),
     do:
@@ -696,56 +708,7 @@ defmodule CinderWeb.SettingsComponents do
 
   defp setup_section_resources(_group), do: []
 
-  def services_for(:tmdb), do: [{"tmdb", "TMDB"}]
-  def services_for(:indexer), do: [{"indexer", "Prowlarr"}]
-
-  def services_for(:migration),
-    do: [
-      {"radarr", gettext("Radarr")},
-      {"sonarr", gettext("Sonarr")},
-      {"readarr", gettext("Readarr")}
-    ]
-
-  def services_for(:download),
-    do: [{"torrent", gettext("Torrent client")}, {"usenet", gettext("Usenet client")}]
-
-  def services_for(:media_server), do: [{"media_server", gettext("Media server")}]
-  def services_for(:audiobook_server), do: [{"audiobook_server", "Audiobookshelf"}]
-  def services_for(:notifications), do: [{"discord", "Discord"}]
-  def services_for(:subtitles), do: [{"subtitles", "OpenSubtitles"}]
-
-  def services_for(:library) do
-    for(
-      %{kind: kind, label: label} <- Settings.library_kinds(),
-      do: {"#{kind}_library", SettingsLabels.t("#{label} library")}
-    ) ++
-      [{"media_info", gettext("Media info (ffprobe)")}]
-  end
-
-  def services_for(_group), do: []
-
   defp fields_for(group), do: Settings.definitions(group: group, render: :field)
-
-  # phx-value is client-controlled; only known services resolve to a check target.
-  def decode_service("tmdb"), do: :tmdb
-  def decode_service("indexer"), do: :indexer
-  def decode_service("radarr"), do: {:migration_source, :radarr}
-  def decode_service("sonarr"), do: {:migration_source, :sonarr}
-  def decode_service("readarr"), do: {:migration_source, :readarr}
-  def decode_service("media_server"), do: :media_server
-  def decode_service("audiobook_server"), do: :audiobook_server
-  def decode_service("torrent"), do: {:download, :torrent}
-  def decode_service("usenet"), do: {:download, :usenet}
-  def decode_service("discord"), do: :discord
-  def decode_service("subtitles"), do: :subtitles
-  def decode_service("media_info"), do: :media_info
-
-  # "movies_library"/"tv_library"/… → {:library, kind} for a known kind, else nil.
-  def decode_service(service) do
-    Enum.find_value(Settings.library_kinds(), fn %{kind: kind} ->
-      if service == "#{kind}_library", do: {:library, kind}
-    end)
-  end
 
   attr :field, Definition, required: true
   attr :form, :map, required: true

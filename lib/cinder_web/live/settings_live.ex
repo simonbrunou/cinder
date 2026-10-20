@@ -53,17 +53,15 @@ defmodule CinderWeb.SettingsLive do
 
   # Probes the saved config synchronously (each impl health/0 has a ~3s timeout).
   # ponytail: synchronous is fine for an admin-only page; revisit with start_async if
-  # the brief block ever annoys.
-  def handle_event("test", %{"service" => svc}, socket) do
-    case decode_service(svc) do
-      nil ->
+  # the brief block ever annoys. The id is client-controlled; one no probe target has changes
+  # nothing.
+  def handle_event("test", %{"target" => id}, socket) do
+    case Health.check(id) do
+      {:error, :unknown_target} ->
         {:noreply, socket}
 
-      service ->
-        {:noreply,
-         assign(socket,
-           health: Map.put(socket.assigns.health, svc, Health.check_service(service))
-         )}
+      status ->
+        {:noreply, assign(socket, health: Map.put(socket.assigns.health, id, status))}
     end
   end
 

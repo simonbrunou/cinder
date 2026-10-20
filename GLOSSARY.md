@@ -49,6 +49,14 @@ An in-flight download that has made no forward progress for longer than Cinder i
 wait.
 _Avoid_: dead download, stuck download
 
+### Health
+
+**Probe target**:
+One thing Cinder can check on demand (an external service, a library root, a local tool), with a
+stable id, the settings group whose Test button checks it, whether setup requires it and whether
+the dashboard shows it.
+_Avoid_: service, health check
+
 ### Movies
 
 **Movie lifecycle**:

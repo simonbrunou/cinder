@@ -175,7 +175,7 @@ defmodule Cinder.Download.Poller do
 
   # Hold (no attempt bump, no park) until the roots are configured: the file is downloaded and
   # waiting, so don't burn the retry budget on a fixable misconfig. The cause is visible — /status
-  # shows the library red (Health.check_service({:library, :movies})).
+  # shows the library red (Health.check("movies_library")).
   defp record_import({:error, :library_not_configured}, movie) do
     Logger.warning(
       "holding #{phase(movie)} for movie #{movie.id}: movies_library_path not set; configure it in /settings"

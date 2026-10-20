@@ -17,6 +17,7 @@ defmodule CinderWeb.DashboardLive do
   alias Cinder.Catalog.{MovieLifecycle, Refresher}
   alias Cinder.Download.{Poller, TvPoller}
   alias Cinder.Subtitles.Sweeper
+  alias CinderWeb.SettingsLabels
 
   require Logger
 
@@ -82,10 +83,17 @@ defmodule CinderWeb.DashboardLive do
   def handle_async({:approve, _id}, _error_or_exit, socket),
     do: {:noreply, put_flash(socket, :error, gettext("Couldn't approve that request."))}
 
-  def handle_async(:health, {:exit, reason}, socket),
-    do:
-      {:noreply,
-       assign(socket, health: [%{label: gettext("Health check"), status: {:error, reason}}])}
+  # Same row shape as `Health.check_all/0`: `label` is an English msgid the template translates.
+  def handle_async(:health, {:exit, reason}, socket) do
+    row = %{
+      id: "health_check",
+      label: gettext_noop("Health check"),
+      adapter: nil,
+      status: {:error, reason}
+    }
+
+    {:noreply, assign(socket, health: [row])}
+  end
 
   def handle_async({:maintenance, key}, {:ok, :ok}, socket) do
     Notifier.notify({:maintenance_completed, key})
@@ -202,15 +210,6 @@ defmodule CinderWeb.DashboardLive do
     if connected?(socket),
       do: start_async(socket, :health, &Health.check_all/0),
       else: socket
-  end
-
-  # `label` is a plain, non-gettext'd literal for every normal probe row (see health.ex) — this
-  # slug is the badge's DOM id fragment, so it must stay stable across locales.
-  defp health_slug(label) do
-    label
-    |> String.downcase()
-    |> String.replace(~r/[^a-z0-9]+/, "-")
-    |> String.trim("-")
   end
 
   defp check_disk(socket) do
@@ -579,7 +578,8 @@ defmodule CinderWeb.DashboardLive do
             >
               <li :for={h <- @health} class="flex items-center justify-between gap-3 px-4 py-2.5">
                 <div class="min-w-0">
-                  <span>{h.label}</span>
+                  <span>{SettingsLabels.t(h.label)}</span>
+                  <span :if={h.adapter} class="text-sm text-base-content/70">({h.adapter})</span>
                   <p :if={match?({:error, _}, h.status)} class="text-xs text-error break-words">
                     {health_reason(elem(h.status, 1))}
                   </p>
@@ -591,7 +591,7 @@ defmodule CinderWeb.DashboardLive do
                   </p>
                 </div>
                 <.status_badge
-                  id={"dash-health-status-#{health_slug(h.label)}"}
+                  id={"dash-health-status-#{h.id}"}
                   kind={:health}
                   status={h.status}
                 />

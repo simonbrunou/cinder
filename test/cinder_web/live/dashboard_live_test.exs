@@ -30,6 +30,8 @@ defmodule CinderWeb.DashboardLiveTest do
   setup do
     # Dashboard runs Health.check_all/0 in a start_async task (separate process) → global mocks.
     stub(Cinder.Acquisition.IndexerMock, :health, fn -> :ok end)
+    stub(Cinder.Books.PrimaryMetadataMock, :provider, fn -> :openlibrary end)
+    stub(Cinder.Books.SecondaryMetadataMock, :provider, fn -> :hardcover end)
     stub(Cinder.Books.PrimaryMetadataMock, :health, fn -> :ok end)
     stub(Cinder.Books.SecondaryMetadataMock, :health, fn -> :ok end)
     stub(Cinder.Download.ClientMock, :health, fn -> :ok end)
@@ -283,6 +285,38 @@ defmodule CinderWeb.DashboardLiveTest do
       assert html =~ "Arrival"
       # health resolves asynchronously
       assert render_async(lv) =~ "OK"
+    end
+
+    test "health rows carry the probe target's id and label, and name a chosen adapter", %{
+      conn: conn
+    } do
+      stub(Cinder.Download.ClientMock, :health, fn -> {:error, :econnrefused} end)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      render_async(lv)
+
+      assert has_element?(lv, "#dash-health-status-tmdb")
+      assert has_element?(lv, "#dashboard-health li", "Prowlarr")
+      assert has_element?(lv, "#dashboard-health li", "Open Library")
+      assert has_element?(lv, "#dashboard-health li", "Movies library")
+
+      assert has_element?(
+               lv,
+               "#dashboard-health li:has(#dash-health-status-torrent)",
+               "ClientMock"
+             )
+
+      assert has_element?(
+               lv,
+               "#dashboard-health li:has(#dash-health-status-torrent)",
+               "Unreachable"
+             )
+
+      refute has_element?(
+               lv,
+               "#dashboard-health li:has(#dash-health-status-indexer)",
+               "IndexerMock"
+             )
     end
 
     test "shows a reachable SABnzbd configuration warning in amber", %{conn: conn} do

@@ -2,10 +2,10 @@ defmodule CinderWeb.SetupLive do
   @moduledoc """
   First-run wizard, mounted at `/setup`. The admin is already created (via the normal
   registration flow); this step collects external-service config, validates each via
-  `Cinder.Health`, and only lets the admin finish once the loop is fully green — TMDB,
-  indexer, a media server, a writable library path for every kind Cinder manages (movies, TV,
-  e-books, audiobooks), and at least one download client. Finishing marks `setup_complete`,
-  releasing the `:require_setup` gate.
+  `Cinder.Health`, and only lets the admin finish once the loop is fully green: every probe
+  target with `setup: :required` (TMDB, the indexer, the media server, a writable root for every
+  library kind) and at least one target of each `setup: :any` group (a download client).
+  Finishing marks `setup_complete`, releasing the `:require_setup` gate.
   """
   use CinderWeb, :live_view
 
@@ -14,18 +14,13 @@ defmodule CinderWeb.SetupLive do
   import CinderWeb.SettingsComponents
 
   alias Cinder.{Health, Settings}
+  alias CinderWeb.SettingsLabels
 
-  @base_required_services ["tmdb", "indexer", "media_server"]
-  @download_services ["torrent", "usenet"]
+  # Every probe target the gate reads, checked on "Save & validate".
+  defp setup_targets, do: Health.targets(setup: :required) ++ Health.targets(setup: :any)
 
-  # The required set is the base services plus one writable-root check per library kind —
-  # every kind Cinder manages (movies, TV, ebooks, audiobooks), not just the video ones, so a
-  # fresh install cannot finish setup with an unwritable or unset book/audiobook root any more
-  # than it can with an unwritable movies/TV one.
-  defp required_services do
-    @base_required_services ++
-      for(%{kind: kind} <- Settings.library_kinds(), do: "#{kind}_library")
-  end
+  # The `:any` targets, one list per group (targets are listed in group order).
+  defp any_groups, do: Enum.chunk_by(Health.targets(setup: :any), & &1.group)
 
   @impl true
   def mount(_params, _session, socket) do
@@ -58,17 +53,16 @@ defmodule CinderWeb.SetupLive do
     end
   end
 
-  # Per-service Test buttons (rendered by the shared SettingsComponents) probe one
-  # saved service and refresh the green/red badge + the Finish gate.
-  def handle_event("test", %{"service" => svc}, socket) do
-    case decode_service(svc) do
-      nil ->
+  # Per-target Test buttons (rendered by the shared SettingsComponents) probe one target against
+  # the saved config and refresh the green/red badge + the Finish gate. The id is
+  # client-controlled; one no probe target has changes nothing.
+  def handle_event("test", %{"target" => id}, socket) do
+    case Health.check(id) do
+      {:error, :unknown_target} ->
         {:noreply, socket}
 
-      service ->
-        health =
-          Map.put(socket.assigns.health, svc, service |> Health.check_service() |> reachable())
-
+      status ->
+        health = Map.put(socket.assigns.health, id, reachable(status))
         {:noreply, assign(socket, health: health, can_finish: all_green?(health))}
     end
   end
@@ -78,7 +72,7 @@ defmodule CinderWeb.SetupLive do
   defp validate_settings(params, socket) do
     case Settings.save_form(params) do
       :ok ->
-        health = Map.new(required_services() ++ @download_services, &{&1, check(&1)})
+        health = Map.new(setup_targets(), &{&1.id, &1.id |> Health.check() |> reachable()})
 
         {:noreply,
          assign(socket,
@@ -97,41 +91,53 @@ defmodule CinderWeb.SetupLive do
     end
   end
 
-  defp check(svc), do: svc |> decode_service() |> Health.check_service() |> reachable()
-
   defp reachable({:warning, _reason}), do: :ok
   defp reachable(status), do: status
 
   defp all_green?(health) do
-    Enum.all?(required_services(), &(health[&1] == :ok)) and
-      Enum.any?(@download_services, &(health[&1] == :ok))
+    Enum.all?(Health.targets(setup: :required), &(health[&1.id] == :ok)) and
+      Enum.all?(any_groups(), &(any_status(&1, health) == :ok))
+  end
+
+  # A `:any` group passes once one of its targets is reachable.
+  defp any_status(targets, health) do
+    cond do
+      Enum.any?(targets, &(health[&1.id] == :ok)) -> :ok
+      # validated, but every configured client failed — show red, not the grey "not checked yet"
+      Enum.any?(targets, &match?({:error, _}, health[&1.id])) -> {:error, :no_download_client}
+      true -> nil
+    end
+  end
+
+  # One line per required target, then one per `:any` group, named after the group.
+  defp checklist(health) do
+    required =
+      for target <- Health.targets(setup: :required),
+          do: %{label: SettingsLabels.t(target.label), status: health[target.id], hint: nil}
+
+    any =
+      for [%{group: group} | _] = targets <- any_groups() do
+        %{
+          label: SettingsLabels.t(Keyword.fetch!(Settings.groups(), group)),
+          status: any_status(targets, health),
+          hint: gettext("connect at least one")
+        }
+      end
+
+    required ++ any
   end
 
   defp setup_steps do
-    [
-      %{number: 1, label: gettext("TMDB"), detail: gettext("Add your metadata token.")},
-      %{
-        number: 2,
-        label: gettext("Indexer"),
-        detail: gettext("Connect Prowlarr and its indexers.")
-      },
-      %{
-        number: 3,
-        label: gettext("Download clients"),
-        detail: gettext("Choose a torrent or Usenet client.")
-      },
-      %{
-        number: 4,
-        label: gettext("Media server"),
-        detail: gettext("Connect Jellyfin or Plex.")
-      },
-      %{
-        number: 5,
-        label: gettext("Library paths"),
-        detail: gettext("Choose download and library folders.")
-      }
-    ]
+    for {{group, label}, number} <- Enum.with_index(setup_groups(), 1),
+        do: %{number: number, label: SettingsLabels.t(label), detail: step_detail(group)}
   end
+
+  defp step_detail(:tmdb), do: gettext("Add your metadata token.")
+  defp step_detail(:indexer), do: gettext("Connect Prowlarr and its indexers.")
+  defp step_detail(:download), do: gettext("Choose a torrent or Usenet client.")
+  defp step_detail(:media_server), do: gettext("Connect Jellyfin or Plex.")
+  defp step_detail(:library), do: gettext("Choose download and library folders.")
+  defp step_detail(_group), do: nil
 
   @impl true
   def render(assigns) do
@@ -171,7 +177,7 @@ defmodule CinderWeb.SetupLive do
               <span>{step.label}</span>
               <span :if={step.number == 1} class="sr-only">{gettext("Start here")}</span>
             </div>
-            <p class="mt-1 text-xs text-base-content/70">{step.detail}</p>
+            <p :if={step.detail} class="mt-1 text-xs text-base-content/70">{step.detail}</p>
           </li>
         </ol>
       </section>
@@ -205,14 +211,10 @@ defmodule CinderWeb.SetupLive do
         <h2 class="mb-3 text-lg font-semibold">{gettext("Setup checklist")}</h2>
         <ul id="setup-checklist" class="space-y-2 text-sm">
           <.check_row
-            :for={svc <- required_services()}
-            label={service_label(svc)}
-            status={@health[svc]}
-          />
-          <.check_row
-            label={gettext("A download client (torrent or usenet)")}
-            status={download_status(@health)}
-            hint={gettext("connect at least one")}
+            :for={row <- checklist(@health)}
+            label={row.label}
+            status={row.status}
+            hint={row.hint}
           />
         </ul>
       </div>
@@ -280,28 +282,4 @@ defmodule CinderWeb.SetupLive do
   defp check_color(:ok), do: "text-success"
   defp check_color({:error, _}), do: "text-error"
   defp check_color(_), do: "text-base-content/40"
-
-  # The download requirement is "at least one of torrent/usenet reachable".
-  defp download_status(health) do
-    cond do
-      Enum.any?(@download_services, &(health[&1] == :ok)) ->
-        :ok
-
-      # validated, but every configured client failed — show red, not the grey "not checked yet"
-      Enum.any?(@download_services, &match?({:error, _}, health[&1])) ->
-        {:error, :no_download_client}
-
-      true ->
-        nil
-    end
-  end
-
-  defp service_label("tmdb"), do: gettext("TMDB")
-  defp service_label("indexer"), do: gettext("Indexer (Prowlarr)")
-  defp service_label("media_server"), do: gettext("Media server (Jellyfin/Plex)")
-  defp service_label("movies_library"), do: gettext("Movies library path")
-  defp service_label("tv_library"), do: gettext("TV library path")
-  defp service_label("ebook_library"), do: gettext("Ebooks library path")
-  defp service_label("audiobook_library"), do: gettext("Audiobooks library path")
-  defp service_label(svc), do: svc |> String.replace("_", " ") |> :string.titlecase()
 end
