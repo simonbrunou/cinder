@@ -185,8 +185,8 @@ _Avoid_: available (on its own, it also names the book and movie badge states)
 
 **Outstanding target**:
 A request target an approved request still waits on: it has not landed and no operator has stopped
-it. It holds one of its requester's quota slots under `auto_approve_all`. A season whose row no
-longer exists is not outstanding.
+it. It holds one of its requester's quota slots under `auto_approve_all`. A target with no row stays
+outstanding and keeps its slot, whether its movie, season or book row is gone or never existed.
 _Avoid_: unfulfilled target, open request
 
 **Approval**:

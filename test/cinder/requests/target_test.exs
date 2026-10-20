@@ -171,15 +171,19 @@ defmodule Cinder.Requests.TargetTest do
       assert t.season_progress == %{total: 3, available: 1, downloading: true}
     end
 
-    # Kept as it was before the resolver existed: the quota only counts a season row it can see
-    # as monitored, so a request whose season row is gone (or never existed) holds no slot.
-    test "a season with no row is neither watchable nor outstanding, but keeps the series title" do
+    # Fails closed, like a movie or book with no row: a request whose season row is gone (or never
+    # existed) still holds its quota slot, whether or not the series row is left.
+    test "a season with no row is outstanding and not watchable, and keeps any series title" do
       series = series_fixture(title: "Rowless")
 
-      [{_ref, t}] = Target.resolve([season_ref(series.tmdb_id, 7)])
+      [{_, rowless}, {_, seriesless}] =
+        Target.resolve([season_ref(series.tmdb_id, 7), season_ref(404_404, 1)])
 
-      assert {t.title, t.watchable?, t.outstanding?, t.season_progress} ==
-               {"Rowless", false, false, nil}
+      assert {rowless.title, rowless.watchable?, rowless.outstanding?, rowless.season_progress} ==
+               {"Rowless", false, true, nil}
+
+      assert {seriesless.title, seriesless.watchable?, seriesless.outstanding?} ==
+               {nil, false, true}
     end
   end
 

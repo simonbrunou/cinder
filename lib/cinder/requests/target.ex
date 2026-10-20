@@ -154,10 +154,11 @@ defmodule Cinder.Requests.Target do
   defp movie_outstanding?(%Movie{status: status}), do: not watchable_movie_status?(status)
 
   # Only a monitored season row still waits: unmonitoring settles it (`cancel_series/2` unmonitors
-  # the whole tree). A season with no row at all is not outstanding either. That is how the quota
-  # counted before this module existed, and changing it is a quota decision, not a refactor.
+  # the whole tree). A season with no row fails closed and stays outstanding, like a movie or book
+  # with no row (#765). `monitored` is non-null, so `nil` means the row is missing.
+  defp season_outstanding?(nil = _no_row, _landed?), do: true
   defp season_outstanding?(true = _monitored, landed?), do: not landed?
-  defp season_outstanding?(_monitored, _landed?), do: false
+  defp season_outstanding?(false = _unmonitored, _landed?), do: false
 
   defp load_movies(keys) do
     case for({:movie, id} <- keys, uniq: true, do: id) do
