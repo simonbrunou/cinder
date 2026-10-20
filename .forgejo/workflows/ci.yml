@@ -5,7 +5,9 @@
 #   ImageOS=ubuntu20, and setup-beam finds no OTP 29 build for Ubuntu 20.04;
 # - artifacts use Forgejo's upload-artifact fork (actions/upload-artifact v4+
 #   refuses to run off github.com);
-# - the container job drives the runner CT's Docker daemon (see that job).
+# - the container job drives the runner CT's Docker daemon (see that job);
+# - no `permissions:` block: Forgejo ignores the key and warns about it on
+#   every run.
 name: CI
 
 on:
@@ -17,9 +19,6 @@ on:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
-
-permissions:
-  contents: read
 
 jobs:
   test:
