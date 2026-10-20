@@ -137,7 +137,7 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
   end
 
   # #732: the pill and the Activity nav badge read "N need attention" off one rule, the nav's
-  # `Catalog.count_operator_holds/0` (an item counts when /activity offers an action for it).
+  # `Catalog.Attention.attention_count/0` (an item counts when /activity offers an action for it).
   # Each item is seeded alone, so an over-count on one side can't cancel an under-count on the
   # other.
   describe "the pill agrees with the Activity nav badge" do
@@ -157,7 +157,7 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
       test "#{inspect(item)} counts #{expected}", %{conn: conn, user: admin} do
         seed(unquote(Macro.escape(item)))
 
-        assert Catalog.count_operator_holds() == unquote(expected)
+        assert Catalog.Attention.attention_count() == unquote(expected)
         assert_attention(conn, admin, unquote(expected))
       end
     end

@@ -770,13 +770,13 @@ defmodule CinderWeb.CoreComponents do
     do: {gettext("Upgrading"), "badge-info", "hero-arrow-up-circle"}
 
   # parked mid post-download verification (`Movie.verification_hold_origin` set) — a
-  # distinct hold from a plain :import_failed, surfaced via `LiveHelpers.movie_badge_status/1`.
+  # distinct hold from a plain :import_failed, surfaced via `Catalog.Attention.classify/1`.
   defp badge_spec(:movie, :verification_hold),
     do: {gettext("Needs verification"), "badge-warning", "hero-exclamation-triangle"}
 
   # held at search time on unsatisfiable Anime preferences (`anime_hold_reason` set) —
   # distinct from a not-yet-swept "Requested"/"Searching"; clears itself once preferences
-  # become satisfiable (movies via `LiveHelpers.movie_badge_status/1`, series on /activity).
+  # become satisfiable (movies via `Catalog.Attention.classify/1`, series on /activity).
   defp badge_spec(kind, :anime_hold) when kind in [:movie, :series],
     do: {gettext("Needs preferences"), "badge-warning", "hero-pause-circle"}
 

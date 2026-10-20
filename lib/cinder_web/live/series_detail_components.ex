@@ -4,8 +4,7 @@ defmodule CinderWeb.SeriesDetailComponents do
   labels, per-episode/season badge derivation). Carved out of
   `CinderWeb.SeriesDetailLive` as plain code motion — `render/1` is called
   unchanged from the LiveView's own `render/1` callback; every helper here is
-  either template-only or (for `all_monitored?/1`) a small duplicate of the
-  LiveView's own copy, per the same file's convention for tiny shared helpers.
+  template-only except `all_monitored?/1`, which the LiveView's season toggle shares.
   """
   use CinderWeb, :html
 
@@ -24,7 +23,10 @@ defmodule CinderWeb.SeriesDetailComponents do
       assign(
         assigns,
         :manual_search_season,
-        Enum.find(assigns.series.seasons, &season_manual_searchable?(&1, assigns.profile_summary))
+        Enum.find(
+          assigns.series.seasons,
+          &Catalog.season_manual_searchable?(&1, assigns.profile_summary)
+        )
       )
 
     ~H"""
@@ -513,7 +515,7 @@ defmodule CinderWeb.SeriesDetailComponents do
               {gettext("Search all missing")}
             </.button>
             <.button
-              :if={season_manual_searchable?(season, @profile_summary)}
+              :if={Catalog.season_manual_searchable?(season, @profile_summary)}
               type="button"
               variant="neutral"
               size="sm"
@@ -841,32 +843,17 @@ defmodule CinderWeb.SeriesDetailComponents do
     )
   end
 
-  # Duplicated from `CinderWeb.SeriesDetailLive`'s own copy (used there by the
-  # "toggle_season" handler) — tiny enough to keep as two independent copies. The template's
-  # only call site is already guarded by `season.episodes != []` (the "Monitor all" button),
-  # so the empty-list clause the LiveView's copy carries is unreachable here and the type
-  # checker rejects it as dead code — a single clause is the equivalent, reachable shape.
-  defp all_monitored?(%{episodes: eps}), do: Enum.all?(eps, & &1.monitored)
+  @doc """
+  Whether every episode of a season is monitored, so its bulk toggle turns monitoring off. An
+  empty season is not. Shared by the "Monitor all" label and `SeriesDetailLive`'s
+  "toggle_season" handler, so the label always names what a click does.
+  """
+  def all_monitored?(%{episodes: []}), do: false
+  def all_monitored?(%{episodes: eps}), do: Enum.all?(eps, & &1.monitored)
 
   # A season has something the search sweep would actually pick up.
   defp season_wanted?(%{episodes: episodes} = season, profile),
     do: Enum.any?(episodes, &episode_searchable?(&1, season, profile))
-
-  @doc """
-  Whether a season has any episode the manual "Find a better match" search would act on: an
-  already-downloaded episode not currently owned by a grab (upgrade candidate) or a
-  sweep-searchable one. Public so `SeriesDetailLive`'s reveal handler shares this exact test.
-
-  Manual search also covers available episodes (monitoring only gates the automatic sweep), but
-  never an episode already owned by another grab.
-  """
-  def season_manual_searchable?(%{episodes: episodes} = season, profile) do
-    Enum.any?(
-      episodes,
-      &((&1.file_path not in [nil, ""] and is_nil(&1.grab_id)) or
-          episode_searchable?(&1, season, profile))
-    )
-  end
 
   # Eligibility lives in Catalog so the sweep and detail actions cannot drift.
   # Episodes arrive nested under their season rather than with the back-reference

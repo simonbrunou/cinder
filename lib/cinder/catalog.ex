@@ -21,6 +21,7 @@ defmodule Cinder.Catalog do
   alias Cinder.Audit
 
   alias Cinder.Catalog.{
+    Attention,
     Discovery,
     Episode,
     EpisodeTransition,
@@ -276,23 +277,6 @@ defmodule Cinder.Catalog do
   @doc "Updates an in-flight grab's progress snapshot and broadcasts its owning series."
   defdelegate update_grab_download_metrics(grab, attrs), to: Grabs
 
-  @doc """
-  Total items needing an operator action, for the admin Activity nav badge: parked/held movies
-  that show a Retry (`MovieLifecycle.parked_statuses/0`) plus grabs classified into a hold by
-  `grab_hold/1` (`Grabs.count_grab_holds/0`, that classification in query form).
-  `CinderWeb.ActivityLive` renders actions from the same classification and
-  `CinderWeb.ActivityBeaconLive`'s pill counts it per item, so all three agree; `0` = no badge.
-
-  The parked set is the movie hold set on purpose: a movie verification hold parks at
-  `:import_failed` (with `verification_hold_origin`), already in this set, and anime-held movies
-  and series (a hold reason, no pipeline failure) show no action, so they are excluded.
-  """
-  def count_operator_holds do
-    parked = MovieLifecycle.parked_statuses()
-    movie_holds = Repo.aggregate(from(m in Movie, where: m.status in ^parked), :count)
-    movie_holds + Grabs.count_grab_holds()
-  end
-
   ## Manual grab + the grab lifecycle — carved out to `Cinder.Catalog.Grabs`.
 
   defdelegate manual_grab_movie(movie, release), to: Grabs
@@ -405,8 +389,9 @@ defmodule Cinder.Catalog do
       # Add button suppressed. Pending/denied are deliberately left (see reap_approved_for_target/2).
       Requests.reap_approved_for_target(["movie"], fresh.tmdb_id)
 
+      # Still owns a client download: it can be cancelled or have its upgrade aborted.
       include_remote? =
-        MovieLifecycle.cancellable?(fresh) or fresh.status == :upgrading or
+        Attention.offers?(fresh, :cancel) or Attention.offers?(fresh, :cancel_upgrade) or
           fresh.verification_hold_origin in [:download, :upgrade]
 
       Download.fence_movie_cleanup(fresh, include_remote: include_remote?)
@@ -767,11 +752,11 @@ defmodule Cinder.Catalog do
   defdelegate list_grabs_downloaded(), to: Grabs
   defdelegate list_grabs(), to: Grabs
   defdelegate unresolved_grab_files(grab), to: Grabs
-  defdelegate grab_hold(grab), to: Grabs
   defdelegate list_mapping_grabs_for_series(series_id), to: Grabs
   defdelegate get_grab(id), to: Grabs
   defdelegate wanted_episodes(), to: SeriesCatalog
   defdelegate manual_search_episodes(series_id, season_number), to: SeriesCatalog
+  defdelegate season_manual_searchable?(season, profile), to: SeriesCatalog
   defdelegate count_wanted_episodes(), to: SeriesCatalog
   defdelegate available_season_keys(), to: SeriesCatalog
   defdelegate available_season_keys(tmdb_id), to: SeriesCatalog

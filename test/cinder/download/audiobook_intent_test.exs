@@ -63,14 +63,15 @@ defmodule Cinder.Download.AudiobookIntentTest do
       assert Repo.all(BookGrab) == []
     end
 
-    test "replace: true is carried onto the created grab" do
+    # A `:monitored` target has no file to replace, so it does not offer `:replace`
+    # (`Books.Attention`).
+    test "replace: true on a :monitored target is refused before the client is called" do
       target = monitored_audiobook_target()
 
-      expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
-      expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "remote-1"} end)
-
-      assert {:ok, %BookGrab{replace: true}} =
+      assert {:error, :stale_target} =
                Download.grab_book_target(target, audiobook_release(), replace: true)
+
+      assert Repo.all(BookGrab) == []
     end
 
     # Regression: the type-matched dispatch guard, exercised in BOTH directions now that two live

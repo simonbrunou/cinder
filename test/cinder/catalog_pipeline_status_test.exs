@@ -28,34 +28,6 @@ defmodule Cinder.CatalogPipelineStatusTest do
     end
   end
 
-  describe "in_pipeline?/1" do
-    test "true for every active status" do
-      for status <- @active do
-        assert MovieLifecycle.in_pipeline?(%{status: status}),
-               "expected #{inspect(status)} to be in the pipeline"
-      end
-    end
-
-    test "true for every parked failure (they need a retry, so they stay on live surfaces)" do
-      for status <- @parked do
-        assert MovieLifecycle.in_pipeline?(%{status: status}),
-               "expected #{inspect(status)} to be in the pipeline"
-      end
-    end
-
-    test "false for the terminal-done statuses" do
-      for status <- @done do
-        refute MovieLifecycle.in_pipeline?(%{status: status}),
-               "expected #{inspect(status)} to be terminal-done"
-      end
-    end
-
-    test "accepts a Movie struct" do
-      assert MovieLifecycle.in_pipeline?(%Movie{status: :downloading})
-      refute MovieLifecycle.in_pipeline?(%Movie{status: :available})
-    end
-  end
-
   test "the active/parked/done split covers Movie's status enum exactly" do
     # Drift guard: adding a status to the Movie schema fails here until it is
     # classified in Cinder.Catalog's pipeline-status classification (and this split).

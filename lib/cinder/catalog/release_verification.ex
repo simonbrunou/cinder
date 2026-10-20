@@ -10,7 +10,7 @@ defmodule Cinder.Catalog.ReleaseVerification do
 
   alias Cinder.Audit
   alias Cinder.Catalog
-  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Season}
+  alias Cinder.Catalog.{Attention, BlockedRelease, Episode, Grab, Season}
   alias Cinder.Download
   alias Cinder.Notifier
   alias Cinder.Repo
@@ -43,14 +43,24 @@ defmodule Cinder.Catalog.ReleaseVerification do
     end
   end
 
+  # The operator actions below refuse a grab that does not offer them (`Attention.offers?/2`), then
+  # claim the hold the classification read with a compare-and-swap on `mapping_status`.
+
   @doc false
   def retry_grab_verification(%Grab{} = grab),
-    do: retry_grab(grab, :verification_blocked, :verification_not_held)
+    do: retry_grab(grab, :retry_verification, :verification_blocked, :verification_not_held)
 
   @doc false
-  def retry_grab_mapping(%Grab{} = grab), do: retry_grab(grab, :needs_mapping, :mapping_not_held)
+  def retry_grab_mapping(%Grab{} = grab),
+    do: retry_grab(grab, :retry_mapping, :needs_mapping, :mapping_not_held)
 
-  defp retry_grab(grab, from_status, error_atom) do
+  defp retry_grab(grab, action, from_status, error_atom) do
+    if Attention.offers?(grab, action),
+      do: claim_retry(grab, from_status, error_atom),
+      else: {:error, error_atom}
+  end
+
+  defp claim_retry(grab, from_status, error_atom) do
     case Repo.update_all(
            from(g in Grab,
              where: g.id == ^grab.id and g.mapping_status == ^from_status,
@@ -71,6 +81,12 @@ defmodule Cinder.Catalog.ReleaseVerification do
   # or a concurrent Retry already released is `:verification_not_held`; the audit row commits with
   # the flip or not at all, and the one broadcast follows the commit.
   def import_grab_anyway(%Grab{} = grab, actor) do
+    if Attention.offers?(grab, :import_anyway),
+      do: waive_verification(grab, actor),
+      else: {:error, :verification_not_held}
+  end
+
+  defp waive_verification(grab, actor) do
     result =
       Repo.transaction(fn ->
         case Repo.update_all(

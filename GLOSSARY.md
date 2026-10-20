@@ -106,6 +106,26 @@ How many failures of one kind a movie may take in its current phase before Cinde
 re-queues or reverts it.
 _Avoid_: retry limit, max attempts
 
+### Operator attention
+
+**Offered action**:
+An operator action Cinder accepts for an item in its current state, such as retry, discard or
+pause. A button renders only for an offered action, and the action refuses an item that does not
+offer it.
+_Avoid_: available action, allowed action
+
+**Needs attention**:
+An item stopped until the operator takes an offered action on `/activity`: a parked movie, a
+verification hold, or a TV grab on a mapping, verification or residual-files hold. The Activity nav
+badge and the beacon pill count exactly these.
+_Avoid_: held (an anime hold waits on a fix made elsewhere), stuck, failed
+
+**Waiting item**:
+An item Cinder skips until the operator fixes something outside it, such as an anime hold that
+needs subtitle languages in Settings. It offers no action that resolves it, so it does not need
+attention.
+_Avoid_: held item, paused item (a paused book target is idle)
+
 ### Requests
 
 **Request target**:

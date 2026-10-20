@@ -10,7 +10,7 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
 
   alias Cinder.Audit.AdminAudit
   alias Cinder.Catalog
-  alias Cinder.Catalog.{BlockedRelease, Movie, MovieLifecycle}
+  alias Cinder.Catalog.{Attention, BlockedRelease, Movie, MovieLifecycle}
 
   setup do
     :ok = Catalog.subscribe()
@@ -954,12 +954,7 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       :transitions,
       :legal?,
       :pipeline_statuses,
-      :parked_statuses,
-      :in_pipeline?,
-      :retryable?,
-      :cancellable?,
-      :abortable?,
-      :grabbable?
+      :parked_statuses
     ]
 
     @next_download %{
@@ -1090,7 +1085,7 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       assert Enum.sort(verbs) == taken |> Enum.map(&elem(&1, 0)) |> Enum.uniq() |> Enum.sort()
     end
 
-    test "each guard agrees with the verb it guards" do
+    test "each verb accepts exactly the movies that offer its action" do
       actor = admin()
 
       hold = fn origin ->
@@ -1098,9 +1093,9 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       end
 
       guards = [
-        {&MovieLifecycle.retryable?/1, &MovieLifecycle.retry/1},
-        {&MovieLifecycle.cancellable?/1, &MovieLifecycle.cancel(&1, actor)},
-        {&MovieLifecycle.abortable?/1, &MovieLifecycle.abort_upgrade(&1, actor)}
+        {&Attention.offers?(&1, :retry), &MovieLifecycle.retry/1},
+        {&Attention.offers?(&1, :cancel), &MovieLifecycle.cancel(&1, actor)},
+        {&Attention.offers?(&1, :cancel_upgrade), &MovieLifecycle.abort_upgrade(&1, actor)}
       ]
 
       for {guard, verb} <- guards,

@@ -107,42 +107,6 @@ defmodule CinderWeb.LiveHelpers do
   def book_badge_state(_request, _target), do: :none
 
   @doc """
-  The status atom for a `<.status_badge kind={:movie}>` — `:verification_hold` when the movie
-  is parked mid post-download verification (`verification_hold_origin` set), `:anime_hold`
-  when a pre-download movie is held at search time on unsatisfiable Anime preferences
-  (`anime_hold_reason` set), the movie's own pipeline `status` otherwise. Single source of
-  truth for every movie-badge surface (dashboard, library, my-requests, activity, the detail
-  page) so a held movie reads "Needs verification"/"Needs preferences" everywhere instead of
-  the bare "Import failed"/"Searching".
-  """
-  def movie_badge_status(%{verification_hold_origin: origin})
-      when origin in [:download, :upgrade],
-      do: :verification_hold
-
-  def movie_badge_status(%{status: status, anime_hold_reason: reason})
-      when status in [:requested, :searching] and is_binary(reason),
-      do: :anime_hold
-
-  def movie_badge_status(movie), do: movie.status
-
-  @doc """
-  The lifecycle atom for a `<.status_badge kind={:grab}>` from a grab row: the badge for the
-  grab's `Catalog.grab_hold/1` class (a residual-files hold wears the `:needs_mapping` badge),
-  else `:downloading` (no delivered content yet) or `:downloaded` (content in hand, waiting to
-  import). A hold wins whatever `content_path` says, so the beacon's attention count matches
-  `Grabs.count_grab_holds/0`. The hold classification itself lives in the Catalog — this only
-  picks badges. Shared by `/activity` and the beacon.
-  """
-  def grab_state(grab) do
-    case Catalog.grab_hold(grab) do
-      nil when is_nil(grab.content_path) -> :downloading
-      nil -> :downloaded
-      :residual_files -> :needs_mapping
-      hold -> hold
-    end
-  end
-
-  @doc """
   Whether a failed `Requests.create_request/2` changeset is the benign duplicate-pending
   case (the `requests_pending_unique` index; Ecto tags it `constraint: :unique`). Any
   other changeset failure is a real error, not a reassuring "already requested" toast.

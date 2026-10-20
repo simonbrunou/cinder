@@ -50,6 +50,8 @@ defmodule CinderWeb.BookManualSearchComponent do
       # `:results` — this is present from the very first render, never only once `handle_async`
       # or a preseed sets it, mirroring `ManualSearchComponent`'s own `results: []` default.
       |> assign_new(:results, fn -> %{accepted: [], rejected: [], complete?: true} end)
+      # Whether a grab replaces the current file: the host passes the target's offered `:replace`.
+      |> assign_new(:replace, fn -> false end)
       |> maybe_cancel_stale_search(context_changed?)
 
     socket =
@@ -208,7 +210,7 @@ defmodule CinderWeb.BookManualSearchComponent do
               phx-click="grab"
               phx-value-index={index}
               phx-disable-with={gettext("Grabbing…")}
-              data-confirm={replace?(@target) && gettext("This replaces the current file: continue?")}
+              data-confirm={@replace && gettext("This replaces the current file: continue?")}
             >
               {gettext("Grab")}
             </.button>
@@ -228,9 +230,6 @@ defmodule CinderWeb.BookManualSearchComponent do
     </div>
     """
   end
-
-  defp replace?(%{status: :available}), do: true
-  defp replace?(_target), do: false
 
   defp format_label(format) when is_atom(format),
     do: format |> Atom.to_string() |> String.upcase()

@@ -45,9 +45,10 @@ defmodule CinderWeb.LibraryLive do
   import CinderWeb.BookComponents, only: [book_state_badge: 1]
 
   alias Cinder.Books
+  alias Cinder.Books.Attention, as: BookAttention
   alias Cinder.Books.{BookTarget, Grabs}
   alias Cinder.Catalog
-  alias Cinder.Catalog.MovieLifecycle
+  alias Cinder.Catalog.{Attention, MovieLifecycle}
 
   @impl true
   def mount(params, _session, socket) do
@@ -649,7 +650,7 @@ defmodule CinderWeb.LibraryLive do
                 <.status_badge
                   id={"library-movie-status-#{m.id}"}
                   kind={:movie}
-                  status={movie_badge_status(m)}
+                  status={Attention.classify(m).badge}
                   progress={m.download_progress}
                   speed={m.download_speed}
                   eta={m.download_eta}
@@ -661,7 +662,7 @@ defmodule CinderWeb.LibraryLive do
 
             <div class="flex flex-wrap gap-2">
               <.button
-                :if={MovieLifecycle.cancellable?(m)}
+                :if={Attention.offers?(m, :cancel)}
                 type="button"
                 variant="warning"
                 size="sm"
@@ -671,7 +672,7 @@ defmodule CinderWeb.LibraryLive do
                 {gettext("Cancel")}
               </.button>
               <.button
-                :if={not MovieLifecycle.cancellable?(m)}
+                :if={not Attention.offers?(m, :cancel)}
                 type="button"
                 variant="danger"
                 size="sm"
@@ -863,9 +864,13 @@ defmodule CinderWeb.LibraryLive do
                     safety boundary is `Books.pause_target/1`'s own `:grab_in_progress`
                     refusal, so a grab created after this batched read still gets refused
                     server-side rather than accepted. --%>
-              <div :if={t.status in [:monitored, :unmonitored]} class="flex flex-wrap gap-2">
+              <% attention = BookAttention.classify(t, MapSet.member?(@book_grabbing, t.id)) %>
+              <div
+                :if={Enum.any?([:pause, :resume], &(&1 in attention.actions))}
+                class="flex flex-wrap gap-2"
+              >
                 <.button
-                  :if={t.status == :monitored and not MapSet.member?(@book_grabbing, t.id)}
+                  :if={:pause in attention.actions}
                   type="button"
                   variant="warning"
                   size="sm"
@@ -875,7 +880,7 @@ defmodule CinderWeb.LibraryLive do
                   {gettext("Pause")}
                 </.button>
                 <.button
-                  :if={t.status == :unmonitored}
+                  :if={:resume in attention.actions}
                   type="button"
                   variant="primary"
                   size="sm"

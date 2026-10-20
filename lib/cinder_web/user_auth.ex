@@ -9,6 +9,7 @@ defmodule CinderWeb.UserAuth do
 
   alias Cinder.Accounts
   alias Cinder.Accounts.Scope
+  alias Cinder.Catalog.Attention
 
   # Make the remember me cookie valid for 14 days. This should match
   # the session validity setting in UserToken.
@@ -381,7 +382,7 @@ defmodule CinderWeb.UserAuth do
   end
 
   # Feeds the admin Activity nav badge (`Layouts.app`'s `holds_count` attr): the count of items
-  # needing an operator action (parked/held movies, grabs in a mapping/verification/residual hold).
+  # that need attention (`Cinder.Catalog.Attention.attention_count/0`).
   # Assigns the count on every mount; for a connected admin it also subscribes to the `"movies"`
   # and `"series"` topics those hold states broadcast on and re-reads the count on each event, so
   # the badge updates live. Non-admins get `nil` (no badge). Returns `{:cont, _}` so pages that
@@ -402,7 +403,7 @@ defmodule CinderWeb.UserAuth do
         else
           socket
         end
-        |> Phoenix.Component.assign(:holds_count, Cinder.Catalog.count_operator_holds())
+        |> Phoenix.Component.assign(:holds_count, Attention.attention_count())
       else
         Phoenix.Component.assign(socket, :holds_count, nil)
       end
@@ -504,7 +505,7 @@ defmodule CinderWeb.UserAuth do
 
   defp pending_requests_badge_hook(_message, socket), do: {:cont, socket}
 
-  # A movie or series/grab event may have changed the operator-hold count: re-read it into the
+  # A movie or series/grab event may have changed the attention count: re-read it into the
   # assign the Activity nav badge renders from. Any other message passes through untouched.
   defp operator_holds_badge_hook({event, _payload}, socket)
        when event in [
@@ -514,7 +515,7 @@ defmodule CinderWeb.UserAuth do
               :series_updated,
               :series_deleted
             ] do
-    {:cont, Phoenix.Component.assign(socket, :holds_count, Cinder.Catalog.count_operator_holds())}
+    {:cont, Phoenix.Component.assign(socket, :holds_count, Attention.attention_count())}
   end
 
   defp operator_holds_badge_hook(_message, socket), do: {:cont, socket}

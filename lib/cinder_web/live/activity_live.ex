@@ -23,7 +23,7 @@ defmodule CinderWeb.ActivityLive do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, MovieLifecycle}
+  alias Cinder.Catalog.{Attention, Episode, MovieLifecycle}
   alias Cinder.Catalog.UpgradeHunter
   alias Cinder.Download.TvPoller
   alias Cinder.Subtitles.Sync.Worker
@@ -40,7 +40,7 @@ defmodule CinderWeb.ActivityLive do
 
     {:ok,
      assign(socket,
-       movies: Enum.filter(Catalog.list_movies(), &MovieLifecycle.in_pipeline?/1),
+       movies: Enum.filter(Catalog.list_movies(), &listed?/1),
        grabs: grabs,
        grab_file_forms: grab_file_forms(grabs),
        grab_file_errors: %{},
@@ -54,7 +54,7 @@ defmodule CinderWeb.ActivityLive do
   @impl true
   def handle_info({:movie_updated, movie}, socket) do
     movies =
-      if MovieLifecycle.in_pipeline?(movie),
+      if listed?(movie),
         do: upsert_by_id(socket.assigns.movies, movie),
         else: Enum.reject(socket.assigns.movies, &(&1.id == movie.id))
 
@@ -318,6 +318,9 @@ defmodule CinderWeb.ActivityLive do
     end
   end
 
+  # Idle movies (`:available`, `:cancelled`) live in /library; every other phase stays listed here.
+  defp listed?(movie), do: Attention.classify(movie).phase != :idle
+
   defp refresh_grabs(socket) do
     grabs = Catalog.list_grabs()
     unresolved_ids = for g <- grabs, f <- Catalog.unresolved_grab_files(g), do: f.id
@@ -483,6 +486,7 @@ defmodule CinderWeb.ActivityLive do
             id={"movie-#{m.id}"}
             class="card bg-base-200 p-3 flex flex-row flex-wrap items-center gap-3"
           >
+            <% attention = Attention.classify(m) %>
             <.link
               navigate={~p"/movies/#{m.id}"}
               class="link link-hover w-full truncate sm:w-auto sm:min-w-0 sm:flex-1"
@@ -492,30 +496,27 @@ defmodule CinderWeb.ActivityLive do
             <.status_badge
               id={"activity-movie-status-#{m.id}"}
               kind={:movie}
-              status={movie_badge_status(m)}
+              status={attention.badge}
               progress={m.download_progress}
               speed={m.download_speed}
               eta={m.download_eta}
             />
             <p
-              :if={movie_badge_status(m) == :anime_hold}
+              :if={attention.reason == :anime_hold}
               id={"movie-#{m.id}-hold-reason"}
               class="w-full text-sm text-base-content/70"
             >
               {anime_hold_reason(m.anime_hold_reason)}
             </p>
             <p
-              :if={movie_badge_status(m) != :anime_hold and pipeline_hint(m)}
+              :if={attention.reason != :anime_hold and pipeline_hint(m)}
               id={"movie-#{m.id}-hint"}
               class="w-full text-sm text-base-content/70"
             >
               {m.failure_reason || pipeline_hint(m)}
             </p>
-            <%!-- Retry shows exactly where MovieLifecycle.retry/1 can succeed: a verification hold
-            parks at :import_failed (in the set), an anime hold rides :requested/:searching
-            (out of it, no action to offer) — see MovieLifecycle.parked_statuses/0. --%>
             <.button
-              :if={m.status in MovieLifecycle.parked_statuses()}
+              :if={:retry in attention.actions}
               id={"retry-movie-#{m.id}"}
               size="sm"
               phx-click="retry"
@@ -568,12 +569,13 @@ defmodule CinderWeb.ActivityLive do
         />
         <ul :if={@grabs != []} id="activity-grabs" class="space-y-3">
           <li :for={g <- @grabs} id={"grab-#{g.id}"} class="rounded-box bg-base-200/50 p-4">
+            <% attention = Attention.classify(g) %>
             <div class="flex flex-wrap items-center gap-2">
               <span class="min-w-0 break-words font-semibold">{series_title(g, @locale)}</span>
               <.status_badge
                 id={"activity-grab-status-#{g.id}"}
                 kind={:grab}
-                status={grab_state(g)}
+                status={attention.badge}
                 progress={g.download_progress}
                 speed={g.download_speed}
                 eta={g.download_eta}
@@ -581,7 +583,7 @@ defmodule CinderWeb.ActivityLive do
               <span class="text-xs text-base-content/70">{g.download_protocol}</span>
               <span class="min-w-0 truncate text-xs text-base-content/70">{g.download_id}</span>
               <.button
-                :if={g.mapping_status == :needs_mapping}
+                :if={:retry_mapping in attention.actions}
                 id={"retry-mapping-grab-#{g.id}"}
                 type="button"
                 size="xs"
@@ -591,7 +593,7 @@ defmodule CinderWeb.ActivityLive do
                 {gettext("Retry import")}
               </.button>
               <.button
-                :if={g.mapping_status == :needs_mapping}
+                :if={:discard in attention.actions}
                 id={"ask-cancel-mapping-grab-#{g.id}"}
                 type="button"
                 variant="danger"
@@ -603,7 +605,7 @@ defmodule CinderWeb.ActivityLive do
                 {gettext("Discard")}
               </.button>
               <.button
-                :if={g.mapping_status == :verification_blocked}
+                :if={:retry_verification in attention.actions}
                 id={"retry-verification-grab-#{g.id}"}
                 type="button"
                 size="xs"
@@ -613,7 +615,7 @@ defmodule CinderWeb.ActivityLive do
                 {gettext("Retry verification")}
               </.button>
               <.button
-                :if={g.mapping_status == :verification_blocked}
+                :if={:import_anyway in attention.actions}
                 id={"import-anyway-grab-#{g.id}"}
                 type="button"
                 size="xs"
@@ -623,9 +625,9 @@ defmodule CinderWeb.ActivityLive do
                 {gettext("Import anyway")}
               </.button>
               <.button
-                :if={g.mapping_status != :needs_mapping}
+                :if={:cancel in attention.actions}
                 id={
-                  if g.mapping_status == :verification_blocked,
+                  if attention.reason == :verification_blocked,
                     do: "cancel-verification-grab-#{g.id}"
                 }
                 type="button"
@@ -636,13 +638,13 @@ defmodule CinderWeb.ActivityLive do
                 phx-value-id={g.id}
                 phx-disable-with={gettext("Deleting…")}
               >
-                {if g.mapping_status == :verification_blocked,
+                {if attention.reason == :verification_blocked,
                   do: gettext("Cancel download"),
                   else: gettext("Delete")}
               </.button>
             </div>
             <p
-              :if={g.mapping_status == :needs_mapping}
+              :if={attention.reason == :needs_mapping}
               id={"grab-#{g.id}-mapping-reason"}
               class="mt-2 text-sm text-base-content/70"
             >
@@ -867,7 +869,7 @@ defmodule CinderWeb.ActivityLive do
               </:caveat>
             </.confirm_action>
             <.confirm_action
-              :if={@confirming == "import:#{g.id}" and g.mapping_status == :verification_blocked}
+              :if={@confirming == "import:#{g.id}" and :import_anyway in attention.actions}
               id={"confirm-import-anyway-grab-#{g.id}"}
               on_confirm="confirm_import_anyway"
               on_cancel="dismiss_confirm"
@@ -888,13 +890,13 @@ defmodule CinderWeb.ActivityLive do
               on_cancel="dismiss_confirm"
               value={g.id}
               confirm_label={
-                if g.mapping_status == :verification_blocked,
+                if attention.reason == :verification_blocked,
                   do: gettext("Cancel download"),
                   else: gettext("Delete")
               }
             >
               <:caveat>
-                {if g.mapping_status == :verification_blocked,
+                {if attention.reason == :verification_blocked,
                   do:
                     gettext(
                       "Cancel this download? Its episodes will return to the wanted queue, and this release will not be picked again."

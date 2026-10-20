@@ -12,7 +12,6 @@ defmodule CinderWeb.MyRequestsLive do
   import CinderWeb.LiveHelpers,
     only: [
       request_title: 2,
-      movie_badge_status: 1,
       book_badge_state: 2,
       pipeline_hint: 1,
       anime_hold_reason: 1,
@@ -23,6 +22,7 @@ defmodule CinderWeb.MyRequestsLive do
   import CinderWeb.IssueComponents, only: [report_form: 1, report_status: 1]
 
   alias Cinder.{Books, Catalog, Issues, Requests, Settings}
+  alias Cinder.Catalog.Attention
   alias Cinder.Requests.Target
 
   @impl true
@@ -346,7 +346,7 @@ defmodule CinderWeb.MyRequestsLive do
               :if={movie}
               id={"myrequests-movie-status-#{r.id}"}
               kind={:movie}
-              status={movie_badge_status(movie)}
+              status={Attention.classify(movie).badge}
               progress={movie.download_progress}
               speed={movie.download_speed}
               eta={movie.download_eta}
@@ -403,14 +403,14 @@ defmodule CinderWeb.MyRequestsLive do
             <span class="min-w-0 break-words"><span class="font-medium">{gettext("Reason:")}</span> {r.denial_reason}</span>
           </p>
           <p
-            :if={movie && movie_badge_status(movie) == :anime_hold}
+            :if={movie && Attention.classify(movie).reason == :anime_hold}
             id={"request-#{r.id}-hold-reason"}
             class="mt-1 text-sm text-base-content/70"
           >
             {anime_hold_reason(movie.anime_hold_reason)}
           </p>
           <p
-            :if={movie && movie_badge_status(movie) != :anime_hold && pipeline_hint(movie)}
+            :if={movie && Attention.classify(movie).reason != :anime_hold && pipeline_hint(movie)}
             id={"request-#{r.id}-hint"}
             class="mt-1 text-sm text-base-content/70"
           >

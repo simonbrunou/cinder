@@ -6,7 +6,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Movie, MovieLifecycle, TitleAlias}
+  alias Cinder.Catalog.{Attention, Movie, MovieLifecycle, TitleAlias}
   alias Cinder.Repo
 
   @moduletag :capture_log
@@ -530,7 +530,6 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert has_element?(lv, "span.badge-warning", "Needs verification")
     assert has_element?(lv, "button", "Retry verification")
     assert has_element?(lv, "button", "Cancel")
-    refute has_element?(lv, "button", "Find a better match")
 
     lv |> element("button", "Retry verification") |> render_click()
 
@@ -552,7 +551,6 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert has_element?(lv, "span.badge-warning", "Needs verification")
     assert has_element?(lv, "button", "Retry verification")
     assert has_element?(lv, "button", "Cancel upgrade")
-    refute has_element?(lv, "button", "Find a better match")
 
     lv |> element("button", "Cancel upgrade") |> render_click()
 
@@ -565,12 +563,37 @@ defmodule CinderWeb.MovieDetailLiveTest do
            } = Catalog.get_movie_by_id(movie.id)
   end
 
-  test "an in-flight movie shows no Retry button", %{conn: conn} do
-    movie = movie_fixture(%{title: "Sicario"})
-    {:ok, _} = seed_movie_state(movie, %{status: :downloading, download_id: "h"})
+  # Which state offers which action is pinned by `Cinder.Catalog.AttentionTest`; this pins only that
+  # the console renders a button for exactly the movie's offered actions (Delete when it offers no
+  # Cancel).
+  test "renders a button for exactly the movie's offered actions", %{conn: conn} do
+    movies = [
+      movie_fixture(status: :downloading, download_id: "h"),
+      movie_fixture(status: :no_match),
+      movie_fixture(status: :upgrading, file_path: "/lib/a.mkv", download_id: "u"),
+      movie_fixture(status: :available, file_path: "/lib/b.mkv"),
+      verification_held_movie!(:download),
+      elem(Catalog.set_anime_hold(movie_fixture(), "subtitle_language_required"), 1)
+    ]
 
-    {:ok, lv, _html} = live_movie(conn, movie)
-    refute has_element?(lv, "button", "Retry")
+    controls = %{
+      retry: ~s(button[phx-click="retry"]),
+      manual_search: ~s(button[phx-click="manual_search"]),
+      cancel_upgrade: ~s(button[phx-click="cancel_upgrade"]),
+      cancel: ~s(button[phx-click="ask_cancel"])
+    }
+
+    for movie <- movies do
+      {:ok, lv, _html} = live_movie(conn, movie)
+
+      for {action, selector} <- controls do
+        assert has_element?(lv, selector) == Attention.offers?(movie, action),
+               "#{movie.status} × #{action}"
+      end
+
+      assert has_element?(lv, ~s(button[phx-click="ask_delete"])) ==
+               not Attention.offers?(movie, :cancel)
+    end
   end
 
   test "Find a better match opens the panel; grabbing transitions the movie to :upgrading",

@@ -12,7 +12,7 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, GrabFile, Grabs}
+  alias Cinder.Catalog.{Episode, Grab, GrabFile}
   alias Cinder.Download.TvPoller
   alias Cinder.Repo
 
@@ -29,7 +29,7 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
     # The grab closes outright: no residual files, nothing in the admin action badge.
     refute Repo.get(Grab, grab.id)
     assert Repo.all(GrabFile) == []
-    assert Catalog.count_operator_holds() == 0
+    assert Catalog.Attention.attention_count() == 0
 
     # The two wanted episodes imported.
     for episode <- wanted do
@@ -59,7 +59,7 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
     assert grab.grab_files |> Enum.map(& &1.relative_path) |> Enum.sort() ==
              ["Show.S01E99.mkv", "bonus-featurette.mkv"] |> Enum.sort()
 
-    assert Grabs.grab_hold(grab) == :residual_files
+    assert Catalog.Attention.classify(grab).reason == :residual_files
   end
 
   @tag :tmp_dir
@@ -81,7 +81,7 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
              "Totally.Different.Show.S01E05.1080p.WEB-DL.mkv"
            ]
 
-    assert Grabs.grab_hold(grab) == :residual_files
+    assert Catalog.Attention.classify(grab).reason == :residual_files
   end
 
   @tag :tmp_dir
@@ -209,7 +209,7 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
              "Totally.Different.Show.S01E05.1080p.WEB-DL.mkv"
            ]
 
-    assert Grabs.grab_hold(grab) == :residual_files
+    assert Catalog.Attention.classify(grab).reason == :residual_files
   end
 
   @tag :tmp_dir
@@ -226,7 +226,7 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
     grab = Repo.get!(Grab, grab.id) |> Repo.preload(:grab_files)
 
     assert Enum.map(grab.grab_files, & &1.relative_path) == ["Show.S01E08E09.1080p.WEB-DL.mkv"]
-    assert Grabs.grab_hold(grab) == :residual_files
+    assert Catalog.Attention.classify(grab).reason == :residual_files
 
     # E08 is untouched either way — the file was never a candidate to replace it.
     e08 = Enum.find(held, &(&1.episode_number == 8))
@@ -249,7 +249,7 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
     grab = Repo.get!(Grab, grab.id) |> Repo.preload(:grab_files)
 
     assert Enum.map(grab.grab_files, & &1.relative_path) == ["Show.S01E08E09.1080p.WEB-DL.mkv"]
-    assert Grabs.grab_hold(grab) == :residual_files
+    assert Catalog.Attention.classify(grab).reason == :residual_files
 
     # Still wanted, still unimported — but its candidate survived for the operator to decide on.
     assert Repo.get!(Episode, e09.id).file_path == nil

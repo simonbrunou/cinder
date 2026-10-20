@@ -18,7 +18,6 @@ defmodule CinderWeb.MovieDetailLive do
       format_date_year: 1,
       humanize_bytes: 1,
       rating: 1,
-      movie_badge_status: 1,
       media_title: 2,
       media_overview: 2
     ]
@@ -27,7 +26,7 @@ defmodule CinderWeb.MovieDetailLive do
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Movie, MovieLifecycle}
+  alias Cinder.Catalog.{Attention, Movie, MovieLifecycle}
   alias CinderWeb.AliasHelpers
 
   @picks Language.preferences()
@@ -43,6 +42,7 @@ defmodule CinderWeb.MovieDetailLive do
        socket
        |> assign(
          movie: movie,
+         attention: Attention.classify(movie),
          confirming: nil,
          alias_form: alias_form(),
          delete_files: false,
@@ -262,7 +262,7 @@ defmodule CinderWeb.MovieDetailLive do
 
       <div class="mb-4 flex flex-wrap items-center gap-2">
         <.button
-          :if={MovieLifecycle.cancellable?(@movie)}
+          :if={:cancel in @attention.actions}
           type="button"
           variant="warning"
           size="sm"
@@ -271,7 +271,7 @@ defmodule CinderWeb.MovieDetailLive do
           {gettext("Cancel")}
         </.button>
         <.button
-          :if={not MovieLifecycle.cancellable?(@movie)}
+          :if={:cancel not in @attention.actions}
           type="button"
           variant="danger"
           size="sm"
@@ -327,7 +327,7 @@ defmodule CinderWeb.MovieDetailLive do
               <.status_badge
                 id={"movie-detail-status-#{@movie.id}"}
                 kind={:movie}
-                status={movie_badge_status(@movie)}
+                status={@attention.badge}
                 progress={@movie.download_progress}
                 speed={@movie.download_speed}
                 eta={@movie.download_eta}
@@ -490,26 +490,23 @@ defmodule CinderWeb.MovieDetailLive do
       </section>
 
       <div
-        :if={parked?(@movie.status) or @movie.status in [:available, :upgrading]}
+        :if={Enum.any?([:retry, :manual_search, :cancel_upgrade], &(&1 in @attention.actions))}
         class="mt-4 flex flex-wrap items-center gap-2"
       >
         <.button
-          :if={parked?(@movie.status)}
+          :if={:retry in @attention.actions}
           type="button"
           variant="ghost"
           size="sm"
           phx-click="retry"
           phx-disable-with={gettext("Retrying…")}
         >
-          {if movie_badge_status(@movie) == :verification_hold,
+          {if @attention.reason == :verification_hold,
             do: gettext("Retry verification"),
             else: gettext("Retry")}
         </.button>
         <.button
-          :if={
-            @movie.status == :available or
-              (parked?(@movie.status) and is_nil(@movie.verification_hold_origin))
-          }
+          :if={:manual_search in @attention.actions}
           type="button"
           variant="ghost"
           size="sm"
@@ -518,10 +515,7 @@ defmodule CinderWeb.MovieDetailLive do
           {gettext("Find a better match")}
         </.button>
         <.button
-          :if={
-            @movie.status == :upgrading or
-              @movie.verification_hold_origin == :upgrade
-          }
+          :if={:cancel_upgrade in @attention.actions}
           type="button"
           variant="ghost"
           size="sm"
@@ -609,8 +603,13 @@ defmodule CinderWeb.MovieDetailLive do
   # mid-flight leaves the current assign in place (the `:movie_deleted` handler drives the redirect).
   defp assign_fresh(socket, id) do
     case Catalog.get_movie_by_id(id) do
-      nil -> socket
-      movie -> socket |> assign(movie: movie) |> refresh_identity(movie)
+      nil ->
+        socket
+
+      movie ->
+        socket
+        |> assign(movie: movie, attention: Attention.classify(movie))
+        |> refresh_identity(movie)
     end
   end
 
@@ -629,8 +628,6 @@ defmodule CinderWeb.MovieDetailLive do
 
   defp profile_form(movie),
     do: to_form(%{"profile_id" => Map.get(movie, :profile_id) || "auto"})
-
-  defp parked?(status), do: status in MovieLifecycle.parked_statuses()
 
   defp has_file?(%Movie{file_path: fp}), do: is_binary(fp) and fp != ""
 

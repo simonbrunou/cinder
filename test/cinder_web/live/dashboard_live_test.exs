@@ -494,6 +494,20 @@ defmodule CinderWeb.DashboardLiveTest do
                ~r{tabular-nums">\s*1\s*</span>}
     end
 
+    # The tile reads the same phases as the beacon pill: an anime hold waits on a fix made elsewhere,
+    # so it is neither in the pipeline nor parked.
+    test "an anime-held movie is neither in the pipeline nor parked", %{conn: conn} do
+      {:ok, movie} =
+        Catalog.add_movie(%{tmdb_id: System.unique_integer([:positive]), title: "Akira"})
+
+      {:ok, _held} = Catalog.set_anime_hold(movie, "subtitle_language_required")
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      tile = lv |> element("div.items-baseline", "In pipeline") |> render()
+      assert tile =~ ~r{tabular-nums">\s*0\s*</span>}
+      refute tile =~ "parked"
+    end
+
     test "shows an empty pending state when there is nothing to approve", %{conn: conn} do
       {:ok, _lv, html} = live(conn, ~p"/dashboard")
       assert html =~ "Nothing to approve"

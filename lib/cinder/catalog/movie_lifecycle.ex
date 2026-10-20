@@ -22,7 +22,8 @@ defmodule Cinder.Catalog.MovieLifecycle do
     * download: `track/2`, `mark_downloaded/2`
     * import: `import_staged/2`, `reject/2`
     * any failure a poller observes: `record_failure/2`
-    * operator: `retry/1`, `cancel/2`, `abort_upgrade/2`
+    * operator: `retry/1`, `cancel/2`, `abort_upgrade/2`, each refusing a movie that does not
+      offer its action (`Cinder.Catalog.Attention`)
     * adoption: `adopt/3`
 
   Creating a movie is not a lifecycle edge: `Cinder.Requests` creates one at `:requested` through
@@ -35,7 +36,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
   alias Cinder.Audit
   alias Cinder.Catalog
-  alias Cinder.Catalog.{BlockedRelease, Grabs, Movie, Profiles}
+  alias Cinder.Catalog.{Attention, BlockedRelease, Grabs, Movie, Profiles}
   alias Cinder.Download
   alias Cinder.Library
   alias Cinder.Library.ImportStage
@@ -59,13 +60,13 @@ defmodule Cinder.Catalog.MovieLifecycle do
     cancelled: []
   }
 
-  # The complete split of `Movie`'s status enum, so views never re-derive it:
+  # The complete split of `Movie`'s status enum. Views read it through `Cinder.Catalog.Attention`,
+  # which also decides which operator verbs a movie offers:
   #   active: in-flight pipeline work         @pipeline_statuses
   #   parked: failed, awaiting a retry        @parked_statuses
   #   done:   terminal, nothing left to do    :available, :cancelled
   @pipeline_statuses [:requested, :searching, :downloading, :downloaded, :upgrading]
   @parked_statuses [:no_match, :search_failed, :import_failed]
-  @cancellable_statuses [:requested, :searching, :downloading, :downloaded]
 
   # The download a movie leaves behind when it is re-queued, reverted, cancelled or aborted:
   # leaving it on the row is misleading, and a latent misroute if anything reads it later.
@@ -98,43 +99,9 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
   @doc """
   The statuses parked on a failure that needs a retry. Disjoint from `pipeline_statuses/0`;
-  together with the terminal-done pair they cover the status enum exactly. `retry/1` accepts
-  exactly these, so a view gating Retry on membership offers it where it can succeed.
+  together with the terminal-done pair they cover the status enum exactly.
   """
   def parked_statuses, do: @parked_statuses
-
-  @doc """
-  True while a movie still belongs on live pipeline surfaces: active (`pipeline_statuses/0`) or
-  parked. False once `:available` or `:cancelled`.
-  """
-  def in_pipeline?(%{status: status}),
-    do: status in @pipeline_statuses or status in @parked_statuses
-
-  @doc "True when `retry/1` would re-queue `movie` or release its verification hold."
-  def retryable?(%Movie{status: status}), do: status in @parked_statuses
-
-  @doc """
-  True when `cancel/2` accepts `movie`: an active status
-  (`#{inspect(@cancellable_statuses)}`), or a verification hold on a fresh download.
-  """
-  def cancellable?(%Movie{status: :import_failed, verification_hold_origin: :download}), do: true
-  def cancellable?(%Movie{status: status}), do: status in @cancellable_statuses
-
-  @doc "True when `abort_upgrade/2` accepts `movie`: an upgrade in flight or on a verification hold."
-  def abortable?(%Movie{status: :upgrading}), do: true
-  def abortable?(%Movie{status: :import_failed, verification_hold_origin: :upgrade}), do: true
-  def abortable?(%Movie{}), do: false
-
-  @doc """
-  True when an operator may grab a chosen release for `movie`: an `:available` movie (the grab
-  becomes an upgrade) or a parked one that is not on a verification hold.
-  """
-  def grabbable?(%Movie{status: :available}), do: true
-
-  def grabbable?(%Movie{status: status, verification_hold_origin: nil}),
-    do: status in @parked_statuses
-
-  def grabbable?(%Movie{}), do: false
 
   # --- search ------------------------------------------------------------------------------------
 
@@ -828,11 +795,16 @@ defmodule Cinder.Catalog.MovieLifecycle do
   A verification hold is released instead: back to `:downloaded` or `:upgrading`, keeping its
   release, with `import_attempts` zeroed so the import gets a fresh budget.
 
-  `{:error, :not_retryable}` for a movie that is not parked; `{:error, :stale_status}` when the
-  row moved on since the caller read it (the blocklist is left alone then).
+  `{:error, :not_retryable}` for a movie that does not offer `:retry` (`Attention.offers?/2`);
+  `{:error, :stale_status}` when the row moved on since the caller read it, a plain parked movie
+  that has since become a verification hold included (the blocklist is left alone then).
   """
-  def retry(%Movie{status: :import_failed, verification_hold_origin: origin} = movie)
-      when origin in [:download, :upgrade] do
+  def retry(%Movie{} = movie) do
+    if Attention.offers?(movie, :retry), do: do_retry(movie), else: {:error, :not_retryable}
+  end
+
+  defp do_retry(%Movie{status: :import_failed, verification_hold_origin: origin} = movie)
+       when origin in [:download, :upgrade] do
     status = if origin == :download, do: :downloaded, else: :upgrading
 
     movie
@@ -843,31 +815,38 @@ defmodule Cinder.Catalog.MovieLifecycle do
     |> publish()
   end
 
-  def retry(%Movie{status: status} = movie) when status in @parked_statuses do
+  defp do_retry(%Movie{} = movie) do
     attrs =
       Map.merge(@requeue_clears, %{status: :requested, search_attempts: 0, import_attempts: 0})
 
-    with {:ok, requested} <- movie |> write(attrs) |> publish() do
+    with {:ok, requested} <- movie |> write(attrs, [:verification_hold_origin]) |> publish() do
       Grabs.clear_stalled_blocklist(movie: movie.id)
       {:ok, requested}
     end
   end
 
-  def retry(%Movie{}), do: {:error, :not_retryable}
-
   @doc """
-  Cancels an in-flight movie (`cancellable?/1`). The `:cancelled` write, the audit row and the
-  durable cleanup fence for its client download commit together; the client removal runs after
-  commit, and a failure there leaves the fence for background reconciliation.
+  Cancels an in-flight movie (one that offers `:cancel`). The `:cancelled` write, the audit row
+  and the durable cleanup fence for its client download commit together; the client removal runs
+  after commit, and a failure there leaves the fence for background reconciliation.
 
   A verification hold on a fresh download is cancelled with its download dropped. Returns
   `{:error, :not_cancellable}` when the movie is not cancellable or moved on since the caller
   read it.
   """
-  def cancel(%Movie{status: :import_failed, verification_hold_origin: :download} = movie, actor),
-    do: release_hold(movie, actor, :cancelled, :cancel_movie, :not_cancellable)
+  def cancel(%Movie{} = movie, actor) do
+    if Attention.offers?(movie, :cancel),
+      do: do_cancel(movie, actor),
+      else: {:error, :not_cancellable}
+  end
 
-  def cancel(%Movie{status: status} = movie, actor) when status in @cancellable_statuses do
+  defp do_cancel(
+         %Movie{status: :import_failed, verification_hold_origin: :download} = movie,
+         actor
+       ),
+       do: release_hold(movie, actor, :cancelled, :cancel_movie, :not_cancellable)
+
+  defp do_cancel(%Movie{} = movie, actor) do
     fn ->
       with {:ok, cancelled} <- write(movie, %{status: :cancelled, release_policy_snapshot: nil}) do
         intent_ids = Download.fence_movie_cleanup(cancelled)
@@ -879,17 +858,22 @@ defmodule Cinder.Catalog.MovieLifecycle do
     |> publish_with_cleanup(:not_cancellable)
   end
 
-  def cancel(%Movie{}, _actor), do: {:error, :not_cancellable}
-
   @doc """
-  Aborts an upgrade: back to `:available` keeping the live library file and its quality, with the
-  replacement download fenced for removal. Never `:cancelled`: the movie still has a good file.
-  An upgrade on a verification hold is released the same way. Audited like `cancel/2`.
+  Aborts an upgrade (a movie that offers `:cancel_upgrade`): back to `:available` keeping the live
+  library file and its quality, with the replacement download fenced for removal. Never
+  `:cancelled`: the movie still has a good file. An upgrade on a verification hold is released the
+  same way. Audited like `cancel/2`.
 
   Returns `{:error, :not_upgrading}` when there is no upgrade to abort, or it finished or changed
   since the caller read the movie.
   """
-  def abort_upgrade(%Movie{status: :upgrading} = movie, actor) do
+  def abort_upgrade(%Movie{} = movie, actor) do
+    if Attention.offers?(movie, :cancel_upgrade),
+      do: do_abort_upgrade(movie, actor),
+      else: {:error, :not_upgrading}
+  end
+
+  defp do_abort_upgrade(%Movie{status: :upgrading} = movie, actor) do
     attrs = Map.put(@drop_download, :status, :available)
 
     fn ->
@@ -903,13 +887,8 @@ defmodule Cinder.Catalog.MovieLifecycle do
     |> publish_with_cleanup(:not_upgrading)
   end
 
-  def abort_upgrade(
-        %Movie{status: :import_failed, verification_hold_origin: :upgrade} = movie,
-        actor
-      ),
-      do: release_hold(movie, actor, :available, :abort_upgrade, :not_upgrading)
-
-  def abort_upgrade(%Movie{}, _actor), do: {:error, :not_upgrading}
+  defp do_abort_upgrade(%Movie{verification_hold_origin: :upgrade} = movie, actor),
+    do: release_hold(movie, actor, :available, :abort_upgrade, :not_upgrading)
 
   # Cancel or abort a verification hold: the hold's download is fenced for removal and its release
   # dropped. A fresh-download hold also loses its download paths; an upgrade hold keeps the live

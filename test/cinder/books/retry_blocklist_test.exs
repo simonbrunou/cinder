@@ -89,7 +89,7 @@ defmodule Cinder.Books.RetryBlocklistTest do
     {:ok, _} = Books.hold_target(target_a, :download_failed, "Release A", true)
     {:ok, _} = Books.hold_target(target_b, :download_failed, "Release B", true)
 
-    Books.clear_blocklist(target_a.id)
+    assert :ok = Books.clear_blocklist(Books.get_target(target_a.id))
 
     assert Books.blocked_release_titles(target_a.id) == []
     assert Books.blocked_release_titles(target_b.id) == ["Release B"]

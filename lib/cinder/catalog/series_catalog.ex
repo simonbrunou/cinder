@@ -1065,16 +1065,28 @@ defmodule Cinder.Catalog.SeriesCatalog do
     case episodes do
       [%{season: %{series: series}} | _] ->
         profile = Cinder.Catalog.media_profile_summary(series)
-
-        Enum.filter(
-          episodes,
-          &(&1.file_path not in [nil, ""] or episode_searchable?(&1, profile))
-        )
+        Enum.filter(episodes, &manual_searchable?(&1, profile))
 
       [] ->
         []
     end
   end
+
+  @doc """
+  Whether a season offers a manual search: it has an episode `manual_search_episodes/2` would act
+  on. `season.episodes` must be loaded; each episode gets `season` attached in memory. The season
+  panel's "Find a better match" renders from this, so it never opens on nothing to search.
+  """
+  def season_manual_searchable?(%Season{episodes: episodes} = season, profile),
+    do: Enum.any?(episodes, &manual_searchable?(%{&1 | season: season}, profile))
+
+  # An episode a manual search may act on: not owned by another grab, and either already
+  # downloaded (an upgrade candidate) or one the sweep would search. Monitoring gates only the
+  # automatic sweep.
+  defp manual_searchable?(%Episode{} = episode, profile),
+    do:
+      is_nil(episode.grab_id) and
+        (episode.file_path not in [nil, ""] or episode_searchable?(episode, profile))
 
   @doc "Count of wanted episodes (see `wanted_episodes/0`)."
   def count_wanted_episodes, do: Repo.aggregate(wanted_episodes_query(), :count)

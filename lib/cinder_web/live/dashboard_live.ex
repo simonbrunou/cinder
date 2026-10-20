@@ -14,7 +14,7 @@ defmodule CinderWeb.DashboardLive do
     only: [default_profile_id: 2, normalize_profile: 2, profile_kind: 1, profiles_for: 2]
 
   alias Cinder.{Accounts, Catalog, Disk, Health, Library, Notifier, Requests}
-  alias Cinder.Catalog.{MovieLifecycle, Refresher}
+  alias Cinder.Catalog.{Attention, Refresher}
   alias Cinder.Download.{Poller, TvPoller}
   alias Cinder.Subtitles.Sweeper
   alias CinderWeb.SettingsLabels
@@ -187,6 +187,7 @@ defmodule CinderWeb.DashboardLive do
   # just to take their length — stays cheap as the catalog grows.
   defp load(socket) do
     counts = Catalog.movie_status_counts()
+    %{movie: movies} = Attention.counts()
 
     assign(socket,
       pending: Requests.list_pending(),
@@ -195,9 +196,8 @@ defmodule CinderWeb.DashboardLive do
       stats: %{
         movies_total: counts |> Map.values() |> Enum.sum(),
         movies_available: Map.get(counts, :available, 0),
-        in_pipeline:
-          Enum.sum(Enum.map(MovieLifecycle.pipeline_statuses(), &Map.get(counts, &1, 0))),
-        parked: Enum.sum(Enum.map(MovieLifecycle.parked_statuses(), &Map.get(counts, &1, 0))),
+        in_pipeline: movies.active,
+        parked: movies.attention,
         series_total: Catalog.count_series(),
         tv_wanted: Catalog.count_wanted_episodes(),
         downloading: Catalog.count_grabs_downloading(),
@@ -643,7 +643,7 @@ defmodule CinderWeb.DashboardLive do
                   <.status_badge
                     id={"dash-movie-status-#{m.id}"}
                     kind={:movie}
-                    status={movie_badge_status(m)}
+                    status={Attention.classify(m).badge}
                     progress={m.download_progress}
                     speed={m.download_speed}
                     eta={m.download_eta}

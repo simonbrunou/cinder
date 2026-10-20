@@ -14,13 +14,13 @@ defmodule Cinder.Catalog.Grabs do
 
   alias Cinder.Catalog.{
     Adoption,
+    Attention,
     BlockedRelease,
     Episode,
     Grab,
     GrabFile,
     Identity,
     Movie,
-    MovieLifecycle,
     Season,
     Series
   }
@@ -46,12 +46,13 @@ defmodule Cinder.Catalog.Grabs do
   Grabs a specific user-chosen `release` for `movie`. An `:available` movie enters `:upgrading`
   (its library `file_path` and `imported_*` are preserved — the poller's upgrade clause swaps the
   file only on a successful re-import). A parked movie that is not on a verification hold enters
-  `:downloading` on the normal import path (`MovieLifecycle.grabbable?/1`). Any other status
-  returns `{:error, :not_grabbable}` (rejecting in-flight/`:upgrading`/`:cancelled`, which also
-  blocks a double-click). A movie deleted mid-action surfaces `{:error, :stale_entry}`.
+  `:downloading` on the normal import path. A movie that does not offer `:manual_search`
+  (`Attention.offers?/2`) returns `{:error, :not_grabbable}` (rejecting
+  in-flight/`:upgrading`/`:cancelled`, which also blocks a double-click). A movie deleted
+  mid-action surfaces `{:error, :stale_entry}`.
   """
   def manual_grab_movie(%Movie{} = movie, %Release{} = release) do
-    if MovieLifecycle.grabbable?(movie),
+    if Attention.offers?(movie, :manual_search),
       do: Download.grab_movie(movie, release),
       else: {:error, :not_grabbable}
   end
@@ -466,16 +467,28 @@ defmodule Cinder.Catalog.Grabs do
   end
 
   @doc """
-  Aborts one grab as a user action. Its delete and durable cleanup fence commit together; remote
-  cleanup retries from the fence. Episodes rejoin the sweep; a verification hold is blocklisted.
+  Aborts one grab as a user action (a grab that offers `:cancel`: any grab not held for mapping,
+  which `cancel_mapping_grab/1` discards instead). Its delete and durable cleanup fence commit
+  together; remote cleanup retries from the fence. Episodes rejoin the sweep; a verification hold
+  is blocklisted. A grab already gone is `{:ok, grab}`; one held for mapping, as the caller saw it
+  or since, is `{:error, :not_cancellable}`.
   """
-  def cancel_grab(%Grab{} = grab), do: cancel_grab(grab, :any_state)
+  def cancel_grab(%Grab{} = grab) do
+    if Attention.offers?(grab, :cancel),
+      do: cancel_grab(grab, :not_mapping),
+      else: {:error, :not_cancellable}
+  end
 
   @doc """
-  Aborts a grab only while it is still held for mapping. The held-state claim, cleanup fence, and
-  delete share one transaction so a concurrent mapping resume cannot be cancelled afterward.
+  Aborts a grab only while it is still held for mapping (one that offers `:discard`). The
+  held-state claim, cleanup fence, and delete share one transaction so a concurrent mapping
+  resume cannot be cancelled afterward.
   """
-  def cancel_mapping_grab(%Grab{} = grab), do: cancel_grab(grab, :needs_mapping)
+  def cancel_mapping_grab(%Grab{} = grab) do
+    if Attention.offers?(grab, :discard),
+      do: cancel_grab(grab, :needs_mapping),
+      else: {:error, :mapping_not_held}
+  end
 
   defp cancel_grab(grab, required_state) do
     result =
@@ -487,7 +500,7 @@ defmodule Cinder.Catalog.Grabs do
             Repo.rollback(:mapping_not_held)
 
           {0, _} ->
-            {grab, [], nil}
+            missed_cancel(grab)
 
           {1, _} ->
             episode_ids = episode_ids_for_grab(grab.id)
@@ -509,7 +522,18 @@ defmodule Cinder.Catalog.Grabs do
     end
   end
 
+  # A cancel claim that matched no row: the grab is gone (idempotent success) or now held for
+  # mapping, which `cancel_grab/1` does not offer.
+  defp missed_cancel(grab) do
+    if Repo.exists?(from g in Grab, where: g.id == ^grab.id),
+      do: Repo.rollback(:not_cancellable),
+      else: {grab, [], nil}
+  end
+
   defp cancel_grab_query(id, :any_state), do: from(g in Grab, where: g.id == ^id)
+
+  defp cancel_grab_query(id, :not_mapping),
+    do: from(g in Grab, where: g.id == ^id and g.mapping_status != :needs_mapping)
 
   defp cancel_grab_query(id, :needs_mapping),
     do: from(g in Grab, where: g.id == ^id and g.mapping_status == :needs_mapping)
@@ -715,53 +739,16 @@ defmodule Cinder.Catalog.Grabs do
   def count_grabs_downloading,
     do: Repo.aggregate(from(g in Grab, where: is_nil(g.content_path)), :count)
 
-  # --- grab hold classification --------------------------------------------------------------
-  #
-  # The one definition of "this grab needs an operator": `grab_hold/1` is the per-grab
-  # authority, `count_grab_holds/0` is the same predicate in query form for the nav badge, and
-  # `CinderWeb.ActivityLive` renders whatever `grab_hold/1` / `unresolved_grab_files/1` say
-  # instead of re-deriving the classes — the view and the count once each kept their own copy,
-  # synced by hand. `operator_holds_test.exs` pins the SQL count to classifying `list_grabs/0`.
-
   @doc """
   The undecided residual videos of a standard-TV grab: inventoried at import time with no
-  fold/part decision yet. A non-empty result makes a `:residual_files` hold (`grab_hold/1`) and
-  is exactly what `/activity` renders resolution actions for. An unloaded `grab_files`
-  association classifies as none.
+  fold/part decision yet. A non-empty result puts the grab on a `:residual_files` hold
+  (`Cinder.Catalog.Attention.classify/1`) and is exactly what `/activity` renders resolution
+  actions for. An unloaded `grab_files` association classifies as none.
   """
   def unresolved_grab_files(%{grab_files: files}) when is_list(files),
     do: Enum.filter(files, &is_nil(&1.decision))
 
   def unresolved_grab_files(_grab), do: []
-
-  @doc """
-  Which operator-action hold a grab sits in, or `nil` when it needs no operator: a mapping hold
-  (`:needs_mapping`), a verification hold (`:verification_blocked`), or a standard residual grab
-  with at least one undecided `grab_file` (`:residual_files`) — the same reason atoms
-  `{:operator_hold, grab, reason}` notifies with. A flagged `mapping_status` wins, so a grab in
-  two classes classifies once.
-  """
-  def grab_hold(%{mapping_status: :needs_mapping}), do: :needs_mapping
-  def grab_hold(%{mapping_status: :verification_blocked}), do: :verification_blocked
-  def grab_hold(grab), do: if(unresolved_grab_files(grab) == [], do: nil, else: :residual_files)
-
-  @doc """
-  Count of grabs sitting in an operator-action hold — `grab_hold/1` in query form (a grab
-  counts iff it classifies non-nil), kept SQL-side so the nav badge doesn't load every grab
-  with its files on each mount. Feeds `Catalog.count_operator_holds/0`;
-  `operator_holds_test.exs` asserts it agrees with classifying the listed grabs.
-  """
-  def count_grab_holds do
-    from(g in Grab,
-      as: :grab,
-      where:
-        g.mapping_status in [:needs_mapping, :verification_blocked] or
-          exists(
-            from f in GrabFile, where: f.grab_id == parent_as(:grab).id and is_nil(f.decision)
-          )
-    )
-    |> Repo.aggregate(:count)
-  end
 
   @doc """
   Grabs downloaded and awaiting import (`content_path` set), preloaded so the TV poller's
@@ -782,7 +769,8 @@ defmodule Cinder.Catalog.Grabs do
   @doc """
   All grabs newest-first, preloaded for the admin /grabs view. No terminal grab row survives to
   prune (every terminal transition deletes it), so instead of a retention sweep this bounds cost
-  with a limit that never drops a hold, regardless of age (#459).
+  with a limit that never drops a hold, regardless of age (#459). The hold predicate here only
+  bounds the list; `Cinder.Catalog.Attention` decides what needs attention.
   """
   def list_grabs do
     Repo.all(

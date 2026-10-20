@@ -694,5 +694,31 @@ defmodule Cinder.CatalogTvPipelineTest do
       # manual search stays operator-overridable, unlike the upgrade hunter).
       assert extra.id in Enum.map(Catalog.manual_search_episodes(series.id, 0), & &1.id)
     end
+
+    test "a season offers a manual search exactly when it has an episode to search" do
+      series = series_fixture(%{monitor_strategy: :all})
+      available = season_fixture(series, %{season_number: 1})
+      episode(available, %{file_path: "/lib/Show/S01E01.mkv"})
+      grabbed = season_fixture(series, %{season_number: 2})
+      owned = episode(grabbed, %{air_date: ~D[2020-01-01]})
+      {:ok, _grab} = Catalog.create_grab("owned", :torrent, [owned.id])
+      unmonitored = season_fixture(series, %{season_number: 3})
+      episode(unmonitored, %{monitored: false, air_date: ~D[2020-01-01]})
+
+      profile = Catalog.media_profile_summary(series)
+
+      offered =
+        for season <- [available, grabbed, unmonitored] do
+          season = Repo.preload(season, :episodes)
+          searchable? = Catalog.season_manual_searchable?(season, profile)
+
+          assert searchable? ==
+                   (Catalog.manual_search_episodes(series.id, season.season_number) != [])
+
+          searchable?
+        end
+
+      assert offered == [true, false, false]
+    end
   end
 end

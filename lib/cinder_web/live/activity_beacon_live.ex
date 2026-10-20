@@ -8,8 +8,9 @@ defmodule CinderWeb.ActivityBeaconLive do
   Its own process owns its own `"movies"`/`"series"` subscriptions — the page LiveViews
   subscribe independently, so there is no double delivery. Toasts fire only on a *change* into a
   noteworthy state (diffed against the last-seen status per id), so a metadata re-broadcast on an
-  already-available movie doesn't re-toast. "Need attention" counts what the Activity nav badge
-  counts (`Catalog.count_operator_holds/0`), so the two never disagree on one page.
+  already-available movie doesn't re-toast. Both counts are phases of `Catalog.Attention.classify/1`
+  per item: "active" counts `:active`, "need attention" counts `:attention`, the same rule as the
+  Activity nav badge (`Catalog.Attention.attention_count/0`), so the two never disagree on one page.
 
   ponytail: re-derives grab counts by re-querying on each `series` broadcast — the coarse
   `{:series_updated, _}` carries no grab. Household scale (a handful of rows); if grab churn ever
@@ -29,17 +30,12 @@ defmodule CinderWeb.ActivityBeaconLive do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.MovieLifecycle
+  alias Cinder.Catalog.Attention
 
   @toast_ttl :timer.seconds(6)
 
-  # Each id maps to `{badge, hold?}`. The badge (movie_badge_status/1, grab_state/1) splits
-  # "in flight" from the rest; an anime hold's badge (:anime_hold replaces :requested/:searching)
-  # leaves the active set. hold? is the nav badge's own rule, `Catalog.count_operator_holds/0`,
-  # per item, read from the same Catalog sources: a movie parked on a Retry
-  # (`MovieLifecycle.parked_statuses/0`) or a grab in any `Catalog.grab_hold/1` class. An anime hold
-  # offers no action, so it never counts.
-  @active_grab [:downloading, :downloaded]
+  # Each id maps to `{badge, phase}` from `Attention.classify/1`. An anime hold is `:waiting`: it
+  # offers no action that resolves it, so it is neither active nor counted as attention.
 
   @impl true
   def mount(_params, _session, socket) do
@@ -99,48 +95,49 @@ defmodule CinderWeb.ActivityBeaconLive do
   defp movie_map, do: Map.new(Catalog.list_movies(), &{&1.id, movie_entry(&1)})
   defp grab_map, do: Map.new(Catalog.list_grabs(), &{&1.id, grab_entry(&1)})
 
-  defp movie_entry(movie),
-    do: {movie_badge_status(movie), movie.status in MovieLifecycle.parked_statuses()}
-
-  defp grab_entry(grab), do: {grab_state(grab), Catalog.grab_hold(grab) != nil}
+  defp movie_entry(movie), do: entry(Attention.classify(movie))
+  defp grab_entry(grab), do: entry(Attention.classify(grab))
+  defp entry(%Attention{badge: badge, phase: phase}), do: {badge, phase}
 
   defp recount(socket) do
     %{movies: movies, grabs: grabs} = socket.assigns
 
-    active =
-      count_badges(movies, MovieLifecycle.pipeline_statuses()) + count_badges(grabs, @active_grab)
-
-    assign(socket, active: active, attention: count_holds(movies) + count_holds(grabs))
+    assign(socket,
+      active: count_phase(movies, :active) + count_phase(grabs, :active),
+      attention: count_phase(movies, :attention) + count_phase(grabs, :attention)
+    )
   end
 
-  defp count_badges(map, badges), do: Enum.count(map, fn {_id, {b, _hold?}} -> b in badges end)
-  defp count_holds(map), do: Enum.count(map, fn {_id, {_badge, hold?}} -> hold? end)
+  defp count_phase(map, phase),
+    do: Enum.count(map, fn {_id, {_badge, item_phase}} -> item_phase == phase end)
 
-  defp maybe_toast_movie(socket, movie, {:available, _hold?}) do
+  defp maybe_toast_movie(socket, movie, {:available, _phase}) do
     title = media_title(movie, socket.assigns.locale)
     toast(socket, :success, gettext("“%{title}” is now available.", title: title))
   end
 
-  defp maybe_toast_movie(socket, movie, {_badge, true}) do
+  defp maybe_toast_movie(socket, movie, {_badge, :attention}) do
     title = media_title(movie, socket.assigns.locale)
     toast(socket, :warning, gettext("“%{title}” needs attention.", title: title))
   end
 
   defp maybe_toast_movie(socket, _movie, _entry), do: socket
 
-  # A grab that just entered a hold it wasn't in before — one toast per newly-held grab.
+  # A grab that just started needing attention: one toast per such grab.
   defp toast_new_grab_attention(socket, grabs) do
     old = socket.assigns.grabs
 
     grabs
-    |> Enum.filter(fn {id, entry} -> held?(entry) and not held?(Map.get(old, id)) end)
+    |> Enum.filter(fn {id, entry} ->
+      needs_attention?(entry) and not needs_attention?(Map.get(old, id))
+    end)
     |> Enum.reduce(socket, fn _grab, acc ->
       toast(acc, :warning, gettext("A download needs attention."))
     end)
   end
 
-  defp held?({_badge, hold?}), do: hold?
-  defp held?(nil), do: false
+  defp needs_attention?({_badge, phase}), do: phase == :attention
+  defp needs_attention?(nil), do: false
 
   defp toast(socket, kind, text) do
     id = socket.assigns.next_toast

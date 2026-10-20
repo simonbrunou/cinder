@@ -310,18 +310,6 @@ defmodule Cinder.CatalogTest do
     end
   end
 
-  describe "cancellable?/1" do
-    test "is true for active statuses and false for terminal/parked ones" do
-      for s <- [:requested, :searching, :downloading, :downloaded] do
-        assert MovieLifecycle.cancellable?(%Movie{status: s}), "expected #{s} cancellable"
-      end
-
-      for s <- [:available, :no_match, :search_failed, :import_failed, :cancelled] do
-        refute MovieLifecycle.cancellable?(%Movie{status: s}), "expected #{s} NOT cancellable"
-      end
-    end
-  end
-
   describe "delete broadcasts" do
     test "broadcast_movie_deleted/1 emits {:movie_deleted, id} on the movies topic" do
       Catalog.subscribe()

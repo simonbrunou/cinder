@@ -67,6 +67,19 @@ The reason: SQLite runs WAL with `busy_timeout: 5000` in dev, test and runtime, 
 racing the poller waits instead of failing with "database busy". That holds only while writes go
 through the choke-points.
 
+## Operator attention has one owner
+
+Whether an item is in flight, needs attention or waits, and which operator actions it offers, come
+from `Cinder.Catalog.Attention.classify/1` (movies, TV grabs) and `Cinder.Books.Attention.classify/2`
+(book targets). Views render badges, buttons and counts from it; they never decide attention or an
+action from raw status fields or status sets. Each operator function refuses an item that does not
+offer its action. `test/cinder/catalog/offered_actions_test.exs` (movies, grabs) and
+`test/cinder/books/attention_test.exs` (book targets) run every action against every state, so a
+new operator action is one classification entry, its guard, and a row in the matching test.
+
+The exception is a residual-files grab's per-file decisions: they render from
+`Grabs.unresolved_grab_files/1`, and `Cinder.Download.TvPoller` claims each file.
+
 ## The approval gate lives in the data model
 
 `Cinder.Requests` is the only path that creates a `:requested` movie or series row, or a book

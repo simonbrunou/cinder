@@ -32,6 +32,7 @@ defmodule CinderWeb.BookDetailLive do
 
   alias Cinder.Acquisition.Parser
   alias Cinder.Books
+  alias Cinder.Books.Attention, as: BookAttention
   alias Cinder.Books.{Author, BookGrab, BookTarget, Work}
   alias Cinder.Catalog
   alias Cinder.Catalog.Profile
@@ -107,8 +108,8 @@ defmodule CinderWeb.BookDetailLive do
   end
 
   # An ebook target's own language preference, set from this page independent of any search —
-  # audiobook is guarded out: `searchable?/2` never offers a search for one, so a picker there
-  # would be a control with no observable effect. `raw_language` is always a string (a `<select>`
+  # audiobook is guarded out, as in the template: a picker there would be a control with no
+  # observable effect. `raw_language` is always a string (a `<select>`
   # posts its blank option as `""`, not an absent key), but guarded anyway per #402's audit —
   # a forged non-string payload falls through to the catch-all instead of reaching `==/2` on a
   # shape `Books.set_target_language/2` never expected.
@@ -154,8 +155,17 @@ defmodule CinderWeb.BookDetailLive do
     with {id, ""} <- Integer.parse(raw_id),
          %BookTarget{work_id: work_id} = target <- Books.get_target(id),
          true <- work_id == socket.assigns.work.id do
-      Books.clear_blocklist(target.id)
-      {:noreply, assign(socket, :blocklists, Map.put(socket.assigns.blocklists, target.id, []))}
+      case Books.clear_blocklist(target) do
+        :ok ->
+          {:noreply,
+           assign(socket, :blocklists, Map.put(socket.assigns.blocklists, target.id, []))}
+
+        {:error, :not_held} ->
+          {:noreply,
+           socket
+           |> reload()
+           |> put_flash(:error, gettext("This target is no longer held, so its blocklist stays."))}
+      end
     else
       _invalid -> {:noreply, socket}
     end
@@ -229,7 +239,11 @@ defmodule CinderWeb.BookDetailLive do
   # The manual-search panel forwards a chosen release back here (it owns no writes of its own).
   @impl true
   def handle_info({:manual_grab, :book, %BookTarget{id: target_id} = target, release}, socket) do
-    outcome = Download.grab_book_target(target, release, replace: target.status == :available)
+    # `replace:` names the kind of grab the operator saw (and confirmed) on the panel's target,
+    # whatever is in flight: Download refuses a target that no longer offers it, and reports one
+    # whose grab is already in flight as busy.
+    replace? = replace_grab?(target)
+    outcome = Download.grab_book_target(target, release, replace: replace?)
     socket = socket |> assign(:searching?, nil) |> reload()
     {level, msg} = book_grab_flash(outcome, socket, target_id)
     {:noreply, put_flash(socket, level, msg)}
@@ -327,13 +341,8 @@ defmodule CinderWeb.BookDetailLive do
 
   defp target_for(work, kind), do: Enum.find(work.targets, &(&1.media_kind == kind))
 
-  defp searchable?(%BookTarget{media_kind: :audiobook, status: :monitored}, nil), do: true
-  defp searchable?(%BookTarget{media_kind: :ebook, status: :monitored}, nil), do: true
-  defp searchable?(_target, _grab), do: false
-
-  defp replaceable?(%BookTarget{media_kind: :audiobook, status: :available}, nil), do: true
-  defp replaceable?(%BookTarget{media_kind: :ebook, status: :available}, nil), do: true
-  defp replaceable?(_target, _grab), do: false
+  # A grab for `target` replaces its file: it would offer `:replace` with nothing in flight.
+  defp replace_grab?(target), do: BookAttention.offers?(target, false, :replace)
 
   defp grab_status(%BookGrab{content_path: nil}), do: :downloading
   defp grab_status(%BookGrab{}), do: :downloaded
@@ -589,6 +598,8 @@ defmodule CinderWeb.BookDetailLive do
           </p>
 
           <div :if={target} id={"book-target-#{kind}"} class="flex flex-col items-start gap-2">
+            <% grab = Map.get(@grabs, target.id) %>
+            <% attention = BookAttention.classify(target, not is_nil(grab)) %>
             <.book_state_badge
               id={"book-target-state-#{kind}"}
               kind={kind}
@@ -596,14 +607,12 @@ defmodule CinderWeb.BookDetailLive do
             />
 
             <p
-              :if={target.status == :held and target.hold_reason}
+              :if={attention.reason == :held and target.hold_reason}
               id={"book-target-hold-reason-#{kind}"}
               class="text-sm text-warning"
             >
               {target.hold_reason}
             </p>
-
-            <% grab = Map.get(@grabs, target.id) %>
 
             <.status_badge
               :if={grab}
@@ -632,7 +641,7 @@ defmodule CinderWeb.BookDetailLive do
             </form>
 
             <.button
-              :if={target.status == :held}
+              :if={:retry in attention.actions}
               type="button"
               variant="neutral"
               size="sm"
@@ -643,7 +652,9 @@ defmodule CinderWeb.BookDetailLive do
             </.button>
 
             <.button
-              :if={target.status == :held and Map.get(@blocklists, target.id, []) != []}
+              :if={
+                :clear_blocklist in attention.actions and Map.get(@blocklists, target.id, []) != []
+              }
               type="button"
               variant="ghost"
               size="sm"
@@ -654,7 +665,7 @@ defmodule CinderWeb.BookDetailLive do
             </.button>
 
             <.button
-              :if={searchable?(target, grab)}
+              :if={:manual_search in attention.actions}
               type="button"
               variant="neutral"
               size="sm"
@@ -665,7 +676,7 @@ defmodule CinderWeb.BookDetailLive do
             </.button>
 
             <.button
-              :if={replaceable?(target, grab)}
+              :if={:replace in attention.actions}
               type="button"
               variant="neutral"
               size="sm"
@@ -681,6 +692,7 @@ defmodule CinderWeb.BookDetailLive do
               id={"ms-book-#{target.id}"}
               target={target}
               work={@work}
+              replace={replace_grab?(target)}
             />
           </div>
         </section>

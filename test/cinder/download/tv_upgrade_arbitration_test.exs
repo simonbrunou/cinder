@@ -59,7 +59,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     # Clean close: no residual holds, no leftover admin action, grab gone.
     refute Repo.get(Grab, grab.id)
     assert Repo.all(GrabFile) == []
-    assert Catalog.count_operator_holds() == 0
+    assert Catalog.Attention.attention_count() == 0
   end
 
   @tag :tmp_dir
@@ -87,7 +87,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     refute adopted.imported_resolution
 
     refute Repo.get(Grab, grab.id)
-    assert Catalog.count_operator_holds() == 0
+    assert Catalog.Attention.attention_count() == 0
   end
 
   @tag :tmp_dir
@@ -196,7 +196,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     end
 
     refute Repo.get(Grab, grab.id)
-    assert Catalog.count_operator_holds() == 0
+    assert Catalog.Attention.attention_count() == 0
   end
 
   # `import_stages.dest` is globally unique and two episodes legitimately share one `file_path` —
@@ -248,7 +248,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
       assert File.read!(held) == "held-both"
       # Imported, not parked: a dest collision would have failed the grab and retried it.
       refute Repo.get(Grab, grab.id)
-      assert Catalog.count_operator_holds() == 0
+      assert Catalog.Attention.attention_count() == 0
     end
   end
 
@@ -515,7 +515,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
       # anchor an import that stopped reaching `keep_held_files/5` would leave the fixture's own
       # state in place and pass.
       refute Repo.get(Grab, grab.id)
-      assert Catalog.count_operator_holds() == 0
+      assert Catalog.Attention.attention_count() == 0
 
       kept = Repo.get!(Episode, adopted.id)
 
@@ -661,7 +661,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
 
       refute Repo.get(Grab, grab.id)
       assert Repo.all(GrabFile) == []
-      assert Catalog.count_operator_holds() == 0
+      assert Catalog.Attention.attention_count() == 0
 
       # #274's bound fired, and only this sweep can see the row.
       assert Catalog.blocked_release_titles_for_series(series.id, include_reasons: [:no_upgrade]) ==

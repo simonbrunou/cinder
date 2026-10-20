@@ -11,6 +11,7 @@ defmodule Cinder.Books do
   require Logger
 
   alias Cinder.Books.{
+    Attention,
     Author,
     BookAuthorPolicy,
     BookBlockedRelease,
@@ -482,24 +483,33 @@ defmodule Cinder.Books do
   end
 
   @doc """
-  Deletes every blocklist row for `target_id`. No status write, no broadcast — mirrors
+  Deletes every blocklist row of a held `target` (one that offers `:clear_blocklist`), or
+  `{:error, :not_held}`. No status write, no broadcast — mirrors
   `Catalog.clear_stalled_blocklist/1`'s "no side effect" contract.
   """
-  @spec clear_blocklist(integer()) :: :ok
-  def clear_blocklist(target_id) do
-    Repo.delete_all(from b in BookBlockedRelease, where: b.book_target_id == ^target_id)
-    :ok
+  @spec clear_blocklist(BookTarget.t()) :: :ok | {:error, :not_held}
+  def clear_blocklist(%BookTarget{id: id} = target) do
+    if offers?(target, :clear_blocklist) do
+      Repo.delete_all(from b in BookBlockedRelease, where: b.book_target_id == ^id)
+      :ok
+    else
+      {:error, :not_held}
+    end
   end
 
   @doc """
   Returns a `:held` target to `:monitored` for a human to pick a different release.
 
   Deliberately does NOT clear the blocklist: the dead release staying blocklisted is what stops
-  the very next search from re-offering it.
+  the very next search from re-offering it. `{:error, :stale_status}` for a target that is not
+  held, as the caller read it or since.
   """
   @spec retry_target(BookTarget.t()) :: {:ok, BookTarget.t()} | {:error, term()}
-  def retry_target(%BookTarget{} = target),
-    do: transition_target(target, %{status: :monitored}, expect: :held)
+  def retry_target(%BookTarget{} = target) do
+    if offers?(target, :retry),
+      do: transition_target(target, %{status: :monitored}, expect: :held),
+      else: {:error, :stale_status}
+  end
 
   @doc """
   Pauses a `:monitored` target to `:unmonitored`.
@@ -512,15 +522,20 @@ defmodule Cinder.Books do
 
   The status transition and a `book_grabs` non-existence check run inside one
   `Repo.transaction/1`, refusing with `{:error, :grab_in_progress}` if a grab for the target
-  exists — closing the race rather than narrowing it.
+  exists — closing the race rather than narrowing it — and with `{:error, :stale_status}` when
+  the target is not `:monitored`, as the caller read it or since.
   """
   @spec pause_target(BookTarget.t()) ::
           {:ok, BookTarget.t()} | {:error, :grab_in_progress | :stale_status}
-  def pause_target(%BookTarget{id: id}) do
+  def pause_target(%BookTarget{id: id} = target) do
     Repo.transaction(fn ->
-      if Repo.exists?(from g in BookGrab, where: g.book_target_id == ^id),
-        do: Repo.rollback(:grab_in_progress),
-        else: do_pause(id)
+      grab_in_progress? = grab_in_progress?(id)
+
+      cond do
+        Attention.offers?(target, grab_in_progress?, :pause) -> do_pause(id)
+        Attention.offers?(target, false, :pause) -> Repo.rollback(:grab_in_progress)
+        true -> Repo.rollback(:stale_status)
+      end
     end)
     |> publish_pause()
   end
@@ -547,8 +562,19 @@ defmodule Cinder.Books do
   approval and pausing never clears it, so resume needs no profile re-selection.
   """
   @spec resume_target(BookTarget.t()) :: {:ok, BookTarget.t()} | {:error, term()}
-  def resume_target(%BookTarget{} = target),
-    do: transition_target(target, %{status: :monitored}, expect: :unmonitored)
+  def resume_target(%BookTarget{} = target) do
+    if offers?(target, :resume),
+      do: transition_target(target, %{status: :monitored}, expect: :unmonitored),
+      else: {:error, :stale_status}
+  end
+
+  # The operator actions above refuse a target that does not offer them (`Books.Attention`), then
+  # claim its status with a compare-and-swap.
+  defp offers?(%BookTarget{id: id} = target, action),
+    do: Attention.offers?(target, grab_in_progress?(id), action)
+
+  defp grab_in_progress?(target_id),
+    do: Repo.exists?(from g in BookGrab, where: g.book_target_id == ^target_id)
 
   # `inspect/1`, never `to_string/1`: a reason may be a tuple (`{:unexpected_destination_type,
   # :directory}`), and `String.Chars` is undefined for tuples — `to_string/1` raised inside the

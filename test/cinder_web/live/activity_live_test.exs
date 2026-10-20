@@ -6,7 +6,7 @@ defmodule CinderWeb.ActivityLiveTest do
   import Mox
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, GrabFile, MovieLifecycle}
+  alias Cinder.Catalog.{Attention, Episode, Grab, GrabFile, MovieLifecycle}
   alias Cinder.Download.Intent
   alias Cinder.Download.TvPoller
   alias Cinder.Library.ImportStage
@@ -59,6 +59,57 @@ defmodule CinderWeb.ActivityLiveTest do
     })
     |> Repo.update!()
     |> Repo.preload(:episodes)
+  end
+
+  # Which state offers which action is pinned by `Cinder.Catalog.AttentionTest`; this pins only
+  # that /activity renders a control for exactly the actions each row's classification offers.
+  test "every movie and grab renders a control for exactly its offered actions", %{conn: conn} do
+    for status <- [:downloading, :no_match, :import_failed] do
+      movie_fixture(status: status, download_id: "m-#{status}")
+    end
+
+    {:ok, _anime} = Catalog.set_anime_hold(movie_fixture(), "subtitle_language_required")
+
+    for mapping_status <- [:resolved, :needs_mapping, :verification_blocked] do
+      Repo.insert!(%Grab{
+        download_id: "g-#{mapping_status}",
+        download_protocol: :torrent,
+        mapping_status: mapping_status
+      })
+    end
+
+    residual = Repo.insert!(%Grab{download_id: "g-res", download_protocol: :usenet})
+
+    Repo.insert!(%GrabFile{
+      grab_id: residual.id,
+      relative_path: "x.mkv",
+      size: 1,
+      device: 1,
+      inode: 1
+    })
+
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+
+    for movie <- Catalog.list_movies() do
+      assert has_element?(lv, "#retry-movie-#{movie.id}") ==
+               Attention.offers?(movie, :retry),
+             "movie #{movie.status}"
+    end
+
+    for grab <- Catalog.list_grabs() do
+      controls = %{
+        retry_mapping: "#retry-mapping-grab-#{grab.id}",
+        discard: "#ask-cancel-mapping-grab-#{grab.id}",
+        retry_verification: "#retry-verification-grab-#{grab.id}",
+        import_anyway: "#import-anyway-grab-#{grab.id}",
+        cancel: ~s(#grab-#{grab.id} button[phx-click="ask_delete"])
+      }
+
+      for {action, selector} <- controls do
+        assert has_element?(lv, selector) == Attention.offers?(grab, action),
+               "grab #{grab.download_id} × #{action}"
+      end
+    end
   end
 
   test "renders the movie pipeline and live-updates on transition", %{conn: conn} do
@@ -235,7 +286,6 @@ defmodule CinderWeb.ActivityLiveTest do
     assert has_element?(view, "#grab-#{held.id}-mapping-reason", "Severance - 01.mkv")
     assert has_element?(view, "#retry-mapping-grab-#{held.id}", "Retry import")
     assert has_element?(view, "#ask-cancel-mapping-grab-#{held.id}", "Discard")
-    refute has_element?(view, "#grab-#{held.id} button", "Delete")
   end
 
   test "a standard residual grab shows explicit Fold, Part, and Hold actions with no selection",
@@ -576,7 +626,7 @@ defmodule CinderWeb.ActivityLiveTest do
     assert Repo.get!(Episode, episode.id).grab_id == nil
   end
 
-  test "verification holds show retry and cancel without exposing mapping actions", %{
+  test "verification holds show retry and cancel, and no residual-file form", %{
     conn: conn
   } do
     held = verification_grab!()
@@ -588,9 +638,6 @@ defmodule CinderWeb.ActivityLiveTest do
     assert has_element?(view, "#grab-#{held.id} span.badge-warning", "Needs verification")
     assert has_element?(view, "#retry-verification-grab-#{held.id}", "Retry verification")
     assert has_element?(view, "#cancel-verification-grab-#{held.id}", "Cancel download")
-
-    refute has_element?(view, "#grab-#{held.id}", "Retry import")
-    refute has_element?(view, "#grab-#{held.id}", "Discard")
     refute has_element?(view, "#grab-#{held.id} input")
   end
 

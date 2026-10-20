@@ -72,7 +72,7 @@ defmodule CinderWeb.SeriesDetailLive do
     with {id, ""} <- Integer.parse(id),
          %Season{} = season <- find_season(socket.assigns.series, id) do
       # Bulk action: if every episode is already monitored, turn the season off; else on.
-      case Catalog.set_season_monitored(season, not all_monitored?(season)) do
+      case Catalog.set_season_monitored(season, not SeriesDetailComponents.all_monitored?(season)) do
         {:ok, _} ->
           {:noreply, reload(socket)}
 
@@ -752,15 +752,10 @@ defmodule CinderWeb.SeriesDetailLive do
     profile = socket.assigns.profile_summary
 
     for season <- socket.assigns.series.seasons,
-        SeriesDetailComponents.season_manual_searchable?(season, profile),
+        Catalog.season_manual_searchable?(season, profile),
         into: MapSet.new(),
         do: season.id
   end
-
-  # Duplicated in `CinderWeb.SeriesDetailComponents` (used there by the template's "Monitor
-  # all"/"Unmonitor all" button) — tiny enough to keep as two independent copies.
-  defp all_monitored?(%{episodes: []}), do: false
-  defp all_monitored?(%{episodes: eps}), do: Enum.all?(eps, & &1.monitored)
 
   # The template (labels, per-episode/season badge derivation) was carved out to
   # `CinderWeb.SeriesDetailComponents` as plain code motion once this file outgrew ~1,500 lines.
