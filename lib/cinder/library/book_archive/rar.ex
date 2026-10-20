@@ -9,10 +9,9 @@ defmodule Cinder.Library.BookArchive.Rar do
   byte level — `unrar` is closed-source (RARLAB freeware, not open source), and RAR's
   compression algorithms are not reimplementable the way ZIP/DEFLATE's small, documented format
   is. So the expanded-size ceiling here is enforced by SUPERVISION rather than by streaming
-  control: the extraction runs as a monitored `Port`, and a separate poll loop periodically
-  measures the destination directory's actual on-disk size, killing the OS process the instant
-  it crosses the ceiling — the same `Port.info(port, :os_pid)` + `kill -KILL` idiom
-  `Cinder.Disk.CommandProbe` already uses for its own supervised subprocess.
+  control: the extraction runs through `Cinder.BoundedCommand.run/4`, whose `:check` option
+  measures the destination directory's actual on-disk size every poll interval and kills the OS
+  process by pid the first time it is over the ceiling.
 
   This is genuinely coarser-grained than the ZIP path's byte-exact, per-chunk enforcement: the
   bound is poll-interval × unrar's max write throughput in that window, not exact. It is still
@@ -23,10 +22,9 @@ defmodule Cinder.Library.BookArchive.Rar do
   A wall-clock ceiling runs alongside the size poll for the same reason `-p-` (never prompt for
   a password) is passed explicitly: a password-protected or otherwise-stuck archive must not
   leave a hung subprocess parked forever on a poller tick. Either ceiling kills the same way.
-  The `unrar lb` listing call that runs *before* extraction starts is bounded the same
-  supervised-`Port` + `SIGKILL`-by-`os_pid` way as extraction itself (`@list_timeout_ms`,
-  a separate, much shorter ceiling) — reusing this module's own `kill/1` rather than a second
-  bespoke mechanism. `Task.shutdown(:brutal_kill)` only kills the *Elixir* task, not `unrar`
+  The `unrar lb` listing call that runs *before* extraction starts goes through the same
+  `BoundedCommand.run/4` as extraction itself (`@list_timeout_ms`, a separate, much shorter
+  ceiling). `Task.shutdown(:brutal_kill)` only kills the *Elixir* task, not `unrar`
   itself when it never reads stdin, which is exactly the defect issue #510 closed for this
   listing call and for `Cinder.Library.MediaInfo.Ffprobe.health/0` and
   `Cinder.Library.AudioProbe.Ffprobe.probe/1`. A hung listing call is otherwise
@@ -57,6 +55,7 @@ defmodule Cinder.Library.BookArchive.Rar do
   walked into.
   """
 
+  alias Cinder.BoundedCommand
   alias Cinder.Library.BookArchive.EntryPath
 
   # Same rationale as the ZIP path's identical constants — see
@@ -81,10 +80,6 @@ defmodule Cinder.Library.BookArchive.Rar do
   # password-blocked process is killed rather than left occupying a poller tick indefinitely.
   @max_duration_ms 60_000
 
-  # Bounded wait for the killed OS process to actually exit before giving up on it — mirrors
-  # `Cinder.Disk.CommandProbe`'s own `@reap_wait`.
-  @reap_wait_ms 200
-
   @doc "Whether `unrar` is on `PATH`, checked fresh — never cached, never compile-time."
   @spec available?() :: boolean()
   def available?, do: not is_nil(unrar_bin())
@@ -105,7 +100,9 @@ defmodule Cinder.Library.BookArchive.Rar do
              | :archive_size_limit
              | :archive_timeout
              | :archive_entry_unsafe
-             | :archive_corrupt}
+             | :archive_corrupt
+             | {:port_open_failed, term()}
+             | Exception.t()}
   def extract(archive_path, dest_dir, opts \\ []) do
     case unrar_bin() do
       nil -> {:error, :unsupported_archive}
@@ -168,94 +165,19 @@ defmodule Cinder.Library.BookArchive.Rar do
     end
   end
 
-  # Supervised `Port` + `SIGKILL`-by-`os_pid` (#510), reusing this module's own `kill/1` — the
-  # same technique `run_extraction/6` already uses for the extraction subprocess, applied here to
-  # the listing one. `Task.shutdown(:brutal_kill)` (the previous implementation) only kills the
-  # *Elixir* task, not `unrar` itself when it never reads stdin, so a hung/slow `lb` used to keep
-  # running past the reported timeout. A timeout maps to the same `:archive_corrupt` a nonzero
-  # exit already returns, so no caller needs a new clause — both mean "this archive cannot be
-  # listed," and a hung `lb` is exactly as unusable to the caller as a corrupt one.
+  # Through `Cinder.BoundedCommand.run/4` (#510): `Task.shutdown(:brutal_kill)` (the previous
+  # implementation) only killed the *Elixir* task, not `unrar` itself when it never reads stdin,
+  # so a hung/slow `lb` used to keep running past the reported timeout. A timeout maps to the same
+  # `:archive_corrupt` a nonzero exit already returns, so no caller needs a new clause — both mean
+  # "this archive cannot be listed," and a hung `lb` is exactly as unusable to the caller as a
+  # corrupt one.
   defp list_entries(bin, archive_path, list_timeout_ms) do
-    case run_bounded_list(bin, ["lb", "-p-", "--", archive_path], list_timeout_ms) do
+    case BoundedCommand.run(bin, ["lb", "-p-", "--", archive_path], list_timeout_ms,
+           stderr_to_stdout: true
+         ) do
       {:ok, output, 0} -> {:ok, String.split(output, "\n", trim: true)}
       {:ok, _output, _status} -> {:error, :archive_corrupt}
       {:error, _reason} -> {:error, :archive_corrupt}
-    end
-  end
-
-  defp run_bounded_list(bin, args, timeout_ms) do
-    port =
-      Port.open({:spawn_executable, bin}, [
-        :binary,
-        :exit_status,
-        :use_stdio,
-        :stderr_to_stdout,
-        args: args
-      ])
-
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    list_supervise(port, deadline, [])
-  catch
-    :error, reason -> {:error, {:port_open_failed, reason}}
-  end
-
-  # Bounded by an ABSOLUTE deadline recomputed on every receive, not a fixed poll tick a chatty
-  # `lb` could keep resetting — same reasoning as `supervise/6`'s own fixed-schedule fix (#506).
-  defp list_supervise(port, deadline, acc) do
-    remaining = deadline - System.monotonic_time(:millisecond)
-
-    if remaining <= 0 do
-      list_kill_and_reap(port)
-    else
-      receive do
-        {^port, {:data, data}} ->
-          list_supervise(port, deadline, [data | acc])
-
-        {^port, {:exit_status, status}} ->
-          drain_immediate(port)
-          {:ok, IO.iodata_to_binary(Enum.reverse(acc)), status}
-      after
-        remaining -> list_kill_and_reap(port)
-      end
-    end
-  end
-
-  # Kills the OS process (reusing this module's own `kill/1`), waits briefly for it to actually
-  # exit, then closes the port and drains anything left in its mailbox regardless — a stray
-  # `{port, {:data, _}}` past this return could reach `BookPoller` (no catch-all `handle_info/2`).
-  defp list_kill_and_reap(port) do
-    kill(port)
-    list_reap(port, System.monotonic_time(:millisecond) + @reap_wait_ms)
-    close_port(port)
-    drain_immediate(port)
-    {:error, :timeout}
-  end
-
-  defp list_reap(port, deadline) do
-    remaining = deadline - System.monotonic_time(:millisecond)
-
-    if remaining > 0 do
-      receive do
-        {^port, {:exit_status, _status}} -> :ok
-        {^port, {:data, _data}} -> list_reap(port, deadline)
-      after
-        remaining -> :ok
-      end
-    end
-  end
-
-  # `Port.close/1` raises `ArgumentError` if the port already closed on its own.
-  defp close_port(port) do
-    if Port.info(port), do: Port.close(port)
-  rescue
-    ArgumentError -> :ok
-  end
-
-  defp drain_immediate(port) do
-    receive do
-      {^port, _message} -> drain_immediate(port)
-    after
-      0 -> :ok
     end
   end
 
@@ -272,6 +194,12 @@ defmodule Cinder.Library.BookArchive.Rar do
     end)
   end
 
+  # The expanded-size ceiling is a `:check` on `Cinder.BoundedCommand.run/4`: every
+  # `poll_interval` it measures `dest_dir` and halts `unrar` once the directory crosses the
+  # ceiling, on a schedule continuous `unrar` output cannot reset (#506). The wall-clock ceiling
+  # is the run's own timeout. A failed port open is a fact about the host, not the archive, so it
+  # passes through as itself rather than as `:archive_corrupt`, which `BookPoller` treats as
+  # permanent.
   defp run_extraction(
          bin,
          archive_path,
@@ -281,81 +209,24 @@ defmodule Cinder.Library.BookArchive.Rar do
          max_duration_ms
        ) do
     args = ["x", "-y", "-p-", "-ol-", "--", archive_path, dest_dir <> "/"]
+    size_check = fn -> size_check(dest_dir, max_expanded_size) end
 
-    port =
-      Port.open({:spawn_executable, bin}, [
-        :binary,
-        :exit_status,
-        :use_stdio,
-        :stderr_to_stdout,
-        args: args
-      ])
-
-    now = System.monotonic_time(:millisecond)
-
-    supervise(
-      port,
-      dest_dir,
-      max_expanded_size,
-      poll_interval,
-      now + max_duration_ms,
-      now + poll_interval
-    )
-  catch
-    :error, reason -> {:error, {:port_open_failed, reason}}
-  end
-
-  # `receive ... after poll_interval` alone is NOT a fixed schedule: each `{:data, _}` clause
-  # recurses straight back into a fresh `receive`, re-arming that relative timer, so continuous
-  # `unrar` output (no idle gap ever wide enough for `after` to win the race) suppresses the
-  # size/time ceiling indefinitely (#506) — the checks below must run on their own schedule
-  # regardless of how much output arrives in between. `due_check/4` compares against absolute
-  # monotonic deadlines computed once up front, so it fires on every iteration once it's due,
-  # whether that iteration was reached via a data message or an idle `after`.
-  defp supervise(port, dest_dir, max_expanded_size, poll_interval, deadline, next_poll_at) do
-    case due_check(dest_dir, max_expanded_size, deadline, next_poll_at, poll_interval) do
-      {:error, _reason} = error ->
-        kill_and_reap(port, error)
-
-      {:ok, next_poll_at} ->
-        remaining = max(next_poll_at - System.monotonic_time(:millisecond), 0)
-
-        receive do
-          {^port, {:exit_status, 0}} ->
-            check_final_size(dest_dir, max_expanded_size)
-
-          {^port, {:exit_status, _nonzero}} ->
-            {:error, :archive_corrupt}
-
-          {^port, {:data, _data}} ->
-            supervise(port, dest_dir, max_expanded_size, poll_interval, deadline, next_poll_at)
-        after
-          remaining ->
-            supervise(port, dest_dir, max_expanded_size, poll_interval, deadline, next_poll_at)
-        end
+    case BoundedCommand.run(bin, args, max_duration_ms,
+           stderr_to_stdout: true,
+           check: {poll_interval, size_check}
+         ) do
+      {:ok, _output, 0} -> check_final_size(dest_dir, max_expanded_size)
+      {:ok, _output, _nonzero} -> {:error, :archive_corrupt}
+      {:error, {:halted, reason}} -> {:error, reason}
+      {:error, {:timeout, _output}} -> {:error, :archive_timeout}
+      {:error, _reason} = error -> error
     end
   end
 
-  # `:ok` (not yet due) carries the unchanged `next_poll_at` through so the caller doesn't need
-  # its own separate "is it due" branch. Once due, this is the only place that walks `dest_dir`
-  # (dir_size/1 can be an expensive tree walk) — gated behind the cheap monotonic comparison so
-  # a burst of data messages between two due checks costs one integer comparison each, not a walk.
-  defp due_check(dest_dir, max_expanded_size, deadline, next_poll_at, poll_interval) do
-    now = System.monotonic_time(:millisecond)
-
-    cond do
-      now < next_poll_at ->
-        {:ok, next_poll_at}
-
-      now > deadline ->
-        {:error, :archive_timeout}
-
-      dir_size(dest_dir) > max_expanded_size ->
-        {:error, :archive_size_limit}
-
-      true ->
-        {:ok, next_poll_at + poll_interval}
-    end
+  # `dir_size/1` can be an expensive tree walk, which is why it runs on `poll_interval` and not on
+  # every message from `unrar`.
+  defp size_check(dest_dir, max_expanded_size) do
+    if dir_size(dest_dir) > max_expanded_size, do: {:halt, :archive_size_limit}, else: :ok
   end
 
   # The zero-exit path used to return :ok unconditionally — a fast extraction that already
@@ -366,38 +237,6 @@ defmodule Cinder.Library.BookArchive.Rar do
     if dir_size(dest_dir) > max_expanded_size,
       do: {:error, :archive_size_limit},
       else: :ok
-  end
-
-  # Waits briefly for the killed process to actually exit (draining its output so the port
-  # doesn't leak into this process's mailbox after we've stopped reading it), then returns the
-  # ceiling-breach reason regardless — a slow-to-reap process must not turn a refused archive
-  # into a hung poller tick.
-  defp kill_and_reap(port, result) do
-    kill(port)
-
-    receive do
-      {^port, {:exit_status, _status}} -> result
-      {^port, {:data, _data}} -> kill_and_reap(port, result)
-    after
-      @reap_wait_ms -> result
-    end
-  end
-
-  # Mirrors `Cinder.Disk.CommandProbe`'s own kill/1 exactly: the OS pid behind a `Port` is not
-  # otherwise reachable, and `Port.close/1` alone does not guarantee the process (or, for a
-  # shell-wrapped command, its children) actually stops.
-  defp kill(port) do
-    with {:os_pid, pid} <- Port.info(port, :os_pid) do
-      System.cmd(
-        "/bin/sh",
-        ["-c", ~S|kill -KILL "$1"|, "kill", Integer.to_string(pid)],
-        stderr_to_stdout: true
-      )
-    end
-
-    :ok
-  catch
-    _kind, _reason -> :ok
   end
 
   # Never `Path.wildcard` — proven in development that its `**` glob traversal silently follows

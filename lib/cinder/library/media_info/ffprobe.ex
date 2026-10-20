@@ -45,33 +45,27 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   the split. The two 10s calls are the ones that actually run inside the poller tick, which is
   where a tight bound matters; the two 30-minute calls never do.
 
-  This module bounds all five calls — `probe/1`, `probe_policy/1`, `subtitle_tracks/1`,
-  `extract_subtitle/2`, and `health/0` — with a supervised `Port` + `SIGKILL`-by-`os_pid`, the
-  same idiom `Cinder.Library.BookArchive.Rar.run_extraction/6`/`list_entries/3`,
-  `Cinder.Library.AudioProbe.Ffprobe.probe/1`, and `Cinder.Disk.CommandProbe` already use for
-  their own subprocesses (#510: `health/0`'s own `-version` no-file call used the lighter
-  `Task.async`/`Task.yield`/`Task.shutdown(:brutal_kill)` idiom until it was found to leak the
-  same way). `Task.shutdown(:brutal_kill)` only kills the *Elixir* task; closing a port does not
-  kill the child OS process on the other end when that child never reads stdin, which is exactly
-  `ffmpeg` and `ffprobe`'s situation here (`ffmpeg` is invoked with `-nostdin`). Since both the
-  poller and `Cinder.Subtitles.Fetcher`/`Sweeper` retry (every tick, or every enqueued/swept
-  file), that lighter idiom would leak one orphaned `ffprobe`/`ffmpeg` per retry, each holding an
-  open file descriptor on the staging file being probed — worse than the original hang. The
-  heavier pattern here kills the actual OS process by pid, not merely the Elixir side of the port.
+  Every call this module makes (`probe/1`, `probe_policy/1`, `subtitle_tracks/1`,
+  `extract_subtitle/2`, `frame_rate/1`, `shot_changes/1` and `health/0`) runs through
+  `Cinder.BoundedCommand.run/4`: a supervised `Port` killed with `SIGKILL` by its OS pid at the
+  bound (#510: `health/0`'s own `-version` no-file call used the lighter
+  `Task.async`/`Task.yield`/`Task.shutdown(:brutal_kill)` idiom until it was found to leak).
+  `Task.shutdown(:brutal_kill)` only kills the *Elixir* task; closing a port does not kill the
+  child OS process on the other end when that child never reads stdin, which is exactly `ffmpeg`
+  and `ffprobe`'s situation here (`ffmpeg` is invoked with `-nostdin`). Since both the poller and
+  `Cinder.Subtitles.Fetcher`/`Sweeper` retry (every tick, or every enqueued/swept file), that
+  lighter idiom would leak one orphaned `ffprobe`/`ffmpeg` per retry, each holding an open file
+  descriptor on the staging file being probed, which is worse than the original hang.
 
   Neither `Poller`, `TvPoller`, nor `Cinder.Subtitles.Sweeper` (all three built on the same
-  `PollerSkeleton`) traps exits or has a catch-all `handle_info/2` (only `PollerSkeleton`'s
-  `:poll` clause) — a stray `{port, {:data, _}}` or `{port, {:exit_status, _}}` arriving in a
-  caller's mailbox *after* this module has already returned would crash it with a
-  `FunctionClauseError` — the exact kind of failure this whole feature exists to prevent.
-  So the deadline path does not merely kill and best-effort-wait: it closes the port (stopping any
-  further messages) and then drains, with a non-blocking `after 0` receive loop, every message
-  already queued for that port before returning — guaranteeing zero port messages ever reach the
-  caller after the call returns, timeout or not.
+  `PollerSkeleton`) traps exits or has a catch-all `handle_info/2`, so a stray port message
+  reaching them after a call returned would crash them. `BoundedCommand.run/4` drains every port
+  message before it returns, timeout or not.
   """
   @behaviour Cinder.Library.MediaInfo
 
   alias Cinder.Acquisition.Language
+  alias Cinder.BoundedCommand
 
   @ignored ~w(und unknown)
   @text_codecs ~w(subrip ass ssa mov_text text webvtt)
@@ -152,11 +146,6 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   # film. 90 minutes leaves room for a 3-hour film on a busy box.
   @shot_changes_timeout_ms 5_400_000
 
-  # Bounded wait for a killed process to actually exit before giving up on it and closing the
-  # port out from under it regardless — mirrors `BookArchive.Rar`'s `@reap_wait_ms` /
-  # `Cinder.Disk.CommandProbe`'s `@reap_wait`.
-  @reap_wait_ms 200
-
   @impl true
   def probe(path), do: run_probe(path, &parse/1)
 
@@ -165,10 +154,10 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   # `-version` is a cheap no-file call, but that does not make a hung binary harmless (#510): it
   # must still not stall /status or "Test connection" indefinitely, and a killed Elixir task must
-  # not leave the OS process behind. Bounded the same supervised Port + SIGKILL way as the other
-  # four, file-inspecting calls below — see the moduledoc's "Bounded subprocess execution"
-  # section. `run_bounded/4` already returns the exact `{:error, %ErlangError{original: :enoent}}`
-  # shape a missing binary needs, so no separate rescue is required here.
+  # not leave the OS process behind. Bounded the same way as the file-inspecting calls below; see
+  # the moduledoc's "Bounded subprocess execution" section. `run_bounded/4` already returns the
+  # exact `{:error, %ErlangError{original: :enoent}}` shape a missing binary needs, so no separate
+  # rescue is required here.
   @impl true
   def health do
     case run_bounded(bin(), ["-version"], health_timeout_ms(), stderr_to_stdout: true) do
@@ -215,6 +204,8 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
     ffmpeg = ffmpeg_executable!()
 
+    # The wrapper's `exec "$@"` replaces `/bin/sh` with ffmpeg under the same pid, so the pid the
+    # bound kills is ffmpeg itself, not a shell that would leave ffmpeg running.
     try do
       case run_bounded(
              "/bin/sh",
@@ -558,149 +549,14 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     end
   end
 
-  # Resolves `bin` on `PATH` exactly like `System.cmd/3` would (which `Port.open` does not do for
-  # `:spawn_executable`), then runs it as a supervised `Port`, killing it by OS pid if it is still
-  # running at `timeout_ms`. See the moduledoc's "Bounded subprocess execution" section for why.
-  #
-  # A missing binary raises `ErlangError{original: :enoent}` from `System.cmd/3` today; reproduced
-  # here explicitly (rather than left as a byproduct of some other call) so every caller's
-  # existing missing-binary handling — and its own tests — keep seeing the identical shape.
+  # Every call here goes through `Cinder.BoundedCommand.run/4`; see the moduledoc's "Bounded
+  # subprocess execution" section for why. Its timeout carries the partial output, but this
+  # module's contract is the bare `{:error, :timeout}`, which `/dashboard` shows as "Timed out"
+  # for `health/0` (`CinderWeb.CoreComponents.health_reason/1`).
   defp run_bounded(bin, args, timeout_ms, opts) do
-    case System.find_executable(bin) do
-      nil -> {:error, %ErlangError{original: :enoent}}
-      exe -> open_and_supervise(exe, args, timeout_ms, opts)
+    case BoundedCommand.run(bin, args, timeout_ms, opts) do
+      {:error, {:timeout, _output}} -> {:error, :timeout}
+      result -> result
     end
-  end
-
-  defp open_and_supervise(exe, args, timeout_ms, opts) do
-    port = Port.open({:spawn_executable, exe}, port_options(args, opts))
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    supervise(port, deadline, [])
-  catch
-    :error, reason -> {:error, {:port_open_failed, reason}}
-  end
-
-  defp port_options(args, opts) do
-    base = [:binary, :exit_status, :use_stdio, args: args]
-
-    base =
-      if Keyword.get(opts, :stderr_to_stdout, false), do: [:stderr_to_stdout | base], else: base
-
-    case Keyword.get(opts, :env) do
-      nil -> base
-      env -> [{:env, charlist_env(env)} | base]
-    end
-  end
-
-  # `Port.open`'s `:env` option wants `{charlist, charlist}` pairs, unlike `System.cmd/3`'s own
-  # `:env` option (which accepts plain strings).
-  defp charlist_env(env) do
-    Enum.map(env, fn {key, value} -> {String.to_charlist(key), String.to_charlist(value)} end)
-  end
-
-  # Accumulates stdout exactly like `System.cmd/3` returns it (iodata built up, then flattened),
-  # bounded by an ABSOLUTE deadline (`started_at + timeout_ms`, carried through recursion as
-  # `deadline` itself so it cannot drift) rather than a per-message `after` — mirrors
-  # `BookArchive.Rar.supervise/6`'s own deadline arithmetic.
-  #
-  # `remaining` (not a fixed poll tick) is recomputed and re-armed as the `after` value on EVERY
-  # receive: unlike `BookArchive.Rar.supervise/6`, which must wake periodically regardless of
-  # messages to re-measure `dir_size` against its expansion ceiling, this loop has no secondary
-  # condition to poll — so a fixed tick would buy nothing and, worse, is actively wrong. A fixed
-  # `after` timer restarts on every matched message, so a subprocess emitting `:data` faster than
-  # the tick interval (`extract_subtitle/2`'s ffmpeg piping SRT to stdout on a pathological
-  # stream is a real example, not a hypothetical one) would starve the `after` clause forever and
-  # this call would never time out at all — exactly the failure this whole module exists to
-  # prevent. Recomputing `remaining` from a fixed deadline before every `receive` closes that gap:
-  # the deadline fires the instant it is reached regardless of how much data arrived beforehand.
-  defp supervise(port, deadline, acc) do
-    remaining = deadline - System.monotonic_time(:millisecond)
-
-    if remaining <= 0 do
-      kill_and_reap(port)
-    else
-      receive do
-        {^port, {:data, data}} ->
-          supervise(port, deadline, [data | acc])
-
-        {^port, {:exit_status, status}} ->
-          # No further messages for this port should exist, since every `:data` message was
-          # already consumed above in send order before `:exit_status` — drained defensively
-          # regardless, so a trapless caller (the poller GenServers) can never see a stray
-          # message past this return.
-          drain_immediate(port)
-          {:ok, IO.iodata_to_binary(Enum.reverse(acc)), status}
-      after
-        remaining -> kill_and_reap(port)
-      end
-    end
-  end
-
-  # Kills the OS process, waits up to `@reap_wait_ms` (an absolute deadline, not reset by each
-  # drained message — a killed-but-still-writing process must not extend the wait) for it to
-  # actually exit, then closes the port and drains anything left in the mailbox regardless of
-  # whether the reap succeeded. Neither poller GenServer traps exits or has a catch-all
-  # `handle_info/2` (see the moduledoc): a `{port, {:data, _}}` or `{port, {:exit_status, _}}`
-  # surviving past this function's return would crash it with `FunctionClauseError`, so this must
-  # guarantee zero port messages remain queued — not merely best-effort drain them.
-  defp kill_and_reap(port) do
-    kill(port)
-    reap(port, System.monotonic_time(:millisecond) + @reap_wait_ms)
-    close_port(port)
-    drain_immediate(port)
-    {:error, :timeout}
-  end
-
-  defp reap(port, deadline) do
-    remaining = deadline - System.monotonic_time(:millisecond)
-
-    if remaining > 0 do
-      receive do
-        {^port, {:exit_status, _status}} -> :ok
-        {^port, {:data, _data}} -> reap(port, deadline)
-      after
-        remaining -> :ok
-      end
-    end
-  end
-
-  # `Port.close/1` raises `ArgumentError` if the port already closed on its own (the reaped
-  # process exited and the port was already consumed by `reap/2`'s `:exit_status` clause) —
-  # checking `Port.info/1` first avoids that in the common case, `rescue` covers the unavoidable
-  # race between the check and the call.
-  defp close_port(port) do
-    if Port.info(port), do: Port.close(port)
-  rescue
-    ArgumentError -> :ok
-  end
-
-  # Non-blocking: drains every message already queued for `port` without waiting for more. Used
-  # both after a clean exit (defensive) and after `kill_and_reap/1` gives up, so a trapless caller
-  # never sees a port message once this module has returned.
-  defp drain_immediate(port) do
-    receive do
-      {^port, _message} -> drain_immediate(port)
-    after
-      0 -> :ok
-    end
-  end
-
-  # Mirrors `BookArchive.Rar.kill/1` / `Cinder.Disk.CommandProbe.kill/1` exactly: the OS pid
-  # behind a `Port` is not otherwise reachable, and `Port.close/1` alone does not guarantee the
-  # process (or, for the shell-wrapped `extract_subtitle/2` call, its child) actually stops. The
-  # shell wrapper's `exec "$@"` (see `extract_subtitle/2`) is what makes this `os_pid` `ffmpeg`
-  # itself rather than the wrapping `/bin/sh`, so killing it here kills the real work.
-  defp kill(port) do
-    with {:os_pid, pid} <- Port.info(port, :os_pid) do
-      System.cmd(
-        "/bin/sh",
-        ["-c", ~S|kill -KILL "$1"|, "kill", Integer.to_string(pid)],
-        stderr_to_stdout: true
-      )
-    end
-
-    :ok
-  catch
-    _kind, _reason -> :ok
   end
 end

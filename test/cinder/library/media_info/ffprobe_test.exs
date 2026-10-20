@@ -499,6 +499,34 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     assert System.monotonic_time(:millisecond) - t0 < 3000
   end
 
+  @tag :tmp_dir
+  test "frame_rate/1 kills a hung ffprobe process and returns {:error, :timeout} within its bound",
+       %{tmp_dir: tmp} do
+    use_hanging_ffprobe(tmp)
+    with_short_timeout(:ffprobe_probe_timeout_ms, 150)
+
+    t0 = System.monotonic_time(:millisecond)
+    assert Ffprobe.frame_rate("/media/movie.mkv") == {:error, :timeout}
+    assert System.monotonic_time(:millisecond) - t0 < 3000
+  end
+
+  # `shot_changes/1` runs ffmpeg under `nice`, which `exec`s it in place: the pid the stub records
+  # is the pid the bound kills.
+  @tag :tmp_dir
+  test "shot_changes/1 kills a hung ffmpeg process and returns {:error, :timeout} within its bound",
+       %{tmp_dir: tmp} do
+    pidfile = Path.join(tmp, "ffmpeg.pid")
+    use_ffmpeg_bin(tmp, "echo $$ > #{pidfile}\nexec sleep 30")
+    with_short_timeout(:ffmpeg_shot_changes_timeout_ms, @pid_bound_ms)
+
+    t0 = System.monotonic_time(:millisecond)
+    assert Ffprobe.shot_changes("/media/movie.mkv") == {:error, :timeout}
+    assert System.monotonic_time(:millisecond) - t0 < 3000
+
+    pid = wait_for_pidfile(pidfile)
+    assert process_gone?(pid)
+  end
+
   # Proves the deadline is an ABSOLUTE bound, not a per-message poll tick that a chatty process
   # can keep resetting: this stub emits `:data` continuously, as fast as the shell can write, so
   # a loop that only re-checks the deadline in its `after` branch — the module's actual shape
@@ -550,7 +578,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   # tick against a hung file would leak one more orphaned ffmpeg holding a staging-file fd.
   # Exercises the trickiest chain: `/bin/sh -c 'exec "$@" ...'` -> `exec`'d ffmpeg stub ->
   # `exec`'d `sleep`, all sharing one pid via POSIX `exec`'s "replace, don't fork" semantics, so
-  # the pid our stub records is exactly the pid `kill/1` targets.
+  # the pid our stub records is exactly the pid `Cinder.BoundedCommand` kills.
   @tag :tmp_dir
   test "extract_subtitle/2 timeout kills the underlying OS process, not just the Elixir call",
        %{tmp_dir: tmp} do

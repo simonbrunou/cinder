@@ -99,9 +99,12 @@ Every call a poller makes has a bound:
   and receive and hard-deadline timeouts.
 - A subprocess goes through `Cinder.BoundedCommand.run/4`: a supervised `Port` killed with
   `SIGKILL` by its OS pid on timeout. `Task.shutdown(:brutal_kill)` kills only the Elixir task,
-  so a child that never reads stdin (ffprobe, ffmpeg) keeps running and leaks one process per
-  retry. `MediaInfo.Ffprobe`, `AudioProbe.Ffprobe` and `BookArchive.Rar` carry older private
-  copies of the same idiom.
+  so a child that never reads stdin (ffprobe, ffmpeg, unrar) keeps running and leaks one process
+  per retry. A condition other than time, such as `BookArchive.Rar`'s expanded-size ceiling
+  during `unrar x`, is a `check:` option on the same call, not a second receive loop. A port kept
+  open across calls closes through `BoundedCommand.kill_and_close/1`. The exceptions are
+  `Cinder.Disk.CommandProbe`, a GenServer that owns its port across messages, and
+  `Subtitles.Sync.Ffsubsync`, which runs under coreutils `timeout --kill-after`.
 - Archive extraction carries entry-count and expanded-size ceilings.
 
 The reason: one unbounded call in a single-tick poller freezes every target sharing that tick,
