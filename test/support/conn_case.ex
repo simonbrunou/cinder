@@ -83,14 +83,16 @@ defmodule CinderWeb.ConnCase do
     Cinder.AccountsFixtures.override_token_authenticated_at(token, authenticated_at)
   end
 
-  # Every key a settings save overlays, plus the disk-probe stubs some LiveView tests plant.
+  # Every key a settings save overlays, plus the disk-probe stubs and the health-probe budget
+  # some LiveView tests plant.
   @reset_env_keys Cinder.Settings.env_keys() ++
                     [
                       :disk_df_bin,
                       :disk_probe_killer,
                       :disk_probe_shell,
                       :disk_probe_timeout,
-                      :disk_stats_stub
+                      :disk_stats_stub,
+                      :health_probe_timeout_ms
                     ]
 
   @doc """

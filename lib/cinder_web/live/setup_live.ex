@@ -72,7 +72,10 @@ defmodule CinderWeb.SetupLive do
   defp validate_settings(params, socket) do
     case Settings.save_form(params) do
       :ok ->
-        health = Map.new(setup_targets(), &{&1.id, &1.id |> Health.check() |> reachable()})
+        health =
+          Map.new(Health.check_targets(setup_targets()), fn {id, status} ->
+            {id, reachable(status)}
+          end)
 
         {:noreply,
          assign(socket,

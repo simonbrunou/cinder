@@ -387,7 +387,7 @@ defmodule Cinder.Download.Client.QBittorrent do
     # Short bounds on both the login round-trip and the probe itself, so a
     # blackholed host can't hang the settings "Test connection" for minutes.
     # A health check is an explicit "probe NOW": drop any login cooldown first —
-    # SettingsLive/SetupLive run this synchronously in the LiveView process, and a
+    # a Test button in SettingsLive/SetupLive runs this in the LiveView process, and a
     # cached failure there would show red for 10 minutes after the server recovered.
     Process.delete({__MODULE__, :login_cooldown})
     probe = [receive_timeout: 3_000, connect_options: [timeout: 3_000]]

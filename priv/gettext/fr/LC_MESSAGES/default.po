@@ -566,12 +566,12 @@ msgstr "Tout le monde"
 msgid "Film"
 msgstr "Film"
 
-#: lib/cinder_web/live/setup_live.ex:256
+#: lib/cinder_web/live/setup_live.ex:259
 #, elixir-autogen
 msgid "Finish setup"
 msgstr "Terminer la configuration"
 
-#: lib/cinder_web/live/setup_live.ex:252
+#: lib/cinder_web/live/setup_live.ex:255
 #, elixir-autogen
 msgid "Finishing…"
 msgstr "Finalisation…"
@@ -1018,7 +1018,7 @@ msgstr "Rôles et quotas de demandes."
 msgid "Save"
 msgstr "Enregistrer"
 
-#: lib/cinder_web/live/setup_live.ex:219
+#: lib/cinder_web/live/setup_live.ex:222
 #, elixir-autogen
 msgid "Save & validate"
 msgstr "Enregistrer et valider"
@@ -1123,7 +1123,7 @@ msgstr "État des services"
 msgid "Set password"
 msgstr "Définir le mot de passe"
 
-#: lib/cinder_web/live/setup_live.ex:155
+#: lib/cinder_web/live/setup_live.ex:158
 #, elixir-autogen
 msgid "Set up Cinder"
 msgstr "Configurer Cinder"
@@ -1297,7 +1297,7 @@ msgstr "Utilisateur supprimé."
 msgid "Users"
 msgstr "Utilisateurs"
 
-#: lib/cinder_web/live/setup_live.ex:217
+#: lib/cinder_web/live/setup_live.ex:220
 #, elixir-autogen
 msgid "Validating…"
 msgstr "Validation…"
@@ -1612,7 +1612,7 @@ msgstr "Activer SABnzbd (usenet)"
 msgid "Enable qBittorrent (torrent)"
 msgstr "Activer qBittorrent (torrent)"
 
-#: lib/cinder_web/live/setup_live.ex:157
+#: lib/cinder_web/live/setup_live.ex:160
 #, elixir-autogen
 msgid "Enter and validate your services. Finish unlocks once every required service is connected."
 msgstr ""
@@ -1771,7 +1771,7 @@ msgstr "Saison %{number} de %{title} demandée. En attente d'approbation."
 msgid "Select the request for %{title}"
 msgstr "Sélectionner la demande pour %{title}"
 
-#: lib/cinder_web/live/setup_live.ex:224
+#: lib/cinder_web/live/setup_live.ex:227
 #, elixir-autogen
 msgid "Setup checklist"
 msgstr "Liste de configuration"
@@ -1842,12 +1842,12 @@ msgstr ""
 msgid "bluray, webdl"
 msgstr "bluray, webdl"
 
-#: lib/cinder_web/live/setup_live.ex:131
+#: lib/cinder_web/live/setup_live.ex:134
 #, elixir-autogen
 msgid "connect at least one"
 msgstr "connectez-en au moins un"
 
-#: lib/cinder_web/live/setup_live.ex:286
+#: lib/cinder_web/live/setup_live.ex:289
 #, elixir-autogen
 msgid "not checked yet"
 msgstr "pas encore vérifié"
@@ -3313,7 +3313,7 @@ msgstr "Impossible de réessayer ce film."
 msgid "Filter by type"
 msgstr "Filtrer par type"
 
-#: lib/cinder_web/live/setup_live.ex:263
+#: lib/cinder_web/live/setup_live.ex:266
 #, elixir-autogen
 msgid "Finish unlocks once every required service is connected."
 msgstr "Terminer est déverrouillé une fois chaque service requis connecté."
@@ -4346,7 +4346,7 @@ msgstr "Fichier inconnu"
 msgid "%{count} pending"
 msgstr "%{count} en attente"
 
-#: lib/cinder_web/live/setup_live.ex:242
+#: lib/cinder_web/live/setup_live.ex:245
 #, elixir-autogen
 msgid "Approval, availability, and failure alerts stay off until you add an email (SMTP) or Discord webhook. Set those up in the Notifications section above now, or later in Settings — this step is optional and won't block Finish."
 msgstr ""
@@ -4366,7 +4366,7 @@ msgstr "Toutes les saisons sont déjà demandées ou disponibles."
 msgid "Metrics"
 msgstr "Métriques"
 
-#: lib/cinder_web/live/setup_live.ex:240
+#: lib/cinder_web/live/setup_live.ex:243
 #, elixir-autogen
 msgid "Notifications (optional)"
 msgstr "Notifications (facultatif)"
@@ -5555,7 +5555,7 @@ msgstr "pour continuer."
 msgid "%{label} (opens in a new tab)"
 msgstr "%{label} (s’ouvre dans un nouvel onglet)"
 
-#: lib/cinder_web/live/setup_live.ex:143
+#: lib/cinder_web/live/setup_live.ex:146
 #, elixir-autogen
 msgid "Add your metadata token."
 msgstr "Ajoutez votre jeton de métadonnées."
@@ -5570,17 +5570,17 @@ msgstr ""
 "torrents et SABnzbd gère Usenet ; Cinder envoie les releases aux clients "
 "activés et les suit jusqu’à l’import."
 
-#: lib/cinder_web/live/setup_live.ex:147
+#: lib/cinder_web/live/setup_live.ex:150
 #, elixir-autogen
 msgid "Choose download and library folders."
 msgstr "Choisissez les dossiers de téléchargement et de médiathèque."
 
-#: lib/cinder_web/live/setup_live.ex:146
+#: lib/cinder_web/live/setup_live.ex:149
 #, elixir-autogen
 msgid "Connect Jellyfin or Plex."
 msgstr "Connectez Jellyfin ou Plex."
 
-#: lib/cinder_web/live/setup_live.ex:144
+#: lib/cinder_web/live/setup_live.ex:147
 #, elixir-autogen
 msgid "Connect Prowlarr and its indexers."
 msgstr "Connectez Prowlarr et ses indexeurs."
@@ -5649,8 +5649,8 @@ msgstr "Ressources :"
 msgid "Sonarr documentation"
 msgstr "Documentation de Sonarr"
 
-#: lib/cinder_web/live/setup_live.ex:169
-#: lib/cinder_web/live/setup_live.ex:191
+#: lib/cinder_web/live/setup_live.ex:172
+#: lib/cinder_web/live/setup_live.ex:194
 #, elixir-autogen
 msgid "Start here"
 msgstr "Commencez ici"
@@ -5668,7 +5668,7 @@ msgstr ""
 "des épisodes pour les films et les séries. Créez un jeton d’accès en lecture "
 "gratuit à l’API et collez-le ci-dessous."
 
-#: lib/cinder_web/live/setup_live.ex:179
+#: lib/cinder_web/live/setup_live.ex:182
 #, elixir-autogen
 msgid "The numbered sections are required. Everything marked Optional can wait."
 msgstr ""
@@ -6301,7 +6301,7 @@ msgstr ""
 "téléchargements partiels inutiles, mettent à jour les séries, recherchent "
 "les sous-titres manquants et synchronisent les listes Plex."
 
-#: lib/cinder_web/live/setup_live.ex:145
+#: lib/cinder_web/live/setup_live.ex:148
 #, elixir-autogen
 msgid "Choose a torrent or Usenet client."
 msgstr "Choisissez un client torrent ou Usenet."
@@ -7776,7 +7776,7 @@ msgstr[1] "%{count} films à traiter"
 msgid "This kind of request isn't supported yet."
 msgstr "Ce type de demande n'est pas encore pris en charge."
 
-#: lib/cinder_web/live/setup_live.ex:171
+#: lib/cinder_web/live/setup_live.ex:174
 #, elixir-autogen, elixir-format
 msgid "Complete this required step"
 msgid_plural "Complete these %{count} required steps in order"

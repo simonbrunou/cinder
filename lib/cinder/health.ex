@@ -7,11 +7,12 @@ defmodule Cinder.Health do
 
   `targets/1` is the one list of targets. The `/settings` Test buttons, the `/setup` gate and the
   `/dashboard` service-health rows all read it, so a new adapter with a `health/0` is one entry
-  here. Each external `health/0` keeps 3-second connect and receive timeouts; `check_all/0`'s
-  backstop only guards against a probe that ignores its own.
+  here. Each external `health/0` keeps 3-second connect and receive timeouts; the concurrent
+  sweeps' backstop only guards against a probe that ignores its own.
 
-  `check_all/0` runs every probe concurrently (`Task.async_stream/3`), so the sweep's wall clock
-  is bounded by the slowest configured row instead of the sum of every row's own timeout.
+  `check_all/0` and `check_targets/1` run their probes concurrently (`Task.async_stream/3`), so a
+  sweep's wall clock is bounded by its slowest probe instead of the sum of every probe's own
+  timeout.
   """
   alias Cinder.Books.Metadata
   alias Cinder.Download
@@ -142,6 +143,8 @@ defmodule Cinder.Health do
   @stored_credentials %{id: "stored_credentials", label: "Stored credentials"}
   @sidecar_files %{id: "sidecar_files", label: "Sidecar files"}
 
+  @type status :: :ok | {:warning, term()} | {:error, term()}
+
   @doc """
   The probe targets in `/settings` group order, optionally filtered by field
   (`group:`, `setup:`, `dashboard:`, `names_adapter:`, `probe:` or `id:`). Pure: it reads no
@@ -163,7 +166,7 @@ defmodule Cinder.Health do
   wired is `{:error, :not_configured}`; an id no target has is `{:error, :unknown_target}` (the id
   comes from the client, so callers ignore it).
   """
-  @spec check(term()) :: :ok | {:warning, term()} | {:error, term()}
+  @spec check(term()) :: status()
   def check(id) do
     case Enum.find(@targets, &(&1.id == id)) do
       nil -> {:error, :unknown_target}
@@ -181,31 +184,23 @@ defmodule Cinder.Health do
   budget reports `{:error, :timeout}` for its row without affecting any other row.
   """
   def check_all do
-    probes = dashboard_probes()
-    timeout = Application.get_env(:cinder, :health_probe_timeout_ms, @probe_timeout_ms)
+    for {row, status} <- concurrently(dashboard_probes()), status != :skip do
+      Map.put(row, :status, status)
+    end
+  end
 
-    probes
-    |> Task.async_stream(fn {_row, fun} -> fun.() end,
-      ordered: true,
-      max_concurrency: length(probes),
-      on_timeout: :kill_task,
-      timeout: timeout
-    )
-    |> Enum.zip(probes)
-    |> Enum.reduce([], fn
-      {{:ok, :skip}, _probe}, rows ->
-        rows
-
-      {{:ok, status}, {row, _fun}}, rows ->
-        [Map.put(row, :status, status) | rows]
-
-      {{:exit, :timeout}, {row, _fun}}, rows ->
-        [Map.put(row, :status, {:error, :timeout}) | rows]
-
-      {{:exit, reason}, {row, _fun}}, rows ->
-        [Map.put(row, :status, {:error, reason}) | rows]
-    end)
-    |> Enum.reverse()
+  @doc """
+  Checks the given targets concurrently, the way `check/1` checks one, and returns a map of each
+  target's id to its status. The sweep has `check_all/0`'s timeout budget: a probe that exceeds
+  it is `{:error, :timeout}` and does not hold up the others. Unlike `check_all/0`, it drops no
+  target: a `:configured` target with nothing wired is `{:error, :not_configured}` here.
+  """
+  @spec check_targets([Target.t()]) :: %{String.t() => status()}
+  def check_targets(targets) do
+    targets
+    |> Enum.map(&{&1.id, fn -> run_target(&1) end})
+    |> concurrently()
+    |> Map.new()
   end
 
   @doc """
@@ -218,9 +213,31 @@ defmodule Cinder.Health do
         Enum.map(@targets, & &1.label) ++ [@stored_credentials.label, @sidecar_files.label]
       )
 
+  # Runs each `{key, fun}` probe in its own task and returns `{key, status}` pairs in input order.
+  # A probe past the timeout budget is killed and reads `{:error, :timeout}`. A raise or exit
+  # inside a probe is already a status (`safely/1`). The tasks are linked to the caller, so any
+  # other exit takes the caller down too, unless the caller traps exits, in which case that
+  # probe reads `{:error, reason}`.
+  defp concurrently(probes) do
+    timeout = Application.get_env(:cinder, :health_probe_timeout_ms, @probe_timeout_ms)
+
+    probes
+    |> Task.async_stream(fn {_key, fun} -> fun.() end,
+      ordered: true,
+      max_concurrency: max(length(probes), 1),
+      on_timeout: :kill_task,
+      timeout: timeout
+    )
+    |> Enum.zip_with(probes, fn
+      {:ok, status}, {key, _fun} -> {key, status}
+      {:exit, :timeout}, {key, _fun} -> {key, {:error, :timeout}}
+      {:exit, reason}, {key, _fun} -> {key, {:error, reason}}
+    end)
+  end
+
   # Ordered `{row, fun}` pairs: the row's id, label and adapter are known upfront (cheap, no
   # network); `fun` is a 0-arity closure that runs the probe and returns `status | :skip`.
-  # `check_all/0` fans these out through `Task.async_stream/3`.
+  # `check_all/0` fans these out through `concurrently/1`.
   defp dashboard_probes do
     for(
       %Target{dashboard: policy} = target <- @targets,

@@ -290,6 +290,42 @@ defmodule Cinder.HealthTest do
     end
   end
 
+  describe "check_targets/1" do
+    test "returns each target's own status by id, warnings and unwired targets included" do
+      stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> {:error, :down} end)
+      stub(Cinder.Library.AudiobookServerMock, :health, fn -> {:warning, :slow} end)
+
+      targets =
+        Enum.flat_map(~w(tmdb indexer audiobook_server ebook_library), &Health.targets(id: &1))
+
+      assert Health.check_targets(targets) == %{
+               "tmdb" => :ok,
+               "indexer" => {:error, :down},
+               "audiobook_server" => {:warning, :slow},
+               "ebook_library" => {:error, :not_configured}
+             }
+    end
+
+    test "a probe exceeding the timeout budget reports :timeout without holding up the others" do
+      with_env(:health_probe_timeout_ms, 200)
+      stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
+
+      stub(Cinder.Acquisition.IndexerMock, :health, fn ->
+        Process.sleep(2_000)
+        :ok
+      end)
+
+      targets = Health.targets(id: "tmdb") ++ Health.targets(id: "indexer")
+
+      assert Health.check_targets(targets) == %{"tmdb" => :ok, "indexer" => {:error, :timeout}}
+    end
+
+    test "no targets is an empty map" do
+      assert Health.check_targets([]) == %{}
+    end
+  end
+
   describe "check_all/0" do
     test "returns one row per dashboard target, in settings-group order" do
       stub_check_all_services()
