@@ -14,6 +14,7 @@ defmodule Cinder.Catalog.SeriesDeletion do
   alias Cinder.Audit
   alias Cinder.Catalog.{Episode, Grab, Grabs, Season, Series}
   alias Cinder.Download
+  alias Cinder.Library.ImportedQuality
   alias Cinder.Repo
   alias Cinder.Requests
 
@@ -242,18 +243,11 @@ defmodule Cinder.Catalog.SeriesDeletion do
         {episode, :unchanged}
 
       primary in [nil, ""] and parts == [] ->
-        attrs = %{
-          file_path: nil,
-          part_file_paths: [],
-          search_attempts: 0,
-          imported_resolution: nil,
-          imported_size: nil,
-          imported_language: nil,
-          imported_source: nil,
-          imported_audio_languages: nil,
-          imported_embedded_subtitles: nil,
-          imported_sidecar_subtitles: nil
-        }
+        attrs =
+          Map.merge(
+            %{file_path: nil, part_file_paths: [], search_attempts: 0},
+            ImportedQuality.columns(nil, Episode)
+          )
 
         episode
         |> Episode.transition_changeset(attrs)

@@ -41,6 +41,7 @@ defmodule Cinder.Catalog do
 
   alias Cinder.Download
   alias Cinder.Library
+  alias Cinder.Library.ImportedQuality
   alias Cinder.Repo
   alias Cinder.Requests
 
@@ -333,34 +334,28 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
-  Persists the probed media info (audio languages + embedded/sidecar subtitle languages) onto a
-  movie or episode. Descriptive-only — used by the import capture and the backfill task; not a
-  status transition.
+  Persists the media-info languages of `quality` (audio, default audio, embedded and sidecar
+  subtitles) onto a movie or episode; its ranked fields are not written. Descriptive-only — used
+  by the backfill task; not a status transition.
   """
-  def set_media_info(%Movie{} = movie, info) do
+  def set_media_info(%Movie{} = movie, %ImportedQuality{} = quality) do
     with {:ok, updated} <-
-           movie |> Movie.media_info_changeset(media_info_attrs(info)) |> Repo.update() do
+           movie
+           |> Movie.media_info_changeset(ImportedQuality.columns(quality, Movie))
+           |> Repo.update() do
       broadcast({:movie_updated, updated})
       {:ok, updated}
     end
   end
 
-  def set_media_info(%Episode{} = episode, info) do
+  def set_media_info(%Episode{} = episode, %ImportedQuality{} = quality) do
     with {:ok, updated} <-
-           episode |> Episode.media_info_changeset(media_info_attrs(info)) |> Repo.update() do
+           episode
+           |> Episode.media_info_changeset(ImportedQuality.columns(quality, Episode))
+           |> Repo.update() do
       broadcast_series(series_id_for_season(updated.season_id))
       {:ok, updated}
     end
-  end
-
-  # Translate the bare-keyed capture map to the imported_* column names the changeset casts.
-  defp media_info_attrs(info) do
-    %{
-      imported_audio_languages: Map.get(info, :audio_languages, []),
-      imported_default_audio_language: Map.get(info, :default_audio_language),
-      imported_embedded_subtitles: Map.get(info, :embedded_subtitles, []),
-      imported_sidecar_subtitles: Map.get(info, :sidecar_subtitles, [])
-    }
   end
 
   @doc """

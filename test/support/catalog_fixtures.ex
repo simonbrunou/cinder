@@ -15,6 +15,7 @@ defmodule Cinder.CatalogFixtures do
     Series
   }
 
+  alias Cinder.Library.ImportedQuality
   alias Cinder.Repo
 
   @movie_pipeline_keys [
@@ -23,15 +24,7 @@ defmodule Cinder.CatalogFixtures do
     :file_path,
     :content_path,
     :download_protocol,
-    :release_title,
-    :imported_resolution,
-    :imported_size,
-    :imported_language,
-    :imported_source,
-    :imported_audio_languages,
-    :imported_default_audio_language,
-    :imported_embedded_subtitles,
-    :imported_sidecar_subtitles
+    :release_title
   ]
 
   @doc """
@@ -39,14 +32,16 @@ defmodule Cinder.CatalogFixtures do
 
   Defaults `tmdb_id` to a fresh unique integer and `title` to "Inception"; any
   other key is passed through to `Catalog.add_movie/1`. Pipeline keys
-  (`:status`, `:download_id`, `:file_path`, `:download_protocol`) are applied via
-  a single `seed_movie_state/2` after creation, so a downloading/downloaded
-  fixture is a one-liner.
+  (`:status`, `:download_id`, `:file_path`, `:download_protocol`, the `imported_*`
+  columns) are applied via a single `seed_movie_state/2` after creation, so a
+  downloading/downloaded fixture is a one-liner.
   """
   def movie_fixture(attrs \\ %{}) do
     attrs = Map.new(attrs)
     {media_profile, attrs} = Map.pop(attrs, :media_profile)
-    {pipeline, create_attrs} = Map.split(attrs, @movie_pipeline_keys)
+
+    {pipeline, create_attrs} =
+      Map.split(attrs, @movie_pipeline_keys ++ ImportedQuality.column_names(Movie))
 
     create_attrs =
       Map.merge(%{tmdb_id: System.unique_integer([:positive]), title: "Inception"}, create_attrs)

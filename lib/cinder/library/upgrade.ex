@@ -7,6 +7,7 @@ defmodule Cinder.Library.Upgrade do
   is a weak proxy. `preferred_sources` defaults to `[]` (no source preference ⇒ source ties).
   """
   alias Cinder.Acquisition.{Language, Release, Scorer}
+  alias Cinder.Library.ImportedQuality
 
   @doc """
   Whether `release` *promises* a better file than `record` (a `Movie` or an `Episode`) already
@@ -31,7 +32,7 @@ defmodule Cinder.Library.Upgrade do
 
   Every caller of this function (`UpgradeHunter`) already restricts `record` to a row that has a
   file (`file_path`/`imported_*` describe a real, held file — see `hunt_movies/0`/`holdings/0`).
-  So unlike `better?/5`, a fully nil baseline here is never "nothing held yet"; it is an
+  So unlike `better?/5`, an unrecorded quality here is never "nothing held yet"; it is an
   established file whose quality was simply never recorded — adopted from disk/Radarr/Sonarr, or
   imported before the quality columns existed. #520: treating that as an unconditional win let any
   acceptable release replace a superior adopted file the first time the sweep looked at it. This
@@ -46,12 +47,7 @@ defmodule Cinder.Library.Upgrade do
         size: release.size,
         language: release.language
       },
-      %{
-        resolution: record.imported_resolution,
-        source: record.imported_source,
-        size: record.imported_size,
-        language: record.imported_language
-      },
+      ImportedQuality.of(record),
       target,
       preferred_resolutions(kind),
       preferred_sources(kind),
@@ -74,8 +70,11 @@ defmodule Cinder.Library.Upgrade do
     cutoff = Application.get_env(:cinder, :"#{kind}_upgrade_cutoff")
 
     case Enum.find_index(preferred, &(&1 == cutoff)) do
-      nil -> false
-      cutoff_rank -> Scorer.resolution_rank(record.imported_resolution, preferred) <= cutoff_rank
+      nil ->
+        false
+
+      cutoff_rank ->
+        Scorer.resolution_rank(ImportedQuality.of(record).resolution, preferred) <= cutoff_rank
     end
   end
 
@@ -88,15 +87,15 @@ defmodule Cinder.Library.Upgrade do
   Whether `new` is an upgrade over `old` for the automatic upgrade sweep's IMPORT-TIME arbitration
   (`Cinder.Library`'s `stage_group/7` `:arbitrate` gate, `Grab.arbitrate_at_import`) — the same
   full comparison as `better?/5` (size legitimately decides: both sides are real `lstat` results),
-  but like `candidate?/4` it fails closed on a nil baseline instead of treating it as an
+  but like `candidate?/4` it fails closed on an unrecorded quality instead of treating it as an
   unconditional win.
 
   Every caller here is deciding whether to unattendedly replace an episode that ALREADY holds a
-  file, so a nil baseline only ever means "held, but its quality was never recorded" (adopted, or
-  a pre-quality-columns row) — never "nothing held yet". #520's mixed-pack gap: a season pack
-  covering both a genuinely-upgradable known-quality episode and a nil-baseline sibling used to
-  pass `candidate?/4`'s pre-download gate on the known episode alone, then this same nil-baseline
-  shortcut let the import replace the sibling's superior file too, once the pack was already
+  file, so an unrecorded quality only ever means "held, but its quality was never recorded"
+  (adopted, or a pre-quality-columns row) — never "nothing held yet". #520's mixed-pack gap: a
+  season pack covering both a genuinely-upgradable known-quality episode and an unrecorded sibling
+  used to pass `candidate?/4`'s pre-download gate on the known episode alone, then this same
+  unrecorded-quality shortcut let the import replace the sibling's superior file too, once the pack was already
   downloading. The manual/forced import path never calls this — it always replaces
   unconditionally, regardless of quality.
   """
@@ -112,15 +111,15 @@ defmodule Cinder.Library.Upgrade do
     do: compare(new, old, target, preferred, preferred_sources, true, false)
 
   # `weigh_size?` is false only for `candidate?/4` — see its doc for why a release's size and an
-  # imported file's size are not the same quantity. `nil_baseline_wins?` is true only for
+  # imported file's size are not the same quantity. `unrecorded_wins?` is true only for
   # `better?/5` (an import comparing against a genuinely absent old file is a legitimate,
   # unconditional win); `candidate?/4`'s pre-download gate fails closed instead (#520).
-  defp compare(new, old, target, preferred, preferred_sources, weigh_size?, nil_baseline_wins?) do
+  defp compare(new, old, target, preferred, preferred_sources, weigh_size?, unrecorded_wins?) do
     lang_verdict = language_decides?(new, old, target)
 
     cond do
-      nil_baseline?(old) ->
-        nil_baseline_wins?
+      ImportedQuality.unrecorded?(old) ->
+        unrecorded_wins?
 
       lang_verdict != :tie ->
         lang_verdict == :upgrade
@@ -135,9 +134,6 @@ defmodule Cinder.Library.Upgrade do
         )
     end
   end
-
-  defp nil_baseline?(%{resolution: nil, size: nil, language: nil}), do: true
-  defp nil_baseline?(_), do: false
 
   defp language_decides?(new, old, target) do
     cond do

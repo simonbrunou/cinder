@@ -351,10 +351,11 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
           tmp,
           4248,
           title,
-          # The pack's own file carries `720p`, and `Library.new_quality/3` backfills only NIL
-          # fields from the release title (deliberately — a mixed pack must keep a member's worse
-          # token), so the import re-reads 720p and declines. The sweep, judging the 1080p TITLE,
-          # disagrees. That disagreement is stable in both directions: the loop #257 is blocked on.
+          # The pack's own file carries `720p`, and `ImportedQuality.capture/3` backfills only
+          # NIL fields from the release title (deliberately — a mixed pack must keep a member's
+          # worse token), so the import re-reads 720p and declines. The sweep, judging the 1080p
+          # TITLE, disagrees. That disagreement is stable in both directions: the loop #257 is
+          # blocked on.
           "Show.S01E01.720p.WEBDL.mkv",
           %{imported_resolution: "720p", imported_source: "WEBDL", imported_size: 1_000_000_000},
           %{tvdb_id: 4248}
@@ -457,10 +458,10 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     end
 
     # The guard on the above: threading the release title into the keep stage puts a description of
-    # the DECLINED file within reach of `existing_quality/3`'s `nil_q?` arm, which writes it onto an
-    # episode that kept its own file. An adopted episode (`Catalog.Adoption` writes `file_path` and
-    # nothing else) is exactly that shape, and a 1080p household would then read this 480p rip as
-    # un-upgradable by anything — strictly worse than the nils it replaces.
+    # the DECLINED file within reach of `ImportedQuality.for_outcome/4`'s unrecorded arm, which
+    # writes it onto an episode that kept its own file. An adopted episode (`Catalog.Adoption`
+    # writes `file_path` and nothing else) is exactly that shape, and a 1080p household would then
+    # read this 480p rip as un-upgradable by anything — strictly worse than the nils it replaces.
     @tag :tmp_dir
     test "a kept sibling's record is left alone, title backfill and all", %{tmp_dir: tmp} do
       %{downloads: downloads, tv: tv} = real_tv_library(tmp)
@@ -479,9 +480,9 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
       adopted_path = Path.join(library, "Show (2008) {tmdb-4252} - S01E05.mkv")
       File.write!(adopted_path, "adopted-480p-rip")
 
-      # E05 is adopted: it holds a file but has never been quality-recorded, so `nil_q?` is true.
-      # Its media lists ARE populated — `adopt_quality/2` replaces them wholesale, so they are the
-      # part of the record the four ranked fields alone would not protect.
+      # E05 is adopted: it holds a file whose quality is unrecorded. Its media lists ARE populated —
+      # the unrecorded arm replaces them wholesale, so they are the part of the record the four
+      # ranked fields alone would not protect.
       adopted =
         episode_fixture(season, %{
           episode_number: 5,
@@ -491,8 +492,9 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
           imported_sidecar_subtitles: ["eng"]
         })
 
-      # E06 vetoes the group, which is the only way a nil_q? episode ever reaches the keep path:
-      # `nil_q?` implies `nil_baseline?`, so on its own it would always upgrade.
+      # E06 vetoes the group, which is the only way an unrecorded episode ever reaches the keep
+      # path: `Upgrade.better?/5` counts any file as better than an unrecorded quality, so on its
+      # own it would always upgrade.
       held_06 = Path.join(library, "Show (2008) {tmdb-4252} - S01E06.mkv")
       File.write!(held_06, "held-6")
 
@@ -605,11 +607,12 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
   end
 
   # #257: the sweep gates on `Enum.any?`, so ONE improvable episode carries the whole pack. This is
-  # the route that closed the first attempt (PR #285), end to end. `Library.new_quality/3` backfills
-  # only NIL fields — deliberately, so a genuinely mixed pack keeps a member's worse token — which
-  # leaves an episode holding a token WORSE than the pack's own title readable as improvable by that
-  # title forever, while the import re-parses the file and declines. Under `all?` the season's other
-  # episodes vetoed the grab and the loop was unreachable; under `any?` that one episode takes it.
+  # the route that closed the first attempt (PR #285), end to end. `ImportedQuality.capture/3`
+  # backfills only NIL fields — deliberately, so a genuinely mixed pack keeps a member's worse
+  # token — which leaves an episode holding a token WORSE than the pack's own title readable as
+  # improvable by that title forever, while the import re-parses the file and declines. Under
+  # `all?` the season's other episodes vetoed the grab and the loop was unreachable; under `any?`
+  # that one episode takes it.
   # #274 BOUNDS the loop rather than removing it: the pack is downloaded and discarded exactly once.
   describe "an `any?` pack whose import then places nothing" do
     @tag :tmp_dir

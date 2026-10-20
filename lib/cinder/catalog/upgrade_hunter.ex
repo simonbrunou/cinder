@@ -330,12 +330,12 @@ defmodule Cinder.Catalog.UpgradeHunter do
   # `any?` re-opens a re-download loop that `all?` incidentally suppressed, so it ships only
   # because all three of its routes are now closed or bounded:
   #
-  #   * quality tokens — #277: `Library.new_quality/3` backfills a terse inner file's nil
+  #   * quality tokens — #277: `ImportedQuality.capture/3` backfills a terse inner file's nil
   #     resolution/source/language from the release title, so a pack no longer out-ranks the very
   #     file it produced on a nil that sorts last;
   #   * size — #278/#283: `Upgrade.candidate?/4` weighs no size at all, so a multi-file container
   #     can't out-weigh the one file `lstat`ed out of it;
-  #   * a worse-token file — still live, and deliberately: `new_quality/3` backfills only NIL
+  #   * a worse-token file — still live, and deliberately: `capture/3` backfills only NIL
   #     fields, because a genuinely mixed pack must keep a member's worse token. So an episode
   #     holding `720p` inside a `1080p`-titled pack reads as improvable by that title forever while
   #     the import re-parses the file and declines. #274 BOUNDS it rather than removing it — a grab

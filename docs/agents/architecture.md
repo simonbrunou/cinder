@@ -81,6 +81,17 @@ until it settles, and `StagedImport.reconcile/0` takes the same lock. The lock i
 through `:global` itself, so take it only through `run/1`. The residual-file Part decision from
 `/activity` does not take it yet (#783).
 
+## The imported quality has one owner
+
+What a movie or episode recorded about its file lives in its `imported_*` columns, and
+`Cinder.Library.ImportedQuality` is the one list of them: a struct with one field per column.
+Stagers record what `capture/3` and `for_outcome/4` return. Writers set the columns only through
+`columns/2`, the schemas cast `column_names/2`, and the import and upgrade decisions read a row
+through `of/1`; only display code and queries read a single column directly. Episodes have no
+default-audio column, and the module records that. A new column is one field in that module, plus
+the migration and the schema `field`; `test/cinder/library/imported_quality_test.exs` fences the list
+against both schemas and runs probe → quality → row → quality through each import writer.
+
 ## Operator attention has one owner
 
 Whether an item is in flight, needs attention or waits, and which operator actions it offers, come

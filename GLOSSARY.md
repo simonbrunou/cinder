@@ -88,6 +88,19 @@ The one lock a poller's import holds from placing its files to settling them, so
 cannot roll back an import that is still in progress.
 _Avoid_: stage handoff, handoff lock
 
+**Imported quality**:
+What Cinder recorded about the file a movie or episode holds: the resolution, source and language
+read from its name (filled from the release title where the name says nothing), its size, and the
+audio, embedded-subtitle and sidecar languages found in and next to it. An upgrade is judged
+against it, and it is stored in the row's `imported_*` columns.
+_Avoid_: quality map, old quality, existing quality
+
+**Unrecorded quality**:
+The imported quality of a held file that Cinder never recorded: no resolution, size or language,
+because the file was adopted or imported before those columns existed. An import adopts the
+incoming file's quality over it, and the upgrade sweep never replaces such a file on its own.
+_Avoid_: nil baseline, nil quality
+
 ### Movies
 
 **Movie lifecycle**:

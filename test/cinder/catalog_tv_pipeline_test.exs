@@ -5,6 +5,7 @@ defmodule Cinder.CatalogTvPipelineTest do
 
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, GrabFile, Season}
+  alias Cinder.Library.ImportedQuality
   alias Ecto.Adapters.SQL, as: EctoSQL
 
   import Cinder.CatalogFixtures
@@ -248,8 +249,8 @@ defmodule Cinder.CatalogTvPipelineTest do
   end
 
   describe "finish_grab/2" do
-    # Quality maps carry the media-info capture lists too (stage_episodes always sets them).
-    @q1 %{
+    # Imported qualities carry the media-info capture lists too (stage_episodes always sets them).
+    @q1 %ImportedQuality{
       resolution: "1080p",
       size: 5_000_000_000,
       language: nil,
@@ -258,7 +259,7 @@ defmodule Cinder.CatalogTvPipelineTest do
       embedded_subtitles: [],
       sidecar_subtitles: []
     }
-    @q2 %{
+    @q2 %ImportedQuality{
       resolution: "720p",
       size: 3_000_000_000,
       language: "FRENCH",
@@ -302,7 +303,7 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert {:ok, _} =
                Catalog.finish_grab(grab, [
                  {ep.id, dest,
-                  %{
+                  %ImportedQuality{
                     resolution: "1080p",
                     size: 123,
                     language: "FRENCH",

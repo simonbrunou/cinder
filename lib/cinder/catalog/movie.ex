@@ -17,6 +17,7 @@ defmodule Cinder.Catalog.Movie do
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog.{Profile, TitleAlias}
+  alias Cinder.Library.ImportedQuality
 
   @statuses [
     :requested,
@@ -163,32 +164,27 @@ defmodule Cinder.Catalog.Movie do
   @doc "Changeset for pipeline state transitions (status + optional download_id/download_protocol/imdb_id/file_path/attempt counters)."
   def transition_changeset(movie, attrs) do
     movie
-    |> cast(attrs, [
-      :status,
-      :download_id,
-      :download_protocol,
-      :release_title,
-      :release_policy_snapshot,
-      :verification_hold_origin,
-      :download_progress,
-      :download_speed,
-      :download_eta,
-      :imdb_id,
-      :file_path,
-      :part_file_paths,
-      :content_path,
-      :import_attempts,
-      :search_attempts,
-      :imported_resolution,
-      :imported_size,
-      :imported_language,
-      :imported_source,
-      :imported_audio_languages,
-      :imported_default_audio_language,
-      :imported_embedded_subtitles,
-      :imported_sidecar_subtitles,
-      :failure_reason
-    ])
+    |> cast(
+      attrs,
+      [
+        :status,
+        :download_id,
+        :download_protocol,
+        :release_title,
+        :release_policy_snapshot,
+        :verification_hold_origin,
+        :download_progress,
+        :download_speed,
+        :download_eta,
+        :imdb_id,
+        :file_path,
+        :part_file_paths,
+        :content_path,
+        :import_attempts,
+        :search_attempts,
+        :failure_reason
+      ] ++ ImportedQuality.column_names(__MODULE__)
+    )
     |> reset_download_metrics(movie.status)
     |> advance_download_progress_at(movie)
     |> clear_failure_reason()
@@ -246,12 +242,6 @@ defmodule Cinder.Catalog.Movie do
   end
 
   @doc "Changeset for the import-time media-info capture / backfill. Descriptive, not pipeline state — separate from transition_changeset/2, so it never touches status/file/download fields."
-  def media_info_changeset(movie, attrs) do
-    cast(movie, attrs, [
-      :imported_audio_languages,
-      :imported_default_audio_language,
-      :imported_embedded_subtitles,
-      :imported_sidecar_subtitles
-    ])
-  end
+  def media_info_changeset(movie, attrs),
+    do: cast(movie, attrs, ImportedQuality.column_names(__MODULE__, :media))
 end

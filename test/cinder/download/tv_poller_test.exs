@@ -14,7 +14,7 @@ defmodule Cinder.Download.TvPollerTest do
   alias Cinder.Download
   alias Cinder.Download.Intent
   alias Cinder.Download.{Poller, TvPoller}
-  alias Cinder.Library.ImportStage
+  alias Cinder.Library.{ImportedQuality, ImportStage}
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -1824,7 +1824,7 @@ defmodule Cinder.Download.TvPollerTest do
 
     Repo.update_all(from(e in Episode, where: e.id == ^episode.id), set: [monitored: false])
 
-    quality = %{
+    quality = %ImportedQuality{
       resolution: "1080p",
       size: 3_000_000_000,
       language: nil,

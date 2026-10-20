@@ -22,12 +22,12 @@ defmodule Cinder.Library do
     AnimeInventory,
     AnimePreflight,
     EpisodeSources,
+    ImportedQuality,
     ImportStage,
     MovieSources,
     Naming,
     PathPolicy,
     PolicyVerifier,
-    Sidecars,
     StagedImport,
     Upgrade
   }
@@ -80,11 +80,11 @@ defmodule Cinder.Library do
          {:ok, reports} <- verify_movie_policy(movie, Enum.map(sources, &elem(&1, 0))),
          :ok <- PolicyVerifier.verify_runtime(movie.runtime, sources, media_info()),
          {:ok, sources} <- stat_movie_sources(sources),
-         parsed = Parser.parse(Path.basename(path)),
          new_q =
-           new_quality(parsed, Enum.sum(Enum.map(sources, & &1.size)), movie.release_title)
-           |> Map.merge(capture_movie_media(sources, reports))
-           |> Map.put_new(:sidecar_subtitles, []),
+           ImportedQuality.capture(path, Enum.map(sources, &{&1.path, &1.size}),
+             release_title: movie.release_title,
+             reports: reports
+           ),
          context = %{
            movie: movie,
            root: root,
@@ -112,18 +112,6 @@ defmodule Cinder.Library do
       {:ok, sources} -> {:ok, Enum.reverse(sources)}
       {:error, _reason} = error -> error
     end
-  end
-
-  defp capture_movie_media(sources, reports) do
-    Enum.reduce(sources, empty_media(), fn %{path: source}, media ->
-      captured = cached_or_capture_media(source, reports)
-
-      %{
-        audio_languages: Enum.uniq(media.audio_languages ++ captured.audio_languages),
-        embedded_subtitles: Enum.uniq(media.embedded_subtitles ++ captured.embedded_subtitles),
-        default_audio_language: media.default_audio_language || captured.default_audio_language
-      }
-    end)
   end
 
   # The first source is the primary file; any further ones are the parts of a stack.
@@ -163,9 +151,11 @@ defmodule Cinder.Library do
              extensions: @video_exts
            ) do
       quality =
-        outcome
-        |> staged_quality(movie, context.quality, dest, context.forced?)
-        |> staged_sidecar_quality(placed?(outcome), context.folder?, source.path)
+        ImportedQuality.for_outcome(context.quality, outcome, movie,
+          dest: dest,
+          forced?: context.forced?,
+          sidecars_from: if(context.folder?, do: source.path)
+        )
 
       staged =
         StagedImport.after_commit(staged, dest, {effect, movie, quality.sidecar_subtitles},
@@ -188,7 +178,7 @@ defmodule Cinder.Library do
     %{
       file_path: primary.dest,
       part_file_paths: Enum.map(parts, & &1.dest),
-      quality: Map.put(primary.quality, :sidecar_subtitles, sidecars)
+      quality: %{primary.quality | sidecar_subtitles: sidecars}
     }
   end
 
@@ -203,156 +193,23 @@ defmodule Cinder.Library do
   # Only fresh bytes count as placed: a staged no-op (the same file, or a kept one) moved nothing.
   defp placed?(outcome), do: outcome in [:placed, :replaced]
 
-  # The quality to record for a staged file, by what staging found at its destination. The incoming
-  # quality belongs only to bytes that landed, or to a forced re-import of the very same file (a
-  # manual re-import after a crash). Otherwise the record keeps what it says, or, never imported,
-  # adopts the file it found (issue #128).
-  defp staged_quality(outcome, _record, new_q, _dest, _forced?)
-       when outcome in [:placed, :replaced],
-       do: new_q
-
-  defp staged_quality(:same_file, _record, new_q, _dest, true), do: new_q
-
-  defp staged_quality(:same_file, record, new_q, dest, false),
-    do: existing_quality(record, new_q, dest)
-
-  defp staged_quality(:kept, record, new_q, dest, _forced?), do: kept_quality(dest, record, new_q)
-
-  defp staged_sidecar_quality(quality, true, true, source) do
-    languages = source |> Sidecars.files() |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
-    Map.put(quality, :sidecar_subtitles, languages)
-  end
-
-  defp staged_sidecar_quality(quality, _placed?, _folder?, _source), do: quality
-
-  # A never-before-imported record (nil_q?) whose computed dest already holds a file we're not
-  # overwriting is the delete-and-re-add case (issue #128): the pre-existing sidecars at dest are
-  # real, so scan them the same way a fresh placement's `staged_sidecar_quality/4` would, instead of
-  # defaulting new_q's sidecar_subtitles to "[]" just because nothing was freshly linked. A record
-  # that's already been imported before keeps its stored quality untouched.
-  defp existing_quality(record, new_q, dest) do
-    if nil_q?(record), do: adopt_quality(new_q, dest), else: old_quality(record)
-  end
-
-  defp adopt_quality(new_q, dest) do
-    languages = dest |> Sidecars.files() |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
-    Map.put(new_q, :sidecar_subtitles, languages)
-  end
-
-  # Quality maps shared by movie + episode import (both carry the imported_* fields). Reads the
-  # stored media-info lists too, so the keep branch carries them forward unchanged.
-  defp old_quality(record) do
-    %{
-      resolution: record.imported_resolution,
-      size: record.imported_size,
-      language: record.imported_language,
-      source: record.imported_source,
-      audio_languages: record.imported_audio_languages,
-      embedded_subtitles: record.imported_embedded_subtitles,
-      sidecar_subtitles: record.imported_sidecar_subtitles,
-      # Map.get: only Movie has this column; old_quality/1 also serves Episode.
-      default_audio_language: Map.get(record, :imported_default_audio_language)
-    }
-  end
-
   # What a staged file inherits from the download it arrived in, threaded as one value because the
   # three travel together the whole way down: `folder?` gates sidecar linking, `reports` is the
   # media-probe cache (anime preflight), and `release_title` is the grab's release name, whose
-  # parsed tokens backfill what a terse inner file name omits (see `new_quality/3`).
+  # parsed tokens backfill what a terse inner file name omits (see `ImportedQuality.capture/3`).
   defp download_context(folder?, reports, release_title),
     do: %{folder?: folder?, reports: reports, release_title: release_title}
-
-  # The recorded quality is what every later upgrade comparison ranks the record on, so it must be
-  # at least as informed as the RELEASE TITLE the sweep decided from — otherwise a terse inner file
-  # name (`S03E01.mkv` inside `Show.S03.1080p.BluRay-GRP`) records nils, nils rank last, and the
-  # release keeps out-ranking the very file it produced, re-downloading forever (#275). Release and
-  # record are parsed by the same `Parser`, so after the backfill a release provably cannot beat
-  # its own output on resolution, source or language.
-  #
-  # Field by field, never wholesale: the file's own name always wins where it says something, so a
-  # `720p` file inside a `1080p` pack still records 720p and stays a legitimate upgrade target.
-  # `size` is never backfilled — the release's size is the whole container (extras, subs, samples),
-  # the file's is the file.
-  defp new_quality(parsed, size, release_title) do
-    # Parser.parse/1 is total: a nil title yields an all-nil parse, i.e. no backfill.
-    release = Parser.parse(release_title)
-
-    %{
-      resolution: parsed.resolution || release.resolution,
-      source: parsed.source || release.source,
-      size: size,
-      language: parsed.language || release.language
-    }
-  end
-
-  # Probe the source's audio + embedded-subtitle languages for storage on the imported row. Empty
-  # lists when media_info is disabled or the probe errors — never blocks the import. Runs on every
-  # import (folder or single-file); the release's sidecar languages are captured separately — by
-  # `staged_sidecar_quality/4` (a folder scan) when a fresh file is actually placed, or by adopt_quality/2
-  # (a dest scan) when a never-imported record adopts an already-present file (issue #128).
-  defp capture_media(source) do
-    case media_info() do
-      nil -> empty_media()
-      impl -> probe_media(impl, source)
-    end
-  end
-
-  defp cached_or_capture_media(source, reports) do
-    case Map.fetch(reports, source) do
-      {:ok, report} -> captured_media(report)
-      :error -> capture_media(source)
-    end
-  end
-
-  # Map.get: `default_audio` is an optional key on the behaviour, so a Mox stub returning only
-  # audio/subtitles stays valid (issue #197).
-  defp captured_media(%{audio: audio, subtitles: subtitles} = report),
-    do: %{
-      audio_languages: audio,
-      embedded_subtitles: subtitles,
-      default_audio_language: Map.get(report, :default_audio)
-    }
-
-  defp empty_media,
-    do: %{audio_languages: [], embedded_subtitles: [], default_audio_language: nil}
-
-  defp probe_media(impl, source) do
-    case impl.probe(source) do
-      {:ok, %{audio: _, subtitles: _} = report} ->
-        captured_media(report)
-
-      other ->
-        # Degrading to empty metadata is deliberate — but a broken/missing ffprobe must be
-        # diagnosable: silently-empty fields read as "the file has no tags", not "the probe
-        # is broken" (media_info is on by default, and there is no health row for it).
-        Logger.warning("media-info probe failed for #{source}: #{inspect(other)}")
-        empty_media()
-    end
-  end
-
-  defp nil_q?(m),
-    do: is_nil(m.imported_resolution) and is_nil(m.imported_size) and is_nil(m.imported_language)
 
   defp upgrade?(movie, new_q) do
     target = Language.target(movie.preferred_language, movie.original_language)
 
     Upgrade.better?(
       new_q,
-      old_quality(movie),
+      ImportedQuality.of(movie),
       target,
       preferred_resolutions(:movies),
       preferred_sources(:movies)
     )
-  end
-
-  defp kept_quality(dest, record, new_q) do
-    old_q = existing_quality(record, new_q, dest)
-
-    Logger.warning(
-      "kept existing #{inspect(old_q.resolution)} file at #{dest}; new release not an upgrade"
-    )
-
-    old_q
   end
 
   # Both reads live in Upgrade, which also ranks against them — one definition, no drift.
@@ -963,12 +820,16 @@ defmodule Cinder.Library do
     end
   end
 
-  # Only the four fields `Upgrade.better?/5` ranks on, so this skips the media-info probe
-  # `stage_episode_file_at/8` runs — audio and subtitle languages never enter the comparison.
+  # Only the four fields `Upgrade.better?/5` ranks on matter here, so this skips the media-info
+  # probe `stage_episode_file_at/8` runs — audio and subtitle languages never enter the comparison.
   defp arbitration_quality(source, release_title) do
     with {:ok, source} <- safe_source_file(source),
          {:ok, %{size: size}} <- fs().lstat(source) do
-      {:ok, new_quality(Parser.parse(Path.basename(source)), size, release_title)}
+      {:ok,
+       ImportedQuality.capture(source, [{source, size}],
+         release_title: release_title,
+         probe: false
+       )}
     end
   end
 
@@ -1011,8 +872,8 @@ defmodule Cinder.Library do
   # `part_file_paths` (which `remove_superseded_episode_files/1` then DELETES off disk) and skips
   # #274's `no_upgrade` row, which the record's own backfill cannot substitute for — the sweep's
   # `Enum.any?` gate is driven by a sibling episode (#289). Quality stays the record's own unless
-  # we truly placed, or `existing_quality/3`'s `nil_q?` arm would stamp the declined file's parse —
-  # title backfill and probed track languages — onto a kept file (#128, #275).
+  # we truly placed, or `ImportedQuality.for_outcome/4`'s unrecorded arm would stamp the declined
+  # file's parse — title backfill and probed track languages — onto a kept file (#128, #275).
   defp keep_stage(staged, ep, source, download, keeps) do
     case Map.fetch(keeps, ep.file_path) do
       {:ok, kept} -> {:ok, staged, kept}
@@ -1046,12 +907,18 @@ defmodule Cinder.Library do
     end
   end
 
-  defp declined_stage(%{outcome: :placed} = stage, _ep, folder?),
-    do:
-      {%{stage | quality: staged_sidecar_quality(stage.quality, true, folder?, stage.source)},
-       folder?}
+  defp declined_stage(%{outcome: :placed} = stage, ep, folder?) do
+    quality =
+      ImportedQuality.for_outcome(stage.quality, :placed, ep,
+        dest: stage.dest,
+        sidecars_from: if(folder?, do: stage.source)
+      )
 
-  defp declined_stage(stage, ep, _folder?), do: {%{stage | quality: old_quality(ep)}, false}
+    {%{stage | quality: quality}, folder?}
+  end
+
+  defp declined_stage(stage, ep, _folder?),
+    do: {%{stage | quality: ImportedQuality.of(ep)}, false}
 
   defp stage_episode_file(staged, [ep | _] = episodes, source, root, target, download, collision) do
     dest = Naming.episode_dest(episodes, source, root)
@@ -1107,11 +974,11 @@ defmodule Cinder.Library do
        ) do
     with {:ok, source} <- safe_source_file(source),
          {:ok, %{size: size}} <- fs().lstat(source),
-         parsed = Parser.parse(Path.basename(source)),
          new_q =
-           new_quality(parsed, size, download.release_title)
-           |> Map.merge(cached_or_capture_media(source, download.reports))
-           |> Map.put_new(:sidecar_subtitles, []),
+           ImportedQuality.capture(source, [{source, size}],
+             release_title: download.release_title,
+             reports: download.reports
+           ),
          {:ok, dest} <- safe_destination(dest, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          forced? = collision == :force,
@@ -1122,21 +989,30 @@ defmodule Cinder.Library do
              extensions: @video_exts
            ) do
       quality =
-        outcome
-        |> staged_quality(ep, new_q, dest, forced?)
-        |> staged_sidecar_quality(placed?(outcome), download.folder?, source)
+        ImportedQuality.for_outcome(new_q, outcome, ep,
+          dest: dest,
+          forced?: forced?,
+          sidecars_from: if(download.folder?, do: source)
+        )
 
       {:ok, staged, %{dest: dest, quality: quality, outcome: outcome, source: source}}
     end
   end
 
-  # `arbitrating?` fails closed on a nil baseline (Upgrade.arbitration_upgrade?/5, #520) only
-  # when the episode still holds a file — a mid-flight deletion can clear file_path/quality
+  # `arbitrating?` fails closed on an unrecorded quality (Upgrade.arbitration_upgrade?/5, #520)
+  # only when the episode still holds a file — a mid-flight deletion can clear file_path/quality
   # while grab_id survives, and a fileless episode has nothing left to protect (better?/5).
   defp ep_upgrade?(ep, new_q, target, arbitrating? \\ false) do
     fail_closed? = arbitrating? and Episode.file_paths(ep) != []
     fun = if fail_closed?, do: &Upgrade.arbitration_upgrade?/5, else: &Upgrade.better?/5
-    fun.(new_q, old_quality(ep), target, preferred_resolutions(:tv), preferred_sources(:tv))
+
+    fun.(
+      new_q,
+      ImportedQuality.of(ep),
+      target,
+      preferred_resolutions(:tv),
+      preferred_sources(:tv)
+    )
   end
 
   defp log_unmatched([]), do: :ok

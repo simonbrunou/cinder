@@ -39,7 +39,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   alias Cinder.Catalog.{Attention, BlockedRelease, Grabs, Movie, Profiles}
   alias Cinder.Download
   alias Cinder.Library
-  alias Cinder.Library.{ImportStage, StagedImport}
+  alias Cinder.Library.{ImportedQuality, ImportStage, StagedImport}
   alias Cinder.Notifier
   alias Cinder.Repo
 
@@ -312,7 +312,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
         file_path: record.file_path,
         part_file_paths: record.part_file_paths
       }
-      |> Map.merge(imported_attrs(record.quality))
+      |> Map.merge(ImportedQuality.columns(record.quality, Movie))
 
     # A fresh import's `content_path` was the download copy; the library file replaces it.
     attrs = if movie.status == :downloaded, do: Map.put(attrs, :content_path, nil), else: attrs
@@ -323,19 +323,6 @@ defmodule Cinder.Catalog.MovieLifecycle do
         {:ok, available}
       end
     end)
-  end
-
-  defp imported_attrs(quality) do
-    %{
-      imported_resolution: quality.resolution,
-      imported_size: quality.size,
-      imported_language: quality.language,
-      imported_source: quality.source,
-      imported_audio_languages: quality.audio_languages,
-      imported_default_audio_language: quality.default_audio_language,
-      imported_embedded_subtitles: quality.embedded_subtitles,
-      imported_sidecar_subtitles: quality.sidecar_subtitles
-    }
   end
 
   # The source is read off the caller's struct, never `available`: `available.content_path` is nil,

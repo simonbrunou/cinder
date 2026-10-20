@@ -12,6 +12,7 @@ defmodule Cinder.Catalog.Episode do
   import Ecto.Changeset
 
   alias Cinder.Catalog.{EpisodeCoordinateMembership, Grab, Season}
+  alias Cinder.Library.ImportedQuality
 
   schema "episodes" do
     field :tmdb_episode_id, :integer
@@ -86,30 +87,17 @@ defmodule Cinder.Catalog.Episode do
   """
   def transition_changeset(episode, attrs) do
     episode
-    |> cast(attrs, [
-      :file_path,
-      :part_file_paths,
-      :grab_id,
-      :search_attempts,
-      :imported_resolution,
-      :imported_size,
-      :imported_language,
-      :imported_source,
-      :imported_audio_languages,
-      :imported_embedded_subtitles,
-      :imported_sidecar_subtitles
-    ])
+    |> cast(
+      attrs,
+      [:file_path, :part_file_paths, :grab_id, :search_attempts] ++
+        ImportedQuality.column_names(__MODULE__)
+    )
     |> validate_number(:search_attempts, greater_than_or_equal_to: 0)
   end
 
   @doc "Changeset for the import-time media-info capture / backfill. Descriptive, not pipeline state — separate from transition_changeset/2, so it never touches status/file/download fields."
-  def media_info_changeset(episode, attrs) do
-    cast(episode, attrs, [
-      :imported_audio_languages,
-      :imported_embedded_subtitles,
-      :imported_sidecar_subtitles
-    ])
-  end
+  def media_info_changeset(episode, attrs),
+    do: cast(episode, attrs, ImportedQuality.column_names(__MODULE__, :media))
 
   @doc "All library files belonging to an episode, primary first."
   def file_paths(%__MODULE__{file_path: primary, part_file_paths: parts}) do

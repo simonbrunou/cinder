@@ -4,12 +4,13 @@ defmodule Cinder.Catalog.MediaInfoTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.Catalog
+  alias Cinder.Library.ImportedQuality
 
   test "set_media_info persists the three lists on a movie" do
     movie = movie_fixture(%{status: :available, file_path: "/lib/M (2020)/M (2020).mkv"})
 
     {:ok, updated} =
-      Catalog.set_media_info(movie, %{
+      Catalog.set_media_info(movie, %ImportedQuality{
         audio_languages: ["en", "fr"],
         embedded_subtitles: ["en"],
         sidecar_subtitles: ["fr"]
@@ -28,7 +29,7 @@ defmodule Cinder.Catalog.MediaInfoTest do
     movie = movie_fixture(%{status: :available, file_path: "/lib/M (2020)/M (2020).mkv"})
 
     {:ok, updated} =
-      Catalog.set_media_info(movie, %{
+      Catalog.set_media_info(movie, %ImportedQuality{
         audio_languages: ["tur", "en"],
         default_audio_language: "tur",
         embedded_subtitles: [],
@@ -38,7 +39,7 @@ defmodule Cinder.Catalog.MediaInfoTest do
     assert updated.imported_default_audio_language == "tur"
 
     {:ok, cleared} =
-      Catalog.set_media_info(updated, %{
+      Catalog.set_media_info(updated, %ImportedQuality{
         audio_languages: ["fre", "en"],
         embedded_subtitles: [],
         sidecar_subtitles: []
@@ -47,13 +48,29 @@ defmodule Cinder.Catalog.MediaInfoTest do
     assert is_nil(cleared.imported_default_audio_language)
   end
 
+  test "set_media_info leaves the ranked quality as recorded" do
+    movie =
+      movie_fixture(%{
+        status: :available,
+        file_path: "/lib/M (2020)/M (2020).mkv",
+        imported_resolution: "1080p",
+        imported_size: 5
+      })
+
+    {:ok, updated} =
+      Catalog.set_media_info(movie, %ImportedQuality{resolution: "480p", audio_languages: ["en"]})
+
+    assert {updated.imported_resolution, updated.imported_size} == {"1080p", 5}
+    assert updated.imported_audio_languages == ["en"]
+  end
+
   test "set_media_info persists on an episode" do
     series = series_fixture()
     season = season_fixture(series)
     ep = episode_fixture(season, %{file_path: "/tv/S (2020)/Season 01/S (2020) - S01E01.mkv"})
 
     {:ok, updated} =
-      Catalog.set_media_info(ep, %{
+      Catalog.set_media_info(ep, %ImportedQuality{
         audio_languages: ["ja"],
         embedded_subtitles: ["en"],
         sidecar_subtitles: []

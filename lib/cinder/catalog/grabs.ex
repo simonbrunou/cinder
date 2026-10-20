@@ -28,7 +28,7 @@ defmodule Cinder.Catalog.Grabs do
   alias Cinder.Catalog.SeriesCatalog
   alias Cinder.Download
   alias Cinder.Download.Intent
-  alias Cinder.Library.ImportStage
+  alias Cinder.Library.{ImportedQuality, ImportStage}
   alias Cinder.Notifier
   alias Cinder.Repo
 
@@ -946,7 +946,7 @@ defmodule Cinder.Catalog.Grabs do
   # is otherwise indistinguishable from a real import — the grab closes, no episode is missing, so
   # nothing bounds the sweep that grabbed it. It can disagree with the import forever:
   # `Upgrade.candidate?/4` judges the RELEASE TITLE while the import re-reads the FILE that
-  # release produced, and `Library.new_quality/3` backfills only nil fields from the title
+  # release produced, and `ImportedQuality.capture/3` backfills only nil fields from the title
   # (deliberately), so an episode whose own token is worse than the pack's title stays "improvable"
   # by it on every rotation. Recording the title under a reason only the upgrade sweep reads bounds
   # that loop and leaves the pack grabbable everywhere else (`blocked_release_titles_for_series/2`).
@@ -983,12 +983,13 @@ defmodule Cinder.Catalog.Grabs do
   defp transition_imported_episode!(grab_id, episode, dest, quality, retain_grab?, placed?) do
     if episode.monitored or not is_nil(episode.file_path) do
       attrs =
-        Map.new(
-          [
+        Map.merge(
+          %{
             file_path: dest,
             part_file_paths: if(placed?, do: [], else: episode.part_file_paths),
             grab_id: if(retain_grab?, do: grab_id)
-          ] ++ imported_attrs(quality)
+          },
+          ImportedQuality.columns(quality, Episode)
         )
 
       expected = %{
@@ -1329,25 +1330,13 @@ defmodule Cinder.Catalog.Grabs do
             (e.monitored == true or not is_nil(e.file_path))
 
     updates =
-      [file_path: dest, part_file_paths: [], grab_id: nil] ++
-        imported_attrs(quality) ++ [updated_at: timestamp]
+      [file_path: dest, part_file_paths: [], grab_id: nil, updated_at: timestamp] ++
+        Map.to_list(ImportedQuality.columns(quality, Episode))
 
     case Repo.update_all(query, set: updates) do
       {1, _} -> :ok
       {0, _} -> Repo.rollback(:stale_grab)
     end
-  end
-
-  defp imported_attrs(quality) do
-    [
-      imported_resolution: quality.resolution,
-      imported_size: quality.size,
-      imported_language: quality.language,
-      imported_source: quality.source,
-      imported_audio_languages: quality.audio_languages,
-      imported_embedded_subtitles: quality.embedded_subtitles,
-      imported_sidecar_subtitles: quality.sidecar_subtitles
-    ]
   end
 
   # The grab's episodes that did not import. Branch on the empty case so we never interpolate

@@ -104,7 +104,7 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
       if Agent.get(subtitle_fs, &Map.has_key?(&1, path)) do
-        {:ok, %File.Stat{type: :regular}}
+        {:ok, %File.Stat{type: :regular, size: 1}}
       else
         {:error, :enoent}
       end
@@ -556,8 +556,8 @@ defmodule Cinder.LibrarySubtitlesTest do
   end
 
   # issue #128: deleting a series (keeping files) and re-adding it recreates a never-imported
-  # (nil_q?) episode row whose computed dest already holds the old file. The import "adopts" the
-  # existing dest (same inode as the download's content — e.g. the client re-served an
+  # episode row (its quality unrecorded) whose computed dest already holds the old file. The import
+  # "adopts" the existing dest (same inode as the download's content — e.g. the client re-served an
   # already-complete download) rather than placing fresh bytes, so it must scan dest's own
   # directory for cinder-named sidecars instead of recording "no sidecars".
   test "adopt path (pre-existing dest, same inode) scans dest's sidecars and registers them as managed",
