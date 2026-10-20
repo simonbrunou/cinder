@@ -1,8 +1,9 @@
 defmodule Cinder.CodeHealthTest do
   @moduledoc """
-  Guards against a single `lib/` file regrowing into an unreviewable mega-module
-  (the trigger for the 2026-07-26 `Cinder.Catalog` split into
-  `Cinder.Catalog.{Discovery,Grabs,SeriesCatalog,SceneNumbering,SeriesRefresh}`).
+  Guards against a single `lib/` file regrowing into an unreviewable mega-module (the trigger for
+  the 2026-07-26 `Cinder.Catalog` split), and fences the module boundaries earlier refactors
+  drew: the catalog's split by concept (#740), the staging engine (#739) and the guarded-write
+  adapters (#743).
   """
   use ExUnit.Case, async: true
 
@@ -16,8 +17,8 @@ defmodule Cinder.CodeHealthTest do
       |> Enum.filter(fn {_path, lines} -> lines > @max_lines end)
 
     assert offenders == [],
-           "the following file(s) exceed #{@max_lines} lines — split it — see the " <>
-             "Catalog.Grabs/Discovery/SeriesCatalog precedent:\n" <>
+           "the following file(s) exceed #{@max_lines} lines — split it by concept, the " <>
+             "way #740 split Cinder.Catalog:\n" <>
              Enum.map_join(offenders, "\n", fn {path, lines} -> "  #{path} (#{lines} lines)" end)
   end
 
@@ -42,6 +43,84 @@ defmodule Cinder.CodeHealthTest do
            "StageEngine must not call `Cinder.Library`; settle the decision in the stager and " <>
              "pass it in:\n  " <> Enum.join(calls, "\n  ")
   end
+
+  # #740: the facade holds no implementation, so nothing a concept needs can land there.
+  test "Cinder.Catalog only delegates" do
+    {:ok, ast} = "lib/cinder/catalog.ex" |> File.read!() |> Code.string_to_quoted()
+
+    {_ast, defs} =
+      Macro.prewalk(ast, [], fn
+        {kind, meta, [head | _]} = node, acc when kind in [:def, :defp, :defmacro, :defmacrop] ->
+          {node, ["#{kind} #{Macro.to_string(head)} (line #{meta[:line]})" | acc]}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    assert defs == [],
+           "move the implementation into the concept module that owns it and `defdelegate` " <>
+             "to it:\n  " <> Enum.join(Enum.reverse(defs), "\n  ")
+  end
+
+  # #740: `Cinder.Catalog` is the facade for code outside the catalog. A concept module calls the
+  # module that owns what it needs, so nothing under `lib/cinder/catalog/` calls back up into it.
+  test "no catalog module calls the Cinder.Catalog facade" do
+    calls =
+      for path <- Path.wildcard("lib/cinder/catalog/**/*.ex"),
+          call <- facade_calls(path),
+          do: "#{path}: Catalog.#{call}"
+
+    assert calls == [],
+           "call the concept module that owns the function, not the facade:\n  " <>
+             Enum.join(calls, "\n  ")
+  end
+
+  defp facade_calls(path) do
+    {:ok, ast} = path |> File.read!() |> Code.string_to_quoted()
+
+    {_ast, calls} =
+      Macro.prewalk(ast, [], fn
+        # `alias Cinder.Catalog.{A, B}` parses as a call to `:{}`; it names submodules only.
+        {{:., _, [{:__aliases__, _, aliases}, fun]}, meta, _args} = node, acc
+        when aliases in [[:Catalog], [:Cinder, :Catalog]] and fun != :{} ->
+          {node, ["#{fun} (line #{meta[:line]})" | acc]}
+
+        # `alias Cinder.Catalog, as: C` would let a call slip past the match above.
+        {:alias, meta, [{:__aliases__, _, [:Cinder, :Catalog]} | _]} = node, acc ->
+          {node, ["aliased (line #{meta[:line]})" | acc]}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    Enum.reverse(calls)
+  end
+
+  # #740: the CI scripts drive the release over `bin/cinder rpc` with Elixir inside Python
+  # strings the compiler never sees, so a rename in `lib/` used to surface only in CI's container
+  # job.
+  test "every Cinder function the CI scripts call over rpc exists" do
+    calls =
+      for path <- Path.wildcard(".github/scripts/**/*.py"),
+          [_call, module, fun] <-
+            Regex.scan(~r/\b(Cinder(?:\.[A-Z]\w*)+)\.([a-z_]\w*[?!]?)\(/, File.read!(path)),
+          uniq: true,
+          do: {path, module, fun}
+
+    missing =
+      for {path, module, fun} <- calls,
+          not exported?(Module.concat([module]), String.to_atom(fun)),
+          do: "#{path}: #{module}.#{fun}"
+
+    assert calls != []
+
+    assert missing == [],
+           "the CI scripts call functions lib/ no longer has; update the rpc strings:\n  " <>
+             Enum.join(missing, "\n  ")
+  end
+
+  defp exported?(module, fun),
+    do: Code.ensure_loaded?(module) and Keyword.has_key?(module.__info__(:functions), fun)
 
   # #739: the engine's scratch-file names are its own. Tests other than the staged-import ones
   # reach them through `Cinder.LibraryStubs`, so renaming them touches two files.
@@ -68,7 +147,7 @@ defmodule Cinder.CodeHealthTest do
       "MovieTransition" =>
         {"lib/cinder/catalog/movie_transition.ex", "lib/cinder/catalog/movie_lifecycle.ex"},
       "EpisodeTransition" =>
-        {"lib/cinder/catalog/episode_transition.ex", "lib/cinder/catalog.ex"},
+        {"lib/cinder/catalog/episode_transition.ex", "lib/cinder/catalog/episodes.ex"},
       "BookTargetTransition" =>
         {"lib/cinder/books/book_target_transition.ex", "lib/cinder/books.ex"},
       "RequestTransition" =>

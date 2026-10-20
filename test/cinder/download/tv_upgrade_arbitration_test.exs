@@ -104,7 +104,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     season = season_fixture(series)
 
     # An admin deleted the held file (and its recorded quality) while this episode's automatic
-    # upgrade was already downloading — SeriesDeletion.reconcile_deleted_paths/3's documented
+    # upgrade was already downloading — TitleDeletion.reconcile_deleted_paths/3's documented
     # shape: file_path/quality cleared, grab_id (set by arbitrated_grab/2 below) untouched. With
     # nothing left to protect, the fail-closed arbitration gate must not reject the replacement.
     episode =

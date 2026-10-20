@@ -1,12 +1,15 @@
-defmodule Cinder.Catalog.SeriesRefresh do
+defmodule Cinder.Catalog.MetadataRefresh do
   @moduledoc """
-  Periodic TMDB refresh + season/episode tree reconciliation for an already-added
-  series (the `Cinder.Catalog.Refresher` GenServer's per-tick call). Existing
-  episodes are matched by `tmdb_episode_id` and updated in place (preserving
-  `monitored`/`file_path`/`grab_id`/counters) via a two-pass renumber that
-  tolerates TMDB reorders/shifts. Carved out of `Cinder.Catalog` as plain code
-  motion — every public function here is re-exported unchanged via `defdelegate`
-  in `Cinder.Catalog`.
+  Descriptive data a title or episode records that is not pipeline state: TMDB metadata and
+  probed media info. Nothing here writes a movie status or an episode's pipeline fields.
+
+    * `refresh_series/1`: the periodic TMDB refresh and season/episode tree reconciliation of an
+      already-added series (the `Cinder.Catalog.Refresher` GenServer's per-tick call). Existing
+      episodes are matched by `tmdb_episode_id` and updated in place (preserving
+      `monitored`/`file_path`/`grab_id`/counters) via a two-pass renumber that tolerates TMDB
+      reorders and shifts.
+    * `enrich_movie/1`, `enrich_series/1`: a lightweight descriptive refresh of one row.
+    * `set_media_info/2`: the media-info backfill's write.
   """
   require Logger
 
@@ -14,14 +17,18 @@ defmodule Cinder.Catalog.SeriesRefresh do
     Episode,
     EpisodeCoordinate,
     EpisodeCoordinateMembership,
+    Episodes,
+    Events,
     GrabFile,
     Identity,
+    Movie,
     Season,
     Series,
     SeriesCatalog
   }
 
   alias Cinder.Download.IntentEpisode
+  alias Cinder.Library.ImportedQuality
   alias Cinder.Repo
 
   import Ecto.Query
@@ -54,7 +61,7 @@ defmodule Cinder.Catalog.SeriesRefresh do
   # "series" topic and passes through; an error passes through untouched. Small enough to
   # duplicate rather than share (see the module notes).
   defp finish_series_write({:ok, updated}) do
-    Cinder.Catalog.broadcast_series(updated.id)
+    Events.series_updated(updated.id)
     {:ok, updated}
   end
 
@@ -91,10 +98,10 @@ defmodule Cinder.Catalog.SeriesRefresh do
         # Descriptive backfill — Map.get (not dot) so a partial info map can't KeyError and abort
         # the whole tree reconcile. The real normalize_series always includes these.
         overview: Map.get(info, :overview),
-        # Merge-over, not replace (see Cinder.Catalog.merge_localizations/2): a transient/partial
+        # Merge-over, not replace (see merge_localizations/2): a transient/partial
         # translations payload must never strip last-synced localizations.
         localizations:
-          Cinder.Catalog.merge_localizations(
+          merge_localizations(
             series.localizations,
             Map.get(info, :localizations, %{})
           ),
@@ -304,11 +311,10 @@ defmodule Cinder.Catalog.SeriesRefresh do
         season_id: season.id,
         episode_number: fe.episode_number,
         title: fe.title,
-        # Merge-over (see Cinder.Catalog.merge_localizations/2): a failed non-canonical season
+        # Merge-over (see merge_localizations/2): a failed non-canonical season
         # fetch yields %{} here, and replacing would erase the last-synced titles until the next
         # successful refresh.
-        localizations:
-          Cinder.Catalog.merge_localizations(parked_ep.localizations, fe.localizations),
+        localizations: merge_localizations(parked_ep.localizations, fe.localizations),
         air_date: fe.air_date
       })
 
@@ -377,6 +383,107 @@ defmodule Cinder.Catalog.SeriesRefresh do
     Logger.warning("refresh skipped #{context}: #{inspect(changeset.errors)}")
     :ok
   end
+
+  @doc """
+  Refreshes a movie's descriptive TMDB metadata (overview/runtime/genres/rating/release date).
+  Returns the refreshed `%Movie{}`; on a TMDB error it logs and returns the row unchanged so the
+  detail page still renders. Writes via `Movie.metadata_changeset/2`, never a
+  `Cinder.Catalog.MovieLifecycle` verb.
+  """
+  def enrich_movie(%Movie{} = movie),
+    do:
+      backfill_metadata(
+        movie,
+        &tmdb().get_movie(&1.tmdb_id),
+        &Movie.metadata_changeset/2,
+        "movie"
+      )
+
+  @doc """
+  Refreshes a series' descriptive TMDB metadata (overview/genres/rating/first air date) with a
+  lightweight `get_series` fetch, not the full `refresh_series/1` season walk. Returns the
+  refreshed `%Series{}` (or the row unchanged, logged, on a TMDB error). No broadcast — the
+  caller reloads its own tree.
+  """
+  def enrich_series(%Series{} = series),
+    do:
+      backfill_metadata(
+        series,
+        &tmdb().get_series(&1.tmdb_id),
+        &Series.metadata_changeset/2,
+        "series"
+      )
+
+  @doc """
+  Persists the media-info languages of `quality` (audio, default audio, embedded and sidecar
+  subtitles) onto a movie or episode; its ranked fields are not written. Used by the backfill
+  task; not a status transition.
+  """
+  def set_media_info(%Movie{} = movie, %ImportedQuality{} = quality) do
+    with {:ok, updated} <-
+           movie
+           |> Movie.media_info_changeset(ImportedQuality.columns(quality, Movie))
+           |> Repo.update() do
+      Events.movie_updated(updated)
+      {:ok, updated}
+    end
+  end
+
+  def set_media_info(%Episode{} = episode, %ImportedQuality{} = quality) do
+    with {:ok, updated} <-
+           episode
+           |> Episode.media_info_changeset(ImportedQuality.columns(quality, Episode))
+           |> Repo.update() do
+      Events.series_updated(Episodes.series_id(updated))
+      {:ok, updated}
+    end
+  end
+
+  # Shared descriptive-metadata refresh for a movie/series row. `fetch` and `changeset` are
+  # the type's TMDB call + metadata changeset; `label` is for the log line. `updated_at` is
+  # never written: this read-triggered refresh must not reorder the dashboard's Recent slice or
+  # overwrite a concurrent pipeline transition's timestamp. On a TMDB error, log and return the
+  # row unchanged so the page still renders.
+  defp backfill_metadata(record, fetch, changeset, label) do
+    case fetch.(record) do
+      {:ok, info} ->
+        changes = changeset.(record, merge_info_localizations(record, info)).changes
+
+        if changes != %{} do
+          schema = record.__struct__
+
+          Repo.update_all(
+            from(r in schema, where: r.id == ^record.id),
+            set: Map.to_list(changes)
+          )
+        end
+
+        Repo.get(record.__struct__, record.id) || record
+
+      error ->
+        Logger.warning("metadata backfill failed for #{label} #{record.id}: #{inspect(error)}")
+        record
+    end
+  end
+
+  defp merge_info_localizations(record, info) do
+    case Map.fetch(info, :localizations) do
+      {:ok, new} -> Map.put(info, :localizations, merge_localizations(record.localizations, new))
+      :error -> info
+    end
+  end
+
+  # Field-wise, per-locale merge for localization maps: a locale absent from the incoming
+  # payload keeps its stored entry, and incoming blank/nil fields never clobber a stored value —
+  # a transient/partial TMDB payload can only add or refresh, never strip (stale beats gone for
+  # display-only data).
+  defp merge_localizations(stored, new) do
+    cleaned = for {locale, entry} <- new || %{}, into: %{}, do: {locale, drop_blank_fields(entry)}
+    Map.merge(stored || %{}, cleaned, fn _locale, old, incoming -> Map.merge(old, incoming) end)
+  end
+
+  defp drop_blank_fields(entry),
+    do: for({k, v} <- entry, is_binary(v) and v != "", into: %{}, do: {k, v})
 
   # Resolve the impl at runtime — see `Cinder.Catalog.Discovery`'s copy for why not compile_env!.
   defp tmdb, do: Application.fetch_env!(:cinder, :tmdb)

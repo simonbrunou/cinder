@@ -25,10 +25,10 @@ defmodule Cinder.Catalog.Attention do
   | movie `:retry` | `MovieLifecycle.retry/1` |
   | movie `:cancel` | `MovieLifecycle.cancel/2` |
   | movie `:cancel_upgrade` | `MovieLifecycle.abort_upgrade/2` |
-  | movie `:manual_search` | `Grabs.manual_grab_movie/2` |
-  | grab `:retry_mapping` | `ReleaseVerification.retry_grab_mapping/1` |
-  | grab `:retry_verification` | `ReleaseVerification.retry_grab_verification/1` |
-  | grab `:import_anyway` | `ReleaseVerification.import_grab_anyway/2` |
+  | movie `:manual_search` | `ManualGrab.manual_grab_movie/2` |
+  | grab `:retry_mapping` | `Grabs.retry_grab_mapping/1` |
+  | grab `:retry_verification` | `Grabs.retry_grab_verification/1` |
+  | grab `:import_anyway` | `Grabs.import_grab_anyway/2` |
   | grab `:discard` | `Grabs.cancel_mapping_grab/1` |
   | grab `:cancel` | `Grabs.cancel_grab/1` |
 

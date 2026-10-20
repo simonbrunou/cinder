@@ -2,15 +2,17 @@ defmodule Cinder.Catalog.Discovery do
   @moduledoc """
   TMDB-facing discovery: search (movies/TV/people/collections), trending/rails, and
   locale-aware field lookups. Reached only through the `Cinder.Catalog.TMDB` behaviour
-  (resolved from config), so tests use a Mox mock and never hit the network. Pure
-  read-side of `Cinder.Catalog` — carved out of the facade as plain code motion; every
-  function here is re-exported unchanged via `defdelegate` in `Cinder.Catalog`.
+  (resolved from config), so tests use a Mox mock and never hit the network. Writes nothing to
+  the database.
   """
   require Logger
 
   alias Cinder.Locales
 
   @discover_task_timeout 30_000
+
+  @doc "Fetches full movie details from TMDB (the details endpoint carries `imdb_id`)."
+  def get_movie(tmdb_id), do: tmdb().get_movie(tmdb_id)
 
   @doc """
   Searches TMDB for `query`. A blank/whitespace query short-circuits to `{:ok, []}`

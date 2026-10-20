@@ -4,8 +4,7 @@ defmodule Cinder.Catalog.Profiles do
   import Ecto.Query
 
   alias Cinder.Books.{BookAuthorPolicy, BookTarget}
-  alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Movie, Profile, Season, Series}
+  alias Cinder.Catalog.{Episode, Events, Movie, Profile, Season, Series}
   alias Cinder.Library.PathPolicy
   alias Cinder.LibraryKind
   alias Cinder.Repo
@@ -223,8 +222,8 @@ defmodule Cinder.Catalog.Profiles do
   defp publish_assignment({:ok, title} = result, opts) do
     if Keyword.get(opts, :publish, true) do
       case title do
-        %Movie{} = movie -> Catalog.broadcast({:movie_updated, movie})
-        %Series{} = series -> Catalog.broadcast_series(series.id)
+        %Movie{} = movie -> Events.movie_updated(movie)
+        %Series{} = series -> Events.series_updated(series.id)
       end
     end
 

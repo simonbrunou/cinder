@@ -3,7 +3,7 @@ defmodule Cinder.Catalog.Rehunter do
   Periodically re-queues titles the pipeline gave up on, so a request that had no release the week
   it was made isn't dead forever — the household's standing "keep looking" loop.
 
-  Both pollers bound their search retries (`Catalog.max_search_attempts/0`) and park what never
+  Both pollers bound their search retries (`Cinder.Catalog.Episodes.max_search_attempts/0`) and park what never
   resolves. Parking is the right call *per tick* — hammering an indexer for a release that does not
   exist yet is pointless — but nothing ever un-parked, so until now the only way back was a human
   clicking Retry. This sweep is that click, on a timer:
@@ -11,7 +11,7 @@ defmodule Cinder.Catalog.Rehunter do
   - **movies** in `:no_match` / `:search_failed` untouched since the cooldown go back to
     `:requested` via `MovieLifecycle.retry/1` (which also clears their `:stalled` blocklist rows).
   - **episodes** at the attempt cap get `search_attempts` zeroed via
-    `Catalog.rehunt_parked_episodes/1`, re-entering the TV sweep.
+    `Cinder.Catalog.EpisodeSearch.rehunt_parked_episodes/1`, re-entering the TV sweep.
 
   `:import_failed` is deliberately **excluded** even though it is a `MovieLifecycle.parked_statuses/0`
   member: that is a broken import, not a missing release — re-searching cannot help, and
@@ -30,8 +30,7 @@ defmodule Cinder.Catalog.Rehunter do
   """
   import Ecto.Query
 
-  alias Cinder.Catalog
-  alias Cinder.Catalog.{Movie, MovieLifecycle}
+  alias Cinder.Catalog.{EpisodeSearch, Movie, MovieLifecycle}
   alias Cinder.Repo
 
   @default_interval :timer.hours(6)
@@ -86,7 +85,7 @@ defmodule Cinder.Catalog.Rehunter do
   end
 
   defp rehunt_episodes(cutoff) do
-    case Catalog.rehunt_parked_episodes(cutoff) do
+    case EpisodeSearch.rehunt_parked_episodes(cutoff) do
       0 -> :ok
       count -> Logger.info("rehunter re-queued #{count} search-parked episode(s)")
     end

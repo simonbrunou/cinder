@@ -3270,7 +3270,7 @@ defmodule Cinder.Download.TvPollerTest do
                  download_eta: 500
                })
 
-      past = DateTime.add(Catalog.now(), -25, :hour)
+      past = DateTime.add(DateTime.utc_now(:second), -25, :hour)
       Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [download_progress_at: past])
       tracked = Repo.get!(Grab, tracked.id)
 

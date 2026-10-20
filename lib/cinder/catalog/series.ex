@@ -51,7 +51,7 @@ defmodule Cinder.Catalog.Series do
     |> check_constraint(:profile_id, name: :series_profile_integrity)
   end
 
-  @doc "Changeset for the sweep-owned search-time Anime preferences hold marker (see `Catalog.set_anime_hold/2`)."
+  @doc "Changeset for the sweep-owned search-time Anime preferences hold marker (see `Cinder.Catalog.MediaProfiles.set_anime_hold/2`)."
   def anime_hold_changeset(series, attrs), do: cast(series, attrs, [:anime_hold_reason])
 
   @doc "Changeset for the media-server inventory reconciler's opaque item id."
@@ -63,7 +63,8 @@ defmodule Cinder.Catalog.Series do
 
   @doc """
   Changeset for the operator-chosen TMDB episode group used for alternate-season numbering
-  (see `Catalog.set_scene_numbering_group/2`). Deliberately its own changeset, like
+  (see `Cinder.Catalog.SceneNumbering.set_scene_numbering_group/2`). Deliberately its own
+  changeset, like
   `anime_hold_changeset/2` — not part of `create_changeset/1` or `refresh_changeset/2`, so
   a TMDB refresh can't clobber it.
   """
@@ -106,8 +107,8 @@ defmodule Cinder.Catalog.Series do
   end
 
   @doc """
-  Changeset for the M6 TMDB refresh (`Catalog.refresh_series/1`): backfills the
-  TMDB-sourced descriptive fields (`tvdb_id` is the acquisition disambiguation key, often
+  Changeset for the M6 TMDB refresh (`Cinder.Catalog.MetadataRefresh.refresh_series/1`):
+  backfills the TMDB-sourced descriptive fields (`tvdb_id` is the acquisition disambiguation key, often
   nil at add time). `tmdb_id` (identity), `monitored`, and `monitor_strategy`
   (user-controlled) are deliberately NOT castable so a refresh preserves them.
   """
@@ -126,7 +127,7 @@ defmodule Cinder.Catalog.Series do
     ])
   end
 
-  @doc "Changeset for the TMDB metadata refresh (`Catalog.enrich_series/1`). Descriptive only; excludes identity/monitoring so a refresh can't disturb the tree."
+  @doc "Changeset for the TMDB metadata refresh (`Cinder.Catalog.MetadataRefresh.enrich_series/1`). Descriptive only; excludes identity/monitoring so a refresh can't disturb the tree."
   def metadata_changeset(series, attrs) do
     cast(series, attrs, [:overview, :localizations, :genres, :vote_average, :first_air_date])
   end

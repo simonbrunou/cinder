@@ -29,6 +29,13 @@ was published, so a preferred group's release can arrive first. A release with n
 can't start the wait, so automatic selection never takes it.
 _Avoid_: fallback delay (the setting, not the rule), group timing
 
+**Blocked release**:
+A release Cinder will not grab again for one movie or series, recorded with its reason: a failed or
+stalled download, a release that broke its policy, a cancelled verification hold. One reason,
+`no_upgrade`, blocks it for the upgrade sweep only: the pack placed nothing better than what the
+library holds.
+_Avoid_: blacklist, banned release
+
 ### Books
 
 **Book family**:
@@ -47,6 +54,13 @@ A book kind's rule for which identifiers of its editions to probe the indexers w
 order: ISBN for an e-book, ASIN then ISBN for an audiobook. Every search for a work runs the most
 specific evidence first: a few of those identifiers, then author and title, then free text.
 _Avoid_: search strategy, query list
+
+### Catalog
+
+**Title**:
+A movie or a series: what a household asks the catalog for, and what a media profile, a language
+pick and a deletion apply to. A book is not a title; it is a work with one target per media kind.
+_Avoid_: media (on its own), item
 
 ### Downloads
 

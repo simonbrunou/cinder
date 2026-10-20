@@ -17,6 +17,7 @@ defmodule Cinder.Books.BookGrab do
   import Ecto.Changeset
 
   alias Cinder.Books.BookTarget
+  alias Cinder.Download.Progress
 
   schema "book_grabs" do
     belongs_to :book_target, BookTarget
@@ -68,15 +69,10 @@ defmodule Cinder.Books.BookGrab do
     content_path = get_field(changeset, :content_path)
 
     if is_nil(grab.id) or is_nil(content_path) != is_nil(grab.content_path) or
-         progress_advanced?(grab.download_progress, progress) do
+         Progress.advanced?(grab.download_progress, progress) do
       force_change(changeset, :download_progress_at, DateTime.utc_now(:second))
     else
       changeset
     end
   end
-
-  defp progress_advanced?(previous, current) when is_number(current),
-    do: current > (previous || 0)
-
-  defp progress_advanced?(_previous, _current), do: false
 end

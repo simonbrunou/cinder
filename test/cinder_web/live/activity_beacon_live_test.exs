@@ -6,7 +6,7 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
 
   alias Cinder.Accounts
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Grab, GrabFile}
+  alias Cinder.Catalog.{Events, Grab, GrabFile}
   alias Cinder.Repo
 
   setup :register_and_log_in_admin
@@ -111,7 +111,7 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
     {:ok, view, _html} = mount_beacon(admin)
     assert render(view) =~ "1 active"
 
-    Catalog.broadcast({:movie_updated, %{movie | status: :available}})
+    Events.movie_updated(%{movie | status: :available})
 
     html = render(view)
     assert html =~ "is now available"
@@ -123,7 +123,7 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
 
     {:ok, view, _html} = mount_beacon(admin)
 
-    Catalog.broadcast({:movie_updated, %{movie | status: :no_match}})
+    Events.movie_updated(%{movie | status: :no_match})
 
     html = render(view)
     assert html =~ "needs attention"
@@ -197,11 +197,11 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
     {:ok, view, _html} = mount_beacon(admin)
 
     available = %{movie | status: :available}
-    Catalog.broadcast({:movie_updated, available})
+    Events.movie_updated(available)
     assert render(view) =~ "is now available"
 
     # A metadata re-broadcast on an already-available movie must not spawn a second toast.
-    Catalog.broadcast({:movie_updated, available})
+    Events.movie_updated(available)
     html = render(view)
     assert length(String.split(html, "is now available")) == 2
   end
@@ -216,7 +216,7 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
 
     {:ok, view, _html} = mount_beacon(admin, %{"locale" => "fr"})
 
-    Catalog.broadcast({:movie_updated, %{movie | status: :available}})
+    Events.movie_updated(%{movie | status: :available})
 
     html = render(view)
     assert html =~ "Premier Contact"

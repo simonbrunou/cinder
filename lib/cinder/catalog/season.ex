@@ -27,8 +27,8 @@ defmodule Cinder.Catalog.Season do
   end
 
   @doc """
-  Changeset for inserting a season discovered by the M6 TMDB refresh (`Catalog.refresh_series/1`),
-  outside the `cast_assoc` create path. Registers the `(series_id, season_number)` unique + series
+  Changeset for inserting a season discovered by the M6 TMDB refresh
+  (`Cinder.Catalog.MetadataRefresh.refresh_series/1`), outside the `cast_assoc` create path. Registers the `(series_id, season_number)` unique + series
   FK constraints so an unexpected duplicate returns `{:error, changeset}` rather than raising.
   """
   def refresh_changeset(season, attrs) do

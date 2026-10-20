@@ -5,6 +5,7 @@ defmodule Cinder.Requests.Approval.Season do
   @behaviour Cinder.Requests.Approval
 
   alias Cinder.Catalog
+  alias Cinder.Catalog.Events
   alias Cinder.Requests.Approval
 
   @impl true
@@ -38,7 +39,7 @@ defmodule Cinder.Requests.Approval.Season do
 
   @impl true
   def publish(series, _approved) do
-    Catalog.broadcast_series(series.id)
+    Events.series_updated(series.id)
     :ok
   end
 end

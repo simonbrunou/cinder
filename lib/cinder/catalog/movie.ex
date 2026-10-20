@@ -17,6 +17,7 @@ defmodule Cinder.Catalog.Movie do
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog.{Profile, TitleAlias}
+  alias Cinder.Download.Progress
   alias Cinder.Library.ImportedQuality
 
   @statuses [
@@ -119,7 +120,7 @@ defmodule Cinder.Catalog.Movie do
     |> check_constraint(:profile_id, name: :movies_profile_integrity)
   end
 
-  @doc "Changeset for the sweep-owned search-time Anime preferences hold marker (see `Catalog.set_anime_hold/2`). Not pipeline status — separate from transition_changeset/2."
+  @doc "Changeset for the sweep-owned search-time Anime preferences hold marker (see `Cinder.Catalog.MediaProfiles.set_anime_hold/2`). Not pipeline status — separate from transition_changeset/2."
   def anime_hold_changeset(movie, attrs), do: cast(movie, attrs, [:anime_hold_reason])
 
   @doc "Changeset for the media-server inventory reconciler's opaque item id."
@@ -142,7 +143,7 @@ defmodule Cinder.Catalog.Movie do
     |> unique_constraint(:tmdb_id)
   end
 
-  @doc "Changeset for the TMDB metadata refresh (`Catalog.enrich_movie/1`). Descriptive, not pipeline state — separate from transition_changeset/2, so it never touches status/download fields."
+  @doc "Changeset for the TMDB metadata refresh (`Cinder.Catalog.MetadataRefresh.enrich_movie/1`). Descriptive, not pipeline state — separate from transition_changeset/2, so it never touches status/download fields."
   def metadata_changeset(movie, attrs) do
     cast(movie, attrs, [
       :overview,
@@ -220,17 +221,12 @@ defmodule Cinder.Catalog.Movie do
     progress = get_field(changeset, :download_progress)
 
     if status in @download_active_statuses != movie.status in @download_active_statuses or
-         progress_advanced?(movie.download_progress, progress) do
+         Progress.advanced?(movie.download_progress, progress) do
       force_change(changeset, :download_progress_at, DateTime.utc_now(:second))
     else
       changeset
     end
   end
-
-  defp progress_advanced?(previous, current) when is_number(current),
-    do: current > (previous || 0)
-
-  defp progress_advanced?(_previous, _current), do: false
 
   # `failure_reason` only means anything for an :import_failed park (the poller writes the client's
   # detail there); every transition OUT of that state (a retry to :requested, a successful

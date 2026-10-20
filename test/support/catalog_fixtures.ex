@@ -10,6 +10,7 @@ defmodule Cinder.CatalogFixtures do
     Episode,
     EpisodeCoordinate,
     EpisodeCoordinateMembership,
+    Events,
     Movie,
     Season,
     Series
@@ -72,7 +73,7 @@ defmodule Cinder.CatalogFixtures do
   """
   def seed_movie_state(%Movie{} = movie, attrs) do
     with {:ok, seeded} <- movie |> Movie.transition_changeset(Map.new(attrs)) |> Repo.update() do
-      Catalog.broadcast({:movie_updated, seeded})
+      Events.movie_updated(seeded)
       {:ok, seeded}
     end
   end

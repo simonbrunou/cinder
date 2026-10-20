@@ -310,20 +310,6 @@ defmodule Cinder.CatalogTest do
     end
   end
 
-  describe "delete broadcasts" do
-    test "broadcast_movie_deleted/1 emits {:movie_deleted, id} on the movies topic" do
-      Catalog.subscribe()
-      assert :ok = Catalog.broadcast_movie_deleted(42)
-      assert_receive {:movie_deleted, 42}
-    end
-
-    test "broadcast_series_deleted/1 emits {:series_deleted, id} on the series topic" do
-      Catalog.subscribe_series()
-      assert :ok = Catalog.broadcast_series_deleted(7)
-      assert_receive {:series_deleted, 7}
-    end
-  end
-
   describe "set_movie_language/2" do
     test "re-queues a parked movie" do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 7, title: "X"})

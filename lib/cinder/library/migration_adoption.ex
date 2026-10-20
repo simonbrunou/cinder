@@ -5,7 +5,7 @@ defmodule Cinder.Library.MigrationAdoption do
 
   alias Cinder.Catalog
   alias Cinder.Catalog.Adoption, as: CatalogAdoption
-  alias Cinder.Catalog.{Episode, Movie, MovieLifecycle, Series}
+  alias Cinder.Catalog.{Episode, Events, Movie, MovieLifecycle, Series}
   alias Cinder.Library
   alias Cinder.Library.MigrationAdoption.Readarr
   alias Cinder.Library.MigrationReconciler
@@ -934,7 +934,7 @@ defmodule Cinder.Library.MigrationAdoption do
              actions,
              Enum.map(batches, &Map.put(&1, :series, series))
            ) do
-      if not existing?, do: Catalog.broadcast_series(series.id)
+      if not existing?, do: Events.series_updated(series.id)
 
       summary
       |> Map.update!(:adopted, &(&1 + length(items)))

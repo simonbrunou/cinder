@@ -163,21 +163,11 @@ defmodule Cinder.Download.OrphanFolders do
     end
   end
 
-  # Written after the delete, like `Catalog.audit_deletion/5`: the folder is gone either way, so a
-  # failed audit write is logged, never propagated.
+  # Written after the delete: the folder is gone either way, so a refused audit row is logged,
+  # never propagated.
   defp audit_cleared(actor, folder) do
     detail = %{path: folder.path, key: folder.key, class: folder.class, size: folder.size}
-
-    case Audit.log(actor, :clear_download_folder, {"DownloadFolder", nil}, detail) do
-      {:ok, _entry} ->
-        :ok
-
-      {:error, changeset} ->
-        Logger.warning(
-          "clear_download_folder audit row failed for #{folder.path}: " <>
-            inspect(changeset.errors)
-        )
-    end
+    Audit.log_or_warn(actor, :clear_download_folder, {"DownloadFolder", nil}, detail)
   end
 
   defp job_folder(path, roots) when is_binary(path) do

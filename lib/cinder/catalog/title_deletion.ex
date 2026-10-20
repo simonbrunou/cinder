@@ -1,22 +1,64 @@
-defmodule Cinder.Catalog.SeriesDeletion do
+defmodule Cinder.Catalog.TitleDeletion do
   @moduledoc """
-  Series/season/episode deletion machinery — whole-series cancel/delete and per-file unlink,
-  carved out of `Cinder.Catalog.SeriesCatalog` as pure code motion (mirrors the
-  `Cinder.Catalog.Grabs` / `Cinder.Catalog.MediaProfiles` split; see `Cinder.Catalog` for the
-  facade that delegates the public functions here).
+  Deleting or cancelling a title (a movie or a series) and the files it holds: whole-movie and
+  whole-series delete, whole-series cancel, and per-episode and per-season file unlink. Each
+  writes its audit row, and announces through `Cinder.Catalog.Events`, only after its transaction
+  commits.
 
-  The public entry points (`cancel_series/2`, `delete_series/3`, `delete_episode_file/3`,
-  `delete_season_files/3`) are re-exposed through `Cinder.Catalog`. Transaction ordering, the
-  post-commit client I/O, and the durable cleanup fences are unchanged from the original.
+  A delete's durable cleanup fences commit in the same transaction as the row delete; client I/O
+  runs after commit, and a failure leaves the fence for reconciliation. A file unlink is
+  best-effort: a failed one is logged and recorded in the audit detail, never propagated.
   """
   import Ecto.Query
+  require Logger
 
   alias Cinder.Audit
-  alias Cinder.Catalog.{Episode, Grab, Grabs, Season, Series}
+  alias Cinder.Catalog.{Attention, Episode, Episodes, Events, Grab, Grabs, Movie, Season, Series}
   alias Cinder.Download
+  alias Cinder.Library
   alias Cinder.Library.ImportedQuality
   alias Cinder.Repo
   alias Cinder.Requests
+
+  @doc """
+  Deletes a movie's DB row. An active row's tracked download is captured in a durable cleanup
+  fence in the same transaction, then removed after commit. Broadcasts `{:movie_deleted, id}`.
+
+  Pass `delete_files: true` in `opts` to also unlink the on-disk library file after the row is
+  deleted (best-effort: a failed unlink is logged, not propagated). Default leaves files on disk.
+  The audit row is written last, after the unlink is attempted, so `files_deleted` records what
+  actually happened rather than the caller's intent.
+  """
+  def delete_movie(%Movie{} = movie, actor, opts \\ []) do
+    delete_files? = Keyword.get(opts, :delete_files, false)
+
+    prepare = fn fresh ->
+      # Reap this title's approved request(s) in the same transaction — a movie gone but its
+      # :approved request left behind strands the requester on a stale "Approved" badge with the
+      # Add button suppressed. Pending/denied are deliberately left (see reap_approved_for_target/2).
+      Requests.reap_approved_for_target(["movie"], fresh.tmdb_id)
+
+      # Still owns a client download: it can be cancelled or have its upgrade aborted.
+      include_remote? =
+        Attention.offers?(fresh, :cancel) or Attention.offers?(fresh, :cancel_upgrade) or
+          fresh.verification_hold_origin in [:download, :upgrade]
+
+      Download.fence_movie_cleanup(fresh, include_remote: include_remote?)
+    end
+
+    with {:ok, {deleted, intent_ids}} <- delete_record(movie, prepare) do
+      Download.cleanup_intents(intent_ids)
+
+      unlinked =
+        if delete_files?,
+          do: Enum.map(Movie.file_paths(deleted), &{&1, best_effort_delete_file(&1)}),
+          else: []
+
+      audit_deletion(actor, :delete_movie, deleted, delete_files?, unlinked)
+      Events.movie_deleted(deleted.id)
+      {:ok, deleted}
+    end
+  end
 
   @doc """
   Cancels an entire series WITHOUT deleting it: reaps every grab serving the series (any state,
@@ -46,7 +88,7 @@ defmodule Cinder.Catalog.SeriesDeletion do
 
     with {:ok, {fresh, intent_ids}} <- result do
       Download.cleanup_intents(intent_ids)
-      Cinder.Catalog.broadcast_series(fresh.id)
+      Events.series_updated(fresh.id)
       {:ok, fresh}
     end
   end
@@ -64,11 +106,11 @@ defmodule Cinder.Catalog.SeriesDeletion do
     paths = if delete_files?, do: episode_file_paths_for_series(series.id), else: []
     prepare = &prepare_series_cleanup/1
 
-    with {:ok, {deleted, intent_ids}} <- Cinder.Catalog.delete_record(series, prepare) do
+    with {:ok, {deleted, intent_ids}} <- delete_record(series, prepare) do
       Download.cleanup_intents(intent_ids)
-      unlinked = Enum.map(paths, &{&1, Cinder.Catalog.best_effort_delete_file(&1)})
-      Cinder.Catalog.audit_deletion(actor, :delete_series, deleted, delete_files?, unlinked)
-      Cinder.Catalog.broadcast_series_deleted(deleted.id)
+      unlinked = Enum.map(paths, &{&1, best_effort_delete_file(&1)})
+      audit_deletion(actor, :delete_series, deleted, delete_files?, unlinked)
+      Events.series_deleted(deleted.id)
       {:ok, deleted}
     end
   end
@@ -98,8 +140,7 @@ defmodule Cinder.Catalog.SeriesDeletion do
 
   defp prepare_series_cleanup(series) do
     # Reap this title's approved series/season/episode requests in the same transaction (all carry
-    # the series' tmdb_id in target_id) — same rationale as the movie path in
-    # `Cinder.Catalog.delete_movie/3`.
+    # the series' tmdb_id in target_id) — same rationale as the movie path in `delete_movie/3`.
     Requests.reap_approved_for_target(["series", "season", "episode"], series.tmdb_id)
 
     episode_ids = episode_ids_for_series(series.id)
@@ -127,7 +168,7 @@ defmodule Cinder.Catalog.SeriesDeletion do
   # No sweep visits the series again to re-evaluate an anime hold, so the hold goes too: it would
   # otherwise need attention forever.
   defp unmonitor_series_tree(series_id) do
-    ts = Cinder.Catalog.now()
+    ts = DateTime.utc_now(:second)
 
     Repo.update_all(from(s in Series, where: s.id == ^series_id),
       set: [monitored: false, monitor_strategy: :none, anime_hold_reason: nil, updated_at: ts]
@@ -177,7 +218,7 @@ defmodule Cinder.Catalog.SeriesDeletion do
              Keyword.get(opts, :unmonitor, false),
              results
            ) do
-      if changed?, do: Cinder.Catalog.broadcast_series(series_id_for_season(updated.season_id))
+      if changed?, do: Events.series_updated(Episodes.series_id(updated))
       episode_delete_result(updated, results)
     end
   end
@@ -219,7 +260,7 @@ defmodule Cinder.Catalog.SeriesDeletion do
   defp unlink_paths(paths) do
     paths
     |> Enum.uniq()
-    |> Enum.map(&{&1, Cinder.Catalog.best_effort_delete_file(&1)})
+    |> Enum.map(&{&1, best_effort_delete_file(&1)})
   end
 
   defp successful_paths(results) do
@@ -305,7 +346,7 @@ defmodule Cinder.Catalog.SeriesDeletion do
 
     with {:ok, cleared_count} <-
            do_delete_season_files_txn(season, actor, results, unmonitor?) do
-      Cinder.Catalog.broadcast_series(season.series_id)
+      Events.series_updated(season.series_id)
       {:ok, cleared_count, failed_count}
     end
   end
@@ -340,8 +381,80 @@ defmodule Cinder.Catalog.SeriesDeletion do
     end)
   end
 
-  # Local one-liner copy (Cinder.Catalog keeps its own private copy too) — resolving a season's
-  # series id for the post-commit broadcast.
-  defp series_id_for_season(season_id),
-    do: Repo.one(from s in Season, where: s.id == ^season_id, select: s.series_id)
+  # Deletes a movie or series row (no audit write here — the caller writes it post-commit, after
+  # any file unlink it performs, via audit_deletion/5, so the audit can record the true outcome
+  # rather than the caller's intent). A concurrent delete (Repo.delete/1 raises) becomes a clean
+  # {:error, :stale_entry}.
+  defp delete_record(record, prepare) do
+    Repo.transaction(fn ->
+      module = record.__struct__
+
+      case Repo.update_all(from(r in module, where: r.id == ^record.id),
+             set: [updated_at: DateTime.utc_now(:second)]
+           ) do
+        {1, _} -> :ok
+        {0, _} -> Repo.rollback(:stale_entry)
+      end
+
+      fresh = Repo.get!(module, record.id)
+      prepared = prepare.(fresh)
+
+      case Repo.delete(fresh) do
+        {:ok, deleted} -> {deleted, prepared}
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  # Best-effort library-file unlink shared by every delete path: a failed unlink is logged, never
+  # propagated, so it can't strand the row delete — but the real :ok/{:error, reason} outcome is
+  # returned so the audit can record it truthfully instead of echoing the caller's intent.
+  # ponytail: no nil clause here — Library.delete_file/1 already guards nil/"" and returns :ok.
+  defp best_effort_delete_file(path) do
+    case Library.delete_file(path) do
+      :ok ->
+        :ok
+
+      {:error, reason} = error ->
+        Logger.warning("library file delete failed for #{inspect(path)}: #{inspect(reason)}")
+        error
+    end
+  end
+
+  # Writes the post-commit deletion audit row with the ACTUAL per-file unlink outcome: when
+  # delete_files? is false nothing was attempted, so `files_deleted` is trivially false; when true,
+  # it's true only if every attempted unlink succeeded. A partial/total failure is recorded with
+  # the leftover paths+reasons and logged loudly — there is no outbox/retry here (household scale),
+  # so this log line + the audit detail are the only trace. The delete already committed, so a
+  # refused audit row can only be logged (`Audit.log_or_warn/4`).
+  defp audit_deletion(actor, action, deleted, delete_files?, unlink_results) do
+    detail = deletion_audit_detail(deleted, delete_files?, unlink_results)
+    Audit.log_or_warn(actor, action, deleted, detail)
+  end
+
+  defp deletion_audit_detail(deleted, false, _unlink_results) do
+    %{title: deleted.title, files_deleted: false}
+  end
+
+  defp deletion_audit_detail(deleted, true, unlink_results) do
+    failed = for {path, {:error, reason}} <- unlink_results, do: "#{path}: #{inspect(reason)}"
+    file_paths = Enum.map(unlink_results, &elem(&1, 0))
+
+    if failed == [] do
+      %{title: deleted.title, files_deleted: true, file_paths: file_paths}
+    else
+      Logger.warning(
+        "#{inspect(deleted.__struct__)} #{deleted.id} delete: #{length(failed)} file(s) left on disk: #{inspect(failed)}"
+      )
+
+      %{
+        title: deleted.title,
+        files_deleted: false,
+        file_paths: file_paths,
+        failed_unlinks: failed
+      }
+    end
+  end
 end

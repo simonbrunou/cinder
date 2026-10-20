@@ -4,8 +4,11 @@ defmodule Cinder.Audit do
 
   **The write happens inside the caller's `Repo.transaction`** — call it after the
   guard passes and before commit, so a rolled-back op (e.g. a last-admin delete)
-  leaves no orphan audit row. `log/4` itself opens no transaction.
+  leaves no orphan audit row. `log/4` itself opens no transaction. The exception is an action
+  that cannot roll back (a file already unlinked): `log_or_warn/4` audits it after the fact.
   """
+  require Logger
+
   alias Cinder.Accounts.User
   alias Cinder.Audit.AdminAudit
   alias Cinder.Repo
@@ -39,6 +42,26 @@ defmodule Cinder.Audit do
     case log(actor, action, entity, detail) do
       {:ok, entry} -> entry
       {:error, changeset} -> Repo.rollback(changeset)
+    end
+  end
+
+  @doc """
+  Like `log/4`, but for an action that has already happened and cannot be undone (a committed
+  delete, an unlinked file): a refused audit write is logged with its `detail`, never
+  propagated, so the log line is the action's only trace. Always `:ok`.
+  """
+  def log_or_warn(actor, action, entity, detail \\ %{}) do
+    case log(actor, action, entity, detail) do
+      {:ok, _entry} ->
+        :ok
+
+      {:error, changeset} ->
+        {entity_type, entity_id} = entity_ref(entity)
+
+        Logger.warning(
+          "#{action} audit row failed for #{entity_type} #{entity_id} " <>
+            "(#{inspect(detail)}): #{inspect(changeset.errors)}"
+        )
     end
   end
 

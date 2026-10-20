@@ -1,9 +1,8 @@
 defmodule Cinder.Catalog.Adoption do
   @moduledoc false
 
-  import Ecto.Query
+  alias Cinder.Catalog.{Episode, Episodes, Identity, Profiles, Series}
 
-  alias Cinder.Catalog.{Episode, Identity, Profiles, Season, Series, SeriesCatalog}
   alias Cinder.Repo
 
   @doc """
@@ -181,25 +180,5 @@ defmodule Cinder.Catalog.Adoption do
 
   defp failure(_action, reason), do: %{reason: reason}
 
-  defp publish(updated, extra_series_ids \\ []) do
-    season_ids = Enum.map(updated, & &1.season_id)
-
-    (extra_series_ids ++
-       Repo.all(
-         from s in Season,
-           where: s.id in ^season_ids,
-           select: s.series_id,
-           distinct: true
-       ))
-    |> Enum.uniq()
-    |> Enum.each(&Cinder.Catalog.broadcast_series/1)
-
-    Enum.each(updated, fn episode ->
-      :telemetry.execute(
-        [:cinder, :transition],
-        %{count: 1},
-        %{kind: :episode, to: SeriesCatalog.episode_state(episode)}
-      )
-    end)
-  end
+  defp publish(updated, extra_series_ids \\ []), do: Episodes.announce(updated, extra_series_ids)
 end

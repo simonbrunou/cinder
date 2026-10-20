@@ -7,7 +7,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.{Catalog, Repo}
-  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Identity, TitleAlias}
+  alias Cinder.Catalog.{BlockedRelease, Episode, Events, Grab, Identity, TitleAlias}
 
   setup :register_and_log_in_admin
   setup :set_mox_global
@@ -1384,7 +1384,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     {:ok, lv, _html} = live_series(conn, series)
 
-    Cinder.Catalog.broadcast_series_deleted(series.id)
+    Events.series_deleted(series.id)
     assert_redirect(lv, ~p"/library?type=tv")
   end
 
@@ -1392,7 +1392,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 7002, title: "Stay Show"})
 
     {:ok, lv, _html} = live_series(conn, series)
-    Cinder.Catalog.broadcast_series_deleted(series.id + 999)
+    Events.series_deleted(series.id + 999)
     assert render(lv) =~ "Stay Show"
   end
 

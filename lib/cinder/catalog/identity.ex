@@ -3,12 +3,11 @@ defmodule Cinder.Catalog.Identity do
 
   import Ecto.Query
 
-  alias Cinder.Catalog
-
   alias Cinder.Catalog.{
     Episode,
     EpisodeCoordinate,
     EpisodeCoordinateMembership,
+    Events,
     Movie,
     Series,
     TitleAlias
@@ -48,17 +47,16 @@ defmodule Cinder.Catalog.Identity do
     end
   end
 
-  # Post-commit, one broadcast per write (mirrors Catalog's own writers): a movie owner carries
-  # the full struct on the "movies" topic, a series owner just its id on the "series" topic — the
-  # same convention `Catalog.broadcast_series/1`'s callers already use. Skipped entirely on
-  # `{:error, _}` so a failed write never fires a stale broadcast.
+  # Post-commit, one announcement per write (`Cinder.Catalog.Events`): a movie owner carries the
+  # full struct, a series owner just its id. Skipped entirely on `{:error, _}` so a failed write
+  # never fires a stale broadcast.
   defp broadcast_owner({:ok, _} = ok, %Movie{} = movie) do
-    Catalog.broadcast({:movie_updated, movie})
+    Events.movie_updated(movie)
     ok
   end
 
   defp broadcast_owner({:ok, _} = ok, %Series{id: id}) do
-    Catalog.broadcast_series(id)
+    Events.series_updated(id)
     ok
   end
 

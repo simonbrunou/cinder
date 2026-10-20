@@ -2,6 +2,7 @@ defmodule Cinder.AuditTest do
   use Cinder.DataCase, async: true
 
   import Cinder.AccountsFixtures
+  import ExUnit.CaptureLog
 
   alias Cinder.Audit
   alias Cinder.Audit.AdminAudit
@@ -76,6 +77,29 @@ defmodule Cinder.AuditTest do
         end)
 
       assert {:error, %Ecto.Changeset{}} = result
+      assert Repo.aggregate(AdminAudit, :count) == 0
+    end
+  end
+
+  describe "log_or_warn/4" do
+    test "writes the audit row of an action that already happened" do
+      admin = admin_fixture()
+
+      assert :ok = Audit.log_or_warn(admin, :delete_movie, {"Movie", 3}, %{title: "O"})
+
+      assert [%AdminAudit{action: "delete_movie", entity_id: 3}] = Repo.all(AdminAudit)
+    end
+
+    test "logs a refused audit row and still returns :ok" do
+      admin = admin_fixture()
+
+      log =
+        capture_log(fn ->
+          assert :ok = Audit.log_or_warn(admin, "", {"Movie", 4}, %{title: "P"})
+        end)
+
+      assert log =~ "audit row failed for Movie 4"
+      assert log =~ ~s(title: "P")
       assert Repo.aggregate(AdminAudit, :count) == 0
     end
   end

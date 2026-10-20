@@ -10,6 +10,7 @@ defmodule Cinder.Catalog.Grab do
   import Ecto.Changeset
 
   alias Cinder.Catalog.{Episode, GrabFile}
+  alias Cinder.Download.Progress
 
   schema "grabs" do
     field :download_id, :string
@@ -67,17 +68,12 @@ defmodule Cinder.Catalog.Grab do
     content_path = get_field(changeset, :content_path)
 
     if is_nil(grab.id) or is_nil(content_path) != is_nil(grab.content_path) or
-         progress_advanced?(grab.download_progress, progress) do
+         Progress.advanced?(grab.download_progress, progress) do
       force_change(changeset, :download_progress_at, DateTime.utc_now(:second))
     else
       changeset
     end
   end
-
-  defp progress_advanced?(previous, current) when is_number(current),
-    do: current > (previous || 0)
-
-  defp progress_advanced?(_previous, _current), do: false
 
   @doc false
   def reservation_changeset(%__MODULE__{id: nil} = grab, attrs) do

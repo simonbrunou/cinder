@@ -1,19 +1,25 @@
 defmodule Cinder.Catalog.MediaProfiles do
   @moduledoc """
-  Operator-owned media-profile handling (Auto / Standard / Anime) and the anime search-hold
-  flag — carved out of `Cinder.Catalog` (plain code motion, 1500-line cap; see the
-  Grabs/Discovery/SeriesCatalog precedent). Reached through the `Cinder.Catalog` facade.
+  A title's preferences: its operator-owned media profile (Auto / Standard / Anime), its
+  preferred language, the anime search-time hold, and the identity context each acquisition
+  search reads (`movie_acquisition_context/1`, `anime_series_acquisition_context/1`).
   """
 
   import Ecto.Query, warn: false
 
-  alias Cinder.Catalog
-  alias Cinder.Catalog.EpisodeCoordinate
-  alias Cinder.Catalog.Identity
-  alias Cinder.Catalog.MediaProfile
-  alias Cinder.Catalog.Movie
-  alias Cinder.Catalog.Series
-  alias Cinder.Catalog.SeriesCatalog
+  alias Cinder.Catalog.{
+    Episode,
+    EpisodeCoordinate,
+    Events,
+    Identity,
+    MediaProfile,
+    Movie,
+    MovieLifecycle,
+    Season,
+    Series,
+    TitleAlias
+  }
+
   alias Cinder.Repo
 
   @doc """
@@ -25,7 +31,7 @@ defmodule Cinder.Catalog.MediaProfiles do
   def set_media_profile(%Movie{} = movie, profile) do
     with {:ok, updated} <-
            movie |> Movie.profile_changeset(%{media_profile: profile}) |> Repo.update() do
-      Catalog.broadcast({:movie_updated, updated})
+      Events.movie_updated(updated)
       {:ok, updated}
     end
   rescue
@@ -35,7 +41,7 @@ defmodule Cinder.Catalog.MediaProfiles do
   def set_media_profile(%Series{} = series, profile) do
     with {:ok, updated} <-
            series |> Series.profile_changeset(%{media_profile: profile}) |> Repo.update() do
-      Catalog.broadcast_series(updated.id)
+      Events.series_updated(updated.id)
       {:ok, updated}
     end
   rescue
@@ -72,7 +78,7 @@ defmodule Cinder.Catalog.MediaProfiles do
          pre_request_profile
        )
        when fillable_pick(preferred, pre_request_profile),
-       do: SeriesCatalog.set_series_language(series, preferred)
+       do: set_series_language(series, preferred)
 
   defp apply_requester_language(
          %Movie{preferred_language: "original"} = movie,
@@ -80,9 +86,102 @@ defmodule Cinder.Catalog.MediaProfiles do
          pre_request_profile
        )
        when fillable_pick(preferred, pre_request_profile),
-       do: Catalog.fill_movie_language(movie, preferred)
+       do: fill_movie_language(movie, preferred)
 
   defp apply_requester_language(media, _preferred, _pre_request_profile), do: {:ok, media}
+
+  # Parked statuses where a language change should trigger a fresh search.
+  # :import_failed means a release was found but couldn't be written — not a language issue.
+  @language_retry_statuses [:no_match, :search_failed]
+
+  @doc """
+  Sets a movie's preferred language. If the movie is parked because no release in
+  the desired language was found, re-queues it so the poller re-searches. Otherwise
+  just updates the field — the download/import pipeline is not disturbed for
+  in-flight or available movies (no quality-upgrade re-grab in this slice).
+  """
+  def set_movie_language(%Movie{} = movie, language) do
+    case write_movie_language(movie, language) do
+      {:ok, updated} ->
+        if updated.status in @language_retry_statuses do
+          MovieLifecycle.retry(updated)
+        else
+          Events.movie_updated(updated)
+          {:ok, updated}
+        end
+
+      {:error, _changeset} = error ->
+        error
+    end
+  end
+
+  # Status-neutral pick fill for request approval (apply_requester_language/3, via
+  # apply_confirmed_media/3): writes the field and broadcasts, WITHOUT set_movie_language/2's
+  # retry branch — approving a request for an existing PARKED movie must not silently re-queue
+  # it (round-3 finding 2).
+  defp fill_movie_language(movie, language) do
+    case write_movie_language(movie, language) do
+      {:ok, updated} ->
+        Events.movie_updated(updated)
+        {:ok, updated}
+
+      {:error, _changeset} = error ->
+        error
+    end
+  end
+
+  # Plain field write shared by set_movie_language/2 and the approval fill: language_changeset +
+  # Repo.update, no status/retry side effects.
+  defp write_movie_language(movie, language) do
+    movie |> Movie.language_changeset(%{preferred_language: language}) |> Repo.update()
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  @doc """
+  Sets a series' preferred language and zeroes `search_attempts` on its still-wanted
+  episodes (no file, no grab) so a previously language-stranded season re-enters the
+  search sweep. Available / in-flight episodes are untouched.
+  """
+  def set_series_language(%Series{} = series, language) do
+    result =
+      Repo.transaction(fn ->
+        case set_series_language_in_transaction(series, language) do
+          {:ok, updated} -> updated
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+
+    with {:ok, updated} <- result do
+      Events.series_updated(series.id)
+      {:ok, updated}
+    end
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  @doc """
+  The write inside `set_series_language/2` for a caller that already holds a transaction:
+  sets the language and zeroes the stranded episodes' `search_attempts`, and announces nothing
+  (the caller announces after its own commit, as series creation does).
+  """
+  def set_series_language_in_transaction(series, language) do
+    with {:ok, updated} <-
+           series
+           |> Series.language_changeset(%{preferred_language: language})
+           |> Repo.update() do
+      from(e in Episode,
+        join: s in Season,
+        on: e.season_id == s.id,
+        where:
+          s.series_id == ^series.id and is_nil(e.file_path) and is_nil(e.grab_id) and
+            e.search_attempts > 0
+      )
+      |> Repo.update_all(set: [search_attempts: 0])
+
+      {:ok, updated}
+    end
+  end
 
   @doc """
   Marks a title held at search time because the Anime release preferences can't be
@@ -102,7 +201,7 @@ defmodule Cinder.Catalog.MediaProfiles do
   defp write_anime_hold(%Movie{} = movie, reason) do
     with {:ok, updated} <-
            movie |> Movie.anime_hold_changeset(%{anime_hold_reason: reason}) |> Repo.update() do
-      Catalog.broadcast({:movie_updated, updated})
+      Events.movie_updated(updated)
       {:ok, updated}
     end
   end
@@ -110,9 +209,14 @@ defmodule Cinder.Catalog.MediaProfiles do
   defp write_anime_hold(%Series{} = series, reason) do
     with {:ok, updated} <-
            series |> Series.anime_hold_changeset(%{anime_hold_reason: reason}) |> Repo.update() do
-      Catalog.broadcast_series(updated.id)
+      Events.series_updated(updated.id)
       {:ok, updated}
     end
+  end
+
+  @doc "Series currently held at search time on unsatisfiable Anime preferences (see `set_anime_hold/2`); surfaced on `/activity`."
+  def list_anime_held_series do
+    Repo.all(from s in Series, where: not is_nil(s.anime_hold_reason), order_by: s.title)
   end
 
   @doc "Returns selected/effective profile policy and bounded suggestion evidence."
@@ -151,12 +255,161 @@ defmodule Cinder.Catalog.MediaProfiles do
     for {_locale, %{"title" => title}} when is_binary(title) <- localizations || %{}, do: title
   end
 
-  # Duplicated in `Cinder.Catalog.SeriesCatalog` (used there by
-  # anime_series_acquisition_context/1) — tiny enough to keep as two independent copies rather
-  # than share a module for it.
   defp acquisition_aliases(owner) do
     owner
     |> Identity.list_aliases()
     |> Enum.map(&Map.take(&1, [:title, :kind, :precedence, :normalized_title]))
+  end
+
+  @doc "Builds the plain Catalog-owned identity context used for anime series acquisition."
+  def anime_series_acquisition_context(%Series{id: series_id}) when not is_nil(series_id) do
+    {:ok, context} =
+      Repo.transaction(fn ->
+        Series
+        |> Repo.get!(series_id)
+        |> build_anime_series_acquisition_context()
+      end)
+
+    context
+  end
+
+  defp build_anime_series_acquisition_context(series) do
+    episodes = acquisition_episodes(series)
+    aliases = acquisition_aliases(series)
+    mappings = Enum.map(episodes, &canonical_mapping/1) ++ persisted_mappings(series)
+
+    %{
+      kind: :series,
+      title: series.title,
+      year: series.year,
+      tvdb_id: series.tvdb_id,
+      aliases: aliases,
+      scene_titles: scene_titles(series, aliases, mappings),
+      episodes: episodes,
+      mappings: Enum.sort_by(mappings, &mapping_sort_key/1)
+    }
+  end
+
+  defp acquisition_episodes(series) do
+    series
+    |> Repo.preload(seasons: :episodes)
+    |> Map.fetch!(:seasons)
+    |> Enum.flat_map(fn season ->
+      Enum.map(season.episodes, fn episode ->
+        %{
+          id: episode.id,
+          season_number: season.season_number,
+          episode_number: episode.episode_number,
+          classification: episode.classification
+        }
+      end)
+    end)
+    |> Enum.sort_by(&{&1.season_number, &1.episode_number, &1.id})
+  end
+
+  defp canonical_mapping(episode) do
+    %{
+      identity: %{
+        source: "cinder",
+        scheme: "standard",
+        namespace: "canonical",
+        canonical_value: Episode.code(episode.season_number, episode.episode_number)
+      },
+      precedence: :manual,
+      episode_ids: [episode.id],
+      evidence: %{"kind" => "canonical_standard"}
+    }
+  end
+
+  defp persisted_mappings(series) do
+    series
+    |> Identity.list_coordinates()
+    |> Enum.map(fn coordinate ->
+      %{
+        identity: %{
+          source: coordinate.source,
+          scheme: coordinate.scheme,
+          namespace: coordinate.namespace,
+          canonical_value: coordinate.canonical_value
+        },
+        scope_title: coordinate.scope_title,
+        precedence: coordinate.precedence,
+        episode_ids: Enum.map(coordinate.memberships, & &1.episode_id),
+        evidence: %{"kind" => "persisted_coordinate", "coordinate_id" => coordinate.id}
+      }
+    end)
+  end
+
+  # A scene subgroup title is safe as a relative-numbering scope only when two independently
+  # persisted facts agree: it belongs to the series' currently selected TMDB episode group, and
+  # the same normalized title is a known series alias. The canonical series title is deliberately
+  # excluded because its established bare-number meaning is series-absolute. If one title points
+  # at more than one source/namespace/season scope, omit it rather than guessing.
+  defp scene_titles(%Series{scene_numbering_group_id: group_id} = series, aliases, mappings)
+       when is_binary(group_id) do
+    canonical_title = TitleAlias.normalize(series.title)
+
+    recognized_aliases =
+      aliases
+      |> Enum.map(& &1.normalized_title)
+      |> Enum.reject(&(&1 in [nil, canonical_title]))
+      |> MapSet.new()
+
+    mappings
+    |> Enum.map(&scene_title_candidate(&1, group_id, recognized_aliases))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.group_by(& &1.normalized_title)
+    |> Enum.flat_map(fn {_normalized_title, candidates} ->
+      case candidates
+           |> Enum.map(&{&1.source, &1.namespace, &1.season})
+           |> Enum.uniq() do
+        [{source, namespace, season}] ->
+          title = candidates |> Enum.map(& &1.title) |> Enum.sort() |> hd()
+          [%{title: title, season: season, source: source, namespace: namespace}]
+
+        _ambiguous ->
+          []
+      end
+    end)
+    |> Enum.sort_by(&{&1.season, TitleAlias.normalize(&1.title), &1.source, &1.namespace})
+  end
+
+  defp scene_titles(_series, _aliases, _mappings), do: []
+
+  defp scene_title_candidate(mapping, group_id, recognized_titles) do
+    identity = mapping.identity
+    title = Map.get(mapping, :scope_title)
+
+    with true <-
+           identity.source == "tmdb" and identity.scheme == "scene" and
+             identity.namespace == group_id,
+         true <- is_binary(title) and String.trim(title) != "",
+         normalized_title = TitleAlias.normalize(title),
+         true <- MapSet.member?(recognized_titles, normalized_title),
+         {:ok, season} <- scene_season(identity.canonical_value) do
+      %{
+        title: title,
+        normalized_title: normalized_title,
+        season: season,
+        source: identity.source,
+        namespace: identity.namespace
+      }
+    else
+      _uncorrelated -> nil
+    end
+  end
+
+  defp scene_season(value) when is_binary(value) do
+    case Regex.run(~r/^S(\d{2,3})E\d{2,4}$/u, value, capture: :all_but_first) do
+      [season] -> {:ok, String.to_integer(season)}
+      _invalid -> :error
+    end
+  end
+
+  defp scene_season(_value), do: :error
+
+  defp mapping_sort_key(mapping) do
+    identity = mapping.identity
+    {identity.source, identity.scheme, identity.namespace, identity.canonical_value}
   end
 end

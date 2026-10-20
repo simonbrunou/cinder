@@ -55,8 +55,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
 
   alias Cinder.Acquisition
   alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy, Language}
-  alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Movie}
+  alias Cinder.Catalog.{Episode, EpisodeSearch, MediaProfiles, Movie, SeriesCatalog}
   alias Cinder.{Disk, Download, Repo, Settings}
   alias Cinder.HTTPPolicy
   alias Cinder.Library.Upgrade
@@ -165,13 +164,13 @@ defmodule Cinder.Catalog.UpgradeHunter do
   defp hunt_selected_series([episode | _] = selected) do
     series = episode.season.series
 
-    case Catalog.media_profile_summary(series).effective do
+    case MediaProfiles.media_profile_summary(series).effective do
       :anime ->
         isolate("series #{series.id}", fn -> hunt_anime_series(series.id) end)
 
       :standard ->
         # A profile switched back to Standard must not keep a stale Anime hold marker.
-        Catalog.set_anime_hold(series, nil)
+        MediaProfiles.set_anime_hold(series, nil)
         hunt_selected_standard_seasons(series.id, selected)
     end
   end
@@ -242,8 +241,10 @@ defmodule Cinder.Catalog.UpgradeHunter do
         # re-searched and upgraded through a path the Anime profile policy excludes (#356).
         # Note this applies the predicate whole, not just its Season-0 clause: a season > 0 row
         # numbered <= 0 is dropped here too, exactly as `wanted_episodes/0` already drops it.
-        profile = Catalog.media_profile_summary(series)
-        searchable = Enum.filter(episodes, &Catalog.episode_kind_wanted?(&1, &1.season, profile))
+        profile = MediaProfiles.media_profile_summary(series)
+
+        searchable =
+          Enum.filter(episodes, &EpisodeSearch.episode_kind_wanted?(&1, &1.season, profile))
 
         eligible =
           searchable
@@ -263,7 +264,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
   defp search_season(series, episodes) do
     season_number = hd(episodes).season.season_number
     target = Language.target(series.preferred_language, series.original_language)
-    season_size = max(Catalog.count_episodes(series.id, season_number), 1)
+    season_size = max(SeriesCatalog.count_episodes(series.id, season_number), 1)
 
     opts =
       upgrade_policy(series) ++
@@ -291,11 +292,11 @@ defmodule Cinder.Catalog.UpgradeHunter do
   defp search_anime_series(series, episodes, eligible_ids) do
     episode_ids = Enum.map(episodes, & &1.id)
     episodes_by_id = Map.new(episodes, &{&1.id, &1})
-    context = Catalog.anime_series_acquisition_context(series)
+    context = MediaProfiles.anime_series_acquisition_context(series)
 
     case AnimePreferences.resolve(series, Settings.anime_defaults()) do
       {:ok, policy} ->
-        Catalog.set_anime_hold(series, nil)
+        MediaProfiles.set_anime_hold(series, nil)
 
         case Acquisition.best_anime_releases(
                context,
@@ -315,7 +316,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
         end
 
       {:error, reason} ->
-        Catalog.set_anime_hold(series, reason)
+        MediaProfiles.set_anime_hold(series, reason)
     end
   end
 

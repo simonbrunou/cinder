@@ -499,7 +499,7 @@ defmodule Cinder.Download do
 
   # `opts[:expect_remote_id]` (issue #415) is a generation guard for the post-commit fence path
   # only: every EXISTING caller (`MovieLifecycle.cancel/2`, `abort_upgrade/2`, `delete_movie/3`,
-  # `ReleaseVerification`) fences BEFORE the target becomes grabbable again, inside the same
+  # the TV grab verification holds) fences BEFORE the target becomes grabbable again, inside the same
   # transaction as the write that makes it so — nothing can race a new reservation in, so "the"
   # intent for this `target_id` is unambiguously the one being torn down. `Download`'s post-commit
   # sites (movie/TV `remove_after_import/4` fences) invert that ordering on purpose (removing

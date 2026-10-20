@@ -166,14 +166,14 @@ def track_progress(movie_id, progress):
 
 
 def broadcast_movie_created(movie_id):
-    """The real second half of movie creation — Catalog.add_movie/1 itself never broadcasts (no
-    call to `broadcast`/`broadcast_movie_created` in its body); `{:movie_created, movie}` is
-    announced separately, normally by `Requests.Approval.Movie.publish/2` post-commit. We can't
-    reach that (it needs a real TMDB round trip via `Requests.create_request/2`), so we call the
-    same real, public, already-decoupled Catalog function it calls."""
+    """The real second half of movie creation — Catalog.add_movie/1 itself never broadcasts;
+    `{:movie_created, movie}` is announced separately, normally by
+    `Requests.Approval.Movie.publish/2` post-commit. We can't reach that (it needs a real TMDB
+    round trip via `Requests.create_request/2`), so we call the same real, public announcement it
+    calls, `Cinder.Catalog.Events.movie_created/1`."""
     rpc(
         f"movie = Cinder.Repo.get!(Cinder.Catalog.Movie, {movie_id}); "
-        f"Cinder.Catalog.broadcast_movie_created(movie); "
+        f"Cinder.Catalog.Events.movie_created(movie); "
         f'IO.puts("RPCRESULT:ok")'
     )
 

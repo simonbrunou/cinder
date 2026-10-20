@@ -126,7 +126,7 @@ defmodule Cinder.Download.Cleaner do
     # A movie at :available has committed its import and needs no further source bytes — the
     # only status this releases for. Every other status (mid-download, mid-import at :downloaded,
     # :upgrading, or a held :import_failed verification park that keeps frozen ownership) keeps
-    # protecting its download_id, matching ReleaseVerification's contract that a hold never
+    # protecting its download_id, matching the verification holds' contract that a hold never
     # clears ownership.
     movie_ids =
       Repo.all(

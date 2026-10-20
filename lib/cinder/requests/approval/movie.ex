@@ -5,6 +5,7 @@ defmodule Cinder.Requests.Approval.Movie do
 
   require Logger
   alias Cinder.Catalog
+  alias Cinder.Catalog.Events
   alias Cinder.Repo
   alias Cinder.Requests.Approval
 
@@ -52,7 +53,7 @@ defmodule Cinder.Requests.Approval.Movie do
   # open views until remount — a sub-ms window that would cost a reload per fresh approval to close.
   @impl true
   def publish(%{outcome: :created, movie: movie}, _approved) do
-    Catalog.broadcast_movie_created(movie)
+    Events.movie_created(movie)
     :ok
   end
 
@@ -90,13 +91,13 @@ defmodule Cinder.Requests.Approval.Movie do
 
     case result do
       {:ok, _movie} when profile_changed? and not fills_language? ->
-        Catalog.broadcast({:movie_updated, movie})
+        Events.movie_updated(movie)
 
       {:ok, _movie} ->
         :ok
 
       {:error, reason} ->
-        if profile_changed?, do: Catalog.broadcast({:movie_updated, movie})
+        if profile_changed?, do: Events.movie_updated(movie)
 
         Logger.warning(
           "apply_confirmed_media for movie #{movie.id} (request #{approved.id}) failed: " <>

@@ -2,8 +2,8 @@ defmodule Cinder.Catalog.Refresher do
   @moduledoc """
   Periodically re-fetches every globally monitored series, plus any unmonitored series with a
   directly monitored season or episode, from TMDB and reconciles its tree via
-  `Cinder.Catalog.refresh_series/1`, so a late-filled `air_date` or a newly-announced
-  episode/season becomes visible to the TV poller's wanted-episodes sweep. Runs on a long interval
+  `Cinder.Catalog.MetadataRefresh.refresh_series/1`, so a late-filled `air_date` or a
+  newly-announced episode/season becomes visible to the TV poller's wanted-episodes sweep. Runs on a long interval
   (12h by default) — household-scale TMDB load is trivial. `:start_poller`-gated like the pollers,
   so the suite doesn't auto-run it.
 
@@ -12,8 +12,7 @@ defmodule Cinder.Catalog.Refresher do
   """
   import Ecto.Query
 
-  alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Movie, Season, Series}
+  alias Cinder.Catalog.{Episode, MetadataRefresh, Movie, Season, Series}
   alias Cinder.Locales
   alias Cinder.Repo
   alias Cinder.Requests.Request
@@ -120,10 +119,10 @@ defmodule Cinder.Catalog.Refresher do
   end
 
   defp enrich_record(%Movie{} = movie),
-    do: isolate("movie #{movie.id}", fn -> Catalog.enrich_movie(movie) end)
+    do: isolate("movie #{movie.id}", fn -> MetadataRefresh.enrich_movie(movie) end)
 
   defp enrich_record(%Series{} = series),
-    do: isolate("series metadata #{series.id}", fn -> Catalog.enrich_series(series) end)
+    do: isolate("series metadata #{series.id}", fn -> MetadataRefresh.enrich_series(series) end)
 
   # Empty maps are deliberately retried every tick so transient TMDB/DB drift self-heals — but
   # only the still-empty rows are queried (not the whole table) so a caught-up instance does a
@@ -135,7 +134,7 @@ defmodule Cinder.Catalog.Refresher do
     |> Enum.with_index()
     |> Enum.each(fn {movie, index} ->
       if index > 0, do: Process.sleep(250)
-      isolate("movie #{movie.id}", fn -> Catalog.enrich_movie(movie) end)
+      isolate("movie #{movie.id}", fn -> MetadataRefresh.enrich_movie(movie) end)
     end)
   end
 
@@ -143,7 +142,7 @@ defmodule Cinder.Catalog.Refresher do
     query = from(s in Series, where: not s.monitored) |> where(^empty_localizations())
 
     for series <- Repo.all(query) do
-      isolate("series metadata #{series.id}", fn -> Catalog.enrich_series(series) end)
+      isolate("series metadata #{series.id}", fn -> MetadataRefresh.enrich_series(series) end)
     end
   end
 
@@ -185,7 +184,7 @@ defmodule Cinder.Catalog.Refresher do
   defp catalog_localizations(%Request{}), do: %{}
 
   defp refresh_one(series) do
-    case Catalog.refresh_series(series) do
+    case MetadataRefresh.refresh_series(series) do
       {:ok, _} ->
         :ok
 

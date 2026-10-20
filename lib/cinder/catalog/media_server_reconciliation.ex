@@ -1,8 +1,7 @@
 defmodule Cinder.Catalog.MediaServerReconciliation do
   @moduledoc false
 
-  alias Cinder.Catalog
-  alias Cinder.Catalog.{Movie, Series}
+  alias Cinder.Catalog.{Events, Movie, Series}
   alias Cinder.Repo
 
   def reconcile(kind, items) when kind in [:movies, :tv] and is_list(items) do
@@ -48,6 +47,6 @@ defmodule Cinder.Catalog.MediaServerReconciliation do
     end
   end
 
-  defp broadcast(:movies, movie), do: Catalog.broadcast({:movie_updated, movie})
-  defp broadcast(:tv, series), do: Catalog.broadcast_series(series.id)
+  defp broadcast(:movies, movie), do: Events.movie_updated(movie)
+  defp broadcast(:tv, series), do: Events.series_updated(series.id)
 end

@@ -9,7 +9,7 @@ defmodule Cinder.Catalog.SceneNumbering do
   import Ecto.Query
   require Logger
 
-  alias Cinder.Catalog.{Episode, Identity, Series, SeriesCatalog}
+  alias Cinder.Catalog.{Episode, Events, Identity, Series, SeriesCatalog}
   alias Cinder.Repo
   alias Cinder.Util
 
@@ -26,7 +26,7 @@ defmodule Cinder.Catalog.SceneNumbering do
   detail (no persistence, no further TMDB call) — shares its per-entry derivation with
   `scene_coordinate_attrs/3` (what Save actually persists) via `derive_scene_entries/2`, so
   the picker's preview can never drift from what Save writes. `series` must carry its
-  preloaded season/episode tree (`Catalog.get_series_with_tree/1`); entries are matched to
+  preloaded season/episode tree (`SeriesCatalog.get_series_with_tree/1`); entries are matched to
   Cinder episodes by `tmdb_episode_id`. Returns one entry per derived season, sorted by
   season number, showing both sides of the mapping — the full sorted `alt_numbers` list Save
   will write as scene coordinates (a caller renders it as a single code, a contiguous range, or a
@@ -244,7 +244,7 @@ defmodule Cinder.Catalog.SceneNumbering do
     with {:ok, coords} <- offset_coords(series, from, delta),
          {:ok, _} <-
            Identity.replace_provider_coordinates(series, "offset", "offset", "scene", coords) do
-      Cinder.Catalog.broadcast_series(series.id)
+      Events.series_updated(series.id)
       {:ok, series}
     end
   end
@@ -530,11 +530,11 @@ defmodule Cinder.Catalog.SceneNumbering do
   defp parse_subgroup_season(_name), do: :error
 
   # Shared by `set_scene_numbering_group/3` above and
-  # `Cinder.Catalog.SeriesRefresh.refresh_series/1`: a `Repo.transaction` result whose ok value is
+  # `Cinder.Catalog.MetadataRefresh.refresh_series/1`: a `Repo.transaction` result whose ok value is
   # the updated `%Series{}` broadcasts once on the "series" topic and passes through; an error
   # passes through untouched. Small enough to duplicate rather than share (see the module notes).
   defp finish_series_write({:ok, updated}) do
-    Cinder.Catalog.broadcast_series(updated.id)
+    Events.series_updated(updated.id)
     {:ok, updated}
   end
 

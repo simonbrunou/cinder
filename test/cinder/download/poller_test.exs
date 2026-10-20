@@ -2440,7 +2440,7 @@ defmodule Cinder.Download.PollerTest do
                  download_eta: 500
                })
 
-      past = DateTime.add(Catalog.now(), -25, :hour)
+      past = DateTime.add(DateTime.utc_now(:second), -25, :hour)
 
       Repo.update_all(from(m in Movie, where: m.id == ^movie.id),
         set: [download_progress_at: past]

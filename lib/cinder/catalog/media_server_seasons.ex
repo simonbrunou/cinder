@@ -9,6 +9,7 @@ defmodule Cinder.Catalog.MediaServerSeasons do
 
   import Ecto.Query
 
+  alias Cinder.Catalog.Events
   alias Cinder.Catalog.MediaServerSeason
   alias Cinder.Repo
 
@@ -16,8 +17,8 @@ defmodule Cinder.Catalog.MediaServerSeasons do
 
   @doc """
   Replaces the stored inventory with a complete one. Writes and broadcasts
-  `:media_server_seasons_updated` on the `"series"` topic (the one `Catalog.subscribe_series/0`
-  joins) only when the set changed. The same show listed twice (two server items) keeps the
+  `:media_server_seasons_updated` on the `"series"` topic (the one
+  `Cinder.Catalog.Events.subscribe_series/0` joins) only when the set changed. The same show listed twice (two server items) keeps the
   season with more episodes.
   """
   def replace(seasons) when is_list(seasons) do
@@ -58,7 +59,7 @@ defmodule Cinder.Catalog.MediaServerSeasons do
     end)
     |> case do
       {:ok, _} ->
-        Phoenix.PubSub.broadcast(Cinder.PubSub, "series", :media_server_seasons_updated)
+        Events.media_server_seasons_updated()
         {:ok, :replaced}
 
       {:error, reason} ->

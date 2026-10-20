@@ -28,16 +28,18 @@ Audiobookshelf, Booklore) is reached only through a behaviour, never directly fr
 ## Status writes go through the choke-points
 
 A movie's `:status` and an episode's derived state (`file_path`, `part_file_paths`, `grab_id`)
-are written only inside `Cinder.Catalog` and its submodules under `lib/cinder/catalog/`:
+are written only by the catalog's concept modules under `lib/cinder/catalog/`:
 
 - `Cinder.Catalog.MovieLifecycle` for every movie status write, upgrades and adoption included.
   Each event is a named verb (`attach/2`, `import_staged/2`, `record_failure/2`, `cancel/2`, ...)
   whose write is a compare-and-swap on the struct the caller read: that is the race-safe poller
   write. `record_submission_failure/3` and `adopt/3` read their own row inside their transaction
   instead. `MovieLifecycle.transitions/0` lists every legal movie edge.
-- `Catalog.transition_episode/3`. Its `expect:` form is the race-safe poller write.
-- Audited siblings that each own one lifecycle: TV grabs, TV release verification, episode
-  adoption, deletion, TMDB refresh.
+- `Cinder.Catalog.Episodes.transition/3` (`Catalog.transition_episode/3` outside the catalog).
+  Its `expect:` form is the race-safe poller write.
+- Audited siblings that each own one lifecycle: TV grabs and their verification holds
+  (`Cinder.Catalog.Grabs`), episode adoption (`Cinder.Catalog.Adoption`), deletion
+  (`Cinder.Catalog.TitleDeletion`), TMDB refresh (`Cinder.Catalog.MetadataRefresh`).
 
 Books and audiobooks follow the same rule through `Cinder.Books.transition_target/3`, plus their
 audited siblings: `hold_target/5`, `pause_target/1`, `monitor_target/3`, `import_resolution/1`,
@@ -49,7 +51,7 @@ audited siblings: `hold_target/5`, `pause_target/1`, `monitor_target/3`, `import
 
 The compare-and-swap status write on movies, episodes, book targets and requests is
 `Cinder.GuardedWrite.write/4`. Each table has one adapter, named only by its owner (the
-`MovieLifecycle` verbs, `transition_episode/3`, `transition_target/3` and `Cinder.Requests`;
+`MovieLifecycle` verbs, `Episodes.transition/3`, `transition_target/3` and `Cinder.Requests`;
 `test/code_health_test.exs` fences it). The audited siblings above still write episodes their own
 way (`Grabs.finish_grab`, episode adoption, deletion), as does `Requests.reopen_request/2`;
 moving them is #788.
@@ -71,8 +73,7 @@ transaction.
 Direct `Repo` writes are not banned. Creation, deletion, monitor flags, language, counters and
 the TMDB/metadata refresh are sanctioned direct writes inside `Catalog` and `Books`. Find the
 current write sites by searching for `Repo\.(insert|update|delete|update_all)` across
-`lib/cinder/catalog.ex` and `lib/cinder/catalog/` rather than recalling them. Include
-`catalog.ex`, because the choke-points themselves live there.
+`lib/cinder/catalog/` rather than recalling them; `catalog.ex` itself only delegates.
 
 Callers hold no `Repo` mutations of their own: `lib/cinder/download/*` (including
 `Cinder.Download.BookPoller`), `acquisition.ex` and `lib/cinder/library/*`. The sanctioned
@@ -87,6 +88,35 @@ A new exception is legitimate only when a plan calls it out. When it lands, add 
 The reason: SQLite runs WAL with `busy_timeout: 5000` in dev, test and runtime, so a web write
 racing the poller waits instead of failing with "database busy". That holds only while writes go
 through the choke-points.
+
+## The catalog is split by concept
+
+Code outside `lib/cinder/catalog/` reaches most of the catalog through `Cinder.Catalog`, which
+only delegates. Some modules it names directly: every movie status write is a `MovieLifecycle`
+verb, a caller announcing a change after its own commit uses `Events`' announcements, and
+modules with an interface of their own (`Attention`, `AnimeResolver`, `Genres`,
+`Grabs.get_grab_file/1`, ...) have no facade name. Whether the facade stays is #829. Inside the
+catalog, a concept module calls the modules it needs directly and never the facade.
+`test/code_health_test.exs` fences that the facade only delegates and that nothing under
+`lib/cinder/catalog/` calls it. A new catalog function goes in the concept that owns it; it gets
+a `defdelegate` in the facade only when a caller outside the catalog needs it.
+
+- The kernel is called by every concept and calls none of them: `Cinder.Catalog.Events` (every
+  announcement on the `"movies"` and `"series"` topics, and `[:cinder, :transition]`) and
+  `Cinder.Catalog.Episodes` (an episode's derived state, its search budget and its guarded
+  write).
+- The concepts:
+  - `MovieLifecycle`: every movie status write.
+  - `MovieCatalog`, `SeriesCatalog`: movie and series rows, the series tree and monitoring.
+  - `EpisodeSearch`: what the TV sweep and the manual season panel search for.
+  - `Grabs`: the TV grab lifecycle, verification holds included.
+  - `ManualGrab`: a release the operator picked.
+  - `BlockedReleases`: the release blocklist.
+  - `MediaProfiles`, `Profiles`: a title's preferences.
+  - `TitleDeletion`: deleting and cancelling titles, and their audit.
+  - `MetadataRefresh`: TMDB metadata and probed media info.
+  - `Discovery`: TMDB reads.
+  - `Identity`, `SceneNumbering`: aliases and episode coordinates.
 
 ## Imports go through the staged import
 

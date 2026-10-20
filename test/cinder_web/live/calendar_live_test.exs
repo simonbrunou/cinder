@@ -4,7 +4,7 @@ defmodule CinderWeb.CalendarLiveTest do
   import Phoenix.LiveViewTest
   import Cinder.AccountsFixtures
 
-  alias Cinder.Catalog.{Episode, Season, Series}
+  alias Cinder.Catalog.{Episode, Events, Season, Series}
   alias Cinder.Repo
 
   setup :register_and_log_in_admin
@@ -91,7 +91,7 @@ defmodule CinderWeb.CalendarLiveTest do
 
   test "survives a {:series_deleted, id} broadcast (re-derives, no crash)", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/calendar")
-    Cinder.Catalog.broadcast_series_deleted(123)
+    Events.series_deleted(123)
     # still alive
     assert render(lv)
   end

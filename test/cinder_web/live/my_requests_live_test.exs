@@ -8,6 +8,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
   alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, Grabs}
+  alias Cinder.Catalog.Events
   alias Cinder.Catalog.MovieLifecycle
   alias Cinder.Requests
 
@@ -134,7 +135,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
     {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: 9600, title: "Vanish"})
 
     {:ok, lv, _html} = live(conn, ~p"/my-requests")
-    Cinder.Catalog.broadcast_movie_deleted(movie.id)
+    Events.movie_deleted(movie.id)
     # still alive after reload
     assert render(lv)
   end

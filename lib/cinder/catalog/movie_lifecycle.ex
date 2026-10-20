@@ -36,9 +36,11 @@ defmodule Cinder.Catalog.MovieLifecycle do
   require Logger
 
   alias Cinder.Audit
-  alias Cinder.Catalog
-  alias Cinder.Catalog.{Attention, BlockedRelease, Grabs, Movie, MovieTransition, Profiles}
+
+  alias Cinder.Catalog.{Attention, BlockedReleases, Events, Movie, MovieTransition, Profiles}
+
   alias Cinder.Download
+  alias Cinder.Download.Progress
   alias Cinder.Download.Watch
   alias Cinder.GuardedWrite
   alias Cinder.Library
@@ -216,8 +218,6 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
   # --- download and import -----------------------------------------------------------------------
 
-  @download_metric_fields [:download_progress, :download_speed, :download_eta]
-
   @doc """
   Records an in-flight download's progress, speed and ETA (the download watch's writer) for a
   `:downloading` or `:upgrading` movie. Progress only moves forward; a call that changes nothing
@@ -225,11 +225,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   `{:error, :not_downloading}` for any other status.
   """
   def track(%Movie{status: status} = movie, metrics) when status in [:downloading, :upgrading] do
-    changes =
-      metrics
-      |> Map.take(@download_metric_fields)
-      |> keep_progress_high_water(movie.download_progress)
-      |> Map.reject(fn {field, value} -> Map.get(movie, field) == value end)
+    changes = Progress.changes(movie, metrics)
 
     if changes == %{},
       do: {:ok, movie},
@@ -237,12 +233,6 @@ defmodule Cinder.Catalog.MovieLifecycle do
   end
 
   def track(%Movie{}, _metrics), do: {:error, :not_downloading}
-
-  defp keep_progress_high_water(%{download_progress: progress} = metrics, previous)
-       when is_number(progress) and (is_nil(previous) or progress >= previous),
-       do: metrics
-
-  defp keep_progress_high_water(metrics, _previous), do: Map.delete(metrics, :download_progress)
 
   @doc """
   Hands a finished download to import: `:downloading` → `:downloaded` with the client's
@@ -371,7 +361,12 @@ defmodule Cinder.Catalog.MovieLifecycle do
                :release_policy_snapshot,
                :download_id
              ]),
-           {:ok, _blocked} <- insert_policy_block(movie, evidence) do
+           {:ok, _blocked} <-
+             BlockedReleases.block_policy_mismatch(
+               [movie: movie.id],
+               movie.release_title,
+               evidence
+             ) do
         {:ok, {rejected, Download.fence_movie_cleanup(movie)}}
       end
     end
@@ -406,16 +401,6 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
   defp reject_attrs(:downloaded),
     do: Map.merge(@requeue_clears, %{status: :requested})
-
-  defp insert_policy_block(movie, evidence) do
-    %BlockedRelease{}
-    |> BlockedRelease.changeset(%{
-      movie_id: movie.id,
-      release_title: movie.release_title,
-      reason: inspect({:release_policy_mismatch, evidence})
-    })
-    |> Repo.insert()
-  end
 
   # The download payload of `movie`: an upgrade's replacement is only ever on the caller's struct.
   defp source(%Movie{status: :upgrading, content_path: path}), do: path
@@ -592,13 +577,13 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
   # A terminal park. The reason's human detail (`{:download_error, "paused"}`) is kept as
   # `failure_reason` for /activity; a proven-bad release is blocklisted after commit, best-effort
-  # (`Grabs.block_release/2` never raises and ignores a pre-grab movie with no release).
+  # (`BlockedReleases.block_release/2` never raises and ignores a pre-grab movie with no release).
   defp park(movie, status, reason) do
     code = reason_code(reason)
 
     with {:ok, parked} <- write(movie, %{status: status, failure_reason: reason_detail(reason)}) do
       announce_park(parked, reason, code)
-      if proven_bad?(code), do: Grabs.block_release(parked, code)
+      if proven_bad?(code), do: BlockedReleases.block_release(parked, code)
       {:ok, parked}
     end
   end
@@ -616,7 +601,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   defp requeue_blocklisted(movie, reason) do
     code = reason_code(reason)
 
-    case Grabs.block_release_and_confirm(movie, code) do
+    case BlockedReleases.block_release_and_confirm(movie, code) do
       :ok ->
         with {:ok, requeued} <- requeue(movie, code) do
           Logger.warning(
@@ -640,7 +625,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   # after the re-queue, and `retry/1` clears it for a fresh chance.
   defp requeue_stalled(movie) do
     with {:ok, requeued} <- requeue(movie, :stalled) do
-      Grabs.block_release(movie, :stalled)
+      BlockedReleases.block_release(movie, :stalled)
       Logger.warning("movie #{movie.id} reaped: stalled download removed; re-searching")
       {:ok, requeued}
     end
@@ -679,7 +664,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
         else: write(movie, attrs, [:download_id])
 
     with {:ok, reverted} <- result do
-      if blocked?, do: Grabs.block_release(movie, :upgrade_failed)
+      if blocked?, do: BlockedReleases.block_release(movie, :upgrade_failed)
 
       # `movie.download_protocol`: `reverted` has cleared it. Only the payload is left to remove.
       if remove_payload?,
@@ -695,7 +680,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   # blocklist it as stalled before the household is notified.
   defp reap_upgrade(movie) do
     with {:ok, reverted} <- fenced_write(movie, Map.put(@drop_download, :status, :available)) do
-      Grabs.block_release(movie, :stalled)
+      BlockedReleases.block_release(movie, :stalled)
       Logger.warning("movie #{movie.id} upgrade reaped: stalled replacement removed; reverted")
       Notifier.notify({:movie_upgrade_failed, reverted, :stalled})
       {:ok, reverted}
@@ -781,7 +766,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
       Map.merge(@requeue_clears, %{status: :requested, search_attempts: 0, import_attempts: 0})
 
     with {:ok, requested} <- write(movie, attrs, [:verification_hold_origin]) do
-      Grabs.clear_stalled_blocklist(movie: movie.id)
+      BlockedReleases.clear_stalled_blocklist(movie: movie.id)
       {:ok, requested}
     end
   end
@@ -992,7 +977,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   defp tag({:error, _reason} = error, _marker), do: error
 
   defp publish_adoption({:ok, {movie, :created}}) do
-    Catalog.broadcast_movie_created(movie)
+    Events.movie_created(movie)
     {:ok, movie, :created}
   end
 

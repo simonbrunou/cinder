@@ -4,7 +4,7 @@ defmodule Cinder.Catalog.MovieTransition do
   # every movie status write is one of its verbs.
   @behaviour Cinder.GuardedWrite
 
-  alias Cinder.Catalog
+  alias Cinder.Catalog.Events
   alias Cinder.Catalog.Movie
 
   @impl true
@@ -19,8 +19,8 @@ defmodule Cinder.Catalog.MovieTransition do
   @impl true
   def publish(movies) do
     Enum.each(movies, fn movie ->
-      Catalog.broadcast({:movie_updated, movie})
-      :telemetry.execute([:cinder, :transition], %{count: 1}, %{kind: :movie, to: movie.status})
+      Events.movie_updated(movie)
+      Events.transitioned(:movie, movie.status)
     end)
   end
 end

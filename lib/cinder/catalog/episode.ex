@@ -79,7 +79,7 @@ defmodule Cinder.Catalog.Episode do
 
   @doc """
   Changeset for pipeline state writes (no status enum — episode state is derived from
-  `file_path`/`grab_id`). Routed through `Cinder.Catalog.transition_episode/2`. `monitored`
+  `file_path`/`grab_id`). Routed through `Cinder.Catalog.Episodes.transition/3`. `monitored`
   is deliberately excluded: it is not pipeline state and keeps its own writer. The post-download
   retry budget lives on the grab (`grab.download_attempts`), not the episode. An available episode
   may carry both `file_path` and `grab_id` while an operator-chosen replacement is in flight; the
@@ -107,7 +107,8 @@ defmodule Cinder.Catalog.Episode do
   end
 
   @doc """
-  Changeset for the M6 TMDB refresh (`Catalog.refresh_series/1`): identity + placement only.
+  Changeset for the M6 TMDB refresh (`Cinder.Catalog.MetadataRefresh.refresh_series/1`):
+  identity + placement only.
   `monitored` is castable (set on a brand-new episode) but the refresh caller omits it when
   *updating* an existing row, so a user's monitor toggle is preserved. The `(season_id,
   episode_number)` unique + season FK constraints are registered so a renumber collision returns

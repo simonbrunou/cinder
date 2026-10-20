@@ -16,6 +16,7 @@ defmodule Cinder.Books.Grabs do
 
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget}
+  alias Cinder.Download.Progress
   alias Cinder.Repo
 
   @doc """
@@ -176,7 +177,7 @@ defmodule Cinder.Books.Grabs do
   """
   @spec track(BookGrab.t(), map()) :: {:ok, BookGrab.t()} | {:error, :stale_grab}
   def track(%BookGrab{} = grab, attrs) do
-    changes = metric_changes(grab, attrs)
+    changes = Progress.changes(grab, attrs)
 
     if changes == %{} do
       if Repo.exists?(from(g in BookGrab, where: g.id == ^grab.id and is_nil(g.content_path))) do
@@ -188,7 +189,7 @@ defmodule Cinder.Books.Grabs do
       now = DateTime.utc_now(:second)
 
       changes =
-        if progress_advanced?(grab.download_progress, Map.get(changes, :download_progress)),
+        if Progress.advanced?(grab.download_progress, Map.get(changes, :download_progress)),
           do: Map.put(changes, :download_progress_at, now),
           else: changes
 
@@ -208,25 +209,6 @@ defmodule Cinder.Books.Grabs do
       end
     end
   end
-
-  defp metric_changes(grab, attrs) do
-    attrs
-    |> Map.take([:download_progress, :download_speed, :download_eta])
-    |> keep_progress_high_water(grab.download_progress)
-    |> Enum.reject(fn {field, value} -> Map.get(grab, field) == value end)
-    |> Map.new()
-  end
-
-  defp keep_progress_high_water(%{download_progress: progress} = attrs, previous)
-       when is_number(progress) and (is_nil(previous) or progress >= previous),
-       do: attrs
-
-  defp keep_progress_high_water(attrs, _previous), do: Map.delete(attrs, :download_progress)
-
-  defp progress_advanced?(previous, current) when is_number(current),
-    do: current > (previous || 0)
-
-  defp progress_advanced?(_previous, _current), do: false
 
   @doc "Bumps the shared download-phase failure budget."
   @spec bump_attempts(BookGrab.t(), non_neg_integer()) ::
