@@ -450,6 +450,25 @@ defmodule Cinder.Library.StagedImportTest do
       assert File.read!(Path.rootname(dest) <> ".en.srt") == "subtitle"
     end
 
+    test "a staged file that kept another file links none of the source's sidecars (#784)", %{
+      downloads: downloads,
+      library: library
+    } do
+      {source, dest} = replacement_files(downloads, library, "Kept")
+      File.write!(Path.rootname(source) <> ".en.srt", "subtitle")
+      counter = scan_counter()
+
+      {:ok, staged, :kept} = place(source, dest, library)
+
+      staged =
+        StagedImport.after_commit(staged, dest, {:movie, movie(), []}, link_sidecars_from: source)
+
+      assert {:ok, :ok} = StagedImport.commit(staged, &record_all/2)
+      assert scans(counter) == 1
+      assert File.read!(dest) == "original"
+      refute File.exists?(Path.rootname(dest) <> ".en.srt")
+    end
+
     test "runs no effects for a staged file nothing committed", %{
       downloads: downloads,
       library: library

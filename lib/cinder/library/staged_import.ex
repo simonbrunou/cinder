@@ -42,6 +42,7 @@ defmodule Cinder.Library.StagedImport do
   @typep stage :: %{
            id: pos_integer(),
            dest: String.t(),
+           outcome: StageEngine.outcome(),
            effect: effect() | nil,
            link_sidecars_from: String.t() | nil
          }
@@ -104,7 +105,7 @@ defmodule Cinder.Library.StagedImport do
     extensions = Keyword.fetch!(opts, :extensions)
 
     with {:ok, id, outcome} <- StageEngine.stage(source, dest, root, on_collision, extensions) do
-      stage = %{id: id, dest: dest, effect: nil, link_sidecars_from: nil}
+      stage = %{id: id, dest: dest, outcome: outcome, effect: nil, link_sidecars_from: nil}
       {:ok, %{staged | stages: staged.stages ++ [stage]}, outcome}
     end
   end
@@ -112,8 +113,9 @@ defmodule Cinder.Library.StagedImport do
   @doc """
   Registers what committing the file staged at `dest` runs: `effect` (see `t:effect/0`), and with
   `link_sidecars_from: source` a hardlink of `source`'s sidecar subtitles next to `dest`, made
-  first. The first registration for a `dest` wins. A staged file with none commits silently,
-  as every book does.
+  first. A stage that kept another file at `dest` (`:kept`) links none: those subtitles were
+  timed for `source`, not for the file that stayed (#784). The first registration for a `dest`
+  wins. A staged file with none commits silently, as every book does.
   """
   @spec after_commit(t(), String.t(), effect() | nil, keyword()) :: t()
   def after_commit(%__MODULE__{} = staged, dest, effect, opts \\ []) do
@@ -121,6 +123,9 @@ defmodule Cinder.Library.StagedImport do
 
     stages =
       Enum.map(staged.stages, fn
+        %{dest: ^dest, effect: nil, link_sidecars_from: nil, outcome: :kept} = stage ->
+          %{stage | effect: effect}
+
         %{dest: ^dest, effect: nil, link_sidecars_from: nil} = stage ->
           %{stage | effect: effect, link_sidecars_from: from}
 
