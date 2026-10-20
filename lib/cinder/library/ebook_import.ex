@@ -50,7 +50,7 @@ defmodule Cinder.Library.EbookImport do
   def import_grab(grab, opts \\ [])
 
   def import_grab(%BookGrab{content_path: path}, _opts) when path in [nil, ""],
-    do: {:error, :missing_content_path}
+    do: {:error, :no_content_path}
 
   def import_grab(%BookGrab{book_target: %BookTarget{} = target} = grab, opts) do
     with {:ok, source, format} <- EbookSources.resolve(grab.content_path),

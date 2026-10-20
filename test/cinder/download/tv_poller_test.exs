@@ -2780,6 +2780,7 @@ defmodule Cinder.Download.TvPollerTest do
     capture_log(fn -> assert :ok = TvPoller.poll() end)
     refute Repo.get(Grab, grab.id)
     assert Catalog.blocked_release_titles_for_series(series.id) == ["Gone.Show.S01E01"]
+    assert [%BlockedRelease{reason: "download_not_found"}] = Repo.all(BlockedRelease)
   end
 
   test "a failed upgrade download parks the grab but keeps the available episode and old files" do

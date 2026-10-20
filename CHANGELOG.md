@@ -110,6 +110,12 @@ All notable changes to Cinder are documented here. The format follows
   Debian trixie 2026-10-05.** These are the versions the test suite already ran on in CI. CI now
   pins the same exact versions instead of the latest 29.x / 1.20.x, and both files say to bump
   them together.
+- **A download the client no longer knows fails as `download_not_found` (#755).** It was
+  `torrent_not_found`, for usenet jobs too. A book downloaded with no path is held as
+  `no_content_path` in both phases (the import phase said `missing_content_path`). A migration
+  renames the old words in blocklist rows and book hold reasons, so a held book shows the new
+  name. The webhook `reason` of a failure event and its `hold_reason` carry the new names too:
+  update any automation that matches `torrent_not_found`.
 
 ### Removed
 - **`railpack.json`.** Cinder is built from the `Dockerfile` (the production deploy, the

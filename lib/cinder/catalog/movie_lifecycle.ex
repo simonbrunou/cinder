@@ -39,6 +39,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Attention, BlockedRelease, Grabs, Movie, MovieTransition, Profiles}
   alias Cinder.Download
+  alias Cinder.Download.Watch
   alias Cinder.GuardedWrite
   alias Cinder.Library
   alias Cinder.Library.{ImportedQuality, ImportStage, StagedImport}
@@ -438,10 +439,6 @@ defmodule Cinder.Catalog.MovieLifecycle do
     :unsupported_disc
   ]
 
-  # Download-side failures whose terminal handling blocklists the release. Each arrives only after
-  # a retry bound, so a single network blip never blocks a good release.
-  @download_failure_errors [:download_error, :torrent_not_found, :no_content_path]
-
   # A client-reported failure reads the same as a client-API blip for a tick or two; past this many
   # strikes the download has failed and re-queues.
   @client_failure_tolerance 3
@@ -496,8 +493,10 @@ defmodule Cinder.Catalog.MovieLifecycle do
   def record_failure(%Movie{status: :downloading} = movie, {:blocked_content, _detail} = reason),
     do: requeue_blocklisted(movie, reason)
 
+  # The download failures the client reports outright: a subset of `Watch.failure?/1` on purpose,
+  # because a completion with no path (`:no_content_path`) takes the import budget below instead.
   def record_failure(%Movie{status: :downloading} = movie, reason)
-      when reason in [:download_error, :torrent_not_found] or
+      when reason in [:download_error, :download_not_found] or
              (is_tuple(reason) and elem(reason, 0) == :download_error) do
     attempts = (movie.import_attempts || 0) + 1
 
@@ -588,7 +587,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   # `:release_policy_mismatch` only arrives here for a release with no title to blocklist.
   defp proven_bad?(code),
     do:
-      code in @permanent_import_errors or code in @download_failure_errors or
+      code in @permanent_import_errors or Watch.failure?(code) or
         code == :release_policy_mismatch
 
   # A terminal park. The reason's human detail (`{:download_error, "paused"}`) is kept as

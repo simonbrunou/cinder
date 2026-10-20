@@ -592,7 +592,7 @@ defmodule Cinder.Download.BookPollerTest do
       target = Repo.reload!(target)
       assert target.status == :held
       # The same reason the movie and TV pollers persist (`Download.Watch`'s vocabulary).
-      assert target.hold_reason == "torrent_not_found"
+      assert target.hold_reason == "download_not_found"
       assert Repo.all(BookGrab) == []
     end
 

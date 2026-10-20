@@ -628,7 +628,7 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
                MovieLifecycle.record_failure(movie, {:failed, :download_error})
 
       assert {:ok, %Movie{status: :downloading, import_attempts: 2} = movie} =
-               MovieLifecycle.record_failure(movie, {:failed, :torrent_not_found})
+               MovieLifecycle.record_failure(movie, {:failed, :download_not_found})
 
       assert Catalog.blocked_release_titles(movie) == []
 
@@ -637,6 +637,17 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
 
       assert Catalog.blocked_release_titles(movie) == ["Dead-GRP"]
       assert_receive {:notify, {:movie_failed, %Movie{status: :requested}, :download_error}}
+    end
+
+    test "re-queues a job the client no longer knows after its tolerance, blocklisting it" do
+      movie = downloading()
+      {:ok, movie} = seed_movie_state(movie, %{import_attempts: 2})
+
+      assert {:ok, %Movie{status: :requested, release_title: nil}} =
+               MovieLifecycle.record_failure(movie, {:failed, :download_not_found})
+
+      assert [%BlockedRelease{release_title: "Dead-GRP", reason: "download_not_found"}] =
+               Repo.all(BlockedRelease)
     end
 
     test "parks instead of re-queueing when there is no release to blocklist" do

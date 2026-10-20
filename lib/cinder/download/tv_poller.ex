@@ -38,11 +38,6 @@ defmodule Cinder.Download.TvPoller do
   @default_interval 5_000
   @search_retry_after 60
 
-  # Download-side failures that only reach park after exhausting @max_attempts retries
-  # (advance/1) — symmetric with the movie poller's @download_failure_errors. Past
-  # exhaustion the release itself is the problem, so the grab's release is blocklisted.
-  @download_failure_errors [:download_error, :torrent_not_found, :no_content_path]
-
   use Cinder.Download.PollerSkeleton, log_prefix: "tv poller"
 
   defp do_poll(state) do
@@ -765,8 +760,9 @@ defmodule Cinder.Download.TvPoller do
     # grab's still-linked episodes (the grab_id FK nilifies them on delete). It is non-raising,
     # so it cannot abort the park (a raise here would re-park the grab every tick). :no_files_matched
     # is the deterministic empty-import; :blocked_content is the deterministic fake-content check
-    # (both park on first sighting); the download-side reasons only reach park post-exhaustion.
-    blocked? = code in [:no_files_matched, :blocked_content] or code in @download_failure_errors
+    # (both park on first sighting); a download failure (`Watch.failure?/1`) only reaches park
+    # once retry_or_park/2 has spent @max_attempts on it.
+    blocked? = code in [:no_files_matched, :blocked_content] or Watch.failure?(code)
     if blocked?, do: Catalog.block_grab_release(grab, code)
 
     # park_grab IS finish_grab(grab, []) — if the finalize transaction itself is what keeps

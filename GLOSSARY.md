@@ -63,6 +63,14 @@ The single outcome of one download watch for one in-flight download: what Cinder
 next.
 _Avoid_: result, status
 
+**Download failure**:
+A verdict saying the download client reports the download went wrong: it errored, it finished with
+no usable path, or the client no longer knows the job, torrent or usenet alike. A poller acts on one
+only after a few ticks, because a job moving between queue and history looks the same for a
+moment. Past that bound Cinder gives up on the release and blocklists it: a movie re-queues or
+parks (an upgrade reverts), a TV grab parks, a book target is held.
+_Avoid_: torrent not found, missing download
+
 **Blocked content**:
 A download whose file list carries an executable or shortcut and nothing that could be the media
 itself, which marks the release as a fake.

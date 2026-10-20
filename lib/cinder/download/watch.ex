@@ -35,16 +35,21 @@ defmodule Cinder.Download.Watch do
 
   ## Reasons
 
-  `{:failed, reason}` carries the same reason atoms for every kind, because they are persisted:
-  blocklist rows, book hold reasons, notifications and both video pollers'
-  `@download_failure_errors` read them.
+  `{:failed, reason}` carries the same reason atoms for every kind, because they are persisted in
+  blocklist rows and book hold reasons. `failure?/1` is the set: a movie park or upgrade revert
+  and a TV grab park blocklist the release when their reason is in it.
 
-  - `:no_content_path`: the client reports `:completed` with no usable path.
+  - `:no_content_path`: the client reports `:completed` with no usable path. The import phase
+    refuses a grab with no path by the same name (`Cinder.Library.stage_episodes/3` and the book
+    importers).
   - `:download_error`, or `{:download_error, detail}` when the client gave a human-facing reason
     (SABnzbd's paused state or `fail_message`).
-  - `:torrent_not_found`: the client does not know the job, for usenet too. Every adapter reports
-    the moment a job moves between queue and history the same way, so the pollers bound this
-    before acting rather than acting on the first sighting.
+  - `:download_not_found`: the client does not know the job, torrent or usenet. Every adapter
+    reports the moment a job moves between queue and history the same way, so the pollers bound
+    this before acting rather than acting on the first sighting.
+
+  Rows written before #755 named a vanished job `torrent_not_found` (and a book `download_missing`)
+  and a book with no path `missing_content_path`; the `20261020120000` migration renamed them.
   """
 
   require Logger
@@ -67,7 +72,9 @@ defmodule Cinder.Download.Watch do
                     | {:error, term()})
 
   @type failure ::
-          :no_content_path | :download_error | {:download_error, String.t()} | :torrent_not_found
+          :no_content_path | :download_error | {:download_error, String.t()} | :download_not_found
+
+  @failure_codes [:no_content_path, :download_error, :download_not_found]
 
   @typedoc """
   - `{:completed, content_path}`: finished, file list clean, `content_path` non-empty.
@@ -99,6 +106,19 @@ defmodule Cinder.Download.Watch do
     end
   end
 
+  @doc """
+  Whether `reason` is a download failure: a reason a `{:failed, reason}` verdict carries, given as
+  the verdict carried it (`{:download_error, detail}` included) or as its bare code.
+
+  A movie park or upgrade revert and a TV grab park blocklist the release when their reason is one
+  of these. Each reaches them only after its retry bound, so a single client blip never blocks a
+  good release. Every other verdict (`:stalled`, `{:blocked_content, detail}`, `:no_client`) is
+  not one.
+  """
+  @spec failure?(failure() | atom() | {atom(), term()}) :: boolean()
+  def failure?({code, _detail}), do: failure?(code)
+  def failure?(code), do: code in @failure_codes
+
   defp check_with(client, download, track) do
     case client.status(download.download_id) do
       {:ok, %{state: :completed, content_path: path}} when is_binary(path) and path != "" ->
@@ -113,7 +133,7 @@ defmodule Cinder.Download.Watch do
         {:failed, download_error(status)}
 
       {:error, :not_found} ->
-        {:failed, :torrent_not_found}
+        {:failed, :download_not_found}
 
       {:ok, %{state: :downloading} = status} ->
         client

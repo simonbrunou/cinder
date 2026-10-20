@@ -207,7 +207,7 @@ defmodule Cinder.Download.WatchTest do
           {"an error with no detail", {:ok, %{state: :error, progress: 0.1}},
            {:failed, :download_error}},
           {"a job the client no longer knows", {:error, :not_found},
-           {:failed, :torrent_not_found}}
+           {:failed, :download_not_found}}
         ] do
       @answer answer
       @verdict verdict
@@ -215,8 +215,33 @@ defmodule Cinder.Download.WatchTest do
       test "#{name}" do
         status(@answer)
 
-        assert Watch.check(download(), track()) == @verdict
+        assert {:failed, reason} = Watch.check(download(), track())
+        assert {:failed, reason} == @verdict
+        # The movie and TV parks blocklist on this predicate, so every reason the watch produces
+        # must pass it, in the shape the verdict carries it.
+        assert Watch.failure?(reason)
         refute_received {:tracked, _id, _attrs}
+      end
+    end
+  end
+
+  describe "failure?/1" do
+    # The verdicts no poller may blocklist as a download failure, and the names this vocabulary
+    # retired (#755): a row still carrying one was renamed by the 20261020 migration.
+    for reason <- [
+          :stalled,
+          :no_client,
+          :blocked_content,
+          {:blocked_content, "setup.exe"},
+          :no_files_matched,
+          :torrent_not_found,
+          :missing_content_path,
+          :download_missing
+        ] do
+      @reason reason
+
+      test "is false for #{inspect(reason)}" do
+        refute Watch.failure?(@reason)
       end
     end
   end
