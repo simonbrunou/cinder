@@ -308,7 +308,7 @@ defmodule Cinder.Download.AudiobookPollerTest do
 
   # The end-to-end regression test for the B7b defect the review found: `BookArchive.finish/2`
   # originally raised `FunctionClauseError` on every SUCCESSFUL audiobook extraction (only
-  # `BookSources`' own 3-tuple resolve_fun shape matched), caught only by `isolate/2`'s rescue —
+  # `EbookSources`' own 3-tuple resolve_fun shape matched), caught only by `isolate/2`'s rescue —
   # a working import looked like an opaque logged failure, and no test anywhere drove a real
   # archive through the actual production path. This one does: a real `.zip` release, downloaded,
   # polled, resolved, staged, and imported through `BookPoller` exactly as a real download client

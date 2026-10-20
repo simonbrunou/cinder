@@ -9,7 +9,7 @@ defmodule CinderWeb.BookManualSearchComponent do
   render loading/error/loaded states, and forward a chosen release to the parent LiveView with
   `send(self(), {:manual_grab, :book, target, release})` rather than writing anything itself.
 
-  The target's media kind picks the search: `Acquisition.Books.candidates/2` for an `:ebook`
+  The target's media kind picks the search: `Acquisition.Ebooks.candidates/2` for an `:ebook`
   target, `Acquisition.Audiobooks.candidates/2` for an `:audiobook` one. Both are judged by
   `Cinder.Acquisition.BookScorer`, so both speak its one closed rejection vocabulary; the only
   row the kinds render differently is an audiobook's narrator credit, shown when the evidence
@@ -34,7 +34,7 @@ defmodule CinderWeb.BookManualSearchComponent do
 
   require Logger
 
-  alias Cinder.Acquisition.{Audiobooks, Books}
+  alias Cinder.Acquisition.{Audiobooks, Ebooks}
   alias Cinder.Download
 
   @impl true
@@ -124,7 +124,7 @@ defmodule CinderWeb.BookManualSearchComponent do
     end)
   end
 
-  defp search_module(%{media_kind: :ebook}), do: Books
+  defp search_module(%{media_kind: :ebook}), do: Ebooks
   defp search_module(%{media_kind: :audiobook}), do: Audiobooks
 
   @impl true

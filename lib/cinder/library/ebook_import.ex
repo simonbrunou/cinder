@@ -1,8 +1,8 @@
-defmodule Cinder.Library.BookImport do
+defmodule Cinder.Library.EbookImport do
   @moduledoc """
-  Publishes a downloaded book into the library and records the resulting file.
+  Publishes a downloaded e-book into the library and records the resulting file.
 
-  The books sibling of `Cinder.Library.stage_movie/2`, built on the **same** staged import
+  The e-book sibling of `Cinder.Library.stage_movie/2`, built on the **same** staged import
   (`Cinder.Library.StagedImport`) the video imports use, so a crash mid-placement is recovered by
   the same `import_stages` journal and the same `StagedImport.reconcile/0` sweep. Nothing about
   two-phase commit is reimplemented here.
@@ -12,7 +12,7 @@ defmodule Cinder.Library.BookImport do
   The contract requires that "a successful import is committed only after the final path is
   durable" and that "consumer downtime cannot roll back or duplicate the import":
 
-  1. Resolve the payload to one accepted file (`Cinder.Library.BookSources`) — refuse otherwise.
+  1. Resolve the payload to one accepted file (`Cinder.Library.EbookSources`) — refuse otherwise.
   2. Stage the placement: hardlink, or copy where a hardlink is impossible. The file is on disk
      at its final path but the operation is still reversible.
   3. Record the `book_files` row and arm the target `:available`, in one transaction
@@ -28,7 +28,7 @@ defmodule Cinder.Library.BookImport do
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget}
   alias Cinder.Download
-  alias Cinder.Library.{BookNaming, BookSources, StagedImport}
+  alias Cinder.Library.{EbookNaming, EbookSources, StagedImport}
   alias Cinder.Settings
 
   @doc """
@@ -53,7 +53,7 @@ defmodule Cinder.Library.BookImport do
     do: {:error, :missing_content_path}
 
   def import_grab(%BookGrab{book_target: %BookTarget{} = target} = grab, opts) do
-    with {:ok, source, format} <- BookSources.resolve(grab.content_path),
+    with {:ok, source, format} <- EbookSources.resolve(grab.content_path),
          {:ok, root} <- library_root(target),
          {:ok, size} <- source_size(source) do
       place(grab, target, source, format, size, root, Keyword.get(opts, :replace, false))
@@ -76,7 +76,7 @@ defmodule Cinder.Library.BookImport do
   # parks automatic upgrades and format conversion for the first release, so an operator's copy
   # is never overwritten on the strength of a release name.
   defp place(grab, target, source, format, size, root, replace?) do
-    dest = BookNaming.book_dest(target.work, source, root)
+    dest = EbookNaming.book_dest(target.work, source, root)
 
     # The author/title folders are Cinder's to create, and staging assumes the destination
     # directory exists (the movie and episode paths `mkdir_p` before staging for the same reason).
@@ -86,12 +86,12 @@ defmodule Cinder.Library.BookImport do
     # `outside/Title` and only then would staging reject the path — the refusal would be correct
     # but a directory outside the root would already exist. `PathPolicy.destination/3` lstats
     # every component, so a symlinked ancestor fails here and nothing is created.
-    with {:ok, _vetted} <- BookSources.safe_destination(Path.dirname(dest), root),
+    with {:ok, _vetted} <- EbookSources.safe_destination(Path.dirname(dest), root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          {:ok, staged, outcome} <-
            StagedImport.place(StagedImport.new(), source, dest, root,
              on_collision: if(replace?, do: :replace, else: :keep),
-             extensions: BookSources.accepted_extensions()
+             extensions: EbookSources.accepted_extensions()
            ) do
       case recorded_size(outcome, size, dest) do
         {:ok, size} ->

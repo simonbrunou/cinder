@@ -3,7 +3,7 @@ defmodule Cinder.Acquisition.BookScorer do
   Judges one book release against one requested work, and ranks the survivors.
 
   One judge for the whole book family. The book kind comes from the release struct — a
-  `Cinder.Acquisition.BookRelease` is an e-book, a `Cinder.Acquisition.AudiobookRelease` an
+  `Cinder.Acquisition.EbookRelease` is an e-book, a `Cinder.Acquisition.AudiobookRelease` an
   audiobook — so a release can never be judged against the other kind's rules, and everything
   that differs between the kinds (formats, size band, edition vocabulary, the narrator credit) is
   data in `Cinder.Acquisition.BookKind`. The check chain, the ranking and the rejection
@@ -82,7 +82,7 @@ defmodule Cinder.Acquisition.BookScorer do
 
   alias Cinder.Acquisition.AudiobookRelease
   alias Cinder.Acquisition.BookKind
-  alias Cinder.Acquisition.BookRelease
+  alias Cinder.Acquisition.EbookRelease
   alias Cinder.Acquisition.Parser
   alias Cinder.Acquisition.TitleNoise
   alias Cinder.Books.TitleFold
@@ -119,7 +119,7 @@ defmodule Cinder.Acquisition.BookScorer do
   # kind — see the moduledoc.
   @narrator_group ~r/^\s*(?:narrated|read)\s+by\s+.+$/i
 
-  @type release :: BookRelease.t() | AudiobookRelease.t()
+  @type release :: EbookRelease.t() | AudiobookRelease.t()
 
   # `narrator` is present only for an audiobook release.
   @type evidence :: %{
@@ -207,7 +207,7 @@ defmodule Cinder.Acquisition.BookScorer do
 
   # The struct IS the kind: two clauses, so a release of a struct this judge does not know raises
   # here rather than being judged under some other kind's rules.
-  defp rules_for(%BookRelease{}), do: BookKind.fetch!(:ebook)
+  defp rules_for(%EbookRelease{}), do: BookKind.fetch!(:ebook)
   defp rules_for(%AudiobookRelease{}), do: BookKind.fetch!(:audiobook)
 
   defp evidence(release, format, %BookKind{narrated?: narrated?}) do

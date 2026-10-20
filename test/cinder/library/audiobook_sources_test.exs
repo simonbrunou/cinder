@@ -1,7 +1,7 @@
 defmodule Cinder.Library.AudiobookSourcesTest do
   @moduledoc """
   Multi-track resolution: the validation gate between a completed audiobook download and
-  publication. Real filesystem and the real `PathPolicy`, matching `BookSourcesTest`'s own
+  publication. Real filesystem and the real `PathPolicy`, matching `EbookSourcesTest`'s own
   reasoning — the guarantees under test are containment and file-type ones.
   """
   use ExUnit.Case, async: false
@@ -414,7 +414,7 @@ defmodule Cinder.Library.AudiobookSourcesTest do
   end
 
   # The direct regression tests for the B7b defect this review found: `BookArchive.finish/2`
-  # originally had clauses only for `{:ok, _source, _format}` (`BookSources`' own 3-tuple
+  # originally had clauses only for `{:ok, _source, _format}` (`EbookSources`' own 3-tuple
   # resolve_fun shape) and `{:error, _reason}` — so EVERY successful extraction through THIS
   # module's own resolve_fun (which returns `{:ok, ordered_tracks}`, a 2-tuple) raised
   # `FunctionClauseError`, caught only by the poller's `isolate/2` rescue as an opaque logged

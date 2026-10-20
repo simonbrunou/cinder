@@ -239,7 +239,7 @@ work's identity through Open Library (primary) and an optional Hardcover key (se
 guessing when identity is ambiguous.
 
 **There is no automatic release search for books, by design** — the roadmap gates it behind a
-corpus-precision measurement that has not been taken, so `Cinder.Acquisition.Books`/`Audiobooks`
+corpus-precision measurement that has not been taken, so `Cinder.Acquisition.Ebooks`/`Audiobooks`
 export no automatic-selection function at all. Instead, an admin opens **manual search** on
 `/books/:id`, where Cinder ranks Prowlarr's book/audiobook candidates against the accepted format
 list (EPUB/AZW3/MOBI for e-books, M4B/MP3 for audiobooks) and author/title evidence for the admin

@@ -1,10 +1,10 @@
 defmodule Cinder.Library.AudiobookSources do
   @moduledoc """
   Resolves a completed audiobook download to an *ordered list* of accepted files, or an explained
-  refusal — the `Cinder.Library.BookSources` sibling for multi-track audio.
+  refusal — the `Cinder.Library.EbookSources` sibling for multi-track audio.
 
   Reuses `Cinder.Library.safe_walk/1`, `Cinder.Library.BookArchive.{Zip,Rar}` (unchanged), and
-  `Cinder.Library.path_policy()` exactly as `BookSources` does: the containment, symlink-refusal,
+  `Cinder.Library.path_policy()` exactly as `EbookSources` does: the containment, symlink-refusal,
   and archive-entry/size-ceiling guarantees are identical infrastructure, not reimplemented here.
   The one real change to shared infrastructure is `BookArchive.extract_and_resolve/3` (arity grew
   from 2 to thread `opts` to the extractors) — see its own moduledoc; this module is the one
@@ -14,7 +14,7 @@ defmodule Cinder.Library.AudiobookSources do
 
   ## Pipeline
 
-  1. **Extraction** — identical to `BookSources.resolve/1`'s archive handling (one archive, or
+  1. **Extraction** — identical to `EbookSources.resolve/1`'s archive handling (one archive, or
      none), recursing into an extracted scratch directory exactly once.
   2. **Candidate collection** — every `.m4b`/`.mp3` file is a candidate. A stray *other audio*
      file (`.m4a`/`.aac`/`.flac`/`.ogg`/`.wma`/`.wav`/`.aiff`/`.aif`/`.aifc`) alongside at least
@@ -24,14 +24,14 @@ defmodule Cinder.Library.AudiobookSources do
      style non-audio padding stays invisible, as it already is for e-books.
   3. **Format-magic verification** — an `ID3`/MPEG-frame-sync check for `.mp3`, an `ftyp` box
      check for `.m4b` — the same positive-identification discipline
-     `BookSources.verify_magic/2` already applies, needing no subprocess.
+     `EbookSources.verify_magic/2` already applies, needing no subprocess.
   4. **Mixed-book detection** — a filename-stem check (always) and an embedded-tag check (only
      when `Cinder.Library.AudioProbe` is configured and answers) must both pass.
   5. **Deterministic ordering** — embedded tags first, filename-embedded numbers second, and a
      multi-file set with neither is refused rather than guessed.
   6. **Container consistency** — every resolved candidate shares one accepted format; a set
      mixing `.m4b` and `.mp3` is refused, since an audiobook's tracks are sequential parts, not
-     interchangeable copies of each other the way `BookSources`' multi-format e-book collapse
+     interchangeable copies of each other the way `EbookSources`' multi-format e-book collapse
      treats an EPUB + MOBI pair.
 
   See the B7b plan (`specs/065-books-b7-audiobooks/plan.md`, `## B7b`, §2) for the full
@@ -102,7 +102,7 @@ defmodule Cinder.Library.AudiobookSources do
   def accepted_extensions, do: @accepted_extensions
 
   @doc """
-  The book equivalent of `Cinder.Library.BookSources.safe_source/1`, against the audiobook
+  The audiobook equivalent of `Cinder.Library.EbookSources.safe_source/1`, against the audiobook
   extension allow-list.
   """
   @spec safe_source(String.t()) :: {:ok, String.t()} | {:error, term()}
@@ -110,7 +110,7 @@ defmodule Cinder.Library.AudiobookSources do
 
   @doc """
   Vets the destination DIRECTORY of a track placement before it is created — the same
-  `BookSources.safe_destination/2` shape, earlier than staging, for the same reason: if
+  `EbookSources.safe_destination/2` shape, earlier than staging, for the same reason: if
   `audiobooks/Author` is a symlink pointing outside the library, `mkdir_p` would create
   `outside/Title` and only then would staging reject the path.
   """
@@ -139,7 +139,7 @@ defmodule Cinder.Library.AudiobookSources do
   def resolve(path), do: resolve(path, true)
 
   # `extract?` bounds recursion to exactly one archive-extraction attempt — see
-  # `Cinder.Library.BookSources.resolve/2`'s identical shape and reasoning.
+  # `Cinder.Library.EbookSources.resolve/2`'s identical shape and reasoning.
   defp resolve(path, extract?) do
     case Library.safe_walk(path) do
       {:ok, files} -> resolve_folder(files, extract?)
@@ -188,7 +188,7 @@ defmodule Cinder.Library.AudiobookSources do
 
   defp scratch_path?(path), do: BookArchive.scratch_dir_name() in Path.split(path)
 
-  # Identical shape/reasoning to `BookSources.archive_candidate/1` — copied, not shared, per the
+  # Identical shape/reasoning to `EbookSources.archive_candidate/1` — copied, not shared, per the
   # B7b plan's own "copy the pattern" call for genuinely different domains.
   defp archive_candidate(paths) do
     archives = Enum.filter(paths, &archive_file?/1)
@@ -278,7 +278,7 @@ defmodule Cinder.Library.AudiobookSources do
   # `ID3` (the near-universal tag header) or a raw MPEG frame sync (`0xFF` followed by three set
   # high bits) for MP3; an `ftyp` box at offset 4 naming one of the three real-world M4B/MP4
   # major brands for M4B — the same positive-identification discipline
-  # `BookSources.verify_magic/2` already applies.
+  # `EbookSources.verify_magic/2` already applies.
   defp verify_magic(path, format) do
     case fs().read_prefix(path, 12) do
       {:ok, prefix} -> if magic?(prefix, format), do: :ok, else: {:error, :format_mismatch}
@@ -351,7 +351,7 @@ defmodule Cinder.Library.AudiobookSources do
 
   # Lowercased, separator-collapsed basename with every track-number idiom stripped
   # (`track 03`, `part 3`, `disc 1`, `cd2`, or a bare number at the position a track number is
-  # conventionally written) — mirrors `BookSources.stem/1`'s own normalization plus the token
+  # conventionally written) — mirrors `EbookSources.stem/1`'s own normalization plus the token
   # strip. All candidates must reduce to the SAME stem; see `check_mixed_filenames/1`.
   @track_token ~r/\b(?:track|part|disc|cd)?\s*0?\d{1,3}\b/iu
 

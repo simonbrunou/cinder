@@ -223,7 +223,7 @@ current source rather than assumed:
    the extraction itself") without evaluating the consequence: `Cinder.Download.BookPoller` runs
    its whole tick synchronously in one `GenServer`, and `isolate/2` is a bare `rescue`, not a
    timeout boundary, so a hung or password-blocked `lb` on the path
-   `import_with_stage_handoff -> import_one -> do_import_one -> BookImport`/
+   `import_with_stage_handoff -> import_one -> do_import_one -> EbookImport`/
    `AudiobookImport.import_grab -> BookArchive.extract/3 -> Rar.list_entries/2` would have
    blocked every subsequent tick, import, Audiobookshelf scan, and ops-log write for every book
    and audiobook target, indefinitely, not merely delayed the one archive being listed. Unlike

@@ -1,7 +1,7 @@
 defmodule Cinder.Library.AudiobookImport do
   @moduledoc """
   Publishes a downloaded audiobook's ordered track set into the library and records the
-  resulting `book_files` rows — the `Cinder.Library.BookImport` sibling, and the one place the
+  resulting `book_files` rows — the `Cinder.Library.EbookImport` sibling, and the one place the
   roadmap's "a multi-track audiobook is imported atomically as one target" and "no mixed-book
   imports" questions are actually answered.
 
@@ -22,7 +22,7 @@ defmodule Cinder.Library.AudiobookImport do
      (`StagedImport.reconcile/0` retries the journal on its own schedule) — never re-imported.
 
   Nothing about two-phase commit is reimplemented here; every step reuses `StagedImport` and
-  `Cinder.Books.Files` exactly as `BookImport` does.
+  `Cinder.Books.Files` exactly as `EbookImport` does.
   """
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget}
@@ -34,7 +34,7 @@ defmodule Cinder.Library.AudiobookImport do
   Imports `grab`'s completed multi-track payload for its audiobook target.
 
   Returns `{:ok, book_files}` (one row per track) or, with `opts[:replace]` superseding a genuine
-  prior set, `{:ok, book_files, superseded_paths}` — mirroring `BookImport.import_grab/2`'s own
+  prior set, `{:ok, book_files, superseded_paths}` — mirroring `EbookImport.import_grab/2`'s own
   return shape, generalized from one file to a list. See its docs for the shared `opts[:replace]`
   contract; `record/4` below forwards it to `Cinder.Books.Files.record_import_set/3` unchanged.
   """
@@ -126,7 +126,7 @@ defmodule Cinder.Library.AudiobookImport do
     }
   end
 
-  # Same reasoning as `BookImport`'s own `recorded_size/3`: when nothing was placed, the
+  # Same reasoning as `EbookImport`'s own `recorded_size/3`: when nothing was placed, the
   # destination already held a file, so the recorded size describes what is ACTUALLY there.
   defp recorded_size(true, source, _dest) do
     case fs().lstat(source) do

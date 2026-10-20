@@ -6,7 +6,7 @@ defmodule Cinder.Acquisition.BookScorerTest do
     async: true,
     parameterize: [%{kind: :ebook}, %{kind: :audiobook}]
 
-  alias Cinder.Acquisition.{AudiobookRelease, BookKind, BookRelease, BookScorer}
+  alias Cinder.Acquisition.{AudiobookRelease, BookKind, BookScorer, EbookRelease}
 
   # Works drawn from the B0 frozen corpus so the scorer and the identity resolver are exercised on
   # one vocabulary (see test/support/fixtures/books/corpus-v1.json).
@@ -19,7 +19,7 @@ defmodule Cinder.Acquisition.BookScorerTest do
   # comfortably inside its band.
   @kinds %{
     ebook: %{
-      struct: BookRelease,
+      struct: EbookRelease,
       fmt: "epub",
       alt: "mobi",
       refused: "pdf",

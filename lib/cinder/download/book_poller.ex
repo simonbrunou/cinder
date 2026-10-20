@@ -6,7 +6,7 @@ defmodule Cinder.Download.BookPoller do
      records the client's progress and, on completion, stores the delivered path. A dead
      download drops the grab and returns the target to plain `:monitored`, so an operator can
      pick another release.
-  2. **import_downloaded** — publishes each completed grab through `Cinder.Library.BookImport`
+  2. **import_downloaded** — publishes each completed grab through `Cinder.Library.EbookImport`
      (or `Cinder.Library.AudiobookImport`) and arms its target `:available`.
   3. **request_audiobookshelf_scans** — when any `:available` audiobook target has not been told
      about yet (`audiobookshelf_scanned_at: nil`), requests exactly ONE whole-library rescan
@@ -17,10 +17,11 @@ defmodule Cinder.Download.BookPoller do
 
   **There is no search pass, and that is the milestone gate.** The video pollers sweep
   `:requested` titles into `Cinder.Download.start/1`, which calls the scorer's automatic
-  selection. `Cinder.Acquisition.Books` deliberately exports no `best_book_release/2` — the
-  roadmap enables automatic choice only once corpus precision is measured — so a book download
-  begins only where an operator chose the release. Adding a sweep here would route around that
-  gate, so this poller only ever advances downloads that already exist.
+  selection. `Cinder.Acquisition.Ebooks`/`Audiobooks` deliberately export no
+  `best_book_release/2` — the roadmap enables automatic choice only once corpus precision is
+  measured — so a book download begins only where an operator chose the release. Adding a sweep
+  here would route around that gate, so this poller only ever advances downloads that already
+  exist.
 
   Holds no in-flight state: every tick re-derives its work from the DB, so it recovers cleanly
   after a crash/restart.
@@ -33,7 +34,7 @@ defmodule Cinder.Download.BookPoller do
   alias Cinder.Download
   alias Cinder.Download.Watch
   alias Cinder.Library
-  alias Cinder.Library.{AudiobookImport, AudiobookServer, BookImport, StagedImport}
+  alias Cinder.Library.{AudiobookImport, AudiobookServer, EbookImport, StagedImport}
   alias Cinder.Notifier
 
   @default_interval 5_000
@@ -376,7 +377,7 @@ defmodule Cinder.Download.BookPoller do
   end
 
   defp do_import_one(%BookGrab{} = grab, %BookTarget{media_kind: :ebook} = target) do
-    handle_import_result(BookImport.import_grab(grab, replace: grab.replace), grab, target)
+    handle_import_result(EbookImport.import_grab(grab, replace: grab.replace), grab, target)
   end
 
   defp do_import_one(%BookGrab{} = grab, %BookTarget{media_kind: :audiobook} = target) do

@@ -152,7 +152,7 @@ defmodule Cinder.Acquisition.BookParser do
 
   @doc """
   Parses a release name of book kind `kind` into the name-derived fields of its release struct
-  (`Cinder.Acquisition.BookRelease` for `:ebook`, `Cinder.Acquisition.AudiobookRelease` for
+  (`Cinder.Acquisition.EbookRelease` for `:ebook`, `Cinder.Acquisition.AudiobookRelease` for
   `:audiobook`).
 
   The result carries a `narrator` key only for a `narrated?` kind, so it never names a field the

@@ -206,7 +206,7 @@ defmodule Cinder.Library.BookArchiveTest do
     end
 
     # The direct regression test for the B7b defect: `finish/2` originally had clauses only for
-    # `{:ok, _source, _format}` (3-tuple, `BookSources`' own resolve_fun shape) and
+    # `{:ok, _source, _format}` (3-tuple, `EbookSources`' own resolve_fun shape) and
     # `{:error, _reason}` — so `Cinder.Library.AudiobookSources`' resolve_fun, which returns
     # `{:ok, ordered_tracks}` (a 2-tuple), raised `FunctionClauseError` on every SUCCESSFUL
     # audiobook extraction, caught only by the poller's `isolate/2` rescue as an opaque logged
@@ -251,7 +251,7 @@ defmodule Cinder.Library.BookArchiveTest do
     end
 
     # `opts` defaulting to `[]` (the 3rd-arity clause's default) is exactly what
-    # `Cinder.Library.BookSources.resolve/1`'s own 2-arity call site relies on unchanged.
+    # `Cinder.Library.EbookSources.resolve/1`'s own 2-arity call site relies on unchanged.
     test "opts default to [] — a 2-arity call keeps the extractor's own default ceiling", %{
       downloads: downloads
     } do

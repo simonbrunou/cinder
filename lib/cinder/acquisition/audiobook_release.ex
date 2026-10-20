@@ -3,19 +3,19 @@ defmodule Cinder.Acquisition.AudiobookRelease do
   A candidate audiobook release: the indexer-reported fields plus the attributes parsed from its
   name.
 
-  The `Cinder.Acquisition.BookRelease` sibling for audiobooks, and a separate struct rather than
-  more nil columns on that one, for the same reason `BookRelease`'s own moduledoc gives against
+  The `Cinder.Acquisition.EbookRelease` sibling for audiobooks, and a separate struct rather than
+  more nil columns on that one, for the same reason `EbookRelease`'s own moduledoc gives against
   merging into `Cinder.Acquisition.Release`: an audiobook release has no resolution, source, or
-  codec, and a book release has no `narrator`.
+  codec, and an e-book release has no `narrator`.
 
-  `formats` is a list, not one value, for the same multi-format-bundle reason `BookRelease`
+  `formats` is a list, not one value, for the same multi-format-bundle reason `EbookRelease`
   documents.
 
   `narrator` is a best-effort, informational-only field parsed from `"(Narrated by Ray Porter)"` /
   `"[Read by ...]"` patterns in the release name. It is never a scorer gate — see
   `Cinder.Acquisition.BookScorer`'s moduledoc for why.
 
-  `query_origins` records identity-scoped and free-text provenance exactly as `BookRelease` does.
+  `query_origins` records identity-scoped and free-text provenance exactly as `EbookRelease` does.
   """
   alias Cinder.Acquisition.BookParser
 

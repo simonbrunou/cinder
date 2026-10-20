@@ -28,6 +28,9 @@ inspecting the running app over guessing.
   correct under a racing poller.
 - New behaviour ⇒ a test. New service config ⇒ **not** a new env var: add a setting definition to
   `Cinder.Settings.Registry` instead (config is in-app, overlaid on env bootstrap).
+- A `Book*` module serves the whole book family (e-books and audiobooks, see `GLOSSARY.md`). A
+  module for one kind alone is named `Ebook*` or `Audiobook*`; `test/code_health_test.exs` fails
+  on a `Book*` module that has an `Audiobook*` sibling.
 - Keep diffs minimal and trace each change to the request; `credo --strict` and warnings-as-errors
   must stay clean.
 

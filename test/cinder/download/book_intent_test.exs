@@ -12,7 +12,7 @@ defmodule Cinder.Download.BookIntentTest do
 
   import Mox
 
-  alias Cinder.Acquisition.BookRelease
+  alias Cinder.Acquisition.EbookRelease
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget}
   alias Cinder.Catalog
@@ -66,7 +66,11 @@ defmodule Cinder.Download.BookIntentTest do
 
       assert {:ok, _grab} = Download.grab_book_target(target, release())
 
-      other = %BookRelease{release() | title: "Another Edition", download_url: "magnet:?xt=other"}
+      other = %EbookRelease{
+        release()
+        | title: "Another Edition",
+          download_url: "magnet:?xt=other"
+      }
 
       assert {:error, :download_intent_busy} = Download.grab_book_target(target, other)
       assert [%BookGrab{download_id: "remote-1"}] = Repo.all(BookGrab)
@@ -182,7 +186,7 @@ defmodule Cinder.Download.BookIntentTest do
       {:ok, audiobook} = Books.ensure_target(Books.get_work(target.work_id), :audiobook)
 
       # No ClientMock expectation: reaching the downloader at all fails this test. Nothing below
-      # `grab_book_target/2` is audiobook-aware — `BookSources` accepts `.epub`/`.azw3`/`.mobi`
+      # `grab_book_target/2` is audiobook-aware — `EbookSources` accepts `.epub`/`.azw3`/`.mobi`
       # only — so an e-book release here would publish an EPUB into the audiobook root and report
       # the audiobook available.
       assert {:error, :unsupported_media_kind} = Download.grab_book_target(audiobook, release())
@@ -243,7 +247,7 @@ defmodule Cinder.Download.BookIntentTest do
 
       assert {:ok, %BookGrab{}} = Download.grab_book_target(target, release(), replace: true)
 
-      other = %BookRelease{
+      other = %EbookRelease{
         release()
         | title: "A Different Release",
           download_url: "magnet:?xt=other"
@@ -285,7 +289,7 @@ defmodule Cinder.Download.BookIntentTest do
       # No ClientMock expectation: reaching the client at all would fail this test. A book
       # release that survived scoring can still carry a nil URL (an indexer result missing its
       # link), and `reserve_intent/1`'s binary-URL guard is what stops it becoming a reservation.
-      urlless = %BookRelease{release() | download_url: nil}
+      urlless = %EbookRelease{release() | download_url: nil}
 
       assert {:error, :unsupported_download_url} = Download.grab_book_target(target, urlless)
       assert Repo.all(Intent) == []
@@ -294,7 +298,7 @@ defmodule Cinder.Download.BookIntentTest do
   end
 
   defp release do
-    %BookRelease{
+    %EbookRelease{
       title: "Le Guin - The Dispossessed (EPUB)",
       download_url: "magnet:?xt=urn:btih:abc",
       protocol: :torrent,

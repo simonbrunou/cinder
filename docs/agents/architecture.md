@@ -91,7 +91,7 @@ through the choke-points.
 ## Imports go through the staged import
 
 Every file an import places in a library goes through `Cinder.Library.StagedImport`. The stager
-(`Cinder.Library`, `BookImport`, `AudiobookImport`) places the files. `commit/2` hands the
+(`Cinder.Library`, `EbookImport`, `AudiobookImport`) places the files. `commit/2` hands the
 caller's Catalog or Books write the stage ids, and that write marks them committed inside its own
 transaction. The journal then settles each file: a committed one runs its post-commit effects, and
 everything else rolls back. Callers never look inside the handle; the one value they read is its

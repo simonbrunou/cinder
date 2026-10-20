@@ -4,7 +4,7 @@ defmodule Cinder.Library.BookArchive.EntryPath do
   `Cinder.Library.BookArchive.Rar`: an entry's raw NAME (as reported by whichever archive's own
   listing) is not a filesystem path yet, and both extractors validate it the same way before
   ever writing a byte — a hostile or malformed name is refused outright (the whole archive, not
-  just that one entry), matching `Cinder.Library.BookSources`'s own "never pick, refuse"
+  just that one entry), matching `Cinder.Library.EbookSources`'s own "never pick, refuse"
   discipline.
   """
 

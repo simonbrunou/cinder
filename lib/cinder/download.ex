@@ -18,7 +18,7 @@ defmodule Cinder.Download do
   alias Cinder.Acquisition.{
     AnimePreferences,
     AudiobookRelease,
-    BookRelease,
+    EbookRelease,
     HouseholdPolicy,
     Release
   }
@@ -196,7 +196,7 @@ defmodule Cinder.Download do
   @doc """
   Durably submits an operator-chosen book release for `target` and creates its grab.
 
-  A `%BookRelease{}`/`%AudiobookRelease{}` is converted to the `%Release{}` the intent journal
+  An `%EbookRelease{}`/`%AudiobookRelease{}` is converted to the `%Release{}` the intent journal
   and every download client already speak: the client only ever needs a title, a URL and a
   protocol, and giving the behaviour a third release struct would fork four adapters to carry
   fields none of them read. The book-specific evidence stays in the books tables, not in the
@@ -207,7 +207,7 @@ defmodule Cinder.Download do
   through it would ask the video policy engine a question with no meaning here.
 
   Two concrete clauses, one per live book media kind — each pattern-matches BOTH the target's
-  `media_kind` AND the release struct's own type, so a `%BookRelease{}` can never reach the
+  `media_kind` AND the release struct's own type, so an `%EbookRelease{}` can never reach the
   audiobook path (or an `%AudiobookRelease{}` the e-book path) by accident: the type match is the
   safety rail, not merely the `media_kind` field. The two clauses are copied scaffolding, not
   shared — the *dispatch* shape (check `Intent`, reserve-or-reconcile) is identical, but the
@@ -222,7 +222,7 @@ defmodule Cinder.Download do
   """
   def grab_book_target(target, release, opts \\ [])
 
-  def grab_book_target(%BookTarget{media_kind: :ebook} = target, %BookRelease{} = release, opts) do
+  def grab_book_target(%BookTarget{media_kind: :ebook} = target, %EbookRelease{} = release, opts) do
     case Repo.get_by(Intent, kind: :book_target, target_id: target.id) do
       nil ->
         reserve_and_reconcile(:book_target, target.id, [], book_release(release), opts)
@@ -258,7 +258,7 @@ defmodule Cinder.Download do
   # A book release carries no mapping or policy snapshot: both are video-pipeline evidence (an
   # episode-numbering decision and an Anime language policy). Left nil, `Intent`'s validators
   # accept them and the reservation's equality checks pass unchanged.
-  defp book_release(%BookRelease{} = release) do
+  defp book_release(%EbookRelease{} = release) do
     %Release{
       title: release.title,
       download_url: release.download_url,
@@ -1340,7 +1340,7 @@ defmodule Cinder.Download do
   # pre-#415 one-shot removal instead of corrupting the new intent: no durable record for THIS
   # attempt, but nothing hijacked either. A logged `context` names what raced; the legacy
   # unfenced callers (`nil`, no durable owner to begin with) pass none. Public (not `defp`) so
-  # `Cinder.Library.BookImport`/`AudiobookImport`/`Cinder.Download.BookPoller` can reach it
+  # `Cinder.Library.EbookImport`/`AudiobookImport`/`Cinder.Download.BookPoller` can reach it
   # directly for `fence_book_cleanup/1`'s own `:mismatch` degrade.
   @doc false
   def fallback_remove(protocol, download_id, context \\ nil) do

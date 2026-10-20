@@ -1,9 +1,9 @@
-defmodule Cinder.Acquisition.BooksTest do
+defmodule Cinder.Acquisition.EbooksTest do
   use Cinder.DataCase, async: true
 
   import Mox
 
-  alias Cinder.Acquisition.Books
+  alias Cinder.Acquisition.Ebooks
   alias Cinder.Acquisition.IndexerMock
 
   setup :verify_on_exit!
@@ -49,7 +49,7 @@ defmodule Cinder.Acquisition.BooksTest do
         {:ok, []}
       end)
 
-      assert {:ok, [], true} = Books.search(@work)
+      assert {:ok, [], true} = Ebooks.search(@work)
 
       assert_received {:structured, "Ursula K. Le Guin", "The Dispossessed"}
       assert_received {:free_text, "The Dispossessed Ursula K. Le Guin"}
@@ -66,7 +66,7 @@ defmodule Cinder.Acquisition.BooksTest do
 
       expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:ok, []} end)
 
-      assert {:ok, [], true} = Books.search(work)
+      assert {:ok, [], true} = Ebooks.search(work)
 
       # Collected in mailbox order and compared as a LIST: independent assert_received/1 calls
       # search the mailbox selectively, so they pass even when the queries ran in another order —
@@ -90,10 +90,10 @@ defmodule Cinder.Acquisition.BooksTest do
 
       expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:ok, []} end)
 
-      assert {:ok, [], true} = Books.search(work)
+      assert {:ok, [], true} = Ebooks.search(work)
 
       # The plan never exceeds what max_queries/0 advertises, and that number is the real bound.
-      assert Books.max_queries() == 5
+      assert Ebooks.max_queries() == 5
     end
 
     test "a work with no author still searches by title" do
@@ -109,7 +109,7 @@ defmodule Cinder.Acquisition.BooksTest do
         {:ok, []}
       end)
 
-      assert {:ok, [], true} = Books.search(%{title: "Beowulf", authors: []})
+      assert {:ok, [], true} = Ebooks.search(%{title: "Beowulf", authors: []})
 
       assert_received {:structured, nil, "Beowulf"}
       assert_received {:free_text, "Beowulf"}
@@ -128,18 +128,18 @@ defmodule Cinder.Acquisition.BooksTest do
         {:ok, [%{shared | query_origins: [:free_text]}]}
       end)
 
-      assert {:ok, [release], true} = Books.search(@work)
+      assert {:ok, [release], true} = Ebooks.search(@work)
       assert Enum.sort(release.query_origins) == [:free_text, :id_scoped]
     end
 
-    test "parses each result into a BookRelease" do
+    test "parses each result into an EbookRelease" do
       expect(IndexerMock, :search_book, fn _author, _title, _opts ->
         {:ok, [indexer_result("Ursula K. Le Guin - The Dispossessed (epub) [retail]")]}
       end)
 
       expect(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
 
-      assert {:ok, [release], true} = Books.search(@work)
+      assert {:ok, [release], true} = Ebooks.search(@work)
       assert release.formats == [:epub]
       assert release.retail? == true
     end
@@ -155,14 +155,14 @@ defmodule Cinder.Acquisition.BooksTest do
         {:ok, [indexer_result("Ursula K. Le Guin - The Dispossessed (epub)")]}
       end)
 
-      assert {:ok, [_release], false} = Books.search(@work)
+      assert {:ok, [_release], false} = Ebooks.search(@work)
     end
 
     test "every query failing is an error, so an outage is never read as an absence" do
       expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:error, :timeout} end)
       expect(IndexerMock, :search_book_query, fn _query, _opts -> {:error, :timeout} end)
 
-      assert {:error, :indexer_unavailable} = Books.search(@work)
+      assert {:error, :indexer_unavailable} = Ebooks.search(@work)
     end
   end
 
@@ -180,7 +180,7 @@ defmodule Cinder.Acquisition.BooksTest do
       expect(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
 
       assert {:ok, %{accepted: accepted, rejected: rejected, complete?: true}} =
-               Books.candidates(@work)
+               Ebooks.candidates(@work)
 
       assert [{release, %{format: :epub}}] = accepted
       assert release.title == "Ursula K. Le Guin - The Dispossessed (epub)"
@@ -193,7 +193,7 @@ defmodule Cinder.Acquisition.BooksTest do
       expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:error, :timeout} end)
       expect(IndexerMock, :search_book_query, fn _query, _opts -> {:error, :timeout} end)
 
-      assert {:error, :indexer_unavailable} = Books.candidates(@work)
+      assert {:error, :indexer_unavailable} = Ebooks.candidates(@work)
     end
   end
 
@@ -243,7 +243,7 @@ defmodule Cinder.Acquisition.BooksTest do
         {:ok, []}
       end)
 
-      assert {:ok, [], true} = Books.search(loaded)
+      assert {:ok, [], true} = Ebooks.search(loaded)
 
       assert_received {:query, "9780060512750"}
       assert_received {:structured, "Ursula K. Le Guin", "The Dispossessed"}
@@ -283,7 +283,7 @@ defmodule Cinder.Acquisition.BooksTest do
         {:ok, []}
       end)
 
-      assert {:ok, [], true} = Books.search(loaded)
+      assert {:ok, [], true} = Ebooks.search(loaded)
 
       refute_received {:query, "9999999999999"}
     end
@@ -323,7 +323,7 @@ defmodule Cinder.Acquisition.BooksTest do
       expect(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
 
       assert {:ok, %{accepted: [], rejected: [{_release, :author_mismatch}]}} =
-               Books.candidates(loaded)
+               Ebooks.candidates(loaded)
     end
 
     test "ISBN probes follow publication date, not insert order" do
@@ -371,7 +371,7 @@ defmodule Cinder.Acquisition.BooksTest do
         {:ok, []}
       end)
 
-      assert {:ok, [], true} = Books.search(loaded)
+      assert {:ok, [], true} = Ebooks.search(loaded)
 
       # Newest three by release_date, newest first. The UNDATED edition sorts last and never gets
       # a probe, even though it was inserted most recently.
@@ -417,13 +417,13 @@ defmodule Cinder.Acquisition.BooksTest do
       expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:ok, [series_named]} end)
       expect(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
 
-      assert {:ok, %{accepted: [{accepted, _evidence}], rejected: []}} = Books.candidates(loaded)
+      assert {:ok, %{accepted: [{accepted, _evidence}], rejected: []}} = Ebooks.candidates(loaded)
       assert accepted.title == series_named.title
     end
   end
 
   test "no automatic selection function is exported in this slice" do
-    refute function_exported?(Books, :best_book_release, 1)
-    refute function_exported?(Books, :best_book_release, 2)
+    refute function_exported?(Ebooks, :best_book_release, 1)
+    refute function_exported?(Ebooks, :best_book_release, 2)
   end
 end

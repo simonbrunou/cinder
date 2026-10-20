@@ -1,15 +1,15 @@
-defmodule Cinder.Library.BookSources do
+defmodule Cinder.Library.EbookSources do
   @moduledoc """
-  Resolves a completed book download to exactly one accepted file, or an explained refusal.
+  Resolves a completed e-book download to exactly one accepted file, or an explained refusal.
 
-  The books sibling of `Cinder.Library.MovieSources`, and the validation half of B4's "validate
+  The e-book sibling of `Cinder.Library.MovieSources`, and the validation half of B4's "validate
   downloaded files/archives before publication".
 
   ## What each guarantee is actually enforced by
 
   - **regular files only, no traversal, no symlink escape** — `Cinder.Library.PathPolicy` `lstat`s
     every path component and refuses anything that is not a regular file under a configured import
-    root. Reused through `Cinder.Library.safe_walk/1` and `safe_book_source/1`, never
+    root. Reused through `Cinder.Library.safe_walk/1` and `safe_source_file/2`, never
     reimplemented here.
   - **no executable substitution** — the extension list is a *positive* allow-list, so a
     `book.epub.exe`, a bare ELF, or a `.pdf` scan is `:no_book_file` rather than something to
@@ -67,7 +67,7 @@ defmodule Cinder.Library.BookSources do
   def accepted_extensions, do: Enum.map(BookKind.accepted_formats(:ebook), &".#{&1}")
 
   @doc """
-  The book equivalent of `Cinder.Library.safe_source_file/1`.
+  The e-book equivalent of `Cinder.Library.safe_source_file/1`.
 
   Same containment and lstat-every-component symlink refusal, different extension allow-list.
   A separate function rather than a parameter on the video one so a book extension can never

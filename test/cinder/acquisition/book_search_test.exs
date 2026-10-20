@@ -9,7 +9,7 @@ defmodule Cinder.Acquisition.BookSearchTest do
 
   import Mox
 
-  alias Cinder.Acquisition.{Audiobooks, Books, IndexerMock}
+  alias Cinder.Acquisition.{Audiobooks, Ebooks, IndexerMock}
 
   setup :verify_on_exit!
 
@@ -17,7 +17,7 @@ defmodule Cinder.Acquisition.BookSearchTest do
   # its identifiers under, and one identifier of the kind's preferred provider.
   @kinds %{
     ebook: %{
-      search: Books,
+      search: Ebooks,
       structured: :search_book,
       text: :search_book_query,
       identifiers_key: :isbns,

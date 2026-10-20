@@ -87,7 +87,7 @@ defmodule Cinder.BooksB0ContractTest do
        "a completed download is published and the target goes available"}
     ],
     "import naming" => [
-      {"test/cinder/library/book_naming_test.exs",
+      {"test/cinder/library/ebook_naming_test.exs",
        "preserves the release filename verbatim, including scene noise"}
     ],
     "Booklore filesystem handoff" => [

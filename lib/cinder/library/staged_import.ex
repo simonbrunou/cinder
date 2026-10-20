@@ -4,7 +4,7 @@ defmodule Cinder.Library.StagedImport do
   catalog write that records them commits (GLOSSARY.md). Every movie, episode and book import
   goes through it.
 
-  A stager (`Cinder.Library`, `Cinder.Library.BookImport`, `Cinder.Library.AudiobookImport`)
+  A stager (`Cinder.Library`, `Cinder.Library.EbookImport`, `Cinder.Library.AudiobookImport`)
   builds the handle with `new/0`, `place/5`, `after_commit/4` and `put_record/2`. Everyone else
   treats it as opaque: they pass it to `commit/2` with their Catalog or Books write, or abandon it
   with `rollback/1`. The one value a caller reads is the stager's **record** (`record/1`), the

@@ -1,6 +1,6 @@
-defmodule Cinder.Library.BookNaming do
+defmodule Cinder.Library.EbookNaming do
   @moduledoc """
-  Where an imported book lands: `root/Author/Title/<original filename>`.
+  Where an imported e-book lands: `root/Author/Title/<original filename>`.
 
   ## The filename is the release's, on purpose
 

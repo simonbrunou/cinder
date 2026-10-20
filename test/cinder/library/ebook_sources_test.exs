@@ -1,4 +1,4 @@
-defmodule Cinder.Library.BookSourcesTest do
+defmodule Cinder.Library.EbookSourcesTest do
   @moduledoc """
   The validation gate between a completed download and publication.
 
@@ -9,7 +9,7 @@ defmodule Cinder.Library.BookSourcesTest do
   use ExUnit.Case, async: false
 
   alias Cinder.Acquisition.BookKind
-  alias Cinder.Library.BookSources
+  alias Cinder.Library.EbookSources
 
   setup %{tmp_dir: tmp} do
     downloads = Path.join(tmp, "downloads")
@@ -40,7 +40,7 @@ defmodule Cinder.Library.BookSourcesTest do
       path = Path.join(downloads, "The Dispossessed.epub")
       File.write!(path, epub_bytes())
 
-      assert {:ok, ^path, :epub} = BookSources.resolve(path)
+      assert {:ok, ^path, :epub} = EbookSources.resolve(path)
     end
 
     test "a folder resolves to its single accepted file", %{downloads: downloads} do
@@ -52,7 +52,7 @@ defmodule Cinder.Library.BookSourcesTest do
       File.write!(Path.join(dir, "readme.txt"), "scene notes")
       File.write!(Path.join(dir, "cover.jpg"), "jpeg")
 
-      assert {:ok, ^book, :epub} = BookSources.resolve(dir)
+      assert {:ok, ^book, :epub} = EbookSources.resolve(dir)
     end
 
     test "a multi-format release of ONE book takes the preferred format", %{downloads: downloads} do
@@ -65,7 +65,7 @@ defmodule Cinder.Library.BookSourcesTest do
 
       # One book offered three ways is not an ambiguity, and epub outranks azw3 outranks mobi —
       # the same order `BookScorer` accepts releases on.
-      assert {:ok, ^epub, :epub} = BookSources.resolve(dir)
+      assert {:ok, ^epub, :epub} = EbookSources.resolve(dir)
     end
 
     test "format preference is the scorer's, not alphabetical", %{downloads: downloads} do
@@ -75,7 +75,7 @@ defmodule Cinder.Library.BookSourcesTest do
       File.write!(azw3, mobi_bytes())
       File.write!(Path.join(dir, "book.mobi"), mobi_bytes())
 
-      assert {:ok, ^azw3, :azw3} = BookSources.resolve(dir)
+      assert {:ok, ^azw3, :azw3} = EbookSources.resolve(dir)
     end
 
     test "stem matching ignores separator and case noise", %{downloads: downloads} do
@@ -85,7 +85,7 @@ defmodule Cinder.Library.BookSourcesTest do
       File.write!(epub, epub_bytes())
       File.write!(Path.join(dir, "the.dispossessed.mobi"), mobi_bytes())
 
-      assert {:ok, ^epub, :epub} = BookSources.resolve(dir)
+      assert {:ok, ^epub, :epub} = EbookSources.resolve(dir)
     end
   end
 
@@ -98,7 +98,7 @@ defmodule Cinder.Library.BookSourcesTest do
       File.write!(Path.join(dir, "Book One.epub"), epub_bytes())
       File.write!(Path.join(dir, "Book Two.epub"), epub_bytes())
 
-      assert {:error, :ambiguous_book_files} = BookSources.resolve(dir)
+      assert {:error, :ambiguous_book_files} = EbookSources.resolve(dir)
     end
 
     test "a payload with no accepted file is refused", %{downloads: downloads} do
@@ -106,14 +106,14 @@ defmodule Cinder.Library.BookSourcesTest do
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "readme.txt"), "nothing here")
 
-      assert {:error, :no_book_file} = BookSources.resolve(dir)
+      assert {:error, :no_book_file} = EbookSources.resolve(dir)
     end
 
     test "a pdf is not an accepted format", %{downloads: downloads} do
       path = Path.join(downloads, "scan.pdf")
       File.write!(path, "%PDF")
 
-      assert {:error, :no_book_file} = BookSources.resolve(path)
+      assert {:error, :no_book_file} = EbookSources.resolve(path)
     end
 
     test "an executable masquerading as a book is refused", %{downloads: downloads} do
@@ -122,7 +122,7 @@ defmodule Cinder.Library.BookSourcesTest do
       # The allow-list is positive, so the compound extension never reads as `.epub`.
       File.write!(Path.join(dir, "book.epub.exe"), "MZ")
 
-      assert {:error, :no_book_file} = BookSources.resolve(dir)
+      assert {:error, :no_book_file} = EbookSources.resolve(dir)
     end
 
     for extension <- ~w(.7z .r00) do
@@ -135,7 +135,7 @@ defmodule Cinder.Library.BookSourcesTest do
 
         # `.7z` is never parsed at all; a lone `.r00` with no `.rar` main present alongside it
         # is not a resolvable split-volume set either way.
-        assert {:error, :unsupported_archive} = BookSources.resolve(dir)
+        assert {:error, :unsupported_archive} = EbookSources.resolve(dir)
       end
     end
 
@@ -149,7 +149,7 @@ defmodule Cinder.Library.BookSourcesTest do
 
         # These extensions ARE now extracted (see the "archive extraction" describe block below)
         # - garbage content is refused by the extractor itself, one level deeper than before.
-        assert {:error, :archive_corrupt} = BookSources.resolve(dir)
+        assert {:error, :archive_corrupt} = EbookSources.resolve(dir)
       end
     end
 
@@ -160,7 +160,7 @@ defmodule Cinder.Library.BookSourcesTest do
       File.write!(Path.join(dir, "extras.rar"), "archive")
 
       # The archive may hold anything, including a second book; refusing is the honest answer.
-      assert {:error, :unsupported_archive} = BookSources.resolve(dir)
+      assert {:error, :unsupported_archive} = EbookSources.resolve(dir)
     end
 
     test "a symlink escaping the import root is never followed", %{
@@ -177,7 +177,7 @@ defmodule Cinder.Library.BookSourcesTest do
       # `PathPolicy.walk/2` yields only regular files and directories, so a symlink is dropped
       # before it can become a candidate — the payload then genuinely holds no book. The escape
       # is refused because the link is invisible, not because it was resolved and then rejected.
-      assert {:error, :no_book_file} = BookSources.resolve(dir)
+      assert {:error, :no_book_file} = EbookSources.resolve(dir)
     end
 
     test "a symlinked payload path itself is refused", %{downloads: downloads, tmp_dir: tmp} do
@@ -190,7 +190,7 @@ defmodule Cinder.Library.BookSourcesTest do
 
       # `safe_components/3` lstats every component of the walked root, so a symlinked payload
       # directory fails containment outright rather than walking the target's contents.
-      assert {:error, :unsafe_source} = BookSources.resolve(link)
+      assert {:error, :unsafe_source} = EbookSources.resolve(link)
     end
 
     test "a payload with two different books sharing one name is refused", %{downloads: downloads} do
@@ -203,14 +203,14 @@ defmodule Cinder.Library.BookSourcesTest do
       File.write!(Path.join([dir, "Retail", "Foundation.epub"]), epub_bytes())
       File.write!(Path.join([dir, "Proof", "Foundation.epub"]), epub_bytes())
 
-      assert {:error, :ambiguous_book_files} = BookSources.resolve(dir)
+      assert {:error, :ambiguous_book_files} = EbookSources.resolve(dir)
     end
 
     test "a path outside the import roots is refused", %{tmp_dir: tmp} do
       outside = Path.join(tmp, "elsewhere.epub")
       File.write!(outside, "book")
 
-      assert {:error, _reason} = BookSources.resolve(outside)
+      assert {:error, _reason} = EbookSources.resolve(outside)
     end
   end
 
@@ -235,7 +235,7 @@ defmodule Cinder.Library.BookSourcesTest do
         {~c"book.epub", epub_bytes()}
       ])
 
-      assert {:ok, path, :epub} = BookSources.resolve(dir)
+      assert {:ok, path, :epub} = EbookSources.resolve(dir)
       assert Path.basename(path) == "book.epub"
       assert File.read!(path) == epub_bytes()
     end
@@ -248,7 +248,7 @@ defmodule Cinder.Library.BookSourcesTest do
         {~c"book.epub", epub_bytes()}
       ])
 
-      assert {:ok, _path, :epub} = BookSources.resolve(dir)
+      assert {:ok, _path, :epub} = EbookSources.resolve(dir)
     end
 
     test "re-resolving the same folder is idempotent", %{downloads: downloads} do
@@ -259,15 +259,15 @@ defmodule Cinder.Library.BookSourcesTest do
         {~c"book.epub", epub_bytes()}
       ])
 
-      assert {:ok, path, :epub} = BookSources.resolve(dir)
-      assert {:ok, ^path, :epub} = BookSources.resolve(dir)
+      assert {:ok, path, :epub} = EbookSources.resolve(dir)
+      assert {:ok, ^path, :epub} = EbookSources.resolve(dir)
     end
 
     test "a bare zip file (not inside a folder) extracts the same way", %{downloads: downloads} do
       path = Path.join(downloads, "release.zip")
       :zip.create(String.to_charlist(path), [{~c"book.epub", epub_bytes()}])
 
-      assert {:ok, extracted, :epub} = BookSources.resolve(path)
+      assert {:ok, extracted, :epub} = EbookSources.resolve(path)
       assert extracted != path
       assert File.read!(extracted) == epub_bytes()
     end
@@ -283,7 +283,7 @@ defmodule Cinder.Library.BookSourcesTest do
 
       :zip.create(String.to_charlist(Path.join(dir, "outer.zip")), [{~c"inner.zip", inner_bytes}])
 
-      assert {:error, :unsupported_archive} = BookSources.resolve(dir)
+      assert {:error, :unsupported_archive} = EbookSources.resolve(dir)
     end
 
     test "two distinct zip archives in one folder refuse, never a size guess", %{
@@ -294,7 +294,7 @@ defmodule Cinder.Library.BookSourcesTest do
       :zip.create(String.to_charlist(Path.join(dir, "a.zip")), [{~c"a.epub", epub_bytes()}])
       :zip.create(String.to_charlist(Path.join(dir, "b.zip")), [{~c"b.epub", epub_bytes()}])
 
-      assert {:error, :unsupported_archive} = BookSources.resolve(dir)
+      assert {:error, :unsupported_archive} = EbookSources.resolve(dir)
     end
 
     test "an unrelated file alongside a zip refuses, mixed content is not auto-expanded", %{
@@ -309,7 +309,7 @@ defmodule Cinder.Library.BookSourcesTest do
 
       File.write!(Path.join(dir, "readme.txt"), "notes")
 
-      assert {:error, :unsupported_archive} = BookSources.resolve(dir)
+      assert {:error, :unsupported_archive} = EbookSources.resolve(dir)
     end
 
     test "a lone rar extracts through the external unrar binary", %{
@@ -323,7 +323,7 @@ defmodule Cinder.Library.BookSourcesTest do
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "release.rar"), "not really parsed, the fake binary decides")
 
-      assert {:ok, path, :epub} = BookSources.resolve(dir)
+      assert {:ok, path, :epub} = EbookSources.resolve(dir)
       assert Path.basename(path) == "book.epub"
     end
 
@@ -340,7 +340,7 @@ defmodule Cinder.Library.BookSourcesTest do
       File.write!(Path.join(dir, "release.r00"), "volume 2")
       File.write!(Path.join(dir, "release.r01"), "volume 3")
 
-      assert {:ok, path, :epub} = BookSources.resolve(dir)
+      assert {:ok, path, :epub} = EbookSources.resolve(dir)
       assert Path.basename(path) == "book.epub"
     end
 
@@ -354,12 +354,12 @@ defmodule Cinder.Library.BookSourcesTest do
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "release.rar"), "archive")
 
-      assert {:error, :unsupported_archive} = BookSources.resolve(dir)
+      assert {:error, :unsupported_archive} = EbookSources.resolve(dir)
     end
   end
 
   test "accepted_extensions/0 tracks the e-book kind's format list" do
-    assert BookSources.accepted_extensions() ==
+    assert EbookSources.accepted_extensions() ==
              Enum.map(BookKind.accepted_formats(:ebook), &".#{&1}")
   end
 
@@ -371,35 +371,35 @@ defmodule Cinder.Library.BookSourcesTest do
       path = Path.join(downloads, "book.epub")
       File.write!(path, <<0x7F, "ELF", 2, 1, 1, 0, 0::size(64)>> <> String.duplicate("\0", 64))
 
-      assert {:error, :format_mismatch} = BookSources.resolve(path)
+      assert {:error, :format_mismatch} = EbookSources.resolve(path)
     end
 
     test "a PE executable renamed .epub is refused", %{downloads: downloads} do
       path = Path.join(downloads, "book.epub")
       File.write!(path, "MZ" <> String.duplicate("\0", 128))
 
-      assert {:error, :format_mismatch} = BookSources.resolve(path)
+      assert {:error, :format_mismatch} = EbookSources.resolve(path)
     end
 
     test "a real EPUB is accepted", %{downloads: downloads} do
       path = Path.join(downloads, "book.epub")
       File.write!(path, epub_bytes())
 
-      assert {:ok, ^path, :epub} = BookSources.resolve(path)
+      assert {:ok, ^path, :epub} = EbookSources.resolve(path)
     end
 
     test "a real MOBI is accepted", %{downloads: downloads} do
       path = Path.join(downloads, "book.mobi")
       File.write!(path, mobi_bytes())
 
-      assert {:ok, ^path, :mobi} = BookSources.resolve(path)
+      assert {:ok, ^path, :mobi} = EbookSources.resolve(path)
     end
 
     test "a truncated file too short to carry a signature is refused", %{downloads: downloads} do
       path = Path.join(downloads, "book.epub")
       File.write!(path, "PK")
 
-      assert {:error, :format_mismatch} = BookSources.resolve(path)
+      assert {:error, :format_mismatch} = EbookSources.resolve(path)
     end
 
     test "a plain ZIP renamed .epub is refused", %{downloads: downloads} do
@@ -409,7 +409,7 @@ defmodule Cinder.Library.BookSourcesTest do
       path = Path.join(downloads, "book.epub")
       File.write!(path, <<"PK", 3, 4>> <> String.duplicate("\0", 96))
 
-      assert {:error, :format_mismatch} = BookSources.resolve(path)
+      assert {:error, :format_mismatch} = EbookSources.resolve(path)
     end
   end
 

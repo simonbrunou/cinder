@@ -2,7 +2,7 @@ defmodule Cinder.Acquisition.Audiobooks do
   @moduledoc """
   Audiobook release search: the `:audiobook` query plan, run by `Cinder.Acquisition.BookSearch`.
 
-  The `Cinder.Acquisition.Books` sibling for audiobooks. It searches, parses, and explains. It
+  The `Cinder.Acquisition.Ebooks` sibling for audiobooks. It searches, parses, and explains. It
   does **not** select, grab, or write anything: there is deliberately no
   `best_audiobook_release/2`, for the reason `BookSearch` gives.
 

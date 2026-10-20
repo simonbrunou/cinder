@@ -691,7 +691,7 @@ defmodule Cinder.Download.BookPollerTest do
       %{target: target, release_dir: release_dir} = downloading(ctx, "book.epub")
       dir = release_dir
       File.rm!(Path.join(dir, "book.epub"))
-      # `.7z` is the one archive shape `Cinder.Library.BookSources` never even attempts to
+      # `.7z` is the one archive shape `Cinder.Library.EbookSources` never even attempts to
       # extract (see its own "archive extraction" test coverage) — unlike `.zip`/`.rar`, it
       # cannot depend on whether the test box happens to have the external `unrar` binary.
       File.write!(Path.join(dir, "book.7z"), "archive")
@@ -1232,7 +1232,7 @@ defmodule Cinder.Download.BookPollerTest do
       assert Books.blocked_release_titles(target.id) == ["Ambiguous Retail Release"]
 
       # The ORIGINAL file is untouched: the import errors before `Files.record_import/3` is ever
-      # reached (`BookSources.resolve/1` fails first), so `maybe_supersede/3` never ran.
+      # reached (`EbookSources.resolve/1` fails first), so `maybe_supersede/3` never ran.
       assert File.read!(old_dest) == epub_bytes()
       assert [%BookFile{path: ^old_dest}] = Repo.all(BookFile)
       assert Repo.all(BookGrab) == []
@@ -1348,7 +1348,7 @@ defmodule Cinder.Download.BookPollerTest do
     end
   end
 
-  # A conforming EPUB OCF container prefix — what `BookSources`' signature check requires: a
+  # A conforming EPUB OCF container prefix — what `EbookSources`' signature check requires: a
   # 30-byte stored-entry local file header, then the mandatory `mimetype` entry and its content.
   defp epub_bytes do
     <<"PK", 3, 4, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 0, 0, 0, 20, 0, 0, 0, 8, 0, 0,

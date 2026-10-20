@@ -3,7 +3,7 @@ defmodule Cinder.Acquisition.BookSearch do
   Bounded release search and candidate evaluation for the book family, run from one book kind's
   query plan.
 
-  `Cinder.Acquisition.Books` (e-books) and `Cinder.Acquisition.Audiobooks` each hold one plan and
+  `Cinder.Acquisition.Ebooks` (e-books) and `Cinder.Acquisition.Audiobooks` each hold one plan and
   are the modules callers use. This module runs a plan: it searches, parses, and explains. It does
   **not** select, grab, or write anything.
 
@@ -25,7 +25,7 @@ defmodule Cinder.Acquisition.BookSearch do
 
     * `media_kind` — the book kind. Only that kind's editions supply identifiers. It also picks
       the indexer callbacks (`search_book/3` and `search_book_query/2`, or the `search_audiobook`
-      pair) and the release struct (`BookRelease` or `AudiobookRelease`), which
+      pair) and the release struct (`EbookRelease` or `AudiobookRelease`), which
       `Cinder.Acquisition.BookScorer` reads the kind back from. Those map one to one onto the
       kind, so they are not plan fields.
     * `identifier_providers` — the identifier providers to probe, in priority order.
@@ -58,7 +58,7 @@ defmodule Cinder.Acquisition.BookSearch do
 
   require Logger
 
-  alias Cinder.Acquisition.{AudiobookRelease, BookKind, BookRelease, BookScorer}
+  alias Cinder.Acquisition.{AudiobookRelease, BookKind, BookScorer, EbookRelease}
   alias Cinder.Books.{Edition, Identifier, Work}
 
   @max_identifier_queries 3
@@ -73,7 +73,7 @@ defmodule Cinder.Acquisition.BookSearch do
           identifiers_key: atom()
         }
 
-  @type release :: BookRelease.t() | AudiobookRelease.t()
+  @type release :: EbookRelease.t() | AudiobookRelease.t()
 
   @doc """
   The most indexer queries one book search can issue, for either book kind.
@@ -176,10 +176,10 @@ defmodule Cinder.Acquisition.BookSearch do
   defp text_query(:ebook, query), do: indexer().search_book_query(query, [])
   defp text_query(:audiobook, query), do: indexer().search_audiobook_query(query, [])
 
-  defp release(:ebook, raw), do: BookRelease.new(raw)
+  defp release(:ebook, raw), do: EbookRelease.new(raw)
   defp release(:audiobook, raw), do: AudiobookRelease.new(raw)
 
-  defp log_label(:ebook), do: "books search"
+  defp log_label(:ebook), do: "ebooks search"
   defp log_label(:audiobook), do: "audiobooks search"
 
   # Dedupe by download_url, preserving first-seen order and unioning query_origins so a release

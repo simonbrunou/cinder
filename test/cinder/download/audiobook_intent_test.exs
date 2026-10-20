@@ -9,7 +9,7 @@ defmodule Cinder.Download.AudiobookIntentTest do
 
   import Mox
 
-  alias Cinder.Acquisition.{AudiobookRelease, BookRelease}
+  alias Cinder.Acquisition.{AudiobookRelease, EbookRelease}
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget}
   alias Cinder.Catalog
@@ -87,11 +87,11 @@ defmodule Cinder.Download.AudiobookIntentTest do
       assert Repo.all(BookGrab) == []
     end
 
-    test "an audiobook target is refused a BookRelease before any reservation" do
+    test "an audiobook target is refused an EbookRelease before any reservation" do
       target = monitored_audiobook_target()
 
       assert {:error, :unsupported_media_kind} =
-               Download.grab_book_target(target, %BookRelease{
+               Download.grab_book_target(target, %EbookRelease{
                  title: "Le Guin - The Dispossessed (EPUB)",
                  download_url: "magnet:?xt=urn:btih:abc",
                  protocol: :torrent,

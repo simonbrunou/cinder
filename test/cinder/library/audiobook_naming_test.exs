@@ -2,7 +2,7 @@ defmodule Cinder.Library.AudiobookNamingTest do
   @moduledoc """
   Destination naming for audiobook tracks. Pure functions — no filesystem, no Repo.
 
-  Unlike `BookNamingTest`, every destination here is derived ONLY from (Author, Title, disc,
+  Unlike `EbookNamingTest`, every destination here is derived ONLY from (Author, Title, disc,
   track order) — never from a source filename, which this module deliberately never even takes
   as an argument. See the module's own moduledoc for why: determinism across two different
   uploaders' releases of the same book.

@@ -88,6 +88,23 @@ defmodule Cinder.CodeHealthTest do
              Enum.join(offenders, "\n  ")
   end
 
+  # #757: `Book*` names the book family, e-books and audiobooks together. A `Book*` module beside
+  # an `Audiobook*` sibling is the e-book half of a pair, so it is named `Ebook*` instead.
+  test "no Book* module has an Audiobook* sibling" do
+    modules = Application.spec(:cinder, :modules)
+
+    offenders =
+      for module <- modules,
+          [last | parent] = module |> Module.split() |> Enum.reverse(),
+          "Audiobook" <> rest <- [last],
+          counterpart = Module.concat(Enum.reverse(["Book" <> rest | parent])),
+          counterpart in modules,
+          do: "#{inspect(counterpart)} (sibling of #{inspect(module)})"
+
+    assert offenders == [],
+           "an e-book-only module is named Ebook*, not Book*:\n  " <> Enum.join(offenders, "\n  ")
+  end
+
   # `Phoenix.LiveView.TagEngine.Parser`/`Tokenizer` are `@moduledoc false` — private
   # phoenix_live_view API, not a documented contract. If a future phoenix_live_view upgrade
   # changes these token shapes, this test breaks loudly at `mix test` time; that is

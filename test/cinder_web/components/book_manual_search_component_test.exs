@@ -5,12 +5,12 @@ defmodule CinderWeb.BookManualSearchHostLive do
   @moduledoc false
   use Phoenix.LiveView
 
-  alias Cinder.Acquisition.BookRelease
+  alias Cinder.Acquisition.EbookRelease
   alias Cinder.Books.BookTarget
 
   @results %{
     accepted: [
-      {%BookRelease{title: "Author - Title (EPUB)", download_url: "url-a", protocol: :torrent},
+      {%EbookRelease{title: "Author - Title (EPUB)", download_url: "url-a", protocol: :torrent},
        %{format: :epub, formats: [:epub], language: nil, retail?: false, size: 2_000_000}}
     ],
     rejected: [],
@@ -46,7 +46,7 @@ defmodule CinderWeb.BookManualSearchComponentTest do
 
   import Phoenix.LiveViewTest
 
-  alias Cinder.Acquisition.{AudiobookRelease, BookRelease, BookScorer}
+  alias Cinder.Acquisition.{AudiobookRelease, BookScorer, EbookRelease}
   alias Cinder.Books.BookTarget
   alias CinderWeb.BookManualSearchComponent
   alias Phoenix.LiveView.Socket
@@ -64,7 +64,7 @@ defmodule CinderWeb.BookManualSearchComponentTest do
   end
 
   defp release(title, attrs \\ %{}),
-    do: BookRelease.new(Map.merge(%{title: title, download_url: "u", protocol: :torrent}, attrs))
+    do: EbookRelease.new(Map.merge(%{title: title, download_url: "u", protocol: :torrent}, attrs))
 
   defp evidence(attrs \\ %{}),
     do:
@@ -248,7 +248,7 @@ defmodule CinderWeb.BookManualSearchComponentTest do
 
     lv |> element("button[phx-value-index='0']", "Grab") |> render_click()
 
-    assert_receive {:grabbed, %BookRelease{download_url: "url-a"}}
+    assert_receive {:grabbed, %EbookRelease{download_url: "url-a"}}
   end
 
   test "a grab event through the real update/2 flow, with :results genuinely never assigned, is a no-op — not a crash" do

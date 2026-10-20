@@ -60,7 +60,7 @@ defmodule Cinder.Download.ContentPolicy do
   @default_blocked_extensions ~w(.lnk .exe .bat .cmd .com .scr .pif .msi .vbs .js .ps1 .zipx)
 
   # Every format a book importer publishes, read from `BookKind` rather than listed here so it
-  # cannot drift from what `BookSources` and `AudiobookSources` accept.
+  # cannot drift from what `EbookSources` and `AudiobookSources` accept.
   @book_extensions for kind <- BookKind.all(),
                        format <- BookKind.accepted_formats(kind),
                        do: ".#{format}"

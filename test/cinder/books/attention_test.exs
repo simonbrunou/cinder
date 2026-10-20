@@ -3,7 +3,7 @@ defmodule Cinder.Books.AttentionTest do
 
   import Mox
 
-  alias Cinder.Acquisition.BookRelease
+  alias Cinder.Acquisition.EbookRelease
   alias Cinder.Books
   alias Cinder.Books.{Attention, BookGrab, BookTarget}
   alias Cinder.Download
@@ -116,7 +116,7 @@ defmodule Cinder.Books.AttentionTest do
   end
 
   defp release do
-    %BookRelease{
+    %EbookRelease{
       title: "Le Guin - The Dispossessed (EPUB)",
       download_url: "magnet:?xt=urn:btih:abc",
       protocol: :torrent,

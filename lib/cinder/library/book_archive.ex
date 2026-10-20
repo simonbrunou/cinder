@@ -1,12 +1,12 @@
 defmodule Cinder.Library.BookArchive do
   @moduledoc """
   Dispatches a single archive file to the right bounded extractor
-  (`Cinder.Library.BookArchive.Zip` or `.Rar`), then hands the result to
-  `Cinder.Library.BookSources.resolve/1` — the same function every other candidate goes
-  through, so extraction cannot widen what publishes and the ambiguity/multi-format rules stay
-  exactly what they already are.
+  (`Cinder.Library.BookArchive.Zip` or `.Rar`), then hands the result to the caller's resolver
+  (`Cinder.Library.EbookSources.resolve/1`, or `Cinder.Library.AudiobookSources`' own) — the
+  same function every other candidate of that kind goes through, so extraction cannot widen what
+  publishes and the ambiguity/multi-format rules stay exactly what they already are.
 
-  `.7z` and everything else `Cinder.Library.BookSources`'s own `archive_file?/1` still flags is
+  `.7z` and everything else `Cinder.Library.EbookSources`'s own `archive_file?/1` still flags is
   deliberately not dispatched here — those extensions never reach `extract_and_resolve/2` at
   all, and stay the plain `:unsupported_archive` refusal.
 
@@ -29,7 +29,7 @@ defmodule Cinder.Library.BookArchive do
     extraction from the same, untouched original archive — not a second, differently-named
     artifact competing with the first as a loose candidate file.
 
-  `Cinder.Library.BookSources.resolve_folder/1`'s own directory walk excludes this exact
+  `Cinder.Library.EbookSources.resolve_folder/1`'s own directory walk excludes this exact
   reserved name unconditionally (`scratch_dir_name/0`), so neither a fresh nor an orphaned
   instance is ever mistaken for a second, unrelated book file.
   """
@@ -57,7 +57,7 @@ defmodule Cinder.Library.BookArchive do
   dispatches to — both `Zip.extract/3` and `Rar.extract/3` already accept and apply it, but this
   module itself never passed any until `Cinder.Library.AudiobookSources.resolve/1` needed the
   audiobook profile's own 8 GB ceiling instead of the e-book-tuned 1 GB extractor default.
-  `Cinder.Library.BookSources.resolve/1`'s own call site is unchanged: `opts` defaults to `[]`,
+  `Cinder.Library.EbookSources.resolve/1`'s own call site is unchanged: `opts` defaults to `[]`,
   exactly what it passed by omission before this arity grew.
   """
   @spec extract_and_resolve(String.t(), (String.t() -> result), keyword()) ::
@@ -106,7 +106,7 @@ defmodule Cinder.Library.BookArchive do
   end
 
   # Generic on purpose: `resolve_fun`'s own type is `(String.t() -> result) when result: term()`
-  # (see `extract_and_resolve/3`'s spec) — `BookSources.resolve/1`'s resolve_fun returns a
+  # (see `extract_and_resolve/3`'s spec) — `EbookSources.resolve/1`'s resolve_fun returns a
   # 3-tuple (`{:ok, source, format}`), `Cinder.Library.AudiobookSources.resolve/1`'s returns a
   # 2-tuple (`{:ok, tracks}`). A clause that only matched the 3-tuple shape left every SUCCESSFUL
   # audiobook extraction raising `FunctionClauseError` here (caught only by the poller's

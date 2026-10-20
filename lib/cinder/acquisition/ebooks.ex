@@ -1,10 +1,10 @@
-defmodule Cinder.Acquisition.Books do
+defmodule Cinder.Acquisition.Ebooks do
   @moduledoc """
   E-book release search: the `:ebook` query plan, run by `Cinder.Acquisition.BookSearch`.
 
-  The books sibling of `Cinder.Acquisition`'s movie/TV search paths, and the whole of B4a's public
-  surface. It searches, parses, and explains. It does **not** select, grab, or write anything:
-  there is deliberately no `best_book_release/2`, for the reason `BookSearch` gives.
+  The e-book sibling of `Cinder.Acquisition`'s movie/TV search paths, and the whole of B4a's
+  public surface. It searches, parses, and explains. It does **not** select, grab, or write
+  anything: there is deliberately no `best_book_release/2`, for the reason `BookSearch` gives.
 
   ## The plan
 
@@ -15,7 +15,7 @@ defmodule Cinder.Acquisition.Books do
   its ISBNs under `:isbns`.
   """
 
-  alias Cinder.Acquisition.{BookRelease, BookSearch}
+  alias Cinder.Acquisition.{BookSearch, EbookRelease}
   alias Cinder.Books.Work
 
   @plan %{media_kind: :ebook, identifier_providers: ["isbn"], identifiers_key: :isbns}
@@ -31,14 +31,14 @@ defmodule Cinder.Acquisition.Books do
   (with `:author`) preloaded, or a plain map with `:title`, `:authors`, and optionally `:isbns`
   and `:series`.
 
-  Returns `{:ok, [%BookRelease{}], complete?}`, or `{:error, reason}` when every query failed —
+  Returns `{:ok, [%EbookRelease{}], complete?}`, or `{:error, reason}` when every query failed —
   see `BookSearch.search/2`.
 
   Takes no options: the queries are derived entirely from the plan and the work, and the scoring
   options belong to `candidates/2`. An `opts` here would be a parameter that reads as meaningful
   and changes nothing.
   """
-  @spec search(Work.t() | map()) :: {:ok, [BookRelease.t()], boolean()} | {:error, term()}
+  @spec search(Work.t() | map()) :: {:ok, [EbookRelease.t()], boolean()} | {:error, term()}
   def search(work), do: BookSearch.search(work, @plan)
 
   @doc """

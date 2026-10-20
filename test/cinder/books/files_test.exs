@@ -88,7 +88,7 @@ defmodule Cinder.Books.FilesTest do
                Books.Files.record_import(target, attrs, replace: true)
 
       # Attempt 2: the replay, with IDENTICAL attrs — exactly what a crashed-and-retried import
-      # tick produces (BookNaming computes the same destination path deterministically).
+      # tick produces (EbookNaming computes the same destination path deterministically).
       assert {:ok, second_file, []} = Books.Files.record_import(target, attrs, replace: true)
 
       assert second_file.id == first_file.id

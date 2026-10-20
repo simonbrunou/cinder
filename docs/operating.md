@@ -721,7 +721,7 @@ same work can be neither, either, or both.
 library root being set, though in practice you configure both together.
 
 **There is no automatic release search for books, by design.** Unlike movies/TV, `BookPoller`
-runs no search sweep at all — `Cinder.Acquisition.Books`/`Audiobooks` export no automatic-release
+runs no search sweep at all — `Cinder.Acquisition.Ebooks`/`Audiobooks` export no automatic-release
 function, a deliberate gate pending a corpus-precision measurement the roadmap has not yet taken.
 Once a target is approved, an admin opens **manual search** on `/books/:id`, where Cinder ranks
 Prowlarr's book/audiobook candidates for the admin to choose from, scoring each against:

@@ -3,14 +3,14 @@ defmodule Cinder.Acquisition.BookScorerKindTest do
   # `book_scorer_test.exs`.
   use ExUnit.Case, async: true
 
-  alias Cinder.Acquisition.{AudiobookRelease, BookRelease, BookScorer}
+  alias Cinder.Acquisition.{AudiobookRelease, BookScorer, EbookRelease}
 
   @beloved %{title: "Beloved", authors: ["Toni Morrison"]}
   @dune %{title: "Dune", authors: ["Frank Herbert"]}
   @hail_mary %{title: "Project Hail Mary", authors: ["Andy Weir"]}
 
   defp ebook(title),
-    do: BookRelease.new(%{title: title, size: 2_000_000, download_url: "u", protocol: :torrent})
+    do: EbookRelease.new(%{title: title, size: 2_000_000, download_url: "u", protocol: :torrent})
 
   defp audiobook(title),
     do:

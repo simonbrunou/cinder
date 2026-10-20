@@ -1,8 +1,8 @@
-defmodule Cinder.Acquisition.BookRelease do
+defmodule Cinder.Acquisition.EbookRelease do
   @moduledoc """
-  A candidate book release: the indexer-reported fields plus the attributes parsed from its name.
+  A candidate e-book release: the indexer-reported fields plus the attributes parsed from its name.
 
-  The books sibling of `Cinder.Acquisition.Release`, and a separate struct rather than more nil
+  The e-book sibling of `Cinder.Acquisition.Release`, and a separate struct rather than more nil
   columns on that one. A book release has no resolution, source, codec, season or episode list,
   and a video release has no format set or author segment; `Cinder.LibraryKind` already keeps the
   two families apart deliberately (`video?: false` opts a book kind out of every video
@@ -55,7 +55,7 @@ defmodule Cinder.Acquisition.BookRelease do
   ]
 
   @doc """
-  Builds a `BookRelease` from an indexer result map, parsing name-derived attributes from the
+  Builds an `EbookRelease` from an indexer result map, parsing name-derived attributes from the
   `:title`.
   """
   def new(%{title: title} = indexer_map) do
