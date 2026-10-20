@@ -19,9 +19,9 @@ defmodule Cinder.Books.Adoption do
 
   `Cinder.Books.import_resolution/1` is itself a `Repo.transaction` whose call graph reaches
   `Repo.rollback/1` on ordinary failures. Calling it from inside this module's own transaction
-  would nest a second transaction/rollback boundary inside the first — exactly the failure
-  `Cinder.Books.Files`'s own `arm_target/1` comment warns about ("aborts the ENCLOSING transaction
-  too... turns a status mismatch into a poisoned connection rather than a handleable error"). So
+  would nest a second transaction/rollback boundary inside the first: an inner `Repo.rollback/1`
+  aborts the ENCLOSING transaction too, turning an ordinary failure into a poisoned connection
+  rather than a handleable error. So
   `adopt_work/3` calls the *non-transactional* folds `Books.import_work_in_tx/2` and
   `Books.stamp_identifier_in_tx/3` directly, inside its own transaction, never `import_resolution/1`
   itself.
@@ -31,6 +31,7 @@ defmodule Cinder.Books.Adoption do
 
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget, Files}
+  alias Cinder.GuardedWrite
   alias Cinder.Repo
 
   @arm_statuses [:unmonitored, :monitored, :available]
@@ -71,12 +72,9 @@ defmodule Cinder.Books.Adoption do
      (`[:monitored, :available]`): `ensure_target/2` creates a target at the schema default
      `:unmonitored`, which is what the overwhelming majority of migrated works actually are — a
      `[:monitored, :available]` guard would match zero rows and fail nearly every real adoption.
-     `:held` is already refused by step 4, so it never reaches this write. Not
-     `Books.transition_target/3`: its single-`expect:` `Repo.rollback` semantics do not compose
-     with three acceptable starting statuses, and its broadcast would fire inside this transaction
-     — the same two reasons `Files.record_import/3`'s own `arm_target/1` stays a module-local
-     guarded write instead.
-  7. Post-commit: `Books.broadcast/1` sends `{:book_target_updated, target}` — no new topic.
+     `:held` is already refused by step 4, so it never reaches this write.
+  7. Post-commit: the guarded write's `{:book_target_updated, target}`, sent as the
+     `Cinder.GuardedWrite.transaction/2` commits — no new topic.
 
   Ordering note: steps 1–2 run before step 3's grab check, not after, unlike the plan prose's own
   step numbering — both orders are externally identical because the whole thing is one
@@ -94,7 +92,7 @@ defmodule Cinder.Books.Adoption do
              | term()}
   def adopt_work(resolution, files, media_kind, _opts \\ [])
       when is_map(resolution) and is_list(files) and files != [] and is_atom(media_kind) do
-    Repo.transaction(
+    GuardedWrite.transaction(
       fn ->
         with {:ok, work} <- do_import(resolution),
              {:ok, target} <- Books.ensure_target(work, media_kind),
@@ -109,7 +107,6 @@ defmodule Cinder.Books.Adoption do
       end,
       mode: :immediate
     )
-    |> publish()
   end
 
   defp do_import(%{work: work, provider: provider, bookshelf_foreign_id: foreign_id}) do
@@ -139,22 +136,9 @@ defmodule Cinder.Books.Adoption do
     end)
   end
 
-  defp arm_available(%BookTarget{id: id}) do
-    now = DateTime.utc_now(:second)
-
-    case Repo.update_all(
-           from(t in BookTarget, where: t.id == ^id and t.status in ^@arm_statuses, select: t),
-           set: [status: :available, hold_reason: nil, updated_at: now]
-         ) do
-      {1, [armed]} -> {:ok, armed}
-      {0, _none} -> {:error, :stale_status}
-    end
-  end
-
-  defp publish({:ok, target}) do
-    Books.broadcast({:book_target_updated, target})
-    {:ok, target}
-  end
-
-  defp publish(error), do: error
+  defp arm_available(%BookTarget{} = target),
+    do:
+      Books.transition_target(target, %{status: :available, hold_reason: nil},
+        expect: @arm_statuses
+      )
 end

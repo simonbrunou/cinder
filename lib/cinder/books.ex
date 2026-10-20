@@ -30,6 +30,7 @@ defmodule Cinder.Books do
   }
 
   alias Cinder.Catalog.Profile
+  alias Cinder.GuardedWrite
   alias Cinder.HTTPPolicy
   alias Cinder.LibraryKind
   alias Cinder.Notifier
@@ -297,9 +298,13 @@ defmodule Cinder.Books do
     end
   end
 
-  def transition_target(%BookTarget{} = target, attrs, opts) do
-    {expected, opts} = Keyword.pop!(opts, :expect)
-    BookTargetTransition.guarded(target, attrs, expected, opts)
+  @doc """
+  The books context's guarded status write (`Cinder.GuardedWrite`): writes `attrs` to `target`
+  only while its status is still `expect:` (one status or a list). `{:error, :stale_status}`
+  otherwise. Publishes `{:book_target_updated, target}` after commit.
+  """
+  def transition_target(%BookTarget{} = target, attrs, expect: expected) do
+    GuardedWrite.write(BookTargetTransition, target, attrs, status: {:in, List.wrap(expected)})
   end
 
   @doc """
@@ -355,8 +360,8 @@ defmodule Cinder.Books do
 
   defp tap_block_release({:ok, held} = ok, release_title, reason) do
     maybe_block_release(held, release_title, reason)
-    # `held` came from `Repo.update_all(select: t)` (see `transition_target/3` →
-    # `BookTargetTransition.guarded/4`) — no `:work` preload, so notifying with it directly
+    # `held` came from the guarded write's `RETURNING` (`transition_target/3`) — no `:work`
+    # preload, so notifying with it directly
     # would leave `book_title/1` on every transport falling back to "book target #<id>",
     # dropping the one fact the notification exists to carry. Reload through the same
     # `get_target/1` every other reader of a held target uses.
@@ -520,42 +525,31 @@ defmodule Cinder.Books do
   `:available`, rolling the import back — and `BookPoller.do_import_one/2`'s `:stale_status`
   clause just deletes the grab and returns `:ok`, silently losing an already-downloaded file.
 
-  The status transition and a `book_grabs` non-existence check run inside one
-  `Repo.transaction/1`, refusing with `{:error, :grab_in_progress}` if a grab for the target
-  exists — closing the race rather than narrowing it — and with `{:error, :stale_status}` when
-  the target is not `:monitored`, as the caller read it or since.
+  The status transition and a `book_grabs` non-existence check run inside one transaction,
+  refusing with `{:error, :grab_in_progress}` if a grab for the target exists — closing the race
+  rather than narrowing it — and with `{:error, :stale_status}` when the target is not
+  `:monitored`, as the caller read it or since.
   """
   @spec pause_target(BookTarget.t()) ::
           {:ok, BookTarget.t()} | {:error, :grab_in_progress | :stale_status}
   def pause_target(%BookTarget{id: id} = target) do
-    Repo.transaction(fn ->
+    GuardedWrite.transaction(fn ->
       grab_in_progress? = grab_in_progress?(id)
 
       cond do
-        Attention.offers?(target, grab_in_progress?, :pause) -> do_pause(id)
+        Attention.offers?(target, grab_in_progress?, :pause) -> pause(target)
         Attention.offers?(target, false, :pause) -> Repo.rollback(:grab_in_progress)
         true -> Repo.rollback(:stale_status)
       end
     end)
-    |> publish_pause()
   end
 
-  defp do_pause(id) do
-    case Repo.update_all(
-           from(t in BookTarget, where: t.id == ^id and t.status == :monitored, select: t),
-           set: [status: :unmonitored, updated_at: DateTime.utc_now(:second)]
-         ) do
-      {1, [updated]} -> updated
-      {0, _none} -> Repo.rollback(:stale_status)
+  defp pause(target) do
+    case transition_target(target, %{status: :unmonitored}, expect: :monitored) do
+      {:ok, paused} -> paused
+      {:error, reason} -> Repo.rollback(reason)
     end
   end
-
-  defp publish_pause({:ok, target}) do
-    broadcast({:book_target_updated, target})
-    {:ok, target}
-  end
-
-  defp publish_pause(error), do: error
 
   @doc """
   Resumes an `:unmonitored` target to `:monitored`. `profile_id` is untouched — it was set at
@@ -605,41 +599,32 @@ defmodule Cinder.Books do
   onto one would flip the request to approved and tell the requester Cinder is looking for a
   copy while nothing ever searches. The admin has to clear the hold first.
 
-  Pass `publish: false` when calling inside a transaction and broadcast
-  `{:book_target_updated, target}` yourself after commit.
+  Inside a `Cinder.GuardedWrite.transaction/2` (the approval), the write publishes when that
+  transaction commits.
 
   The kind check is here rather than in `BookTarget.transition_changeset/2` because that
   changeset has no `%Profile{}` to inspect. `book_targets_profile_integrity_update` is the DB
-  fence behind it, but it fires under `update_all`, which raises rather than returning a
-  changeset — so a mismatch is refused before the write, not caught after it.
+  fence behind it, refused as `{:error, :invalid_media_profile}` too.
   """
-  def monitor_target(work, media_kind, profile, opts \\ [])
-
-  def monitor_target(%Work{} = work, media_kind, %Profile{kind: kind} = profile, opts)
+  def monitor_target(%Work{} = work, media_kind, %Profile{kind: kind} = profile)
       when kind == media_kind do
     with {:ok, target} <- ensure_target(work, media_kind) do
-      arm(target, profile, opts)
+      arm(target, profile)
     end
   end
 
-  def monitor_target(%Work{}, _media_kind, %Profile{}, _opts),
-    do: {:error, :invalid_media_profile}
+  def monitor_target(%Work{}, _media_kind, %Profile{}), do: {:error, :invalid_media_profile}
 
-  defp arm(%BookTarget{status: :held}, _profile, _opts), do: {:error, :target_held}
+  defp arm(%BookTarget{status: :held}, _profile), do: {:error, :target_held}
 
-  defp arm(%BookTarget{status: status} = target, profile, opts) do
+  defp arm(%BookTarget{status: status} = target, profile) do
     next = if status == :unmonitored, do: :monitored, else: status
-
-    transition_target(
-      target,
-      %{status: next, profile_id: profile.id},
-      Keyword.put(opts, :expect, status)
-    )
+    transition_target(target, %{status: next, profile_id: profile.id}, expect: status)
   end
 
   @doc """
   Sets or clears an admin's language preference on a target, independent of the status pipeline
-  — unlike `transition_target/3`/`arm/3`, this never touches `:status` and carries no `:expect`
+  — unlike `transition_target/3`/`arm/2`, this never touches `:status` and carries no `:expect`
   precondition, so it is safe to call regardless of where the target is in its lifecycle (armed,
   held, available — an admin may reasonably change their mind about language after the fact).
   `language` is `nil` for "no preference" or a code `BookTarget.language_changeset/2` recognizes
@@ -818,7 +803,7 @@ defmodule Cinder.Books do
   been claimed by something else — a direct per-work approval, a different admin's confirm of the
   same author, or a prior `Cinder.Books.BibliographyRefresher` tick. A target still `:unmonitored`
   is armed (the guarded `:unmonitored -> :monitored` transition, not the approval choke-point's
-  own `arm/3`, which is `:monitored`/`:available`-write-back-compatible on purpose for the
+  own `arm/2`, which is `:monitored`/`:available`-write-back-compatible on purpose for the
   re-approval case and would otherwise silently overwrite a profile someone else deliberately
   set); anything else is skipped — no write, not counted — rather than clobbered. One candidate's
   failure or skip does not abort the batch. Returns `{:ok, created_count}`; `created_count` is
@@ -891,7 +876,8 @@ defmodule Cinder.Books do
   # what actually closes the race, not merely wrapping in a transaction. Calls `import_work_in_tx/2`
   # directly rather than the public `import_resolution/1`, which opens its OWN `:immediate`
   # transaction — nesting it here would nest a second `Repo.transaction`/rollback boundary inside
-  # this one, the same reason `Cinder.Books.Adoption.adopt_work/3` calls it directly too.
+  # this one, the same reason `Cinder.Books.Adoption.adopt_work/3` calls it directly too. The
+  # target's broadcast follows the commit (`Cinder.GuardedWrite.transaction/2`).
   # `isolate`-style exception handling, same as `import_and_monitor/2`: one candidate's exception
   # must not abort the batch.
   defp import_and_monitor_if_current(
@@ -901,7 +887,7 @@ defmodule Cinder.Books do
          policy,
          profile_id
        ) do
-    Repo.transaction(
+    GuardedWrite.transaction(
       fn ->
         if current_policy_matches?(author_id, policy, profile_id),
           do: import_and_arm_in_tx(work, provider, profile),
@@ -1081,7 +1067,7 @@ defmodule Cinder.Books do
 
   # Arms a bulk-policy candidate only while its target is still exclusively unclaimed —
   # `:unmonitored`, meaning nothing has monitored it since `preview_author_policy/2` computed
-  # `eligible`. Deliberately does NOT reuse `monitor_target/4`'s `arm/3`: that function is
+  # `eligible`. Deliberately does NOT reuse `monitor_target/3`'s `arm/2`: that function is
   # `:monitored`/`:available`-write-back-compatible on purpose, for the *approval* choke-point's
   # "a second requester approving an already-satisfied work takes the profile" case — reusing it
   # here would let a stale bulk-policy confirm silently overwrite the profile a direct approval,

@@ -6,15 +6,17 @@ defmodule Cinder.Catalog.MovieLifecycle do
   ordering, its cleanup fence, notification, telemetry and broadcast. Two rules hold for all of
   them:
 
-    * **The struct the caller passes is the expectation.** A write is one compare-and-swap,
-      `update_all ... where id and status == ^movie.status [and the verb's guard fields]`, with
-      `select:` handing back the fresh row. A miss is `{:error, :stale_status}` (or the verb's own
-      refusal atom) and writes nothing. Pollers pass the row they read at tick start, LiveViews
-      the row they rendered. Two verbs read their own row instead: `record_submission_failure/3`
-      under its intent claim, and `adopt/3` under its `:immediate` transaction.
+    * **The struct the caller passes is the expectation.** A write is one guarded write
+      (`Cinder.GuardedWrite`), `update_all ... where id and status == ^movie.status [and the
+      verb's guard fields]`, handing back the fresh row. A miss is `{:error, :stale_status}` (or
+      the verb's own refusal atom) and writes nothing. Pollers pass the row they read at tick
+      start, LiveViews the row they rendered. Two verbs read their own row instead:
+      `record_submission_failure/3` under its intent claim, and `adopt/3` under its `:immediate`
+      transaction.
     * **Publication happens once, after commit.** A committed write emits one
       `[:cinder, :transition]` (`%{kind: :movie, to: status}`) and broadcasts one
-      `{:movie_updated, movie}` on the `"movies"` topic. A refused or stale call publishes nothing.
+      `{:movie_updated, movie}` on the `"movies"` topic, as it commits and before the verb's own
+      post-commit work. A refused or stale call publishes nothing.
 
   Verbs, by phase:
 
@@ -31,13 +33,13 @@ defmodule Cinder.Catalog.MovieLifecycle do
   `{:movie_created, movie}` after commit and emit no `[:cinder, :transition]`.
   """
 
-  import Ecto.Query
   require Logger
 
   alias Cinder.Audit
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Attention, BlockedRelease, Grabs, Movie, Profiles}
+  alias Cinder.Catalog.{Attention, BlockedRelease, Grabs, Movie, MovieTransition, Profiles}
   alias Cinder.Download
+  alias Cinder.GuardedWrite
   alias Cinder.Library
   alias Cinder.Library.{ImportedQuality, ImportStage, StagedImport}
   alias Cinder.Notifier
@@ -111,7 +113,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   """
   def start_search(%Movie{status: status} = movie, imdb_id)
       when status in [:requested, :searching],
-      do: movie |> write(%{status: :searching, imdb_id: imdb_id}) |> publish()
+      do: write(movie, %{status: :searching, imdb_id: imdb_id})
 
   def start_search(%Movie{}, _imdb_id), do: {:error, :not_searchable}
 
@@ -122,8 +124,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   """
   def no_match(%Movie{status: :searching} = movie, reason)
       when reason in [:no_match, :no_language_match] do
-    with {:ok, parked} <-
-           movie |> write(%{status: :no_match, release_policy_snapshot: nil}) |> publish() do
+    with {:ok, parked} <- write(movie, %{status: :no_match, release_policy_snapshot: nil}) do
       if reason == :no_language_match, do: Notifier.notify({:movie_failed, parked, reason})
       {:ok, parked}
     end
@@ -164,7 +165,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
       |> Map.merge(extra)
       |> Map.merge(%{status: status, import_attempts: 0})
 
-    movie |> write(attrs) |> publish()
+    write(movie, attrs)
   end
 
   @doc """
@@ -185,7 +186,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
       end
     end
     |> transact()
-    |> publish_submission_failure(reason)
+    |> announce_submission_failure(reason)
   end
 
   defp submission_strike(movie) do
@@ -201,21 +202,16 @@ defmodule Cinder.Catalog.MovieLifecycle do
     end
   end
 
-  defp publish_submission_failure({:ok, :skipped}, _reason), do: :ok
+  defp announce_submission_failure({:ok, :skipped}, _reason), do: :ok
+  defp announce_submission_failure({:ok, {:counted, _movie}}, _reason), do: :ok
 
-  defp publish_submission_failure({:ok, {:counted, movie}}, _reason) do
-    publish({:ok, movie})
-    :ok
-  end
-
-  defp publish_submission_failure({:ok, {:parked, parked, intent_ids}}, reason) do
-    publish({:ok, parked})
+  defp announce_submission_failure({:ok, {:parked, parked, intent_ids}}, reason) do
     announce_park(parked, reason, reason)
     Download.cleanup_intents(intent_ids)
     :ok
   end
 
-  defp publish_submission_failure({:error, _reason} = error, _submission_reason), do: error
+  defp announce_submission_failure({:error, _reason} = error, _submission_reason), do: error
 
   # --- download and import -----------------------------------------------------------------------
 
@@ -236,7 +232,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
     if changes == %{},
       do: {:ok, movie},
-      else: movie |> write(Map.put(changes, :status, movie.status)) |> publish()
+      else: write(movie, Map.put(changes, :status, movie.status))
   end
 
   def track(%Movie{}, _metrics), do: {:error, :not_downloading}
@@ -252,11 +248,8 @@ defmodule Cinder.Catalog.MovieLifecycle do
   `content_path` and a fresh import budget. `{:error, :not_downloading}` otherwise.
   """
   def mark_downloaded(%Movie{status: :downloading} = movie, content_path)
-      when is_binary(content_path) and content_path != "" do
-    movie
-    |> write(%{status: :downloaded, content_path: content_path, import_attempts: 0})
-    |> publish()
-  end
+      when is_binary(content_path) and content_path != "",
+      do: write(movie, %{status: :downloaded, content_path: content_path, import_attempts: 0})
 
   def mark_downloaded(%Movie{}, _content_path), do: {:error, :not_downloading}
 
@@ -280,7 +273,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   """
   def import_staged(%Movie{status: status} = movie, staged)
       when status in [:downloaded, :upgrading] do
-    case StagedImport.commit(staged, &(movie |> write_available(&1, &2) |> publish())) do
+    case StagedImport.commit(staged, &write_available(movie, &1, &2)) do
       {:ok, available} ->
         after_import(movie, available)
         {:ok, available}
@@ -382,7 +375,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
       end
     end
     |> transact()
-    |> publish_with_cleanup(:stale_release)
+    |> drain_fence(:stale_release)
     |> tap(fn
       {:ok, _rejected} ->
         Download.remove_after_import(movie.download_protocol, nil, source(movie))
@@ -581,11 +574,14 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
   # A counted failure: the status stays, the budget field takes the strike, and the live speed and
   # ETA clear (whatever was moving is not moving now).
-  defp strike(movie, field, attempts) do
-    movie
-    |> write(%{field => attempts, status: movie.status, download_speed: nil, download_eta: nil})
-    |> publish()
-  end
+  defp strike(movie, field, attempts),
+    do:
+      write(movie, %{
+        field => attempts,
+        status: movie.status,
+        download_speed: nil,
+        download_eta: nil
+      })
 
   # A release a failure proves bad for this movie, so it is blocklisted (and an upgrade's client job
   # removed): every reason is either deterministic or arrives only after its retry bound.
@@ -601,10 +597,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   defp park(movie, status, reason) do
     code = reason_code(reason)
 
-    with {:ok, parked} <-
-           movie
-           |> write(%{status: status, failure_reason: reason_detail(reason)})
-           |> publish() do
+    with {:ok, parked} <- write(movie, %{status: status, failure_reason: reason_detail(reason)}) do
       announce_park(parked, reason, code)
       if proven_bad?(code), do: Grabs.block_release(parked, code)
       {:ok, parked}
@@ -664,7 +657,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
         content_path: nil
       })
 
-    with {:ok, requeued} <- movie |> fenced_write(attrs) |> publish() do
+    with {:ok, requeued} <- fenced_write(movie, attrs) do
       Notifier.notify({:movie_failed, requeued, notify_reason})
       {:ok, requeued}
     end
@@ -683,8 +676,8 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
     result =
       if code == :blocked_content or remove_payload?,
-        do: movie |> fenced_write(attrs) |> publish(),
-        else: movie |> write(attrs, [:download_id]) |> publish()
+        do: fenced_write(movie, attrs),
+        else: write(movie, attrs, [:download_id])
 
     with {:ok, reverted} <- result do
       if blocked?, do: Grabs.block_release(movie, :upgrade_failed)
@@ -700,11 +693,10 @@ defmodule Cinder.Catalog.MovieLifecycle do
   end
 
   # A stalled upgrade: revert keeping the live file, fence the stalled replacement for removal, and
-  # blocklist it as stalled before the revert is announced.
+  # blocklist it as stalled before the household is notified.
   defp reap_upgrade(movie) do
     with {:ok, reverted} <- fenced_write(movie, Map.put(@drop_download, :status, :available)) do
       Grabs.block_release(movie, :stalled)
-      publish({:ok, reverted})
       Logger.warning("movie #{movie.id} upgrade reaped: stalled replacement removed; reverted")
       Notifier.notify({:movie_upgrade_failed, reverted, :stalled})
       {:ok, reverted}
@@ -713,7 +705,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
   # A write that drops the caller's download, with that download fenced for removal in the same
   # transaction (the fence reads the caller's struct: the row's `download_id` is cleared by then).
-  # The fence drains after commit; the caller publishes.
+  # The fence drains after commit.
   defp fenced_write(movie, attrs) do
     fn ->
       with {:ok, written} <- write(movie, attrs, [:download_id]),
@@ -731,16 +723,15 @@ defmodule Cinder.Catalog.MovieLifecycle do
     origin = if status == :downloaded, do: :download, else: :upgrade
 
     with {:ok, held} <-
-           movie
-           |> write(
+           write(
+             movie,
              %{
                status: :import_failed,
                import_attempts: attempts,
                verification_hold_origin: origin
              },
              [:release_title]
-           )
-           |> publish() do
+           ) do
       Notifier.notify({:movie_failed, held, reason})
       {:ok, held}
     end
@@ -780,19 +771,17 @@ defmodule Cinder.Catalog.MovieLifecycle do
        when origin in [:download, :upgrade] do
     status = if origin == :download, do: :downloaded, else: :upgrading
 
-    movie
-    |> write(%{status: status, import_attempts: 0, verification_hold_origin: nil}, [
+    write(movie, %{status: status, import_attempts: 0, verification_hold_origin: nil}, [
       :verification_hold_origin,
       :release_title
     ])
-    |> publish()
   end
 
   defp do_retry(%Movie{} = movie) do
     attrs =
       Map.merge(@requeue_clears, %{status: :requested, search_attempts: 0, import_attempts: 0})
 
-    with {:ok, requested} <- movie |> write(attrs, [:verification_hold_origin]) |> publish() do
+    with {:ok, requested} <- write(movie, attrs, [:verification_hold_origin]) do
       Grabs.clear_stalled_blocklist(movie: movie.id)
       {:ok, requested}
     end
@@ -828,7 +817,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
       end
     end
     |> transact()
-    |> publish_with_cleanup(:not_cancellable)
+    |> drain_fence(:not_cancellable)
   end
 
   @doc """
@@ -857,7 +846,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
       end
     end
     |> transact()
-    |> publish_with_cleanup(:not_upgrading)
+    |> drain_fence(:not_upgrading)
   end
 
   defp do_abort_upgrade(%Movie{verification_hold_origin: :upgrade} = movie, actor),
@@ -881,7 +870,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
       end
     end
     |> transact()
-    |> publish_with_cleanup(miss)
+    |> drain_fence(miss)
   end
 
   # --- adoption ----------------------------------------------------------------------------------
@@ -971,10 +960,11 @@ defmodule Cinder.Catalog.MovieLifecycle do
       movie.status not in [:requested, :available] ->
         {:error, {:illegal_transition, movie.status, :available}}
 
+      # The assignment comes first, so the status write's one publication carries it.
       true ->
         with :ok <- ensure_assignment_safe(movie, assignment),
-             {:ok, adopted} <- write(movie, %{status: :available, file_path: file_path}) do
-          assign(adopted, assignment)
+             {:ok, assigned} <- assign(movie, assignment) do
+          write(assigned, %{status: :available, file_path: file_path})
         end
     end
   end
@@ -1007,62 +997,28 @@ defmodule Cinder.Catalog.MovieLifecycle do
     {:ok, movie, :created}
   end
 
-  defp publish_adoption({:ok, {movie, :existing}}) do
-    {:ok, movie} = publish({:ok, movie})
-    {:ok, movie, :existing}
-  end
-
+  defp publish_adoption({:ok, {movie, :existing}}), do: {:ok, movie, :existing}
   defp publish_adoption({:error, _reason} = error), do: error
 
-  # --- the write and its publication ---------------------------------------------------------------
+  # --- the write ---------------------------------------------------------------------------------
 
-  # The one compare-and-swap every verb writes through. The matrix check runs first, on the
-  # caller's status, so an illegal pair never reaches the database. The update then lands only if
-  # the row still holds the caller's status and each `guards` field still holds the caller's value
-  # (nil-safe), and `select:` returns the fresh row. Every attr the verb names is written, even when
-  # the caller's struct already holds that value: the struct may be stale everywhere it is not
-  # guarded. No publication: callers publish once their transaction has committed.
+  # The one guarded write every verb makes (`Cinder.GuardedWrite`, `MovieTransition`). The matrix
+  # check runs first, on the caller's status, so an illegal pair never reaches the database. The
+  # update then lands only if the row still holds the caller's status and each `guards` field
+  # still holds the caller's value (nil-safe). It publishes once, after commit: at once outside a
+  # transaction, as the frame commits inside `transact/2`.
   defp write(%Movie{} = movie, attrs, guards \\ []) do
-    changeset = Movie.transition_changeset(movie, attrs)
-    to = Ecto.Changeset.get_field(changeset, :status)
+    to = Map.get(attrs, :status, movie.status)
 
-    cond do
-      not changeset.valid? -> {:error, changeset}
-      not legal?(movie.status, to) -> {:error, {:illegal_transition, movie.status, to}}
-      true -> compare_and_swap(movie, write_set(changeset, attrs), guards)
-    end
+    if legal?(movie.status, to),
+      do: GuardedWrite.write(MovieTransition, movie, attrs, [:status | guards]),
+      else: {:error, {:illegal_transition, movie.status, to}}
   end
 
-  defp write_set(changeset, attrs) do
-    named =
-      Map.new(attrs, fn {field, _value} -> {field, Ecto.Changeset.get_field(changeset, field)} end)
-
-    named
-    |> Map.merge(changeset.changes)
-    |> Map.put(:updated_at, Catalog.now())
-    |> Map.to_list()
-  end
-
-  defp compare_and_swap(movie, set, guards) do
-    query =
-      Enum.reduce(
-        guards,
-        from(m in Movie, where: m.id == ^movie.id and m.status == ^movie.status, select: m),
-        fn field, query -> guard(query, field, Map.fetch!(movie, field)) end
-      )
-
-    case Repo.update_all(query, set: set) do
-      {1, [updated]} -> {:ok, updated}
-      {0, _} -> {:error, :stale_status}
-    end
-  end
-
-  defp guard(query, field, nil), do: where(query, [m], is_nil(field(m, ^field)))
-  defp guard(query, field, value), do: where(query, [m], field(m, ^field) == ^value)
-
-  # Runs `fun` (`{:ok, value} | {:error, reason}`) in a transaction, rolling back on an error.
+  # Runs `fun` (`{:ok, value} | {:error, reason}`) in a guarded-write frame, rolling back on an
+  # error.
   defp transact(fun, opts \\ []) do
-    Repo.transaction(
+    GuardedWrite.transaction(
       fn ->
         case fun.() do
           {:ok, value} -> value
@@ -1073,10 +1029,8 @@ defmodule Cinder.Catalog.MovieLifecycle do
     )
   end
 
-  # After commit: drain the cleanup fence the transaction wrote, then publish. A stale miss
-  # becomes the verb's own refusal atom.
-  defp publish_with_cleanup(result, miss), do: result |> drain_fence(miss) |> publish()
-
+  # After commit: drain the cleanup fence the transaction wrote. A stale miss becomes the verb's
+  # own refusal atom.
   defp drain_fence({:ok, {movie, intent_ids}}, _miss) do
     Download.cleanup_intents(intent_ids)
     {:ok, movie}
@@ -1084,14 +1038,4 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
   defp drain_fence({:error, :stale_status}, miss), do: {:error, miss}
   defp drain_fence({:error, reason}, _miss), do: {:error, reason}
-
-  # The one publication of a committed write: `{:movie_updated, movie}` on the "movies" topic,
-  # then `[:cinder, :transition]`. Never call it inside a transaction.
-  defp publish({:ok, %Movie{} = movie}) do
-    Catalog.broadcast({:movie_updated, movie})
-    :telemetry.execute([:cinder, :transition], %{count: 1}, %{kind: :movie, to: movie.status})
-    {:ok, movie}
-  end
-
-  defp publish({:error, _reason} = error), do: error
 end

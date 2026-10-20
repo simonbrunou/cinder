@@ -4,7 +4,7 @@ defmodule CinderWeb.BookDetailLive do
   (deferred by B3b, claimed here). `:id` is the work's own id: a work independently monitors
   `:ebook` and `:audiobook`, so this renders one section per media kind, from whichever
   `%Cinder.Books.BookTarget{}` rows actually exist. A target only exists once
-  `Cinder.Books.monitor_target/4` — the approval choke-point — has run, so a work reached here with
+  `Cinder.Books.monitor_target/3` — the approval choke-point — has run, so a work reached here with
   a pending or denied request shows "Not yet approved" for that media kind, not a crash.
 
   The manual-search-and-Grab panel is offered for a `:monitored` `:ebook` or `:audiobook` target
@@ -405,7 +405,7 @@ defmodule CinderWeb.BookDetailLive do
   end
 
   # No profile to arm a new target with (should not happen — every rendered ebook target already
-  # has one, see `Cinder.Books.monitor_target/4`) — fail closed rather than preview with nothing
+  # has one, see `Cinder.Books.monitor_target/3`) — fail closed rather than preview with nothing
   # to confirm against.
   defp start_policy_preview(socket, _author, _policy, nil), do: socket
 

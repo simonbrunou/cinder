@@ -365,8 +365,8 @@ defmodule Cinder.RequestsTest do
     assert Repo.aggregate(Cinder.Requests.Request, :count) == 0
   end
 
-  # deny_request/3 is the one flip_pending/2 caller that runs outside a transaction, so it takes
-  # refuse_flip/1's `{:error, reason}` branch rather than the Repo.rollback/1 one.
+  # deny_request/3 is the one request flip that runs outside a transaction, so the refusal comes
+  # back as a tuple rather than rolling back an approval frame.
   test "a denial whose admin was deleted mid-flight is refused, not raised" do
     user = user_fixture()
     actor = admin_fixture()

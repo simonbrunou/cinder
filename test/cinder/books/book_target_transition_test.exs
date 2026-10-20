@@ -5,36 +5,10 @@ defmodule Cinder.Books.BookTargetTransitionTest do
   alias Cinder.Books.BookTarget
   alias Cinder.Catalog
 
-  test "a guarded transition returns the fresh row and broadcasts exactly once after commit" do
-    work = work_fixture()
-    {:ok, target} = Books.ensure_target(work, :ebook)
-
-    Repo.update_all(
-      from(t in BookTarget, where: t.id == ^target.id),
-      set: [updated_at: ~U[2000-01-01 00:00:00Z]]
-    )
-
-    target = Repo.get!(BookTarget, target.id)
-    target_id = target.id
-    Books.subscribe_targets()
-
-    assert {:ok,
-            %BookTarget{
-              status: :monitored,
-              updated_at: updated_at
-            } = updated} =
-             Books.transition_target(target, %{status: :monitored}, expect: :unmonitored)
-
-    assert DateTime.after?(updated_at, target.updated_at)
-    assert Repo.get!(BookTarget, target.id) == updated
-    assert_receive {:book_target_updated, ^updated}
-    refute_receive {:book_target_updated, %BookTarget{id: ^target_id}}
-  end
-
   # A transition carries `profile_id` so an approval can arm a target and attach its profile in
-  # one guarded write. `monitor_target/4` is the guard: the DB fence behind it fires under
-  # `update_all`, which raises instead of returning a changeset.
-  test "a wrong-kind profile is refused before the write, and fenced at the DB if it gets there" do
+  # one guarded write. `monitor_target/3` refuses the wrong kind before the write; the DB fence
+  # behind it is tested at `Cinder.GuardedWrite` (test/cinder/guarded_write_test.exs).
+  test "a wrong-kind profile is refused before the write" do
     work = work_fixture()
     {:ok, target} = Books.ensure_target(work, :ebook)
 
@@ -47,19 +21,6 @@ defmodule Cinder.Books.BookTargetTransitionTest do
 
     assert {:error, :invalid_media_profile} =
              Books.monitor_target(work, :ebook, wrong_kind_profile)
-
-    assert %BookTarget{status: :unmonitored, profile_id: nil} = Repo.get!(BookTarget, target.id)
-
-    # The DB fence surfaces as an explained refusal, not a raise, so a future caller that skips
-    # monitor_target/4's up-front check gets an error it can report. Inside an outer transaction
-    # the abort has already poisoned the connection, so the only safe response there is to roll
-    # back — see the caller contract on guarded_update/3.
-    assert {:error, :invalid_media_profile} =
-             Books.transition_target(
-               target,
-               %{status: :monitored, profile_id: wrong_kind_profile.id},
-               expect: :unmonitored
-             )
 
     assert %BookTarget{status: :unmonitored, profile_id: nil} = Repo.get!(BookTarget, target.id)
   end
@@ -81,24 +42,6 @@ defmodule Cinder.Books.BookTargetTransitionTest do
 
     assert profile_id == profile.id
     assert_receive {:book_target_updated, ^armed}
-  end
-
-  test "monitor_target with publish: false leaves the broadcast to its caller" do
-    work = work_fixture()
-
-    assert {:ok, profile} =
-             Catalog.create_profile(%{
-               name: "Silent ebook profile #{unique_id()}",
-               kind: :ebook,
-               handling: :standard
-             })
-
-    Books.subscribe_targets()
-
-    assert {:ok, %BookTarget{id: target_id, status: :monitored}} =
-             Books.monitor_target(work, :ebook, profile, publish: false)
-
-    refute_receive {:book_target_updated, %BookTarget{id: ^target_id}}
   end
 
   test "leaving held clears an omitted hold reason" do

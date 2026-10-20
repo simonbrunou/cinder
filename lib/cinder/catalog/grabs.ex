@@ -28,6 +28,7 @@ defmodule Cinder.Catalog.Grabs do
   alias Cinder.Catalog.SeriesCatalog
   alias Cinder.Download
   alias Cinder.Download.Intent
+  alias Cinder.GuardedWrite
   alias Cinder.Library.{ImportedQuality, ImportStage}
   alias Cinder.Notifier
   alias Cinder.Repo
@@ -871,7 +872,7 @@ defmodule Cinder.Catalog.Grabs do
     episodes = Map.new(grab.episodes, &{&1.id, &1})
 
     result =
-      Repo.transaction(fn ->
+      GuardedWrite.transaction(fn ->
         claim_import_grab!(grab)
 
         if Repo.exists?(from f in GrabFile, where: f.grab_id == ^grab.id),
@@ -919,7 +920,7 @@ defmodule Cinder.Catalog.Grabs do
     series_id = series_id_for_grab(grab.id)
 
     result =
-      Repo.transaction(fn ->
+      GuardedWrite.transaction(fn ->
         claim_import_grab!(grab)
 
         if Repo.exists?(from f in GrabFile, where: f.grab_id == ^grab.id and is_nil(f.decision)),
@@ -998,10 +999,7 @@ defmodule Cinder.Catalog.Grabs do
         monitored: episode.monitored
       }
 
-      case Cinder.Catalog.transition_episode(episode, attrs,
-             expect: expected,
-             publish: false
-           ) do
+      case Cinder.Catalog.transition_episode(episode, attrs, expect: expected) do
         {:ok, updated} -> updated
         {:error, _reason} -> Repo.rollback(:stale_grab)
       end
@@ -1020,10 +1018,7 @@ defmodule Cinder.Catalog.Grabs do
       search_attempts: episode.search_attempts
     }
 
-    case Cinder.Catalog.transition_episode(episode, attrs,
-           expect: expected,
-           publish: false
-         ) do
+    case Cinder.Catalog.transition_episode(episode, attrs, expect: expected) do
       {:ok, updated} -> updated
       {:error, _reason} -> Repo.rollback(:stale_grab)
     end
@@ -1038,10 +1033,7 @@ defmodule Cinder.Catalog.Grabs do
       monitored: episode.monitored
     }
 
-    case Cinder.Catalog.transition_episode(episode, %{grab_id: nil},
-           expect: expected,
-           publish: false
-         ) do
+    case Cinder.Catalog.transition_episode(episode, %{grab_id: nil}, expect: expected) do
       {:ok, updated} -> updated
       {:error, _reason} -> Repo.rollback(:stale_grab)
     end
@@ -1238,12 +1230,14 @@ defmodule Cinder.Catalog.Grabs do
     :ok
   end
 
+  # The episode writes published as their frame committed; a pass that wrote none still announces
+  # the grab's own change.
   defp publish_grab_import_result(
          {:ok, {state, episodes, bumped_ids, completed_seasons}},
          grab,
          series_id
        ) do
-    Cinder.Catalog.publish_episode_transition_batch(episodes, series_id)
+    if episodes == [], do: Cinder.Catalog.broadcast_series(series_id)
     announce_search_exhausted(bumped_ids)
     Enum.each(completed_seasons, &Notifier.notify({:season_available, &1}))
 

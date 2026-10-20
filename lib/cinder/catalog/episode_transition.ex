@@ -1,36 +1,35 @@
 defmodule Cinder.Catalog.EpisodeTransition do
   @moduledoc false
+  # The `episodes` adapter of `Cinder.GuardedWrite`: an episode's pipeline fields, from which its
+  # state is derived. Only `Cinder.Catalog.transition_episode/3` names it.
+  @behaviour Cinder.GuardedWrite
 
   import Ecto.Query
 
-  alias Cinder.Catalog.Episode
+  alias Cinder.Catalog
+  alias Cinder.Catalog.{Episode, Season}
   alias Cinder.Repo
 
-  def guarded(%Episode{} = episode, attrs, expected) do
-    case Episode.transition_changeset(episode, attrs) do
-      %{valid?: true} = changeset ->
-        guarded_update(episode.id, changeset.changes, expected)
+  @impl true
+  def changeset(episode, attrs), do: Episode.transition_changeset(episode, attrs)
 
-      %{valid?: false} = changeset ->
-        {:error, changeset}
-    end
-  end
+  # No trigger guards an episode's pipeline fields; a CHECK violation is a bug and re-raises.
+  @impl true
+  def refusal(_message, _attrs), do: nil
 
-  defp guarded_update(id, changes, expected) do
-    query =
-      Enum.reduce(expected, from(e in Episode, where: e.id == ^id), fn
-        {field, nil}, query ->
-          from e in query, where: is_nil(field(e, ^field))
+  # One `{:series_updated, id}` per series, then `[:cinder, :transition]` per episode.
+  @impl true
+  def publish(episodes) do
+    season_ids = episodes |> Enum.map(& &1.season_id) |> Enum.uniq()
 
-        {field, value}, query ->
-          from e in query, where: field(e, ^field) == ^value
-      end)
+    series =
+      Repo.all(from s in Season, where: s.id in ^season_ids, select: {s.id, s.series_id})
+      |> Map.new()
 
-    case Repo.update_all(query |> select([e], e),
-           set: Map.to_list(changes) ++ [updated_at: Cinder.Catalog.now()]
-         ) do
-      {1, [updated]} -> {:ok, updated}
-      {0, _} -> {:error, :stale_episode}
-    end
+    episodes
+    |> Enum.group_by(&Map.get(series, &1.season_id))
+    |> Enum.each(fn {series_id, written} ->
+      Catalog.publish_episode_transition_batch(written, series_id)
+    end)
   end
 end

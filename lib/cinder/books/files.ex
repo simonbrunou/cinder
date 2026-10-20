@@ -4,14 +4,15 @@ defmodule Cinder.Books.Files do
 
   Recording the file and arming the target are one transaction: a committed file whose target
   stayed `:monitored` would be re-grabbed on the next sweep, and an `:available` target with no
-  file row would report a library it does not have. The target broadcast is sent **after** the
-  commit, never inside it (AGENTS.md), so no open view can observe a write a rollback could still
-  undo.
+  file row would report a library it does not have. The target is armed by a guarded write inside
+  a `Cinder.GuardedWrite.transaction/2`, so its broadcast is sent **after** the commit, never
+  inside it, and no open view can observe a write a rollback could still undo.
   """
   import Ecto.Query
 
   alias Cinder.Books
   alias Cinder.Books.{BookFile, BookTarget}
+  alias Cinder.GuardedWrite
   alias Cinder.Library.ImportStage
   alias Cinder.Repo
 
@@ -40,7 +41,7 @@ defmodule Cinder.Books.Files do
     stage_ids = Keyword.get(opts, :import_stage_ids, [])
     replace? = Keyword.get(opts, :replace, false)
 
-    Repo.transaction(fn ->
+    GuardedWrite.transaction(fn ->
       with {:ok, superseded} <- maybe_supersede(target, attrs, replace?),
            {:ok, file} <- insert_or_existing(target, attrs, replace?),
            {:ok, _armed} <- arm_target(target) do
@@ -53,7 +54,7 @@ defmodule Cinder.Books.Files do
         {:error, reason} -> Repo.rollback(reason)
       end
     end)
-    |> publish(target, replace?)
+    |> import_result(replace?)
   end
 
   defp maybe_supersede(_target, _attrs, false), do: {:ok, []}
@@ -81,7 +82,7 @@ defmodule Cinder.Books.Files do
   Records N imported assets — a multi-track audiobook set — for one target and moves it to
   `:available` in one transaction. The multi-file generalization of `record_import/3`; see its
   own moduledoc for the shared "record and arm together, broadcast once after commit" invariants,
-  which this function reuses unchanged (`publish/2` below is the SAME private function
+  which this function reuses unchanged (`import_result/2` below is the SAME private function
   `record_import/3` already calls — it is generic over one file or a list of them).
 
   `opts[:replace]` (default `false`) is a confirmed "Find a better match" import, generalized to
@@ -96,7 +97,7 @@ defmodule Cinder.Books.Files do
     stage_ids = Keyword.get(opts, :import_stage_ids, [])
     replace? = Keyword.get(opts, :replace, false)
 
-    Repo.transaction(fn ->
+    GuardedWrite.transaction(fn ->
       with {:ok, superseded} <- maybe_supersede_set(target, attrs_list, replace?),
            {:ok, files} <- insert_all_or_existing(target, attrs_list, replace?),
            {:ok, _armed} <- arm_target(target) do
@@ -107,7 +108,7 @@ defmodule Cinder.Books.Files do
         {:error, reason} -> Repo.rollback(reason)
       end
     end)
-    |> publish(target, replace?)
+    |> import_result(replace?)
   end
 
   # `changed?` (default `true` per item, popped out of each attrs map before it ever reaches a
@@ -243,24 +244,12 @@ defmodule Cinder.Books.Files do
     if Keyword.has_key?(errors, :path), do: :book_file_exists, else: changeset
   end
 
-  # The guarded target write, inline rather than through `Books.transition_target/3`.
-  #
-  # Two reasons, and the second is load-bearing. First, that function broadcasts on success, and a
-  # broadcast inside this transaction would announce a state a rollback can still undo —
-  # `publish/2` below sends it once, after commit. Second, and why `publish: false` is not enough:
-  # `BookTargetTransition.guarded/4` implements its guard with `Repo.rollback(:stale_status)`
-  # inside its own `Repo.transaction`, which aborts the ENCLOSING transaction too (its own
-  # comments say exactly this — "the only safe response to this error is to roll that transaction
-  # back"). Calling it here turns a status mismatch into a poisoned connection rather than a
-  # handleable error, and this function must be able to accept a second status.
+  # The guarded target write. Inside `record_import/3`'s frame it publishes once, after commit.
   #
   # `:available` is accepted alongside `:monitored` so an import REPLAY (see `insert_conflict/3`)
   # converges: the target is already in the state this write wants, and demanding `:monitored`
   # there is what turned a replay into a `:held` demotion. An unmonitored or held target still
   # refuses — those are an operator's more recent decision.
-  #
-  # The `book_targets_profile_integrity` trigger cannot fire here: it guards `profile_id` and
-  # `media_kind`, and neither is in the `set`.
   #
   # `audiobookshelf_scanned_at` is reset to `nil` on every fresh `:available`-transition of an
   # AUDIOBOOK target only (B7c) — the signal "this target's on-disk content changed and
@@ -268,32 +257,17 @@ defmodule Cinder.Books.Files do
   # no-op) and a REPLACE (content genuinely changed under an existing path, so a stale "already
   # scanned" timestamp must not survive it). An e-book target's `media_kind` never matches, so
   # its (unused) column stays exactly as it already was — nil forever, nothing to reset.
-  defp arm_target(%BookTarget{id: id, media_kind: media_kind}) do
-    now = DateTime.utc_now(:second)
+  defp arm_target(%BookTarget{media_kind: media_kind} = target) do
+    scan_reset = if media_kind == :audiobook, do: %{audiobookshelf_scanned_at: nil}, else: %{}
 
-    scan_reset =
-      if media_kind == :audiobook, do: [audiobookshelf_scanned_at: nil], else: []
-
-    case Repo.update_all(
-           from(t in BookTarget,
-             where: t.id == ^id and t.status in [:monitored, :available],
-             select: t
-           ),
-           set: [status: :available, hold_reason: nil, updated_at: now] ++ scan_reset
-         ) do
-      {1, [armed]} -> {:ok, armed}
-      {0, _none} -> {:error, :stale_status}
-    end
+    Books.transition_target(
+      target,
+      Map.merge(%{status: :available, hold_reason: nil}, scan_reset),
+      expect: [:monitored, :available]
+    )
   end
 
-  defp publish({:ok, {file, superseded}}, %BookTarget{id: id}, replace?) do
-    case Repo.get(BookTarget, id) do
-      nil -> :ok
-      armed -> Books.broadcast({:book_target_updated, armed})
-    end
-
-    if replace?, do: {:ok, file, superseded}, else: {:ok, file}
-  end
-
-  defp publish({:error, reason}, _target, _replace?), do: {:error, reason}
+  defp import_result({:ok, {file, superseded}}, true), do: {:ok, file, superseded}
+  defp import_result({:ok, {file, _superseded}}, false), do: {:ok, file}
+  defp import_result({:error, reason}, _replace?), do: {:error, reason}
 end

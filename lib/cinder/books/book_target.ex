@@ -52,10 +52,18 @@ defmodule Cinder.Books.BookTarget do
   @doc """
   The guarded-write changeset. Carries `:profile_id` alongside the status so an approval can
   attach the profile and arm the target in one write — two writes would mean two broadcasts and
-  a window where a target is monitored with no profile to score against.
+  a window where a target is monitored with no profile to score against. Carries
+  `:audiobookshelf_scanned_at` so an import can reset it in the same write that arms the target.
   """
   def transition_changeset(target, attrs) do
-    changeset = cast(target, attrs, [:status, :hold_reason, :hold_transient, :profile_id])
+    changeset =
+      cast(target, attrs, [
+        :status,
+        :hold_reason,
+        :hold_transient,
+        :profile_id,
+        :audiobookshelf_scanned_at
+      ])
 
     changeset =
       case {target.status, get_change(changeset, :status),

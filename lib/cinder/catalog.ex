@@ -40,6 +40,7 @@ defmodule Cinder.Catalog do
   }
 
   alias Cinder.Download
+  alias Cinder.GuardedWrite
   alias Cinder.Library
   alias Cinder.Library.ImportedQuality
   alias Cinder.Repo
@@ -268,7 +269,8 @@ defmodule Cinder.Catalog do
   defdelegate list_episodes_with_file(series_id), to: SeriesCatalog
 
   # `[:cinder, :transition]` fires once per successful episode write at Catalog's choke-points
-  # (`transition_episode/2,3`, and atomic episode adoption) — never at a call site, so
+  # (`transition_episode/3` through `publish_episode_transition_batch/2`, and atomic episode
+  # adoption) — never at a call site, so
   # instrumentation can't drift from "every writer goes through Catalog". Movie writes emit it from
   # `Cinder.Catalog.MovieLifecycle`.
   defp emit_transition(:episode = kind, to_status) do
@@ -629,29 +631,14 @@ defmodule Cinder.Catalog do
 
   @doc """
   Single choke-point for episode **pipeline** writes (`file_path`, `grab_id`, attempt counters;
-  episode state is derived). On success broadcasts `{:series_updated, series_id}`. `monitored`
-  stays in `set_episode_monitored/2`. `expect:` is atomic; `publish: false` defers publication.
+  episode state is derived), as a guarded write (`Cinder.GuardedWrite`). `expect:` names the
+  values the row must still hold (`%{field => value}`); a miss is `{:error, :stale_status}`.
+  Publishes `{:series_updated, series_id}` after commit. `monitored` stays in
+  `set_episode_monitored/2`.
   """
-  def transition_episode(episode, attrs, opts \\ [])
-
-  def transition_episode(%Episode{} = episode, attrs, []) do
-    with {:ok, updated} <- episode |> Episode.transition_changeset(attrs) |> Repo.update() do
-      broadcast_series(series_id_for_season(updated.season_id))
-      emit_transition(:episode, SeriesCatalog.episode_state(updated))
-      {:ok, updated}
-    end
-  end
-
-  def transition_episode(%Episode{} = episode, attrs, opts) when is_list(opts) do
-    expected = opts |> Keyword.fetch!(:expect) |> Map.new()
-
-    with {:ok, updated} <- EpisodeTransition.guarded(episode, attrs, expected) do
-      if Keyword.get(opts, :publish, true) do
-        publish_episode_transition_batch([updated], series_id_for_season(updated.season_id))
-      end
-
-      {:ok, updated}
-    end
+  def transition_episode(%Episode{} = episode, attrs, opts \\ []) do
+    expect = opts |> Keyword.get(:expect, %{}) |> Enum.to_list()
+    GuardedWrite.write(EpisodeTransition, episode, attrs, expect)
   end
 
   @doc false

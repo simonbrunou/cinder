@@ -279,7 +279,7 @@ defmodule CinderWeb.RequestsLive do
   defp find_request(socket, id), do: find_by_id(socket.assigns.requests, id)
 
   # An approved book request is the only row type this page links out from: it is the only point
-  # where a `book_targets` row is guaranteed to exist (`Books.monitor_target/4` runs inside
+  # where a `book_targets` row is guaranteed to exist (`Books.monitor_target/3` runs inside
   # `Requests.approve_request/3`), so anything before approval has nowhere at `/books/:id` to go.
   # Movie/series rows get no equivalent link — there was none to mirror for any target type before
   # this (`request_title/2` has always rendered as plain text here), and adding one for them is a

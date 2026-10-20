@@ -134,7 +134,7 @@ defmodule Cinder.Catalog.ProfilesTest do
     assert {:ok, _policy} = Books.set_author_policy(author, :all, ebook)
 
     # No `book_targets` row exists at all yet — the reference is the policy row alone. A kind
-    # change here would leave the policy pointing at a profile `Books.monitor_target/4` refuses
+    # change here would leave the policy pointing at a profile `Books.monitor_target/3` refuses
     # every candidate against forever, with nothing logged to say why.
     assert {:error, changeset} = Catalog.update_profile(ebook, %{kind: :audiobook})
     assert "referenced profile may only be renamed" in errors_on(changeset).base

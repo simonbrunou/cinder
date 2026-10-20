@@ -20,13 +20,12 @@ defmodule Cinder.Requests.Approval.Book do
   # A book target is useless without a profile: B4 has nothing to score against.
   @impl true
   def create({work, media_kind}, %Profile{} = profile),
-    do: Books.monitor_target(work, media_kind, profile, publish: false)
+    do: Books.monitor_target(work, media_kind, profile)
 
   def create(_prepared, nil), do: {:error, :invalid_media_profile}
 
+  # Nothing left to announce: arming the target is a guarded write, which the approval's
+  # `Cinder.GuardedWrite.transaction/2` published as it committed.
   @impl true
-  def publish(target, _approved) do
-    Books.broadcast({:book_target_updated, target})
-    :ok
-  end
+  def publish(_target, _approved), do: :ok
 end

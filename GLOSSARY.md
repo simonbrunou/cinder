@@ -203,6 +203,20 @@ The env value a setting falls back to when no row is stored, captured once befor
 overlay so a cleared setting reverts to it.
 _Avoid_: default, base config
 
+### Status writes
+
+**Guarded write**:
+A change to a movie's, episode's, book target's or request's state that lands only if the row
+still holds what the caller read. One that misses is stale and changes nothing; one that commits
+is announced once, after its transaction commits; one refused inside a transaction rolls that
+whole transaction back.
+_Avoid_: CAS, transition (on its own)
+
+**Stale write**:
+A guarded write whose row moved on since the caller read it, so it writes nothing. A poller
+re-reads the row on its next tick; an operator action reports that the item already changed.
+_Avoid_: conflict, race loss
+
 ### Subtitles
 
 **Sidecar**:

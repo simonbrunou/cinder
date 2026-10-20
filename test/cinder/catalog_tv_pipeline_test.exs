@@ -90,7 +90,7 @@ defmodule Cinder.CatalogTvPipelineTest do
       ep = episode(season, %{})
       {:ok, _grab} = Catalog.create_grab("guarded", :torrent, [ep.id])
 
-      assert {:error, :stale_episode} =
+      assert {:error, :stale_status} =
                Catalog.transition_episode(ep, %{file_path: "/library/x.mkv"},
                  expect: %{grab_id: nil}
                )

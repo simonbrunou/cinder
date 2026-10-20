@@ -91,7 +91,7 @@ defmodule CinderWeb.LiveHelpers do
 
   A linked target with no request backing it (`nil`) and still `:unmonitored` renders explicitly
   rather than falling to `:none` (no badge at all): nothing produces this combination today — both
-  production callers of `monitor_target/4` monitor the target inside the same transaction that
+  production callers of `monitor_target/3` monitor the target inside the same transaction that
   approves its request — but B5's planned pause/resume control will set an *existing*, still-linked
   target back to `:unmonitored`, and a blank badge on every book-badge surface at once is worse
   than a plain "Unmonitored" label.

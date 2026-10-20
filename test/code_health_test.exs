@@ -60,6 +60,34 @@ defmodule Cinder.CodeHealthTest do
              "spelling out #{marker} in:\n  " <> Enum.join(offenders, "\n  ")
   end
 
+  # #743: a guarded-write adapter is reachable only through its owner, so no caller can write a
+  # movie status around a `MovieLifecycle` verb, or a request around the approval gate.
+  test "only its owner names each guarded-write adapter" do
+    # adapter => {its own file, its owner}
+    adapters = %{
+      "MovieTransition" =>
+        {"lib/cinder/catalog/movie_transition.ex", "lib/cinder/catalog/movie_lifecycle.ex"},
+      "EpisodeTransition" =>
+        {"lib/cinder/catalog/episode_transition.ex", "lib/cinder/catalog.ex"},
+      "BookTargetTransition" =>
+        {"lib/cinder/books/book_target_transition.ex", "lib/cinder/books.ex"},
+      "RequestTransition" =>
+        {"lib/cinder/requests/request_transition.ex", "lib/cinder/requests.ex"}
+    }
+
+    offenders =
+      for path <- Path.wildcard("lib/**/*.ex"),
+          source = File.read!(path),
+          {adapter, {own, owner}} <- adapters,
+          String.contains?(source, adapter),
+          path not in [own, owner],
+          do: "#{path} names #{adapter} (owner: #{owner})"
+
+    assert offenders == [],
+           "call the owner's guarded write instead of naming its adapter:\n  " <>
+             Enum.join(offenders, "\n  ")
+  end
+
   # `Phoenix.LiveView.TagEngine.Parser`/`Tokenizer` are `@moduledoc false` — private
   # phoenix_live_view API, not a documented contract. If a future phoenix_live_view upgrade
   # changes these token shapes, this test breaks loudly at `mix test` time; that is

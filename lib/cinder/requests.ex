@@ -8,10 +8,11 @@ defmodule Cinder.Requests do
   alias Cinder.Books.Work
   alias Cinder.Catalog
   alias Cinder.Catalog.Profile
+  alias Cinder.GuardedWrite
   alias Cinder.LibraryKind
   alias Cinder.Notifier
   alias Cinder.Repo
-  alias Cinder.Requests.{Approval, Request, Target}
+  alias Cinder.Requests.{Approval, Request, RequestTransition, Target}
   alias Cinder.Settings
   alias Cinder.Util
 
@@ -449,11 +450,13 @@ defmodule Cinder.Requests do
   #    `:not_pending` before any catalog row, alias or book target is written.
   # 5. The quota re-count runs after the target exists, so the new request counts unless its
   #    target is already settled (#650).
-  # 6. Only after commit: the target's own publish, then the approval announcement.
+  # 6. Only after commit: the target's own publish (a book target's guarded write publishes as
+  #    the frame commits), then the approval announcement.
   defp approve_target(write, adapter, profile) do
     with {:ok, prepared} <- adapter.prepare(write_source(write), profile),
          {:ok, {approved, created}} <-
-           Repo.transaction(fn -> approve_in_transaction(write, adapter, prepared, profile) end,
+           GuardedWrite.transaction(
+             fn -> approve_in_transaction(write, adapter, prepared, profile) end,
              mode: :immediate
            ) do
       adapter.publish(created, approved)
@@ -491,10 +494,10 @@ defmodule Cinder.Requests do
   # The insert reaches Ecto's `to_constraints`, but ecto_sqlite3 translates every FK violation to
   # `[foreign_key: nil]` (no column name from SQLite), and Ecto requires the registered constraint
   # name to match — a nil name never matches, so `Repo.insert/1` raises `Ecto.ConstraintError`
-  # regardless of a declared `foreign_key_constraint/2`. The insert's counterpart of
-  # `flip_pending/2`'s rescue: a concurrent deletion of the requester or (for an admin
-  # auto-approval) the approver — the same row for an admin request — is refused, not raised.
-  # Unlike the flip, the refusal is returned, and `approve_in_transaction/4` rolls back on it.
+  # regardless of a declared `foreign_key_constraint/2`. The insert's counterpart of the flip's
+  # `RequestTransition.refusal/2`: a concurrent deletion of the requester or (for an admin
+  # auto-approval) the approver — the same row for an admin request — is refused, not raised, and
+  # `approve_in_transaction/4` rolls back on it.
   defp write_request({:insert, user, attrs, approver_id}, profile) do
     %Request{}
     |> Request.create_changeset(
@@ -528,61 +531,15 @@ defmodule Cinder.Requests do
 
   def deny_request(%Request{}, _admin, _reason), do: {:error, :not_pending}
 
-  # Guarded status flip: applies `attrs` only while the row is still :pending in the DB —
-  # the UPDATE itself is scoped by status, so two racing admin sessions (e.g. a slow bulk
-  # async approve vs a concurrent deny) can't silently reverse each other's committed
-  # decision. Validates via the changeset, then writes with one atomic update_all (no
-  # read-then-write upgrade window for SQLite to reject).
-  #
-  # `update_all` also skips Ecto's `to_constraints`, so the approval's `proposed_profile_id`
-  # write surfaces `requests_profile_integrity` as a raw Exqlite.Error rather than
-  # `{:error, changeset}`. `approve_target/3` re-reads the profile inside its `:immediate`
-  # transaction just before this write, so another connection cannot re-kind it in between; the
-  # trigger is the fence behind that. Rescue on the constraint's own message (not the exception
-  # class, which also covers a transient busy) so the approval queue reports a refusal instead of
-  # a 500.
-  #
-  # The same write can race deletion of its `approved_by_id` user. SQLite's FK message names no
-  # column, so this narrows by checking the approver row is gone. That is a strong hint, not proof
-  # of causation — `requests` also FKs `proposed_profile_id`, so a profile FK failure that happens
-  # to coincide with a deleted approver would be reported as `:approver_deleted`. Practically
-  # unreachable (the #379 trigger fires first for the profile race) and not worth code, but do not
-  # read this arm as "the approver caused it". Unrelated FK errors still surface.
-  #
-  # Caller contract, enforced here rather than asked of callers: SQLite's `RAISE(ABORT, ...)`
-  # reverts only the offending statement, so inside an outer `Repo.transaction` the transaction
-  # stays open and its earlier writes would still commit. So the refusal rolls that transaction
-  # back itself — `Repo.rollback/1` throws, so `Repo.transaction` still returns
-  # `{:error, :invalid_media_profile}` and `approve_target/3` sees exactly what it would see had
-  # it matched the tuple itself; a future caller cannot handle it in place and commit.
-  # Outside a transaction (`deny_request/3`) there is nothing to roll back and the tuple is
-  # returned directly.
-  #
-  # The `requests_profile_integrity` literal is also spelled out in the migrations that create the
-  # trigger and in `Request`'s `check_constraint/3` calls, with no shared constant to bind them
-  # (migrations are frozen history). The re-kind race test in
-  # `test/cinder/requests/book_request_test.exs` is what catches a drift in that name from this
-  # end: it asserts the aborted write carried this exact string.
+  # The admin's decision on a pending request, as a guarded write on `status == :pending`: two
+  # racing admin sessions (a slow bulk async approve against a concurrent deny) can't silently
+  # reverse each other's committed decision. A miss is `:not_pending`. A trigger or FK refusal
+  # (`RequestTransition.refusal/2`) inside the approval's frame rolls the whole approval back.
   defp flip_pending(%Request{} = request, attrs) do
-    do_flip_pending(request, attrs)
-  rescue
-    error in Exqlite.Error ->
-      cond do
-        error.message =~ "requests_profile_integrity" ->
-          refuse_flip(:invalid_media_profile)
-
-        error.message == "FOREIGN KEY constraint failed" and
-          not is_nil(attrs[:approved_by_id]) and
-            is_nil(Repo.get(User, attrs[:approved_by_id])) ->
-          refuse_flip(:approver_deleted)
-
-        true ->
-          reraise error, __STACKTRACE__
-      end
-  end
-
-  defp refuse_flip(reason) do
-    if Repo.in_transaction?(), do: Repo.rollback(reason), else: {:error, reason}
+    case GuardedWrite.write(RequestTransition, request, attrs, status: :pending) do
+      {:error, :stale_status} -> {:error, :not_pending}
+      result -> result
+    end
   end
 
   # Rescue seam for the auto-approval request insert (`write_request/2`): a concurrent deletion
@@ -602,24 +559,6 @@ defmodule Cinder.Requests do
         reraise error, stacktrace
     end
   end
-
-  defp do_flip_pending(request, attrs) do
-    changeset = Request.status_changeset(request, attrs)
-
-    with %{valid?: true, changes: changes} <- changeset,
-         {1, _} <-
-           Repo.update_all(
-             from(r in Request, where: r.id == ^request.id and r.status == :pending),
-             set: Map.to_list(changes) ++ [updated_at: now()]
-           ) do
-      {:ok, struct(request, changes)}
-    else
-      {0, _} -> {:error, :not_pending}
-      %Ecto.Changeset{} = invalid -> {:error, invalid}
-    end
-  end
-
-  defp now, do: NaiveDateTime.truncate(NaiveDateTime.utc_now(), :second)
 
   @doc """
   Reopens a denied request back to `:pending` (clearing the denial reason and

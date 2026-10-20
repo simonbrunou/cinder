@@ -10,7 +10,7 @@ defmodule Cinder.Books.BibliographyRefresher do
   rather than unconditionally re-upserting it the way an explicit admin confirm does.
 
   **Never demotes, never deletes.** The only write this module ever reaches is
-  `Cinder.Books.monitor_target/4` (via `apply_bibliography_refresh/4`), which only ever arms a
+  `Cinder.Books.monitor_target/3` (via `apply_bibliography_refresh/4`), which only ever arms a
   target — it has no path that touches an existing target's status. `Cinder.Books.import_resolution/1`'s
   "only write what the provider actually returned" rule (unchanged) already means a provider that
   stops listing a work causes no local write at all, let alone a delete. A provider outage during

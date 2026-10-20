@@ -39,13 +39,34 @@ are written only inside `Cinder.Catalog` and its submodules under `lib/cinder/ca
 - Audited siblings that each own one lifecycle: TV grabs, TV release verification, episode
   adoption, deletion, TMDB refresh.
 
-Books and audiobooks follow the same rule through `Cinder.Books.transition_target/3` and
-`BookTargetTransition.guarded/4`, plus their audited siblings: `hold_target/4`, `pause_target/1`,
-`monitor_target/4`, `import_resolution/1`, `Files.record_import/3` and `record_import_set/3`.
-Every `book_grabs` mutation lives in `Cinder.Books.Grabs`.
+Books and audiobooks follow the same rule through `Cinder.Books.transition_target/3`, plus their
+audited siblings: `hold_target/5`, `pause_target/1`, `monitor_target/3`, `import_resolution/1`,
+`Files.record_import/3` and `record_import_set/3`. Every `book_grabs` mutation lives in
+`Cinder.Books.Grabs`. A request's status (an admin's approval or denial) is written only by
+`Cinder.Requests`.
+
+## Guarded writes have one contract
+
+The compare-and-swap status write on movies, episodes, book targets and requests is
+`Cinder.GuardedWrite.write/4`. Each table has one adapter, named only by its owner (the
+`MovieLifecycle` verbs, `transition_episode/3`, `transition_target/3` and `Cinder.Requests`;
+`test/code_health_test.exs` fences it). The audited siblings above still write episodes their own
+way (`Grabs.finish_grab`, episode adoption, deletion), as does `Requests.reopen_request/2`;
+moving them is #788.
+
+- A miss is `{:error, :stale_status}`. An owner may rename it at its public boundary
+  (`:not_pending` for `/api/v1`, `:not_cancellable`, ...).
+- `update_all` skips Ecto's `to_constraints`, so a trigger abort arrives as a raw
+  `Exqlite.Error`. The adapter's `refusal/2` names it by the constraint's message; anything else
+  re-raises, a transient busy included.
+- A guarded write inside a transaction must run in `GuardedWrite.transaction/2`; it raises in a raw
+  `Repo.transaction`. A refused write rolls that transaction back, even if the caller carries on,
+  so nothing commits around it.
+- Callers never publish. A write publishes after its own statement outside a transaction, or after
+  the outermost `GuardedWrite.transaction/2` commits inside one.
 
 Each transition emits exactly one broadcast, after commit, never inside the enclosing
-`Repo.transaction`.
+transaction.
 
 Direct `Repo` writes are not banned. Creation, deletion, monitor flags, language, counters and
 the TMDB/metadata refresh are sanctioned direct writes inside `Catalog` and `Books`. Find the
