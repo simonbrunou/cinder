@@ -1051,15 +1051,16 @@ defmodule Cinder.Catalog.Grabs do
 
   @doc """
   Atomically records one Fold/Part decision. The guarded file claim makes a decided row a no-op;
-  coordinate, episode-part, and import-stage writes roll back together on any failure.
+  coordinate, episode-part, and import-stage writes roll back together on any failure. A Part
+  decision passes `{dest, stage_ids}`: the staged part's destination and its one journal id.
   """
-  def decide_grab_file(file, episode, decision, stage \\ nil)
+  def decide_grab_file(file, episode, decision, part \\ nil)
 
-  def decide_grab_file(%GrabFile{} = file, %Episode{} = episode, decision, stage)
+  def decide_grab_file(%GrabFile{} = file, %Episode{} = episode, decision, part)
       when decision in [:fold, :part] do
     result =
       Repo.transaction(fn ->
-        attrs = decision_attrs(decision, episode.id, stage)
+        attrs = decision_attrs(decision, episode.id, part)
 
         case Repo.update_all(
                from(f in GrabFile,
@@ -1072,14 +1073,14 @@ defmodule Cinder.Catalog.Grabs do
             existing_grab_file_decision(file.id)
 
           {1, [decided]} ->
-            apply_grab_file_decision!(decided, episode.id, decision, stage)
+            apply_grab_file_decision!(decided, episode.id, decision, part)
         end
       end)
 
     publish_grab_file_decision(result)
   end
 
-  def decide_grab_file(%GrabFile{}, %Episode{}, _decision, _stage),
+  def decide_grab_file(%GrabFile{}, %Episode{}, _decision, _part),
     do: {:error, :invalid_grab_file_decision}
 
   @doc """
@@ -1124,7 +1125,7 @@ defmodule Cinder.Catalog.Grabs do
   defp decision_attrs(:fold, episode_id, nil),
     do: %{decision: :fold, episode_id: episode_id, destination: nil, import_stage_id: nil}
 
-  defp decision_attrs(:part, episode_id, %{dest: dest, rollback: %{stage_id: stage_id}})
+  defp decision_attrs(:part, episode_id, {dest, [stage_id]})
        when is_binary(dest) and is_integer(stage_id),
        do: %{
          decision: :part,
@@ -1133,9 +1134,9 @@ defmodule Cinder.Catalog.Grabs do
          import_stage_id: stage_id
        }
 
-  defp decision_attrs(_decision, _episode_id, _stage), do: Repo.rollback(:invalid_import_stage)
+  defp decision_attrs(_decision, _episode_id, _part), do: Repo.rollback(:invalid_import_stage)
 
-  defp apply_grab_file_decision!(file, episode_id, decision, stage) do
+  defp apply_grab_file_decision!(file, episode_id, decision, part) do
     grab = Repo.get(Grab, file.grab_id) || Repo.rollback(:stale_grab)
     claim_import_grab!(grab)
 
@@ -1154,10 +1155,11 @@ defmodule Cinder.Catalog.Grabs do
           nil
 
         :part ->
-          adopt_grab_file_part!(episode, stage.dest)
+          {dest, stage_ids} = part
+          ImportStage.mark_committed!(stage_ids)
+          adopt_grab_file_part!(episode, dest)
       end
 
-    ImportStage.mark_committed!(stage_ids(stage))
     {:decided, file, updated_episode, episode.season.series_id}
   end
 
@@ -1201,9 +1203,6 @@ defmodule Cinder.Catalog.Grabs do
       {:error, reason} -> Repo.rollback(reason)
     end
   end
-
-  defp stage_ids(nil), do: []
-  defp stage_ids(%{rollback: %{stage_id: id}}), do: [id]
 
   defp publish_grab_file_decision({:ok, {:noop, file, nil}}), do: {:ok, :noop, file}
 

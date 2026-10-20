@@ -39,7 +39,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   alias Cinder.Catalog.{Attention, BlockedRelease, Grabs, Movie, Profiles}
   alias Cinder.Download
   alias Cinder.Library
-  alias Cinder.Library.ImportStage
+  alias Cinder.Library.{ImportStage, StagedImport}
   alias Cinder.Notifier
   alias Cinder.Repo
 
@@ -263,7 +263,8 @@ defmodule Cinder.Catalog.MovieLifecycle do
   @doc """
   Records a staged import (`Cinder.Library.stage_movie/2`) as the movie's library file:
   `:downloaded` or `:upgrading` → `:available`, with the imported quality. The write marks the
-  stage committed in the same transaction; after commit the stage is committed on disk, then:
+  staged files committed in the same transaction, and `Cinder.Library.StagedImport.commit/2`
+  finishes them on disk (scan, subtitles, sidecars) before the post-import work:
 
     * a fresh import notifies `{:movie_available, movie}` and removes its download source;
     * an upgrade removes the superseded library files, removes the replacement's download source
@@ -274,51 +275,51 @@ defmodule Cinder.Catalog.MovieLifecycle do
   the replacement download (the row keeps `content_path` nil while upgrading), because the
   movie's own `file_path` is the live library file and must never be removed as a source.
 
-  When the movie moved on since the caller read it, or the write fails, the stage is rolled back
-  so no row points at an orphaned file, and the error is returned.
+  When the movie moved on since the caller read it, or the write fails, the staged files are
+  rolled back so no row points at an orphaned file, and the error is returned.
   """
-  def import_staged(%Movie{status: status} = movie, %{dest: _dest, quality: _quality} = stage)
+  def import_staged(%Movie{status: status} = movie, staged)
       when status in [:downloaded, :upgrading] do
-    case movie |> write_available(stage) |> publish() do
+    case StagedImport.commit(staged, &(movie |> write_available(&1, &2) |> publish())) do
       {:ok, available} ->
-        finish_stage(stage, :commit)
         after_import(movie, available)
         {:ok, available}
 
       {:error, :stale_status} = stale ->
         Logger.info(
-          "movie #{movie.id} left the import pass mid-import; rolling back #{stage.dest}"
+          "movie #{movie.id} left the import pass mid-import; rolled back " <>
+            StagedImport.record(staged).file_path
         )
 
-        finish_stage(stage, :rollback)
         stale
 
       {:error, _reason} = error ->
-        finish_stage(stage, :rollback)
         error
     end
   end
 
-  def import_staged(%Movie{}, _stage), do: {:error, :not_importing}
+  def import_staged(%Movie{}, staged) do
+    StagedImport.rollback(staged)
+    {:error, :not_importing}
+  end
 
-  # The write half of `import_staged/2`: compare-and-swap to `:available` plus the stage's commit
-  # marker, in one transaction. Kept separate from the post-commit work so the staged import can
-  # own that work later.
-  defp write_available(movie, stage) do
+  # The write half of `import_staged/2`: compare-and-swap to `:available` plus the staged files'
+  # commit marker, in one transaction.
+  defp write_available(movie, record, stage_ids) do
     attrs =
       %{
         status: :available,
-        file_path: stage.dest,
-        part_file_paths: Map.get(stage, :part_file_paths, [])
+        file_path: record.file_path,
+        part_file_paths: record.part_file_paths
       }
-      |> Map.merge(imported_attrs(stage.quality))
+      |> Map.merge(imported_attrs(record.quality))
 
     # A fresh import's `content_path` was the download copy; the library file replaces it.
     attrs = if movie.status == :downloaded, do: Map.put(attrs, :content_path, nil), else: attrs
 
     transact(fn ->
       with {:ok, available} <- write(movie, attrs, [:download_id]) do
-        ImportStage.mark_committed!(Library.stage_ids([stage]))
+        ImportStage.mark_committed!(stage_ids)
         {:ok, available}
       end
     end)
@@ -368,21 +369,6 @@ defmodule Cinder.Catalog.MovieLifecycle do
       {:error, reason} ->
         Logger.warning("upgrade: couldn't remove old file #{inspect(path)}: #{inspect(reason)}")
     end
-  end
-
-  # Best-effort: commit finalizes the staged file at its destination, rollback removes it. A
-  # failure is logged, never raised, so it cannot reopen a decision the write already committed.
-  defp finish_stage(stage, action) do
-    result =
-      case action do
-        :commit -> Library.commit_stage(stage)
-        :rollback -> Library.rollback_stage(stage)
-      end
-
-    if match?({:error, _}, result),
-      do: Logger.warning("movie import stage cleanup remains pending")
-
-    result
   end
 
   @doc """

@@ -2,7 +2,7 @@ defmodule Cinder.Library.Filesystem.RenameIdentityTest do
   @moduledoc """
   The probe writes, renames and unlinks a file of its own to answer, inside a library folder the
   operator sees. Its verdict is covered end to end where it is acted on
-  (`Cinder.Library.SidecarsTest`, `Cinder.Library.StageEngineTest`); what needs proving here is
+  (`Cinder.Library.SidecarsTest`, `Cinder.Library.StagedImportTest`); what needs proving here is
   the invariant those tests can only observe on one branch — that no outcome leaves the probe
   file behind.
   """

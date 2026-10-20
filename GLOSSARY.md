@@ -75,6 +75,19 @@ stable id, the settings group whose Test button checks it, whether setup require
 the dashboard shows it.
 _Avoid_: service, health check
 
+### Library
+
+**Staged import**:
+Files placed at their final library paths but still reversible until the catalog write that
+records them commits. After that write, Cinder commits what the write recorded and rolls back the
+rest, so no library file is left that no catalog row claims.
+_Avoid_: stage handle, rollback map, import stage (one journal row of it)
+
+**Household import lock**:
+The one lock a poller's import holds from placing its files to settling them, so crash recovery
+cannot roll back an import that is still in progress.
+_Avoid_: stage handoff, handoff lock
+
 ### Movies
 
 **Movie lifecycle**:

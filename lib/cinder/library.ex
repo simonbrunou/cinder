@@ -27,24 +27,14 @@ defmodule Cinder.Library do
     Naming,
     PathPolicy,
     PolicyVerifier,
-    PostImport,
     Sidecars,
-    StageEngine,
+    StagedImport,
     Upgrade
   }
 
   alias Cinder.Settings
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
-
-  # link(2) errnos that mean "this dest can't be hardlinked to" — fall back to an atomic byte copy
-  # rather than parking. `:exdev` = source and dest on different mounts. `:eperm`/`:eopnotsupp`/
-  # `:enotsup` = a single mount whose filesystem has no hardlink support at all (FAT/exFAT on USB
-  # drives, SMB/CIFS without Unix extensions, some FUSE), where `link()` fails without `:exdev` ever
-  # firing (issue #59). `:eperm` can also be a genuine permission error, but then the copy fails the
-  # same way (`cp` can't open the dest) and the item still parks — a wasted copy attempt, not a wrong
-  # import. Every other errno propagates. A guard so `Cinder.Library.Sidecars` shares this one list.
-  defguard copy_fallback_errno?(errno) when errno in [:exdev, :eperm, :eopnotsupp, :enotsup]
   @standard_tv_bridged_schemes ~w(scene aired)
 
   # The video library kinds Cinder manages. `Cinder.LibraryKind` is the full library-kind registry;
@@ -63,9 +53,16 @@ defmodule Cinder.Library do
   @doc false
   def video_extensions, do: @video_exts
 
-  @doc "Stages a movie import with rollback material for a guarded Catalog transition."
-  @spec stage_movie(Movie.t(), keyword()) ::
-          {:ok, %{dest: String.t(), rollback: map(), quality: map()}} | {:error, term()}
+  @doc """
+  Stages a movie's download as a `Cinder.Library.StagedImport` for
+  `Cinder.Catalog.MovieLifecycle.import_staged/2`.
+
+  The record is `%{file_path:, part_file_paths:, quality:}`: the primary file, the further parts
+  of a strict CD/part stack, and the quality to record (sidecar languages merged across parts).
+  `replace: true` (a forced upgrade) swaps whatever sits at the movie's destination; otherwise a
+  file already there is swapped only when the download ranks better than the recorded quality.
+  """
+  @spec stage_movie(Movie.t(), keyword()) :: {:ok, StagedImport.t()} | {:error, term()}
   def stage_movie(movie, opts \\ [])
 
   def stage_movie(%Movie{} = movie, opts) do
@@ -88,17 +85,24 @@ defmodule Cinder.Library do
            new_quality(parsed, Enum.sum(Enum.map(sources, & &1.size)), movie.release_title)
            |> Map.merge(capture_movie_media(sources, reports))
            |> Map.put_new(:sidecar_subtitles, []),
-         {:ok, stages} <- stage_movie_sources(movie, sources, root, new_q, replace?, folder?) do
-      {:ok, movie_stage_result(stages, new_q)}
+         context = %{
+           movie: movie,
+           root: root,
+           quality: new_q,
+           forced?: replace?,
+           on_collision: if(replace? or upgrade?(movie, new_q), do: :replace, else: :keep),
+           folder?: folder?
+         },
+         {:ok, staged, stages} <- stage_movie_sources(sources, context) do
+      {:ok, StagedImport.put_record(staged, movie_record(stages))}
     end
   end
 
   defp stat_movie_sources(sources) do
     Enum.reduce_while(sources, {:ok, []}, fn {path, part}, {:ok, acc} ->
       case fs().lstat(path) do
-        {:ok, %{size: size, inode: inode, major_device: device}} ->
-          {:cont,
-           {:ok, [%{path: path, part: part, size: size, inode: inode, device: device} | acc]}}
+        {:ok, %{size: size}} ->
+          {:cont, {:ok, [%{path: path, part: part, size: size} | acc]}}
 
         {:error, _reason} = error ->
           {:halt, error}
@@ -122,25 +126,30 @@ defmodule Cinder.Library do
     end)
   end
 
-  defp stage_movie_sources(movie, sources, root, quality, replace?, folder?) do
+  # The first source is the primary file; any further ones are the parts of a stack.
+  defp stage_movie_sources(sources, context) do
     sources
-    |> Enum.reduce_while({:ok, []}, fn source, {:ok, stages} ->
-      case stage_movie_source(movie, source, root, quality, replace?, folder?) do
-        {:ok, stage} ->
-          {:cont, {:ok, [stage | stages]}}
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, StagedImport.new(), []}, fn {source, index},
+                                                           {:ok, staged, stages} ->
+      effect = if index == 0, do: :movie, else: :movie_part
+
+      case stage_movie_source(staged, source, effect, context) do
+        {:ok, staged, stage} ->
+          {:cont, {:ok, staged, [stage | stages]}}
 
         {:error, _reason} = error ->
-          stages |> Enum.each(&rollback_stage/1)
+          StagedImport.rollback(staged)
           {:halt, error}
       end
     end)
     |> case do
-      {:ok, stages} -> {:ok, stages |> Enum.reverse() |> put_movie_after_commit(movie)}
+      {:ok, staged, stages} -> {:ok, staged, Enum.reverse(stages)}
       {:error, _reason} = error -> error
     end
   end
 
-  defp stage_movie_source(movie, source, root, quality, replace?, folder?) do
+  defp stage_movie_source(staged, source, effect, %{movie: movie, root: root} = context) do
     dest =
       if source.part,
         do: Naming.movie_part_dest(movie, source.path, root, source.part),
@@ -148,96 +157,40 @@ defmodule Cinder.Library do
 
     with {:ok, dest} <- safe_destination(dest, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, staged_quality, rollback, placed?} <-
-           StageEngine.stage_place(
-             source.path,
-             dest,
-             root,
-             {source.inode, source.device},
-             movie,
-             quality,
-             replace?,
-             fn -> upgrade?(movie, quality) end
+         {:ok, staged, outcome} <-
+           StagedImport.place(staged, source.path, dest, root,
+             on_collision: context.on_collision,
+             extensions: @video_exts
            ) do
-      {:ok,
-       %{
-         dest: dest,
-         quality: staged_sidecar_quality(staged_quality, placed?, folder?, source.path),
-         rollback: Map.merge(rollback, %{folder?: folder?, source: source.path})
-       }}
+      quality =
+        outcome
+        |> staged_quality(movie, context.quality, dest, context.forced?)
+        |> staged_sidecar_quality(placed?(outcome), context.folder?, source.path)
+
+      staged =
+        StagedImport.after_commit(staged, dest, {effect, movie, quality.sidecar_subtitles},
+          link_sidecars_from: if(context.folder?, do: source.path)
+        )
+
+      {:ok, staged, %{dest: dest, quality: quality}}
     end
   end
 
-  defp put_movie_after_commit([first | rest], movie) do
-    first = put_in(first, [:rollback, :after_commit], {:movie, movie})
-    [first | Enum.map(rest, &put_in(&1, [:rollback, :after_commit], {:movie_part, movie}))]
-  end
+  defp movie_record([primary]),
+    do: %{file_path: primary.dest, part_file_paths: [], quality: primary.quality}
 
-  defp movie_stage_result([stage], _quality), do: stage
-
-  defp movie_stage_result([primary | rest] = stages, _quality) do
+  defp movie_record([primary | parts] = stages) do
     sidecars =
       stages
       |> Enum.flat_map(& &1.quality.sidecar_subtitles)
       |> Enum.uniq()
 
-    primary
-    |> Map.put(:stages, stages)
-    |> Map.put(:part_file_paths, Enum.map(rest, & &1.dest))
-    |> Map.put(:quality, Map.put(primary.quality, :sidecar_subtitles, sidecars))
+    %{
+      file_path: primary.dest,
+      part_file_paths: Enum.map(parts, & &1.dest),
+      quality: Map.put(primary.quality, :sidecar_subtitles, sidecars)
+    }
   end
-
-  @doc "Commits a staged import. Safe to call repeatedly."
-  @spec commit_stage(map()) :: :ok | {:error, term()}
-  def commit_stage(%{stages: stages}), do: run_all(stages, &commit_stage/1)
-
-  def commit_stage(%{dest: dest, rollback: rollback, quality: quality}) do
-    if StageEngine.claim_post_commit_effects(rollback) do
-      maybe_commit_sidecars(rollback, dest)
-      run_after_commit(rollback, dest, quality)
-    end
-
-    StageEngine.commit(rollback)
-  end
-
-  @doc "Rolls a staged import back. Safe to call repeatedly."
-  @spec rollback_stage(map()) :: :ok | {:error, term()}
-  def rollback_stage(%{stages: stages}), do: run_all(Enum.reverse(stages), &rollback_stage/1)
-  def rollback_stage(%{rollback: rollback}), do: StageEngine.rollback(rollback)
-
-  defp run_all(stages, fun) do
-    Enum.reduce(stages, :ok, fn stage, result ->
-      case fun.(stage) do
-        :ok -> result
-        {:error, _reason} = error when result == :ok -> error
-        {:error, _reason} -> result
-      end
-    end)
-  end
-
-  @doc false
-  def stage_ids(stages),
-    do:
-      stages
-      |> Enum.flat_map(fn
-        %{stages: nested} -> stage_ids(nested)
-        %{rollback: %{state: :durable, stage_id: id}} -> [id]
-        _stage -> []
-      end)
-      |> Enum.uniq()
-
-  @doc "Converges durable import stages left by process death or a prior filesystem error."
-  @spec reconcile_stages() :: :ok
-  def reconcile_stages do
-    with_stage_handoff(fn ->
-      Enum.each(ImportStage.list(), &StageEngine.reconcile_stage(&1.id, :auto))
-    end)
-  end
-
-  # ponytail: one household-wide lock is enough; split it per import if throughput ever matters.
-  @doc false
-  def with_stage_handoff(fun) when is_function(fun, 0),
-    do: :global.trans({{__MODULE__, :stage_handoff}, self()}, fun)
 
   @doc "Lists quarantined import journals for operator inspection."
   @spec quarantined_import_stages() :: [map()]
@@ -247,6 +200,24 @@ defmodule Cinder.Library do
   @spec retry_import_stage(pos_integer()) :: {:ok, map()} | {:error, term()}
   def retry_import_stage(id), do: ImportStage.retry_quarantined(id)
 
+  # Only fresh bytes count as placed: a staged no-op (the same file, or a kept one) moved nothing.
+  defp placed?(outcome), do: outcome in [:placed, :replaced]
+
+  # The quality to record for a staged file, by what staging found at its destination. The incoming
+  # quality belongs only to bytes that landed, or to a forced re-import of the very same file (a
+  # manual re-import after a crash). Otherwise the record keeps what it says, or, never imported,
+  # adopts the file it found (issue #128).
+  defp staged_quality(outcome, _record, new_q, _dest, _forced?)
+       when outcome in [:placed, :replaced],
+       do: new_q
+
+  defp staged_quality(:same_file, _record, new_q, _dest, true), do: new_q
+
+  defp staged_quality(:same_file, record, new_q, dest, false),
+    do: existing_quality(record, new_q, dest)
+
+  defp staged_quality(:kept, record, new_q, dest, _forced?), do: kept_quality(dest, record, new_q)
+
   defp staged_sidecar_quality(quality, true, true, source) do
     languages = source |> Sidecars.files() |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
     Map.put(quality, :sidecar_subtitles, languages)
@@ -254,47 +225,12 @@ defmodule Cinder.Library do
 
   defp staged_sidecar_quality(quality, _placed?, _folder?, _source), do: quality
 
-  defp maybe_commit_sidecars(%{folder?: true, source: source}, dest),
-    do: Sidecars.link(source, dest)
-
-  defp maybe_commit_sidecars(_rollback, _dest), do: []
-
-  defp run_after_commit(%{after_commit: {:movie, movie}}, dest, quality) do
-    refresh(:movies, dest)
-
-    PostImport.fetch_subtitles(
-      fn -> Cinder.Subtitles.movie_criteria(movie) end,
-      dest,
-      :movies,
-      quality.sidecar_subtitles
-    )
-  end
-
-  # Part stages skip the scan because the media-server scan is library-kind-wide.
-  defp run_after_commit(%{after_commit: {:movie_part, movie}}, dest, quality) do
-    PostImport.fetch_subtitles(
-      fn -> Cinder.Subtitles.movie_criteria(movie) end,
-      dest,
-      :movies,
-      quality.sidecar_subtitles
-    )
-  end
-
-  defp run_after_commit(%{after_commit: {:episodes, episodes}}, dest, quality) do
-    refresh(:tv, dest)
-    PostImport.fetch_episode_subtitles_for_dest(episodes, dest, quality)
-  end
-
-  defp run_after_commit(_rollback, _dest, _quality), do: :ok
-
   # A never-before-imported record (nil_q?) whose computed dest already holds a file we're not
   # overwriting is the delete-and-re-add case (issue #128): the pre-existing sidecars at dest are
-  # real, so scan them the same way a fresh placement's maybe_link_sidecars/5 would, instead of
+  # real, so scan them the same way a fresh placement's `staged_sidecar_quality/4` would, instead of
   # defaulting new_q's sidecar_subtitles to "[]" just because nothing was freshly linked. A record
-  # that's already been imported before keeps its stored quality untouched. Public (not private):
-  # also called from `Cinder.Library.StageEngine`.
-  @doc false
-  def existing_quality(record, new_q, dest) do
+  # that's already been imported before keeps its stored quality untouched.
+  defp existing_quality(record, new_q, dest) do
     if nil_q?(record), do: adopt_quality(new_q, dest), else: old_quality(record)
   end
 
@@ -337,7 +273,7 @@ defmodule Cinder.Library do
   # `720p` file inside a `1080p` pack still records 720p and stays a legitimate upgrade target.
   # `size` is never backfilled — the release's size is the whole container (extras, subs, samples),
   # the file's is the file.
-  defp new_quality(parsed, size, release_title \\ nil) do
+  defp new_quality(parsed, size, release_title) do
     # Parser.parse/1 is total: a nil title yields an all-nil parse, i.e. no backfill.
     release = Parser.parse(release_title)
 
@@ -352,7 +288,7 @@ defmodule Cinder.Library do
   # Probe the source's audio + embedded-subtitle languages for storage on the imported row. Empty
   # lists when media_info is disabled or the probe errors — never blocks the import. Runs on every
   # import (folder or single-file); the release's sidecar languages are captured separately — by
-  # maybe_link_sidecars/5 (a folder scan) when a fresh file is actually placed, or by adopt_quality/2
+  # `staged_sidecar_quality/4` (a folder scan) when a fresh file is actually placed, or by adopt_quality/2
   # (a dest scan) when a never-imported record adopts an already-present file (issue #128).
   defp capture_media(source) do
     case media_info() do
@@ -394,17 +330,6 @@ defmodule Cinder.Library do
     end
   end
 
-  # Hardlink the release's sidecar subtitles next to a freshly-placed dest and record their
-  # languages — only when the file was actually placed (`placed?`, not a keep/idempotent no-op)
-  # AND the download was a folder (`folder?`); a single-file download ships no sidecars. Best-effort
-  # via Sidecars.link/2, which never raises. Otherwise the quality's `sidecar_subtitles` stays as it
-  # was: the stored value on the keep branch's old_quality, or on the adopt branch the dest-scanned
-  # value from adopt_quality/2 (issue #128) rather than new_q's fresh `[]`.
-  defp maybe_link_sidecars(quality, true, true, source, dest),
-    do: Map.put(quality, :sidecar_subtitles, Sidecars.link(source, dest))
-
-  defp maybe_link_sidecars(quality, _placed?, _folder?, _source, _dest), do: quality
-
   defp nil_q?(m),
     do: is_nil(m.imported_resolution) and is_nil(m.imported_size) and is_nil(m.imported_language)
 
@@ -420,91 +345,19 @@ defmodule Cinder.Library do
     )
   end
 
-  # Public (not private): also called from `Cinder.Library.StageEngine`.
-  @doc false
-  def keep(dest, movie, new_q) do
-    old_q = existing_quality(movie, new_q, dest)
+  defp kept_quality(dest, record, new_q) do
+    old_q = existing_quality(record, new_q, dest)
 
     Logger.warning(
       "kept existing #{inspect(old_q.resolution)} file at #{dest}; new release not an upgrade"
     )
 
-    {:ok, old_q, false}
+    old_q
   end
 
   # Both reads live in Upgrade, which also ranks against them — one definition, no drift.
   defp preferred_resolutions(kind), do: Upgrade.preferred_resolutions(kind)
   defp preferred_sources(kind), do: Upgrade.preferred_sources(kind)
-
-  # Atomic replace of an existing dest with source's content: sweep stale temps (a host crash between
-  # link/copy and rename can leak one), link-or-copy source -> unique temp in the dest dir, then rename
-  # over dest. The temp lives on the dest filesystem, so the rename is same-fs and atomic even when the
-  # source content had to be copied across filesystems. Public (not private): also called from
-  # `Cinder.Library.StageEngine`.
-  @doc false
-  def replace(source, dest, root) do
-    dir = Path.dirname(dest)
-    sweep_temps(dir, root)
-    tmp = Path.join(dir, ".cinder-tmp-#{System.unique_integer([:positive])}")
-
-    with {:ok, ^dest} <- safe_destination(dest, root),
-         {:ok, ^tmp} <- safe_destination(tmp, root),
-         :ok <- link_or_copy(source, tmp, root),
-         {:ok, ^tmp} <- safe_destination(tmp, root),
-         {:ok, ^dest} <- safe_destination(dest, root),
-         :ok <- fs().rename(tmp, dest) do
-      :ok
-    else
-      {:error, _} = err ->
-        _ = safe_remove(tmp, [root])
-        err
-    end
-  end
-
-  # Hardlink source -> target, falling back to a byte copy only when the dest filesystem can't be
-  # hardlinked to (`copy_fallback_errno?/1`: cross-mount `:exdev`, or no hardlink support at all →
-  # `:eperm`/`:eopnotsupp`/`:enotsup`). Every other ln error (`:eacces`, `:enoent`, `:enospc`, …) is a
-  # real failure and propagates unchanged — a copy would fail the same way. Both the fresh placement
-  # and the upgrade-replace path route the copy through here, so the :info fallback log lives at this
-  # single choke-point and covers every fallback (per docs/operating.md). Public (not private):
-  # also called from `Cinder.Library.StageEngine`.
-  @doc false
-  def link_or_copy(source, target, root, extensions \\ @video_exts) do
-    with {:ok, source} <- safe_source_file(source, extensions),
-         {:ok, target} <- safe_destination(target, root) do
-      do_link_or_copy(source, target, root, extensions)
-    end
-  end
-
-  defp do_link_or_copy(source, target, root, extensions) do
-    case fs().ln(source, target) do
-      {:error, errno} when copy_fallback_errno?(errno) ->
-        Logger.info(
-          "hardlink unsupported (#{errno}); copying #{source} into #{Path.dirname(target)}"
-        )
-
-        with {:ok, ^source} <- safe_source_file(source, extensions),
-             {:ok, ^target} <- safe_destination(target, root),
-             do: fs().cp(source, target)
-
-      other ->
-        other
-    end
-  end
-
-  defp sweep_temps(dir, root) do
-    case path_policy().walk(dir, roots: [root], filesystem: fs()) do
-      {:ok, files} ->
-        for {p, _size} <- files,
-            String.contains?(Path.basename(p), ".cinder-tmp-"),
-            do: safe_remove(p, [root])
-
-        :ok
-
-      _ ->
-        :ok
-    end
-  end
 
   # MediaInfo safety net behind the name filter: when a language is wanted and the file's audio
   # tracks positively don't include it, fail with `:wrong_audio_language` so the poller parks the
@@ -557,43 +410,12 @@ defmodule Cinder.Library do
   defp media_info, do: Application.get_env(:cinder, :media_info)
 
   @doc """
-  Imports the video files at `content_path` for `episodes` (a grab's episodes, each preloaded
-  `season: :series`). Returns `{:ok, imported, unmatched}` — `imported` is
-  `[{episode_id, dest_path, quality}]` where `quality = %{resolution:, size:, language:}`,
-  `unmatched` the video files that mapped to no episode (logged,
-  not an error: graceful park) — or `{:error, reason}` on a transient filesystem error (the grab
-  retries). One best-effort scan fires when anything imported. A sample-named file that lost every
-  episode it names to a real (non-sample) file is dropped (logged), not returned as unmatched.
+  Stages a standard-TV grab's download as a `Cinder.Library.StagedImport` for
+  `Catalog.commit_grab_imports/4`, together with the video files that matched no episode.
 
-  Layout: `Show (Year)/Season NN/Show (Year) - SxxEyy.ext`. Files are matched by parsing `SxxEyy`
-  from each name and intersecting with the grab's native episode numbers or exact persisted
-  `scene`/TVDB `aired` coordinates (a double-episode file maps to both). When an episode has both
-  alternate schemes, operator-selected `scene` wins over migration-inferred `aired`.
-  For a single-episode grab whose files name no specific episode, the largest video is assigned
-  to it — mirroring `import_movie`'s sample-skipping largest-wins, since the grab already names
-  the one episode. Reuses `import_movie`'s place/scan/naming primitives.
-
-  When `:media_info` is configured and the series wants a language, a file whose actual audio is a
-  confirmed different language is dropped to `unmatched` (logged, not imported) rather than landing
-  the wrong language — so the episode re-searches. Same conservative rule as the movie path.
-  """
-  @spec import_episodes(String.t() | nil, [Episode.t()]) ::
-          {:ok, [{integer(), String.t(), map()}], [String.t()]} | {:error, term()}
-  def import_episodes(content_path, _episodes) when content_path in [nil, ""],
-    do: {:error, :no_content_path}
-
-  def import_episodes(content_path, episodes) do
-    # Strict separate TV root: with no :tv_library_path configured, return an error tuple so the
-    # poller holds the grab (no bump, no park) until it's set, rather than raising every tick
-    # (a raise would sit above the poller's {:error,_} clause and re-raise — see TvPoller). The
-    # same `Settings.library_root/2` guard protects the movie path symmetrically.
-    with {:ok, root} <- Settings.library_root(:tv, episodes) do
-      do_import_episodes(content_path, episodes, root)
-    end
-  end
-
-  @doc """
-  Stages standard-TV imports with rollback material for `Catalog.commit_grab_imports/3`.
+  The record is `[{episode_id, dest, quality, placed?}]`, one row per staged episode; one file can
+  be the dest of several episodes. `placed?` is false only for an arbitrated decline, where the
+  episode keeps its own file; it is empty when nothing matched.
 
   `arbitrate: true` (the unattended upgrade sweep, `Grab.arbitrate_at_import`) makes THIS import
   the arbiter of every swap: an episode that already holds a file keeps it unless the incoming
@@ -611,7 +433,7 @@ defmodule Cinder.Library do
   a release's `Sample/` clip doesn't become an operator decision either.
   """
   @spec stage_episodes(String.t() | nil, [Episode.t()], keyword()) ::
-          {:ok, [{integer(), map()}], [String.t()]} | {:error, term()}
+          {:ok, StagedImport.t(), [String.t()]} | {:error, term()}
   def stage_episodes(content_path, episodes, opts \\ [])
 
   def stage_episodes(content_path, _episodes, _opts) when content_path in [nil, ""],
@@ -633,17 +455,10 @@ defmodule Cinder.Library do
 
       download = download_context(folder?, %{}, release_title)
 
-      case stage_all(to_import, root, episode_target(episodes), download, collision) do
-        {:ok, []} ->
-          log_unmatched(unmatched)
-          {:ok, [], unmatched}
-
-        {:ok, imported} ->
-          log_unmatched(unmatched)
-          {:ok, imported, unmatched}
-
-        {:error, _} = error ->
-          error
+      with {:ok, staged} <-
+             stage_all(to_import, root, episode_target(episodes), download, collision) do
+        log_unmatched(unmatched)
+        {:ok, staged, unmatched}
       end
     end
   end
@@ -666,9 +481,11 @@ defmodule Cinder.Library do
   end
 
   @doc """
-  Stages one operator-selected residual video at a canonical episode part destination.
+  Stages one operator-selected residual video at a canonical episode part destination, as a
+  `Cinder.Library.StagedImport` whose record is that destination.
 
-  The inventoried device/inode/size must still match; a changed source fails before staging.
+  The inventoried device/inode/size must still match; a changed source fails before staging, and
+  a destination that already holds a file fails with `{:error, :part_destination_occupied}`.
   """
   def stage_grab_file_part(
         %Grab{content_path: content_path},
@@ -681,8 +498,9 @@ defmodule Cinder.Library do
          {:ok, stat} <- fs().lstat(source),
          :ok <- verify_grab_file_identity(file, stat),
          dest = Naming.episode_part_dest(episode, source, root, file.id),
-         {:ok, stage} <-
+         {:ok, staged, stage} <-
            stage_episode_file_at(
+             StagedImport.new(),
              [episode],
              source,
              root,
@@ -691,10 +509,13 @@ defmodule Cinder.Library do
              :adopt,
              fn _new_quality -> false end
            ) do
-      if stage.placed? do
-        {:ok, Map.delete(stage, :placed?)}
+      if placed?(stage.outcome) do
+        {:ok,
+         staged
+         |> register_episode_effect([episode], stage, folder?)
+         |> StagedImport.put_record(stage.dest)}
       else
-        rollback_stage(stage)
+        StagedImport.rollback(staged)
         {:error, :part_destination_occupied}
       end
     end
@@ -803,7 +624,10 @@ defmodule Cinder.Library do
     end
   end
 
-  @doc "Stages persisted anime assignments after revalidating the download inventory."
+  @doc """
+  Stages persisted anime assignments after revalidating the download inventory, as a
+  `Cinder.Library.StagedImport` whose record has `stage_episodes/3`'s row shape.
+  """
   def stage_anime_episodes(%Grab{} = grab, preflight) do
     collision = if grab.arbitrate_at_import, do: :arbitrate, else: :force
     target = if grab.arbitrate_at_import, do: nil, else: episode_target(grab.episodes)
@@ -844,33 +668,6 @@ defmodule Cinder.Library do
   end
 
   defp verify_grab_policy(%Grab{}, _to_import), do: {:ok, %{}}
-
-  defp do_import_episodes(content_path, episodes, root) do
-    with {:ok, videos, folder?} <- video_files(content_path) do
-      {to_import, unmatched} =
-        videos
-        |> match_episodes(episodes)
-        |> EpisodeSources.pick(videos, episodes)
-        |> reject_wrong_audio(episodes)
-
-      case link_all(to_import, root, episode_target(episodes), folder?) do
-        {:ok, []} ->
-          # Nothing mapped — still surface the offending file names (don't silently drop them)
-          # so a parser gap on a real release is diagnosable; the poller parks the grab.
-          log_unmatched(unmatched)
-          {:ok, [], unmatched}
-
-        {:ok, imported} ->
-          log_unmatched(unmatched)
-          refresh(:tv, content_path)
-          PostImport.fetch_episode_subtitles(imported, episodes)
-          {:ok, imported, unmatched}
-
-        {:error, _reason} = err ->
-          err
-      end
-    end
-  end
 
   # MediaInfo safety net for TV (same as the movie path): drop a file whose actual audio is a
   # confirmed different language from the series' wanted language into `unmatched` (logged, not
@@ -1015,7 +812,7 @@ defmodule Cinder.Library do
     do: Enum.filter(files, fn {path, _size} -> video_file?(path) end)
 
   # {episode, source_path, size} triples for files that name a specific episode in the grab. A
-  # double-episode file yields two entries; `link_all/4` groups them back to one library file.
+  # double-episode file yields two entries; `stage_all/5` groups them back to one library file.
   defp match_episodes(videos, episodes) do
     episodes = prefer_scene_coordinates(episodes)
 
@@ -1094,49 +891,46 @@ defmodule Cinder.Library do
     end)
   end
 
-  # Hardlink each match into its tmdb-tagged dest, resolving a same-episode collision by upgrade
-  # decision (replace if the new file is better, else keep). One source covering several episodes
-  # gets one multi-episode destination, which every covered episode references. Returns
-  # {ep_id, dest, quality} per episode; a transient FS error halts and returns {:error, _} so the
-  # grab retries the whole import next tick.
-  defp link_all(to_import, root, target, folder?) do
-    to_import
-    |> Enum.group_by(fn {_ep, source} -> source end, fn {ep, _source} -> ep end)
-    |> Enum.reduce_while({:ok, []}, fn {source, episodes}, {:ok, acc} ->
-      episodes = Enum.sort_by(episodes, & &1.episode_number)
-
-      case place_episode_file(episodes, source, root, target, folder?) do
-        {:ok, dest, q} ->
-          imported = Enum.map(episodes, &{&1.id, dest, q})
-          {:cont, {:ok, Enum.reverse(imported, acc)}}
-
-        {:error, _} = err ->
-          {:halt, err}
-      end
-    end)
-  end
-
-  # `keeps` (held path => its noop stage) is threaded across every group on purpose: two episodes
-  # sharing one `file_path` can decline in one group (a combined incoming file) or in two (the
-  # pack ships them separately), and `import_stages.dest` is globally unique either way.
   defp stage_all(to_import, root, target, download, collision) do
     to_import
     |> Enum.group_by(fn {_ep, source} -> source end, fn {ep, _source} -> ep end)
-    |> Enum.reduce_while({:ok, [], %{}}, fn {source, episodes}, {:ok, acc, keeps} ->
+    |> stage_groups(root, target, download, collision)
+  end
+
+  defp stage_anime_all(to_import, root, target, download, collision) do
+    to_import
+    |> Enum.group_by(
+      fn {episode, source} -> {source, episode.season.season_number} end,
+      fn {episode, _source} -> episode end
+    )
+    |> Enum.sort_by(fn {{source, season}, _episodes} -> {source, season} end)
+    |> Enum.map(fn {{source, _season}, episodes} -> {source, episodes} end)
+    |> stage_groups(root, target, download, collision)
+  end
+
+  # The accumulator is `{staged, rows, keeps}`. `keeps` (held path => its staged row) is threaded
+  # across every group on purpose: two episodes sharing one `file_path` can decline in one group (a
+  # combined incoming file) or in two (the pack ships them separately), and `import_stages.dest` is
+  # globally unique either way. Any failure rolls back everything staged so far, or the retry
+  # collides with its own `:prepared` rows.
+  defp stage_groups(groups, root, target, download, collision) do
+    groups
+    |> Enum.reduce_while({:ok, {StagedImport.new(), [], %{}}}, fn {source, episodes},
+                                                                  {:ok, acc} ->
       episodes = Enum.sort_by(episodes, & &1.episode_number)
 
-      case stage_group(episodes, source, root, target, download, collision, keeps) do
-        {:ok, imported, keeps} ->
-          {:cont, {:ok, Enum.reverse(imported, acc), keeps}}
-
-        {:error, _} = error ->
-          acc |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest) |> Enum.each(&rollback_stage/1)
-          {:halt, error}
+      case stage_group(acc, episodes, source, root, target, download, collision) do
+        {:ok, acc} -> {:cont, {:ok, acc}}
+        {:error, _reason, _acc} = error -> {:halt, error}
       end
     end)
     |> case do
-      {:ok, imported, _keeps} -> {:ok, imported}
-      {:error, _reason} = error -> error
+      {:ok, {staged, rows, _keeps}} ->
+        {:ok, StagedImport.put_record(staged, rows)}
+
+      {:error, reason, {staged, _rows, _keeps}} ->
+        StagedImport.rollback(staged)
+        {:error, reason}
     end
   end
 
@@ -1146,29 +940,31 @@ defmodule Cinder.Library do
   # the gate would consult only the group's first episode, and a decline would re-point every row
   # in the group at that one episode's file — leaving the others' files unreferenced for
   # `remove_superseded_episode_files/1` to delete.
-  defp stage_group(episodes, source, root, target, download, :arbitrate, keeps) do
+  defp stage_group(acc, episodes, source, root, target, download, :arbitrate) do
     case arbitration_quality(source, download.release_title) do
       {:ok, new_q} ->
-        if Enum.all?(episodes, &ep_upgrade?(&1, new_q, target, true)) do
-          stage_group(episodes, source, root, target, download, :adopt, keeps)
-        else
-          keep_held_files(episodes, source, root, download, keeps)
-        end
+        if Enum.all?(episodes, &ep_upgrade?(&1, new_q, target, true)),
+          do: stage_group(acc, episodes, source, root, target, download, :adopt),
+          else: keep_held_files(acc, episodes, source, download)
 
-      {:error, _reason} = error ->
-        error
+      {:error, reason} ->
+        {:error, reason, acc}
     end
   end
 
-  defp stage_group(episodes, source, root, target, download, collision, keeps) do
-    case stage_episode_file(episodes, source, root, target, download, collision) do
-      {:ok, stage} -> {:ok, Enum.map(episodes, &{&1.id, stage}), keeps}
-      {:error, _reason} = error -> error
+  defp stage_group({staged, rows, keeps}, episodes, source, root, target, download, collision) do
+    case stage_episode_file(staged, episodes, source, root, target, download, collision) do
+      {:ok, staged, stage} ->
+        group = Enum.map(episodes, &{&1.id, stage.dest, stage.quality, true})
+        {:ok, {staged, Enum.reverse(group, rows), keeps}}
+
+      {:error, reason} ->
+        {:error, reason, {staged, rows, keeps}}
     end
   end
 
   # Only the four fields `Upgrade.better?/5` ranks on, so this skips the media-info probe
-  # `stage_episode_file_at/7` runs — audio and subtitle languages never enter the comparison.
+  # `stage_episode_file_at/8` runs — audio and subtitle languages never enter the comparison.
   defp arbitration_quality(source, release_title) do
     with {:ok, source} <- safe_source_file(source),
          {:ok, %{size: size}} <- fs().lstat(source) do
@@ -1187,54 +983,56 @@ defmodule Cinder.Library do
   # row holding that dest until its handoff deadline, so retries inside that window would fail
   # identically. The stage fans back out to every episode on that path, as `stage_group/7` already
   # does for placements.
-  defp keep_held_files(episodes, source, root, download, keeps) do
+  defp keep_held_files(acc, episodes, source, download) do
     held = Enum.filter(episodes, &(&1.file_path not in [nil, ""]))
 
     held
     |> Enum.uniq_by(& &1.file_path)
-    |> Enum.reduce_while({:ok, [], keeps}, &keep_held_file(&1, &2, held, source, root, download))
+    |> Enum.reduce_while({:ok, acc}, fn ep, {:ok, acc} ->
+      keep_held_file(acc, ep, held, source, download)
+    end)
   end
 
-  defp keep_held_file(ep, {:ok, acc, keeps}, held, source, root, download) do
-    case keep_stage(ep, source, root, download, keeps) do
-      {:ok, stage} ->
-        rows = for e <- held, e.file_path == ep.file_path, do: {e.id, stage}
-        {:cont, {:ok, rows ++ acc, Map.put(keeps, ep.file_path, stage)}}
+  defp keep_held_file({staged, rows, keeps} = acc, ep, held, source, download) do
+    case keep_stage(staged, ep, source, download, keeps) do
+      {:ok, staged, kept} ->
+        held_rows =
+          for e <- held, e.file_path == ep.file_path, do: {e.id, kept.dest, kept.quality, false}
 
-      {:error, _reason} = error ->
-        # Release the dests this group already claimed, or the retry collides with itself.
-        acc |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest) |> Enum.each(&rollback_stage/1)
-        {:halt, error}
+        {:cont, {:ok, {staged, held_rows ++ rows, Map.put(keeps, ep.file_path, kept)}}}
+
+      {:error, reason} ->
+        {:halt, {:error, reason, acc}}
     end
   end
 
-  # `placed?` survives here (the other builders strip it) but is pinned false — a decline is never
-  # a placement. It comes back true only when the held file has vanished and `stage_place_locked/8`
-  # lands the DECLINED file at that path; calling that a placement clears `part_file_paths` (which
-  # `remove_superseded_episode_files/1` then DELETES off disk) and skips #274's `no_upgrade` row,
-  # which the record's own backfill cannot substitute for — the sweep's `Enum.any?` gate is driven
-  # by a sibling episode (#289). Quality stays the record's own unless we truly placed, or
-  # `existing_quality/3`'s `nil_q?` arm stamps the declined file's parse — title backfill and
-  # probed track languages — onto a kept file (#128, #275).
-  defp keep_stage(ep, source, root, download, keeps) do
+  # The row's `placed?` is pinned false — a decline is never a placement, even when the held file
+  # has vanished and staging lands the DECLINED file at that path. Calling that a placement clears
+  # `part_file_paths` (which `remove_superseded_episode_files/1` then DELETES off disk) and skips
+  # #274's `no_upgrade` row, which the record's own backfill cannot substitute for — the sweep's
+  # `Enum.any?` gate is driven by a sibling episode (#289). Quality stays the record's own unless
+  # we truly placed, or `existing_quality/3`'s `nil_q?` arm would stamp the declined file's parse —
+  # title backfill and probed track languages — onto a kept file (#128, #275).
+  defp keep_stage(staged, ep, source, download, keeps) do
     case Map.fetch(keeps, ep.file_path) do
-      {:ok, stage} -> {:ok, stage}
-      :error -> fresh_keep_stage(ep, source, root, download)
+      {:ok, kept} -> {:ok, staged, kept}
+      :error -> fresh_keep_stage(staged, ep, source, download)
     end
   end
 
-  # `folder?` is pinned false in the context rather than taken from the download: it gates
-  # `maybe_commit_sidecars/2`, and hardlinking the DECLINED release's subtitles next to the file
-  # the episode KEPT is the same lie as recording its quality. The fall-through placement is the
-  # one case where they do belong at `dest` — the file there IS the release's — so it gets the
-  # real `folder?` back afterwards, once `placed?` has told us which of the two happened (#291).
-  defp fresh_keep_stage(ep, source, _root, download) do
+  # `folder?` is pinned false while staging rather than taken from the download: it gates the
+  # sidecar link at commit, and hardlinking the DECLINED release's subtitles next to the file the
+  # episode KEPT is the same lie as recording its quality. The fall-through placement is the one
+  # case where they do belong at `dest` — the file there IS the release's — so it gets the real
+  # `folder?` back once the outcome has told us which of the two happened (#291).
+  defp fresh_keep_stage(staged, ep, source, download) do
     decline = fn _new_quality -> false end
     held = download_context(false, %{}, download.release_title)
 
     with {:ok, held_root} <- Settings.library_root_for_path(ep.file_path),
-         {:ok, stage} <-
+         {:ok, staged, stage} <-
            stage_episode_file_at(
+             staged,
              [ep],
              source,
              held_root,
@@ -1243,73 +1041,19 @@ defmodule Cinder.Library do
              :adopt,
              decline
            ) do
-      {:ok, declined_stage(stage, ep, download.folder?)}
+      {kept, folder?} = declined_stage(stage, ep, download.folder?)
+      {:ok, register_episode_effect(staged, [ep], kept, folder?), kept}
     end
   end
 
-  defp declined_stage(%{placed?: true} = stage, _ep, folder?) do
-    %{
-      stage
-      | placed?: false,
-        quality: staged_sidecar_quality(stage.quality, true, folder?, stage.rollback.source),
-        rollback: %{stage.rollback | folder?: folder?}
-    }
-  end
+  defp declined_stage(%{outcome: :placed} = stage, _ep, folder?),
+    do:
+      {%{stage | quality: staged_sidecar_quality(stage.quality, true, folder?, stage.source)},
+       folder?}
 
-  defp declined_stage(stage, ep, _folder?),
-    do: %{stage | placed?: false, quality: old_quality(ep)}
+  defp declined_stage(stage, ep, _folder?), do: {%{stage | quality: old_quality(ep)}, false}
 
-  defp stage_anime_all(to_import, root, target, download, collision) do
-    to_import
-    |> Enum.group_by(
-      fn {episode, source} -> {source, episode.season.season_number} end,
-      fn {episode, _source} -> episode end
-    )
-    |> Enum.sort_by(fn {{source, season}, _episodes} -> {source, season} end)
-    |> Enum.reduce_while({:ok, [], %{}}, fn
-      {{source, _season}, episodes}, {:ok, acc, keeps} ->
-        episodes = Enum.sort_by(episodes, & &1.episode_number)
-
-        case stage_group(episodes, source, root, target, download, collision, keeps) do
-          {:ok, imported, keeps} ->
-            {:cont, {:ok, Enum.reverse(imported, acc), keeps}}
-
-          {:error, _reason} = error ->
-            acc
-            |> Enum.map(&elem(&1, 1))
-            |> Enum.uniq_by(& &1.dest)
-            |> Enum.each(&rollback_stage/1)
-
-            {:halt, error}
-        end
-    end)
-    |> case do
-      {:ok, imported, _keeps} -> {:ok, imported}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp place_episode_file([ep | _] = episodes, source, root, target, folder?) do
-    dest = Naming.episode_dest(episodes, source, root)
-
-    with {:ok, source} <- safe_source_file(source),
-         {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
-         parsed = Parser.parse(Path.basename(source)),
-         new_q =
-           new_quality(parsed, size)
-           |> Map.merge(capture_media(source))
-           |> Map.put_new(:sidecar_subtitles, []),
-         {:ok, dest} <- safe_destination(dest, root),
-         :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, q, placed?} <-
-           StageEngine.place(source, dest, root, {si, sdev}, ep, new_q, false, fn ->
-             ep_upgrade?(ep, new_q, target)
-           end) do
-      {:ok, dest, maybe_link_sidecars(q, placed?, folder?, source, dest)}
-    end
-  end
-
-  defp stage_episode_file([ep | _] = episodes, source, root, target, download, collision) do
+  defp stage_episode_file(staged, [ep | _] = episodes, source, root, target, download, collision) do
     dest = Naming.episode_dest(episodes, source, root)
 
     collision =
@@ -1317,28 +1061,43 @@ defmodule Cinder.Library do
         do: :adopt,
         else: collision
 
-    case stage_episode_file_at(
-           episodes,
-           source,
-           root,
-           download,
-           dest,
-           collision,
-           fn new_quality -> ep_upgrade?(ep, new_quality, target) end
-         ) do
-      {:ok, stage} -> {:ok, Map.delete(stage, :placed?)}
-      {:error, _reason} = error -> error
+    upgrade_fun = fn new_quality -> ep_upgrade?(ep, new_quality, target) end
+
+    with {:ok, staged, stage} <-
+           stage_episode_file_at(
+             staged,
+             episodes,
+             source,
+             root,
+             download,
+             dest,
+             collision,
+             upgrade_fun
+           ) do
+      {:ok, register_episode_effect(staged, episodes, stage, download.folder?), stage}
     end
+  end
+
+  # Committing an episode file scans the TV library and fetches one subtitle for the file; a
+  # folder download also hardlinks its sidecars next to it first.
+  defp register_episode_effect(staged, episodes, stage, folder?) do
+    StagedImport.after_commit(
+      staged,
+      stage.dest,
+      {:episodes, episodes, stage.quality.sidecar_subtitles},
+      link_sidecars_from: if(folder?, do: stage.source)
+    )
   end
 
   # `collision` decides what happens when a file already sits at `dest`. Only `:force` (the manual
   # path, and anime) and `:adopt` reach here — `:arbitrate` is settled a level up, in
-  # `stage_group/6`, because the choice belongs to the whole group and not to one stage.
+  # `stage_group/7`, because the choice belongs to the whole group and not to one stage.
   #   :force — swap it, no questions.
-  #   :adopt — leave StageEngine's own gate to settle it (nothing is held, or the group already
-  #            decided and passed a `upgrade_fun` that says so).
+  #   :adopt — swap it only when `upgrade_fun` says the incoming file is better (nothing is held,
+  #            or the group already decided and passed an `upgrade_fun` that says so).
   defp stage_episode_file_at(
-         [ep | _] = episodes,
+         staged,
+         [ep | _],
          source,
          root,
          download,
@@ -1347,7 +1106,7 @@ defmodule Cinder.Library do
          upgrade_fun
        ) do
     with {:ok, source} <- safe_source_file(source),
-         {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
+         {:ok, %{size: size}} <- fs().lstat(source),
          parsed = Parser.parse(Path.basename(source)),
          new_q =
            new_quality(parsed, size, download.release_title)
@@ -1355,31 +1114,19 @@ defmodule Cinder.Library do
            |> Map.put_new(:sidecar_subtitles, []),
          {:ok, dest} <- safe_destination(dest, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, quality, rollback, placed?} <-
-           StageEngine.stage_place(
-             source,
-             dest,
-             root,
-             {si, sdev},
-             ep,
-             new_q,
-             collision == :force,
-             fn -> upgrade_fun.(new_q) end
+         forced? = collision == :force,
+         on_collision = if(forced? or upgrade_fun.(new_q), do: :replace, else: :keep),
+         {:ok, staged, outcome} <-
+           StagedImport.place(staged, source, dest, root,
+             on_collision: on_collision,
+             extensions: @video_exts
            ) do
-      quality = staged_sidecar_quality(quality, placed?, download.folder?, source)
+      quality =
+        outcome
+        |> staged_quality(ep, new_q, dest, forced?)
+        |> staged_sidecar_quality(placed?(outcome), download.folder?, source)
 
-      {:ok,
-       %{
-         dest: dest,
-         quality: quality,
-         placed?: placed?,
-         rollback:
-           Map.merge(rollback, %{
-             after_commit: {:episodes, episodes},
-             folder?: download.folder?,
-             source: source
-           })
-       }}
+      {:ok, staged, %{dest: dest, quality: quality, outcome: outcome, source: source}}
     end
   end
 
@@ -1443,11 +1190,6 @@ defmodule Cinder.Library do
 
   defp safe_destination(path, root),
     do: path_policy().destination(path, root, filesystem: fs())
-
-  defp safe_remove(path, roots) do
-    with :ok <- path_policy().deletable_file(path, roots, filesystem: fs()),
-         do: fs().rm(path)
-  end
 
   defp fs, do: Application.fetch_env!(:cinder, :filesystem)
 

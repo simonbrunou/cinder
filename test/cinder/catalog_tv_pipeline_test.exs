@@ -248,7 +248,7 @@ defmodule Cinder.CatalogTvPipelineTest do
   end
 
   describe "finish_grab/2" do
-    # Quality maps carry the media-info capture lists too (import_episodes always sets them).
+    # Quality maps carry the media-info capture lists too (stage_episodes always sets them).
     @q1 %{
       resolution: "1080p",
       size: 5_000_000_000,

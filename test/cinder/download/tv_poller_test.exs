@@ -114,10 +114,9 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   defp import_stat(path, size) do
-    if String.contains?(path, ".cinder-stage-") or
-         not String.starts_with?(path, "/tmp/cinder-test-tv-library/"),
-       do: {:ok, %File.Stat{size: size, inode: 1, major_device: 1}},
-       else: {:error, :enoent}
+    if candidate_path?(path) or not String.starts_with?(path, "/tmp/cinder-test-tv-library/"),
+      do: {:ok, %File.Stat{type: :regular, size: size, inode: 1, major_device: 1}},
+      else: {:error, :enoent}
   end
 
   defp enable_policy_probe do
@@ -1626,7 +1625,7 @@ defmodule Cinder.Download.TvPollerTest do
           Application.put_env(:cinder, :filesystem_barrier, %{
             owner: owner,
             operation: :cp,
-            contains: ".cinder-stage-",
+            contains: candidate_marker(),
             once: true
           })
         end

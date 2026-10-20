@@ -15,6 +15,7 @@ defmodule Cinder.Download.AudiobookPollerTest do
   alias Cinder.Catalog
   alias Cinder.Download.{BookPoller, Intent}
   alias Cinder.Library
+  alias Cinder.Library.StagedImport
   alias Cinder.Repo
 
   setup :set_mox_global
@@ -712,7 +713,7 @@ defmodule Cinder.Download.AudiobookPollerTest do
     # A fault injected on the commit-phase filesystem call (backup cleanup) after the catalog
     # transaction has already committed must never lose or roll back a `book_files` row or its
     # underlying file — `AudiobookImport.commit/4`'s own "logged, not retried" contract,
-    # generalized to N stage tokens. A later `Library.reconcile_stages/0` sweep converges.
+    # generalized to N staged tracks. A later `StagedImport.reconcile/0` sweep converges.
     test "a commit-phase failure after the DB commit leaves every row and every file intact",
          ctx do
       %{target: target, audiobooks: audiobooks, release_dir: first_dir} =
@@ -740,7 +741,7 @@ defmodule Cinder.Download.AudiobookPollerTest do
           replace: true
         )
 
-      # Fires during the post-commit `StageEngine.commit/1` loop, not during staging: every
+      # Fires while the staged import settles after its write, not during staging: every
       # `.cinder-rollback-*` backup removal fails, simulating the process dying (or the backup
       # cleanup erroring) between the catalog write's commit and the journal finishing its own
       # bookkeeping.
@@ -764,7 +765,7 @@ defmodule Cinder.Download.AudiobookPollerTest do
       # Clear the injected failure and let the next sweep converge the still-`:committed` journal
       # rows without deleting any of the N files.
       Application.delete_env(:cinder, :filesystem_failure)
-      assert :ok = Library.reconcile_stages()
+      assert :ok = StagedImport.reconcile()
       assert Library.quarantined_import_stages() == []
       assert File.read!(Path.join(dir, "01 - The Dispossessed.mp3")) == mp3_bytes("replacement-1")
       assert File.read!(Path.join(dir, "02 - The Dispossessed.mp3")) == mp3_bytes("replacement-2")

@@ -8,13 +8,13 @@ defmodule Cinder.Library.Sidecars do
   require Logger
 
   alias Cinder.Acquisition.Parser
-  alias Cinder.Library
+  alias Cinder.Library.Filesystem
   alias Cinder.Library.Filesystem.RenameIdentity
   alias Cinder.Library.PathPolicy
   alias Cinder.Library.SidecarQuarantine
   alias Cinder.Settings
 
-  require Library
+  require Filesystem
 
   @sub_exts ~w(.srt .ass .ssa .sub .vtt)
   @flags ~w(forced sdh cc hi)
@@ -136,7 +136,7 @@ defmodule Cinder.Library.Sidecars do
 
   defp link_or_copy(src, dest) do
     case fs().ln(src, dest) do
-      {:error, errno} when Library.copy_fallback_errno?(errno) -> copy(src, dest)
+      {:error, errno} when Filesystem.copy_fallback_errno?(errno) -> copy(src, dest)
       result -> result
     end
   end
@@ -175,7 +175,7 @@ defmodule Cinder.Library.Sidecars do
   # is whole.
   defp land_noreplace(tmp, dest, root) do
     case fs().ln(tmp, dest) do
-      {:error, errno} when Library.copy_fallback_errno?(errno) ->
+      {:error, errno} when Filesystem.copy_fallback_errno?(errno) ->
         copy_exclusive(tmp, dest, root)
 
       result ->

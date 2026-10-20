@@ -32,6 +32,7 @@ defmodule Cinder.Download.TvPoller do
   alias Cinder.Catalog.{Episode, Grab, Grabs, MediaProfile}
   alias Cinder.Download.Watch
   alias Cinder.HTTPPolicy
+  alias Cinder.Library.StagedImport
   alias Cinder.Repo
 
   @default_interval 5_000
@@ -47,7 +48,7 @@ defmodule Cinder.Download.TvPoller do
   defp do_poll(state) do
     # Isolated like every per-unit pass below: a persistent raise here must not crash-loop the
     # whole GenServer forever with nothing parked and no signal (issue: preamble reliability).
-    isolate("stage reconciliation", fn -> Library.reconcile_stages() end)
+    isolate("stage reconciliation", fn -> StagedImport.reconcile() end)
 
     isolate("pending intent reconciliation", fn ->
       Download.reconcile_pending_intents([:episode, :season_pack])
@@ -124,11 +125,11 @@ defmodule Cinder.Download.TvPoller do
 
   defp import_grabs do
     for grab <- Catalog.list_grabs_downloaded(),
-        do: isolate("grab #{grab.id}", fn -> import_with_stage_handoff(grab) end)
+        do: isolate("grab #{grab.id}", fn -> import_under_lock(grab) end)
   end
 
-  defp import_with_stage_handoff(grab),
-    do: Library.with_stage_handoff(fn -> import_grab(grab) end)
+  defp import_under_lock(grab),
+    do: StagedImport.run(fn -> import_grab(grab) end)
 
   defp import_grab(%Grab{mapping_snapshot: nil, grab_files: [_ | _]} = grab) do
     if Enum.all?(grab.grab_files, & &1.decision),
@@ -245,24 +246,24 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
-  defp finalize_standard_staging(grab, [], _unmatched) do
-    # Deterministic: nothing in content_path mapped to a grab episode. Re-importing can't
-    # help, so park — the episodes re-search (bounded), rather than re-importing forever.
-    Logger.warning(
-      "tv grab #{grab.id} imported nothing from #{HTTPPolicy.sanitize_log(grab.content_path)}; parking"
-    )
-
-    park(grab, :no_files_matched)
-  end
-
   defp finalize_standard_staging(grab, staged, unmatched) do
-    case inventory_standard_residuals(grab, unmatched) do
-      {:ok, residuals} ->
-        finalize_standard_grab(grab, staged, residuals)
+    if StagedImport.record(staged) == [] do
+      # Deterministic: nothing in content_path mapped to a grab episode. Re-importing can't
+      # help, so park — the episodes re-search (bounded), rather than re-importing forever.
+      Logger.warning(
+        "tv grab #{grab.id} imported nothing from #{HTTPPolicy.sanitize_log(grab.content_path)}; parking"
+      )
 
-      {:error, reason} ->
-        rollback_stages(staged)
-        retry_or_park(grab, {:grab_file_inventory, reason})
+      park(grab, :no_files_matched)
+    else
+      case inventory_standard_residuals(grab, unmatched) do
+        {:ok, residuals} ->
+          finalize_standard_grab(grab, staged, residuals)
+
+        {:error, reason} ->
+          StagedImport.rollback(staged)
+          retry_or_park(grab, {:grab_file_inventory, reason})
+      end
     end
   end
 
@@ -285,23 +286,10 @@ defmodule Cinder.Download.TvPoller do
   # cleanup carrier still reserves — over-reserving a missed episode would silently stop
   # re-searching it for as long as the (unrelated) remote-cleanup intent lives.
   defp finalize_standard_grab(grab, staged, residuals) do
-    # `placed?` is absent on every stage but the arbitrated keep (#250), which is the one case
-    # where the episode's file did not change and its part files must survive the commit.
-    imported =
-      Enum.map(staged, fn {episode_id, stage} ->
-        {episode_id, stage.dest, stage.quality, Map.get(stage, :placed?, true)}
-      end)
+    imported_ids = staged |> StagedImport.record() |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
 
-    imported_ids = imported |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
-
-    case Catalog.commit_grab_imports(
-           grab,
-           imported,
-           residuals,
-           Library.stage_ids(Enum.map(staged, &elem(&1, 1)))
-         ) do
+    case StagedImport.commit(staged, &Catalog.commit_grab_imports(grab, &1, residuals, &2)) do
       {:ok, :closed, _grab} ->
-        commit_stages(staged)
         remove_superseded_episode_files(grab.episodes)
 
         Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path,
@@ -309,14 +297,12 @@ defmodule Cinder.Download.TvPoller do
         )
 
       {:ok, :open, _grab} ->
-        commit_stages(staged)
         remove_superseded_episode_files(grab.episodes)
 
       {:error, :stale_grab} ->
-        rollback_stages(staged)
+        :ok
 
       {:error, reason} ->
-        rollback_stages(staged)
         retry_or_park(grab, {:commit_grab_imports, reason})
     end
   end
@@ -384,35 +370,18 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
+  # A `:noop` decision (another operator already decided this file) commits nothing, so the
+  # staged part rolls back with it.
   defp apply_grab_file_decision(file, episode, :part) do
-    with {:ok, stage} <- Library.stage_grab_file_part(file.grab, file, episode) do
-      case Catalog.decide_grab_file(file, episode, :part, stage) do
-        {:ok, :decided, _file} = result ->
-          commit_part_stage(stage)
-          finalize_residual_grab(file.grab)
-          result
-
-        {:ok, :noop, _file} = result ->
-          Library.rollback_stage(stage)
+    with {:ok, staged} <- Library.stage_grab_file_part(file.grab, file, episode) do
+      case StagedImport.commit(staged, &Catalog.decide_grab_file(file, episode, :part, {&1, &2})) do
+        {:ok, _state, _file} = result ->
           finalize_residual_grab(file.grab)
           result
 
         {:error, _reason} = error ->
-          Library.rollback_stage(stage)
           error
       end
-    end
-  end
-
-  defp commit_part_stage(stage) do
-    case Library.commit_stage(stage) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning(
-          "tv residual part staged at #{stage.dest}; deferred stage cleanup failed: #{inspect(reason)}"
-        )
     end
   end
 
@@ -455,18 +424,19 @@ defmodule Cinder.Download.TvPoller do
   # before `remove_after_import` ever runs. `imported` (already computed below) names exactly the
   # episodes that got a file this round — same reasoning as `finalize_standard_grab/3`.
   defp finalize_staged_grab(grab, staged) do
-    imported =
-      Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
+    imported_ids = staged |> StagedImport.record() |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
 
-    imported_ids = imported |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
+    # `finish_grab/3` takes `{episode_id, dest, quality}`: an anime grab that is not arbitrated
+    # never declines, so every row's `placed?` is true.
+    finish = fn rows, stage_ids ->
+      imported =
+        Enum.map(rows, fn {episode_id, dest, quality, _placed?} -> {episode_id, dest, quality} end)
 
-    case Catalog.finish_grab(
-           grab,
-           imported,
-           Library.stage_ids(Enum.map(staged, &elem(&1, 1)))
-         ) do
+      Catalog.finish_grab(grab, imported, stage_ids)
+    end
+
+    case StagedImport.commit(staged, finish) do
       {:ok, _grab} ->
-        commit_stages(staged)
         remove_superseded_episode_files(grab.episodes)
 
         Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path,
@@ -474,10 +444,9 @@ defmodule Cinder.Download.TvPoller do
         )
 
       {:error, :stale_grab} ->
-        rollback_stages(staged)
+        :ok
 
       {:error, reason} ->
-        rollback_stages(staged)
         retry_or_park(grab, {:finish_grab, reason})
     end
   end
@@ -514,21 +483,6 @@ defmodule Cinder.Download.TvPoller do
       "tv grab #{grab.id}: download import roots not configured; holding the download until they are configured"
     )
   end
-
-  defp commit_stages(staged) do
-    staged
-    |> unique_stages()
-    |> Enum.each(&finish_stage(&1, :commit))
-  end
-
-  defp rollback_stages(staged) do
-    staged
-    |> unique_stages()
-    |> Enum.each(&finish_stage(&1, :rollback))
-  end
-
-  defp unique_stages(staged),
-    do: staged |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest)
 
   # The Catalog commit has moved every imported row to its verified new destination. Remove old
   # primary/part files only now, and only when no episode still references them (a multi-episode

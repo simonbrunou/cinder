@@ -8,7 +8,7 @@ defmodule Cinder.LibraryTest do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, GrabFile, Movie, Season, Series}
   alias Cinder.Library
-  alias Cinder.Library.ImportStage
+  alias Cinder.Library.{ImportStage, StagedImport}
 
   defmodule DisappearingPathPolicy do
     def source_file(path, _roots, _extensions, _opts) do
@@ -49,14 +49,11 @@ defmodule Cinder.LibraryTest do
     }
   end
 
-  # Commits a `stage_movie`/`stage_episodes` result the way production does: the DB write
-  # (`MovieLifecycle.import_staged/2`) marks the journal row `:committed` before `commit_stage/1`
-  # is allowed to run its post-commit effects — mirror that ordering here without a lifecycle
-  # write, since these unit tests assert on the library layer only.
-  defp commit!(stage) do
-    ImportStage.mark_committed!(Library.stage_ids([stage]))
-    Library.commit_stage(stage)
-  end
+  # Commits a `stage_movie`/`stage_episodes` result the way production does: the writer marks the
+  # journal rows `:committed` in its transaction before the staged import runs its post-commit
+  # effects — mirror that ordering here without a lifecycle write, since these unit tests assert
+  # on the library layer only.
+  defp commit!(staged), do: Cinder.LibraryStubs.commit_staged(staged)
 
   describe "inventory_anime_videos/1" do
     setup do
@@ -194,11 +191,12 @@ defmodule Cinder.LibraryTest do
 
       expected = Enum.map(fixture["expected"]["destinations"], &Path.join(@tv_lib, &1))
 
-      assert staged |> Enum.map(fn {_episode_id, stage} -> stage.dest end) |> Enum.uniq() ==
+      rows = StagedImport.record(staged)
+
+      assert rows |> Enum.map(fn {_episode_id, dest, _q, _placed?} -> dest end) |> Enum.uniq() ==
                expected
 
-      assert length(staged) == 2
-      assert length(Library.stage_ids(Enum.map(staged, &elem(&1, 1)))) == 1
+      assert length(rows) == 2
       assert Repo.aggregate(ImportStage, :count) == 1
     end
 
@@ -233,9 +231,9 @@ defmodule Cinder.LibraryTest do
       end)
 
       assert {:ok, staged} = Library.stage_anime_episodes(grab, anime_preflight(fixture))
-      assert Enum.all?(staged, fn {_episode_id, stage} -> stage.dest == held end)
-      assert Enum.all?(staged, fn {_episode_id, stage} -> stage.placed? == false end)
-      assert Enum.all?(staged, fn {_episode_id, stage} -> stage.quality.resolution == "1080p" end)
+      assert Enum.all?(rows(staged), fn stage -> stage.dest == held end)
+      assert Enum.all?(rows(staged), fn stage -> stage.placed? == false end)
+      assert Enum.all?(rows(staged), fn stage -> stage.quality.resolution == "1080p" end)
     end
 
     test "an anime upgrade ignores filename language after policy verification" do
@@ -273,7 +271,7 @@ defmodule Cinder.LibraryTest do
       end)
 
       assert {:ok, staged} = Library.stage_anime_episodes(grab, anime_preflight(fixture))
-      assert Enum.all?(staged, fn {_episode_id, stage} -> stage.quality.resolution == "1080p" end)
+      assert Enum.all?(rows(staged), fn stage -> stage.quality.resolution == "1080p" end)
     end
 
     test "a shared story source is policy-probed once and its report supplies stage metadata" do
@@ -288,9 +286,9 @@ defmodule Cinder.LibraryTest do
       end)
 
       assert {:ok, staged} = Library.stage_anime_episodes(grab, anime_preflight(fixture))
-      assert length(staged) == 2
+      assert length(rows(staged)) == 2
 
-      assert Enum.all?(staged, fn {_episode_id, stage} ->
+      assert Enum.all?(rows(staged), fn stage ->
                stage.quality.audio_languages == ["ja", "fr"] and
                  stage.quality.embedded_subtitles == ["fr"]
              end)
@@ -354,8 +352,8 @@ defmodule Cinder.LibraryTest do
         {:ok, policy_report()}
       end)
 
-      assert {:ok, [{101, stage}]} =
-               Library.stage_anime_episodes(grab, anime_preflight(fixture))
+      assert {:ok, staged} = Library.stage_anime_episodes(grab, anime_preflight(fixture))
+      assert [%{episode_id: 101} = stage] = rows(staged)
 
       assert stage.quality.audio_languages == ["ja", "fr"]
       assert Repo.aggregate(ImportStage, :count) == 1
@@ -372,7 +370,8 @@ defmodule Cinder.LibraryTest do
         fixture["expected"]["destinations"] |> Enum.map(&Path.join(@tv_lib, &1)) |> Enum.sort()
 
       assert staged
-             |> Enum.map(fn {_episode_id, stage} -> stage.dest end)
+             |> rows()
+             |> Enum.map(& &1.dest)
              |> Enum.uniq()
              |> Enum.sort() == expected
 
@@ -380,7 +379,8 @@ defmodule Cinder.LibraryTest do
       [season_one_episode, season_two_episode] = grab.episodes
 
       assert staged
-             |> Enum.map(fn {episode_id, stage} -> {episode_id, Path.dirname(stage.dest)} end)
+             |> rows()
+             |> Enum.map(&{&1.episode_id, Path.dirname(&1.dest)})
              |> Map.new() == %{
                season_one_episode.id => Path.join(series_root, "Season 01"),
                season_two_episode.id => Path.join(series_root, "Season 02")
@@ -518,7 +518,9 @@ defmodule Cinder.LibraryTest do
       expect(Cinder.Library.FilesystemMock, :ln, 2, fn _source, _destination -> :ok end)
       expect(Cinder.Library.FilesystemMock, :rm, fn _candidate -> :ok end)
 
-      assert {:ok, %{quality: quality}} = Library.stage_movie(movie)
+      assert {:ok, stage} = Library.stage_movie(movie)
+
+      assert %{quality: quality} = movie(stage)
       assert quality.audio_languages == ["ja", "fr"]
       assert quality.embedded_subtitles == ["fr"]
       assert Repo.aggregate(ImportStage, :count) == 1
@@ -565,7 +567,9 @@ defmodule Cinder.LibraryTest do
 
     Cinder.LibraryStubs.stub_import_ok(5 * @gb)
 
-    assert {:ok, %{dest: dest, quality: quality} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: dest, quality: quality} = movie(stage)
     assert dest == "#{@lib}/Inception (2010) {tmdb-27205}/Inception (2010) {tmdb-27205}.mkv"
     assert %{resolution: "1080p", size: 5_000_000_000, language: nil} = quality
     assert :ok = commit!(stage)
@@ -587,7 +591,9 @@ defmodule Cinder.LibraryTest do
 
     Cinder.LibraryStubs.stub_import_ok(5 * @gb)
 
-    assert {:ok, %{dest: dest}} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: dest} = movie(stage)
     assert String.starts_with?(dest, anime_root <> "/")
   end
 
@@ -613,7 +619,9 @@ defmodule Cinder.LibraryTest do
 
     Cinder.LibraryStubs.stub_import_ok(5 * @gb)
 
-    assert {:ok, %{dest: dest}} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: dest} = movie(stage)
     assert String.starts_with?(dest, root <> "/")
   end
 
@@ -629,7 +637,9 @@ defmodule Cinder.LibraryTest do
 
     Cinder.LibraryStubs.stub_import_ok(4 * @gb)
 
-    assert {:ok, %{quality: q} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{quality: q} = movie(stage)
     assert q.audio_languages == []
     assert q.embedded_subtitles == []
     assert q.sidecar_subtitles == []
@@ -648,9 +658,10 @@ defmodule Cinder.LibraryTest do
 
     Cinder.LibraryStubs.stub_import_ok(8 * @gb)
 
-    assert {:ok,
-            %{dest: ^dest, quality: %{resolution: "1080p", source: "bluray", language: nil}} =
-              stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: ^dest, quality: %{resolution: "1080p", source: "bluray", language: nil}} =
+             movie(stage)
 
     assert :ok = commit!(stage)
   end
@@ -678,7 +689,7 @@ defmodule Cinder.LibraryTest do
         {:ok, %File.Stat{size: 9_000_000_000, inode: 2}}
 
       path ->
-        if String.contains?(path, ".cinder-stage-"),
+        if Cinder.LibraryStubs.candidate_path?(path),
           do: {:ok, %File.Stat{size: 9_000_000_000, inode: 3, major_device: 1}},
           else: {:error, :enoent}
     end)
@@ -688,7 +699,9 @@ defmodule Cinder.LibraryTest do
     stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
     stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
-    assert {:ok, %{dest: ^dest} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: ^dest} = movie(stage)
     assert :ok = commit!(stage)
   end
 
@@ -711,7 +724,7 @@ defmodule Cinder.LibraryTest do
         path == cd2 ->
           {:ok, %File.Stat{size: 4_000, inode: 12, major_device: 1}}
 
-        String.contains?(path, ".cinder-stage-") ->
+        Cinder.LibraryStubs.candidate_path?(path) ->
           size = if String.contains?(path, "-cd1"), do: 3_000, else: 4_000
           {:ok, %File.Stat{size: size, inode: 20 + size, major_device: 1}}
 
@@ -727,11 +740,11 @@ defmodule Cinder.LibraryTest do
     stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
 
     assert {:ok, stage} = Library.stage_movie(movie)
-    assert stage.dest =~ "Epic (1960) {tmdb-1}-cd1.mkv"
-    assert [part] = stage.part_file_paths
+    assert movie(stage).file_path =~ "Epic (1960) {tmdb-1}-cd1.mkv"
+    assert [part] = movie(stage).part_file_paths
     assert part =~ "Epic (1960) {tmdb-1}-cd2.mkv"
-    assert stage.quality.size == 7_000
-    assert length(Library.stage_ids([stage])) == 2
+    assert movie(stage).quality.size == 7_000
+    assert Repo.aggregate(ImportStage, :count) == 2
     assert :ok = commit!(stage)
   end
 
@@ -783,7 +796,7 @@ defmodule Cinder.LibraryTest do
         path == cd2 ->
           {:ok, %File.Stat{size: 4_000, inode: 12, major_device: 1}}
 
-        String.contains?(path, ".cinder-stage-") ->
+        Cinder.LibraryStubs.candidate_path?(path) ->
           size = if String.contains?(path, "-cd1"), do: 3_000, else: 4_000
           {:ok, %File.Stat{size: size, inode: 20 + size, major_device: 1}}
 
@@ -799,8 +812,8 @@ defmodule Cinder.LibraryTest do
     stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
 
     assert {:ok, stage} = Library.stage_movie(movie)
-    assert stage.dest =~ "Amélie (2001) {tmdb-560}-cd1.mkv"
-    assert [part] = stage.part_file_paths
+    assert movie(stage).file_path =~ "Amélie (2001) {tmdb-560}-cd1.mkv"
+    assert [part] = movie(stage).part_file_paths
     assert part =~ "Amélie (2001) {tmdb-560}-cd2.mkv"
     assert :ok = commit!(stage)
   end
@@ -822,7 +835,9 @@ defmodule Cinder.LibraryTest do
     Cinder.LibraryStubs.stub_import_ok(1)
     stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> {:error, :econnrefused} end)
 
-    assert {:ok, %{dest: ^dest} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: ^dest} = movie(stage)
 
     log = capture_log(fn -> assert :ok = commit!(stage) end)
     assert log =~ "media-server scan failed"
@@ -838,7 +853,9 @@ defmodule Cinder.LibraryTest do
     # hardlinked import.
     stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> raise "boom" end)
 
-    assert {:ok, %{dest: ^dest} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: ^dest} = movie(stage)
 
     log = capture_log(fn -> assert :ok = commit!(stage) end)
     assert log =~ "media-server scan failed"
@@ -914,7 +931,9 @@ defmodule Cinder.LibraryTest do
        ]}
     end)
 
-    assert {:ok, %{dest: dest} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: dest} = movie(stage)
     assert dest == "#{@lib}/X (2000) {tmdb-555}/X (2000) {tmdb-555}.mkv"
     assert :ok = commit!(stage)
   end
@@ -935,7 +954,9 @@ defmodule Cinder.LibraryTest do
        ]}
     end)
 
-    assert {:ok, %{dest: dest} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: dest} = movie(stage)
     assert dest == "#{@lib}/X (2000) {tmdb-556}/X (2000) {tmdb-556}.mkv"
     assert :ok = commit!(stage)
   end
@@ -1029,7 +1050,9 @@ defmodule Cinder.LibraryTest do
        ]}
     end)
 
-    assert {:ok, %{dest: dest} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: dest} = movie(stage)
     assert dest == "#{@lib}/Sample (2000) {tmdb-558}/Sample (2000) {tmdb-558}.mkv"
     assert :ok = commit!(stage)
   end
@@ -1078,7 +1101,9 @@ defmodule Cinder.LibraryTest do
 
     Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, %{dest: ^dest} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: ^dest} = movie(stage)
     assert :ok = commit!(stage)
   end
 
@@ -1088,7 +1113,9 @@ defmodule Cinder.LibraryTest do
 
     Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, %{dest: ^dest} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: ^dest} = movie(stage)
     assert :ok = commit!(stage)
   end
 
@@ -1098,7 +1125,9 @@ defmodule Cinder.LibraryTest do
 
     Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, %{dest: ^dest} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: ^dest} = movie(stage)
     assert :ok = commit!(stage)
   end
 
@@ -1108,7 +1137,9 @@ defmodule Cinder.LibraryTest do
 
     Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, %{dest: ^dest} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: ^dest} = movie(stage)
     assert :ok = commit!(stage)
   end
 
@@ -1119,7 +1150,9 @@ defmodule Cinder.LibraryTest do
 
     Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, %{dest: ^dest} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: ^dest} = movie(stage)
     assert :ok = commit!(stage)
   end
 
@@ -1141,17 +1174,20 @@ defmodule Cinder.LibraryTest do
 
     Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, %{dest: ^dest} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+
+    assert %{file_path: ^dest} = movie(stage)
     assert :ok = commit!(stage)
   end
 
-  test "TV: import_episodes takes the identical :exdev → copy path and imports the episode" do
+  test "TV: stage_episodes copies through the :exdev fallback and stages the episode" do
     Cinder.LibraryStubs.stub_import_exdev(3 * @gb)
 
-    assert {:ok, [{7, dest, _q}], []} =
-             Library.import_episodes("/dl/Show.S01E03.1080p.mkv", [ep(7, 3)])
+    assert {:ok, staged, []} = Library.stage_episodes("/dl/Show.S01E03.1080p.mkv", [ep(7, 3)])
 
-    assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
+    assert episode_dests(staged) == [
+             {7, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"}
+           ]
   end
 
   # #399: episode_dest reuses the same guarded string for the show FOLDER and the episode
@@ -1159,13 +1195,13 @@ defmodule Cinder.LibraryTest do
   test "TV: a series title beginning with a dot is prefixed so the show folder is not hidden" do
     Cinder.LibraryStubs.stub_import_exdev(3 * @gb)
 
-    assert {:ok, [{7, dest, _q}], []} =
-             Library.import_episodes("/dl/Show.S01E03.1080p.mkv", [
+    assert {:ok, staged, []} =
+             Library.stage_episodes("/dl/Show.S01E03.1080p.mkv", [
                ep(7, 3, 1, title: ".hack//Legend of the Twilight", year: 2003, tmdb_id: 99)
              ])
 
     name = "_.hackLegend of the Twilight (2003) {tmdb-99}"
-    assert dest == "#{@tv_lib}/#{name}/Season 01/#{name} - S01E03.mkv"
+    assert episode_dests(staged) == [{7, "#{@tv_lib}/#{name}/Season 01/#{name} - S01E03.mkv"}]
   end
 
   test "TV: an explicit Anime series stages under the Anime TV destination" do
@@ -1175,12 +1211,13 @@ defmodule Cinder.LibraryTest do
     on_exit(fn -> restore_env(:tv_anime_library_path, saved) end)
     Cinder.LibraryStubs.stub_import_ok(3 * @gb)
 
-    assert {:ok, [{7, stage}], []} =
+    assert {:ok, staged, []} =
              Library.stage_episodes("/dl/Show.S01E03.1080p.mkv", [
                ep(7, 3, 1, media_profile: :anime)
              ])
 
-    assert String.starts_with?(stage.dest, anime_root <> "/")
+    assert [{7, dest}] = episode_dests(staged)
+    assert String.starts_with?(dest, anime_root <> "/")
   end
 
   test "TV: a residual part stays beside its primary file after a profile change" do
@@ -1197,25 +1234,51 @@ defmodule Cinder.LibraryTest do
 
     Cinder.LibraryStubs.stub_import_ok(@gb)
 
-    assert {:ok, %{dest: dest}} = Library.stage_grab_file_part(grab, file, episode)
+    assert {:ok, staged} = Library.stage_grab_file_part(grab, file, episode)
+    dest = StagedImport.record(staged)
     assert String.starts_with?(dest, @tv_lib <> "/")
     refute String.starts_with?(dest, anime_root <> "/")
   end
 
-  describe "import_episodes/2" do
-    # FS/media mocks stubbed (multiple, order-independent calls); assertions read the return value.
+  test "TV: a residual part whose destination is already taken stages nothing" do
+    source = "/dl/Show.extra.mkv"
+    primary = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
+    episode = %{ep(7, 3) | file_path: primary}
+    grab = %Grab{content_path: source}
+    file = %GrabFile{id: 11, relative_path: Path.basename(source), size: @gb, device: 1, inode: 1}
+
+    Cinder.LibraryStubs.stub_import_ok(@gb)
+
+    # Another file already sits at the part's destination.
+    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+      if String.starts_with?(path, @tv_lib <> "/") and String.ends_with?(path, "-part-11.mkv"),
+        do: {:ok, %File.Stat{type: :regular, size: 5, inode: 99, major_device: 1}},
+        else: Cinder.LibraryStubs.import_lstat(path, @gb)
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :ln, 0, fn _src, _dest -> :ok end)
+
+    assert {:error, :part_destination_occupied} =
+             Library.stage_grab_file_part(grab, file, episode)
+
+    refute Repo.exists?(ImportStage)
+  end
+
+  # File-to-episode matching, the half of a TV import that decides which download file becomes
+  # which episode. Stubbed filesystem and media server (order-independent calls); the assertions
+  # read which destination each episode was staged at.
+  describe "stage_episodes/3 file matching" do
     defp stub_dir(files) do
       stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
       stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, files} end)
     end
 
+    # Library paths are empty, so every match stages as a fresh placement.
     defp stub_link_ok do
-      stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
-        {:ok, %File.Stat{size: @gb, inode: 1}}
-      end)
-
+      stub(Cinder.Library.FilesystemMock, :lstat, &Cinder.LibraryStubs.import_lstat(&1, @gb))
       stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
       stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
       stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
     end
 
@@ -1225,11 +1288,12 @@ defmodule Cinder.LibraryTest do
 
       log =
         capture_log(fn ->
-          assert {:ok, [{7, dest, _quality}], ["/dl/sample.mkv"]} =
-                   Library.import_episodes("/dl", [ep(7, 3)])
+          assert {:ok, staged, ["/dl/sample.mkv"]} = Library.stage_episodes("/dl", [ep(7, 3)])
 
-          assert dest ==
-                   "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
+          assert episode_dests(staged) == [
+                   {7,
+                    "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"}
+                 ]
         end)
 
       assert log =~ "import skipped 1 unmatched file(s): [\"/dl/sample.mkv\"]"
@@ -1239,11 +1303,11 @@ defmodule Cinder.LibraryTest do
       stub_dir([{"/dl/Show.S00E05.1080p.mkv", 9 * @gb}])
       stub_link_ok()
 
-      assert {:ok, [{7, dest, _quality}], []} =
-               Library.import_episodes("/dl", [ep(7, 5, 0)])
+      assert {:ok, staged, []} = Library.stage_episodes("/dl", [ep(7, 5, 0)])
 
-      assert dest ==
-               "#{@tv_lib}/Show (2008) {tmdb-1}/Season 00/Show (2008) {tmdb-1} - S00E05.mkv"
+      assert episode_dests(staged) == [
+               {7, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 00/Show (2008) {tmdb-1} - S00E05.mkv"}
+             ]
     end
 
     test "a deobfuscated SABnzbd .cinder-<uuid> suffix still maps to the correct episode (issue #127)" do
@@ -1256,59 +1320,48 @@ defmodule Cinder.LibraryTest do
 
       stub_link_ok()
 
-      assert {:ok, [{9, dest, _quality}], []} = Library.import_episodes("/dl", [ep(9, 5)])
+      assert {:ok, staged, []} = Library.stage_episodes("/dl", [ep(9, 5)])
 
-      assert dest ==
-               "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E05.mkv"
+      assert episode_dests(staged) == [
+               {9, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E05.mkv"}
+             ]
     end
 
     test "season pack: each file maps to its own episode and dest" do
       stub_dir([{"/dl/Show.S01E01.mkv", 3 * @gb}, {"/dl/Show.S01E02.mkv", 3 * @gb}])
       stub_link_ok()
 
-      assert {:ok, imported, []} = Library.import_episodes("/dl", [ep(1, 1), ep(2, 2)])
+      assert {:ok, staged, []} = Library.stage_episodes("/dl", [ep(1, 1), ep(2, 2)])
 
-      assert Enum.map(Enum.sort_by(imported, &elem(&1, 0)), fn {id, dest, _q} -> {id, dest} end) ==
-               [
-                 {1,
-                  "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"},
-                 {2,
-                  "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E02.mkv"}
-               ]
+      assert episode_dests(staged) == [
+               {1, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"},
+               {2, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E02.mkv"}
+             ]
     end
 
-    test "a double-episode file links once at a range-named path shared by both episodes" do
+    test "a double-episode file stages once at a range-named path shared by both episodes" do
       source = "/dl/Show.S01E01E02.1080p.mkv"
 
       dest =
         "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01-E02.mkv"
 
       stub_dir([{source, 4 * @gb}])
+      stub_link_ok()
       parent = self()
-
-      stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
-        {:ok, %File.Stat{size: @gb, inode: 1}}
-      end)
-
-      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
 
       stub(Cinder.Library.FilesystemMock, :ln, fn path, target ->
         send(parent, {:linked, path, target})
         :ok
       end)
 
-      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+      assert {:ok, staged, []} = Library.stage_episodes("/dl", [ep(1, 1), ep(2, 2)])
+      assert episode_dests(staged) == [{1, dest}, {2, dest}]
+      assert Repo.aggregate(ImportStage, :count) == 1
 
-      assert {:ok, imported, []} = Library.import_episodes("/dl", [ep(1, 1), ep(2, 2)])
-
-      assert Enum.map(Enum.sort_by(imported, &elem(&1, 0)), fn {id, dest, _q} -> {id, dest} end) ==
-               [
-                 {1, dest},
-                 {2, dest}
-               ]
-
-      assert_received {:linked, ^source, ^dest}
-      refute_received {:linked, _, _}
+      # The source is linked once, into the one candidate that lands at the shared dest.
+      assert_received {:linked, ^source, _candidate}
+      refute_received {:linked, ^source, _}
+      assert_received {:linked, _candidate, ^dest}
     end
 
     test "a non-contiguous multi-episode file keeps its distinct episode tokens" do
@@ -1317,15 +1370,10 @@ defmodule Cinder.LibraryTest do
       stub_dir([{source, 4 * @gb}])
       stub_link_ok()
 
-      assert {:ok, imported, []} = Library.import_episodes("/dl", [ep(1, 1), ep(3, 3)])
+      assert {:ok, staged, []} = Library.stage_episodes("/dl", [ep(1, 1), ep(3, 3)])
 
-      assert Enum.map(Enum.sort_by(imported, &elem(&1, 0)), fn {id, dest, _q} -> {id, dest} end) ==
-               [
-                 {1,
-                  "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01E03.mkv"},
-                 {3,
-                  "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01E03.mkv"}
-               ]
+      dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01E03.mkv"
+      assert episode_dests(staged) == [{1, dest}, {3, dest}]
     end
 
     test "two files parsing the same episode: largest imports, the rest log as unmatched" do
@@ -1336,11 +1384,13 @@ defmodule Cinder.LibraryTest do
 
       log =
         capture_log(fn ->
-          assert {:ok, [{1, dest, _q}], ["/dl/Show.S01E01.mkv"]} =
-                   Library.import_episodes("/dl", [ep(1, 1)])
+          assert {:ok, staged, ["/dl/Show.S01E01.mkv"]} =
+                   Library.stage_episodes("/dl", [ep(1, 1)])
 
-          assert dest ==
-                   "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"
+          assert episode_dests(staged) == [
+                   {1,
+                    "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"}
+                 ]
         end)
 
       assert log =~ "unmatched"
@@ -1359,10 +1409,11 @@ defmodule Cinder.LibraryTest do
 
       stub_link_ok()
 
-      assert {:ok, [{1, dest, _q}], []} = Library.import_episodes("/dl", [ep(1, 5)])
+      assert {:ok, staged, []} = Library.stage_episodes("/dl", [ep(1, 5)])
 
-      assert dest ==
-               "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E05.mkv"
+      assert episode_dests(staged) == [
+               {1, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E05.mkv"}
+             ]
     end
 
     test "a sample naming an episode outside the grab still comes back unmatched" do
@@ -1376,8 +1427,10 @@ defmodule Cinder.LibraryTest do
       stub_link_ok()
 
       capture_log(fn ->
-        assert {:ok, [{1, _dest, _q}], ["/dl/Sample/sample-show.s01e02.mkv"]} =
-                 Library.import_episodes("/dl", [ep(1, 1)])
+        assert {:ok, staged, ["/dl/Sample/sample-show.s01e02.mkv"]} =
+                 Library.stage_episodes("/dl", [ep(1, 1)])
+
+        assert [{1, _dest}] = episode_dests(staged)
       end)
     end
 
@@ -1390,11 +1443,12 @@ defmodule Cinder.LibraryTest do
 
       stub_link_ok()
 
-      assert {:ok, [{1, dest, _q}], ["/dl/Show.S01E05.1080p.WEB-GRP.mkv"]} =
-               Library.import_episodes("/dl", [ep(1, 5)])
+      assert {:ok, staged, ["/dl/Show.S01E05.1080p.WEB-GRP.mkv"]} =
+               Library.stage_episodes("/dl", [ep(1, 5)])
 
-      assert dest ==
-               "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E05.mkv"
+      assert episode_dests(staged) == [
+               {1, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E05.mkv"}
+             ]
     end
 
     test "an unmatchable file is logged and skipped; the rest still import" do
@@ -1403,11 +1457,13 @@ defmodule Cinder.LibraryTest do
 
       log =
         capture_log(fn ->
-          assert {:ok, [{1, dest, _q}], ["/dl/Show.S01E05.mkv"]} =
-                   Library.import_episodes("/dl", [ep(1, 1)])
+          assert {:ok, staged, ["/dl/Show.S01E05.mkv"]} =
+                   Library.stage_episodes("/dl", [ep(1, 1)])
 
-          assert dest ==
-                   "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"
+          assert episode_dests(staged) == [
+                   {1,
+                    "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"}
+                 ]
         end)
 
       assert log =~ "unmatched"
@@ -1418,18 +1474,22 @@ defmodule Cinder.LibraryTest do
       stub(Cinder.Library.FilesystemMock, :dir?, fn "/dl/random.mkv" -> false end)
       stub_link_ok()
 
-      assert {:ok, [{1, dest, _q}], []} = Library.import_episodes("/dl/random.mkv", [ep(1, 4)])
-      assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E04.mkv"
+      assert {:ok, staged, []} = Library.stage_episodes("/dl/random.mkv", [ep(1, 4)])
+
+      assert episode_dests(staged) == [
+               {1, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E04.mkv"}
+             ]
     end
 
     test "video+sample with no SxxEyy: largest-wins assigns the episode, drops the sample" do
       stub_dir([{"/dl/show.finale.mkv", 9 * @gb}, {"/dl/sample.mkv", 50_000_000}])
       stub_link_ok()
 
-      assert {:ok, [{1, dest, _q}], []} = Library.import_episodes("/dl", [ep(1, 3)])
+      assert {:ok, staged, []} = Library.stage_episodes("/dl", [ep(1, 3)])
 
-      assert dest ==
-               "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
+      assert episode_dests(staged) == [
+               {1, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"}
+             ]
     end
 
     test "lone-episode grab does NOT fall back when a file names a different specific episode" do
@@ -1438,48 +1498,50 @@ defmodule Cinder.LibraryTest do
 
       log =
         capture_log(fn ->
-          assert {:ok, [], ["/dl/Show.S01E04.mkv"]} =
-                   Library.import_episodes("/dl", [ep(1, 3)])
+          assert {:ok, staged, ["/dl/Show.S01E04.mkv"]} =
+                   Library.stage_episodes("/dl", [ep(1, 3)])
+
+          assert episode_dests(staged) == []
         end)
 
       assert log =~ "import skipped 1 unmatched file(s): [\"/dl/Show.S01E04.mkv\"]"
     end
 
-    test "no video file → {:ok, [], []} and no scan" do
+    test "no video file stages nothing" do
       stub_dir([{"/dl/readme.nfo", 10}])
 
-      assert {:ok, [], []} = Library.import_episodes("/dl", [ep(1, 1)])
+      assert {:ok, staged, []} = Library.stage_episodes("/dl", [ep(1, 1)])
+      assert episode_dests(staged) == []
+      refute Repo.exists?(ImportStage)
     end
 
-    test "ln :eexist is treated as success when dest is the same file (idempotent re-import)" do
+    test "a destination already holding this exact file stages a no-op (idempotent re-import)" do
       stub_dir([{"/dl/Show.S01E01.mkv", 3 * @gb}])
       stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
-      # Same inode for source + dest → already our hardlink → idempotent.
+      # Same inode and device for source and dest: already our hardlink, so nothing is linked.
       stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
-        {:ok, %File.Stat{size: @gb, inode: 7}}
+        {:ok, %File.Stat{type: :regular, size: @gb, inode: 7, major_device: 1}}
       end)
 
-      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+      expect(Cinder.Library.FilesystemMock, :ln, 0, fn _src, _dest -> :ok end)
 
-      assert {:ok, [{1, _dest, _q}], []} = Library.import_episodes("/dl", [ep(1, 1)])
+      assert {:ok, staged, []} = Library.stage_episodes("/dl", [ep(1, 1)])
+      assert [{1, _dest}] = episode_dests(staged)
+      assert [%ImportStage{kind: :noop}] = Repo.all(ImportStage)
     end
 
     test "a transient hardlink error returns {:error, reason} so the grab retries" do
       stub_dir([{"/dl/Show.S01E01.mkv", 3 * @gb}])
-
-      stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
-        {:ok, %File.Stat{size: @gb, inode: 1}}
-      end)
-
-      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub_link_ok()
       stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eacces} end)
 
-      assert {:error, :eacces} = Library.import_episodes("/dl", [ep(1, 1)])
+      capture_log(fn ->
+        assert {:error, :eacces} = Library.stage_episodes("/dl", [ep(1, 1)])
+      end)
     end
 
     test "nil content_path → {:error, :no_content_path}" do
-      assert {:error, :no_content_path} = Library.import_episodes(nil, [ep(1, 1)])
+      assert {:error, :no_content_path} = Library.stage_episodes(nil, [ep(1, 1)])
     end
 
     test "a vanished content_path folder surfaces {:error, reason}, not an empty import" do
@@ -1488,7 +1550,7 @@ defmodule Cinder.LibraryTest do
       stub(Cinder.Library.FilesystemMock, :dir?, fn "/dl/gone" -> false end)
       expect(Cinder.Library.FilesystemMock, :lstat, fn "/dl/gone" -> {:error, :enoent} end)
 
-      assert {:error, :enoent} = Library.import_episodes("/dl/gone", [ep(1, 1)])
+      assert {:error, :enoent} = Library.stage_episodes("/dl/gone", [ep(1, 1)])
     end
 
     test "TV re-import replaces an episode's file on a resolution upgrade" do
@@ -1503,41 +1565,17 @@ defmodule Cinder.LibraryTest do
         season: %Season{season_number: 1, series: series}
       }
 
-      source = "/dl/Show.S01E01.1080p.mkv"
+      source = "/dl/grab/Show.S01E01.1080p.mkv"
       dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"
+      stub_replacement_filesystem(source, 3 * @gb, dest)
 
-      expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl/grab" -> true end)
+      assert {:ok, staged, []} = Library.stage_episodes("/dl/grab", [ep])
 
-      # sweep_temps' walk checks the dest dir is a directory before listing it.
-      expect(Cinder.Library.FilesystemMock, :dir?, fn _dir -> true end)
+      assert [%{episode_id: 5, dest: ^dest, quality: %{resolution: "1080p", size: 3_000_000_000}}] =
+               rows(staged)
 
-      # The sidecar scan after a placed file re-checks the source dir; fall through to "not a dir".
-      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-
-      expect(Cinder.Library.FilesystemMock, :find_files, fn "/dl/grab" ->
-        {:ok, [{source, 3 * @gb}]}
-      end)
-
-      expect(Cinder.Library.FilesystemMock, :lstat, fn ^source ->
-        {:ok, %File.Stat{size: 3 * @gb, inode: 7}}
-      end)
-
-      expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-      expect(Cinder.Library.FilesystemMock, :ln, fn ^source, ^dest -> {:error, :eexist} end)
-      expect(Cinder.Library.FilesystemMock, :lstat, fn ^dest -> {:ok, %File.Stat{inode: 99}} end)
-      # sweep_temps
-      expect(Cinder.Library.FilesystemMock, :find_files, fn _dir -> {:ok, []} end)
-
-      expect(Cinder.Library.FilesystemMock, :ln, fn ^source, tmp ->
-        assert String.contains?(tmp, ".cinder-tmp-")
-        :ok
-      end)
-
-      expect(Cinder.Library.FilesystemMock, :rename, fn _tmp, ^dest -> :ok end)
-      expect(Cinder.Library.MediaServerMock, :scan, fn _ -> :ok end)
-
-      assert {:ok, [{5, ^dest, %{resolution: "1080p", size: 3_000_000_000, language: nil}}], []} =
-               Library.import_episodes("/dl/grab", [ep])
+      assert [%ImportStage{kind: :placement, backup: backup}] = Repo.all(ImportStage)
+      assert backup
     end
 
     test "TV re-import keeps the existing episode file when the new release is not an upgrade" do
@@ -1552,34 +1590,65 @@ defmodule Cinder.LibraryTest do
         season: %Season{season_number: 1, series: series}
       }
 
-      source = "/dl/Show.S01E01.720p.mkv"
+      source = "/dl/grab/Show.S01E01.720p.mkv"
       dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"
-
-      expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl/grab" -> true end)
-
-      expect(Cinder.Library.FilesystemMock, :find_files, fn "/dl/grab" ->
-        {:ok, [{source, 1 * @gb}]}
-      end)
-
-      expect(Cinder.Library.FilesystemMock, :lstat, fn ^source ->
-        {:ok, %File.Stat{size: 1 * @gb, inode: 7}}
-      end)
-
-      expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-      expect(Cinder.Library.FilesystemMock, :ln, fn ^source, ^dest -> {:error, :eexist} end)
-      expect(Cinder.Library.FilesystemMock, :lstat, fn ^dest -> {:ok, %File.Stat{inode: 99}} end)
-      expect(Cinder.Library.MediaServerMock, :scan, fn _ -> :ok end)
+      stub_replacement_filesystem(source, 1 * @gb, dest)
+      expect(Cinder.Library.FilesystemMock, :ln, 0, fn _src, _dest -> :ok end)
 
       log =
         capture_log(fn ->
-          assert {:ok, [{6, ^dest, %{resolution: "1080p", size: 9_000_000_000, language: nil}}],
-                  []} =
-                   Library.import_episodes("/dl/grab", [ep])
+          assert {:ok, staged, []} = Library.stage_episodes("/dl/grab", [ep])
+
+          assert [
+                   %{
+                     episode_id: 6,
+                     dest: ^dest,
+                     quality: %{resolution: "1080p", size: 9_000_000_000}
+                   }
+                 ] =
+                   rows(staged)
         end)
 
       assert log =~ "kept existing"
+      assert [%ImportStage{kind: :noop}] = Repo.all(ImportStage)
     end
   end
+
+  # A one-file grab folder whose episode already has a different file at `dest`: the source
+  # (inode 7) and the held file (inode 99) are distinct, and every staging path succeeds.
+  defp stub_replacement_filesystem(source, size, dest) do
+    stub(Cinder.Library.FilesystemMock, :dir?, fn path -> path == "/dl/grab" end)
+    stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl/grab" -> {:ok, [{source, size}]} end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn
+      ^source ->
+        {:ok, %File.Stat{type: :regular, size: size, inode: 7, major_device: 1}}
+
+      ^dest ->
+        {:ok, %File.Stat{type: :regular, size: @gb, inode: 99, major_device: 1}}
+
+      path ->
+        if Cinder.LibraryStubs.candidate_path?(path),
+          do: {:ok, %File.Stat{type: :regular, size: size, inode: 50, major_device: 1}},
+          else: {:error, :enoent}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rename, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
+  end
+
+  defp episode_dests(staged), do: Cinder.LibraryStubs.episode_dests(staged)
+
+  # The staged import's record as maps, for assertions that read one field of each row.
+  defp rows(staged) do
+    for {episode_id, dest, quality, placed?} <- StagedImport.record(staged),
+        do: %{episode_id: episode_id, dest: dest, quality: quality, placed?: placed?}
+  end
+
+  # The movie record `Library.stage_movie/2` stages for its writer.
+  defp movie(staged), do: StagedImport.record(staged)
 
   describe "delete_file/1" do
     test "nil/blank path is a no-op (no filesystem calls)" do
@@ -2020,7 +2089,7 @@ defmodule Cinder.LibraryTest do
   defp stage_failure?(target, fail_on) when is_binary(fail_on),
     do:
       String.contains?(target, fail_on) &&
-        String.contains?(Path.basename(target), ".cinder-stage-")
+        Cinder.LibraryStubs.candidate_path?(target)
 
   defp stage_failure?(_target, _fail_on), do: false
 

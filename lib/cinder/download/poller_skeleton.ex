@@ -11,9 +11,9 @@ defmodule Cinder.Download.PollerSkeleton do
   - The pipeline pollers (`Cinder.Download.Poller`, `Cinder.Download.TvPoller`) use
     `stateful: true` (the default): a `do_poll/1` pass receiving the state, the search
     backoff `search_due?/2` fed by `@search_retry_after`, an `@max_attempts` bound, and the
-    `finish_stage/2` + `reject_release/4` helpers for the import-stage cleanup and
-    release-policy-mismatch paths. Only the TV poller still uses the last three: the movie
-    poller hands the same decisions to `Cinder.Catalog.MovieLifecycle`.
+    `reject_release/4` helper for the release-policy-mismatch path. Only the TV poller still
+    uses the last two: the movie poller hands the same decisions to
+    `Cinder.Catalog.MovieLifecycle`.
 
         @default_interval 5_000
         @search_retry_after 60
@@ -134,22 +134,6 @@ defmodule Cinder.Download.PollerSkeleton do
           # unwrap the classifying code the blocklist/membership checks and notifications key on.
           defp reason_code({code, _detail}), do: code
           defp reason_code(code), do: code
-
-          # A terminal-park write's stage cleanup: commit finalizes the staged import file at its
-          # destination, rollback removes it. Best-effort — a cleanup failure is logged, never
-          # raised, so it can't re-open a decision the caller's transition already committed.
-          defp finish_stage(stage, action) do
-            result =
-              case action do
-                :commit -> Cinder.Library.commit_stage(stage)
-                :rollback -> Cinder.Library.rollback_stage(stage)
-              end
-
-            if match?({:error, _}, result),
-              do: Logger.warning("#{unquote(prefix)} import stage cleanup remains pending")
-
-            result
-          end
 
           # A provable release-policy mismatch: reject via the caller's Catalog function
           # (`reject_fun`), then best-effort remove the now-unneeded download source.

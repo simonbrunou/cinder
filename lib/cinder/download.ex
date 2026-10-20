@@ -1357,6 +1357,55 @@ defmodule Cinder.Download do
     end
   end
 
+  @doc """
+  Drops a book grab whose client job is done with: fences a durable `:cleanup_pending` intent
+  and deletes the grab in one transaction (`fence_book_cleanup/1`), then makes the immediate
+  best-effort removal. A transient removal failure survives as that intent for
+  `reconcile_pending_intents/1`'s bounded retry (#398, #415).
+
+  `:mismatch` (#536) means a concurrent grab already reserved a new intent for the same target,
+  and fencing would hijack it: this degrades to a plain grab delete plus `fallback_remove/3`'s
+  one-shot, undurable removal, so the race winner's intent is never touched. Always `:ok`.
+  """
+  @spec retire_book_grab(BookGrab.t()) :: :ok
+  def retire_book_grab(%BookGrab{} = grab) do
+    case fence_book_cleanup(grab) do
+      {:ok, intent_ids} ->
+        cleanup_intents(intent_ids)
+
+      :mismatch ->
+        Books.Grabs.delete(grab)
+
+        fallback_remove(
+          grab.download_protocol,
+          grab.download_id,
+          "book target #{grab.book_target_id}"
+        )
+    end
+
+    :ok
+  end
+
+  @doc """
+  Releases a book grab after its import committed. When `move_on_import` will remove anything
+  (`move_on_import_removal?/1`), the grab is retired (`retire_book_grab/1`) and its download
+  source deleted; otherwise it is deleted plain. The grab goes first either way: a crash between a
+  content-path delete and the grab delete would leave a surviving grab whose payload is gone,
+  which the next tick re-imports into `:enoent` until it holds a target that is genuinely
+  available. Always `:ok`.
+  """
+  @spec release_imported_book_grab(BookGrab.t()) :: :ok
+  def release_imported_book_grab(%BookGrab{} = grab) do
+    if move_on_import_removal?(grab.download_protocol) do
+      retire_book_grab(grab)
+      best_effort_delete_source(grab.content_path)
+    else
+      Books.Grabs.delete(grab)
+    end
+
+    :ok
+  end
+
   @doc "Deletes `content_path` best-effort. Shared by `remove_after_import/4` and the book path."
   def best_effort_delete_source(content_path) do
     case Library.delete_download_source(content_path) do

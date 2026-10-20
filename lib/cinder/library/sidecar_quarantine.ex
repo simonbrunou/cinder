@@ -26,7 +26,7 @@ defmodule Cinder.Library.SidecarQuarantine do
 
   @doc """
   Upserts a retention row keyed on `path`. Called from inside the reclaim path right after it has
-  already failed once, and reached from `Cinder.Library.commit_stage/1` AFTER the catalog write
+  already failed once, and reached from `Cinder.Library.StagedImport.commit/2` AFTER the catalog write
   has committed, so it must never fail the caller: a bookkeeping row cannot be allowed to skip
   the media-server refresh and the journal commit that follow it. Any insert failure is logged
   and swallowed and this always returns `:ok` — `catch` alongside `rescue` because a

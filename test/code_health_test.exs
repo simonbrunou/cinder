@@ -21,6 +21,45 @@ defmodule Cinder.CodeHealthTest do
              Enum.map_join(offenders, "\n", fn {path, lines} -> "  #{path} (#{lines} lines)" end)
   end
 
+  # #739: the staging engine settles nothing about media. Calls back into `Cinder.Library` are how
+  # keep-or-replace and quality decisions used to creep into it, and why books needed an entry
+  # point of their own.
+  test "the staging engine calls nothing in Cinder.Library itself" do
+    {:ok, ast} = "lib/cinder/library/stage_engine.ex" |> File.read!() |> Code.string_to_quoted()
+
+    {_ast, calls} =
+      Macro.prewalk(ast, [], fn
+        # `alias Cinder.Library.{A, B}` parses as a call to `:{}`; it names submodules only.
+        {{:., _, [{:__aliases__, _, aliases}, fun]}, meta, _args} = node, acc
+        when aliases in [[:Library], [:Cinder, :Library]] and fun != :{} ->
+          {node, ["Library.#{fun} (line #{meta[:line]})" | acc]}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    assert calls == [],
+           "StageEngine must not call `Cinder.Library`; settle the decision in the stager and " <>
+             "pass it in:\n  " <> Enum.join(calls, "\n  ")
+  end
+
+  # #739: the engine's scratch-file names are its own. Tests other than the staged-import ones
+  # reach them through `Cinder.LibraryStubs`, so renaming them touches two files.
+  test "only the staged-import tests and LibraryStubs spell out the candidate file name" do
+    marker = ".cinder-" <> "stage-"
+    allowed = ["test/cinder/library/staged_import_test.exs", "test/support/library_stubs.ex"]
+
+    offenders =
+      "test/**/*.{ex,exs}"
+      |> Path.wildcard()
+      |> Enum.reject(&(&1 in allowed))
+      |> Enum.filter(&(&1 |> File.read!() |> String.contains?(marker)))
+
+    assert offenders == [],
+           "use `Cinder.LibraryStubs.candidate_path?/1` or `candidate_marker/0` instead of " <>
+             "spelling out #{marker} in:\n  " <> Enum.join(offenders, "\n  ")
+  end
+
   # `Phoenix.LiveView.TagEngine.Parser`/`Tokenizer` are `@moduledoc false` — private
   # phoenix_live_view API, not a documented contract. If a future phoenix_live_view upgrade
   # changes these token shapes, this test breaks loudly at `mix test` time; that is

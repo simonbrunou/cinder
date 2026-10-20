@@ -1,20 +1,19 @@
 defmodule Cinder.Library.StageEngine do
   @moduledoc """
-  The durable two-phase-commit filesystem staging engine `Cinder.Library` places
-  every movie/episode file through: place a candidate (link-or-copy), land it at
-  the destination, journal the operation (`Cinder.Library.ImportStage`) so a
-  process crash mid-placement is recoverable, then commit or roll back. Carved
-  out of `Cinder.Library` as plain code motion — every entry point below is
-  called from `Cinder.Library` unchanged; the journal semantics, lock ordering,
-  and identity checks are byte-for-byte what they were before the split.
+  The durable two-phase-commit filesystem engine under `Cinder.Library.StagedImport`: place a
+  candidate (link-or-copy), land it at the destination, journal the operation
+  (`Cinder.Library.ImportStage`) so a process crash mid-placement is recoverable, then commit or
+  roll back.
+
+  It decides nothing about media. The stager settles keep-or-replace before `stage/5` runs and
+  the quality to record after it, from the outcome; video and books share the one entry point.
   """
   require Logger
 
-  alias Cinder.Library
-  alias Cinder.Library.{BookSources, ImportStage}
+  alias Cinder.Library.{Filesystem, ImportStage, PathPolicy}
   alias Cinder.Library.Filesystem.RenameIdentity
 
-  require Library
+  require Filesystem
 
   # link(2) errnos that mean "this dest can't be hardlinked to" — fall back to an atomic byte copy
   # rather than parking. `:exdev` = source and dest on different mounts. `:eperm`/`:eopnotsupp`/
@@ -24,85 +23,103 @@ defmodule Cinder.Library.StageEngine do
   # same way (`cp` can't open the dest) and the item still parks — a wasted copy attempt, not a
   # wrong import. Every other errno (`:enoent`, `:enospc`, …) is a real failure and propagates.
   @exclusive_copy_fallback_errnos [:eperm, :eopnotsupp, :enotsup]
-  @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
 
-  # Place source at dest; resolve a same-item collision (tmdb-unique folder => same record) by the
-  # caller's `upgrade_fun` decision or a forced `replace?`. Shared by movie and episode imports.
-  # `upgrade_fun` is a thunk so the (config-reading) upgrade comparison runs only on an actual
-  # collision, not every import. `replace?` bypasses the upgrade gate entirely. Public (not
-  # private): called from `Cinder.Library.place_episode_file/5`.
-  @doc false
-  def place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
-    with {:ok, source} <- safe_source_file(source),
+  @typedoc """
+  What `stage/5` found and did at the destination:
+
+    * `:placed` — nothing was there; the source's bytes landed.
+    * `:replaced` — another file was there and `:replace` swapped it out (it waits in a backup
+      until commit).
+    * `:same_file` — the source is already the file at the destination (a replay); nothing moved.
+    * `:kept` — another file was there and `:keep` left it alone; nothing moved.
+  """
+  @type outcome :: :placed | :replaced | :same_file | :kept
+
+  @doc """
+  Stages `source` at `dest` under `root` and journals it, returning the journal row's id.
+
+  `on_collision` says what to do with ANOTHER regular file already at `dest`: `:replace` swaps
+  it out (backup, then an atomic land), `:keep` leaves it. The same file, by inode and device or
+  by the #584 backing-identity proof, is never swapped over itself. Anything at `dest` that is not
+  a regular file is refused with `{:error, {:unexpected_destination_type, type}}`. `extensions`
+  is the source's allow-list. Every outcome leaves one `:prepared` row that `commit/1` or
+  `rollback/1` settles.
+  """
+  @spec stage(String.t(), String.t(), String.t(), :keep | :replace, [String.t()]) ::
+          {:ok, pos_integer(), outcome()} | {:error, term()}
+  def stage(source, dest, root, on_collision, extensions)
+      when on_collision in [:keep, :replace] do
+    with {:ok, source} <- safe_source_file(source, extensions),
          {:ok, dest} <- safe_destination(dest, root),
          :ok <- normalize_import_directories(dest, root) do
-      do_place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun)
+      # Lock ordering is always destination -> operation -> DB claim. The stable destination lock
+      # serializes local staging decisions; the unique DB index extends exclusion across nodes.
+      ImportStage.with_destination_lock(dest, fn ->
+        stage_locked(source, dest, root, on_collision, extensions)
+      end)
     end
   end
 
-  defp do_place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
-    case fs().ln(source, dest) do
-      :ok ->
-        {:ok, new_q, true}
+  defp stage_locked(source, dest, root, on_collision, extensions) do
+    case fs().lstat(dest) do
+      {:error, :enoent} ->
+        prepare_durable_stage(source, dest, root, nil, nil, extensions, :placed)
 
-      {:error, errno} when Library.copy_fallback_errno?(errno) ->
-        # Fresh placement onto a filesystem that can't hardlink this source (cross-mount `:exdev`, or a
-        # no-hardlink-support mount → `:eperm`/`:eopnotsupp`/`:enotsup`): copy the bytes in atomically
-        # via replace/2 (link-or-copy into a unique temp on the dest fs, then rename). This is the
-        # *fresh* case because on Linux (the deployment target) link(2) reports EEXIST before EXDEV/EPERM
-        # (filename_create checks EEXIST before vfs_link), so a collision with an existing dest surfaces
-        # as :eexist below and still runs the upgrade/keep gate — never an unconditional overwrite here.
-        # The copy logs
-        # at :info from link_or_copy/2 — the one choke-point both copy paths hit.
-        with :ok <- Library.replace(source, dest, root), do: {:ok, new_q, true}
+      {:ok, %File.Stat{type: :regular} = dest_stat} ->
+        stage_collision(source, dest, root, dest_stat, on_collision, extensions)
 
-      {:error, :eexist} ->
-        with {:ok, ^dest} <- safe_destination(dest, root),
-             {:ok, %{inode: di, major_device: ddev} = dest_stat} <- fs().lstat(dest) do
-          # Inode numbers are unique only within one filesystem, so an idempotency short-circuit must
-          # also match the device — across filesystems two inodes can collide and would otherwise skip
-          # a genuine upgrade. Same-fs hardlink fast path (sdev == ddev) is unchanged.
-          same_inode? = si == di and sdev == ddev
-          upgrade? = replace? or upgrade_fun.()
+      # Anything else at the destination — a directory, a device node — is not a file this import
+      # can adopt or swap. Recording it would put a catalog row behind a path that is not a
+      # readable file, and moving it aside as a "backup" would hide an operator's directory under
+      # a rollback name. Refuse and let the caller hold.
+      {:ok, %File.Stat{type: type}} ->
+        {:error, {:unexpected_destination_type, type}}
 
-          do_resolve(
-            source,
-            dest,
-            same_inode? or (upgrade? and same_backing_file?(source, dest, dest_stat)),
-            upgrade?,
-            record,
-            new_q,
-            replace?,
-            root
-          )
-        end
-
-      {:error, _} = err ->
-        err
+      {:error, _reason} = error ->
+        error
     end
   end
 
-  # Same inode: the file is already in place (idempotent). Normally keep the recorded quality, but a
-  # forced replace (e.g. manual re-import after a crash) must record the NEW quality. `placed?` is
-  # false either way — no fresh bytes landed, so maybe_link_sidecars never re-scans; a fresh
-  # (never-imported) record adopting an already-present file gets its sidecars scanned in
-  # existing_quality/3 instead (issue #128).
-  defp do_resolve(_source, dest, true, _upgrade, movie, new_q, replace?, _root),
-    do: {:ok, if(replace?, do: new_q, else: Library.existing_quality(movie, new_q, dest)), false}
+  # A regular file already occupies the destination:
+  #
+  # - the same inode and device ⇒ this exact file is already published (a re-run after a crash
+  #   between placement and the catalog write, or a replay of an already-completed replace), so
+  #   the stage is an idempotent no-op — never a second backup-swap over content swapped once;
+  # - a different file and `:keep` ⇒ the operator's (or the library's) file stays;
+  # - a different file and `:replace` ⇒ a real backup-then-atomic-swap, unless the cross-path
+  #   proof (issue #584) shows the "different" file is the source under a second name.
+  defp stage_collision(source, dest, root, dest_stat, on_collision, extensions) do
+    with {:ok, source_stat} <- fs().lstat(source) do
+      cond do
+        same_file?(source_stat, dest_stat) ->
+          stage_noop(dest, root, :same_file)
 
-  defp do_resolve(source, dest, false, true, _movie, new_q, _replace?, root) do
-    with :ok <- Library.replace(source, dest, root), do: {:ok, new_q, true}
+        on_collision == :keep ->
+          stage_noop(dest, root, :kept)
+
+        same_backing_file?(source, dest, dest_stat) ->
+          stage_noop(dest, root, :same_file)
+
+        true ->
+          prepare_durable_stage(source, dest, root, dest, dest_stat, extensions, :replaced)
+      end
+    end
   end
 
-  defp do_resolve(_source, dest, false, false, movie, new_q, _replace?, _root),
-    do: Library.keep(dest, movie, new_q)
+  # Inode numbers are unique only within one filesystem, so the idempotency short-circuit must
+  # also match the device — across filesystems two inodes can collide and would otherwise skip a
+  # genuine upgrade.
+  defp same_file?(%{inode: inode, major_device: device}, %{inode: inode, major_device: device}),
+    do: true
 
-  # Issue #584, a follow-up to #558: `si == di and sdev == ddev` answers "is `dest` already the
+  defp same_file?(_source_stat, _dest_stat), do: false
+
+  # Issue #584, a follow-up to #558: `same_file?/2` answers "is `dest` already the
   # file I am about to place there" by comparing what `lstat` reports for two DIFFERENT paths. On
   # a mount that computes the reported inode from the path (mergerfs `inodecalc=path-hash`, some
   # FUSE) that always reads "different", so replaying an already-completed replace re-runs the
-  # whole backup-then-swap over content that was already swapped once and reports `placed?: true`
-  # for bytes that never moved.
+  # whole backup-then-swap over content that was already swapped once and reports `:replaced` for
+  # bytes that never moved.
   #
   # #583's fallback does not carry over: it re-reads an identity mismatch as "the mount renamed
   # my own file", which works because the path it falls back to is operation-keyed and only one
@@ -141,135 +158,6 @@ defmodule Cinder.Library.StageEngine do
     end
   end
 
-  @doc """
-  Stages a book file, using the same journal as `stage_place/8` with none of its quality logic.
-
-  Separate from `stage_place/8` rather than a flag on it: that function's source gate is the
-  video extension list, and its collision branches all resolve through `Library.existing_quality/3`
-  and `Library.keep/3`, which read `imported_resolution`-style columns a book target does not
-  have. A book collision needs no comparison at all when `opts[:replace]` is falsy — the parity
-  contract parks automatic upgrades and format conversion for the first release, so an existing
-  file at the destination is always kept.
-
-  `opts`:
-  - `:extensions` — the source/link-or-copy extension allow-list, default
-    `BookSources.accepted_extensions()` (e-book). `Cinder.Library.AudiobookImport` passes
-    `Cinder.Library.AudiobookSources.accepted_extensions()`; this is what makes the SAME staging
-    function safe for both media kinds without a widened, e-book-only gate.
-  - `:replace` — default `false` (today's actual behavior, byte-for-byte unchanged: a destination
-    collision keeps the existing file). `true` is a confirmed "Find a better match" import: a
-    destination collision performs a real, durable, backup-then-atomic-swap replacement — the
-    SAME machinery `stage_replacement/4` already uses for a confirmed movie upgrade
-    (`prepare_durable_stage/7` with `backup_source: dest`), not new code. A same-inode collision
-    (the new bytes are already hardlinked at `dest` — a replay of an already-completed replace) is
-    still the idempotent no-op either way: never a second backup-swap over content already
-    swapped once.
-
-  Returns `{:ok, rollback, placed?}`. `placed?` is false when the destination already held a
-  file and nothing changed, so the caller can tell a fresh publication (or a real replace) from
-  an adoption/replay.
-  """
-  @spec stage_book_place(String.t(), String.t(), String.t(), keyword()) ::
-          {:ok, map(), boolean()} | {:error, term()}
-  def stage_book_place(source, dest, root, opts \\ []) do
-    extensions = Keyword.get(opts, :extensions, BookSources.accepted_extensions())
-    replace? = Keyword.get(opts, :replace, false)
-
-    with {:ok, source} <- safe_source_file(source, extensions),
-         {:ok, dest} <- safe_destination(dest, root),
-         :ok <- normalize_import_directories(dest, root) do
-      ImportStage.with_destination_lock(dest, fn ->
-        stage_book_place_locked(source, dest, root, extensions, replace?)
-      end)
-    end
-  end
-
-  defp stage_book_place_locked(source, dest, root, extensions, replace?) do
-    case fs().lstat(dest) do
-      {:error, :enoent} ->
-        with {:ok, _quality, rollback, placed?} <-
-               stage_new(source, dest, root, %{}, extensions),
-             do: {:ok, rollback, placed?}
-
-      # A REGULAR FILE already occupies the destination.
-      #
-      # - same inode+device ⇒ this exact file is already published (a re-run after a crash
-      #   between placement and the catalog write, OR a replay of an already-completed replace),
-      #   so the import is idempotent either way — never a second backup-swap over content
-      #   already swapped once.
-      # - a different file, `replace?: false` ⇒ the contract parks automatic upgrades and format
-      #   conversion for the first release, so an operator's existing copy is never overwritten on
-      #   the strength of a release name.
-      # - a different file, `replace?: true` ⇒ a confirmed "Find a better match": real,
-      #   backup-then-atomic-swap replacement below.
-      #
-      # Every branch but the real replacement journals a no-op so the caller's commit/rollback
-      # path is uniform and reports `placed?: false` — no fresh bytes landed.
-      {:ok, %File.Stat{type: :regular} = dest_stat} ->
-        stage_book_collision(source, dest, root, dest_stat, extensions, replace?)
-
-      # Anything else at the destination — a directory, a symlink, a device node — is not a book
-      # this import can adopt. Recording it would put a `book_files` row (and an `:available`
-      # target) behind a path that is not a readable book, and the consumer would find a
-      # directory where the catalog promised a file. Refuse and let the target hold.
-      {:ok, %File.Stat{type: type}} ->
-        {:error, {:unexpected_destination_type, type}}
-
-      {:error, _reason} = error ->
-        error
-    end
-  end
-
-  # `same_file?/2` reads the destination as a different file whenever the mount derives the
-  # reported inode from the path, so the cross-path proof (issue #584) guards the swap here too:
-  # a replayed replace must stay the idempotent no-op this function's docstring promises.
-  defp stage_book_collision(source, dest, root, dest_stat, extensions, replace?) do
-    with {:ok, source_stat} <- fs().lstat(source) do
-      if replace? and not same_file?(source_stat, dest_stat) and
-           not same_backing_file?(source, dest, dest_stat),
-         do: stage_book_replace(source, dest, root, dest_stat, extensions),
-         else: stage_book_keep(dest, root)
-    end
-  end
-
-  defp stage_book_replace(source, dest, root, dest_stat, extensions) do
-    with {:ok, _quality, rollback, placed?} <-
-           prepare_durable_stage(source, dest, root, dest, dest_stat, %{}, extensions),
-         do: {:ok, rollback, placed?}
-  end
-
-  defp stage_book_keep(dest, root) do
-    with {:ok, _quality, rollback, placed?} <- stage_noop(dest, root, %{}),
-         do: {:ok, rollback, placed?}
-  end
-
-  defp same_file?(%{inode: inode, major_device: device}, %{inode: inode, major_device: device}),
-    do: true
-
-  defp same_file?(_source_stat, _dest_stat), do: false
-
-  @doc false
-  def stage_place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
-    with {:ok, source} <- safe_source_file(source),
-         {:ok, dest} <- safe_destination(dest, root),
-         :ok <- normalize_import_directories(dest, root) do
-      # Lock ordering is always destination -> operation -> DB claim. The stable destination lock
-      # serializes local staging decisions; the unique DB index extends exclusion across nodes.
-      ImportStage.with_destination_lock(dest, fn ->
-        stage_place_locked(
-          source,
-          dest,
-          root,
-          {si, sdev},
-          record,
-          new_q,
-          replace?,
-          upgrade_fun
-        )
-      end)
-    end
-  end
-
   defp normalize_import_directories(dest, root),
     do: normalize_directory_permissions(Path.dirname(dest), Path.expand(root))
 
@@ -280,57 +168,7 @@ defmodule Cinder.Library.StageEngine do
          do: normalize_directory_permissions(Path.dirname(path), root)
   end
 
-  defp stage_place_locked(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
-    case fs().lstat(dest) do
-      {:error, :enoent} ->
-        stage_new(source, dest, root, new_q)
-
-      {:ok, %{inode: ^si, major_device: ^sdev}} ->
-        stage_same_file(dest, root, record, new_q, replace?)
-
-      {:ok, stat} ->
-        stage_existing(source, dest, root, stat, record, new_q, replace?, upgrade_fun)
-
-      {:error, _} = error ->
-        error
-    end
-  end
-
-  defp stage_same_file(dest, root, record, new_q, replace?) do
-    quality = existing_quality_for_stage(record, new_q, replace?, dest)
-    stage_noop(dest, root, quality)
-  end
-
-  defp stage_existing(source, dest, root, stat, record, new_q, replace?, upgrade_fun) do
-    if replace? or upgrade_fun.() do
-      stage_upgrade(source, dest, root, stat, record, new_q, replace?)
-    else
-      {:ok, quality, false} = Library.keep(dest, record, new_q)
-      stage_noop(dest, root, quality)
-    end
-  end
-
-  # The clause above matched `dest`'s reported inode against the source's; where that comparison
-  # cannot answer (issue #584), prove it across the two paths before spending a whole file's
-  # worth of link-or-copy plus a backup swap on bytes that are already published.
-  defp stage_upgrade(source, dest, root, stat, record, new_q, replace?) do
-    if same_backing_file?(source, dest, stat),
-      do: stage_same_file(dest, root, record, new_q, replace?),
-      else: stage_replacement(source, dest, root, stat, new_q)
-  end
-
-  defp existing_quality_for_stage(_record, new_q, true, _dest), do: new_q
-
-  defp existing_quality_for_stage(record, new_q, false, dest),
-    do: Library.existing_quality(record, new_q, dest)
-
-  defp stage_new(source, dest, root, quality, extensions \\ @video_exts),
-    do: prepare_durable_stage(source, dest, root, nil, nil, quality, extensions)
-
-  defp stage_replacement(source, dest, root, original_stat, quality),
-    do: prepare_durable_stage(source, dest, root, dest, original_stat, quality, @video_exts)
-
-  defp stage_noop(dest, root, quality) do
+  defp stage_noop(dest, root, outcome) do
     operation_key = Ecto.UUID.generate()
 
     ImportStage.with_lock(operation_key, fn ->
@@ -343,13 +181,13 @@ defmodule Cinder.Library.StageEngine do
              dest: dest,
              candidate: dest
            }) do
-        {:ok, stage} -> {:ok, quality, durable_rollback(stage), false}
+        {:ok, stage} -> {:ok, stage.id, outcome}
         {:error, _} = error -> error
       end
     end)
   end
 
-  defp prepare_durable_stage(source, dest, root, backup_source, backup_stat, quality, extensions) do
+  defp prepare_durable_stage(source, dest, root, backup_source, backup_stat, extensions, outcome) do
     operation_key = Ecto.UUID.generate()
     candidate = stage_path(dest, operation_key)
     backup = if backup_source, do: rollback_path(dest, operation_key)
@@ -369,7 +207,7 @@ defmodule Cinder.Library.StageEngine do
 
       case create_stage(attrs) do
         {:ok, stage} ->
-          prepare_created_stage(stage, source, backup_source, quality, extensions)
+          prepare_created_stage(stage, source, backup_source, extensions, outcome)
 
         {:error, _} = error ->
           error
@@ -377,10 +215,10 @@ defmodule Cinder.Library.StageEngine do
     end)
   end
 
-  defp prepare_created_stage(stage, source, backup_source, quality, extensions) do
+  defp prepare_created_stage(stage, source, backup_source, extensions, outcome) do
     case do_prepare_stage(stage, source, backup_source, extensions) do
       {:ok, prepared} ->
-        {:ok, quality, durable_rollback(prepared), true}
+        {:ok, prepared.id, outcome}
 
       {:error, reason} = error ->
         record_stage_error(stage.id, reason)
@@ -398,7 +236,7 @@ defmodule Cinder.Library.StageEngine do
   defp do_prepare_stage(stage, source, backup_source, extensions) do
     candidate = stage.candidate
 
-    with :ok <- Library.link_or_copy(source, candidate, stage.root, extensions),
+    with :ok <- link_or_copy(source, candidate, stage.root, extensions),
          {:ok, candidate_stat} <- fs().lstat(candidate),
          stage <-
            ImportStage.update!(stage, identity_attrs(:candidate, candidate_stat, candidate)),
@@ -509,8 +347,34 @@ defmodule Cinder.Library.StageEngine do
     :ok
   end
 
-  defp durable_rollback(stage),
-    do: %{state: :durable, stage_id: stage.id, operation_key: stage.operation_key}
+  # Hardlink source -> target, falling back to a byte copy only when the dest filesystem can't be
+  # hardlinked to (`Filesystem.copy_fallback_errno?/1`: cross-mount `:exdev`, or no hardlink
+  # support at all → `:eperm`/`:eopnotsupp`/`:enotsup`). Every other ln error (`:eacces`,
+  # `:enoent`, `:enospc`, …) is a real failure and propagates unchanged — a copy would fail the
+  # same way. Every candidate is built here, so the :info fallback log lives at this single
+  # choke-point and covers every fallback (per docs/operating.md).
+  defp link_or_copy(source, target, root, extensions) do
+    with {:ok, source} <- safe_source_file(source, extensions),
+         {:ok, target} <- safe_destination(target, root) do
+      do_link_or_copy(source, target, root, extensions)
+    end
+  end
+
+  defp do_link_or_copy(source, target, root, extensions) do
+    case fs().ln(source, target) do
+      {:error, errno} when Filesystem.copy_fallback_errno?(errno) ->
+        Logger.info(
+          "hardlink unsupported (#{errno}); copying #{source} into #{Path.dirname(target)}"
+        )
+
+        with {:ok, ^source} <- safe_source_file(source, extensions),
+             {:ok, ^target} <- safe_destination(target, root),
+             do: fs().cp(source, target)
+
+      other ->
+        other
+    end
+  end
 
   defp stage_path(dest, operation_key),
     do: Path.join(Path.dirname(dest), ".cinder-stage-#{operation_key}")
@@ -580,23 +444,26 @@ defmodule Cinder.Library.StageEngine do
 
   defp encode_backing_identity(_identity), do: nil
 
-  # Public (not private): called from `Cinder.Library.rollback_stage/1`.
-  @doc false
-  def rollback(%{state: :durable, stage_id: id}), do: reconcile_stage(id, :rollback)
+  @doc """
+  Undoes the stage `id`: removes the bytes it landed and restores any file it moved aside. A row
+  that is already `:committed` is cleaned up instead, so a late rollback never undoes a recorded
+  import.
+  """
+  @spec rollback(pos_integer()) :: :ok | {:error, term()}
+  def rollback(id), do: reconcile_stage(id, :rollback)
 
-  # Public (not private): called from `Cinder.Library.commit_stage/1`.
-  @doc false
-  def commit(%{state: :durable, stage_id: id}), do: reconcile_stage(id, :commit)
+  @doc """
+  Finalizes the stage `id` once a catalog write has marked it `:committed`: removes the backup a
+  replacement left. `{:error, :import_stage_not_committed}` for a row nothing recorded.
+  """
+  @spec commit(pos_integer()) :: :ok | {:error, term()}
+  def commit(id), do: reconcile_stage(id, :commit)
 
-  # Public (not private): called from `Cinder.Library.commit_stage/1`.
-  @doc false
-  def claim_post_commit_effects(%{state: :durable, stage_id: id}),
-    do: match?({:claimed, _stage}, ImportStage.claim_effects(id))
-
-  def claim_post_commit_effects(_rollback), do: false
-
-  # Public (not private): called from `Cinder.Library.reconcile_stages/0`.
-  @doc false
+  @doc """
+  Converges the stage `id` in `mode`. `:auto` is crash recovery: it touches a row only once its
+  handoff deadline or retry backoff has passed.
+  """
+  @spec reconcile_stage(pos_integer(), :auto | :commit | :rollback) :: :ok | {:error, term()}
   def reconcile_stage(id, mode) do
     case ImportStage.get(id) do
       nil ->
@@ -992,22 +859,22 @@ defmodule Cinder.Library.StageEngine do
   defp stage_error({tag, _detail}) when is_atom(tag), do: Atom.to_string(tag)
   defp stage_error(_reason), do: "filesystem_error"
 
-  # Duplicated from `Cinder.Library`'s own copies — tiny, side-effect-free config/PathPolicy
-  # accessors — kept as independent copies rather than shared for it.
+  # The same config reads `Cinder.Library` makes, kept local so the engine depends on no caller.
   defp fs, do: Application.fetch_env!(:cinder, :filesystem)
+  defp path_policy, do: Application.get_env(:cinder, :path_policy, PathPolicy)
 
-  defp safe_source_file(path, extensions \\ @video_exts) do
+  defp safe_source_file(path, extensions) do
     case Cinder.Settings.import_roots() do
       [] -> {:error, :download_roots_not_configured}
-      roots -> Library.path_policy().source_file(path, roots, extensions, filesystem: fs())
+      roots -> path_policy().source_file(path, roots, extensions, filesystem: fs())
     end
   end
 
   defp safe_destination(path, root),
-    do: Library.path_policy().destination(path, root, filesystem: fs())
+    do: path_policy().destination(path, root, filesystem: fs())
 
   defp safe_remove(path, roots) do
-    with :ok <- Library.path_policy().deletable_file(path, roots, filesystem: fs()),
+    with :ok <- path_policy().deletable_file(path, roots, filesystem: fs()),
          do: fs().rm(path)
   end
 end

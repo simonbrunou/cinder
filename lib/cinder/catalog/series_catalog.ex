@@ -315,8 +315,8 @@ defmodule Cinder.Catalog.SeriesCatalog do
   Bytes on disk per series (`%{series_id => bytes}`), for the `/library` size sort and readout.
   Series with nothing imported are absent from the map, not zero.
 
-  Deduplicates by the complete primary-plus-parts path bundle. `Cinder.Library.link_all/4` gives
-  one multi-episode source **one** destination that every covered episode references, and
+  Deduplicates by the complete primary-plus-parts path bundle. `Cinder.Library.stage_episodes/3`
+  gives one multi-episode source **one** destination that every covered episode references, and
   `update_imported_episode!/5` writes the full imported size to each of those rows — so a bare
   `sum(imported_size)` double-counts a double-episode file. A part-only bundle left by a partial
   unlink still counts until its final path is removed.

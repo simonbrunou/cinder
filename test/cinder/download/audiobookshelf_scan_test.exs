@@ -2,7 +2,7 @@ defmodule Cinder.Download.AudiobookshelfScanTest do
   @moduledoc """
   The B7c vertical slice: `Cinder.Download.BookPoller`'s retryable Audiobookshelf scan phase.
 
-  Deliberately not `StageEngine.claim_post_commit_effects/1`'s one-shot-forever-claimed shape —
+  Deliberately not a staged import's one-shot-forever-claimed post-commit effects —
   the roadmap's own "refresh failure is recoverable without re-downloading" requirement means a
   scan failure must leave the target exactly where a later tick can retry it, with no separate
   attempt budget to exhaust and no way to duplicate or roll back the already-committed import.

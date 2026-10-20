@@ -33,7 +33,7 @@ defmodule Cinder.Download.BookPoller do
   alias Cinder.Download
   alias Cinder.Download.Watch
   alias Cinder.Library
-  alias Cinder.Library.{AudiobookImport, AudiobookServer, BookImport}
+  alias Cinder.Library.{AudiobookImport, AudiobookServer, BookImport, StagedImport}
   alias Cinder.Notifier
 
   @default_interval 5_000
@@ -86,7 +86,7 @@ defmodule Cinder.Download.BookPoller do
   ]
 
   defp do_poll(_state) do
-    isolate("stage reconciliation", fn -> Library.reconcile_stages() end)
+    isolate("stage reconciliation", fn -> StagedImport.reconcile() end)
 
     isolate("pending intent reconciliation", fn ->
       Download.reconcile_pending_intents([:book_target])
@@ -105,11 +105,11 @@ defmodule Cinder.Download.BookPoller do
 
   defp import_downloaded do
     for grab <- Books.Grabs.list_downloaded(),
-        do: isolate("book grab #{grab.id}", fn -> import_with_stage_handoff(grab) end)
+        do: isolate("book grab #{grab.id}", fn -> import_under_lock(grab) end)
   end
 
-  defp import_with_stage_handoff(grab),
-    do: Library.with_stage_handoff(fn -> import_one(grab) end)
+  defp import_under_lock(grab),
+    do: StagedImport.run(fn -> import_one(grab) end)
 
   # --- download phase ---
 
@@ -215,15 +215,9 @@ defmodule Cinder.Download.BookPoller do
   #
   # #398: the client removal used to be a bare best-effort call with the grab (its only durable
   # record of `download_id`/`download_protocol`) already deleted — a transient removal failure
-  # leaked the remote job forever. `Download.fence_book_cleanup/1` now persists a
-  # `download_intents` `:cleanup_pending` row and deletes the grab in the SAME transaction (no
-  # crash window between them), and `cleanup_intents/1` makes the immediate best-effort attempt;
-  # a failure there leaves the row for `reconcile_pending_intents/1`'s bounded retry to drain on
-  # a later tick instead of losing it. `:mismatch` (#536) means a concurrent grab already
-  # reserved a NEW intent for this same target between whatever committed earlier and this
-  # fence — degrades to a plain grab delete plus `Download.fallback_remove/3`'s one-shot,
-  # undurable removal, so this dead download's own job is still cleaned up without touching the
-  # race winner's intent.
+  # leaked the remote job forever. `Download.retire_book_grab/1` fences a durable cleanup intent
+  # and deletes the grab in one transaction, and degrades to a one-shot removal when a newer
+  # grab already owns the target (#536).
   defp fail_download(%BookGrab{} = grab, reason) do
     Logger.warning("book grab #{grab.id} download failed: #{inspect(reason)}")
 
@@ -235,21 +229,7 @@ defmodule Cinder.Download.BookPoller do
       grab.replace
     )
 
-    case Download.fence_book_cleanup(grab) do
-      {:ok, intent_ids} ->
-        Download.cleanup_intents(intent_ids)
-
-      :mismatch ->
-        Books.Grabs.delete(grab)
-
-        Download.fallback_remove(
-          grab.download_protocol,
-          grab.download_id,
-          "book target #{grab.book_target_id}"
-        )
-    end
-
-    :ok
+    Download.retire_book_grab(grab)
   end
 
   # A deterministic fact about the payload (a blocked file) is not transient; every other
@@ -313,8 +293,8 @@ defmodule Cinder.Download.BookPoller do
 
   # --- audiobookshelf scan phase ---
 
-  # Retryable, not one-shot: unlike the video pollers' `StageEngine.claim_post_commit_effects/1`
-  # (which marks a post-commit effect claimed regardless of its own success), this re-derives its
+  # Retryable, not one-shot: unlike a staged import's post-commit effects (claimed once per
+  # journal row by `Cinder.Library.StagedImport.commit/2`, regardless of their own success), this re-derives its
   # work from `audiobookshelf_scanned_at: nil` every tick, so a scan failure simply leaves the
   # target here to be retried next tick — the roadmap's "refresh failure is recoverable without
   # re-downloading" requirement. The already-`:available`, already-on-disk file is never touched

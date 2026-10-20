@@ -498,9 +498,9 @@ defmodule Cinder.Download.MoveOnImportTest do
       stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
 
       stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
-        if String.contains?(path, [".cinder-rollback-", ".cinder-stage-"]),
+        if staging_path?(path),
           do: {:error, :enoent},
-          else: {:ok, %File.Stat{size: 1, inode: 1}}
+          else: {:ok, %File.Stat{type: :regular, size: 1, inode: 1}}
       end)
 
       stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
@@ -613,9 +613,9 @@ defmodule Cinder.Download.MoveOnImportTest do
       end)
 
       stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
-        if String.contains?(path, ".cinder-stage-") or
+        if candidate_path?(path) or
              not String.starts_with?(path, "/tmp/cinder-test-tv-library/"),
-           do: {:ok, %File.Stat{size: 3_000_000_000, inode: 1, major_device: 1}},
+           do: {:ok, %File.Stat{type: :regular, size: 3_000_000_000, inode: 1, major_device: 1}},
            else: {:error, :enoent}
       end)
 
@@ -666,9 +666,9 @@ defmodule Cinder.Download.MoveOnImportTest do
       end)
 
       stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
-        if String.contains?(path, ".cinder-stage-") or
+        if candidate_path?(path) or
              not String.starts_with?(path, "/tmp/cinder-test-tv-library/"),
-           do: {:ok, %File.Stat{size: 3_000_000_000, inode: 1, major_device: 1}},
+           do: {:ok, %File.Stat{type: :regular, size: 3_000_000_000, inode: 1, major_device: 1}},
            else: {:error, :enoent}
       end)
 
@@ -774,15 +774,14 @@ defmodule Cinder.Download.MoveOnImportTest do
 
       stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
         cond do
-          String.contains?(path, "/tmp/cinder-test-tv-library/") and
-              not String.contains?(path, ".cinder-stage-") ->
+          String.contains?(path, "/tmp/cinder-test-tv-library/") and not candidate_path?(path) ->
             {:error, :enoent}
 
           String.contains?(path, "S01E99") ->
-            {:ok, %File.Stat{size: 1_000_000_000, inode: 99, major_device: 7}}
+            {:ok, %File.Stat{type: :regular, size: 1_000_000_000, inode: 99, major_device: 7}}
 
           true ->
-            {:ok, %File.Stat{size: 3_000_000_000, inode: 1, major_device: 7}}
+            {:ok, %File.Stat{type: :regular, size: 3_000_000_000, inode: 1, major_device: 7}}
         end
       end)
 

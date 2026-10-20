@@ -24,6 +24,7 @@ defmodule Cinder.Download.Poller do
   alias Cinder.Download
   alias Cinder.Download.Watch
   alias Cinder.Library
+  alias Cinder.Library.StagedImport
 
   @default_interval 5_000
   @search_retry_after 60
@@ -33,7 +34,7 @@ defmodule Cinder.Download.Poller do
   defp do_poll(state) do
     # Isolated like every per-unit pass below: a persistent raise here must not crash-loop the
     # whole GenServer forever with nothing parked and no signal (issue: preamble reliability).
-    isolate("stage reconciliation", fn -> Library.reconcile_stages() end)
+    isolate("stage reconciliation", fn -> StagedImport.reconcile() end)
 
     isolate("pending intent reconciliation", fn ->
       Download.reconcile_pending_intents([:movie])
@@ -52,11 +53,11 @@ defmodule Cinder.Download.Poller do
 
   defp import_downloaded do
     for movie <- Catalog.list_by_status(:downloaded),
-        do: isolate("movie #{movie.id}", fn -> import_with_stage_handoff(movie) end)
+        do: isolate("movie #{movie.id}", fn -> import_under_lock(movie) end)
   end
 
-  defp import_with_stage_handoff(movie),
-    do: Library.with_stage_handoff(fn -> import_one(movie) end)
+  defp import_under_lock(movie),
+    do: StagedImport.run(fn -> import_one(movie) end)
 
   defp search_requested(retry_after) do
     movies = Catalog.list_by_status(:requested) ++ Catalog.list_by_status(:searching)
@@ -145,7 +146,7 @@ defmodule Cinder.Download.Poller do
   # :downloaded. The replacement's source is set on this local struct only; the row's
   # content_path stays nil through :upgrading.
   defp complete(%Movie{status: :upgrading} = movie, content_path) do
-    Library.with_stage_handoff(fn ->
+    StagedImport.run(fn ->
       upgrade = %{movie | content_path: content_path}
       upgrade |> Library.stage_movie(replace: true) |> record_import(upgrade)
     end)

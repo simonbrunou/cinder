@@ -11,6 +11,7 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
   alias Cinder.Audit.AdminAudit
   alias Cinder.Catalog
   alias Cinder.Catalog.{Attention, BlockedRelease, Movie, MovieLifecycle}
+  alias Cinder.Library.StagedImport
 
   setup do
     :ok = Catalog.subscribe()
@@ -503,8 +504,8 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
         published(movie.id, fn -> MovieLifecycle.import_staged(movie, stage) end)
 
       assert {:ok, %Movie{status: :available, content_path: nil} = available} = result
-      assert available.file_path == stage.dest
-      assert File.exists?(stage.dest)
+      assert available.file_path == StagedImport.record(stage).file_path
+      assert File.exists?(available.file_path)
       assert [{_, %{to: :available}}] = events
       assert [_] = broadcasts
       assert_receive {:notify, {:movie_available, %Movie{status: :available}}}
@@ -515,7 +516,7 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       {:ok, _} = seed_movie_state(movie, %{status: :cancelled})
 
       assert {:error, :stale_status} = MovieLifecycle.import_staged(movie, stage)
-      refute File.exists?(stage.dest)
+      refute File.exists?(StagedImport.record(stage).file_path)
       assert %Movie{status: :cancelled, file_path: nil} = Repo.reload!(movie)
     end
   end
@@ -977,7 +978,7 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
          &MovieLifecycle.track(&1, %{download_progress: 0.5})},
         {:mark_downloaded, [:downloading], &MovieLifecycle.mark_downloaded(&1, "/downloads/M")},
         {:import_staged, [:downloaded, :upgrading],
-         &MovieLifecycle.import_staged(&1, %{dest: "/x", quality: %{}})},
+         &MovieLifecycle.import_staged(&1, StagedImport.new())},
         {:reject, [:downloaded, :upgrading], &MovieLifecycle.reject(&1, :evidence)},
         {:record_failure, [:requested, :searching, :downloading, :downloaded, :upgrading],
          &MovieLifecycle.record_failure(&1, :timeout)},

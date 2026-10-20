@@ -669,7 +669,7 @@ defmodule Cinder.CatalogTest do
       season = season_fixture(series)
       shared = "/tv/Show (2008)/Season 01/Show (2008) - S01E01-E02.mkv"
 
-      # What Library.link_all/4 + update_imported_episode!/5 actually write for a double episode:
+      # What Library.stage_episodes/3 + update_imported_episode!/5 actually write for a double episode:
       # one destination, referenced by both rows, each carrying the whole file's size.
       for number <- [1, 2] do
         episode_fixture(season, %{

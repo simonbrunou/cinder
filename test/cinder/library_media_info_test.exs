@@ -9,7 +9,7 @@ defmodule Cinder.LibraryMediaInfoTest do
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Library
-  alias Cinder.Library.ImportStage
+  alias Cinder.Library.StagedImport
 
   @tv_lib "/tmp/cinder-test-tv-library"
 
@@ -47,10 +47,11 @@ defmodule Cinder.LibraryMediaInfoTest do
     assert Language.stream_status("fr", ["zzz"], false) == :unknown
   end
 
-  defp commit!(stage) do
-    ImportStage.mark_committed!(Library.stage_ids([stage]))
-    Library.commit_stage(stage)
-  end
+  defp commit!(staged), do: Cinder.LibraryStubs.commit_staged(staged)
+
+  # The primary file a successful `stage_movie/2` staged.
+  defp staged_dest({:ok, staged}), do: {:ok, StagedImport.record(staged).file_path}
+  defp staged_dest(error), do: error
 
   test "imports when the file's audio includes the wanted language (639-2 code match)" do
     # stub, not expect: capture_media/1 probes again after verify_audio, so probe runs twice.
@@ -60,7 +61,7 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, %{dest: @dest}} = Library.stage_movie(french_movie())
+    assert {:ok, @dest} = staged_dest(Library.stage_movie(french_movie()))
   end
 
   test "parks a confirmed wrong-language file without importing it" do
@@ -82,7 +83,7 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, %{dest: @dest}} = Library.stage_movie(french_movie())
+    assert {:ok, @dest} = staged_dest(Library.stage_movie(french_movie()))
   end
 
   test "imports when the probe errors (e.g. ffprobe not installed)" do
@@ -91,7 +92,7 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     log =
       capture_log(fn ->
-        assert {:ok, %{dest: @dest}} = Library.stage_movie(french_movie())
+        assert {:ok, @dest} = staged_dest(Library.stage_movie(french_movie()))
       end)
 
     assert log =~ "media-info audio check skipped for /dl/movie.mkv: :enoent"
@@ -106,8 +107,8 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, %{dest: @dest}} =
-             Library.stage_movie(%{french_movie() | preferred_language: "any"})
+    assert {:ok, @dest} =
+             staged_dest(Library.stage_movie(%{french_movie() | preferred_language: "any"}))
   end
 
   test "imports for a language outside the registry (can't verify → don't false-park)" do
@@ -121,7 +122,7 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, %{dest: @dest}} = Library.stage_movie(movie)
+    assert {:ok, @dest} = staged_dest(Library.stage_movie(movie))
   end
 
   test "a 639-2 variant code (Norwegian 'nob') is accepted, not false-parked" do
@@ -133,7 +134,7 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, %{dest: @dest}} = Library.stage_movie(movie)
+    assert {:ok, @dest} = staged_dest(Library.stage_movie(movie))
   end
 
   test "an unrecognised audio code can't confirm a mismatch → imports" do
@@ -146,7 +147,7 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, %{dest: @dest}} = Library.stage_movie(movie)
+    assert {:ok, @dest} = staged_dest(Library.stage_movie(movie))
   end
 
   # A release can spell the right title and hold another film. Only a clearly SHORTER file is
@@ -184,10 +185,11 @@ defmodule Cinder.LibraryMediaInfoTest do
                  "#{file} min for a #{tmdb} min movie should be rejected"
 
         :import ->
-          assert {:ok, %{dest: @dest} = stage} = result,
+          assert {:ok, @dest} = staged_dest(result),
                  "#{inspect(file)} min for a #{inspect(tmdb)} min movie should import"
 
-          Library.rollback_stage(stage)
+          {:ok, stage} = result
+          StagedImport.rollback(stage)
       end
     end
   end
@@ -213,7 +215,7 @@ defmodule Cinder.LibraryMediaInfoTest do
         path == cd2 ->
           {:ok, %File.Stat{size: 4_000, inode: 12, major_device: 1}}
 
-        String.contains?(path, ".cinder-stage-") ->
+        Cinder.LibraryStubs.candidate_path?(path) ->
           size = if String.contains?(path, "-cd1"), do: 3_000, else: 4_000
           {:ok, %File.Stat{size: size, inode: 20 + size, major_device: 1}}
 
@@ -233,8 +235,8 @@ defmodule Cinder.LibraryMediaInfoTest do
     end)
 
     assert {:ok, stage} = Library.stage_movie(movie)
-    assert [_part] = stage.part_file_paths
-    Library.rollback_stage(stage)
+    assert [_part] = StagedImport.record(stage).part_file_paths
+    StagedImport.rollback(stage)
   end
 
   @gb 1_000_000_000
@@ -279,7 +281,7 @@ defmodule Cinder.LibraryMediaInfoTest do
         {:error, :enoent}
 
       path ->
-        if String.contains?(path, ".cinder-stage-"),
+        if Cinder.LibraryStubs.candidate_path?(path),
           do: {:ok, %File.Stat{size: 5 * @gb, inode: 2, major_device: 1}},
           else: {:error, :enoent}
     end)
@@ -297,7 +299,8 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
 
-    assert {:ok, %{dest: ^dest, quality: q} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+    assert %{file_path: ^dest, quality: q} = StagedImport.record(stage)
     assert :ok = commit!(stage)
 
     assert q.audio_languages == ["eng", "fre"]
@@ -331,16 +334,9 @@ defmodule Cinder.LibraryMediaInfoTest do
       {"/dl/Show.S01E02.1080p.mkv", 3_000_000_000}
     ]
 
+    Cinder.LibraryStubs.stub_import_ok(3_000_000_000)
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
     stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, files} end)
-
-    stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
-      {:ok, %File.Stat{size: 3_000_000_000, inode: 1}}
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
-    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
 
     # E01 is French audio (kept); E02 is a Hungarian dub (dropped).
     stub(Cinder.Library.MediaInfoMock, :probe, fn
@@ -350,8 +346,10 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     log =
       capture_log(fn ->
-        assert {:ok, [{1, dest, _q}], ["/dl/Show.S01E02.1080p.mkv"]} =
-                 Library.import_episodes("/dl", [french_ep(1, 1), french_ep(2, 2)])
+        assert {:ok, staged, ["/dl/Show.S01E02.1080p.mkv"]} =
+                 Library.stage_episodes("/dl", [french_ep(1, 1), french_ep(2, 2)])
+
+        assert [{1, dest}] = Cinder.LibraryStubs.episode_dests(staged)
 
         assert dest ==
                  "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"
@@ -374,8 +372,10 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     log =
       capture_log(fn ->
-        assert {:ok, [], unmatched} =
-                 Library.import_episodes("/dl", [french_ep(1, 1), french_ep(2, 2)])
+        assert {:ok, staged, unmatched} =
+                 Library.stage_episodes("/dl", [french_ep(1, 1), french_ep(2, 2)])
+
+        assert StagedImport.record(staged) == []
 
         assert Enum.sort(unmatched) ==
                  Enum.sort(["/dl/Show.S01E01.1080p.mkv", "/dl/Show.S01E02.1080p.mkv"])
@@ -384,7 +384,7 @@ defmodule Cinder.LibraryMediaInfoTest do
     assert log =~ "import skipped 2 unmatched file(s):"
   end
 
-  test "import_episodes captures audio + embedded + sidecar languages per imported episode" do
+  test "stage_episodes captures audio + embedded + sidecar languages per staged episode" do
     parent = self()
 
     # 'any' pick → no wanted language → reject_wrong_audio adds no probe; capture_media does the one.
@@ -416,13 +416,19 @@ defmodule Cinder.LibraryMediaInfoTest do
     end)
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn
-      ^source -> {:ok, %File.Stat{size: 3 * @gb, inode: 1}}
-      ^sidecar_dest -> {:error, :enoent}
+      ^source ->
+        {:ok, %File.Stat{size: 3 * @gb, inode: 1}}
+
+      path ->
+        if Cinder.LibraryStubs.candidate_path?(path),
+          do: {:ok, %File.Stat{size: 3 * @gb, inode: 2, major_device: 1}},
+          else: {:error, :enoent}
     end)
 
     stub(Cinder.Library.FilesystemMock, :moviehash_data, fn ^dest -> :too_small end)
 
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
 
     stub(Cinder.Library.FilesystemMock, :ln, fn s, d ->
       send(parent, {:ln, s, d})
@@ -431,12 +437,16 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
 
-    assert {:ok, [{7, ^dest, q}], []} = Library.import_episodes("/dl", [episode])
+    assert {:ok, stage, []} = Library.stage_episodes("/dl", [episode])
+    assert [{7, ^dest, q, true}] = StagedImport.record(stage)
+
     assert q.audio_languages == ["eng", "fre"]
     assert q.embedded_subtitles == ["eng"]
     assert q.sidecar_subtitles == ["fr"]
+    assert :ok = commit!(stage)
 
-    assert_received {:ln, ^source, ^dest}
+    assert_received {:ln, ^source, candidate}
+    assert_received {:ln, ^candidate, ^dest}
 
     assert_received {:ln, ^srt, ^sidecar_dest}
     await_subtitle_tasks()

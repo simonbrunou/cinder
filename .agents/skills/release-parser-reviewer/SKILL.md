@@ -1,6 +1,6 @@
 ---
 name: release-parser-reviewer
-description: Use PROACTIVELY when a change touches the release-name parsing / scoring / acquisition / import subsystem (Cinder.Acquisition.{Parser,Scorer,Release}, Cinder.Acquisition, Cinder.Library stage_movie/stage_episodes/import_episodes/commit_stage). This is Cinder's highest-bug-density area — messy real-world release names, season-pack vs episode selection, and file-to-episode mapping. Read-only. Reports high-confidence regressions in parsing precedence, scorer nil-safety/band logic, the title-match guard, and import file-mapping/graceful-park, with file:line + a concrete fix. Silent on correct code and on security/role-gating (that is approval-gate-reviewer's job).
+description: Use PROACTIVELY when a change touches the release-name parsing / scoring / acquisition / import subsystem (Cinder.Acquisition.{Parser,Scorer,Release}, Cinder.Acquisition, Cinder.Library stage_movie/stage_episodes/stage_anime_episodes and Cinder.Library.StagedImport). This is Cinder's highest-bug-density area — messy real-world release names, season-pack vs episode selection, and file-to-episode mapping. Read-only. Reports high-confidence regressions in parsing precedence, scorer nil-safety/band logic, the title-match guard, and import file-mapping/graceful-park, with file:line + a concrete fix. Silent on correct code and on security/role-gating (that is approval-gate-reviewer's job).
 ---
 
 You are the **release-parser-reviewer** for Cinder (Elixir/Phoenix). You are a read-only
@@ -28,9 +28,11 @@ You have no memory between runs. Orient first, every run.
      (protocol → title guard → language), `kept` (the selection pool, in indexer order) and the
      language stage (`language_stage/3`). `lib/cinder/acquisition/household_policy.ex` —
      `for_target/2` and `band/1`.
-   - `lib/cinder/library.ex` — `stage_movie/1,2` + `commit_stage/1` (the movie path; there is
-     no `import_movie/1` any more), `stage_episodes/3` (the TV path the poller uses) and
-     `import_episodes/2` (the same file->episode mapping, direct).
+   - `lib/cinder/library.ex` — `stage_movie/1,2` (the movie path), `stage_episodes/3` (the
+     standard-TV path: file->episode mapping), `stage_anime_episodes/2` and
+     `stage_grab_file_part/3`. Each returns a `Cinder.Library.StagedImport` whose record the
+     writer stores; `lib/cinder/library/staged_import.ex` commits it and
+     `lib/cinder/library/stage_engine.ex` places the bytes (`stage/5` returns the outcome).
    - Fixtures: `test/cinder/acquisition/parser_test.exs`, `scorer_test.exs`,
      `test/cinder/library_test.exs`.
 
@@ -83,8 +85,9 @@ unfiltered; an explicit pick is strict (parks on no match). `kept` must stay in 
 can't clobber Scorer defaults.
 
 **Library import — the file->episode contract and graceful park:**
-- `import_episodes` maps files by parsing `SxxEyy` per file against the grab's episodes; a
-  double-episode file yields two hardlinks; dedupe is largest-wins (path breaks ties for a
+- `stage_episodes` maps files by parsing `SxxEyy` per file against the grab's episodes; a
+  double-episode file yields one staged file that both episodes' rows point at; dedupe is
+  largest-wins (path breaks ties for a
   stable dest across retries). The single-episode fallback fires ONLY when the grab has exactly
   one episode AND zero files name any episode — never to force-match a clearly-numbered other
   episode.
@@ -94,8 +97,11 @@ can't clobber Scorer defaults.
   pass.
 - Hardlink layout: movies `Title (Year) {tmdb-id}/...`; episodes
   `Show (Year) {tmdb-id}/Season NN/Show (Year) {tmdb-id} - SxxEyy.ext` (two-digit padding).
-  Collision: same inode = idempotent; different inode + upgrade = replace via temp-hardlink +
-  rename; else keep existing + log.
+  Collision (`StageEngine.stage/5` outcomes): same inode = `:same_file` (idempotent);
+  different file + `:replace` (forced, or an upgrade decided before staging) = `:replaced` via
+  a backup and an atomic land; else `:kept` + the "kept existing" log. The record's quality
+  follows the outcome (`Library.staged_quality/5`), and a TV row's `placed?` is false only for
+  an arbitrated decline.
 
 ## Fixtures
 A parser or scorer change that adds or changes an edge case MUST extend the fixture matrix in

@@ -111,9 +111,10 @@ defmodule Cinder.Books.Files do
   end
 
   # `changed?` (default `true` per item, popped out of each attrs map before it ever reaches a
-  # changeset — see `AudiobookImport.record/4`) is the actual `StageEngine.stage_book_place/4`
-  # `placed?` outcome for that specific track: `true` only when new bytes genuinely landed at
-  # that destination THIS tick, `false` for a same-inode replay where nothing changed. This
+  # changeset — see `AudiobookImport.stage_track/5`) is whether staging that specific track placed
+  # bytes (the outcome of `Cinder.Library.StagedImport.place/5`): `true` only when new bytes
+  # genuinely landed at that destination THIS tick, `false` for a same-inode replay where nothing
+  # changed. This
   # matters independently of `replace?` because probe-derived fields (`duration_seconds`,
   # `track_number`, `disc_number`, `chapter_count`) can legitimately come back `nil` on a
   # replayed tick — a timed-out or budget-exhausted `AudioProbe` degrades gracefully rather than

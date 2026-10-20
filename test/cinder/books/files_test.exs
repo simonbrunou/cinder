@@ -418,7 +418,7 @@ defmodule Cinder.Books.FilesTest do
     # Codex review on PR #569: `AudiobookSources`' own AudioProbe can time out or exhaust its
     # probe budget on ANY given tick and degrade gracefully to nil duration/track/disc facts,
     # independent of whether the underlying bytes changed. `attrs[:changed?]` (populated from
-    # `StageEngine`'s own `placed?` staging outcome, NOT from `replace?`) is what must gate the
+    # the track's own staging outcome, NOT from `replace?`) is what must gate the
     # metadata refresh: a same-inode replay (`changed?: false`) must never let a degraded probe
     # attempt overwrite metadata an earlier, successful tick already committed.
     test "a degraded replay never overwrites metadata from an earlier successful probe", %{

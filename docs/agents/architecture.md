@@ -67,6 +67,20 @@ The reason: SQLite runs WAL with `busy_timeout: 5000` in dev, test and runtime, 
 racing the poller waits instead of failing with "database busy". That holds only while writes go
 through the choke-points.
 
+## Imports go through the staged import
+
+Every file an import places in a library goes through `Cinder.Library.StagedImport`. The stager
+(`Cinder.Library`, `BookImport`, `AudiobookImport`) places the files. `commit/2` hands the
+caller's Catalog or Books write the stage ids, and that write marks them committed inside its own
+transaction. The journal then settles each file: a committed one runs its post-commit effects, and
+everything else rolls back. Callers never look inside the handle; the one value they read is its
+record.
+
+The pollers hold the household import lock (`StagedImport.run/1`) from an import's first placement
+until it settles, and `StagedImport.reconcile/0` takes the same lock. The lock is not re-entrant
+through `:global` itself, so take it only through `run/1`. The residual-file Part decision from
+`/activity` does not take it yet (#783).
+
 ## Operator attention has one owner
 
 Whether an item is in flight, needs attention or waits, and which operator actions it offers, come

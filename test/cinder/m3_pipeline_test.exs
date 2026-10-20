@@ -92,9 +92,9 @@ defmodule Cinder.M3PipelineTest do
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
-      if String.contains?(path, ".cinder-stage-") or
+      if Cinder.LibraryStubs.candidate_path?(path) or
            not String.starts_with?(path, "/tmp/cinder-test-library/"),
-         do: {:ok, %File.Stat{size: 1, inode: 1, major_device: 1}},
+         do: {:ok, %File.Stat{type: :regular, size: 1, inode: 1, major_device: 1}},
          else: {:error, :enoent}
     end)
 

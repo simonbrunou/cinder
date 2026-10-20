@@ -18,7 +18,7 @@ defmodule Cinder.LibrarySubtitlesTest do
 
   alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.{Library, Subtitles}
-  alias Cinder.Library.ImportStage
+  alias Cinder.Library.StagedImport
 
   setup :set_mox_from_context
   setup :verify_on_exit!
@@ -104,7 +104,7 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
       if Agent.get(subtitle_fs, &Map.has_key?(&1, path)) do
-        {:ok, %File.Stat{}}
+        {:ok, %File.Stat{type: :regular}}
       else
         {:error, :enoent}
       end
@@ -136,10 +136,8 @@ defmodule Cinder.LibrarySubtitlesTest do
     end
   end
 
-  defp commit!(stage) do
-    ImportStage.mark_committed!(Library.stage_ids([stage]))
-    Library.commit_stage(stage)
-  end
+  defp commit!(staged), do: Cinder.LibraryStubs.commit_staged(staged)
+  defp commit_episodes!(staged), do: :ok = Cinder.LibraryStubs.commit_staged(staged)
 
   test "stage_movie dispatches the subtitle fetch off the import path, best-effort" do
     parent = self()
@@ -165,7 +163,8 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     log =
       capture_log(fn ->
-        assert {:ok, %{dest: ^dest, quality: quality} = stage} = Library.stage_movie(movie)
+        assert {:ok, stage} = Library.stage_movie(movie)
+        assert %{file_path: ^dest, quality: quality} = StagedImport.record(stage)
         assert quality.sidecar_subtitles == []
         assert :ok = commit!(stage)
         assert_receive :subtitle_search
@@ -175,7 +174,7 @@ defmodule Cinder.LibrarySubtitlesTest do
     assert log =~ "subtitle fetch for #{dest} (en) failed: :down"
   end
 
-  test "import_episodes dispatches the subtitle fetch off the import path, best-effort" do
+  test "a staged episode dispatches its subtitle fetch at commit, off the import path, best-effort" do
     parent = self()
     series = %Series{title: "Show", year: 2008, tmdb_id: 1}
 
@@ -187,24 +186,14 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
 
-    expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl" -> true end)
+    Cinder.LibraryStubs.stub_import_ok(9 * @gb)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn path -> path == "/dl" end)
 
-    # The sidecar scan after the placed file re-checks the source dir; fall through to "not a dir".
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-
-    expect(Cinder.Library.FilesystemMock, :find_files, fn "/dl" ->
+    stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl" ->
       {:ok, [{"/dl/Show.S01E03.1080p.mkv", 9 * @gb}]}
     end)
 
-    # The source file, then the subtitle fetch checking for an existing sidecar.
-    stub(Cinder.Library.FilesystemMock, :lstat, fn
-      "/dl/Show.S01E03.1080p.mkv" -> {:ok, %File.Stat{size: 9 * @gb, inode: 1}}
-      _sidecar -> {:error, :enoent}
-    end)
-
-    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    expect(Cinder.Library.FilesystemMock, :ln, fn _src, ^dest -> :ok end)
-    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
 
     expect(Cinder.Subtitles.ProviderMock, :search, fn %{
                                                         tmdb_id: 1,
@@ -218,8 +207,11 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     log =
       capture_log(fn ->
-        assert {:ok, [{7, ^dest, quality}], []} = Library.import_episodes("/dl", [episode])
+        assert {:ok, staged, []} = Library.stage_episodes("/dl", [episode])
+        assert [{7, ^dest, quality, true}] = StagedImport.record(staged)
+
         assert quality.sidecar_subtitles == []
+        commit_episodes!(staged)
         assert_receive :subtitle_search
         await_subtitle_tasks()
       end)
@@ -239,21 +231,14 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01-E02.mkv"
 
-    expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl" -> true end)
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    Cinder.LibraryStubs.stub_import_ok(9 * @gb)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn path -> path == "/dl" end)
 
-    expect(Cinder.Library.FilesystemMock, :find_files, fn "/dl" ->
+    stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl" ->
       {:ok, [{"/dl/Show.S01E01-E02.1080p.mkv", 9 * @gb}]}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :lstat, fn
-      "/dl/Show.S01E01-E02.1080p.mkv" -> {:ok, %File.Stat{size: 9 * @gb, inode: 1}}
-      _sidecar -> {:error, :enoent}
-    end)
-
-    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    expect(Cinder.Library.FilesystemMock, :ln, fn _src, ^dest -> :ok end)
-    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
 
     # Both episodes share one physical file, so exactly one fetch may target the shared
     # sidecar path — a second one would race/overwrite it with the other part's subtitles.
@@ -263,11 +248,11 @@ defmodule Cinder.LibrarySubtitlesTest do
     end)
 
     capture_log(fn ->
-      assert {:ok, imported, []} = Library.import_episodes("/dl", episodes)
+      assert {:ok, staged, []} = Library.stage_episodes("/dl", episodes)
 
-      assert imported |> Enum.map(&{elem(&1, 0), elem(&1, 1)}) |> Enum.sort() ==
-               [{7, dest}, {8, dest}]
+      assert Cinder.LibraryStubs.episode_dests(staged) == [{7, dest}, {8, dest}]
 
+      commit_episodes!(staged)
       assert_receive {:subtitle_search, %{season: 1, episode: 1}}
       await_subtitle_tasks()
       refute_received {:subtitle_search, _}
@@ -307,9 +292,9 @@ defmodule Cinder.LibrarySubtitlesTest do
       path ->
         cond do
           Agent.get(fs, &Map.has_key?(&1, path)) ->
-            {:ok, %File.Stat{}}
+            {:ok, %File.Stat{type: :regular}}
 
-          String.contains?(path, ".cinder-stage-") ->
+          Cinder.LibraryStubs.candidate_path?(path) ->
             {:ok, %File.Stat{size: 1 * @gb, inode: 2, major_device: 1}}
 
           true ->
@@ -353,7 +338,8 @@ defmodule Cinder.LibrarySubtitlesTest do
       {:ok, "1\n00:00:01,000 --> 00:00:02,000\nreplacement SRT\n\n"}
     end)
 
-    assert {:ok, %{dest: ^dest, quality: quality} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+    assert %{file_path: ^dest, quality: quality} = StagedImport.record(stage)
     assert quality.sidecar_subtitles == ["en"]
     assert :ok = commit!(stage)
 
@@ -397,7 +383,7 @@ defmodule Cinder.LibrarySubtitlesTest do
 
       path ->
         cond do
-          String.contains?(path, ".cinder-stage-") ->
+          Cinder.LibraryStubs.candidate_path?(path) ->
             {:ok, %File.Stat{size: 1 * @gb, inode: 20, major_device: 1}}
 
           String.ends_with?(path, ".en.srt") ->
@@ -432,7 +418,8 @@ defmodule Cinder.LibrarySubtitlesTest do
       {:error, :down}
     end)
 
-    assert {:ok, %{dest: ^dest1, part_file_paths: [^dest2]} = stage} = Library.stage_movie(movie)
+    assert {:ok, stage} = Library.stage_movie(movie)
+    assert %{file_path: ^dest1, part_file_paths: [^dest2]} = StagedImport.record(stage)
     assert :ok = commit!(stage)
 
     assert_receive :movie_scan
@@ -488,10 +475,11 @@ defmodule Cinder.LibrarySubtitlesTest do
     dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
     dest_sidecar = Path.rootname(dest) <> ".en.srt"
 
-    expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl" -> true end)
+    # Walked at staging (the episode match and the sidecar languages) and again at commit (the
+    # sidecar link); stubbed rather than pinned to an exact count.
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
 
-    expect(Cinder.Library.FilesystemMock, :find_files, 2, fn "/dl" ->
+    stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl" ->
       {:ok, [{source, 9 * @gb}, {source_sidecar, 1_000}]}
     end)
 
@@ -500,19 +488,27 @@ defmodule Cinder.LibrarySubtitlesTest do
         {:ok, %File.Stat{size: 9 * @gb, inode: 1}}
 
       path ->
-        if Agent.get(fs, &Map.has_key?(&1, path)),
-          do: {:ok, %File.Stat{}},
-          else: {:error, :enoent}
+        cond do
+          Agent.get(fs, &Map.has_key?(&1, path)) ->
+            {:ok, %File.Stat{type: :regular}}
+
+          Cinder.LibraryStubs.candidate_path?(path) ->
+            {:ok, %File.Stat{size: 9 * @gb, inode: 2, major_device: 1}}
+
+          true ->
+            {:error, :enoent}
+        end
     end)
 
-    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
 
-    expect(Cinder.Library.FilesystemMock, :ln, 2, fn
-      ^source, ^dest ->
-        :ok
-
+    stub(Cinder.Library.FilesystemMock, :ln, fn
       ^source_sidecar, ^dest_sidecar ->
         Agent.update(fs, &Map.put(&1, dest_sidecar, "release SRT"))
+        :ok
+
+      _src, _dest ->
         :ok
     end)
 
@@ -545,8 +541,11 @@ defmodule Cinder.LibrarySubtitlesTest do
       {:ok, "1\n00:00:01,000 --> 00:00:02,000\nreplacement SRT\n\n"}
     end)
 
-    assert {:ok, [{7, ^dest, quality}], []} = Library.import_episodes("/dl", [episode])
+    assert {:ok, staged, []} = Library.stage_episodes("/dl", [episode])
+    assert [{7, ^dest, quality, true}] = StagedImport.record(staged)
+
     assert quality.sidecar_subtitles == ["en"]
+    commit_episodes!(staged)
     assert_receive :tv_scan
     assert_receive :subtitle_search
     assert_receive :tv_scan
@@ -590,18 +589,16 @@ defmodule Cinder.LibrarySubtitlesTest do
       })
     )
 
-    expect(Cinder.Library.FilesystemMock, :dir?, 2, fn
-      "/dl/grab" -> true
-      ^season_dir -> true
-    end)
+    # Walked at staging (the episode match, then dest's own sidecars) and again at commit (the
+    # source's sidecars, of which there are none); stubbed rather than pinned to an exact count.
+    stub(Cinder.Library.FilesystemMock, :dir?, fn path -> path in ["/dl/grab", season_dir] end)
 
-    expect(Cinder.Library.FilesystemMock, :find_files, 2, fn
+    stub(Cinder.Library.FilesystemMock, :find_files, fn
       "/dl/grab" -> {:ok, [{source, 9 * @gb}]}
       ^season_dir -> {:ok, [{dest, 9 * @gb}, {dest_en, 1_000}, {dest_fr, 1_000}]}
     end)
 
-    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    expect(Cinder.Library.FilesystemMock, :ln, fn ^source, ^dest -> {:error, :eexist} end)
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
 
     expect(Cinder.Library.MediaServerMock, :scan, fn :tv ->
       send(parent, :tv_scan)
@@ -620,8 +617,11 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     log =
       capture_log(fn ->
-        assert {:ok, [{7, ^dest, quality}], []} = Library.import_episodes("/dl/grab", [episode])
+        assert {:ok, staged, []} = Library.stage_episodes("/dl/grab", [episode])
+        assert [{7, ^dest, quality, true}] = StagedImport.record(staged)
+
         assert quality.sidecar_subtitles == ["en", "fr"]
+        commit_episodes!(staged)
         assert_receive :tv_scan
         assert_receive :subtitle_search
         await_subtitle_tasks()
@@ -668,12 +668,9 @@ defmodule Cinder.LibrarySubtitlesTest do
       })
     )
 
-    expect(Cinder.Library.FilesystemMock, :dir?, 2, fn
-      "/dl/grab" -> true
-      ^season_dir -> true
-    end)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn path -> path in ["/dl/grab", season_dir] end)
 
-    expect(Cinder.Library.FilesystemMock, :find_files, 2, fn
+    stub(Cinder.Library.FilesystemMock, :find_files, fn
       "/dl/grab" ->
         {:ok, [{source, 9 * @gb}]}
 
@@ -687,8 +684,7 @@ defmodule Cinder.LibrarySubtitlesTest do
          ]}
     end)
 
-    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    expect(Cinder.Library.FilesystemMock, :ln, fn ^source, ^dest -> {:error, :eexist} end)
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     expect(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
 
     expect(Cinder.Subtitles.ProviderMock, :search, fn %{languages: ["en"]} ->
@@ -697,8 +693,11 @@ defmodule Cinder.LibrarySubtitlesTest do
     end)
 
     capture_log(fn ->
-      assert {:ok, [{7, ^dest, quality}], []} = Library.import_episodes("/dl/grab", [episode])
+      assert {:ok, staged, []} = Library.stage_episodes("/dl/grab", [episode])
+      assert [{7, ^dest, quality, true}] = StagedImport.record(staged)
+
       assert quality.sidecar_subtitles == ["en"]
+      commit_episodes!(staged)
       assert_receive :subtitle_search
       await_subtitle_tasks()
     end)

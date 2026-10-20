@@ -392,8 +392,8 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
   end
 
   # #289: `keep_stage/5` pins a declined episode's stage to the file it already holds — but if that
-  # file has vanished off disk, `StageEngine.stage_place_locked/8` takes its `:enoent` branch and
-  # lands the DECLINED file there, reporting `placed?: true`. Placing it is the right outcome (the
+  # file has vanished off disk, staging finds nothing there and lands the DECLINED file, reporting
+  # `:placed`. Placing it is the right outcome (the
   # episode holds nothing and nothing in `lib/` clears a stale `file_path`, so refusing would
   # strand it) — calling it a PLACEMENT is not.
   describe "a declined keep whose held file has vanished" do

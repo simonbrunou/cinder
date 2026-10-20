@@ -1063,7 +1063,7 @@ defmodule Cinder.Download.BookPollerTest do
 
     # #500: the destination path is computed from the target's work, not the release's
     # filename, so a confirmed replacement whose new file happens to share the OLD file's exact
-    # basename collides at the SAME path `stage_book_place/4` already occupies — the case the
+    # basename collides at the SAME path the earlier import already occupies — the case the
     # "Retail" test above never exercises.
     test "a confirmed replace reusing the exact same filename changes bytes and recorded size",
          ctx do

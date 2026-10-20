@@ -6,7 +6,7 @@ defmodule Cinder.Library.PathPolicyTest do
   alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Library
   alias Cinder.Library.Filesystem.Disk
-  alias Cinder.Library.{ImportStage, PathPolicy}
+  alias Cinder.Library.{PathPolicy, StagedImport}
   alias Cinder.Settings
 
   # A synthetic filesystem with one directory holding more entries than the 100k
@@ -253,7 +253,7 @@ defmodule Cinder.Library.PathPolicyTest do
     end
 
     @tag :tmp_dir
-    test "import_episodes imports nested regular files but skips a symlinked outside directory",
+    test "stage_episodes stages nested regular files but skips a symlinked outside directory",
          %{
            tmp_dir: tmp
          } do
@@ -267,8 +267,8 @@ defmodule Cinder.Library.PathPolicyTest do
       File.write!(Path.join(outside, "Show.S01E02.mkv"), "episode two")
       File.ln_s!(outside, Path.join(grab, "escaped"))
 
-      assert {:ok, [{1, dest, _quality}], []} =
-               Library.import_episodes(grab, [episode(1, 1), episode(2, 2)])
+      assert {:ok, staged, []} = Library.stage_episodes(grab, [episode(1, 1), episode(2, 2)])
+      assert [{1, dest}] = Cinder.LibraryStubs.episode_dests(staged)
 
       assert String.starts_with?(dest, tv <> "/")
       assert File.read!(dest) == "episode one"
@@ -317,14 +317,16 @@ defmodule Cinder.Library.PathPolicyTest do
       File.chmod!(source, 0o664)
       movie = %Movie{title: "Movie", year: 2024, tmdb_id: 42, file_path: source}
 
-      assert {:ok, %{dest: dest} = stage1} = Library.stage_movie(movie)
+      assert {:ok, stage1} = Library.stage_movie(movie)
+      dest = StagedImport.record(stage1).file_path
       assert :ok = commit!(stage1)
 
       assert Bitwise.band(File.stat!(Path.dirname(dest)).mode, 0o777) == 0o755
       assert Bitwise.band(File.stat!(movies).mode, 0o777) == 0o700
       assert Bitwise.band(File.stat!(dest).mode, 0o777) == 0o664
 
-      assert {:ok, %{dest: ^dest} = stage2} = Library.stage_movie(movie)
+      assert {:ok, stage2} = Library.stage_movie(movie)
+      assert StagedImport.record(stage2).file_path == dest
       assert :ok = commit!(stage2)
 
       assert File.stat!(source).inode == File.stat!(dest).inode
@@ -373,10 +375,7 @@ defmodule Cinder.Library.PathPolicyTest do
     end
   end
 
-  defp commit!(stage) do
-    ImportStage.mark_committed!(Library.stage_ids([stage]))
-    Library.commit_stage(stage)
-  end
+  defp commit!(staged), do: Cinder.LibraryStubs.commit_staged(staged)
 
   defp configure_roots(tmp) do
     downloads = Path.join(tmp, "downloads")

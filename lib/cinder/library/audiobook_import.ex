@@ -9,31 +9,25 @@ defmodule Cinder.Library.AudiobookImport do
 
   1. Resolve the payload to an ordered list of accepted, validated tracks
      (`Cinder.Library.AudiobookSources.resolve/1`) — refuse otherwise.
-  2. **Stage every track, accumulating rollback tokens as it goes.** On the FIRST staging
-     failure, every rollback token accumulated so far is rolled back before returning
-     `{:error, reason}` — for a fresh import this means zero bytes land under the target's
-     folder; for a replace, each already-swapped track's rollback restores that track's own
-     original file from its own backup path (`Cinder.Library.StageEngine.stage_book_place/4`'s
-     `:replace` path), so a partial failure never leaves a half-landed mixed set.
+  2. **Stage every track into one staged import** (`Cinder.Library.StagedImport`). On the FIRST
+     staging failure the whole set is rolled back before returning `{:error, reason}` — for a
+     fresh import this means zero bytes land under the target's folder; for a replace, each
+     already-swapped track restores its own original file from its own backup path, so a
+     partial failure never leaves a half-landed mixed set.
   3. Record every `book_files` row and arm the target `:available`, in ONE transaction
      (`Cinder.Books.Files.record_import_set/3`) — the multi-file generalization of
-     `Cinder.Books.Files.record_import/3`.
-  4. Only if that DB write commits, commit every stage. A committed catalog write with an
-     unfinished stage commit is logged and the import stands (`reconcile_stages/0` retries the
-     journal on its own schedule) — never re-imported, per each single-file import's own
-     "commit already logged, not retried" precedent, generalized to N tokens.
+     `Cinder.Books.Files.record_import/3` — which marks every track's stage committed.
+  4. The staged import then commits every track, or rolls them all back when the write lost. A
+     committed catalog write with an unfinished stage commit is logged and the import stands
+     (`StagedImport.reconcile/0` retries the journal on its own schedule) — never re-imported.
 
-  Nothing about two-phase commit is reimplemented here; every step reuses
-  `Cinder.Library.StageEngine`, `Cinder.Books.Files`, and `Cinder.Library.ImportStage` exactly as
-  `BookImport` does.
+  Nothing about two-phase commit is reimplemented here; every step reuses `StagedImport` and
+  `Cinder.Books.Files` exactly as `BookImport` does.
   """
-  require Logger
-
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget}
   alias Cinder.Download
-  alias Cinder.Library
-  alias Cinder.Library.{AudiobookNaming, AudiobookSources, StageEngine}
+  alias Cinder.Library.{AudiobookNaming, AudiobookSources, StagedImport}
   alias Cinder.Settings
 
   @doc """
@@ -42,7 +36,7 @@ defmodule Cinder.Library.AudiobookImport do
   Returns `{:ok, book_files}` (one row per track) or, with `opts[:replace]` superseding a genuine
   prior set, `{:ok, book_files, superseded_paths}` — mirroring `BookImport.import_grab/2`'s own
   return shape, generalized from one file to a list. See its docs for the shared `opts[:replace]`
-  contract; `record/3` below forwards it to `Cinder.Books.Files.record_import_set/3` unchanged.
+  contract; `record/4` below forwards it to `Cinder.Books.Files.record_import_set/3` unchanged.
   """
   @spec import_grab(BookGrab.t(), keyword()) ::
           {:ok, [struct()]} | {:ok, [struct()], [String.t()]} | {:error, term()}
@@ -57,7 +51,7 @@ defmodule Cinder.Library.AudiobookImport do
     with {:ok, tracks} <- AudiobookSources.resolve(grab.content_path),
          {:ok, root} <- library_root(target),
          {:ok, staged} <- stage_all(tracks, target, root, replace?) do
-      record(grab, target, staged, opts)
+      record(staged, grab, target, replace?)
     end
   end
 
@@ -66,7 +60,7 @@ defmodule Cinder.Library.AudiobookImport do
   defp library_root(%BookTarget{media_kind: media_kind} = target),
     do: Settings.library_root(media_kind, target)
 
-  # --- staging: accumulate rollback tokens, roll everything back on the first failure ---
+  # --- staging: one staged import for the whole set, rolled back on the first failure ---
 
   defp stage_all(tracks, target, root, replace?) do
     total = length(tracks)
@@ -74,33 +68,66 @@ defmodule Cinder.Library.AudiobookImport do
 
     tracks
     |> Enum.with_index(1)
-    |> Enum.reduce_while({:ok, []}, fn {track, index}, {:ok, staged_so_far} ->
+    |> Enum.reduce_while({:ok, StagedImport.new(), []}, fn {track, index}, {:ok, staged, attrs} ->
       meta = %{index: index, total: total, disc: track.order_disc, multi_disc?: multi_disc?}
       dest = AudiobookNaming.track_dest(target.work, track.format, root, meta)
 
-      case stage_track(track, dest, root, replace?) do
-        {:ok, staged} -> {:cont, {:ok, [staged | staged_so_far]}}
-        {:error, reason} -> {:halt, {:error, reason, staged_so_far}}
+      case stage_track(staged, track, dest, root, replace?) do
+        {:ok, staged, track_attrs} ->
+          {:cont, {:ok, staged, [track_attrs | attrs]}}
+
+        {:error, reason, staged} ->
+          StagedImport.rollback(staged)
+          {:halt, {:error, reason}}
       end
     end)
-    |> finish_staging()
-  end
-
-  defp stage_track(track, dest, root, replace?) do
-    with {:ok, _vetted_dir} <- AudiobookSources.safe_destination(Path.dirname(dest), root),
-         :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, rollback, placed?} <-
-           StageEngine.stage_book_place(track.path, dest, root,
-             extensions: AudiobookSources.accepted_extensions(),
-             replace: replace?
-           ),
-         {:ok, size} <- recorded_size(placed?, track.path, dest) do
-      {:ok, %{track: track, dest: dest, rollback: rollback, size: size, placed?: placed?}}
+    |> case do
+      {:ok, staged, attrs} -> {:ok, StagedImport.put_record(staged, Enum.reverse(attrs))}
+      {:error, _reason} = error -> error
     end
   end
 
-  # Same reasoning as `BookImport`'s own `recorded_size/3`: `placed?: false` means the destination
-  # already held a file and nothing landed, so the recorded size describes what is ACTUALLY there.
+  # `changed?` carries this track's actual staging outcome through to
+  # `Files.record_import_set/3` — see that call's own `insert_all_or_existing/3` comment for why a
+  # same-inode replay (nothing placed) must never refresh a row's metadata even when `replace?` is
+  # true, regardless of what this tick's own probe attempt returned.
+  #
+  # A failure returns the handle as it stands, including this track when it was already placed,
+  # so the caller's rollback covers it too.
+  defp stage_track(staged, track, dest, root, replace?) do
+    with {:ok, _vetted_dir} <- AudiobookSources.safe_destination(Path.dirname(dest), root),
+         :ok <- fs().mkdir_p(Path.dirname(dest)),
+         {:ok, staged, outcome} <-
+           StagedImport.place(staged, track.path, dest, root,
+             on_collision: if(replace?, do: :replace, else: :keep),
+             extensions: AudiobookSources.accepted_extensions()
+           ) do
+      placed? = outcome in [:placed, :replaced]
+
+      case recorded_size(placed?, track.path, dest) do
+        {:ok, size} -> {:ok, staged, track_attrs(track, dest, size, placed?)}
+        {:error, reason} -> {:error, reason, staged}
+      end
+    else
+      {:error, reason} -> {:error, reason, staged}
+    end
+  end
+
+  defp track_attrs(track, dest, size, placed?) do
+    %{
+      path: dest,
+      format: track.format,
+      size: size,
+      track_number: track.track_number,
+      disc_number: track.disc_number,
+      duration_seconds: track.duration_seconds,
+      chapter_count: track.chapter_count,
+      changed?: placed?
+    }
+  end
+
+  # Same reasoning as `BookImport`'s own `recorded_size/3`: when nothing was placed, the
+  # destination already held a file, so the recorded size describes what is ACTUALLY there.
   defp recorded_size(true, source, _dest) do
     case fs().lstat(source) do
       {:ok, %{size: size}} -> {:ok, size}
@@ -115,117 +142,28 @@ defmodule Cinder.Library.AudiobookImport do
     end
   end
 
-  defp finish_staging({:ok, staged}), do: {:ok, Enum.reverse(staged)}
-
-  defp finish_staging({:error, reason, staged_so_far}) do
-    Enum.each(staged_so_far, &rollback(&1.rollback, reason))
-    {:error, reason}
-  end
-
   # --- record phase ---
 
-  defp record(grab, target, staged, opts) do
-    replace? = Keyword.get(opts, :replace, false)
-    stage_ids = Library.stage_ids(Enum.map(staged, &%{rollback: &1.rollback}))
+  # `record_import_set/3` marks every track's stage committed in the one transaction that records
+  # them, so a losing write commits none of them and the whole set rolls back.
+  defp record(staged, grab, target, replace?) do
+    write = &Books.Files.record_import_set(target, &1, import_stage_ids: &2, replace: replace?)
 
-    # `changed?` carries this track's actual `placed?` staging outcome through to
-    # `Files.record_import_set/3` — see that call's own `insert_all_or_existing/3` comment for
-    # why a same-inode replay (`placed?: false`) must never refresh a row's metadata even when
-    # `replace?` is true, regardless of what this tick's own probe attempt returned.
-    attrs_list =
-      Enum.map(staged, fn %{track: track, dest: dest, size: size, placed?: placed?} ->
-        %{
-          path: dest,
-          format: track.format,
-          size: size,
-          track_number: track.track_number,
-          disc_number: track.disc_number,
-          duration_seconds: track.duration_seconds,
-          chapter_count: track.chapter_count,
-          changed?: placed?
-        }
-      end)
+    case StagedImport.commit(staged, write) do
+      {:ok, files} ->
+        Download.release_imported_book_grab(grab)
+        {:ok, files}
 
-    case Books.Files.record_import_set(target, attrs_list,
-           import_stage_ids: stage_ids,
-           replace: replace?
-         ) do
-      {:ok, files} -> commit(grab, files, staged, [])
-      {:ok, files, superseded_paths} -> commit(grab, files, staged, superseded_paths)
-      {:error, reason} -> abort(reason, staged)
-    end
-  end
+      {:ok, files, []} ->
+        Download.release_imported_book_grab(grab)
+        {:ok, files}
 
-  defp abort(reason, staged) do
-    Enum.each(staged, &rollback(&1.rollback, reason))
-    {:error, reason}
-  end
+      {:ok, files, superseded_paths} ->
+        Download.release_imported_book_grab(grab)
+        {:ok, files, superseded_paths}
 
-  # Best-effort per token, logged and never retried — the same "commit already logged, not
-  # retried" precedent `BookImport.commit/4` applies to one file, generalized to N: the catalog
-  # write already committed, so reporting an error here would re-import files the catalog already
-  # claims.
-  defp commit(grab, files, staged, superseded_paths) do
-    Enum.each(staged, fn %{rollback: rollback, dest: dest} ->
-      case StageEngine.commit(rollback) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning(
-            "audiobook file #{dest} imported but its stage did not commit: #{inspect(reason)}"
-          )
-      end
-    end)
-
-    finish(grab, files, superseded_paths)
-  end
-
-  # Post-commit, best-effort. ORDER MATTERS — see `BookImport.finish/3`'s full reasoning, applied
-  # identically here: when `move_on_import` will actually attempt a removal (usenet protocol),
-  # the grab is fenced-then-deleted atomically via `Download.fence_book_cleanup/1` (#415), so a
-  # crash or a transient client-removal failure survives as a durable `:cleanup_pending`
-  # `download_intents` row for `reconcile_pending_intents/1`'s bounded retry, instead of the grab
-  # (the only row carrying the remote id) being gone with nothing left to retry it. `:mismatch`
-  # (#536) means a concurrent grab already reserved a new intent for this same target — fencing
-  # would have hijacked it, so this degrades to a plain grab delete plus
-  # `Download.fallback_remove/3`'s one-shot, undurable removal instead. Otherwise (torrent, or
-  # `move_on_import` off), the grab is deleted plain.
-  defp finish(grab, files, superseded_paths) do
-    if Download.move_on_import_removal?(grab.download_protocol) do
-      case Download.fence_book_cleanup(grab) do
-        {:ok, intent_ids} ->
-          Download.cleanup_intents(intent_ids)
-
-        :mismatch ->
-          Books.Grabs.delete(grab)
-
-          Download.fallback_remove(
-            grab.download_protocol,
-            grab.download_id,
-            "audiobook target #{grab.book_target_id}"
-          )
-      end
-
-      Download.best_effort_delete_source(grab.content_path)
-    else
-      Books.Grabs.delete(grab)
-    end
-
-    if superseded_paths == [], do: {:ok, files}, else: {:ok, files, superseded_paths}
-  end
-
-  defp rollback(rollback, reason) do
-    case StageEngine.rollback(rollback) do
-      :ok ->
-        :ok
-
-      {:error, rollback_error} ->
-        Logger.error(
-          "audiobook import rollback failed after #{inspect(reason)}: #{inspect(rollback_error)}"
-        )
-
-        :ok
+      {:error, _reason} = error ->
+        error
     end
   end
 

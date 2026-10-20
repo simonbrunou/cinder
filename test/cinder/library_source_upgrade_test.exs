@@ -6,6 +6,7 @@ defmodule Cinder.LibrarySourceUpgradeTest do
 
   alias Cinder.Catalog.{Episode, Season, Series}
   alias Cinder.Library
+  alias Cinder.Library.StagedImport
 
   setup :verify_on_exit!
 
@@ -45,37 +46,35 @@ defmodule Cinder.LibrarySourceUpgradeTest do
     source = "/dl/grab/Show.S01E01.1080p.BluRay.x264.mkv"
     dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"
 
-    expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl/grab" -> true end)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn path -> path == "/dl/grab" end)
 
-    # sweep_temps' walk checks the dest dir is a directory before listing it.
-    expect(Cinder.Library.FilesystemMock, :dir?, fn _dir -> true end)
-
-    # The sidecar scan after the replaced file re-checks the source dir; fall through to "not a dir".
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-
-    expect(Cinder.Library.FilesystemMock, :find_files, fn "/dl/grab" ->
+    stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl/grab" ->
       {:ok, [{source, 2 * @gb}]}
     end)
 
-    expect(Cinder.Library.FilesystemMock, :lstat, fn ^source ->
-      {:ok, %File.Stat{size: 2 * @gb, inode: 7}}
+    # The download (inode 7) and the held webdl file at dest (inode 99) are different files.
+    stub(Cinder.Library.FilesystemMock, :lstat, fn
+      ^source ->
+        {:ok, %File.Stat{type: :regular, size: 2 * @gb, inode: 7, major_device: 1}}
+
+      ^dest ->
+        {:ok, %File.Stat{type: :regular, size: 9 * @gb, inode: 99, major_device: 1}}
+
+      path ->
+        if Cinder.LibraryStubs.candidate_path?(path),
+          do: {:ok, %File.Stat{type: :regular, size: 2 * @gb, inode: 50, major_device: 1}},
+          else: {:error, :enoent}
     end)
 
-    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    expect(Cinder.Library.FilesystemMock, :ln, fn ^source, ^dest -> {:error, :eexist} end)
-    expect(Cinder.Library.FilesystemMock, :lstat, fn ^dest -> {:ok, %File.Stat{inode: 99}} end)
-    # sweep_temps
-    expect(Cinder.Library.FilesystemMock, :find_files, fn _dir -> {:ok, []} end)
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
+    # The held file moves aside to its backup before the candidate lands at dest.
+    expect(Cinder.Library.FilesystemMock, :rename, fn ^dest, _backup -> :ok end)
 
-    expect(Cinder.Library.FilesystemMock, :ln, fn ^source, tmp ->
-      assert String.contains?(tmp, ".cinder-tmp-")
-      :ok
-    end)
+    assert {:ok, staged, []} = Library.stage_episodes("/dl/grab", [ep])
 
-    expect(Cinder.Library.FilesystemMock, :rename, fn _tmp, ^dest -> :ok end)
-    expect(Cinder.Library.MediaServerMock, :scan, fn _ -> :ok end)
-
-    assert {:ok, [{5, ^dest, %{resolution: "1080p", source: "bluray"}}], []} =
-             Library.import_episodes("/dl/grab", [ep])
+    assert [{5, ^dest, %{resolution: "1080p", source: "bluray"}, true}] =
+             StagedImport.record(staged)
   end
 end

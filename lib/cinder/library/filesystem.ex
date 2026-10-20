@@ -61,6 +61,16 @@ defmodule Cinder.Library.Filesystem do
   """
   @callback backing_identity(path :: String.t()) :: {:ok, term()} | {:error, term()}
 
+  # link(2) errnos that mean "this dest can't be hardlinked to" — fall back to an atomic byte copy
+  # rather than parking. `:exdev` = source and dest on different mounts. `:eperm`/`:eopnotsupp`/
+  # `:enotsup` = a single mount whose filesystem has no hardlink support at all (FAT/exFAT on USB
+  # drives, SMB/CIFS without Unix extensions, some FUSE), where `link()` fails without `:exdev` ever
+  # firing (issue #59). `:eperm` can also be a genuine permission error, but then the copy fails the
+  # same way (`cp` can't open the dest) and the item still parks — a wasted copy attempt, not a wrong
+  # import. Every other errno propagates. A guard so the staging engine and `Cinder.Library.Sidecars`
+  # share this one list.
+  defguard copy_fallback_errno?(errno) when errno in [:exdev, :eperm, :eopnotsupp, :enotsup]
+
   @spec identity?(map(), term()) :: boolean()
   def identity?(bound, expected),
     do: bound.identity == expected or Map.get(bound, :union_identity) == expected

@@ -7,6 +7,7 @@ defmodule Cinder.Download.GrabResolutionTest do
   alias Cinder.Catalog.{Episode, Grab, GrabFile, Grabs, Identity}
   alias Cinder.Download.TvPoller
   alias Cinder.Library
+  alias Cinder.Library.StagedImport
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -198,21 +199,13 @@ defmodule Cinder.Download.GrabResolutionTest do
     {:ok, _grab} = Catalog.mark_grab_downloaded(grab, release_dir)
     grab = Enum.find(Catalog.list_grabs_downloaded(), &(&1.id == grab.id))
 
-    assert {:ok, [{episode_id, stage}], unmatched} =
-             Library.stage_episodes(grab.content_path, grab.episodes)
-
+    assert {:ok, staged, unmatched} = Library.stage_episodes(grab.content_path, grab.episodes)
+    assert [{episode_id, _dest, _quality, true}] = StagedImport.record(staged)
     assert episode_id == episode.id
     assert {:ok, residuals} = Library.inventory_grab_files(release_dir, unmatched, grab.episodes)
 
     assert {:ok, :open, _grab} =
-             Catalog.commit_grab_imports(
-               grab,
-               [{episode_id, stage.dest, stage.quality}],
-               residuals,
-               Library.stage_ids([stage])
-             )
-
-    assert :ok = Library.commit_stage(stage)
+             StagedImport.commit(staged, &Catalog.commit_grab_imports(grab, &1, residuals, &2))
 
     grab = Enum.find(Catalog.list_grabs(), &(&1.id == grab.id))
 
