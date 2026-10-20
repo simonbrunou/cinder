@@ -115,6 +115,34 @@ defmodule Cinder.Settings.DefinitionTest do
              %{key: "unknown_key", group: nil, label: "unknown_key", message: nil}
   end
 
+  test "one!/1 finds the single definition a filter names, and raises unless exactly one matches" do
+    assert %Definition{key: "smtp_ssl"} =
+             Settings.Registry.one!(target: {:writer, :mailer}, slot: :ssl)
+
+    assert %Definition{key: "smtp_host"} =
+             Settings.Registry.one!(target: {:module, Cinder.Mailer, :relay})
+
+    assert_raise ArgumentError, ~r/no setting definition/, fn ->
+      Settings.Registry.one!(target: {:writer, :no_such_writer})
+    end
+
+    assert_raise ArgumentError, ~r/2 setting definitions/, fn ->
+      Settings.Registry.one!(target: {:writer, :download_clients}, save: :read_only)
+    end
+  end
+
+  test "the media server choice maps each option it offers to its implementation" do
+    assert {:media_server, options} =
+             Settings.Registry.one!(target: {:writer, :media_server}).shape
+
+    assert Map.new(options, &{&1.value, &1.module}) == %{
+             "jellyfin" => Cinder.Library.MediaServer.Jellyfin,
+             "plex" => Cinder.Library.MediaServer.Plex
+           }
+
+    assert Settings.media_server_options() == ["jellyfin", "plex"]
+  end
+
   test "every label and message a definition emits is registered for translation" do
     msgids = MapSet.new(Settings.Registry.msgids())
 

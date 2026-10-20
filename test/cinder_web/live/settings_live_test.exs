@@ -26,6 +26,24 @@ defmodule CinderWeb.SettingsLiveTest do
   setup :reset_cinder_env
   setup :set_mox_global
 
+  # The custom blocks spell their keys by hand, so this is what catches a renamed definition whose
+  # input still carries the old name. `render: :none` keys (the legacy toggles, setup_complete)
+  # must never get an input.
+  test "every rendered definition has an input named after its key, and no other does",
+       %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    for definition <- Settings.definitions() do
+      rendered? = has_element?(lv, ~s([name="#{definition.key}"]))
+
+      if definition.render == :none,
+        do: refute(rendered?, "#{definition.key} is render: :none but has an input"),
+        else: assert(rendered?, "#{definition.key} (render: #{definition.render}) has no input")
+    end
+
+    assert Enum.any?(Settings.definitions(), &(&1.render == :none))
+  end
+
   test "renders the grouped settings form", %{conn: conn} do
     {:ok, lv, html} = live(conn, ~p"/settings")
 

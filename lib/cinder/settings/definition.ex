@@ -17,14 +17,18 @@ defmodule Cinder.Settings.Definition do
     `config :cinder, module` keyword list), `{:env, key}` (a flat `:cinder` key),
     `{:writer, name}` (a composite value one overlay writer assembles) or `nil` (read live from
     the store).
-  - `bootstrap` is `:base` when a missing row falls back to the captured env value.
+  - `bootstrap` is `:base` when a missing row falls back to the captured env value, and
+    `{:base, value}` when it falls back to `value` if that captured value is nil (a writer slot
+    the bootstrap keyword list lacks).
   - `save` is `:form` (planned from the submitted form), `:always` (written on every form save,
     `params[key]` or the shape's default), `:read_only` (shown, never saved by the form) or
     `:direct` (written only through `Cinder.Settings.put/2`).
-  - `render` is `:field` (the generic `setting_field`), `:custom` or `:none`.
+  - `render` is `:field` (the generic `setting_field`), `:custom` (an input written by hand on
+    `/settings`) or `:none` (no input). Every key but a `:none` one has an input named after it.
   - `check` names a cross-field rule: `:cutoff_in_preferred` or `:languages_for_require`.
   - `env_placeholder` shows the effective env value as the input placeholder when no row exists.
-  - `kind` and `slot` identify a per-kind or per-part definition (`:movies`, `:min_size`).
+  - `kind` and `slot` identify a per-kind or per-part definition (`:movies`, `:min_size`). For a
+    `{:writer, name}` target, `slot` is the field it fills in the writer's keyword list (`:ssl`).
   """
 
   alias Cinder.LibraryKind
@@ -39,7 +43,7 @@ defmodule Cinder.Settings.Definition do
           label: label() | nil,
           message: String.t() | nil,
           target: {:module, module(), atom()} | {:env, atom()} | {:writer, atom()} | nil,
-          bootstrap: :base | :none,
+          bootstrap: :base | {:base, term()} | :none,
           save: :form | :always | :read_only | :direct,
           render: :field | :custom | :none,
           check: :cutoff_in_preferred | :languages_for_require | nil,

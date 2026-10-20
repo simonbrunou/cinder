@@ -208,7 +208,10 @@ defmodule Cinder.Settings.Registry do
   # operator-supplied value rather than something derivable from the server URL. One Plex section
   # per video kind, so a server with separate Movies/Shows libraries refreshes the right one.
   @media_server [
-                  new("media_server_type", {:media_server, ["jellyfin", "plex"]},
+                  new(
+                    "media_server_type",
+                    {:media_server,
+                     [%{value: "jellyfin", module: Jellyfin}, %{value: "plex", module: Plex}]},
                     group: :media_server,
                     label: "Media server type",
                     target: {:writer, :media_server},
@@ -424,6 +427,7 @@ defmodule Cinder.Settings.Registry do
       group: :notifications,
       label: "SMTP: use implicit TLS/SSL (usually port 465; leave off for STARTTLS on 587)",
       target: {:writer, :mailer},
+      slot: :ssl,
       save: :always
     ),
     field("discord_webhook_url", {Cinder.Notifier.Discord, :webhook_url},
@@ -510,25 +514,29 @@ defmodule Cinder.Settings.Registry do
       message: "Choose a valid mode and at least one subtitle language when required.",
       target: {:writer, :anime_preferences},
       slot: :embedded_subtitle_mode,
+      bootstrap: :base,
       check: :languages_for_require
     ),
     new("anime_preferred_groups", {:list, :groups},
       group: :anime,
       label: "Anime: Preferred groups",
       target: {:writer, :anime_preferences},
-      slot: :preferred_groups
+      slot: :preferred_groups,
+      bootstrap: :base
     ),
     new("anime_blocked_groups", {:list, :groups},
       group: :anime,
       label: "Anime: Blocked groups",
       target: {:writer, :anime_preferences},
-      slot: :blocked_groups
+      slot: :blocked_groups,
+      bootstrap: :base
     ),
     new("anime_group_fallback_delay", :hours,
       group: :anime,
       label: "Anime: Preferred-group fallback delay",
       target: {:writer, :anime_preferences},
-      slot: :group_fallback_delay
+      slot: :group_fallback_delay,
+      bootstrap: {:base, 24 * 60 * 60}
     )
   ]
 
@@ -542,6 +550,7 @@ defmodule Cinder.Settings.Registry do
     new("upgrade_hunt_enabled", :boolean,
       label: "Look for better releases of titles already in the library",
       target: {:writer, :upgrade_hunt},
+      slot: :enabled,
       save: :direct
     ),
     new("setup_complete", :boolean, save: :direct, render: :none)
@@ -578,6 +587,10 @@ defmodule Cinder.Settings.Registry do
 
   @by_key Map.new(@definitions, &{&1.key, &1})
 
+  @media_server_options for %{shape: {:media_server, options}} <- @definitions,
+                            option <- options,
+                            do: option.value
+
   @library_kinds Enum.map(
                    LibraryKind.all(),
                    &%{kind: &1, label: LibraryKind.label(&1), video?: LibraryKind.video?(&1)}
@@ -609,6 +622,26 @@ defmodule Cinder.Settings.Registry do
     end)
   end
 
+  @doc """
+  The single definition `filter` names, as in `definitions/1`; raises unless exactly one matches.
+  `Cinder.Settings.Overlay` calls it at compile time, in module attributes, so a renamed key still
+  reaches its writers and a removed or doubled one fails the build.
+  """
+  @spec one!(keyword()) :: Cinder.Settings.Definition.t()
+  def one!(filter) do
+    case definitions(filter) do
+      [definition] ->
+        definition
+
+      [] ->
+        raise ArgumentError, "no setting definition matches #{inspect(filter)}"
+
+      matches ->
+        raise ArgumentError,
+              "#{length(matches)} setting definitions match #{inspect(filter)}, expected one"
+    end
+  end
+
   @doc "The definition for `key`, or `nil` when the key is not a setting."
   @spec definition(String.t()) :: Cinder.Settings.Definition.t() | nil
   def definition(key), do: Map.get(@by_key, key)
@@ -632,8 +665,5 @@ defmodule Cinder.Settings.Registry do
   def library_kinds, do: @library_kinds
 
   @doc "The media server types the form offers."
-  def media_server_options do
-    {:media_server, options} = definition("media_server_type").shape
-    options
-  end
+  def media_server_options, do: @media_server_options
 end

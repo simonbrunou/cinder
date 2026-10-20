@@ -7,8 +7,7 @@ defmodule Cinder.Settings.Overlay do
   # are between writers, not between definitions. `env_keys/0` folds the same phases, so the set
   # of keys a load writes is never re-listed by hand.
 
-  alias Cinder.Acquisition.AnimePreferences
-  alias Cinder.Library.MediaServer.{Jellyfin, Plex}
+  alias Cinder.Library.MediaServer.Plex
   alias Cinder.LibraryKind
   alias Cinder.Settings.{Crypto, Registry, Shape}
 
@@ -41,6 +40,15 @@ defmodule Cinder.Settings.Overlay do
   ]
 
   @named_env for {:env, key} <- @phases, do: key
+
+  # The definitions the composite writers read one by one, found by target and slot: a renamed key
+  # still reaches its writer, and a removed or doubled one fails the build.
+  @smtp_host Registry.one!(target: {:module, Cinder.Mailer, :relay})
+  @smtp_password Registry.one!(target: {:module, Cinder.Mailer, :password})
+  @smtp_ssl Registry.one!(target: {:writer, :mailer}, slot: :ssl)
+  @media_server Registry.one!(target: {:writer, :media_server})
+  @import_roots Registry.one!(target: {:writer, :import_roots})
+  @upgrade_hunt Registry.one!(target: {:writer, :upgrade_hunt}, slot: :enabled)
 
   for %{key: key, target: {:writer, writer}} <- Registry.definitions(), writer not in @phases do
     raise CompileError, description: "#{key} targets unknown overlay writer #{inspect(writer)}"
@@ -121,7 +129,7 @@ defmodule Cinder.Settings.Overlay do
   # itself) and a temporarily-stale :ssl on a non-SMTP adapter are harmless.
   defp write(:mailer, rows) do
     current = Application.get_env(:cinder, Cinder.Mailer, [])
-    host = decoded(rows, "smtp_host")
+    host = decoded(rows, @smtp_host.key)
     smtp? = is_binary(host) and host != ""
 
     adapter =
@@ -133,13 +141,10 @@ defmodule Cinder.Settings.Overlay do
 
     # :ssl must be a real boolean: gen_smtp pattern-matches `true` strictly, so the string "true"
     # would silently disable implicit TLS.
-    ssl? = decoded(rows, "smtp_ssl") == "true"
+    ssl? = decoded(rows, @smtp_ssl.key) == "true"
 
-    Application.put_env(
-      :cinder,
-      Cinder.Mailer,
-      Keyword.merge(current, [adapter: adapter, ssl: ssl?] ++ mailer_tls_overlay(rows, host))
-    )
+    overlay = [{:adapter, adapter}, {@smtp_ssl.slot, ssl?}] ++ mailer_tls_overlay(rows, host)
+    Application.put_env(:cinder, Cinder.Mailer, Keyword.merge(current, overlay))
   end
 
   # Rebuilt whole from the four Anime definitions (not merged), each falling back to its own
@@ -149,7 +154,7 @@ defmodule Cinder.Settings.Overlay do
 
     config =
       for %{slot: slot} = definition <- writer_definitions(:anime_preferences) do
-        fallback = anime_fallback(slot, base)
+        fallback = fallback(definition, fn -> base[slot] end)
         {slot, Shape.to_env(definition.shape, decoded(rows, definition.key), fallback, true)}
       end
 
@@ -166,11 +171,12 @@ defmodule Cinder.Settings.Overlay do
         do: Plex,
         else: base(:media_server)
 
+    {:media_server, options} = @media_server.shape
+
     impl =
-      case decoded(rows, "media_server_type") do
-        "plex" -> Plex
-        "jellyfin" -> Jellyfin
-        _ -> fallback
+      case Shape.option(options, decoded(rows, @media_server.key)) do
+        %{module: module} -> module
+        nil -> fallback
       end
 
     Application.put_env(:cinder, :media_server, impl)
@@ -198,11 +204,7 @@ defmodule Cinder.Settings.Overlay do
       # Capture the bootstrap EAGERLY, before the row lookup: a lazy capture would first record
       # the env during a *delete*, snapshotting the already-overlaid value instead of the true
       # pre-overlay bootstrap (a cleared setting would then revert to the overlaid value).
-      fallback =
-        case definition.bootstrap do
-          :base -> Shape.from_base(definition.shape, base(env_key))
-          :none -> Shape.empty(definition.shape)
-        end
+      fallback = fallback(definition, fn -> base(env_key) end)
 
       value =
         Shape.to_env(
@@ -235,20 +237,27 @@ defmodule Cinder.Settings.Overlay do
     base = base(module)
 
     config =
-      case decoded(rows, "upgrade_hunt_enabled") do
+      case decoded(rows, @upgrade_hunt.key) do
         nil -> base
-        value -> Keyword.put(base, :enabled, value == "true")
+        value -> Keyword.put(base, @upgrade_hunt.slot, value == "true")
       end
 
     Application.put_env(:cinder, module, config)
   end
 
-  defp anime_fallback(:embedded_subtitle_mode, base), do: base[:embedded_subtitle_mode]
+  # What a definition with no row falls back to. `capture` reads its bootstrap, and only runs for a
+  # definition that has one.
+  defp fallback(%{bootstrap: :none, shape: shape}, _capture), do: Shape.empty(shape)
 
-  defp anime_fallback(slot, base) when slot in [:preferred_groups, :blocked_groups],
-    do: AnimePreferences.normalize_groups(base[slot] || [])
+  defp fallback(%{bootstrap: :base, shape: shape}, capture),
+    do: Shape.from_base(shape, capture.())
 
-  defp anime_fallback(:group_fallback_delay, base), do: base[:group_fallback_delay] || 86_400
+  defp fallback(%{bootstrap: {:base, value}, shape: shape}, capture) do
+    case Shape.from_base(shape, capture.()) do
+      nil -> value
+      bootstrap -> bootstrap
+    end
+  end
 
   # gen_smtp's defaults are `tls: :if_available` (STARTTLS silently downgradable by a MITM
   # stripping the advertisement) with no certificate verification. Credentials must never cross
@@ -256,7 +265,7 @@ defmodule Cinder.Settings.Overlay do
   # engages the relay certificate is verified against the system store. A password-less LAN relay
   # keeps opportunistic TLS so bare-postfix setups still work.
   defp mailer_tls_overlay(rows, host) when is_binary(host) and host != "" do
-    tls = if decoded(rows, "smtp_password") in [nil, ""], do: :if_available, else: :always
+    tls = if decoded(rows, @smtp_password.key) in [nil, ""], do: :if_available, else: :always
 
     [
       tls: tls,
@@ -272,7 +281,7 @@ defmodule Cinder.Settings.Overlay do
   defp mailer_tls_overlay(_rows, _host), do: []
 
   defp selected_download_client(rows, choice, base_map) do
-    case Shape.choice_option(choice, decoded(rows, choice.key)) do
+    case Shape.option(choice.options, decoded(rows, choice.key)) do
       %{module: module} ->
         module
 
@@ -282,7 +291,7 @@ defmodule Cinder.Settings.Overlay do
   end
 
   defp explicit_roots_from(rows) do
-    case decoded(rows, "import_roots") do
+    case decoded(rows, @import_roots.key) do
       nil -> nil
       value -> parse_import_roots(value)
     end

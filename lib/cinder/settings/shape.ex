@@ -5,7 +5,7 @@ defmodule Cinder.Settings.Shape do
   # bootstrap) becomes the env value. One clause per shape, so a new shape is one set of clauses
   # here and no engine edit.
   #
-  # Shapes: :text | :secret | :boolean | :legacy_toggle | {:media_server, options}
+  # Shapes: :text | :secret | :boolean | :legacy_toggle | {:media_server, [%{value, module}]}
   # | {:download_client, choice} | {:choice, options} | :resolution | :positive_integer
   # | :lenient_integer | :positive_number | :size_band | :path_root | :root_list
   # | {:list, :downcase | :groups} | :timezone | :hours
@@ -58,7 +58,7 @@ defmodule Cinder.Settings.Shape do
   def form_value({:media_server, _options}, value, _lookup), do: value || default_media_server()
 
   def form_value({:download_client, choice}, value, lookup) do
-    case choice_option(choice, value) do
+    case option(choice.options, value) do
       %{value: value} -> value
       nil -> if enabled?(lookup.(choice.legacy_key)), do: choice.default, else: "disabled"
     end
@@ -72,12 +72,12 @@ defmodule Cinder.Settings.Shape do
   end
 
   def resubmitted({:media_server, options}, key, params) do
-    if params[key] in options, do: {:ok, params[key]}, else: :keep
+    if option(options, params[key]), do: {:ok, params[key]}, else: :keep
   end
 
   def resubmitted({:download_client, choice}, key, params) do
     value = params[key]
-    if is_binary(value) and choice_option(choice, value), do: {:ok, value}, else: :keep
+    if is_binary(value) and option(choice.options, value), do: {:ok, value}, else: :keep
   end
 
   def resubmitted(_shape, key, params) do
@@ -92,7 +92,7 @@ defmodule Cinder.Settings.Shape do
   clears the setting, except for a client choice, which must name a listed option.
   """
   def invalid?({:download_client, choice}, value),
-    do: not is_nil(value) and is_nil(choice_option(choice, value))
+    do: not is_nil(value) and is_nil(option(choice.options, value))
 
   def invalid?(:root_list, value), do: "/" in split_import_roots(value || "")
   def invalid?(:positive_integer, value), do: rejects?(value, &is_nil(positive_integer(&1)))
@@ -132,7 +132,7 @@ defmodule Cinder.Settings.Shape do
   # Validate against the whitelist so a crafted/buggy submit can't persist a junk impl string
   # (which the media-server writer would silently ignore, leaving the dropdown unselected).
   def plan(%{save: :always, shape: {:media_server, options}, key: key}, params, {puts, deletes}) do
-    choice = if params[key] in options, do: params[key], else: default_media_server()
+    choice = if option(options, params[key]), do: params[key], else: default_media_server()
     {Map.put(puts, key, choice), deletes}
   end
 
@@ -213,13 +213,15 @@ defmodule Cinder.Settings.Shape do
 
   @doc """
   The bootstrap value a cleared setting reverts to. The captured env defaults to `[]` for an
-  unset key; a root is a string and a band is positive bytes, so anything else becomes nil.
+  unset key; a root is a string and a band is positive bytes, so anything else becomes nil. A
+  group list is normalized, and none is `[]`.
   """
   def from_base(:path_root, path) when is_binary(path), do: path
   def from_base(:path_root, _base), do: nil
   def from_base(:size_band, bytes) when is_integer(bytes) and bytes > 0, do: bytes
   def from_base(:size_band, _base), do: nil
   def from_base(:lenient_integer, value), do: positive_integer(value)
+  def from_base({:list, :groups}, groups), do: AnimePreferences.normalize_groups(groups)
   def from_base(_shape, value), do: value
 
   @doc "The env value of a key with no bootstrap and no row."
@@ -284,8 +286,9 @@ defmodule Cinder.Settings.Shape do
 
   def valid_timezone?(_zone), do: false
 
+  # The option of a media server or download client choice whose value is `value`, or nil.
   @doc false
-  def choice_option(choice, value), do: Enum.find(choice.options, &(&1.value == value))
+  def option(options, value), do: Enum.find(options, &(&1.value == value))
 
   @doc false
   def enabled?(nil), do: true

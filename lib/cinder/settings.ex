@@ -22,11 +22,6 @@ defmodule Cinder.Settings do
   alias Cinder.Settings.{Crypto, Definition, Overlay, Registry, Setting, Shape}
   alias Cinder.Util
 
-  @media_server_key "media_server_type"
-  @import_roots_key "import_roots"
-  @ffprobe_bin_key "ffprobe_bin"
-  @smtp_ssl_key "smtp_ssl"
-
   # --- boot loader: one-shot supervised child, runs synchronously before the poller ---
 
   @doc false
@@ -86,11 +81,6 @@ defmodule Cinder.Settings do
 
   @doc "The resolutions an upgrade cutoff may name."
   def release_resolutions, do: Parser.resolutions()
-
-  def media_server_key, do: @media_server_key
-  def import_roots_key, do: @import_roots_key
-  def ffprobe_bin_key, do: @ffprobe_bin_key
-  def smtp_ssl_key, do: @smtp_ssl_key
 
   @doc "Positive default quota for new users, or nil when the configured value is unusable."
   def default_request_quota do
@@ -160,7 +150,7 @@ defmodule Cinder.Settings do
   """
   @spec media_server_web_link() :: {:plex | :jellyfin, String.t()} | nil
   def media_server_web_link do
-    case get(@media_server_key) do
+    case get(Registry.one!(target: {:writer, :media_server}).key) do
       "plex" -> web_link_for(:plex)
       "jellyfin" -> web_link_for(:jellyfin)
       _ -> sole_configured_web_link()

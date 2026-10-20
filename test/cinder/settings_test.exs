@@ -744,6 +744,21 @@ defmodule Cinder.SettingsTest do
              }
     end
 
+    test "an anime bootstrap without group lists or a delay falls back to none and 24 hours" do
+      erase_base_snapshot(:anime_preferences)
+      Application.put_env(:cinder, :anime_preferences, embedded_subtitle_mode: :allow)
+
+      assert Settings.load_into_env() == :ok
+
+      assert Settings.anime_defaults() == %{
+               subtitle_languages: [],
+               embedded_subtitle_mode: :allow,
+               preferred_groups: [],
+               blocked_groups: [],
+               group_fallback_delay: 86_400
+             }
+    end
+
     test "DB overrides the env bootstrap on the boot path" do
       # Insert directly (bypassing put/0's auto-load) to exercise load_into_env standalone.
       Repo.insert!(%Setting{key: "jellyfin_url", value: "http://boot-jellyfin", is_secret: false})
@@ -858,6 +873,24 @@ defmodule Cinder.SettingsTest do
       assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServer.Plex
 
       Settings.put("media_server_type", "jellyfin")
+      assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServer.Jellyfin
+    end
+
+    test "the form saves and keeps a listed media server type, never an unlisted one" do
+      assert :ok = Settings.save_form(%{"media_server_type" => "plex"})
+      assert Settings.get("media_server_type") == "plex"
+      assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServer.Plex
+
+      # A rejected submit re-renders the listed type it sent, over the stored one.
+      assert Settings.form_state(%{"media_server_type" => "jellyfin"}).values["media_server_type"] ==
+               "jellyfin"
+
+      # An unlisted type keeps the stored one on re-render, and a save stores the default instead.
+      assert Settings.form_state(%{"media_server_type" => "emby"}).values["media_server_type"] ==
+               "plex"
+
+      assert :ok = Settings.save_form(%{"media_server_type" => "emby"})
+      assert Settings.get("media_server_type") == "jellyfin"
       assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServer.Jellyfin
     end
 

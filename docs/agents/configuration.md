@@ -17,7 +17,10 @@ positive-integer setting is one `field/3` entry plus its French msgstr after
 `mix gettext.extract --merge`. That entry renders in its group, validates, saves, overlays the
 env, joins `Cinder.Settings.env_keys/0` (which the test env snapshots derive from) and registers
 its strings in `CinderWeb.SettingsLabels.known/0`. Edit `settings_components.ex` only when the
-setting needs custom rendering, and `Cinder.Settings.Shape` only for a new shape.
+setting needs custom rendering (`render: :custom`; the `/settings` page test fails until its input
+is named after its key), and `Cinder.Settings.Shape` only for a new shape. An overlay writer that
+assembles one env value from several keys finds each definition with `Registry.one!/1`, by target
+and slot, never by key.
 
 A registry-driven loader `Application.put_env`s stored values onto a one-time bootstrap snapshot
 at boot (a one-shot supervised child, after PubSub and before the poller) and on every save. So

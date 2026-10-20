@@ -84,7 +84,7 @@ defmodule CinderWeb.SettingsComponents do
             <option
               :for={opt <- Settings.media_server_options()}
               value={opt}
-              selected={@form.values[Settings.media_server_key()] == opt}
+              selected={@form.values["media_server_type"] == opt}
             >
               {opt}
             </option>
@@ -117,30 +117,30 @@ defmodule CinderWeb.SettingsComponents do
 
         <div :if={group == :library} class="space-y-2">
           <div class="form-control">
-            <label class="label" for={Settings.import_roots_key()}>
+            <label class="label" for="import_roots">
               <span class="label-text">{gettext("Download folders")}</span>
             </label>
             <textarea
-              id={Settings.import_roots_key()}
-              name={Settings.import_roots_key()}
+              id="import_roots"
+              name="import_roots"
               placeholder={gettext("/media/downloads")}
               autocomplete="off"
               class={[
                 "textarea w-full",
-                invalid?(@form, Settings.import_roots_key()) && "textarea-error"
+                invalid?(@form, "import_roots") && "textarea-error"
               ]}
-              aria-invalid={invalid?(@form, Settings.import_roots_key()) && "true"}
+              aria-invalid={invalid?(@form, "import_roots") && "true"}
               aria-describedby={
-                if invalid?(@form, Settings.import_roots_key()),
-                  do: "#{Settings.import_roots_key()}-help #{Settings.import_roots_key()}-error",
-                  else: "#{Settings.import_roots_key()}-help"
+                if invalid?(@form, "import_roots"),
+                  do: "import_roots-help import_roots-error",
+                  else: "import_roots-help"
               }
-            >{@form.values[Settings.import_roots_key()]}</textarea>
+            >{@form.values["import_roots"]}</textarea>
             <.field_error
-              :if={invalid?(@form, Settings.import_roots_key())}
-              field={Settings.import_roots_key()}
+              :if={invalid?(@form, "import_roots")}
+              field="import_roots"
             />
-            <p id={"#{Settings.import_roots_key()}-help"} class="mt-1 text-xs opacity-70">
+            <p id="import_roots-help" class="mt-1 text-xs opacity-70">
               {gettext(
                 "Folders where your download clients save completed files. Separate multiple folders with commas or new lines. Do not use /, the top-level folder."
               )}
@@ -254,20 +254,20 @@ defmodule CinderWeb.SettingsComponents do
           </div>
 
           <div class="form-control pt-2">
-            <label class="label" for={Settings.ffprobe_bin_key()}>
+            <label class="label" for="ffprobe_bin">
               <span class="label-text">{gettext("ffprobe media analysis tool")}</span>
             </label>
             <input
               type="text"
-              id={Settings.ffprobe_bin_key()}
-              name={Settings.ffprobe_bin_key()}
-              value={@form.values[Settings.ffprobe_bin_key()]}
-              placeholder={@form.placeholders[Settings.ffprobe_bin_key()] || "ffprobe"}
+              id="ffprobe_bin"
+              name="ffprobe_bin"
+              value={@form.values["ffprobe_bin"]}
+              placeholder={@form.placeholders["ffprobe_bin"] || "ffprobe"}
               autocomplete="off"
-              aria-describedby={"#{Settings.ffprobe_bin_key()}-help"}
+              aria-describedby="ffprobe_bin-help"
               class="input w-full"
             />
-            <p id={"#{Settings.ffprobe_bin_key()}-help"} class="mt-1 text-xs opacity-70">
+            <p id="ffprobe_bin-help" class="mt-1 text-xs opacity-70">
               {gettext(
                 "Cinder uses ffprobe to check audio and subtitle languages after import. Leave blank to use ffprobe already available to Cinder."
               )}
@@ -441,12 +441,12 @@ defmodule CinderWeb.SettingsComponents do
 
         <div :if={group == :notifications} class="mb-3">
           <label class="label cursor-pointer justify-start gap-2">
-            <input type="hidden" name={Settings.smtp_ssl_key()} value="false" />
+            <input type="hidden" name="smtp_ssl" value="false" />
             <input
               type="checkbox"
-              name={Settings.smtp_ssl_key()}
+              name="smtp_ssl"
               value="true"
-              checked={@form.values[Settings.smtp_ssl_key()]}
+              checked={@form.values["smtp_ssl"]}
               class="checkbox"
             />
             <span class="label-text">
