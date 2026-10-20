@@ -41,6 +41,12 @@ band and release-name vocabulary.
 _Avoid_: profile, media profile (a library root and its quality settings), format (a container
 such as EPUB or M4B)
 
+**Query plan**:
+A book kind's rule for which identifiers of its editions to probe the indexers with, and in what
+order: ISBN for an e-book, ASIN then ISBN for an audiobook. Every search for a work runs the most
+specific evidence first: a few of those identifiers, then author and title, then free text.
+_Avoid_: search strategy, query list
+
 ### Downloads
 
 **In-flight download**:

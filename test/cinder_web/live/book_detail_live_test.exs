@@ -404,9 +404,10 @@ defmodule CinderWeb.BookDetailLiveTest do
     # #495: changing the language while the panel stays open must restart the search under the
     # new preference, and a search that was already in flight under the OLD preference must
     # never land afterward — even when it completes later than the fresh, post-change search.
-    # `search_book` is called once per `Books.candidates/2` invocation (the structured query in
-    # `Acquisition.Books.plan/1`), so blocking the FIRST call and racing a language change against
-    # it exercises the real `start_async`/`cancel_async` ref machinery, not just `update/2`.
+    # `search_book` is called once per `Books.candidates/2` invocation (the search's structured
+    # query, run by `Acquisition.BookSearch`), so blocking the FIRST call and racing a language
+    # change against it exercises the real `start_async`/`cancel_async` ref machinery, not just
+    # `update/2`.
     test "changing the language mid-search restarts it, and a late pre-change result never lands",
          %{conn: conn} do
       {target, _work} = ebook_target(title: "The Dispossessed")

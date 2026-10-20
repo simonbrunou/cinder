@@ -218,7 +218,7 @@ defmodule Cinder.Acquisition.BookScorerTest do
 
     test "tolerates series, year, and group noise around the title", ctx do
       # The series must be LOADED for its name to be discountable — an unrecognized bracket group
-      # is title evidence, not noise. `Books.normalize/1` supplies this from series_memberships.
+      # is title evidence, not noise. `BookSearch` supplies this from series_memberships.
       work = Map.put(@dispossessed, :series, ["Hainish Cycle"])
 
       assert {:accept, _evidence} =
