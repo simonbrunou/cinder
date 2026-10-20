@@ -46,6 +46,26 @@ defmodule Cinder.Download.AudiobookPollerTest do
       assert Repo.reload!(target).status == :available
     end
 
+    # #750: an audiobook is media the way a video is, so the 0-byte filler public trackers ship
+    # beside it is a companion, not the payload.
+    test "an M4B carrying a 0-byte filler executable beside it imports", ctx do
+      %{target: target, audiobooks: audiobooks, release_dir: release_dir} =
+        downloading(ctx, %{"The Dispossessed.m4b" => m4b_bytes(), "RARBG_DO_NOT_MIRROR.exe" => ""})
+
+      stub(Cinder.Download.ClientMock, :files, fn _id ->
+        {:ok, ["The Dispossessed.m4b", "RARBG_DO_NOT_MIRROR.exe"]}
+      end)
+
+      complete_download(release_dir)
+      poll!()
+
+      dest =
+        Path.join([audiobooks, "Ursula K. Le Guin", "The Dispossessed", "The Dispossessed.m4b"])
+
+      assert [%BookFile{path: ^dest}] = Repo.all(BookFile)
+      assert Repo.reload!(target).status == :available
+    end
+
     test "a correctly-numbered multi-track MP3 set imports as N rows, ordered by tag evidence
           even out of lexical order",
          ctx do

@@ -128,10 +128,12 @@ defmodule Cinder.Download.BookPoller do
       {:failed, reason} ->
         retry_or_fail(grab, reason)
 
-      # Refused BEFORE `mark_downloaded/2`: `BookSources` would silently filter the executable at
-      # import time and publish the book anyway, so the blocked-content verdict the B4b plan
-      # requires would never be reached. The detail names the offending file and is carried into
-      # the hold reason.
+      # Refused BEFORE `mark_downloaded/2`: the download carries an executable and nothing that
+      # could be the media (`ContentPolicy` counts every format a book importer publishes, so a
+      # filler `.exe` beside a book does not land here). Caught in the watch, the target is held
+      # on the first tick and the remote job is removed, instead of the whole payload landing
+      # first and import refusing it as `:no_book_file`. The detail names the offending file and
+      # is carried into the hold reason.
       {:blocked_content, _detail} = reason ->
         fail_download(grab, reason)
 

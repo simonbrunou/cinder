@@ -119,13 +119,19 @@ All notable changes to Cinder are documented here. The format follows
   as an unprivileged user the way the Dockerfile does. Build with the `Dockerfile` instead.
 
 ### Fixed
+- **An e-book or audiobook with a filler `.exe` beside it is no longer blocklisted (#750).** Many
+  public-tracker releases ship a 0-byte `RARBG_DO_NOT_MIRROR.exe` next to the real file. Cinder
+  already let that through beside a video, but beside a book it held the request as
+  "blocked_content" and blocklisted a good release. A book format Cinder imports (`.epub`,
+  `.azw3`, `.mobi`, `.m4b`, `.mp3`) now counts as the real content the way a video does: the book
+  is imported and the executable stays in the download folder. A download that is only an
+  executable, or an executable dressed as a book (`Title.epub.exe`), is still blocked.
 - **A book download that finishes between two polls still gets the blocked-content check.** The
-  book poller checked a download's file list only while it was still downloading. An e-book
-  small enough to complete inside one 5-second tick skipped the check: the executable next to it
-  was dropped at import and the book was published, but the release was neither held nor
-  blocklisted. Completed e-book and audiobook downloads now get the same check, as movies and
-  episodes already did. A usenet job that finishes inside one poll is still not checked, for any
-  kind: SABnzbd lists no files once the job is in history (#749).
+  book poller checked a download's file list only while it was still downloading, so a fake
+  small enough to complete inside one 5-second tick skipped the check. Completed e-book and
+  audiobook downloads now get the same check, as movies and episodes already did, and a
+  completed download's files are also checked on disk, which covers a usenet job that finishes
+  inside one poll (#749).
 - **Live updates no longer close the mobile menu or open series sections.** Every page refresh
   pushed by the server (download progress on Activity, a series update) snapped the mobile nav
   drawer shut, so on a phone you could not leave Activity from the menu. The series page's Title

@@ -3,6 +3,7 @@ defmodule Cinder.Download.ContentPolicyTest do
   # in-flight poller tick reads.
   use ExUnit.Case, async: false
 
+  alias Cinder.Acquisition.BookKind
   alias Cinder.Download.ContentPolicy
 
   describe "check/1" do
@@ -38,6 +39,36 @@ defmodule Cinder.Download.ContentPolicyTest do
                  "Movie.2024.1080p/RARBG_DO_NOT_MIRROR.exe",
                  "Movie.2024.1080p/RARBG.com"
                ])
+    end
+
+    # #750: the same filler ships next to e-books and audiobooks, and a book format is the media
+    # there. Every format a book importer publishes counts, so a new accepted format cannot
+    # quietly reopen this false positive.
+    test "passes an e-book or audiobook release that carries a blocked file alongside the book" do
+      for kind <- BookKind.all(), format <- BookKind.accepted_formats(kind) do
+        assert :ok =
+                 ContentPolicy.check([
+                   "The Dispossessed/The Dispossessed.#{format}",
+                   "The Dispossessed/RARBG_DO_NOT_MIRROR.exe"
+                 ]),
+               "#{kind} .#{format} release was blocked"
+      end
+    end
+
+    # A format no importer publishes is not media: the download could never become an available
+    # book, so its executable is the payload.
+    test "a book format no importer publishes does not shield an executable" do
+      for kind <- BookKind.all(),
+          format <- BookKind.fetch!(kind).known_formats -- accepted_book_formats() do
+        assert {:blocked, _} = ContentPolicy.check(["The Dispossessed.#{format}", "setup.exe"]),
+               "#{kind} .#{format} shielded the executable"
+      end
+    end
+
+    test "still blocks a lone or book-disguised payload" do
+      assert {:blocked, _} = ContentPolicy.check(["The Dispossessed.epub.exe", "readme.txt"])
+      assert {:blocked, _} = ContentPolicy.check(["The Dispossessed (Audiobook).m4b.lnk"])
+      assert {:blocked, _} = ContentPolicy.check(["The Dispossessed/setup.exe"])
     end
 
     # Seeing through an ADS suffix must not cost colon-titled releases their extension — reading
@@ -168,4 +199,6 @@ defmodule Cinder.Download.ContentPolicyTest do
       assert :ok = ContentPolicy.vet_completed(ExplodingClient, "id", "/dl/Movie")
     end
   end
+
+  defp accepted_book_formats, do: Enum.flat_map(BookKind.all(), &BookKind.accepted_formats/1)
 end

@@ -1,7 +1,7 @@
 defmodule Cinder.Download.ContentPolicy do
   @moduledoc """
   Decides whether a download's file list marks it as a fake — the payload-bearing torrents that
-  advertise a movie and deliver a shortcut, an installer, or a "watch online" script.
+  advertise a movie or a book and deliver a shortcut, an installer, or a "watch online" script.
 
   Without this, such a download is only caught by `Cinder.Download.StallReaper`'s absolute
   `max_downloading_timeout` (24h by default), because it never errors and often *completes*: a
@@ -27,6 +27,23 @@ defmodule Cinder.Download.ContentPolicy do
   as `.rar`/`.par2` sets and only become video after unpacking). A fake carries a `.lnk` and a
   `readme.txt` and nothing else, which is exactly what this catches.
 
+  ## Books are media too
+
+  A book format counts as media the way a video does: every format a book importer publishes
+  (`Cinder.Acquisition.BookKind.accepted_formats/1`, so `.epub`, `.azw3`, `.mobi`, `.m4b` and
+  `.mp3` today). The same filler ships next to e-books and audiobooks, and the executable is no
+  more dangerous there: an importer publishes only its accepted formats, so the book reaches the
+  library and the `.exe` stays in the download folder, exactly as it does beside a video (#750).
+
+  A book format no importer publishes (`.pdf`, `.flac`) does not count. That download can never
+  become an available book, so its executable is the payload.
+
+  The check is kind-blind: it sees file names, not what was requested. A movie download whose only
+  "media" is an `.mp3` therefore passes here and downloads whole. The import then refuses it as
+  `:no_video_file`, which parks the movie until an operator retries, where a blocked-content verdict
+  would have removed the job and re-queued the movie on the first tick. No known fake has that
+  shape, and nothing is published either way.
+
   Override either list per install with
   `config :cinder, #{inspect(__MODULE__)}, blocked_extensions: ~w(.lnk ...), media_extensions: ~w(.mkv ...)`.
 
@@ -35,22 +52,29 @@ defmodule Cinder.Download.ContentPolicy do
   `Cinder.Download.StallReaper`.)
   """
 
+  alias Cinder.Acquisition.BookKind
   alias Cinder.{HTTPPolicy, Library}
 
   # Executables and shortcuts. Deliberately excludes archive formats a real release uses
   # (.rar/.zip/.7z/.par2) — `.zipx` is here because no media release ships one.
   @default_blocked_extensions ~w(.lnk .exe .bat .cmd .com .scr .pif .msi .vbs .js .ps1 .zipx)
 
-  # Anything that could plausibly BE the media: playable containers, plus the archive/parity set a
-  # release arrives in before unpacking. One of these present means the download has real content
-  # and the blocked file is a companion, not the payload.
+  # Every format a book importer publishes, read from `BookKind` rather than listed here so it
+  # cannot drift from what `BookSources` and `AudiobookSources` accept.
+  @book_extensions for kind <- BookKind.all(),
+                       format <- BookKind.accepted_formats(kind),
+                       do: ".#{format}"
+
+  # Anything that could plausibly BE the media: playable containers, the archive/parity set a
+  # release arrives in before unpacking, and the book formats. One of these present means the
+  # download has real content and the blocked file is a companion, not the payload.
   # .vob/.ifo/.bup are a VIDEO_TS DVD rip's ONLY content type — and the trackers still carrying
   # DVD rips are exactly the ones that ship `.com`/`.exe` filler, so omitting them blocklists a
   # whole class of legitimate release.
   @default_media_extensions ~w(
     .mkv .mp4 .avi .m4v .mov .wmv .ts .m2ts .mpg .mpeg .webm .flv .ogm .iso .img
     .vob .ifo .bup .rar .zip .7z .par2 .tar .gz .001
-  )
+  ) ++ @book_extensions
 
   @doc "Whether the content check runs (`config :cinder, #{inspect(__MODULE__)}, enabled: true`)."
   def enabled?, do: Keyword.get(config(), :enabled, false)
@@ -62,7 +86,10 @@ defmodule Cinder.Download.ContentPolicy do
   def blocked_extensions,
     do: config() |> Keyword.get(:blocked_extensions, @default_blocked_extensions) |> downcase()
 
-  @doc "The extensions that mean a download carries real content, dot-prefixed."
+  @doc """
+  The extensions that mean a download carries real content, dot-prefixed. A configured list
+  replaces the default whole, book formats included.
+  """
   def media_extensions,
     do: config() |> Keyword.get(:media_extensions, @default_media_extensions) |> downcase()
 
