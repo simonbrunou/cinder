@@ -19,7 +19,11 @@ defmodule Cinder.MixProject do
       description: @description,
       source_url: @source_url,
       package: package(),
-      hex: hex()
+      hex: hex(),
+      # `#:` references name the file only: a line number goes stale whenever an edit moves a
+      # gettext call, and `gettext.extract --check-up-to-date` then fails on a catalog whose
+      # messages did not change.
+      gettext: [write_reference_line_numbers: false]
     ]
   end
 
