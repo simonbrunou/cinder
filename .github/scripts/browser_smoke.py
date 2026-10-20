@@ -10,6 +10,7 @@ EMAIL = os.environ["CINDER_SMOKE_EMAIL"]
 PASSWORD = os.environ["CINDER_SMOKE_PASSWORD"]
 BOOTSTRAP_TOKEN = os.environ["CINDER_SMOKE_BOOTSTRAP_TOKEN"]
 SCREENSHOT_DIR = os.environ.get("CINDER_SMOKE_SCREENSHOT_DIR")
+# Unset in CI, which runs Playwright's bundled Chromium (#842); set it (e.g. "chrome") locally.
 BROWSER_CHANNEL = os.environ.get("CINDER_SMOKE_BROWSER_CHANNEL")
 
 

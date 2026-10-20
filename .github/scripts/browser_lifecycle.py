@@ -41,6 +41,7 @@ EMAIL = os.environ["CINDER_SMOKE_EMAIL"]
 PASSWORD = os.environ["CINDER_SMOKE_PASSWORD"]
 CONTAINER = os.environ.get("CINDER_SMOKE_CONTAINER", "cinder-ci")
 SCREENSHOT_DIR = os.environ.get("CINDER_SMOKE_SCREENSHOT_DIR")
+# Unset in CI, which runs Playwright's bundled Chromium (#842); set it (e.g. "chrome") locally.
 BROWSER_CHANNEL = os.environ.get("CINDER_SMOKE_BROWSER_CHANNEL")
 
 RPC_TIMEOUT = 15

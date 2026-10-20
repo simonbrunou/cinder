@@ -159,8 +159,8 @@ jobs:
 
           python3 -m venv "$RUNNER_TEMP/cinder-browser-smoke"
           "$RUNNER_TEMP/cinder-browser-smoke/bin/pip" install --disable-pip-version-check playwright==1.61.0
-          # GitHub-hosted runners ship Google Chrome; the self-hosted job image does not.
-          "$RUNNER_TEMP/cinder-browser-smoke/bin/playwright" install --with-deps chrome
+          # Playwright's own Chromium (cdn.playwright.dev), not Google Chrome from dl.google.com (#842).
+          "$RUNNER_TEMP/cinder-browser-smoke/bin/playwright" install --with-deps chromium
 
       - name: Browser smoke
         env:
@@ -168,7 +168,6 @@ jobs:
           CINDER_SMOKE_EMAIL: browser-smoke@example.invalid
           CINDER_SMOKE_PASSWORD: ci-only-browser-smoke-password
           CINDER_SMOKE_BOOTSTRAP_TOKEN: ci-only-not-a-real-bootstrap-token
-          CINDER_SMOKE_BROWSER_CHANNEL: chrome
         run: '"$RUNNER_TEMP/cinder-browser-smoke/bin/python" .github/scripts/browser_smoke.py'
 
       # #593: covers the two JS lifecycles (Kindle status-badge flare, poster-failure handling)
@@ -182,7 +181,6 @@ jobs:
           CINDER_SMOKE_BASE_URL: http://127.0.0.1:4000
           CINDER_SMOKE_EMAIL: browser-smoke@example.invalid
           CINDER_SMOKE_PASSWORD: ci-only-browser-smoke-password
-          CINDER_SMOKE_BROWSER_CHANNEL: chrome
         run: '"$RUNNER_TEMP/cinder-browser-smoke/bin/python" .github/scripts/browser_lifecycle.py'
 
       - name: Container logs and cleanup
@@ -204,9 +202,34 @@ jobs:
           echo "8b4376d5d6befe5c24d503f10ff136d9e0c49f9127a4279fd110b727929a5aa9  trivy.tar.gz" | sha256sum -c -
           tar -xzf trivy.tar.gz -C /usr/local/bin trivy
 
+      # #835: Trivy moves on to its second DB repository only after some registry errors,
+      # not after a stalled download, and its --timeout does not bound the download. On
+      # 2026-10-20 mirror.gcr.io stalled for hours while ghcr.io answered. So fetch the DB
+      # here, one attempt per repository under coreutils `timeout`, into the directory the
+      # action points Trivy at (its cache-dir default), and scan without updating it. The
+      # action's own cache stays off: restoring it after this step could swap in an older DB.
+      # The Java DB is not fetched: the image ships no JARs. One that did would make the scan
+      # fetch it from mirror.gcr.io first, with no bound. GITHUB_TOKEN is unset for the
+      # download: Trivy sends it to ghcr.io, and this forge's job token gets DENIED there.
+      - name: Download the Trivy vulnerability DB
+        run: |
+          for repo in ghcr.io/aquasecurity/trivy-db:2 mirror.gcr.io/aquasec/trivy-db:2; do
+            if env -u GITHUB_TOKEN timeout --kill-after=10s 3m \
+              trivy image --download-db-only --db-repository "$repo" \
+              --cache-dir "$GITHUB_WORKSPACE/.cache/trivy"; then
+              exit 0
+            else
+              echo "::warning::Trivy DB download from $repo failed (exit $?)"
+            fi
+          done
+          exit 1
+
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SKIP_DB_UPDATE: "true"
         with:
           skip-setup-trivy: true
+          cache: false
           image-ref: ${{ env.CINDER_IMAGE }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
