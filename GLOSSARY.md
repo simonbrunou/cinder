@@ -105,6 +105,20 @@ it. It holds one of its requester's quota slots under `auto_approve_all`. A seas
 longer exists is not outstanding.
 _Avoid_: unfulfilled target, open request
 
+**Approval**:
+The step that commits Cinder to acquiring a request target. In one transaction the request becomes
+`:approved` and its target is created or armed: a movie or series row at `:requested`, or a
+monitored book target. Nothing is announced until it commits. An approval is either an admin
+approval of a pending request or an auto-approval.
+_Avoid_: acceptance, grant
+
+**Auto-approval**:
+An approval at request time, with no pending stage: the request is an admin's own, or
+`auto_approve_all` is on. It re-counts the requester's quota after the target exists and is refused
+over quota. An admin approval never checks the quota: it does not grow the count, and the admin
+decides.
+_Avoid_: auto-accept, instant request
+
 ### Settings
 
 **Setting definition**:

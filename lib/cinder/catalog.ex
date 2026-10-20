@@ -530,8 +530,8 @@ defmodule Cinder.Catalog do
 
   No broadcast here — this may run inside a caller's transaction (a savepoint when joined
   to one already open), so announcing creation is the caller's post-commit job
-  (`Cinder.Requests.finalize_movie_approval/2` broadcasts `{:movie_created, movie}` once
-  its transaction has committed, using the returned `:created` marker).
+  (`Cinder.Requests.Approval.Movie.publish/2` broadcasts `{:movie_created, movie}` once
+  the approval transaction has committed, using the returned `:created` marker).
 
   Confirm/fill (the requester's media-profile confirmation and language pick) is NOT applied
   here — `Cinder.Requests` calls `apply_confirmed_media/3` itself, after its approval

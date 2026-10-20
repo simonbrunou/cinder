@@ -167,7 +167,7 @@ def track_progress(movie_id, progress):
 def broadcast_movie_created(movie_id):
     """The real second half of movie creation — Catalog.add_movie/1 itself never broadcasts (no
     call to `broadcast`/`broadcast_movie_created` in its body); `{:movie_created, movie}` is
-    announced separately, normally by `Requests.finalize_movie_approval/2` post-commit. We can't
+    announced separately, normally by `Requests.Approval.Movie.publish/2` post-commit. We can't
     reach that (it needs a real TMDB round trip via `Requests.create_request/2`), so we call the
     same real, public, already-decoupled Catalog function it calls."""
     rpc(

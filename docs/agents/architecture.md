@@ -80,7 +80,10 @@ row with no further auth check. Once the row exists, the pipeline grabs it.
 - Movie creation is a separate insert: `Catalog.add_movie/1`, and
   `Catalog.find_or_create_at_requested/2`, the only one reachable from a user action, gated by
   `Cinder.Requests`.
-- `Cinder.Requests` announces creation after commit (`{:movie_created, movie}`) so open `/` views
+- Every approval, admin or automatic, runs through one transaction in `Cinder.Requests`
+  (`approve_target/3`). Each target kind's part sits in an adapter under
+  `Cinder.Requests.Approval.*`, and only `Cinder.Requests` calls it.
+- The movie adapter announces creation after commit (`{:movie_created, movie}`) so open `/` views
   update. The Catalog insert never broadcasts mid-transaction.
 - `/api/v1` request mutations route through `Cinder.Requests`. API actions never write request
   lifecycle state directly.

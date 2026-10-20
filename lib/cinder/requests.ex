@@ -1,7 +1,6 @@
 defmodule Cinder.Requests do
   @moduledoc "Request/approval gate: the single caller allowed to create a movie row from a user action."
   import Ecto.Query
-  require Logger
   alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Accounts.User
   alias Cinder.Audit
@@ -12,7 +11,7 @@ defmodule Cinder.Requests do
   alias Cinder.LibraryKind
   alias Cinder.Notifier
   alias Cinder.Repo
-  alias Cinder.Requests.{Request, Target}
+  alias Cinder.Requests.{Approval, Request, Target}
   alias Cinder.Settings
   alias Cinder.Util
 
@@ -299,7 +298,11 @@ defmodule Cinder.Requests do
 
   defp create_request_for(user, attrs, true) do
     approver_id = if user.role == :admin, do: user.id, else: nil
-    create_approved(user, attrs, approver_id)
+
+    with {:ok, adapter} <- Approval.adapter(attrs),
+         {:ok, profile} <- auto_approval_profile(attrs) do
+      approve_target({:insert, user, attrs, approver_id}, adapter, profile)
+    end
   end
 
   defp create_request_for(user, attrs, false), do: create_pending(user, attrs)
@@ -357,8 +360,8 @@ defmodule Cinder.Requests do
     pending_count(id) > quota
   end
 
-  # The auto-approve counterpart of `pending_over_quota?/1`, run inside each approved-insert
-  # transaction AFTER the request's target is persisted (#650), so the new request is counted
+  # The auto-approve counterpart of `pending_over_quota?/1`, run by `quota_check/1` inside the
+  # approval transaction AFTER the request's target is persisted (#650), so the new request is counted
   # unless its target is already settled. Re-reads the user so a quota edited since the pre-check
   # is honoured; `>` because the new row is included. Admins are never limited.
   defp approved_quota_check(%User{role: :admin}), do: :ok
@@ -408,49 +411,12 @@ defmodule Cinder.Requests do
     |> Enum.count(fn {_request, target} -> target.outstanding? end)
   end
 
-  def approve_request(
-        %Request{status: :pending, target_type: "movie"} = request,
-        %User{} = admin,
-        %Profile{kind: :movies} = profile
-      ) do
-    with {:ok, profile} <- current_profile(profile, :movies),
-         {:ok, prepared} <-
-           Catalog.prepare_requested_movie(
-             movie_attrs(request, media_profile: profile.handling, profile_id: profile.id)
-           ) do
-      approve_prepared_movie(request, admin, prepared, profile)
-      |> Util.tap_ok(&announce_approved/1)
-    end
-  end
-
-  def approve_request(
-        %Request{status: :pending, target_type: "season"} = request,
-        %User{} = admin,
-        %Profile{kind: :tv} = profile
-      ) do
-    preferred = request.preferred_language || "original"
-
-    with {:ok, profile} <- current_profile(profile, :tv),
-         {:ok, prepared} <-
-           Catalog.prepare_requested_series(request.target_id, preferred, profile.handling) do
-      approve_prepared_series(request, admin, prepared, preferred, profile)
-    end
-  end
-
-  def approve_request(
-        %Request{status: :pending, target_type: "book", media_kind: media_kind} = request,
-        %User{} = admin,
-        %Profile{kind: media_kind} = profile
-      )
-      when not is_nil(media_kind) do
-    with {:ok, profile} <- current_profile(profile, media_kind),
-         %Work{} = work <- Repo.get(Work, request.target_id) do
-      request
-      |> approve_book(admin, work, profile)
-      |> Util.tap_ok(&announce_approved/1)
-    else
-      nil -> {:error, :unknown_work}
-      {:error, _reason} = error -> error
+  # The profile is checked against the request's kind before the provider round-trips, then again
+  # inside the approval transaction.
+  def approve_request(%Request{status: :pending} = request, %User{} = admin, %Profile{} = profile) do
+    with {:ok, adapter} <- Approval.adapter(request),
+         {:ok, profile} <- current_profile(profile, request_kind(request)) do
+      approve_target({:flip, request, admin}, adapter, profile)
     end
   end
 
@@ -470,66 +436,89 @@ defmodule Cinder.Requests do
 
   def approve_request(%Request{}, _admin, _profile), do: {:error, :not_pending}
 
-  # No provider round-trip and no catalog row to create: the work already exists, so flipping the
-  # request and arming its target is one transaction. The target broadcast is post-commit.
-  defp approve_book(request, admin, work, profile) do
-    Repo.transaction(fn ->
-      with {:ok, approved} <- flip_pending(request, approval_attrs(admin, profile)),
-           {:ok, target} <-
-             Books.monitor_target(work, request.media_kind, profile, publish: false) do
-        {approved, target}
-      else
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
-    |> case do
-      {:ok, {approved, target}} ->
-        Books.broadcast({:book_target_updated, target})
-        {:ok, approved}
-
-      {:error, _reason} = error ->
-        error
+  # The one approval transaction, for an admin approval (`:flip`, a pending request) and an
+  # auto-approval (`:insert`, a request filed already approved), and for every request target kind
+  # through its `Cinder.Requests.Approval` adapter. The order is the gate:
+  #
+  # 1. The adapter prepares before the transaction, so no provider round-trip holds the write lock.
+  # 2. `:immediate` takes the write lock at BEGIN: the profile read below would otherwise make this
+  #    a deferred read-then-write transaction, which SQLite refuses with SQLITE_BUSY rather than
+  #    waiting when another write commits in between.
+  # 3. The profile is re-read, so the approval writes the profile the DB holds now.
+  # 4. The request write comes before the target: a racing deny makes the flip fail with
+  #    `:not_pending` before any catalog row, alias or book target is written.
+  # 5. The quota re-count runs after the target exists, so the new request counts unless its
+  #    target is already settled (#650).
+  # 6. Only after commit: the target's own publish, then the approval announcement.
+  defp approve_target(write, adapter, profile) do
+    with {:ok, prepared} <- adapter.prepare(write_source(write), profile),
+         {:ok, {approved, created}} <-
+           Repo.transaction(fn -> approve_in_transaction(write, adapter, prepared, profile) end,
+             mode: :immediate
+           ) do
+      adapter.publish(created, approved)
+      announce_approved(approved)
+      {:ok, approved}
     end
   end
 
-  defp approve_prepared_movie(request, admin, prepared, profile) do
-    Repo.transaction(fn ->
-      # Provider I/O finished before this transaction. Flip first so a racing deny
-      # prevents both the movie and its aliases from being written.
-      with {:ok, profile} <- current_profile(profile, :movies),
-           {:ok, approved} <-
-             flip_pending(request, approval_attrs(admin, profile)),
-           {:ok, movie, created} <-
-             Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases),
-           pre_request_profile = movie.media_profile,
-           {:ok, {movie, profile_changed?}} <- assign_selected_profile(movie, profile) do
-        {approved, movie, created, profile_changed?, pre_request_profile}
-      else
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
-    |> finalize_movie_approval(prepared)
+  defp approve_in_transaction(write, adapter, prepared, profile) do
+    with {:ok, profile} <- reread_profile(profile, write_source(write)),
+         {:ok, approved} <- write_request(write, profile),
+         {:ok, created} <- adapter.create(prepared, profile),
+         :ok <- quota_check(write) do
+      {approved, created}
+    else
+      {:error, reason} -> Repo.rollback(reason)
+    end
   end
 
-  defp approve_prepared_series(request, admin, prepared, preferred, profile) do
-    Repo.transaction(fn ->
-      with {:ok, profile} <- current_profile(profile, :tv),
-           {:ok, approved} <- flip_pending(request, approval_attrs(admin, profile)),
-           {:ok, series} <-
-             Catalog.persist_requested_series(
-               prepared,
-               request.season_number,
-               preferred,
-               profile.handling
-             ),
-           {:ok, {series, _profile_changed?}} <- assign_selected_profile(series, profile) do
-        {approved, series}
-      else
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
-    |> finalize_series_approval()
+  defp write_source({:flip, request, _admin}), do: request
+  defp write_source({:insert, _user, attrs, _approver_id}), do: attrs
+
+  defp reread_profile(nil, _source), do: {:ok, nil}
+
+  defp reread_profile(%Profile{} = profile, source),
+    do: current_profile(profile, request_kind(source))
+
+  defp write_request({:flip, request, admin}, profile) do
+    flip_pending(
+      request,
+      Map.merge(%{status: :approved, approved_by_id: admin.id}, profile_attrs(profile))
+    )
   end
+
+  # The insert reaches Ecto's `to_constraints`, but ecto_sqlite3 translates every FK violation to
+  # `[foreign_key: nil]` (no column name from SQLite), and Ecto requires the registered constraint
+  # name to match — a nil name never matches, so `Repo.insert/1` raises `Ecto.ConstraintError`
+  # regardless of a declared `foreign_key_constraint/2`. The insert's counterpart of
+  # `flip_pending/2`'s rescue: a concurrent deletion of the requester or (for an admin
+  # auto-approval) the approver — the same row for an admin request — is refused, not raised.
+  # Unlike the flip, the refusal is returned, and `approve_in_transaction/4` rolls back on it.
+  defp write_request({:insert, user, attrs, approver_id}, profile) do
+    %Request{}
+    |> Request.create_changeset(
+      attrs
+      |> Map.merge(%{user_id: user.id, status: :approved, approved_by_id: approver_id})
+      |> Map.merge(profile_attrs(profile))
+    )
+    |> Repo.insert()
+  rescue
+    error in Ecto.ConstraintError -> refuse_insert(error, __STACKTRACE__, user, approver_id)
+  end
+
+  defp profile_attrs(nil), do: %{}
+
+  defp profile_attrs(%Profile{} = profile),
+    do: %{proposed_profile_id: profile.id, proposed_media_profile: profile.handling}
+
+  # The quota decision. An auto-approval adds a row the quota counts, so it re-counts (#650). An
+  # admin approval is the admin's own decision on a row the quota already counted while pending,
+  # and it never grows the count: the pending row becomes an approved one that counts only while
+  # its target is outstanding, and only under `auto_approve_all`. So a quota lowered after the
+  # request was filed never blocks the admin.
+  defp quota_check({:flip, _request, _admin}), do: :ok
+  defp quota_check({:insert, user, _attrs, _approver_id}), do: approved_quota_check(user)
 
   def deny_request(%Request{status: :pending} = request, %User{} = admin, reason) do
     request
@@ -547,10 +536,11 @@ defmodule Cinder.Requests do
   #
   # `update_all` also skips Ecto's `to_constraints`, so the approval's `proposed_profile_id`
   # write surfaces `requests_profile_integrity` as a raw Exqlite.Error rather than
-  # `{:error, changeset}`. Every caller re-reads the profile first, but a second admin can
-  # re-kind it between that read and this write: rescue on the constraint's own message (not the
-  # exception class, which also covers a transient busy) so the approval queue reports a refusal
-  # instead of a 500.
+  # `{:error, changeset}`. `approve_target/3` re-reads the profile inside its `:immediate`
+  # transaction just before this write, so another connection cannot re-kind it in between; the
+  # trigger is the fence behind that. Rescue on the constraint's own message (not the exception
+  # class, which also covers a transient busy) so the approval queue reports a refusal instead of
+  # a 500.
   #
   # The same write can race deletion of its `approved_by_id` user. SQLite's FK message names no
   # column, so this narrows by checking the approver row is gone. That is a strong hint, not proof
@@ -563,8 +553,8 @@ defmodule Cinder.Requests do
   # reverts only the offending statement, so inside an outer `Repo.transaction` the transaction
   # stays open and its earlier writes would still commit. So the refusal rolls that transaction
   # back itself — `Repo.rollback/1` throws, so `Repo.transaction` still returns
-  # `{:error, :invalid_media_profile}` and the three approve paths see exactly what they saw when
-  # they matched the tuple themselves; a future caller cannot handle it in place and commit.
+  # `{:error, :invalid_media_profile}` and `approve_target/3` sees exactly what it would see had
+  # it matched the tuple itself; a future caller cannot handle it in place and commit.
   # Outside a transaction (`deny_request/3`) there is nothing to roll back and the tuple is
   # returned directly.
   #
@@ -595,9 +585,8 @@ defmodule Cinder.Requests do
     if Repo.in_transaction?(), do: Repo.rollback(reason), else: {:error, reason}
   end
 
-  # Rescue seam for the auto-approve insert paths (`insert_approved_book/5`,
-  # `insert_approved_movie/5`, `insert_approved_series/7`): a concurrent deletion of the
-  # requester or approver during the provider round-trips before the write. For an admin
+  # Rescue seam for the auto-approval request insert (`write_request/2`): a concurrent deletion
+  # of the requester or approver during the provider round-trips before the write. For an admin
   # request the deleted row is both, so the approver check goes first; `Repo.get` costs one
   # query on the rare raise path only. Unrelated `Ecto.ConstraintError`s (a future FK this
   # module gains) re-raise rather than being swallowed as a false refusal.
@@ -772,252 +761,28 @@ defmodule Cinder.Requests do
     count
   end
 
-  defp create_approved(user, %{target_type: "book"} = attrs, approver_id) do
-    # Unlike a movie, a book target is useless without a profile — B4 has nothing to score
-    # against — so an auto-approval with no proposed profile falls back to the lowest-id
-    # `:standard` profile of that media kind, and fails closed when none is configured.
-    with {:ok, profile} <- approved_book_profile(attrs),
-         %Work{} = work <- Repo.get(Work, attrs.target_id) do
-      insert_approved_book(user, attrs, approver_id, work, profile)
-    else
-      nil -> {:error, :unknown_work}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp create_approved(user, %{target_type: "season"} = attrs, approver_id) do
-    preferred = attrs[:preferred_language] || "original"
-    named = proposed_profile(attrs)
-    handling = attrs[:proposed_media_profile] || :auto
-
-    with {:ok, prepared} <-
-           Catalog.prepare_requested_series(attrs.target_id, preferred, handling) do
-      insert_approved_series(user, attrs, approver_id, prepared, preferred, handling, named)
-    end
-  end
-
-  defp create_approved(user, attrs, approver_id) do
-    named = proposed_profile(attrs)
-    handling = attrs[:proposed_media_profile] || :auto
-
-    with {:ok, prepared} <-
-           Catalog.prepare_requested_movie(
-             movie_attrs(attrs,
-               media_profile: handling,
-               profile_id: named && named.id
-             )
-           ) do
-      insert_approved_movie(user, attrs, approver_id, prepared, named)
-      |> Util.tap_ok(&announce_approved/1)
-    end
-  end
-
-  defp approved_book_profile(attrs) do
-    case proposed_profile(attrs) do
+  # The profile an auto-approval writes: the requester's proposal, re-read so a profile deleted
+  # since `normalize_request_profile/1` fails closed rather than leaving the request pointing at
+  # nothing. With no proposal, a movie or season is Auto. A book target is useless without a
+  # profile — B4 has nothing to score against — so it falls back to the lowest-id `:standard`
+  # profile of that media kind, and fails closed when none is configured.
+  defp auto_approval_profile(%{proposed_profile_id: id}) when is_integer(id) do
+    case Catalog.get_profile(id) do
       %Profile{} = profile -> {:ok, profile}
-      nil -> profile_for_handling(attrs, :standard)
+      nil -> {:error, :invalid_media_profile}
     end
   end
 
-  # The insert reaches Ecto's `to_constraints`, but ecto_sqlite3 translates every FK violation
-  # to `[foreign_key: nil]` (no column name from SQLite), and Ecto requires the registered
-  # constraint name to match — a nil name never matches, so `Repo.insert/1` raises
-  # `Ecto.ConstraintError` regardless of a declared `foreign_key_constraint/2`. Same shape as
-  # `flip_pending/2`'s rescue, translated for the insert path: a concurrent deletion of the
-  # requester or (for an admin auto-approval) the approver — the same row for an admin request —
-  # is refused rather than raised.
-  defp insert_approved_book(user, attrs, approver_id, work, profile) do
-    Repo.transaction(
-      fn ->
-        with {:ok, request} <-
-               %Request{}
-               |> Request.create_changeset(
-                 Map.merge(attrs, %{
-                   user_id: user.id,
-                   status: :approved,
-                   approved_by_id: approver_id,
-                   proposed_profile_id: profile.id,
-                   proposed_media_profile: profile.handling
-                 })
-               )
-               |> Repo.insert(),
-             {:ok, target} <-
-               Books.monitor_target(work, attrs.media_kind, profile, publish: false),
-             :ok <- approved_quota_check(user) do
-          {request, target}
-        else
-          {:error, reason} -> Repo.rollback(reason)
-        end
-      end,
-      mode: :immediate
-    )
-    |> case do
-      {:ok, {approved, target}} ->
-        Books.broadcast({:book_target_updated, target})
-        announce_approved(approved)
-        {:ok, approved}
+  defp auto_approval_profile(%{target_type: "book"} = attrs),
+    do: profile_for_handling(attrs, :standard)
 
-      {:error, _reason} = error ->
-        error
-    end
-  rescue
-    error in Ecto.ConstraintError -> refuse_insert(error, __STACKTRACE__, user, approver_id)
-  end
+  defp auto_approval_profile(_attrs), do: {:ok, nil}
 
-  defp insert_approved_movie(user, attrs, approver_id, prepared, profile) do
-    Repo.transaction(
-      fn ->
-        # Creation is announced post-commit, in finalize_movie_approval — nothing here broadcasts.
-        with {:ok, request} <-
-               %Request{}
-               |> Request.create_changeset(
-                 Map.merge(attrs, %{
-                   user_id: user.id,
-                   status: :approved,
-                   approved_by_id: approver_id
-                 })
-               )
-               |> Repo.insert(),
-             {:ok, movie, created} <-
-               Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases),
-             pre_request_profile = movie.media_profile,
-             {:ok, {movie, profile_changed?}} <- assign_selected_profile(movie, profile),
-             :ok <- approved_quota_check(user) do
-          {request, movie, created, profile_changed?, pre_request_profile}
-        else
-          {:error, reason} -> Repo.rollback(reason)
-        end
-      end,
-      mode: :immediate
-    )
-    |> finalize_movie_approval(prepared)
-  rescue
-    error in Ecto.ConstraintError -> refuse_insert(error, __STACKTRACE__, user, approver_id)
-  end
-
-  defp insert_approved_series(
-         user,
-         attrs,
-         approver_id,
-         prepared,
-         preferred,
-         handling,
-         profile
-       ) do
-    Repo.transaction(
-      fn ->
-        with {:ok, request} <-
-               %Request{}
-               |> Request.create_changeset(
-                 Map.merge(attrs, %{
-                   user_id: user.id,
-                   status: :approved,
-                   approved_by_id: approver_id
-                 })
-               )
-               |> Repo.insert(),
-             {:ok, series} <-
-               Catalog.persist_requested_series(
-                 prepared,
-                 attrs[:season_number],
-                 preferred,
-                 handling
-               ),
-             {:ok, {series, _profile_changed?}} <- assign_selected_profile(series, profile),
-             :ok <- approved_quota_check(user) do
-          {request, series}
-        else
-          {:error, reason} -> Repo.rollback(reason)
-        end
-      end,
-      mode: :immediate
-    )
-    |> finalize_series_approval()
-  rescue
-    error in Ecto.ConstraintError -> refuse_insert(error, __STACKTRACE__, user, approver_id)
-  end
-
-  defp finalize_series_approval({:ok, {approved, series}}) do
-    Catalog.broadcast_series(series.id)
-    announce_approved(approved)
-    {:ok, approved}
-  end
-
-  defp finalize_series_approval({:error, _reason} = error), do: error
-
-  # Post-commit seam shared by both movie-approval transactions above. Runs AFTER the
-  # transaction commits — Catalog.apply_confirmed_media/3 must not run inside it (a fill/confirm
-  # failure must not roll back the already-committed movie/request write). Both fields stay
-  # detail-page-editable afterward, so a failure here only logs. Only the :existing clause
-  # confirms/fills; a :created movie needs neither.
-
-  # :created — a fresh insert already carries the requester's profile and pick
-  # (Movie.changeset casts both from the create attrs), so there is nothing to confirm or
-  # fill: just announce, post-commit. Residual (accepted): the payload is the txn struct, so
-  # a delete landing in the commit→broadcast gap would be announced after its own
-  # {:movie_deleted} and upserted back by open views until remount — a sub-ms window
-  # that would cost a reload per fresh approval to close.
-  defp finalize_movie_approval(
-         {:ok, {approved, movie, :created, _profile_changed?, _pre_request_profile}},
-         _prepared
-       ) do
-    Catalog.broadcast_movie_created(movie)
-    {:ok, approved}
-  end
-
-  # :existing — re-read post-commit: the txn struct is a stale snapshot the moment it
-  # commits — an edit (or delete) landing before this reload wins over the requester's
-  # confirm+fill. An edit in the reload→update window can still lose (no optimistic lock);
-  # accepted at household scale.
-  defp finalize_movie_approval(
-         {:ok, {approved, movie, :existing, profile_changed?, pre_request_profile}},
-         prepared
-       ) do
-    case Repo.reload(movie) do
-      nil ->
-        Logger.warning("movie #{movie.id} (request #{approved.id}) deleted before confirm+fill")
-
-      fresh ->
-        confirm_and_fill(fresh, approved, prepared, pre_request_profile, profile_changed?)
-    end
-
-    {:ok, approved}
-  end
-
-  defp finalize_movie_approval({:error, _reason} = error, _prepared), do: error
-
-  defp confirm_and_fill(movie, approved, prepared, pre_request_profile, profile_changed?) do
-    preferred = prepared.attrs.preferred_language
-
-    fills_language? =
-      movie.preferred_language == "original" and preferred not in [nil, "original"] and
-        pre_request_profile != :anime
-
-    result =
-      if fills_language? do
-        Catalog.apply_confirmed_media(movie, :auto, preferred, pre_request_profile)
-      else
-        {:ok, movie}
-      end
-
-    case result do
-      {:ok, _movie} when profile_changed? and not fills_language? ->
-        Catalog.broadcast({:movie_updated, movie})
-
-      {:ok, _movie} ->
-        :ok
-
-      {:error, reason} ->
-        if profile_changed?, do: Catalog.broadcast({:movie_updated, movie})
-        log_confirm_failure(movie, approved, reason)
-    end
-  end
-
-  # Repo.preload is a no-op on the two admin-approval paths (their caller's query already
-  # preloaded :user). The two auto-approve paths build the struct from a bare insert, so
-  # without this a notifier reading `request.user` would raise on %NotLoaded{} — and
-  # Notifier.notify/1 swallows raises, so Discord would silently never post for
-  # auto-approved requests while working fine for admin-approved ones.
+  # The only approval announcement, called by `approve_target/3` after commit. Repo.preload is a
+  # no-op on an admin approval (the approval queue's query already preloaded :user). An
+  # auto-approval builds the struct from a bare insert, so without this a notifier reading
+  # `request.user` would raise on %NotLoaded{} — and Notifier.notify/1 swallows raises, so Discord
+  # would silently never post for auto-approved requests while working fine for admin-approved ones.
   defp announce_approved(request) do
     request = Repo.preload(request, :user)
     broadcast({:request_approved, request})
@@ -1031,21 +796,6 @@ defmodule Cinder.Requests do
     request = Repo.preload(request, :user)
     broadcast({:request_denied, request})
     Notifier.notify({:request_denied, request, reason})
-  end
-
-  # Accepts a %Request{} or a plain attrs map — Map.get works on both.
-  defp movie_attrs(source, overrides) do
-    Map.merge(
-      %{
-        tmdb_id: Map.get(source, :target_id),
-        title: Map.get(source, :title),
-        year: Map.get(source, :year),
-        poster_path: Map.get(source, :poster_path),
-        original_language: Map.get(source, :original_language),
-        preferred_language: Map.get(source, :preferred_language) || "original"
-      },
-      Map.new(overrides)
-    )
   end
 
   defp normalize_request_profile(%{target_type: _type} = attrs) do
@@ -1118,41 +868,5 @@ defmodule Cinder.Requests do
       %Profile{kind: ^expected_kind} = profile -> {:ok, profile}
       _ -> {:error, :invalid_media_profile}
     end
-  end
-
-  defp proposed_profile(%{proposed_profile_id: id}) when is_integer(id),
-    do: Catalog.get_profile(id)
-
-  defp proposed_profile(_attrs), do: nil
-
-  defp approval_attrs(admin, profile) do
-    %{
-      status: :approved,
-      approved_by_id: admin.id,
-      proposed_profile_id: profile.id,
-      proposed_media_profile: profile.handling
-    }
-  end
-
-  defp assign_selected_profile(title, nil), do: {:ok, {title, false}}
-
-  defp assign_selected_profile(%{profile_id: id, media_profile: handling} = title, %Profile{
-         id: id,
-         handling: handling
-       }),
-       do: {:ok, {title, false}}
-
-  defp assign_selected_profile(title, profile) do
-    case Catalog.assign_profile(title, profile, publish: false) do
-      {:ok, title} -> {:ok, {title, true}}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp log_confirm_failure(movie, approved, reason) do
-    Logger.warning(
-      "apply_confirmed_media for movie #{movie.id} (request #{approved.id}) failed: " <>
-        inspect(reason)
-    )
   end
 end

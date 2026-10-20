@@ -293,12 +293,12 @@ defmodule Cinder.Requests.BookRequestTest do
       # not happening would degrade the test into a restatement of the plain wrong-kind refusal.
       assert_received :rekinded
 
-      # The re-kind is pinned to the *first* `media_profiles` read, so an added preload upstream
-      # could move the window ahead of `current_profile/2`'s check and leave this test passing on
-      # the ordinary wrong-kind refusal instead of the race. This says which refusal it was: the
-      # `requests` write reached the DB and the trigger aborted it. It is also the far end of the
-      # constraint-name coupling — renaming the trigger without updating `flip_pending/2`'s rescue
-      # fails here.
+      # The re-kind is pinned to the first `media_profiles` read inside the transaction, so an
+      # added preload there could move the window ahead of `current_profile/2`'s check and leave
+      # this test passing on the ordinary wrong-kind refusal instead of the race. This says which
+      # refusal it was: the `requests` write reached the DB and the trigger aborted it. It is also
+      # the far end of the constraint-name coupling — renaming the trigger without updating
+      # `flip_pending/2`'s rescue fails here.
       assert_received {:aborted_request_write, message}
       assert message =~ "requests_profile_integrity"
 
@@ -559,18 +559,21 @@ defmodule Cinder.Requests.BookRequestTest do
     end
   end
 
-  # `Catalog.get_profile/1` inside `current_profile/2` is the approval's first `media_profiles`
-  # read, and it is the read the TOCTOU window is defined against: firing here puts the re-kind
-  # provably after the check and before `flip_pending/2`'s write, which is the race the approval
-  # cannot re-validate away.
+  # The approval re-reads its profile inside the transaction, and that `media_profiles` read is the
+  # one the TOCTOU window is defined against: firing here puts the re-kind provably after the
+  # last check and before `flip_pending/2`'s write. The approval's `:immediate` transaction keeps
+  # another connection out of that window, so this re-kind runs on the approval's own connection
+  # to reach the trigger the rescue stands behind.
   def rekind_on_profile_read(_event, _measurements, %{source: "media_profiles"}, %{
         handler: handler,
         profile: profile,
         test: test
       }) do
-    :telemetry.detach(handler)
-    {:ok, _} = Catalog.update_profile(profile, %{kind: :audiobook})
-    send(test, :rekinded)
+    if Repo.in_transaction?() do
+      :telemetry.detach(handler)
+      {:ok, _} = Catalog.update_profile(profile, %{kind: :audiobook})
+      send(test, :rekinded)
+    end
   end
 
   def rekind_on_profile_read(_event, _measurements, _metadata, _config), do: :ok
