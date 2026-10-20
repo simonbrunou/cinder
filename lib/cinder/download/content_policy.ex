@@ -9,9 +9,10 @@ defmodule Cinder.Download.ContentPolicy do
   Checking the file list catches it in the first tick instead, and the release is blocklisted so
   the next-best candidate is grabbed.
 
-  `check/1` is pure: no DB, no HTTP. `vet/2` is the one impure edge — it fetches the list via
-  `Cinder.Download.Client.files/1` and hands it to `check/1`. A client that cannot answer yields
-  `:ok`: a check that could not run must never be the thing that kills a download.
+  `check/1` is pure: no DB, no HTTP. `vet/2` and `vet_completed/3` are the impure edges — they
+  fetch the list via `Cinder.Download.Client.files/1`, and on completion also from disk, and hand
+  it to `check/1`. A client or a disk that cannot answer yields `:ok`: a check that could not run
+  must never be the thing that kills a download.
 
   ## Why the payload must be the *whole* download
 
@@ -34,7 +35,7 @@ defmodule Cinder.Download.ContentPolicy do
   `Cinder.Download.StallReaper`.)
   """
 
-  alias Cinder.HTTPPolicy
+  alias Cinder.{HTTPPolicy, Library}
 
   # Executables and shortcuts. Deliberately excludes archive formats a real release uses
   # (.rar/.zip/.7z/.par2) — `.zipx` is here because no media release ships one.
@@ -111,17 +112,48 @@ defmodule Cinder.Download.ContentPolicy do
 
   @doc """
   `check/1` over the file list `client` reports for `download_id` — what
-  `Cinder.Download.Watch.check/2` calls on every in-flight download. `:ok` when disabled, when the
-  client has no opinion, and when the client call fails outright.
+  `Cinder.Download.Watch.check/2` calls on every download still `:downloading`. `:ok` when
+  disabled, when the client has no opinion, and when the client call fails outright.
 
   ## ponytail: one client call per in-flight download per tick
 
-  Only while enabled, and at household scale that is a handful of local calls. If a big queue ever
-  makes it measurable, cache the verdict on the row rather than sampling ticks — a fake has to be
-  caught on the first look, not the tenth.
+  Only while enabled, and at household scale that is a handful of local calls (plus one disk walk
+  per completion, through `vet_completed/3`). If a big queue ever makes it measurable, cache the
+  verdict on the row rather than sampling ticks — a fake has to be caught on the first look, not
+  the tenth.
   """
   def vet(client, download_id) do
     if enabled?(), do: vet_files(client, download_id), else: :ok
+  end
+
+  @doc """
+  `vet/2` for a download the client reports `:completed`, then `check/1` over the files on disk
+  under `content_path`; the first `{:blocked, detail}` wins. `:ok` when disabled, and when neither
+  list blocks.
+
+  The disk is what the importer is about to read, and for usenet it is the only list left:
+  SABnzbd has no file list for a job already in history, so a fake that finishes between two
+  ticks answers `{:ok, []}` to `vet/2`. The client goes first because a client may misreport
+  `content_path` as the whole downloads folder, whose walk finds other downloads' media.
+
+  The walk is `Cinder.Library.safe_walk/1`, bounded and confined to the import roots. A walk that
+  cannot run (no import roots, an unsafe or unreadable path, past the traversal limit) has no
+  opinion. A single-file download is vetted by its own name.
+  """
+  def vet_completed(client, download_id, content_path) do
+    if enabled?() do
+      with :ok <- vet_files(client, download_id), do: vet_disk(content_path)
+    else
+      :ok
+    end
+  end
+
+  defp vet_disk(content_path) do
+    case Library.safe_walk(content_path) do
+      {:ok, entries} -> entries |> Enum.map(fn {path, _size} -> path end) |> check()
+      {:error, :enotdir} -> check([content_path])
+      {:error, _reason} -> :ok
+    end
   end
 
   defp vet_files(client, download_id) do

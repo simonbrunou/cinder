@@ -34,13 +34,27 @@ defmodule Cinder.Download.WatchTest do
     end
   end
 
-  defp status(result), do: expect(Cinder.Download.ClientMock, :status, fn "dl-1" -> result end)
-  defp files(names), do: expect(Cinder.Download.ClientMock, :files, fn "dl-1" -> {:ok, names} end)
+  @usenet Cinder.Download.SabnzbdClientMock
+
+  defp status(result, client \\ Cinder.Download.ClientMock),
+    do: expect(client, :status, fn "dl-1" -> result end)
+
+  defp files(names, client \\ Cinder.Download.ClientMock),
+    do: expect(client, :files, fn "dl-1" -> {:ok, names} end)
+
+  # The test env infers an import root, and the test path policy ignores roots and walks through
+  # the filesystem mock: a directory answers `find_files/1`, anything else is a single-file
+  # download.
+  defp disk(dir, entries) do
+    stub(Cinder.Library.FilesystemMock, :dir?, &(&1 == dir))
+    stub(Cinder.Library.FilesystemMock, :find_files, fn ^dir -> {:ok, entries} end)
+  end
 
   describe "a completed download" do
-    test "is completed with its path once its file list is clean" do
+    test "is completed with its path once its file list and its files on disk are clean" do
       status({:ok, %{state: :completed, progress: 1.0, content_path: "/dl/Movie"}})
       files(["Movie/Movie.mkv"])
+      disk("/dl/Movie", [{"/dl/Movie/Movie.mkv", 4_000_000_000}])
 
       assert Watch.check(download(), track()) == {:completed, "/dl/Movie"}
       refute_received {:tracked, _id, _attrs}
@@ -56,6 +70,52 @@ defmodule Cinder.Download.WatchTest do
                {:blocked_content, "download contains Movie.mkv.lnk"}
 
       refute_received {:tracked, _id, _attrs}
+    end
+
+    # SABnzbd has no file list for a job already in history, so a usenet fake that finished
+    # between two ticks reaches :completed with nothing for the client check to read. The files
+    # are on disk under the content path by then.
+    test "is blocked content when the client has no file list but the disk carries a fake" do
+      status({:ok, %{state: :completed, progress: 1.0, content_path: "/dl/Movie"}}, @usenet)
+      files([], @usenet)
+      disk("/dl/Movie", [{"/dl/Movie/Movie.mkv.lnk", 1_024}, {"/dl/Movie/readme.txt", 64}])
+
+      assert Watch.check(download(%{download_protocol: :usenet}), track()) ==
+               {:blocked_content, "download contains Movie.mkv.lnk"}
+    end
+
+    test "is blocked content when its content path is a single blocked file" do
+      status(
+        {:ok, %{state: :completed, progress: 1.0, content_path: "/dl/Movie.mkv.lnk"}},
+        @usenet
+      )
+
+      files([], @usenet)
+      stub(Cinder.Library.FilesystemMock, :dir?, fn "/dl/Movie.mkv.lnk" -> false end)
+
+      assert Watch.check(download(%{download_protocol: :usenet}), track()) ==
+               {:blocked_content, "download contains Movie.mkv.lnk"}
+    end
+
+    # Best-effort like the client check: a walk that could not run is no opinion.
+    test "is completed when its files on disk cannot be listed" do
+      status({:ok, %{state: :completed, progress: 1.0, content_path: "/dl/Movie"}}, @usenet)
+      files([], @usenet)
+      stub(Cinder.Library.FilesystemMock, :dir?, fn "/dl/Movie" -> true end)
+      stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl/Movie" -> {:error, :eacces} end)
+
+      assert Watch.check(download(%{download_protocol: :usenet}), track()) ==
+               {:completed, "/dl/Movie"}
+    end
+
+    # A client can report the whole downloads folder as the content path, whose walk finds other
+    # downloads' media. The client's own file list still blocks the fake.
+    test "is blocked content on the client's file list whatever the disk holds" do
+      status({:ok, %{state: :completed, progress: 1.0, content_path: "/dl"}})
+      files(["setup.exe"])
+      disk("/dl", [{"/dl/setup.exe", 1_024}, {"/dl/Other/Other.mkv", 4_000_000_000}])
+
+      assert Watch.check(download(), track()) == {:blocked_content, "download contains setup.exe"}
     end
   end
 
@@ -197,11 +257,9 @@ defmodule Cinder.Download.WatchTest do
     end
 
     test "is asked of the protocol's own client" do
-      expect(Cinder.Download.SabnzbdClientMock, :status, fn "dl-1" ->
-        {:ok, %{state: :completed, content_path: "/dl/Movie"}}
-      end)
-
-      expect(Cinder.Download.SabnzbdClientMock, :files, fn "dl-1" -> {:ok, ["Movie.mkv"]} end)
+      status({:ok, %{state: :completed, content_path: "/dl/Movie"}}, @usenet)
+      files(["Movie.mkv"], @usenet)
+      disk("/dl/Movie", [{"/dl/Movie/Movie.mkv", 4_000_000_000}])
 
       assert Watch.check(download(%{download_protocol: :usenet}), track()) ==
                {:completed, "/dl/Movie"}

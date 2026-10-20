@@ -338,7 +338,8 @@ defmodule Cinder.Download.Client.Sabnzbd do
         {:ok, for(file <- files, is_binary(file["filename"]), do: file["filename"])}
 
       # A job SABnzbd has no file list for (still fetching, already in history) answers without a
-      # `files` key. Per the Client.files/1 contract that is "no opinion", not a failure.
+      # `files` key. Per the Client.files/1 contract that is "no opinion", not a failure; a
+      # completed job's files are vetted on disk instead (`ContentPolicy.vet_completed/3`).
       {:ok, %{status: 200}} ->
         {:ok, []}
 

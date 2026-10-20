@@ -128,7 +128,7 @@ defmodule Cinder.Download.ContentPolicyTest do
     end
   end
 
-  describe "vet/2" do
+  describe "vet/2 and vet_completed/3" do
     defmodule CleanClient do
       @moduledoc false
       def files(_id), do: {:ok, ["Movie.mkv"]}
@@ -158,12 +158,14 @@ defmodule Cinder.Download.ContentPolicyTest do
       assert :ok = ContentPolicy.vet(BrokenClient, "id")
     end
 
-    test "does not even ask the client when disabled" do
+    test "does not even ask the client, or walk the disk, when disabled" do
       original = Application.get_env(:cinder, ContentPolicy, [])
       Application.put_env(:cinder, ContentPolicy, enabled: false)
       on_exit(fn -> Application.put_env(:cinder, ContentPolicy, original) end)
 
       assert :ok = ContentPolicy.vet(ExplodingClient, "id")
+      # No filesystem stub: a walk would raise Mox.UnexpectedCallError.
+      assert :ok = ContentPolicy.vet_completed(ExplodingClient, "id", "/dl/Movie")
     end
   end
 end

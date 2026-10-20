@@ -1910,7 +1910,7 @@ defmodule Cinder.Download.PollerTest do
       {:ok, %{state: :completed, content_path: source}}
     end)
 
-    expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
 
     expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
       {:ok, %{audio: ["ja"], subtitles: [], audio_unknown?: false, subtitle_unknown?: false}}
@@ -1962,7 +1962,7 @@ defmodule Cinder.Download.PollerTest do
       {:ok, %{state: :completed, content_path: source}}
     end)
 
-    expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
 
     stub(Cinder.Library.MediaInfoMock, :probe, fn ^source ->
       {:ok, %{audio: ["eng"], subtitles: [], duration: 98 * 60.0}}
@@ -2052,7 +2052,7 @@ defmodule Cinder.Download.PollerTest do
       {:ok, %{state: :completed, content_path: source}}
     end)
 
-    expect(Cinder.Library.FilesystemMock, :dir?, 10, fn ^source -> false end)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
 
     expect(Cinder.Library.MediaInfoMock, :probe_policy, 10, fn ^source ->
       {:error, :timeout}

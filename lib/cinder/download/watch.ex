@@ -10,10 +10,12 @@ defmodule Cinder.Download.Watch do
 
   1. Look up the protocol's client (`Cinder.Download.client_for/1`).
   2. Ask it for the download's status.
-  3. Vet the file list (`Cinder.Download.ContentPolicy.vet/2`) on `:downloading` AND on
-     `:completed` with a path. Blocked content is small enough to finish between two ticks, so the
-     first status a poller ever sees for it is often `:completed`; vetting only in flight misses
-     exactly that download.
+  3. Vet the file list on `:downloading` (`Cinder.Download.ContentPolicy.vet/2`) AND on
+     `:completed` with a path (`ContentPolicy.vet_completed/3`, which also reads the files on disk
+     under that path). Blocked content is small enough to finish between two ticks, so the first
+     status a poller ever sees for it is often `:completed`; vetting only in flight misses exactly
+     that download. A usenet client has no file list for a job already in history, so for usenet
+     the disk is the only list left at that point.
   4. While `:downloading`, record progress, speed and ETA through the writer, THEN ask the stall
      reaper, on the progress clock that write returned. After an outage longer than the reaper's
      absolute cap, the clock the row carried at tick start is stale by definition, so reading it
@@ -100,7 +102,9 @@ defmodule Cinder.Download.Watch do
   defp check_with(client, download, track) do
     case client.status(download.download_id) do
       {:ok, %{state: :completed, content_path: path}} when is_binary(path) and path != "" ->
-        vetted(client, download, fn -> {:completed, path} end)
+        client
+        |> ContentPolicy.vet_completed(download.download_id, path)
+        |> vetted(fn -> {:completed, path} end)
 
       {:ok, %{state: :completed}} ->
         {:failed, :no_content_path}
@@ -112,7 +116,9 @@ defmodule Cinder.Download.Watch do
         {:failed, :torrent_not_found}
 
       {:ok, %{state: :downloading} = status} ->
-        vetted(client, download, fn -> track_and_reap(download, status, track) end)
+        client
+        |> ContentPolicy.vet(download.download_id)
+        |> vetted(fn -> track_and_reap(download, status, track) end)
 
       {:ok, status} ->
         unreachable(download, track, {:unexpected_status, status})
@@ -127,12 +133,8 @@ defmodule Cinder.Download.Watch do
 
   defp download_error(_status), do: :download_error
 
-  defp vetted(client, download, continue) do
-    case ContentPolicy.vet(client, download.download_id) do
-      {:blocked, detail} -> {:blocked_content, detail}
-      :ok -> continue.()
-    end
-  end
+  defp vetted({:blocked, detail}, _continue), do: {:blocked_content, detail}
+  defp vetted(:ok, continue), do: continue.()
 
   defp track_and_reap(download, status, track) do
     attrs = %{
