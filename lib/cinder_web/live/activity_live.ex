@@ -13,8 +13,10 @@ defmodule CinderWeb.ActivityLive do
   anyway" (`Catalog.import_grab_anyway/2`). Titles held at search time on
   unsatisfiable Anime preferences (`anime_hold_reason`) show a "Needs preferences" badge with
   the reason — movies in the pipeline list, series in their own section (a held series has no
-  movie row or grab to hang the badge on); no action needed here, the sweep clears the hold
-  once preferences resolve. Live via the `movies` + `series` topics. The "Background sweeps"
+  movie row or grab to hang the badge on). Only the operator clears such a hold, so each row
+  links to its fix (`Attention`'s `fix`): the title's Audio row on its detail page, or the
+  Subtitles group in Settings; the next sweep then lifts the hold. Live via the `movies` +
+  `series` topics. The "Background sweeps"
   section is the exception — a point-in-time snapshot read once at mount (its `last_run`/`next_run`
   values go stale until the page is reloaded), since a 12h sweep is rarely caught mid-run.
   """
@@ -23,7 +25,7 @@ defmodule CinderWeb.ActivityLive do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Attention, Episode, MovieLifecycle}
+  alias Cinder.Catalog.{Attention, Episode, Movie, MovieLifecycle, Series}
   alias Cinder.Catalog.UpgradeHunter
   alias Cinder.Download.TvPoller
   alias Cinder.Subtitles.Sync.Worker
@@ -420,6 +422,26 @@ defmodule CinderWeb.ActivityLive do
   defp series_title(%{episodes: [ep | _]}, locale), do: media_title(ep.season.series, locale)
   defp series_title(_grab, _locale), do: gettext("Unknown series")
 
+  # Where the operator makes an attention fix (`Attention.fix`): the title's Audio row on its detail
+  # page, or the Subtitles group in Settings, opened.
+  defp fix_path(:detail_page, %Movie{id: id}), do: ~p"/movies/#{id}" <> "#movie-language-form"
+
+  defp fix_path(:detail_page, %Series{id: id}),
+    do: ~p"/series/#{id}" <> "#series-detail-language-form"
+
+  defp fix_path(:subtitle_settings, _title),
+    do: ~p"/settings?#{[group: :subtitles]}" <> "#settings-group-subtitles"
+
+  defp fix_label(:detail_page), do: gettext("Fix on detail page")
+  defp fix_label(:subtitle_settings), do: gettext("Fix in Settings")
+
+  # The visible label first, then the title: one row's link reads apart from the next.
+  defp fix_aria_label(:detail_page, title),
+    do: gettext("Fix on detail page: %{title}", title: title)
+
+  defp fix_aria_label(:subtitle_settings, title),
+    do: gettext("Fix in Settings: %{title}", title: title)
+
   # SQL-ordered by canonical title (`Catalog.list_anime_held_series/0`); re-sort here by the
   # folded LOCALIZED title so FR display order is alphabetical in that locale too.
   defp sort_held_series(series, locale),
@@ -525,6 +547,15 @@ defmodule CinderWeb.ActivityLive do
             >
               {gettext("Retry")}
             </.button>
+            <.button
+              :if={attention.fix}
+              id={"movie-#{m.id}-fix"}
+              navigate={fix_path(attention.fix, m)}
+              size="sm"
+              aria-label={fix_aria_label(attention.fix, media_title(m, @locale))}
+            >
+              {fix_label(attention.fix)}
+            </.button>
           </li>
         </ul>
       </section>
@@ -533,7 +564,7 @@ defmodule CinderWeb.ActivityLive do
         <h2 class="pb-3 text-lg font-semibold">{gettext("Held series")}</h2>
         <p class="pb-3 text-sm text-base-content/70">
           {gettext(
-            "These series are skipped by the search sweep until their Anime preferences can be satisfied; the hold clears automatically once they can."
+            "These series are skipped by the search sweep until their Anime preferences can be satisfied. Make the change each one names; the next sweep then lifts its hold."
           )}
         </p>
         <ul id="activity-held-series" class="space-y-2">
@@ -548,13 +579,23 @@ defmodule CinderWeb.ActivityLive do
             >
               {media_title(s, @locale)}<span :if={s.year} class="text-base-content/70"> ({s.year})</span>
             </.link>
-            <.status_badge kind={:series} status={:anime_hold} />
+            <% attention = Attention.classify(s) %>
+            <.status_badge kind={:series} status={attention.badge} />
             <p
               id={"held-series-#{s.id}-reason"}
               class="w-full text-sm text-base-content/70"
             >
               {anime_hold_reason(s.anime_hold_reason)}
             </p>
+            <.button
+              :if={attention.fix}
+              id={"held-series-#{s.id}-fix"}
+              navigate={fix_path(attention.fix, s)}
+              size="sm"
+              aria-label={fix_aria_label(attention.fix, media_title(s, @locale))}
+            >
+              {fix_label(attention.fix)}
+            </.button>
           </li>
         </ul>
       </section>

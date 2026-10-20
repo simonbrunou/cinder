@@ -220,6 +220,19 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#settings-group-#{hd(groups)}[open]")
   end
 
+  # #772: /activity links an anime hold on subtitle languages here, with that group open.
+  test "?group= opens the named group, and an unknown name opens nothing extra", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+    refute has_element?(lv, "#settings-group-subtitles[open]")
+
+    {:ok, lv, _html} = live(conn, ~p"/settings?group=subtitles")
+    assert has_element?(lv, "#settings-group-subtitles[open]")
+    refute has_element?(lv, "#settings-group-notifications[open]")
+
+    {:ok, lv, _html} = live(conn, ~p"/settings?group=no_such_group")
+    refute has_element?(lv, "#settings-group-subtitles[open]")
+  end
+
   test "renders Anime defaults in display units and preserves safe values on validation", %{
     conn: conn
   } do

@@ -29,6 +29,9 @@ defmodule Cinder.Catalog.OfferedActionsTest do
 
   @grab_states [:downloading, :downloaded, :needs_mapping, :verification_blocked, :residual_files]
 
+  # A series classifies only on its anime hold: none, one per hold reason, or one its cancel lifted.
+  @series_states [nil, "original_language_required", "subtitle_language_required", :cancelled]
+
   # Real rows for each classified state, carrying the fields the operator functions need (a
   # download to fence, a release to blocklist, a live file to keep).
   defp seed_movie(:requested), do: movie_fixture()
@@ -247,25 +250,40 @@ defmodule Cinder.Catalog.OfferedActionsTest do
   defp seed(:movie, state), do: seed_movie(state)
   defp seed(:grab, state), do: seed_grab(state)
 
+  defp seed_series(:cancelled) do
+    {:ok, held} = Catalog.set_anime_hold(series_fixture(), "subtitle_language_required")
+    {:ok, cancelled} = Catalog.cancel_series(held, Cinder.AccountsFixtures.admin_fixture())
+    cancelled
+  end
+
+  defp seed_series(reason) do
+    {:ok, series} = Catalog.set_anime_hold(series_fixture(), reason)
+    series
+  end
+
   defp reread(%Movie{id: id}), do: Repo.get!(Movie, id)
   defp reread(%Grab{id: id}), do: Enum.find(Catalog.list_grabs(), &(&1.id == id))
 
   describe "counts/0" do
+    # Each grab seeds its own unheld series, so the series tally counts five more idle rows.
     test "tallies one row per classified state by phase" do
       for state <- @movie_states, do: seed_movie(state)
       for state <- @grab_states, do: seed_grab(state)
+      for reason <- @series_states, do: seed_series(reason)
 
       assert Attention.counts() == %{
-               movie: %{active: 5, attention: 5, waiting: 2, idle: 2},
-               grab: %{active: 2, attention: 3, waiting: 0, idle: 0}
+               movie: %{active: 5, attention: 7, waiting: 0, idle: 2},
+               grab: %{active: 2, attention: 3, waiting: 0, idle: 0},
+               series: %{active: 0, attention: 2, waiting: 0, idle: 7}
              }
 
-      assert Attention.attention_count() == 8
+      assert Attention.attention_count() == 12
     end
 
-    test "agrees with classifying every listed movie and grab" do
+    test "agrees with classifying every listed movie, grab and series" do
       for state <- @movie_states, do: seed_movie(state)
       for state <- @grab_states, do: seed_grab(state)
+      for reason <- @series_states, do: seed_series(reason)
 
       tally = fn items ->
         Enum.reduce(items, %{active: 0, attention: 0, waiting: 0, idle: 0}, fn item, acc ->
@@ -275,13 +293,14 @@ defmodule Cinder.Catalog.OfferedActionsTest do
 
       assert Attention.counts() == %{
                movie: tally.(Catalog.list_movies()),
-               grab: tally.(Catalog.list_grabs())
+               grab: tally.(Catalog.list_grabs()),
+               series: tally.(Catalog.list_series())
              }
     end
 
     test "is all zeroes with nothing in the catalog" do
       zero = %{active: 0, attention: 0, waiting: 0, idle: 0}
-      assert Attention.counts() == %{movie: zero, grab: zero}
+      assert Attention.counts() == %{movie: zero, grab: zero, series: zero}
       assert Attention.attention_count() == 0
     end
   end

@@ -84,6 +84,12 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
   defp seed(:anime_held_series),
     do: {:ok, _} = Catalog.set_anime_hold(series_fixture(), "original_language_required")
 
+  # No sweep visits a cancelled series again, so cancelling lifts its hold.
+  defp seed(:anime_held_cancelled_series) do
+    {:ok, held} = Catalog.set_anime_hold(series_fixture(), "original_language_required")
+    {:ok, _} = Catalog.cancel_series(held, Cinder.AccountsFixtures.admin_fixture())
+  end
+
   test "counts an in-flight movie as active", %{user: admin} do
     {:ok, _movie} = Catalog.add_movie(%{tmdb_id: 1, title: "Dune"})
 
@@ -124,22 +130,44 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
     assert html =~ "1 need attention"
   end
 
-  test "an anime hold neither toasts nor counts as attention: it offers no action", %{
-    user: admin
-  } do
+  # #772: only the operator clears an anime hold, so it toasts and counts like any other item that
+  # needs attention.
+  test "toasts and counts attention when a movie enters an anime hold", %{user: admin} do
     {:ok, movie} = Catalog.add_movie(%{tmdb_id: 6, title: "Akira"})
     {:ok, view, _html} = mount_beacon(admin)
 
     {:ok, _held} = Catalog.set_anime_hold(movie, "subtitle_language_required")
 
-    refute has_element?(view, "#activity-beacon-toasts .alert")
+    assert has_element?(view, "#activity-beacon-toasts .alert", "“Akira” needs attention.")
+    assert has_element?(view, ~s(a[aria-label="Pipeline: 1 need attention"]))
+  end
+
+  test "toasts once and counts attention when a series enters an anime hold", %{user: admin} do
+    series = series_fixture(%{title: "Re:Zero"})
+    {:ok, view, _html} = mount_beacon(admin)
+
+    {:ok, held} = Catalog.set_anime_hold(series, "original_language_required")
+
+    assert has_element?(view, "#activity-beacon-toasts .alert", "“Re:Zero” needs attention.")
+    assert has_element?(view, ~s(a[aria-label="Pipeline: 1 need attention"]))
+
+    # A new reason keeps it in attention: no second toast. Lifting the hold drops the count.
+    {:ok, held} = Catalog.set_anime_hold(held, "subtitle_language_required")
+
+    assert view
+           |> element("#activity-beacon-toasts")
+           |> render()
+           |> String.split("Re:Zero")
+           |> length() == 2
+
+    {:ok, _cleared} = Catalog.set_anime_hold(held, nil)
     refute has_element?(view, ~s(a[aria-label*="need attention"]))
   end
 
   # #732: the pill and the Activity nav badge read "N need attention" off one rule, the nav's
-  # `Catalog.Attention.attention_count/0` (an item counts when /activity offers an action for it).
-  # Each item is seeded alone, so an over-count on one side can't cancel an under-count on the
-  # other.
+  # `Catalog.Attention.attention_count/0` (an item counts when /activity offers an action or names
+  # a fix for it). Each item is seeded alone, so an over-count on one side can't cancel an
+  # under-count on the other.
   describe "the pill agrees with the Activity nav badge" do
     for {item, expected} <- [
           {{:parked, :no_match}, 1},
@@ -151,8 +179,9 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
           {{:grab_hold, :verification_blocked}, 1},
           {:residual_grab_without_content, 1},
           {:in_flight_movie, 0},
-          {:anime_held_movie, 0},
-          {:anime_held_series, 0}
+          {:anime_held_movie, 1},
+          {:anime_held_series, 1},
+          {:anime_held_cancelled_series, 0}
         ] do
       test "#{inspect(item)} counts #{expected}", %{conn: conn, user: admin} do
         seed(unquote(Macro.escape(item)))

@@ -124,11 +124,13 @@ defmodule Cinder.Catalog.SeriesDeletion do
   end
 
   # Unmonitor every season + episode of the series in one write each so wanted_episodes is empty.
+  # No sweep visits the series again to re-evaluate an anime hold, so the hold goes too: it would
+  # otherwise need attention forever.
   defp unmonitor_series_tree(series_id) do
     ts = Cinder.Catalog.now()
 
     Repo.update_all(from(s in Series, where: s.id == ^series_id),
-      set: [monitored: false, monitor_strategy: :none, updated_at: ts]
+      set: [monitored: false, monitor_strategy: :none, anime_hold_reason: nil, updated_at: ts]
     )
 
     Repo.update_all(from(s in Season, where: s.series_id == ^series_id),

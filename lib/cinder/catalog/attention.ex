@@ -1,14 +1,19 @@
 defmodule Cinder.Catalog.Attention do
   @moduledoc """
-  Operator attention: the one classification of a movie or TV grab that every pipeline surface
-  reads. `classify/1` answers, per item:
+  Operator attention: the one classification of a movie, TV grab or series that every pipeline
+  surface reads. `classify/1` answers, per item:
 
     * `phase`: `:active` (Cinder is working on it), `:attention` (it needs attention: `/activity`
-      offers an action that resolves it), `:waiting` (it waits on a fix made outside it, an anime
-      hold) or `:idle` (nothing in progress);
+      offers an action or names a fix that resolves it), `:waiting` (it waits on a change the
+      operator does not make; no item waits today) or `:idle` (nothing in progress);
     * `reason`: why it needs attention or waits (`nil` otherwise);
     * `badge`: the `<.status_badge>` status it wears (`nil` for a book target);
-    * `actions`: its offered actions, one atom per operator function, in render order.
+    * `actions`: its offered actions, one atom per operator function, in render order;
+    * `fix`: where the operator makes the change that clears it, when that change is on another
+      page (`nil` otherwise): `:detail_page` (the title's Audio pick and profile) or
+      `:subtitle_settings` (the subtitle languages in Settings).
+
+  A series classifies only on its search-time anime hold: its downloads classify as grabs.
 
   Buttons render from `actions`, and each operator function refuses an item that does not offer
   its action (`offers?/2`), so a view and the write it triggers can never disagree. A view picks
@@ -33,13 +38,15 @@ defmodule Cinder.Catalog.Attention do
 
   import Ecto.Query
 
-  alias Cinder.Catalog.{Grab, GrabFile, Grabs, Movie, MovieLifecycle}
+  alias Cinder.Catalog.{Grab, GrabFile, Grabs, Movie, MovieLifecycle, Series}
   alias Cinder.Repo
 
   @enforce_keys [:phase]
-  defstruct [:phase, :reason, :badge, actions: []]
+  defstruct [:phase, :reason, :badge, :fix, actions: []]
 
   @type phase :: :active | :attention | :waiting | :idle
+
+  @type fix :: :detail_page | :subtitle_settings
 
   @typedoc "An offered action: one atom per operator function (see the tables above and in `Cinder.Books.Attention`)."
   @type action ::
@@ -60,15 +67,16 @@ defmodule Cinder.Catalog.Attention do
           phase: phase(),
           reason: atom() | nil,
           badge: atom() | nil,
-          actions: [action()]
+          actions: [action()],
+          fix: fix() | nil
         }
 
-  @doc "Classifies a movie or a TV grab. Pure: reads only the struct's loaded fields."
-  @spec classify(Movie.t() | Grab.t()) :: t()
+  @doc "Classifies a movie, a TV grab or a series. Pure: reads only the struct's loaded fields."
+  @spec classify(Movie.t() | Grab.t() | Series.t()) :: t()
   def classify(%Movie{status: status} = movie) do
     cond do
       anime_held?(movie) ->
-        %__MODULE__{phase: :waiting, reason: :anime_hold, badge: :anime_hold, actions: [:cancel]}
+        anime_hold(movie.anime_hold_reason, [:cancel])
 
       verification_hold?(movie) ->
         attention(:verification_hold, :verification_hold, [:retry, hold_release(movie)])
@@ -115,37 +123,34 @@ defmodule Cinder.Catalog.Attention do
     end
   end
 
+  # Cancelling a series, or setting its monitoring to none, lifts its hold: no sweep would.
+  def classify(%Series{anime_hold_reason: nil}), do: %__MODULE__{phase: :idle}
+  def classify(%Series{anime_hold_reason: reason}), do: anime_hold(reason, [])
+
   @doc "True when `item` offers `action` in its current state."
-  @spec offers?(Movie.t() | Grab.t(), action()) :: boolean()
+  @spec offers?(Movie.t() | Grab.t() | Series.t(), action()) :: boolean()
   def offers?(item, action), do: action in classify(item).actions
 
   @doc """
-  Movies and grabs per phase, every phase present. SQL groups the rows by the fields
-  `classify/1` reads (a movie's status, hold origin and whether an anime hold is set; a grab's
-  mapping status and whether it has an undecided file), then one representative per group is
-  classified here, so the counts never re-encode the rule. Read by the dashboard and, through
-  `attention_count/0`, the Activity nav badge.
+  Movies, grabs and series per phase, every phase present. SQL groups the rows by the fields
+  `classify/1` reads (a movie's status, hold origin and anime hold reason; a grab's mapping
+  status and whether it has an undecided file; a series' anime hold reason), then one
+  representative per group is classified here, so the counts never re-encode the rule. Read by
+  the dashboard and, through `attention_count/0`, the Activity nav badge.
   """
   @spec counts() :: %{
           movie: %{phase() => non_neg_integer()},
-          grab: %{phase() => non_neg_integer()}
+          grab: %{phase() => non_neg_integer()},
+          series: %{phase() => non_neg_integer()}
         }
   def counts do
     movies =
       from(m in Movie,
-        group_by: [
-          m.status,
-          m.verification_hold_origin,
-          fragment("? IS NOT NULL", m.anime_hold_reason)
-        ],
-        select:
-          {m.status, m.verification_hold_origin, fragment("? IS NOT NULL", m.anime_hold_reason),
-           count(m.id)}
+        group_by: [m.status, m.verification_hold_origin, m.anime_hold_reason],
+        select: {m.status, m.verification_hold_origin, m.anime_hold_reason, count(m.id)}
       )
       |> Repo.all()
-      |> Enum.map(fn {status, origin, anime_held, n} ->
-        # Any reason string stands for "an anime hold is set": `classify/1` reads only that.
-        reason = if sql_true?(anime_held), do: "set"
+      |> Enum.map(fn {status, origin, reason, n} ->
         {%Movie{status: status, verification_hold_origin: origin, anime_hold_reason: reason}, n}
       end)
 
@@ -169,14 +174,24 @@ defmodule Cinder.Catalog.Attention do
         {%Grab{mapping_status: mapping_status, grab_files: files}, n}
       end)
 
-    %{movie: tally(movies), grab: tally(grabs)}
+    series =
+      from(s in Series,
+        group_by: s.anime_hold_reason,
+        select: {s.anime_hold_reason, count(s.id)}
+      )
+      |> Repo.all()
+      |> Enum.map(fn {reason, n} -> {%Series{anime_hold_reason: reason}, n} end)
+
+    %{movie: tally(movies), grab: tally(grabs), series: tally(series)}
   end
 
-  @doc "How many movies and grabs need attention: the Activity nav badge (`0` hides it)."
+  @doc "How many movies, grabs and series need attention: the Activity nav badge (`0` hides it)."
   @spec attention_count() :: non_neg_integer()
   def attention_count do
-    %{movie: %{attention: movies}, grab: %{attention: grabs}} = counts()
-    movies + grabs
+    %{movie: %{attention: movies}, grab: %{attention: grabs}, series: %{attention: series}} =
+      counts()
+
+    movies + grabs + series
   end
 
   # SQLite returns a boolean expression as 0/1.
@@ -190,6 +205,21 @@ defmodule Cinder.Catalog.Attention do
 
   defp anime_held?(%Movie{status: status, anime_hold_reason: reason}),
     do: status in [:requested, :searching] and is_binary(reason)
+
+  defp anime_hold(reason, actions) do
+    {phase, fix} = anime_hold_fix(reason)
+    %__MODULE__{phase: phase, reason: :anime_hold, badge: :anime_hold, actions: actions, fix: fix}
+  end
+
+  # Each anime hold reason (an `AnimePreferences.resolve/2` error) and the fix that clears it. The
+  # sweep lifts a hold once preferences resolve, but both reasons resolve only after the operator
+  # changes something, so they need attention. A reason that cleared without the operator would
+  # map to `{:waiting, nil}` here. A reason this Cinder does not know still counts: after the
+  # profile on the detail page switches to Standard, the next sweep that visits the title lifts
+  # any anime hold.
+  defp anime_hold_fix("original_language_required"), do: {:attention, :detail_page}
+  defp anime_hold_fix("subtitle_language_required"), do: {:attention, :subtitle_settings}
+  defp anime_hold_fix(_unknown), do: {:attention, :detail_page}
 
   defp verification_hold?(%Movie{status: :import_failed, verification_hold_origin: origin}),
     do: origin in [:download, :upgrade]

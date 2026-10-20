@@ -548,6 +548,17 @@ defmodule Cinder.CatalogAdminTest do
       refute series.id in Enum.map(Catalog.wanted_episodes(), & &1.season.series_id)
     end
 
+    # #772: an anime hold needs attention, and no sweep visits a cancelled series again to lift it.
+    test "cancel_series lifts the series' anime hold" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      {series, _season, _ep} = series_tree()
+      {:ok, held} = Catalog.set_anime_hold(series, "subtitle_language_required")
+
+      assert {:ok, cancelled} = Catalog.cancel_series(held, actor)
+      assert cancelled.anime_hold_reason == nil
+      assert Repo.get!(Series, series.id).anime_hold_reason == nil
+    end
+
     test "cancel_series audits the fresh canonical series" do
       actor = Cinder.AccountsFixtures.admin_fixture()
       {series, _season, _ep} = series_tree()

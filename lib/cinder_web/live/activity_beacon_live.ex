@@ -1,9 +1,10 @@
 defmodule CinderWeb.ActivityBeaconLive do
   @moduledoc """
   The always-mounted pipeline beacon: a floating pill (live "N active, N need attention" counts,
-  links to `/activity`) plus transient toasts when a movie goes available, a movie parks, or a
-  download needs attention. Rendered once in `root.html.heex` as a sticky nested LiveView
-  (admin-gated there), so it survives live navigation and shows on every page.
+  links to `/activity`) plus transient toasts when a movie goes available, a movie or series
+  starts needing attention, or a download needs attention. Rendered once in `root.html.heex` as a
+  sticky nested LiveView (admin-gated there), so it survives live navigation and shows on every
+  page.
 
   Its own process owns its own `"movies"`/`"series"` subscriptions — the page LiveViews
   subscribe independently, so there is no double delivery. Toasts fire only on a *change* into a
@@ -12,9 +13,9 @@ defmodule CinderWeb.ActivityBeaconLive do
   per item: "active" counts `:active`, "need attention" counts `:attention`, the same rule as the
   Activity nav badge (`Catalog.Attention.attention_count/0`), so the two never disagree on one page.
 
-  ponytail: re-derives grab counts by re-querying on each `series` broadcast — the coarse
-  `{:series_updated, _}` carries no grab. Household scale (a handful of rows); if grab churn ever
-  gets heavy, carry the changed grab in the broadcast instead.
+  ponytail: re-derives grab and held-series counts by re-querying on each `series` broadcast — the
+  coarse `{:series_updated, _}` carries no grab or series. Household scale (a handful of rows); if
+  grab churn ever gets heavy, carry the changed grab in the broadcast instead.
   """
   use CinderWeb, :live_view
 
@@ -34,8 +35,8 @@ defmodule CinderWeb.ActivityBeaconLive do
 
   @toast_ttl :timer.seconds(6)
 
-  # Each id maps to `{badge, phase}` from `Attention.classify/1`. An anime hold is `:waiting`: it
-  # offers no action that resolves it, so it is neither active nor counted as attention.
+  # Each id maps to `{badge, phase}` from `Attention.classify/1`. A series is tracked only while it
+  # is on an anime hold: that is the only state it classifies on.
 
   @impl true
   def mount(_params, _session, socket) do
@@ -49,6 +50,7 @@ defmodule CinderWeb.ActivityBeaconLive do
      |> assign(
        movies: movie_map(),
        grabs: grab_map(),
+       series: series_map(Catalog.list_anime_held_series()),
        toasts: [],
        next_toast: 0
      )
@@ -79,11 +81,14 @@ defmodule CinderWeb.ActivityBeaconLive do
 
   def handle_info({msg, _id}, socket) when msg in [:series_updated, :series_deleted] do
     grabs = grab_map()
+    held = Catalog.list_anime_held_series()
+    series = series_map(held)
 
     {:noreply,
      socket
      |> toast_new_grab_attention(grabs)
-     |> assign(grabs: grabs)
+     |> toast_new_series_attention(held, series)
+     |> assign(grabs: grabs, series: series)
      |> recount()}
   end
 
@@ -94,17 +99,18 @@ defmodule CinderWeb.ActivityBeaconLive do
 
   defp movie_map, do: Map.new(Catalog.list_movies(), &{&1.id, movie_entry(&1)})
   defp grab_map, do: Map.new(Catalog.list_grabs(), &{&1.id, grab_entry(&1)})
+  defp series_map(held), do: Map.new(held, &{&1.id, entry(Attention.classify(&1))})
 
   defp movie_entry(movie), do: entry(Attention.classify(movie))
   defp grab_entry(grab), do: entry(Attention.classify(grab))
   defp entry(%Attention{badge: badge, phase: phase}), do: {badge, phase}
 
   defp recount(socket) do
-    %{movies: movies, grabs: grabs} = socket.assigns
+    maps = [socket.assigns.movies, socket.assigns.grabs, socket.assigns.series]
 
     assign(socket,
-      active: count_phase(movies, :active) + count_phase(grabs, :active),
-      attention: count_phase(movies, :attention) + count_phase(grabs, :attention)
+      active: Enum.sum_by(maps, &count_phase(&1, :active)),
+      attention: Enum.sum_by(maps, &count_phase(&1, :attention))
     )
   end
 
@@ -133,6 +139,20 @@ defmodule CinderWeb.ActivityBeaconLive do
     end)
     |> Enum.reduce(socket, fn _grab, acc ->
       toast(acc, :warning, gettext("A download needs attention."))
+    end)
+  end
+
+  # A series that just started needing attention (an anime hold): one titled toast per series.
+  defp toast_new_series_attention(socket, held, series) do
+    old = socket.assigns.series
+
+    held
+    |> Enum.filter(fn s ->
+      needs_attention?(series[s.id]) and not needs_attention?(Map.get(old, s.id))
+    end)
+    |> Enum.reduce(socket, fn s, acc ->
+      title = media_title(s, acc.assigns.locale)
+      toast(acc, :warning, gettext("“%{title}” needs attention.", title: title))
     end)
   end
 

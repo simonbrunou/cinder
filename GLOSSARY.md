@@ -141,15 +141,27 @@ offer it.
 _Avoid_: available action, allowed action
 
 **Needs attention**:
-An item stopped until the operator takes an offered action on `/activity`: a parked movie, a
-verification hold, or a TV grab on a mapping, verification or residual-files hold. The Activity nav
-badge and the beacon pill count exactly these.
-_Avoid_: held (an anime hold waits on a fix made elsewhere), stuck, failed
+An item stopped until the operator acts: `/activity` offers an action for it or links to its fix.
+A parked movie, a verification hold, a TV grab on a mapping, verification or residual-files hold,
+or an anime hold. The Activity nav badge and the beacon pill count exactly these.
+_Avoid_: held, stuck, failed
+
+**Anime hold**:
+A movie or series the search sweep skips because the household's anime preferences can't be
+satisfied for it, with the reason why: dual audio for a title whose original language is unknown,
+or embedded subtitles required with no subtitle languages set. Each reason clears only after the
+operator changes something, so an anime hold needs attention, and the next sweep lifts it.
+Cancelling a series, or setting its monitoring to none, lifts its hold at once.
+_Avoid_: preferences hold, anime block
+
+**Fix**:
+The change, made on another page, that clears an item needing attention: the Audio pick or
+profile on the title's detail page, or the subtitle languages in Settings. `/activity` links to it.
+_Avoid_: remedy, resolution, correction (a subtitle timing change)
 
 **Waiting item**:
-An item Cinder skips until the operator fixes something outside it, such as an anime hold that
-needs subtitle languages in Settings. It offers no action that resolves it, so it does not need
-attention.
+An item Cinder skips until something changes that the operator does not have to change. It needs
+no attention. No item waits today: an anime hold reason that cleared on its own would.
 _Avoid_: held item, paused item (a paused book target is idle)
 
 ### Requests

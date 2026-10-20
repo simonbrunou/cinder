@@ -197,7 +197,7 @@ defmodule CinderWeb.DashboardLive do
         movies_total: counts |> Map.values() |> Enum.sum(),
         movies_available: Map.get(counts, :available, 0),
         in_pipeline: movies.active,
-        parked: movies.attention,
+        needs_attention: movies.attention,
         series_total: Catalog.count_series(),
         tv_wanted: Catalog.count_wanted_episodes(),
         downloading: Catalog.count_grabs_downloading(),
@@ -394,7 +394,14 @@ defmodule CinderWeb.DashboardLive do
         <.stat_card
           label={gettext("In pipeline")}
           value={@stats.in_pipeline}
-          suffix={@stats.parked > 0 && gettext("%{count} parked", count: @stats.parked)}
+          suffix={
+            @stats.needs_attention > 0 &&
+              ngettext(
+                "%{count} movie needs attention",
+                "%{count} movies need attention",
+                @stats.needs_attention
+              )
+          }
           icon="hero-arrow-path"
         />
         <.stat_card

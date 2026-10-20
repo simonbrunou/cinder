@@ -21,9 +21,10 @@ defmodule CinderWeb.SettingsLive do
   alias CinderWeb.SettingsLabels
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(params, _session, socket) do
     {:ok,
      assign(socket,
+       open_group: open_group(params),
        form: Settings.form_state(),
        health: %{},
        form_revision: 0,
@@ -93,6 +94,17 @@ defmodule CinderWeb.SettingsLive do
   # Event payloads are client-controlled — ignore a forged/unmatched frame rather than
   # crash the LiveView (and lose unsaved form input). House rule; see sibling views.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # `?group=subtitles` (an /activity fix link) opens that group on arrival. The name is
+  # client-controlled: it is matched against the known groups, never made an atom, and an unknown
+  # name opens nothing.
+  defp open_group(%{"group" => name}) when is_binary(name),
+    do:
+      Enum.find_value(Settings.groups(), fn {group, _label} ->
+        name == to_string(group) && group
+      end)
+
+  defp open_group(_params), do: nil
 
   defp save_settings(params, socket) do
     case Settings.save_form(params) do
@@ -193,7 +205,7 @@ defmodule CinderWeb.SettingsLive do
         data-form-revision={@form_revision}
         class="space-y-8"
       >
-        <.service_fields form={@form} health={@health} />
+        <.service_fields form={@form} health={@health} open_group={@open_group} />
         <.button type="submit" phx-disable-with={gettext("Saving…")}>
           {gettext("Save settings")}
         </.button>

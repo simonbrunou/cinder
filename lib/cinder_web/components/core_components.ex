@@ -775,8 +775,8 @@ defmodule CinderWeb.CoreComponents do
     do: {gettext("Needs verification"), "badge-warning", "hero-exclamation-triangle"}
 
   # held at search time on unsatisfiable Anime preferences (`anime_hold_reason` set) —
-  # distinct from a not-yet-swept "Requested"/"Searching"; clears itself once preferences
-  # become satisfiable (movies via `Catalog.Attention.classify/1`, series on /activity).
+  # distinct from a not-yet-swept "Requested"/"Searching"; needs the operator's fix, and the next
+  # sweep lifts it once preferences become satisfiable (`Catalog.Attention.classify/1`).
   defp badge_spec(kind, :anime_hold) when kind in [:movie, :series],
     do: {gettext("Needs preferences"), "badge-warning", "hero-pause-circle"}
 

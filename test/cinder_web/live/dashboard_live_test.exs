@@ -494,9 +494,9 @@ defmodule CinderWeb.DashboardLiveTest do
                ~r{tabular-nums">\s*1\s*</span>}
     end
 
-    # The tile reads the same phases as the beacon pill: an anime hold waits on a fix made elsewhere,
-    # so it is neither in the pipeline nor parked.
-    test "an anime-held movie is neither in the pipeline nor parked", %{conn: conn} do
+    # The tile reads the same phases as the beacon pill: an anime hold is not in flight, and only
+    # the operator clears it, so it needs attention (#772).
+    test "an anime-held movie is not in the pipeline and needs attention", %{conn: conn} do
       {:ok, movie} =
         Catalog.add_movie(%{tmdb_id: System.unique_integer([:positive]), title: "Akira"})
 
@@ -505,6 +505,7 @@ defmodule CinderWeb.DashboardLiveTest do
 
       tile = lv |> element("div.items-baseline", "In pipeline") |> render()
       assert tile =~ ~r{tabular-nums">\s*0\s*</span>}
+      assert tile =~ "1 movie needs attention"
       refute tile =~ "parked"
     end
 

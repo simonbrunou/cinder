@@ -827,6 +827,52 @@ defmodule CinderWeb.ActivityLiveTest do
     refute has_element?(lv, "#movie-#{movie.id}-hold-reason")
   end
 
+  # #772: an anime hold needs attention, so its row links to the page where the operator clears it.
+  test "each anime hold links to the fix for its reason", %{conn: conn} do
+    hold = fn title, reason ->
+      {:ok, held} = Catalog.set_anime_hold(title, reason)
+      held
+    end
+
+    audio = hold.(movie_fixture(%{title: "Your Name"}), :original_language_required)
+    subtitles = hold.(movie_fixture(%{title: "Akira"}), :subtitle_language_required)
+    series_audio = hold.(series_fixture(%{title: "Re:Zero"}), :original_language_required)
+    series_subtitles = hold.(series_fixture(%{title: "Frieren"}), :subtitle_language_required)
+    parked = movie_fixture(%{title: "Dune", status: :no_match})
+
+    # No sweep visits a cancelled series again, so cancelling lifts its hold.
+    {:ok, cancelled} =
+      series_fixture(%{title: "Bleach"})
+      |> hold.(:subtitle_language_required)
+      |> Catalog.cancel_series(Cinder.AccountsFixtures.admin_fixture())
+
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+
+    settings = "/settings?group=subtitles#settings-group-subtitles"
+
+    assert has_element?(
+             lv,
+             ~s|#movie-#{audio.id}-fix[href="/movies/#{audio.id}#movie-language-form"]|,
+             "Fix on detail page"
+           )
+
+    assert has_element?(
+             lv,
+             ~s|#movie-#{subtitles.id}-fix[href="#{settings}"][aria-label="Fix in Settings: Akira"]|,
+             "Fix in Settings"
+           )
+
+    assert has_element?(
+             lv,
+             ~s|#held-series-#{series_audio.id}-fix[href="/series/#{series_audio.id}#series-detail-language-form"]|,
+             "Fix on detail page"
+           )
+
+    assert has_element?(lv, ~s|#held-series-#{series_subtitles.id}-fix[href="#{settings}"]|)
+    refute has_element?(lv, "#movie-#{parked.id}-fix")
+    refute has_element?(lv, "#held-series-#{cancelled.id}")
+  end
+
   test "non-admins are redirected away from /activity", %{conn: _conn} do
     conn = build_conn() |> log_in_user(Cinder.AccountsFixtures.user_fixture())
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/activity")

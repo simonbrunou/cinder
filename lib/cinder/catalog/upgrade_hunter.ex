@@ -166,8 +166,13 @@ defmodule Cinder.Catalog.UpgradeHunter do
     series = episode.season.series
 
     case Catalog.media_profile_summary(series).effective do
-      :anime -> isolate("series #{series.id}", fn -> hunt_anime_series(series.id) end)
-      :standard -> hunt_selected_standard_seasons(series.id, selected)
+      :anime ->
+        isolate("series #{series.id}", fn -> hunt_anime_series(series.id) end)
+
+      :standard ->
+        # A profile switched back to Standard must not keep a stale Anime hold marker.
+        Catalog.set_anime_hold(series, nil)
+        hunt_selected_standard_seasons(series.id, selected)
     end
   end
 

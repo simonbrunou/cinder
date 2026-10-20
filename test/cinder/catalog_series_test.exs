@@ -254,6 +254,27 @@ defmodule Cinder.CatalogSeriesTest do
       assert Enum.all?(episodes(series.id), &(&1.monitored == false))
     end
 
+    # #772: an anime hold needs attention, and no sweep visits a series monitoring nothing to lift
+    # it. Any other strategy keeps it for the next sweep to re-evaluate.
+    test "set_series_monitor_strategy/2 to :none lifts an anime hold" do
+      stub_tmdb(82)
+      {:ok, series} = Catalog.add_series(82, monitor_strategy: :all)
+      {:ok, held} = Catalog.set_anime_hold(series, "subtitle_language_required")
+
+      assert {:ok, kept} = Catalog.set_series_monitor_strategy(held, :future)
+      assert kept.anime_hold_reason == "subtitle_language_required"
+
+      assert {:ok, lifted} = Catalog.set_series_monitor_strategy(kept, :none)
+      assert lifted.anime_hold_reason == nil
+      assert Repo.get!(Cinder.Catalog.Series, series.id).anime_hold_reason == nil
+
+      # The caller's struct may predate the hold: the clear still lands.
+      {:ok, _monitored} = Catalog.set_series_monitor_strategy(lifted, :all)
+      {:ok, _held} = Catalog.set_anime_hold(lifted, "subtitle_language_required")
+      assert {:ok, _} = Catalog.set_series_monitor_strategy(lifted, :none)
+      assert Repo.get!(Cinder.Catalog.Series, series.id).anime_hold_reason == nil
+    end
+
     test "set_series_monitor_strategy/2 rejects an unknown strategy" do
       stub_tmdb(81)
       {:ok, series} = Catalog.add_series(81, monitor_strategy: :none)

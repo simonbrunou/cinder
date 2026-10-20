@@ -973,14 +973,23 @@ defmodule Cinder.Catalog.SeriesCatalog do
     end
   end
 
+  # `:none` also lifts an anime hold: no sweep visits a series monitoring nothing to re-evaluate it,
+  # so it would otherwise need attention forever. Any other strategy leaves it to the next sweep.
+  # Forced, so a caller's struct read before the sweep set the hold still clears it.
   defp reapply_monitor_strategy(series, strategy) do
     tree_monitored = strategy != :none
 
+    changeset =
+      Ecto.Changeset.change(series, monitored: tree_monitored, monitor_strategy: strategy)
+
+    changeset =
+      if tree_monitored,
+        do: changeset,
+        else: Ecto.Changeset.force_change(changeset, :anime_hold_reason, nil)
+
     result =
       Repo.transaction(fn ->
-        case series
-             |> Ecto.Changeset.change(monitored: tree_monitored, monitor_strategy: strategy)
-             |> Repo.update() do
+        case Repo.update(changeset) do
           {:ok, series} ->
             reapply_tree_monitoring(series, strategy, tree_monitored)
             series

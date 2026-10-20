@@ -35,6 +35,7 @@ defmodule CinderWeb.SettingsComponents do
   attr :show_move_on_import, :boolean, default: true
   attr :show_anime, :boolean, default: true
   attr :show_setup_guidance, :boolean, default: false
+  attr :open_group, :atom, default: nil, doc: "a group to render open, besides the first"
 
   def service_fields(assigns) do
     [{first_group, _label} | _groups] = Settings.groups()
@@ -49,7 +50,7 @@ defmodule CinderWeb.SettingsComponents do
     <details
       :for={{group, label} <- Settings.groups()}
       id={"settings-group-#{group}"}
-      open={group == @first_group or MapSet.member?(@invalid_groups, group)}
+      open={group in [@first_group, @open_group] or MapSet.member?(@invalid_groups, group)}
       phx-hook="DisclosureState"
       data-force-open={to_string(MapSet.member?(@invalid_groups, group))}
       data-setup-step={@show_setup_guidance && @setup_steps[group]}

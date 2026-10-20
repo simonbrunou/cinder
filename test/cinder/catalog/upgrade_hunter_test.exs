@@ -272,6 +272,20 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert episode.file_path == "/lib/Show/S01E01.mkv"
     end
 
+    # #772: an anime hold counts as needing attention, so a series switched back to Standard must
+    # not keep a hold the upgrade sweep set, as the wanted-episode sweep already ensures.
+    test "lifts a stale anime hold from a Standard series", ctx do
+      {:ok, _held} = Cinder.Catalog.set_anime_hold(ctx.series, "original_language_required")
+      watch_grabs()
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 -> {:ok, []} end)
+
+      poll()
+
+      assert Repo.get!(Cinder.Catalog.Series, ctx.series.id).anime_hold_reason == nil
+      refute_grabbed()
+    end
+
     test "leaves an episode alone when the offer is not better", ctx do
       watch_grabs()
 

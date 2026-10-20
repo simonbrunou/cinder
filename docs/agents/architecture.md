@@ -115,10 +115,12 @@ against both schemas and runs probe → quality → row → quality through each
 
 ## Operator attention has one owner
 
-Whether an item is in flight, needs attention or waits, and which operator actions it offers, come
-from `Cinder.Catalog.Attention.classify/1` (movies, TV grabs) and `Cinder.Books.Attention.classify/2`
-(book targets). Views render badges, buttons and counts from it; they never decide attention or an
-action from raw status fields or status sets. Each operator function refuses an item that does not
+Whether an item is in flight, needs attention or waits, which operator actions it offers and which
+fix on another page clears it, come from `Cinder.Catalog.Attention.classify/1` (movies, TV grabs,
+series on an anime hold) and `Cinder.Books.Attention.classify/2` (book targets). Views render
+badges, buttons, fix links and counts from it; they never decide attention or an action from raw
+status fields or status sets. Each anime hold reason maps to its phase and fix in one place in
+`Attention`. Each operator function refuses an item that does not
 offer its action. `test/cinder/catalog/offered_actions_test.exs` (movies, grabs) and
 `test/cinder/books/attention_test.exs` (book targets) run every action against every state, so a
 new operator action is one classification entry, its guard, and a row in the matching test.
