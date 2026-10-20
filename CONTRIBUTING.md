@@ -33,6 +33,10 @@ inspecting the running app over guessing.
   on a `Book*` module that has an `Audiobook*` sibling.
 - Keep diffs minimal and trace each change to the request; `credo --strict` and warnings-as-errors
   must stay clean.
+- A user-visible change adds a changelog fragment, `changelog.d/<number>-<slug>.md` (format in
+  [`changelog.d/README.md`](changelog.d/README.md)), instead of an entry under `[Unreleased]` in
+  `CHANGELOG.md`, so two PRs never conflict on the changelog. `test/code_health_test.exs` fails
+  on a new entry under `[Unreleased]` and on a fragment a release could not fold.
 
 See [`docs/agents/architecture.md`](docs/agents/architecture.md) for fuller architecture notes
 and [`ROADMAP.md`](ROADMAP.md) for historical scope.
@@ -60,8 +64,14 @@ PRs.
 
 ## Releasing (maintainers)
 
-1. Bump `version:` in `mix.exs` and add a dated section to `CHANGELOG.md`.
-2. Land it on a **green** `main`.
+1. On a branch synced with `main`, bump `version:` in `mix.exs`, then run
+   `mix cinder.changelog.release`. It folds the fragments in `changelog.d/` and the entries left
+   under `[Unreleased]` into a dated `CHANGELOG.md` section, updates the compare links, and
+   deletes the fragments. Add a release introduction under the new heading by hand if the release
+   needs one. The first release after #843 also deletes `@legacy_unreleased_sha256` and the
+   `or hash == ...` clause that reads it in `test/code_health_test.exs`.
+2. Land it on a **green** `main` right away. Before tagging, check that `changelog.d/` holds only
+   `README.md`; move a fragment that merged after the fold into the new section by hand.
 3. Tag and push: `git tag v0.7.0 && git push origin v0.7.0` (the tag is `v` + the mix.exs version).
 4. The [`release`](.github/workflows/release.yml) workflow builds the image and pushes
    `ghcr.io/simonbrunou/cinder` tagged `:0.7.0`, `:0.7`, and `:latest`.

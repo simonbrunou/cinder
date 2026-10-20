@@ -6,6 +6,9 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+Unreleased changes not listed below are in [`changelog.d/`](changelog.d/), one file per change,
+until a release folds them into its dated section.
+
 ### Added
 - **The season request page shows what is already on Plex/Jellyfin.** `/series/tmdb/:id` used to
   mark a season Available only once Cinder itself had imported all of it, so a season already on

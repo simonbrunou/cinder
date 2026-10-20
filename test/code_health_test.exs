@@ -3,7 +3,7 @@ defmodule Cinder.CodeHealthTest do
   Guards against a single `lib/` file regrowing into an unreviewable mega-module (the trigger for
   the 2026-07-26 `Cinder.Catalog` split), and fences the module boundaries earlier refactors
   drew: the catalog's split by concept (#740), the staging engine (#739) and the guarded-write
-  adapters (#743).
+  adapters (#743). It also keeps new changelog entries in `changelog.d/` (#843).
   """
   use ExUnit.Case, async: true
 
@@ -182,6 +182,31 @@ defmodule Cinder.CodeHealthTest do
 
     assert offenders == [],
            "an e-book-only module is named Ebook*, not Book*:\n  " <> Enum.join(offenders, "\n  ")
+  end
+
+  alias Cinder.Changelog
+
+  # #843: a PR's changelog entry goes in changelog.d/, so two PRs never conflict on CHANGELOG.md.
+  # The entries written under [Unreleased] before then stay as they are until the next release
+  # folds them; this hash keeps them fixed until then, and that release deletes it.
+  @legacy_unreleased_sha256 "1c7a845fd192270e41f13d26bc21d9613ae9cfbd797af21505e993bb6cb085b9"
+
+  test "no PR adds an entry under CHANGELOG.md's [Unreleased]" do
+    body = "CHANGELOG.md" |> File.read!() |> Changelog.unreleased()
+    hash = :sha256 |> :crypto.hash(body) |> Base.encode16(case: :lower)
+
+    assert body == Changelog.note() or hash == @legacy_unreleased_sha256,
+           "CHANGELOG.md's [Unreleased] changed. Write the entry as " <>
+             "changelog.d/<number>-<slug>.md instead (format: changelog.d/README.md). Only a " <>
+             "deliberate edit to an entry from before #843 updates @legacy_unreleased_sha256."
+  end
+
+  test "every changelog.d/ fragment folds into a release" do
+    problems = Changelog.check(".")
+
+    assert problems == [],
+           "a release would refuse these; fix them on this PR:\n  " <>
+             Enum.join(problems, "\n  ")
   end
 
   # `Phoenix.LiveView.TagEngine.Parser`/`Tokenizer` are `@moduledoc false` — private

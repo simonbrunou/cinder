@@ -29,9 +29,29 @@ Read the matching doc before you act:
 - [History](docs/agents/history.md): when you need the reason behind a past decision, or what is
   left on the roadmap.
 
+## Changelog
+
+A PR with a user-visible change adds one fragment, `changelog.d/<number>-<slug>.md`, in the
+format of [changelog.d/README.md](changelog.d/README.md). `CHANGELOG.md` changes only in a release.
+
 ## Merge authority
 
-Agents may merge their own PR without asking once all three hold: a code review ran on the diff (the `code-review` skill or the `pr-review-toolkit:code-reviewer` agent) and its real findings are fixed; CI is green on the pushed SHA; the branch is up to date with `origin/main`. The production deploy that the merge triggers is accepted. Ask first only when the PR drops or rewrites stored data (a destructive migration, a backfill that overwrites rows).
+Agents may merge their own PR without asking once all three hold:
+
+- a code review ran on the diff (the `code-review` skill or the `pr-review-toolkit:code-reviewer`
+  agent) and its real findings are fixed;
+- CI is green on the pushed SHA;
+- the branch has no conflict with `origin/main`: after `git fetch origin`,
+  `git merge-tree --write-tree origin/main HEAD` exits 0.
+
+A branch behind `main` with no conflict merges as it is, with no sync and no CI re-run. Accepted
+risk: two PRs that pass apart can break `main` together, and the next PR's CI shows it. On a
+conflict, merge `origin/main` into the branch, resolve it, run `mix test`, push, and wait for CI
+on the new head. Do the same for a PR whose diff touches `CHANGELOG.md` even without a conflict:
+a stale entry under `[Unreleased]` merges cleanly and turns `main` red.
+
+The production deploy that the merge triggers is accepted. Ask first only when the PR drops or
+rewrites stored data (a destructive migration, a backfill that overwrites rows).
 
 ## Agent skills
 
