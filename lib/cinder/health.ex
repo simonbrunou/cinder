@@ -276,8 +276,8 @@ defmodule Cinder.Health do
     do: present(Enum.find(Metadata.providers(), &(&1.provider() == provider)))
 
   defp resolve({:library, kind}) do
-    case Application.get_env(:cinder, :"#{LibraryKind.root_role(kind)}_library_path") do
-      blank when blank in [nil, ""] -> {:error, :not_configured}
+    case Cinder.Settings.configured_library_path(kind) do
+      nil -> {:error, :not_configured}
       path -> {:path, path}
     end
   end

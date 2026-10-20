@@ -90,7 +90,8 @@ config :cinder,
   ffsubsync_python: nil,
   timeout_bin: "timeout"
 
-# Default; setting PLEX_URL (see runtime.exs) switches this to Plex.
+# The bootstrap impl. A stored media_server_type picks the impl; with none stored, a set PLEX_URL
+# picks Plex (the Plex option's os_env in Cinder.Settings.Registry).
 config :cinder, media_server: Cinder.Library.MediaServer.Jellyfin
 
 # Only one impl (unlike media_server's Jellyfin/Plex choice) — Audiobookshelf is the household's

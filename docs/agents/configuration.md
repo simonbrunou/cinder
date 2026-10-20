@@ -20,7 +20,11 @@ its strings in `CinderWeb.SettingsLabels.known/0`. Edit `settings_components.ex`
 setting needs custom rendering (`render: :custom`; the `/settings` page test fails until its input
 is named after its key), and `Cinder.Settings.Shape` only for a new shape. An overlay writer that
 assembles one env value from several keys finds each definition with `Registry.one!/1`, by target
-and slot, never by key.
+and slot, never by key. Code that reads a kind's library root calls
+`Cinder.Settings.configured_library_path/2` and never builds the env key itself. Code that picks
+or links a media server reads the `media_server_type` options (outside `Cinder.Settings.Shape`,
+through `Cinder.Settings.Registry.media_servers/0`): each one has a `value`, a `server` atom, a
+`module` and an `os_env`.
 
 A registry-driven loader `Application.put_env`s stored values onto a one-time bootstrap snapshot
 at boot (a one-shot supervised child, after PubSub and before the poller) and on every save. So
@@ -31,8 +35,9 @@ site:
 
 - `config/runtime.exs` reads the boot-only keys.
 - `lib/cinder/application.ex` loads the bootstrap snapshot and checks `RELEASE_NAME`.
-- `lib/cinder/settings/overlay.ex` applies the env-as-bootstrap overlay, including the `PLEX_URL`
-  media-server fallback.
+- `lib/cinder/settings/overlay.ex` applies the env-as-bootstrap overlay. The `PLEX_URL`
+  media-server fallback is the Plex option's `os_env` in `Cinder.Settings.Registry`, and
+  `Cinder.Settings.Shape` reads it for the overlay and the form.
 - `lib/cinder_web/router.ex` reads the `CINDER_BASIC_AUTH_*` pair for the Basic gate.
 
 ## Secrets

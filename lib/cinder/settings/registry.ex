@@ -9,7 +9,7 @@ defmodule Cinder.Settings.Registry do
   extraction, so nothing else needs editing.
   """
 
-  import Cinder.Settings.Definition, only: [field: 3, new: 3, kind_key: 2]
+  import Cinder.Settings.Definition, only: [field: 3, new: 3, kind_key: 2, root_slot: 1]
 
   alias Cinder.Download.Client
   alias Cinder.Library.MediaServer.{Jellyfin, Plex}
@@ -207,11 +207,18 @@ defmodule Cinder.Settings.Registry do
   # what a household member's browser should open instead, so they are a separate,
   # operator-supplied value rather than something derivable from the server URL. One Plex section
   # per video kind, so a server with separate Movies/Shows libraries refreshes the right one.
+  #
+  # Each option's `server` is the atom `Cinder.Settings.media_server_web_link/0` names it by. With
+  # no type stored, the option whose `os_env` variable is set is the bootstrap choice; with none
+  # set, the form shows the first option and the overlay keeps the captured impl.
   @media_server [
                   new(
                     "media_server_type",
                     {:media_server,
-                     [%{value: "jellyfin", module: Jellyfin}, %{value: "plex", module: Plex}]},
+                     [
+                       %{value: "jellyfin", server: :jellyfin, module: Jellyfin, os_env: nil},
+                       %{value: "plex", server: :plex, module: Plex, os_env: "PLEX_URL"}
+                     ]},
                     group: :media_server,
                     label: "Media server type",
                     target: {:writer, :media_server},
@@ -257,8 +264,13 @@ defmodule Cinder.Settings.Registry do
                       )
                   )
 
-  # Every kind gets a standard root; only kinds with Anime handling get an Anime root. Both show
-  # the effective env root as their placeholder.
+  # One root per handling a kind supports: every kind has a Standard root, and only kinds with
+  # Anime handling get an Anime root. Both show the effective env root as their placeholder.
+  @root_handlings [
+    standard: {"%{kind} library folder", :base},
+    anime: {"Anime %{kind} library folder", :none}
+  ]
+
   @library [
              new("import_roots", :root_list,
                group: :library,
@@ -268,12 +280,9 @@ defmodule Cinder.Settings.Registry do
            ] ++
              (for kind <- LibraryKind.all(),
                   binding = [kind: LibraryKind.label(kind)],
-                  {slot, template, bootstrap} <-
-                    [{:library_path, "%{kind} library folder", :base}] ++
-                      if(LibraryKind.handling?(kind, :anime),
-                        do: [{:anime_library_path, "Anime %{kind} library folder", :none}],
-                        else: []
-                      ) do
+                  handling <- LibraryKind.handlings(kind),
+                  {template, bootstrap} = Keyword.fetch!(@root_handlings, handling) do
+                slot = root_slot(handling)
                 key = kind_key(kind, slot)
 
                 new(key, :path_root,
@@ -587,9 +596,8 @@ defmodule Cinder.Settings.Registry do
 
   @by_key Map.new(@definitions, &{&1.key, &1})
 
-  @media_server_options for %{shape: {:media_server, options}} <- @definitions,
-                            option <- options,
-                            do: option.value
+  [media_servers] = for %{shape: {:media_server, options}} <- @definitions, do: options
+  @media_servers media_servers
 
   @library_kinds Enum.map(
                    LibraryKind.all(),
@@ -664,6 +672,12 @@ defmodule Cinder.Settings.Registry do
   @doc "Every media kind with its display label and video capability, for the settings/setup UI."
   def library_kinds, do: @library_kinds
 
+  @doc """
+  The media server choices, in form order: each one's stored `value`, `server` atom, `module` and
+  the `os_env` variable that makes it the bootstrap choice (or nil).
+  """
+  def media_servers, do: @media_servers
+
   @doc "The media server types the form offers."
-  def media_server_options, do: @media_server_options
+  def media_server_options, do: Enum.map(@media_servers, & &1.value)
 end

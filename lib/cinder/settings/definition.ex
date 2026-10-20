@@ -104,6 +104,10 @@ defmodule Cinder.Settings.Definition do
 
   def kind_key(kind, slot), do: "#{kind}_#{slot}"
 
+  @doc "The slot of a kind's library root for `handling`: a kind has one root per handling."
+  def root_slot(:standard), do: :library_path
+  def root_slot(:anime), do: :anime_library_path
+
   @doc "Whether the store encrypts this key at rest."
   def secret?(%__MODULE__{shape: shape}), do: shape == :secret
 

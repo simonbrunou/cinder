@@ -5,7 +5,8 @@ defmodule Cinder.Settings.Shape do
   # bootstrap) becomes the env value. One clause per shape, so a new shape is one set of clauses
   # here and no engine edit.
   #
-  # Shapes: :text | :secret | :boolean | :legacy_toggle | {:media_server, [%{value, module}]}
+  # Shapes: :text | :secret | :boolean | :legacy_toggle
+  # | {:media_server, [%{value, server, module, os_env}]}
   # | {:download_client, choice} | {:choice, options} | :resolution | :positive_integer
   # | :lenient_integer | :positive_number | :size_band | :path_root | :root_list
   # | {:list, :downcase | :groups} | :timezone | :hours
@@ -55,7 +56,9 @@ defmodule Cinder.Settings.Shape do
   """
   def form_value(:boolean, value, _lookup), do: value == "true"
   def form_value(:legacy_toggle, value, _lookup), do: enabled?(value)
-  def form_value({:media_server, _options}, value, _lookup), do: value || default_media_server()
+
+  def form_value({:media_server, options}, value, _lookup),
+    do: value || unstored_media_server(options)
 
   def form_value({:download_client, choice}, value, lookup) do
     case option(choice.options, value) do
@@ -132,7 +135,9 @@ defmodule Cinder.Settings.Shape do
   # Validate against the whitelist so a crafted/buggy submit can't persist a junk impl string
   # (which the media-server writer would silently ignore, leaving the dropdown unselected).
   def plan(%{save: :always, shape: {:media_server, options}, key: key}, params, {puts, deletes}) do
-    choice = if option(options, params[key]), do: params[key], else: default_media_server()
+    choice =
+      if option(options, params[key]), do: params[key], else: unstored_media_server(options)
+
     {Map.put(puts, key, choice), deletes}
   end
 
@@ -181,6 +186,16 @@ defmodule Cinder.Settings.Shape do
     zone = value || fallback
     zone = if is_binary(zone), do: String.trim(zone), else: zone
     if valid_timezone?(zone), do: zone, else: "Etc/UTC"
+  end
+
+  # The stored option picks the impl. With none, the option its os_env selects does, else the
+  # captured bootstrap (config.exs's Jellyfin in prod, the Mox mock in tests). It sits above the
+  # nil clause because a missing row must still reach the os_env selection.
+  def to_env({:media_server, options}, value, fallback, _row?) do
+    case option(options, value) || os_env_option(options) do
+      %{module: module} -> module
+      nil -> fallback
+    end
   end
 
   def to_env(_shape, nil, fallback, _row?), do: fallback
@@ -294,8 +309,12 @@ defmodule Cinder.Settings.Shape do
   def enabled?(nil), do: true
   def enabled?(value), do: value in ["true", "1", "on"]
 
-  @doc false
-  def default_media_server, do: if(System.get_env("PLEX_URL"), do: "plex", else: "jellyfin")
+  # The type the form shows while none is stored, and saves when the submitted one is unlisted.
+  defp unstored_media_server(options), do: (os_env_option(options) || hd(options)).value
+
+  # The option whose os_env variable is set (PLEX_URL for Plex): the bootstrap media server choice.
+  defp os_env_option(options),
+    do: Enum.find(options, &(&1.os_env && System.get_env(&1.os_env)))
 
   @doc false
   def truthy?(value), do: value in [true, "true", "1", "on"]

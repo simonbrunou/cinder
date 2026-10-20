@@ -7,9 +7,9 @@ defmodule Cinder.Settings.Overlay do
   # are between writers, not between definitions. `env_keys/0` folds the same phases, so the set
   # of keys a load writes is never re-listed by hand.
 
-  alias Cinder.Library.MediaServer.Plex
   alias Cinder.LibraryKind
-  alias Cinder.Settings.{Crypto, Registry, Shape}
+  alias Cinder.Settings.{Crypto, Definition, Registry, Shape}
+  alias Cinder.Util
 
   @phases [
     # Writes the only fail-OPEN env key (:explicit_import_roots authorizes rm_rf), so it runs
@@ -29,8 +29,8 @@ defmodule Cinder.Settings.Overlay do
     # Every flat key not named in this list: the download clients' path mappings, and where a new
     # flat setting lands.
     :flat,
-    # Its inferred fallback reads the :"#{root_role}_library_path" env keys :kinds just wrote, so
-    # it must run after :kinds.
+    # Its inferred fallback reads the video kinds' Standard roots :kinds just wrote, so it must
+    # run after :kinds.
     :import_roots,
     {:env, :move_on_import},
     :upgrade_hunt,
@@ -49,6 +49,18 @@ defmodule Cinder.Settings.Overlay do
   @media_server Registry.one!(target: {:writer, :media_server})
   @import_roots Registry.one!(target: {:writer, :import_roots})
   @upgrade_hunt Registry.one!(target: {:writer, :upgrade_hunt}, slot: :enabled)
+
+  # Each kind's library root env key per handling, from the root definitions' targets: a kind
+  # whose handling has no root definition fails the build.
+  @library_roots Map.new(LibraryKind.all(), fn kind ->
+                   {kind,
+                    Map.new(LibraryKind.handlings(kind), fn handling ->
+                      %{target: {:env, env_key}} =
+                        Registry.one!(kind: kind, slot: Definition.root_slot(handling))
+
+                      {handling, env_key}
+                    end)}
+                 end)
 
   for %{key: key, target: {:writer, writer}} <- Registry.definitions(), writer not in @phases do
     raise CompileError, description: "#{key} targets unknown overlay writer #{inspect(writer)}"
@@ -161,23 +173,17 @@ defmodule Cinder.Settings.Overlay do
     Application.put_env(:cinder, :anime_preferences, config)
   end
 
-  # The setting picks the impl; with no setting fall back to the PLEX_URL bootstrap, then to the
-  # captured base (config.exs default in prod, the Mox mock in tests). `fallback` is computed
-  # every load (so base/1 is captured before any overlay, like the other phases); otherwise an
-  # explicit-then-cleared setting would revert to the last impl instead of the bootstrap default.
+  # The setting picks the impl, else the option's os_env bootstrap (PLEX_URL), else the captured
+  # base (`Shape.to_env/4`). base/1 is read every load, before any overlay like the other phases,
+  # so an explicit-then-cleared setting reverts to the bootstrap impl, not the last one.
   defp write(:media_server, rows) do
-    fallback =
-      if System.get_env("PLEX_URL"),
-        do: Plex,
-        else: base(:media_server)
-
-    {:media_server, options} = @media_server.shape
-
     impl =
-      case Shape.option(options, decoded(rows, @media_server.key)) do
-        %{module: module} -> module
-        nil -> fallback
-      end
+      Shape.to_env(
+        @media_server.shape,
+        decoded(rows, @media_server.key),
+        base(:media_server),
+        Map.has_key?(rows, @media_server.key)
+      )
 
     Application.put_env(:cinder, :media_server, impl)
   end
@@ -306,8 +312,8 @@ defmodule Cinder.Settings.Overlay do
   def inferred_import_roots do
     roots =
       Cinder.Library.kinds()
-      |> Enum.map(&Application.get_env(:cinder, :"#{LibraryKind.root_role(&1)}_library_path"))
-      |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
+      |> Enum.map(&configured_library_path(&1, :standard))
+      |> Enum.filter(&is_binary/1)
       |> Enum.map(&Path.expand/1)
 
     infer_common_root(roots, length(Cinder.Library.kinds()))
@@ -332,6 +338,16 @@ defmodule Cinder.Settings.Overlay do
     |> Enum.zip(Path.split(path))
     |> Enum.take_while(fn {left, right} -> left == right end)
     |> Enum.map(&elem(&1, 0))
+  end
+
+  # Behind `Cinder.Settings.configured_library_path/2`, which documents it. Here so the import-root
+  # inference above reads the same roots without calling back into `Cinder.Settings`.
+  @doc false
+  def configured_library_path(kind, handling) do
+    case @library_roots |> Map.fetch!(kind) |> Map.fetch(handling) do
+      {:ok, env_key} -> :cinder |> Application.get_env(env_key) |> Util.blank_to_nil()
+      :error -> nil
+    end
   end
 
   @doc """

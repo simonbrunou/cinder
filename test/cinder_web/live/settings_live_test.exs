@@ -646,6 +646,32 @@ defmodule CinderWeb.SettingsLiveTest do
     refute html =~ "must-never-echo"
   end
 
+  # The standalone toggles save outside the main form, each through its own `Settings.put/2` call
+  # that spells its key by hand. Every `save: :direct` definition with an input must write its own
+  # key when its toggle flips on and off, so a renamed key whose put/2 call stayed behind fails.
+  test "every standalone toggle writes its own definition's key", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    toggles =
+      for %{save: :direct, render: render, key: key} <- Settings.definitions(),
+          render != :none,
+          do: key
+
+    assert toggles != []
+
+    for key <- toggles do
+      form = element(lv, "form:has(input[name=#{key}])")
+      [event] = form |> render() |> LazyHTML.from_fragment() |> LazyHTML.attribute("phx-change")
+
+      render_change(form, %{key => "on"})
+      assert Settings.get(key) == "true", "#{key}: toggling on did not write it"
+
+      # Unticked, the browser sends the frame without the checkbox at all.
+      render_change(lv, event, %{})
+      assert Settings.get(key) == "false", "#{key}: toggling off did not write it"
+    end
+  end
+
   test "toggling auto-approve persists", %{conn: conn} do
     {:ok, lv, _} = live(conn, ~p"/settings")
 

@@ -9,6 +9,7 @@ defmodule Cinder.SettingsTest do
   alias Cinder.Catalog
   alias Cinder.Catalog.UpgradeHunter
   alias Cinder.Health
+  alias Cinder.LibraryKind
   alias Cinder.Settings
   alias Cinder.Settings.Setting
 
@@ -17,6 +18,8 @@ defmodule Cinder.SettingsTest do
   # Every :cinder key load_into_env/0 writes, plus the books Anime root one test plants on purpose;
   # snapshot and restore so a test can't leak an overlay into the rest of the suite.
   @env_keys Settings.env_keys() ++ [:books_anime_library_path]
+
+  @media_servers Settings.Registry.media_servers()
 
   setup do
     saved = Map.new(@env_keys, fn k -> {k, Application.get_env(:cinder, k)} end)
@@ -876,6 +879,33 @@ defmodule Cinder.SettingsTest do
       assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServer.Jellyfin
     end
 
+    # The Plex credentials' env var is also the bootstrap media-server choice: with no stored type
+    # it picks the impl and the form's selection, and a stored type still wins over it.
+    test "PLEX_URL selects Plex while no media server type is stored" do
+      prior = System.get_env("PLEX_URL")
+      System.put_env("PLEX_URL", "http://plex.test:32400")
+
+      on_exit(fn ->
+        if prior, do: System.put_env("PLEX_URL", prior), else: System.delete_env("PLEX_URL")
+      end)
+
+      assert Settings.load_into_env() == :ok
+      assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServer.Plex
+      assert Settings.form_state().values["media_server_type"] == "plex"
+
+      assert :ok = Settings.save_form(%{"media_server_type" => "emby"})
+      assert Settings.get("media_server_type") == "plex"
+
+      Settings.put("media_server_type", "jellyfin")
+      assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServer.Jellyfin
+      assert Settings.form_state().values["media_server_type"] == "jellyfin"
+
+      System.delete_env("PLEX_URL")
+      Settings.delete("media_server_type")
+      assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServerMock
+      assert Settings.form_state().values["media_server_type"] == "jellyfin"
+    end
+
     test "the form saves and keeps a listed media server type, never an unlisted one" do
       assert :ok = Settings.save_form(%{"media_server_type" => "plex"})
       assert Settings.get("media_server_type") == "plex"
@@ -1027,6 +1057,50 @@ defmodule Cinder.SettingsTest do
 
       assert Settings.library_root(:movies, %{media_profile: :anime}) ==
                {:ok, Application.fetch_env!(:cinder, :movies_library_path)}
+    end
+
+    # The one reader of a configured library root: each kind reads the env key of its own root for
+    # every handling it supports, a blank root reads as unset, and a handling the kind lacks has no
+    # root even with a matching-looking env key planted.
+    test "configured_library_path/2 reads each kind's root for every handling it supports" do
+      roots = %{
+        {:movies, :standard} => :movies_library_path,
+        {:movies, :anime} => :movies_anime_library_path,
+        {:tv, :standard} => :tv_library_path,
+        {:tv, :anime} => :tv_anime_library_path,
+        {:ebook, :standard} => :books_library_path,
+        {:audiobook, :standard} => :audiobooks_library_path
+      }
+
+      assert Enum.sort(Map.keys(roots)) ==
+               Enum.sort(
+                 for kind <- LibraryKind.all(), h <- LibraryKind.handlings(kind), do: {kind, h}
+               )
+
+      Application.put_env(:cinder, :books_anime_library_path, "/srv/media/anime-books")
+
+      for kind <- LibraryKind.all(), handling <- [:standard, :anime] do
+        case Map.fetch(roots, {kind, handling}) do
+          {:ok, key} ->
+            Application.put_env(:cinder, key, "/srv/media/#{kind}-#{handling}")
+
+            assert Settings.configured_library_path(kind, handling) ==
+                     "/srv/media/#{kind}-#{handling}"
+
+            Application.put_env(:cinder, key, "  ")
+            assert Settings.configured_library_path(kind, handling) == nil
+
+            Application.delete_env(:cinder, key)
+            assert Settings.configured_library_path(kind, handling) == nil
+
+          :error ->
+            assert Settings.configured_library_path(kind, handling) == nil
+        end
+      end
+
+      Application.put_env(:cinder, :tv_library_path, "/srv/media/tv")
+      assert Settings.configured_library_path(:tv) == "/srv/media/tv"
+      assert_raise KeyError, fn -> Settings.configured_library_path(:comics, :standard) end
     end
 
     test "named profiles route explicit roots, blank roots fall back, and wrong kinds never route" do
@@ -1617,21 +1691,38 @@ defmodule Cinder.SettingsTest do
     end
 
     defp set_web_url(server, url) do
-      module =
-        case server do
-          :plex -> Cinder.Library.MediaServer.Plex
-          :jellyfin -> Cinder.Library.MediaServer.Jellyfin
-        end
-
+      %{module: module} = Enum.find(@media_servers, &(&1.server == server))
       config = Application.get_env(:cinder, module, [])
       Application.put_env(:cinder, module, Keyword.put(config, :web_url, url))
     end
 
     setup do
-      # A leftover value on either module would mask the case under test.
-      set_web_url(:plex, nil)
-      set_web_url(:jellyfin, nil)
+      # A leftover value on any server's module would mask the case under test.
+      Enum.each(@media_servers, &set_web_url(&1.server, nil))
       :ok
+    end
+
+    # Every option the type offers links by its own server atom and its module's web URL, so a
+    # third server is one option, not another clause here.
+    test "names each listed server and links at its module's web URL" do
+      for %{value: value, server: server} <- @media_servers do
+        Repo.delete_all(Setting)
+        Enum.each(@media_servers, &set_web_url(&1.server, "https://other.test"))
+        set_web_url(server, "https://#{value}.test")
+        set_media_server_type(value)
+
+        assert Settings.media_server_web_link() == {server, "https://#{value}.test"}
+
+        assert Settings.media_server_web_link("not-an-item-id") ==
+                 {server, "https://#{value}.test"}
+      end
+    end
+
+    test "an unlisted stored type falls back to a uniquely configured URL" do
+      set_media_server_type("emby")
+      set_web_url(:plex, "https://plex.test")
+
+      assert Settings.media_server_web_link() == {:plex, "https://plex.test"}
     end
 
     test "is nil when neither media server has one configured" do

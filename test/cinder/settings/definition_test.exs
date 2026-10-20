@@ -135,12 +135,24 @@ defmodule Cinder.Settings.DefinitionTest do
     assert {:media_server, options} =
              Settings.Registry.one!(target: {:writer, :media_server}).shape
 
-    assert Map.new(options, &{&1.value, &1.module}) == %{
-             "jellyfin" => Cinder.Library.MediaServer.Jellyfin,
-             "plex" => Cinder.Library.MediaServer.Plex
+    assert Settings.Registry.media_servers() == options
+
+    assert Map.new(options, &{&1.value, {&1.server, &1.module, &1.os_env}}) == %{
+             "jellyfin" => {:jellyfin, Cinder.Library.MediaServer.Jellyfin, nil},
+             "plex" => {:plex, Cinder.Library.MediaServer.Plex, "PLEX_URL"}
            }
 
+    # The first option is the form's choice when no type is stored and no os_env is set.
     assert Settings.media_server_options() == ["jellyfin", "plex"]
+
+    # media_server_web_link/1 calls the option's deep_link/1, and reads its web URL field.
+    for %{module: module} <- options do
+      behaviours =
+        module.__info__(:attributes) |> Keyword.get_values(:behaviour) |> List.flatten()
+
+      assert Cinder.Library.MediaServer in behaviours
+      assert Settings.Registry.one!(target: {:module, module, :web_url})
+    end
   end
 
   test "every label and message a definition emits is registered for translation" do

@@ -227,6 +227,35 @@ defmodule Cinder.HealthTest do
       assert Health.check("ebook_library") == {:error, :not_configured}
     end
 
+    # Each kind's probe writes into the root its own definition targets (ebooks: books_library_path),
+    # and a blank root reads as unset there too, as the importer reads it.
+    test "each kind's library probe checks that kind's configured root" do
+      parent = self()
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn path ->
+        send(parent, {:mkdir_p, path})
+        :ok
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
+
+      for {id, key} <- [
+            {"movies_library", :movies_library_path},
+            {"tv_library", :tv_library_path},
+            {"ebook_library", :books_library_path},
+            {"audiobook_library", :audiobooks_library_path}
+          ] do
+        with_env(key, "/srv/probe/#{key}")
+        assert Health.check(id) == :ok
+        assert_received {:mkdir_p, path}
+        assert path == "/srv/probe/#{key}"
+
+        with_env(key, "  ")
+        assert Health.check(id) == {:error, :not_configured}
+      end
+    end
+
     test "an existing, unwritable library directory is unhealthy" do
       # mkdir_p on an existing directory always returns :ok even when the app cannot create
       # files or subdirectories in it (a read-only mount, a Docker UID/GID mismatch) — the

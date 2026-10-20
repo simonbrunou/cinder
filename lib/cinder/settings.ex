@@ -16,11 +16,15 @@ defmodule Cinder.Settings do
 
   alias Cinder.Acquisition.{AnimePreferences, Parser, Scorer}
   alias Cinder.Catalog.Profile
-  alias Cinder.Library.MediaServer.{Jellyfin, Plex}
   alias Cinder.LibraryKind
   alias Cinder.Repo
   alias Cinder.Settings.{Crypto, Definition, Overlay, Registry, Setting, Shape}
   alias Cinder.Util
+
+  # Found at compile time, like the overlay's writers: the media server web link reads the stored
+  # type through this definition, and names and links each server through its options.
+  @media_server Registry.one!(target: {:writer, :media_server})
+  @media_servers Registry.media_servers()
 
   # --- boot loader: one-shot supervised child, runs synchronously before the poller ---
 
@@ -138,11 +142,11 @@ defmodule Cinder.Settings do
   The browser-reachable media-server URL a household member should open, or `nil` when the
   operator has not set one.
 
-  Resolved from the stored `media_server_type` — the same value that picks the impl in
-  `apply_media_server/1` — so a Plex instance never links at a leftover Jellyfin URL. When the
-  type has never been saved, this falls back to a *uniquely* configured web URL and otherwise
-  returns `nil`: with both set and no type, either answer is a guess, and sending someone to
-  the wrong server is worse than showing no link.
+  Resolved from the stored `media_server_type`, the same value that picks the impl in the env
+  overlay, so a Plex instance never links at a leftover Jellyfin URL. The server atom and its
+  module come from that definition's options. When no listed type is stored, this falls back to
+  a *uniquely* configured web URL and otherwise returns `nil`: with both set and no type, either
+  answer is a guess, and sending someone to the wrong server is worse than showing no link.
 
   When the background media-server inventory has reconciled a title, pass its opaque item id to
   `media_server_web_link/1` for a title deep link. A missing or stale id retains this front-door
@@ -150,10 +154,9 @@ defmodule Cinder.Settings do
   """
   @spec media_server_web_link() :: {:plex | :jellyfin, String.t()} | nil
   def media_server_web_link do
-    case get(Registry.one!(target: {:writer, :media_server}).key) do
-      "plex" -> web_link_for(:plex)
-      "jellyfin" -> web_link_for(:jellyfin)
-      _ -> sole_configured_web_link()
+    case Shape.option(@media_servers, get(@media_server.key)) do
+      %{} = option -> web_link_for(option)
+      nil -> sole_configured_web_link()
     end
   end
 
@@ -164,21 +167,16 @@ defmodule Cinder.Settings do
   @doc false
   def media_server_web_link(link, item_id) do
     case link do
-      {server, fallback} -> {server, item_web_link(server, item_id) || fallback}
-      nil -> nil
+      {server, fallback} ->
+        %{module: module} = Enum.find(@media_servers, &(&1.server == server))
+        {server, module.deep_link(item_id) || fallback}
+
+      nil ->
+        nil
     end
   end
 
-  defp item_web_link(:plex, item_id), do: Plex.deep_link(item_id)
-  defp item_web_link(:jellyfin, item_id), do: Jellyfin.deep_link(item_id)
-
-  defp web_link_for(server) do
-    module =
-      case server do
-        :plex -> Cinder.Library.MediaServer.Plex
-        :jellyfin -> Cinder.Library.MediaServer.Jellyfin
-      end
-
+  defp web_link_for(%{server: server, module: module}) do
     url =
       :cinder
       |> Application.get_env(module, [])
@@ -190,7 +188,7 @@ defmodule Cinder.Settings do
   end
 
   defp sole_configured_web_link do
-    case Enum.flat_map([:plex, :jellyfin], &List.wrap(web_link_for(&1))) do
+    case Enum.flat_map(@media_servers, &List.wrap(web_link_for(&1))) do
       [only] -> only
       _ -> nil
     end
@@ -303,17 +301,13 @@ defmodule Cinder.Settings do
     |> Enum.uniq()
   end
 
-  defp configured_library_path(kind, :anime),
-    do:
-      :cinder
-      |> Application.get_env(:"#{LibraryKind.root_role(kind)}_anime_library_path")
-      |> Util.blank_to_nil()
-
-  defp configured_library_path(kind, :standard),
-    do:
-      :cinder
-      |> Application.get_env(:"#{LibraryKind.root_role(kind)}_library_path")
-      |> Util.blank_to_nil()
+  @doc """
+  The library root configured for `kind` and `handling` (`:standard` or `:anime`), read from the
+  env key its root definition targets: `nil` when the root is blank or `kind` has no root for
+  `handling` (books have no Anime root). Raises `KeyError` for an unknown kind.
+  """
+  @spec configured_library_path(atom(), :standard | :anime) :: String.t() | nil
+  defdelegate configured_library_path(kind, handling \\ :standard), to: Overlay
 
   defp fallback_library_path(kind, profile),
     do: configured_library_path(kind, profile) || configured_library_path(kind, :standard)
@@ -337,9 +331,7 @@ defmodule Cinder.Settings do
   def legacy_library_destinations do
     Enum.flat_map(LibraryKind.all(), fn kind ->
       standard = configured_library_path(kind, :standard)
-
-      anime =
-        if LibraryKind.handling?(kind, :anime), do: configured_library_path(kind, :anime)
+      anime = configured_library_path(kind, :anime)
 
       [%{kind: kind, profile: :standard, profile_id: nil, path: standard}] ++
         if(anime in [nil, standard],
