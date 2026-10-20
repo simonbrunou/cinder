@@ -134,6 +134,27 @@ defmodule Cinder.Test.BarrierFilesystem do
   end
 
   @impl true
+  def rename_exclusive(source, dest) do
+    pause(:rename_exclusive, source, :before)
+
+    case injected_failure(:rename_exclusive, source, dest) do
+      :ok ->
+        result = Disk.rename_exclusive(source, dest)
+        pause(:rename_exclusive, source)
+        result
+
+      {:post_effect_error, reason} ->
+        case Disk.rename_exclusive(source, dest) do
+          :ok -> {:error, {:effect_committed, "rename_exclusive", reason}}
+          {:error, _reason} = error -> error
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  @impl true
   def rm(path) do
     pause(:rm, path, :before)
 
@@ -210,10 +231,9 @@ defmodule Cinder.Test.BarrierFilesystem do
   def open_bound(path, modes) do
     pause(:open_bound, path, :before)
 
-    case Disk.open_bound(path, modes) do
-      {:ok, bound} -> {:ok, Map.put(bound, :source_path, path)}
-      {:error, _reason} = error -> error
-    end
+    with :ok <- injected_failure(:open_bound, path, path),
+         {:ok, bound} <- Disk.open_bound(path, modes),
+         do: {:ok, Map.put(bound, :source_path, path)}
   end
 
   @impl true

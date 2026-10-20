@@ -35,7 +35,7 @@ defmodule Cinder.Subtitles.SidecarTransaction do
   alias Cinder.Subtitles.SidecarTransaction.{AtomicFile, Backup, Recovery}
 
   import SafeFile,
-    only: [fs: 0, safe_destination: 1, safe_read: 1, safe_remove: 1, sha256: 1]
+    only: [fs: 0, safe_destination: 1, safe_read: 1, sha256: 1]
 
   @type sidecar :: %{
           required(:video_path) => String.t(),
@@ -249,10 +249,15 @@ defmodule Cinder.Subtitles.SidecarTransaction do
   Replaces a sidecar with newly fetched bytes and a new manifest track (`origin`, the bytes'
   hash). The previous final record is journaled in the same manifest write, then its immutable
   original is retired and the journal closed; a retirement that fails stays journaled for
-  `reconcile/2`. The target may not exist yet, so the bytes are published with a
-  create-or-replace rename rather than an exchange, and without a pending record: a crash
-  between the rename and the manifest write leaves bytes `recover/2` holds for review (#758
-  moves this onto `AtomicFile`). If the manifest write fails the previous bytes are put back.
+  `reconcile/2`.
+
+  The bytes are published through `AtomicFile.swap/3` from the sidecar the snapshot saw: an
+  exchange if it existed, a create that never replaces anything if it did not. A sidecar that
+  changed, appeared or vanished since the snapshot is left alone (`{:error, {:write, {:error,
+  :concurrent_change}}}`). There is no pending record: a crash between the publication and the
+  manifest write leaves bytes `recover/2` holds for review. If the manifest write fails, the
+  sidecar is swapped back to what the snapshot saw, but only while it still holds the fetched
+  bytes.
 
   `{:error, {:write, error}}` and `{:error, {:manifest, error}}` carry the failing call's own
   return value.
@@ -265,13 +270,14 @@ defmodule Cinder.Subtitles.SidecarTransaction do
         origin,
         moviehash
       ) do
+    content = IO.iodata_to_binary(content)
     state = Manifest.read(video_path)
 
     previous_sync =
       Manifest.replacement_cleanup_sync(state, language) || Manifest.sync(state, language)
 
     with {:ok, previous} <- snapshot(target),
-         :ok <- write_sidecar(target, content) do
+         :ok <- publish_fetched(target, previous, content) do
       case Manifest.put(
              video_path,
              moviehash,
@@ -285,7 +291,7 @@ defmodule Cinder.Subtitles.SidecarTransaction do
           retire_replaced(video_path, language, target, previous_sync)
 
         error ->
-          rollback_sidecar(target, previous)
+          rollback_fetched(target, content, previous)
           {:error, {:manifest, error}}
       end
     else
@@ -309,68 +315,35 @@ defmodule Cinder.Subtitles.SidecarTransaction do
     end
   end
 
+  # The sidecar's bytes, or `:absent`: what `AtomicFile.swap/3` publishes from.
   defp snapshot(target) do
     with {:ok, target} <- safe_destination(target) do
       case fs().read(target) do
-        {:ok, content} -> {:ok, {:existing, content}}
-        {:error, :enoent} -> {:ok, :missing}
-        error -> {:error, error}
+        {:ok, content} -> {:ok, content}
+        {:error, :enoent} -> {:ok, :absent}
+        {:error, _reason} = error -> error
       end
     end
   end
 
-  defp rollback_sidecar(target, :missing) do
-    case safe_remove(target) do
-      :ok -> :ok
-      error -> Logger.warning("subtitle rollback rejected: #{inspect(error)}")
-    end
-  end
-
-  defp rollback_sidecar(target, {:existing, content}) do
-    case write_sidecar(target, content) do
-      :ok -> :ok
-      error -> Logger.warning("subtitle rollback failed for #{target}: #{inspect(error)}")
-    end
-  end
-
-  defp write_sidecar(target, content) do
-    temporary =
-      Path.join(
-        Path.dirname(target),
-        ".cinder-subtitle-#{System.unique_integer([:positive])}"
-      )
-
-    result =
-      with {:ok, target} <- safe_destination(target),
-           {:ok, temporary} <- safe_destination(temporary),
-           :ok <- fs().write(temporary, content),
-           :ok <- fs().chmod(temporary, 0o644) do
-        rename_sidecar(temporary, target, IO.iodata_to_binary(content))
-      end
-
-    if result != :ok, do: safe_remove(temporary)
-    result
-  end
-
-  defp rename_sidecar(temporary, target, expected) do
-    result =
-      with {:ok, temporary} <- safe_destination(temporary),
-           {:ok, target} <- safe_destination(target) do
-        fs().rename(temporary, target)
-      end
-
-    case result do
-      :ok ->
+  # The bytes are verified at the target even when a step after the publication went
+  # unacknowledged, and no pending record waits for `recover/2`, so the track is recorded.
+  defp publish_fetched(target, previous, content) do
+    case AtomicFile.swap(target, previous, content) do
+      {:error, {:publication_committed, detail}} ->
+        Logger.warning("subtitle publication unacknowledged for #{target}: #{inspect(detail)}")
         :ok
 
-      {:error, {:effect_committed, "rename", _reason}} = error ->
-        verified = fs().read(target) == {:ok, expected}
-        _ = safe_remove(temporary)
-        if verified, do: :ok, else: error
+      result ->
+        result
+    end
+  end
 
-      error ->
-        _ = safe_remove(temporary)
-        error
+  defp rollback_fetched(target, content, previous) do
+    case AtomicFile.swap(target, content, previous) do
+      :ok -> :ok
+      {:error, {:publication_committed, _detail}} -> :ok
+      error -> Logger.warning("subtitle rollback failed for #{target}: #{inspect(error)}")
     end
   end
 end

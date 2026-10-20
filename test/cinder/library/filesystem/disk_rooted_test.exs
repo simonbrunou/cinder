@@ -422,6 +422,182 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     assert File.exists?(owned)
   end
 
+  # Issue #758: the fetch side publishes a sidecar that may not exist yet without replacing one
+  # that appeared meanwhile.
+  describe "rename_exclusive/2" do
+    @describetag :tmp_dir
+
+    test "moves a file onto a name nothing holds", %{root: root} do
+      {source, dest} = exclusive_rename_paths!(root)
+
+      assert :ok = Disk.rename_exclusive(source, dest)
+      refute File.exists?(source)
+      assert File.read!(dest) == "fetched"
+    end
+
+    test "never replaces a destination that exists", %{root: root} do
+      {source, dest} = exclusive_rename_paths!(root)
+      File.write!(dest, "external")
+
+      assert {:error, :eexist} = Disk.rename_exclusive(source, dest)
+      assert File.read!(source) == "fetched"
+      assert File.read!(dest) == "external"
+    end
+
+    test "never replaces a destination outside the roots either", %{tmp: tmp} do
+      {source, dest} = exclusive_rename_paths!(Path.join(tmp, "outside"))
+
+      assert :ok = Disk.rename_exclusive(source, dest)
+      assert File.read!(dest) == "fetched"
+
+      File.write!(source, "second")
+      assert {:error, :eexist} = Disk.rename_exclusive(source, dest)
+      assert File.read!(source) == "second"
+      assert File.read!(dest) == "fetched"
+    end
+
+    test "rejects a destination ancestor replaced by an outside symlink", %{root: root, tmp: tmp} do
+      {source, dest} = exclusive_rename_paths!(root)
+      outside = Path.join(tmp, "outside")
+      File.mkdir_p!(outside)
+      barrier!(:rename_exclusive, source)
+
+      task = Task.async(fn -> BarrierFilesystem.rename_exclusive(source, dest) end)
+      assert_receive {:filesystem_barrier, pid, ref, :rename_exclusive, ^source}
+      swap_parent!(dest, Path.join(root, "Movie.original"), outside)
+      send(pid, {ref, :continue})
+
+      assert {:error, reason} = Task.await(task)
+      assert reason in [:eloop, :enotdir]
+      assert File.ls!(outside) == []
+      assert File.read!(Path.join(root, "Movie.original/.workspace/staged")) == "fetched"
+    end
+
+    test "on mergerfs renames on the backing branch once the name is unique", %{
+      root: root,
+      tmp: tmp
+    } do
+      {source, dest} = exclusive_rename_paths!(root)
+      mergerfs_rename_shim!(root, tmp, dest)
+
+      assert :ok = Disk.rename_exclusive(source, dest)
+      refute File.exists?(source)
+      assert File.read!(dest) == "fetched"
+    end
+
+    test "on mergerfs a destination another branch also holds is committed, not acknowledged",
+         %{root: root, tmp: tmp} do
+      {source, dest} = exclusive_rename_paths!(root)
+      %{duplicate: duplicate} = mergerfs_rename_shim!(root, tmp, dest)
+      File.mkdir_p!(Path.dirname(duplicate))
+      File.write!(duplicate, "other branch")
+
+      assert {:error, {:effect_committed, "rename_exclusive", %{"reason" => "EEXIST"}}} =
+               Disk.rename_exclusive(source, dest)
+
+      assert File.read!(dest) == "fetched"
+      assert File.read!(duplicate) == "other branch"
+    end
+
+    test "on mergerfs a fetch creates an absent sidecar through a workspace beside it", %{
+      root: root,
+      tmp: tmp
+    } do
+      dest = Path.join(root, "Movie/subtitle.srt")
+      File.mkdir_p!(Path.dirname(dest))
+      mergerfs_rename_shim!(root, tmp, dest)
+      Application.put_env(:cinder, :filesystem, Disk)
+      Application.put_env(:cinder, :path_policy, PathPolicy)
+
+      assert :ok = AtomicFile.swap(dest, :absent, "fetched")
+      assert File.read!(dest) == "fetched"
+      assert File.ls!(Path.dirname(dest)) == ["subtitle.srt"]
+    end
+
+    test "on mergerfs a source on another backing branch is refused", %{root: root, tmp: tmp} do
+      {source, dest} = exclusive_rename_paths!(root)
+      mergerfs_rename_shim!(root, tmp, dest, foreign: ".workspace")
+
+      assert {:error, :exdev} = Disk.rename_exclusive(source, dest)
+      assert File.read!(source) == "fetched"
+      refute File.exists?(dest)
+    end
+  end
+
+  defp exclusive_rename_paths!(root) do
+    source = Path.join(root, "Movie/.workspace/staged")
+    File.mkdir_p!(Path.dirname(source))
+    File.write!(source, "fetched")
+    {source, Path.join(root, "Movie/subtitle.srt")}
+  end
+
+  # A real mergerfs mount is not available in the test environment, so the shim maps every
+  # logical path onto itself on a branch that IS the library root, and answers
+  # user.mergerfs.allpaths for `dest` with whichever of its two branch containers exist. A
+  # path containing `foreign` instead maps onto a second branch. The renames and proofs are
+  # the real helper's.
+  defp mergerfs_rename_shim!(root, tmp, dest, opts \\ []) do
+    branch_b = Path.join(tmp, "branch-b")
+    duplicate = Path.join(branch_b, Path.relative_to(dest, root))
+    helper = Path.join(tmp, "mergerfs_rename_shim.py")
+    real_helper = Path.expand("../../../../priv/rooted_fs.py", __DIR__)
+
+    File.write!(helper, """
+    import os
+    import posixpath
+    import sys
+
+    ROOT = #{inspect(root)}
+    BRANCH_B = #{inspect(branch_b)}
+    DEST = #{inspect(dest)}
+    CONTAINERS = [DEST, #{inspect(duplicate)}]
+    FOREIGN = #{if opts[:foreign], do: inspect(opts[:foreign]), else: "None"}
+    REAL_HELPER = #{inspect(real_helper)}
+
+    real_getxattr = os.getxattr
+
+    def real_path(path):
+        return os.readlink(f"/proc/self/fd/{path}") if isinstance(path, int) else path
+
+    def getxattr(path, name, **kwargs):
+        real = real_path(path)
+        foreign = FOREIGN is not None and FOREIGN in real
+        if name == "user.mergerfs.allpaths":
+            if real == DEST:
+                return b"\\0".join(os.fsencode(c) for c in CONTAINERS if os.path.lexists(c))
+            return os.fsencode(real)
+        if name == "user.mergerfs.fullpath":
+            if foreign:
+                return os.fsencode(posixpath.join(BRANCH_B, posixpath.relpath(real, ROOT)))
+            return os.fsencode(real)
+        if name == "user.mergerfs.basepath":
+            return os.fsencode(BRANCH_B if foreign else ROOT)
+        return real_getxattr(path, name, **kwargs)
+
+    os.getxattr = getxattr
+
+    namespace = {"__name__": "rooted_fs_shim", "__file__": REAL_HELPER}
+    with open(REAL_HELPER, encoding="utf-8") as source:
+        exec(compile(source.read(), REAL_HELPER, "exec"), namespace)
+
+    namespace["mergerfs_mountpoint"] = lambda path: ROOT
+    namespace["mergerfs_mount"] = lambda path: True
+
+    sys.argv = [REAL_HELPER] + sys.argv[1:]
+    operation = sys.argv[1] if len(sys.argv) > 1 else "unknown"
+
+    try:
+        namespace["main"]()
+    except OSError as exc:
+        committed = isinstance(exc, namespace["EffectCommittedError"])
+        namespace["fail"](operation, "post_effect" if committed else "pre_effect", exc)
+        sys.exit(1)
+    """)
+
+    Application.put_env(:cinder, :rooted_filesystem_helper, helper)
+    %{duplicate: duplicate}
+  end
+
   # A real mergerfs mount is not available in the test environment, so the shim
   # forces mergerfs_mount() to true and answers user.mergerfs.allpaths for the
   # logical backup path with the two branch containers. Everything else -- the

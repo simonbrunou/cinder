@@ -805,6 +805,98 @@ def rename(args):
         os.close(dst_parent)
 
 
+def rename_exclusive(args):
+    """Move a file onto a name nothing holds yet: renameat2(RENAME_NOREPLACE).
+
+    The kernel refuses an existing destination, so nothing is ever replaced.
+    """
+    if mergerfs_mount(args[2]):
+        rename_exclusive_mergerfs(*args)
+        emit({"ok": "rename_exclusive"})
+        return
+
+    src_parent, src_name = open_parent(args[0], args[1])
+    dst_parent, dst_name = open_parent(args[2], args[3])
+    try:
+        rename_with_flags(src_parent, src_name, dst_parent, dst_name, RENAME_NOREPLACE)
+        try:
+            sync_parents(src_parent, dst_parent)
+        except OSError as exc:
+            fail("rename_exclusive", "post_effect", exc)
+            return
+        emit({"ok": "rename_exclusive"})
+    finally:
+        os.close(src_parent)
+        os.close(dst_parent)
+
+
+def rename_exclusive_mergerfs(src_root, src_relative, dst_root, dst_relative):
+    """RENAME_NOREPLACE on the source's backing branch, after proving the logical name absent.
+
+    A backing branch only knows its own names, so the absence check runs on the union first,
+    and the rename is only acknowledged once mergerfs shows our file as the one container
+    under the destination name. A name another branch gained in between is caught there,
+    after the effect.
+    """
+    check_logical_absence(dst_root, dst_relative)
+    src_fd = open_mergerfs_path(src_root, src_relative)
+    try:
+        src_base, src_backing = mergerfs_backing_location_fd(src_fd)
+    finally:
+        os.close(src_fd)
+
+    dst_relative = checked_relative(dst_relative)
+    dst_parent_fd = open_mergerfs_path(dst_root, posixpath.dirname(dst_relative) or ".")
+    try:
+        dst_base, dst_backing_parent = mergerfs_backing_location_fd(dst_parent_fd)
+    finally:
+        os.close(dst_parent_fd)
+
+    if src_base != dst_base:
+        raise OSError(errno.EXDEV, "mergerfs exclusive rename crosses backing filesystems")
+
+    dst_backing = posixpath.join(dst_backing_parent, posixpath.basename(dst_relative))
+    root_fd = open_root(src_base)
+    try:
+        src_parent = open_beneath(
+            root_fd,
+            posixpath.dirname(src_backing) or ".",
+            os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW,
+            resolve=RESOLVE_NO_XDEV,
+        )
+        try:
+            dst_parent = open_beneath(
+                root_fd,
+                posixpath.dirname(dst_backing) or ".",
+                os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW,
+                resolve=RESOLVE_NO_XDEV,
+            )
+        except BaseException:
+            os.close(src_parent)
+            raise
+    finally:
+        os.close(root_fd)
+
+    try:
+        src_name = posixpath.basename(src_backing)
+        moved = os.open(src_name, O_PATH | O_NOFOLLOW | O_CLOEXEC, dir_fd=src_parent)
+        try:
+            identity = file_identity(moved)
+            rename_with_flags(
+                src_parent, src_name, dst_parent, posixpath.basename(dst_backing), RENAME_NOREPLACE
+            )
+            try:
+                sync_parents(src_parent, dst_parent)
+                wait_for_unique_path(dst_root, dst_relative, dst_base, dst_backing, identity)
+            except OSError as exc:
+                raise EffectCommittedError(exc.errno or errno.EIO, str(exc)) from exc
+        finally:
+            os.close(moved)
+    finally:
+        os.close(src_parent)
+        os.close(dst_parent)
+
+
 def unlink(args, directory=False):
     parent, name = open_parent(args[0], args[1])
     operation = "rmdir" if directory else "unlink"
@@ -931,6 +1023,8 @@ def main():
         exchange(args)
     elif operation == "rename" and len(args) == 4:
         rename(args)
+    elif operation == "rename_exclusive" and len(args) == 4:
+        rename_exclusive(args)
     elif operation == "unlink" and len(args) == 2:
         unlink(args)
     elif operation == "rmdir" and len(args) == 2:

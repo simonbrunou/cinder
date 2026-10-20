@@ -35,7 +35,7 @@ defmodule Cinder.Library.Filesystem.Disk do
     "ESTALE" => :estale,
     "EXDEV" => :exdev
   }
-  @rooted_effect_operations ~w(chmod exchange rename unlink rmdir mkdir mkdir_near reconcile_duplicates)
+  @rooted_effect_operations ~w(chmod exchange rename rename_exclusive unlink rmdir mkdir mkdir_near reconcile_duplicates)
 
   # Elixir-side bound for every subprocess this module shells out to: `run_rooted/2`,
   # `open_rooted_bound/4`, `sync_directory/1`, and `run_command/2` (issue #590 — none of these
@@ -464,6 +464,29 @@ defmodule Cinder.Library.Filesystem.Disk do
         with :ok <- File.rename(source, dest),
              do: sync_directories([Path.dirname(source), Path.dirname(dest)])
     end
+  end
+
+  # Unlike `rename/2`, a post-effect failure stays `{:effect_committed, ...}`: on mergerfs it
+  # can mean another backing branch holds the destination too, which only the caller can judge.
+  # Outside the roots `link(2)` is the no-replace primitive, so whatever fails after it (the
+  # unlink of the source, the directory sync) is committed too. The link-then-unlink pair is not
+  # atomic against a rename over the source in between; no sidecar lives outside the roots.
+  @impl true
+  def rename_exclusive(source, dest) do
+    case {rooted_location(source), rooted_location(dest)} do
+      {{:ok, source_root, source_relative}, {:ok, dest_root, dest_relative}} ->
+        run_rooted("rename_exclusive", [source_root, source_relative, dest_root, dest_relative])
+
+      _ ->
+        with :ok <- File.ln(source, dest), do: unlink_linked_source(source, dest)
+    end
+  end
+
+  defp unlink_linked_source(source, dest) do
+    with :ok <- File.rm(source),
+         :ok <- sync_directories([Path.dirname(source), Path.dirname(dest)]),
+         do: :ok,
+         else: ({:error, reason} -> {:error, {:effect_committed, "rename_exclusive", reason}})
   end
 
   @impl true

@@ -21,6 +21,8 @@ defmodule Cinder.Library.Filesystem do
             ) :: :ok | {:error, term()}
   @callback lstat(path :: String.t()) :: {:ok, File.Stat.t()} | {:error, term()}
   @callback rename(source :: String.t(), dest :: String.t()) :: :ok | {:error, term()}
+  @doc "Moves `source` onto `dest` only if no file holds `dest` yet; never replaces one."
+  @callback rename_exclusive(source :: String.t(), dest :: String.t()) :: :ok | {:error, term()}
   @callback rm(path :: String.t()) :: :ok | {:error, term()}
   @callback rmdir(dir :: String.t()) :: :ok | {:error, term()}
   @callback rm_rf(path :: String.t()) :: {:ok, [String.t()]} | {:error, File.posix(), String.t()}

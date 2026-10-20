@@ -45,12 +45,11 @@ defmodule Cinder.Subtitles.SweeperTest do
     :ok
   end
 
-  test "movie sweep refreshes the movies library after a committed subtitle" do
+  @tag :tmp_dir
+  test "movie sweep refreshes the movies library after a committed subtitle", %{tmp_dir: tmp} do
     parent = self()
-    _m = movie_fixture(status: :available, file_path: "/lib/M/M.mkv", imdb_id: "tt1", tmdb_id: 1)
-
-    Cinder.Library.FilesystemMock
-    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
+    video = real_library_video!(tmp, "movies/M/M.mkv")
+    _m = movie_fixture(status: :available, file_path: video, imdb_id: "tt1", tmdb_id: 1)
 
     Cinder.Subtitles.ProviderMock
     |> expect(:search, fn %{imdb_id: "tt1", languages: ["en"]} ->
@@ -75,6 +74,7 @@ defmodule Cinder.Subtitles.SweeperTest do
     {:ok, pid} = start_supervised({Sweeper, name: :sweeper_test})
     assert :ok = Sweeper.poll(pid)
     assert_receive {:subtitle_scan, :movies}
+    assert File.read!(Path.rootname(video) <> ".en.srt") =~ "SRT"
   end
 
   test "movie sweep checks every path in a movie stack" do
@@ -142,14 +142,13 @@ defmodule Cinder.Subtitles.SweeperTest do
     assert :ok = Sweeper.poll(pid)
   end
 
-  test "episode sweep refreshes the TV library after a committed subtitle" do
+  @tag :tmp_dir
+  test "episode sweep refreshes the TV library after a committed subtitle", %{tmp_dir: tmp} do
     parent = self()
+    video = real_library_video!(tmp, "tv/S/S02E05.mkv")
     series = series_fixture(tmdb_id: 42)
     season = season_fixture(series, %{season_number: 2})
-    _ep = episode_fixture(season, %{episode_number: 5, file_path: "/lib/S/S02E05.mkv"})
-
-    Cinder.Library.FilesystemMock
-    |> expect(:lstat, fn "/lib/S/S02E05.en.srt" -> {:error, :enoent} end)
+    _ep = episode_fixture(season, %{episode_number: 5, file_path: video})
 
     Cinder.Subtitles.ProviderMock
     |> expect(:search, fn %{tmdb_id: 42, season: 2, episode: 5, languages: ["en"]} ->
@@ -174,6 +173,7 @@ defmodule Cinder.Subtitles.SweeperTest do
     {:ok, pid} = start_supervised({Sweeper, name: :sweeper_test})
     assert :ok = Sweeper.poll(pid)
     assert_receive {:subtitle_scan, :tv}
+    assert File.read!(Path.rootname(video) <> ".en.srt") =~ "SRT"
   end
 
   # Issue #143: an A6 episode-group series is scene-numbered on the provider (OpenSubtitles), so
@@ -205,5 +205,30 @@ defmodule Cinder.Subtitles.SweeperTest do
     {:ok, pid} = start_supervised({Sweeper, name: :sweeper_test})
     assert :ok = Sweeper.poll(pid)
     assert_receive {:searched, %{tmdb_id: 209_867, season: 2, episode: 1}}
+  end
+
+  # A committed subtitle is published through the real rooted helper, so the video sits in a real
+  # library under `tmp` and the filesystem mock delegates to `Disk`.
+  defp real_library_video!(tmp, relative) do
+    keys = [:path_policy, :movies_library_path, :tv_library_path]
+    saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
+
+    on_exit(fn ->
+      Enum.each(saved, fn
+        {key, nil} -> Application.delete_env(:cinder, key)
+        {key, value} -> Application.put_env(:cinder, key, value)
+      end)
+    end)
+
+    Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
+    Application.put_env(:cinder, :movies_library_path, Path.join(tmp, "movies"))
+    Application.put_env(:cinder, :tv_library_path, Path.join(tmp, "tv"))
+    stub_with(Cinder.Library.FilesystemMock, Cinder.Library.Filesystem.Disk)
+    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> :too_small end)
+
+    video = Path.join(tmp, relative)
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, "video")
+    video
   end
 end

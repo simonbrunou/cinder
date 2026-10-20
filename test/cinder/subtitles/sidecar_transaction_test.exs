@@ -40,6 +40,8 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     @impl true
     defdelegate rename(source, dest), to: Disk
     @impl true
+    defdelegate rename_exclusive(source, dest), to: Disk
+    @impl true
     defdelegate rm(path), to: Disk
     @impl true
     defdelegate rmdir(path), to: Disk
@@ -80,6 +82,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   @moduletag :tmp_dir
 
   @changed_video "x" <> String.duplicate("v", 131_071)
+  @replacement "1\n00:00:10,000 --> 00:00:11,000\nReplacement\n\n"
 
   setup %{tmp_dir: tmp} do
     keys = [
@@ -1271,11 +1274,261 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     test "a sidecar that did not exist yet is created", %{video: video} do
       target = Path.rootname(video) <> ".fr.srt"
       content = "1\n00:00:05,000 --> 00:00:06,000\nUn\n\n"
-      sidecar = %{video_path: video, sidecar_path: target, language: "fr"}
 
-      assert :ok = SidecarTransaction.replace(sidecar, content, "embedded", moviehash!(video))
+      assert :ok = replace_fr(video, content)
       assert File.read!(target) == content
       assert %{origin: "embedded"} = Manifest.read(video).tracks["fr"]
+      assert workspaces(target) == []
+    end
+
+    # Issue #758: the fetch side publishes through the same compare-and-swap as corrections.
+    test "a replacement leaves no workspace beside the sidecar", %{video: video, path: path} do
+      assert :ok = replace(video, @replacement)
+      assert File.read!(path) == @replacement
+      assert workspaces(path) == []
+    end
+
+    test "bytes the sidecar already holds are recorded without a write", %{
+      video: video,
+      path: path,
+      original: original
+    } do
+      assert :ok = replace(video, original)
+      assert File.read!(path) == original
+      assert %{origin: "opensubtitles_id"} = Manifest.read(video).tracks["en"]
+      assert workspaces(path) == []
+    end
+
+    test "a fetch never overwrites bytes edited after its snapshot", %{video: video, path: path} do
+      use_barrier(%{
+        operation: :mkdir_exclusive,
+        phase: :before,
+        contains: ".cinder-subtitle-sync-cas-"
+      })
+
+      task = Task.async(fn -> replace(video, @replacement) end)
+      assert_receive {:filesystem_barrier, pid, ref, :mkdir_exclusive, _workspace}, 15_000
+      File.write!(path, "edited")
+      send(pid, {ref, :continue})
+
+      assert {:error, {:write, {:error, :concurrent_change}}} = Task.await(task, 15_000)
+      assert File.read!(path) == "edited"
+      assert %{origin: "opensubtitles_hash"} = Manifest.read(video).tracks["en"]
+      assert workspaces(path) == []
+    end
+
+    test "a fetch leaves bytes edited just before its exchange alone", %{video: video, path: path} do
+      use_barrier(%{operation: :exchange, phase: :before, contains: ".cinder-subtitle-sync-"})
+
+      task = Task.async(fn -> replace(video, @replacement) end)
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      File.write!(path, "edited")
+      send(pid, {ref, :continue})
+
+      assert {:error, {:write, {:error, :captured_target_changed}}} = Task.await(task, 15_000)
+      assert File.read!(path) == "edited"
+      assert %{origin: "opensubtitles_hash"} = Manifest.read(video).tracks["en"]
+      assert workspaces(path) == []
+    end
+
+    test "a fetch never replaces a sidecar that appeared after its snapshot", %{video: video} do
+      target = Path.rootname(video) <> ".fr.srt"
+      use_barrier(%{operation: :rename_exclusive, phase: :before, contains: "cas-"})
+
+      task = Task.async(fn -> replace_fr(video, @replacement) end)
+      assert_receive {:filesystem_barrier, pid, ref, :rename_exclusive, _staged}, 15_000
+      File.write!(target, "external")
+      send(pid, {ref, :continue})
+
+      assert {:error, {:write, {:error, :concurrent_change}}} = Task.await(task, 15_000)
+      assert File.read!(target) == "external"
+      refute Map.has_key?(Manifest.read(video).tracks, "fr")
+      assert workspaces(target) == []
+    end
+
+    test "a sidecar replaced right after the fetch's exchange keeps the newer file", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      download = hardlink_download!(path, tmp)
+      use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-staged"})
+
+      task = Task.async(fn -> replace(video, @replacement) end)
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      newer = Path.join(tmp, "newer.srt")
+      File.write!(newer, "newer")
+      File.rename!(newer, path)
+      send(pid, {ref, :continue})
+
+      assert {:error, {:write, {:error, :concurrent_change}}} = Task.await(task, 15_000)
+      assert File.read!(path) == "newer"
+      assert File.read!(download) == original
+      assert workspaces(path) == []
+    end
+
+    test "identical bytes another writer created first are not recorded as the fetch's", %{
+      video: video
+    } do
+      target = Path.rootname(video) <> ".fr.srt"
+      use_barrier(%{operation: :rename_exclusive, phase: :before, contains: "cas-"})
+
+      task = Task.async(fn -> replace_fr(video, @replacement) end)
+      assert_receive {:filesystem_barrier, pid, ref, :rename_exclusive, _staged}, 15_000
+      File.write!(target, @replacement)
+      send(pid, {ref, :continue})
+
+      assert {:error, {:write, {:error, :concurrent_change}}} = Task.await(task, 15_000)
+      refute Map.has_key?(Manifest.read(video).tracks, "fr")
+    end
+
+    # A release sidecar is a hardlink into the download, which may still be seeding.
+    test "a fetched replacement never empties the file it displaced", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      download = hardlink_download!(path, tmp)
+
+      assert :ok = replace(video, @replacement)
+      assert File.read!(path) == @replacement
+      assert File.read!(download) == original
+    end
+
+    test "a post-effect exchange failure still records the fetched track", %{
+      video: video,
+      path: path
+    } do
+      fail_once(%{
+        operation: :exchange,
+        source_contains: ".cinder-subtitle-sync-write-staged",
+        reason: :eio,
+        phase: :post_effect
+      })
+
+      capture_log(fn -> assert :ok = replace(video, @replacement) end)
+      assert File.read!(path) == @replacement
+      assert %{managed_sha256: managed} = Manifest.read(video).tracks["en"]
+      assert managed == digest(@replacement)
+    end
+
+    test "a post-effect create failure still records the fetched track", %{video: video} do
+      target = Path.rootname(video) <> ".fr.srt"
+
+      fail_once(%{
+        operation: :rename_exclusive,
+        source_contains: ".cinder-subtitle-sync-write-staged",
+        reason: :eio,
+        phase: :post_effect
+      })
+
+      capture_log(fn -> assert :ok = replace_fr(video, @replacement) end)
+      assert File.read!(target) == @replacement
+      assert %{origin: "embedded"} = Manifest.read(video).tracks["fr"]
+    end
+
+    test "a descriptor that fails to close after the create still records the fetched track", %{
+      video: video
+    } do
+      target = Path.rootname(video) <> ".fr.srt"
+
+      fail_once(%{
+        operation: :close_bound,
+        source_contains: ".cinder-subtitle-sync-write-staged",
+        reason: :eio
+      })
+
+      log = capture_log(fn -> assert :ok = replace_fr(video, @replacement) end)
+      assert log =~ "subtitle publication unacknowledged"
+      assert File.read!(target) == @replacement
+      assert %{origin: "embedded"} = Manifest.read(video).tracks["fr"]
+      assert workspaces(target) == []
+    end
+
+    test "a target that cannot be opened after the create still records the fetched track", %{
+      video: video
+    } do
+      target = Path.rootname(video) <> ".fr.srt"
+      fail_once(%{operation: :open_bound, source_contains: ".fr.srt", reason: :eio})
+
+      log = capture_log(fn -> assert :ok = replace_fr(video, @replacement) end)
+      assert log =~ "subtitle publication unacknowledged"
+      assert File.read!(target) == @replacement
+      assert %{origin: "embedded"} = Manifest.read(video).tracks["fr"]
+      assert workspaces(target) == []
+    end
+
+    test "a rollback that cannot read back what it retracted puts it back", %{video: video} do
+      target = Path.rootname(video) <> ".fr.srt"
+
+      fail_in_order([
+        %{
+          operation: :write_exclusive,
+          source_contains: ".cinder-subtitle-manifest-",
+          reason: :eio
+        },
+        %{
+          operation: :open_bound,
+          source_contains: ".cinder-subtitle-sync-write-staged",
+          reason: :eio
+        }
+      ])
+
+      log =
+        capture_log(fn ->
+          assert {:error, {:manifest, {:error, :eio}}} = replace_fr(video, @replacement)
+        end)
+
+      assert log =~ "subtitle rollback failed"
+      assert log =~ "retract_unverified"
+      assert File.read!(target) == @replacement
+      assert workspaces(target) == []
+    end
+
+    test "a failed manifest write removes the sidecar it created", %{video: video} do
+      target = Path.rootname(video) <> ".fr.srt"
+      fail_manifest_once()
+
+      assert {:error, {:manifest, {:error, :eio}}} = replace_fr(video, @replacement)
+      refute File.exists?(target)
+      refute Map.has_key?(Manifest.read(video).tracks, "fr")
+      assert workspaces(target) == []
+    end
+
+    test "a failed manifest write never empties the file the replacement displaced", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      download = hardlink_download!(path, tmp)
+      fail_manifest_once()
+
+      assert {:error, {:manifest, {:error, :eio}}} = replace(video, @replacement)
+      assert File.read!(path) == original
+      assert File.read!(download) == original
+    end
+
+    test "a rollback never overwrites a replacement edited after it was published", %{
+      video: video,
+      path: path
+    } do
+      log = edit_during_failed_manifest(path, fn -> replace(video, @replacement) end)
+
+      assert log =~ "subtitle rollback failed"
+      assert File.read!(path) == "edited"
+    end
+
+    test "a rollback never removes a created sidecar edited after it was published", %{
+      video: video
+    } do
+      target = Path.rootname(video) <> ".fr.srt"
+
+      log = edit_during_failed_manifest(target, fn -> replace_fr(video, @replacement) end)
+      assert log =~ "subtitle rollback failed"
+      assert File.read!(target) == "edited"
     end
   end
 
@@ -1383,6 +1636,60 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   defp replace(video, content) do
     sidecar = %{video_path: video, sidecar_path: sidecar(video).sidecar_path, language: "en"}
     SidecarTransaction.replace(sidecar, content, "opensubtitles_id", moviehash!(video))
+  end
+
+  # A fetch of a French sidecar the setup never created.
+  defp replace_fr(video, content) do
+    sidecar = %{
+      video_path: video,
+      sidecar_path: Path.rootname(video) <> ".fr.srt",
+      language: "fr"
+    }
+
+    SidecarTransaction.replace(sidecar, content, "embedded", moviehash!(video))
+  end
+
+  defp workspaces(path) do
+    path
+    |> Path.dirname()
+    |> Path.join(".cinder-subtitle-sync-cas-*")
+    |> Path.wildcard(match_dot: true)
+  end
+
+  # The sidecar's second name in a download folder, the way `Library.Sidecars` imports one.
+  defp hardlink_download!(path, tmp) do
+    download = Path.join(tmp, "downloads/#{Path.basename(path)}")
+    File.mkdir_p!(Path.dirname(download))
+    File.ln!(path, download)
+    download
+  end
+
+  defp fail_manifest_once do
+    fail_once(%{
+      operation: :write_exclusive,
+      source_contains: ".cinder-subtitle-manifest-",
+      reason: :eio
+    })
+  end
+
+  # Runs `fun` until the manifest write that follows its publication, writes "edited" over
+  # `path` there, then fails that manifest write. Returns the log.
+  defp edit_during_failed_manifest(path, fun) do
+    use_barrier(%{
+      operation: :write_exclusive,
+      phase: :before,
+      contains: ".cinder-subtitle-manifest-"
+    })
+
+    fail_manifest_once()
+
+    capture_log(fn ->
+      task = Task.async(fun)
+      assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, _manifest}, 15_000
+      File.write!(path, "edited")
+      send(pid, {ref, :continue})
+      assert {:error, {:manifest, {:error, :eio}}} = Task.await(task, 15_000)
+    end)
   end
 
   # The sidecar as `Sync.discover/1` hands it over: its paths plus the manifest track's fields.

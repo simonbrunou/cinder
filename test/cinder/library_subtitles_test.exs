@@ -18,6 +18,7 @@ defmodule Cinder.LibrarySubtitlesTest do
 
   alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.{Library, Subtitles}
+  alias Cinder.Library.Filesystem.Disk
   alias Cinder.Library.StagedImport
 
   setup :set_mox_from_context
@@ -139,6 +140,52 @@ defmodule Cinder.LibrarySubtitlesTest do
   defp commit!(staged), do: Cinder.LibraryStubs.commit_staged(staged)
   defp commit_episodes!(staged), do: :ok = Cinder.LibraryStubs.commit_staged(staged)
 
+  # The subtitle half of an import against a real library under `tmp`: the sidecar a download
+  # replaces is published through real descriptors (`AtomicFile`), so the filesystem mock
+  # delegates to `Disk`, and only the staged video keeps its stubs. Manifest writes are still
+  # recorded in `fs`'s `:writes`.
+  defp real_subtitle_library!(tmp, root_key, fs) do
+    library = Path.join(tmp, "library")
+    saved = Application.fetch_env!(:cinder, root_key)
+    on_exit(fn -> Application.put_env(:cinder, root_key, saved) end)
+    Application.put_env(:cinder, root_key, library)
+
+    stub_with(Cinder.Library.FilesystemMock, Disk)
+    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> :too_small end)
+    stub(Cinder.Library.FilesystemMock, :backing_identity, fn _ -> {:error, :outside_roots} end)
+
+    stub(Cinder.Library.FilesystemMock, :rm, fn path ->
+      if Cinder.LibraryStubs.staging_path?(path), do: :ok, else: Disk.rm(path)
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
+      Agent.update(fs, fn files ->
+        Map.update(files, :writes, [{path, content}], &[{path, content} | &1])
+      end)
+
+      Disk.write_exclusive(path, content)
+    end)
+
+    library
+  end
+
+  defp staged_video_lstat(path, size) do
+    if Cinder.LibraryStubs.candidate_path?(path),
+      do: {:ok, %File.Stat{size: size, inode: 2, major_device: 1}},
+      else: Disk.lstat(path)
+  end
+
+  defp stub_release_sidecar_link(source_sidecar, dest_sidecar) do
+    stub(Cinder.Library.FilesystemMock, :ln, fn
+      ^source_sidecar, ^dest_sidecar ->
+        File.mkdir_p!(Path.dirname(dest_sidecar))
+        File.write!(dest_sidecar, "release SRT")
+
+      _src, _dest ->
+        :ok
+    end)
+  end
+
   test "stage_movie dispatches the subtitle fetch off the import path, best-effort" do
     parent = self()
 
@@ -259,10 +306,13 @@ defmodule Cinder.LibrarySubtitlesTest do
     end)
   end
 
+  @tag :tmp_dir
   test "folder movie import passes linked sidecars to the movies subtitle task", %{
-    subtitle_fs: fs
+    subtitle_fs: fs,
+    tmp_dir: tmp
   } do
     parent = self()
+    library = real_subtitle_library!(tmp, :movies_library_path, fs)
 
     movie = %Movie{
       title: "Heat",
@@ -274,7 +324,7 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     source = "/dl/Heat/Movie.mkv"
     source_sidecar = "/dl/Heat/Movie.en.srt"
-    dest = "#{@lib}/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv"
+    dest = "#{library}/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv"
     dest_sidecar = Path.rootname(dest) <> ".en.srt"
 
     # Probed both during staging (resolve_source) and again at commit (the sidecar scan
@@ -286,33 +336,11 @@ defmodule Cinder.LibrarySubtitlesTest do
     end)
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn
-      ^source ->
-        {:ok, %File.Stat{size: 1 * @gb, inode: 1}}
-
-      path ->
-        cond do
-          Agent.get(fs, &Map.has_key?(&1, path)) ->
-            {:ok, %File.Stat{type: :regular}}
-
-          Cinder.LibraryStubs.candidate_path?(path) ->
-            {:ok, %File.Stat{size: 1 * @gb, inode: 2, major_device: 1}}
-
-          true ->
-            {:error, :enoent}
-        end
+      ^source -> {:ok, %File.Stat{size: 1 * @gb, inode: 1}}
+      path -> staged_video_lstat(path, 1 * @gb)
     end)
 
-    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
-
-    stub(Cinder.Library.FilesystemMock, :ln, fn
-      ^source_sidecar, ^dest_sidecar ->
-        Agent.update(fs, &Map.put(&1, dest_sidecar, "release SRT"))
-        :ok
-
-      _src, _dest ->
-        :ok
-    end)
+    stub_release_sidecar_link(source_sidecar, dest_sidecar)
 
     expect(Cinder.Library.MediaServerMock, :scan, 2, fn :movies ->
       send(parent, :movie_scan)
@@ -460,8 +488,13 @@ defmodule Cinder.LibrarySubtitlesTest do
     assert_received :subtitle_search
   end
 
-  test "folder episode import passes linked sidecars to the TV subtitle task", %{subtitle_fs: fs} do
+  @tag :tmp_dir
+  test "folder episode import passes linked sidecars to the TV subtitle task", %{
+    subtitle_fs: fs,
+    tmp_dir: tmp
+  } do
     parent = self()
+    library = real_subtitle_library!(tmp, :tv_library_path, fs)
     series = %Series{title: "Show", year: 2008, tmdb_id: 1}
 
     episode = %Episode{
@@ -472,7 +505,7 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     source = "/dl/Show.S01E03.1080p.mkv"
     source_sidecar = "/dl/Show.S01E03.1080p.en.srt"
-    dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
+    dest = "#{library}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
     dest_sidecar = Path.rootname(dest) <> ".en.srt"
 
     # Walked at staging (the episode match and the sidecar languages) and again at commit (the
@@ -484,33 +517,11 @@ defmodule Cinder.LibrarySubtitlesTest do
     end)
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn
-      ^source ->
-        {:ok, %File.Stat{size: 9 * @gb, inode: 1}}
-
-      path ->
-        cond do
-          Agent.get(fs, &Map.has_key?(&1, path)) ->
-            {:ok, %File.Stat{type: :regular}}
-
-          Cinder.LibraryStubs.candidate_path?(path) ->
-            {:ok, %File.Stat{size: 9 * @gb, inode: 2, major_device: 1}}
-
-          true ->
-            {:error, :enoent}
-        end
+      ^source -> {:ok, %File.Stat{size: 9 * @gb, inode: 1}}
+      path -> staged_video_lstat(path, 9 * @gb)
     end)
 
-    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
-
-    stub(Cinder.Library.FilesystemMock, :ln, fn
-      ^source_sidecar, ^dest_sidecar ->
-        Agent.update(fs, &Map.put(&1, dest_sidecar, "release SRT"))
-        :ok
-
-      _src, _dest ->
-        :ok
-    end)
+    stub_release_sidecar_link(source_sidecar, dest_sidecar)
 
     expect(Cinder.Library.MediaServerMock, :scan, 2, fn :tv ->
       send(parent, :tv_scan)

@@ -1,6 +1,7 @@
 defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   @moduledoc """
-  Publishes subtitle bytes with a descriptor-bound exchange and verified rollback.
+  Publishes subtitle bytes with a descriptor-bound exchange and verified rollback, or, for a
+  target that does not exist yet, a rename that never replaces anything (`swap/3`).
 
   The target and staged inodes stay open across the exchange. Every observable race is classified
   before cleanup so a concurrent pathname replacement is restored instead of displaced.
@@ -8,7 +9,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   require Logger
 
-  import Cinder.Subtitles.SafeFile, only: [fs: 0, safe_destination: 1, sha256: 1]
+  import Cinder.Subtitles.SafeFile, only: [fs: 0, safe_destination: 1, safe_read: 1, sha256: 1]
 
   @operation_id ~r/\A[A-Za-z0-9_-]{22}\z/
 
@@ -43,9 +44,9 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   defp create_authorized_workspace(target, directory, staged_path, content, expected_current) do
     case mkdir_workspace(directory, target) do
       :ok ->
-        with_bound(directory, [:read, :raw, :binary], fn directory_bound ->
+        with_bound(directory, [:read, :raw, :binary], fn _directory_bound ->
           {:directory_bound_result,
-           atomic_operation(target, staged_path, content, expected_current, directory_bound)}
+           atomic_operation(target, staged_path, content, expected_current, :discard)}
         end)
 
       {:error, :eexist} ->
@@ -59,12 +60,213 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     end
   end
 
-  defp mkdir_workspace(directory, target) do
+  # On mergerfs the workspace lands on the anchor's backing branch, so the anchor must exist.
+  defp mkdir_workspace(directory, anchor) do
     filesystem = fs()
 
     if function_exported?(filesystem, :mkdir_exclusive_near, 3),
-      do: filesystem.mkdir_exclusive_near(directory, target, 0o700),
+      do: filesystem.mkdir_exclusive_near(directory, anchor, 0o700),
       else: filesystem.mkdir_exclusive(directory, 0o700)
+  end
+
+  @doc """
+  Moves `target` from `from` to `to`, each its bytes or `:absent`, only if it still is `from`,
+  then removes its workspace. This is the fetch side's publication: no pending record names it,
+  so nothing would ever read the workspace again.
+
+    * bytes to bytes is `write/4`'s exchange, except that the displaced inode is never emptied,
+      only its workspace name removed: a fetch may displace a release sidecar, which is a
+      hardlink into a download that may still be seeding.
+    * `:absent` to bytes stages the bytes, then renames them onto a name nothing holds yet.
+    * bytes to `:absent` renames the target into the workspace and removes it only if it held
+      `from`; anything else is renamed back.
+    * `from == to` only checks the target.
+
+  `{:error, :concurrent_change}` means the target was not `from`, or something replaced it right
+  after the move and `to` could not be read back there: whatever holds the name now is left
+  alone.
+  `{:error, {:publication_committed, detail}}` means the target holds `to`, but a step after the
+  effect was not acknowledged. Any other error leaves whatever the workspace still holds there.
+  """
+  @spec swap(String.t(), binary() | :absent, binary() | :absent) :: :ok | {:error, term()}
+  def swap(target, same, same) when is_binary(same), do: verify_unchanged(target, same)
+
+  def swap(target, from, to) when from != :absent or to != :absent,
+    do: swap_through_workspace(target, from, to)
+
+  defp verify_unchanged(target, expected) do
+    case safe_read(target) do
+      {:ok, ^expected} -> :ok
+      {:ok, _changed} -> {:error, :concurrent_change}
+      {:error, :enoent} -> {:error, :concurrent_change}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp swap_through_workspace(target, from, to) do
+    operation_id = Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
+    directory = workspace_path(target, operation_id)
+    staged_path = Path.join(directory, ".cinder-subtitle-sync-write-staged")
+
+    with {:ok, target} <- safe_destination(target),
+         {:ok, directory} <- safe_destination(directory),
+         {:ok, staged_path} <- safe_destination(staged_path),
+         :ok <- mkdir_workspace(directory, swap_anchor(target, from)) do
+      result =
+        with_bound(directory, [:read, :raw, :binary], fn _directory_bound ->
+          {:directory_bound_result, swap_in_workspace(target, staged_path, from, to)}
+        end)
+
+      remove_swap_workspace(directory)
+      settle_unverified(result, target, to)
+    end
+  end
+
+  # After the bytes moved, a target that could not be verified (`{:moved_unverified, _}`: every
+  # open error reads as a changed identity) or a descriptor that failed to close hides whether
+  # `to` was published. The target's bytes answer that; unreadable bytes count as unpublished.
+  defp settle_unverified({:error, {:moved_unverified, reason}}, target, to),
+    do: settle_by_target(reason, target, to)
+
+  defp settle_unverified({:error, {:descriptor_close_failed, _} = reason}, target, to)
+       when is_binary(to),
+       do: settle_by_target(reason, target, to)
+
+  defp settle_unverified(result, _target, _to), do: result
+
+  defp settle_by_target(reason, target, to) do
+    if safe_read(target) == {:ok, to},
+      do: {:error, {:publication_committed, reason}},
+      else: {:error, reason}
+  end
+
+  defp swap_anchor(target, :absent), do: Path.dirname(target)
+  defp swap_anchor(target, _from), do: target
+
+  defp swap_in_workspace(target, staged_path, :absent, to), do: create(target, staged_path, to)
+
+  defp swap_in_workspace(target, staged_path, from, :absent),
+    do: retract(target, staged_path, from)
+
+  defp swap_in_workspace(target, staged_path, from, to) do
+    result =
+      with_bound(target, [:read, :raw, :binary], fn current ->
+        with_created_bound(staged_path, to, fn staged ->
+          perform_atomic_operation(target, staged_path, current, staged, from, to, :unlink)
+        end)
+      end)
+
+    if result == {:error, :enoent}, do: {:error, :concurrent_change}, else: result
+  end
+
+  defp create(target, staged_path, content) do
+    with_created_bound(staged_path, content, fn staged ->
+      operation =
+        with :ok <- File.chmod(staged.path, 0o644),
+             do: rename_onto_absent(target, staged_path, staged, content)
+
+      finish_atomic_operation(operation, :unlink, staged_path, staged)
+    end)
+  end
+
+  defp rename_onto_absent(target, staged_path, staged, content) do
+    case fs().rename_exclusive(staged_path, target) do
+      :ok ->
+        verify_created(target, staged_path, staged, content, nil)
+
+      {:error, {:effect_committed, _operation, _detail} = reason} ->
+        verify_created(target, staged_path, staged, content, reason)
+
+      {:error, :eexist} ->
+        {:not_exchanged, {:error, :concurrent_change}}
+
+      {:error, _reason} = error ->
+        {:not_exchanged, error}
+    end
+  end
+
+  defp verify_created(target, staged_path, staged, content, committed_warning) do
+    with :ok <- verify_bound_path(target, staged),
+         {:ok, ^content} <- File.read(staged.path) do
+      committed_result(committed_warning)
+    else
+      _unverified ->
+        if verify_bound_path(staged_path, staged) == :ok,
+          do: {:not_exchanged, {:error, :concurrent_change}},
+          else: {:moved_unverified, :concurrent_change}
+    end
+  end
+
+  defp retract(target, staged_path, expected) do
+    case fs().rename_exclusive(target, staged_path) do
+      :ok ->
+        verify_retracted(target, staged_path, expected)
+
+      {:error, {:effect_committed, _op, _detail}} ->
+        verify_retracted(target, staged_path, expected)
+
+      {:error, :enoent} ->
+        {:error, :concurrent_change}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  # Anything short of proving the retracted file held `expected` puts it back: the name is only
+  # ever taken when nothing holds it, so trying the restore is always safe.
+  defp verify_retracted(target, staged_path, expected) do
+    case with_bound(staged_path, [:read, :raw, :binary], &retracted_identity(&1, expected)) do
+      {:matches, identity} ->
+        remove_workspace_name(staged_path, %{identity: identity})
+
+      :changed ->
+        restore_retracted(staged_path, target, :concurrent_change)
+
+      {:error, reason} ->
+        restore_retracted(staged_path, target, {:retract_unverified, reason})
+    end
+  end
+
+  defp retracted_identity(retracted, expected) do
+    case File.read(retracted.path) do
+      {:ok, ^expected} -> {:matches, retracted.identity}
+      {:ok, _changed} -> :changed
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp restore_retracted(staged_path, target, reason) do
+    case fs().rename_exclusive(staged_path, target) do
+      :ok -> {:error, reason}
+      {:error, restore_reason} -> {:error, {:retract_restore_failed, reason, restore_reason}}
+    end
+  end
+
+  # Removes the workspace's one name, but only while it still names the inode we hold (`bound` or
+  # its `identity`). A name that stays only keeps the workspace from being removed, so failing
+  # here is logged, not returned.
+  defp remove_workspace_name(path, bound) do
+    with :ok <- verify_bound_path(path, bound),
+         :ok <- fs().rm(path) do
+      :ok
+    else
+      {:error, reason} ->
+        Logger.warning("subtitle workspace entry kept at #{path}: #{inspect(reason)}")
+        :ok
+    end
+  end
+
+  # `rmdir` refuses a workspace that still holds a name, so whatever a preserved exchange or an
+  # unrestorable retraction left there stays, at the path the warning names.
+  defp remove_swap_workspace(directory) do
+    case fs().rmdir(directory) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("subtitle workspace kept at #{directory}: #{inspect(reason)}")
+    end
   end
 
   @spec cleanup_pending(String.t(), String.t(), String.t(), String.t()) ::
@@ -254,7 +456,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     end
   end
 
-  defp atomic_operation(target, staged_path, content, expected_current, directory) do
+  defp atomic_operation(target, staged_path, content, expected_current, disposal) do
     with_bound(target, [:read, :raw, :binary], fn current ->
       with_created_bound(staged_path, content, fn staged ->
         perform_atomic_operation(
@@ -264,14 +466,14 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
           staged,
           expected_current,
           content,
-          directory
+          disposal
         )
       end)
     end)
   end
 
   defp reuse_authorized_workspace(target, directory, staged_path, content, expected_current) do
-    with_bound(directory, [:read, :raw, :binary], fn directory_bound ->
+    with_bound(directory, [:read, :raw, :binary], fn _directory_bound ->
       {:directory_bound_result,
        with_bound(target, [:read, :raw, :binary], fn current ->
          reuse_bound_workspace(
@@ -280,7 +482,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
            current,
            content,
            expected_current,
-           directory_bound
+           :discard
          )
        end)}
     end)
@@ -292,7 +494,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          current,
          content,
          expected_current,
-         directory
+         disposal
        ) do
     case File.read(current.path) do
       {:ok, ^content} ->
@@ -305,7 +507,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
           current,
           content,
           expected_current,
-          directory
+          disposal
         )
 
       {:ok, _other} ->
@@ -322,7 +524,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          current,
          content,
          expected_current,
-         directory
+         disposal
        ) do
     with_bound(staged_path, [:read, :raw, :binary], fn staged ->
       reuse_expected_staged(
@@ -332,7 +534,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
         staged,
         content,
         expected_current,
-        directory
+        disposal
       )
     end)
   end
@@ -344,7 +546,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          staged,
          content,
          expected_current,
-         directory
+         disposal
        ) do
     case File.read(staged.path) do
       {:ok, ^content} ->
@@ -355,7 +557,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
           staged,
           expected_current,
           content,
-          directory
+          disposal
         )
 
       {:ok, ""} ->
@@ -366,7 +568,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
           staged,
           content,
           expected_current,
-          directory
+          disposal
         )
 
       {:ok, _other} ->
@@ -397,7 +599,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          staged,
          content,
          expected_current,
-         directory
+         disposal
        ) do
     # `staged.path` may be the bound descriptor's own `/proc/<pid>/fd/<n>` reference rather than
     # the plain pathname (see `Disk.create_bound/2`/`open_bound/2`): `File.stat/1` follows that
@@ -412,7 +614,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
           staged,
           content,
           expected_current,
-          directory
+          disposal
         )
 
       {:ok, _multiply_linked} ->
@@ -430,7 +632,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          staged,
          content,
          expected_current,
-         directory
+         disposal
        ) do
     case fs().write_bound(staged, content) do
       :ok ->
@@ -441,7 +643,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
           staged,
           expected_current,
           content,
-          directory
+          disposal
         )
 
       {:error, reason} ->
@@ -456,7 +658,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          staged,
          expected_current,
          content,
-         directory
+         disposal
        ) do
     operation =
       with :ok <- File.chmod(staged.path, 0o644) do
@@ -467,19 +669,19 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
           staged,
           expected_current,
           content,
-          directory
+          disposal
         )
       end
 
-    finish_atomic_operation(operation, directory, staged_path, staged)
+    finish_atomic_operation(operation, disposal, staged_path, staged)
   end
 
-  defp exchange_if_current(target, staged_path, current, staged, expected, content, directory) do
+  defp exchange_if_current(target, staged_path, current, staged, expected, content, disposal) do
     case File.read(current.path) do
       {:ok, ^expected} ->
         case fs().exchange(staged_path, target) do
           :ok ->
-            finalize_exchange(target, staged_path, current, staged, expected, content, directory)
+            finalize_exchange(target, staged_path, current, staged, expected, content, disposal)
 
           {:error, {:effect_committed, _operation, _detail} = reason} ->
             finalize_exchange(
@@ -489,7 +691,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
               staged,
               expected,
               content,
-              directory,
+              disposal,
               reason
             )
 
@@ -512,41 +714,54 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          staged,
          expected,
          content,
-         directory,
+         disposal,
          committed_warning \\ nil
        ) do
     case verify_exchanged_files(target, staged_path, current, staged, expected, content) do
       :ok ->
-        case fs().discard_bound(current) do
-          :ok ->
-            committed_result(committed_warning)
-
-          {:error, {:effect_committed, _operation, _detail} = reason} ->
-            {:committed_unacknowledged, merge_committed_warnings(committed_warning, reason)}
-
-          {:error, reason} ->
-            {:committed_unacknowledged,
-             merge_committed_warnings(committed_warning, {:discard_failed, reason})}
-        end
+        dispose_displaced(staged_path, current, disposal, committed_warning)
 
       {:error, :published_target_changed} ->
-        preserve_published_external(staged_path, current, directory)
+        preserve_published_external(staged_path, current, disposal)
 
       {:error, :displaced_target_changed} ->
         rollback_displaced_exchange(
           target,
           staged_path,
           staged,
-          directory,
+          disposal,
           {:error, :concurrent_change}
         )
 
       {:error, :captured_target_changed} = error ->
-        rollback_exchange(target, staged_path, current, staged, directory, error)
+        rollback_exchange(target, staged_path, current, staged, disposal, error)
 
       {:error, _reason} = error ->
         {:preserved, error}
     end
+  end
+
+  # `:discard` empties the displaced inode and keeps its name as the workspace tombstone that
+  # pending records and deterministic reversals read. `:unlink` (`swap/3`) only removes the
+  # displaced inode's workspace name: a fetch may displace a release sidecar, which is a hardlink
+  # into a download that may still be seeding, so its bytes must survive under that other name.
+  defp dispose_displaced(_staged_path, current, :discard, committed_warning) do
+    case fs().discard_bound(current) do
+      :ok ->
+        committed_result(committed_warning)
+
+      {:error, {:effect_committed, _operation, _detail} = reason} ->
+        {:committed_unacknowledged, merge_committed_warnings(committed_warning, reason)}
+
+      {:error, reason} ->
+        {:committed_unacknowledged,
+         merge_committed_warnings(committed_warning, {:discard_failed, reason})}
+    end
+  end
+
+  defp dispose_displaced(staged_path, current, :unlink, committed_warning) do
+    remove_workspace_name(staged_path, current)
+    committed_result(committed_warning)
   end
 
   defp committed_result(nil), do: {:committed, :ok}
@@ -589,14 +804,21 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   defp classify_exchanged_bytes(_published, _captured, _content, _expected),
     do: {:error, :concurrent_change}
 
-  defp preserve_published_external(_staged_path, current, _directory) do
+  # The target lost our inode after the exchange, or could not be opened to tell: `swap/3`
+  # settles which from the target's bytes.
+  defp preserve_published_external(staged_path, current, :unlink) do
+    remove_workspace_name(staged_path, current)
+    {:moved_unverified, :concurrent_change}
+  end
+
+  defp preserve_published_external(_staged_path, current, :discard) do
     case fs().discard_bound(current) do
       :ok -> {:external_preserved, {:error, :concurrent_change}}
       {:error, reason} -> {:preserved, {:error, {:external_preservation_discard_failed, reason}}}
     end
   end
 
-  defp rollback_displaced_exchange(target, staged_path, staged, _directory, original_error) do
+  defp rollback_displaced_exchange(target, staged_path, staged, _disposal, original_error) do
     with :ok <- verify_bound_path(target, staged),
          {:ok, displaced_identity} <- path_identity(staged_path),
          :ok <- fs().exchange(staged_path, target),
@@ -610,7 +832,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     end
   end
 
-  defp rollback_exchange(target, staged_path, current, staged, _directory, original_error) do
+  defp rollback_exchange(target, staged_path, current, staged, _disposal, original_error) do
     with :ok <- verify_bound_path(target, staged),
          :ok <- verify_bound_path(staged_path, current),
          :ok <- fs().exchange(staged_path, target),
@@ -722,20 +944,26 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   defp finish_bound_operation({:raised, kind, reason, stacktrace}, _close_result),
     do: :erlang.raise(kind, reason, stacktrace)
 
-  defp finish_atomic_operation({:committed, :ok}, _directory, _staged_path, _identity),
+  defp finish_atomic_operation({:committed, :ok}, _disposal, _staged_path, _identity),
     do: :ok
 
   defp finish_atomic_operation(
          {:committed_unacknowledged, reason},
-         _directory,
+         _disposal,
          _staged_path,
          _identity
        ),
        do: {:error, {:publication_committed, reason}}
 
+  # A rolled-back exchange put our own staged inode back in the workspace, already emptied.
+  defp finish_atomic_operation({:rolled_back, {:error, _reason} = error}, :unlink, path, staged) do
+    remove_workspace_name(path, staged)
+    error
+  end
+
   defp finish_atomic_operation(
          {:rolled_back, {:error, _reason} = error},
-         _directory,
+         _disposal,
          _path,
          _identity
        ),
@@ -743,7 +971,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   defp finish_atomic_operation(
          {:preserved, {:error, _reason} = error},
-         _directory,
+         _disposal,
          _path,
          _identity
        ),
@@ -751,15 +979,28 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   defp finish_atomic_operation(
          {:external_preserved, {:error, _reason} = error},
-         _directory,
+         _disposal,
          _path,
          _identity
        ),
        do: error
 
+  defp finish_atomic_operation({:moved_unverified, reason}, :unlink, _path, _identity),
+    do: {:error, {:moved_unverified, reason}}
+
   defp finish_atomic_operation(
          {:not_exchanged, {:error, _reason} = error},
-         _directory,
+         :unlink,
+         staged_path,
+         staged
+       ) do
+    remove_workspace_name(staged_path, staged)
+    error
+  end
+
+  defp finish_atomic_operation(
+         {:not_exchanged, {:error, _reason} = error},
+         _disposal,
          _path,
          staged
        ) do
@@ -769,8 +1010,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     end
   end
 
-  defp finish_atomic_operation({:error, _reason} = error, directory, path, staged),
-    do: finish_atomic_operation({:not_exchanged, error}, directory, path, staged)
+  defp finish_atomic_operation({:error, _reason} = error, disposal, path, staged),
+    do: finish_atomic_operation({:not_exchanged, error}, disposal, path, staged)
 
   defp reversal_operation_id(target, expected_sha256, content_sha256) do
     :crypto.hash(:sha256, [target, 0, expected_sha256, 0, content_sha256])
