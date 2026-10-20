@@ -105,13 +105,29 @@ defmodule Cinder.Acquisition.AnimePreferences do
     }
   end
 
-  @doc "The legacy timing options plus the resolved Anime policy consumed by selection."
-  def selection_opts(policy) do
-    [
-      anime_policy: policy,
-      preferred_groups: policy.preferred_groups,
-      fallback_delay: policy.group_fallback_delay
-    ]
+  @doc """
+  The group wait: whether `release` may be taken at `now`, or has to leave a preferred group
+  time to publish first.
+
+  With no preferred groups, or from one of them, a release is `:eligible` at once. Another
+  group's release waits `group_fallback_delay` seconds from its own publication and is
+  `{:delayed, retry_at}` until then. One with no publication time cannot start that wait and is
+  `:undated`: automatic selection never takes it, the manual-search panel says why. The policy's
+  groups are already normalized (`Cinder.Settings` stores them that way).
+  """
+  @spec group_wait(map(), map(), DateTime.t()) :: :eligible | {:delayed, DateTime.t()} | :undated
+  def group_wait(release, %{preferred_groups: groups} = policy, now) do
+    cond do
+      groups == [] or preferred_group?(release, policy) ->
+        :eligible
+
+      not match?(%DateTime{}, release.published_at) ->
+        :undated
+
+      true ->
+        retry_at = DateTime.add(release.published_at, policy.group_fallback_delay, :second)
+        if DateTime.compare(retry_at, now) == :gt, do: {:delayed, retry_at}, else: :eligible
+    end
   end
 
   def normalize_languages(nil), do: []
@@ -132,8 +148,8 @@ defmodule Cinder.Acquisition.AnimePreferences do
     |> Enum.uniq()
   end
 
-  def normalize_group(nil), do: nil
-  def normalize_group(group), do: group |> String.trim() |> String.downcase()
+  defp normalize_group(nil), do: nil
+  defp normalize_group(group), do: group |> String.trim() |> String.downcase()
 
   defp normalized_languages?(languages) when is_list(languages) do
     Enum.all?(languages, &Util.present?/1) and normalize_languages(languages) == languages

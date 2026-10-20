@@ -1279,7 +1279,7 @@ defmodule Cinder.Download.TvPollerTest do
                [candidate],
                context,
                Enum.map(episodes, & &1.id),
-               AnimePreferences.selection_opts(policy)
+               anime_policy: policy
              )
 
     assignment
@@ -2236,14 +2236,13 @@ defmodule Cinder.Download.TvPollerTest do
       |> Catalog.anime_series_acquisition_context()
       |> Cinder.Acquisition.standard_tv_numbering(candidates, MapSet.new([1]))
 
-    assert {:ok, results} =
-             Cinder.Acquisition.list_releases_tv(series, 1, standard_numbering: numbering)
+    assert {:ok, %{rows: rows}} = Cinder.Acquisition.judge_season(series, 1, numbering)
 
     assert_receive {:searched_manual_season, 1}
     assert_receive {:searched_manual_season, 2}
     assert_receive {:searched_manual_season, 3}
 
-    releases = Map.new(results, fn {release, _verdict} -> {release.download_url, release} end)
+    releases = Map.new(rows, fn %{release: release} -> {release.download_url, release} end)
     assert releases["manual-scene"].resolved_episode_ids == [episode29.id]
     assert releases["manual-aired"].resolved_episode_ids == [episode30.id]
 

@@ -28,7 +28,7 @@ defmodule Cinder.Download.TvPoller do
   import Ecto.Query
 
   alias Cinder.{Acquisition, Catalog, Disk, Download, Library, Notifier, Settings}
-  alias Cinder.Acquisition.AnimePreferences
+  alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy}
   alias Cinder.Catalog.{Episode, Grab, Grabs, MediaProfile}
   alias Cinder.Download.Watch
   alias Cinder.HTTPPolicy
@@ -633,7 +633,7 @@ defmodule Cinder.Download.TvPoller do
     # bands a whole-season pack against it as a last resort when nothing else fits (#268).
     opts =
       Keyword.put(
-        search_opts(series),
+        HouseholdPolicy.for_target(series),
         :season_episode_count,
         Catalog.count_episodes(series.id, season_number)
       )
@@ -680,7 +680,7 @@ defmodule Cinder.Download.TvPoller do
   end
 
   defp search_anime_with_policy(series, episodes, context, wanted_ids, policy) do
-    opts = search_opts(series) ++ AnimePreferences.selection_opts(policy)
+    opts = HouseholdPolicy.for_target(series) ++ [anime_policy: policy]
 
     case Acquisition.best_anime_releases(context, wanted_ids, opts) do
       {:ok, %{assignments: assignments, waiting: waiting}} ->
@@ -701,15 +701,6 @@ defmodule Cinder.Download.TvPoller do
 
         bump_not_grabbed(episodes, [])
     end
-  end
-
-  defp search_opts(series) do
-    [
-      protocols: Download.available_protocols(),
-      preferred_language: series.preferred_language,
-      original_language: series.original_language,
-      release_blocklist: Catalog.blocked_release_titles_for_series(series.id)
-    ] ++ Acquisition.band_opts(:tv)
   end
 
   # Add one chosen release to its client and create the grab linking exactly the episodes it

@@ -148,6 +148,43 @@ defmodule Cinder.Acquisition.AnimePreferencesTest do
            ] == []
   end
 
+  describe "group_wait/3" do
+    @now ~U[2026-07-13 12:00:00Z]
+
+    defp waiting_policy(groups), do: %{preferred_groups: groups, group_fallback_delay: 3_600}
+
+    test "no preferred groups means nothing waits, dated or not" do
+      assert AnimePreferences.group_wait(%Release{group: "Other"}, waiting_policy([]), @now) ==
+               :eligible
+    end
+
+    test "a preferred group's release is eligible at once, whatever its case or spacing" do
+      release = %Release{group: " SubsPlease ", published_at: @now}
+
+      assert AnimePreferences.group_wait(release, waiting_policy(["subsplease"]), @now) ==
+               :eligible
+    end
+
+    test "another group's release waits out the fallback delay from its publication" do
+      release = %Release{group: "Other", published_at: @now}
+      policy = waiting_policy(["subsplease"])
+
+      assert AnimePreferences.group_wait(release, policy, ~U[2026-07-13 12:59:59Z]) ==
+               {:delayed, ~U[2026-07-13 13:00:00Z]}
+
+      assert AnimePreferences.group_wait(release, policy, ~U[2026-07-13 13:00:00Z]) == :eligible
+    end
+
+    test "another group's release with no publication time cannot start the wait" do
+      policy = waiting_policy(["subsplease"])
+
+      assert AnimePreferences.group_wait(%Release{group: "Other"}, policy, @now) == :undated
+
+      assert AnimePreferences.group_wait(%Release{group: nil, published_at: "bad"}, policy, @now) ==
+               :undated
+    end
+  end
+
   test "a standard intent exposes no release policy snapshot by default" do
     intent =
       %Intent{}

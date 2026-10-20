@@ -1882,67 +1882,67 @@ msgstr "Nom d'utilisateur qBittorrent"
 msgid "Upgrading"
 msgstr "Mise à niveau"
 
-#: lib/cinder_web/components/manual_search_component.ex:300
+#: lib/cinder_web/components/manual_search_component.ex:261
 #, elixir-autogen
 msgid "?"
 msgstr "?"
 
 #: lib/cinder_web/components/book_manual_search_component.ex:174
-#: lib/cinder_web/components/manual_search_component.ex:288
+#: lib/cinder_web/components/manual_search_component.ex:249
 #, elixir-autogen
 msgid "Couldn't reach the indexer. Try again."
 msgstr "Impossible de joindre l'indexeur. Réessayez."
 
 #: lib/cinder_web/components/book_manual_search_component.ex:213
-#: lib/cinder_web/components/manual_search_component.ex:316
+#: lib/cinder_web/components/manual_search_component.ex:274
 #, elixir-autogen
 msgid "Grab"
 msgstr "Récupérer"
 
 #: lib/cinder_web/components/book_manual_search_component.ex:183
-#: lib/cinder_web/components/manual_search_component.ex:291
+#: lib/cinder_web/components/manual_search_component.ex:252
 #, elixir-autogen
 msgid "No releases found."
 msgstr "Aucune version trouvée."
 
-#: lib/cinder_web/components/manual_search_component.ex:328
+#: lib/cinder_web/components/manual_search_component.ex:286
 #, elixir-autogen
 msgid "Replace file"
 msgstr "Remplacer le fichier"
 
-#: lib/cinder_web/components/manual_search_component.ex:331
+#: lib/cinder_web/components/manual_search_component.ex:289
 #, elixir-autogen
 msgid "Replace the current file for this movie with the selected release?"
 msgstr "Remplacer le fichier actuel de ce film par la version sélectionnée ?"
 
 #: lib/cinder_web/components/book_manual_search_component.ex:170
-#: lib/cinder_web/components/manual_search_component.ex:285
+#: lib/cinder_web/components/manual_search_component.ex:246
 #, elixir-autogen
 msgid "Searching releases…"
 msgstr "Recherche de versions…"
 
-#: lib/cinder_web/components/manual_search_component.ex:456
+#: lib/cinder_web/components/manual_search_component.ex:342
 #, elixir-autogen
 msgid "blocklisted"
 msgstr "sur liste de blocage"
 
 #: lib/cinder_web/components/book_manual_search_component.ex:266
-#: lib/cinder_web/components/manual_search_component.ex:460
+#: lib/cinder_web/components/manual_search_component.ex:346
 #, elixir-autogen
 msgid "no client for protocol"
 msgstr "aucun client pour ce protocole"
 
-#: lib/cinder_web/components/manual_search_component.ex:455
+#: lib/cinder_web/components/manual_search_component.ex:341
 #, elixir-autogen
 msgid "outside size band"
 msgstr "hors de la plage de taille"
 
-#: lib/cinder_web/components/manual_search_component.ex:458
+#: lib/cinder_web/components/manual_search_component.ex:344
 #, elixir-autogen
 msgid "resolution not preferred"
 msgstr "résolution non préférée"
 
-#: lib/cinder_web/components/manual_search_component.ex:459
+#: lib/cinder_web/components/manual_search_component.ex:345
 #, elixir-autogen
 msgid "source not preferred"
 msgstr "source non préférée"
@@ -2009,7 +2009,7 @@ msgid "Searching for this episode…"
 msgstr "Recherche de cet épisode…"
 
 #: lib/cinder_web/components/book_manual_search_component.ex:210
-#: lib/cinder_web/components/manual_search_component.ex:314
+#: lib/cinder_web/components/manual_search_component.ex:272
 #, elixir-autogen
 msgid "Grabbing…"
 msgstr "Récupération…"
@@ -2681,32 +2681,32 @@ msgid "Use server default (Prefer embedded)"
 msgstr ""
 "Utiliser la valeur par défaut du serveur (Préférer les sous-titres intégrés)"
 
-#: lib/cinder_web/components/manual_search_component.ex:468
+#: lib/cinder_web/components/manual_search_component.ex:354
 #, elixir-autogen
 msgid "awaiting preferred group"
 msgstr "en attente du groupe préféré"
 
-#: lib/cinder_web/components/manual_search_component.ex:461
+#: lib/cinder_web/components/manual_search_component.ex:347
 #, elixir-autogen
 msgid "blocked anime group"
 msgstr "groupe anime bloqué"
 
-#: lib/cinder_web/components/manual_search_component.ex:462
+#: lib/cinder_web/components/manual_search_component.ex:348
 #, elixir-autogen
 msgid "contradictory audio"
 msgstr "audio contradictoire"
 
-#: lib/cinder_web/components/manual_search_component.ex:465
+#: lib/cinder_web/components/manual_search_component.ex:351
 #, elixir-autogen
 msgid "contradictory subtitles"
 msgstr "sous-titres contradictoires"
 
-#: lib/cinder_web/components/manual_search_component.ex:471
+#: lib/cinder_web/components/manual_search_component.ex:357
 #, elixir-autogen
 msgid "publication time required"
 msgstr "heure de publication requise"
 
-#: lib/cinder_web/components/manual_search_component.ex:474
+#: lib/cinder_web/components/manual_search_component.ex:360
 #, elixir-autogen
 msgid "stable episode mapping required"
 msgstr "correspondance stable des épisodes requise"
@@ -4912,7 +4912,7 @@ msgstr "Têtes d'affiche"
 msgid "just now"
 msgstr "à l'instant"
 
-#: lib/cinder_web/components/manual_search_component.ex:477
+#: lib/cinder_web/components/manual_search_component.ex:363
 #, elixir-autogen
 msgid "conflicting episode numbering"
 msgstr "numérotation des épisodes conflictuelle"
@@ -5224,23 +5224,23 @@ msgstr ""
 "Lecture en %{language} par défaut : la langue demandée est bien dans le "
 "fichier, mais ce n'est pas la piste audio par défaut."
 
-#: lib/cinder_web/components/manual_search_component.ex:443
+#: lib/cinder_web/components/manual_search_component.ex:329
 #, elixir-autogen
 msgid "Doesn't match this title's audio pick"
 msgstr "Ne correspond pas à la langue audio choisie pour ce titre"
 
-#: lib/cinder_web/components/manual_search_component.ex:438
+#: lib/cinder_web/components/manual_search_component.ex:324
 #, elixir-autogen
 msgid "Matches this title's audio pick"
 msgstr "Correspond à la langue audio choisie pour ce titre"
 
 #: lib/cinder_web/components/book_manual_search_component.ex:238
-#: lib/cinder_web/components/manual_search_component.ex:361
+#: lib/cinder_web/components/manual_search_component.ex:319
 #, elixir-autogen
 msgid "untagged"
 msgstr "sans étiquette"
 
-#: lib/cinder_web/components/manual_search_component.ex:441
+#: lib/cinder_web/components/manual_search_component.ex:327
 #, elixir-autogen
 msgid "Untagged: assumed to be the original audio, ranked below a tagged match"
 msgstr ""
@@ -6119,7 +6119,7 @@ msgid "cam, telesync"
 msgstr "cam, telesync"
 
 #: lib/cinder_web/components/book_manual_search_component.ex:259
-#: lib/cinder_web/components/manual_search_component.ex:457
+#: lib/cinder_web/components/manual_search_component.ex:343
 #, elixir-autogen
 msgid "contains a blocked term"
 msgstr "contient un terme bloqué"
@@ -6930,7 +6930,7 @@ msgstr "commercial"
 
 #: lib/cinder_web/components/book_manual_search_component.ex:255
 #: lib/cinder_web/components/book_manual_search_component.ex:256
-#: lib/cinder_web/components/manual_search_component.ex:479
+#: lib/cinder_web/components/manual_search_component.ex:365
 #, elixir-autogen, elixir-format
 msgid "title doesn't match"
 msgstr "le titre ne correspond pas"

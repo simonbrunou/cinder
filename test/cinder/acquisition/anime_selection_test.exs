@@ -4,7 +4,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
   import Mox
 
   alias Cinder.Acquisition
-  alias Cinder.Acquisition.{Anime, AnimePreferences}
+  alias Cinder.Acquisition.Anime
   alias Cinder.Acquisition.IndexerMock
   alias Cinder.Acquisition.Release
   alias Cinder.Acquisition.Scorer
@@ -50,7 +50,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
              Anime.select_episodes([release], context, [11], [])
 
     assert {:ok, %{assignments: [%{episode_ids: [11]}], waiting: nil}} =
-             Anime.select_episodes([release], context, [11], preferred_groups: [])
+             Anime.select_episodes([release], context, [11], anime_policy: policy([]))
   end
 
   test "episodic preference keeps a trailing group parsed by the standard release parser" do
@@ -58,7 +58,9 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     release = Release.new(raw("Show - 1 [1080p]-Trusted", "single"))
 
     assert {:ok, %{assignments: [%{release: selected}], waiting: nil}} =
-             Anime.select_episodes([release], context, [1], preferred_groups: ["trusted"])
+             Anime.select_episodes([release], context, [1],
+               anime_policy: policy(preferred_groups: ["trusted"])
+             )
 
     assert selected.group == "Trusted"
   end
@@ -366,7 +368,10 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
         )
       )
 
-    selection_opts = [preferred_groups: ["trusted"], fallback_delay: 3600, now: now]
+    selection_opts = [
+      anime_policy: policy(preferred_groups: ["trusted"], group_fallback_delay: 3600),
+      now: now
+    ]
 
     assert :no_match = Anime.select_episodes([unsafe_delayed], context, [11], selection_opts)
     assert :no_match = Anime.select_episodes([unsafe_bridge], context, [11, 12], selection_opts)
@@ -443,8 +448,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
               waiting: %{episode_ids: episode_ids, retry_at: ~U[2026-07-14 12:00:00Z]}
             }} =
              Anime.select_episodes([preferred, delayed], context, Enum.to_list(1..12),
-               preferred_groups: [" trusted "],
-               fallback_delay: 86_400,
+               anime_policy: policy(preferred_groups: ["trusted"], group_fallback_delay: 86_400),
                now: now
              )
 
@@ -1181,7 +1185,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
                [release],
                absolute_context(1..1),
                [1],
-               AnimePreferences.selection_opts(policy)
+               anime_policy: policy
              )
 
     assert selected.release_policy_snapshot == %{
@@ -1301,8 +1305,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
     assert {:error, :incomplete_search} =
              Anime.best_episodes(IndexerMock, context, [11],
-               preferred_groups: ["trusted"],
-               fallback_delay: 3600,
+               anime_policy: policy(preferred_groups: ["trusted"], group_fallback_delay: 3600),
                now: now
              )
   end
@@ -1319,7 +1322,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
                [blocked, preferred],
                context,
                [11, 12],
-               AnimePreferences.selection_opts(policy)
+               anime_policy: policy
              )
 
     assert assignment.release.group == "SubsPlease"
@@ -1353,7 +1356,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert {:ok, %Release{title: "[SubsPlease] Suzume 2022 [1080p] [JA Audio] [FR Subs]"}} =
              Anime.select_movie(
                [blocked, preferred],
-               AnimePreferences.selection_opts(policy)
+               anime_policy: policy
              )
   end
 
@@ -1373,7 +1376,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       )
 
     assert {:ok, selected} =
-             Anime.select_movie([release], AnimePreferences.selection_opts(policy))
+             Anime.select_movie([release], anime_policy: policy)
 
     assert selected.release_policy_snapshot == %{
              "version" => 1,
@@ -1400,7 +1403,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
     opts =
       [preferred_language: "french", original_language: "ja"] ++
-        AnimePreferences.selection_opts(policy(required_audio_languages: ["fr"]))
+        [anime_policy: policy(required_audio_languages: ["fr"])]
 
     assert {:ok, %Release{audio_languages: ["fr"], audio_claim_complete?: true}} =
              Acquisition.best_anime_movie("tt4425200", context, opts)
@@ -1432,7 +1435,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
                ],
                preference_context(),
                [11, 12],
-               AnimePreferences.selection_opts(policy)
+               anime_policy: policy
              )
 
     assert selected.group == "Mystery"
@@ -1449,9 +1452,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
                [release],
                context,
                [11, 12],
-               AnimePreferences.selection_opts(
-                 policy(embedded_subtitle_mode: :require, subtitle_languages: ["fr"])
-               )
+               anime_policy: policy(embedded_subtitle_mode: :require, subtitle_languages: ["fr"])
              )
 
     assert {:ok, %{assignments: [_]}} =
@@ -1459,7 +1460,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
                [release],
                context,
                [11, 12],
-               AnimePreferences.selection_opts(policy(embedded_subtitle_mode: :allow))
+               anime_policy: policy(embedded_subtitle_mode: :allow)
              )
   end
 
@@ -1467,7 +1468,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     preference_cases: cases
   } do
     policy = policy(preferred_groups: ["subsplease"], group_fallback_delay: 3_600)
-    opts = AnimePreferences.selection_opts(policy) ++ [now: ~U[2026-07-13 13:00:00Z]]
+    opts = [anime_policy: policy, now: ~U[2026-07-13 13:00:00Z]]
 
     assert {:ok, %{assignments: [%{release: selected}]}} =
              Anime.select_episodes(
@@ -1495,7 +1496,8 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
                [release],
                preference_context(),
                [11, 12],
-               AnimePreferences.selection_opts(policy) ++ [now: ~U[2026-07-13 12:59:59Z]]
+               anime_policy: policy,
+               now: ~U[2026-07-13 12:59:59Z]
              )
 
     assert {:ok, %{assignments: [_], waiting: nil}} =
@@ -1503,7 +1505,8 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
                [release],
                preference_context(),
                [11, 12],
-               AnimePreferences.selection_opts(policy) ++ [now: ~U[2026-07-13 13:00:00Z]]
+               anime_policy: policy,
+               now: ~U[2026-07-13 13:00:00Z]
              )
   end
 
@@ -1513,7 +1516,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     release = preference_release(cases, "unknown-undated")
     context = preference_context()
     policy = policy(preferred_groups: ["subsplease"])
-    opts = AnimePreferences.selection_opts(policy)
+    opts = [anime_policy: policy]
 
     assert :no_match = Anime.select_episodes([release], context, [11, 12], opts)
 

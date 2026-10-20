@@ -6,6 +6,7 @@ defmodule Cinder.AcquisitionTest do
   alias Cinder.Acquisition
   alias Cinder.Acquisition.Anime
   alias Cinder.Acquisition.Release
+  alias Cinder.Acquisition.ReleaseJudge
   alias Cinder.Catalog.Series
 
   setup :verify_on_exit!
@@ -49,14 +50,15 @@ defmodule Cinder.AcquisitionTest do
 
     assert {:waiting_for_preferred_group, %{retry_at: ~U[2026-07-14 12:00:00Z]}} =
              Anime.select_movie([fallback],
-               preferred_groups: ["Trusted"],
-               fallback_delay: 86_400,
+               anime_policy: anime_policy(preferred_groups: ["trusted"]),
                now: now
              )
 
     no_timestamp = %{fallback | published_at: nil}
     assert {:ok, ^no_timestamp} = Anime.select_movie([no_timestamp])
-    assert {:ok, ^no_timestamp} = Anime.select_movie([no_timestamp], preferred_groups: [])
+
+    assert {:ok, %Release{download_url: "fallback", published_at: nil}} =
+             Anime.select_movie([no_timestamp], anime_policy: anime_policy(preferred_groups: []))
   end
 
   test "anime movie preference recognizes a leading bracketed group" do
@@ -68,7 +70,24 @@ defmodule Cinder.AcquisitionTest do
       })
 
     assert {:ok, %Release{group: "Trusted"}} =
-             Anime.select_movie([release], preferred_groups: ["trusted"])
+             Anime.select_movie([release],
+               anime_policy: anime_policy(preferred_groups: ["trusted"])
+             )
+  end
+
+  # A resolved anime policy that contradicts nothing, so only the group wait decides.
+  defp anime_policy(overrides) do
+    Map.merge(
+      %{
+        required_audio_languages: [],
+        subtitle_languages: [],
+        embedded_subtitle_mode: :allow,
+        preferred_groups: [],
+        blocked_groups: [],
+        group_fallback_delay: 86_400
+      },
+      Map.new(overrides)
+    )
   end
 
   test "best_anime_releases/3 exposes stable-ID selection without changing the TV poller API" do
@@ -406,8 +425,8 @@ defmodule Cinder.AcquisitionTest do
     assert :no_match = Acquisition.best_release("tt0145487", context, max_size: 20 * @gb)
   end
 
-  describe "list_releases/3" do
-    test "returns every release annotated with its verdict, acceptable first" do
+  describe "judge_movie/3" do
+    test "judges every release, acceptable first" do
       Cinder.Acquisition.IndexerMock
       |> expect(:search, fn "tt1" ->
         {:ok,
@@ -429,32 +448,35 @@ defmodule Cinder.AcquisitionTest do
          ]}
       end)
 
-      assert {:ok, [{first, v1}, {_second, v2}]} =
-               Acquisition.list_releases("tt1", movie_context(),
+      assert [{first, v1}, {_second, v2}] =
+               "tt1"
+               |> Acquisition.judge_movie(movie_context(),
                  protocols: [:torrent],
                  preferred_resolutions: ["1080p"],
                  max_size: 10_000_000_000
                )
+               |> verdicts()
 
       assert v1 == :ok
       assert first.title == "Movie Good 1080p"
       assert v2 == {:rejected, :out_of_band}
     end
 
-    # A wrong-protocol row can't be grabbed at all, so that verdict outranks a title mismatch.
     test "flags a release on an unconfigured protocol" do
       Cinder.Acquisition.IndexerMock
       |> expect(:search, fn _ ->
         {:ok, [%{title: "U", size: 1_000_000_000, protocol: :usenet, download_url: "u"}]}
       end)
 
-      assert {:ok, [{_r, {:rejected, :wrong_protocol}}]} =
-               Acquisition.list_releases("tt1", movie_context(), protocols: [:torrent])
+      assert [{_r, {:rejected, :wrong_protocol}}] =
+               "tt1"
+               |> Acquisition.judge_movie(movie_context(), protocols: [:torrent])
+               |> verdicts()
     end
 
     test "passes through an indexer error" do
       Cinder.Acquisition.IndexerMock |> expect(:search, fn _ -> {:error, :down} end)
-      assert Acquisition.list_releases("tt1", movie_context(), []) == {:error, :down}
+      assert Acquisition.judge_movie("tt1", movie_context(), []) == {:error, :down}
     end
 
     # "Find a better match" on Spider-Man (2002) would list another film the `{ImdbId:...}` search
@@ -467,24 +489,50 @@ defmodule Cinder.AcquisitionTest do
       right = raw(title: "Spiderman.2002.1080p.BluRay.x264-GRP", size: 6 * @gb)
       expect(Cinder.Acquisition.IndexerMock, :search, fn "tt0145487" -> {:ok, [wrong, right]} end)
 
-      assert {:ok,
-              [
-                {%Release{title: "Spiderman.2002" <> _}, :ok},
-                {%Release{title: "Spider.2002" <> _}, {:rejected, :title_mismatch}}
-              ]} = Acquisition.list_releases("tt0145487", context, max_size: 20 * @gb)
+      assert [
+               {%Release{title: "Spiderman.2002" <> _}, :ok},
+               {%Release{title: "Spider.2002" <> _}, {:rejected, :title_mismatch}}
+             ] =
+               "tt0145487"
+               |> Acquisition.judge_movie(context, max_size: 20 * @gb)
+               |> verdicts()
+    end
+
+    # The sweep can fetch an IMDb id the context doesn't carry yet (`Download.ensure_imdb_id/1`):
+    # the guard follows the id that was searched.
+    test "searches by the id it is given, whatever the context says" do
+      expect(Cinder.Acquisition.IndexerMock, :search, fn "tt9" -> {:ok, [raw([])]} end)
+
+      assert {:ok, %ReleaseJudge{guard: {:imdb, _context}}} =
+               Acquisition.judge_movie("tt9", movie_context(imdb_id: nil), [])
+    end
+
+    test "a blank id takes the Title.Year search" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn "Movie 2020", [] ->
+        {:ok, [raw([])]}
+      end)
+
+      assert {:ok, %ReleaseJudge{guard: {:title_year, "Movie", 2020}}} =
+               Acquisition.judge_movie("", movie_context(), [])
     end
   end
 
+  defp verdicts({:ok, %ReleaseJudge{rows: rows}}), do: Enum.map(rows, &{&1.release, &1.verdict})
+
+  # `best_release/3` with no IMDb id: the free-text Title.Year search.
+  defp best_by_title(title, year, opts \\ []),
+    do: Acquisition.best_release(nil, movie_context(imdb_id: nil, title: title, year: year), opts)
+
   # Issue #195 — the free-text fallback for a TMDB title with no IMDb id. Without the id token
   # the title+year guard is the only thing pinning identity, so both halves are load-bearing.
-  describe "best_release_by_title/3" do
+  describe "best_release/3 with no IMDb id" do
     test "queries \"Title Year\" and selects a release the guard accepts" do
       expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn "Dune 2021", [] ->
         {:ok, [raw(title: "[TGx] Dune.2021.1080p.BluRay.x264-GRP")]}
       end)
 
       assert {:ok, %Release{title: "[TGx] Dune.2021.1080p.BluRay.x264-GRP"}} =
-               Acquisition.best_release_by_title("Dune", 2021)
+               best_by_title("Dune", 2021)
     end
 
     # The title must be EVERYTHING before the year token — a run-anywhere match takes all three of
@@ -499,7 +547,7 @@ defmodule Cinder.AcquisitionTest do
          ]}
       end)
 
-      assert Acquisition.best_release_by_title("Dune", 2021) == :no_match
+      assert best_by_title("Dune", 2021) == :no_match
     end
 
     test "with no known year, anchors on the LAST year token only" do
@@ -513,7 +561,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, %Release{title: "Dune.1984.1080p.BluRay.x264-GRP"}} =
-               Acquisition.best_release_by_title("Dune", nil)
+               best_by_title("Dune", nil)
     end
 
     # Anchoring on *any* year token would read the 2049 in this release's title as its year and
@@ -523,8 +571,8 @@ defmodule Cinder.AcquisitionTest do
         {:ok, [raw(title: "Blade.Runner.2049.2017.1080p.BluRay.x264-GRP")]}
       end)
 
-      assert Acquisition.best_release_by_title("Blade Runner", nil) == :no_match
-      assert {:ok, %Release{}} = Acquisition.best_release_by_title("Blade Runner 2049", nil)
+      assert best_by_title("Blade Runner", nil) == :no_match
+      assert {:ok, %Release{}} = best_by_title("Blade Runner 2049", nil)
     end
 
     test "accepts a title that itself ends in a year" do
@@ -532,7 +580,7 @@ defmodule Cinder.AcquisitionTest do
         {:ok, [raw(title: "Blade.Runner.2049.2017.1080p.BluRay.x264-GRP")]}
       end)
 
-      assert {:ok, %Release{}} = Acquisition.best_release_by_title("Blade Runner 2049", 2017)
+      assert {:ok, %Release{}} = best_by_title("Blade Runner 2049", 2017)
     end
 
     test "drops a release naming no year at all when the movie's year is known" do
@@ -540,34 +588,44 @@ defmodule Cinder.AcquisitionTest do
         {:ok, [raw(title: "Dune.1080p.BluRay.x264-GRP")]}
       end)
 
-      assert Acquisition.best_release_by_title("Dune", 2021) == :no_match
+      assert best_by_title("Dune", 2021) == :no_match
     end
 
     test "passes through an indexer error" do
       expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _q, _o -> {:error, :down} end)
 
-      assert Acquisition.best_release_by_title("Dune", 2021) == {:error, :down}
+      assert best_by_title("Dune", 2021) == {:error, :down}
     end
 
     # The guard is strict enough to fail closed on real conventions it can't parse (German scene
     # puts the language before the year). Fine for automatic selection — but the manual panel is
     # the operator's override, so it must keep listing them, unflagged: the name does spell "Dune",
     # so a "title doesn't match" verdict would be false.
-    test "list_releases_by_title/3 still lists a release the guard rejects" do
+    test "the panel still lists a release the guard rejects" do
       expect(Cinder.Acquisition.IndexerMock, :search_movie_query, 2, fn _query, [] ->
         {:ok, [raw(title: "Dune.German.2021.AC3.BDRiP.x264-GRP")]}
       end)
 
-      assert :no_match = Acquisition.best_release_by_title("Dune", 2021, max_size: 20 * @gb)
+      assert :no_match = best_by_title("Dune", 2021, max_size: 20 * @gb)
 
-      assert {:ok, [{%Release{title: "Dune.German.2021.AC3.BDRiP.x264-GRP"}, verdict}]} =
-               Acquisition.list_releases_by_title("Dune", 2021, max_size: 20 * @gb)
+      context = movie_context(imdb_id: nil, title: "Dune", year: 2021)
+
+      assert {:ok,
+              %ReleaseJudge{
+                rows: [
+                  %{
+                    release: %Release{title: "Dune.German.2021.AC3.BDRiP.x264-GRP"},
+                    dropped_at: :title_guard,
+                    verdict: verdict
+                  }
+                ]
+              }} = Acquisition.judge_movie(nil, context, max_size: 20 * @gb)
 
       refute verdict == {:rejected, :title_mismatch}
     end
   end
 
-  describe "list_releases_tv/3 alternate numbering" do
+  describe "judge_season/4 alternate numbering" do
     test "unions and deduplicates scene and aired season searches with stable episode ids" do
       episodes = [
         %{id: 29, episode_number: 29},
@@ -614,13 +672,13 @@ defmodule Cinder.AcquisitionTest do
         end
       end)
 
-      assert {:ok, results} =
-               Acquisition.list_releases_tv(series(), 1, standard_numbering: numbering)
+      assert {:ok, %ReleaseJudge{rows: rows}} =
+               Acquisition.judge_season(series(), 1, numbering)
 
       assert [
-               {%Release{season: 2, resolved_episode_ids: [29]}, _},
-               {%Release{season: 3, resolved_episode_ids: [30]}, _}
-             ] = Enum.sort_by(results, fn {release, _verdict} -> release.season end)
+               %Release{season: 2, resolved_episode_ids: [29]},
+               %Release{season: 3, resolved_episode_ids: [30]}
+             ] = rows |> Enum.map(& &1.release) |> Enum.sort_by(& &1.season)
 
       assert_received {:searched_manual_season, 1}
       assert_received {:searched_manual_season, 2}
@@ -656,12 +714,17 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok,
-              [
-                {%Release{
-                   resolved_episode_ids: nil,
-                   resolution_evidence: :conflicting_standard_numbering
-                 }, {:rejected, :conflicting_standard_numbering}}
-              ]} = Acquisition.list_releases_tv(series(), 1, standard_numbering: numbering)
+              %ReleaseJudge{
+                rows: [
+                  %{
+                    release: %Release{
+                      resolved_episode_ids: nil,
+                      resolution_evidence: :conflicting_standard_numbering
+                    },
+                    verdict: {:rejected, :conflicting_standard_numbering}
+                  }
+                ]
+              }} = Acquisition.judge_season(series(), 1, numbering)
     end
   end
 
@@ -1100,7 +1163,7 @@ defmodule Cinder.AcquisitionTest do
     end
   end
 
-  describe "title_guard/3" do
+  describe "title_guard/2" do
     test "keeps an id-scoped AKA while dropping a free-text title continued by spinoff words" do
       target = series(title: "Money Heist")
 
@@ -1116,7 +1179,7 @@ defmodule Cinder.AcquisitionTest do
         |> Enum.map(&Release.new/1)
 
       assert [%Release{title: "La.Casa.de.Papel.S01E01.1080p.WEB-DL-GRP"}] =
-               Acquisition.title_guard(releases, :tv, target)
+               Acquisition.title_guard(releases, {:series, target})
     end
 
     test "a title containing a year token still year-verifies against its own decoration year" do
@@ -1129,7 +1192,7 @@ defmodule Cinder.AcquisitionTest do
         |> Enum.map(&Release.new/1)
 
       assert [%Release{title: "Class.of.2009.2021.S01E01.1080p.WEB-DL-GRP"}] =
-               Acquisition.title_guard(releases, :tv, target)
+               Acquisition.title_guard(releases, {:series, target})
     end
 
     test "a bare-numeral title still rejects a genuinely conflicting decoration year" do
@@ -1141,7 +1204,7 @@ defmodule Cinder.AcquisitionTest do
         [raw_tv("1923.2005.S01E01.1080p.WEB-DL-GRP", query_origins: [:free_text])]
         |> Enum.map(&Release.new/1)
 
-      assert [] = Acquisition.title_guard(releases, :tv, target)
+      assert [] = Acquisition.title_guard(releases, {:series, target})
     end
 
     test "an IMDb-scoped movie keeps any name spelling a known title and drops another film" do
@@ -1168,7 +1231,7 @@ defmodule Cinder.AcquisitionTest do
       releases =
         Enum.map(["The.Godmother.1972.1080p.WEB-DL-GRP" | kept], &Release.new(raw(title: &1)))
 
-      assert Enum.map(Acquisition.title_guard(releases, :movie, context), & &1.title) == kept
+      assert Enum.map(Acquisition.title_guard(releases, {:imdb, context}), & &1.title) == kept
     end
 
     test "an IMDb-scoped movie title matches whole tokens, not a word's prefix" do
@@ -1179,7 +1242,7 @@ defmodule Cinder.AcquisitionTest do
         )
 
       assert [%Release{title: "Up.2009.1080p.BluRay.x264-GRP"}] =
-               Acquisition.title_guard(releases, :movie, movie_context(title: "Up", year: 2009))
+               Acquisition.title_guard(releases, {:imdb, movie_context(title: "Up", year: 2009)})
     end
 
     # Every release carries a year, so a year-shaped title matched anywhere would admit any film
@@ -1191,7 +1254,7 @@ defmodule Cinder.AcquisitionTest do
         Enum.map(["Avatar.2012.1080p.BluRay.x264-GRP" | kept], &Release.new(raw(title: &1)))
 
       assert releases
-             |> Acquisition.title_guard(:movie, movie_context(title: "2012", year: 2009))
+             |> Acquisition.title_guard({:imdb, movie_context(title: "2012", year: 2009)})
              |> Enum.map(& &1.title) == kept
     end
 
@@ -1202,13 +1265,13 @@ defmodule Cinder.AcquisitionTest do
       good = Release.new(raw(title: "Inception.2010.1080p.BluRay.x264-GRP"))
       movie = movie_context(title: "Inception", year: 2010)
 
-      assert Acquisition.title_guard([Release.new(raw(title: garbled)), good], :movie, movie) ==
+      assert Acquisition.title_guard([Release.new(raw(title: garbled)), good], {:imdb, movie}) ==
                [good]
 
       # The scrubbed name still reads "Interstellar.2014", so the TV guard keeps it for that show.
       tv = [Release.new(raw_tv(garbled, query_origins: [:free_text]))]
       target = series(tvdb_id: nil, title: "Interstellar", year: 2014)
-      assert Acquisition.title_guard(tv, :tv, target) == tv
+      assert Acquisition.title_guard(tv, {:series, target}) == tv
     end
 
     # Nothing to compare release names against, so the IMDb scope stays the only evidence rather
@@ -1216,7 +1279,7 @@ defmodule Cinder.AcquisitionTest do
     test "an IMDb-scoped movie with no Latin-script title or alias keeps its results" do
       releases = [Release.new(raw(title: "Dom.2011.1080p.WEB-DL-GRP"))]
 
-      assert Acquisition.title_guard(releases, :movie, movie_context(title: "Дом", year: 2011)) ==
+      assert Acquisition.title_guard(releases, {:imdb, movie_context(title: "Дом", year: 2011)}) ==
                releases
     end
   end

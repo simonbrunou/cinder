@@ -23,8 +23,8 @@ defmodule Cinder.Acquisition.Scorer do
   them.
 
   Rules come from per-call `opts` — the pollers and the manual-search panel pass the
-  settings-store band via `Cinder.Acquisition.band_opts/1`. Returns `{:ok, release}`
-  or `:no_match` when none survive the filters.
+  household policy (`Cinder.Acquisition.HouseholdPolicy.for_target/2`), which carries the
+  settings-store band. Returns `{:ok, release}` or `:no_match` when none survive the filters.
   """
   alias Cinder.Acquisition.{AnimePreferences, Language, Release}
 

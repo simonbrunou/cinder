@@ -2,7 +2,7 @@ defmodule Cinder.Acquisition.Anime do
   @moduledoc "Bounded anime-aware query planning and release aggregation."
 
   alias Cinder.Acquisition
-  alias Cinder.Acquisition.{AnimeParser, AnimePreferences, Language, Release, Scorer}
+  alias Cinder.Acquisition.{AnimeParser, AnimePreferences, Release, ReleaseJudge, Scorer}
   alias Cinder.Catalog.{AnimeResolver, Episode, TitleAlias}
   alias Cinder.Download.Intent
 
@@ -73,10 +73,9 @@ defmodule Cinder.Acquisition.Anime do
         match?({:ok, _selection}, Scorer.select_for_ids([candidate], wanted_ids, opts))
       end)
 
-    case preferred_groups(opts) do
-      [] -> select_immediately(hard_valid, context, wanted_ids, opts)
-      groups -> select_with_waiting(hard_valid, context, wanted_ids, groups, opts)
-    end
+    if waits_for_preferred_group?(opts),
+      do: select_with_waiting(hard_valid, context, wanted_ids, opts),
+      else: select_immediately(hard_valid, context, wanted_ids, opts)
   end
 
   def select_movie(releases, opts \\ []) do
@@ -87,10 +86,9 @@ defmodule Cinder.Acquisition.Anime do
       |> Enum.filter(&(Scorer.verdict(&1, opts) == :ok))
 
     result =
-      case preferred_groups(opts) do
-        [] -> Scorer.select(hard_valid, opts)
-        groups -> select_timed_movie(hard_valid, groups, opts)
-      end
+      if waits_for_preferred_group?(opts),
+        do: select_timed_movie(hard_valid, opts),
+        else: Scorer.select(hard_valid, opts)
 
     cond do
       result == :no_match and Keyword.get(opts, :incomplete_search?, false) ->
@@ -393,20 +391,12 @@ defmodule Cinder.Acquisition.Anime do
 
   defp fill_movie_group(release), do: release
 
+  # With no anime policy the name's language tag decides, by the release judge's rule; a strict
+  # pick that removes every candidate leaves nothing to cover.
   defp language_pool(candidates, opts) do
     case Keyword.get(opts, :anime_policy) do
-      nil -> legacy_language_pool(candidates, opts)
+      nil -> candidates |> ReleaseJudge.language_stage(opts, []) |> elem(1)
       _policy -> candidates
-    end
-  end
-
-  defp legacy_language_pool(candidates, opts) do
-    preferred = Keyword.get(opts, :preferred_language)
-    original = Keyword.get(opts, :original_language)
-
-    case Language.filter(candidates, preferred, original) do
-      [] when candidates != [] -> if Language.strict?(preferred), do: [], else: candidates
-      filtered -> filtered
     end
   end
 
@@ -570,21 +560,13 @@ defmodule Cinder.Acquisition.Anime do
     |> selection_result(nil)
   end
 
-  defp preferred_groups(opts) do
-    opts
-    |> Keyword.get(:preferred_groups, [])
-    |> Enum.filter(&is_binary/1)
-    |> Enum.map(&normalize_group/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.uniq()
-  end
+  # The group wait (`AnimePreferences.group_wait/3`) only shapes selection when the policy names
+  # preferred groups; without one, every candidate is taken on its merits at once.
+  defp waits_for_preferred_group?(opts),
+    do: match?(%{preferred_groups: [_ | _]}, Keyword.get(opts, :anime_policy))
 
-  defp normalize_group(group), do: group |> String.trim() |> String.downcase()
-
-  defp select_timed_movie(candidates, groups, opts) do
-    now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
-    delay = Keyword.get(opts, :fallback_delay, 0)
-    entries = Enum.flat_map(candidates, &timed_entry(&1, groups, now, delay))
+  defp select_timed_movie(candidates, opts) do
+    entries = timed_entries(candidates, opts)
     eligible = for %{status: :eligible, release: release} <- entries, do: release
 
     case Scorer.select(eligible, opts) do
@@ -604,12 +586,10 @@ defmodule Cinder.Acquisition.Anime do
     {:waiting_for_preferred_group, %{retry_at: retry_at}}
   end
 
-  defp select_with_waiting(candidates, context, wanted_ids, groups, opts) do
-    now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
-    delay = Keyword.get(opts, :fallback_delay, 0)
-
+  defp select_with_waiting(candidates, context, wanted_ids, opts) do
     entries =
-      Enum.flat_map(candidates, &timed_entry(&1, groups, now, delay))
+      candidates
+      |> timed_entries(opts)
       |> Enum.filter(&valid_timed_entry_snapshot?(&1, context))
 
     outcomes =
@@ -638,28 +618,26 @@ defmodule Cinder.Acquisition.Anime do
     selection_result(assignments, waiting)
   end
 
-  defp timed_entry(release, groups, now, delay) do
+  defp timed_entries(candidates, opts) do
+    policy = Keyword.fetch!(opts, :anime_policy)
+    now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
+    Enum.flat_map(candidates, &timed_entry(&1, AnimePreferences.group_wait(&1, policy, now)))
+  end
+
+  defp timed_entry(release, wait) do
     ids = MapSet.new(release.resolved_episode_ids || [])
 
-    if normalize_group(release.group || "") in groups do
-      [%{release: release, ids: ids, status: :eligible, retry_at: nil}]
-    else
-      fallback_entry(release, ids, now, delay)
+    case wait do
+      :eligible ->
+        [%{release: release, ids: ids, status: :eligible, retry_at: nil}]
+
+      {:delayed, retry_at} ->
+        [%{release: release, ids: ids, status: :delayed, retry_at: retry_at}]
+
+      :undated ->
+        []
     end
   end
-
-  defp fallback_entry(
-         %Release{published_at: %DateTime{} = published_at} = release,
-         ids,
-         now,
-         delay
-       ) do
-    retry_at = DateTime.add(published_at, delay, :second)
-    status = if DateTime.compare(retry_at, now) == :gt, do: :delayed, else: :eligible
-    [%{release: release, ids: ids, status: status, retry_at: retry_at}]
-  end
-
-  defp fallback_entry(_release, _ids, _now, _delay), do: []
 
   defp valid_timed_entry_snapshot?(entry, context) do
     episode_ids =
@@ -1124,7 +1102,7 @@ defmodule Cinder.Acquisition.Anime do
   # lenient whole-token guard the standard path uses — no exact-year requirement, and a movie with
   # no usable title keeps its id-scoped results. Episodic results keep the exemption.
   defp id_scoped_match?(release, release_title, %{kind: :movie} = context) do
-    Acquisition.filter_id_scoped_movie([release], context) != [] or
+    Acquisition.title_guard([release], {:imdb, context}) != [] or
       known_title_match?(release_title, context)
   end
 

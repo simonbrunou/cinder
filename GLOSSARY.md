@@ -5,6 +5,29 @@ downloads it and imports it into the library a media server reads.
 
 ## Language
 
+### Acquisition
+
+**Release judge**:
+The decision that accepts or rejects each release one search returned for one request target,
+always with a named reason, and ranks the accepted ones. The manual-search panel lists it. For a
+movie or a TV season automatic selection takes its pick from the same judge, so the two can't
+disagree, and it also names the stage that dropped a release before scoring: no download client
+for its protocol, a name that isn't the target's, or the audio pick. Books have no automatic
+selection.
+_Avoid_: filter, matcher, release decision
+
+**Household policy**:
+The household's rules for acquiring one movie or series: which protocols have a download client,
+the title's audio pick, the releases blocked for it, and the size band and quality preferences set
+for its kind. The anime policy is resolved separately, on top of it.
+_Avoid_: search opts, scorer opts
+
+**Group wait**:
+Holding back an anime release from a group outside the preferred ones until a set delay after it
+was published, so a preferred group's release can arrive first. A release with no publication time
+can't start the wait, so automatic selection never takes it.
+_Avoid_: fallback delay (the setting, not the rule), group timing
+
 ### Books
 
 **Book family**:
@@ -17,11 +40,6 @@ The form a work is acquired in: e-book or audiobook. Each kind has its own accep
 band and release-name vocabulary.
 _Avoid_: profile, media profile (a library root and its quality settings), format (a container
 such as EPUB or M4B)
-
-**Release judge**:
-The decision that accepts or rejects one release for one work, always with a named reason, and
-ranks the accepted ones.
-_Avoid_: filter, matcher
 
 ### Downloads
 

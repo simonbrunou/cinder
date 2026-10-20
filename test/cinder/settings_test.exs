@@ -5,6 +5,7 @@ defmodule Cinder.SettingsTest do
   import Mox
   import ExUnit.CaptureLog
 
+  alias Cinder.Acquisition.HouseholdPolicy
   alias Cinder.Catalog
   alias Cinder.Catalog.UpgradeHunter
   alias Cinder.Health
@@ -1172,7 +1173,7 @@ defmodule Cinder.SettingsTest do
       assert Application.get_env(:cinder, :movies_preferred_sources) == nil
     end
 
-    test "movie size band is editable too (same coercion as TV) and reaches band_opts/1" do
+    test "movie size band is editable too (same coercion as TV) and reaches the household band" do
       Settings.put("movies_max_size", "20")
       Settings.put("movies_preferred_resolutions", "2160p, 1080P")
 
@@ -1180,7 +1181,7 @@ defmodule Cinder.SettingsTest do
       assert Application.get_env(:cinder, :movies_preferred_resolutions) == ["2160p", "1080p"]
 
       # The band reaches the scorer the same way TV's does; nil (min_size unset) is dropped.
-      opts = Cinder.Acquisition.band_opts(:movies)
+      opts = HouseholdPolicy.band(:movies)
       assert opts[:max_size] == 20_000_000_000
       assert opts[:preferred_resolutions] == ["2160p", "1080p"]
       refute Keyword.has_key?(opts, :min_size)
@@ -1194,7 +1195,7 @@ defmodule Cinder.SettingsTest do
       Settings.put("movies_blocked_terms", "CAM, telesync")
       Settings.put("movies_upgrade_cutoff", "1080p")
 
-      opts = Cinder.Acquisition.band_opts(:movies)
+      opts = HouseholdPolicy.band(:movies)
       assert opts[:preferred_terms] == ["proper", "repack"]
       assert opts[:blocked_terms] == ["cam", "telesync"]
       refute Keyword.has_key?(opts, :upgrade_cutoff)

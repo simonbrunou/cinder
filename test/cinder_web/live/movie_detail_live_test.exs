@@ -604,6 +604,43 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert Catalog.get_movie_by_id(movie.id).status == :upgrading
   end
 
+  # The anime search still returns `{release, verdict}` pairs (#775); the panel turns them into the
+  # same rows the release judge builds, with no language badge.
+  test "an anime movie's panel lists its releases as rows", %{conn: conn} do
+    movie =
+      movie_fixture(%{
+        title: "Perfect Blue",
+        year: 1997,
+        status: :available,
+        imdb_id: "tt3",
+        media_profile: :anime,
+        file_path: "/lib/Perfect Blue (1997)/Perfect Blue (1997).mkv"
+      })
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt3" ->
+      {:ok,
+       [
+         %{
+           title: "[Group] Perfect Blue (1997) [1080p]",
+           size: 5_000_000_000,
+           protocol: :torrent,
+           download_url: "u"
+         }
+       ]}
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, _opts -> {:ok, []} end)
+
+    {:ok, lv, _html} = live_movie(conn, movie)
+
+    lv |> element("button", "Find a better match") |> render_click()
+    html = render_async(lv)
+
+    assert html =~ "[Group] Perfect Blue (1997) [1080p]"
+    assert has_element?(lv, "#ms-movie-#{movie.id} button", "Grab")
+    refute html =~ "audio pick"
+  end
+
   test "Cancel upgrade reverts an :upgrading movie to :available", %{conn: conn} do
     movie =
       movie_fixture(%{

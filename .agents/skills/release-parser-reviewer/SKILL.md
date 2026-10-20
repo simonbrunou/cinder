@@ -22,8 +22,12 @@ You have no memory between runs. Orient first, every run.
    - `lib/cinder/acquisition/parser.ex` — release name -> resolution/source/codec/group/
      language/season/episodes. `lib/cinder/acquisition/release.ex` — the `%Release{}` struct.
    - `lib/cinder/acquisition/scorer.ex` — `select/2` (movie) + `select_for/4` (TV set-cover).
-   - `lib/cinder/acquisition.ex` — `best_release/3`, `best_releases/4`, `search`/`search_tv`,
-     the title-match guard, the language pool, `band_opts/1`.
+   - `lib/cinder/acquisition.ex` — `best_release/3`, `best_releases/4`, `judge_movie/3`,
+     `judge_season/4`, `search`/`search_tv`, the title-match guards behind `title_guard/2`.
+   - `lib/cinder/acquisition/release_judge.ex` — the stages the sweep and the manual panel share
+     (protocol → title guard → language), `kept` (the selection pool, in indexer order) and the
+     language stage (`language_stage/3`). `lib/cinder/acquisition/household_policy.ex` —
+     `for_target/2` and `band/1`.
    - `lib/cinder/library.ex` — `stage_movie/1,2` + `commit_stage/1` (the movie path; there is
      no `import_movie/1` any more), `stage_episodes/3` (the TV path the poller uses) and
      `import_episodes/2` (the same file->episode mapping, direct).
@@ -66,16 +70,17 @@ You have no memory between runs. Orient first, every run.
 (a 4-digit year-like token, `Sxx`/`SxxEyy`, `Exx`, absolute number/range with
 optional `v2`, `[`, or a resolution/source token) — NOT a bare substring match; the movie kind additionally
 requires an exact-year hit (`exact_movie_year?/2`). The standard movie IMDb path
-(`best_release/3` / `title_guard/3`) runs `filter_id_scoped_movie/2`. An IMDb-scoped result is
+(`best_release/3` / `title_guard(releases, {:imdb, context})`) runs `filter_id_scoped_movie/2`. An IMDb-scoped result is
 NOT identity proof: a release must spell the title, a localized title, or an alias as a
 whole-token run anywhere in the name. The exception is an all-digit title ("2012"), which must
 lead the name so that another release's year can't match it. There is no year requirement, and
 the guard is skipped only when no title yields a usable needle. Do not drop this guard or make it
 a bare substring match. `nfd/1` (`acquisition.ex`)
 must tolerate malformed UTF-8 (a garbled indexer title must not crash or stall the
-season). Language pool: soft Original/Any falls back to unfiltered; an explicit pick is
-strict (parks on no match). `band_opts/1` returns only non-nil keys so it can't clobber
-Scorer defaults.
+season). Language stage (`ReleaseJudge.language_stage/3`): soft Original/Any falls back to
+unfiltered; an explicit pick is strict (parks on no match). `kept` must stay in indexer order:
+`Scorer` breaks ties by input order. `HouseholdPolicy.band/1` returns only non-nil keys so it
+can't clobber Scorer defaults.
 
 **Library import — the file->episode contract and graceful park:**
 - `import_episodes` maps files by parsing `SxxEyy` per file against the grab's episodes; a

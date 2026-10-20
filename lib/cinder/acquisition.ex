@@ -9,8 +9,8 @@ defmodule Cinder.Acquisition do
   require Logger
 
   alias Cinder.Acquisition.{Anime, AnimeParser, AnimePreferences}
-  alias Cinder.Acquisition.Language
   alias Cinder.Acquisition.Release
+  alias Cinder.Acquisition.ReleaseJudge
   alias Cinder.Acquisition.Scorer
   alias Cinder.Catalog.{AnimeResolver, Episode}
 
@@ -18,65 +18,44 @@ defmodule Cinder.Acquisition do
   @standard_tv_bridged_schemes ~w(scene aired)
 
   @doc """
-  Size-band scorer opts for a library `kind` (`:movies`/`:tv`), read from the settings-overlaid
-  `:cinder` env (`:movies_min_size`, `:tv_max_size`, …). Only non-nil keys are returned: a nil
-  nil list would override the scorer's default, and an unset rule is omitted. Both pollers pass
-  these through to `Scorer`, so movie and TV rules are configured the same way.
+  The release the movie sweep grabs for the movie `context` describes
+  (`Cinder.Catalog.movie_acquisition_context/1`): `judge_movie/3`'s pick
+  (`Cinder.Acquisition.ReleaseJudge.pick/1`). `opts` is the household policy
+  (`Cinder.Acquisition.HouseholdPolicy.for_target/2`).
+
+  Returns `{:ok, %Release{}}`, `:no_match` (no results, or none survive the rules),
+  `:no_language_match` (a strict audio pick removed every candidate), or `{:error, term}`
+  (indexer failure, passed through).
   """
-  def band_opts(kind) do
-    [
-      min_size: Application.get_env(:cinder, :"#{kind}_min_size"),
-      max_size: Application.get_env(:cinder, :"#{kind}_max_size"),
-      preferred_resolutions: Application.get_env(:cinder, :"#{kind}_preferred_resolutions"),
-      preferred_sources: Application.get_env(:cinder, :"#{kind}_preferred_sources"),
-      preferred_terms: Application.get_env(:cinder, :"#{kind}_preferred_terms"),
-      blocked_terms: Application.get_env(:cinder, :"#{kind}_blocked_terms")
-    ]
-    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  def best_release(imdb_id, context, opts \\ []) do
+    with {:ok, judged} <- judge_movie(imdb_id, context, opts), do: ReleaseJudge.pick(judged)
   end
 
   @doc """
-  Searches the configured indexer for `imdb_id`, parses each result, keeps only releases whose
-  name spells one of the movie's known titles (the IMDb scope alone is not identity proof), and
-  returns the best release per `Scorer` rules. `context` is
-  `Cinder.Catalog.movie_acquisition_context/1`'s map. `opts` are forwarded to `Scorer.select/2`.
+  Searches the indexer for a movie and judges every result (`Cinder.Acquisition.ReleaseJudge`).
+  The sweep picks from it (`best_release/3`) and the manual-search panel lists it.
 
-  When `opts[:protocols]` is given (a list of `:torrent`/`:usenet`), releases on
-  any other protocol are dropped before scoring — this is the graceful-degradation
-  guard, so a release with no configured download client is never chosen.
-  Omitting the option keeps every protocol.
-
-  Returns `{:ok, %Release{}}`, `:no_match` (no results, or none survive the rules),
-  `:no_language_match` (a non-empty candidate set was fully removed by an active per-item
-  language preference), or `{:error, term}` (indexer failure, passed through).
+  With an IMDb id the search is `{ImdbId:...}`-scoped. That scope is not identity proof, so a
+  release must still spell one of the movie's known titles (`{:imdb, context}`). With a nil or
+  blank id (TMDB publishes none for some titles, #195) it is a free-text `"Title Year"` search,
+  and the stricter Title.Year guard re-establishes the identity the id would have pinned
+  (`{:title_year, title, year}`). The guard follows the id that was searched, not
+  `context.imdb_id`: the sweep can fetch an id the context doesn't carry yet.
   """
-  def best_release(imdb_id, context, opts \\ []) do
-    case indexer().search(imdb_id) do
-      {:ok, raw_results} ->
-        releases = raw_results |> Enum.map(&Release.new/1) |> filter_id_scoped_movie(context)
+  def judge_movie(imdb_id, context, opts \\ [])
 
-        case movie_pool(releases, opts) do
-          :no_language_match -> :no_language_match
-          pool -> Scorer.select(pool, opts)
-        end
+  def judge_movie(imdb_id, context, opts) when imdb_id in [nil, ""] do
+    with {:ok, releases} <- title_search(context.title, context.year),
+         do: {:ok, ReleaseJudge.judge(releases, {:title_year, context.title, context.year}, opts)}
+  end
+
+  def judge_movie(imdb_id, context, opts) do
+    case indexer().search(imdb_id) do
+      {:ok, raw} ->
+        {:ok, ReleaseJudge.judge(Enum.map(raw, &Release.new/1), {:imdb, context}, opts)}
 
       {:error, _reason} = error ->
         error
-    end
-  end
-
-  @doc """
-  Free-text fallback for a movie TMDB publishes no IMDb id for (issue #195): a `"Title Year"`
-  `moviesearch` instead of the `{ImdbId:...}` token, then the same title guard the free-text TV
-  path uses plus a year-token check, re-establishing the identity the id token would have pinned.
-  Returns the same values as `best_release/3`.
-  """
-  def best_release_by_title(title, year, opts \\ []) do
-    with {:ok, releases} <- title_search(title, year) do
-      case releases |> filter_movie_title(title, year) |> movie_pool(opts) do
-        :no_language_match -> :no_language_match
-        pool -> Scorer.select(pool, opts)
-      end
     end
   end
 
@@ -94,26 +73,19 @@ defmodule Cinder.Acquisition do
   end
 
   @doc """
-  Searches the configured indexer for one TV `season` of `series`, parses each
-  result, on the free-text path keeps only releases whose name plausibly matches
-  the series title, and returns the chosen releases — each paired with the episode
-  numbers it covers — per `Scorer.select_for/4`. `wanted_numbers` is the
-  still-wanted episode-number set for that season.
+  Searches the configured indexer for one TV `season` of `series` and returns the chosen
+  releases, each paired with the episode numbers it covers, per `Scorer.select_for/4`.
+  `wanted_numbers` is the still-wanted episode-number set for that season.
 
-  `opts[:protocols]` drops releases on any other protocol before scoring (same
-  graceful-degradation guard as `best_release/3`); `opts` is otherwise forwarded
-  to the scorer. `opts[:season_episode_count]` (the season's real episode count) enables the
-  last-resort pack retry described in `pack_band_retry/4`.
+  The set-cover runs over what the release judge keeps (`Cinder.Acquisition.ReleaseJudge`,
+  guard `{:series, series}`): releases with a download client, whose name is the series' (see
+  `title_guard/2`), that satisfy the audio pick. A strict pick that removes every candidate
+  leaves nothing to cover, so the season is `:no_match`. `opts` is the household policy
+  (`Cinder.Acquisition.HouseholdPolicy.for_target/2`) plus scorer opts.
+  `opts[:season_episode_count]` (the season's real episode count) enables the last-resort pack
+  retry described in `pack_band_retry/4`.
 
   Returns `{:ok, [{%Release{}, [number]}]}`, `:no_match`, or `{:error, term}`.
-
-  The title guard rejects obviously-wrong series from the free-text half of an
-  indexer search. Prowlarr preserves per-result query provenance, so TVDB-scoped
-  AKA results stay trusted while a free-text title run must open a release tag next,
-  rather than continue into another show's name.
-  An id-less search is necessarily free text and always takes that guard. This is
-  deliberately fail-closed: a false negative parks at `:no_match`, while a false
-  positive imports the wrong show.
 
   When `opts[:alternate_numbering]` is present, the mapped scene seasons are searched
   additively and the same map is forwarded to `Scorer.select_for/4`.
@@ -128,21 +100,10 @@ defmodule Cinder.Acquisition do
 
     case search_tv_seasons(indexer(), series, [season_number | alternate_seasons]) do
       {:ok, raw_results} ->
-        preferred = Keyword.get(opts, :preferred_language)
-        original = Keyword.get(opts, :original_language)
-
-        candidates =
+        %ReleaseJudge{kept: cover_set} =
           raw_results
           |> Enum.map(&Release.new/1)
-          |> filter_protocols(Keyword.get(opts, :protocols))
-          |> filter_title(series)
-
-        # A strict total-wipe collapses to [] → select_for → :no_match → the tv_poller bump path.
-        cover_set =
-          case language_pool(candidates, preferred, original) do
-            :no_language_match -> []
-            pool -> pool
-          end
+          |> ReleaseJudge.judge({:series, series}, opts)
 
         case Scorer.select_for(cover_set, season_number, wanted_numbers, opts) do
           :no_match -> pack_band_retry(cover_set, season_number, wanted_numbers, opts)
@@ -201,54 +162,35 @@ defmodule Cinder.Acquisition do
   end
 
   @doc """
-  Lists EVERY parsed release for `imdb_id`, each paired with the scorer's verdict (`:ok` or
-  `{:rejected, reason}`), sorted acceptable-first then best-ranked. Unlike `best_release/3` it
-  neither drops nor collapses — the interactive manual-search panel shows them all and lets the
-  user grab any (overriding the band/blocklist and the title guard). A release the title guard
-  rejects for `context` (`Cinder.Catalog.movie_acquisition_context/1`'s map) is listed as
-  `{:rejected, :title_mismatch}`: unmarked, another film the indexer returned for the id reads as
-  a valid candidate, and sorts first when it is the bigger file. `opts[:protocols]` adds a
-  `:wrong_protocol` verdict for releases with no configured client (still listed, but the panel
-  disables grab); it outranks a title mismatch.
+  The release judge's title guard: the releases automatic selection keeps as the target's own.
+
+  - `{:imdb, context}`: an `{ImdbId:...}`-scoped movie search. The release has to spell one of the
+    movie's known titles (`context` is `Cinder.Catalog.movie_acquisition_context/1`'s map).
+  - `{:title_year, title, year}`: a free-text movie search. Everything before the year token has
+    to be the title.
+  - `{:series, series}`: a season search. An explicit TVDB id match is proof; otherwise the
+    title run has to open a release tag, and a known year has to agree.
+
+  Only `Cinder.Acquisition.ReleaseJudge` and the anime movie guard call this.
   """
-  def list_releases(imdb_id, context, opts \\ []) do
-    case indexer().search(imdb_id) do
-      {:ok, raw} ->
-        releases = Enum.map(raw, &Release.new/1)
-        {:ok, annotate(releases, opts, filter_id_scoped_movie(releases, context))}
+  def title_guard(releases, {:imdb, context}), do: filter_id_scoped_movie(releases, context)
 
-      {:error, _} = error ->
-        error
-    end
-  end
+  def title_guard(releases, {:title_year, title, year}),
+    do: filter_movie_title(releases, title, year)
 
-  @doc "Manual-search variant of `best_release_by_title/3`, listing every guarded candidate."
-  def list_releases_by_title(title, year, opts \\ []) do
-    with {:ok, releases} <- title_search(title, year), do: {:ok, annotate(releases, opts)}
-  end
+  def title_guard(releases, {:series, series}), do: filter_title(releases, series)
 
   @doc """
-  The releases automatic selection's title guard would keep for `target` — the TV series, or for
-  a movie `Cinder.Catalog.movie_acquisition_context/1`'s map, whose `imdb_id` picks the strict
-  free-text guard or the id-scoped one. The manual panel lists guarded-away rows on purpose, so it
-  needs this to tell a candidate-pool survivor from a row the sweep never sees; re-deriving the
-  guard there would drift from these clauses.
+  Searches the indexer for one TV `season` of `series` and judges every result
+  (`Cinder.Acquisition.ReleaseJudge`, guard `{:series, series}`), for the manual-search panel.
+
+  `numbering` is `standard_tv_numbering/3`'s result, or nil. It adds the bounded alternate-season
+  queries and freezes each bridged release's resolved Catalog episode ids, so a later grab can't
+  reinterpret an alternate-numbered release through native episode numbers; a coordinate that
+  resolves two ways is marked instead. Unlike `best_releases/4` it also drops duplicate results.
+  The judging is the sweep's; these inputs differ on purpose (#775).
   """
-  def title_guard(releases, :movie, %{imdb_id: imdb_id, title: title, year: year})
-      when imdb_id in [nil, ""],
-      do: filter_movie_title(releases, title, year)
-
-  def title_guard(releases, :movie, context), do: filter_id_scoped_movie(releases, context)
-  def title_guard(releases, :tv, series), do: filter_title(releases, series)
-
-  @doc """
-  TV variant of `list_releases/3`. A `:standard_numbering` result from
-  `standard_tv_numbering/3` adds the same bounded alternate-season queries used by automatic
-  acquisition and freezes each bridged release's resolved Catalog episode ids.
-  """
-  def list_releases_tv(series, season_number, opts \\ []) do
-    numbering = Keyword.get(opts, :standard_numbering)
-
+  def judge_season(series, season_number, numbering, opts \\ []) do
     alternate_seasons =
       case numbering do
         %{search_seasons: seasons} -> seasons
@@ -265,7 +207,7 @@ defmodule Cinder.Acquisition do
           |> deduplicate_tv_releases()
           |> Enum.map(&resolve_standard_manual_release(&1, season_number, numbering))
 
-        {:ok, annotate(releases, Keyword.delete(opts, :standard_numbering))}
+        {:ok, ReleaseJudge.judge(releases, {:series, series}, opts)}
 
       {:error, _} = error ->
         error
@@ -355,10 +297,8 @@ defmodule Cinder.Acquisition do
     end
   end
 
-  # `title_matches` is the IMDb-scoped movie guard's survivors; nil flags nothing. Only that guard
-  # rejects on the name alone. The no-IMDb Title.Year guard also rejects a name with no year or
-  # the language before it, and the TV guard rejects for missing year evidence; a "title doesn't
-  # match" flag would misstate both. The anime searches title-guard before listing.
+  # The anime panel's verdicts, until the anime searches go through `ReleaseJudge` too (#775).
+  # `title_matches` is the anime movie guard's survivors; nil flags nothing.
   defp annotate(releases, opts, title_matches \\ nil) do
     protocols = Keyword.get(opts, :protocols)
     title_matches = title_matches && MapSet.new(title_matches)
@@ -386,9 +326,6 @@ defmodule Cinder.Acquisition do
       is_list(protocols) and not is_nil(release.protocol) and release.protocol not in protocols ->
         {:rejected, :wrong_protocol}
 
-      release.resolution_evidence == :conflicting_standard_numbering ->
-        {:rejected, :conflicting_standard_numbering}
-
       Keyword.get(opts, :manual_anime_tv, false) and not safe_anime_mapping?(release) ->
         {:rejected, :unsafe_anime_mapping}
 
@@ -401,38 +338,16 @@ defmodule Cinder.Acquisition do
   end
 
   defp anime_manual_verdict(release, policy, opts) do
-    case AnimePreferences.verdict(release, policy) do
-      :ok -> anime_timing_verdict(release, policy, opts)
-      rejection -> rejection
-    end
-  end
-
-  defp anime_timing_verdict(release, %{preferred_groups: []}, opts),
-    do: Scorer.verdict(release, opts)
-
-  defp anime_timing_verdict(release, policy, opts) do
-    if AnimePreferences.normalize_group(release.group) in policy.preferred_groups do
-      Scorer.verdict(release, opts)
-    else
-      fallback_timing_verdict(release, policy, opts)
-    end
-  end
-
-  defp fallback_timing_verdict(
-         %Release{published_at: %DateTime{} = published_at} = release,
-         policy,
-         opts
-       ) do
-    retry_at = DateTime.add(published_at, policy.group_fallback_delay, :second)
     now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
 
-    if DateTime.compare(retry_at, now) == :gt,
-      do: {:rejected, :awaiting_preferred_group},
-      else: Scorer.verdict(release, opts)
+    with :ok <- AnimePreferences.verdict(release, policy) do
+      case AnimePreferences.group_wait(release, policy, now) do
+        :eligible -> Scorer.verdict(release, opts)
+        {:delayed, _retry_at} -> {:rejected, :awaiting_preferred_group}
+        :undated -> {:rejected, :publication_time_required}
+      end
+    end
   end
-
-  defp fallback_timing_verdict(_release, _policy, _opts),
-    do: {:rejected, :publication_time_required}
 
   defp safe_anime_mapping?(%Release{
          resolved_episode_ids: ids,
@@ -585,36 +500,17 @@ defmodule Cinder.Acquisition do
     end)
   end
 
-  # Resolve the candidate pool a language preference scores against. An explicit-language pick
-  # (french) with nothing satisfying it returns :no_language_match so the caller parks visibly;
-  # a soft Original/Any pick falls back to the unfiltered candidates. The parser tags `language`
-  # from the whole release name, so a title-word collision (e.g. "The Italian Job" → ITALIAN)
-  # must not strand a title under the default — hence Original/Any is soft, an explicit pick strict.
-  defp language_pool(candidates, preferred, original, filter_opts \\ []) do
-    case Language.filter(candidates, preferred, original, filter_opts) do
-      [] when candidates != [] ->
-        if Language.strict?(preferred), do: :no_language_match, else: candidates
-
-      filtered ->
-        filtered
-    end
-  end
-
-  # `keep_untagged: true` is movie-only on purpose: this pool feeds `Scorer.select/2`, where
-  # `rank_key/2` IS the sort key, so an untagged release can only win when nothing tagged survives
-  # the band. The TV/anime pools feed the set-cover selectors, which sort by coverage first and
-  # would let an untagged pack beat confirmed-original singles — see `Language.keep?/3`.
-  defp movie_pool(releases, opts) do
-    candidates = filter_protocols(releases, Keyword.get(opts, :protocols))
-    preferred = Keyword.get(opts, :preferred_language)
-    original = Keyword.get(opts, :original_language)
-    language_pool(candidates, preferred, original, keep_untagged: true)
-  end
-
+  # The anime search already title-guarded these. An anime policy judges audio from release
+  # evidence instead of the name's language tag; without one, the movie language stage applies.
   defp anime_movie_pool(releases, opts) do
-    case Keyword.get(opts, :anime_policy) do
-      nil -> movie_pool(releases, opts)
-      _policy -> filter_protocols(releases, Keyword.get(opts, :protocols))
+    candidates = filter_protocols(releases, Keyword.get(opts, :protocols))
+    if Keyword.get(opts, :anime_policy), do: candidates, else: tag_language_pool(candidates, opts)
+  end
+
+  defp tag_language_pool(candidates, opts) do
+    case ReleaseJudge.language_stage(candidates, opts, keep_untagged: true) do
+      {:no_language_match, []} -> :no_language_match
+      {_outcome, pool} -> pool
     end
   end
 
@@ -724,10 +620,10 @@ defmodule Cinder.Acquisition do
   defp title_run_before_tag?([_ | rest] = tokens, series),
     do: leads_with_title?(tokens, series) or title_run_before_tag?(rest, series)
 
-  # The free-text movie search an absent IMDb id degrades to. Unguarded on purpose: automatic
-  # selection filters below, but the manual panel must keep listing everything (see
-  # `list_releases/3`) — the guard is deliberately strict, so a title convention it fails closed on
-  # is exactly when the operator needs to see and override the rows.
+  # The free-text movie search an absent IMDb id degrades to. Unguarded on purpose: the release
+  # judge drops what the Title.Year guard rejects from the sweep's pool, but the manual panel must
+  # keep listing everything — the guard is deliberately strict, so a title convention it fails
+  # closed on is exactly when the operator needs to see and override the rows.
   defp title_search(title, year) do
     query = [title, year] |> Enum.reject(&is_nil/1) |> Enum.join(" ")
 
@@ -748,8 +644,7 @@ defmodule Cinder.Acquisition do
   # guard fails closed on — language before the year ("Dune.German.2021"), an edition tag, a site
   # prefix, no year at all. A movie with no usable needle (a non-Latin title and no Latin alias)
   # has nothing to compare names against, so the id scope stays the only evidence.
-  @doc false
-  def filter_id_scoped_movie(candidates, context) do
+  defp filter_id_scoped_movie(candidates, context) do
     needles =
       [context.title | context.localized_titles ++ Enum.map(context.aliases, & &1.title)]
       |> Enum.map(&title_needle/1)

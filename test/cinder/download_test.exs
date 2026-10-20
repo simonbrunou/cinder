@@ -220,8 +220,14 @@ defmodule Cinder.DownloadTest do
 
     assert {:waiting_for_preferred_group, %{retry_at: ~U[2026-07-14 12:00:00Z]}} =
              Anime.select_movie([fallback],
-               preferred_groups: ["Trusted"],
-               fallback_delay: 86_400,
+               anime_policy: %{
+                 required_audio_languages: [],
+                 subtitle_languages: [],
+                 embedded_subtitle_mode: :allow,
+                 preferred_groups: ["trusted"],
+                 blocked_groups: [],
+                 group_fallback_delay: 86_400
+               },
                now: now
              )
 

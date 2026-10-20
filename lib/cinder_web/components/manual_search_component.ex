@@ -10,23 +10,22 @@ defmodule CinderWeb.ManualSearchComponent do
   shows "No releases found." TV season searches include wanted and already-available episodes,
   so fully imported seasons can open the panel for an operator-chosen upgrade.
 
-  Every row carries a language badge — untagged included, since untagged means English by scene
-  convention and is precisely the row an audio pick decides. A release the sweep would actually
-  reject on language is badged `warning` (icon + `sr-only` text, not colour alone) and ranked
-  below one that satisfies the pick, but never hidden: the panel is the override surface. Flagging
-  asks `Cinder.Acquisition.Language.filter/4` — the sweep's own pool function — rather than
-  comparing tags itself, and only a row the sweep actually reaches a language verdict on can be
-  flagged at all. A tag that satisfies the pick is the release's own fact and is stated either
-  way; see `language_states/5`.
+  The rows are the sweep's own release judge (`Cinder.Acquisition.ReleaseJudge`), so the panel
+  renders what automatic selection decided rather than re-deriving it. Every row carries a
+  language badge, untagged included: untagged means English by scene convention and is precisely
+  the row an audio pick decides. A release the sweep rejects on language is badged `warning`
+  (icon + `sr-only` text, not colour alone) and ranked below one that satisfies the pick, but
+  never hidden: the panel is the override surface.
 
   Required assigns: `id`, `mode` (`:movie | :tv`), `target` (the `%Movie{}` or `%Series{}`), plus
-  `season_number` for `:tv`. A `results:` assign (a list of `{release, verdict}` tuples) is
-  consumed directly and skips the async fetch — useful for tests.
+  `season_number` for `:tv`. A `results:` assign (a list of rows, each a map with `release`,
+  `verdict` and `audio`, as `ReleaseJudge` builds them) is consumed directly and skips the async
+  fetch — useful for tests.
   """
   use CinderWeb, :live_component
 
-  alias Cinder.{Acquisition, Catalog, Download, Settings}
-  alias Cinder.Acquisition.{AnimePreferences, Language}
+  alias Cinder.{Acquisition, Catalog, Settings}
+  alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy, Language}
 
   @impl true
   def update(assigns, socket) do
@@ -37,8 +36,6 @@ defmodule CinderWeb.ManualSearchComponent do
       socket
       |> assign(assigns)
       |> assign(:search_context, search_context)
-      |> assign(:audio_target, context_audio_target(search_context))
-      |> assign(:guard_target, guard_target(assigns.mode, assigns.target))
       |> assign_new(:confirming, fn -> nil end)
       |> maybe_cancel_stale_search(context_changed?)
 
@@ -80,31 +77,25 @@ defmodule CinderWeb.ManualSearchComponent do
         else: nil
 
     {assigns.mode, target.__struct__, target.id, assigns[:season_number], profile, policy,
-     audio_target(profile, target)}
+     audio_pick(profile, target)}
   end
 
-  # The resolved audio target, or nil when the language filter is off entirely (anime — which
-  # resolves audio through `AnimePreferences`, its own `:contradictory_audio` verdict, and never
-  # name-tag filters; "any"; "original" on a title with no TMDB original language).
+  # What the judge's language stage reads from the title: the resolved audio target (nil when the
+  # filter is off: anime, which resolves audio through `AnimePreferences` instead; "any";
+  # "original" on a title with no TMDB original language) and whether the pick is strict.
   #
   # Held RESOLVED so both inputs — the pick and, for "original", the title's TMDB
   # `original_language` — sit behind one context element: a metadata refresh that moves the target
-  # restarts the search rather than leaving the old ordering behind. It is exactly what
-  # `Scorer.rank_key/2` ranks on, so this element changes iff the ordering would, and no more:
-  # "french" ⇄ "dual" resolve alike and stay a no-op, and switching "original" ⇄ "french" on a
-  # French title doesn't re-query either (same rank, and the badges recompute from `@target`).
-  defp audio_target(:anime, _target), do: nil
+  # restarts the search rather than leaving the old ordering and badges behind. It changes iff the
+  # language stage's outcome could, and no more: "french" ⇄ "dual" resolve alike and stay a
+  # no-op, while "original" ⇄ "french" on a French title re-judges, because a soft pick keeps
+  # untagged releases and falls back where a strict one drops them.
+  defp audio_pick(:anime, _target), do: nil
 
-  defp audio_target(_profile, target),
-    do: Language.target(target.preferred_language, target.original_language)
-
-  defp context_audio_target(search_context), do: elem(search_context, 6)
-
-  # What `Acquisition.title_guard/3` judges against: the series itself, or the movie's acquisition
-  # context — its aliases and localized titles are what the sweep's IMDb-path guard accepts.
-  # Resolved here, not in render, because the aliases are a query.
-  defp guard_target(:movie, movie), do: Catalog.movie_acquisition_context(movie)
-  defp guard_target(:tv, series), do: series
+  defp audio_pick(_profile, target) do
+    {Language.target(target.preferred_language, target.original_language),
+     Language.strict?(target.preferred_language)}
+  end
 
   defp search_context_changed?(socket, current) do
     previous = socket.assigns[:search_context] || previous_search_context(socket.assigns)
@@ -129,7 +120,8 @@ defmodule CinderWeb.ManualSearchComponent do
   defp start_search(socket) do
     %{mode: mode, target: target} = socket.assigns
     season = socket.assigns[:season_number]
-    opts = search_opts(mode, target)
+    # The sweep's own household policy, so the panel's verdicts and order are the sweep's.
+    opts = HouseholdPolicy.for_target(target)
     profile = Catalog.media_profile_summary(target).effective
 
     start_async(socket, :search, fn ->
@@ -138,31 +130,36 @@ defmodule CinderWeb.ManualSearchComponent do
   end
 
   defp search(:anime, :movie, target, _season, opts) do
-    with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()) do
-      Acquisition.list_anime_movie_releases(
-        target.imdb_id,
-        Catalog.movie_acquisition_context(target),
-        opts ++ AnimePreferences.selection_opts(policy)
-      )
-    end
+    with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()),
+         {:ok, pairs} <-
+           Acquisition.list_anime_movie_releases(
+             target.imdb_id,
+             Catalog.movie_acquisition_context(target),
+             opts ++ [anime_policy: policy]
+           ),
+         do: {:ok, anime_rows(pairs)}
   end
 
   defp search(:anime, :tv, target, season, opts) do
-    with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()) do
-      Acquisition.list_anime_episode_releases(
-        Catalog.anime_series_acquisition_context(target),
-        manual_episode_ids(target, season),
-        opts ++ AnimePreferences.selection_opts(policy)
-      )
-    end
+    with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()),
+         {:ok, pairs} <-
+           Acquisition.list_anime_episode_releases(
+             Catalog.anime_series_acquisition_context(target),
+             manual_episode_ids(target, season),
+             opts ++ [anime_policy: policy]
+           ),
+         do: {:ok, anime_rows(pairs)}
   end
 
-  defp search(:standard, :movie, %{imdb_id: imdb_id} = target, _season, opts)
-       when imdb_id in [nil, ""],
-       do: Acquisition.list_releases_by_title(target.title, target.year, opts)
-
-  defp search(:standard, :movie, target, _season, opts),
-    do: Acquisition.list_releases(target.imdb_id, Catalog.movie_acquisition_context(target), opts)
+  defp search(:standard, :movie, target, _season, opts) do
+    with {:ok, judged} <-
+           Acquisition.judge_movie(
+             target.imdb_id,
+             Catalog.movie_acquisition_context(target),
+             opts
+           ),
+         do: {:ok, judged.rows}
+  end
 
   defp search(:standard, :tv, target, season, opts) do
     episodes = Catalog.manual_search_episodes(target.id, season)
@@ -174,16 +171,19 @@ defmodule CinderWeb.ManualSearchComponent do
 
     # Whole-season packs are verdict-banded per episode (k×band, like the sweep);
     # pass the season's wanted count so a pack isn't judged as one episode's size.
-    Acquisition.list_releases_tv(
-      target,
-      season,
-      opts ++
-        [
-          pack_episode_count: max(length(episodes), 1),
-          standard_numbering: numbering
-        ]
-    )
+    opts = opts ++ [pack_episode_count: max(length(episodes), 1)]
+
+    with {:ok, judged} <- Acquisition.judge_season(target, season, numbering, opts),
+         do: {:ok, judged.rows}
   end
+
+  # The anime searches don't go through the release judge yet (#775). Anime resolves audio through
+  # its policy, never the name's tag, so no row carries a language fact.
+  defp anime_rows(pairs),
+    do:
+      Enum.map(pairs, fn {release, verdict} ->
+        %{release: release, verdict: verdict, audio: nil}
+      end)
 
   defp manual_episode_ids(series, season_number) do
     series.id
@@ -192,32 +192,6 @@ defmodule CinderWeb.ManualSearchComponent do
       episode.id
     end)
   end
-
-  # Mirror the auto-search scorer opts (size band, preferred resolutions/sources/title terms,
-  # release blocklist, audio pick) so the panel's verdicts and ordering match what the sweep
-  # would pick — without them a release the poller rejects as out-of-band shows as acceptable,
-  # and one that doesn't satisfy the title's audio pick sorts as high as one that does.
-  # The audio pick only RANKS here (`Scorer.rank_key/2`); it never drops a row — the panel is the
-  # override surface, and a no-op under an `:anime_policy` by design.
-  defp search_opts(:movie, movie) do
-    [
-      protocols: Download.available_protocols(),
-      release_blocklist: Catalog.blocked_release_titles(movie)
-    ] ++ language_opts(movie) ++ Acquisition.band_opts(:movies)
-  end
-
-  defp search_opts(:tv, series) do
-    [
-      protocols: Download.available_protocols(),
-      release_blocklist: Catalog.blocked_release_titles_for_series(series.id)
-    ] ++ language_opts(series) ++ Acquisition.band_opts(:tv)
-  end
-
-  defp language_opts(target),
-    do: [
-      preferred_language: target.preferred_language,
-      original_language: target.original_language
-    ]
 
   @impl true
   def handle_async(:search, {:ok, {:ok, results}}, socket),
@@ -240,8 +214,8 @@ defmodule CinderWeb.ManualSearchComponent do
     # Resolve by list index, not title: multi-tracker Prowlarr dupes can share an identical
     # title, so a title match could grab the wrong release (different protocol/size/download_url).
     # The confirm button carries no phx-value, so fall back to the pending index in @confirming.
-    case fetch_release(socket.assigns.results, params["index"] || socket.assigns.confirming) do
-      {release, _verdict} ->
+    case fetch_row(socket.assigns.results, params["index"] || socket.assigns.confirming) do
+      %{release: release} ->
         send(self(), {:manual_grab, socket.assigns.mode, socket.assigns.target, release})
 
       nil ->
@@ -254,31 +228,18 @@ defmodule CinderWeb.ManualSearchComponent do
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
-  # phx-value-index arrives as a string; resolve it to the {release, verdict} tuple by position.
-  defp fetch_release(results, index) when is_binary(index) do
+  # phx-value-index arrives as a string; resolve it to the row by position.
+  defp fetch_row(results, index) when is_binary(index) do
     case Integer.parse(index) do
       {i, ""} when i >= 0 -> Enum.at(results, i)
       _ -> nil
     end
   end
 
-  defp fetch_release(_results, _index), do: nil
+  defp fetch_row(_results, _index), do: nil
 
   @impl true
   def render(assigns) do
-    assigns =
-      assign(
-        assigns,
-        :language_scope,
-        language_states(
-          assigns.results,
-          assigns.mode,
-          assigns.audio_target,
-          assigns.target,
-          assigns.guard_target
-        )
-      )
-
     ~H"""
     <div id={@id} class="card bg-base-200 mt-2 p-3">
       <div :if={@state == :loading} class="flex items-center gap-2 text-sm">
@@ -293,15 +254,12 @@ defmodule CinderWeb.ManualSearchComponent do
 
       <ul :if={@state == :loaded and @results != []} class="space-y-1">
         <li
-          :for={{{release, verdict}, index} <- Enum.with_index(@results)}
+          :for={{%{release: release, verdict: verdict} = row, index} <- Enum.with_index(@results)}
           class="flex flex-wrap items-center gap-2 text-sm"
         >
           <span class="min-w-0 flex-1 truncate" title={release.title}>{release.title}</span>
           <span class="badge badge-xs">{release.resolution || gettext("?")}</span>
-          <.language_badge
-            language={release.language}
-            state={language_state(release, @audio_target, @language_scope)}
-          />
+          <.language_badge language={release.language} state={row.audio} />
           <span :if={verdict != :ok} class="text-xs text-warning">{verdict_reason(verdict)}</span>
           <.button
             :if={grabbable?(verdict)}
@@ -361,80 +319,8 @@ defmodule CinderWeb.ManualSearchComponent do
   defp release_language_label(language) when language in [nil, ""], do: gettext("untagged")
   defp release_language_label(language), do: language
 
-  # How the sweep would actually treat each row — which is NOT "does the tag equal the target".
-  # Re-deriving that rule is how this badge got it wrong twice (`keep_untagged` is movie-only; an
-  # original language outside the parser's tag registry still lets MULTI through), so don't:
-  # `Language.filter/4` IS what `Acquisition.language_pool/4` runs, so ask it, one row at a time.
-  #
-  #   :match    — satisfies the target outright.
-  #   :assumed  — kept by the pool but not by its tag: the `keep_untagged: true` relaxation, which
-  #               `movie_pool/2` opts into and the TV/anime pools deliberately do not, because
-  #               non-English groups routinely publish original audio with a bare name (#191).
-  #               Kept, but `rank_key/2` ranks it below any tagged match — so does the badge.
-  #   :mismatch — the pool drops it.
-  #
-  # `scored` is exactly the rows the sweep reaches one of those three verdicts on, and only they
-  # carry an `:assumed`/`:mismatch` — the pool-derived pair. It is empty when a SOFT pick would drop
-  # everything: `language_pool/4` then falls back to the unfiltered candidates, so the sweep never
-  # judges anything on language and the panel says so by making no pool claim at all. A strict pick
-  # has no such fallback — it parks — so its `scored` stands and it flags. `:match` is not in this
-  # ballot: it is the release's own tag against the pick, so it is stated wherever it is true, and
-  # only a nil target (no pick in force) silences the badge outright.
-  defp language_states(_results, _mode, nil = _target, _title, _guard_target), do: nil
-
-  defp language_states(results, mode, _target, title, guard_target) do
-    pick = {title.preferred_language, title.original_language, keep_untagged?(mode, title)}
-    scored = MapSet.new(scored_by_sweep(results, mode, guard_target))
-
-    if sweep_would_fall_back?(scored, pick, title),
-      do: {MapSet.new(), pick},
-      else: {scored, pick}
-  end
-
-  # The rows automatic selection actually reaches a language decision on, which is narrower than
-  # what the panel lists twice over. Both `movie_pool/2` and `best_releases/4` run
-  # `filter_protocols` BEFORE `language_pool/4`, and the movie / free-text-origin TV results also
-  # title-guard; the panel deliberately lists releases with no configured client and
-  # never title-guards, because those are exactly the rows an operator opens it to override. They
-  # are still not rows the sweep judges on language: counting one as a pool survivor would suppress
-  # the fallback and turn every other row into an accusation the sweep never makes, and badging one
-  # itself states an outcome that is never reached. The guard comes from `Acquisition.title_guard/3`
-  # for the same reason the language rule comes from `Language.filter/4`: re-deriving it drifts.
-  defp scored_by_sweep(results, mode, guard_target) do
-    results
-    |> Enum.reject(fn {_release, verdict} -> verdict == {:rejected, :wrong_protocol} end)
-    |> Enum.map(fn {release, _verdict} -> release end)
-    |> Acquisition.title_guard(mode, guard_target)
-  end
-
-  defp sweep_would_fall_back?(scored, pick, title) do
-    not Enum.any?(scored, &kept?(&1, pick)) and not Language.strict?(title.preferred_language)
-  end
-
-  # `keep_untagged: true` is safe only where `rank_key/2` is the deciding sort — the movie path.
-  defp keep_untagged?(mode, title),
-    do: mode == :movie and not Language.strict?(title.preferred_language)
-
-  defp kept?(release, {preferred, original, keep_untagged?}),
-    do: Language.filter([release], preferred, original, keep_untagged: keep_untagged?) != []
-
-  defp language_state(_release, _target, nil), do: nil
-
-  # Only the POOL-derived verdicts are the sweep's to make, so only those are withheld from a row
-  # it never scores — and, via an empty `scored`, from every row when the sweep falls back.
-  # `:match` is a tag-vs-pick fact about the release itself and survives both: the row is still
-  # grabbable, still the one an operator overriding the guard would pick, and the panel would
-  # otherwise go silent exactly where it is the only surface left — a title that folds to an empty
-  # needle guards every row away, and a strict pick then parks the sweep entirely.
-  defp language_state(release, target, {scored, pick}) do
-    cond do
-      Language.satisfies_lang?(release.language, target) -> :match
-      not MapSet.member?(scored, release) -> nil
-      kept?(release, pick) -> :assumed
-      true -> :mismatch
-    end
-  end
-
+  # The row's `audio` is the release judge's language fact (`Cinder.Acquisition.ReleaseJudge`):
+  # the panel states it, never re-derives it. Re-deriving it is how this badge got it wrong twice.
   defp language_explanation(:match), do: gettext("Matches this title's audio pick")
 
   defp language_explanation(:assumed),

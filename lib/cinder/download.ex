@@ -14,7 +14,15 @@ defmodule Cinder.Download do
 
   require Logger
   alias Cinder.{Acquisition, Books, Catalog, Library, Repo, Settings, Vault}
-  alias Cinder.Acquisition.{AnimePreferences, AudiobookRelease, BookRelease, Release}
+
+  alias Cinder.Acquisition.{
+    AnimePreferences,
+    AudiobookRelease,
+    BookRelease,
+    HouseholdPolicy,
+    Release
+  }
+
   alias Cinder.Books.{BookGrab, BookTarget}
   alias Cinder.Catalog.{Grab, MediaProfile, Movie, MovieLifecycle}
   alias Cinder.Download.{Intent, IntentEpisode}
@@ -1200,14 +1208,7 @@ defmodule Cinder.Download do
   end
 
   defp search_movie(movie, imdb_id) do
-    opts =
-      [
-        protocols: available_protocols(),
-        preferred_language: movie.preferred_language,
-        original_language: movie.original_language,
-        release_blocklist: Catalog.blocked_release_titles(movie)
-      ] ++ Acquisition.band_opts(:movies)
-
+    opts = HouseholdPolicy.for_target(movie)
     summary = Catalog.media_profile_summary(movie)
     context = Catalog.movie_acquisition_context(movie)
 
@@ -1228,10 +1229,7 @@ defmodule Cinder.Download do
   # (TMDB publishes none for this title) degrades to the guarded free-text search — see issue #195.
   defp standard_movie_result(movie, imdb_id, context, opts) do
     Catalog.set_anime_hold(movie, nil)
-
-    if imdb_id,
-      do: Acquisition.best_release(imdb_id, context, opts),
-      else: Acquisition.best_release_by_title(movie.title, movie.year, opts)
+    Acquisition.best_release(imdb_id, context, opts)
   end
 
   defp anime_movie_result(movie, imdb_id, context, opts) do
@@ -1242,7 +1240,7 @@ defmodule Cinder.Download do
         Acquisition.best_anime_movie(
           imdb_id,
           context,
-          opts ++ AnimePreferences.selection_opts(policy)
+          opts ++ [anime_policy: policy]
         )
 
       {:error, reason} ->

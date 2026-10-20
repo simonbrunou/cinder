@@ -54,7 +54,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
   import Ecto.Query
 
   alias Cinder.Acquisition
-  alias Cinder.Acquisition.{AnimePreferences, Language}
+  alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy, Language}
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Movie}
   alias Cinder.{Disk, Download, Repo, Settings}
@@ -261,7 +261,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
     season_size = max(Catalog.count_episodes(series.id, season_number), 1)
 
     opts =
-      upgrade_search_opts(series) ++
+      upgrade_policy(series) ++
         [
           # Every file we can't link to an episode we hold becomes an operator residual decision
           # at import (#247), so filter such releases before the set cover picks them.
@@ -295,9 +295,9 @@ defmodule Cinder.Catalog.UpgradeHunter do
         case Acquisition.best_anime_releases(
                context,
                episode_ids,
-               upgrade_search_opts(series) ++
-                 AnimePreferences.selection_opts(policy) ++
+               upgrade_policy(series) ++
                  [
+                   anime_policy: policy,
                    required_episode_ids: MapSet.to_list(eligible_ids),
                    candidate_filter: &anime_upgrade_candidate?(&1, episodes_by_id, eligible_ids)
                  ]
@@ -314,18 +314,11 @@ defmodule Cinder.Catalog.UpgradeHunter do
     end
   end
 
-  defp upgrade_search_opts(series) do
-    [
-      protocols: Download.available_protocols(),
-      preferred_language: series.preferred_language,
-      original_language: series.original_language,
-      # The only consumer that includes `"no_upgrade"`: a release this sweep grabbed and the
-      # import then arbitrated down to nothing placed would otherwise be re-offered every
-      # rotation (#274). The wanted-episode sweep and the manual panel still see it.
-      release_blocklist:
-        Catalog.blocked_release_titles_for_series(series.id, include_reasons: [:no_upgrade])
-    ] ++ Acquisition.band_opts(:tv)
-  end
+  # The only consumer that includes `"no_upgrade"`: a release this sweep grabbed and the import
+  # then arbitrated down to nothing placed would otherwise be re-offered every rotation (#274).
+  # The wanted-episode sweep and the manual panel still see it.
+  defp upgrade_policy(series),
+    do: HouseholdPolicy.for_target(series, include_reasons: [:no_upgrade])
 
   # An assignment covers a set of episode NUMBERS — every one of them ours to claim, since
   # `full_claim_only` already dropped the releases carrying anything else. Take it if it improves
