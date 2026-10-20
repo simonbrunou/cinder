@@ -854,7 +854,7 @@ defmodule CinderWeb.CoreComponents do
   for the badge's hover title and for the visible reason text on `/dashboard`.
   """
   def health_reason(:not_configured), do: gettext("Not configured")
-  def health_reason(:no_download_client), do: gettext("No reachable client")
+  def health_reason(:none_reachable), do: gettext("None reachable")
   def health_reason(:timeout), do: gettext("Timed out")
   def health_reason(:nxdomain), do: gettext("Host not found")
   def health_reason(:ehostunreach), do: gettext("Host unreachable")

@@ -133,7 +133,7 @@ defmodule CinderWeb.SetupLiveTest do
     assert has_element?(
              lv,
              "#setup-required-steps",
-             "Complete these five required steps in order"
+             "Complete these 5 required steps in order"
            )
 
     assert has_element?(lv, "#setup-step-1", "Start here")
@@ -149,12 +149,26 @@ defmodule CinderWeb.SetupLiveTest do
       assert has_element?(lv, "#settings-group-#{group}[data-setup-step=\"#{step}\"]")
     end
 
-    # The heading says "five": a sixth required group must update that copy too.
     refute has_element?(lv, "#setup-step-6")
 
     for group <- ~w(migration audiobook_server releases subtitles books notifications accounts) do
       assert has_element?(lv, "#settings-group-#{group}[data-setup-optional=true]", "Optional")
     end
+  end
+
+  test "the required-steps heading has a French plural", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    {:ok, admin} = Cinder.Accounts.update_user_locale(admin, %{locale: "fr"})
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+
+    # The English heading test pins the count; this one pins the French plural.
+    assert has_element?(
+             lv,
+             "#setup-required-steps-title",
+             "étapes obligatoires dans l’ordre"
+           )
   end
 
   test "every setup section explains its purpose and credential sources are linked", %{conn: conn} do
@@ -285,6 +299,22 @@ defmodule CinderWeb.SetupLiveTest do
     refute Cinder.Settings.setup_complete?()
   end
 
+  test "a download group whose every client failed reads as none reachable", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+    stub_all_services_ok()
+    stub(Cinder.Download.ClientMock, :health, fn -> {:error, :econnrefused} end)
+    stub(Cinder.Download.SabnzbdClientMock, :health, fn -> {:error, :econnrefused} end)
+    Req.Test.stub(Cinder.QBittorrentStub, &Req.Test.transport_error(&1, :econnrefused))
+    Req.Test.stub(Cinder.SabnzbdStub, &Req.Test.transport_error(&1, :econnrefused))
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+    lv |> form("#setup-form", @valid_params_with_books) |> render_submit()
+
+    assert has_element?(lv, "#setup-check-group-download", "None reachable")
+    assert has_element?(lv, "#finish-setup[disabled]")
+  end
+
   test "a SABnzbd configuration warning remains reachable during setup", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)
@@ -327,13 +357,46 @@ defmodule CinderWeb.SetupLiveTest do
 
     {:ok, lv, _html} = live(conn, ~p"/setup")
 
-    for label <- ["TMDB", "Prowlarr", "Media server", "Movies library", "Download clients"] do
-      assert has_element?(lv, "#setup-checklist li", label)
+    rows = [
+      {"tmdb", "TMDB"},
+      {"indexer", "Prowlarr"},
+      {"media_server", "Media server"},
+      {"movies_library", "Movies library"},
+      {"tv_library", "TV library"},
+      {"ebook_library", "Ebooks library"},
+      {"audiobook_library", "Audiobooks library"},
+      {"group-download", "Download clients"}
+    ]
+
+    for {row, label} <- rows do
+      assert has_element?(lv, "#setup-check-#{row}", label)
     end
 
-    assert has_element?(lv, "#setup-checklist li", "connect at least one")
-    assert has_element?(lv, "#setup-checklist li:nth-child(8)")
-    refute has_element?(lv, "#setup-checklist li:nth-child(9)")
+    row_ids =
+      lv
+      |> element("#setup-checklist")
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("li")
+      |> LazyHTML.attribute("id")
+
+    assert row_ids == Enum.map(rows, fn {row, _label} -> "setup-check-#{row}" end)
+    assert has_element?(lv, "#setup-check-group-download", "connect at least one")
+  end
+
+  test "every Test button carries its probe target's id", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+
+    for target <- Cinder.Health.targets() do
+      assert has_element?(
+               lv,
+               "button#test-target-#{target.id}[phx-value-target=#{target.id}]",
+               "Test #{target.label}"
+             )
+    end
   end
 
   test "a Test event for an id no probe target has changes nothing", %{conn: conn} do

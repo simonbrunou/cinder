@@ -103,21 +103,29 @@ defmodule CinderWeb.SetupLive do
   defp any_status(targets, health) do
     cond do
       Enum.any?(targets, &(health[&1.id] == :ok)) -> :ok
-      # validated, but every configured client failed — show red, not the grey "not checked yet"
-      Enum.any?(targets, &match?({:error, _}, health[&1.id])) -> {:error, :no_download_client}
+      # validated, but every checked target failed — show red, not the grey "not checked yet"
+      Enum.any?(targets, &match?({:error, _}, health[&1.id])) -> {:error, :none_reachable}
       true -> nil
     end
   end
 
-  # One line per required target, then one per `:any` group, named after the group.
+  # One line per required target, then one per `:any` group, named after the group. Target ids
+  # and group names are separate keyspaces, so the two kinds of row take separate DOM id prefixes.
   defp checklist(health) do
     required =
-      for target <- Health.targets(setup: :required),
-          do: %{label: SettingsLabels.t(target.label), status: health[target.id], hint: nil}
+      for target <- Health.targets(setup: :required) do
+        %{
+          id: "setup-check-#{target.id}",
+          label: SettingsLabels.t(target.label),
+          status: health[target.id],
+          hint: nil
+        }
+      end
 
     any =
       for [%{group: group} | _] = targets <- any_groups() do
         %{
+          id: "setup-check-group-#{group}",
           label: SettingsLabels.t(Keyword.fetch!(Settings.groups(), group)),
           status: any_status(targets, health),
           hint: gettext("connect at least one")
@@ -160,13 +168,18 @@ defmodule CinderWeb.SetupLive do
         <div class="flex flex-wrap items-center gap-2">
           <span class="badge badge-primary">{gettext("Start here")}</span>
           <h2 id="setup-required-steps-title" class="text-lg font-semibold">
-            {gettext("Complete these five required steps in order")}
+            {ngettext(
+              "Complete this required step",
+              "Complete these %{count} required steps in order",
+              length(setup_groups())
+            )}
           </h2>
         </div>
         <p class="mt-1 text-sm text-base-content/70">
           {gettext("The numbered sections are required. Everything marked Optional can wait.")}
         </p>
-        <ol class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <%!-- One row of equal columns at xl, however many steps there are. --%>
+        <ol class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-flow-col xl:grid-cols-none xl:auto-cols-fr">
           <li
             :for={step <- setup_steps()}
             id={"setup-step-#{step.number}"}
@@ -212,6 +225,7 @@ defmodule CinderWeb.SetupLive do
         <ul id="setup-checklist" class="space-y-2 text-sm">
           <.check_row
             :for={row <- checklist(@health)}
+            id={row.id}
             label={row.label}
             status={row.status}
             hint={row.hint}
@@ -254,13 +268,14 @@ defmodule CinderWeb.SetupLive do
 
   # One checklist line: a green check when the service is reachable, a red x with
   # the reason when it failed, or a grey hint when it has not been validated yet.
+  attr :id, :string, required: true
   attr :label, :string, required: true
   attr :status, :any, default: nil
   attr :hint, :string, default: nil
 
   defp check_row(assigns) do
     ~H"""
-    <li class="flex items-start gap-2">
+    <li id={@id} class="flex items-start gap-2">
       <.icon name={check_icon(@status)} class={["mt-0.5 size-4 shrink-0", check_color(@status)]} />
       <div class="min-w-0 break-words">
         <span>{@label}</span>

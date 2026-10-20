@@ -108,6 +108,12 @@ defmodule Cinder.HealthTest do
       assert ids.(:any) == ["torrent", "usenet"]
     end
 
+    test "the dashboard names the adapter only where the operator picks it" do
+      ids = Enum.map(Health.targets(names_adapter: true), & &1.id)
+
+      assert ids == ["torrent", "usenet", "media_server"]
+    end
+
     test "every production books provider has a target" do
       for provider <- [Cinder.Books.Metadata.OpenLibrary, Cinder.Books.Metadata.Hardcover] do
         assert [%{probe: {:books_metadata, _}}] =

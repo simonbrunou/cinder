@@ -475,6 +475,7 @@ defmodule CinderWeb.SettingsComponents do
             aria-live="polite"
           >
             <.button
+              id={"test-target-#{target.id}"}
               type="button"
               variant="neutral"
               size="sm"

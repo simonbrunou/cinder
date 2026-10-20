@@ -58,7 +58,8 @@ defmodule Cinder.Health do
                          label: choice.label,
                          probe: {:download, choice.protocol},
                          setup: :any,
-                         dashboard: :configured
+                         dashboard: :configured,
+                         names_adapter: true
                        }
                      end)
 
@@ -68,7 +69,8 @@ defmodule Cinder.Health do
       group: :media_server,
       label: "Media server",
       probe: {:env, :media_server},
-      setup: :required
+      setup: :required,
+      names_adapter: true
     },
     %Target{
       id: "audiobook_server",
@@ -142,8 +144,8 @@ defmodule Cinder.Health do
 
   @doc """
   The probe targets in `/settings` group order, optionally filtered by field
-  (`group:`, `setup:`, `dashboard:`, `probe:` or `id:`). Pure: it reads no config and calls no
-  adapter, so a page can render every Test button without touching a service.
+  (`group:`, `setup:`, `dashboard:`, `names_adapter:`, `probe:` or `id:`). Pure: it reads no
+  config and calls no adapter, so a page can render every Test button without touching a service.
   """
   @spec targets(keyword()) :: [Target.t()]
   def targets(filter \\ [])
@@ -173,10 +175,10 @@ defmodule Cinder.Health do
   Checks every dashboard target concurrently and returns a list of
   `%{id: String.t(), label: String.t(), adapter: String.t() | nil, status: status}` in
   `targets/0` order, followed by the stored-credentials and retained-sidecar findings. `label` is
-  an English msgid. `adapter` names the wired module where the operator picks one (download
-  clients, the media server), even when its probe fails or times out. A `:configured` target that
-  is not configured, and a finding with nothing to report, have no row. A probe that exceeds the
-  timeout budget reports `{:error, :timeout}` for its row without affecting any other row.
+  an English msgid. `adapter` names the wired module of a `names_adapter` target, even when its
+  probe fails or times out, and is `nil` elsewhere. A `:configured` target that is not
+  configured, and a finding with nothing to report, have no row. A probe that exceeds the timeout
+  budget reports `{:error, :timeout}` for its row without affecting any other row.
   """
   def check_all do
     probes = dashboard_probes()
@@ -223,8 +225,7 @@ defmodule Cinder.Health do
     for(
       %Target{dashboard: policy} = target <- @targets,
       policy != :never,
-      do:
-        {row(target.id, target.label, chosen_adapter(target)), fn -> dashboard_status(target) end}
+      do: {row(target.id, target.label, adapter_name(target)), fn -> dashboard_status(target) end}
     ) ++
       [
         {row(@stored_credentials.id, @stored_credentials.label, nil), &stored_credentials/0},
@@ -241,14 +242,11 @@ defmodule Cinder.Health do
     end
   end
 
-  # The operator picks these adapters in /settings, so the row names the one that is wired, even
-  # when its probe times out. Every other target has one adapter, which its label already names.
-  # Resolving them only reads config.
-  defp chosen_adapter(%Target{probe: {:download, _} = probe}), do: adapter_name(probe)
-  defp chosen_adapter(%Target{probe: {:env, :media_server} = probe}), do: adapter_name(probe)
-  defp chosen_adapter(_target), do: nil
+  # Resolved before the probe runs, so the row names the wired adapter even when its probe times
+  # out. Resolving a `names_adapter` target only reads config.
+  defp adapter_name(%Target{names_adapter: false}), do: nil
 
-  defp adapter_name(probe) do
+  defp adapter_name(%Target{probe: probe}) do
     case safely(fn -> resolve(probe) end) do
       {:ok, mod} -> short(mod)
       _not_configured -> nil

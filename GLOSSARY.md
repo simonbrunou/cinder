@@ -77,8 +77,8 @@ _Avoid_: dead download, stuck download
 
 **Probe target**:
 One thing Cinder can check on demand (an external service, a library root, a local tool), with a
-stable id, the settings group whose Test button checks it, whether setup requires it and whether
-the dashboard shows it.
+stable id, the settings group whose Test button checks it, whether setup requires it, whether
+the dashboard shows it and whether the dashboard names the adapter the operator picked for it.
 _Avoid_: service, health check
 
 ### Library

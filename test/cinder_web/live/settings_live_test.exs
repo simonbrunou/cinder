@@ -58,7 +58,13 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#movies_anime_library_path-help", "Leave blank")
     assert has_element?(lv, "#books_library_path[name=books_library_path]")
     assert has_element?(lv, "#audiobooks_library_path[name=audiobooks_library_path]")
-    assert has_element?(lv, "button[phx-value-target=ebook_library]", "Test Ebooks library")
+
+    assert has_element?(
+             lv,
+             "button#test-target-ebook_library[phx-value-target=ebook_library]",
+             "Test Ebooks library"
+           )
+
     # Positive control: Plex section inputs do render here, so the refutes below are live.
     assert has_element?(lv, "#movies_plex_section")
 
