@@ -7,11 +7,18 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
   @moduletag :capture_log
 
   import Cinder.CatalogFixtures
+  import Mox
 
+  alias Cinder.Acquisition.Release
   alias Cinder.Audit.AdminAudit
   alias Cinder.Catalog
   alias Cinder.Catalog.{Attention, BlockedRelease, Movie, MovieLifecycle}
-  alias Cinder.Library.StagedImport
+  alias Cinder.Download.Intent
+  alias Cinder.Library
+  alias Cinder.Library.{StagedImport, Upgrade}
+
+  # A verb that drops a movie's download fences it and removes it from the client in the caller.
+  setup :verify_on_exit!
 
   setup do
     :ok = Catalog.subscribe()
@@ -128,8 +135,15 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       assert Catalog.blocked_release_titles(movie) == ["WrongLang-GRP"]
     end
 
-    test "releases a verification hold back to the status it was held from" do
-      held = hold_fixture(:download, %{content_path: "/downloads/held"})
+    test "releases a verification hold back to the status it was held from, download kept" do
+      snapshot = %{release_policy_snapshot: %{"version" => 1}}
+
+      held_with_download = fn origin, extra ->
+        held = hold_fixture(origin, Map.put(extra, :download_id, "hash-held"))
+        elem(seed_movie_state(held, snapshot), 1)
+      end
+
+      held = held_with_download.(:download, %{content_path: "/downloads/held"})
 
       assert {:ok,
               %Movie{
@@ -137,10 +151,18 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
                 import_attempts: 0,
                 verification_hold_origin: nil,
                 release_title: "Held.Release-GRP",
+                download_id: "hash-held",
+                release_policy_snapshot: %{"version" => 1},
                 content_path: "/downloads/held"
               }} = MovieLifecycle.retry(held)
 
-      assert {:ok, %Movie{status: :upgrading}} = MovieLifecycle.retry(hold_fixture(:upgrade))
+      assert {:ok,
+              %Movie{
+                status: :upgrading,
+                file_path: "/lib/M.mkv",
+                download_id: "hash-held",
+                release_policy_snapshot: %{"version" => 1}
+              }} = MovieLifecycle.retry(held_with_download.(:upgrade, %{}))
     end
 
     test "misses, publishing nothing, when the movie moved on since the caller read it" do
@@ -413,14 +435,22 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
                MovieLifecycle.track(tracked, %{download_progress: 0.4, download_speed: 50})
     end
 
+    # The stall reaper's seed window reads `updated_at`, so an unchanged report must not touch it.
     test "writes and publishes nothing when nothing moved" do
       movie = movie_fixture(%{status: :downloading})
-      {:ok, tracked} = MovieLifecycle.track(movie, %{download_progress: 0.5})
+      {:ok, _tracked} = MovieLifecycle.track(movie, %{download_progress: 0.5})
+
+      # Back-dated, so a write in the same second as the fixture would still show.
+      past = DateTime.add(DateTime.utc_now(:second), -60)
+      Repo.update_all(from(m in Movie, where: m.id == ^movie.id), set: [updated_at: past])
+      tracked = Repo.reload!(movie)
 
       assert {{:ok, ^tracked}, [], []} =
                published(movie.id, fn ->
                  MovieLifecycle.track(tracked, %{download_progress: 0.5})
                end)
+
+      assert Repo.reload!(tracked).updated_at == past
     end
   end
 
@@ -467,10 +497,15 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
   end
 
   # A `:downloaded` movie, or an `:upgrading` one with a live library file, and its real stage.
-  defp staged(downloads, status \\ :downloaded) do
+  defp staged(downloads, status \\ :downloaded, extra \\ %{}) do
     source = Path.join(downloads, "M.#{System.unique_integer([:positive])}.1080p.mkv")
     File.write!(source, "video")
-    attrs = %{title: "M", year: 2020, status: status, release_title: "M.2020.1080p-GRP"}
+
+    attrs =
+      Map.merge(
+        %{title: "M", year: 2020, status: status, release_title: "M.2020.1080p-GRP"},
+        extra
+      )
 
     case status do
       :downloaded ->
@@ -479,17 +514,23 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
         {movie, stage}
 
       :upgrading ->
-        movie = movie_fixture(attrs)
-
-        live =
-          Path.join(Application.fetch_env!(:cinder, :movies_library_path), "live-#{movie.id}.mkv")
-
-        File.write!(live, "original")
-        {:ok, movie} = seed_movie_state(movie, %{file_path: live})
-        upgrade = %{movie | content_path: source}
+        upgrade = %{upgrading_with_live_file(attrs) | content_path: source}
         {:ok, stage} = Cinder.Library.stage_movie(upgrade, replace: true)
         {upgrade, stage}
     end
+  end
+
+  # An `:upgrading` movie whose live file is on the real library, at a path the replacement does
+  # not land on.
+  defp upgrading_with_live_file(extra) do
+    movie = movie_fixture(Map.merge(%{title: "M", year: 2020, status: :upgrading}, extra))
+
+    live =
+      Path.join(Application.fetch_env!(:cinder, :movies_library_path), "live-#{movie.id}.mkv")
+
+    File.write!(live, "original")
+    {:ok, movie} = seed_movie_state(movie, %{file_path: live})
+    movie
   end
 
   describe "import_staged/2" do
@@ -519,6 +560,126 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       refute File.exists?(StagedImport.record(stage).file_path)
       assert %Movie{status: :cancelled, file_path: nil} = Repo.reload!(movie)
     end
+
+    test "rolls the staged file back when the movie was deleted meanwhile", %{
+      downloads: downloads
+    } do
+      {movie, stage} = staged(downloads)
+      assert {:ok, _deleted} = Catalog.delete_movie(movie, nil)
+
+      assert {:error, :stale_status} = MovieLifecycle.import_staged(movie, stage)
+      refute File.exists?(StagedImport.record(stage).file_path)
+      refute Repo.get(Movie, movie.id)
+    end
+
+    # #415: the client removal after an import is fenced on the committed row, so a client that is
+    # restarting or timing out leaves a cleanup intent the poller's next tick retries.
+    test "a failed download removal survives as a cleanup intent", %{downloads: downloads} do
+      Cinder.ConfigCase.put_env(:move_on_import, true)
+
+      for status <- [:downloaded, :upgrading] do
+        id = "nzo-#{status}"
+        {movie, stage} = staged(downloads, status, %{download_id: id, download_protocol: :usenet})
+
+        expect(Cinder.Download.SabnzbdClientMock, :remove, fn ^id, _opts -> {:error, :timeout} end)
+
+        assert {:ok, %Movie{status: :available, download_id: ^id}} =
+                 MovieLifecycle.import_staged(movie, stage)
+
+        assert %Intent{status: :cleanup_pending, remote_id: ^id, protocol: :usenet} =
+                 Repo.get_by!(Intent, kind: :movie, target_id: movie.id)
+      end
+    end
+
+    # #275: a single-file download whose name carries none of the release's tokens. Recorded as
+    # the file name reads, its quality would be nil, which ranks last, so the very release this
+    # file came from would out-rank it on every later sweep.
+    test "a terse file name records the release title's quality", %{downloads: downloads} do
+      source = Path.join(downloads, "video.mkv")
+      File.write!(source, "video")
+
+      movie =
+        upgrading_with_live_file(%{
+          release_title: "M.2020.1080p.BluRay-GRP",
+          imported_resolution: "720p"
+        })
+
+      upgrade = %{movie | content_path: source}
+      {:ok, stage} = Library.stage_movie(upgrade, replace: true)
+
+      assert {:ok, %Movie{imported_resolution: "1080p", imported_source: "bluray"}} =
+               MovieLifecycle.import_staged(upgrade, stage)
+    end
+
+    # #278: the indexer prices the whole release (video, sample, nfo); the import records the one
+    # video file it kept. Weighed against each other, a multi-file release would out-rank the very
+    # file it produced, and the upgrade sweep would re-grab it every rotation.
+    test "a multi-file release records the one video file, so it is not offered again", %{
+      downloads: downloads
+    } do
+      title = "M.2020.1080p.BluRay-GRP"
+      folder = Path.join(downloads, title)
+      File.mkdir_p!(folder)
+      File.write!(Path.join(folder, "#{title}.mkv"), String.duplicate("v", 4_000))
+      File.write!(Path.join(folder, "sample.mkv"), String.duplicate("s", 500))
+      File.write!(Path.join(folder, "release.nfo"), "nfo")
+
+      movie =
+        upgrading_with_live_file(%{
+          release_title: title,
+          imported_resolution: "720p",
+          imported_source: "webdl",
+          imported_size: 8
+        })
+
+      upgrade = %{movie | content_path: folder}
+      {:ok, stage} = Library.stage_movie(upgrade, replace: true)
+
+      assert {:ok, %Movie{imported_resolution: "1080p", imported_size: 4_000} = imported} =
+               MovieLifecycle.import_staged(upgrade, stage)
+
+      refute Upgrade.candidate?(imported, Release.new(%{title: title, size: 4_503}), :movies, nil)
+    end
+
+    # The other side of #278: at import both sizes are `lstat` results on real files, so size
+    # still decides between two files of the same resolution and source.
+    test "the bigger of two real files of the same quality replaces the recorded one", %{
+      downloads: downloads,
+      movies: movies
+    } do
+      source = Path.join(downloads, "M.2020.1080p.WEBDL-GRP.mkv")
+      File.write!(source, String.duplicate("n", 9_000))
+
+      movie =
+        movie_fixture(%{
+          title: "M",
+          year: 2020,
+          status: :downloaded,
+          release_title: "M.2020.1080p.WEBDL-GRP",
+          content_path: source,
+          imported_resolution: "1080p",
+          imported_source: "webdl",
+          imported_size: 1_000
+        })
+
+      dest =
+        Path.join([
+          movies,
+          "M (2020) {tmdb-#{movie.tmdb_id}}",
+          "M (2020) {tmdb-#{movie.tmdb_id}}.mkv"
+        ])
+
+      File.mkdir_p!(Path.dirname(dest))
+      File.write!(dest, String.duplicate("o", 1_000))
+      {:ok, movie} = seed_movie_state(movie, %{file_path: dest})
+
+      {:ok, stage} = Library.stage_movie(movie)
+
+      assert {:ok, %Movie{file_path: ^dest, imported_size: 9_000}} =
+               MovieLifecycle.import_staged(movie, stage)
+
+      assert File.read!(dest) == String.duplicate("n", 9_000)
+    end
   end
 
   describe "reject/2" do
@@ -535,8 +696,15 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       movie
     end
 
-    test "blocklists a fresh download's release and re-queues the movie" do
-      movie = policy_movie(:downloaded, %{content_path: "/downloads/bad"})
+    @rejected_download %{download_id: "hash-rejected", download_protocol: :torrent}
+
+    test "blocklists a fresh download's release, removes its download and re-queues the movie" do
+      movie =
+        policy_movie(:downloaded, Map.put(@rejected_download, :content_path, "/downloads/bad"))
+
+      expect(Cinder.Download.ClientMock, :remove, fn "hash-rejected", delete_files: true ->
+        :ok
+      end)
 
       {result, events, _} =
         published(movie.id, fn -> MovieLifecycle.reject(movie, :wrong_audio) end)
@@ -544,6 +712,7 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       assert {:ok,
               %Movie{
                 status: :requested,
+                download_id: nil,
                 release_title: nil,
                 release_policy_snapshot: nil,
                 file_path: nil,
@@ -556,14 +725,36 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
                Repo.all(BlockedRelease)
 
       assert reason =~ "release_policy_mismatch"
+      assert Repo.all(Intent) == []
     end
 
-    test "rejects an upgrade's release but keeps the live file and its quality" do
-      movie = policy_movie(:upgrading, %{file_path: "/lib/M.mkv", imported_resolution: "720p"})
+    test "rejects an upgrade's release and removes its download, keeping the live file" do
+      movie =
+        policy_movie(
+          :upgrading,
+          Map.merge(@rejected_download, %{
+            file_path: "/lib/M.mkv",
+            imported_resolution: "720p",
+            imported_size: 1_234
+          })
+        )
+
+      expect(Cinder.Download.ClientMock, :remove, fn "hash-rejected", delete_files: true ->
+        :ok
+      end)
 
       assert {:ok,
-              %Movie{status: :available, file_path: "/lib/M.mkv", imported_resolution: "720p"}} =
-               MovieLifecycle.reject(movie, :wrong_audio)
+              %Movie{
+                status: :available,
+                download_id: nil,
+                release_title: nil,
+                release_policy_snapshot: nil,
+                file_path: "/lib/M.mkv",
+                imported_resolution: "720p",
+                imported_size: 1_234
+              }} = MovieLifecycle.reject(movie, :wrong_audio)
+
+      assert [%BlockedRelease{release_title: "Bad.Policy-GRP"}] = Repo.all(BlockedRelease)
     end
 
     test "misses, blocking nothing, when the release changed since the caller read it" do
@@ -591,16 +782,41 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
   describe "record_failure/2 in the search phase" do
     test "parks a permanent search error at once" do
       Cinder.TestNotifier.subscribe()
+
+      for reason <- [:bad_torrent, :unsupported_download_url] do
+        movie = movie_fixture(%{status: :searching})
+
+        {result, parks} =
+          Cinder.TelemetryHelpers.capture([:cinder, :park], fn ->
+            MovieLifecycle.record_failure(movie, reason)
+          end)
+
+        assert {:ok, %Movie{status: :search_failed, search_attempts: 0}} = result
+        assert [{_, %{kind: :movie, reason: ^reason}}] = parks
+        assert_receive {:notify, {:movie_failed, %Movie{}, ^reason}}
+      end
+    end
+
+    # The download intent counts a failed client submission in the same transaction as its claim
+    # (`record_submission_failure/3`); the search pass then reports the same error.
+    test "does not count again a failure its download intent already counted" do
       movie = movie_fixture(%{status: :searching})
+      {:ok, movie} = seed_movie_state(movie, %{search_attempts: 1})
 
-      {result, parks} =
-        Cinder.TelemetryHelpers.capture([:cinder, :park], fn ->
-          MovieLifecycle.record_failure(movie, :bad_torrent)
-        end)
+      Repo.insert!(%Intent{
+        operation_key: Ecto.UUID.generate(),
+        kind: :movie,
+        target_id: movie.id,
+        protocol: :torrent,
+        release: %{"title" => "Retry-GRP"},
+        status: :reserved,
+        attempt_count: 1
+      })
 
-      assert {:ok, %Movie{status: :search_failed}} = result
-      assert [{_, %{kind: :movie, reason: :bad_torrent}}] = parks
-      assert_receive {:notify, {:movie_failed, %Movie{}, :bad_torrent}}
+      assert {{:ok, %Movie{search_attempts: 1}}, [], []} =
+               published(movie.id, fn -> MovieLifecycle.record_failure(movie, :timeout) end)
+
+      assert Repo.reload!(movie).search_attempts == 1
     end
 
     test "counts a transient error against the search budget, parking on the last strike" do
@@ -729,6 +945,26 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       assert Repo.all(BlockedRelease) == []
     end
 
+    # None of these proves the release bad on first sight: each takes a strike and waits for the
+    # next tick, so only a budget's worth of them parks or holds the movie.
+    test "counts a missing client, a missing path and an unavailable probe as strikes" do
+      for {status, reason} <- [
+            {:downloading, :no_client},
+            {:downloading, {:failed, :no_content_path}},
+            {:downloaded, {:release_policy_unavailable, :timeout}}
+          ] do
+        movie = movie_fixture(%{status: status, release_title: "Rel-GRP"})
+
+        assert match?(
+                 {:ok, %Movie{status: ^status, import_attempts: 1}},
+                 MovieLifecycle.record_failure(movie, reason)
+               ),
+               inspect(reason)
+      end
+
+      assert Repo.all(BlockedRelease) == []
+    end
+
     test "never holds a download that has not reached import" do
       movie = movie_fixture(%{status: :downloading, release_title: "Rel-GRP"})
       {:ok, movie} = seed_movie_state(movie, %{import_attempts: 9})
@@ -737,10 +973,21 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
                MovieLifecycle.record_failure(movie, {:release_policy_unavailable, :timeout})
     end
 
+    # A hold keeps the release and its download for the operator: nothing is blocklisted, fenced
+    # or removed until they decide.
     test "holds the release for verification when its policy probe stayed unavailable" do
       Cinder.TestNotifier.subscribe()
-      movie = downloaded()
-      {:ok, movie} = seed_movie_state(movie, %{import_attempts: 9})
+
+      movie =
+        downloaded(%{
+          download_id: "hash-held",
+          download_protocol: :torrent,
+          content_path: "/downloads/held"
+        })
+
+      {:ok, movie} =
+        seed_movie_state(movie, %{import_attempts: 9, release_policy_snapshot: %{"version" => 1}})
+
       reason = {:release_policy_unavailable, :timeout}
 
       assert {:ok,
@@ -748,10 +995,32 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
                 status: :import_failed,
                 verification_hold_origin: :download,
                 import_attempts: 10,
-                release_title: "Rel-GRP"
+                release_title: "Rel-GRP",
+                release_policy_snapshot: %{"version" => 1},
+                download_id: "hash-held",
+                content_path: "/downloads/held"
               }} = MovieLifecycle.record_failure(movie, reason)
 
       assert_receive {:notify, {:movie_failed, %Movie{}, ^reason}}
+      assert Repo.all(BlockedRelease) == []
+      assert Repo.all(Intent) == []
+    end
+
+    test "never holds a release that changed since the caller read it" do
+      {:ok, movie} = seed_movie_state(downloaded(), %{import_attempts: 9})
+      {:ok, _} = seed_movie_state(movie, %{release_title: "Concurrent-GRP"})
+
+      assert {{:error, :stale_status}, [], []} =
+               published(movie.id, fn ->
+                 MovieLifecycle.record_failure(movie, {:release_policy_unavailable, :timeout})
+               end)
+
+      assert %Movie{
+               status: :downloaded,
+               release_title: "Concurrent-GRP",
+               import_attempts: 9,
+               verification_hold_origin: nil
+             } = Repo.reload!(movie)
     end
   end
 
@@ -770,21 +1039,75 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       )
     end
 
-    test "reaps a stalled upgrade back to the live file, blocklisting it as stalled" do
-      Cinder.TestNotifier.subscribe()
+    @replacement %{download_id: "hash-up", download_protocol: :torrent}
 
-      assert {:ok, %Movie{status: :available, file_path: "/lib/M.mkv", release_title: nil}} =
-               MovieLifecycle.record_failure(upgrading(), :stalled)
+    test "reaps a stalled upgrade back to the live file, removing and blocklisting it" do
+      Cinder.TestNotifier.subscribe()
+      expect(Cinder.Download.ClientMock, :remove, fn "hash-up", delete_files: true -> :ok end)
+
+      assert {:ok,
+              %Movie{
+                status: :available,
+                file_path: "/lib/M.mkv",
+                download_id: nil,
+                release_title: nil
+              }} = MovieLifecycle.record_failure(upgrading(@replacement), :stalled)
 
       assert [%BlockedRelease{reason: "stalled"}] = Repo.all(BlockedRelease)
       assert_receive {:notify, {:movie_upgrade_failed, %Movie{}, :stalled}}
+      assert Repo.all(Intent) == []
     end
 
-    test "reverts blocked content at once, blocklisting the replacement" do
-      assert {:ok, %Movie{status: :available, imported_resolution: "720p"}} =
-               MovieLifecycle.record_failure(upgrading(), {:blocked_content, "setup.exe"})
+    # #414: a removal that fails (a client restarting, an API timeout) survives as a cleanup
+    # intent the poller's next tick retries.
+    test "reverts blocked content at once, blocklisting the replacement and fencing its removal" do
+      Cinder.TestNotifier.subscribe()
+
+      expect(Cinder.Download.ClientMock, :remove, fn "hash-up", delete_files: true ->
+        {:error, :timeout}
+      end)
+
+      assert {:ok,
+              %Movie{status: :available, file_path: "/lib/M.mkv", imported_resolution: "720p"}} =
+               MovieLifecycle.record_failure(
+                 upgrading(@replacement),
+                 {:blocked_content, "setup.exe"}
+               )
 
       assert [%BlockedRelease{reason: "upgrade_failed"}] = Repo.all(BlockedRelease)
+      assert_receive {:notify, {:movie_upgrade_failed, %Movie{}, :blocked_content}}
+
+      assert [%Intent{status: :cleanup_pending, remote_id: "hash-up", protocol: :torrent}] =
+               Repo.all(Intent)
+    end
+
+    # #414 review: an operator's Cancel upgrade can commit between a poller's read and its
+    # verdict. The losing revert finds the row moved on and touches nothing: no second removal,
+    # no orphan cleanup intent, no blocklist row.
+    test "touches nothing when the upgrade was aborted since the caller read it" do
+      movie = upgrading(@replacement)
+      expect(Cinder.Download.ClientMock, :remove, fn "hash-up", _opts -> :ok end)
+      assert {:ok, %Movie{status: :available}} = MovieLifecycle.abort_upgrade(movie, admin())
+
+      assert {{:error, :stale_status}, [], []} =
+               published(movie.id, fn ->
+                 MovieLifecycle.record_failure(movie, {:blocked_content, "setup.exe"})
+               end)
+
+      assert Repo.all(Intent) == []
+      assert Repo.all(BlockedRelease) == []
+    end
+
+    test "reverts a permanent import error at once, blocklisting the replacement" do
+      Cinder.TestNotifier.subscribe()
+
+      assert {:ok, %Movie{status: :available, file_path: "/lib/M.mkv", release_title: nil}} =
+               MovieLifecycle.record_failure(upgrading(), :no_video_file)
+
+      assert [%BlockedRelease{release_title: "Better-GRP", reason: "upgrade_failed"}] =
+               Repo.all(BlockedRelease)
+
+      assert_receive {:notify, {:movie_upgrade_failed, %Movie{}, :no_video_file}}
     end
 
     test "reverts on a missing client without blocklisting a good release" do
@@ -794,7 +1117,9 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       assert Repo.all(BlockedRelease) == []
     end
 
-    test "counts a transient failure, then reverts on the last strike" do
+    # The last strike carries the client's own error text (`{:download_error, detail}`); the
+    # revert still reads it as a download failure, or the next upgrade hunt re-picks the release.
+    test "counts a transient failure, then reverts on the last strike, blocklisting it" do
       Cinder.TestNotifier.subscribe()
 
       assert {:ok, %Movie{status: :upgrading, import_attempts: 1}} =
@@ -804,17 +1129,53 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       {:ok, movie} = seed_movie_state(movie, %{import_attempts: 9})
 
       assert {:ok, %Movie{status: :available, file_path: "/lib/M.mkv"}} =
-               MovieLifecycle.record_failure(movie, {:failed, :download_error})
+               MovieLifecycle.record_failure(movie, {:failed, {:download_error, "Paused"}})
 
       assert_receive {:notify, {:movie_upgrade_failed, %Movie{}, :download_error}}
+
+      assert [%BlockedRelease{release_title: "Better-GRP", reason: "upgrade_failed"}] =
+               Repo.all(BlockedRelease)
     end
 
-    test "holds an upgrade whose policy probe stayed unavailable" do
-      movie = upgrading()
+    test "holds an upgrade whose policy probe stayed unavailable, keeping both files" do
+      movie = upgrading(@replacement)
       {:ok, movie} = seed_movie_state(movie, %{import_attempts: 9})
 
-      assert {:ok, %Movie{status: :import_failed, verification_hold_origin: :upgrade}} =
+      assert {:ok,
+              %Movie{
+                status: :import_failed,
+                verification_hold_origin: :upgrade,
+                file_path: "/lib/M.mkv",
+                imported_resolution: "720p",
+                download_id: "hash-up",
+                release_title: "Better-GRP"
+              }} =
                MovieLifecycle.record_failure(movie, {:release_policy_unavailable, :timeout})
+
+      assert Repo.all(BlockedRelease) == []
+      assert Repo.all(Intent) == []
+    end
+  end
+
+  test "record_failure/2 counts a strike keeping the progress, clearing the live speed and ETA" do
+    for status <- [:downloading, :upgrading] do
+      movie = movie_fixture(%{status: status, release_title: "Rel-GRP", file_path: "/lib/M.mkv"})
+
+      {:ok, movie} =
+        MovieLifecycle.track(movie, %{
+          download_progress: 0.42,
+          download_speed: 1_500_000,
+          download_eta: 90
+        })
+
+      assert {:ok,
+              %Movie{
+                status: ^status,
+                import_attempts: 1,
+                download_progress: 0.42,
+                download_speed: nil,
+                download_eta: nil
+              }} = MovieLifecycle.record_failure(movie, {:failed, :download_error})
     end
   end
 

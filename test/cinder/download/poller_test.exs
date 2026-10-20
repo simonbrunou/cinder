@@ -1,4 +1,13 @@
 defmodule Cinder.Download.PollerTest do
+  @moduledoc """
+  The movie poller's own job: mapping each `Cinder.Download.Watch` verdict, each
+  `Cinder.Library.stage_movie/2` result and each `Cinder.Download.start/1` result onto the right
+  `Cinder.Catalog.MovieLifecycle` verb, the holds it decides itself, and recovery.
+
+  What a verb then does to the movie is pinned in `MovieLifecycleTest`, the verdicts in
+  `WatchTest`, the staging in `StagedImportTest` and `LibraryTest`, and the search in
+  `DownloadTest` and `AnimeMovieSearchTest`.
+  """
   use Cinder.DataCase, async: false
 
   import ExUnit.CaptureLog
@@ -8,14 +17,14 @@ defmodule Cinder.Download.PollerTest do
   # capture them so test output stays pristine (they print on failure).
   @moduletag :capture_log
 
-  alias Cinder.Acquisition.Release
-  alias Cinder.{Catalog, Download}
-  alias Cinder.Catalog.{Movie, MovieLifecycle}
-  alias Cinder.Download.{Intent, Poller, TvPoller}
-  alias Cinder.Library.{ImportStage, Upgrade}
+  alias Cinder.Catalog
+  alias Cinder.Catalog.{BlockedRelease, Movie, MovieLifecycle}
+  alias Cinder.Download.{Intent, Poller, StallReaper, TvPoller}
+  alias Cinder.Library.ImportStage
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
+  import Cinder.ConfigCase
   import Cinder.LibraryStubs
   import Cinder.PollerHelpers
 
@@ -23,6 +32,11 @@ defmodule Cinder.Download.PollerTest do
   # mock must be global. Shared Sandbox (async: false) lets those processes use
   # the test-owned DB connection.
   setup :set_mox_global
+
+  # An `expect` the poller never reaches fails the test. An extra call still raises inside the
+  # poller's `isolate/2`, which only logs it, so a test that must rule a call out spies on it
+  # with `send` and `refute_received`.
+  setup :verify_on_exit!
 
   # A poll stamps last-run into process-global :persistent_term (PollerSkeleton's `status/0`,
   # read by /healthz); erase it so a recorded run can't bleed into another test/suite.
@@ -46,732 +60,6 @@ defmodule Cinder.Download.PollerTest do
     )
   end
 
-  # Anime preferences are global-only (no per-title override) — a test needing a non-default
-  # policy overrides the global settings env for its duration and restores it on exit.
-  defp set_anime_defaults!(overrides) do
-    saved = Application.fetch_env!(:cinder, :anime_preferences)
-    Application.put_env(:cinder, :anime_preferences, Keyword.merge(saved, overrides))
-    on_exit(fn -> Application.put_env(:cinder, :anime_preferences, saved) end)
-  end
-
-  # Drives the free-disk prober (Cinder.Test.StubDisk) for a test's duration: `result` is a
-  # `{:ok, stats}` / `{:error, reason}` tuple returned for every path. Restored on exit.
-  defp set_disk_stub!(result) do
-    saved = Application.get_env(:cinder, :disk_stats_stub)
-    Application.put_env(:cinder, :disk_stats_stub, result)
-
-    on_exit(fn ->
-      if is_nil(saved),
-        do: Application.delete_env(:cinder, :disk_stats_stub),
-        else: Application.put_env(:cinder, :disk_stats_stub, saved)
-    end)
-  end
-
-  defp upgrading_movie(tmdb_id, download_id) do
-    movie_fixture(%{
-      tmdb_id: tmdb_id,
-      title: "M",
-      status: :upgrading,
-      download_id: download_id,
-      file_path: "/lib/M.mkv"
-    })
-  end
-
-  defp use_real_library(tmp) do
-    downloads = Path.join(tmp, "downloads")
-    movies = Path.join(tmp, "movies")
-    File.mkdir_p!(downloads)
-    File.mkdir_p!(movies)
-
-    saved =
-      Map.new([:filesystem, :path_policy, :import_roots, :movies_library_path], fn key ->
-        {key, Application.get_env(:cinder, key)}
-      end)
-
-    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
-    Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
-    Application.put_env(:cinder, :import_roots, [downloads])
-    Application.put_env(:cinder, :movies_library_path, movies)
-
-    on_exit(fn ->
-      Enum.each(saved, fn {key, value} -> Application.put_env(:cinder, key, value) end)
-      Application.delete_env(:cinder, :filesystem_barrier)
-      Application.delete_env(:cinder, :filesystem_failure)
-    end)
-
-    %{downloads: downloads, movies: movies}
-  end
-
-  defp import_stat(path, size \\ 1) do
-    if candidate_path?(path) or not String.starts_with?(path, "/tmp/cinder-test-library/"),
-      do: {:ok, %File.Stat{type: :regular, size: size, inode: 1, major_device: 1}},
-      else: {:error, :enoent}
-  end
-
-  defp enable_policy_probe do
-    saved = Application.get_env(:cinder, :media_info)
-    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
-
-    on_exit(fn ->
-      if saved,
-        do: Application.put_env(:cinder, :media_info, saved),
-        else: Application.delete_env(:cinder, :media_info)
-    end)
-  end
-
-  defp policy_snapshot(release_title) do
-    %{
-      "version" => 1,
-      "required_audio_languages" => ["ja", "fr"],
-      "required_embedded_subtitle_languages" => [],
-      "release_group" => "group",
-      "release_title" => release_title
-    }
-  end
-
-  defp policy_movie(status, download_id, source) do
-    movie =
-      movie_fixture(%{
-        title: "Anime Movie",
-        year: 2026,
-        imdb_id: "tt-policy-#{download_id}",
-        media_profile: :anime,
-        original_language: "ja",
-        status: status,
-        download_id: download_id,
-        download_protocol: :torrent,
-        release_title: "[Group] Anime Movie [1080p]",
-        file_path: source,
-        imported_resolution: "720p",
-        imported_size: 1_234
-      })
-
-    {:ok, movie} =
-      seed_movie_state(movie, %{
-        status: status,
-        release_policy_snapshot: policy_snapshot(movie.release_title),
-        search_attempts: 2,
-        import_attempts: 3
-      })
-
-    movie
-  end
-
-  defp cleanup_pending_for?(remote_id) do
-    Repo.exists?(
-      from i in Intent, where: i.remote_id == ^remote_id and i.status == :cleanup_pending
-    )
-  end
-
-  test "a poll drives a completed download through :downloaded to :available" do
-    movie = downloading_movie(1, "hash-1")
-    Catalog.subscribe()
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-1" ->
-      {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
-    end)
-
-    stub_import_ok()
-
-    assert :ok = Poller.poll()
-
-    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
-    # Passes through :downloaded (pass 1) then :available (pass 2) in one tick.
-    assert_receive {:movie_updated, %Movie{status: :downloaded}}
-    assert_receive {:movie_updated, %Movie{status: :available}}
-  end
-
-  test "a failed post-import client removal survives as a durable cleanup record, and a later pass drains it" do
-    saved = Application.get_env(:cinder, :move_on_import, false)
-    Application.put_env(:cinder, :move_on_import, true)
-    on_exit(fn -> Application.put_env(:cinder, :move_on_import, saved) end)
-
-    movie = downloading_movie(90, "nzo-90", download_protocol: :usenet)
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.SabnzbdClientMock, :status, fn "nzo-90" ->
-      {:ok, %{state: :completed, content_path: "/downloads/M90.mkv"}}
-    end)
-
-    stub_import_ok()
-
-    # #415: the immediate best-effort removal fails transiently (client restarting, an API
-    # timeout) — the exact failure the durable record has to survive.
-    expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-90", _opts ->
-      {:error, :timeout}
-    end)
-
-    assert :ok = Poller.poll()
-
-    # The pre-existing outcome still holds: the movie imports and goes available, and its
-    # download_id survives untouched (issue #415's secondary claim — see Cleaner's claimed_ids/2).
-    reloaded = Repo.get!(Movie, movie.id)
-    assert reloaded.status == :available
-    assert reloaded.download_id == "nzo-90"
-
-    # A durable download_intents row now survives the failed removal.
-    intent = Repo.get_by!(Intent, kind: :movie, target_id: movie.id)
-    assert intent.status == :cleanup_pending
-    assert intent.remote_id == "nzo-90"
-    assert intent.protocol == :usenet
-
-    # Simulate the bounded retry becoming due — the movie poller reconciles pending intents every
-    # tick, but a failed attempt backs off rather than retrying immediately.
-    intent |> Ecto.Changeset.change(next_attempt_at: nil) |> Repo.update!()
-
-    # The later pass succeeds: the remote job is actually removed this time.
-    expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-90", _opts -> :ok end)
-
-    assert :ok = Poller.poll()
-
-    refute Repo.get(Intent, intent.id)
-    # Draining the cleanup record is not itself a movie-state change.
-    assert Repo.get!(Movie, movie.id).status == :available
-  end
-
-  test "content_path (not file_path) is stamped at :downloaded, and import resolves from it" do
-    movie = downloading_movie(40, "hash-40")
-    Catalog.subscribe()
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-40" ->
-      {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
-    end)
-
-    stub_import_ok()
-
-    assert :ok = Poller.poll()
-
-    # The :downloaded pass stamps content_path — file_path stays nil, it's the library field.
-    assert_receive {:movie_updated,
-                    %Movie{status: :downloaded, content_path: "/downloads/M.mkv", file_path: nil}}
-
-    # The import pass resolves its source from content_path alone (file_path was nil) and, on
-    # success, clears content_path while file_path becomes the library destination.
-    assert_receive {:movie_updated, %Movie{status: :available} = available}
-    assert available.content_path == nil
-    refute available.file_path == "/downloads/M.mkv"
-
-    assert %Movie{status: :available, content_path: nil} = Repo.get!(Movie, movie.id)
-  end
-
-  test "routes status polling to the client matching the movie's download_protocol" do
-    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 20, title: "M"})
-
-    {:ok, movie} =
-      seed_movie_state(movie, %{
-        status: :downloading,
-        download_id: "nzo-20",
-        download_protocol: :usenet
-      })
-
-    start_supervised!({Poller, interval: 60_000})
-
-    # The usenet client is polled; ClientMock (torrent) has no stub, so a misroute
-    # to it would raise.
-    stub(Cinder.Download.SabnzbdClientMock, :status, fn "nzo-20" ->
-      {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
-    end)
-
-    stub_import_ok()
-
-    assert :ok = Poller.poll()
-
-    assert %Movie{status: :available, release_policy_snapshot: nil} =
-             Repo.get!(Movie, movie.id)
-  end
-
-  test "a download_protocol with no configured client is parked at :import_failed (no hang)" do
-    # Drop usenet from the client map so a usenet movie's status poll can't resolve
-    # a client. async: false + restore keeps the global key sane for other tests.
-    original = Application.fetch_env!(:cinder, :download_clients)
-    Application.put_env(:cinder, :download_clients, %{torrent: Cinder.Download.ClientMock})
-    on_exit(fn -> Application.put_env(:cinder, :download_clients, original) end)
-
-    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 21, title: "M"})
-
-    {:ok, movie} =
-      seed_movie_state(movie, %{
-        status: :downloading,
-        download_id: "nzo-21",
-        download_protocol: :usenet
-      })
-
-    start_supervised!({Poller, interval: 60_000})
-
-    # Bounded: re-attempts each tick, then parks (does not hang forever).
-    Enum.each(1..9, fn _ -> Poller.poll() end)
-    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
-  end
-
-  test "import_attempts is reset to 0 on the :downloading -> :downloaded transition" do
-    # Download-phase blips (e.g. a transient :error state) increment import_attempts
-    # while the movie is still :downloading. The reset on completion stops those
-    # from bleeding into — and prematurely exhausting — the import phase's bound.
-    movie = downloading_movie(30, "hash-30")
-    {:ok, counter} = Agent.start_link(fn -> 0 end)
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-30" ->
-      n = Agent.get_and_update(counter, &{&1, &1 + 1})
-
-      # Two blips only: a third would exhaust the client-failure tolerance and re-queue.
-      if n < 2,
-        do: {:ok, %{state: :error}},
-        else: {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
-    end)
-
-    stub_import_ok()
-
-    # Download blips bump import_attempts while the movie stays :downloading.
-    Enum.each(1..2, fn _ -> Poller.poll() end)
-    downloading = Repo.get!(Movie, movie.id)
-    assert downloading.status == :downloading
-    assert downloading.import_attempts > 0
-
-    # Completion resets the counter, then the import pass advances it the same tick.
-    assert :ok = Poller.poll()
-    reset = Repo.get!(Movie, movie.id)
-    assert reset.status == :available
-    assert reset.import_attempts == 0
-  end
-
-  test "a non-completed status leaves the movie :downloading" do
-    movie = downloading_movie(2, "hash-2")
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-2" -> {:ok, %{state: :downloading}} end)
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
-  end
-
-  test "publishes a fresh downloading snapshot once" do
-    movie = downloading_movie(5, "hash-5")
-    movie_id = movie.id
-    Catalog.subscribe()
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-5" ->
-      {:ok, %{state: :downloading, progress: 0.42, speed: 1_500_000, eta: 90}}
-    end)
-
-    assert :ok = Poller.poll()
-
-    assert %Movie{
-             status: :downloading,
-             download_progress: 0.42,
-             download_speed: 1_500_000,
-             download_eta: 90
-           } = Repo.get!(Movie, movie.id)
-
-    assert_receive {:movie_updated,
-                    %Movie{
-                      id: ^movie_id,
-                      download_progress: 0.42,
-                      download_speed: 1_500_000,
-                      download_eta: 90
-                    }}
-
-    assert :ok = Poller.poll()
-    refute_receive {:movie_updated, _}
-  end
-
-  test "publishes a fresh upgrading snapshot" do
-    movie = upgrading_movie(6, "hash-6")
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-6" ->
-      {:ok, %{state: :downloading, progress: 0.42, speed: 1_500_000, eta: 90}}
-    end)
-
-    assert :ok = Poller.poll()
-
-    assert %Movie{
-             status: :upgrading,
-             download_progress: 0.42,
-             download_speed: 1_500_000,
-             download_eta: 90
-           } = Repo.get!(Movie, movie.id)
-  end
-
-  test "a transient client error keeps the progress high-water while clearing live estimates" do
-    movie = downloading_movie(7, "hash-7")
-    movie_id = movie.id
-
-    assert {:ok, _movie} =
-             MovieLifecycle.track(movie, %{
-               download_progress: 0.42,
-               download_speed: 1_500_000,
-               download_eta: 90
-             })
-
-    Catalog.subscribe()
-    start_supervised!({Poller, interval: 60_000})
-    stub(Cinder.Download.ClientMock, :status, fn "hash-7" -> {:error, :timeout} end)
-
-    assert :ok = Poller.poll()
-
-    assert %Movie{
-             status: :downloading,
-             download_progress: 0.42,
-             download_speed: nil,
-             download_eta: nil
-           } = Repo.get!(Movie, movie.id)
-
-    assert_receive {:movie_updated,
-                    %Movie{
-                      id: ^movie_id,
-                      download_progress: 0.42,
-                      download_speed: nil,
-                      download_eta: nil
-                    }}
-  end
-
-  test "a retryable download error keeps the progress high-water" do
-    movie = downloading_movie(8, "hash-8")
-
-    assert {:ok, _movie} =
-             MovieLifecycle.track(movie, %{
-               download_progress: 0.42,
-               download_speed: 1_500_000,
-               download_eta: 90
-             })
-
-    start_supervised!({Poller, interval: 60_000})
-    stub(Cinder.Download.ClientMock, :status, fn "hash-8" -> {:ok, %{state: :error}} end)
-
-    assert :ok = Poller.poll()
-
-    assert %Movie{
-             status: :downloading,
-             import_attempts: 1,
-             download_progress: 0.42,
-             download_speed: nil,
-             download_eta: nil
-           } = Repo.get!(Movie, movie.id)
-  end
-
-  test "a paused SABnzbd download blocklists that release and re-queues for the next-best" do
-    # SABnzbd carries an actionable :reason on its :error status; it reaches the log and the
-    # notifier's reason code while the movie itself goes back to :requested for another try.
-    Cinder.TestNotifier.subscribe()
-
-    movie =
-      movie_fixture(%{
-        tmdb_id: 88,
-        status: :downloading,
-        download_id: "hash-paused",
-        download_protocol: :torrent,
-        release_title: "Paused.Release.1080p"
-      })
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-paused" ->
-      {:ok, %{state: :error, reason: "Paused by the download client (duplicate detection)"}}
-    end)
-
-    start_supervised!({Poller, interval: 60_000})
-    Enum.each(1..3, fn _ -> Poller.poll() end)
-
-    assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
-    assert Catalog.blocked_release_titles(movie) == ["Paused.Release.1080p"]
-    assert_receive {:notify, {:movie_failed, %Movie{status: :requested}, :download_error}}
-  end
-
-  test "a retryable upgrade error keeps the progress high-water" do
-    movie = upgrading_movie(9, "hash-9")
-
-    assert {:ok, _movie} =
-             MovieLifecycle.track(movie, %{
-               download_progress: 0.42,
-               download_speed: 1_500_000,
-               download_eta: 90
-             })
-
-    start_supervised!({Poller, interval: 60_000})
-    stub(Cinder.Download.ClientMock, :status, fn "hash-9" -> {:ok, %{state: :error}} end)
-
-    assert :ok = Poller.poll()
-
-    assert %Movie{
-             status: :upgrading,
-             import_attempts: 1,
-             download_progress: 0.42,
-             download_speed: nil,
-             download_eta: nil
-           } = Repo.get!(Movie, movie.id)
-  end
-
-  test "a completed download clears its snapshot before import" do
-    movie = downloading_movie(10, "hash-10")
-
-    assert {:ok, _movie} =
-             MovieLifecycle.track(movie, %{
-               download_progress: 0.42,
-               download_speed: 1_500_000,
-               download_eta: 90
-             })
-
-    Catalog.subscribe()
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-10" ->
-      {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
-    end)
-
-    stub_import_ok()
-
-    assert :ok = Poller.poll()
-
-    assert_receive {:movie_updated,
-                    %Movie{
-                      status: :downloaded,
-                      download_progress: nil,
-                      download_speed: nil,
-                      download_eta: nil
-                    }}
-  end
-
-  test "drives a movie through the full state machine: requested -> downloaded" do
-    {:ok, movie} =
-      Catalog.add_movie(%{tmdb_id: 3, title: "Inception", imdb_id: "tt1375666"})
-
-    assert movie.status == :requested
-    hash = "deadbeef"
-
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
-      {:ok,
-       [
-         %{
-           title: "Inception.2010.1080p.BluRay.x264-GRP",
-           size: 8_000_000_000,
-           download_url: "magnet:?x",
-           seeders: 10
-         }
-       ]}
-    end)
-
-    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, hash} end)
-
-    stub(Cinder.Download.ClientMock, :status, fn ^hash ->
-      {:ok, %{state: :completed, content_path: "/downloads/Inception.mkv"}}
-    end)
-
-    stub_import_ok()
-
-    start_supervised!({Poller, interval: 60_000})
-
-    assert {:ok, %Movie{status: :downloading, download_id: ^hash}} = Download.start(movie)
-    assert :ok = Poller.poll()
-    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
-  end
-
-  test "search skips the grab (no park, no attempt bump) when the download root can't hold it" do
-    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 77, title: "Big", imdb_id: "tt7777777"})
-
-    set_disk_stub!({:ok, %{free_bytes: 1_000_000_000, total_bytes: 100_000_000_000}})
-
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt7777777" ->
-      {:ok,
-       [
-         %{
-           title: "Big.2020.1080p.BluRay.x264-GRP",
-           size: 8_000_000_000,
-           download_url: "magnet:?x",
-           seeders: 10
-         }
-       ]}
-    end)
-
-    # ClientMock.add is intentionally NOT stubbed — a disk-blocked grab must never reach the client
-    # (set_mox_global would raise on an unexpected call).
-    start_supervised!({Poller, interval: 60_000})
-
-    log = capture_log(fn -> assert :ok = Poller.poll() end)
-
-    movie = Repo.get!(Movie, movie.id)
-    assert movie.status in [:requested, :searching]
-    assert (movie.search_attempts || 0) == 0
-    assert log =~ "insufficient free disk space"
-    assert Repo.aggregate(Intent, :count) == 0
-  end
-
-  test "import holds (no park, no attempt bump) when the movies library root is nearly full" do
-    movie =
-      movie_fixture(%{
-        tmdb_id: 78,
-        title: "M",
-        status: :downloaded,
-        content_path: "/downloads/M.mkv",
-        download_id: "hash-hold"
-      })
-
-    set_disk_stub!({:ok, %{free_bytes: 500_000_000, total_bytes: 100_000_000_000}})
-
-    # No filesystem stubs: a held import must never reach Library.stage_movie.
-    start_supervised!({Poller, interval: 60_000})
-
-    log = capture_log(fn -> assert :ok = Poller.poll() end)
-
-    assert %Movie{status: :downloaded, import_attempts: attempts} = Repo.get!(Movie, movie.id)
-    assert (attempts || 0) == 0
-    assert log =~ "nearly full"
-  end
-
-  test "the poller recovers from a crash and still advances work (OTP payoff)" do
-    movie = downloading_movie(4, "hash-4")
-    pid = start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-4" ->
-      {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
-    end)
-
-    stub_import_ok()
-
-    Process.exit(pid, :kill)
-    new_pid = await_restart(Poller, pid)
-    assert new_pid != pid
-
-    assert :ok = Poller.poll(new_pid)
-    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
-  end
-
-  test "recovers a remotely accepted movie after process death without submitting twice" do
-    {:ok, movie} =
-      Catalog.add_movie(%{tmdb_id: 401, title: "Crash Window", imdb_id: "tt0000401"})
-
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt0000401" ->
-      {:ok,
-       [
-         %{
-           title: "Crash.Window.1080p.WEB-GRP",
-           size: 2_000_000_000,
-           download_url: "magnet:?xt=urn:btih:crash",
-           seeders: 1
-         }
-       ]}
-    end)
-
-    {:ok, accepted} = Agent.start_link(fn -> %{adds: 0, jobs: %{}} end)
-
-    stub(Cinder.Download.ClientMock, :add, fn _release, operation_key: key ->
-      Agent.update(accepted, fn state ->
-        %{state | adds: state.adds + 1, jobs: Map.put(state.jobs, key, "hash-crash")}
-      end)
-
-      Process.exit(self(), :kill)
-    end)
-
-    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn key ->
-      case Agent.get(accepted, &Map.get(&1.jobs, key)) do
-        nil -> :not_found
-        id -> {:ok, id}
-      end
-    end)
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-crash" ->
-      {:ok, %{state: :downloading, progress: 0.0}}
-    end)
-
-    pid = start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-    catch_exit(Poller.poll(pid))
-
-    new_pid = await_restart(Poller, pid)
-    assert :ok = Poller.poll(new_pid)
-
-    assert %{adds: 1} = Agent.get(accepted, & &1)
-
-    assert %Movie{status: :downloading, download_id: "hash-crash"} =
-             Repo.get!(Movie, movie.id)
-  end
-
-  test "an intent backoff does not consume a movie search attempt every poll tick" do
-    movie = movie_fixture(%{status: :searching, search_attempts: 2})
-    attempts_before = Repo.get!(Movie, movie.id).search_attempts
-
-    assert {:ok, intent} =
-             Download.reserve_intent(%{
-               kind: :movie,
-               target_id: movie.id,
-               episode_ids: [],
-               protocol: :torrent,
-               release: %Release{
-                 title: "Backoff.Movie",
-                 download_url: "magnet:?x",
-                 protocol: :torrent
-               }
-             })
-
-    intent
-    |> Intent.changeset(%{
-      attempt_count: 1,
-      next_attempt_at: DateTime.utc_now(:second) |> DateTime.add(300, :second)
-    })
-    |> Repo.update!()
-
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-    assert :ok = Poller.poll()
-    assert Repo.get!(Movie, movie.id).search_attempts == attempts_before
-  end
-
-  test "persistent movie intent failures consume the search budget and park safely" do
-    Cinder.TestNotifier.subscribe()
-
-    {:ok, movie} =
-      Catalog.add_movie(%{tmdb_id: 402, title: "Intent Retry", imdb_id: "tt0000402"})
-
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt0000402" ->
-      {:ok,
-       [
-         %{
-           title: "Intent.Retry.1080p.WEB-GRP",
-           size: 2_000_000_000,
-           download_url: "magnet:?xt=urn:btih:retry",
-           seeders: 1
-         }
-       ]}
-    end)
-
-    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> {:error, :timeout} end)
-
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-
-    assert :ok = Poller.poll()
-    intent = Repo.get_by!(Intent, kind: :movie, target_id: movie.id)
-    operation_key = intent.operation_key
-    assert Repo.get!(Movie, movie.id).search_attempts == 1
-
-    Enum.each(2..9, fn expected_attempts ->
-      intent
-      |> Repo.reload!()
-      |> Intent.changeset(%{next_attempt_at: nil})
-      |> Repo.update!()
-
-      assert :ok = Poller.poll()
-      assert Repo.get!(Movie, movie.id).search_attempts == expected_attempts
-    end)
-
-    intent
-    |> Repo.reload!()
-    |> Intent.changeset(%{next_attempt_at: nil})
-    |> Repo.update!()
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :search_failed, search_attempts: 9} = Repo.get!(Movie, movie.id)
-
-    cleanup = Repo.get_by!(Intent, kind: :movie, target_id: movie.id)
-    assert cleanup.status == :cleanup_pending
-    assert cleanup.operation_key == operation_key
-
-    assert_receive {:notify, {:movie_failed, %Movie{id: id, status: :search_failed}, :timeout}}
-
-    assert id == movie.id
-  end
-
   defp downloaded_movie(tmdb_id, file_path) do
     movie_fixture(%{
       tmdb_id: tmdb_id,
@@ -782,1084 +70,36 @@ defmodule Cinder.Download.PollerTest do
     })
   end
 
-  # Doubles as the import-pass crash-recovery proof: a movie already stranded at
-  # :downloaded (crash after download, before import) is imported on a later poll.
-  test "imports a :downloaded movie into the library and marks it :available" do
-    movie = downloaded_movie(10, "/downloads/Inception.2010.1080p.mkv")
-    Catalog.subscribe()
-    start_supervised!({Poller, interval: 60_000})
-
-    test_pid = self()
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-    stub(Cinder.Library.FilesystemMock, :lstat, &import_stat/1)
-    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-
-    stub(Cinder.Library.FilesystemMock, :ln, fn _src, dest ->
-      send(test_pid, {:linked, dest})
-      :ok
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :rename, fn _src, _dest -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
-
-    stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
-    assert_receive {:movie_updated, %Movie{status: :available}}
-
-    # After import, file_path must point at the LIBRARY destination (the imported hardlink),
-    # not the download source — else delete_files unlinks the download copy and strands the
-    # library file on disk.
-    assert_receive {:linked, staged_path}
-    assert candidate_path?(staged_path)
-    assert %Movie{file_path: dest} = Repo.get!(Movie, movie.id)
-    refute dest == "/downloads/Inception.2010.1080p.mkv"
+  # One strike short of its failure budget. A test asserting that the poller takes no strike
+  # starts here, so a verdict that leaked into `MovieLifecycle.record_failure/2` would park it
+  # (or revert it, for an upgrade).
+  defp last_strike(movie) do
+    {:ok, movie} = seed_movie_state(movie, %{import_attempts: 9})
+    movie
   end
 
-  test "a :downloaded movie with a legacy file_path and no content_path still imports (deploy-compat)" do
-    # A movie already :downloaded before content_path shipped has content_path: nil and its
-    # pre-import path still in file_path (the old dual-purpose field) — Movie.download_source/1
-    # is the read-side fallback that keeps a release restart able to import it.
-    movie = downloaded_movie(42, "/downloads/Inception.2010.1080p.mkv")
-    assert movie.content_path == nil
-    start_supervised!({Poller, interval: 60_000})
-    stub_import_ok()
-
-    assert :ok = Poller.poll()
-
-    assert %Movie{status: :available, content_path: nil} = Repo.get!(Movie, movie.id)
-  end
-
-  @tag :tmp_dir
-  test "deleting a movie after file staging rolls the uncommitted destination back", %{
-    tmp_dir: tmp
-  } do
-    %{downloads: downloads} = use_real_library(tmp)
-    source = Path.join(downloads, "Inception.2010.1080p.mkv")
-    File.write!(source, "candidate")
-    movie = downloaded_movie(10_001, source)
-    start_supervised!({Poller, interval: 60_000})
-
-    Application.put_env(:cinder, :filesystem_barrier, %{
-      owner: self(),
-      operation: :ln,
-      contains: "Inception (2010) {tmdb-10001}.mkv"
-    })
-
-    poll = Task.async(fn -> Poller.poll() end)
-
-    assert_receive {:filesystem_barrier, pid, ref, operation, dest}, 15_000
-    assert operation == :ln
-    assert File.read!(dest) == "candidate"
-    assert {:ok, _deleted} = Catalog.delete_movie(Repo.get!(Movie, movie.id), nil)
-    send(pid, {ref, :continue})
-
-    assert :ok = Task.await(poll)
-    refute File.exists?(dest)
-    assert Repo.get(Movie, movie.id) == nil
-  end
-
-  test "a best-effort scan failure still advances the movie to :available" do
-    movie = downloaded_movie(17, "/downloads/Inception.2010.1080p.mkv")
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-    stub(Cinder.Library.FilesystemMock, :lstat, &import_stat/1)
-    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :rename, fn _src, _dest -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
-    # File is hardlinked; only the media-server scan fails. Best-effort: the movie
-    # still reaches :available rather than re-stranding at :downloaded.
-    stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> {:error, :econnrefused} end)
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
-  end
-
-  test "a failed import leaves the movie :downloaded for retry" do
-    movie = downloaded_movie(11, "/downloads/Inception.2010.1080p.mkv")
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-
-    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
-      if candidate_path?(path),
-        do: {:error, :enoent},
-        else: import_stat(path)
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eacces} end)
-
-    assert :ok = Poller.poll()
-    # :eacces (e.g. a read-only mount) is transient — stays :downloaded for retry.
-    assert %Movie{status: :downloaded} = Repo.get!(Movie, movie.id)
-  end
-
-  test "a release with no usable video file is parked at :import_failed (no retry loop)" do
-    movie = downloaded_movie(12, "/downloads/release-folder")
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
-
-    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
-      {:ok, [{"/downloads/release-folder/readme.nfo", 12}]}
-    end)
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
-  end
-
-  test "a confirmed wrong-language file is parked at :import_failed (MediaInfo safety net)" do
-    {:ok, movie} =
-      Catalog.add_movie(%{
-        tmdb_id: 99,
-        title: "Chasse Gardee",
-        year: 2024,
-        original_language: "fr",
-        preferred_language: "original"
-      })
-
-    {:ok, movie} =
-      seed_movie_state(movie, %{status: :downloaded, file_path: "/downloads/dub.mkv"})
-
-    # Enable the optional probe for this test; the file's only audio track is Hungarian, not French.
-    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
-    on_exit(fn -> Application.delete_env(:cinder, :media_info) end)
-
-    start_supervised!({Poller, interval: 60_000})
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-
-    stub(Cinder.Library.MediaInfoMock, :probe, fn _ -> {:ok, %{audio: ["hun"], subtitles: []}} end)
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
-  end
-
-  test "a :downloaded movie with no file_path is parked at :import_failed" do
-    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 13, title: "M"})
-    {:ok, movie} = seed_movie_state(movie, %{status: :downloaded})
-    start_supervised!({Poller, interval: 60_000})
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
-  end
-
-  test "a completed torrent with no content_path yet stays :downloading (not parked)" do
-    movie = downloading_movie(14, "hash-14")
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-14" ->
-      {:ok, %{state: :completed, content_path: nil}}
-    end)
-
-    assert :ok = Poller.poll()
-    # No final path yet — don't snapshot a nil and prematurely fail; wait a tick.
-    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
-  end
-
-  test "a completed torrent with an empty content_path also stays :downloading" do
-    movie = downloading_movie(15, "hash-15")
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-15" ->
-      {:ok, %{state: :completed, content_path: ""}}
-    end)
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
-  end
-
-  test "auto-wires a :requested movie through to :available with no manual Download.start call" do
-    {:ok, movie} =
-      Catalog.add_movie(%{tmdb_id: 900, title: "Inception", imdb_id: "tt1375666"})
-
-    assert movie.status == :requested
-
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
-      {:ok,
-       [
-         %{
-           title: "Inception.2010.1080p.BluRay.x264-GRP",
-           size: 8_000_000_000,
-           download_url: "magnet:?x",
-           seeders: 10
-         }
-       ]}
-    end)
-
-    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-900"} end)
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-900" ->
-      {:ok, %{state: :completed, content_path: "/downloads/Inception.mkv"}}
-    end)
-
-    stub_import_ok()
-
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-
-    # search runs last in a tick: poll 1 → :downloading, poll 2 → :downloaded → :available
-    assert :ok = Poller.poll()
-    assert :ok = Poller.poll()
-    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
-  end
-
-  test "an Anime movie waits for its preferred group without client I/O or an attempt bump" do
-    set_anime_defaults!(preferred_groups: ["subsplease"], group_fallback_delay: 3_600)
-
-    movie =
-      movie_fixture(%{
-        title: "Inception",
-        year: 2010,
-        imdb_id: "tt-anime-wait",
-        media_profile: :anime
-      })
-
-    release = %{
-      title: "[Other] Inception 2010 [1080p]",
-      size: 2_000_000_000,
-      download_url: "anime-movie-wait",
-      published_at: DateTime.utc_now(:second)
-    }
-
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt-anime-wait" -> {:ok, [release]} end)
-
-    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, categories: [5070] ->
-      {:ok, [release]}
-    end)
-
-    adds = start_supervised!({Agent, fn -> 0 end})
-
-    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
-      Agent.update(adds, &(&1 + 1))
-      {:ok, "unexpected-anime-movie"}
-    end)
-
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-    assert :ok = Poller.poll()
-
-    assert %Movie{status: :searching, search_attempts: 0} = Repo.get!(Movie, movie.id)
-    assert Agent.get(adds, & &1) == 0
-  end
-
-  test "a confirmed movie policy mismatch blocks only that title and grabs its sibling" do
-    enable_policy_probe()
-    source = "/downloads/Anime.Movie.mkv"
-    movie = policy_movie(:downloaded, "hash-policy-old", source)
-    sibling_title = "[Group] Anime Movie v2 [1080p]"
-
-    expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
-
-    expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
-      {:ok, %{audio: ["ja"], subtitles: [], audio_unknown?: false, subtitle_unknown?: false}}
-    end)
-
-    expect(Cinder.Download.ClientMock, :remove, fn "hash-policy-old", delete_files: true ->
-      :ok
-    end)
-
-    releases = [
-      %{
-        title: movie.release_title,
-        size: 2_000_000_000,
-        download_url: "magnet:?old"
-      },
-      %{title: sibling_title, size: 2_000_000_000, download_url: "magnet:?sibling"}
-    ]
-
-    stub(Cinder.Acquisition.IndexerMock, :search, fn _imdb_id -> {:ok, releases} end)
-
-    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, categories: [5070] ->
-      {:ok, releases}
-    end)
-
-    selected = start_supervised!({Agent, fn -> nil end})
-
-    expect(Cinder.Download.ClientMock, :add, fn release, _opts ->
-      Agent.update(selected, fn _ -> release.title end)
-      {:ok, "hash-policy-sibling"}
-    end)
-
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-    assert :ok = Poller.poll()
-
-    assert Agent.get(selected, & &1) == sibling_title
-
-    assert %Movie{
-             status: :downloading,
-             download_id: "hash-policy-sibling",
-             release_title: ^sibling_title,
-             search_attempts: 2,
-             import_attempts: 0
-           } = Repo.get!(Movie, movie.id)
-
-    assert Catalog.blocked_release_titles(movie) == [movie.release_title]
-    refute Repo.exists?(ImportStage)
-  end
-
-  # A release can spell the right title and hold another film: every name check passes, but its
-  # length gives it away, far short of TMDB's 121 minutes. No release-policy snapshot here, unlike
-  # the anime case above.
-  test "a movie file far shorter than its TMDB runtime is rejected and another release grabbed" do
-    enable_policy_probe()
-    wrong = "Spider-Man.2002.1080p.BluRay.x264-MISLABELED"
-    right = "Spider-Man.2002.1080p.BluRay.x264-GRP"
-    source = "/downloads/#{wrong}.mkv"
-
-    movie =
-      movie_fixture(%{
-        title: "Spider-Man",
-        year: 2002,
-        imdb_id: "tt0145487",
-        runtime: 121,
-        status: :downloaded,
-        download_id: "hash-wrong-film",
-        download_protocol: :torrent,
-        release_title: wrong,
-        file_path: source
-      })
-
-    expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
-
-    stub(Cinder.Library.MediaInfoMock, :probe, fn ^source ->
-      {:ok, %{audio: ["eng"], subtitles: [], duration: 98 * 60.0}}
-    end)
-
-    expect(Cinder.Download.ClientMock, :remove, fn "hash-wrong-film", delete_files: true ->
-      :ok
-    end)
-
-    releases = [
-      %{title: wrong, size: 2_000_000_000, download_url: "magnet:?wrong"},
-      %{title: right, size: 2_000_000_000, download_url: "magnet:?right"}
-    ]
-
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt0145487" -> {:ok, releases} end)
-    selected = start_supervised!({Agent, fn -> nil end})
-
-    expect(Cinder.Download.ClientMock, :add, fn release, _opts ->
-      Agent.update(selected, fn _ -> release.title end)
-      {:ok, "hash-right-film"}
-    end)
-
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-    assert :ok = Poller.poll()
-
-    assert Agent.get(selected, & &1) == right
-
-    assert %Movie{status: :downloading, download_id: "hash-right-film", file_path: nil} =
-             Repo.get!(Movie, movie.id)
-
-    assert Catalog.blocked_release_titles(movie) == [wrong]
-    refute Repo.exists?(ImportStage)
-  end
-
-  test "a confirmed upgrade policy mismatch reverts without replacing live quality" do
-    enable_policy_probe()
-    source = "/downloads/Anime.Movie.Upgrade.mkv"
-    movie = policy_movie(:upgrading, "hash-policy-upgrade", "/library/Anime Movie.mkv")
-
-    expect(Cinder.Download.ClientMock, :status, fn "hash-policy-upgrade" ->
-      {:ok, %{state: :completed, content_path: source}}
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
-
-    expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
-      {:ok, %{audio: ["ja"], subtitles: [], audio_unknown?: false, subtitle_unknown?: false}}
-    end)
-
-    expect(Cinder.Download.ClientMock, :remove, fn "hash-policy-upgrade", delete_files: true ->
-      :ok
-    end)
-
-    start_supervised!({Poller, interval: 60_000})
-    assert :ok = Poller.poll()
-
-    assert %Movie{
-             status: :available,
-             download_id: nil,
-             release_title: nil,
-             release_policy_snapshot: nil,
-             file_path: "/library/Anime Movie.mkv",
-             imported_resolution: "720p",
-             imported_size: 1_234,
-             search_attempts: 2,
-             import_attempts: 3
-           } = Repo.get!(Movie, movie.id)
-
-    assert Catalog.blocked_release_titles(movie) == [movie.release_title]
-    refute Repo.exists?(ImportStage)
-  end
-
-  # The upgrade side of the runtime check: a wrong film must never replace a good live file.
-  test "an upgrade far shorter than its TMDB runtime is rejected and the live file kept" do
-    enable_policy_probe()
-    wrong = "Spider-Man.2002.1080p.BluRay.x264-MISLABELED"
-    source = "/downloads/#{wrong}.mkv"
-
-    movie =
-      movie_fixture(%{
-        title: "Spider-Man",
-        year: 2002,
-        runtime: 121,
-        status: :upgrading,
-        download_id: "hash-wrong-upgrade",
-        download_protocol: :torrent,
-        release_title: wrong,
-        file_path: "/library/Spider-Man (2002).mkv",
-        imported_resolution: "720p"
-      })
-
-    expect(Cinder.Download.ClientMock, :status, fn "hash-wrong-upgrade" ->
-      {:ok, %{state: :completed, content_path: source}}
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
-
-    stub(Cinder.Library.MediaInfoMock, :probe, fn ^source ->
-      {:ok, %{audio: ["eng"], subtitles: [], duration: 98 * 60.0}}
-    end)
-
-    expect(Cinder.Download.ClientMock, :remove, fn "hash-wrong-upgrade", delete_files: true ->
-      :ok
-    end)
-
-    start_supervised!({Poller, interval: 60_000})
-    assert :ok = Poller.poll()
-
-    assert %Movie{
-             status: :available,
-             release_title: nil,
-             file_path: "/library/Spider-Man (2002).mkv",
-             imported_resolution: "720p"
-           } = Repo.get!(Movie, movie.id)
-
-    assert Catalog.blocked_release_titles(movie) == [wrong]
-  end
-
-  test "an unavailable movie policy probe exhausts the bound without discarding content" do
-    enable_policy_probe()
-    source = "/downloads/Anime.Movie.Unavailable.mkv"
-    movie = policy_movie(:downloaded, "hash-policy-unavailable", source)
-
-    assert {:ok, downloaded} =
-             seed_movie_state(movie, %{status: :downloaded, import_attempts: 0})
-
-    expect(Cinder.Library.FilesystemMock, :dir?, 10, fn ^source -> false end)
-
-    expect(Cinder.Library.MediaInfoMock, :probe_policy, 10, fn ^source ->
-      {:error, :timeout}
-    end)
-
-    start_supervised!({Poller, interval: 60_000})
-
-    for attempt <- 1..9 do
-      assert :ok = Poller.poll()
-
-      assert %Movie{status: :downloaded, import_attempts: ^attempt} =
-               Repo.get!(Movie, movie.id)
-    end
-
-    assert :ok = Poller.poll()
-
-    assert %Movie{
-             status: :import_failed,
-             import_attempts: 10,
-             verification_hold_origin: :download
-           } =
-             failed =
-             Repo.get!(Movie, movie.id)
-
-    assert failed.file_path == downloaded.file_path
-    assert failed.download_id == downloaded.download_id
-    assert failed.release_title == downloaded.release_title
-    assert failed.release_policy_snapshot == downloaded.release_policy_snapshot
-    assert Catalog.blocked_release_titles(failed) == []
-    refute cleanup_pending_for?(failed.download_id)
-    assert Repo.all(Intent) == []
-    refute Repo.exists?(ImportStage)
-
-    assert :ok = Poller.poll()
-    stop_supervised(Poller)
-    start_supervised!({Poller, interval: 60_000})
-    assert :ok = Poller.poll()
-
-    assert {:ok, retried} = MovieLifecycle.retry(failed)
-    assert retried.status == :downloaded
-    assert retried.import_attempts == 0
-    assert retried.verification_hold_origin == nil
-    assert retried.file_path == failed.file_path
-    assert retried.download_id == failed.download_id
-    assert retried.release_title == failed.release_title
-    assert retried.release_policy_snapshot == failed.release_policy_snapshot
-  end
-
-  test "an unavailable upgrade policy probe holds durably and Retry resumes the same replacement" do
-    enable_policy_probe()
-    source = "/downloads/Anime.Movie.Upgrade.Unavailable.mkv"
-    live_file = "/library/Anime Movie.mkv"
-    movie = policy_movie(:upgrading, "hash-policy-upgrade-unavailable", live_file)
-
-    expect(Cinder.Download.ClientMock, :status, 10, fn "hash-policy-upgrade-unavailable" ->
-      {:ok, %{state: :completed, content_path: source}}
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
-
-    expect(Cinder.Library.MediaInfoMock, :probe_policy, 10, fn ^source ->
-      {:error, :timeout}
-    end)
-
-    start_supervised!({Poller, interval: 60_000})
-
-    for _attempt <- 1..10, do: assert(:ok = Poller.poll())
-
-    assert %Movie{
-             status: :import_failed,
-             import_attempts: 10,
-             verification_hold_origin: :upgrade,
-             download_id: "hash-policy-upgrade-unavailable",
-             release_title: "[Group] Anime Movie [1080p]",
-             file_path: ^live_file,
-             imported_resolution: "720p",
-             imported_size: 1_234
-           } = failed = Repo.get!(Movie, movie.id)
-
-    assert failed.release_policy_snapshot == movie.release_policy_snapshot
-    assert Catalog.blocked_release_titles(failed) == []
-    refute cleanup_pending_for?(failed.download_id)
-    refute Repo.exists?(ImportStage)
-
-    assert :ok = Poller.poll()
-    stop_supervised(Poller)
-    start_supervised!({Poller, interval: 60_000})
-    assert :ok = Poller.poll()
-
-    assert {:ok, retried} = MovieLifecycle.retry(failed)
-    assert retried.status == :upgrading
-    assert retried.import_attempts == 0
-    assert retried.verification_hold_origin == nil
-    assert retried.download_id == failed.download_id
-    assert retried.release_title == failed.release_title
-    assert retried.release_policy_snapshot == failed.release_policy_snapshot
-    assert retried.file_path == live_file
-    assert retried.imported_resolution == "720p"
-    assert retried.imported_size == 1_234
-  end
-
-  test "a stale unavailable probe cannot hold a changed release" do
-    enable_policy_probe()
-    source = "/downloads/Anime.Movie.Unavailable.Stale.mkv"
-    movie = policy_movie(:downloaded, "hash-policy-unavailable-stale", source)
-
-    assert {:ok, movie} =
-             seed_movie_state(movie, %{status: :downloaded, import_attempts: 9})
-
-    expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
-
-    expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
-      Repo.update_all(from(m in Movie, where: m.id == ^movie.id),
-        set: [release_title: "Concurrent.Release"]
-      )
-
-      {:error, :timeout}
-    end)
-
-    start_supervised!({Poller, interval: 60_000})
-    assert :ok = Poller.poll()
-
-    assert %Movie{
-             status: :downloaded,
-             release_title: "Concurrent.Release",
-             import_attempts: 9,
-             verification_hold_origin: nil
-           } = Repo.get!(Movie, movie.id)
-  end
-
-  test "a stale movie rejection is skipped without retrying or partial cleanup" do
-    enable_policy_probe()
-    source = "/downloads/Anime.Movie.Stale.mkv"
-    movie = policy_movie(:downloaded, "hash-policy-stale", source)
-
-    expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
-
-    expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
-      Repo.update_all(from(m in Movie, where: m.id == ^movie.id),
-        set: [release_title: "Concurrent.Release"]
-      )
-
-      {:ok, %{audio: ["ja"], subtitles: [], audio_unknown?: false, subtitle_unknown?: false}}
-    end)
-
-    start_supervised!({Poller, interval: 60_000})
-    assert :ok = Poller.poll()
-
-    assert %Movie{
-             status: :downloaded,
-             download_id: "hash-policy-stale",
-             release_title: "Concurrent.Release",
-             import_attempts: 3
-           } = Repo.get!(Movie, movie.id)
-
-    assert Repo.all(Intent) == []
-    assert Repo.aggregate(Cinder.Catalog.BlockedRelease, :count, :id) == 0
-    refute Repo.exists?(ImportStage)
-  end
-
-  test "invalid Anime movie preferences hold without searching or consuming attempts" do
-    set_anime_defaults!(embedded_subtitle_mode: :require)
-
-    movie =
-      movie_fixture(%{
-        title: "Invalid Anime",
-        year: 2020,
-        imdb_id: "tt-anime-invalid",
-        media_profile: :anime
-      })
-
-    searches = start_supervised!({Agent, fn -> 0 end})
-
-    stub(Cinder.Acquisition.IndexerMock, :search, fn _imdb_id ->
-      Agent.update(searches, &(&1 + 1))
-      {:ok, []}
-    end)
-
-    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, _opts ->
-      Agent.update(searches, &(&1 + 1))
-      {:ok, []}
-    end)
-
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-    assert :ok = Poller.poll()
-
-    assert %Movie{status: :searching, search_attempts: 0} = Repo.get!(Movie, movie.id)
-    assert Agent.get(searches, & &1) == 0
-
-    # The hold is DB-visible (issue #107) — the badge reads "Needs preferences", not "Searching".
-    assert Repo.get!(Movie, movie.id).anime_hold_reason == "subtitle_language_required"
-
-    # Preferences become satisfiable → the next sweep clears the hold and searches normally.
-    set_anime_defaults!(embedded_subtitle_mode: :prefer)
-    assert :ok = Poller.poll()
-
-    assert Repo.get!(Movie, movie.id).anime_hold_reason == nil
-    assert Agent.get(searches, & &1) > 0
-  end
-
-  test "a title's Audio pick shapes the frozen release-policy snapshot" do
-    movie =
-      movie_fixture(%{
-        title: "Your Name",
-        year: 2016,
-        imdb_id: "tt-anime-audio-pick",
-        original_language: "ja",
-        preferred_language: "dual",
-        media_profile: :anime
-      })
-
-    release = %{
-      title: "[Group] Your Name 2016 [1080p]",
-      size: 2_000_000_000,
-      download_url: "magnet:?audio-pick"
-    }
-
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt-anime-audio-pick" -> {:ok, [release]} end)
-
-    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, categories: [5070] ->
-      {:ok, [release]}
-    end)
-
-    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
-      {:ok, "hash-anime-audio-pick"}
-    end)
-
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-    assert :ok = Poller.poll()
-
-    # The frozen release-policy snapshot carries the pick's requirement (dual: original + fr),
-    # proving the Audio pick is read at snapshot-freeze time — not just at display time.
-    assert %Movie{
-             status: :downloading,
-             anime_hold_reason: nil,
-             release_policy_snapshot: %{"required_audio_languages" => ["ja", "fr"]}
-           } = Repo.get!(Movie, movie.id)
-  end
-
-  test "a persistently transient search error parks :search_failed after max attempts" do
-    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 901, title: "M", imdb_id: "tt1"})
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1" -> {:error, :prowlarr_down} end)
-
-    # search_retry_after: 0 → every poll is due
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-
-    Enum.each(1..9, fn _ -> Poller.poll() end)
-    refute Repo.get!(Movie, movie.id).status == :search_failed
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :search_failed} = Repo.get!(Movie, movie.id)
-  end
-
-  test "backoff: a just-failed movie is not re-attempted until retry_after elapses" do
-    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 902, title: "M", imdb_id: "tt2"})
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt2" -> {:error, :prowlarr_down} end)
-
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 60})
-
-    # First poll: fresh (attempts 0) → attempted → search_attempts becomes 1.
-    assert :ok = Poller.poll()
-    assert Repo.get!(Movie, movie.id).search_attempts == 1
-
-    # Second poll immediately: not due (updated_at is ~now) → not attempted.
-    assert :ok = Poller.poll()
-    assert Repo.get!(Movie, movie.id).search_attempts == 1
-
-    # Back-date updated_at past the window → due again → attempted.
-    past = DateTime.utc_now() |> DateTime.add(-61, :second) |> DateTime.truncate(:second)
-    Repo.update_all(Movie, set: [updated_at: past])
-    assert :ok = Poller.poll()
-    assert Repo.get!(Movie, movie.id).search_attempts == 2
-  end
-
-  test "unsupported download URL parks :search_failed immediately (no retry)" do
-    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 903, title: "M", imdb_id: "tt3"})
-
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt3" ->
-      {:ok, [%{title: "M.1080p", size: 8_000_000_000, download_url: "magnet:?x", seeders: 5}]}
-    end)
-
-    stub(Cinder.Download.ClientMock, :add, fn _, _opts -> {:error, :unsupported_download_url} end)
-
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-
-    assert :ok = Poller.poll()
-    movie = Repo.get!(Movie, movie.id)
-    assert movie.status == :search_failed
-    assert movie.search_attempts == 0
-  end
-
-  test "a definite add rejection releases the movie for the next search tick" do
-    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 906, title: "M", imdb_id: "tt906"})
-    {:ok, adds} = Agent.start_link(fn -> 0 end)
-
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt906" ->
-      {:ok,
-       [%{title: "M.1080p.WEB-GRP", size: 8_000_000_000, download_url: "magnet:?x", seeders: 5}]}
-    end)
-
-    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
-      case Agent.get_and_update(adds, &{&1, &1 + 1}) do
-        0 -> {:error, :add_rejected}
-        _ -> {:ok, "hash-after-rejection"}
-      end
-    end)
-
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-
-    assert :ok = Poller.poll()
-    assert Repo.get!(Movie, movie.id).status == :searching
-    refute Repo.get_by(Intent, kind: :movie, target_id: movie.id)
-
-    assert :ok = Poller.poll()
-
-    assert %Movie{status: :downloading, download_id: "hash-after-rejection"} =
-             Repo.get!(Movie, movie.id)
-  end
-
-  # Issue #195: TMDB genuinely publishes no IMDb id for some released titles. Parking those
-  # unsearched was permanent (a :no_match row is never swept again, and Retry re-ran the same
-  # nil-id lookup), so a missing id now degrades to a free-text search instead.
-  test "genuinely-missing imdb free-text searches, then parks :no_match; TMDB error retries" do
-    {:ok, miss} = Catalog.add_movie(%{tmdb_id: 904, title: "M", year: 2010})
-    {:ok, flaky} = Catalog.add_movie(%{tmdb_id: 905, title: "N"})
-
-    stub(Cinder.Catalog.TMDBMock, :get_movie, fn
-      904 -> {:ok, %{imdb_id: nil}}
-      905 -> {:error, {:tmdb_status, 503}}
-    end)
-
-    # The park is only legitimate BECAUSE a search ran — assert the query itself, or this test
-    # passes just as well against the old short-circuit (this file has no verify_on_exit!, so an
-    # uninvoked expect() would go unnoticed).
-    test_pid = self()
-
-    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn query, _opts ->
-      send(test_pid, {:searched, query})
-      {:ok, []}
-    end)
-
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-
-    assert :ok = Poller.poll()
-    assert_received {:searched, "M 2010"}
-    assert %Movie{status: :no_match} = Repo.get!(Movie, miss.id)
-    assert %Movie{status: :requested, search_attempts: 1} = Repo.get!(Movie, flaky.id)
-  end
-
-  test "a missing imdb grabs a free-text release the title+year guard accepts" do
-    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 907, title: "Inception", year: 2010})
-    stub(Cinder.Catalog.TMDBMock, :get_movie, fn 907 -> {:ok, %{imdb_id: nil}} end)
-
-    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn "Inception 2010", _opts ->
-      {:ok,
-       [
-         %{title: "Interstellar.2014.1080p.BluRay.x264-GRP", size: 8_000_000_000, guid: "wrong"},
-         %{
-           title: "Inception.2010.1080p.BluRay.x264-GRP",
-           size: 8_000_000_000,
-           download_url: "magnet:?xt=urn:btih:inception"
-         }
-       ]}
-    end)
-
-    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-907"} end)
-
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-
-    assert :ok = Poller.poll()
-
-    assert %Movie{status: :downloading, release_title: "Inception.2010.1080p.BluRay.x264-GRP"} =
-             Repo.get!(Movie, movie.id)
-  end
-
-  test "a persistently failing import is parked at :import_failed after max attempts" do
-    movie = downloaded_movie(16, "/downloads/Inception.2010.1080p.mkv")
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-
-    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
-      if candidate_path?(path),
-        do: {:error, :enoent},
-        else: import_stat(path)
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eacces} end)
-
-    # A transient error is retried (stays :downloaded) until the bound is hit.
-    Enum.each(1..9, fn _ -> Poller.poll() end)
-    assert %Movie{status: :downloaded} = Repo.get!(Movie, movie.id)
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
-  end
-
-  test "missing download roots hold a downloaded movie without consuming import attempts" do
-    movie =
-      movie_fixture(%{
-        tmdb_id: 401,
-        status: :downloaded,
-        file_path: "/downloads/held.mkv"
-      })
-
-    assert {:ok, movie} =
-             seed_movie_state(movie, %{status: :downloaded, import_attempts: 4})
-
-    saved = Application.get_env(:cinder, :import_roots)
-    Application.put_env(:cinder, :import_roots, [])
-    on_exit(fn -> Application.put_env(:cinder, :import_roots, saved) end)
-    start_supervised!({Poller, interval: 60_000})
-
-    log = capture_log(fn -> Enum.each(1..12, fn _ -> Poller.poll() end) end)
-
-    assert %Movie{status: :downloaded, import_attempts: 4} = Repo.get!(Movie, movie.id)
-    assert log =~ "download import roots not configured"
-    refute log =~ movie.file_path
-  end
-
-  test "a completed download that never yields a content_path is parked after max attempts" do
-    movie = downloading_movie(17, "hash-17")
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-17" ->
-      {:ok, %{state: :completed, content_path: nil}}
-    end)
-
-    Enum.each(1..9, fn _ -> Poller.poll() end)
-    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
-  end
-
-  test "a qBittorrent :error state re-queues to :requested after the flake tolerance (not before)" do
-    movie = downloading_movie(18, "hash-18", release_title: "Dead.Release.1080p-GRP")
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-18" ->
-      {:ok, %{state: :error}}
-    end)
-
-    Enum.each(1..2, fn _ -> Poller.poll() end)
-    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
-
-    assert :ok = Poller.poll()
-
-    # Re-queued, not parked: the dead download's fields are cleared so the next search tick
-    # grabs the next-best release without a human pressing Retry (issue #192).
-    assert %Movie{status: :requested, download_id: nil, release_title: nil} =
-             Repo.get!(Movie, movie.id)
-  end
-
-  test "a dead download re-queues only after its release is confirmed blocklisted" do
-    # The blocklist row is the loop's only bound and block_release/2 swallows insert failures, so
-    # the re-queue is gated on the row actually being there. Belt-and-braces on the happy path:
-    # the row exists AND the movie moved, in that order.
-    movie = downloading_movie(22, "hash-22", release_title: "Dead.Release.1080p-GRP")
-
-    start_supervised!({Poller, interval: 60_000})
-    stub(Cinder.Download.ClientMock, :status, fn "hash-22" -> {:ok, %{state: :error}} end)
-
-    Enum.each(1..3, fn _ -> Poller.poll() end)
-
-    assert Catalog.blocked_release_titles(movie) == ["Dead.Release.1080p-GRP"]
-    assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
-  end
-
-  test "a dead download with no release to blocklist parks instead of re-queueing" do
-    # The blocklist is the only bound on the re-queue loop, so a movie with nothing to block must
-    # fall back to the terminal park — re-queueing it would re-grab the same dead download forever.
-    movie =
-      movie_fixture(%{
-        tmdb_id: 20,
-        status: :downloading,
-        download_id: "hash-20",
-        download_protocol: :torrent,
-        release_title: nil
-      })
-
-    start_supervised!({Poller, interval: 60_000})
-    stub(Cinder.Download.ClientMock, :status, fn "hash-20" -> {:ok, %{state: :error}} end)
-
-    Enum.each(1..3, fn _ -> Poller.poll() end)
-    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
-  end
-
-  test "a torrent not found in qBittorrent re-queues to :requested after the flake tolerance" do
-    movie = downloading_movie(19, "hash-19", release_title: "Missing.Release.1080p-GRP")
-    start_supervised!({Poller, interval: 60_000})
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-19" ->
-      {:error, :not_found}
-    end)
-
-    Enum.each(1..2, fn _ -> Poller.poll() end)
-    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
-  end
-
-  test "a movie reaching :available emits the available notifier event" do
-    Cinder.TestNotifier.subscribe()
-    movie = downloaded_movie(40, "/downloads/Inception.2010.1080p.mkv")
-    start_supervised!({Poller, interval: 60_000})
-    stub_import_ok()
-
-    assert :ok = Poller.poll()
-    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
-    assert_receive {:notify, {:movie_available, %Movie{status: :available}}}
-  end
-
-  describe "release blocklist capture" do
-    test "a download-side failure blocks the release and re-queues instead of parking" do
-      movie =
-        movie_fixture(%{
-          tmdb_id: 50,
-          imdb_id: "tt50",
-          status: :downloading,
-          download_id: "hash-50",
-          release_title: "Inception.Bad.Release.1080p-GRP"
-        })
-
-      start_supervised!({Poller, interval: 60_000})
-      stub(Cinder.Download.ClientMock, :status, fn "hash-50" -> {:ok, %{state: :error}} end)
-
-      # Pre-tolerance polls don't block; the release is only recorded once the flake window is out.
-      Enum.each(1..2, fn _ -> Poller.poll() end)
-      assert Catalog.blocked_release_titles(movie) == []
-
-      assert :ok = Poller.poll()
-      assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
-      assert Catalog.blocked_release_titles(movie) == ["Inception.Bad.Release.1080p-GRP"]
-
-      # The blocklist row is what bounds the re-queue loop: a re-search that finds only the
-      # blocked release parks :no_match rather than re-grabbing it forever. (Asserted on a fresh
-      # movie because the just-requeued one is still waiting out its fenced intent's backoff.)
-      fresh =
-        movie_fixture(%{tmdb_id: 51, imdb_id: "tt50", status: :requested, release_title: nil})
-
-      Catalog.block_release(
-        %{Repo.get!(Movie, fresh.id) | release_title: "Inception.Bad.Release.1080p-GRP"},
-        :download_error
-      )
-
-      expect(Cinder.Acquisition.IndexerMock, :search, fn _ ->
-        {:ok,
-         [
-           %{
-             title: "Inception.Bad.Release.1080p-GRP",
-             size: 8_000_000_000,
-             download_url: "magnet:?xt=urn:btih:bad",
-             seeders: 1
-           }
-         ]}
-      end)
-
-      assert {:ok, %Movie{status: :no_match}} = Download.start(fresh)
-    end
-  end
-
-  describe "upgrade advance" do
-    test "missing download roots hold a completed upgrade without consuming attempts or metadata" do
-      movie =
-        movie_fixture(%{
-          tmdb_id: 69,
-          status: :upgrading,
-          download_id: "dl-roots",
-          download_protocol: :torrent,
-          release_title: "Better.1080p-GRP",
-          file_path: "/lib/M (2020)/M (2020).mkv"
-        })
-
-      assert {:ok, movie} =
-               seed_movie_state(movie, %{status: :upgrading, import_attempts: 4})
-
-      assert {:ok, _movie} =
-               MovieLifecycle.track(movie, %{
-                 download_progress: 1.0,
-                 download_speed: 0,
-                 download_eta: 0
-               })
-
-      saved = Application.get_env(:cinder, :import_roots)
-      Application.put_env(:cinder, :import_roots, [])
-      on_exit(fn -> Application.put_env(:cinder, :import_roots, saved) end)
+  # Drives the free-disk prober (Cinder.Test.StubDisk) for a test's duration: `result` is a
+  # `{:ok, stats}` / `{:error, reason}` tuple returned for every path.
+  defp set_disk_stub!(result), do: put_env(:disk_stats_stub, result)
+
+  describe "download watch verdicts:" do
+    test "a completed download is marked downloaded, then imported in the same tick" do
+      movie = downloading_movie(1, "hash-1")
+      Catalog.subscribe()
       start_supervised!({Poller, interval: 60_000})
 
-      stub(Cinder.Download.ClientMock, :status, fn "dl-roots" ->
-        {:ok, %{state: :completed, content_path: "/downloads/Better.1080p.mkv"}}
+      stub(Cinder.Download.ClientMock, :status, fn "hash-1" ->
+        {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
       end)
 
-      log = capture_log(fn -> Enum.each(1..12, fn _ -> Poller.poll() end) end)
+      stub_import_ok()
 
-      assert %Movie{
-               status: :upgrading,
-               import_attempts: 4,
-               download_id: "dl-roots",
-               download_protocol: :torrent,
-               release_title: "Better.1080p-GRP",
-               file_path: "/lib/M (2020)/M (2020).mkv",
-               download_progress: 1.0,
-               download_speed: 0,
-               download_eta: 0
-             } = Repo.get!(Movie, movie.id)
+      assert :ok = Poller.poll()
 
-      assert log =~ "download import roots not configured"
-      refute log =~ "/downloads/Better.1080p.mkv"
+      assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+      # Passes through :downloaded (pass 1) then :available (pass 2) in one tick.
+      assert_receive {:movie_updated, %Movie{status: :downloaded}}
+      assert_receive {:movie_updated, %Movie{status: :available}}
     end
 
     test "a completed upgrade imports via forced replace and ends :available with new quality" do
@@ -1896,7 +136,12 @@ defmodule Cinder.Download.PollerTest do
 
       stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
       stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
-      stub(Cinder.Library.FilesystemMock, :rm, fn path -> send(test_pid, {:rm, path}) && :ok end)
+
+      stub(Cinder.Library.FilesystemMock, :rm, fn path ->
+        send(test_pid, {:rm, path})
+        :ok
+      end)
+
       stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
       assert :ok = Poller.poll()
@@ -1912,358 +157,106 @@ defmodule Cinder.Download.PollerTest do
       assert_receive {:rm, "/lib/M (2020)/M (2020).mkv"}
     end
 
-    test "a failed post-import client removal on an upgrade survives as a durable cleanup record, and a later pass drains it" do
-      saved = Application.get_env(:cinder, :move_on_import, false)
-      Application.put_env(:cinder, :move_on_import, true)
-      on_exit(fn -> Application.put_env(:cinder, :move_on_import, saved) end)
-
-      movie =
-        movie_fixture(%{
-          tmdb_id: 91,
-          status: :upgrading,
-          download_id: "nzo-91",
-          download_protocol: :usenet,
-          release_title: "Better.1080p-GRP",
-          file_path: "/lib/M91 (2020)/M91 (2020).mkv",
-          imported_resolution: "720p"
-        })
-
+    test "a download still in flight takes no strike" do
+      movie = last_strike(downloading_movie(2, "hash-2"))
       start_supervised!({Poller, interval: 60_000})
 
-      expect(Cinder.Download.SabnzbdClientMock, :status, fn "nzo-91" ->
-        {:ok, %{state: :completed, content_path: "/dl/Better91.1080p.mkv"}}
-      end)
-
-      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-
-      stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
-        if staging_path?(path),
-          do: {:error, :enoent},
-          else: {:ok, %File.Stat{type: :regular, size: 1, inode: 1}}
-      end)
-
-      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
-      stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
-      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
-
-      # #415: the immediate best-effort removal fails transiently (client restarting, an API
-      # timeout) — the exact failure the durable record has to survive.
-      expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-91", _opts ->
-        {:error, :timeout}
+      stub(Cinder.Download.ClientMock, :status, fn "hash-2" ->
+        {:ok, %{state: :downloading, progress: 0.42}}
       end)
 
       assert :ok = Poller.poll()
 
-      reloaded = Repo.get!(Movie, movie.id)
-      assert reloaded.status == :available
-      assert reloaded.imported_resolution == "1080p"
-      # download_id survives untouched — issue #415's secondary claim.
-      assert reloaded.download_id == "nzo-91"
-
-      intent = Repo.get_by!(Intent, kind: :movie, target_id: movie.id)
-      assert intent.status == :cleanup_pending
-      assert intent.remote_id == "nzo-91"
-      assert intent.protocol == :usenet
-
-      intent |> Ecto.Changeset.change(next_attempt_at: nil) |> Repo.update!()
-
-      expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-91", _opts -> :ok end)
-
-      assert :ok = Poller.poll()
-
-      refute Repo.get(Intent, intent.id)
-      assert Repo.get!(Movie, movie.id).status == :available
+      # The progress shows the tick reached the watch.
+      assert %Movie{status: :downloading, import_attempts: 9, download_progress: 0.42} =
+               Repo.get!(Movie, movie.id)
     end
 
-    test "a terse single-file download records the release title's quality (#275)" do
-      movie =
-        movie_fixture(%{
-          tmdb_id: 71,
-          status: :upgrading,
-          download_id: "dl-terse",
-          download_protocol: :torrent,
-          release_title: "Better.1080p.BluRay-GRP",
-          file_path: "/lib/M (2020)/M (2020).mkv",
-          imported_resolution: "720p"
-        })
+    # A slow or restarting client is no evidence about the download.
+    test "a client that cannot answer costs no strike" do
+      movie = last_strike(downloading_movie(7, "hash-7"))
+
+      {:ok, movie} =
+        MovieLifecycle.track(movie, %{download_progress: 0.42, download_speed: 1_000})
 
       start_supervised!({Poller, interval: 60_000})
-
-      # A single-file download whose content path IS the file, and whose name carries none of the
-      # release's tokens. Recording that parse verbatim left `imported_resolution` nil, which ranks
-      # LAST — so the very release this file came from out-ranked it on every later sweep (#275).
-      expect(Cinder.Download.ClientMock, :status, fn "dl-terse" ->
-        {:ok, %{state: :completed, content_path: "/dl/video.mkv"}}
-      end)
-
-      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-
-      stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
-        if staging_path?(path),
-          do: {:error, :enoent},
-          else: {:ok, %File.Stat{type: :regular, size: 1, inode: 1}}
-      end)
-
-      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
-      stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
-      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+      stub(Cinder.Download.ClientMock, :status, fn "hash-7" -> {:error, :timeout} end)
 
       assert :ok = Poller.poll()
 
-      reloaded = Repo.get!(Movie, movie.id)
-      assert reloaded.status == :available
-      assert reloaded.imported_resolution == "1080p"
-      assert reloaded.imported_source == "bluray"
+      # The cleared speed shows the tick reached the watch.
+      assert %Movie{status: :downloading, import_attempts: 9, download_speed: nil} =
+               Repo.get!(Movie, movie.id)
     end
 
-    test "a failed upgrade reverts to :available with the old file intact and blocklists the release" do
-      movie =
-        movie_fixture(%{
-          tmdb_id: 71,
-          status: :upgrading,
-          download_id: "dl-2",
-          download_protocol: :torrent,
-          release_title: "Bad.1080p-GRP",
-          file_path: "/lib/M (2020)/M (2020).mkv"
-        })
-
-      start_supervised!({Poller, interval: 60_000})
-
-      expect(Cinder.Download.ClientMock, :status, fn "dl-2" ->
-        {:ok, %{state: :completed, content_path: "/dl/Bad"}}
-      end)
-
-      # The download yields no usable video file -> :no_video_file (a permanent import error). The
-      # upgrade reverts WITHOUT touching the live file and blocklists the release it was told to grab.
-      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
-
-      stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
-        {:ok, [{"/dl/Bad/readme.nfo", 12}]}
-      end)
-
-      assert :ok = Poller.poll()
-
-      reloaded = Repo.get!(Movie, movie.id)
-      assert reloaded.status == :available
-      assert reloaded.file_path == "/lib/M (2020)/M (2020).mkv"
-      assert reloaded.download_id == nil
-      assert reloaded.download_protocol == nil
-      assert reloaded.release_title == nil
-      assert "Bad.1080p-GRP" in Catalog.blocked_release_titles(reloaded)
-    end
-
-    # The watch keeps the client's own error text (`{:download_error, detail}`); the revert still
-    # has to recognise it as a download failure, or the dead replacement is never blocklisted and
-    # the next upgrade hunt re-picks it.
-    test "an upgrade whose client keeps failing with a reason reverts and blocklists the release" do
+    # The client's own error text (SABnzbd's paused state, say) goes to the log; the notification
+    # keeps the classifying code, and the movie goes back to :requested for another try.
+    test "a download the client reports failed is blocklisted and re-queued on its last strike" do
       Cinder.TestNotifier.subscribe()
 
       movie =
         movie_fixture(%{
-          tmdb_id: 74,
-          status: :upgrading,
-          download_id: "dl-paused",
-          download_protocol: :torrent,
-          release_title: "Paused.2160p-GRP",
-          file_path: "/lib/M (2020)/M (2020).mkv"
-        })
-
-      # One tick short of the bound, so this tick's failure is the one that reverts.
-      {:ok, movie} = seed_movie_state(movie, %{import_attempts: 9})
-
-      stub(Cinder.Download.ClientMock, :status, fn "dl-paused" ->
-        {:ok, %{state: :error, reason: "Paused on duplicate"}}
-      end)
-
-      start_supervised!({Poller, interval: 60_000})
-      capture_log(fn -> assert :ok = Poller.poll() end)
-
-      reloaded = Repo.get!(Movie, movie.id)
-      assert reloaded.status == :available
-      assert reloaded.file_path == "/lib/M (2020)/M (2020).mkv"
-      assert Catalog.blocked_release_titles(reloaded) == ["Paused.2160p-GRP"]
-      # The notification keeps the classifying code; the client's text goes to the log.
-      assert_receive {:notify, {:movie_upgrade_failed, %Movie{}, :download_error}}
-    end
-
-    test "an upgrade with no configured client reverts to :available without blocklisting" do
-      # Drop usenet so the upgrade's status poll can't resolve a client (a config glitch, not a
-      # release failure): it must revert the file-safe upgrade but NOT blocklist a good release.
-      original = Application.fetch_env!(:cinder, :download_clients)
-      Application.put_env(:cinder, :download_clients, %{torrent: Cinder.Download.ClientMock})
-      on_exit(fn -> Application.put_env(:cinder, :download_clients, original) end)
-
-      movie =
-        movie_fixture(%{
-          tmdb_id: 72,
-          status: :upgrading,
-          download_id: "nzo-72",
-          download_protocol: :usenet,
-          release_title: "Good.Release-GRP",
-          file_path: "/lib/M (2020)/M (2020).mkv"
-        })
-
-      start_supervised!({Poller, interval: 60_000})
-
-      assert :ok = Poller.poll()
-
-      reloaded = Repo.get!(Movie, movie.id)
-      assert reloaded.status == :available
-      assert reloaded.file_path == "/lib/M (2020)/M (2020).mkv"
-      assert reloaded.download_id == nil
-      assert reloaded.download_protocol == nil
-      assert Catalog.blocked_release_titles(reloaded) == []
-    end
-
-    # #278: the indexer prices the whole CONTAINER (video + sample + nfo), the import records the
-    # ONE video file it kept. Weighed against each other, a multi-file release beats the very file
-    # it produced at identical quality — the sweep re-grabs it, re-downloads it, replaces the file
-    # with an identical one, and does it again next rotation.
-    @tag :tmp_dir
-    test "a movie imported from a multi-file release is not re-offered that release",
-         %{tmp_dir: tmp} do
-      %{downloads: downloads, movies: movies} = use_real_library(tmp)
-
-      title = "M.2020.1080p.BluRay-GRP"
-      folder = Path.join(downloads, title)
-      File.mkdir_p!(folder)
-      File.write!(Path.join(folder, "#{title}.mkv"), String.duplicate("v", 4_000))
-      File.write!(Path.join(folder, "sample.mkv"), String.duplicate("s", 500))
-      File.write!(Path.join(folder, "release.nfo"), "nfo")
-      container_size = 4_000 + 500 + 3
-
-      dest = Path.join([movies, "M (2020) {tmdb-10278}", "M (2020) {tmdb-10278}.mkv"])
-      File.mkdir_p!(Path.dirname(dest))
-      File.write!(dest, "original")
-
-      movie =
-        movie_fixture(%{
-          tmdb_id: 10_278,
-          title: "M",
-          year: 2020,
-          status: :upgrading,
-          download_id: "dl-278",
-          download_protocol: :torrent,
-          release_title: title,
-          file_path: dest,
-          imported_resolution: "720p",
-          imported_source: "webdl",
-          imported_size: 8
-        })
-
-      start_supervised!({Poller, interval: 60_000})
-
-      stub(Cinder.Download.ClientMock, :status, fn "dl-278" ->
-        {:ok, %{state: :completed, content_path: folder}}
-      end)
-
-      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
-
-      assert :ok = Poller.poll()
-
-      imported = Repo.get!(Movie, movie.id)
-      assert imported.status == :available
-      assert imported.imported_resolution == "1080p"
-      # What was recorded is the one video file, not the container the indexer priced.
-      assert imported.imported_size == 4_000
-
-      # The next rotation offers the same release straight back. Same resolution, same source, same
-      # language — it only "weighs" more because its size counts the sample and the nfo.
-      refute Upgrade.candidate?(
-               imported,
-               Release.new(%{title: title, size: container_size}),
-               :movies,
-               nil
-             )
-    end
-
-    # The other side of #278: at IMPORT both sizes are `lstat` results on real files, so they are
-    # commensurable and size must keep deciding. Removing it here (rather than only from the
-    # pre-download gate) would leave a same-resolution/same-source replacement undecidable.
-    @tag :tmp_dir
-    test "the import arbiter still decides on size: the bigger of two real files wins",
-         %{tmp_dir: tmp} do
-      %{downloads: downloads, movies: movies} = use_real_library(tmp)
-
-      source = Path.join(downloads, "M.2020.1080p.WEBDL-GRP.mkv")
-      File.write!(source, String.duplicate("n", 9_000))
-
-      dest = Path.join([movies, "M (2020) {tmdb-10279}", "M (2020) {tmdb-10279}.mkv"])
-      File.mkdir_p!(Path.dirname(dest))
-      File.write!(dest, String.duplicate("o", 1_000))
-
-      movie =
-        movie_fixture(%{
-          tmdb_id: 10_279,
-          title: "M",
-          year: 2020,
+          tmdb_id: 88,
           status: :downloading,
-          download_id: "dl-279",
+          download_id: "hash-paused",
           download_protocol: :torrent,
-          release_title: "M.2020.1080p.WEBDL-GRP",
-          file_path: dest,
-          imported_resolution: "1080p",
-          imported_source: "webdl",
-          imported_size: 1_000
+          release_title: "Paused.Release.1080p"
         })
+
+      # The lifecycle tolerates two client failures; this tick's is the third.
+      {:ok, movie} = seed_movie_state(movie, %{import_attempts: 2})
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-paused" ->
+        {:ok, %{state: :error, reason: "Paused by the download client (duplicate detection)"}}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn "hash-paused", _opts -> :ok end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
+      assert Catalog.blocked_release_titles(movie) == ["Paused.Release.1080p"]
+      assert_receive {:notify, {:movie_failed, %Movie{status: :requested}, :download_error}}
+    end
+
+    test "a download with no client for its protocol parks on its last strike" do
+      # Drop usenet from the client map so a usenet movie's status poll can't resolve a client.
+      put_env(:download_clients, %{torrent: Cinder.Download.ClientMock})
+
+      movie =
+        last_strike(
+          movie_fixture(%{
+            tmdb_id: 21,
+            title: "M",
+            status: :downloading,
+            download_id: "nzo-21",
+            download_protocol: :usenet,
+            release_title: "Good.Release-GRP"
+          })
+        )
 
       start_supervised!({Poller, interval: 60_000})
 
-      stub(Cinder.Download.ClientMock, :status, fn "dl-279" ->
-        {:ok, %{state: :completed, content_path: source}}
-      end)
-
-      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
-
       assert :ok = Poller.poll()
-
-      imported = Repo.get!(Movie, movie.id)
-      assert imported.status == :available
-      assert imported.file_path == dest
-      assert imported.imported_size == 9_000
-      assert File.read!(dest) == String.duplicate("n", 9_000)
-    end
-  end
-
-  describe "stall reaper" do
-    alias Cinder.Download.StallReaper
-
-    # Immediate reap: 0-window thresholds so a just-created stalled download is past the bound.
-    defp enable_reaper!(opts \\ []) do
-      saved = Application.get_env(:cinder, StallReaper)
-
-      Application.put_env(
-        :cinder,
-        StallReaper,
-        Keyword.merge([enabled: true, stall_timeout: 0, no_seeders_timeout: 0], opts)
-      )
-
-      on_exit(fn ->
-        if saved,
-          do: Application.put_env(:cinder, StallReaper, saved),
-          else: Application.delete_env(:cinder, StallReaper)
-      end)
+      assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+      # A missing client is a config glitch, not evidence against the release.
+      assert Catalog.blocked_release_titles(movie) == []
     end
 
-    defp stalled_downloading_movie(tmdb_id, download_id, release_title) do
-      {:ok, movie} = Catalog.add_movie(%{tmdb_id: tmdb_id, title: "M"})
+    test "a stalled download is removed with its data, blocklisted and re-queued" do
+      put_config(StallReaper, enabled: true, stall_timeout: 0, no_seeders_timeout: 0)
 
-      {:ok, movie} =
-        seed_movie_state(movie, %{
+      movie =
+        movie_fixture(%{
+          tmdb_id: 71,
+          title: "M",
           status: :downloading,
-          download_id: download_id,
+          download_id: "hash-stall",
           download_protocol: :torrent,
-          release_title: release_title
+          release_title: "Dead.Release.1080p"
         })
 
-      movie
-    end
-
-    test "reaps a 0-seeder stalled torrent: removes it (with data), blocklists :stalled, re-requests" do
-      enable_reaper!()
-      movie = stalled_downloading_movie(70, "hash-stall", "Dead.Release.1080p")
       test_pid = self()
 
       stub(Cinder.Download.ClientMock, :status, fn "hash-stall" ->
@@ -2290,222 +283,18 @@ defmodule Cinder.Download.PollerTest do
       assert Keyword.get(opts, :delete_files) == true
     end
 
-    # The reaper's on/off switch and its clocks are `Download.Watch`'s, pinned in `WatchTest`; these
-    # pin what a stalled verdict does to a movie and an upgrade.
-    test "does not reap a seeded stall inside the (long) stall window" do
-      # 0 no-seeders window, but a 1h stall window and a seeded swarm: not yet reapable.
-      enable_reaper!(stall_timeout: :timer.hours(1))
-      movie = stalled_downloading_movie(72, "hash-seed", "Seeded.Release.1080p")
-
-      stub(Cinder.Download.ClientMock, :status, fn "hash-seed" ->
-        {:ok, %{state: :downloading, progress: 0.1, speed: 0, seeders: 8}}
-      end)
-
-      start_supervised!({Poller, interval: 60_000})
-      assert :ok = Poller.poll()
-
-      assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
-    end
-
-    test "reaps a stalled upgrade back to :available, keeping the live file and removing the download" do
-      enable_reaper!()
-      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 73, title: "M"})
-
-      {:ok, movie} =
-        seed_movie_state(movie, %{
-          status: :upgrading,
-          download_id: "hash-up",
-          download_protocol: :torrent,
-          release_title: "Dead.Upgrade.1080p",
-          file_path: "/lib/M (2020)/M (2020).mkv"
-        })
-
-      test_pid = self()
-
-      stub(Cinder.Download.ClientMock, :status, fn "hash-up" ->
-        {:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 0}}
-      end)
-
-      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
-        send(test_pid, {:removed, id, opts})
-        :ok
-      end)
-
-      start_supervised!({Poller, interval: 60_000})
-      assert :ok = Poller.poll()
-
-      reverted = Repo.get!(Movie, movie.id)
-      assert reverted.status == :available
-      assert reverted.file_path == "/lib/M (2020)/M (2020).mkv"
-      assert reverted.download_id == nil
-      assert reverted.release_title == nil
-      assert Catalog.blocked_release_titles(reverted) == ["Dead.Upgrade.1080p"]
-      assert_receive {:removed, "hash-up", _opts}
-    end
-
-    test "acceptance (#147): reaps a dead release, then grabs a seeded replacement in one loop" do
-      enable_reaper!()
-      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 80, title: "Kizu", imdb_id: "tt147147"})
-
-      {:ok, movie} =
-        seed_movie_state(movie, %{
-          status: :downloading,
-          download_id: "hash-dead",
-          download_protocol: :torrent,
-          release_title: "Teke.Kizu.I.1080p-TEKE"
-        })
-
-      stub(Cinder.Download.ClientMock, :status, fn
-        "hash-dead" -> {:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 0}}
-        "hash-good" -> {:ok, %{state: :downloading, progress: 0.2, speed: 500_000, seeders: 20}}
-      end)
-
-      stub(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)
-
-      # Re-search returns the now-blocklisted dead release AND a seeded replacement; the scorer
-      # skips the blocklisted one and picks the replacement.
-      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt147147" ->
-        {:ok,
-         [
-           %{
-             title: "Teke.Kizu.I.1080p-TEKE",
-             size: 8_000_000_000,
-             download_url: "magnet:?dead",
-             seeders: 0
-           },
-           %{
-             title: "Tsundere-Raws.Kizu.I.1080p",
-             size: 8_000_000_000,
-             download_url: "magnet:?good",
-             seeders: 20
-           }
-         ]}
-      end)
-
-      stub(Cinder.Download.ClientMock, :add, fn %{title: "Tsundere-Raws.Kizu.I.1080p"}, _opts ->
-        {:ok, "hash-good"}
-      end)
-
-      # search_retry_after: 0 lets the just-reaped :requested movie re-search in the same tick.
-      start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-      assert :ok = Poller.poll()
-
-      reloaded = Repo.get!(Movie, movie.id)
-      assert reloaded.status == :downloading
-      assert reloaded.download_id == "hash-good"
-      assert reloaded.release_title == "Tsundere-Raws.Kizu.I.1080p"
-      assert Catalog.blocked_release_titles(reloaded) == ["Teke.Kizu.I.1080p-TEKE"]
-    end
-
-    test "reaps a wedged usenet download (nil speed) once past the absolute cap" do
-      # The torrent-only seed window can't touch a nil-speed usenet job; the protocol-agnostic
-      # absolute cap does. cap: 0 so the freshly-stalled movie is immediately past it.
-      enable_reaper!(max_downloading_timeout: 0)
-      movie = stalled_downloading_movie(75, "nzo-wedged", "Wedged.Release.1080p")
-      test_pid = self()
-
-      stub(Cinder.Download.ClientMock, :status, fn "nzo-wedged" ->
-        {:ok, %{state: :downloading, progress: 0.5, speed: nil}}
-      end)
-
-      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
-        send(test_pid, {:removed, id, opts})
-        :ok
-      end)
-
-      start_supervised!({Poller, interval: 60_000})
-      assert :ok = Poller.poll()
-
-      reaped = Repo.get!(Movie, movie.id)
-      assert reaped.status == :requested
-      assert reaped.download_id == nil
-      assert reaped.search_attempts == 1
-      assert Catalog.blocked_release_titles(reaped) == ["Wedged.Release.1080p"]
-      assert_receive {:removed, "nzo-wedged", _opts}
-    end
-
-    test "reaps at the absolute cap despite changing speed and ETA without progress" do
-      enable_reaper!(
-        stall_timeout: :timer.hours(2),
-        no_seeders_timeout: :timer.hours(2),
-        max_downloading_timeout: :timer.hours(24)
-      )
-
-      movie = stalled_downloading_movie(76, "hash-flapping", "Flapping.Release.1080p")
-
-      assert {:ok, tracked} =
-               MovieLifecycle.track(movie, %{
-                 download_progress: 0.5,
-                 download_speed: 1_024,
-                 download_eta: 500
-               })
-
-      past = DateTime.add(DateTime.utc_now(:second), -25, :hour)
-
-      Repo.update_all(from(m in Movie, where: m.id == ^movie.id),
-        set: [download_progress_at: past]
-      )
-
-      tracked = Repo.get!(Movie, tracked.id)
-
-      assert {:ok, jittered} =
-               MovieLifecycle.track(tracked, %{
-                 download_progress: 0.5,
-                 download_speed: 2_048,
-                 download_eta: 400
-               })
-
-      assert jittered.download_progress_at == past
-
-      stub(Cinder.Download.ClientMock, :status, fn "hash-flapping" ->
-        {:ok, %{state: :downloading, progress: 0.5, speed: 3_072, eta: 300, seeders: 5}}
-      end)
-
-      stub(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)
-
-      start_supervised!({Poller, interval: 60_000})
-      assert :ok = Poller.poll()
-
-      assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
-    end
-
-    test "updated_at still freezes for the seed-window derivation" do
-      # Reaper OFF: the torrent-only short window keeps its existing derived activity clock.
-      movie = stalled_downloading_movie(74, "hash-freeze", "Whatever.1080p")
-
-      stub(Cinder.Download.ClientMock, :status, fn "hash-freeze" ->
-        {:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 5}}
-      end)
-
-      start_supervised!({Poller, interval: 60_000})
-
-      # Tick 1 writes the initial metrics (nil → 0.0/0/nil), bumping updated_at once.
-      assert :ok = Poller.poll()
-      first = Repo.get!(Movie, movie.id).updated_at
-
-      # Tick 2: identical metrics → no write → updated_at unchanged.
-      assert :ok = Poller.poll()
-      assert Repo.get!(Movie, movie.id).updated_at == first
-    end
-  end
-
-  # Which states are vetted and how a client with no file list is read are `Download.Watch`'s rules,
-  # pinned in `WatchTest`; these pin what a blocked-content verdict does to a movie and an upgrade.
-  describe "content policy" do
-    setup do
+    test "a fake payload re-queues on the first tick, blocklisted" do
       movie = downloading_movie(90, "hash-fake", release_title: "Movie.2024.1080p-FAKE")
 
       stub(Cinder.Download.ClientMock, :status, fn "hash-fake" ->
         {:ok, %{state: :downloading, progress: 0.9, speed: 500_000, seeders: 40}}
       end)
 
-      %{movie: movie}
-    end
-
-    test "a fake payload re-queues on the FIRST tick, blocklisted", %{movie: movie} do
       expect(Cinder.Download.ClientMock, :files, fn "hash-fake" ->
         {:ok, ["Movie.2024.1080p/Movie.2024.1080p.mkv.lnk", "Movie.2024.1080p/readme.txt"]}
       end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn "hash-fake", _opts -> :ok end)
 
       start_supervised!({Poller, interval: 60_000})
       assert :ok = Poller.poll()
@@ -2517,190 +306,537 @@ defmodule Cinder.Download.PollerTest do
                Repo.get!(Movie, movie.id)
 
       assert [%{release_title: "Movie.2024.1080p-FAKE", reason: "blocked_content"}] =
-               Repo.all(Cinder.Catalog.BlockedRelease)
+               Repo.all(BlockedRelease)
+    end
+  end
+
+  describe "staged import results:" do
+    # Doubles as the import-pass crash-recovery proof: a movie already stranded at
+    # :downloaded (crash after download, before import) is imported on a later poll.
+    test "a :downloaded movie is imported into the library and marked :available" do
+      movie = downloaded_movie(10, "/downloads/Inception.2010.1080p.mkv")
+      Catalog.subscribe()
+      start_supervised!({Poller, interval: 60_000})
+
+      test_pid = self()
+      stub_import_ok()
+
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, dest ->
+        send(test_pid, {:linked, dest})
+        :ok
+      end)
+
+      assert :ok = Poller.poll()
+      assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+      assert_receive {:movie_updated, %Movie{status: :available}}
+
+      # After import, file_path must point at the LIBRARY destination (the imported hardlink),
+      # not the download source — else delete_files unlinks the download copy and strands the
+      # library file on disk.
+      assert_receive {:linked, staged_path}
+      assert candidate_path?(staged_path)
+      assert %Movie{file_path: dest} = Repo.get!(Movie, movie.id)
+      refute dest == "/downloads/Inception.2010.1080p.mkv"
     end
 
-    test "an ordinary release is tracked as usual", %{movie: movie} do
-      expect(Cinder.Download.ClientMock, :files, fn "hash-fake" ->
-        {:ok, ["Movie.2024.1080p/Movie.2024.1080p.mkv"]}
+    test "a confirmed movie policy mismatch blocks only that title and grabs its sibling" do
+      put_env(:media_info, Cinder.Library.MediaInfoMock)
+      source = "/downloads/Anime.Movie.mkv"
+      sibling_title = "[Group] Anime Movie v2 [1080p]"
+
+      movie =
+        movie_fixture(%{
+          title: "Anime Movie",
+          year: 2026,
+          imdb_id: "tt-policy-mismatch",
+          media_profile: :anime,
+          original_language: "ja",
+          status: :downloaded,
+          download_id: "hash-policy-old",
+          download_protocol: :torrent,
+          release_title: "[Group] Anime Movie [1080p]",
+          file_path: source
+        })
+
+      {:ok, movie} =
+        seed_movie_state(movie, %{
+          release_policy_snapshot: %{
+            "version" => 1,
+            "required_audio_languages" => ["ja", "fr"],
+            "required_embedded_subtitle_languages" => [],
+            "release_group" => "group",
+            "release_title" => movie.release_title
+          },
+          search_attempts: 2,
+          import_attempts: 3
+        })
+
+      expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
+        {:ok, %{audio: ["ja"], subtitles: [], audio_unknown?: false, subtitle_unknown?: false}}
+      end)
+
+      expect(Cinder.Download.ClientMock, :remove, fn "hash-policy-old", delete_files: true ->
+        :ok
+      end)
+
+      releases = [
+        %{
+          title: movie.release_title,
+          size: 2_000_000_000,
+          download_url: "magnet:?old"
+        },
+        %{title: sibling_title, size: 2_000_000_000, download_url: "magnet:?sibling"}
+      ]
+
+      stub(Cinder.Acquisition.IndexerMock, :search, fn _imdb_id -> {:ok, releases} end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, categories: [5070] ->
+        {:ok, releases}
+      end)
+
+      selected = start_supervised!({Agent, fn -> nil end})
+
+      expect(Cinder.Download.ClientMock, :add, fn release, _opts ->
+        Agent.update(selected, fn _ -> release.title end)
+        {:ok, "hash-policy-sibling"}
+      end)
+
+      # The rejected movie is re-searched in the same tick: search runs after import.
+      start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+      assert :ok = Poller.poll()
+
+      assert Agent.get(selected, & &1) == sibling_title
+
+      assert %Movie{
+               status: :downloading,
+               download_id: "hash-policy-sibling",
+               release_title: ^sibling_title,
+               search_attempts: 2,
+               import_attempts: 0
+             } = Repo.get!(Movie, movie.id)
+
+      assert Catalog.blocked_release_titles(movie) == [movie.release_title]
+      refute Repo.exists?(ImportStage)
+    end
+
+    test "a failed import takes a strike and leaves the movie :downloaded for retry" do
+      movie = downloaded_movie(11, "/downloads/Inception.2010.1080p.mkv")
+      start_supervised!({Poller, interval: 60_000})
+
+      stub_import_ok()
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+        if candidate_path?(path), do: {:error, :enoent}, else: import_lstat(path, 1)
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eacces} end)
+
+      assert :ok = Poller.poll()
+      # :eacces (e.g. a read-only mount) is transient — stays :downloaded for retry.
+      assert %Movie{status: :downloaded, import_attempts: 1} = Repo.get!(Movie, movie.id)
+    end
+  end
+
+  # A downloaded file waiting on something the operator can fix: the poller holds it without a
+  # strike, rather than spending the import budget on a condition retrying cannot change.
+  describe "holds:" do
+    test "an unconfigured movies library holds a downloaded movie" do
+      movie = last_strike(downloaded_movie(79, "/downloads/held.mkv"))
+      put_env(:movies_library_path, nil)
+      start_supervised!({Poller, interval: 60_000})
+
+      log = capture_log(fn -> assert :ok = Poller.poll() end)
+
+      assert %Movie{status: :downloaded, import_attempts: 9} = Repo.get!(Movie, movie.id)
+      assert log =~ "movies_library_path not set"
+    end
+
+    test "missing download roots hold a downloaded movie" do
+      movie = last_strike(downloaded_movie(401, "/downloads/held.mkv"))
+      put_env(:import_roots, [])
+      start_supervised!({Poller, interval: 60_000})
+
+      log = capture_log(fn -> assert :ok = Poller.poll() end)
+
+      assert %Movie{status: :downloaded, import_attempts: 9} = Repo.get!(Movie, movie.id)
+      assert log =~ "download import roots not configured"
+      refute log =~ movie.file_path
+    end
+
+    test "missing download roots hold a completed upgrade without consuming attempts or metadata" do
+      movie =
+        last_strike(
+          movie_fixture(%{
+            tmdb_id: 69,
+            status: :upgrading,
+            download_id: "dl-roots",
+            download_protocol: :torrent,
+            release_title: "Better.1080p-GRP",
+            file_path: "/lib/M (2020)/M (2020).mkv"
+          })
+        )
+
+      assert {:ok, _movie} =
+               MovieLifecycle.track(movie, %{
+                 download_progress: 1.0,
+                 download_speed: 0,
+                 download_eta: 0
+               })
+
+      put_env(:import_roots, [])
+      start_supervised!({Poller, interval: 60_000})
+
+      stub(Cinder.Download.ClientMock, :status, fn "dl-roots" ->
+        {:ok, %{state: :completed, content_path: "/downloads/Better.1080p.mkv"}}
+      end)
+
+      log = capture_log(fn -> assert :ok = Poller.poll() end)
+
+      assert %Movie{
+               status: :upgrading,
+               import_attempts: 9,
+               download_id: "dl-roots",
+               download_protocol: :torrent,
+               release_title: "Better.1080p-GRP",
+               file_path: "/lib/M (2020)/M (2020).mkv",
+               download_progress: 1.0,
+               download_speed: 0,
+               download_eta: 0
+             } = Repo.get!(Movie, movie.id)
+
+      assert log =~ "download import roots not configured"
+      refute log =~ "/downloads/Better.1080p.mkv"
+    end
+
+    test "a nearly full movies library root holds the import before staging" do
+      movie =
+        movie_fixture(%{
+          tmdb_id: 78,
+          title: "M",
+          status: :downloaded,
+          content_path: "/downloads/M.mkv",
+          download_id: "hash-hold"
+        })
+
+      set_disk_stub!({:ok, %{free_bytes: 500_000_000, total_bytes: 100_000_000_000}})
+
+      # Staging's first filesystem call reports here: a held import must never reach it.
+      test_pid = self()
+
+      stub(Cinder.Library.FilesystemMock, :dir?, fn path ->
+        send(test_pid, {:staging, path})
+        false
       end)
 
       start_supervised!({Poller, interval: 60_000})
-      assert :ok = Poller.poll()
 
-      assert %Movie{status: :downloading, download_progress: 0.9} = Repo.get!(Movie, movie.id)
-      assert Repo.all(Cinder.Catalog.BlockedRelease) == []
+      log = capture_log(fn -> assert :ok = Poller.poll() end)
+
+      assert %Movie{status: :downloaded, import_attempts: attempts} = Repo.get!(Movie, movie.id)
+      assert (attempts || 0) == 0
+      assert log =~ "nearly full"
+      refute_received {:staging, _path}
+    end
+  end
+
+  describe "the search pass:" do
+    test "auto-wires a :requested movie through to :available with no manual Download.start call" do
+      {:ok, movie} =
+        Catalog.add_movie(%{tmdb_id: 900, title: "Inception", imdb_id: "tt1375666"})
+
+      assert movie.status == :requested
+
+      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
+        {:ok,
+         [
+           %{
+             title: "Inception.2010.1080p.BluRay.x264-GRP",
+             size: 8_000_000_000,
+             download_url: "magnet:?x",
+             seeders: 10
+           }
+         ]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-900"} end)
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-900" ->
+        {:ok, %{state: :completed, content_path: "/downloads/Inception.mkv"}}
+      end)
+
+      stub_import_ok()
+
+      start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+
+      # search runs last in a tick: poll 1 → :downloading, poll 2 → :downloaded → :available
+      assert :ok = Poller.poll()
+      assert :ok = Poller.poll()
+      assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
     end
 
-    test "a fake replacement reverts an upgrade, live library file untouched" do
+    test "invalid Anime movie preferences hold without searching or consuming attempts" do
+      put_config(:anime_preferences, embedded_subtitle_mode: :require)
+
       movie =
         movie_fixture(%{
-          tmdb_id: 91,
-          title: "M",
-          status: :upgrading,
-          download_id: "hash-upgrade-fake",
-          release_title: "M.2024.2160p-FAKE",
-          file_path: "/lib/M/M.mkv"
+          title: "Invalid Anime",
+          year: 2020,
+          imdb_id: "tt-anime-invalid",
+          media_profile: :anime
         })
 
+      searches = start_supervised!({Agent, fn -> 0 end})
+
+      stub(Cinder.Acquisition.IndexerMock, :search, fn _imdb_id ->
+        Agent.update(searches, &(&1 + 1))
+        {:ok, []}
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, _opts ->
+        Agent.update(searches, &(&1 + 1))
+        {:ok, []}
+      end)
+
+      start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :searching, search_attempts: 0} = Repo.get!(Movie, movie.id)
+      assert Agent.get(searches, & &1) == 0
+
+      # The hold is DB-visible (issue #107) — the badge reads "Needs preferences", not "Searching".
+      assert Repo.get!(Movie, movie.id).anime_hold_reason == "subtitle_language_required"
+
+      # Preferences become satisfiable → the next sweep clears the hold and searches normally.
+      put_config(:anime_preferences, embedded_subtitle_mode: :prefer)
+      assert :ok = Poller.poll()
+
+      assert Repo.get!(Movie, movie.id).anime_hold_reason == nil
+      assert Agent.get(searches, & &1) > 0
+    end
+
+    test "search skips the grab (no park, no attempt bump) when the download root can't hold it" do
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 77, title: "Big", imdb_id: "tt7777777"})
+
+      set_disk_stub!({:ok, %{free_bytes: 1_000_000_000, total_bytes: 100_000_000_000}})
+
+      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt7777777" ->
+        {:ok,
+         [
+           %{
+             title: "Big.2020.1080p.BluRay.x264-GRP",
+             size: 8_000_000_000,
+             download_url: "magnet:?x",
+             seeders: 10
+           }
+         ]}
+      end)
+
+      # ClientMock.add is intentionally NOT stubbed — a disk-blocked grab must never reach the client
+      # (set_mox_global would raise on an unexpected call).
+      start_supervised!({Poller, interval: 60_000})
+
+      log = capture_log(fn -> assert :ok = Poller.poll() end)
+
+      movie = Repo.get!(Movie, movie.id)
+      assert movie.status in [:requested, :searching]
+      assert (movie.search_attempts || 0) == 0
+      assert log =~ "insufficient free disk space"
+      assert Repo.aggregate(Intent, :count) == 0
+    end
+
+    # A re-queued movie whose old download's client removal failed: `Download.start/1` retries
+    # that cleanup before any new search, and while the retry backs off the search waits. A wait
+    # is not a failed search. The intent is a cleanup, not a counted submission, so the
+    # lifecycle's own already-counted check stays out of it; one strike short of the search
+    # budget, a strike would park the movie.
+    test "a movie whose previous download's cleanup is backing off takes no strike" do
+      # An IMDb id, so a search that ran anyway would reach the indexer spy below.
+      movie = movie_fixture(%{imdb_id: "tt0000903"})
+      {:ok, movie} = seed_movie_state(movie, %{search_attempts: 9})
+
+      Repo.insert!(%Intent{
+        operation_key: Ecto.UUID.generate(),
+        kind: :movie,
+        target_id: movie.id,
+        protocol: :torrent,
+        release: %{"title" => "Old.Release-GRP"},
+        status: :cleanup_pending,
+        remote_id: "hash-old",
+        next_attempt_at: DateTime.add(DateTime.utc_now(:second), 300, :second)
+      })
+
+      # Neither the removal nor a new search may run while the cleanup backs off.
       test_pid = self()
-
-      stub(Cinder.Download.ClientMock, :status, fn "hash-upgrade-fake" ->
-        {:ok, %{state: :completed, content_path: "/downloads/M.2024.2160p"}}
-      end)
-
-      expect(Cinder.Download.ClientMock, :files, fn "hash-upgrade-fake" ->
-        {:ok, ["M.2024.2160p/M.2024.2160p.mkv.exe"]}
-      end)
 
       stub(Cinder.Download.ClientMock, :remove, fn id, _opts ->
         send(test_pid, {:removed, id})
         :ok
       end)
 
-      start_supervised!({Poller, interval: 60_000})
+      stub(Cinder.Acquisition.IndexerMock, :search, fn imdb_id ->
+        send(test_pid, {:searched, imdb_id})
+        {:ok, []}
+      end)
+
+      start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
       assert :ok = Poller.poll()
 
-      # Reverted to :available with the ORIGINAL file still in place — an upgrade that turns out
-      # to be a fake must never cost the household the file it already had.
-      assert %Movie{status: :available, file_path: "/lib/M/M.mkv", download_id: nil} =
-               Repo.get!(Movie, movie.id)
-
-      assert_receive {:removed, "hash-upgrade-fake"}
-
-      # Blocklisted, or the next upgrade hunt re-picks the very same fake.
-      assert [%{release_title: "M.2024.2160p-FAKE", reason: "upgrade_failed"}] =
-               Repo.all(Cinder.Catalog.BlockedRelease)
+      assert %Movie{status: :requested, search_attempts: 9} = Repo.get!(Movie, movie.id)
+      assert %Intent{status: :cleanup_pending} = Repo.get_by!(Intent, target_id: movie.id)
+      refute_received {:removed, _id}
+      refute_received {:searched, _imdb_id}
     end
 
-    test "a failed client removal survives as a durable cleanup record, and a later tick drains it" do
-      movie =
-        movie_fixture(%{
-          tmdb_id: 92,
-          title: "M2",
-          status: :upgrading,
-          download_id: "hash-upgrade-fake-2",
-          download_protocol: :torrent,
-          release_title: "M2.2024.2160p-FAKE",
-          file_path: "/lib/M2/M2.mkv"
-        })
+    # A search that fails before it starts (TMDB down while resolving the IMDb id) leaves the
+    # movie :requested, and the write-back still counts it.
+    test "a search that fails before it starts takes a strike and stays :requested" do
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 905, title: "N"})
+      stub(Cinder.Catalog.TMDBMock, :get_movie, fn 905 -> {:error, {:tmdb_status, 503}} end)
+      start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
 
-      test_pid = self()
-      Cinder.TestNotifier.subscribe()
+      assert :ok = Poller.poll()
+      assert %Movie{status: :requested, search_attempts: 1} = Repo.get!(Movie, movie.id)
+    end
 
-      stub(Cinder.Download.ClientMock, :status, fn "hash-upgrade-fake-2" ->
-        {:ok, %{state: :completed, content_path: "/downloads/M2.2024.2160p"}}
+    test "backoff: a just-failed movie is not re-attempted until retry_after elapses" do
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 902, title: "M", imdb_id: "tt2"})
+      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt2" -> {:error, :prowlarr_down} end)
+
+      start_supervised!({Poller, interval: 60_000, search_retry_after: 60})
+
+      # First poll: fresh (attempts 0) → attempted → search_attempts becomes 1. The write-back
+      # reads the row fresh: the search moved it to :searching mid-unit.
+      assert :ok = Poller.poll()
+      assert Repo.get!(Movie, movie.id).search_attempts == 1
+
+      # Second poll immediately: not due (updated_at is ~now) → not attempted.
+      assert :ok = Poller.poll()
+      assert Repo.get!(Movie, movie.id).search_attempts == 1
+
+      # Back-date updated_at past the window → due again → attempted.
+      past = DateTime.utc_now() |> DateTime.add(-61, :second) |> DateTime.truncate(:second)
+      Repo.update_all(Movie, set: [updated_at: past])
+      assert :ok = Poller.poll()
+      assert Repo.get!(Movie, movie.id).search_attempts == 2
+    end
+  end
+
+  describe "recovery:" do
+    test "the poller recovers from a crash and still advances work (OTP payoff)" do
+      movie = downloading_movie(4, "hash-4")
+      pid = start_supervised!({Poller, interval: 60_000})
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-4" ->
+        {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
       end)
 
-      expect(Cinder.Download.ClientMock, :files, fn "hash-upgrade-fake-2" ->
-        {:ok, ["M2.2024.2160p/M2.2024.2160p.mkv.exe"]}
+      stub_import_ok()
+
+      Process.exit(pid, :kill)
+      new_pid = await_restart(Poller, pid)
+      assert new_pid != pid
+
+      assert :ok = Poller.poll(new_pid)
+      assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+    end
+
+    test "recovers a remotely accepted movie after process death without submitting twice" do
+      {:ok, movie} =
+        Catalog.add_movie(%{tmdb_id: 401, title: "Crash Window", imdb_id: "tt0000401"})
+
+      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt0000401" ->
+        {:ok,
+         [
+           %{
+             title: "Crash.Window.1080p.WEB-GRP",
+             size: 2_000_000_000,
+             download_url: "magnet:?xt=urn:btih:crash",
+             seeders: 1
+           }
+         ]}
       end)
 
-      # #414: the immediate best-effort removal fails transiently (client restarting, an API
-      # timeout) — the exact failure the durable record has to survive.
-      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
-        send(test_pid, {:removed, id, opts})
+      accepted = start_supervised!({Agent, fn -> %{adds: 0, jobs: %{}} end})
+
+      stub(Cinder.Download.ClientMock, :add, fn _release, operation_key: key ->
+        Agent.update(accepted, fn state ->
+          %{state | adds: state.adds + 1, jobs: Map.put(state.jobs, key, "hash-crash")}
+        end)
+
+        Process.exit(self(), :kill)
+      end)
+
+      stub(Cinder.Download.ClientMock, :find_by_operation_key, fn key ->
+        case Agent.get(accepted, &Map.get(&1.jobs, key)) do
+          nil -> :not_found
+          id -> {:ok, id}
+        end
+      end)
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-crash" ->
+        {:ok, %{state: :downloading, progress: 0.0}}
+      end)
+
+      pid = start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+      catch_exit(Poller.poll(pid))
+
+      new_pid = await_restart(Poller, pid)
+      assert :ok = Poller.poll(new_pid)
+
+      assert %{adds: 1} = Agent.get(accepted, & &1)
+
+      assert %Movie{status: :downloading, download_id: "hash-crash"} =
+               Repo.get!(Movie, movie.id)
+    end
+
+    # #415: the lifecycle fences the post-import client removal, so a removal that fails survives
+    # as a cleanup intent. Each tick reconciles the movie intents first, which drains it.
+    test "a later tick drains the cleanup intent a failed post-import removal left" do
+      put_env(:move_on_import, true)
+
+      movie = downloading_movie(90, "nzo-90", download_protocol: :usenet)
+      start_supervised!({Poller, interval: 60_000})
+
+      stub(Cinder.Download.SabnzbdClientMock, :status, fn "nzo-90" ->
+        {:ok, %{state: :completed, content_path: "/downloads/M90.mkv"}}
+      end)
+
+      stub_import_ok()
+
+      # The immediate best-effort removal fails transiently (client restarting, an API timeout).
+      expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-90", _opts ->
         {:error, :timeout}
       end)
 
-      start_supervised!({Poller, interval: 60_000})
       assert :ok = Poller.poll()
 
-      # The pre-existing outcome still holds: reverted to :available, live file untouched,
-      # download_id cleared, release blocklisted — identical to the happy-path test above.
-      assert %Movie{status: :available, file_path: "/lib/M2/M2.mkv", download_id: nil} =
-               Repo.get!(Movie, movie.id)
+      # The movie imports and goes available, and its download_id survives untouched (issue
+      # #415's secondary claim — see Cleaner's claimed_ids/2).
+      reloaded = Repo.get!(Movie, movie.id)
+      assert reloaded.status == :available
+      assert reloaded.download_id == "nzo-90"
 
-      assert [%{release_title: "M2.2024.2160p-FAKE", reason: "upgrade_failed"}] =
-               Repo.all(Cinder.Catalog.BlockedRelease)
-
-      assert_receive {:removed, "hash-upgrade-fake-2", _opts}
-      assert_receive {:notify, {:movie_upgrade_failed, %Movie{}, :blocked_content}}
-
-      # A durable download_intents row now survives the failed removal, carrying exactly what a
-      # retry needs: the remote id and protocol the movie used to be the sole owner of.
       intent = Repo.get_by!(Intent, kind: :movie, target_id: movie.id)
       assert intent.status == :cleanup_pending
-      assert intent.remote_id == "hash-upgrade-fake-2"
-      assert intent.protocol == :torrent
 
-      # Simulate the bounded retry becoming due — the movie poller reconciles pending intents
-      # every tick, but a failed attempt backs off rather than retrying immediately.
+      # Simulate the bounded retry becoming due: a failed attempt backs off rather than retrying
+      # on the very next tick.
       intent |> Ecto.Changeset.change(next_attempt_at: nil) |> Repo.update!()
 
-      # The later pass succeeds: the remote job is actually removed this time.
-      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
-        send(test_pid, {:removed_again, id, opts})
+      test_pid = self()
+
+      expect(Cinder.Download.SabnzbdClientMock, :remove, fn "nzo-90", _opts ->
+        send(test_pid, :removed_again)
         :ok
       end)
 
       assert :ok = Poller.poll()
 
-      assert_receive {:removed_again, "hash-upgrade-fake-2", _opts}
+      assert_received :removed_again
       refute Repo.get(Intent, intent.id)
       # Draining the cleanup record is not itself a movie-state change.
-      assert Repo.get!(Movie, movie.id).status == :available
-    end
-
-    test "a movie whose upgrade is aborted mid-vet reverts gracefully instead of raising" do
-      movie =
-        movie_fixture(%{
-          tmdb_id: 93,
-          title: "M3",
-          status: :upgrading,
-          download_id: "hash-upgrade-fake-3",
-          download_protocol: :torrent,
-          release_title: "M3.2024.2160p-FAKE",
-          file_path: "/lib/M3/M3.mkv"
-        })
-
-      test_pid = self()
-      # #414 review: a concurrent Cancel/Discard-upgrade (or Delete) can commit between the
-      # poller's tick-start read and Download.Watch's blocked-content verdict — simulated here by
-      # aborting the upgrade from inside the files/1 expectation, the exact point
-      # ContentPolicy.vet/2's client I/O sits. abort_upgrade/2's own cleanup removes the
-      # replacement job immediately, so the LOSING racer (this tick's revert) must find nothing
-      # left to remove and nothing left to fence. The describe block's default `ctx.movie`
-      # ("hash-fake") is also swept by this same tick, hence the second clause below.
-      expect(Cinder.Download.ClientMock, :files, 2, fn
-        "hash-fake" ->
-          {:ok, ["Movie.2024.1080p/Movie.2024.1080p.mkv"]}
-
-        "hash-upgrade-fake-3" ->
-          assert {:ok, %Movie{status: :available}} =
-                   MovieLifecycle.abort_upgrade(movie, nil)
-
-          {:ok, ["M3.2024.2160p/M3.2024.2160p.mkv.exe"]}
-      end)
-
-      stub(Cinder.Download.ClientMock, :status, fn
-        "hash-fake" ->
-          {:ok, %{state: :downloading, progress: 0.9, speed: 500_000, seeders: 40}}
-
-        "hash-upgrade-fake-3" ->
-          {:ok, %{state: :completed, content_path: "/downloads/M3.2024.2160p"}}
-      end)
-
-      # A stub (not a bounded `expect`), so a second, REDUNDANT removal attempt (what the old
-      # best-effort-then-revert ordering made) is observable rather than silently swallowed by
-      # Mox's own over-call handling — the send/2 count below is the actual regression signal.
-      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
-        send(test_pid, {:removed, id, opts})
-        :ok
-      end)
-
-      start_supervised!({Poller, interval: 60_000})
-      log = capture_log(fn -> assert :ok = Poller.poll() end)
-
-      # isolate/2 would log "skipped movie N" for an unrescued raise or a stray write; its
-      # absence proves the stale-status rollback path was taken instead. No orphan cleanup
-      # intent survives pointing at a movie the concurrent abort already fenced and reverted —
-      # and the losing racer, having fenced-then-rolled-back BEFORE ever calling the client,
-      # never attempts its own redundant removal: exactly abort_upgrade's ONE call, not two.
-      refute log =~ "skipped movie"
-      assert_receive {:removed, "hash-upgrade-fake-3", _opts}
-      refute_receive {:removed, "hash-upgrade-fake-3", _opts}, 0
-      assert Repo.all(Intent) == []
       assert Repo.get!(Movie, movie.id).status == :available
     end
   end

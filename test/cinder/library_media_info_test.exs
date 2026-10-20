@@ -194,6 +194,21 @@ defmodule Cinder.LibraryMediaInfoTest do
     end
   end
 
+  # The forced replace of an upgrade is held to the same runtime: a wrong film must never replace
+  # a good live file.
+  test "rejects an upgrade far shorter than its TMDB runtime too" do
+    Cinder.LibraryStubs.stub_import_ok(1)
+    movie = %{french_movie() | preferred_language: "any", runtime: 121}
+
+    stub(Cinder.Library.MediaInfoMock, :probe, fn @source ->
+      {:ok, %{audio: [], subtitles: [], duration: 98 * 60.0}}
+    end)
+
+    assert {:error,
+            {:release_policy_mismatch, %{tmdb_runtime_minutes: 121, file_runtime_minutes: 98}}} =
+             Library.stage_movie(movie, replace: true)
+  end
+
   # A CD1/CD2 stack is one film between its parts: judged part by part, every stacked movie would
   # look half its length and be rejected.
   test "judges a CD1/CD2 stack on its combined length" do

@@ -17,4 +17,21 @@ defmodule Cinder.ConfigCase do
     ExUnit.Callbacks.on_exit(fn -> Application.put_env(:cinder, key, original) end)
     Application.put_env(:cinder, key, Keyword.merge(original, overrides))
   end
+
+  @doc """
+  Sets `key` to `value` and restores the original value when the test exits, deleting the key
+  when it was unset. For a value that is not a keyword list to merge into.
+  """
+  def put_env(key, value) do
+    original = Application.fetch_env(:cinder, key)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      case original do
+        {:ok, original} -> Application.put_env(:cinder, key, original)
+        :error -> Application.delete_env(:cinder, key)
+      end
+    end)
+
+    Application.put_env(:cinder, key, value)
+  end
 end
