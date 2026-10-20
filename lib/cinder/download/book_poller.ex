@@ -39,6 +39,7 @@ defmodule Cinder.Download.BookPoller do
 
   @default_interval 5_000
   @search_retry_after 60
+  @max_attempts 10
 
   use Cinder.Download.PollerSkeleton, log_prefix: "book poller"
 
@@ -166,10 +167,11 @@ defmodule Cinder.Download.BookPoller do
   end
 
   # The download-phase failure budget, on the same `import_attempts` column the import phase uses.
-  # One counter across both phases is the movie poller's own arrangement (`Poller.fail_download/2`),
-  # and the two cannot interleave here: a grab is in the download phase only while `content_path`
-  # is nil, and `Books.Grabs.mark_downloaded/2` resets the counter on the edge between them — the
-  # download→import reset `Catalog.Grabs` documents at the same boundary.
+  # One counter across both phases is the movie's own arrangement
+  # (`MovieLifecycle.record_failure/2`), and the two cannot interleave here: a grab is in the
+  # download phase only while `content_path` is nil, and `Books.Grabs.mark_downloaded/2` resets
+  # the counter on the edge between them — the download→import reset `Catalog.Grabs` documents
+  # at the same boundary.
   #
   # Bounded rather than immediate because every verdict routed here is derived from a SUCCESSFUL
   # client response, not from a transport failure: all four adapters return `{:error, :not_found}`
@@ -177,7 +179,8 @@ defmodule Cinder.Download.BookPoller do
   # job moves between queue and history. Acting on the first sighting made a routine blip
   # destructive — `fail_download/2` removes the remote job with `delete_files: true` — and held a
   # target whose bytes were fine. All three video sites bound the same verdicts
-  # (`Poller.fail_download/2`, `Poller.retry_or_revert/2`, `TvPoller.retry_or_park/2`).
+  # (`MovieLifecycle.record_failure/2` for a download and for an upgrade,
+  # `TvPoller.retry_or_park/2`).
   #
   # `:blocked_content` and `:stalled` deliberately do NOT come through here: the first is a
   # deterministic fact about the file list the client already gave us, and the second has a

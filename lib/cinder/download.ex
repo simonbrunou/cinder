@@ -1298,7 +1298,7 @@ defmodule Cinder.Download do
   `{:episode, episode_ids, spec}` (`fence_episode_cleanup/2`, `spec` from
   `Catalog.grab_cleanup_spec/2`). Omitted (`nil`, the default) keeps today's one-shot
   best-effort removal — the shape used where the caller has nothing durable left to fence
-  (`Cinder.Download.PollerSkeleton`'s `reject_release/4`, whose `download_id` is always `nil`
+  (`Cinder.Download.TvPoller`'s release-policy reject, whose `download_id` is always `nil`
   here regardless of any fence).
 
   A failure in either is logged, never propagated. Always `:ok`.

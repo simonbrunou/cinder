@@ -2511,7 +2511,8 @@ defmodule Cinder.Download.PollerTest do
       assert :ok = Poller.poll()
 
       # :requested, not a bounded retry — the file list won't improve, so there is nothing to wait
-      # for. import_attempts stays 0: this never entered fail_download/2's tolerance.
+      # for. import_attempts stays 0: this never entered `MovieLifecycle.record_failure/2`'s
+      # client-failure tolerance.
       assert %Movie{status: :requested, import_attempts: 0, download_id: nil} =
                Repo.get!(Movie, movie.id)
 

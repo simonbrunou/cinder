@@ -37,8 +37,8 @@ defmodule Cinder.Download.PollerSkeletonTest do
     assert log =~ "poller_skeleton_test.exs"
   end
 
-  # A `stateful: true` poller (`Cinder.Download.Poller`, `Cinder.Download.TvPoller`) — models the
-  # do_poll/1 shape both real pollers use: a preamble wrapped in isolate/2, then further work.
+  # A `stateful: true` poller (`Cinder.Download.Poller`, `TvPoller`, `BookPoller`) — models the
+  # do_poll/1 shape the real pollers use: a preamble wrapped in isolate/2, then further work.
   defmodule StatefulPreambleTestPoller do
     @default_interval :timer.hours(1)
     @search_retry_after 60

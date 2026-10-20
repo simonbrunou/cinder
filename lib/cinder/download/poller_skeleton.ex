@@ -8,11 +8,12 @@ defmodule Cinder.Download.PollerSkeleton do
 
   Two flavours, selected by `:stateful`:
 
-  - The pipeline pollers (`Cinder.Download.Poller`, `Cinder.Download.TvPoller`) use
-    `stateful: true` (the default): a `do_poll/1` pass receiving the state, the search
-    backoff `search_due?/2` fed by `@search_retry_after`, an `@max_attempts` bound, and the
-    `reject_release/4` helper for the release-policy-mismatch path. Only the TV poller still
-    uses the last two: the movie poller hands the same decisions to
+  - The pipeline pollers (`Cinder.Download.Poller`, `Cinder.Download.TvPoller`,
+    `Cinder.Download.BookPoller`) use `stateful: true` (the default): a `do_poll/1` pass
+    receiving the state, `warn_throttled/2`, and the search backoff `search_due?/2` fed by
+    `@search_retry_after` (the movie and TV pollers; `BookPoller` has no search pass). The
+    failure budget and what a failure does stay with each pipeline: `TvPoller` and
+    `BookPoller` each define their own `@max_attempts`, and the movie poller hands both to
     `Cinder.Catalog.MovieLifecycle`.
 
         @default_interval 5_000
@@ -46,8 +47,6 @@ defmodule Cinder.Download.PollerSkeleton do
     lifecycle =
       if stateful do
         quote do
-          @max_attempts 10
-
           # A per-tick condition (a full disk) warns at most once per this window instead of every
           # tick. Deduped in the long-lived poller process dictionary (see warn_throttled/2).
           @warn_throttle_ms :timer.minutes(10)
@@ -127,30 +126,6 @@ defmodule Cinder.Download.PollerSkeleton do
 
           defp search_due?(unit, retry_after),
             do: DateTime.diff(DateTime.utc_now(), unit.updated_at) >= retry_after
-
-          # --- shared pipeline helpers (movie + TV pollers) --------------------------------------
-
-          # A reason may carry a human detail (`Download.Watch`'s `{:download_error, "paused"}`);
-          # unwrap the classifying code the blocklist/membership checks and notifications key on.
-          defp reason_code({code, _detail}), do: code
-          defp reason_code(code), do: code
-
-          # A provable release-policy mismatch: reject via the caller's Catalog function
-          # (`reject_fun`), then best-effort remove the now-unneeded download source.
-          # `:stale_release` means the item moved on concurrently — nothing left to reject.
-          defp reject_release(item, evidence, content_path, reject_fun) do
-            case reject_fun.(item, evidence) do
-              {:ok, _item} ->
-                Cinder.Download.remove_after_import(item.download_protocol, nil, content_path)
-                :ok
-
-              {:error, :stale_release} ->
-                :ok
-
-              {:error, reason} ->
-                {:error, reason}
-            end
-          end
         end
       else
         quote do

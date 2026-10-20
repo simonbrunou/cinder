@@ -2783,6 +2783,30 @@ defmodule Cinder.Download.TvPollerTest do
     assert [%BlockedRelease{reason: "download_not_found"}] = Repo.all(BlockedRelease)
   end
 
+  # The client's detail (a paused job) rides along in the logs; the blocklist row and the
+  # notification carry the bare code.
+  test "a download error with a client detail parks blocklisted under its bare code" do
+    Cinder.TestNotifier.subscribe()
+    {series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-paused", :torrent, [e1.id], "Paused.Show.S01E01")
+    grab |> Ecto.Changeset.change(download_attempts: 9) |> Repo.update!()
+    start_supervised!({TvPoller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-paused" ->
+      {:ok, %{state: :error, reason: "Paused on duplicate"}}
+    end)
+
+    log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+    assert log =~ "Paused on duplicate"
+    refute Repo.get(Grab, grab.id)
+    assert Catalog.blocked_release_titles_for_series(series.id) == ["Paused.Show.S01E01"]
+    assert [%BlockedRelease{reason: "download_error"}] = Repo.all(BlockedRelease)
+    grab_id = grab.id
+    assert_receive {:notify, {:grab_failed, %Grab{id: ^grab_id}, :download_error}}
+  end
+
   test "a failed upgrade download parks the grab but keeps the available episode and old files" do
     {series, season} = series_tree()
     old_file = "/tmp/cinder-test-tv-library/Show/old.mkv"

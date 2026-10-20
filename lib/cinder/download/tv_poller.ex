@@ -37,6 +37,7 @@ defmodule Cinder.Download.TvPoller do
 
   @default_interval 5_000
   @search_retry_after 60
+  @max_attempts 10
 
   use Cinder.Download.PollerSkeleton, log_prefix: "tv poller"
 
@@ -175,12 +176,7 @@ defmodule Cinder.Download.TvPoller do
         :ok
 
       {:error, {:release_policy_mismatch, evidence}} ->
-        reject_release(
-          preflight.grab,
-          evidence,
-          preflight.grab.content_path,
-          &Catalog.reject_grab_release/2
-        )
+        reject_release(preflight.grab, evidence)
 
       {:error, {:release_policy_unavailable, reason}} ->
         retry_or_hold_verification(preflight.grab, reason)
@@ -196,7 +192,19 @@ defmodule Cinder.Download.TvPoller do
   # (retry_or_hold_verification) never reaches here and must keep the files for operator inspection.
   # download_id is nil here on purpose: reject_grab_release already fences + cleans up the
   # client-tracked job, so passing the real id would remove it a second time.
-  # `reject_release/4` lives in `Cinder.Download.PollerSkeleton`.
+  # `:stale_release` means the grab moved on concurrently: nothing is left to reject.
+  defp reject_release(%Grab{} = grab, evidence) do
+    case Catalog.reject_grab_release(grab, evidence) do
+      {:ok, _deleted} ->
+        Download.remove_after_import(grab.download_protocol, nil, grab.content_path)
+
+      {:error, :stale_release} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 
   defp import_standard_grab(grab) do
     case Library.stage_episodes(grab.content_path, grab.episodes,
@@ -754,7 +762,7 @@ defmodule Cinder.Download.TvPoller do
     # log so the operator sees it; the grab itself is transient (deleted here), so only the
     # classifying `code` is used for the blocklist/notify (a per-episode reason field would be the
     # only persistence surface, and that's out of scope for the transient grab model).
-    code = reason_code(reason)
+    code = Watch.reason_code(reason)
 
     # Block BEFORE park_grab deletes the grab: block_grab_release resolves the series from the
     # grab's still-linked episodes (the grab_id FK nilifies them on delete). It is non-raising,

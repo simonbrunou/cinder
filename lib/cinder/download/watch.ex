@@ -119,6 +119,17 @@ defmodule Cinder.Download.Watch do
   def failure?({code, _detail}), do: failure?(code)
   def failure?(code), do: code in @failure_codes
 
+  @doc """
+  The classifying code of `reason`: `{code, detail}` gives `code` (`{:download_error, "Paused"}`
+  gives `:download_error`), any other value gives itself.
+
+  `Cinder.Catalog.MovieLifecycle` and `Cinder.Download.TvPoller` classify a failure and write its
+  blocklist row on the code, so the row's reason never carries a client's free text.
+  """
+  @spec reason_code({code, term()} | code) :: code when code: term()
+  def reason_code({code, _detail}), do: code
+  def reason_code(code), do: code
+
   defp check_with(client, download, track) do
     case client.status(download.download_id) do
       {:ok, %{state: :completed, content_path: path}} when is_binary(path) and path != "" ->

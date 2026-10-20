@@ -246,6 +246,19 @@ defmodule Cinder.Download.WatchTest do
     end
   end
 
+  describe "reason_code/1" do
+    # Blocklist rows are written on the code: a client's detail never reaches a row's reason.
+    test "drops the detail a reason carries" do
+      assert Watch.reason_code({:download_error, "Paused on duplicate"}) == :download_error
+      assert Watch.reason_code({:blocked_content, "setup.exe"}) == :blocked_content
+    end
+
+    test "keeps a bare code" do
+      assert Watch.reason_code(:download_not_found) == :download_not_found
+      assert Watch.reason_code(:no_files_matched) == :no_files_matched
+    end
+  end
+
   describe "a download the client cannot answer for" do
     test "has no client when none is configured for its protocol" do
       # No ClientMock expectation: reaching any client would fail this test.

@@ -458,7 +458,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   def record_failure(%Movie{status: status} = movie, reason)
       when status in [:requested, :searching] do
     cond do
-      reason_code(reason) in @permanent_search_errors ->
+      Watch.reason_code(reason) in @permanent_search_errors ->
         Logger.warning("movie #{movie.id} search failed permanently: #{inspect(reason)}")
         park(movie, :search_failed, reason)
 
@@ -499,7 +499,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
   def record_failure(%Movie{status: status} = movie, reason)
       when status in [:downloading, :downloaded] do
-    if reason_code(reason) in @permanent_import_errors do
+    if Watch.reason_code(reason) in @permanent_import_errors do
       Logger.warning("import permanently failed for movie #{movie.id}: #{inspect(reason)}")
       park(movie, :import_failed, reason)
     else
@@ -518,7 +518,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
     do: revert_upgrade(movie, :no_client)
 
   def record_failure(%Movie{status: :upgrading} = movie, reason) do
-    if reason_code(reason) in @permanent_import_errors,
+    if Watch.reason_code(reason) in @permanent_import_errors,
       do: revert_upgrade(movie, reason),
       else: count(movie, reason, :import_attempts, &revert_upgrade(movie, &1))
   end
@@ -579,7 +579,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   # `failure_reason` for /activity; a proven-bad release is blocklisted after commit, best-effort
   # (`BlockedReleases.block_release/2` never raises and ignores a pre-grab movie with no release).
   defp park(movie, status, reason) do
-    code = reason_code(reason)
+    code = Watch.reason_code(reason)
 
     with {:ok, parked} <- write(movie, %{status: status, failure_reason: reason_detail(reason)}) do
       announce_park(parked, reason, code)
@@ -599,7 +599,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   # instead of re-grabbing the same release forever. It must be checked before the re-queue: the
   # matrix has no way back from `:requested` to a park.
   defp requeue_blocklisted(movie, reason) do
-    code = reason_code(reason)
+    code = Watch.reason_code(reason)
 
     case BlockedReleases.block_release_and_confirm(movie, code) do
       :ok ->
@@ -653,7 +653,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   # torrent keeps seeding). `:blocked_content` already removed its job from the client, so it is
   # fenced too. Any other reason (a config glitch like `:no_client`) leaves the release alone.
   defp revert_upgrade(movie, reason) do
-    code = reason_code(reason)
+    code = Watch.reason_code(reason)
     blocked? = code == :blocked_content or proven_bad?(code)
     remove_payload? = blocked? and Download.move_on_import_removal?(movie.download_protocol)
     attrs = Map.put(@drop_download, :status, :available)
@@ -724,14 +724,13 @@ defmodule Cinder.Catalog.MovieLifecycle do
   # A movie that just parked: `[:cinder, :park]` keyed on the classifying code, then the household
   # notification.
   defp announce_park(parked, reason, notify_reason) do
-    :telemetry.execute([:cinder, :park], %{count: 1}, %{kind: :movie, reason: reason_code(reason)})
+    :telemetry.execute([:cinder, :park], %{count: 1}, %{
+      kind: :movie,
+      reason: Watch.reason_code(reason)
+    })
 
     Notifier.notify({:movie_failed, parked, notify_reason})
   end
-
-  # A reason may carry a human detail (`{:download_error, "paused"}`); the code classifies it.
-  defp reason_code({code, _detail}), do: code
-  defp reason_code(code), do: code
 
   # --- operator verbs ----------------------------------------------------------------------------
 

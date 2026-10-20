@@ -322,7 +322,7 @@ defmodule Cinder.Books do
   `opts[:replace]` (default `false`) widens the guard to `[:monitored, :available]`. A "Find a
   better match" grab's target is `:available` for its whole download/import cycle — grabs never
   touch `book_targets.status` (see `pause_target/1`'s doc) — so a replace grab's own failure
-  paths (`Download.abandon_reserved/2`, `BookPoller.hold_orphaned_target/4`,
+  paths (`Download.abandon_reserved/2`, `BookPoller.hold_orphaned_target/5`,
   `BookPoller.hold/3`) must be able to park an `:available` target, not just a `:monitored` one.
   A plain (non-replace) grab's target is `:monitored` for its entire cycle by construction — a
   fresh grab is only ever created for a `:monitored` target — so the guard still refuses to hold
