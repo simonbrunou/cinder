@@ -89,10 +89,13 @@ defmodule CinderWeb.MyRequestsLive do
 
   # Re-submit a denied request through the normal gate (quota + approval intact). The TMDB
   # lookup inside create_request runs off-process so a slow provider can't freeze the page.
+  # A row the page doesn't offer the action on (a target type no approval can create) is ignored.
   def handle_event("request_again", %{"id" => id}, socket) do
     socket =
-      case find_by_id(socket.assigns.requests, id) do
-        %{status: :denied} = request -> start_request_again(socket, request)
+      with %{status: :denied} = request <- find_by_id(socket.assigns.requests, id),
+           true <- Requests.approvable_target?(request) do
+        start_request_again(socket, request)
+      else
         _ -> socket
       end
 
@@ -383,7 +386,7 @@ defmodule CinderWeb.MyRequestsLive do
               {gettext("Cancel request")}
             </.button>
             <.button
-              :if={badge == :denied}
+              :if={badge == :denied and Requests.approvable_target?(r)}
               id={"request-again-#{r.id}"}
               variant="ghost"
               size="sm"

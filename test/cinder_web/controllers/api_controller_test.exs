@@ -503,6 +503,19 @@ defmodule CinderWeb.ApiControllerTest do
       assert Repo.get_by!(Movie, tmdb_id: 603).media_profile == :anime
     end
 
+    # A pending row filed before #770, when a target type with no approval adapter could still be
+    # filed. Creating one is refused as `invalid_payload`, so approval is the only way to reach it.
+    test "names a target type no approval can create", %{conn: conn, key: key} do
+      _admin = admin_fixture()
+      request = request_fixture(user_fixture(), %{target_type: "series", title: "Legacy"})
+
+      assert conn
+             |> post_json(key, "/api/v1/requests/#{request.id}/approve", %{})
+             |> json_response(422) == %{"error" => "unsupported_target"}
+
+      assert Repo.reload!(request).status == :pending
+    end
+
     test "denies once, then deletes with an audit row", %{conn: conn, key: key} do
       admin = admin_fixture()
       requester = user_fixture()

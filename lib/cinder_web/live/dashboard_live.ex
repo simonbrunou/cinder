@@ -80,6 +80,11 @@ defmodule CinderWeb.DashboardLive do
          gettext("That title is on hold. Clear the hold before approving it.")
        )}
 
+  # A pending row filed before #770 whose target type no approval can create (as on `/requests`).
+  def handle_async({:approve, _id}, {:ok, {:error, :unsupported_target}}, socket),
+    do:
+      {:noreply, put_flash(socket, :error, gettext("This kind of request isn't supported yet."))}
+
   def handle_async({:approve, _id}, _error_or_exit, socket),
     do: {:noreply, put_flash(socket, :error, gettext("Couldn't approve that request."))}
 

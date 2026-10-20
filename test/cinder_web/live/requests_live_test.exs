@@ -231,6 +231,28 @@ defmodule CinderWeb.RequestsLiveTest do
     assert %{status: :pending} = Cinder.Repo.reload(req)
   end
 
+  # A pending row from before #770, filed when nothing refused a target type with no approval
+  # adapter. No retry can approve it, so the copy says why instead of "try again".
+  test "approving a request no approval can create says it isn't supported", %{conn: conn} do
+    req =
+      Cinder.Repo.insert!(%Cinder.Requests.Request{
+        user_id: user_fixture().id,
+        target_type: "series",
+        target_id: 1399,
+        title: "Legacy series",
+        status: :pending
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+
+    lv |> element("button[phx-click='approve'][phx-value-id='#{req.id}']") |> render_click()
+    render_async(lv)
+
+    assert has_element?(lv, "#flash-error", "This kind of request isn't supported yet.")
+    refute has_element?(lv, "#flash-error", "Please try again")
+    assert %{status: :pending} = Cinder.Repo.reload(req)
+  end
+
   test "bulk approval uses each row's confirmed profile", %{conn: conn} do
     user = user_fixture()
 

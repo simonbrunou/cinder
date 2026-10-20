@@ -7,9 +7,10 @@ defmodule Cinder.Requests.Request do
   alias Cinder.LibraryKind
 
   @statuses [:pending, :approved, :denied]
-  # The polymorphic request target. Movies are the only writer today; series/episode are
-  # reserved for the TV requester flow (M5+). An allowlist keeps a typo'd discriminator out of
-  # the DB before a second writer (or its dispatch) exists to trip over it.
+  # The polymorphic request target. series/episode are reserved for the TV requester flow (M5+):
+  # with no approval adapter yet, `Cinder.Requests.create_request/2` refuses to file them (#770).
+  # An allowlist keeps a typo'd discriminator out of the DB before a second writer (or its
+  # dispatch) exists to trip over it.
   @target_types ["movie", "series", "season", "episode", "book"]
   @book_media_kinds LibraryKind.books()
 

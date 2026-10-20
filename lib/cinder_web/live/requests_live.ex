@@ -242,6 +242,12 @@ defmodule CinderWeb.RequestsLive do
          gettext("Your admin account was deleted. Sign in again to approve requests.")
        )}
 
+  # A pending row filed before #770 whose target type no approval can create: no retry approves
+  # it, so "try again" would be a lie. Denying it stays the admin's call.
+  def handle_async({:approve, _id}, {:ok, {:error, :unsupported_target}}, socket),
+    do:
+      {:noreply, put_flash(socket, :error, gettext("This kind of request isn't supported yet."))}
+
   def handle_async({:approve, _id}, _error_or_exit, socket),
     do:
       {:noreply,

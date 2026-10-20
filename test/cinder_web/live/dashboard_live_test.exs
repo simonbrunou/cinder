@@ -387,6 +387,33 @@ defmodule CinderWeb.DashboardLiveTest do
       assert Cinder.Repo.get(Cinder.Requests.Request, req.id).status == :pending
     end
 
+    # A pending row from before #770: the dashboard queue says why, like `/requests` does.
+    test "approving a request no approval can create says it isn't supported", %{conn: conn} do
+      req =
+        Cinder.Repo.insert!(%Cinder.Requests.Request{
+          user_id: Cinder.AccountsFixtures.user_fixture().id,
+          target_type: "series",
+          target_id: 1399,
+          title: "Legacy series",
+          status: :pending
+        })
+
+      tv = Enum.find(Catalog.list_profiles(:tv), &(&1.handling == :standard))
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      lv
+      |> form("#dashboard-approval-form-#{req.id}", %{
+        "_id" => to_string(req.id),
+        "profile_id" => to_string(tv.id)
+      })
+      |> render_submit()
+
+      render_async(lv)
+
+      assert has_element?(lv, "#flash-error", "This kind of request isn't supported yet.")
+      assert Cinder.Repo.get(Cinder.Requests.Request, req.id).status == :pending
+    end
+
     test "approving from the dashboard behaves identically to /requests", %{conn: conn} do
       requester = Cinder.AccountsFixtures.user_fixture()
       req = pending_movie_request(requester)

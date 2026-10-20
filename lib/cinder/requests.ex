@@ -213,11 +213,19 @@ defmodule Cinder.Requests do
     )
   end
 
+  @doc """
+  Files `user`'s request: pending, or approved at once for an admin or under `auto_approve_all`.
+
+  A target type no approval can create is refused with `{:error, :unsupported_target}` before any
+  other check, so no requester path writes a row that would sit pending with no admin able to
+  approve it (#770).
+  """
   def create_request(%User{} = user, attrs) do
-    with {:ok, attrs} <- normalize_request_profile(attrs) do
+    with {:ok, adapter} <- Approval.adapter(attrs),
+         {:ok, attrs} <- normalize_request_profile(attrs) do
       case Repo.get(User, user.id) do
         %User{} = current ->
-          create_for_current_user(current, attrs)
+          create_for_current_user(current, attrs, adapter)
 
         nil ->
           {:error, :invalid_requester}
@@ -225,14 +233,21 @@ defmodule Cinder.Requests do
     end
   end
 
-  defp create_for_current_user(current, attrs) do
+  @doc """
+  Whether an approval can create `ref`'s target. The same `Approval.adapter/1` answer
+  `create_request/2` and `approve_request/3` act on, for a view that offers a request action.
+  """
+  @spec approvable_target?(Target.ref()) :: boolean()
+  def approvable_target?(ref), do: match?({:ok, _adapter}, Approval.adapter(ref))
+
+  defp create_for_current_user(current, attrs, adapter) do
     auto_approve? = current.role == :admin or Settings.auto_approve_all?()
 
     if current.role != :admin and over_quota?(current, auto_approve?) do
       {:error, :quota_exceeded}
     else
       with {:ok, attrs} <- snapshot_request(attrs) do
-        create_request_for(current, attrs, auto_approve?)
+        create_request_for(current, attrs, adapter, auto_approve?)
       end
     end
   end
@@ -297,16 +312,15 @@ defmodule Cinder.Requests do
   defp year_of(%Date{year: year}), do: year
   defp year_of(nil), do: nil
 
-  defp create_request_for(user, attrs, true) do
+  defp create_request_for(user, attrs, adapter, true) do
     approver_id = if user.role == :admin, do: user.id, else: nil
 
-    with {:ok, adapter} <- Approval.adapter(attrs),
-         {:ok, profile} <- auto_approval_profile(attrs) do
+    with {:ok, profile} <- auto_approval_profile(attrs) do
       approve_target({:insert, user, attrs, approver_id}, adapter, profile)
     end
   end
 
-  defp create_request_for(user, attrs, false), do: create_pending(user, attrs)
+  defp create_request_for(user, attrs, _adapter, false), do: create_pending(user, attrs)
 
   # Insert, then re-count inside one transaction. SQLite serializes write transactions,
   # so the post-insert count sees any concurrently-committed pending row — closing the
@@ -766,8 +780,6 @@ defmodule Cinder.Requests do
         {:error, :invalid_media_profile}
     end
   end
-
-  defp normalize_request_profile(_attrs), do: {:error, :invalid_media_profile}
 
   defp profile_for_handling(target, handling) do
     case request_kind(target) do

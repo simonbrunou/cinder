@@ -44,9 +44,11 @@ defmodule Cinder.Requests.Approval do
 
   @doc """
   The adapter for a request's target kind. A target type with no adapter (`"series"`, `"episode"`)
-  cannot be approved: it names no row Cinder knows how to create.
+  cannot be approved: it names no row Cinder knows how to create. `Cinder.Requests` refuses to
+  file one too, and `Cinder.Requests.approvable_target?/1` asks the same question for a view.
   """
-  @spec adapter(Target.ref()) :: {:ok, module()} | {:error, :unsupported_target}
+  # Reads only the target type: `Cinder.Requests` asks before a book request's `target_id` exists.
+  @spec adapter(%{optional(atom()) => term()}) :: {:ok, module()} | {:error, :unsupported_target}
   def adapter(%{target_type: "movie"}), do: {:ok, __MODULE__.Movie}
   def adapter(%{target_type: "season"}), do: {:ok, __MODULE__.Season}
   def adapter(%{target_type: "book"}), do: {:ok, __MODULE__.Book}

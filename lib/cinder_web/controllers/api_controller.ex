@@ -294,6 +294,11 @@ defmodule CinderWeb.ApiController do
   # malformed request, and retrying the same call cannot succeed.
   defp api_error(conn, :approver_deleted), do: json_error(conn, :conflict, "approver_deleted")
 
+  # A pending row filed before #770 whose target type no approval can create. Only an approval
+  # reaches it: `target_type/1` already refuses those types on create.
+  defp api_error(conn, :unsupported_target),
+    do: json_error(conn, :unprocessable_entity, "unsupported_target")
+
   defp api_error(conn, %Ecto.Changeset{} = changeset) do
     if unique_error?(changeset),
       do: json_error(conn, :conflict, "request_already_pending"),

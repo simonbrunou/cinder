@@ -449,6 +449,39 @@ defmodule CinderWeb.MyRequestsLiveTest do
     end
   end
 
+  # A row from before #770, when a target type with no approval adapter could still be filed:
+  # Request again would only be refused, so the row doesn't offer it (#770).
+  for type <- ["series", "episode"] do
+    test "a denied #{type} request offers no Request again action", %{conn: conn} do
+      user = Cinder.AccountsFixtures.user_fixture()
+
+      req =
+        Cinder.Repo.insert!(%Cinder.Requests.Request{
+          user_id: user.id,
+          target_type: unquote(type),
+          target_id: 1399,
+          title: "Legacy #{unquote(type)}",
+          status: :denied,
+          denial_reason: "not now"
+        })
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      assert has_element?(lv, "#request-#{req.id}", "Legacy #{unquote(type)}")
+      assert has_element?(lv, "#myrequests-request-status-#{req.id}", "Denied")
+      refute has_element?(lv, "#request-again-#{req.id}")
+
+      # A forged event for the hidden action is ignored, not answered with "Try again".
+      render_hook(lv, "request_again", %{"id" => to_string(req.id)})
+      render_async(lv)
+
+      refute has_element?(lv, "#flash-error")
+      assert [%{id: id}] = Requests.list_for_user(user)
+      assert id == req.id
+    end
+  end
+
   test "a pending request offers no Request again action", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
 

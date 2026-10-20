@@ -143,23 +143,42 @@ defmodule Cinder.Requests.ApprovalTest do
 
   describe "a target type with no approval adapter" do
     # My requests' "Request again" copies a row's target type, so a legacy "series" row reaches
-    # create_request/2. It used to fall into the movie path and mint a movie from a series id.
-    test "is refused on auto-approval before any catalog write" do
-      admin = admin_fixture()
+    # create_request/2. Filed pending, it would sit in the approval queue with no admin able to
+    # approve it (#770); auto-approved, it used to mint a movie from a series id (#744). Every
+    # requester path is refused before any other check, so a requester at quota 0 hears why.
+    for type <- ["series", "episode"],
+        requester <- [:admin, :member, :member_at_quota, :auto_approved_member] do
+      test "#{type} is refused at filing time for #{requester}, with no row written" do
+        user = requester(unquote(requester))
 
+        assert {:error, :unsupported_target} =
+                 Requests.create_request(user, %{
+                   target_type: unquote(type),
+                   target_id: 1399,
+                   season_number: 1
+                 })
+
+        refute Requests.approvable_target?(%{target_type: unquote(type), target_id: 1399})
+        assert Repo.aggregate(Movie, :count) == 0
+        assert Repo.aggregate(Series, :count) == 0
+        assert Repo.aggregate(Request, :count) == 0
+      end
+    end
+
+    test "is refused before its proposed profile is checked", %{profiles: profiles} do
       assert {:error, :unsupported_target} =
-               Requests.create_request(admin, %{target_type: "series", target_id: 1399})
+               Requests.create_request(user_fixture(), %{
+                 target_type: "series",
+                 target_id: 1399,
+                 proposed_profile_id: profiles.movie.id
+               })
 
-      assert Repo.aggregate(Movie, :count) == 0
-      assert Repo.aggregate(Series, :count) == 0
       assert Repo.aggregate(Request, :count) == 0
     end
 
     test "is refused on admin approval and stays pending", %{profiles: profiles} do
       admin = admin_fixture()
-
-      {:ok, request} =
-        Requests.create_request(user_fixture(), %{target_type: "series", target_id: 1399})
+      request = legacy_request!(user_fixture(), "series")
 
       assert {:error, :unsupported_target} =
                Requests.approve_request(request, admin, profiles.season)
@@ -167,6 +186,36 @@ defmodule Cinder.Requests.ApprovalTest do
       assert Repo.reload!(request).status == :pending
       assert Repo.aggregate(Series, :count) == 0
     end
+
+    for kind <- @kinds do
+      test "#{kind} is an approvable target", ctx do
+        assert Requests.approvable_target?(attrs(unquote(kind), ctx))
+      end
+    end
+  end
+
+  defp requester(:admin), do: admin_fixture()
+  defp requester(:member), do: user_fixture()
+
+  defp requester(:member_at_quota) do
+    {:ok, user} = Accounts.update_user_quota(admin_fixture(), user_fixture(), 0)
+    user
+  end
+
+  defp requester(:auto_approved_member) do
+    Settings.put("auto_approve_all", "true")
+    user_fixture()
+  end
+
+  # A row from before #770, filed when nothing refused a target type without an adapter.
+  defp legacy_request!(user, type) do
+    Repo.insert!(%Request{
+      user_id: user.id,
+      target_type: type,
+      target_id: 1399,
+      title: "Legacy #{type}",
+      status: :pending
+    })
   end
 
   defp approve(:admin_approval, attrs, profile) do
