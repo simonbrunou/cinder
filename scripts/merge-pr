@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# Merge a Cinder PR on Forgejo under AGENTS.md "Merge authority", pinned to the CI-tested head.
+#
+#   scripts/merge-pr [--dry-run] <pr-number> [squash|rebase|merge]
+#
+# The style defaults to squash, which keeps main linear with one `<title> (#n)` commit per PR;
+# rebase keeps a stacked queue's CI-tested commits as they are.
+#
+# It stops at the first check that fails:
+#   1. the PR is open against main; its head SHA comes from the API, never from a local branch;
+#   2. CI is green on that SHA: every job of the head's .forgejo/workflows/ci.yml reports success
+#      as `<workflow> / <job> (pull_request)`, and the combined status is success;
+#   3. after `git fetch origin`, `git merge-tree --write-tree origin/main <sha>` exits 0;
+#   4. a diff that touches CHANGELOG.md already contains origin/main (merge it in and re-run CI
+#      first, since a stale [Unreleased] entry merges cleanly and turns main red);
+#   5. every lib/**/*.ex file the PR touches stays within test/code_health_test.exs's @max_lines
+#      on the merged tree. This one is a pre-check beyond AGENTS.md: two PRs that each grow a
+#      near-cap file pass apart and break main together.
+# Then it POSTs the merge with head_commit_id (Forgejo answers 409 when the branch moved after
+# CI) and delete_branch_after_merge, retries a 405 every 20 s for up to 5 minutes, re-running
+# checks 3 to 5 before each attempt, and asserts the PR reports merged.
+#
+# It cannot check the first Merge authority condition. Run it only once a code review ran on the
+# diff (the `code-review` skill or the `pr-review-toolkit:code-reviewer` agent) and its real
+# findings are fixed. --dry-run runs every check and stops before the POST.
+#
+# The token is the one `fj` stores (docs/agents/issue-tracker.md). It is never printed and never
+# put on a command line.
+set -euo pipefail
+
+api_root=https://git.sbrn.eu/api/v1/repos/simonbrunou/cinder
+keys=$HOME/.local/share/forgejo-cli/keys.json
+
+usage() {
+  sed -n '4p' "$0" | sed 's/^#   //' >&2
+  exit 2
+}
+
+dry_run=false
+args=()
+for arg in "$@"; do
+  case $arg in
+    --dry-run) dry_run=true ;;
+    -h | --help) usage ;;
+    *) args+=("$arg") ;;
+  esac
+done
+[[ ${#args[@]} -ge 1 && ${#args[@]} -le 2 ]] || usage
+pr=${args[0]}
+style=${args[1]:-squash}
+[[ $pr =~ ^[0-9]+$ ]] || usage
+case $style in
+  squash | rebase | merge) ;;
+  *) usage ;;
+esac
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+
+token=$(jq -r '.hosts["git.sbrn.eu"].token // empty' "$keys" 2>/dev/null || true)
+[[ -n $token ]] || fail "no git.sbrn.eu token in $keys (log in with fj first)"
+
+# api METHOD PATH [JSON]: sets http_status and http_body.
+api() {
+  local data=()
+  [[ $# -ge 3 ]] && data=(-H 'Content-Type: application/json' --data "$3")
+  local out
+  out=$(curl -sS --max-time 60 -X "$1" -w '\n%{http_code}' \
+    -H @<(printf 'Authorization: token %s\n' "$token") ${data[@]+"${data[@]}"} "$api_root$2") ||
+    fail "$1 $2: curl failed"
+  http_status=${out##*$'\n'}
+  http_body=${out%$'\n'*}
+}
+
+# 1. The PR and its head.
+api GET "/pulls/$pr"
+[[ $http_status == 200 ]] || fail "GET /pulls/$pr answered $http_status"
+read -r state merged base sha < <(jq -r '"\(.state) \(.merged) \(.base.ref) \(.head.sha)"' <<<"$http_body")
+title=$(jq -r .title <<<"$http_body")
+[[ $state == open && $merged == false ]] || fail "#$pr is $state (merged: $merged)"
+[[ $base == main ]] || fail "#$pr targets $base, not main"
+echo "#$pr: $title"
+echo "head: $sha"
+
+fetch_head() {
+  git fetch -q origin
+  git fetch -q origin "refs/pull/$pr/head"
+  git cat-file -e "$sha^{commit}" 2>/dev/null || fail "$sha is not fetchable from origin"
+}
+fetch_head
+
+# 2. CI on that head. The status contexts come from the head's own ci.yml: the workflow name and
+# each job id (a job given a `name:` would report under that name, show as missing, and stop the
+# merge).
+contexts=$(git show "$sha:.forgejo/workflows/ci.yml" | awk '
+  /^name:/ && wf == "" { sub(/^name:[ ]*/, ""); gsub(/"/, ""); wf = $0 }
+  /^jobs:/ { jobs = 1; next }
+  jobs && /^[^ #]/ { jobs = 0 }
+  jobs && /^  [A-Za-z0-9_-]+:[ ]*$/ { id = $1; sub(/:$/, "", id); print wf " / " id " (pull_request)" }')
+[[ -n $contexts ]] || fail "no jobs found in $sha:.forgejo/workflows/ci.yml"
+api GET "/commits/$sha/status"
+[[ $http_status == 200 ]] || fail "GET /commits/$sha/status answered $http_status"
+while IFS= read -r context; do
+  status=$(jq -r --arg c "$context" '[.statuses[]? | select(.context == $c) | .status][0] // "missing"' <<<"$http_body")
+  echo "$context: $status"
+  case $status in
+    success) ;;
+    pending | missing) fail "CI has not finished on $sha; wait with: fj pr -R origin status $pr --wait" ;;
+    *) fail "CI is red on $sha ($context: $status)" ;;
+  esac
+done <<<"$contexts"
+combined=$(jq -r .state <<<"$http_body")
+[[ $combined == success ]] || fail "the combined status of $sha is $combined"
+
+# 3 to 5. The merged tree, against a freshly fetched origin/main.
+check_against_main() {
+  local tree code=0
+  tree=$(git merge-tree --write-tree origin/main "$sha" | sed -n 1p) || code=$?
+  case $code in
+    0) ;;
+    1) fail "$sha conflicts with origin/main: merge origin/main into the branch, run mix test, push, wait for CI" ;;
+    *) fail "git merge-tree exited $code (a git error, not a conflict): fetch again and re-run" ;;
+  esac
+  echo "merge-tree against origin/main $(git rev-parse --short origin/main): clean"
+
+  local changed
+  changed=$(git diff --name-only "origin/main...$sha")
+  if grep -qx CHANGELOG.md <<<"$changed"; then
+    git merge-base --is-ancestor origin/main "$sha" ||
+      fail "the diff touches CHANGELOG.md and the branch lacks origin/main: merge it in, run mix test, push, wait for CI"
+    echo "CHANGELOG.md: touched, branch contains origin/main"
+  else
+    echo "CHANGELOG.md: untouched"
+  fi
+
+  local max touched file lines
+  max=$(git show "$tree:test/code_health_test.exs" | sed -n 's/^ *@max_lines \([0-9][0-9]*\)$/\1/p')
+  [[ -n $max ]] || fail "no @max_lines in test/code_health_test.exs"
+  touched=$(git diff --name-only --diff-filter=AMR "origin/main...$sha" -- 'lib/*.ex')
+  while IFS= read -r file; do
+    [[ -n $file ]] || continue
+    git cat-file -e "$tree:$file" 2>/dev/null || continue
+    # code_health_test counts String.split(content, "\n"), one more than wc -l.
+    lines=$(($(git show "$tree:$file" | wc -l) + 1))
+    ((lines <= max)) || fail "$file has $lines lines on the merged tree, over the $max cap"
+  done <<<"$touched"
+  echo "line cap: every touched lib/*.ex within $max"
+}
+
+check_against_main
+
+payload=$(jq -nc --arg style "$style" --arg sha "$sha" \
+  '{Do: $style, head_commit_id: $sha, delete_branch_after_merge: true}')
+if [[ $style == squash ]]; then
+  # main's convention: the PR title with (#n), then the body of the branch's first commit (the
+  # fix itself, not a later review-fix or CI re-run commit).
+  [[ $title == *"(#$pr)" ]] || title="$title (#$pr)"
+  first=$(git rev-list --reverse --no-merges "origin/main..$sha" | sed -n 1p)
+  [[ -n $first ]] || fail "#$pr has no commit that origin/main lacks"
+  message=$(git log -1 --format=%b "$first")
+  payload=$(jq -c --arg t "$title" --arg m "$message" \
+    '. + {MergeTitleField: $t, MergeMessageField: $m}' <<<"$payload")
+fi
+
+if $dry_run; then
+  echo "would POST /pulls/$pr/merge with:"
+  jq . <<<"$payload"
+  echo "DRY RUN: every check passed; #$pr ($sha) would merge with $style"
+  exit 0
+fi
+
+deadline=$((SECONDS + 300))
+while :; do
+  api POST "/pulls/$pr/merge" "$payload"
+  case $http_status in
+    200) break ;;
+    405)
+      reason=$(jq -r '.message // empty' <<<"$http_body" 2>/dev/null || true)
+      ((SECONDS < deadline)) || fail "Forgejo still answers 405 after 5 minutes: ${reason:-$http_body}"
+      echo "405 (${reason:-no message}); retrying in 20 s"
+      sleep 20
+      fetch_head
+      check_against_main
+      ;;
+    409) fail "409: the branch moved after CI ran on $sha" ;;
+    *) fail "POST /pulls/$pr/merge answered $http_status: $http_body" ;;
+  esac
+done
+
+api GET "/pulls/$pr"
+[[ $(jq -r .merged <<<"$http_body") == true ]] || fail "#$pr does not report merged after a 200"
+echo "MERGED: #$pr as $(jq -r .merge_commit_sha <<<"$http_body")"

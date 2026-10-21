@@ -6,7 +6,7 @@ contributing you agree your contributions are licensed under the same terms.
 ## Development setup
 
 ```sh
-mix setup        # deps + create/migrate DB + build assets
+mix setup        # deps + create/migrate/seed the dev DB + build assets
 mix phx.server   # run the app at http://localhost:4000
 ```
 
@@ -64,7 +64,7 @@ PRs.
 
 ## Releasing (maintainers)
 
-1. On a branch synced with `main`, bump `version:` in `mix.exs`, then run
+1. On a branch synced with `main`, bump `@version` in `mix.exs`, then run
    `mix cinder.changelog.release`. It folds the fragments in `changelog.d/` and the entries left
    under `[Unreleased]` into a dated `CHANGELOG.md` section, updates the compare links, and
    deletes the fragments. Add a release introduction under the new heading by hand if the release
@@ -72,9 +72,12 @@ PRs.
    `or hash == ...` clause that reads it in `test/code_health_test.exs`.
 2. Land it on a **green** `main` right away. Before tagging, check that `changelog.d/` holds only
    `README.md`; move a fragment that merged after the fold into the new section by hand.
-3. Tag and push: `git tag v0.7.0 && git push origin v0.7.0` (the tag is `v` + the mix.exs version).
+3. Once CI is green on the merge commit, tag that commit and push the tag:
+   `git tag -a v0.7.0 <merge sha> -m "Cinder 0.7.0" && git push origin v0.7.0` (the tag is `v` +
+   the mix.exs version).
 4. The [`release`](.github/workflows/release.yml) workflow builds the image and pushes
-   `ghcr.io/simonbrunou/cinder` tagged `:0.7.0`, `:0.7`, and `:latest`.
+   `ghcr.io/simonbrunou/cinder` tagged `:0.7.0`, `:0.7`, and `:latest`. Check the result with
+   `scripts/verify-ghcr-release.sh 0.7.0`.
 5. **First release only:** GHCR packages are **private by default**. After the first successful
    push, open the package settings at
    `https://github.com/users/simonbrunou/packages/container/cinder/settings`, set **visibility →

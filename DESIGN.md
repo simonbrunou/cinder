@@ -288,3 +288,16 @@ handful of mechanical habits, not per-page tuning:
 - **Translated labels are wider.** French is ~30% longer; if a label, badge, or button only just
   fits in English it overflows in French. The shared `status_badge` is `shrink-0` (wraps as a whole
   unit in a flex row); daisyUI `.label` text is unpinned to wrap globally (`app.css`).
+
+## Tailwind and daisyUI pitfalls
+
+- **Tailwind v4 emits only classes that appear literally in source.** A candidate class injected
+  into the page from the browser measures nothing unless the built CSS already has it. Put the
+  class in the HEEx or the component, let the watcher rebuild, reload, then read
+  `getComputedStyle`.
+- **daisyUI 5's `.btn` draws its border from `--btn-border`.** A plain `border-*` utility wins,
+  being in the utilities layer, but it also overrides the disabled state. Pair it with
+  `disabled:border-transparent` when the disabled look should stay, as `neutral` does.
+- **A plain `.btn` is filled with `base-200`, the card surface.** That is why `neutral` carries a
+  `border-base-content/20` outline. `ghost` has neither fill nor outline, so it reads as plain
+  text on any surface.

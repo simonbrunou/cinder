@@ -22,3 +22,8 @@
 While the dev server runs, the Tidewave MCP is available. Use it (`project_eval`,
 `get_ecto_schemas`, `execute_sql_query`, `get_logs`) to inspect the running app instead of
 guessing.
+
+A page with data needs the dev seed first:
+`mix run priv/repo/seeds.exs && PORT=4123 mix phx.server` (an admin whose login it prints, setup
+marked complete, one TV grab with an undecided file on `/activity`; `mix ecto.setup` runs it on a
+new database).

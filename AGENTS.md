@@ -23,7 +23,10 @@ Read the matching doc before you act:
   secrets, `/settings`, the auth plugs or `/api/v1`.
 - [Testing](docs/agents/testing.md): before writing a test or calling a task done.
 - [Workflow](docs/agents/workflow.md): before starting a feature, an audit or a review, filing an
-  issue, or opening a PR.
+  issue, opening a PR, or cutting a release.
+- [CI](docs/agents/ci.md): before reading a red CI run, re-running CI, or merging.
+- [Subtitle sync](docs/agents/subtitle-sync.md): before changing `Cinder.Subtitles.Sync`, its
+  engine or its timing rules.
 - [Code navigation](docs/agents/code-navigation.md): before exploring `lib/` or `test/`, or
   inspecting the running dev app.
 - [History](docs/agents/history.md): when you need the reason behind a past decision, or what is
@@ -43,6 +46,10 @@ Agents may merge their own PR without asking once all three hold:
 - CI is green on the pushed SHA;
 - the branch has no conflict with `origin/main`: after `git fetch origin`,
   `git merge-tree --write-tree origin/main HEAD` exits 0.
+
+`scripts/merge-pr <n>` checks the last two on the PR's head, the `CHANGELOG.md` rule below and the
+`code_health_test` line cap on the merged tree, then merges pinned to that SHA. It cannot check
+the review.
 
 A branch behind `main` with no conflict merges as it is, with no sync and no CI re-run. Accepted
 risk: two PRs that pass apart can break `main` together, and the next PR's CI shows it. On a

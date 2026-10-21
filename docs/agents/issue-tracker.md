@@ -12,8 +12,10 @@ with `no repo info specified`.
 - `fj -H git.sbrn.eu pr ...` and `fj -H git.sbrn.eu repo labels simonbrunou/cinder ...`. `-H`
   goes before the subcommand.
 
-`fj` has no JSON output and no dependency command, so for those call the Forgejo REST API with the
-token `fj` already stores:
+`fj` (v0.7.0) has no JSON output. Its dependency commands (`fj issue depend list -R origin <n>`,
+`depend add`, `depend remove`, `fj issue block ...`) are new and only `list` has been tried, so
+add a dependency with the REST call under **Blocking** below. For JSON and for dependencies, call
+the Forgejo REST API with the token `fj` already stores:
 
 ```sh
 FJ_TOKEN=$(jq -r '.hosts["git.sbrn.eu"].token' ~/.local/share/forgejo-cli/keys.json)

@@ -48,3 +48,37 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
 - In `GLOSSARY.md`, keep every section from both sides.
 - In a `.po` file, take either side, run `MIX_ENV=test mix gettext.extract --merge`, then refill
   the French msgstrs the other side had and clear any `#, fuzzy` flag the merge added.
+  `scripts/gettext-fill.exs` does both from the other side's copy of each catalog
+  (`default.po`, `errors.po`):
+  `git show <other side>:priv/gettext/fr/LC_MESSAGES/default.po > /tmp/other-default.po`, then
+  `MIX_ENV=test mix run --no-start scripts/gettext-fill.exs priv/gettext/fr/LC_MESSAGES/default.po /tmp/other-default.po`.
+  It lists the entries still left to translate by hand.
+
+## Releasing
+
+Tag only when the user asks. Production deploys from `main` on every merge; a `v*` tag only
+publishes the public GHCR image for other installs, and its workflow runs no tests. The fold
+itself is in [CONTRIBUTING.md](../../CONTRIBUTING.md) "Releasing (maintainers)".
+
+1. On a branch, bump `@version` in `mix.exs` and run `mix cinder.changelog.release`.
+2. Open the PR. Its diff touches `CHANGELOG.md`, so merge `origin/main` into the branch, run
+   `mix test`, push and wait for CI before it merges (AGENTS.md "Merge authority";
+   `scripts/merge-pr` refuses otherwise). Once it merged, check that `changelog.d/` on `main`
+   holds only `README.md`.
+3. Tag the merge commit once Forgejo CI is green on it, meaning the three `CI / <job> (push)`
+   statuses on that SHA are `success` ([ci.md](ci.md)):
+   `git tag -a v<version> <sha> -m "Cinder <version>" && git push origin v<version>`. `origin`
+   is Forgejo.
+4. GitHub gets the tag through Forgejo's push mirror. Check with
+   `git ls-remote --tags github v<version>`. If it is still missing after a minute, trigger the
+   mirror with `curl -s -X POST -H "Authorization: token $FJ_TOKEN" "$API/push_mirrors-sync"`
+   ([issue-tracker.md](issue-tracker.md) for the token). Then wait for `release.yml` on GitHub:
+   `gh run list -R simonbrunou/cinder --workflow release.yml --limit 1` gives the run id, and
+   `gh run watch <run id> -R simonbrunou/cinder --exit-status` waits for it (the multi-arch build
+   takes about 20 minutes).
+5. Check the registry, not the workflow's exit code: `scripts/verify-ghcr-release.sh <version>`.
+
+- `latest` follows the most recently pushed tag, not the highest version (`release.yml`). To
+  backfill several tags, push them oldest first, one at a time, each after the previous release
+  run finished. Never push an older tag after a newer release.
+- A tag is not a GitHub Release object. Create one only when the user asks.

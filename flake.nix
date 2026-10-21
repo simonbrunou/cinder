@@ -27,6 +27,12 @@
           # baseline: `beam = pkgs.beam.packages.erlang_28; elixir = beam.elixir_1_19;`.
           beam = pkgs.beam.packages.erlang_29;
           elixir = beam.elixir_1_20;
+          # A python3 that can import ffsubsync, so `python3 priv/ffsubsync_runner.py ...` runs the
+          # subtitle sync engine with no venv. nixpkgs packages ffsubsync as an application built
+          # with `python3.pkgs`, hence `toPythonModule`. Keep it on the Dockerfile's pin
+          # (`ffsubsync==0.5.1`); after a lock bump, check the version with
+          # `nix eval --raw --inputs-from . nixpkgs#ffsubsync.version`.
+          python = pkgs.python3.withPackages (ps: [ (ps.toPythonModule pkgs.ffsubsync) ]);
         in
         {
           default = pkgs.mkShell {
@@ -39,7 +45,7 @@
             packages = [
               elixir
               pkgs.git
-              pkgs.python3
+              python
             ]
             ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.inotify-tools;
 
