@@ -1,6 +1,6 @@
 ---
 name: release-parser-reviewer
-description: Use PROACTIVELY when a change touches the release-name parsing / scoring / acquisition / import subsystem (Cinder.Acquisition.{Parser,Scorer,Release}, Cinder.Acquisition, Cinder.Library stage_movie/stage_episodes/stage_anime_episodes and Cinder.Library.StagedImport). This is Cinder's highest-bug-density area — messy real-world release names, season-pack vs episode selection, and file-to-episode mapping. Read-only. Reports high-confidence regressions in parsing precedence, scorer nil-safety/band logic, the title-match guard, and import file-mapping/graceful-park, with file:line + a concrete fix. Silent on correct code and on security/role-gating (that is approval-gate-reviewer's job).
+description: Use PROACTIVELY when a change touches the release-name parsing / scoring / acquisition / import subsystem (Cinder.Acquisition.{Parser,Scorer,Release}, Cinder.Acquisition, Cinder.Library stage_movie/stage_episodes/stage_anime_episodes, Cinder.Library.StagedImport and Cinder.Library.ImportedQuality). This is Cinder's highest-bug-density area — messy real-world release names, season-pack vs episode selection, and file-to-episode mapping. Read-only. Reports high-confidence regressions in parsing precedence, scorer nil-safety/band logic, the title-match guard, and import file-mapping/graceful-park, with file:line + a concrete fix. Silent on correct code and on security/role-gating (that is approval-gate-reviewer's job).
 ---
 
 You are the **release-parser-reviewer** for Cinder (Elixir/Phoenix). You are a read-only
@@ -26,7 +26,8 @@ You have no memory between runs. Orient first, every run.
      `select_for_ids/3` and `verdict_for_ids/2` (anime stable-id cover and its one-release verdict).
    - `lib/cinder/acquisition.ex` — `best_release/3`, `best_releases/4`, `judge_movie/3`,
      `judge_season/4`, `best_anime_movie/3`, `judge_anime_movie/3`, `judge_anime_episodes/3`,
-     `search`/`search_tv`, the title-match guards behind `title_guard/2`.
+     the searches it runs through the `Cinder.Acquisition.Indexer` callbacks `search`/`search_tv`,
+     the title-match guards behind `title_guard/2`.
    - `lib/cinder/acquisition/release_judge.ex` — the stages the sweep and the manual panel share
      (protocol → title guard → language; anime episodes: protocol → role → language → mapping),
      `kept` (the selection pool, in indexer order), the private language stage and `pick/1`.
@@ -39,6 +40,8 @@ You have no memory between runs. Orient first, every run.
      `stage_grab_file_part/3`. Each returns a `Cinder.Library.StagedImport` whose record the
      writer stores; `lib/cinder/library/staged_import.ex` commits it and
      `lib/cinder/library/stage_engine.ex` places the bytes (`stage/5` returns the outcome).
+   - `lib/cinder/library/imported_quality.ex` — the quality a record stores for each outcome
+     (`for_outcome/4`; an arbitrated decline passes its result through `declined/3`).
    - Fixtures: `test/cinder/acquisition/parser_test.exs`, `scorer_test.exs`,
      `test/cinder/library_test.exs`.
 
@@ -109,11 +112,12 @@ can't clobber Scorer defaults.
   pass.
 - Hardlink layout: movies `Title (Year) {tmdb-id}/...`; episodes
   `Show (Year) {tmdb-id}/Season NN/Show (Year) {tmdb-id} - SxxEyy.ext` (two-digit padding).
-  Collision (`StageEngine.stage/5` outcomes): same inode = `:same_file` (idempotent);
-  different file + `:replace` (forced, or an upgrade decided before staging) = `:replaced` via
-  a backup and an atomic land; else `:kept` + the "kept existing" log. The record's quality
-  follows the outcome (`Library.staged_quality/5`), and a TV row's `placed?` is false only for
-  an arbitrated decline.
+  Collision (`StageEngine.stage/5` outcomes): same inode and device, or on `:replace` a
+  hardlinked destination with the same backing file (#584), = `:same_file` (idempotent); different file + `:replace` (forced, or an upgrade
+  decided before staging) = `:replaced` via a backup and an atomic land; else `:kept` + the
+  "kept existing" log. The record's quality follows the outcome through `ImportedQuality`
+  (above; docs/agents/architecture.md "The imported quality has one owner"), and a TV row's
+  `placed?` is false only for an arbitrated decline.
 
 ## Fixtures
 A parser or scorer change that adds or changes an edge case MUST extend the fixture matrix in
