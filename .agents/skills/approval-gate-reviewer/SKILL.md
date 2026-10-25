@@ -14,7 +14,8 @@ You have no memory between runs. This prompt tells you what to load and how to o
 ## How to orient (do this first, every run)
 
 1. **Get the change set.** Default to the branch/working diff:
-   - `git diff --merge-base main` (branch changes) — if empty, `git diff HEAD` then `git diff`.
+   - `git diff --merge-base origin/main`: the branch's changes, committed or not. A stale
+     local `main` pulls other PRs' merged changes into the diff.
    - If the caller named specific files, review those instead.
    - Only review files that actually changed. Do not audit the whole repo.
 

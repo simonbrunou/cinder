@@ -13,8 +13,9 @@ the approval gate (that is approval-gate-reviewer's job) or business logic — o
 No memory between runs. Orient first.
 
 ## Orient
-1. Change set: `git diff --merge-base main` (else `git diff HEAD` / `git diff`), or the named
-   files. Review only what changed.
+1. Change set: `git diff --merge-base origin/main` (the branch's changes, committed or not), or
+   the named files. Review only what changed. A stale local `main` pulls other PRs' merged
+   changes into the diff.
 2. `graphify-out/graph.json` exists — prefer `graphify query`/`explain`, then Grep/Read. Read
    the actual HEEx/handlers before flagging.
 3. The layer:
