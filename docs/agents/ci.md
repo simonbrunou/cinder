@@ -82,7 +82,13 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   and GitHub's release redirect has passed that (#867), so a download can print
   `does not exist or cannot download: :enoent`. elixir_make then builds the NIF from source,
   lazy_html with the `cmake` that `test` installs on a miss, so that line alone is not the
-  failure. The image build fetches Tailwind with `curl` for the same reason.
+  failure. The image build fetches Tailwind with `curl` for the same reason. To prove the NIF
+  source-build fallback while the downloads work, put `config :elixir_make, :force_build,
+  lazy_html: true, exqlite: true` in `config/test.exs` on a run whose compiled-deps cache
+  misses, then revert it before the merge (#885's run 347). The `test` log shows the miss: the
+  cmake install step runs only then. A green `test` job saves the cache under its exact key, so a
+  later run with the same `mix.lock`, OTP and Elixir restores the NIFs and rebuilds nothing,
+  flag or not.
 
 ## Re-running CI
 
