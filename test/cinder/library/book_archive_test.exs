@@ -38,6 +38,54 @@ defmodule Cinder.Library.BookArchiveTest do
     end
   end
 
+  # #781: which archive a folder holds and which files may sit beside it, for both book kinds.
+  describe "archive_candidate/1" do
+    test "a folder with no archive is left to the resolver, companions or not" do
+      assert BookArchive.archive_candidate(~w(b.epub)) == :none
+      assert BookArchive.archive_candidate(~w(b.epub release.nfo)) == :none
+    end
+
+    test "the fixed companions and the default blocked executables, in any case, sit beside it" do
+      for name <- ~w(r.nfo r.sfv r.md5 r.vol00+01.par2 r.txt r.url r.jpg r.jpeg r.png
+                     RARBG_DO_NOT_MIRROR.exe setup.msi COVER.JPG) do
+        assert BookArchive.archive_candidate(["r.zip", name]) == {:ok, "r.zip"}, name
+      end
+    end
+
+    test "a .rar main volume is picked with its .rNN volumes and companions beside it" do
+      assert BookArchive.archive_candidate(~w(r.rar r.r00 r.r01 r.nfo r.sfv)) == {:ok, "r.rar"}
+    end
+
+    # `x.exe.` is blocked by `ContentPolicy`'s normalised reading but is no companion here: a
+    # companion matches on its plain extension, and the folder refuses rather than guesses.
+    test "anything that could be the book, or is unknown, keeps the folder refused" do
+      for name <-
+            ~w(b.epub b.mobi b.azw3 b.pdf b.m4b b.mp3 b.flac b.m4a b.docx b.zip noext x.exe.) do
+        assert BookArchive.archive_candidate(["r.zip", name]) == {:error, :unsupported_archive},
+               name
+      end
+    end
+
+    test "a configured blocked list is read, not a copy of the default" do
+      key = Cinder.Download.ContentPolicy
+      saved = Application.get_env(:cinder, key)
+
+      on_exit(fn ->
+        if saved,
+          do: Application.put_env(:cinder, key, saved),
+          else: Application.delete_env(:cinder, key)
+      end)
+
+      Application.put_env(:cinder, key, Keyword.put(saved || [], :blocked_extensions, ~w(.APK)))
+
+      assert BookArchive.archive_candidate(~w(r.zip filler.apk)) == {:ok, "r.zip"}
+      assert BookArchive.archive_candidate(~w(r.zip release.nfo)) == {:ok, "r.zip"}
+
+      assert BookArchive.archive_candidate(~w(r.zip RARBG_DO_NOT_MIRROR.exe)) ==
+               {:error, :unsupported_archive}
+    end
+  end
+
   describe "extract_and_resolve/2" do
     test "extracts a zip and hands the scratch dir to resolve_fun", %{downloads: downloads} do
       dir = Path.join(downloads, "release")

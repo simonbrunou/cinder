@@ -10,6 +10,7 @@ defmodule Cinder.Library.EbookSourcesTest do
 
   alias Cinder.Acquisition.BookKind
   alias Cinder.Library.EbookSources
+  alias Cinder.Test.FakeUnrar
 
   setup %{tmp_dir: tmp} do
     downloads = Path.join(tmp, "downloads")
@@ -215,17 +216,7 @@ defmodule Cinder.Library.EbookSourcesTest do
   end
 
   describe "archive extraction" do
-    setup %{tmp_dir: tmp} do
-      original_path = System.get_env("PATH")
-      fakebin = Path.join(tmp, "fakebin")
-      File.mkdir_p!(fakebin)
-
-      on_exit(fn ->
-        if original_path, do: System.put_env("PATH", original_path)
-      end)
-
-      {:ok, fakebin: fakebin, original_path: original_path}
-    end
+    setup {FakeUnrar, :fakebin}
 
     test "a lone zip extracts and resolves to the epub inside it", %{downloads: downloads} do
       dir = Path.join(downloads, "Zipped")
@@ -297,7 +288,9 @@ defmodule Cinder.Library.EbookSourcesTest do
       assert {:error, :unsupported_archive} = EbookSources.resolve(dir)
     end
 
-    test "an unrelated file alongside a zip refuses, mixed content is not auto-expanded", %{
+    # Only the fixed companion list may sit beside an archive (#781). A file of any other
+    # extension could be the release, so the folder stays ambiguous.
+    test "a file of an unknown extension alongside a zip refuses, never auto-expanded", %{
       downloads: downloads
     } do
       dir = Path.join(downloads, "MixedZip")
@@ -307,7 +300,37 @@ defmodule Cinder.Library.EbookSourcesTest do
         {~c"book.epub", epub_bytes()}
       ])
 
-      File.write!(Path.join(dir, "readme.txt"), "notes")
+      File.write!(Path.join(dir, "notes.docx"), "notes")
+
+      assert {:error, :unsupported_archive} = EbookSources.resolve(dir)
+    end
+
+    test "a zip with a cover image beside it extracts and resolves", %{downloads: downloads} do
+      dir = Path.join(downloads, "CoveredZip")
+      File.mkdir_p!(dir)
+
+      :zip.create(String.to_charlist(Path.join(dir, "release.zip")), [
+        {~c"book.epub", epub_bytes()}
+      ])
+
+      File.write!(Path.join(dir, "COVER.JPG"), "jpeg")
+
+      assert {:ok, path, :epub} = EbookSources.resolve(dir)
+      assert Path.basename(path) == "book.epub"
+    end
+
+    test "a loose book beside an archive still refuses when companions sit there too", %{
+      downloads: downloads
+    } do
+      dir = Path.join(downloads, "MixedWithCompanions")
+      File.mkdir_p!(dir)
+
+      :zip.create(String.to_charlist(Path.join(dir, "release.zip")), [
+        {~c"book.epub", epub_bytes()}
+      ])
+
+      File.write!(Path.join(dir, "Other Book.epub"), epub_bytes())
+      File.write!(Path.join(dir, "release.nfo"), "scene notes")
 
       assert {:error, :unsupported_archive} = EbookSources.resolve(dir)
     end
@@ -317,7 +340,7 @@ defmodule Cinder.Library.EbookSourcesTest do
       fakebin: fakebin,
       original_path: original_path
     } do
-      install_fake_unrar(fakebin, original_path, epub_unrar_script(fakebin))
+      install_epub_unrar(fakebin, original_path)
 
       dir = Path.join(downloads, "Rarred")
       File.mkdir_p!(dir)
@@ -332,13 +355,34 @@ defmodule Cinder.Library.EbookSourcesTest do
       fakebin: fakebin,
       original_path: original_path
     } do
-      install_fake_unrar(fakebin, original_path, epub_unrar_script(fakebin))
+      install_epub_unrar(fakebin, original_path)
 
       dir = Path.join(downloads, "SplitRar")
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "release.rar"), "main volume")
       File.write!(Path.join(dir, "release.r00"), "volume 2")
       File.write!(Path.join(dir, "release.r01"), "volume 3")
+
+      assert {:ok, path, :epub} = EbookSources.resolve(dir)
+      assert Path.basename(path) == "book.epub"
+    end
+
+    # #781: scene and usenet sets ship an `.nfo` and an `.sfv` beside the volumes, and public
+    # trackers add a 0-byte filler executable. None of them can be the book.
+    test "a .rar set with scene companions beside it extracts and resolves", %{
+      downloads: downloads,
+      fakebin: fakebin,
+      original_path: original_path
+    } do
+      install_epub_unrar(fakebin, original_path)
+
+      dir = Path.join(downloads, "SceneRar")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "release.rar"), "main volume")
+      File.write!(Path.join(dir, "release.r00"), "volume 2")
+      File.write!(Path.join(dir, "release.nfo"), "scene notes")
+      File.write!(Path.join(dir, "release.sfv"), "release.rar 0badc0de")
+      File.write!(Path.join(dir, "RARBG_DO_NOT_MIRROR.exe"), "")
 
       assert {:ok, path, :epub} = EbookSources.resolve(dir)
       assert Path.basename(path) == "book.epub"
@@ -424,30 +468,14 @@ defmodule Cinder.Library.EbookSourcesTest do
   defp mobi_bytes,
     do: String.duplicate("\0", 60) <> "BOOKMOBI" <> String.duplicate("\0", 32)
 
-  # Installs `script` as the `unrar` resolved by `System.find_executable/1` for the rest of the
-  # calling test — the real Rar module's own seam, since `unrar` is closed-source and cannot be
-  # scripted to produce a controlled fixture otherwise. Mirrors
-  # `Cinder.Library.BookArchive.RarTest`'s identical helper.
-  defp install_fake_unrar(fakebin, original_path, script) do
-    path = Path.join(fakebin, "unrar")
-    File.write!(path, script)
-    File.chmod!(path, 0o755)
-    System.put_env("PATH", fakebin <> ":" <> (original_path || ""))
-  end
-
-  # A fake `unrar` that reports one entry, `book.epub`, and "extracts" it by copying a real,
-  # conforming EPUB fixture into the destination — so the resolve-level dispatch tests exercise
-  # the same `verify_magic/2` gate every other candidate goes through, not a bypass.
-  defp epub_unrar_script(fakebin) do
-    fixture = Path.join(fakebin, "epub_fixture.epub")
-    File.write!(fixture, epub_bytes())
-
-    """
-    #!/bin/sh
-    case "$1" in
-      lb) printf 'book.epub\\n'; exit 0 ;;
-      x) cp #{fixture} "$7book.epub"; exit 0 ;;
-    esac
-    """
-  end
+  # A fake `unrar` that reports one entry, `book.epub`, and "extracts" a real, conforming EPUB
+  # fixture — so the resolve-level dispatch tests exercise the same `verify_magic/2` gate every
+  # other candidate goes through, not a bypass.
+  defp install_epub_unrar(fakebin, original_path),
+    do:
+      FakeUnrar.install(
+        fakebin,
+        original_path,
+        FakeUnrar.extracting(fakebin, "book.epub", epub_bytes())
+      )
 end

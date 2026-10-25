@@ -20,6 +20,7 @@ defmodule Cinder.Download.BookPollerTest do
   alias Cinder.Download
   alias Cinder.Download.{BookPoller, Intent}
   alias Cinder.Repo
+  alias Cinder.Test.FakeUnrar
   alias Ecto.Adapters.SQL.Sandbox
 
   setup :set_mox_global
@@ -728,6 +729,37 @@ defmodule Cinder.Download.BookPollerTest do
       assert file.path == expected
       assert file.format == :epub
       assert File.read!(expected) == epub_bytes()
+    end
+
+    # #781: the scene companions and the 0-byte filler beside an archive neither block the
+    # extraction nor reach the library.
+    test "a .rar set with companions beside it imports the book alone", ctx do
+      %{target: target, release_dir: release_dir, books: books} =
+        downloading(ctx, "book.epub")
+
+      {:ok, %{fakebin: fakebin, original_path: original_path}} = FakeUnrar.fakebin(ctx)
+      script = FakeUnrar.extracting(fakebin, "The Dispossessed.epub", epub_bytes())
+      FakeUnrar.install(fakebin, original_path, script)
+
+      File.rm!(Path.join(release_dir, "book.epub"))
+
+      files =
+        ~w(release.rar release.r00 release.nfo release.sfv RARBG_DO_NOT_MIRROR.exe cover.jpg)
+
+      for name <- files, do: File.write!(Path.join(release_dir, name), "")
+
+      stub(Cinder.Download.ClientMock, :files, fn _id -> {:ok, files} end)
+
+      complete_download(release_dir)
+      poll!()
+
+      assert Repo.reload!(target).status == :available
+
+      assert File.ls!(Path.join([books, "Ursula K. Le Guin", "The Dispossessed"])) == [
+               "The Dispossessed.epub"
+             ]
+
+      assert [%BookFile{format: :epub}] = Repo.all(BookFile)
     end
 
     test "a completed download with no content path holds", ctx do

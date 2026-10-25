@@ -65,6 +65,14 @@ order: ISBN for an e-book, ASIN then ISBN for an audiobook. Every search for a w
 specific evidence first: a few of those identifiers, then author and title, then free text.
 _Avoid_: search strategy, query list
 
+**Companion**:
+A file beside a book download's one archive that can never be the book, from a fixed list: scene
+files such as the `.nfo` and `.sfv`, a cover image, and any file whose extension the download
+content check blocks, such as a filler `.exe`. The archive still extracts with companions beside
+it, and a companion is never imported. Any other file beside the archive holds the book as an
+unsupported archive.
+_Avoid_: sidecar (a subtitle file beside a video), extras
+
 ### Catalog
 
 **Title**:

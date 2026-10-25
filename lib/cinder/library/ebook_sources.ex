@@ -19,7 +19,7 @@ defmodule Cinder.Library.EbookSources do
     out of samples and extras, but two book files of similar size are as likely to be two
     different books, and importing the wrong one is a silent wrong answer.
 
-  ## Archives are extracted, bounded — except `.7z` and a genuinely mixed folder
+  ## Archives are extracted, bounded — except `.7z` and a mixed folder
 
   `.zip`/`.cbz` extract through `Cinder.Library.BookArchive.Zip` (pure OTP, no external
   dependency); `.rar`/`.cbr`, and a split `.rNN` set (resolved to its `.rar` main volume, the
@@ -30,15 +30,21 @@ defmodule Cinder.Library.EbookSources do
   regular file — see each extractor's own moduledoc for exactly how, and why (both were built
   only after establishing what Erlang's own `:zip` module can and cannot verify).
 
-  `.7z`, and a folder that mixes an archive with other loose files, still refuse outright with
-  `:unsupported_archive` — the former because nothing here parses that format at all, the
-  latter because a release that is simultaneously "an archive" and "some other file" is rare
-  enough, and ambiguous enough about which one is the release, to be out of scope rather than
-  guessed at. So does a nested archive found *inside* an already-extracted one — `resolve/1`
+  A folder's archive may sit beside companions, files that can never be the book: `.nfo`,
+  `.sfv`, `.md5`, `.par2`, `.txt`, `.url`, `.jpg`, `.jpeg`, `.png`, and every extension in
+  `Cinder.Download.ContentPolicy.blocked_extensions/0` (a filler `.exe`, ...). They are ignored
+  for the extraction decision and never published. `Cinder.Library.BookArchive.archive_candidate/1`
+  makes that decision for both book kinds, and its "Companions" section gives the reasons (#781).
+
+  `.7z`, and a folder that mixes an archive with any non-companion file, still refuse outright
+  with `:unsupported_archive` — the former because nothing here parses that format at all, the
+  latter because a file off the companion list (a loose `.epub`, a second archive, an unknown
+  extension) could be the release itself, and which one is the book is a guess this module does
+  not make. So does a nested archive found *inside* an already-extracted one — `resolve/1`
   recurses into the extracted scratch directory exactly once; anything unresolved there,
   archives included, is a plain refusal, not a second extraction attempt.
 
-  `Cinder.Library.BookArchive.extract_and_resolve/2` hands the extracted scratch directory to
+  `Cinder.Library.BookArchive.extract_and_resolve/3` hands the extracted scratch directory to
   this exact `resolve/1`, so the extension allow-list, `verify_magic/2`, and the multi-format
   collapse below all still gate whatever an archive contained — extraction cannot widen what
   publishes, because nothing downstream of it is new code.
@@ -58,9 +64,6 @@ defmodule Cinder.Library.EbookSources do
   alias Cinder.Acquisition.BookKind
   alias Cinder.Library
   alias Cinder.Library.BookArchive
-
-  @archive_extensions ~w(.rar .zip .7z .gz .bz2 .xz .tar .cbz .cbr)
-  @extractable_extensions ~w(.zip .cbz .rar .cbr)
 
   @doc "The file extensions an import accepts, most-preferred format first."
   @spec accepted_extensions() :: [String.t()]
@@ -100,7 +103,7 @@ defmodule Cinder.Library.EbookSources do
   def resolve(path), do: resolve(path, true)
 
   # `extract?` bounds recursion to exactly one archive-extraction attempt: the scratch
-  # directory `Cinder.Library.BookArchive.extract_and_resolve/2` hands back here is resolved
+  # directory `Cinder.Library.BookArchive.extract_and_resolve/3` hands back here is resolved
   # with `extract?: false`, so an archive found INSIDE an already-extracted one is a plain
   # `:unsupported_archive` refusal rather than a second extraction — see the moduledoc.
   defp resolve(path, extract?) do
@@ -115,7 +118,7 @@ defmodule Cinder.Library.EbookSources do
     all_paths = Enum.map(files, &elem(&1, 0))
     paths = if extract?, do: Enum.reject(all_paths, &scratch_path?/1), else: all_paths
 
-    case archive_candidate(paths) do
+    case BookArchive.archive_candidate(paths) do
       {:ok, archive_path} when extract? ->
         BookArchive.extract_and_resolve(archive_path, &resolve(&1, false))
 
@@ -132,10 +135,10 @@ defmodule Cinder.Library.EbookSources do
 
   defp resolve_file(path, extract?) do
     cond do
-      extractable_archive?(path) and extract? ->
+      BookArchive.extractable?(path) and extract? ->
         BookArchive.extract_and_resolve(path, &resolve(&1, false))
 
-      archive_file?(path) ->
+      BookArchive.archive?(path) ->
         {:error, :unsupported_archive}
 
       accepted_file?(path) ->
@@ -153,51 +156,6 @@ defmodule Cinder.Library.EbookSources do
   # `Cinder.Library.BookArchive`'s moduledoc on why the scratch directory has a fixed, reserved
   # name instead of a random one.
   defp scratch_path?(path), do: BookArchive.scratch_dir_name() in Path.split(path)
-
-  # `archives == []` is the common case (nothing to extract, fall through to the normal
-  # accepted-file pick). Exactly one archive and nothing else alongside it is the only
-  # extractable shape: either a single `.zip`/`.cbz`/`.rar`/`.cbr`, or a split `.rNN` set whose
-  # one `.rar`/`.cbr` main volume is the file `unrar` is pointed at (it locates the numbered
-  # siblings itself). Anything else — a folder mixing an archive with other loose files,
-  # multiple distinct archives, a `.rNN` set with no main volume present, or a lone `.7z` — is
-  # `:unsupported_archive`, exactly as before this feature existed.
-  defp archive_candidate(paths) do
-    archives = Enum.filter(paths, &archive_file?/1)
-    non_archives = paths -- archives
-
-    cond do
-      archives == [] -> :none
-      non_archives != [] -> {:error, :unsupported_archive}
-      true -> pick_archive(archives)
-    end
-  end
-
-  defp pick_archive(archives) do
-    mains = Enum.filter(archives, &rar_main?/1)
-    zips = Enum.filter(archives, &zip_like?/1)
-    # NOTE: `--` is right-associative in Elixir (unlike arithmetic `-`) - parens are load-bearing,
-    # not stylistic; `archives -- mains -- zips` silently no-ops to `archives` whenever `mains`
-    # is empty, which is every zip-only release.
-    volumes = (archives -- mains) -- zips
-
-    cond do
-      zips == [] and length(mains) == 1 and Enum.all?(volumes, &rar_volume?/1) ->
-        {:ok, hd(mains)}
-
-      mains == [] and volumes == [] and length(zips) == 1 ->
-        {:ok, hd(zips)}
-
-      true ->
-        {:error, :unsupported_archive}
-    end
-  end
-
-  defp extractable_archive?(path),
-    do: String.downcase(Path.extname(path)) in @extractable_extensions
-
-  defp zip_like?(path), do: String.downcase(Path.extname(path)) in ~w(.zip .cbz)
-  defp rar_main?(path), do: String.downcase(Path.extname(path)) in ~w(.rar .cbr)
-  defp rar_volume?(path), do: Regex.match?(~r/^\.r\d{2}$/u, String.downcase(Path.extname(path)))
 
   defp pick([]), do: {:error, :no_book_file}
 
@@ -296,11 +254,5 @@ defmodule Cinder.Library.EbookSources do
     |> String.downcase()
     |> String.replace(~r/[ ._-]+/u, " ")
     |> String.trim()
-  end
-
-  # `.r00`-style split volumes alongside the named archive extensions: a multipart RAR set is
-  # still an archive, and its first part often carries the only recognizable extension.
-  defp archive_file?(path) do
-    String.downcase(Path.extname(path)) in @archive_extensions or rar_volume?(path)
   end
 end

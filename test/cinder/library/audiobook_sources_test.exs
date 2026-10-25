@@ -9,6 +9,7 @@ defmodule Cinder.Library.AudiobookSourcesTest do
   import Mox
 
   alias Cinder.Library.AudiobookSources
+  alias Cinder.Test.FakeUnrar
 
   setup :verify_on_exit!
 
@@ -451,6 +452,63 @@ defmodule Cinder.Library.AudiobookSourcesTest do
     end
   end
 
+  # #781: `BookArchive.archive_candidate/1`'s companion rule, through the audiobook resolver.
+  # Scene and usenet sets ship an `.nfo` and an `.sfv`, and public trackers add a filler `.exe`.
+  describe "archive companions" do
+    setup {FakeUnrar, :fakebin}
+
+    test "a .rar set with scene companions beside it extracts and resolves", %{
+      downloads: downloads,
+      fakebin: fakebin,
+      original_path: original_path
+    } do
+      script = FakeUnrar.extracting(fakebin, "The Dispossessed.m4b", m4b_bytes())
+      FakeUnrar.install(fakebin, original_path, script)
+
+      dir = Path.join(downloads, "SceneRar")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "release.rar"), "main volume")
+      File.write!(Path.join(dir, "release.r00"), "volume 2")
+      File.write!(Path.join(dir, "release.nfo"), "scene notes")
+      File.write!(Path.join(dir, "release.sfv"), "release.rar 0badc0de")
+      File.write!(Path.join(dir, "RARBG_DO_NOT_MIRROR.exe"), "")
+
+      assert {:ok, [track]} = AudiobookSources.resolve(dir)
+      assert Path.basename(track.path) == "The Dispossessed.m4b"
+      assert track.format == :m4b
+    end
+
+    test "a zip with a cover image beside it extracts and resolves", %{downloads: downloads} do
+      dir = Path.join(downloads, "CoveredZip")
+      File.mkdir_p!(dir)
+      zip_m4b(dir)
+      File.write!(Path.join(dir, "cover.jpg"), "jpeg")
+
+      assert {:ok, [track]} = AudiobookSources.resolve(dir)
+      assert Path.basename(track.path) == "The Dispossessed.m4b"
+    end
+
+    for {name, why} <- [
+          {"Other Book.m4b", "a loose accepted track"},
+          {"bonus.flac", "a loose other-audio file"},
+          {"Other Book.epub", "a loose e-book"},
+          {"notes.docx", "a file of an unknown extension"}
+        ] do
+      @name name
+      test "#{why} beside an archive still refuses, even with companions there", %{
+        downloads: downloads
+      } do
+        dir = Path.join(downloads, "Mixed")
+        File.mkdir_p!(dir)
+        zip_m4b(dir)
+        File.write!(Path.join(dir, @name), m4b_bytes())
+        File.write!(Path.join(dir, "release.nfo"), "scene notes")
+
+        assert {:error, :unsupported_archive} = AudiobookSources.resolve(dir)
+      end
+    end
+  end
+
   describe "track count ceiling" do
     test "a set with more accepted files than the configured ceiling is refused before any probing",
          %{downloads: downloads} do
@@ -522,4 +580,10 @@ defmodule Cinder.Library.AudiobookSourcesTest do
   # A minimal `ftyp` box naming the `M4B ` major brand at offset 4 — what the resolver's
   # magic-byte gate requires for `.m4b`.
   defp m4b_bytes, do: <<0, 0, 0, 32>> <> "ftyp" <> "M4B "
+
+  defp zip_m4b(dir) do
+    :zip.create(String.to_charlist(Path.join(dir, "release.zip")), [
+      {~c"The Dispossessed.m4b", m4b_bytes()}
+    ])
+  end
 end

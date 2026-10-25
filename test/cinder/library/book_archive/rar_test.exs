@@ -22,30 +22,16 @@ defmodule Cinder.Library.BookArchive.RarTest do
   use ExUnit.Case, async: false
 
   alias Cinder.Library.BookArchive.Rar
+  alias Cinder.Test.FakeUnrar
 
   @moduletag :tmp_dir
 
+  setup {FakeUnrar, :fakebin}
+
   setup %{tmp_dir: tmp} do
-    original_path = System.get_env("PATH")
-    fakebin = Path.join(tmp, "fakebin")
-    File.mkdir_p!(fakebin)
     dest = Path.join(tmp, "dest")
     File.mkdir_p!(dest)
-
-    on_exit(fn ->
-      if original_path, do: System.put_env("PATH", original_path)
-    end)
-
-    {:ok, tmp: tmp, fakebin: fakebin, dest: dest, original_path: original_path}
-  end
-
-  # Installs `script` as the `unrar` resolved by `System.find_executable/1` for the rest of
-  # this test, by putting a fake binary ahead of the real PATH.
-  defp install_fake_unrar(fakebin, original_path, script) do
-    path = Path.join(fakebin, "unrar")
-    File.write!(path, script)
-    File.chmod!(path, 0o755)
-    System.put_env("PATH", fakebin <> ":" <> (original_path || ""))
+    {:ok, tmp: tmp, dest: dest}
   end
 
   defp remove_fake_unrar(fakebin, original_path) do
@@ -55,7 +41,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
 
   describe "available?/0" do
     test "true when unrar resolves on PATH", %{fakebin: fakebin, original_path: original_path} do
-      install_fake_unrar(fakebin, original_path, "#!/bin/sh\nexit 0\n")
+      FakeUnrar.install(fakebin, original_path, "#!/bin/sh\nexit 0\n")
       assert Rar.available?()
     end
 
@@ -82,7 +68,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
       original_path: original_path,
       dest: dest
     } do
-      install_fake_unrar(fakebin, original_path, """
+      FakeUnrar.install(fakebin, original_path, """
       #!/bin/sh
       case "$1" in
         lb) printf 'book.epub\\n'; exit 0 ;;
@@ -104,7 +90,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
     } do
       marker = Path.join(tmp, "extraction_ran")
 
-      install_fake_unrar(fakebin, original_path, """
+      FakeUnrar.install(fakebin, original_path, """
       #!/bin/sh
       case "$1" in
         lb) printf '../../../etc/evil.txt\\n'; exit 0 ;;
@@ -124,7 +110,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
     } do
       marker = Path.join(tmp, "extraction_ran")
 
-      install_fake_unrar(fakebin, original_path, """
+      FakeUnrar.install(fakebin, original_path, """
       #!/bin/sh
       case "$1" in
         lb) printf '/etc/evil.txt\\n'; exit 0 ;;
@@ -150,7 +136,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
       File.mkdir_p!(outside)
       File.write!(Path.join(outside, "secret.txt"), "not meant to be reachable")
 
-      install_fake_unrar(fakebin, original_path, """
+      FakeUnrar.install(fakebin, original_path, """
       #!/bin/sh
       case "$1" in
         lb) printf 'book.epub\\n'; exit 0 ;;
@@ -176,7 +162,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
       File.mkdir_p!(outside)
       File.write!(Path.join(outside, "secret.txt"), "not meant to be reachable")
 
-      install_fake_unrar(fakebin, original_path, """
+      FakeUnrar.install(fakebin, original_path, """
       #!/bin/sh
       case "$1" in
         lb) printf 'book.epub\\n'; exit 0 ;;
@@ -204,7 +190,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
 
       entries = Enum.map_join(1..20, "\\n", &"book#{&1}.txt")
 
-      install_fake_unrar(fakebin, original_path, """
+      FakeUnrar.install(fakebin, original_path, """
       #!/bin/sh
       case "$1" in
         lb) printf '#{entries}\\n'; exit 0 ;;
@@ -223,7 +209,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
       original_path: original_path,
       dest: dest
     } do
-      install_fake_unrar(fakebin, original_path, """
+      FakeUnrar.install(fakebin, original_path, """
       #!/bin/sh
       case "$1" in
         lb) echo "cannot open archive"; exit 1 ;;
@@ -243,7 +229,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
          } do
       marker = Path.join(tmp, "extraction_ran")
 
-      install_fake_unrar(fakebin, original_path, """
+      FakeUnrar.install(fakebin, original_path, """
       #!/bin/sh
       case "$1" in
         lb) sleep 3600 ;;
@@ -274,7 +260,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
          } do
       marker = Path.join(tmp, "list_survived")
 
-      install_fake_unrar(fakebin, original_path, """
+      FakeUnrar.install(fakebin, original_path, """
       #!/bin/sh
       case "$1" in
         lb) sleep 1; touch #{marker}; exit 0 ;;
@@ -293,7 +279,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
       original_path: original_path,
       dest: dest
     } do
-      install_fake_unrar(fakebin, original_path, """
+      FakeUnrar.install(fakebin, original_path, """
       #!/bin/sh
       case "$1" in
         lb) printf 'book.epub\\n'; exit 0 ;;
@@ -327,7 +313,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
       original_path: original_path,
       dest: dest
     } do
-      install_fake_unrar(fakebin, original_path, """
+      FakeUnrar.install(fakebin, original_path, """
       #!/bin/sh
       case "$1" in
         lb) printf 'book.epub\\n'; exit 0 ;;
@@ -355,7 +341,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
       original_path: original_path,
       dest: dest
     } do
-      install_fake_unrar(fakebin, original_path, """
+      FakeUnrar.install(fakebin, original_path, """
       #!/bin/sh
       case "$1" in
         lb) printf 'book.epub\\n'; exit 0 ;;
@@ -380,7 +366,7 @@ defmodule Cinder.Library.BookArchive.RarTest do
     # slipped through even though it already exceeded the cap on disk.
     test "a fast extractor exceeding max_expanded_size is refused even if it exits 0 before the first poll",
          %{fakebin: fakebin, original_path: original_path, dest: dest} do
-      install_fake_unrar(fakebin, original_path, """
+      FakeUnrar.install(fakebin, original_path, """
       #!/bin/sh
       case "$1" in
         lb) printf 'book.epub\\n'; exit 0 ;;

@@ -14,8 +14,13 @@ defmodule Cinder.Library.AudiobookSources do
 
   ## Pipeline
 
-  1. **Extraction** — identical to `EbookSources.resolve/1`'s archive handling (one archive, or
-     none), recursing into an extracted scratch directory exactly once.
+  1. **Extraction** — `Cinder.Library.BookArchive.archive_candidate/1`, the one decision both
+     book kinds share: one archive with nothing but companions beside it, or none, recursing
+     into an extracted scratch directory exactly once. The companions are `.nfo`, `.sfv`,
+     `.md5`, `.par2`, `.txt`, `.url`, `.jpg`, `.jpeg`, `.png`, and every extension in
+     `Cinder.Download.ContentPolicy.blocked_extensions/0` (a filler `.exe`, ...); a loose
+     track, an other-audio file or any other file beside an archive is `:unsupported_archive`
+     (#781). `BookArchive`'s "Companions" section gives the reasons.
   2. **Candidate collection** — every `.m4b`/`.mp3` file is a candidate. A stray *other audio*
      file (`.m4a`/`.aac`/`.flac`/`.ogg`/`.wma`/`.wav`/`.aiff`/`.aif`/`.aifc`) alongside at least
      one accepted candidate is never silently ignored: `safe_source/1`'s own extension
@@ -79,9 +84,6 @@ defmodule Cinder.Library.AudiobookSources do
   # or "aiff"), but which must not silently vanish here the same way a stray
   # `.flac` mustn't (#504).
   @other_audio_extensions ~w(.m4a .aac .flac .ogg .wma .wav .aiff .aif .aifc)
-
-  @archive_extensions ~w(.rar .zip .7z .gz .bz2 .xz .tar .cbz .cbr)
-  @extractable_extensions ~w(.zip .cbz .rar .cbr)
 
   # See the moduledoc's "Bounded probing" section for the exact reasoning behind both numbers.
   @max_tracks 200
@@ -152,7 +154,7 @@ defmodule Cinder.Library.AudiobookSources do
     all_paths = Enum.map(files, &elem(&1, 0))
     paths = if extract?, do: Enum.reject(all_paths, &scratch_path?/1), else: all_paths
 
-    case archive_candidate(paths) do
+    case BookArchive.archive_candidate(paths) do
       {:ok, archive_path} when extract? ->
         BookArchive.extract_and_resolve(archive_path, &resolve(&1, false),
           max_expanded_size: max_expanded_size()
@@ -171,12 +173,12 @@ defmodule Cinder.Library.AudiobookSources do
 
   defp resolve_file(path, extract?) do
     cond do
-      extractable_archive?(path) and extract? ->
+      BookArchive.extractable?(path) and extract? ->
         BookArchive.extract_and_resolve(path, &resolve(&1, false),
           max_expanded_size: max_expanded_size()
         )
 
-      archive_file?(path) ->
+      BookArchive.archive?(path) ->
         {:error, :unsupported_archive}
 
       true ->
@@ -187,46 +189,6 @@ defmodule Cinder.Library.AudiobookSources do
   defp max_expanded_size, do: BookKind.size_band(:audiobook) |> elem(1)
 
   defp scratch_path?(path), do: BookArchive.scratch_dir_name() in Path.split(path)
-
-  # Identical shape/reasoning to `EbookSources.archive_candidate/1` — copied, not shared, per the
-  # B7b plan's own "copy the pattern" call for genuinely different domains.
-  defp archive_candidate(paths) do
-    archives = Enum.filter(paths, &archive_file?/1)
-    non_archives = paths -- archives
-
-    cond do
-      archives == [] -> :none
-      non_archives != [] -> {:error, :unsupported_archive}
-      true -> pick_archive(archives)
-    end
-  end
-
-  defp pick_archive(archives) do
-    mains = Enum.filter(archives, &rar_main?/1)
-    zips = Enum.filter(archives, &zip_like?/1)
-    volumes = (archives -- mains) -- zips
-
-    cond do
-      zips == [] and length(mains) == 1 and Enum.all?(volumes, &rar_volume?/1) ->
-        {:ok, hd(mains)}
-
-      mains == [] and volumes == [] and length(zips) == 1 ->
-        {:ok, hd(zips)}
-
-      true ->
-        {:error, :unsupported_archive}
-    end
-  end
-
-  defp extractable_archive?(path),
-    do: String.downcase(Path.extname(path)) in @extractable_extensions
-
-  defp zip_like?(path), do: String.downcase(Path.extname(path)) in ~w(.zip .cbz)
-  defp rar_main?(path), do: String.downcase(Path.extname(path)) in ~w(.rar .cbr)
-  defp rar_volume?(path), do: Regex.match?(~r/^\.r\d{2}$/u, String.downcase(Path.extname(path)))
-
-  defp archive_file?(path),
-    do: String.downcase(Path.extname(path)) in @archive_extensions or rar_volume?(path)
 
   # --- candidate collection, magic, mixed-book detection, ordering, container consistency ---
 

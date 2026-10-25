@@ -17,6 +17,7 @@ defmodule Cinder.Download.AudiobookPollerTest do
   alias Cinder.Library
   alias Cinder.Library.StagedImport
   alias Cinder.Repo
+  alias Cinder.Test.FakeUnrar
 
   setup :set_mox_global
   setup :verify_on_exit!
@@ -314,6 +315,8 @@ defmodule Cinder.Download.AudiobookPollerTest do
   # polled, resolved, staged, and imported through `BookPoller` exactly as a real download client
   # would hand it off.
   describe "archive extraction" do
+    setup {FakeUnrar, :fakebin}
+
     test "a real zip archive extracts, resolves, and imports atomically end to end", ctx do
       %{target: target, audiobooks: audiobooks, release_dir: release_dir} = downloading(ctx, %{})
 
@@ -336,6 +339,34 @@ defmodule Cinder.Download.AudiobookPollerTest do
       files = Repo.all(from f in BookFile, where: f.book_target_id == ^target.id)
       assert length(files) == 2
       assert Repo.reload!(target).status == :available
+    end
+
+    # #781: the scene companions and the 0-byte filler beside an archive neither block the
+    # extraction nor reach the library.
+    test "a .rar set with companions beside it imports the audiobook alone", ctx do
+      %{target: target, audiobooks: audiobooks, release_dir: release_dir} = downloading(ctx, %{})
+
+      %{fakebin: fakebin, original_path: original_path} = ctx
+      script = FakeUnrar.extracting(fakebin, "The Dispossessed.m4b", m4b_bytes())
+      FakeUnrar.install(fakebin, original_path, script)
+
+      files =
+        ~w(release.rar release.r00 release.nfo release.sfv RARBG_DO_NOT_MIRROR.exe cover.jpg)
+
+      for name <- files, do: File.write!(Path.join(release_dir, name), "")
+
+      stub(Cinder.Download.ClientMock, :files, fn _id -> {:ok, files} end)
+
+      complete_download(release_dir)
+      poll!()
+
+      assert Repo.reload!(target).status == :available
+
+      assert File.ls!(Path.join([audiobooks, "Ursula K. Le Guin", "The Dispossessed"])) == [
+               "The Dispossessed.m4b"
+             ]
+
+      assert [%BookFile{format: :m4b}] = Repo.all(BookFile)
     end
   end
 

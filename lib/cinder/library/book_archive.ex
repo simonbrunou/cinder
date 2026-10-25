@@ -1,14 +1,42 @@
 defmodule Cinder.Library.BookArchive do
   @moduledoc """
-  Dispatches a single archive file to the right bounded extractor
-  (`Cinder.Library.BookArchive.Zip` or `.Rar`), then hands the result to the caller's resolver
-  (`Cinder.Library.EbookSources.resolve/1`, or `Cinder.Library.AudiobookSources`' own) — the
-  same function every other candidate of that kind goes through, so extraction cannot widen what
-  publishes and the ambiguity/multi-format rules stay exactly what they already are.
+  The archive half of both book resolvers (`Cinder.Library.EbookSources.resolve/1` and
+  `Cinder.Library.AudiobookSources.resolve/1`): `archive_candidate/1` decides which one archive
+  in a download folder to extract, and `extract_and_resolve/3` dispatches it to the right bounded
+  extractor (`Cinder.Library.BookArchive.Zip` or `.Rar`), then hands the result to the caller's
+  resolver — the same function every other candidate of that kind goes through, so extraction
+  cannot widen what publishes and the ambiguity/multi-format rules stay exactly what they
+  already are. One definition serves both book kinds, as ADR 0001 has it for the release judge.
 
-  `.7z` and everything else `Cinder.Library.EbookSources`'s own `archive_file?/1` still flags is
-  deliberately not dispatched here — those extensions never reach `extract_and_resolve/2` at
-  all, and stay the plain `:unsupported_archive` refusal.
+  `.7z` and every other archive `archive?/1` flags but `extractable?/1` does not is deliberately
+  not dispatched here — those extensions never reach `extract_and_resolve/3` at all, and stay the
+  plain `:unsupported_archive` refusal.
+
+  ## Companions
+
+  Scene and usenet releases ship their `.rar` set with an `.nfo` and an `.sfv`, and public-tracker
+  releases add a 0-byte `RARBG_DO_NOT_MIRROR.exe`. `archive_candidate/1` picks a folder's one
+  archive for extraction (a `.rar` main volume together with its `.rNN` volumes) when every other
+  file beside it is a companion, a file that can never be the book: `.nfo`, `.sfv`, `.md5`,
+  `.par2`, `.txt`, `.url`, `.jpg`, `.jpeg`, `.png`, and every extension in
+  `Cinder.Download.ContentPolicy.blocked_extensions/0` (`.exe`, `.lnk`, ... by default). The
+  blocked list is read at call time, so an install's configured list counts too, and a blocked
+  file is a companion whatever its size (#781).
+
+  Those nine extensions are fixed on purpose. Any other file beside an archive could be the
+  release, or a second book: an accepted format of either kind, an audio file an audiobook import
+  refuses (`.flac`, `.m4a`, ...), a second archive `archive?/1` flags, or an unknown extension.
+  Each of those keeps the folder an `:unsupported_archive` refusal rather than a guess. (`.zipx`
+  is on `ContentPolicy`'s default blocked list, so it counts as a companion, not a second
+  archive.)
+
+  A companion matches on its plain extension. `ContentPolicy` also reads a name with a trailing
+  dot or an alternate-data-stream suffix (`x.exe.`, `x.exe:$DATA`) as blocked; beside an archive
+  such a file is not a companion and the folder still refuses. That can only hold a release,
+  never publish a wrong one.
+
+  A companion is never published: it sits beside the archive, outside the scratch directory, and
+  only what the extracted archive resolves to reaches the library.
 
   ## Scratch directory
 
@@ -29,29 +57,99 @@ defmodule Cinder.Library.BookArchive do
     extraction from the same, untouched original archive — not a second, differently-named
     artifact competing with the first as a loose candidate file.
 
-  `Cinder.Library.EbookSources.resolve_folder/1`'s own directory walk excludes this exact
-  reserved name unconditionally (`scratch_dir_name/0`), so neither a fresh nor an orphaned
-  instance is ever mistaken for a second, unrelated book file.
+  Each resolver's own directory walk excludes this exact reserved name (`scratch_dir_name/0`)
+  before `archive_candidate/1` sees the folder, so neither a fresh nor an orphaned instance is
+  ever mistaken for a second, unrelated book file.
   """
 
+  alias Cinder.Download.ContentPolicy
   alias Cinder.Library
   alias Cinder.Library.BookArchive.{Rar, Zip}
 
   @scratch_dir_name ".cinder-extract"
+  @archive_extensions ~w(.rar .zip .7z .gz .bz2 .xz .tar .cbz .cbr)
   @zip_extensions ~w(.zip .cbz)
   @rar_extensions ~w(.rar .cbr)
+  @extractable_extensions @zip_extensions ++ @rar_extensions
+  @companion_extensions ~w(.nfo .sfv .md5 .par2 .txt .url .jpg .jpeg .png)
 
   @doc "The reserved scratch-directory basename — excluded from every folder candidate scan."
   @spec scratch_dir_name() :: String.t()
   def scratch_dir_name, do: @scratch_dir_name
 
   @doc """
-  Extracts `archive_path` (already confirmed to be a `.zip`/`.cbz`/`.rar`/`.cbr` — the caller
-  picks which single archive this is, including resolving a split `.rNN` set to its `.rar`
-  main volume; this module only ever handles one file) to the scratch directory, then calls
-  `resolve_fun` on it. The scratch directory survives a success (see the moduledoc); a failure
-  removes it, so a refused attempt does not accumulate partial extraction garbage under the
-  import root.
+  Whether `path` is an archive, extractable or not. `.rNN`-style split volumes count alongside
+  the named archive extensions: a multipart RAR set is still an archive, and its first part
+  often carries the only recognizable extension.
+  """
+  @spec archive?(String.t()) :: boolean()
+  def archive?(path), do: extension(path) in @archive_extensions or rar_volume?(path)
+
+  @doc "Whether `path` is an archive `extract_and_resolve/3` extracts: `.zip`/`.cbz`/`.rar`/`.cbr`."
+  @spec extractable?(String.t()) :: boolean()
+  def extractable?(path), do: extension(path) in @extractable_extensions
+
+  @doc """
+  Picks the one archive to extract from a download folder's walked `paths`.
+
+  `:none` when no path is an archive: the caller resolves the loose files as they are. `{:ok,
+  archive_path}` when exactly one archive sits there with nothing but companions beside it (see
+  the moduledoc): either a single `.zip`/`.cbz`/`.rar`/`.cbr`, or a split `.rNN` set whose one
+  `.rar`/`.cbr` main volume is the file `unrar` is pointed at (it locates the numbered siblings
+  itself). Anything else — an archive beside a file off the companion list, multiple distinct
+  archives, a `.rNN` set with no main volume present, or a lone `.7z` — is
+  `{:error, :unsupported_archive}`.
+  """
+  @spec archive_candidate([String.t()]) ::
+          :none | {:ok, String.t()} | {:error, :unsupported_archive}
+  def archive_candidate(paths) do
+    archives = Enum.filter(paths, &archive?/1)
+    non_archives = Enum.reject(paths -- archives, &companion?/1)
+
+    cond do
+      archives == [] -> :none
+      non_archives != [] -> {:error, :unsupported_archive}
+      true -> pick_archive(archives)
+    end
+  end
+
+  defp pick_archive(archives) do
+    mains = Enum.filter(archives, &(extension(&1) in @rar_extensions))
+    zips = Enum.filter(archives, &(extension(&1) in @zip_extensions))
+    # NOTE: `--` is right-associative in Elixir (unlike arithmetic `-`) - parens are load-bearing,
+    # not stylistic; `archives -- mains -- zips` silently no-ops to `archives` whenever `mains`
+    # is empty, which is every zip-only release.
+    volumes = (archives -- mains) -- zips
+
+    cond do
+      zips == [] and length(mains) == 1 and Enum.all?(volumes, &rar_volume?/1) ->
+        {:ok, hd(mains)}
+
+      mains == [] and volumes == [] and length(zips) == 1 ->
+        {:ok, hd(zips)}
+
+      true ->
+        {:error, :unsupported_archive}
+    end
+  end
+
+  # Read at call time, never copied, so an install's configured blocked list counts too.
+  defp companion?(path) do
+    extension = extension(path)
+    extension in @companion_extensions or extension in ContentPolicy.blocked_extensions()
+  end
+
+  defp rar_volume?(path), do: Regex.match?(~r/^\.r\d{2}$/u, extension(path))
+
+  defp extension(path), do: String.downcase(Path.extname(path))
+
+  @doc """
+  Extracts `archive_path` (already confirmed to be a `.zip`/`.cbz`/`.rar`/`.cbr` —
+  `archive_candidate/1` picks which single archive a folder holds, including resolving a split
+  `.rNN` set to its `.rar` main volume; this function only ever handles one file) to the
+  scratch directory, then calls `resolve_fun` on it. The scratch directory survives a success
+  (see the moduledoc); a failure removes it, so a refused attempt does not accumulate partial
+  extraction garbage under the import root.
 
   `opts` (`:max_entries`, `:max_expanded_size`) is forwarded to whichever extractor `extract/3`
   dispatches to — both `Zip.extract/3` and `Rar.extract/3` already accept and apply it, but this
@@ -82,12 +180,12 @@ defmodule Cinder.Library.BookArchive do
   end
 
   # The one containment/symlink/extension check every other candidate this module hands to
-  # `resolve/1` already gets — `resolve_folder/1`'s callers already validated it via
-  # `Library.safe_walk/1`, but `resolve_file/1`'s single-path caller has not, since today it
-  # refuses an archive before ever reaching a containment check. Closing that gap here means
-  # extraction never even opens a path this module has not itself confirmed is safe to read.
+  # `resolve/1` already gets — a resolver's `resolve_folder/2` already validated it via
+  # `Library.safe_walk/1`, but its `resolve_file/2` hands a bare archive path here with no
+  # containment check of its own. Closing that gap here means extraction never even opens a path
+  # this module has not itself confirmed is safe to read.
   defp safe_archive_source(archive_path),
-    do: Library.safe_source_file(archive_path, @zip_extensions ++ @rar_extensions)
+    do: Library.safe_source_file(archive_path, @extractable_extensions)
 
   defp reset_scratch_dir(scratch_dir) do
     with {:ok, _removed} <- File.rm_rf(scratch_dir) do
@@ -96,7 +194,7 @@ defmodule Cinder.Library.BookArchive do
   end
 
   defp extract(archive_path, scratch_dir, opts) do
-    extension = String.downcase(Path.extname(archive_path))
+    extension = extension(archive_path)
 
     cond do
       extension in @zip_extensions -> Zip.extract(archive_path, scratch_dir, opts)
