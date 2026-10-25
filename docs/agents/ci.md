@@ -70,6 +70,13 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   accepted advisories from `ignore_advisories` in `mix.exs` (`hex/0`), each with a rationale
   comment. For Debian packages Trivy flags that a fresh `apt-get upgrade` fixes, set the
   Dockerfile's `APT_REFRESH` to today's date so the cached layer rebuilds.
+- **Dependency rebuild.** A `mix.lock`, OTP or Elixir change misses the compiled-deps caches,
+  so `test` and `dependency-audit` rebuild every dependency and download precompiled NIFs from
+  GitHub releases. Erlang's `:httpc` refuses a response whose headers pass 10240 bytes (OTP 29),
+  and GitHub's release redirect has passed that (#867), so a download can print
+  `does not exist or cannot download: :enoent`. elixir_make then builds the NIF from source,
+  lazy_html with the `cmake` that `test` installs on a miss, so that line alone is not the
+  failure. The image build fetches Tailwind with `curl` for the same reason.
 
 ## Re-running CI
 

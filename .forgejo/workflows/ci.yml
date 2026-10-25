@@ -54,11 +54,18 @@ jobs:
       # itself, so with a bare `_build/test/lib` the whole directory, Cinder included, was
       # archived (observed in this PR's first runs).
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: deps-build
         with:
           path: |
             _build/test/lib/*
             !_build/test/lib/cinder
           key: ${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-deps-build-test-${{ hashFiles('**/mix.lock') }}
+
+      # #867: on a miss, a precompiled NIF download from GitHub can fail on OTP 29 :httpc's
+      # header cap (docs/agents/ci.md "Dependency rebuild"). elixir_make then builds the NIF
+      # from source: exqlite needs only the image's C compiler, lazy_html also needs cmake.
+      - if: steps.deps-build.outputs.cache-hit != 'true'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake
 
       - run: mix deps.get
 
@@ -102,7 +109,7 @@ jobs:
 
       # `mix deps.audit` is a task from a dependency, so Mix compiles every dependency
       # (dev env) before it runs: 2m34s of a 3-minute job (2026-10-12). Same rules as the
-      # test job's build cache.
+      # test job's build cache. A miss needs no cmake here: lazy_html is a test-only dependency.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -111,9 +118,10 @@ jobs:
           key: ${{ runner.os }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-deps-build-dev-${{ hashFiles('**/mix.lock') }}
 
       - run: mix deps.get
-      # hex.audit = retired packages; deps.audit (mix_audit) = CVEs vs the Elixir
-      # Security Advisory DB. Disjoint checks, keep both. deps.audit fails open if
-      # it can't reach github.com to sync advisories — fine on hosted runners.
+      # hex.audit = retired packages and Hex.pm security advisories (accepted ones
+      # in `ignore_advisories`, mix.exs `hex/0`); deps.audit (mix_audit) = CVEs vs
+      # the Elixir Security Advisory DB. Keep both. deps.audit fails open if it
+      # can't reach github.com to sync advisories; the runner reaches it.
       - run: mix hex.audit
       - run: mix deps.audit
 

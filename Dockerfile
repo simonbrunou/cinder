@@ -24,8 +24,26 @@ FROM ${BUILDER_IMAGE} AS builder
 
 # install build dependencies
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential git \
+  && apt-get install -y --no-install-recommends build-essential git curl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
+
+# Tailwind comes from curl, not from `mix assets.setup`: its installer downloads with Erlang's
+# :httpc, which fails on GitHub's release redirect when its headers pass OTP 29's 10240-byte cap
+# (#867, docs/agents/ci.md "Dependency rebuild"). MIX_TAILWIND_PATH feeds
+# `config :tailwind, path:`, so `tailwind.install --if-missing` finds the configured version there
+# and downloads nothing.
+# TAILWIND_VERSION must equal `config :tailwind, version:` (test/code_health_test.exs checks it);
+# take the new sums from the release's sha256sums.txt when you bump it.
+ARG TAILWIND_VERSION=4.1.12
+ENV MIX_TAILWIND_PATH=/usr/local/bin/tailwindcss
+RUN case "$(dpkg --print-architecture)" in \
+    amd64) target=linux-x64 sum=5eeee66ea237eae9a160fa3314fd0cf76ab993551a99fafb16fa1db6c6b90289 ;; \
+    arm64) target=linux-arm64 sum=181332974fff1b3423ad75d6a2f1d09adf1ca63eb1324db0afbc4c30ff1ad086 ;; \
+    *) echo "no Tailwind binary pinned for $(dpkg --print-architecture)" >&2; exit 1 ;; \
+  esac \
+  && curl -fsSL -o "$MIX_TAILWIND_PATH" "https://github.com/tailwindlabs/tailwindcss/releases/download/v${TAILWIND_VERSION}/tailwindcss-${target}" \
+  && echo "${sum}  ${MIX_TAILWIND_PATH}" | sha256sum -c - \
+  && chmod +x "$MIX_TAILWIND_PATH"
 
 # prepare build dir
 WORKDIR /app
@@ -81,7 +99,7 @@ FROM ${RUNNER_IMAGE} AS final
 # `apt-get upgrade` (Trivy then fails `container` on curl, librsvg2... that are already fixed).
 # The RUN echoes APT_REFRESH, so changing it rebuilds the layer: set it to today's date when
 # `container` flags OS packages that a fresh `apt-get upgrade` fixes.
-ARG APT_REFRESH=2026-10-19
+ARG APT_REFRESH=2026-10-24
 RUN echo "Debian packages refreshed ${APT_REFRESH}" \
   && apt-get update \
   && apt-get upgrade -y \

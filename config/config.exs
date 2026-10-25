@@ -190,6 +190,9 @@ config :esbuild,
 # Configure tailwind (the version is required)
 config :tailwind,
   version: "4.1.12",
+  # The image build installs a pinned binary here (Dockerfile, #867). Unset, the installer
+  # downloads the version above into _build.
+  path: System.get_env("MIX_TAILWIND_PATH"),
   cinder: [
     args: ~w(
       --input=assets/css/app.css

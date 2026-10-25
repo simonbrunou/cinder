@@ -3,7 +3,8 @@ defmodule Cinder.CodeHealthTest do
   Guards against a single `lib/` file regrowing into an unreviewable mega-module (the trigger for
   the 2026-07-26 `Cinder.Catalog` split), and fences the module boundaries earlier refactors
   drew: the catalog's split by concept (#740), the staging engine (#739) and the guarded-write
-  adapters (#743). It also keeps new changelog entries in `changelog.d/` (#843).
+  adapters (#743). It also keeps new changelog entries in `changelog.d/` (#843), and the
+  Dockerfile's Tailwind pin on the configured version (#867).
   """
   use ExUnit.Case, async: true
 
@@ -121,6 +122,20 @@ defmodule Cinder.CodeHealthTest do
 
   defp exported?(module, fun),
     do: Code.ensure_loaded?(module) and Keyword.has_key?(module.__info__(:functions), fun)
+
+  # #867: the Dockerfile fetches Tailwind with curl against pinned sha256 sums. On a version
+  # mismatch, `tailwind.install --if-missing` replaces that binary with its own unverified download,
+  # or fails on the GitHub redirect the curl step avoids.
+  test "the Dockerfile pins the Tailwind version config.exs asks for" do
+    pinned =
+      Regex.run(~r/^ARG TAILWIND_VERSION=(\S+)$/m, File.read!("Dockerfile"),
+        capture: :all_but_first
+      )
+
+    assert pinned == [Application.fetch_env!(:tailwind, :version)],
+           "bump the Dockerfile's ARG TAILWIND_VERSION and both of its sha256 sums together " <>
+             "with `config :tailwind, version:`"
+  end
 
   # #739: the engine's scratch-file names are its own. Tests other than the staged-import ones
   # reach them through `Cinder.LibraryStubs`, so renaming them touches two files.

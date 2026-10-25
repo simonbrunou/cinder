@@ -39,6 +39,8 @@ site:
   media-server fallback is the Plex option's `os_env` in `Cinder.Settings.Registry`, and
   `Cinder.Settings.Shape` reads it for the overlay and the form.
 - `lib/cinder_web/router.ex` reads the `CINDER_BASIC_AUTH_*` pair for the Basic gate.
+- `config/config.exs` reads `MIX_TAILWIND_PATH` into `config :tailwind, path:` each time Mix
+  loads its config. Only the image build sets it, to its pinned Tailwind binary (#867).
 
 ## Secrets
 
