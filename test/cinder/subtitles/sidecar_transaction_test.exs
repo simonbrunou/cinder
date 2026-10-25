@@ -145,7 +145,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     } do
       assert {:ok, :corrected, _} = manual(video, 1_000)
       assert File.read!(backup) == original
-      assert File.read!(path) =~ "00:00:02,000"
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
 
       assert {:ok, :corrected, _} = manual(video, 2_000)
       assert File.read!(backup) == original
@@ -268,15 +268,65 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert Manifest.sync(Manifest.read(video), "en") == nil
     end
 
-    test "a descriptor close failure after a committed exchange keeps the correction", %{
+    test "a staged descriptor that fails to close after the exchange keeps the pending record", %{
       video: video,
-      path: path
+      path: path,
+      original: original,
+      backup: backup
     } do
-      fail_once(%{operation: :close_bound, source_contains: "/proc/", reason: :eio})
+      {result, _log} = fail_close_after_exchange(path, [:staged], fn -> manual(video, 1_000) end)
 
+      assert {:error, {:publication_committed, {:descriptor_close_failed, :eio}}} = result
+      assert_unacknowledged_correction(video, path, original, backup)
+    end
+
+    test "staged and directory descriptors that both fail to close keep the pending record", %{
+      video: video,
+      path: path,
+      original: original,
+      backup: backup
+    } do
+      {result, _log} =
+        fail_close_after_exchange(path, [:staged, :directory], fn -> manual(video, 1_000) end)
+
+      assert {:error, {:publication_committed, {:descriptor_close_failed, :eio}}} = result
+      assert_unacknowledged_correction(video, path, original, backup)
+    end
+
+    test "a target descriptor that fails to close after the exchange keeps the pending record", %{
+      video: video,
+      path: path,
+      original: original,
+      backup: backup
+    } do
+      {result, _log} = fail_close_after_exchange(path, [:target], fn -> manual(video, 1_000) end)
+
+      assert {:error, {:publication_committed, {:descriptor_close_failed, :eio}}} = result
+      assert_unacknowledged_correction(video, path, original, backup)
+    end
+
+    test "a descriptor that fails to close after a failed exchange restores the previous record",
+         %{
+           video: video,
+           path: path
+         } do
       assert {:ok, :corrected, _} = manual(video, 1_000)
-      assert File.read!(path) =~ "00:00:02,000"
-      assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
+      previous = File.read!(path)
+      previous_record = Manifest.sync(Manifest.read(video), "en")
+
+      fail_in_order([
+        %{operation: :exchange, source_contains: ".cinder-subtitle-sync-write-", reason: :eio},
+        %{
+          operation: :close_bound,
+          source_contains: ".cinder-subtitle-sync-write-staged",
+          reason: :eio
+        }
+      ])
+
+      assert {:error, {:descriptor_close_failed, :eio}} = manual(video, 2_000)
+      assert Application.get_env(:cinder, :filesystem_failures) == nil
+      assert File.read!(path) == previous
+      assert Manifest.sync(Manifest.read(video), "en") == previous_record
     end
 
     test "a post-effect exchange failure leaves the pending record for recovery", %{
@@ -293,12 +343,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       })
 
       assert {:error, {:publication_committed, _reason}} = manual(video, 1_000)
-      assert File.read!(path) =~ "00:00:02,000"
-      assert File.read!(backup) == original
-      assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
-
-      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
-      assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
+      assert_unacknowledged_correction(video, path, original, backup)
     end
 
     test "a post-effect staged discard failure leaves the pending record for recovery", %{
@@ -315,11 +360,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       })
 
       assert {:error, {:publication_committed, _reason}} = manual(video, 1_000)
-      assert File.read!(path) =~ "00:00:02,000"
-      assert File.read!(backup) == original
-      assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
-
-      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+      assert_unacknowledged_correction(video, path, original, backup)
     end
 
     test "a failed final record rolls back the bytes and the original it created", %{
@@ -559,7 +600,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
       assert [staged] = workspace_staged_files(path)
       assert File.read!(staged) == ""
-      assert File.read!(path) =~ "00:00:02,000"
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
     end
 
     test "identical correct and reset cycles never collide with a retired workspace", %{
@@ -569,7 +610,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     } do
       for _cycle <- 1..2 do
         assert {:ok, :corrected, _} = manual(video, 1_000)
-        assert File.read!(path) =~ "00:00:02,000"
+        assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
         assert :ok = reset(video)
         assert File.read!(path) == original
       end
@@ -627,7 +668,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
       assert {:ok, :corrected, _} = manual(video, 1_000)
       assert {:error, :pending_workspace_mismatch} = reset(video)
-      assert File.read!(path) =~ "00:00:02,000"
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
       for outside <- outside_links, do: assert(File.read!(outside) == "")
     end
   end
@@ -756,7 +797,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       File.write!(path, original)
 
       assert {:ok, %{sync: ^record}} = recover(video)
-      assert File.read!(path) =~ "00:00:02,000"
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
       assert File.read!(backup) == original
     end
 
@@ -809,7 +850,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
       assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
       assert File.read!(Path.join(workspace, ".cinder-subtitle-sync-write-staged")) == ""
-      assert File.read!(path) =~ "00:00:02,000"
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
     end
 
     test "finalizes a publication killed after its exchange emptied the workspace", %{
@@ -821,7 +862,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
       assert [staged] = workspace_staged_files(path)
       assert File.read!(staged) == ""
-      assert File.read!(path) =~ "00:00:02,000"
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
       assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
 
       assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
@@ -1397,6 +1438,26 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(download) == original
     end
 
+    test "a descriptor that fails to close after the fetch's exchange still records the track", %{
+      video: video,
+      path: path
+    } do
+      {result, log} =
+        fail_close_after_exchange(
+          path,
+          [:staged],
+          fn -> replace(video, @replacement) end,
+          :unlink
+        )
+
+      assert :ok = result
+      assert log =~ "subtitle publication unacknowledged"
+      assert File.read!(path) == @replacement
+      assert %{managed_sha256: managed} = Manifest.read(video).tracks["en"]
+      assert managed == digest(@replacement)
+      assert workspaces(path) == []
+    end
+
     test "a post-effect exchange failure still records the fetched track", %{
       video: video,
       path: path
@@ -1567,6 +1628,23 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     } do
       assert {:ok, :corrected, _} = manual(video, 1_000)
       assert {:ok, ^original} = SidecarTransaction.original(sidecar(video), File.read!(path))
+    end
+  end
+
+  describe "AtomicFile.write/3" do
+    test "a descriptor that fails to close after the exchange reports the bytes published", %{
+      path: path,
+      original: original
+    } do
+      corrected = shifted(original)
+
+      {result, _log} =
+        fail_close_after_exchange(path, [:staged], fn ->
+          SidecarTransaction.AtomicFile.write(path, corrected, original)
+        end)
+
+      assert {:error, {:publication_committed, {:descriptor_close_failed, :eio}}} = result
+      assert File.read!(path) == corrected
     end
   end
 
@@ -1755,6 +1833,57 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   defp fail_in_order(failures) do
     Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
     Application.put_env(:cinder, :filesystem_failures, failures)
+  end
+
+  # Runs `fun` until the exchange onto `path` committed and the displaced inode was disposed of
+  # (`:discard` empties it for `write/3` and `write/4`, `:unlink` removes its workspace name for
+  # `swap/3`), then fails the next close of each descriptor in order: `:staged`, `:target`, or the
+  # workspace `:directory` (only after `:staged`, whose path it contains). Armed any earlier, a
+  # failure would hit the identity probes that verify the exchange instead. Returns `fun`'s result
+  # and the log, after checking every injected failure fired.
+  defp fail_close_after_exchange(path, descriptors, fun, disposal \\ :discard) do
+    use_barrier(disposal_barrier(disposal, path))
+
+    {result, log} =
+      with_log(fn ->
+        task = Task.async(fun)
+        assert_receive {:filesystem_barrier, pid, ref, _disposal, _displaced}, 15_000
+
+        fail_in_order(
+          for descriptor <- descriptors,
+              do: %{
+                operation: :close_bound,
+                source_contains: close_source(descriptor, path),
+                reason: :eio
+              }
+        )
+
+        send(pid, {ref, :continue})
+        Task.await(task, 15_000)
+      end)
+
+    assert Application.get_env(:cinder, :filesystem_failures) == nil
+    {result, log}
+  end
+
+  defp disposal_barrier(:discard, path), do: %{operation: :discard_bound, contains: path}
+
+  defp disposal_barrier(:unlink, _path),
+    do: %{operation: :rm, contains: ".cinder-subtitle-sync-write-staged"}
+
+  defp close_source(:staged, _path), do: ".cinder-subtitle-sync-write-staged"
+  defp close_source(:target, path), do: path
+  defp close_source(:directory, _path), do: ".cinder-subtitle-sync-cas-"
+
+  # A correction whose exchange committed unacknowledged: the corrected bytes and the pending
+  # record stay until `recover/2` records them.
+  defp assert_unacknowledged_correction(video, path, original, backup) do
+    assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+    assert File.read!(backup) == original
+    assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
+
+    assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+    assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
   end
 
   # Runs `fun` until it reaches the barrier at `operation`, then kills it there: a crash at that

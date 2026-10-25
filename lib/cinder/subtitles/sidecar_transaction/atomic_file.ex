@@ -44,9 +44,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   defp create_authorized_workspace(target, directory, staged_path, content, expected_current) do
     case mkdir_workspace(directory, target) do
       :ok ->
-        with_bound(directory, [:read, :raw, :binary], fn _directory_bound ->
-          {:directory_bound_result,
-           atomic_operation(target, staged_path, content, expected_current, :discard)}
+        in_workspace(directory, fn ->
+          atomic_operation(target, staged_path, content, expected_current, :discard)
         end)
 
       {:error, :eexist} ->
@@ -59,6 +58,22 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
         error
     end
   end
+
+  # Runs `operation` with the workspace directory held open. A publication's committed marker
+  # becomes its result only here, after the staged and target descriptors closed, so a close
+  # failure after the effect stays a committed publication (`finish_bound_operation/2`).
+  defp in_workspace(directory, operation) do
+    with_bound(directory, [:read, :raw, :binary], fn _directory_bound ->
+      {:directory_bound_result, acknowledged(operation.())}
+    end)
+  end
+
+  defp acknowledged({:committed, :ok}), do: :ok
+
+  defp acknowledged({:committed_unacknowledged, reason}),
+    do: {:error, {:publication_committed, reason}}
+
+  defp acknowledged(result), do: result
 
   # On mergerfs the workspace lands on the anchor's backing branch, so the anchor must exist.
   defp mkdir_workspace(directory, anchor) do
@@ -112,11 +127,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          {:ok, directory} <- safe_destination(directory),
          {:ok, staged_path} <- safe_destination(staged_path),
          :ok <- mkdir_workspace(directory, swap_anchor(target, from)) do
-      result =
-        with_bound(directory, [:read, :raw, :binary], fn _directory_bound ->
-          {:directory_bound_result, swap_in_workspace(target, staged_path, from, to)}
-        end)
-
+      result = in_workspace(directory, fn -> swap_in_workspace(target, staged_path, from, to) end)
       remove_swap_workspace(directory)
       settle_unverified(result, target, to)
     end
@@ -473,18 +484,17 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   end
 
   defp reuse_authorized_workspace(target, directory, staged_path, content, expected_current) do
-    with_bound(directory, [:read, :raw, :binary], fn _directory_bound ->
-      {:directory_bound_result,
-       with_bound(target, [:read, :raw, :binary], fn current ->
-         reuse_bound_workspace(
-           target,
-           staged_path,
-           current,
-           content,
-           expected_current,
-           :discard
-         )
-       end)}
+    in_workspace(directory, fn ->
+      with_bound(target, [:read, :raw, :binary], fn current ->
+        reuse_bound_workspace(
+          target,
+          staged_path,
+          current,
+          content,
+          expected_current,
+          :discard
+        )
+      end)
     end)
   end
 
@@ -919,23 +929,27 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   defp finish_bound_operation({:returned, result}, :ok), do: result
 
-  defp finish_bound_operation({:returned, {:committed, _result} = committed}, {:error, reason}) do
+  # The bytes are published, but the failed close leaves them unacknowledged: the caller gets
+  # `{:publication_committed, _}`, so a correction keeps its pending record for
+  # `SidecarTransaction.recover/2`.
+  defp finish_bound_operation({:returned, {:committed, :ok}}, {:error, reason}) do
     Logger.warning(
       "descriptor close failed after committed subtitle publication: #{inspect(reason)}"
     )
 
-    committed
+    {:committed_unacknowledged, {:descriptor_close_failed, reason}}
   end
 
   defp finish_bound_operation(
-         {:returned, {:committed_unacknowledged, _reason} = committed},
+         {:returned, {:committed_unacknowledged, committed_warning}},
          {:error, reason}
        ) do
     Logger.warning(
       "descriptor close failed after unacknowledged subtitle publication: #{inspect(reason)}"
     )
 
-    committed
+    {:committed_unacknowledged,
+     merge_committed_warnings(committed_warning, {:descriptor_close_failed, reason})}
   end
 
   defp finish_bound_operation({:returned, _result}, {:error, reason}),
@@ -944,16 +958,11 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   defp finish_bound_operation({:raised, kind, reason, stacktrace}, _close_result),
     do: :erlang.raise(kind, reason, stacktrace)
 
-  defp finish_atomic_operation({:committed, :ok}, _disposal, _staged_path, _identity),
-    do: :ok
-
-  defp finish_atomic_operation(
-         {:committed_unacknowledged, reason},
-         _disposal,
-         _staged_path,
-         _identity
-       ),
-       do: {:error, {:publication_committed, reason}}
+  # A committed marker leaves the staged and target bounds as it is: `in_workspace/2` turns it
+  # into the result once they closed.
+  defp finish_atomic_operation({marker, _detail} = committed, _disposal, _staged_path, _identity)
+       when marker in [:committed, :committed_unacknowledged],
+       do: committed
 
   # A rolled-back exchange put our own staged inode back in the workspace, already emptied.
   defp finish_atomic_operation({:rolled_back, {:error, _reason} = error}, :unlink, path, staged) do
