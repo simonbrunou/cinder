@@ -467,8 +467,10 @@ defmodule Cinder.HTTPPolicyTest do
                  100
                )
 
+      # 1 s, not 300 ms: a loaded CI runner took 436 ms (#908). A deadline of 1 s or more still
+      # fails this bound, and a request that ran to the stub's 5 s valve fails the match above.
       elapsed = System.monotonic_time(:millisecond) - started_at
-      assert elapsed < 300
+      assert elapsed < 1_000
       assert_received {:request_started, request_pid}
       refute request_pid == self()
       refute Process.alive?(request_pid)

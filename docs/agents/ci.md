@@ -45,12 +45,13 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   diff, and the identical tree went green elsewhere (`git diff --stat <green sha> <red sha>`
   prints nothing). A red run never counts as green.
 - **Wall-clock tests.** #637 (for #636) widened the subprocess bounds that raced process startup
-  on the runner to 1 s. Two tight-bound tests still fail now and then on diffs that do not touch
-  them: `Cinder.HTTPPolicyTest` "cancels a request blocked before headers at the wall-clock
-  deadline" (a 100 ms deadline asserted under 300 ms), and
-  `Cinder.Library.Filesystem.DiskBoundedTest` "run_rooted's sync_parent timeout is reported
-  distinctly from a malformed helper, and the OS process is killed" (it got `{:error, :rooted_helper_timeout}` instead). Apply
-  the flake rule before re-running.
+  on the runner to 1 s. After a 436 ms run on #908, `Cinder.HTTPPolicyTest` "cancels a request
+  blocked before headers at the wall-clock deadline" keeps its 100 ms deadline but asserts the
+  elapsed time under 1 s instead of 300 ms. One tight-bound test still fails now and then on
+  diffs that do not touch it: `Cinder.Library.Filesystem.DiskBoundedTest` "run_rooted's
+  sync_parent timeout is reported distinctly from a malformed helper, and the OS process is
+  killed" (it got `{:error, :rooted_helper_timeout}` instead). Apply the flake rule before
+  re-running.
 - **Shared state.** Check order-dependent state before blaming a flake or a new test: the
   always-on `:login_pair` bucket of `Cinder.Accounts.IpRateLimiter`, keyed on the IP and the
   name (#686), and the suite-wide `Cinder.Subtitles.Fetcher` consuming another module's Mox
