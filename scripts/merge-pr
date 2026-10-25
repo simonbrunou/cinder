@@ -116,7 +116,8 @@ while IFS= read -r context; do
   echo "$context: $status"
   case $status in
     success) ;;
-    pending | missing) fail "CI has not finished on $sha; wait with: fj pr -R origin status $pr --wait" ;;
+    pending) fail "CI has not finished on $sha; wait with: python3 -I ~/.agents/skills/forgejo-issues/scripts/forgejo.py ci cinder $sha" ;;
+    missing) fail "no '$context' status on $sha; while CI starts, wait with: python3 -I ~/.agents/skills/forgejo-issues/scripts/forgejo.py ci cinder $sha; once it has finished, the job reports under a name: key (see the comment above the contexts)" ;;
     *) fail "CI is red on $sha ($context: $status)" ;;
   esac
 done <<<"$contexts"

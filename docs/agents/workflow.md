@@ -80,8 +80,9 @@ itself is in [CONTRIBUTING.md](../../CONTRIBUTING.md) "Releasing (maintainers)".
    mirror with `curl -s -X POST -H "Authorization: token $FJ_TOKEN" "$API/push_mirrors-sync"`
    ([issue-tracker.md](issue-tracker.md) for the token). Then wait for `release.yml` on GitHub:
    `gh run list -R simonbrunou/cinder --workflow release.yml --limit 1` gives the run id, and
-   `gh run watch <run id> -R simonbrunou/cinder --exit-status` waits for it (the multi-arch build
-   takes about 20 minutes).
+   `gh run watch <run id> -R simonbrunou/cinder --exit-status` waits for it. The multi-arch build
+   takes about 20 minutes, longer than one 600 s Bash call, so run the watch again each time the
+   call times out.
 5. Check the registry, not the workflow's exit code: `scripts/verify-ghcr-release.sh <version>`.
 
 - `latest` follows the most recently pushed tag, not the highest version (`release.yml`). To

@@ -19,7 +19,14 @@
 
 Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
 
-- Wait for a PR's CI with `fj pr -R origin status <n> --wait`. For one SHA:
+- Wait for CI on a pushed SHA with `forgejo.py ci cinder <sha>` (the shorthand from
+  [issue-tracker.md](issue-tracker.md)) in one foreground Bash call with timeout 600000. Exit 3
+  means still pending, so run it again. Exit 4 means no workflow ran for that commit: `ci.yml`
+  runs on `pull_request` and on pushes to `main`, so a branch pushed before its PR exists gets
+  no run. The Forgejo CI bullet of the global CLAUDE.md lists every exit code.
+  `fj pr -R origin status <n> --wait` blocks until the whole run ends, which outlasts the Bash
+  cap once the shared runner queues jobs, and fails while a commit has no check yet. For one
+  SHA's raw statuses:
   `curl ... "$API/commits/<sha>/status" | jq '{state, statuses: [.statuses[] | {context, status}]}'`.
 - Job logs: `curl ... -o logs.zip "$API/actions/runs/<run id>/logs"` returns a zip with
   one `<job>-<task id>-attempt-<n>.log` per job. Find the run id from the head SHA with

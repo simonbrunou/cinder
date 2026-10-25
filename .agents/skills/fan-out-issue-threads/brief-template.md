@@ -39,8 +39,9 @@ where the `ship-cinder-pr-on-forgejo` skill differs.
 
 - Other threads merge while you work, and CI is one shared runner. Batch commits and push once
   per review round.
-- Wait for CI in the foreground, with a polling loop inside one Bash call under its timeout. A
-  background process dies when your turn ends. Retrigger a flaky run with an empty commit.
+- Wait for CI in the foreground with `forgejo.py ci`, rerunning it while it exits 3, as
+  [ci.md](docs/agents/ci.md) "Reading a run" says. A background process dies when your turn
+  ends. Retrigger a flaky run with an empty commit.
 - Read a red job's log before calling it infrastructure.
 - Run the final `git fetch origin` and the merge call as two separate steps. Between them,
   re-check the "Merge authority" conditions against the fresh `origin/main`.
