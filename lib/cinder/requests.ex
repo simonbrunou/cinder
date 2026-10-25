@@ -235,7 +235,8 @@ defmodule Cinder.Requests do
 
   @doc """
   Whether an approval can create `ref`'s target. The same `Approval.adapter/1` answer
-  `create_request/2` and `approve_request/3` act on, for a view that offers a request action.
+  `create_request/2`, `approve_request/3` and `reopen_request/2` act on, for a view that offers a
+  request action.
   """
   @spec approvable_target?(Target.ref()) :: boolean()
   def approvable_target?(ref), do: match?({:ok, _adapter}, Approval.adapter(ref))
@@ -575,18 +576,23 @@ defmodule Cinder.Requests do
   end
 
   @doc """
-  Reopens a denied request back to `:pending` (clearing the denial reason and
-  approver) so an admin can recover from a mistaken deny — the undo path for the
-  approval queue. Re-occupies the partial `requests_pending_unique` slot, so it
-  returns `{:error, changeset}` if a competing pending row for the same target
-  was created in the meantime.
+  Reopens a denied request back to `:pending` (clearing the denial reason and approver) so an
+  admin can recover from a mistaken deny — the undo path for the approval queue. Re-occupies the
+  partial `requests_pending_unique` slot, so it returns `{:error, changeset}` if a competing
+  pending row for the same target was created in the meantime.
+
+  A target type no approval can create is refused with `{:error, :unsupported_target}` and no
+  write: reopened, a legacy row filed before #770 would sit pending with no admin able to approve
+  it (#809).
   """
   def reopen_request(%Request{status: :denied} = request, %User{} = _admin) do
-    Repo.transaction(
-      fn -> reopen_denied_request(Repo.get(Request, request.id)) end,
-      mode: :immediate
-    )
-    |> Util.tap_ok(&broadcast({:request_created, &1}))
+    with {:ok, _adapter} <- Approval.adapter(request) do
+      Repo.transaction(
+        fn -> reopen_denied_request(Repo.get(Request, request.id)) end,
+        mode: :immediate
+      )
+      |> Util.tap_ok(&broadcast({:request_created, &1}))
+    end
   end
 
   def reopen_request(%Request{}, _admin), do: {:error, :not_denied}

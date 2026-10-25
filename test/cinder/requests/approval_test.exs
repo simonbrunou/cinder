@@ -187,6 +187,45 @@ defmodule Cinder.Requests.ApprovalTest do
       assert Repo.aggregate(Series, :count) == 0
     end
 
+    # Reopened, a denied legacy row would sit pending with no admin able to approve it: the
+    # #770 dead end again, reached from the admin side (#809).
+    for type <- ["series", "episode"] do
+      test "a denied #{type} is refused on reopen, stays denied and announces nothing" do
+        admin = admin_fixture()
+
+        request =
+          legacy_request!(user_fixture(), unquote(type),
+            status: :denied,
+            denial_reason: "not now",
+            approved_by_id: admin.id
+          )
+
+        Requests.subscribe()
+
+        assert {:error, :unsupported_target} = Requests.reopen_request(request, admin)
+
+        assert %Request{status: :denied, denial_reason: "not now", approved_by_id: approver_id} =
+                 Repo.reload!(request)
+
+        assert approver_id == admin.id
+        refute_received {:request_created, _}
+      end
+    end
+
+    for kind <- @kinds do
+      test "a denied #{kind} reopens to pending", ctx do
+        admin = admin_fixture()
+        {:ok, request} = Requests.create_request(user_fixture(), attrs(unquote(kind), ctx))
+        {:ok, denied} = Requests.deny_request(request, admin, "not now")
+        Requests.subscribe()
+
+        assert {:ok, %Request{status: :pending, denial_reason: nil, approved_by_id: nil}} =
+                 Requests.reopen_request(denied, admin)
+
+        assert_received {:request_created, %Request{status: :pending}}
+      end
+    end
+
     for kind <- @kinds do
       test "#{kind} is an approvable target", ctx do
         assert Requests.approvable_target?(attrs(unquote(kind), ctx))
@@ -208,14 +247,13 @@ defmodule Cinder.Requests.ApprovalTest do
   end
 
   # A row from before #770, filed when nothing refused a target type without an adapter.
-  defp legacy_request!(user, type) do
-    Repo.insert!(%Request{
-      user_id: user.id,
-      target_type: type,
-      target_id: 1399,
-      title: "Legacy #{type}",
-      status: :pending
-    })
+  defp legacy_request!(user, type, fields \\ []) do
+    Repo.insert!(
+      struct!(
+        %Request{user_id: user.id, target_type: type, target_id: 1399, title: "Legacy #{type}"},
+        fields
+      )
+    )
   end
 
   defp approve(:admin_approval, attrs, profile) do

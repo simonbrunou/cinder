@@ -141,9 +141,18 @@ defmodule CinderWeb.RequestsLive do
 
     socket =
       case req && Requests.reopen_request(req, socket.assigns.current_scope.user) do
-        {:ok, _} -> put_flash(socket, :info, gettext("Request reopened."))
-        nil -> socket
-        _ -> put_flash(socket, :error, gettext("Couldn't reopen that request."))
+        {:ok, _} ->
+          put_flash(socket, :info, gettext("Request reopened."))
+
+        nil ->
+          socket
+
+        # A denied row filed before #770: reopened, no admin could approve it (#809).
+        {:error, :unsupported_target} ->
+          put_flash(socket, :error, gettext("This kind of request isn't supported yet."))
+
+        _ ->
+          put_flash(socket, :error, gettext("Couldn't reopen that request."))
       end
 
     {:noreply, assign(socket, requests: Requests.list_requests())}

@@ -299,6 +299,28 @@ defmodule CinderWeb.RequestsLiveTest do
     assert %{status: :pending} = Cinder.Repo.reload(req)
   end
 
+  # A denied row from before #770: reopened, it would sit pending with no admin able to approve
+  # it (#809), so the copy says why instead of a generic failure.
+  test "reopening a request no approval can create says it isn't supported", %{conn: conn} do
+    req =
+      Cinder.Repo.insert!(%Cinder.Requests.Request{
+        user_id: user_fixture().id,
+        target_type: "series",
+        target_id: 1399,
+        title: "Legacy series",
+        status: :denied,
+        denial_reason: "later"
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+
+    lv |> element("button[phx-click='reopen'][phx-value-id='#{req.id}']") |> render_click()
+
+    assert has_element?(lv, "#flash-error", "This kind of request isn't supported yet.")
+    refute has_element?(lv, "#flash-error", "Couldn't reopen that request.")
+    assert %{status: :denied, denial_reason: "later"} = Cinder.Repo.reload(req)
+  end
+
   test "bulk approve approves every selected pending request", %{conn: conn} do
     user = user_fixture()
 
