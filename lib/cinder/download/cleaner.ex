@@ -17,9 +17,13 @@ defmodule Cinder.Download.Cleaner do
   least one configured limit has been reached. Missing client metrics fail closed.
 
   A completed **usenet** entry has nothing to seed, so it is removed once nothing owns it and the
-  client reports it completed over an hour ago (an import may still be finishing just after the
-  owner is released) — but only while the "Remove download after a Usenet import" setting
-  (`move_on_import`) is on, the same rule `Cinder.Download.remove_after_import/4` applies.
+  client reports it completed over an hour ago — but only while the "Remove download after a
+  Usenet import" setting (`move_on_import`) is on, the same rule
+  `Cinder.Download.remove_after_import/4` applies.
+
+  The ownership check and the removals run under the household import lock
+  (`Cinder.Library.StagedImport.run/1`), so a sweep never removes a download whose import has
+  released its owner but is still settling.
 
   **On by default** — the shipped `config/config.exs` sets `enabled: true`. (`enabled?/0`'s own
   fallback is `false`, so an install with no config block at all stays off — fail-safe, mirroring
@@ -35,12 +39,13 @@ defmodule Cinder.Download.Cleaner do
   alias Cinder.Catalog.{Grab, Movie}
   alias Cinder.Download
   alias Cinder.Download.Intent
+  alias Cinder.Library.StagedImport
   alias Cinder.Repo
 
   @default_interval :timer.hours(1)
 
   # Far longer than any one import (even a season pack's per-file stage commits and media-server
-  # refreshes), so a sweep can't reap a download whose import is still wrapping up.
+  # refreshes): the second guard behind the import lock in `reap_unclaimed/3`.
   @usenet_grace_seconds 3600
 
   use Cinder.Download.PollerSkeleton,
@@ -64,8 +69,7 @@ defmodule Cinder.Download.Cleaner do
          {:ok, entries} <- client.list_managed() do
       entries
       |> Enum.filter(&reapable?(&1, protocol))
-      |> unclaimed(protocol)
-      |> Enum.each(&reap(client, &1))
+      |> reap_unclaimed(client, protocol)
     else
       # No client configured for this protocol — nothing to sweep.
       :error ->
@@ -76,10 +80,26 @@ defmodule Cinder.Download.Cleaner do
     end
   end
 
+  # An import releases its owner (grab deleted, movie flipped `:available`) inside its catalog
+  # write, then still links sidecars from the source and refreshes the media server while its
+  # stages settle (#703). The pollers hold the household import lock from an import's first
+  # placement until it settles, so under that lock the ownership check sees either the owner still
+  # in place or an import that is done with the source. The client listing stays outside the lock.
+  # Every reapable entry goes through the lock, not only completed usenet ones: a job the listing
+  # shows as downloading can complete and be imported before the ownership check runs, and a
+  # torrent reaped on a seeding limit has no grace at all.
+  defp reap_unclaimed([], _client, _protocol), do: :ok
+
+  defp reap_unclaimed(entries, client, protocol) do
+    StagedImport.run(fn ->
+      entries
+      |> unclaimed(protocol)
+      |> Enum.each(&reap(client, &1))
+    end)
+  end
+
   # Two batched lookups rather than one query per entry: the client list is small (a household
   # queue), but a per-entry query would be a round trip each on every tick.
-  defp unclaimed([], _protocol), do: []
-
   defp unclaimed(entries, protocol) do
     keys = claimed_keys(Enum.map(entries, & &1.operation_key))
     ids = claimed_ids(Enum.map(entries, & &1.id), protocol)
@@ -174,11 +194,9 @@ defmodule Cinder.Download.Cleaner do
   # (`move_on_import`); with it off, imported downloads are meant to stay on disk. A completed
   # torrent is kept until a configured ratio/seed-time limit says it is done seeding.
   #
-  # An import releases its durable owner (grab deleted / movie flipped `:available`) BEFORE it
-  # links sidecars from the source and creates its own removal intent, so a job that completed
-  # moments ago can look unowned while its import is still finishing. A usenet entry therefore
-  # has to have completed more than `@usenet_grace_seconds` ago, per the client's own completion
-  # time; an entry that reports none fails closed (kept).
+  # As a second guard behind the import lock in `reap_unclaimed/3`, a usenet entry also has to
+  # have completed more than `@usenet_grace_seconds` ago, per the client's own completion time; an
+  # entry that reports none fails closed (kept).
   defp reapable?(%{state: :completed} = entry, protocol) do
     (Download.move_on_import_removal?(protocol) and usenet_grace_elapsed?(entry)) or
       reached?(Map.get(entry, :ratio), ratio_limit()) or

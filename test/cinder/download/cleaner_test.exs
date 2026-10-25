@@ -8,8 +8,10 @@ defmodule Cinder.Download.CleanerTest do
   @moduletag :capture_log
 
   alias Cinder.Books
-  alias Cinder.Catalog.Grab
-  alias Cinder.Download.{Cleaner, ClientMock, Intent, SabnzbdClientMock}
+  alias Cinder.Catalog
+  alias Cinder.Catalog.{Episode, Grab}
+  alias Cinder.Download.{Cleaner, ClientMock, Intent, SabnzbdClientMock, TvPoller}
+  alias Cinder.Library.StagedImport
 
   import Cinder.CatalogFixtures
 
@@ -101,6 +103,40 @@ defmodule Cinder.Download.CleanerTest do
       entry(Map.merge(%{state: :completed, completed_at: System.os_time(:second) - 7200}, attrs))
     end
 
+    # A season folder with one episode and its French subtitle on a real library under `tmp`: what
+    # a usenet TV grab held until its import could start leaves behind.
+    defp late_tv_release(tmp) do
+      downloads = Path.join(tmp, "downloads")
+      tv = Path.join(tmp, "tv")
+      release_dir = Path.join(downloads, "Show.S01.WEBDL-GRP")
+      File.mkdir_p!(release_dir)
+      File.mkdir_p!(tv)
+      File.write!(Path.join(release_dir, "S01E01.mkv"), "episode")
+      File.write!(Path.join(release_dir, "S01E01.fre.srt"), "1\n")
+
+      keys = [:filesystem, :path_policy, :import_roots, :tv_library_path]
+      saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
+      Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+      Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
+      Application.put_env(:cinder, :import_roots, [downloads])
+      Application.put_env(:cinder, :tv_library_path, tv)
+
+      on_exit(fn ->
+        Enum.each(saved, fn
+          {key, nil} -> Application.delete_env(:cinder, key)
+          {key, value} -> Application.put_env(:cinder, key, value)
+        end)
+
+        Application.delete_env(:cinder, :filesystem_barrier)
+        :persistent_term.erase({TvPoller, :last_run})
+      end)
+
+      stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+      series = series_fixture(%{tmdb_id: 4703, title: "Show", year: 2008, monitor_strategy: :all})
+      episode = series |> season_fixture() |> episode_fixture(%{episode_number: 1})
+      %{release_dir: release_dir, episode: episode}
+    end
+
     # `Download.best_effort_remove/2` swallows a Mox.UnexpectedCallError, so a missing `remove`
     # expectation can't prove a "keeps" test: record every removal and refute it explicitly.
     defp record_removals(mock) do
@@ -166,8 +202,7 @@ defmodule Cinder.Download.CleanerTest do
       refute_received {:removed, _id, _opts}
     end
 
-    # An import releases its owner before it finishes linking sidecars, so a just-completed job
-    # can look unowned while its import is still running.
+    # The hour since completion is the second guard behind the household import lock (#703).
     test "keeps a just-completed usenet entry and one reporting no completion time" do
       stub(SabnzbdClientMock, :list_managed, fn ->
         {:ok,
@@ -181,6 +216,106 @@ defmodule Cinder.Download.CleanerTest do
 
       assert :ok = Cleaner.poll()
       refute_received {:removed, _id, _opts}
+    end
+
+    # #703: an import that starts long after the job completed has no grace left. It releases its
+    # owner inside its catalog write, then still links sidecars from the source and refreshes the
+    # media server while it settles, all under the household import lock. The holder below stands
+    # in for that import, paused between the owner release and the settle; the next test runs a
+    # real one.
+    test "keeps a completed usenet entry while a late import that released it is still settling" do
+      grab =
+        Repo.insert!(%Grab{
+          download_id: "nzo-late",
+          download_protocol: :usenet,
+          release_title: "R"
+        })
+
+      stub(SabnzbdClientMock, :list_managed, fn ->
+        {:ok, [completed_usenet(%{id: "nzo-late"})]}
+      end)
+
+      record_removals(SabnzbdClientMock)
+      test = self()
+
+      importer =
+        Task.async(fn ->
+          StagedImport.run(fn ->
+            Repo.delete!(grab)
+            send(test, :owner_released)
+
+            receive do
+              :settle -> :ok
+            after
+              5_000 -> :timeout
+            end
+          end)
+        end)
+
+      assert_receive :owner_released
+      sweep = Task.async(&Cleaner.poll/0)
+
+      refute Task.yield(sweep, 200)
+      refute_received {:removed, _id, _opts}
+
+      send(importer.pid, :settle)
+      assert :ok = Task.await(importer)
+      # `:global.trans/2` retries a held lock after a random sleep whose ceiling doubles on each
+      # retry, from 250 ms up to 8 s, so the sweep can take seconds to see the lock free.
+      assert :ok = Task.await(sweep, 15_000)
+      assert_received {:removed, "nzo-late", _opts}
+    end
+
+    @tag :tmp_dir
+    test "a late TV import links its sidecars before the sweep takes its download", %{
+      tmp_dir: tmp
+    } do
+      %{release_dir: release_dir, episode: episode} = late_tv_release(tmp)
+      {:ok, grab} = Catalog.create_grab("nzo-late", :usenet, [episode.id], "Show.S01.WEBDL-GRP")
+      {:ok, grab} = Catalog.mark_grab_downloaded(grab, release_dir)
+
+      stub(SabnzbdClientMock, :list_managed, fn ->
+        {:ok, [completed_usenet(%{id: "nzo-late"})]}
+      end)
+
+      # Like SABnzbd's own removal with delete_files: the job's folder goes with it.
+      test = self()
+
+      stub(SabnzbdClientMock, :remove, fn id, _opts ->
+        send(test, {:removed_by, id, self()})
+        File.rm_rf!(release_dir)
+        :ok
+      end)
+
+      Application.put_env(:cinder, :filesystem_barrier, %{
+        owner: test,
+        operation: :ln,
+        contains: ".fr.srt",
+        phase: :before,
+        once: true
+      })
+
+      start_supervised!({TvPoller, interval: 60_000})
+      importing = Task.async(&TvPoller.poll/0)
+      assert_receive {:filesystem_barrier, pid, ref, :ln, _sidecar}, 15_000
+
+      # The import has deleted the grab and is about to link the release's subtitle.
+      refute Repo.get(Grab, grab.id)
+      sweep = Task.async(&Cleaner.poll/0)
+      refute Task.yield(sweep, 200)
+
+      send(pid, {ref, :continue})
+      assert :ok = Task.await(importing, 15_000)
+      assert :ok = Task.await(sweep, 15_000)
+
+      imported = Repo.get!(Episode, episode.id)
+      assert File.exists?(Path.rootname(imported.file_path) <> ".fr.srt")
+      cleaner = Process.whereis(Cleaner)
+      assert_received {:removed_by, "nzo-late", ^cleaner}
+
+      # The Fetcher runs one job at a time, so this returns once the import's subtitle fetch is
+      # done, while the test still owns the database connection.
+      :sys.get_state(Cinder.Subtitles.Fetcher)
     end
 
     test "still leaves a completed torrent below its limits alone" do

@@ -27,6 +27,8 @@ defmodule Cinder.Test.BarrierFilesystem do
 
   @impl true
   def ln(source, dest) do
+    pause(:ln, dest, :before)
+
     case injected_failure(:ln, source, dest) do
       :ok ->
         result = Disk.ln(source, dest)

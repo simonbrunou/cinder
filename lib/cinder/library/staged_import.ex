@@ -29,7 +29,9 @@ defmodule Cinder.Library.StagedImport do
   `run/1` holds the one lock a poller's import holds from its first `place/5` to its settle, the
   same lock `reconcile/0` takes. Without it, crash recovery could roll back a `:prepared` stage
   whose handoff deadline expired while a long multi-file copy was still building the next one.
-  The residual-file Part decision from `/activity` does not take it yet (#783).
+  `Cinder.Download.Cleaner` takes it too, so it never reaps a download whose import has released
+  its owner but is still settling. The residual-file Part decision from `/activity` does not take
+  it yet (#783).
   """
   require Logger
 

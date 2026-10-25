@@ -133,7 +133,8 @@ _Avoid_: stage handle, rollback map, import stage (one journal row of it)
 
 **Household import lock**:
 The one lock a poller's import holds from placing its files to settling them, so crash recovery
-cannot roll back an import that is still in progress.
+cannot roll back an import that is still in progress, and the download cleanup cannot remove a
+download an import is still reading.
 _Avoid_: stage handoff, handoff lock
 
 **Imported quality**:

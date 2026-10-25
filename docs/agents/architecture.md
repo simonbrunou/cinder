@@ -128,9 +128,10 @@ everything else rolls back. Callers never look inside the handle; the one value 
 record.
 
 The pollers hold the household import lock (`StagedImport.run/1`) from an import's first placement
-until it settles, and `StagedImport.reconcile/0` takes the same lock. The lock is not re-entrant
-through `:global` itself, so take it only through `run/1`. The residual-file Part decision from
-`/activity` does not take it yet (#783).
+until it settles, and `StagedImport.reconcile/0` takes the same lock. `Cinder.Download.Cleaner`
+takes it for its ownership check and removals, because an import releases its owner before it
+settles. The lock is not re-entrant through `:global` itself, so take it only through `run/1`.
+The residual-file Part decision from `/activity` does not take it yet (#783).
 
 ## Most library writes go through the rooted helper
 
