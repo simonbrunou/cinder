@@ -4,9 +4,12 @@ Issues and specs for this repo live as Forgejo issues on `git.sbrn.eu/simonbruno
 `origin` remote). The `github` remote is a push-disabled mirror. Its issues are still enabled, but
 nothing new gets filed there.
 
-Use the [`fj`](https://codeberg.org/forgejo-contrib/forgejo-cli) CLI for everyday operations. Name
-the repo on every command: T3 worktree branches have no upstream, so a bare `fj issue ...` fails
-with `no repo info specified`.
+Use the [`fj`](https://codeberg.org/forgejo-contrib/forgejo-cli) CLI for reads, PRs and
+assignments. Every other issue write goes through the `forgejo-issues` skill's script, written
+`forgejo.py` below (`python3 -I ~/.agents/skills/forgejo-issues/scripts/forgejo.py`): it fails
+on an unknown label, sets labels in the same call that creates the issue, and reads every write
+back. Name the repo on every `fj` command: T3 worktree branches have no upstream, so a bare
+`fj issue ...` fails with `no repo info specified`.
 
 - `fj issue <cmd> -R origin ...`. `-R` goes after the subcommand.
 - `fj -H git.sbrn.eu pr ...` and `fj -H git.sbrn.eu repo labels simonbrunou/cinder ...`. `-H`
@@ -14,8 +17,8 @@ with `no repo info specified`.
 
 `fj` (v0.7.0) has no JSON output. Its dependency commands (`fj issue depend list -R origin <n>`,
 `depend add`, `depend remove`, `fj issue block ...`) are new and only `list` has been tried, so
-add a dependency with the REST call under **Blocking** below. For JSON and for dependencies, call
-the Forgejo REST API with the token `fj` already stores:
+add a dependency with `forgejo.py depend` (**Blocking** below). For other JSON reads, call the
+Forgejo REST API with the token `fj` already stores:
 
 ```sh
 FJ_TOKEN=$(jq -r '.hosts["git.sbrn.eu"].token' ~/.local/share/forgejo-cli/keys.json)
@@ -29,9 +32,8 @@ the API with `jq`.
 
 ## Conventions
 
-- **Create an issue**: `fj issue create -R origin "<title>" --body-file <file>`. Write multi-line
-  bodies to a temp file with a heredoc. `fj issue create` has no label flag, so apply labels right
-  after creating.
+- **Create an issue**: `forgejo.py create cinder "<title>" <file> --labels <a,b>`. Write
+  multi-line bodies to a temp file with a heredoc.
 - **Read an issue**: `fj issue view -R origin <n>` for the body, `fj issue view -R origin <n>
   comments` for the comments. For JSON with labels:
   `curl ... "$API/issues/<n>" | jq '{number, title, body, state, labels: [.labels[].name]}'`.
@@ -40,12 +42,13 @@ the API with `jq`.
   Keep `type=issues`, because without it the endpoint also returns PRs.
 - **Make an issue a child of a parent**: Forgejo has no sub-issues. Put `Part of #<parent>` at the
   top of the child body and add the child to a task list in the parent body.
-- **Comment on an issue**: `fj issue comment -R origin <n> "..."`, or `--body-file <file>` for
-  multi-line comments.
-- **Apply / remove labels**: `fj issue edit -R origin <n> labels --add "..."` / `--rm "..."`.
-  Repeat the flag for several labels. A label that does not exist prints `'X' doesn't exist` and
-  still exits 0, so read the output.
-- **Close**: `fj issue close -R origin <n> --with-msg "..."`. Always pass the message.
+- **Comment on an issue**: `forgejo.py comment cinder#<n> <file>`.
+- **Apply / remove labels**: `forgejo.py labels cinder#<n> --add <a,b> --remove <c>`.
+- **Edit an issue body**: `forgejo.py body cinder#<n> > old.md`, edit a copy, then
+  `forgejo.py edit cinder#<n> new.md --expect old.md`, which refuses when another session edited
+  the body meanwhile.
+- **Close**: `forgejo.py comment cinder#<n> <file>` for the reason, then
+  `forgejo.py close cinder#<n>`. Always give the reason.
 
 Renovate owns the "Dependency Dashboard" issue (#629). Leave it out of triage.
 
@@ -80,19 +83,17 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 with `fj -H git.sbrn.eu repo labels simonbrunou/cinder view`.
 
 - **Map**: a single issue labelled `wayfinder:map`, holding the Notes / Decisions-so-far / Fog
-  body. Create it with `fj issue create`, then add the label.
+  body. Create it with `forgejo.py create cinder "<title>" <file> --labels wayfinder:map`.
 - **Child ticket**: an issue with `Part of #<map>` at the top of its body, listed in a task list in
   the map body. Labels: `wayfinder:<type>` (`research`/`prototype`/`grilling`/`task`). Once
   claimed, the ticket is assigned to the driving dev.
 - **Blocking**: Forgejo's native issue dependencies, enabled on this repo and visible in the UI.
-  Mark `<child>` as blocked by `<blocker>` with
-  `curl -s -X POST -H "Authorization: token $FJ_TOKEN" -H 'Content-Type: application/json' "$API/issues/<child>/dependencies" -d '{"owner":"simonbrunou","repo":"cinder","index":<blocker>}'`.
-  The `index` is the blocker's `#number`, not a database id. A ticket is unblocked when every
-  blocker is closed.
-- **Frontier query**: list the map's open children, then drop any with an assignee or an open
-  blocker (`curl ... "$API/issues/<child>/dependencies" | jq '[.[] | select(.state == "open")] | length'`
-  is above 0). First in map order wins.
-- **Claim**: `fj issue assign -R origin <n> simonbrunou`, the session's first write.
-- **Resolve**: `fj issue comment -R origin <n> "<answer>"`, then `fj issue close -R origin <n>
-  --with-msg "Resolved"`, then append a context pointer (gist + link) to the map's
-  Decisions-so-far.
+  Mark `<child>` as blocked by `<blocker>` with `forgejo.py depend cinder#<child> cinder#<blocker>`.
+  A ticket is unblocked when every blocker is closed.
+- **Frontier query**: `forgejo.py frontier cinder#<map>` lists the map's open tickets in map
+  order, each marked frontier (no assignee, no open blocker), claimed or blocked. The first
+  frontier line is the next ticket.
+- **Claim**: `fj issue assign -R origin <n> simonbrunou`, the session's first write
+  (`forgejo.py` has no assign command).
+- **Resolve**: `forgejo.py comment cinder#<n> <answer-file>`, then `forgejo.py close cinder#<n>`,
+  then append a context pointer (gist + link) to the map's Decisions-so-far.
