@@ -6,24 +6,14 @@ defmodule Cinder.Library.ImportedQualityTest do
   import ExUnit.CaptureLog
   import Mox
 
-  alias Cinder.Catalog
+  alias Cinder.{Catalog, ConfigCase}
   alias Cinder.Catalog.{Episode, Movie, MovieLifecycle}
   alias Cinder.Library
   alias Cinder.Library.{ImportedQuality, MediaInfoMock, StagedImport}
 
   setup :verify_on_exit!
 
-  # Sets `:cinder` env for the test, restoring what was there on exit.
-  defp put_env(pairs) do
-    saved = Map.new(pairs, fn {key, _value} -> {key, Application.get_env(:cinder, key)} end)
-    Enum.each(pairs, fn {key, value} -> Application.put_env(:cinder, key, value) end)
-
-    on_exit(fn ->
-      Enum.each(saved, fn {key, value} -> Application.put_env(:cinder, key, value) end)
-    end)
-  end
-
-  defp probe_with_mock, do: put_env(media_info: MediaInfoMock)
+  defp probe_with_mock, do: ConfigCase.put_env(media_info: MediaInfoMock)
 
   # Real movie and TV libraries on a temp dir, so imports stage and commit for real, plus a
   # download file and a library file with one sidecar each.
@@ -39,7 +29,7 @@ defmodule Cinder.Library.ImportedQualityTest do
       File.write!(Path.rootname(video) <> ".#{language}.srt", "1")
     end
 
-    put_env(
+    ConfigCase.put_env(
       filesystem: Cinder.Library.Filesystem.Disk,
       path_policy: Cinder.Library.PathPolicy,
       import_roots: [downloads],
@@ -202,17 +192,41 @@ defmodule Cinder.Library.ImportedQualityTest do
       end
     end
 
-    test "a forced re-import of the same file records the incoming quality as it is", ctx do
+    # Issue #822: the commit links the download's sidecars next to its own video, so the record
+    # lists them with the ones already at `dest`.
+    test "a forced re-import of the same file records the incoming quality and the sidecars",
+         ctx do
       assert ImportedQuality.for_outcome(@incoming, :same_file, @recorded,
                dest: ctx.dest,
                forced?: true,
                sidecars_from: ctx.source
+             ) == %{@incoming | sidecar_subtitles: ["en", "fr"]}
+
+      assert ImportedQuality.for_outcome(@incoming, :same_file, @recorded,
+               dest: ctx.dest,
+               forced?: true
              ) == @incoming
+
+      # A first attempt that already linked the download's French sidecar lists it once. Sorted:
+      # the two at `dest` come in directory order.
+      File.write!(Path.rootname(ctx.dest) <> ".fr.srt", "1")
+
+      quality =
+        ImportedQuality.for_outcome(@incoming, :same_file, @recorded,
+          dest: ctx.dest,
+          forced?: true,
+          sidecars_from: ctx.source
+        )
+
+      assert Enum.sort(quality.sidecar_subtitles) == ["en", "fr"]
+      assert %{quality | sidecar_subtitles: []} == @incoming
     end
 
     test "an untouched file keeps what its row recorded", ctx do
-      assert ImportedQuality.for_outcome(@incoming, :same_file, @recorded, dest: ctx.dest) ==
-               ImportedQuality.of(@recorded)
+      for opts <- [[dest: ctx.dest], [dest: ctx.dest, sidecars_from: ctx.source]] do
+        assert ImportedQuality.for_outcome(@incoming, :same_file, @recorded, opts) ==
+                 ImportedQuality.of(@recorded)
+      end
 
       log =
         capture_log(fn ->
@@ -233,6 +247,42 @@ defmodule Cinder.Library.ImportedQualityTest do
         assert ImportedQuality.for_outcome(@incoming, outcome, unrecorded, dest: ctx.dest) ==
                  %{@incoming | sidecar_subtitles: ["en"]}
       end
+    end
+
+    # Issue #822: the same file is the download's own video, so its sidecars join the record. A kept
+    # file is another one, and the commit links none of them (#784).
+    @tag :capture_log
+    test "an unrecorded row adds the download's sidecars only when the file is the same", ctx do
+      unrecorded = %Movie{}
+      opts = [dest: ctx.dest, sidecars_from: ctx.source]
+
+      assert ImportedQuality.for_outcome(@incoming, :same_file, unrecorded, opts) ==
+               %{@incoming | sidecar_subtitles: ["en", "fr"]}
+
+      assert ImportedQuality.for_outcome(@incoming, :kept, unrecorded, opts) ==
+               %{@incoming | sidecar_subtitles: ["en"]}
+    end
+  end
+
+  describe "declined/3" do
+    @staged %ImportedQuality{resolution: "720p", size: 3, sidecar_subtitles: ["fr"]}
+
+    test "a decline that placed the file records its stage's quality" do
+      assert ImportedQuality.declined(@staged, :placed, %Episode{}) == @staged
+    end
+
+    # Issue #822: the file is the release's own video. An unrecorded row takes the stage's sidecar
+    # list, which then holds the release's (`for_outcome/4`), but none of the release's parse.
+    test "a decline onto the release's own video keeps the row's quality and takes the sidecars" do
+      row = %Episode{imported_sidecar_subtitles: nil}
+
+      assert ImportedQuality.declined(@staged, :same_file, row) ==
+               %{ImportedQuality.of(row) | sidecar_subtitles: ["fr"]}
+    end
+
+    test "a decline that kept another file keeps the row's quality, sidecars included" do
+      row = %Episode{imported_resolution: "1080p", imported_sidecar_subtitles: ["en"]}
+      assert ImportedQuality.declined(@staged, :kept, row) == ImportedQuality.of(row)
     end
   end
 

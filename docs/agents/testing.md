@@ -14,7 +14,7 @@
   that msgstr by hand, especially when the new msgid contains an old one: "Jellyfin web URL"
   was filled with "URL Jellyfin", the translation of "Jellyfin URL".
 - A test sets a `:cinder` env key with `Cinder.ConfigCase.put_env/2`, which restores the old value
-  on exit. For a keyword-list key, `Cinder.ConfigCase.put_config/2` merges the overrides and
+  on exit; `put_env/1` takes a keyword list of keys. For a keyword-list key, `Cinder.ConfigCase.put_config/2` merges the overrides and
   restores the same way. The household size band (`:tv_min_size`, `:tv_max_size`, read by
   `Cinder.Acquisition.HouseholdPolicy.band/1`) is one such key. When other test modules also read
   the key, as several read the band, set it from an `async: false` module.

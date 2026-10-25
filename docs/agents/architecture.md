@@ -168,7 +168,8 @@ mount check and the xattrs around the real helper. The `branch:` option of
 
 What a movie or episode recorded about its file lives in its `imported_*` columns, and
 `Cinder.Library.ImportedQuality` is the one list of them: a struct with one field per column.
-Stagers record what `capture/3` and `for_outcome/4` return. Writers set the columns only through
+Stagers record what `capture/3` and `for_outcome/4` return, and an arbitrated TV decline what
+`declined/3` returns. Writers set the columns only through
 `columns/2`, the schemas cast `column_names/2`, and the import and upgrade decisions read a row
 through `of/1`; only display code and queries read a single column directly. Episodes have no
 default-audio column, and the module records that. A new column is one field in that module, plus

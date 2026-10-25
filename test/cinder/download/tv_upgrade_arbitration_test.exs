@@ -543,10 +543,10 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     end
   end
 
-  # #291: `folder?` gates sidecar linking, and the keep path hardcodes it false — right for a keep
-  # (the declined release's subtitles must not be hardlinked next to the file the episode KEPT),
-  # wrong for the fall-through, where the file at dest IS the release's and its subtitles belong
-  # with it. Getting this from `placed?` after staging is the only way to tell the two apart.
+  # #291: the declined release's subtitles must not be hardlinked next to the file the episode
+  # KEPT, but they belong at dest wherever the file there IS the release's: the fall-through
+  # placement, and the release's own video (#822). The stage's outcome tells them apart, and
+  # `StagedImport.after_commit/4` links nothing for a `:kept` stage (#784).
   describe "sidecars on a declined keep" do
     @tag :tmp_dir
     test "the fall-through placement takes the release's subtitles", %{tmp_dir: tmp} do
@@ -603,6 +603,69 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
       assert File.read!(imported.file_path) == "held-1"
       assert imported.imported_sidecar_subtitles == ["en"]
       refute File.exists?(Path.rootname(imported.file_path) <> ".fr.srt")
+    end
+
+    # #822: a held file that IS the release's video (one inode, an adopted hardlink) is the
+    # `:same_file` outcome. The unrecorded row fails the arbitration closed (#520), and the decline
+    # then links the release's subtitles and records them, as the movie and plain TV paths do. The
+    # ranked fields stay the row's own: the decline records no parse.
+    @tag :tmp_dir
+    test "a keep whose file is the release's own video takes them", %{tmp_dir: tmp} do
+      title = "Show.S01.1080p.WEBDL-GRP"
+      pack = terse_pack(tmp, 4255, title, "S01E01.mkv", %{}, %{tvdb_id: 4255})
+      File.write!(Path.join(pack.release_dir, "S01E01.fre.srt"), "1\n")
+      File.rm!(pack.episode.file_path)
+      File.ln!(Path.join(pack.release_dir, "S01E01.mkv"), pack.episode.file_path)
+
+      imported = import_pack(pack, title)
+
+      # Positive anchor: the import declined rather than placed.
+      assert Catalog.blocked_release_titles_for_series(pack.series.id,
+               include_reasons: [:no_upgrade]
+             ) == [title]
+
+      assert imported.file_path == pack.episode.file_path
+      assert imported.imported_resolution == nil
+      assert imported.imported_sidecar_subtitles == ["fr"]
+      assert File.read!(Path.rootname(imported.file_path) <> ".fr.srt") == "1\n"
+    end
+
+    # The same file under a recorded row that out-ranks the release: the subtitles still land, and
+    # the row keeps its recorded list, as a replay over a recorded row does on the other paths.
+    @tag :tmp_dir
+    test "a recorded keep of the release's own video takes them and keeps its list", %{
+      tmp_dir: tmp
+    } do
+      title = "Show.S01.1080p.WEBDL-GRP"
+
+      pack =
+        terse_pack(
+          tmp,
+          4256,
+          title,
+          "S01E01.mkv",
+          %{
+            imported_resolution: "1080p",
+            imported_source: "WEBDL",
+            imported_size: 9_000_000_000,
+            imported_sidecar_subtitles: ["en"]
+          },
+          %{tvdb_id: 4256}
+        )
+
+      File.write!(Path.join(pack.release_dir, "S01E01.fre.srt"), "1\n")
+      File.rm!(pack.episode.file_path)
+      File.ln!(Path.join(pack.release_dir, "S01E01.mkv"), pack.episode.file_path)
+
+      imported = import_pack(pack, title)
+
+      assert Catalog.blocked_release_titles_for_series(pack.series.id,
+               include_reasons: [:no_upgrade]
+             ) == [title]
+
+      assert imported.imported_size == 9_000_000_000
+      assert imported.imported_sidecar_subtitles == ["en"]
+      assert File.read!(Path.rootname(imported.file_path) <> ".fr.srt") == "1\n"
     end
   end
 

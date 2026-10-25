@@ -157,25 +157,36 @@ defmodule Cinder.Library.ImportedQuality do
   Otherwise the row keeps what it recorded, or, when its quality is unrecorded, adopts the file it
   found, with the sidecars already at `dest` (issue #128). A `:kept` file logs that the download
   was not an upgrade.
+
+  On `:same_file` the file at `dest` is the download's own video, and the commit links the
+  sidecars of `sidecars_from:` next to it. So wherever that outcome records the incoming quality,
+  forced or adopted, its sidecar list is the languages already at `dest` followed by those of
+  `sidecars_from:`, each once (issue #822). A forced re-import without `sidecars_from:` records
+  the incoming quality as it is.
   """
   @spec for_outcome(t(), :placed | :replaced | :same_file | :kept, row(), keyword()) :: t()
   def for_outcome(%__MODULE__{} = incoming, outcome, _record, opts)
       when outcome in [:placed, :replaced] do
     case Keyword.get(opts, :sidecars_from) do
       nil -> incoming
-      source -> %{incoming | sidecar_subtitles: sidecar_languages(source)}
+      source -> %{incoming | sidecar_subtitles: sidecar_languages([source])}
     end
   end
 
   def for_outcome(%__MODULE__{} = incoming, :same_file, record, opts) do
-    if Keyword.get(opts, :forced?, false),
-      do: incoming,
-      else: existing(record, incoming, Keyword.fetch!(opts, :dest))
+    source = Keyword.get(opts, :sidecars_from)
+    videos = Enum.reject([Keyword.fetch!(opts, :dest), source], &is_nil/1)
+
+    case {Keyword.get(opts, :forced?, false), source} do
+      {true, nil} -> incoming
+      {true, _source} -> %{incoming | sidecar_subtitles: sidecar_languages(videos)}
+      {false, _source} -> existing(record, incoming, videos)
+    end
   end
 
   def for_outcome(%__MODULE__{} = incoming, :kept, record, opts) do
     dest = Keyword.fetch!(opts, :dest)
-    kept = existing(record, incoming, dest)
+    kept = existing(record, incoming, [dest])
 
     Logger.warning(
       "kept existing #{inspect(kept.resolution)} file at #{dest}; new release not an upgrade"
@@ -184,16 +195,34 @@ defmodule Cinder.Library.ImportedQuality do
     kept
   end
 
-  defp existing(record, incoming, dest) do
+  @doc """
+  The quality an arbitrated TV decline records on `record`, when `for_outcome/4` gave its stage
+  `quality` with `outcome`. A placement (the held file had vanished) records `quality`. On
+  `:kept` and `:same_file` the row keeps its own ranked and probed fields, so the declined
+  release's parse never lands on a file the row kept (issues #128, #275). On `:same_file` that
+  file is the release's own video, and the row takes `quality`'s sidecar list, the one the movie
+  and plain TV imports record for that outcome (issue #822).
+  """
+  @spec declined(t(), :placed | :same_file | :kept, row()) :: t()
+  def declined(%__MODULE__{} = quality, :placed, _record), do: quality
+
+  def declined(%__MODULE__{} = quality, :same_file, record),
+    do: %{of(record) | sidecar_subtitles: quality.sidecar_subtitles}
+
+  def declined(%__MODULE__{}, :kept, record), do: of(record)
+
+  # An unrecorded row adopts the incoming quality, with the sidecars next to each of `videos`.
+  defp existing(record, incoming, videos) do
     recorded = of(record)
 
     if unrecorded?(recorded),
-      do: %{incoming | sidecar_subtitles: sidecar_languages(dest)},
+      do: %{incoming | sidecar_subtitles: sidecar_languages(videos)},
       else: recorded
   end
 
-  defp sidecar_languages(video),
-    do: video |> Sidecars.files() |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+  # The languages of the sidecars next to each of `videos`, in order, each once.
+  defp sidecar_languages(videos),
+    do: videos |> Enum.flat_map(&Sidecars.files/1) |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
 
   @doc """
   `record`'s imported quality with its languages read again from its library files: each file
@@ -203,7 +232,7 @@ defmodule Cinder.Library.ImportedQuality do
   @spec recapture(row()) :: t()
   def recapture(%schema{} = record) when is_map_key(@absent, schema) do
     paths = schema.file_paths(record)
-    sidecars = paths |> Enum.flat_map(&sidecar_languages/1) |> Enum.uniq()
+    sidecars = sidecar_languages(paths)
     struct!(of(record), Map.put(probe_all(paths, %{}), :sidecar_subtitles, sidecars))
   end
 

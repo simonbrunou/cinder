@@ -34,4 +34,8 @@ defmodule Cinder.ConfigCase do
 
     Application.put_env(:cinder, key, value)
   end
+
+  @doc "Runs `put_env/2` for each key and value in the keyword list `pairs`."
+  def put_env(pairs) when is_list(pairs),
+    do: Enum.each(pairs, fn {key, value} -> put_env(key, value) end)
 end

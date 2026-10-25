@@ -873,7 +873,9 @@ defmodule Cinder.Library do
   # #274's `no_upgrade` row, which the record's own backfill cannot substitute for — the sweep's
   # `Enum.any?` gate is driven by a sibling episode (#289). Quality stays the record's own unless
   # we truly placed, or `ImportedQuality.for_outcome/4`'s unrecorded arm would stamp the declined
-  # file's parse — title backfill and probed track languages — onto a kept file (#128, #275).
+  # file's parse — title backfill and probed track languages — onto a kept file (#128, #275). The
+  # one exception is a `:same_file` keep's sidecar list, which follows the subtitles its commit
+  # links (#822). `ImportedQuality.declined/3` holds both rules.
   defp keep_stage(staged, ep, source, download, keeps) do
     case Map.fetch(keeps, ep.file_path) do
       {:ok, kept} -> {:ok, staged, kept}
@@ -881,14 +883,12 @@ defmodule Cinder.Library do
     end
   end
 
-  # `folder?` is pinned false while staging rather than taken from the download: it gates the
-  # sidecar link at commit, and hardlinking the DECLINED release's subtitles next to the file the
-  # episode KEPT is the same lie as recording its quality. The fall-through placement is the one
-  # case where they do belong at `dest` — the file there IS the release's — so it gets the real
-  # `folder?` back once the outcome has told us which of the two happened (#291).
+  # The decline stages with the download's own `folder?`, so the release's sidecars go wherever the
+  # file at `dest` is the release's: the fall-through placement (#291) and `:same_file` (#822). A
+  # `:kept` stage links none of them (`StagedImport.after_commit/4`, #784): hardlinking the DECLINED
+  # release's subtitles next to the file the episode KEPT is the same lie as recording its quality.
   defp fresh_keep_stage(staged, ep, source, download) do
     decline = fn _new_quality -> false end
-    held = download_context(false, %{}, download.release_title)
 
     with {:ok, held_root} <- Settings.library_root_for_path(ep.file_path),
          {:ok, staged, stage} <-
@@ -897,28 +897,15 @@ defmodule Cinder.Library do
              [ep],
              source,
              held_root,
-             held,
+             download,
              ep.file_path,
              :adopt,
              decline
            ) do
-      {kept, folder?} = declined_stage(stage, ep, download.folder?)
-      {:ok, register_episode_effect(staged, [ep], kept, folder?), kept}
+      kept = %{stage | quality: ImportedQuality.declined(stage.quality, stage.outcome, ep)}
+      {:ok, register_episode_effect(staged, [ep], kept, download.folder?), kept}
     end
   end
-
-  defp declined_stage(%{outcome: :placed} = stage, ep, folder?) do
-    quality =
-      ImportedQuality.for_outcome(stage.quality, :placed, ep,
-        dest: stage.dest,
-        sidecars_from: if(folder?, do: stage.source)
-      )
-
-    {%{stage | quality: quality}, folder?}
-  end
-
-  defp declined_stage(stage, ep, _folder?),
-    do: {%{stage | quality: ImportedQuality.of(ep)}, false}
 
   defp stage_episode_file(staged, [ep | _] = episodes, source, root, target, download, collision) do
     dest = Naming.episode_dest(episodes, source, root)
