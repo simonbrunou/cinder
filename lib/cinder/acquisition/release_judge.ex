@@ -9,7 +9,8 @@ defmodule Cinder.Acquisition.ReleaseJudge do
 
   - `{:imdb, context}`: an IMDb-scoped movie search.
   - `{:title_year, title, year}`: a movie with no IMDb id.
-  - `{:series, series}`: a standard TV season.
+  - `{:series, series, season_number, wanted_numbers}`: a standard TV season and its still-wanted
+    episode numbers.
   - `{:anime_movie, context}`: an anime movie (`Cinder.Catalog.movie_acquisition_context/1`).
   - `{:anime_episodes, context, wanted_ids}`: the wanted episodes of an anime series, by stable
     episode id (`Cinder.Catalog.anime_series_acquisition_context/1`).
@@ -56,10 +57,11 @@ defmodule Cinder.Acquisition.ReleaseJudge do
     `:conflicting_standard_numbering` marks a bridged coordinate that resolves two ways. An anime
     episode row with no frozen mapping is `:unsafe_anime_mapping` (the panel can't grab it), and
     one the role stage dropped is `:special_release` (the sweep never takes it; the operator
-    may). The rest is the selection's own rules for one release: `Scorer.verdict/2` (for a season
-    it bands a pack by `:pack_episode_count` at once, an approximation of the cover's two passes
-    in `Scorer.select_for/4`), or for anime `Cinder.Acquisition.Anime.movie_verdict/2` and
-    `episode_verdict/2` (policy, quality, group wait).
+    may). The rest is the selection's own rules for one release: `Scorer.verdict/2` for a movie,
+    `Scorer.verdict_for_season/4` for a season (the set-cover's band for that release alone, both
+    passes of `Scorer.select_for/4` included), or for anime
+    `Cinder.Acquisition.Anime.movie_verdict/2` and `episode_verdict/2` (policy, quality, group
+    wait).
   - `audio`: what the language stage decided. `:match` when the release's tag satisfies the pick,
     at any stage. `:assumed` for an untagged release a movie pool kept. `:mismatch` for a release
     the language stage dropped. nil for a release dropped before that stage, when the pick fell
@@ -82,7 +84,7 @@ defmodule Cinder.Acquisition.ReleaseJudge do
   @type guard ::
           {:imdb, map()}
           | {:title_year, String.t() | nil, integer() | nil}
-          | {:series, map()}
+          | {:series, map(), integer(), [integer()]}
           | {:anime_movie, map()}
           | {:anime_episodes, map(), [integer()]}
   @type stage :: :protocol | :title_guard | :role | :language | :mapping
@@ -247,6 +249,9 @@ defmodule Cinder.Acquisition.ReleaseJudge do
 
   defp verdict(%{resolution_evidence: :conflicting_standard_numbering}, _dropped, _guard, _opts),
     do: {:rejected, :conflicting_standard_numbering}
+
+  defp verdict(release, _dropped_at, {:series, _series, season_number, wanted_numbers}, opts),
+    do: Scorer.verdict_for_season(release, season_number, wanted_numbers, opts)
 
   defp verdict(release, _dropped_at, _guard, opts), do: Scorer.verdict(release, opts)
 

@@ -614,7 +614,7 @@ defmodule Cinder.AcquisitionTest do
     end
   end
 
-  describe "judge_season/4 alternate numbering" do
+  describe "judge_season/5 alternate numbering" do
     test "unions and deduplicates scene and aired season searches with stable episode ids" do
       episodes = [
         %{id: 29, episode_number: 29},
@@ -662,7 +662,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, %ReleaseJudge{rows: rows}} =
-               Acquisition.judge_season(series(), 1, numbering)
+               Acquisition.judge_season(series(), 1, [29, 30], numbering)
 
       assert [
                %Release{season: 2, resolved_episode_ids: [29]},
@@ -713,7 +713,7 @@ defmodule Cinder.AcquisitionTest do
                     verdict: {:rejected, :conflicting_standard_numbering}
                   }
                 ]
-              }} = Acquisition.judge_season(series(), 1, numbering)
+              }} = Acquisition.judge_season(series(), 1, [29, 30], numbering)
     end
   end
 
@@ -1206,7 +1206,7 @@ defmodule Cinder.AcquisitionTest do
         |> Enum.map(&Release.new/1)
 
       assert [%Release{title: "La.Casa.de.Papel.S01E01.1080p.WEB-DL-GRP"}] =
-               Acquisition.title_guard(releases, {:series, target})
+               Acquisition.title_guard(releases, {:series, target, 1, [1]})
     end
 
     test "a title containing a year token still year-verifies against its own decoration year" do
@@ -1219,7 +1219,7 @@ defmodule Cinder.AcquisitionTest do
         |> Enum.map(&Release.new/1)
 
       assert [%Release{title: "Class.of.2009.2021.S01E01.1080p.WEB-DL-GRP"}] =
-               Acquisition.title_guard(releases, {:series, target})
+               Acquisition.title_guard(releases, {:series, target, 1, [1]})
     end
 
     test "a bare-numeral title still rejects a genuinely conflicting decoration year" do
@@ -1231,7 +1231,7 @@ defmodule Cinder.AcquisitionTest do
         [raw_tv("1923.2005.S01E01.1080p.WEB-DL-GRP", query_origins: [:free_text])]
         |> Enum.map(&Release.new/1)
 
-      assert [] = Acquisition.title_guard(releases, {:series, target})
+      assert [] = Acquisition.title_guard(releases, {:series, target, 1, [1]})
     end
 
     test "an IMDb-scoped movie keeps any name spelling a known title and drops another film" do
@@ -1298,7 +1298,7 @@ defmodule Cinder.AcquisitionTest do
       # The scrubbed name still reads "Interstellar.2014", so the TV guard keeps it for that show.
       tv = [Release.new(raw_tv(garbled, query_origins: [:free_text]))]
       target = series(tvdb_id: nil, title: "Interstellar", year: 2014)
-      assert Acquisition.title_guard(tv, {:series, target}) == tv
+      assert Acquisition.title_guard(tv, {:series, target, 1, [1]}) == tv
     end
 
     # Nothing to compare release names against, so the IMDb scope stays the only evidence rather

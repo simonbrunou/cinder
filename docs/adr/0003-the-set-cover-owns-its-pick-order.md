@@ -57,6 +57,6 @@ pool of untagged and wrong-tagged releases from `:fell_back` to `:applied`, drop
 wrong-tagged ones. #882 decides it; opening the gate is one guard in
 `ReleaseJudge.language_stage/3`.
 
-`pack_episode_count` still means three things: the season's episode count in the cover, the count a pack
-must claim under `full_claim_only` (#839), and the approximate count the panel's `Scorer.verdict/2`
-bands a pack by (#836).
+`pack_episode_count` still means two things: the season's episode count, which the cover and the
+panel's season verdict read (`Scorer.verdict_for_season/4`, #836), and the count a pack must claim
+under `full_claim_only` (#839).

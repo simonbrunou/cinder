@@ -696,6 +696,103 @@ defmodule Cinder.Acquisition.ScorerTest do
     end
   end
 
+  describe "verdict_for_season/4" do
+    # The standard season panel shows this verdict, so for a release covering a still-wanted episode
+    # it has to agree with the set-cover taking it alone, both passes included (#836).
+    test "is :ok exactly when the season cover takes the release alone" do
+      rules = [
+        min_size: 1 * @gb,
+        max_size: 2 * @gb,
+        preferred_resolutions: ["1080p"],
+        preferred_sources: ["webdl"],
+        release_blocklist: ["blocked"],
+        blocked_terms: ["cam"]
+      ]
+
+      # Scene season 2 holds native episodes 3 and 4.
+      numbering = %{2 => %{1 => [3], 2 => [4]}}
+
+      shapes = [
+        {1, nil},
+        {1, [3]},
+        {1, [3, 4, 5]},
+        {1, [1, 2, 3, 4, 5, 6]},
+        {2, nil},
+        {2, [1]}
+      ]
+
+      for {season, episodes} <- shapes,
+          wanted <- [[3], [3, 4], [1, 2, 3, 4, 5, 6]],
+          pack_count <- [nil, 6, 20],
+          size <- [
+            nil,
+            div(@gb, 2) | Enum.map([1, 2, 3, 4, 5, 6, 7, 9, 12, 13, 20, 30, 40, 41], &(&1 * @gb))
+          ],
+          title <- ["fine", "blocked", "a cam rip"],
+          resolution <- ["1080p", "720p"],
+          source <- [nil, "webdl", "hdtv"] do
+        release =
+          release(
+            title: title,
+            season: season,
+            episodes: episodes,
+            size: size,
+            resolution: resolution,
+            source: source
+          )
+
+        opts = [alternate_numbering: numbering] ++ rules
+        opts = if pack_count, do: [{:pack_episode_count, pack_count} | opts], else: opts
+
+        # Only a release the cover would take under no rules covers a still-wanted episode.
+        covers_wanted? =
+          match?(
+            {:ok, _},
+            Scorer.select_for([release], 1, wanted,
+              alternate_numbering: numbering,
+              preferred_resolutions: []
+            )
+          )
+
+        if covers_wanted? do
+          taken? = match?({:ok, _}, Scorer.select_for([release], 1, wanted, opts))
+
+          assert Scorer.verdict_for_season(release, 1, wanted, opts) == :ok == taken?,
+                 inspect({release, wanted, pack_count})
+        end
+      end
+    end
+
+    # The cover never takes a release covering no still-wanted episode, but the panel lists it for
+    # an operator upgrade, so it is banded by what it carries: a pack by the season's episode
+    # count, unaired episodes included, as the upgrade sweep's season band does.
+    test "a release covering no still-wanted episode is banded by what it carries" do
+      opts = [
+        min_size: div(@gb, 2),
+        max_size: 2 * @gb,
+        pack_episode_count: 20,
+        alternate_numbering: %{2 => %{1 => [3]}}
+      ]
+
+      pack = release(season: 1, episodes: nil, resolution: "1080p", size: 30 * @gb)
+      assert Scorer.verdict_for_season(pack, 1, [], opts) == :ok
+      assert Scorer.select_for([pack], 1, [], opts) == :no_match
+
+      # 10 aired episodes' worth, in a 20-episode season.
+      assert Scorer.verdict_for_season(%{pack | size: 7 * @gb}, 1, [], opts) ==
+               {:rejected, :out_of_band}
+
+      double = release(season: 1, episodes: [7, 8], resolution: "1080p", size: 3 * @gb)
+      assert Scorer.verdict_for_season(double, 1, [3], opts) == :ok
+
+      assert Scorer.verdict_for_season(%{double | size: 5 * @gb}, 1, [3], opts) ==
+               {:rejected, :out_of_band}
+
+      other_season = release(season: 3, episodes: [1], resolution: "1080p", size: 1 * @gb)
+      assert Scorer.verdict_for_season(other_season, 1, [3], opts) == :ok
+    end
+  end
+
   describe "source_rank/2 (public for Library.Upgrade)" do
     test "index in the preference list; nil/unlisted sorts last" do
       assert Scorer.source_rank("bluray", ["bluray", "webdl"]) == 0

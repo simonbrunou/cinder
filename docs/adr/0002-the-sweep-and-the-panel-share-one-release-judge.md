@@ -33,9 +33,14 @@ freezes bridged episode ids. So the judging is shared and the inputs are not.
 ## Consequences
 
 The panel's verdict column is unchanged: only the IMDb-scoped and anime movie guards say "title
-doesn't match", because the Title.Year and season guards also reject for year evidence. A TV row's
-verdict still bands a pack by an approximate episode count, while the set-cover bands by the
-still-wanted count.
+doesn't match", because the Title.Year and season guards also reject for year evidence.
+
+Since #836, a TV row's verdict is the set-cover's for that release alone
+(`Scorer.verdict_for_season/4`). The set-cover bands by the still-wanted count, so the season guard
+carries the still-wanted episodes, and the panel passes the season's episode count as the TV sweep
+does. A row covering no still-wanted episode, which the cover never takes, is banded by what it
+carries (the episodes it names or resolves to, else the season's count for a pack), so an operator
+upgrade still reads whether it fits.
 
 An anime row the judge keeps carries the anime selection's own verdict: the anime policy, then the
 quality rules, then the group wait. The group wait stays a verdict rather than a stage that drops

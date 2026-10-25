@@ -5,9 +5,12 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   import Mox
   import Cinder.AccountsFixtures
   import Cinder.CatalogFixtures
+  import Cinder.ConfigCase, only: [put_env: 2]
 
   alias Cinder.{Catalog, Repo}
   alias Cinder.Catalog.{BlockedRelease, Episode, Events, Grab, Identity, TitleAlias}
+
+  @gb 1_000_000_000
 
   setup :register_and_log_in_admin
   setup :set_mox_global
@@ -1757,6 +1760,117 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert grab.download_id == "hash-new"
   end
 
+  # #836: a standard season row's verdict is the sweep's cover taking that release alone. A pack is
+  # banded by the still-wanted episodes it covers, then by the season's episode count. A 20-episode
+  # season with 10 aired, 8 of them imported, under a 0.5 to 2 GB band: the cover takes a lone pack
+  # of 1 to 4 GB (2 wanted) or 10 to 40 GB (20 in the season), while the panel used to band it by
+  # the 10 episodes it searched, 5 to 20 GB.
+  describe "a standard season row's panel verdict" do
+    setup do
+      put_env(:tv_min_size, div(@gb, 2))
+      put_env(:tv_max_size, 2 * @gb)
+
+      series =
+        Repo.insert!(%Cinder.Catalog.Series{
+          tmdb_id: 9002,
+          tvdb_id: 99,
+          title: "Test Show",
+          scene_numbering_group_id: "operator-group"
+        })
+
+      season =
+        Repo.insert!(%Cinder.Catalog.Season{
+          series_id: series.id,
+          season_number: 1,
+          monitored: true
+        })
+
+      today = Cinder.Settings.household_date()
+
+      episodes =
+        Map.new(1..20, fn number ->
+          {number,
+           wanted_ep(season, number,
+             air_date: Date.add(today, if(number <= 10, do: -30 + number, else: 7 * number)),
+             file_path: if(number <= 8, do: "/tv/Test Show/S01E0#{number}.mkv")
+           )}
+        end)
+
+      %{series: Repo.reload!(series), season: season, episodes: episodes}
+    end
+
+    test "a 3 GB pack the sweep takes for the 2 wanted episodes reads acceptable",
+         %{conn: conn, series: series, season: season} do
+      {lv, html} = open_season_panel(conn, series, season, %{1 => [season_pack(3 * @gb)]})
+
+      assert html =~ "Test Show S01 1080p WEB-DL GRP"
+      refute has_element?(lv, verdict_reason(season))
+      assert has_element?(lv, "#ms-season-#{season.id} button", "Grab")
+    end
+
+    test "a 6 GB pack the sweep never takes reads outside size band",
+         %{conn: conn, series: series, season: season} do
+      {lv, html} = open_season_panel(conn, series, season, %{1 => [season_pack(6 * @gb)]})
+
+      assert html =~ "Test Show S01 1080p WEB-DL GRP"
+      assert has_element?(lv, verdict_reason(season), "outside size band")
+    end
+
+    test "a 30 GB pack the sweep takes under the season band reads acceptable",
+         %{conn: conn, series: series, season: season} do
+      {lv, html} = open_season_panel(conn, series, season, %{1 => [season_pack(30 * @gb)]})
+
+      assert html =~ "Test Show S01 1080p WEB-DL GRP"
+      refute has_element?(lv, verdict_reason(season))
+    end
+
+    # Scene S02E01 is native E10 (wanted) and S02E02 native E08 (imported): the cover bands the
+    # double by the one wanted episode it covers, through the alternate numbering.
+    test "a bridged double episode is banded by the wanted episode it covers",
+         %{conn: conn, series: series, season: season, episodes: episodes} do
+      assert {:ok, _} =
+               Identity.replace_provider_coordinates(
+                 series,
+                 "tmdb",
+                 "operator-group",
+                 "scene",
+                 for {code, number} <- [{"S02E01", 10}, {"S02E02", 8}] do
+                   %{
+                     scheme: "scene",
+                     canonical_value: code,
+                     precedence: :inferred,
+                     episode_ids: [episodes[number].id]
+                   }
+                 end
+               )
+
+      double = %{title: "Test Show S02E01E02 1080p WEB-DL GRP", size: 3 * @gb, download_url: "d"}
+      {lv, html} = open_season_panel(conn, series, season, %{1 => [], 2 => [double]})
+
+      assert html =~ "Test Show S02E01E02 1080p WEB-DL GRP"
+      assert has_element?(lv, verdict_reason(season), "outside size band")
+    end
+  end
+
+  defp season_pack(size),
+    do: %{title: "Test Show S01 1080p WEB-DL GRP", size: size, download_url: "pack"}
+
+  # A row's rejection reason, which the panel renders for every verdict but `:ok`.
+  defp verdict_reason(season), do: "#ms-season-#{season.id} li span.text-warning"
+
+  # Opens `season`'s panel over the indexer results `results` lists per searched season; returns
+  # the view and the panel's HTML once the search has run.
+  defp open_season_panel(conn, series, season, results) do
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Test Show", number ->
+      {:ok, Map.get(results, number, [])}
+    end)
+
+    {:ok, lv, _html} = live_series(conn, series)
+    lv |> element("button[phx-click=tv_manual_search]", "Find a better match") |> render_click()
+    render_async(lv)
+    {lv, lv |> element("#ms-season-#{season.id}") |> render()}
+  end
+
   # #274: the panel reads the same series-scoped blocklist as the sweeps. A `"no_upgrade"` row says
   # only "this release does not beat the file we already hold" — it bounds the upgrade sweep and
   # nothing else, so the panel must neither label it blocklisted nor withhold the Grab button.
@@ -1984,7 +2098,8 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     Repo.reload!(series)
   end
 
-  # Insert one wanted-shaped episode (monitored, no file, no grab) with a chosen air_date.
+  # Insert one monitored episode with a chosen air_date: wanted-shaped (no file, no grab) unless
+  # `opts` sets a file_path.
   defp wanted_ep(season, number, opts) do
     Repo.insert!(
       struct(

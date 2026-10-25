@@ -2235,7 +2235,9 @@ defmodule Cinder.Download.TvPollerTest do
       |> Catalog.anime_series_acquisition_context()
       |> Cinder.Acquisition.standard_tv_numbering(candidates, MapSet.new([1]))
 
-    assert {:ok, %{rows: rows}} = Cinder.Acquisition.judge_season(series, 1, numbering)
+    wanted = Enum.map(candidates, & &1.episode_number)
+
+    assert {:ok, %{rows: rows}} = Cinder.Acquisition.judge_season(series, 1, wanted, numbering)
 
     assert_receive {:searched_manual_season, 1}
     assert_receive {:searched_manual_season, 2}

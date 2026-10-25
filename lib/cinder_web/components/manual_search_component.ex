@@ -125,14 +125,14 @@ defmodule CinderWeb.ManualSearchComponent do
     season = socket.assigns[:season_number]
     # The sweep's own household policy, so the panel's verdicts and order are the sweep's.
     opts = HouseholdPolicy.for_target(target)
-    profile = Catalog.media_profile_summary(target).effective
+    summary = Catalog.media_profile_summary(target)
 
     start_async(socket, :search, fn ->
-      search(profile, mode, target, season, opts)
+      search(summary, mode, target, season, opts)
     end)
   end
 
-  defp search(:anime, :movie, target, _season, opts) do
+  defp search(%{effective: :anime}, :movie, target, _season, opts) do
     with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()),
          {:ok, judged, _incomplete?} <-
            Acquisition.judge_anime_movie(
@@ -143,7 +143,7 @@ defmodule CinderWeb.ManualSearchComponent do
          do: {:ok, judged.rows}
   end
 
-  defp search(:anime, :tv, target, season, opts) do
+  defp search(%{effective: :anime}, :tv, target, season, opts) do
     with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()),
          {:ok, judged, _incomplete?} <-
            Acquisition.judge_anime_episodes(
@@ -154,7 +154,7 @@ defmodule CinderWeb.ManualSearchComponent do
          do: {:ok, judged.rows}
   end
 
-  defp search(:standard, :movie, target, _season, opts) do
+  defp search(%{effective: :standard}, :movie, target, _season, opts) do
     with {:ok, judged} <-
            Acquisition.judge_movie(
              target.imdb_id,
@@ -164,7 +164,7 @@ defmodule CinderWeb.ManualSearchComponent do
          do: {:ok, judged.rows}
   end
 
-  defp search(:standard, :tv, target, season, opts) do
+  defp search(%{effective: :standard} = summary, :tv, target, season, opts) do
     episodes = Catalog.manual_search_episodes(target.id, season)
 
     numbering =
@@ -172,11 +172,15 @@ defmodule CinderWeb.ManualSearchComponent do
       |> Catalog.anime_series_acquisition_context()
       |> Acquisition.standard_tv_numbering(episodes, MapSet.new([season]))
 
-    # Whole-season packs are verdict-banded per episode (k×band, like the sweep);
-    # pass the season's wanted count so a pack isn't judged as one episode's size.
-    opts = opts ++ [pack_episode_count: max(length(episodes), 1)]
+    # The facts the sweep's set-cover reads, so each row's verdict is the cover's for that release
+    # alone (`judge_season/5` adds the alternate numbering): the season's episode count, and its
+    # still-wanted episodes. Those are the searched episodes eligible for the sweep's wanted set,
+    # parked or backing off included; the rest are imported, there to upgrade. The numbering is
+    # built over the searched episodes, not the sweep's wanted ones (#837).
+    wanted = for e <- episodes, Catalog.episode_searchable?(e, summary), do: e.episode_number
+    opts = Keyword.put(opts, :pack_episode_count, Catalog.count_episodes(target.id, season))
 
-    with {:ok, judged} <- Acquisition.judge_season(target, season, numbering, opts),
+    with {:ok, judged} <- Acquisition.judge_season(target, season, wanted, numbering, opts),
          do: {:ok, judged.rows}
   end
 

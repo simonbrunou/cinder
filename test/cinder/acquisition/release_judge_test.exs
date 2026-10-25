@@ -96,7 +96,7 @@ defmodule Cinder.Acquisition.ReleaseJudgeTest do
       series =
         ReleaseJudge.judge(
           [release("Darkwing.Duck.S01.1080p", season: 1)],
-          {:series, %Series{title: "Dark"}},
+          {:series, %Series{title: "Dark"}, 1, [1]},
           []
         )
 
@@ -112,7 +112,7 @@ defmodule Cinder.Acquisition.ReleaseJudgeTest do
               resolution_evidence: :conflicting_standard_numbering
             )
           ],
-          {:series, %Series{title: "Show"}},
+          {:series, %Series{title: "Show"}, 1, [1]},
           []
         )
 
@@ -224,7 +224,7 @@ defmodule Cinder.Acquisition.ReleaseJudgeTest do
             release("Serie.S01.FRENCH", language: "FRENCH", season: 1),
             release("Serie.S01.1080p", season: 1)
           ],
-          {:series, %Series{title: "Série"}},
+          {:series, %Series{title: "Série"}, 1, [1]},
           preferred_language: "original",
           original_language: "fr"
         )
@@ -238,7 +238,7 @@ defmodule Cinder.Acquisition.ReleaseJudgeTest do
       judged =
         ReleaseJudge.judge(
           [release("Multi", language: "MULTI"), release("Wrong", language: "FRENCH")],
-          {:series, %Series{title: "Hérbergið", tvdb_id: 42}},
+          {:series, %Series{title: "Hérbergið", tvdb_id: 42}, 1, [1]},
           preferred_language: "original",
           original_language: "is"
         )
@@ -252,7 +252,7 @@ defmodule Cinder.Acquisition.ReleaseJudgeTest do
       releases = [release("One", language: "FRENCH"), release("Two", language: "GERMAN")]
 
       judged =
-        ReleaseJudge.judge(releases, {:series, %Series{title: "Hérbergið", tvdb_id: 42}},
+        ReleaseJudge.judge(releases, {:series, %Series{title: "Hérbergið", tvdb_id: 42}, 1, [1]},
           preferred_language: "original",
           original_language: "is"
         )
@@ -325,7 +325,7 @@ defmodule Cinder.Acquisition.ReleaseJudgeTest do
             release("Dark.S01.GERMAN", language: "GERMAN", season: 1),
             release("Darkwing.Duck.S01.ENGLISH", language: "ENGLISH", season: 1)
           ],
-          {:series, %Series{title: "Dark"}},
+          {:series, %Series{title: "Dark"}, 1, [1]},
           preferred_language: "original",
           original_language: "de"
         )

@@ -94,11 +94,12 @@ defmodule Cinder.Acquisition do
   `wanted_numbers` is the still-wanted episode-number set for that season.
 
   The set-cover runs over what the release judge keeps (`Cinder.Acquisition.ReleaseJudge`,
-  guard `{:series, series}`): releases with a download client, whose name is the series' (see
-  `title_guard/2`), that satisfy the audio pick. A strict pick that removes every candidate
-  leaves nothing to cover, so the season is `:no_match`. `opts` is the household policy
-  (`Cinder.Acquisition.HouseholdPolicy.for_target/2`) plus the facts the set-cover reads, such as
-  `opts[:pack_episode_count]`, the season's real episode count (`Scorer.select_for/4`).
+  guard `{:series, series, season_number, wanted_numbers}`): releases with a download client,
+  whose name is the series' (see `title_guard/2`), that satisfy the audio pick. A strict pick
+  that removes every candidate leaves nothing to cover, so the season is `:no_match`. `opts` is
+  the household policy (`Cinder.Acquisition.HouseholdPolicy.for_target/2`) plus the facts the
+  set-cover reads, such as `opts[:pack_episode_count]`, the season's real episode count
+  (`Scorer.select_for/4`).
 
   Returns `{:ok, [{%Release{}, [number]}]}`, `:no_match`, or `{:error, term}`.
 
@@ -118,7 +119,7 @@ defmodule Cinder.Acquisition do
         %ReleaseJudge{kept: cover_set} =
           raw_results
           |> Enum.map(&Release.new/1)
-          |> ReleaseJudge.judge({:series, series}, opts)
+          |> ReleaseJudge.judge({:series, series, season_number, wanted_numbers}, opts)
 
         Scorer.select_for(cover_set, season_number, wanted_numbers, opts)
 
@@ -170,8 +171,9 @@ defmodule Cinder.Acquisition do
     movie's known titles (`context` is `Cinder.Catalog.movie_acquisition_context/1`'s map).
   - `{:title_year, title, year}`: a free-text movie search. Everything before the year token has
     to be the title.
-  - `{:series, series}`: a season search. An explicit TVDB id match is proof; otherwise the
-    title run has to open a release tag, and a known year has to agree.
+  - `{:series, series, season_number, wanted_numbers}`: a season search. An explicit TVDB id
+    match is proof; otherwise the title run has to open a release tag, and a known year has to
+    agree.
   - `{:anime_movie, context}`: the anime movie queries. The anime guard
     (`Cinder.Acquisition.Anime.names_movie?/2`), and for an IMDb-scoped result the `{:imdb,
     context}` spelling as well.
@@ -183,7 +185,8 @@ defmodule Cinder.Acquisition do
   def title_guard(releases, {:title_year, title, year}),
     do: filter_movie_title(releases, title, year)
 
-  def title_guard(releases, {:series, series}), do: filter_title(releases, series)
+  def title_guard(releases, {:series, series, _season_number, _wanted_numbers}),
+    do: filter_title(releases, series)
 
   def title_guard(releases, {:anime_movie, context}) do
     Enum.filter(releases, fn release ->
@@ -195,19 +198,25 @@ defmodule Cinder.Acquisition do
 
   @doc """
   Searches the indexer for one TV `season` of `series` and judges every result
-  (`Cinder.Acquisition.ReleaseJudge`, guard `{:series, series}`), for the manual-search panel.
+  (`Cinder.Acquisition.ReleaseJudge`, guard `{:series, series, season_number, wanted_numbers}`),
+  for the manual-search panel. `wanted_numbers` and `opts` are the facts `best_releases/4` takes,
+  so a row's verdict is the set-cover's for that release alone.
 
   `numbering` is `standard_tv_numbering/3`'s result, or nil. It adds the bounded alternate-season
   queries and freezes each bridged release's resolved Catalog episode ids, so a later grab can't
   reinterpret an alternate-numbered release through native episode numbers; a coordinate that
-  resolves two ways is marked instead. Unlike `best_releases/4` it also drops duplicate results.
-  The judging is the sweep's; these inputs differ on purpose (#775).
+  resolves two ways is marked instead. Its `scorer` map becomes `opts[:alternate_numbering]`, as
+  the sweep passes it to `best_releases/4`. Unlike `best_releases/4` it also drops duplicate
+  results. The judging is the sweep's; these inputs differ on purpose (#775).
   """
-  def judge_season(series, season_number, numbering, opts \\ []) do
-    alternate_seasons =
+  def judge_season(series, season_number, wanted_numbers, numbering, opts \\ []) do
+    {alternate_seasons, opts} =
       case numbering do
-        %{search_seasons: seasons} -> seasons
-        _none -> []
+        %{search_seasons: seasons, scorer: scorer} ->
+          {seasons, Keyword.put(opts, :alternate_numbering, scorer)}
+
+        nil ->
+          {[], opts}
       end
 
     seasons = [season_number | Enum.reject(alternate_seasons, &(&1 == season_number))]
@@ -220,7 +229,8 @@ defmodule Cinder.Acquisition do
           |> deduplicate_tv_releases()
           |> Enum.map(&resolve_standard_manual_release(&1, season_number, numbering))
 
-        {:ok, ReleaseJudge.judge(releases, {:series, series}, opts)}
+        {:ok,
+         ReleaseJudge.judge(releases, {:series, series, season_number, wanted_numbers}, opts)}
 
       {:error, _} = error ->
         error

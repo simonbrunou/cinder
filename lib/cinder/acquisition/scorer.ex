@@ -77,7 +77,8 @@ defmodule Cinder.Acquisition.Scorer do
      tagged in that band can), then the one covering the most still-needed episodes, then the
      best `rank_key/2`. Ties keep input order.
 
-  Partial coverage is fine: the rest stay wanted for the next search tick.
+  Partial coverage is fine: the rest stay wanted for the next search tick. `verdict_for_season/4`
+  is this rule for one release, which the manual-search panel shows.
 
   `opts[:pack_episode_count]` is the season's real episode count. Under `full_claim_only` it is
   also what a whole-season pack must claim, in both passes.
@@ -97,7 +98,7 @@ defmodule Cinder.Acquisition.Scorer do
 
     candidates =
       releases
-      |> Enum.filter(&(&1.season == season or Map.has_key?(alternate_numbering, &1.season)))
+      |> Enum.filter(&coverable_season?(&1, season, alternate_numbering))
       |> Enum.reject(&excluded_title?(&1, release_blocklist, blocked_terms))
       |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
 
@@ -150,15 +151,49 @@ defmodule Cinder.Acquisition.Scorer do
   :wrong_resolution, :wrong_source]`. Used by the interactive manual-search panel to show WHY the
   auto-pick would skip a release while still letting the user grab it. Shares the private
   predicates with `select/2`, so the panel verdict and the auto-pick can never drift.
+
+  A TV release is banded per episode by what it carries: the episodes it names, its stable ids,
+  or `opts[:pack_episode_count]` for a whole-season pack. A season row the cover could take uses
+  `verdict_for_season/4` instead.
   """
-  def verdict(%Release{} = release, opts \\ []) do
-    # The TV band is per-episode: a multi-episode release is judged against the episodes it
-    # NAMES, a whole-season pack against `opts[:pack_episode_count]`. This approximates
-    # select_for's still-wanted k (a release naming already-imported episodes bands wider
-    # here than the sweep would — the panel is the manual-override surface, so the lenient
-    # direction is acceptable). Without scaling, every pack in the manual-search panel
-    # shows {:rejected, :out_of_band} while the auto-pick accepts it.
-    classify(release, episodes_multiplier(release, opts), opts)
+  def verdict(%Release{} = release, opts \\ []),
+    do: classify(release, [episodes_multiplier(release, opts)], opts)
+
+  @doc """
+  `verdict/2` for a release the standard season cover takes alone: its size band is
+  `select_for/4`'s, both passes included. A release covering `k` still-wanted episodes fits when
+  it is in band at `k` episodes, or, for a whole-season pack, at the season band `max(k,
+  opts[:pack_episode_count])`. `season`, `wanted_episodes` and `opts` are what `select_for/4`
+  takes.
+
+  For a release covering at least one still-wanted episode this is `:ok` exactly when
+  `select_for([release], season, wanted_episodes, opts)` matches. So a multi-episode release that
+  also names imported episodes is banded by the wanted ones alone, as the cover bands it, though a
+  manual grab links every episode it names.
+
+  A release covering none (an upgrade in an imported season, another season's release) is one the
+  cover never takes. It keeps `verdict/2`'s band by what it carries: the episodes it names or
+  resolves to, else for a whole-season pack the season's episode count, the band the upgrade
+  sweep's season pass uses. So the panel still tells the operator whether an upgrade fits.
+  """
+  def verdict_for_season(%Release{} = release, season, wanted_episodes, opts \\ []) do
+    case MapSet.size(season_coverage(release, season, wanted_episodes, opts)) do
+      0 ->
+        verdict(release, opts)
+
+      k ->
+        multipliers = Enum.map(pack_episodes_per_pass(opts), &banded_episodes(release, k, &1))
+        classify(release, multipliers, opts)
+    end
+  end
+
+  # The still-wanted episodes `select_for/4` would assign `release` if it were the only candidate.
+  defp season_coverage(release, season, wanted_episodes, opts) do
+    numbering = Keyword.get(opts, :alternate_numbering, %{})
+
+    if coverable_season?(release, season, numbering),
+      do: claimable_coverage(release, MapSet.new(wanted_episodes), season, numbering, opts),
+      else: MapSet.new()
   end
 
   @doc """
@@ -170,15 +205,19 @@ defmodule Cinder.Acquisition.Scorer do
   """
   def verdict_for_ids(%Release{} = release, opts \\ []) do
     ids = release.resolved_episode_ids || []
-    classify(release, max(length(ids), carried(release, pack_episodes(opts))), opts)
+    classify(release, [banded_episodes(release, length(ids), pack_episodes(opts))], opts)
   end
 
-  defp classify(release, k, opts) do
+  # The release is in band when it fits the size band scaled by any of `multipliers`.
+  defp classify(release, multipliers, opts) do
     {min_size, max_size, preferred, sources, release_blocklist, _preferred_terms, blocked_terms} =
       rules(opts)
 
+    in_band? =
+      Enum.any?(multipliers, &within_band?(release, scale(min_size, &1), scale(max_size, &1)))
+
     cond do
-      not within_band?(release, scale_band(min_size, k), scale_band(max_size, k)) ->
+      not in_band? ->
         {:rejected, :out_of_band}
 
       title_blocked?(release, release_blocklist) ->
@@ -242,9 +281,6 @@ defmodule Cinder.Acquisition.Scorer do
     do: Keyword.get(opts, :pack_episode_count) || 1
 
   defp episodes_multiplier(_movie_release, _opts), do: 1
-
-  defp scale_band(nil, _k), do: nil
-  defp scale_band(bound, k), do: bound * k
 
   @doc """
   The ascending sort key `select/2` ranks by (language → resolution → source → preferred title
@@ -330,7 +366,7 @@ defmodule Cinder.Acquisition.Scorer do
           # against k×the band (a pack is allowed proportionally more size), but never
           # against less than the episodes a whole-season pack CARRIES in this pass.
           k = MapSet.size(cov)
-          banded = max(k, carried(release, pack_episodes))
+          banded = banded_episodes(release, k, pack_episodes)
           k == 0 or not within_band?(release, scale(min_size, banded), scale(max_size, banded))
         end)
       end
@@ -406,8 +442,8 @@ defmodule Cinder.Acquisition.Scorer do
   defp within_band?(%Release{size: nil}, min_size, max_size),
     do: is_nil(min_size) and is_nil(max_size)
 
-  # One inclusive size-band check for both paths. The TV path pre-multiplies the
-  # bounds by k (the episodes a release covers) at the call site; movies pass them as-is.
+  # One inclusive size-band check for every path. The covers and the verdicts pre-multiply the
+  # bounds by the episodes a release is banded by at the call site; `select/2` passes them as-is.
   defp within_band?(%Release{size: size}, min_size, max_size) do
     (is_nil(min_size) or size >= min_size) and (is_nil(max_size) or size <= max_size)
   end
@@ -426,6 +462,15 @@ defmodule Cinder.Acquisition.Scorer do
     do: pack_episodes
 
   defp carried(_release, _pack_episodes), do: 0
+
+  # The episodes a release covering `k` still-needed ones is banded by in a cover pass that bands
+  # whole-season packs by `pack_episodes`. The covers and their verdicts share it.
+  defp banded_episodes(release, k, pack_episodes), do: max(k, carried(release, pack_episodes))
+
+  # The cover's season filter: a release of the native season, or of an alternate season the
+  # numbering maps.
+  defp coverable_season?(%Release{season: release_season}, season, alternate_numbering),
+    do: release_season == season or Map.has_key?(alternate_numbering, release_season)
 
   @doc "Index of a resolution string in the preference list (lower = better); nil/unlisted sorts last."
   def resolution_rank(resolution, preferred) when is_binary(resolution) or is_nil(resolution),
