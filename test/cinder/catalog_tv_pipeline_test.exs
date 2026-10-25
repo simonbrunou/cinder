@@ -4,7 +4,7 @@ defmodule Cinder.CatalogTvPipelineTest do
   use Cinder.DataCase, async: false
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, GrabFile, Season}
+  alias Cinder.Catalog.{Episode, EpisodeSearch, Grab, GrabFile, Season}
   alias Cinder.Library.ImportedQuality
   alias Ecto.Adapters.SQL, as: EctoSQL
 
@@ -720,6 +720,80 @@ defmodule Cinder.CatalogTvPipelineTest do
         end
 
       assert offered == [true, false, false]
+    end
+
+    test "an episode airing after the given day is not searched yet" do
+      {series, season} = series_with_season()
+      airing = episode(season, %{air_date: ~D[2001-01-01]})
+
+      assert [] = EpisodeSearch.manual_search_episodes(series.id, 1, ~D[2000-12-31])
+
+      assert [%{id: id}] = EpisodeSearch.manual_search_episodes(series.id, 1, ~D[2001-01-01])
+      assert id == airing.id
+    end
+  end
+
+  describe "season_acquisition_context/2 (#837)" do
+    test "the searched episodes with their search state, and every native season wanting one" do
+      series = series_fixture(%{monitor_strategy: :all})
+      season = season_fixture(series, %{season_number: 1})
+      imported = episode(season, %{episode_number: 1, file_path: "/lib/Show/S01E01.mkv"})
+      wanted = episode(season, %{episode_number: 2})
+      parked = episode(season, %{episode_number: 3, search_attempts: 10})
+      owned = episode(season, %{episode_number: 4})
+      {:ok, _grab} = Catalog.create_grab("owned", :torrent, [owned.id])
+      episode(season, %{episode_number: 5, monitored: false})
+
+      # Backing off this tick, still wanted: the sweep searches season 2 on its own.
+      # Numbered past 1, so no canonical S02E01 sits next to the scene one below.
+      episode(season_fixture(series, %{season_number: 2}), %{
+        episode_number: 5,
+        search_attempts: 1
+      })
+
+      episode(season_fixture(series, %{season_number: 3}), %{
+        episode_number: 5,
+        file_path: "/lib/Show/S03E05.mkv"
+      })
+
+      episode(season_fixture(series, %{season_number: 4}), %{episode_number: 5, air_date: @future})
+
+      episode_coordinate_fixture(
+        series,
+        %{
+          source: "tmdb",
+          scheme: "scene",
+          namespace: "operator-group",
+          canonical_value: "S02E01",
+          precedence: :inferred
+        },
+        [wanted.id]
+      )
+
+      context = Catalog.season_acquisition_context(series, 1)
+
+      assert context.series == series
+      assert context.season_number == 1
+      assert context.episode_count == 5
+      assert context.native_seasons == MapSet.new([1, 2])
+
+      # The scene coordinate, next to each episode's own canonical one.
+      mapping = fn code -> Enum.find(context.mappings, &(&1.identity.canonical_value == code)) end
+
+      assert %{
+               identity: %{scheme: "scene", namespace: "operator-group"},
+               precedence: :inferred,
+               episode_ids: [wanted_id]
+             } = mapping.("S02E01")
+
+      assert %{identity: %{scheme: "standard"}, episode_ids: [^wanted_id]} = mapping.("S01E02")
+      assert wanted_id == wanted.id
+
+      assert Enum.sort_by(context.episodes, & &1.episode_number) == [
+               %{id: imported.id, episode_number: 1, state: :available},
+               %{id: wanted.id, episode_number: 2, state: :wanted},
+               %{id: parked.id, episode_number: 3, state: :search_parked}
+             ]
     end
   end
 end

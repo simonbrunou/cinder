@@ -11,7 +11,6 @@ defmodule Cinder.Acquisition do
   alias Cinder.Acquisition.{Anime, AnimeParser}
   alias Cinder.Acquisition.Release
   alias Cinder.Acquisition.ReleaseJudge
-  alias Cinder.Acquisition.Scorer
   alias Cinder.Catalog.{AnimeResolver, Episode}
 
   @max_alternate_seasons 4
@@ -89,43 +88,19 @@ defmodule Cinder.Acquisition do
     do: Anime.judge_movie(indexer(), imdb_id, context, opts)
 
   @doc """
-  Searches the configured indexer for one TV `season` of `series` and returns the chosen
-  releases, each paired with the episode numbers it covers, per `Scorer.select_for/4`.
-  `wanted_numbers` is the still-wanted episode-number set for that season.
-
-  The set-cover runs over what the release judge keeps (`Cinder.Acquisition.ReleaseJudge`,
-  guard `{:series, series, season_number, wanted_numbers}`): releases with a download client,
-  whose name is the series' (see `title_guard/2`), that satisfy the audio pick. A strict pick
-  that removes every candidate leaves nothing to cover, so the season is `:no_match`. `opts` is
-  the household policy (`Cinder.Acquisition.HouseholdPolicy.for_target/2`) plus the facts the
-  set-cover reads, such as `opts[:pack_episode_count]`, the season's real episode count
-  (`Scorer.select_for/4`).
+  The releases the upgrade sweep grabs for one TV `season` of `series`. It builds the season's
+  release list as `judge_season/3` does, without the numbering bridge: one query for the native
+  season, its duplicate results dropped, then judged, and takes the judge's pick
+  (`Cinder.Acquisition.ReleaseJudge.pick/1`, the set-cover `Scorer.select_for/4` over what the
+  judge keeps). `wanted_numbers` is the episode-number set the cover may claim, and `opts` the
+  household policy plus the facts the set-cover reads, such as `opts[:pack_episode_count]`, which
+  it passes as given.
 
   Returns `{:ok, [{%Release{}, [number]}]}`, `:no_match`, or `{:error, term}`.
-
-  When `opts[:alternate_numbering]` is present, the mapped scene seasons are searched
-  additively and the same map is forwarded to `Scorer.select_for/4`.
   """
   def best_releases(series, season_number, wanted_numbers, opts \\ []) do
-    alternate_seasons =
-      opts
-      |> Keyword.get(:alternate_numbering, %{})
-      |> Map.keys()
-      |> Enum.reject(&(&1 == season_number))
-      |> Enum.sort()
-
-    case search_tv_seasons(indexer(), series, [season_number | alternate_seasons]) do
-      {:ok, raw_results} ->
-        %ReleaseJudge{kept: cover_set} =
-          raw_results
-          |> Enum.map(&Release.new/1)
-          |> ReleaseJudge.judge({:series, series, season_number, wanted_numbers}, opts)
-
-        Scorer.select_for(cover_set, season_number, wanted_numbers, opts)
-
-      {:error, _reason} = error ->
-        error
-    end
+    with {:ok, judged} <- judge_releases(series, season_number, wanted_numbers, nil, opts),
+         do: ReleaseJudge.pick(judged)
   end
 
   defp search_tv_seasons(indexer, series, [season_number]) do
@@ -197,19 +172,48 @@ defmodule Cinder.Acquisition do
   end
 
   @doc """
-  Searches the indexer for one TV `season` of `series` and judges every result
-  (`Cinder.Acquisition.ReleaseJudge`, guard `{:series, series, season_number, wanted_numbers}`),
-  for the manual-search panel. `wanted_numbers` and `opts` are the facts `best_releases/4` takes,
-  so a row's verdict is the set-cover's for that release alone.
+  The one function that builds a standard TV season's release list, for the TV sweep (which takes
+  `Cinder.Acquisition.ReleaseJudge.pick/1`, the set-cover over `kept`) and the manual-search panel
+  (which renders `rows`). `context` is `Cinder.Catalog.season_acquisition_context/2`'s, so both
+  read the same episodes, native seasons and coordinate mappings.
 
-  `numbering` is `standard_tv_numbering/3`'s result, or nil. It adds the bounded alternate-season
-  queries and freezes each bridged release's resolved Catalog episode ids, so a later grab can't
-  reinterpret an alternate-numbered release through native episode numbers; a coordinate that
-  resolves two ways is marked instead. Its `scorer` map becomes `opts[:alternate_numbering]`, as
-  the sweep passes it to `best_releases/4`. Unlike `best_releases/4` it also drops duplicate
-  results. The judging is the sweep's; these inputs differ on purpose (#775).
+  From those it derives the numbering bridge: the scene and TVDB-aired coordinates of the searched
+  episodes that land in another season. It searches the native season plus at most
+  #{@max_alternate_seasons} of those alternate seasons, never a native one: while the season
+  wants an episode, the seasons reaching a wanted one, an unparked one first; a season wanting
+  nothing (an upgrade from the panel) searches those reaching its imported episodes. It drops
+  duplicate results, keeping every copy's query origins, and freezes each bridged release's
+  Catalog episode ids, so a later grab can't read an alternate-numbered release through native
+  episode numbers. A bridged release with a coordinate that resolves two ways is marked
+  `:conflicting_standard_numbering`, and the judge drops it at its mapping stage.
+
+  Then it judges the releases (guard `{:series, series, season_number, wanted_numbers}`) under
+  `opts`, the household policy, plus the bridge's canonical-number map as
+  `opts[:alternate_numbering]` and the season's episode count as `opts[:pack_episode_count]`
+  (`Scorer.select_for/4`).
+
+  Only `wanted_numbers` differs between the two callers. The sweep passes the episodes it searches
+  this tick (no pending grab, under the attempt cap, out of backoff), because it grabs on its own
+  and must not spend a release on an episode it is resting. The panel passes
+  `searchable_numbers/1`, every still-wanted episode, parked or backing off included, because the
+  operator may search what the sweep is resting. It changes the set-cover's band and the rows'
+  verdicts, never `kept`, the seasons searched or the bridge.
+
+  Returns `{:ok, %ReleaseJudge{}}`, or the first failed query's `{:error, term}`.
   """
-  def judge_season(series, season_number, wanted_numbers, numbering, opts \\ []) do
+  def judge_season(context, wanted_numbers, opts) do
+    opts = Keyword.put(opts, :pack_episode_count, context.episode_count)
+
+    judge_releases(
+      context.series,
+      context.season_number,
+      wanted_numbers,
+      standard_tv_numbering(context),
+      opts
+    )
+  end
+
+  defp judge_releases(series, season_number, wanted_numbers, numbering, opts) do
     {alternate_seasons, opts} =
       case numbering do
         %{search_seasons: seasons, scorer: scorer} ->
@@ -219,15 +223,13 @@ defmodule Cinder.Acquisition do
           {[], opts}
       end
 
-    seasons = [season_number | Enum.reject(alternate_seasons, &(&1 == season_number))]
-
-    case search_tv_seasons(indexer(), series, seasons) do
+    case search_tv_seasons(indexer(), series, [season_number | alternate_seasons]) do
       {:ok, raw} ->
         releases =
           raw
           |> Enum.map(&Release.new/1)
           |> deduplicate_tv_releases()
-          |> Enum.map(&resolve_standard_manual_release(&1, season_number, numbering))
+          |> Enum.map(&resolve_bridged_release(&1, season_number, numbering))
 
         {:ok,
          ReleaseJudge.judge(releases, {:series, series, season_number, wanted_numbers}, opts)}
@@ -238,30 +240,31 @@ defmodule Cinder.Acquisition do
   end
 
   @doc """
-  Derives the bounded scene/TVDB-aired bridge used by Standard TV acquisition.
-
-  `scorer` is the canonical-number map consumed by automatic selection. Manual search also uses
-  `search_seasons`, stable `episode_ids`, and `conflicts` so its later grab cannot reinterpret an
-  alternate-numbered release through native episode numbers.
+  The episode numbers of a season context's still-wanted episodes (`judge_season/3`), parked or
+  backing off included: the manual-search panel's `wanted_numbers`.
   """
-  def standard_tv_numbering(context, episodes, native_seasons) do
-    wanted_by_id = Map.new(episodes, &{&1.id, &1.episode_number})
-    wanted_ids = MapSet.new(Map.keys(wanted_by_id))
-    mappings = prefer_scene_mappings(context.mappings, wanted_ids)
+  def searchable_numbers(context),
+    do: for(episode <- context.episodes, wanted?(episode), do: episode.episode_number)
+
+  defp wanted?(%{state: state}), do: state != :available
+
+  # The bounded scene/TVDB-aired bridge: `scorer` is the canonical-number map the set-cover reads,
+  # `search_seasons` the alternate seasons searched, `episode_ids` each resolved coordinate's
+  # stable episode ids and `conflicts` the coordinates that resolve two ways.
+  defp standard_tv_numbering(%{episodes: episodes} = context) do
+    numbers_by_id = Map.new(episodes, &{&1.id, &1.episode_number})
+    searched_ids = MapSet.new(Map.keys(numbers_by_id))
+    wanted_ids = for episode <- episodes, wanted?(episode), into: MapSet.new(), do: episode.id
+    mappings = prefer_scene_mappings(context.mappings, searched_ids, wanted_ids)
 
     relevant =
       Enum.filter(mappings, fn mapping ->
         mapping.identity.scheme in @standard_tv_bridged_schemes and
-          not MapSet.disjoint?(MapSet.new(mapping.episode_ids), wanted_ids)
+          not MapSet.disjoint?(MapSet.new(mapping.episode_ids), searched_ids)
       end)
 
     alternate_seasons =
-      relevant
-      |> Enum.map(&Episode.season_from_code(&1.identity.canonical_value))
-      |> Enum.reject(&is_nil/1)
-      |> Enum.uniq()
-      |> Enum.sort()
-      |> Enum.take(@max_alternate_seasons)
+      alternate_search_seasons(relevant, episodes, wanted_ids, context.native_seasons)
 
     initial = %{
       scorer: %{},
@@ -276,7 +279,6 @@ defmodule Cinder.Acquisition do
     |> Enum.reduce(initial, fn value, numbering ->
       with {alternate_season, alternate_episode} <-
              Episode.season_and_episode_from_code(value),
-           false <- MapSet.member?(native_seasons, alternate_season),
            true <- alternate_season in alternate_seasons do
         put_standard_resolution(
           numbering,
@@ -284,8 +286,8 @@ defmodule Cinder.Acquisition do
           alternate_season,
           alternate_episode,
           resolve_standard_coordinate(value, mappings),
-          wanted_by_id,
-          wanted_ids
+          numbers_by_id,
+          searched_ids
         )
       else
         _unusable -> numbering
@@ -293,17 +295,50 @@ defmodule Cinder.Acquisition do
     end)
   end
 
+  # The alternate seasons the bridge searches, at most `@max_alternate_seasons`. A native season is
+  # never one. While the season wants an episode, only the seasons reaching a wanted one count, a
+  # season reaching an unparked one first: a query that can't cover a wanted episode would cost the
+  # sweep a search attempt if it failed. A season wanting nothing (an upgrade from the panel)
+  # searches the seasons reaching its imported episodes.
+  defp alternate_search_seasons(relevant, episodes, wanted_ids, native_seasons) do
+    rank_by_id = Map.new(episodes, &{&1.id, search_rank(&1.state)})
+    upgrade_only? = MapSet.size(wanted_ids) == 0
+
+    relevant
+    |> Enum.flat_map(fn mapping ->
+      season = Episode.season_from_code(mapping.identity.canonical_value)
+      ranks = for id <- mapping.episode_ids, rank = rank_by_id[id], do: rank
+
+      if is_nil(season) or MapSet.member?(native_seasons, season) or ranks == [],
+        do: [],
+        else: [{Enum.min(ranks), season}]
+    end)
+    |> Enum.reject(fn {rank, _season} ->
+      rank == search_rank(:available) and not upgrade_only?
+    end)
+    |> Enum.sort()
+    |> Enum.uniq_by(fn {_rank, season} -> season end)
+    |> Enum.take(@max_alternate_seasons)
+    |> Enum.map(fn {_rank, season} -> season end)
+    |> Enum.sort()
+  end
+
+  # How much an episode in `state` makes a season worth searching, best first.
+  defp search_rank(:wanted), do: 0
+  defp search_rank(:search_parked), do: 1
+  defp search_rank(:available), do: 2
+
   defp put_standard_resolution(
          numbering,
          value,
          alternate_season,
          alternate_episode,
          {:ok, episode_ids, _evidence},
-         wanted_by_id,
-         wanted_ids
+         numbers_by_id,
+         searched_ids
        ) do
-    if MapSet.subset?(MapSet.new(episode_ids), wanted_ids) do
-      canonical_numbers = Enum.map(episode_ids, &Map.fetch!(wanted_by_id, &1))
+    if MapSet.subset?(MapSet.new(episode_ids), searched_ids) do
+      canonical_numbers = Enum.map(episode_ids, &Map.fetch!(numbers_by_id, &1))
 
       numbering
       |> put_in([:episode_ids, value], episode_ids)
@@ -326,18 +361,20 @@ defmodule Cinder.Acquisition do
          _season,
          _episode,
          _unresolved,
-         _wanted_by_id,
-         _wanted_ids
+         _numbers_by_id,
+         _searched_ids
        ),
        do: update_in(numbering.conflicts, &MapSet.put(&1, value))
 
-  defp prefer_scene_mappings(mappings, wanted_ids) do
+  # A scene coordinate shadows a TVDB-aired one for the same searched episode. The warning counts
+  # only wanted episodes, so a season of imported ones doesn't repeat it on every sweep.
+  defp prefer_scene_mappings(mappings, searched_ids, wanted_ids) do
     scene_ids =
       mappings
       |> Enum.filter(&(&1.identity.scheme == "scene"))
       |> Enum.flat_map(& &1.episode_ids)
       |> MapSet.new()
-      |> MapSet.intersection(wanted_ids)
+      |> MapSet.intersection(searched_ids)
 
     {mappings, dropped_ids} =
       Enum.map_reduce(mappings, MapSet.new(), fn
@@ -355,10 +392,12 @@ defmodule Cinder.Acquisition do
           {mapping, dropped_ids}
       end)
 
-    if MapSet.size(dropped_ids) > 0 do
+    dropped_wanted = MapSet.size(MapSet.intersection(dropped_ids, wanted_ids))
+
+    if dropped_wanted > 0 do
       Logger.warning(
         "standard TV numbering: ignored TVDB aired coordinates for " <>
-          "#{MapSet.size(dropped_ids)} episode(s) because scene coordinates take precedence"
+          "#{dropped_wanted} episode(s) because scene coordinates take precedence"
       )
     end
 
@@ -387,16 +426,13 @@ defmodule Cinder.Acquisition do
     AnimeResolver.resolve(Enum.map(matching, & &1.identity), resolver_mappings)
   end
 
-  defp resolve_standard_manual_release(release, native_season, numbering)
+  # A release of an alternate season: its frozen episode ids, or the conflict mark.
+  defp resolve_bridged_release(release, native_season, numbering)
 
-  defp resolve_standard_manual_release(
-         %Release{season: native_season} = release,
-         native_season,
-         _
-       ),
-       do: release
+  defp resolve_bridged_release(%Release{season: native_season} = release, native_season, _),
+    do: release
 
-  defp resolve_standard_manual_release(%Release{} = release, _native_season, %{
+  defp resolve_bridged_release(%Release{} = release, _native_season, %{
          episode_ids: episode_ids,
          conflicts: conflicts
        }) do
@@ -411,7 +447,7 @@ defmodule Cinder.Acquisition do
     end
   end
 
-  defp resolve_standard_manual_release(%Release{} = release, _native_season, _none), do: release
+  defp resolve_bridged_release(%Release{} = release, _native_season, _none), do: release
 
   defp standard_release_values(%Release{season: season, episodes: nil}, known_values)
        when is_integer(season) do
@@ -425,14 +461,36 @@ defmodule Cinder.Acquisition do
 
   defp standard_release_values(_release, _known_values), do: []
 
+  # One copy of each release, in first-seen order: the bridged seasons' queries can each return it.
+  # The copy kept carries every copy's query origins, as `Indexer.Prowlarr.search_tv/3` merges its
+  # own two queries, because the title guard reads them.
   defp deduplicate_tv_releases(releases) do
-    Enum.uniq_by(releases, fn
-      %Release{download_url: url, protocol: protocol} when is_binary(url) and url != "" ->
-        {protocol, url}
+    {keys, by_key} =
+      Enum.reduce(releases, {[], %{}}, fn release, {keys, by_key} ->
+        key = tv_release_key(release)
 
-      %Release{} = release ->
-        {release.protocol, release.title, release.size}
-    end)
+        case by_key do
+          %{^key => kept} -> {keys, %{by_key | key => merge_query_origins(kept, release)}}
+          %{} -> {[key | keys], Map.put(by_key, key, release)}
+        end
+      end)
+
+    keys |> Enum.reverse() |> Enum.map(&Map.fetch!(by_key, &1))
+  end
+
+  defp tv_release_key(%Release{download_url: url, protocol: protocol})
+       when is_binary(url) and url != "",
+       do: {protocol, url}
+
+  defp tv_release_key(%Release{} = release), do: {release.protocol, release.title, release.size}
+
+  # nil origins (an indexer that predates provenance) stay nil: the title guard reads nil as legacy.
+  defp merge_query_origins(%Release{query_origins: nil} = kept, %Release{query_origins: nil}),
+    do: kept
+
+  defp merge_query_origins(kept, copy) do
+    origins = Enum.uniq(List.wrap(kept.query_origins) ++ List.wrap(copy.query_origins))
+    %{kept | query_origins: origins}
   end
 
   # `Indexer.Prowlarr.search_tv/3` unions a TVDB-scoped query with a free-text query. Query origin

@@ -9,7 +9,17 @@ defmodule Cinder.Catalog.EpisodeSearch do
   import Ecto.Query
   require Logger
 
-  alias Cinder.Catalog.{BlockedReleases, Episode, Episodes, Events, MediaProfiles, Season}
+  alias Cinder.Catalog.{
+    BlockedReleases,
+    Episode,
+    Episodes,
+    Events,
+    MediaProfiles,
+    Season,
+    Series,
+    SeriesCatalog
+  }
+
   alias Cinder.{Notifier, Repo, Settings}
 
   @doc """
@@ -31,15 +41,18 @@ defmodule Cinder.Catalog.EpisodeSearch do
 
   @doc """
   Episodes a season-level manual search may replace or fill: ungrabbed available episodes
-  (monitored or not) plus the normal wanted set. Unlike `wanted_episodes/0`, this is operator-only
-  input and is never consumed by the automatic sweep.
+  (monitored or not) plus the normal wanted set. Unlike `wanted_episodes/0`, it is never the set
+  the automatic sweep grabs for. The sweep reads it only through `season_acquisition_context/2`,
+  to build the season's numbering bridge from the same episodes the panel does.
 
   Deliberately does NOT apply the Anime Season-0 story-special/recap classification restriction
   (`episode_kind_wanted?/3`) that gates automatic search and the upgrade hunter — an operator
   working a season panel can still target an unclassified special or a pure `:extra` explicitly.
   The restriction is a policy default for unattended sweeps, not an operator-facing lock (#356).
+
+  `today` is the household date an episode must have aired by.
   """
-  def manual_search_episodes(series_id, season_number) do
+  def manual_search_episodes(series_id, season_number, today \\ Settings.household_date()) do
     episodes =
       Repo.all(
         from e in Episode,
@@ -52,7 +65,7 @@ defmodule Cinder.Catalog.EpisodeSearch do
     case episodes do
       [%{season: %{series: series}} | _] ->
         profile = MediaProfiles.media_profile_summary(series)
-        Enum.filter(episodes, &manual_searchable?(&1, profile))
+        Enum.filter(episodes, &manual_searchable?(&1, profile, today))
 
       [] ->
         []
@@ -60,20 +73,76 @@ defmodule Cinder.Catalog.EpisodeSearch do
   end
 
   @doc """
+  The facts a standard season's release list is built from (`Cinder.Acquisition.judge_season/3`),
+  read in one transaction, so the TV sweep and the manual season panel search the season from the
+  same inputs:
+
+  - `series`, as given, and `season_number`;
+  - `episode_count`: every episode of the season, the set-cover's `pack_episode_count`;
+  - `episodes`: the searched episodes (`manual_search_episodes/2`), each `%{id, episode_number,
+    state}` in `Episodes.state/2`'s terms: `:wanted` or `:search_parked` for one still wanted (the
+    sweep searches a `:search_parked` one again once it's re-queued), `:available` for an imported
+    one;
+  - `native_seasons`: the season and every other season of the series with a wanted episode
+    (`wanted_episodes/0`, backing off or parked included). The sweep searches each of those as a
+    native season, on this tick or a later one, so the numbering bridge never reads one as an
+    alternate season;
+  - `mappings`: the series' episode coordinate mappings (`MediaProfiles.acquisition_mappings/1`).
+  """
+  def season_acquisition_context(%Series{id: series_id} = series, season_number) do
+    {:ok, context} =
+      Repo.transaction(fn ->
+        today = Settings.household_date()
+
+        %{
+          series: series,
+          season_number: season_number,
+          episode_count: SeriesCatalog.count_episodes(series_id, season_number),
+          # One `today` for the filter and the state, so no row reads as `:upcoming`.
+          episodes:
+            for episode <- manual_search_episodes(series_id, season_number, today) do
+              %{
+                id: episode.id,
+                episode_number: episode.episode_number,
+                state: Episodes.state(episode, today)
+              }
+            end,
+          native_seasons: MapSet.put(wanted_season_numbers(series_id), season_number),
+          mappings: MediaProfiles.acquisition_mappings(series)
+        }
+      end)
+
+    context
+  end
+
+  defp wanted_season_numbers(series_id) do
+    Repo.all(
+      from([e, s] in wanted_episodes_query(),
+        where: s.series_id == ^series_id,
+        distinct: true,
+        select: s.season_number
+      )
+    )
+    |> MapSet.new()
+  end
+
+  @doc """
   Whether a season offers a manual search: it has an episode `manual_search_episodes/2` would act
   on. `season.episodes` must be loaded; each episode gets `season` attached in memory. The season
   panel's "Find a better match" renders from this, so it never opens on nothing to search.
   """
-  def season_manual_searchable?(%Season{episodes: episodes} = season, profile),
-    do: Enum.any?(episodes, &manual_searchable?(%{&1 | season: season}, profile))
+  def season_manual_searchable?(%Season{episodes: episodes} = season, profile) do
+    today = Settings.household_date()
+    Enum.any?(episodes, &manual_searchable?(%{&1 | season: season}, profile, today))
+  end
 
   # An episode a manual search may act on: not owned by another grab, and either already
   # downloaded (an upgrade candidate) or one the sweep would search. Monitoring gates only the
   # automatic sweep.
-  defp manual_searchable?(%Episode{} = episode, profile),
+  defp manual_searchable?(%Episode{} = episode, profile, today),
     do:
       is_nil(episode.grab_id) and
-        (episode.file_path not in [nil, ""] or episode_searchable?(episode, profile))
+        (episode.file_path not in [nil, ""] or episode_searchable?(episode, profile, today))
 
   @doc "Count of wanted episodes (see `wanted_episodes/0`)."
   def count_wanted_episodes, do: Repo.aggregate(wanted_episodes_query(), :count)

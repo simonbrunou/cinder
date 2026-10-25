@@ -56,9 +56,11 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     stub(Cinder.Acquisition.IndexerMock, :search, fn ^title -> {:ok, results} end)
   end
 
+  # Each result has its own download URL, as an indexer returns them: a season's release list keeps
+  # one copy per URL.
   defp release(title, extra \\ %{}) do
     Map.merge(
-      %{title: title, size: 9_000_000_000, download_url: "magnet:?x", seeders: 40},
+      %{title: title, size: 9_000_000_000, download_url: "magnet:?x=#{title}", seeders: 40},
       extra
     )
   end

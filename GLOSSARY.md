@@ -12,8 +12,9 @@ The decision that accepts or rejects each release one search returned for one re
 always with a named reason, and ranks the accepted ones. The manual-search panel lists it. For a
 movie, a TV season or an anime title automatic selection takes its pick from the same judge, so
 the two can't disagree, and it also names the stage that dropped a release before scoring: no
-download client for its protocol, a name that isn't the target's, the audio pick, or for anime
-episodes a release that isn't a story episode or doesn't map to the wanted episodes. Books have
+download client for its protocol, a name that isn't the target's, the audio pick, for anime
+episodes a release that isn't a story episode or doesn't map to the wanted episodes, or for a TV
+season an alternate-numbered release that could name two different sets of episodes. Books have
 no automatic selection.
 _Avoid_: filter, matcher, release decision
 

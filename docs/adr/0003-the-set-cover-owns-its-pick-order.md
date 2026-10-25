@@ -4,8 +4,8 @@ A standard season's releases are picked by a greedy set-cover (`Cinder.Acquisiti
 `select_for/4`, and `select_for_ids/3` for anime). Its greedy step sorted by coverage before
 `Scorer.rank_key/2`, and two callers worked around that order instead of the cover owning it
 (#838). `Cinder.Acquisition.best_releases/4` re-ran the cover after a clean `:no_match` with
-whole-season packs banded by the season's episode count (#268), because a pack banded that way on the
-first pass would beat every in-band single behind it. The release judge kept untagged releases
+whole-season packs banded by the season's episode count (#268), because a pack banded that way on
+the first pass would beat every in-band single behind it. The release judge kept untagged releases
 under a soft "original" pick for movies only (#191), because an untagged season pack would beat
 confirmed-original singles. Each new caller of the cover had to know both rules.
 
@@ -22,12 +22,13 @@ So the cover decides its order in one place, the `select_for/4` doc, and callers
    decides first: an untagged single in the still-wanted band is taken before a tagged pack that
    fits only the season band.
 
-The TV sweep and the upgrade sweep both pass `pack_episode_count`, the season's episode count,
-under the same name. For the upgrade sweep the first pass equals its old single pass: under
-`full_claim_only` a native whole-season pack is claimable only when the whole season is wanted,
-so the episodes it covers are the season's count, and that sweep passes no alternate numbering.
-`select_for_ids/3` keeps one pass, banding a pack by `max(k, pack_episode_count)` at once,
-because `Scorer.verdict_for_ids/2` has to agree with it for a release taken alone.
+The TV sweep (through `Cinder.Acquisition.judge_season/3`, since #837) and the upgrade sweep both
+pass `pack_episode_count`, the season's episode count, under the same name. For the upgrade sweep
+the first pass equals its old single pass: under `full_claim_only` a native whole-season pack is
+claimable only when the whole season is wanted, so the episodes it covers are the season's count,
+and that sweep passes no alternate numbering. `select_for_ids/3` keeps one pass, banding a pack by
+`max(k, pack_episode_count)` at once, because `Scorer.verdict_for_ids/2` has to agree with it for
+a release taken alone.
 
 This refines ADR 0002's Consequences, which say the set-cover bands by the still-wanted count: it
 does in the first pass, and bands a whole-season pack by the season's count only in the second.

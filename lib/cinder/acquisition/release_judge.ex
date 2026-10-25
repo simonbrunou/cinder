@@ -16,8 +16,8 @@ defmodule Cinder.Acquisition.ReleaseJudge do
     episode id (`Cinder.Catalog.anime_series_acquisition_context/1`).
 
   `judge/3` runs these stages, in this order. An anime episode search has no title guard (its
-  search guards its free-text results and the stable-id mapping holds the rest), and two stages
-  of its own:
+  search guards its free-text results and the stable-id mapping holds the rest), and a stage of
+  its own:
 
   1. **Protocol.** A release whose protocol has no download client (`:protocols` in the
      household policy) is dropped.
@@ -35,8 +35,11 @@ defmodule Cinder.Acquisition.ReleaseJudge do
      (`Scorer.select_for/4`), but keeping it changes which releases a season grabs, a product
      decision (ADR 0003, #882). Under an anime policy the stage is off: the policy judges audio
      from release evidence, not the name's tag.
-  4. **Mapping**, anime episodes only. A release that doesn't resolve to wanted stable episode
-     ids, or whose mapping snapshot can't be frozen, is dropped: a grab could link no episode.
+  4. **Mapping**, anime episodes and standard seasons. An anime release that doesn't resolve to
+     wanted stable episode ids, or whose mapping snapshot can't be frozen, is dropped: a grab
+     could link no episode. A season release with an alternate-numbered coordinate that resolves
+     two ways (`:conflicting_standard_numbering`, `Cinder.Acquisition.judge_season/3`) is dropped:
+     a grab couldn't tell which episodes it holds.
 
   An anime movie's releases have their group read from the name first
   (`Cinder.Acquisition.Anime.movie_candidates/1`), as its policy reads it. An anime episode
@@ -44,8 +47,7 @@ defmodule Cinder.Acquisition.ReleaseJudge do
   (`Cinder.Acquisition.Anime.episode_candidates/3`).
 
   `kept` is what the selection runs over, in indexer order: `Cinder.Acquisition.Scorer` breaks
-  ties by input order. For a movie or anime episodes, `pick/1` is the selection. For a standard
-  season, `Cinder.Acquisition.best_releases/4` runs the set-cover over `kept`.
+  ties by input order. `pick/1` is the selection.
 
   Each row of `rows` carries:
 
@@ -140,8 +142,9 @@ defmodule Cinder.Acquisition.ReleaseJudge do
   instead wait for a preferred group), or `:no_language_match` when a strict audio pick left
   nothing to rank. For anime episodes, the stable-id cover over the kept releases
   (`Cinder.Acquisition.Anime.cover_episodes/3`); a strict audio pick that left nothing to cover
-  is `:no_match` there, as it is for a season. Not defined for a standard season, whose set-cover
-  `Cinder.Acquisition.best_releases/4` runs.
+  is `:no_match` there. For a standard season, the set-cover over the kept releases
+  (`Scorer.select_for/4`): each chosen release with the still-wanted episode numbers it covers,
+  or `:no_match`, which is also what a strict audio pick that left nothing gives.
   """
   @spec pick(t()) ::
           {:ok, struct()}
@@ -149,6 +152,7 @@ defmodule Cinder.Acquisition.ReleaseJudge do
           | :no_language_match
           | {:waiting_for_preferred_group, map()}
           | {:ok, %{assignments: [map()], waiting: map() | nil}}
+          | {:ok, [{struct(), [integer()]}]}
   def pick(%__MODULE__{guard: guard, language: :no_language_match})
       when elem(guard, 0) in @movie_guards,
       do: :no_language_match
@@ -158,6 +162,9 @@ defmodule Cinder.Acquisition.ReleaseJudge do
 
   def pick(%__MODULE__{guard: {:anime_episodes, _context, wanted_ids}} = judged),
     do: Anime.cover_episodes(judged.kept, wanted_ids, judged.opts)
+
+  def pick(%__MODULE__{guard: {:series, _series, season_number, wanted_numbers}} = judged),
+    do: Scorer.select_for(judged.kept, season_number, wanted_numbers, judged.opts)
 
   def pick(%__MODULE__{guard: guard} = judged) when elem(guard, 0) in @movie_guards,
     do: Scorer.select(judged.kept, judged.opts)
@@ -178,6 +185,9 @@ defmodule Cinder.Acquisition.ReleaseJudge do
   defp stages({:anime_episodes, _context, _wanted_ids}),
     do: [:protocol, :role, :language, :mapping]
 
+  defp stages({:series, _series, _season_number, _wanted_numbers}),
+    do: [:protocol, :title_guard, :language, :mapping]
+
   defp stages(_guard), do: [:protocol, :title_guard, :language]
 
   defp filter(:protocol, pool, _guard, opts),
@@ -185,6 +195,10 @@ defmodule Cinder.Acquisition.ReleaseJudge do
 
   defp filter(:title_guard, pool, guard, _opts), do: Acquisition.title_guard(pool, guard)
   defp filter(:role, pool, _guard, _opts), do: Enum.filter(pool, &(&1.role == :story))
+
+  defp filter(:mapping, pool, {:series, _series, _season_number, _wanted_numbers}, _opts),
+    do: Enum.reject(pool, &(&1.resolution_evidence == :conflicting_standard_numbering))
+
   defp filter(:mapping, pool, _guard, _opts), do: Enum.reject(pool, &is_nil(&1.mapping_snapshot))
 
   defp language_stage(candidates, guard, opts) do

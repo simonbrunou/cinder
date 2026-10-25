@@ -6,9 +6,12 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   import Cinder.AccountsFixtures
   import Cinder.CatalogFixtures
   import Cinder.ConfigCase, only: [put_env: 2]
+  import Cinder.IndexerStubs
 
-  alias Cinder.{Catalog, Repo}
+  alias Cinder.{Acquisition, Catalog, Repo}
+  alias Cinder.Acquisition.HouseholdPolicy
   alias Cinder.Catalog.{BlockedRelease, Episode, Events, Grab, Identity, TitleAlias}
+  alias Cinder.Download.TvPoller
 
   @gb 1_000_000_000
 
@@ -1964,6 +1967,78 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     assert %Cinder.Catalog.Grab{download_id: "hash-upgrade"} =
              Repo.get!(Cinder.Catalog.Grab, upgraded.grab_id)
+  end
+
+  # #837: the sweep and the panel build a season's release list in one function, from one Catalog
+  # read. Episode 30 is backing off, so the sweep wants only 29 this tick while the panel offers
+  # both. The native query and the bridged one both return the S02E01 single, and scene S03 reaches
+  # only the imported episode 1.
+  test "the sweep and the panel search a bridged season alike and judge the same releases", %{
+    conn: conn
+  } do
+    series =
+      series_fixture(
+        title: "Test Show",
+        tvdb_id: 99,
+        media_profile: :standard,
+        monitor_strategy: :all,
+        scene_numbering_group_id: "operator-group"
+      )
+
+    season = season_fixture(series, season_number: 1)
+    imported = episode_fixture(season, episode_number: 1, file_path: "/lib/Show/S01E01.mkv")
+    due = episode_fixture(season, episode_number: 29)
+    backing_off = episode_fixture(season, episode_number: 30, search_attempts: 1)
+
+    assert {:ok, _} =
+             Identity.replace_provider_coordinates(
+               series,
+               "tmdb",
+               "operator-group",
+               "scene",
+               for {code, episode} <- [
+                     {"S02E01", due},
+                     {"S02E02", backing_off},
+                     {"S03E01", imported}
+                   ] do
+                 %{
+                   scheme: "scene",
+                   canonical_value: code,
+                   precedence: :inferred,
+                   episode_ids: [episode.id]
+                 }
+               end
+             )
+
+    single = %{title: "Test.Show.S02E01.1080p.WEB-DL-GRP", size: 2 * @gb, download_url: "single"}
+    pack = %{title: "Test.Show.S02.1080p.WEB-DL-GRP", size: 2 * @gb, download_url: "pack"}
+    stub_search_tv(99, "Test Show", %{1 => [single], 2 => [single, pack]})
+
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      {:ok, "hash-#{release.download_url}"}
+    end)
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+
+    context = Catalog.season_acquisition_context(series, 1)
+    opts = HouseholdPolicy.for_target(series)
+    assert {:ok, sweep} = Acquisition.judge_season(context, [29], opts)
+    assert searched_seasons() == [1, 2]
+    assert {:ok, panel} = Acquisition.judge_season(context, [29, 30], opts)
+    assert searched_seasons() == [1, 2]
+    assert sweep.kept == panel.kept
+    assert ["single", "pack"] = Enum.map(panel.kept, & &1.download_url)
+
+    # The real callers: the series page's panel, then one sweep tick.
+    {:ok, lv, _html} = live_series(conn, series)
+    lv |> element(~s(button[phx-value-season="1"]), "Find a better match") |> render_click()
+    assert render_async(lv) =~ "Test.Show.S02.1080p.WEB-DL-GRP"
+    assert searched_seasons() == [1, 2]
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 86_400})
+    assert :ok = TvPoller.poll()
+    assert searched_seasons() == [1, 2]
+    assert %Grab{download_id: "hash-single"} = Repo.one!(Grab)
   end
 
   test "a conflicting alternate-numbering result refuses the manual grab with a clear error", %{

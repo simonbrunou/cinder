@@ -164,23 +164,14 @@ defmodule CinderWeb.ManualSearchComponent do
          do: {:ok, judged.rows}
   end
 
-  defp search(%{effective: :standard} = summary, :tv, target, season, opts) do
-    episodes = Catalog.manual_search_episodes(target.id, season)
+  # The sweep's own season list (`Acquisition.judge_season/3`), so each row's verdict is the
+  # set-cover's for that release alone. The wanted episodes are the searched ones still wanted,
+  # parked or backing off included; the rest are imported, there to upgrade.
+  defp search(%{effective: :standard}, :tv, target, season, opts) do
+    context = Catalog.season_acquisition_context(target, season)
 
-    numbering =
-      target
-      |> Catalog.anime_series_acquisition_context()
-      |> Acquisition.standard_tv_numbering(episodes, MapSet.new([season]))
-
-    # The facts the sweep's set-cover reads, so each row's verdict is the cover's for that release
-    # alone (`judge_season/5` adds the alternate numbering): the season's episode count, and its
-    # still-wanted episodes. Those are the searched episodes eligible for the sweep's wanted set,
-    # parked or backing off included; the rest are imported, there to upgrade. The numbering is
-    # built over the searched episodes, not the sweep's wanted ones (#837).
-    wanted = for e <- episodes, Catalog.episode_searchable?(e, summary), do: e.episode_number
-    opts = Keyword.put(opts, :pack_episode_count, Catalog.count_episodes(target.id, season))
-
-    with {:ok, judged} <- Acquisition.judge_season(target, season, wanted, numbering, opts),
+    with {:ok, judged} <-
+           Acquisition.judge_season(context, Acquisition.searchable_numbers(context), opts),
          do: {:ok, judged.rows}
   end
 

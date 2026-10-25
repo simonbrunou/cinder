@@ -3,6 +3,7 @@ defmodule Cinder.AcquisitionTest do
 
   import Mox
   import Cinder.AnimeFixtures, only: [neutral_anime_policy: 1]
+  import Cinder.IndexerStubs
 
   alias Cinder.Acquisition
   alias Cinder.Acquisition.Anime
@@ -32,8 +33,11 @@ defmodule Cinder.AcquisitionTest do
     )
   end
 
+  # Each result has its own download URL, as an indexer returns them: a season's release list keeps
+  # one copy per URL (`Acquisition.judge_season/3`).
   defp raw_tv(title, attrs \\ []),
-    do: Map.merge(%{title: title, size: 2 * @gb, download_url: "u", seeders: 10}, Map.new(attrs))
+    do:
+      Map.merge(%{title: title, size: 2 * @gb, download_url: title, seeders: 10}, Map.new(attrs))
 
   test "anime movie waiting is advisory and empty preferences are a no-op" do
     now = ~U[2026-07-13 12:00:00Z]
@@ -614,106 +618,268 @@ defmodule Cinder.AcquisitionTest do
     end
   end
 
-  describe "judge_season/5 alternate numbering" do
-    test "unions and deduplicates scene and aired season searches with stable episode ids" do
-      episodes = [
-        %{id: 29, episode_number: 29},
-        %{id: 30, episode_number: 30}
-      ]
+  # `Catalog.season_acquisition_context/2`'s shape for season 1 of `series/1`.
+  defp season_context(attrs) do
+    Map.merge(
+      %{
+        series: series(),
+        season_number: 1,
+        episode_count: 30,
+        episodes: [],
+        native_seasons: MapSet.new([1]),
+        mappings: []
+      },
+      Map.new(attrs)
+    )
+  end
 
-      context = %{
-        mappings: [
-          %{
-            identity: %{
-              source: "tmdb",
-              scheme: "scene",
-              namespace: "operator-group",
-              canonical_value: "S02E01"
-            },
-            precedence: :inferred,
-            episode_ids: [29],
-            evidence: nil
-          },
-          %{
-            identity: %{
-              source: "tvdb",
-              scheme: "aired",
-              namespace: "123",
-              canonical_value: "S03E01"
-            },
-            precedence: :inferred,
-            episode_ids: [30],
-            evidence: nil
-          }
-        ]
-      }
+  # A searched episode numbered as its id, in `Cinder.Catalog.Episodes.state/2`'s terms.
+  defp searched(id, state \\ :wanted), do: %{id: id, episode_number: id, state: state}
 
-      numbering = Acquisition.standard_tv_numbering(context, episodes, MapSet.new([1]))
-      test_pid = self()
+  # A coordinate mapping as `Cinder.Catalog.MediaProfiles.acquisition_mappings/1` lists it.
+  defp coordinate(scheme, code, episode_ids, namespace \\ "operator-group") do
+    %{
+      identity: %{source: "tmdb", scheme: scheme, namespace: namespace, canonical_value: code},
+      precedence: :inferred,
+      episode_ids: episode_ids,
+      evidence: nil
+    }
+  end
 
-      expect(Cinder.Acquisition.IndexerMock, :search_tv, 3, fn 123, "The Office", season ->
-        send(test_pid, {:searched_manual_season, season})
+  # `series/1`'s indexer answers, by season.
+  defp stub_seasons(by_season), do: stub_search_tv(123, "The Office", by_season)
 
-        case season do
-          1 -> {:ok, [raw_tv("The.Office.S02E01.1080p.WEB-DL-GRP", download_url: "scene")]}
-          2 -> {:ok, [raw_tv("The.Office.S02E01.1080p.WEB-DL-GRP", download_url: "scene")]}
-          3 -> {:ok, [raw_tv("The.Office.S03E01.1080p.WEB-DL-GRP", download_url: "aired")]}
-        end
-      end)
+  describe "judge_season/3" do
+    test "searches each bridged season once, drops a duplicate and freezes its episode ids" do
+      scene = raw_tv("The.Office.S02E01.1080p.WEB-DL-GRP", download_url: "scene")
 
-      assert {:ok, %ReleaseJudge{rows: rows}} =
-               Acquisition.judge_season(series(), 1, [29, 30], numbering)
+      stub_seasons(%{
+        1 => [scene],
+        2 => [scene],
+        3 => [raw_tv("The.Office.S03E01.1080p.WEB-DL-GRP", download_url: "aired")]
+      })
+
+      context =
+        season_context(
+          episodes: [searched(29), searched(30)],
+          mappings: [coordinate("scene", "S02E01", [29]), coordinate("aired", "S03E01", [30])]
+        )
+
+      assert {:ok, %ReleaseJudge{kept: kept, rows: rows}} =
+               Acquisition.judge_season(context, [29, 30], [])
 
       assert [
-               %Release{season: 2, resolved_episode_ids: [29]},
-               %Release{season: 3, resolved_episode_ids: [30]}
-             ] = rows |> Enum.map(& &1.release) |> Enum.sort_by(& &1.season)
+               %Release{download_url: "scene", resolved_episode_ids: [29]},
+               %Release{download_url: "aired", resolved_episode_ids: [30]}
+             ] = Enum.sort_by(kept, & &1.season)
 
-      assert_received {:searched_manual_season, 1}
-      assert_received {:searched_manual_season, 2}
-      assert_received {:searched_manual_season, 3}
+      assert length(rows) == 2
+      assert searched_seasons() == [1, 2, 3]
     end
 
-    test "marks an ambiguous bridged coordinate instead of choosing an episode" do
-      episodes = [%{id: 29, episode_number: 29}, %{id: 30, episode_number: 30}]
+    # A yearless series keeps a free-text result only when it spells the title, but trusts the
+    # TVDB-scoped query. The same AKA-titled release answering both queries keeps both origins.
+    test "a dropped duplicate's query origins stay with the copy it keeps" do
+      aka = "Le.Bureau.S02E01.1080p.WEB-DL-GRP"
 
-      context = %{
-        mappings:
-          for id <- [29, 30] do
-            %{
-              identity: %{
-                source: "tmdb",
-                scheme: "scene",
-                namespace: "conflict",
-                canonical_value: "S02E01"
-              },
-              precedence: :inferred,
-              episode_ids: [id],
-              evidence: nil
-            }
-          end
+      stub_seasons(%{
+        1 => [raw_tv(aka, download_url: "aka", query_origins: [:free_text])],
+        2 => [raw_tv(aka, download_url: "aka", query_origins: [:id_scoped])]
+      })
+
+      context =
+        season_context(episodes: [searched(29)], mappings: [coordinate("scene", "S02E01", [29])])
+
+      assert {:ok, %ReleaseJudge{kept: [%Release{query_origins: [:free_text, :id_scoped]}]}} =
+               Acquisition.judge_season(context, [29], [])
+    end
+
+    # An indexer that predates provenance tags nothing, and the title guard trusts its TVDB-scoped
+    # contract. Merging two untagged copies must not turn that into an empty origin list, which the
+    # guard reads as untrusted.
+    test "a dropped duplicate of an untagged result keeps the copy untagged" do
+      aka = raw_tv("Le.Bureau.S02E01.1080p.WEB-DL-GRP", download_url: "aka")
+      stub_seasons(%{1 => [aka], 2 => [aka]})
+
+      context =
+        season_context(
+          series: series(year: 2005),
+          episodes: [searched(29)],
+          mappings: [coordinate("scene", "S02E01", [29])]
+        )
+
+      assert {:ok, %ReleaseJudge{kept: [%Release{query_origins: nil}]}} =
+               Acquisition.judge_season(context, [29], [])
+    end
+
+    test "the sweep's pick is the set-cover over the bridged numbering" do
+      stub_seasons(%{2 => [raw_tv("The.Office.S02E01.1080p.WEB-DL-GRP")]})
+
+      context =
+        season_context(episodes: [searched(29)], mappings: [coordinate("scene", "S02E01", [29])])
+
+      assert {:ok, judged} = Acquisition.judge_season(context, [29], [])
+      assert {:ok, [{%Release{season: 2, episodes: [1]}, [29]}]} = ReleaseJudge.pick(judged)
+    end
+
+    # The native S02E02 outranks the inferred scene S02E02, so a bare "S02" may be the native
+    # season's pack: the panel refuses it and the sweep must not take it for E29 either.
+    test "drops a bridged pack holding a coordinate that resolves elsewhere; the sweep skips it" do
+      pack = raw_tv("The.Office.S02.1080p.WEB-DL-GRP", download_url: "pack")
+      single = raw_tv("The.Office.S02E01.1080p.WEB-DL-GRP", download_url: "single")
+      stub_seasons(%{2 => [pack, single]})
+
+      native_s02e02 = %{
+        identity: %{
+          source: "cinder",
+          scheme: "standard",
+          namespace: "canonical",
+          canonical_value: "S02E02"
+        },
+        precedence: :manual,
+        episode_ids: [202],
+        evidence: %{"kind" => "canonical_standard"}
       }
 
-      numbering = Acquisition.standard_tv_numbering(context, episodes, MapSet.new([1]))
+      context =
+        season_context(
+          episodes: [searched(29), searched(30)],
+          mappings: [
+            coordinate("scene", "S02E01", [29]),
+            coordinate("scene", "S02E02", [30]),
+            native_s02e02
+          ]
+        )
 
-      expect(Cinder.Acquisition.IndexerMock, :search_tv, 2, fn 123, "The Office", season ->
-        if season == 2,
-          do: {:ok, [raw_tv("The.Office.S02E01.1080p.WEB-DL-GRP")]},
-          else: {:ok, []}
-      end)
+      assert {:ok, judged} = Acquisition.judge_season(context, [29, 30], [])
+      assert [%Release{download_url: "single"}] = judged.kept
 
-      assert {:ok,
-              %ReleaseJudge{
-                rows: [
-                  %{
-                    release: %Release{
-                      resolved_episode_ids: nil,
-                      resolution_evidence: :conflicting_standard_numbering
-                    },
-                    verdict: {:rejected, :conflicting_standard_numbering}
-                  }
-                ]
-              }} = Acquisition.judge_season(series(), 1, [29, 30], numbering)
+      assert %{
+               dropped_at: :mapping,
+               verdict: {:rejected, :conflicting_standard_numbering}
+             } = Enum.find(judged.rows, &(&1.release.download_url == "pack"))
+
+      assert {:ok, [{%Release{download_url: "single"}, [29]}]} = ReleaseJudge.pick(judged)
+    end
+
+    # The sweep reads the panel's searched episodes, so a coordinate naming an imported episode and
+    # a wanted one resolves for both, and the cover claims the wanted one, as it does for a native
+    # multi-episode release.
+    test "a coordinate naming an imported and a wanted episode is covered for the wanted one" do
+      stub_seasons(%{2 => [raw_tv("The.Office.S02E01.1080p.WEB-DL-GRP")]})
+
+      context =
+        season_context(
+          episodes: [searched(28, :available), searched(29)],
+          mappings: [coordinate("scene", "S02E01", [28, 29])]
+        )
+
+      assert {:ok, judged} = Acquisition.judge_season(context, [29], [])
+      assert [%Release{resolved_episode_ids: [28, 29]}] = judged.kept
+      assert {:ok, [{%Release{season: 2}, [29]}]} = ReleaseJudge.pick(judged)
+    end
+
+    test "drops a bridged coordinate that resolves two ways instead of choosing an episode" do
+      stub_seasons(%{2 => [raw_tv("The.Office.S02E01.1080p.WEB-DL-GRP")]})
+
+      context =
+        season_context(
+          episodes: [searched(29), searched(30)],
+          mappings: [
+            coordinate("scene", "S02E01", [29], "group-a"),
+            coordinate("scene", "S02E01", [30], "group-b")
+          ]
+        )
+
+      assert {:ok, %ReleaseJudge{kept: [], rows: [row]}} =
+               Acquisition.judge_season(context, [29, 30], [])
+
+      assert %{
+               release: %Release{
+                 resolved_episode_ids: nil,
+                 resolution_evidence: :conflicting_standard_numbering
+               },
+               dropped_at: :mapping,
+               verdict: {:rejected, :conflicting_standard_numbering}
+             } = row
+    end
+  end
+
+  describe "judge_season/3's alternate seasons" do
+    # Episode `id` is scene `S0<season>E01`.
+    defp bridged(pairs) do
+      Enum.map(pairs, fn {id, season} -> coordinate("scene", "S0#{season}E01", [id]) end)
+    end
+
+    test "searches the seasons reaching a wanted episode, never those reaching only imported ones" do
+      stub_seasons(%{})
+
+      context =
+        season_context(
+          episodes: [searched(21, :available), searched(22, :available)] ++ [searched(25)],
+          mappings: bridged([{21, 2}, {22, 3}, {25, 6}])
+        )
+
+      assert {:ok, _judged} = Acquisition.judge_season(context, [25], [])
+      assert searched_seasons() == [1, 6]
+    end
+
+    # Native S02 wants an episode, so the sweep searches it on its own: reading "S02E01" as scene
+    # S02 too would claim one release for two seasons.
+    test "never searches an alternate season that is a native season wanting an episode" do
+      stub_seasons(%{})
+
+      context =
+        season_context(
+          episodes: [searched(29)],
+          native_seasons: MapSet.new([1, 2]),
+          mappings: bridged([{29, 2}])
+        )
+
+      assert {:ok, %ReleaseJudge{opts: opts}} = Acquisition.judge_season(context, [29], [])
+      assert opts[:alternate_numbering] == %{}
+      assert searched_seasons() == [1]
+    end
+
+    test "a native season takes no slot of the cap" do
+      stub_seasons(%{})
+
+      context =
+        season_context(
+          episodes: Enum.map(21..25, &searched/1),
+          mappings: bridged([{21, 1}, {22, 2}, {23, 3}, {24, 4}, {25, 5}])
+        )
+
+      assert {:ok, _judged} = Acquisition.judge_season(context, Enum.to_list(21..25), [])
+      assert searched_seasons() == [1, 2, 3, 4, 5]
+    end
+
+    test "the cap keeps a season reaching an unparked episode over those reaching parked ones" do
+      stub_seasons(%{})
+
+      context =
+        season_context(
+          episodes: Enum.map(21..24, &searched(&1, :search_parked)) ++ [searched(25)],
+          mappings: bridged([{21, 2}, {22, 3}, {23, 4}, {24, 5}, {25, 6}])
+        )
+
+      assert {:ok, _judged} = Acquisition.judge_season(context, [25], [])
+      assert searched_seasons() == [1, 2, 3, 4, 6]
+    end
+
+    test "a season wanting nothing searches the seasons reaching its imported episodes" do
+      stub_seasons(%{3 => [raw_tv("The.Office.S03E01.1080p.WEB-DL-GRP")]})
+
+      context =
+        season_context(
+          episodes: [searched(21, :available), searched(22, :available)],
+          mappings: bridged([{21, 2}, {22, 3}])
+        )
+
+      assert {:ok, %ReleaseJudge{kept: [%Release{resolved_episode_ids: [22]}]}} =
+               Acquisition.judge_season(context, [], [])
+
+      assert searched_seasons() == [1, 2, 3]
     end
   end
 
@@ -730,27 +896,6 @@ defmodule Cinder.AcquisitionTest do
 
       assert {:ok, chosen} = Acquisition.best_releases(series(), 1, [1, 2])
       assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() == [[1], [2]]
-    end
-
-    test "unions canonical and alternate-season queries before scoring" do
-      test_pid = self()
-
-      expect(Cinder.Acquisition.IndexerMock, :search_tv, 2, fn
-        123, "The Office", season_number ->
-          send(test_pid, {:searched_season, season_number})
-
-          if season_number == 2,
-            do: {:ok, [raw_tv("The.Office.S02E01.1080p.WEB-DL-GRP")]},
-            else: {:ok, []}
-      end)
-
-      assert {:ok, [{%Release{season: 2, episodes: [1]}, [29]}]} =
-               Acquisition.best_releases(series(), 1, [29],
-                 alternate_numbering: %{2 => %{1 => [29]}}
-               )
-
-      assert_received {:searched_season, 1}
-      assert_received {:searched_season, 2}
     end
 
     test "keeps the TV language gate strict about untagged releases" do

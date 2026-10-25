@@ -28,7 +28,7 @@ defmodule Cinder.Download.TvPoller do
   import Ecto.Query
 
   alias Cinder.{Acquisition, Catalog, Disk, Download, Library, Notifier, Settings}
-  alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy}
+  alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy, ReleaseJudge}
   alias Cinder.Catalog.{Episode, Grab, Grabs, MediaProfile}
   alias Cinder.Download.Watch
   alias Cinder.HTTPPolicy
@@ -546,15 +546,13 @@ defmodule Cinder.Download.TvPoller do
   end
 
   defp search_standard_series(series, episodes, summary) do
-    context = Catalog.anime_series_acquisition_context(series)
     groups = Enum.group_by(episodes, & &1.season.season_number)
-    native_seasons = MapSet.new(Map.keys(groups))
 
     outcomes =
       Enum.map(groups, fn {season_number, group} ->
         result =
           isolate("series #{series.id} s#{season_number}", fn ->
-            search_standard_group(group, context, native_seasons)
+            search_standard_group(group)
           end)
 
         {group, result}
@@ -581,31 +579,19 @@ defmodule Cinder.Download.TvPoller do
        else: bump_not_grabbed(episodes, grabbed ++ skipped)
   end
 
-  defp search_standard_group(episodes, context, native_seasons) do
+  # The season's release list is the manual panel's (`Acquisition.judge_season/3`); the sweep
+  # claims only the episodes due this tick.
+  defp search_standard_group(episodes) do
     series = hd(episodes).season.series
     season_number = hd(episodes).season.season_number
     numbers = Enum.map(episodes, & &1.episode_number)
+    context = Catalog.season_acquisition_context(series, season_number)
 
-    # The season's real episode count, not the still-wanted count: the cover bands a whole-season
-    # pack against it as a last resort when nothing else fits (#268, `Scorer.select_for/4`).
-    opts =
-      Keyword.put(
-        HouseholdPolicy.for_target(series),
-        :pack_episode_count,
-        Catalog.count_episodes(series.id, season_number)
-      )
-
-    numbering = Acquisition.standard_tv_numbering(context, episodes, native_seasons).scorer
-
-    opts =
-      if map_size(numbering) == 0,
-        do: opts,
-        else: Keyword.put(opts, :alternate_numbering, numbering)
-
-    case Acquisition.best_releases(series, season_number, numbers, opts) do
-      {:ok, assignments} ->
-        {:ok, Enum.flat_map(assignments, &grab_assignment(&1, episodes))}
-
+    with {:ok, judged} <-
+           Acquisition.judge_season(context, numbers, HouseholdPolicy.for_target(series)),
+         {:ok, assignments} <- ReleaseJudge.pick(judged) do
+      {:ok, Enum.flat_map(assignments, &grab_assignment(&1, episodes))}
+    else
       :no_match ->
         {:ok, []}
 

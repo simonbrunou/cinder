@@ -273,10 +273,23 @@ defmodule Cinder.Catalog.MediaProfiles do
     context
   end
 
+  @doc """
+  The series' episode coordinate mappings, as `anime_series_acquisition_context/1` lists them: a
+  canonical standard mapping for each episode, then every persisted coordinate. A standard
+  season's numbering bridge reads them (`Cinder.Catalog.EpisodeSearch.season_acquisition_context/2`).
+  """
+  def acquisition_mappings(%Series{id: series_id}) when not is_nil(series_id) do
+    series = Repo.get!(Series, series_id)
+
+    series
+    |> coordinate_mappings(acquisition_episodes(series))
+    |> Enum.sort_by(&mapping_sort_key/1)
+  end
+
   defp build_anime_series_acquisition_context(series) do
     episodes = acquisition_episodes(series)
     aliases = acquisition_aliases(series)
-    mappings = Enum.map(episodes, &canonical_mapping/1) ++ persisted_mappings(series)
+    mappings = coordinate_mappings(series, episodes)
 
     %{
       kind: :series,
@@ -289,6 +302,9 @@ defmodule Cinder.Catalog.MediaProfiles do
       mappings: Enum.sort_by(mappings, &mapping_sort_key/1)
     }
   end
+
+  defp coordinate_mappings(series, episodes),
+    do: Enum.map(episodes, &canonical_mapping/1) ++ persisted_mappings(series)
 
   defp acquisition_episodes(series) do
     series
