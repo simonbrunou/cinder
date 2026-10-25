@@ -443,13 +443,22 @@ def mergerfs_near_relative(root, anchor_relative, relative):
     finally:
         os.close(anchor_fd)
 
-    logical_parts = checked_relative(anchor_relative).split("/")
-    backing_parts = checked_relative(backing_anchor).split("/")
-    if backing_parts[-len(logical_parts) :] != logical_parts:
+    # The library root's own backing path is the whole prefix: it is "." when the root is the
+    # mount and the root's path below the mount otherwise. Mergerfs itself reports it (the
+    # user.mergerfs.* xattrs), and mkdir_near's wait_for_unique_path proves the new directory
+    # shows at its logical path.
+    logical_parts = path_parts(anchor_relative)
+    backing_parts = path_parts(backing_anchor)
+    prefix_len = len(backing_parts) - len(logical_parts)
+    if prefix_len < 0 or backing_parts[prefix_len:] != logical_parts:
         raise OSError(errno.EXDEV, "mergerfs backing path does not match library root")
 
-    prefix = backing_parts[: -len(logical_parts)]
-    return basepath, posixpath.join(*prefix, checked_relative(relative))
+    return basepath, posixpath.join(*backing_parts[:prefix_len], checked_relative(relative))
+
+
+def path_parts(relative):
+    relative = checked_relative(relative)
+    return [] if relative == "." else relative.split("/")
 
 
 def check_logical_absence(root, relative):

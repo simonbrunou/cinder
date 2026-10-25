@@ -499,21 +499,6 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
       assert File.read!(duplicate) == "other branch"
     end
 
-    test "on mergerfs a fetch creates an absent sidecar through a workspace beside it", %{
-      root: root,
-      tmp: tmp
-    } do
-      dest = Path.join(root, "Movie/subtitle.srt")
-      File.mkdir_p!(Path.dirname(dest))
-      mergerfs_rename_shim!(root, tmp, dest)
-      Application.put_env(:cinder, :filesystem, Disk)
-      Application.put_env(:cinder, :path_policy, PathPolicy)
-
-      assert :ok = AtomicFile.swap(dest, :absent, "fetched")
-      assert File.read!(dest) == "fetched"
-      assert File.ls!(Path.dirname(dest)) == ["subtitle.srt"]
-    end
-
     test "on mergerfs a source on another backing branch is refused", %{root: root, tmp: tmp} do
       {source, dest} = exclusive_rename_paths!(root)
       mergerfs_rename_shim!(root, tmp, dest, foreign: ".workspace")
@@ -524,6 +509,53 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     end
   end
 
+  # Issue #798: a fetch creates an absent sidecar through a workspace anchored on the sidecar's
+  # directory. That directory may be the library root itself, and on mergerfs the library root
+  # may be the mount or a directory below it.
+  describe "on mergerfs, a fetch of an absent sidecar" do
+    @describetag :tmp_dir
+
+    setup do
+      Application.put_env(:cinder, :filesystem, Disk)
+      Application.put_env(:cinder, :path_policy, PathPolicy)
+    end
+
+    for {layout, branch} <- [{"is the mount", :root}, {"is below the mount", :parent}] do
+      for {place, folder} <- [{"in a title folder", "Movie"}, {"at the library root", "."}] do
+        test "creates it #{place} when the library root #{layout}", %{root: root, tmp: tmp} do
+          folder = Path.expand(unquote(folder), root)
+          dest = Path.join(folder, "Movie.en.srt")
+          File.mkdir_p!(folder)
+          File.write!(Path.join(folder, "Movie.mkv"), "video")
+          mergerfs_rename_shim!(root, tmp, dest, branch: shim_branch(root, unquote(branch)))
+
+          assert :ok = AtomicFile.swap(dest, :absent, "fetched")
+          assert File.read!(dest) == "fetched"
+          assert Enum.sort(File.ls!(folder)) == ["Movie.en.srt", "Movie.mkv"]
+        end
+      end
+
+      test "refuses a title folder whose backing path has another name when the library root #{layout}",
+           %{root: root, tmp: tmp} do
+        folder = Path.join(root, "Movie")
+        dest = Path.join(folder, "Movie.en.srt")
+        File.mkdir_p!(folder)
+        File.write!(Path.join(folder, "Movie.mkv"), "video")
+
+        mergerfs_rename_shim!(root, tmp, dest,
+          branch: shim_branch(root, unquote(branch)),
+          misplaced: "Movie"
+        )
+
+        assert {:error, :exdev} = AtomicFile.swap(dest, :absent, "fetched")
+        assert File.ls!(folder) == ["Movie.mkv"]
+      end
+    end
+  end
+
+  defp shim_branch(root, :root), do: root
+  defp shim_branch(root, :parent), do: Path.dirname(root)
+
   defp exclusive_rename_paths!(root) do
     source = Path.join(root, "Movie/.workspace/staged")
     File.mkdir_p!(Path.dirname(source))
@@ -532,13 +564,15 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
   end
 
   # A real mergerfs mount is not available in the test environment, so the shim maps every
-  # logical path onto itself on a branch that IS the library root, and answers
-  # user.mergerfs.allpaths for `dest` with whichever of its two branch containers exist. A
-  # path containing `foreign` instead maps onto a second branch. The renames and proofs are
-  # the real helper's.
+  # logical path onto itself on a branch that is also the mount: the library root by default,
+  # or `branch`, a directory above it. It answers user.mergerfs.allpaths for `dest` with
+  # whichever of its two branch containers exist. A path containing `foreign` instead maps
+  # onto a second branch, and a path whose last component is `misplaced` reports a backing
+  # path under another name. The renames and proofs are the real helper's.
   defp mergerfs_rename_shim!(root, tmp, dest, opts \\ []) do
+    branch = Keyword.get(opts, :branch, root)
     branch_b = Path.join(tmp, "branch-b")
-    duplicate = Path.join(branch_b, Path.relative_to(dest, root))
+    duplicate = Path.join(branch_b, Path.relative_to(dest, branch))
     helper = Path.join(tmp, "mergerfs_rename_shim.py")
     real_helper = Path.expand("../../../../priv/rooted_fs.py", __DIR__)
 
@@ -547,11 +581,12 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     import posixpath
     import sys
 
-    ROOT = #{inspect(root)}
+    BRANCH = #{inspect(branch)}
     BRANCH_B = #{inspect(branch_b)}
     DEST = #{inspect(dest)}
     CONTAINERS = [DEST, #{inspect(duplicate)}]
     FOREIGN = #{if opts[:foreign], do: inspect(opts[:foreign]), else: "None"}
+    MISPLACED = #{if opts[:misplaced], do: inspect(opts[:misplaced]), else: "None"}
     REAL_HELPER = #{inspect(real_helper)}
 
     real_getxattr = os.getxattr
@@ -568,10 +603,12 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
             return os.fsencode(real)
         if name == "user.mergerfs.fullpath":
             if foreign:
-                return os.fsencode(posixpath.join(BRANCH_B, posixpath.relpath(real, ROOT)))
+                return os.fsencode(posixpath.join(BRANCH_B, posixpath.relpath(real, BRANCH)))
+            if posixpath.basename(real) == MISPLACED:
+                return os.fsencode(real + ".elsewhere")
             return os.fsencode(real)
         if name == "user.mergerfs.basepath":
-            return os.fsencode(BRANCH_B if foreign else ROOT)
+            return os.fsencode(BRANCH_B if foreign else BRANCH)
         return real_getxattr(path, name, **kwargs)
 
     os.getxattr = getxattr
@@ -580,7 +617,7 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     with open(REAL_HELPER, encoding="utf-8") as source:
         exec(compile(source.read(), REAL_HELPER, "exec"), namespace)
 
-    namespace["mergerfs_mountpoint"] = lambda path: ROOT
+    namespace["mergerfs_mountpoint"] = lambda path: BRANCH
     namespace["mergerfs_mount"] = lambda path: True
 
     sys.argv = [REAL_HELPER] + sys.argv[1:]
