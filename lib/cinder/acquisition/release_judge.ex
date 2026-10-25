@@ -30,9 +30,10 @@ defmodule Cinder.Acquisition.ReleaseJudge do
      word ("The Italian Job" → ITALIAN) must not strand a title under the default pick. The
      movie guards keep an untagged release under a soft pick, ranked below a tagged match
      (`Scorer.rank_key/2` is `Scorer.select/2`'s whole sort key, so it wins only when nothing
-     tagged survives the band). A season doesn't: the set-cover sorts by coverage before rank
-     and would let an untagged pack beat confirmed-original singles. Under an anime policy the
-     stage is off: the policy judges audio from release evidence, not the name's tag.
+     tagged survives the band). A season doesn't. The set-cover would rank it the same way
+     (`Scorer.select_for/4`), but keeping it changes which releases a season grabs, a product
+     decision (ADR 0003, #882). Under an anime policy the stage is off: the policy judges audio
+     from release evidence, not the name's tag.
   4. **Mapping**, anime episodes only. A release that doesn't resolve to wanted stable episode
      ids, or whose mapping snapshot can't be frozen, is dropped: a grab could link no episode.
 
@@ -56,9 +57,9 @@ defmodule Cinder.Acquisition.ReleaseJudge do
     episode row with no frozen mapping is `:unsafe_anime_mapping` (the panel can't grab it), and
     one the role stage dropped is `:special_release` (the sweep never takes it; the operator
     may). The rest is the selection's own rules for one release: `Scorer.verdict/2` (for a season
-    it bands a pack by `:pack_episode_count`, an approximation of the cover's still-wanted
-    count), or for anime `Cinder.Acquisition.Anime.movie_verdict/2` and `episode_verdict/2`
-    (policy, quality, group wait).
+    it bands a pack by `:pack_episode_count` at once, an approximation of the cover's two passes
+    in `Scorer.select_for/4`), or for anime `Cinder.Acquisition.Anime.movie_verdict/2` and
+    `episode_verdict/2` (policy, quality, group wait).
   - `audio`: what the language stage decided. `:match` when the release's tag satisfies the pick,
     at any stage. `:assumed` for an untagged release a movie pool kept. `:mismatch` for a release
     the language stage dropped. nil for a release dropped before that stage, when the pick fell
@@ -101,7 +102,7 @@ defmodule Cinder.Acquisition.ReleaseJudge do
 
   @doc """
   Judges `releases` for the target `guard` names, under the household policy `opts`
-  (`Cinder.Acquisition.HouseholdPolicy.for_target/2`, plus any per-search scorer opts and, for an
+  (`Cinder.Acquisition.HouseholdPolicy.for_target/2`, plus any per-search opts the selection reads and, for an
   anime guard, `anime_policy:`).
   """
   @spec judge([struct()], guard(), keyword()) :: t()
@@ -138,7 +139,7 @@ defmodule Cinder.Acquisition.ReleaseJudge do
   nothing to rank. For anime episodes, the stable-id cover over the kept releases
   (`Cinder.Acquisition.Anime.cover_episodes/3`); a strict audio pick that left nothing to cover
   is `:no_match` there, as it is for a season. Not defined for a standard season, whose set-cover
-  `Cinder.Acquisition.best_releases/4` runs with its pack retry.
+  `Cinder.Acquisition.best_releases/4` runs.
   """
   @spec pick(t()) ::
           {:ok, struct()}
@@ -191,6 +192,7 @@ defmodule Cinder.Acquisition.ReleaseJudge do
     if anime_policy?(guard, opts) or is_nil(Language.target(preferred, original)) do
       {:off, candidates}
     else
+      # Movie-only by product choice (see the Language stage above).
       filtered = Language.filter(candidates, preferred, original, keep_untagged: movie?(guard))
       language_outcome(candidates, filtered, Language.strict?(preferred))
     end

@@ -586,12 +586,12 @@ defmodule Cinder.Download.TvPoller do
     season_number = hd(episodes).season.season_number
     numbers = Enum.map(episodes, & &1.episode_number)
 
-    # The season's real episode count, not the still-wanted count: `Acquisition.best_releases/4`
-    # bands a whole-season pack against it as a last resort when nothing else fits (#268).
+    # The season's real episode count, not the still-wanted count: the cover bands a whole-season
+    # pack against it as a last resort when nothing else fits (#268, `Scorer.select_for/4`).
     opts =
       Keyword.put(
         HouseholdPolicy.for_target(series),
-        :season_episode_count,
+        :pack_episode_count,
         Catalog.count_episodes(series.id, season_number)
       )
 

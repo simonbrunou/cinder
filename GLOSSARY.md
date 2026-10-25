@@ -17,6 +17,16 @@ episodes a release that isn't a story episode or doesn't map to the wanted episo
 no automatic selection.
 _Avoid_: filter, matcher, release decision
 
+**Set-cover**:
+How automatic selection chooses the releases for a TV season's or an anime series' wanted
+episodes: greedily, one release at a time, until the wanted episodes are covered or nothing left
+fits. Each step takes a release whose audio tag satisfies the title's audio pick before an
+untagged one (a TV season only; an anime policy judges audio its own way), then the one covering
+the most still-wanted episodes, then the better-ranked release. Size is judged per episode,
+against the still-wanted episodes a release covers. For a TV season, only when nothing fits that
+way is a whole-season pack judged against the whole season, the **season band**.
+_Avoid_: cover set, the picker, rung
+
 **Household policy**:
 The household's rules for acquiring one movie or series: which protocols have a download client,
 the title's audio pick, the releases blocked for it, and the size band and quality preferences set

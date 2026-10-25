@@ -6,8 +6,36 @@ defmodule Cinder.Acquisition.ScorerTest do
 
   @gb 1_000_000_000
 
+  # A neutral anime policy: every `AnimePreferences.rank_key/2` term ties.
+  @neutral_anime_policy %{
+    preferred_groups: [],
+    required_audio_languages: [],
+    embedded_subtitle_mode: :allow,
+    subtitle_languages: []
+  }
+
   # Build a Release fixture from just the fields the scorer reads.
   defp release(attrs), do: struct(%Release{title: "fixture"}, attrs)
+
+  # #268's Charmed S03 pack: ~0.9 GB per episode across 22, out of a 4 GB band at 4 wanted.
+  defp charmed_pack,
+    do:
+      release(
+        title: "pack",
+        season: 3,
+        episodes: nil,
+        resolution: "1080p",
+        size: 197 * div(@gb, 10)
+      )
+
+  defp charmed_singles(numbers) do
+    Enum.map(numbers, fn n ->
+      release(title: "e#{n}", season: 3, episodes: [n], resolution: "1080p", size: 1 * @gb)
+    end)
+  end
+
+  defp titles(chosen),
+    do: chosen |> Enum.map(fn {release, _covered} -> release.title end) |> Enum.sort()
 
   describe "select/2" do
     test "happy path: picks the band-fitting 1080p from a mixed list" do
@@ -44,19 +72,12 @@ defmodule Cinder.Acquisition.ScorerTest do
       tagged = release(title: "T", language: "MULTI", resolution: "720p", size: 4 * @gb)
       untagged = release(title: "U", language: nil, resolution: "1080p", size: 9 * @gb)
 
-      # A neutral policy: every anime_rank_key term ties, so language_rank alone would decide.
-      policy = %{
-        preferred_groups: [],
-        required_audio_languages: [],
-        embedded_subtitle_mode: :allow,
-        subtitle_languages: []
-      }
-
+      # The neutral policy ties every anime term, so language_rank alone would decide.
       opts = [
         max_size: 20 * @gb,
         preferred_language: "original",
         original_language: "ja",
-        anime_policy: policy
+        anime_policy: @neutral_anime_policy
       ]
 
       assert {:ok, %Release{title: "U"}} = Scorer.select([untagged, tagged], opts)
@@ -410,35 +431,91 @@ defmodule Cinder.Acquisition.ScorerTest do
       assert :no_match = Scorer.select_for([pack], 3, wanted, max_size: 4 * @gb)
     end
 
-    # The guard for the two-pass shape in `Acquisition.best_releases/4`: `cover/6` sorts by
-    # coverage BEFORE rank, so a widened pack outranks every single behind it. Widening on the
-    # first pass would trade four 1 GB singles for one 19.7 GB pack, which is why the widened
-    # band only ever runs after a clean :no_match.
-    test "a widened pack would outrank the singles it covers (why the widening is last-resort)" do
-      pack =
-        release(
-          title: "pack",
-          season: 3,
-          episodes: nil,
-          resolution: "1080p",
-          size: 197 * div(@gb, 10)
-        )
-
-      singles =
-        Enum.map(19..22, fn n ->
-          release(title: "e#{n}", season: 3, episodes: [n], resolution: "1080p", size: 1 * @gb)
-        end)
-
+    # The season band is the cover's second pass (ADR 0003): a pack banded by the season's episode count
+    # covers more than any single, so letting it compete with in-band releases would trade four
+    # 1 GB singles for one 19.7 GB pack on an unattended sweep.
+    test "the season's episode count never lets a fat pack beat in-band singles" do
       wanted = [19, 20, 21, 22]
       opts = [max_size: 4 * @gb]
 
-      # First pass (no pack_episode_count): the pack is out of band, so the singles are chosen.
-      assert {:ok, chosen} = Scorer.select_for([pack | singles], 3, wanted, opts)
-      assert chosen |> Enum.map(fn {r, _cov} -> r.title end) |> Enum.sort() == ~w(e19 e20 e21 e22)
+      for count_opts <- [[], [pack_episode_count: 22]] do
+        assert {:ok, chosen} =
+                 Scorer.select_for(
+                   [charmed_pack() | charmed_singles(19..22)],
+                   3,
+                   wanted,
+                   opts ++ count_opts
+                 )
 
-      # Same pool with the widened band: the pack takes the whole want in one greedy step.
-      assert {:ok, [{%Release{title: "pack"}, ^wanted}]} =
-               Scorer.select_for([pack | singles], 3, wanted, opts ++ [pack_episode_count: 22])
+        assert titles(chosen) == ~w(e19 e20 e21 e22)
+      end
+    end
+
+    # The passes are per cover, not per greedy step: once the still-wanted band covers anything, the
+    # season band does not run this search, so the pack waits for a search where nothing else fits.
+    test "the season band does not run once the still-wanted band covers part of the want" do
+      assert {:ok, chosen} =
+               Scorer.select_for([charmed_pack() | charmed_singles(19..20)], 3, [19, 20, 21, 22],
+                 max_size: 4 * @gb,
+                 pack_episode_count: 22
+               )
+
+      assert titles(chosen) == ~w(e19 e20)
+    end
+
+    # #191's rule for the cover (ADR 0003): a release whose tag satisfies the audio target is taken
+    # before an untagged one, whatever each covers, so untagged only covers what no tagged release
+    # in that band can.
+    test "a tagged match beats an untagged pack before coverage counts" do
+      pack =
+        release(title: "untagged", season: 1, episodes: nil, resolution: "1080p", size: 4 * @gb)
+
+      [e1, e2] =
+        for n <- [1, 2],
+            do:
+              release(
+                title: "fr#{n}",
+                language: "FRENCH",
+                season: 1,
+                episodes: [n],
+                resolution: "1080p",
+                size: 2 * @gb
+              )
+
+      opts = [max_size: 5 * @gb, preferred_language: "original", original_language: "fr"]
+
+      assert {:ok, chosen} = Scorer.select_for([pack, e1, e2], 1, [1, 2], opts)
+      assert titles(chosen) == ~w(fr1 fr2)
+
+      assert {:ok, [{^e1, [1]}, {^pack, [2]}]} = Scorer.select_for([pack, e1], 1, [1, 2], opts)
+    end
+
+    # The season band is the whole cover rerun with whole-season packs banded by the season's episode count:
+    # an alternate-season pack widens too, and a release the pack's pick shrinks into band is taken
+    # after it.
+    test "the season band reruns the whole cover, alternate-season packs included" do
+      # Scene season 2 numbers native episodes 1 and 2.
+      alternate =
+        release(title: "alt", season: 2, episodes: nil, resolution: "1080p", size: 12 * @gb)
+
+      range =
+        release(
+          title: "range",
+          season: 1,
+          episodes: [1, 2, 3, 4],
+          resolution: "1080p",
+          size: 15 * div(@gb, 10)
+        )
+
+      opts = [
+        min_size: div(@gb, 2),
+        max_size: 1 * @gb,
+        pack_episode_count: 22,
+        alternate_numbering: %{2 => %{1 => [1], 2 => [2]}}
+      ]
+
+      assert {:ok, [{^alternate, [1, 2]}, {^range, [3, 4]}]} =
+               Scorer.select_for([alternate, range], 1, [1, 2, 3, 4], opts)
     end
 
     test "releases for another season (and movies) are ignored" do
@@ -518,6 +595,48 @@ defmodule Cinder.Acquisition.ScorerTest do
 
       assert {:ok, [{^first, [11, 12]}]} =
                Scorer.select_for_ids([overlap, first], [11, 12, 13])
+    end
+
+    # The stable-id cover shares the season cover's pick order. Under an anime policy the language
+    # rank is off, as in `rank_key/2`, so coverage decides again.
+    test "a tagged match beats an untagged release before coverage counts, except under an anime policy" do
+      untagged =
+        release(
+          title: "untagged",
+          resolved_episode_ids: [11, 12],
+          resolution: "1080p",
+          size: 4 * @gb
+        )
+
+      fr11 =
+        release(
+          title: "fr11",
+          language: "FRENCH",
+          resolved_episode_ids: [11],
+          resolution: "1080p",
+          size: 2 * @gb
+        )
+
+      fr12 =
+        release(
+          title: "fr12",
+          language: "FRENCH",
+          resolved_episode_ids: [12],
+          resolution: "1080p",
+          size: 2 * @gb
+        )
+
+      opts = [preferred_language: "original", original_language: "fr"]
+
+      assert {:ok, chosen} = Scorer.select_for_ids([untagged, fr11, fr12], [11, 12], opts)
+      assert titles(chosen) == ~w(fr11 fr12)
+
+      assert {:ok, [{^untagged, [11, 12]}]} =
+               Scorer.select_for_ids(
+                 [untagged, fr11, fr12],
+                 [11, 12],
+                 opts ++ [anime_policy: @neutral_anime_policy]
+               )
     end
 
     test "preserves non-monotonic resolved membership order" do

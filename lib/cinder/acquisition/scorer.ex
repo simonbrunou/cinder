@@ -61,13 +61,26 @@ defmodule Cinder.Acquisition.Scorer do
   `select/2`) are rejected. The size band is **per-episode**: a
   release covering `k` still-wanted episodes must satisfy `k*min_size ≤ size ≤
   k*max_size` (so a season pack is judged against the episodes it actually supplies).
-  `opts[:pack_episode_count]` raises that multiplier for a whole-season pack to the episodes it
-  *contains* — it can only widen, never narrow, and `Cinder.Acquisition.best_releases/4` supplies
-  it only on a last-resort retry (see there for why not on the first pass).
-  Selection is greedy set-cover — repeatedly take the release covering the most
-  still-needed episodes (ties by resolution preference, then larger size) — which
-  handles packs, ranges, and singles uniformly. Partial coverage is fine: the rest
-  stay wanted for the next search tick.
+
+  Selection is greedy set-cover, which handles packs, ranges, and singles uniformly. Its order is
+  decided here (ADR 0003 records why); callers pass facts, never a band rule or a retry:
+
+  1. **Two passes.** The cover first bands every release by the still-wanted episodes it covers.
+     Only when that selects nothing does it run again with each whole-season pack banded by
+     `max(k, opts[:pack_episode_count])`, the episodes the season holds: the season band (#268).
+     With 4 of 22 episodes wanted, a 19.7 GB pack is ~0.9 GB per episode, not 4.9. A pack that
+     only fits the season band never competes with an in-band release, so four 1 GB singles
+     don't collapse into one 19.7 GB pack, and it waits while in-band releases cover any of the
+     want.
+  2. **Each greedy step** takes, of what fits the pass's band, a release whose language tag
+     satisfies the audio target before an untagged one (#191: untagged covers only what nothing
+     tagged in that band can), then the one covering the most still-needed episodes, then the
+     best `rank_key/2`. Ties keep input order.
+
+  Partial coverage is fine: the rest stay wanted for the next search tick.
+
+  `opts[:pack_episode_count]` is the season's real episode count. Under `full_claim_only` it is
+  also what a whole-season pack must claim, in both passes.
 
   Rules come from per-call `opts`, exactly like `select/2`.
   `opts[:alternate_numbering]` may map alternate season/episode coordinates onto
@@ -80,21 +93,31 @@ defmodule Cinder.Acquisition.Scorer do
     {min_size, max_size, preferred, sources, release_blocklist, _preferred_terms, blocked_terms} =
       rules(opts)
 
-    band = {min_size, max_size, preferred, sources}
     alternate_numbering = Keyword.get(opts, :alternate_numbering, %{})
 
-    releases
-    |> Enum.filter(&(&1.season == season or Map.has_key?(alternate_numbering, &1.season)))
-    |> Enum.reject(&excluded_title?(&1, release_blocklist, blocked_terms))
-    |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
-    |> cover(
-      MapSet.new(wanted_episodes),
-      [],
-      band,
-      &claimable_coverage(&1, &2, season, alternate_numbering, opts),
-      opts
-    )
+    candidates =
+      releases
+      |> Enum.filter(&(&1.season == season or Map.has_key?(alternate_numbering, &1.season)))
+      |> Enum.reject(&excluded_title?(&1, release_blocklist, blocked_terms))
+      |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
+
+    coverage_fun = &claimable_coverage(&1, &2, season, alternate_numbering, opts)
+
+    Enum.find_value(pack_episodes_per_pass(opts), :no_match, fn pack_episodes ->
+      band = {min_size, max_size, pack_episodes}
+
+      case cover(candidates, MapSet.new(wanted_episodes), [], band, coverage_fun, opts) do
+        :no_match -> nil
+        selections -> selections
+      end
+    end)
   end
+
+  # The episodes a whole-season pack is banded by in each pass of `select_for/4`: the still-wanted
+  # ones it covers (0 adds nothing to its coverage), then the season band.
+  defp pack_episodes_per_pass(opts), do: [0 | List.wrap(Keyword.get(opts, :pack_episode_count))]
+
+  defp pack_episodes(opts), do: Keyword.get(opts, :pack_episode_count) || 0
 
   @doc """
   Selects releases by resolved stable episode IDs.
@@ -102,12 +125,15 @@ defmodule Cinder.Acquisition.Scorer do
   A release is eligible only while every ID it claims is still needed, so the
   greedy cover never truncates one release's durable meaning. Returned IDs keep
   the resolver's membership order rather than database-ID sort order.
+
+  Each greedy step follows `select_for/4`'s order. There is one pass: a whole-season pack is
+  banded by `max(k, opts[:pack_episode_count])` at once, as `verdict_for_ids/2` bands it.
   """
   def select_for_ids(releases, wanted_ids, opts \\ []) do
     {min_size, max_size, preferred, sources, release_blocklist, _preferred_terms, blocked_terms} =
       rules(opts)
 
-    band = {min_size, max_size, preferred, sources}
+    band = {min_size, max_size, pack_episodes(opts)}
 
     result =
       releases
@@ -144,7 +170,7 @@ defmodule Cinder.Acquisition.Scorer do
   """
   def verdict_for_ids(%Release{} = release, opts \\ []) do
     ids = release.resolved_episode_ids || []
-    classify(release, max(length(ids), carried(release, opts)), opts)
+    classify(release, max(length(ids), carried(release, pack_episodes(opts))), opts)
   end
 
   defp classify(release, k, opts) do
@@ -230,8 +256,10 @@ defmodule Cinder.Acquisition.Scorer do
   no-op whenever the language filter is off or every candidate satisfies the target.
 
   That "only wins when nothing tagged survived" guarantee holds for `select/2`, where this IS the
-  sort key. `cover/6`'s `take_best/7` sorts by coverage FIRST, so the term is only a tiebreak
-  there — which is exactly why `keep_untagged` is opt-in and only the movie pool passes it.
+  sort key, and within each pass of the set-covers, whose greedy step ranks the language term
+  ahead of coverage (`select_for/4`, ADR 0003). Across `select_for/4`'s passes the band decides
+  first: an untagged single in the still-wanted band is taken before a tagged pack that fits only
+  the season band.
 
   It is skipped entirely under an `:anime_policy`. The anime pools deliberately never run
   `Language.filter/3` (the release judge turns its language stage off under an anime policy)
@@ -286,8 +314,10 @@ defmodule Cinder.Acquisition.Scorer do
     }
   end
 
+  # `band` is one pass's per-episode size bounds plus the episodes a whole-season pack is banded by
+  # in that pass.
   defp cover(candidates, needed, chosen, band, coverage_fun, opts) do
-    {min_size, max_size, _preferred, _sources} = band
+    {min_size, max_size, pack_episodes} = band
 
     scored =
       if MapSet.size(needed) == 0 do
@@ -298,9 +328,9 @@ defmodule Cinder.Acquisition.Scorer do
         |> Enum.reject(fn {release, cov} ->
           # Per-episode band: a release covering k still-wanted episodes is judged
           # against k×the band (a pack is allowed proportionally more size), but never
-          # against less than the episodes it CARRIES when the caller says how many.
+          # against less than the episodes a whole-season pack CARRIES in this pass.
           k = MapSet.size(cov)
-          banded = max(k, carried(release, opts))
+          banded = max(k, carried(release, pack_episodes))
           k == 0 or not within_band?(release, scale(min_size, banded), scale(max_size, banded))
         end)
       end
@@ -313,9 +343,7 @@ defmodule Cinder.Acquisition.Scorer do
 
   defp take_best(scored, candidates, needed, chosen, band, coverage_fun, opts) do
     {pick, cov} =
-      Enum.min_by(scored, fn {release, coverage} ->
-        {-MapSet.size(coverage), rank_key(release, opts)}
-      end)
+      Enum.min_by(scored, fn {release, coverage} -> pick_key(release, coverage, opts) end)
 
     covered = cov |> MapSet.to_list() |> Enum.sort()
 
@@ -328,6 +356,11 @@ defmodule Cinder.Acquisition.Scorer do
       opts
     )
   end
+
+  # One greedy step's order (ADR 0003): a release whose tag satisfies the audio target, then the
+  # one covering more still-needed episodes, then `rank_key/2`. Ties keep input order.
+  defp pick_key(release, coverage, opts),
+    do: {language_rank(release, opts), -MapSet.size(coverage), rank_key(release, opts)}
 
   # A whole-season pack (no episode list) covers every still-needed episode; an
   # episode list covers its intersection with what's still needed.
@@ -382,16 +415,17 @@ defmodule Cinder.Acquisition.Scorer do
   defp scale(nil, _k), do: nil
   defp scale(size, k), do: k * size
 
-  # The episodes a release CARRIES, for a caller that opted into `pack_episode_count`: a bare-season
-  # pack carries the whole season, everything else is banded by its coverage alone. Defaults to 0
-  # (not 1, unlike `episodes_multiplier/2`) so it can only ever RAISE the multiplier in `cover/6` —
-  # a caller that doesn't opt in is untouched, and one that does can only gain matches, never lose
-  # a small pack to a newly-scaled `min_size` (#268). The count is a proxy: an ongoing season's
-  # unaired rows inflate it, and a half-season pack ("S05A") parses as a pack of that season.
-  defp carried(%Release{episodes: nil, season: season}, opts) when not is_nil(season),
-    do: Keyword.get(opts, :pack_episode_count) || 0
+  # The episodes a release CARRIES in a cover pass that bands whole-season packs by `pack_episodes`:
+  # a bare-season pack carries the whole season, everything else is banded by its coverage alone.
+  # 0 (not 1, unlike `episodes_multiplier/2`) leaves the multiplier at the coverage, which is
+  # `select_for/4`'s first pass; running that pass first means the season band can only gain
+  # matches, never lose a small pack to a newly-scaled `min_size` (#268). The count is a proxy: an
+  # ongoing season's unaired rows inflate it, and a half-season pack ("S05A") parses as a pack of
+  # that season.
+  defp carried(%Release{episodes: nil, season: season}, pack_episodes) when not is_nil(season),
+    do: pack_episodes
 
-  defp carried(_release, _opts), do: 0
+  defp carried(_release, _pack_episodes), do: 0
 
   @doc "Index of a resolution string in the preference list (lower = better); nil/unlisted sorts last."
   def resolution_rank(resolution, preferred) when is_binary(resolution) or is_nil(resolution),

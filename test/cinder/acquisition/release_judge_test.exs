@@ -215,8 +215,8 @@ defmodule Cinder.Acquisition.ReleaseJudgeTest do
       assert [_kept] = judged.kept
     end
 
-    # The set-cover sorts by coverage first, so an untagged pack would beat confirmed-original
-    # singles: the TV pool never keeps untagged releases.
+    # The #191 relaxation is movie-only (ADR 0003, #882): the TV pool never keeps untagged
+    # releases.
     test "a TV season drops the untagged release a movie would keep" do
       judged =
         ReleaseJudge.judge(

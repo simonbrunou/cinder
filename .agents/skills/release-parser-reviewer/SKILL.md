@@ -66,9 +66,11 @@ You have no memory between runs. Orient first, every run.
   rejected). Source allow-list is LENIENT (empty keeps all; nil source PASSES — a parser miss
   must not strand). Do not swap these.
 - TV per-episode size band: a release covering k episodes is judged against k x band.
-  `select_for` is greedy coverage-primary (more-covered wins, then resolution, then source,
-  then larger size); partial coverage is fine. Don't make it require full coverage or drop the
-  coverage-primary sort key.
+  `select_for` runs two passes (ADR 0003): the still-wanted band, then, only after a clean
+  `:no_match`, whole-season packs banded by `max(k, pack_episode_count)`. Each greedy step
+  picks by `{language_rank, -coverage, rank_key}`; ties keep input order; partial coverage is
+  fine. Don't make it require full coverage, fold the season band into the pick key, or let a
+  pack that only fits the season band compete with in-band releases.
 
 **Acquisition** — the title guard is `known_title_match?/2` / `free_text_match?/2`
 (`acquisition/anime.ex`): strip the leading `[group]` tag, normalize

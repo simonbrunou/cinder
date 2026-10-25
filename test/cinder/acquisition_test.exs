@@ -754,9 +754,9 @@ defmodule Cinder.AcquisitionTest do
     end
 
     test "keeps the TV language gate strict about untagged releases" do
-      # The #191 relaxation is movie-only. Set-cover sorts by coverage BEFORE the scorer's
-      # language rank, so an untagged season pack would beat the confirmed-FRENCH singles it
-      # covers and the ranking safety net would never engage. Untagged stays filtered out here.
+      # The #191 relaxation is movie-only (ADR 0003, #882). Here the language stage and the
+      # cover's language rank both keep the confirmed-FRENCH singles; the next test isolates the
+      # language stage.
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
         {:ok,
          [
@@ -775,9 +775,27 @@ defmodule Cinder.AcquisitionTest do
       assert chosen |> Enum.map(fn {r, _cov} -> r.language end) == ["FRENCH", "FRENCH"]
     end
 
+    # The cover would take the untagged pack for the episode the FRENCH single leaves, so only the
+    # language stage dropping it keeps E02 waiting for a FRENCH release.
+    test "a season's language stage drops the untagged pack the cover would fill a gap with" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok,
+         [
+           raw_tv("The.Office.S01.1080p.WEB-DL.x264-FW"),
+           raw_tv("The.Office.S01E01.FRENCH.1080p.WEB-DL-GRP")
+         ]}
+      end)
+
+      assert {:ok, [{%Release{language: "FRENCH"}, [1]}]} =
+               Acquisition.best_releases(series(), 1, [1, 2],
+                 preferred_language: "original",
+                 original_language: "fr"
+               )
+    end
+
     # #268: 4 of 22 episodes wanted banded a 19.7 GB season pack at 4×4 GB and parked the tail.
-    # One `expect` (not two) also pins that the retry re-scores the SAME candidates rather than
-    # searching the indexer again.
+    # One `expect` (not two) also pins that the cover's season band re-scores the SAME candidates
+    # rather than searching the indexer again.
     test "retries a whole-season pack against the season's episode count when nothing else fits" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "The Office", 3 ->
         {:ok, [raw_tv("The.Office.S03.1080p.BluRay.x265-GRP", size: 197 * div(@gb, 10))]}
@@ -786,14 +804,13 @@ defmodule Cinder.AcquisitionTest do
       assert {:ok, [{%Release{episodes: nil}, [19, 20, 21, 22]}]} =
                Acquisition.best_releases(series(), 3, [19, 20, 21, 22],
                  max_size: 4 * @gb,
-                 season_episode_count: 22
+                 pack_episode_count: 22
                )
     end
 
-    # The reason the widened band is a retry and not the first pass: `Scorer.cover/6` sorts by
-    # coverage before rank, so a pack that fits takes the whole want and the singles behind it are
-    # never scored. Running it only after a clean :no_match keeps four 1 GB grabs from collapsing
-    # into one 19.7 GB grab on an unattended sweep.
+    # The season band is the cover's second pass (ADR 0003), so a pack that only fits it never
+    # competes with in-band singles: four 1 GB grabs don't collapse into one 19.7 GB grab on an
+    # unattended sweep.
     test "viable singles still win over a fat pack — the widened band never runs" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, 3 ->
         {:ok,
@@ -808,11 +825,32 @@ defmodule Cinder.AcquisitionTest do
       assert {:ok, chosen} =
                Acquisition.best_releases(series(), 3, [19, 20, 21, 22],
                  max_size: 4 * @gb,
-                 season_episode_count: 22
+                 pack_episode_count: 22
                )
 
       assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() ==
                [[19], [20], [21], [22]]
+    end
+
+    # Singles cover part of the want: the season band does not run in this search, so the pack
+    # waits for a search where nothing else fits instead of riding along with the singles.
+    test "singles for part of the want do not pull in a pack that only fits the season band" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, 3 ->
+        {:ok,
+         [
+           raw_tv("The.Office.S03.1080p.BluRay.x265-GRP", size: 197 * div(@gb, 10)),
+           raw_tv("The.Office.S03E19.1080p.WEB-DL-GRP", size: 1 * @gb),
+           raw_tv("The.Office.S03E20.1080p.WEB-DL-GRP", size: 1 * @gb)
+         ]}
+      end)
+
+      assert {:ok, chosen} =
+               Acquisition.best_releases(series(), 3, [19, 20, 21, 22],
+                 max_size: 4 * @gb,
+                 pack_episode_count: 22
+               )
+
+      assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() == [[19], [20]]
     end
 
     test "rejects a same-season release of a different series on the free-text path" do

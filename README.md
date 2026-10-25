@@ -128,9 +128,11 @@ Secrets are encrypted at rest with a key derived from `SECRET_KEY_BASE`.
 | Audiobookshelf | URL + API key + library id — Cinder requests a library scan after every successful audiobook import; a failed scan retries automatically without re-downloading |
 
 **TV size bands are per episode.** A release is banded against the still-wanted episodes it
-covers, so one covering N of them is allowed N× the max. The upgrade sweep and manual search apply
-that pack banding on the first pass; the automatic sweep re-bands a whole-season pack against the
-season's full episode count only as a last-resort retry, when nothing else fit.
+covers, so one covering N of them is allowed N× the max. When nothing fits that way, the automatic
+sweep re-bands a whole-season pack against the season's full episode count, so a pack for the last
+few episodes of a long season isn't rejected as too big. The upgrade sweep takes a whole-season pack
+only when it holds the whole season, so it bands one by the full count anyway. The manual search
+panel bands a pack by the season's wanted episodes at once.
 
 **Jellyfin/Plex web URL** is separate from the Jellyfin/Plex URL above on purpose. The latter is
 how the Cinder *server* reaches your media server, which in the compose deployment is a

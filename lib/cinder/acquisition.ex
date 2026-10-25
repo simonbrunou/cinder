@@ -97,9 +97,8 @@ defmodule Cinder.Acquisition do
   guard `{:series, series}`): releases with a download client, whose name is the series' (see
   `title_guard/2`), that satisfy the audio pick. A strict pick that removes every candidate
   leaves nothing to cover, so the season is `:no_match`. `opts` is the household policy
-  (`Cinder.Acquisition.HouseholdPolicy.for_target/2`) plus scorer opts.
-  `opts[:season_episode_count]` (the season's real episode count) enables the last-resort pack
-  retry described in `pack_band_retry/4`.
+  (`Cinder.Acquisition.HouseholdPolicy.for_target/2`) plus the facts the set-cover reads, such as
+  `opts[:pack_episode_count]`, the season's real episode count (`Scorer.select_for/4`).
 
   Returns `{:ok, [{%Release{}, [number]}]}`, `:no_match`, or `{:error, term}`.
 
@@ -121,37 +120,10 @@ defmodule Cinder.Acquisition do
           |> Enum.map(&Release.new/1)
           |> ReleaseJudge.judge({:series, series}, opts)
 
-        case Scorer.select_for(cover_set, season_number, wanted_numbers, opts) do
-          :no_match -> pack_band_retry(cover_set, season_number, wanted_numbers, opts)
-          selections -> selections
-        end
+        Scorer.select_for(cover_set, season_number, wanted_numbers, opts)
 
       {:error, _reason} = error ->
         error
-    end
-  end
-
-  # Last resort for #268: nothing survived the per-still-wanted-episode band, so re-run the cover
-  # once with whole-season packs banded against `opts[:season_episode_count]` — the episodes the
-  # pack CONTAINS. A 22-episode season with 4 episodes left wanted budgeted a pack at 4×the band,
-  # so the fewer episodes remained, the harsher the effective per-episode cap.
-  #
-  # It has to be a retry, not a wider first pass: `Scorer.cover/6` sorts candidates by coverage
-  # before rank, so a whole-season pack that fits the band beats every single-episode release
-  # behind it. Widening up front would trade four 1 GB singles for one 19.7 GB pack on an
-  # unattended sweep; running it only after a clean `:no_match` can add a match, never replace one.
-  defp pack_band_retry(candidates, season_number, wanted_numbers, opts) do
-    case Keyword.get(opts, :season_episode_count) do
-      nil ->
-        :no_match
-
-      count ->
-        Scorer.select_for(
-          candidates,
-          season_number,
-          wanted_numbers,
-          Keyword.put(opts, :pack_episode_count, count)
-        )
     end
   end
 
