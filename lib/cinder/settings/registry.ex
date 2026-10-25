@@ -209,8 +209,9 @@ defmodule Cinder.Settings.Registry do
   # per video kind, so a server with separate Movies/Shows libraries refreshes the right one.
   #
   # Each option's `server` is the atom `Cinder.Settings.media_server_web_link/0` names it by. With
-  # no type stored, the option whose `os_env` variable is set is the bootstrap choice; with none
-  # set, the form shows the first option and the overlay keeps the captured impl.
+  # no listed type stored, the option whose `os_env` variable is set is the bootstrap choice for
+  # the overlay, the form and the web link; with none set, the form shows the first option, the
+  # overlay keeps the captured impl and the web link takes a uniquely configured web URL.
   @media_server [
                   new(
                     "media_server_type",

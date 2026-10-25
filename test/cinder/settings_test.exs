@@ -53,6 +53,16 @@ defmodule Cinder.SettingsTest do
     end)
   end
 
+  # PLEX_URL is process-global and picks the bootstrap media server for the overlay, the form and
+  # the web link. A test that sets it restores the prior value on exit.
+  defp restore_plex_url_on_exit do
+    prior = System.get_env("PLEX_URL")
+    on_exit(fn -> put_plex_url(prior) end)
+  end
+
+  defp put_plex_url(nil), do: System.delete_env("PLEX_URL")
+  defp put_plex_url(url), do: System.put_env("PLEX_URL", url)
+
   describe "env_keys/0" do
     # Measured against the overlay before the setting definitions existed, so a key the overlay
     # writes but env_keys/0 forgets (or the reverse) fails here, and the restore above stays whole.
@@ -882,12 +892,8 @@ defmodule Cinder.SettingsTest do
     # The Plex credentials' env var is also the bootstrap media-server choice: with no stored type
     # it picks the impl and the form's selection, and a stored type still wins over it.
     test "PLEX_URL selects Plex while no media server type is stored" do
-      prior = System.get_env("PLEX_URL")
-      System.put_env("PLEX_URL", "http://plex.test:32400")
-
-      on_exit(fn ->
-        if prior, do: System.put_env("PLEX_URL", prior), else: System.delete_env("PLEX_URL")
-      end)
+      restore_plex_url_on_exit()
+      put_plex_url("http://plex.test:32400")
 
       assert Settings.load_into_env() == :ok
       assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServer.Plex
@@ -900,9 +906,25 @@ defmodule Cinder.SettingsTest do
       assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServer.Jellyfin
       assert Settings.form_state().values["media_server_type"] == "jellyfin"
 
-      System.delete_env("PLEX_URL")
+      put_plex_url(nil)
       Settings.delete("media_server_type")
       assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServerMock
+      assert Settings.form_state().values["media_server_type"] == "jellyfin"
+    end
+
+    # Only a direct write stores an unlisted type (the form saves a listed one). The form shows
+    # the server the overlay runs, never a value no option matches, which the browser would show
+    # as the first option and a save would then store.
+    test "an unlisted stored type shows and runs the PLEX_URL choice" do
+      restore_plex_url_on_exit()
+      put_plex_url("http://plex.test:32400")
+      Repo.insert!(%Setting{key: "media_server_type", value: "emby", is_secret: false})
+
+      assert Settings.load_into_env() == :ok
+      assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServer.Plex
+      assert Settings.form_state().values["media_server_type"] == "plex"
+
+      put_plex_url(nil)
       assert Settings.form_state().values["media_server_type"] == "jellyfin"
     end
 
@@ -1697,8 +1719,11 @@ defmodule Cinder.SettingsTest do
     end
 
     setup do
-      # A leftover value on any server's module would mask the case under test.
+      # A leftover value on any server's module, or an exported PLEX_URL, would mask the case
+      # under test.
       Enum.each(@media_servers, &set_web_url(&1.server, nil))
+      restore_plex_url_on_exit()
+      put_plex_url(nil)
       :ok
     end
 
@@ -1781,6 +1806,45 @@ defmodule Cinder.SettingsTest do
       set_web_url(:jellyfin, "https://jellyfin.test")
 
       refute Settings.media_server_web_link()
+    end
+
+    # With no listed type stored, PLEX_URL makes the overlay run Plex, so the link follows Plex
+    # too and never sends a household member to a leftover Jellyfin URL (#806).
+    test "with no type saved, PLEX_URL picks Plex and never links at Jellyfin" do
+      put_plex_url("http://plex.test:32400")
+      set_web_url(:plex, "https://plex.test")
+
+      assert Settings.media_server_web_link() == {:plex, "https://plex.test"}
+
+      set_web_url(:jellyfin, "https://jellyfin.test")
+
+      assert Settings.media_server_web_link() == {:plex, "https://plex.test"}
+
+      set_web_url(:plex, nil)
+
+      refute Settings.media_server_web_link()
+      refute Settings.media_server_web_link("jellyfin:item-1")
+    end
+
+    test "an unlisted stored type follows PLEX_URL, as the overlay does" do
+      put_plex_url("http://plex.test:32400")
+      set_media_server_type("emby")
+      set_web_url(:jellyfin, "https://jellyfin.test")
+
+      refute Settings.media_server_web_link()
+
+      set_web_url(:plex, "https://plex.test")
+
+      assert Settings.media_server_web_link() == {:plex, "https://plex.test"}
+    end
+
+    test "a stored type wins over PLEX_URL" do
+      put_plex_url("http://plex.test:32400")
+      set_media_server_type("jellyfin")
+      set_web_url(:plex, "https://plex.test")
+      set_web_url(:jellyfin, "https://jellyfin.test")
+
+      assert Settings.media_server_web_link() == {:jellyfin, "https://jellyfin.test"}
     end
 
     # A scheme-less host would render as a RELATIVE href (resolving against the current page),

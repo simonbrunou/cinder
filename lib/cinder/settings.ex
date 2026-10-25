@@ -142,11 +142,12 @@ defmodule Cinder.Settings do
   The browser-reachable media-server URL a household member should open, or `nil` when the
   operator has not set one.
 
-  Resolved from the stored `media_server_type`, the same value that picks the impl in the env
-  overlay, so a Plex instance never links at a leftover Jellyfin URL. The server atom and its
-  module come from that definition's options. When no listed type is stored, this falls back to
-  a *uniquely* configured web URL and otherwise returns `nil`: with both set and no type, either
-  answer is a guess, and sending someone to the wrong server is worse than showing no link.
+  Resolved from the stored `media_server_type`, else the option whose `os_env` variable is set
+  (`PLEX_URL` picks Plex): the same choice that picks the impl in the env overlay, so a Plex
+  instance never links at a leftover Jellyfin URL. The server atom and its module come from that
+  definition's options. When neither applies, this falls back to a *uniquely* configured web URL
+  and otherwise returns `nil`: with both set and no choice, either answer is a guess, and sending
+  someone to the wrong server is worse than showing no link.
 
   When the background media-server inventory has reconciled a title, pass its opaque item id to
   `media_server_web_link/1` for a title deep link. A missing or stale id retains this front-door
@@ -154,7 +155,7 @@ defmodule Cinder.Settings do
   """
   @spec media_server_web_link() :: {:plex | :jellyfin, String.t()} | nil
   def media_server_web_link do
-    case Shape.option(@media_servers, get(@media_server.key)) do
+    case Shape.running_media_server(@media_servers, get(@media_server.key)) do
       %{} = option -> web_link_for(option)
       nil -> sole_configured_web_link()
     end

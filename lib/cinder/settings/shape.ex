@@ -58,7 +58,7 @@ defmodule Cinder.Settings.Shape do
   def form_value(:legacy_toggle, value, _lookup), do: enabled?(value)
 
   def form_value({:media_server, options}, value, _lookup),
-    do: value || unstored_media_server(options)
+    do: shown_media_server(options, value)
 
   def form_value({:download_client, choice}, value, lookup) do
     case option(choice.options, value) do
@@ -133,13 +133,9 @@ defmodule Cinder.Settings.Shape do
     do: {Map.put(puts, key, params[key] || "false"), deletes}
 
   # Validate against the whitelist so a crafted/buggy submit can't persist a junk impl string
-  # (which the media-server writer would silently ignore, leaving the dropdown unselected).
-  def plan(%{save: :always, shape: {:media_server, options}, key: key}, params, {puts, deletes}) do
-    choice =
-      if option(options, params[key]), do: params[key], else: unstored_media_server(options)
-
-    {Map.put(puts, key, choice), deletes}
-  end
+  # (which the media-server writer would silently ignore).
+  def plan(%{save: :always, shape: {:media_server, options}, key: key}, params, {puts, deletes}),
+    do: {Map.put(puts, key, shown_media_server(options, params[key])), deletes}
 
   def plan(%{save: :form, shape: :secret, key: key}, params, {puts, deletes}) do
     cond do
@@ -192,7 +188,7 @@ defmodule Cinder.Settings.Shape do
   # captured bootstrap (config.exs's Jellyfin in prod, the Mox mock in tests). It sits above the
   # nil clause because a missing row must still reach the os_env selection.
   def to_env({:media_server, options}, value, fallback, _row?) do
-    case option(options, value) || os_env_option(options) do
+    case running_media_server(options, value) do
       %{module: module} -> module
       nil -> fallback
     end
@@ -309,8 +305,17 @@ defmodule Cinder.Settings.Shape do
   def enabled?(nil), do: true
   def enabled?(value), do: value in ["true", "1", "on"]
 
-  # The type the form shows while none is stored, and saves when the submitted one is unlisted.
-  defp unstored_media_server(options), do: (os_env_option(options) || hd(options)).value
+  # The media server option that runs: the stored one, else the one its os_env variable selects,
+  # else nil. The overlay, the form and Cinder.Settings.media_server_web_link/0 all pick through
+  # it.
+  @doc false
+  def running_media_server(options, value),
+    do: option(options, value) || os_env_option(options)
+
+  # The type the form shows for a stored value, and saves for a submitted one: the listed value,
+  # else the option its os_env selects, else the first option.
+  defp shown_media_server(options, value),
+    do: (running_media_server(options, value) || hd(options)).value
 
   # The option whose os_env variable is set (PLEX_URL for Plex): the bootstrap media server choice.
   defp os_env_option(options),
