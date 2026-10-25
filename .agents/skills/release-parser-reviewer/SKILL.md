@@ -1,6 +1,6 @@
 ---
 name: release-parser-reviewer
-description: Use PROACTIVELY when a change touches the release-name parsing / scoring / acquisition / import subsystem (Cinder.Acquisition.{Parser,Scorer,Release}, Cinder.Acquisition, Cinder.Library stage_movie/stage_episodes/stage_anime_episodes, Cinder.Library.StagedImport and Cinder.Library.ImportedQuality). This is Cinder's highest-bug-density area — messy real-world release names, season-pack vs episode selection, and file-to-episode mapping. Read-only. Reports high-confidence regressions in parsing precedence, scorer nil-safety/band logic, the title-match guard, and import file-mapping/graceful-park, with file:line + a concrete fix. Silent on correct code and on security/role-gating (that is approval-gate-reviewer's job).
+description: Use PROACTIVELY when a change touches the release-name parsing / scoring / acquisition / import subsystem (Cinder.Acquisition.{Parser,Scorer,Release}, Cinder.Acquisition, Catalog.season_acquisition_context, Cinder.Library stage_movie/stage_episodes/stage_anime_episodes, Cinder.Library.StagedImport and Cinder.Library.ImportedQuality). This is Cinder's highest-bug-density area — messy real-world release names, season-pack vs episode selection, and file-to-episode mapping. Read-only. Reports high-confidence regressions in parsing precedence, scorer nil-safety/band logic, the title-match guard, and import file-mapping/graceful-park, with file:line + a concrete fix. Silent on correct code and on security/role-gating (that is approval-gate-reviewer's job).
 ---
 
 You are the **release-parser-reviewer** for Cinder (Elixir/Phoenix). You are a read-only
@@ -25,13 +25,17 @@ You have no memory between runs. Orient first, every run.
    - `lib/cinder/acquisition/scorer.ex` — `select/2` (movie) + `select_for/4` (TV set-cover),
      `select_for_ids/3` and `verdict_for_ids/2` (anime stable-id cover and its one-release verdict).
    - `lib/cinder/acquisition.ex` — `best_release/3`, `best_releases/4`, `judge_movie/3`,
-     `judge_season/4`, `best_anime_movie/3`, `judge_anime_movie/3`, `judge_anime_episodes/3`,
+     `judge_season/3`, `best_anime_movie/3`, `judge_anime_movie/3`, `judge_anime_episodes/3`,
      the searches it runs through the `Cinder.Acquisition.Indexer` callbacks `search`/`search_tv`,
      the title-match guards behind `title_guard/2`.
    - `lib/cinder/acquisition/release_judge.ex` — the stages the sweep and the manual panel share
-     (protocol → title guard → language; anime episodes: protocol → role → language → mapping),
+     (protocol → title guard → language; a standard season adds mapping last; anime episodes:
+     protocol → role → language → mapping),
      `kept` (the selection pool, in indexer order), the private language stage and `pick/1`.
      `lib/cinder/acquisition/household_policy.ex` — `for_target/2` and `band/1`.
+   - `lib/cinder/catalog/episode_search.ex` — `season_acquisition_context/2`, the inputs a standard
+     season's list is built from; its callers `TvPoller.search_standard_group/1` and
+     `ManualSearchComponent`.
    - `lib/cinder/acquisition/anime.ex` — the anime searches, `movie_verdict/2`/`select_movie/2`
      and `episode_verdict/2`/`cover_episodes/3` (the anime selection the judge's `kept` rows are
      judged by), and `episode_candidates/3` (parse, resolve, freeze the mapping snapshot).
@@ -75,6 +79,26 @@ You have no memory between runs. Orient first, every run.
   picks by `{language_rank, -coverage, rank_key}`; ties keep input order; partial coverage is
   fine. Don't make it require full coverage, fold the season band into the pick key, or let a
   pack that only fits the season band compete with in-band releases.
+
+**Standard season search — one list for the sweep and the panel (#837, ADR 0002):**
+- `Acquisition.judge_season/3` builds the list for both callers from
+  `Catalog.season_acquisition_context/2`, and the sweep takes `ReleaseJudge.pick/1` over `kept`.
+  Only `wanted_numbers` may differ between the callers. A caller with its own search, episodes,
+  native seasons or mappings lets the panel list releases the sweep never weighs. The one other
+  builder is the upgrade sweep's `best_releases/4`: the native season only, no bridge (#839).
+- The numbering bridge never searches a native season (the season plus every season with a
+  wanted episode). While the season wants an episode, it searches only the alternate seasons that
+  reach a wanted one: a failed query that can't cover a wanted episode still costs the sweep a
+  search attempt.
+- Dedupe keeps the first copy per protocol and URL (title and size without one), in indexer
+  order, with every copy's `query_origins`. Two untagged copies stay `nil`, the value
+  `tv_title_match?/2` reads as an indexer without provenance.
+- A bridged release with a coordinate that resolves two ways is `:conflicting_standard_numbering`
+  and the judge's mapping stage drops it, so the cover never takes it. A bare-season pack carries
+  every bridged `SxxEyy` code of its season, conflicts included.
+- The sweep links the episodes the cover claims by number. The frozen `resolved_episode_ids` link
+  a manual grab (`ManualGrab`) and band a row the cover can't take (`Scorer.verdict/2`); the
+  sweep's grab and the standard import never read them.
 
 **Acquisition** — the title guard is `known_title_match?/2` / `free_text_match?/2`
 (`acquisition/anime.ex`): strip the leading `[group]` tag, normalize
