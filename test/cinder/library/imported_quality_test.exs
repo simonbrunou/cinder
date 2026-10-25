@@ -6,7 +6,7 @@ defmodule Cinder.Library.ImportedQualityTest do
   import ExUnit.CaptureLog
   import Mox
 
-  alias Cinder.{Catalog, ConfigCase}
+  alias Cinder.{Catalog, ConfigCase, LibraryStubs}
   alias Cinder.Catalog.{Episode, Movie, MovieLifecycle}
   alias Cinder.Library
   alias Cinder.Library.{ImportedQuality, MediaInfoMock, StagedImport}
@@ -322,8 +322,6 @@ defmodule Cinder.Library.ImportedQualityTest do
   # The issue's done-when: every field survives probe → quality → row → quality, through each
   # real writer. Every field gets a value, so a new field nothing captures fails here too.
   describe "the round trip" do
-    # The committed files' subtitle effects run against unstubbed providers and log it.
-    @describetag :capture_log
     @describetag :tmp_dir
     setup [:set_mox_global, :real_disk]
 
@@ -355,6 +353,7 @@ defmodule Cinder.Library.ImportedQualityTest do
       assert_every_field_set(quality)
 
       assert {:ok, _available} = MovieLifecycle.import_staged(movie, staged)
+      LibraryStubs.await_subtitle_tasks()
       assert ImportedQuality.of(Repo.get!(Movie, movie.id)) == quality
     end
 
@@ -373,6 +372,7 @@ defmodule Cinder.Library.ImportedQualityTest do
         assert_every_field_set(quality)
 
         assert :ok = staged |> StagedImport.commit(writer(unquote(writer), grab)) |> elem(0)
+        LibraryStubs.await_subtitle_tasks()
 
         # An episode row has no default-audio column.
         assert ImportedQuality.of(Repo.get!(Episode, episode.id)) ==

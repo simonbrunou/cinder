@@ -56,7 +56,8 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   always-on `:login_pair` bucket of `Cinder.Accounts.IpRateLimiter`, keyed on the IP and the
   name (#686), and the suite-wide `Cinder.Subtitles.Fetcher` consuming another module's Mox
   expectations (#685). Give throttle tests unique names, and drain a shared worker with
-  `:sys.get_state/1`.
+  `:sys.get_state/1`: the Fetcher through `Cinder.LibraryStubs.await_subtitle_tasks/0`
+  ([testing.md](testing.md)).
 - **CI runs the suite as root.** A test that makes a delete fail with `File.chmod` passes
   locally and fails on CI. Fail it at the `Cinder.Library.Filesystem` behaviour instead:
   `config/test.exs` already points `:filesystem` at `Cinder.Library.FilesystemMock`, so

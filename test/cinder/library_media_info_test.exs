@@ -327,7 +327,7 @@ defmodule Cinder.LibraryMediaInfoTest do
     assert q.default_audio_language == "fre"
 
     assert_received {:ln, ^srt, ^sidecar_dest}
-    await_subtitle_tasks()
+    Cinder.LibraryStubs.await_subtitle_tasks()
   end
 
   # A French series ('original') episode with its season/series preloaded (what the TvPoller passes).
@@ -464,12 +464,6 @@ defmodule Cinder.LibraryMediaInfoTest do
     assert_received {:ln, ^candidate, ^dest}
 
     assert_received {:ln, ^srt, ^sidecar_dest}
-    await_subtitle_tasks()
-  end
-
-  # The Fetcher processes casts one at a time in mailbox order, so a synchronous round-trip after
-  # dispatch only returns once every previously-enqueued fetch has finished.
-  defp await_subtitle_tasks do
-    :sys.get_state(Cinder.Subtitles.Fetcher)
+    Cinder.LibraryStubs.await_subtitle_tasks()
   end
 end

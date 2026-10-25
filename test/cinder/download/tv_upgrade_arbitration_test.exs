@@ -14,7 +14,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.Acquisition.{Language, Release}
-  alias Cinder.Catalog
+  alias Cinder.{Catalog, LibraryStubs}
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, GrabFile, UpgradeHunter}
   alias Cinder.Download.TvPoller
   alias Cinder.Library.Upgrade
@@ -873,6 +873,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
 
     start_supervised!({TvPoller, interval: 60_000})
     assert :ok = TvPoller.poll()
+    LibraryStubs.await_subtitle_tasks()
 
     Repo.get!(Episode, episode.id)
   end

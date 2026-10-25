@@ -21,3 +21,9 @@
   restores the same way. The household size band (`:tv_min_size`, `:tv_max_size`, read by
   `Cinder.Acquisition.HouseholdPolicy.band/1`) is one such key. When other test modules also read
   the key, as several read the band, set it from an `async: false` module.
+- Each committed movie or episode file queues a subtitle task on the one shared
+  `Cinder.Subtitles.Fetcher`. A test calls `Cinder.LibraryStubs.await_subtitle_tasks/0` before
+  it ends when an import it commits records sidecar languages, or the task can run after the
+  test restores its library roots and log `subtitle manifest write failed ... :unsafe_destination`.
+  A test that turns subtitle languages on calls it first, so a task an earlier test queued runs
+  while they are still off instead of consuming this test's provider expectations (#685).

@@ -1,6 +1,8 @@
 defmodule Cinder.LibraryStubs do
   @moduledoc """
-  Shared Mox stubs for the library import path (filesystem + media server).
+  Shared helpers for library import tests: Mox stubs for the import path (filesystem + media
+  server), a catalog-style commit of a staged import, and a drain of the subtitle tasks that
+  commit queues.
 
   `stub/3` registers against the calling process, so each consuming test sets
   the Mox mode (private or global) and these stubs follow it.
@@ -26,6 +28,14 @@ defmodule Cinder.LibraryStubs do
       {:error, _reason} = error -> error
     end
   end
+
+  @doc """
+  Returns once the shared `Cinder.Subtitles.Fetcher` has run every subtitle task queued so far.
+  It runs one cast at a time in mailbox order, so a synchronous round-trip waits for them. Each
+  committed movie or episode file queues one (`Cinder.Subtitles.fetch_after_import/4`), which marks the
+  release's sidecars in the subtitle manifest and then fetches the missing languages.
+  """
+  def await_subtitle_tasks, do: :sys.get_state(Cinder.Subtitles.Fetcher)
 
   @doc "The `{episode_id, dest}` pairs a staged TV import records, sorted by episode id."
   def episode_dests(staged) do

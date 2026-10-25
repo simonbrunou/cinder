@@ -191,7 +191,7 @@ defmodule Cinder.Library.KeptFileSidecarsTest do
       assert :ok = LibraryStubs.commit_staged(staged)
 
       assert_receive {:scanned, :movies}
-      await_subtitle_tasks()
+      LibraryStubs.await_subtitle_tasks()
       assert quality.sidecar_subtitles == ["en", "fr"]
       assert sidecars_on_disk(dest) == ["en", "fr"]
     end
@@ -211,7 +211,7 @@ defmodule Cinder.Library.KeptFileSidecarsTest do
       assert :ok = LibraryStubs.commit_staged(staged)
 
       assert_receive {:scanned, :movies}
-      await_subtitle_tasks()
+      LibraryStubs.await_subtitle_tasks()
       assert quality.resolution == "720p"
       assert quality.sidecar_subtitles == ["fr"]
       assert sidecars_on_disk(dest) == ["fr"]
@@ -235,7 +235,7 @@ defmodule Cinder.Library.KeptFileSidecarsTest do
         assert :ok = LibraryStubs.commit_staged(staged)
 
         assert_receive {:scanned, :tv}
-        await_subtitle_tasks()
+        LibraryStubs.await_subtitle_tasks()
         assert quality.sidecar_subtitles == ["fr"]
         assert sidecars_on_disk(dest) == ["fr"]
       end
@@ -353,8 +353,4 @@ defmodule Cinder.Library.KeptFileSidecarsTest do
       :ok
     end)
   end
-
-  # The Fetcher takes one cast at a time, so a round-trip returns once the commit's subtitle job
-  # ran: it marks the linked sidecars while this test's library roots are still set.
-  defp await_subtitle_tasks, do: :sys.get_state(Cinder.Subtitles.Fetcher)
 end

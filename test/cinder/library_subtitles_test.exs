@@ -17,7 +17,7 @@ defmodule Cinder.LibrarySubtitlesTest do
   import Mox
 
   alias Cinder.Catalog.{Episode, Movie, Season, Series}
-  alias Cinder.{Library, Subtitles}
+  alias Cinder.{Library, LibraryStubs, Subtitles}
   alias Cinder.Library.Filesystem.Disk
   alias Cinder.Library.StagedImport
 
@@ -28,8 +28,8 @@ defmodule Cinder.LibrarySubtitlesTest do
   @tv_lib "/tmp/cinder-test-tv-library"
   @gb 1_000_000_000
 
-  # Stands in for an earlier module's fire-and-forget import that leaves a job in the shared
-  # Fetcher: the job reads the wanted languages only once its criteria thunk returns, i.e. late
+  # Stands in for an earlier module's fire-and-forget import that leaves a task in the shared
+  # Fetcher: the task reads the wanted languages only once its criteria thunk returns, i.e. late
   # enough to land after this module's setup has switched subtitles on (see the drain below).
   setup context do
     if context[:stale_fetcher_job] do
@@ -48,13 +48,13 @@ defmodule Cinder.LibrarySubtitlesTest do
   end
 
   # #685: the Fetcher is one process shared by the whole suite and most import tests enqueue onto
-  # it without waiting. A job left over from an earlier test or module can still be in flight when
-  # the setup below switches subtitles on and the test installs its expectations; its provider
+  # it without waiting. A task left over from an earlier test or module can still be in flight
+  # when the setup below switches subtitles on and the test installs its expectations; its provider
   # search then consumes one of THIS test's expected calls and the test's own fetch never reaches
-  # the provider. Let every previously-enqueued job finish first, while subtitles are still off
+  # the provider. Let every previously-enqueued task finish first, while subtitles are still off
   # and no expectations exist.
   setup do
-    await_subtitle_tasks()
+    LibraryStubs.await_subtitle_tasks()
     :ok
   end
 
@@ -137,8 +137,8 @@ defmodule Cinder.LibrarySubtitlesTest do
     end
   end
 
-  defp commit!(staged), do: Cinder.LibraryStubs.commit_staged(staged)
-  defp commit_episodes!(staged), do: :ok = Cinder.LibraryStubs.commit_staged(staged)
+  defp commit!(staged), do: LibraryStubs.commit_staged(staged)
+  defp commit_episodes!(staged), do: :ok = LibraryStubs.commit_staged(staged)
 
   # The subtitle half of an import against a real library under `tmp`: the sidecar a download
   # replaces is published through real descriptors (`AtomicFile`), so the filesystem mock
@@ -155,7 +155,7 @@ defmodule Cinder.LibrarySubtitlesTest do
     stub(Cinder.Library.FilesystemMock, :backing_identity, fn _ -> {:error, :outside_roots} end)
 
     stub(Cinder.Library.FilesystemMock, :rm, fn path ->
-      if Cinder.LibraryStubs.staging_path?(path), do: :ok, else: Disk.rm(path)
+      if LibraryStubs.staging_path?(path), do: :ok, else: Disk.rm(path)
     end)
 
     stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
@@ -170,7 +170,7 @@ defmodule Cinder.LibrarySubtitlesTest do
   end
 
   defp staged_video_lstat(path, size) do
-    if Cinder.LibraryStubs.candidate_path?(path),
+    if LibraryStubs.candidate_path?(path),
       do: {:ok, %File.Stat{size: size, inode: 2, major_device: 1}},
       else: Disk.lstat(path)
   end
@@ -199,7 +199,7 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     dest = "#{@lib}/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv"
 
-    Cinder.LibraryStubs.stub_import_ok(1 * @gb)
+    LibraryStubs.stub_import_ok(1 * @gb)
 
     # The subtitle fetch runs in the Task (global Mox). It signals the test so we can prove the
     # dispatch happened and that the provider error stayed off the import path.
@@ -215,7 +215,7 @@ defmodule Cinder.LibrarySubtitlesTest do
         assert quality.sidecar_subtitles == []
         assert :ok = commit!(stage)
         assert_receive :subtitle_search
-        await_subtitle_tasks()
+        LibraryStubs.await_subtitle_tasks()
       end)
 
     assert log =~ "subtitle fetch for #{dest} (en) failed: :down"
@@ -233,7 +233,7 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
 
-    Cinder.LibraryStubs.stub_import_ok(9 * @gb)
+    LibraryStubs.stub_import_ok(9 * @gb)
     stub(Cinder.Library.FilesystemMock, :dir?, fn path -> path == "/dl" end)
 
     stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl" ->
@@ -260,7 +260,7 @@ defmodule Cinder.LibrarySubtitlesTest do
         assert quality.sidecar_subtitles == []
         commit_episodes!(staged)
         assert_receive :subtitle_search
-        await_subtitle_tasks()
+        LibraryStubs.await_subtitle_tasks()
       end)
 
     assert log =~ "subtitle fetch for #{dest} (en) failed: :down"
@@ -278,7 +278,7 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01-E02.mkv"
 
-    Cinder.LibraryStubs.stub_import_ok(9 * @gb)
+    LibraryStubs.stub_import_ok(9 * @gb)
     stub(Cinder.Library.FilesystemMock, :dir?, fn path -> path == "/dl" end)
 
     stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl" ->
@@ -297,11 +297,11 @@ defmodule Cinder.LibrarySubtitlesTest do
     capture_log(fn ->
       assert {:ok, staged, []} = Library.stage_episodes("/dl", episodes)
 
-      assert Cinder.LibraryStubs.episode_dests(staged) == [{7, dest}, {8, dest}]
+      assert LibraryStubs.episode_dests(staged) == [{7, dest}, {8, dest}]
 
       commit_episodes!(staged)
       assert_receive {:subtitle_search, %{season: 1, episode: 1}}
-      await_subtitle_tasks()
+      LibraryStubs.await_subtitle_tasks()
       refute_received {:subtitle_search, _}
     end)
   end
@@ -411,7 +411,7 @@ defmodule Cinder.LibrarySubtitlesTest do
 
       path ->
         cond do
-          Cinder.LibraryStubs.candidate_path?(path) ->
+          LibraryStubs.candidate_path?(path) ->
             {:ok, %File.Stat{size: 1 * @gb, inode: 20, major_device: 1}}
 
           String.ends_with?(path, ".en.srt") ->
@@ -453,15 +453,15 @@ defmodule Cinder.LibrarySubtitlesTest do
     assert_receive :movie_scan
     assert_receive :subtitle_search
     assert_receive :subtitle_search
-    await_subtitle_tasks()
+    LibraryStubs.await_subtitle_tasks()
 
     assert_receive {:subtitle_path, ^dest1}
     assert_receive {:subtitle_path, ^dest2}
     refute_received :movie_scan
   end
 
-  # #685: the shared Fetcher can still hold a job an earlier test or module enqueued without
-  # waiting for it. Run late, that job's provider search used to eat one of THIS test's expected
+  # #685: the shared Fetcher can still hold a task an earlier test or module enqueued without
+  # waiting for it. Run late, that task's provider search used to eat one of THIS test's expected
   # calls, so the test's own fetch (here, and in the multipart test above) never reached the
   # provider and no :subtitle_search ever arrived.
   @tag :stale_fetcher_job
@@ -482,7 +482,7 @@ defmodule Cinder.LibrarySubtitlesTest do
                  []
                )
 
-      await_subtitle_tasks()
+      LibraryStubs.await_subtitle_tasks()
     end)
 
     assert_received :subtitle_search
@@ -635,7 +635,7 @@ defmodule Cinder.LibrarySubtitlesTest do
         commit_episodes!(staged)
         assert_receive :tv_scan
         assert_receive :subtitle_search
-        await_subtitle_tasks()
+        LibraryStubs.await_subtitle_tasks()
       end)
 
     assert log =~ "subtitle fetch for #{dest} (en) failed: :down"
@@ -710,7 +710,7 @@ defmodule Cinder.LibrarySubtitlesTest do
       assert quality.sidecar_subtitles == ["en"]
       commit_episodes!(staged)
       assert_receive :subtitle_search
-      await_subtitle_tasks()
+      LibraryStubs.await_subtitle_tasks()
     end)
 
     assert dest |> Subtitles.Manifest.read() |> Subtitles.Manifest.managed?("en")
@@ -718,11 +718,5 @@ defmodule Cinder.LibrarySubtitlesTest do
     refute sibling_video
            |> Subtitles.Manifest.read()
            |> Subtitles.Manifest.managed?("en")
-  end
-
-  # The Fetcher processes casts one at a time in mailbox order, so a synchronous round-trip after
-  # dispatch only returns once every previously-enqueued fetch has finished.
-  defp await_subtitle_tasks do
-    :sys.get_state(Cinder.Subtitles.Fetcher)
   end
 end
