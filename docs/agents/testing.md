@@ -12,7 +12,10 @@
   `priv/gettext/fr/LC_MESSAGES/default.po`. When an existing msgid is close enough, the merge
   fills the new one with that translation and flags it `#, fuzzy`. Remove the flag and rewrite
   that msgstr by hand, especially when the new msgid contains an old one: "Jellyfin web URL"
-  was filled with "URL Jellyfin", the translation of "Jellyfin URL".
+  was filled with "URL Jellyfin", the translation of "Jellyfin URL". For more than a few new
+  msgids, write each with its French msgstr into a scratch `.po` and fill the catalog from it with
+  `scripts/gettext-fill.exs` ([workflow.md](workflow.md) "Merge conflicts" has the command),
+  which also clears the `#, fuzzy` flag on the entries it fills.
 - A test sets a `:cinder` env key with `Cinder.ConfigCase.put_env/2`, which restores the old value
   on exit; `put_env/1` takes a keyword list of keys. For a keyword-list key, `Cinder.ConfigCase.put_config/2` merges the overrides and
   restores the same way. The household size band (`:tv_min_size`, `:tv_max_size`, read by
