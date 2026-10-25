@@ -15,7 +15,8 @@ It is part of #{{PARENT}}.
 
 Merge your own PR under the "Merge authority" section of `AGENTS.md`. Make a product-level choice
 the conservative way, record it in the PR body, and keep going. This brief and `AGENTS.md` win
-where the `ship-cinder-pr-on-forgejo` skill differs.
+where the `ship-cinder-pr-on-forgejo` skill differs. On a design choice, the issue wins over this
+brief.
 
 ## First commands
 

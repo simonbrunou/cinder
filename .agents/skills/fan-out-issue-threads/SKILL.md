@@ -35,16 +35,19 @@ Fill [brief-template.md](brief-template.md) per issue. Its `{{HOW}}` block depen
 
 - For a refactor, the thread designs two interfaces with the `codebase-design` skill and posts
   the chosen one on the issue before coding. When the issue already proposes the interface, one
-  written alternative replaces the design sub-agents.
+  written alternative replaces the design sub-agents. Both designs keep the issue's design
+  preferences.
 - For a question with a decision comment, the thread implements the decision as written.
 - For a rename or a test-only change, name the proof, such as an empty `rg` for the old names or
   one replacement test per deleted test.
 
-Each `{{HOW}}` also names the lane's predecessor and what it changed, parallel threads that touch
-nearby files, and paths in the issue that later merges moved. `{{REVIEWERS}}` names each project
-reviewer the diff needs, from `approval-gate-reviewer` (approval gate, roles, status writes),
-`release-parser-reviewer` (parsing, scoring, import) and `liveview-ui-reviewer` (LiveView and
-HEEx).
+Each `{{HOW}}` copies any design preference the issue's body or a decision comment states (one
+shared definition, a named seam) in the issue's words, since the Spec review checks the thread
+against the issue (#781). It also names the lane's predecessor and what it changed, parallel
+threads that touch nearby files, and paths in the issue that later merges moved. `{{REVIEWERS}}`
+names each project reviewer the diff needs, from `approval-gate-reviewer` (approval gate, roles,
+status writes), `release-parser-reviewer` (parsing, scoring, import) and `liveview-ui-reviewer`
+(LiveView and HEEx).
 
 ## 4. Launch
 
