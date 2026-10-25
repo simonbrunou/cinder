@@ -27,6 +27,10 @@ defmodule Cinder.MixProject do
     ]
   end
 
+  # The standalone tasks the docs name run in the env a seeded worktree holds
+  # (docs/agents/workflow.md "Worktrees").
+  def cli, do: [preferred_envs: [format: :test, credo: :test, "gettext.extract": :test]]
+
   # Two LOW advisories that `mix hex.audit` (a required CI check) fails on, both terminal
   # escape-sequence injection in an *interactive* mix task run by a developer — `mix
   # igniter.install`'s confirmation prompt and `mix usage_rules.search_docs` — via package

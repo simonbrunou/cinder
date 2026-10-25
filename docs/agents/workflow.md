@@ -45,9 +45,9 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
   4. `rm -rf _build/test/lib/cinder`
   5. `mix deps.get`
 - If a test then behaves like old code, run `MIX_ENV=test mix compile --force`.
-- The seed has only `_build/test`, so run standalone tasks in that env: `MIX_ENV=test mix format`,
-  `MIX_ENV=test mix credo --strict`, `MIX_ENV=test mix gettext.extract --merge`. In the dev env
-  they recompile every dependency.
+- The seed has only `_build/test`, and in the dev env a task recompiles every dependency first.
+  `mix format`, `mix credo --strict` and `mix gettext.extract --merge` run in the test env by
+  default (`cli/0` in `mix.exs`). Run any other standalone task as `MIX_ENV=test mix <task>`.
 
 ## Merge conflicts
 
