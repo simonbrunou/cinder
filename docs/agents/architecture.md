@@ -147,8 +147,12 @@ On a `fuse.mergerfs` mount, the creating operations (`hold` of a new file, `rena
 `mkdir_near`) work on a backing branch, and so does an `exchange` the union refuses. The helper
 reads the branch from mergerfs's own `user.mergerfs.*` xattrs (`mergerfs_backing_location_fd`).
 A creating operation then proves that the union shows its file under the new name
-(`wait_for_unique_path`). The other operations act on the union path, and the mergerfs opens never
-cross into a nested mount.
+(`wait_for_unique_path`). When the union shows another branch's container there too,
+`rename_exclusive` moves its file back to the source (`move_back_shadowed`). It reports a plain
+`EEXIST` once the identity it held before the rename proves the file at the source is still
+Cinder's and both directories are synced; otherwise it reports the rename as committed.
+`mkdir_near` and the file create leave theirs committed (#905). The other operations act on the
+union path, and the mergerfs opens never cross into a nested mount.
 
 A library root may sit below the mount, as in prod, where the pool is at `/media` and each root is
 a folder in it. Take a path's place on a branch from the backing path of its directory or of the

@@ -466,11 +466,13 @@ defmodule Cinder.Library.Filesystem.Disk do
     end
   end
 
-  # Unlike `rename/2`, a post-effect failure stays `{:effect_committed, ...}`: on mergerfs it
-  # can mean another backing branch holds the destination too, which only the caller can judge.
-  # Outside the roots `link(2)` is the no-replace primitive, so whatever fails after it (the
-  # unlink of the source, the directory sync) is committed too. The link-then-unlink pair is not
-  # atomic against a rename over the source in between; no sidecar lives outside the roots.
+  # Unlike `rename/2`, a post-effect failure stays `{:effect_committed, ...}`, which only the
+  # caller can judge. On mergerfs, when another backing branch holds the destination too, the
+  # helper moves the file back to the source and returns `{:error, :eexist}`; a move back it
+  # cannot prove or sync stays committed (#796). Outside the roots `link(2)` is the no-replace
+  # primitive, so whatever fails after it (the unlink of the source, the directory sync) is
+  # committed too. The link-then-unlink pair is not atomic against a rename over the source in
+  # between; no sidecar lives outside the roots.
   @impl true
   def rename_exclusive(source, dest) do
     case {rooted_location(source), rooted_location(dest)} do

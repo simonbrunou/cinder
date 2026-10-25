@@ -1,8 +1,11 @@
 defmodule Cinder.Library.Filesystem.DiskRootedTest do
   use Cinder.DataCase, async: false
 
+  import ExUnit.CaptureLog
+
   alias Cinder.Library.Filesystem.Disk
   alias Cinder.Library.PathPolicy
+  alias Cinder.Subtitles.{Manifest, SidecarTransaction}
   alias Cinder.Subtitles.SidecarTransaction.AtomicFile
   alias Cinder.Test.BarrierFilesystem
 
@@ -485,18 +488,48 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
       assert File.read!(dest) == "fetched"
     end
 
-    test "on mergerfs a destination another branch also holds is committed, not acknowledged",
+    # Issue #796: the shim's union cannot see the other branch, so the absence check passes and
+    # only the wait after the rename finds two containers, as when the name appears in between.
+    test "on mergerfs a file renamed onto a name another branch gains goes back to the source",
          %{root: root, tmp: tmp} do
       {source, dest} = exclusive_rename_paths!(root)
       %{duplicate: duplicate} = mergerfs_rename_shim!(root, tmp, dest)
-      File.mkdir_p!(Path.dirname(duplicate))
-      File.write!(duplicate, "other branch")
+      write_other_branch!(duplicate)
 
-      assert {:error, {:effect_committed, "rename_exclusive", %{"reason" => "EEXIST"}}} =
-               Disk.rename_exclusive(source, dest)
-
-      assert File.read!(dest) == "fetched"
+      assert {:error, :eexist} = Disk.rename_exclusive(source, dest)
+      assert File.read!(source) == "fetched"
+      refute File.exists?(dest)
       assert File.read!(duplicate) == "other branch"
+    end
+
+    # What each failed move back leaves: the file that replaced ours stays at `dest`, and ours is
+    # back at the source only when the last sync failed. After the forward rename and its sync,
+    # a replaced file is never moved, a file swapped in is moved back and synced, and the failed
+    # sync is the last step tried.
+    for {case_name, interfere, at_source, at_dest, effects} <- [
+          {"a renamed file replaced before the move back", :after_rename, nil, "replacement",
+           ~w(rename sync)},
+          {"a file swapped in during the move back", :before_move_back, nil, "replacement",
+           ~w(rename sync rename rename sync)},
+          {"a move back that cannot be synced", :unsynced_move_back, "fetched", nil,
+           ~w(rename sync rename sync)}
+        ] do
+      test "on mergerfs #{case_name} stays committed", %{root: root, tmp: tmp} do
+        {source, dest} = exclusive_rename_paths!(root)
+
+        %{duplicate: duplicate, effects: effects} =
+          mergerfs_rename_shim!(root, tmp, dest, interfere: unquote(interfere))
+
+        write_other_branch!(duplicate)
+
+        assert {:error, {:effect_committed, "rename_exclusive", %{"reason" => "EEXIST"}}} =
+                 Disk.rename_exclusive(source, dest)
+
+        assert contents(source) == unquote(at_source)
+        assert contents(dest) == unquote(at_dest)
+        assert File.read!(duplicate) == "other branch"
+        assert String.split(File.read!(effects), "\n", trim: true) == unquote(effects)
+      end
     end
 
     test "on mergerfs a source on another backing branch is refused", %{root: root, tmp: tmp} do
@@ -551,6 +584,87 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
         assert File.ls!(folder) == ["Movie.mkv"]
       end
     end
+
+    # Issue #796: another branch gains the sidecar's name before the fetch's rename.
+    test "loses the name to another branch without leaving its own copy", %{root: root, tmp: tmp} do
+      %{folder: folder, dest: dest, duplicate: duplicate} = absent_sidecar!(root, tmp)
+      write_other_branch!(duplicate)
+
+      assert {:error, :concurrent_change} = AtomicFile.swap(dest, :absent, "fetched")
+      assert File.ls!(folder) == ["Movie.mkv"]
+      assert File.read!(duplicate) == "other branch"
+    end
+
+    test "records no track when it loses the name to another branch", %{root: root, tmp: tmp} do
+      %{video: video, dest: dest, duplicate: duplicate} = absent_sidecar!(root, tmp)
+      write_other_branch!(duplicate)
+      sidecar = %{video_path: video, sidecar_path: dest, language: "en"}
+
+      assert {:error, {:write, {:error, :concurrent_change}}} =
+               SidecarTransaction.replace(sidecar, "fetched", "embedded", nil)
+
+      assert Manifest.read(video).tracks == %{}
+      refute File.exists?(dest)
+      assert File.read!(duplicate) == "other branch"
+    end
+
+    test "records its track when no other branch holds the name", %{root: root, tmp: tmp} do
+      %{video: video, dest: dest} = absent_sidecar!(root, tmp)
+      sidecar = %{video_path: video, sidecar_path: dest, language: "en"}
+
+      assert :ok = SidecarTransaction.replace(sidecar, "fetched", "embedded", nil)
+      assert %{"en" => %{origin: "embedded"}} = Manifest.read(video).tracks
+      assert File.read!(dest) == "fetched"
+    end
+
+    # A retraction that finds other bytes puts them back, and that restore is a create too: when
+    # another branch gains the name first, they stay in the workspace, as when the name is taken
+    # before the restore.
+    test "a retraction whose restore loses the name to another branch keeps the file in its workspace",
+         %{root: root, tmp: tmp} do
+      %{folder: folder, dest: dest, duplicate: duplicate} = absent_sidecar!(root, tmp)
+      File.write!(dest, "edited")
+      write_other_branch!(duplicate)
+
+      log =
+        capture_log(fn ->
+          assert {:error, {:retract_restore_failed, :concurrent_change, :eexist}} =
+                   AtomicFile.swap(dest, "fetched", :absent)
+        end)
+
+      assert log =~ "subtitle workspace kept"
+      refute File.exists?(dest)
+      assert File.read!(duplicate) == "other branch"
+
+      assert [workspace] =
+               Path.wildcard(Path.join(folder, ".cinder-subtitle-sync-cas-*"), match_dot: true)
+
+      assert File.read!(Path.join(workspace, ".cinder-subtitle-sync-write-staged")) == "edited"
+    end
+  end
+
+  defp absent_sidecar!(root, tmp) do
+    folder = Path.join(root, "Movie")
+    video = Path.join(folder, "Movie.mkv")
+    dest = Path.join(folder, "Movie.en.srt")
+    File.mkdir_p!(folder)
+    File.write!(video, "video")
+    %{duplicate: duplicate} = mergerfs_rename_shim!(root, tmp, dest)
+    %{folder: folder, video: video, dest: dest, duplicate: duplicate}
+  end
+
+  # The shim's union never shows this container, so it reads as one another branch gained after
+  # the absence check.
+  defp write_other_branch!(duplicate) do
+    File.mkdir_p!(Path.dirname(duplicate))
+    File.write!(duplicate, "other branch")
+  end
+
+  defp contents(path) do
+    case File.read(path) do
+      {:ok, bytes} -> bytes
+      {:error, :enoent} -> nil
+    end
   end
 
   defp shim_branch(root, :root), do: root
@@ -568,12 +682,17 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
   # or `branch`, a directory above it. It answers user.mergerfs.allpaths for `dest` with
   # whichever of its two branch containers exist. A path containing `foreign` instead maps
   # onto a second branch, and a path whose last component is `misplaced` reports a backing
-  # path under another name. The renames and proofs are the real helper's.
+  # path under another name. `interfere` breaks a `rename_exclusive` that has to move its file
+  # back: another file replaces `dest` right after the rename onto it (`:after_rename`) or
+  # right before the move back (`:before_move_back`), or the move back's directory sync fails
+  # (`:unsynced_move_back`); each rename and directory sync the helper then tries is logged to
+  # `effects`. The renames and proofs are the real helper's.
   defp mergerfs_rename_shim!(root, tmp, dest, opts \\ []) do
     branch = Keyword.get(opts, :branch, root)
     branch_b = Path.join(tmp, "branch-b")
     duplicate = Path.join(branch_b, Path.relative_to(dest, branch))
     helper = Path.join(tmp, "mergerfs_rename_shim.py")
+    effects = Path.join(tmp, "helper-effects.log")
     real_helper = Path.expand("../../../../priv/rooted_fs.py", __DIR__)
 
     File.write!(helper, """
@@ -585,8 +704,10 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     BRANCH_B = #{inspect(branch_b)}
     DEST = #{inspect(dest)}
     CONTAINERS = [DEST, #{inspect(duplicate)}]
-    FOREIGN = #{if opts[:foreign], do: inspect(opts[:foreign]), else: "None"}
-    MISPLACED = #{if opts[:misplaced], do: inspect(opts[:misplaced]), else: "None"}
+    FOREIGN = #{python_literal(opts[:foreign])}
+    MISPLACED = #{python_literal(opts[:misplaced])}
+    INTERFERE = #{python_literal(opts[:interfere] && Atom.to_string(opts[:interfere]))}
+    EFFECTS = #{inspect(effects)}
     REAL_HELPER = #{inspect(real_helper)}
 
     real_getxattr = os.getxattr
@@ -620,6 +741,48 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     namespace["mergerfs_mountpoint"] = lambda path: BRANCH
     namespace["mergerfs_mount"] = lambda path: True
 
+    def on_call(name, number, effect):
+        real = namespace[name]
+        calls = []
+
+        def wrapper(*args):
+            calls.append(args)
+            if len(calls) == number:
+                effect()
+            return real(*args)
+
+        namespace[name] = wrapper
+
+    def replace_dest():
+        replacement = DEST + ".replacement"
+        with open(replacement, "w", encoding="utf-8") as file:
+            file.write("replacement")
+        os.replace(replacement, DEST)
+
+    def fail_sync():
+        raise OSError(5, "EIO")
+
+    def log_effect(name, effect):
+        real = namespace[name]
+
+        def wrapper(*args):
+            with open(EFFECTS, "a", encoding="utf-8") as log:
+                log.write(effect + "\\n")
+            return real(*args)
+
+        namespace[name] = wrapper
+
+    if INTERFERE == "after_rename":
+        on_call("wait_for_unique_path", 1, replace_dest)
+    elif INTERFERE == "before_move_back":
+        on_call("rename_with_flags", 2, replace_dest)
+    elif INTERFERE == "unsynced_move_back":
+        on_call("sync_parents", 2, fail_sync)
+
+    if INTERFERE is not None:
+        log_effect("rename_with_flags", "rename")
+        log_effect("sync_parents", "sync")
+
     sys.argv = [REAL_HELPER] + sys.argv[1:]
     operation = sys.argv[1] if len(sys.argv) > 1 else "unknown"
 
@@ -632,7 +795,7 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     """)
 
     Application.put_env(:cinder, :rooted_filesystem_helper, helper)
-    %{duplicate: duplicate}
+    %{duplicate: duplicate, effects: effects}
   end
 
   # A real mergerfs mount is not available in the test environment, so the shim
@@ -683,7 +846,7 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     CONTAINERS = #{inspect(containers)}
     BRANCHES = #{inspect(branches)}
     REAL_HELPER = #{inspect(real_helper)}
-    FILL_AFTER_QUARANTINE = #{if fill_after_quarantine, do: inspect(fill_after_quarantine), else: "None"}
+    FILL_AFTER_QUARANTINE = #{python_literal(fill_after_quarantine)}
 
     real_getxattr = os.getxattr
 
@@ -743,6 +906,9 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
 
     helper
   end
+
+  defp python_literal(value) when value in [nil, false], do: "None"
+  defp python_literal(value), do: inspect(value)
 
   defp barrier!(operation, contains) do
     Application.put_env(:cinder, :filesystem_barrier, %{

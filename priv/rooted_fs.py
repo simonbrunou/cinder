@@ -845,7 +845,8 @@ def rename_exclusive_mergerfs(src_root, src_relative, dst_root, dst_relative):
     A backing branch only knows its own names, so the absence check runs on the union first,
     and the rename is only acknowledged once mergerfs shows our file as the one container
     under the destination name. A name another branch gained in between is caught there,
-    after the effect.
+    after the effect: our file goes back to the source and the rename reports EEXIST, as if
+    the name had been taken first (#796).
     """
     check_logical_absence(dst_root, dst_relative)
     src_fd = open_mergerfs_path(src_root, src_relative)
@@ -888,22 +889,58 @@ def rename_exclusive_mergerfs(src_root, src_relative, dst_root, dst_relative):
 
     try:
         src_name = posixpath.basename(src_backing)
+        dst_name = posixpath.basename(dst_backing)
         moved = os.open(src_name, O_PATH | O_NOFOLLOW | O_CLOEXEC, dir_fd=src_parent)
         try:
             identity = file_identity(moved)
-            rename_with_flags(
-                src_parent, src_name, dst_parent, posixpath.basename(dst_backing), RENAME_NOREPLACE
-            )
+            rename_with_flags(src_parent, src_name, dst_parent, dst_name, RENAME_NOREPLACE)
             try:
                 sync_parents(src_parent, dst_parent)
+            except OSError as exc:
+                raise EffectCommittedError(exc.errno or errno.EIO, str(exc)) from exc
+            try:
                 wait_for_unique_path(dst_root, dst_relative, dst_base, dst_backing, identity)
             except OSError as exc:
+                if exc.errno == errno.EEXIST and move_back_shadowed(
+                    dst_parent, dst_name, src_parent, src_name, identity
+                ):
+                    raise OSError(errno.EEXIST, "another mergerfs branch holds the name") from exc
                 raise EffectCommittedError(exc.errno or errno.EIO, str(exc)) from exc
         finally:
             os.close(moved)
     finally:
         os.close(src_parent)
         os.close(dst_parent)
+
+
+def move_back_shadowed(dst_parent, dst_name, src_parent, src_name, identity):
+    """Put our renamed file back at its source once another branch also holds the name.
+
+    True once the file at the source is proven ours again and both directories are synced.
+    The identity we held before the rename is checked at the destination before the move and
+    at the source after it; a file that turns out not to be ours goes back to the destination.
+    False reports the rename as committed: the move back was refused, undone, or not synced,
+    so the caller cannot tell which file holds either name.
+    """
+    try:
+        if identity_at(dst_parent, dst_name) != identity:
+            return False
+        rename_with_flags(dst_parent, dst_name, src_parent, src_name, RENAME_NOREPLACE)
+        ours = identity_at(src_parent, src_name) == identity
+        if not ours:
+            rename_with_flags(src_parent, src_name, dst_parent, dst_name, RENAME_NOREPLACE)
+        sync_parents(src_parent, dst_parent)
+        return ours
+    except OSError:
+        return False
+
+
+def identity_at(parent, name):
+    fd = os.open(name, O_PATH | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
+    try:
+        return file_identity(fd)
+    finally:
+        os.close(fd)
 
 
 def unlink(args, directory=False):
