@@ -3,6 +3,9 @@ defmodule CinderWeb.LiveHelpersTest do
 
   import CinderWeb.LiveHelpers
 
+  alias Cinder.Download
+  alias Cinder.Download.{BookPoller, Watch}
+
   # The date format strings AND month names are gettext-translated, so a bad .po
   # msgstr would be executed as strftime syntax at render time — this pins every
   # locale's values as valid (an invalid directive would raise here, not in a view).
@@ -100,6 +103,70 @@ defmodule CinderWeb.LiveHelpersTest do
     # nothing here", which is wrong once a target exists.
     test "a linked, unmonitored target with no request renders explicitly, not blank" do
       assert book_badge_state(nil, :unmonitored) == :unmonitored
+    end
+  end
+
+  describe "book_hold_reason/1" do
+    # The lists come from their producers, so a code added to one fails here until it has a
+    # sentence. The watch's `:stalled` and `{:blocked_content, _}` verdicts have no list to read.
+    defp known_hold_codes do
+      (Watch.failure_codes() ++
+         [:stalled, :blocked_content] ++
+         BookPoller.permanent_import_errors() ++
+         Download.permanent_submission_errors())
+      |> Enum.map(&Atom.to_string/1)
+    end
+
+    test "every known reason code reads as a sentence, not as the code" do
+      for code <- known_hold_codes() do
+        sentence = book_hold_reason(code)
+        assert sentence != code, "#{code} has no sentence"
+        assert sentence =~ ~r/^\p{Lu}.*\.$/u, "#{code} reads #{inspect(sentence)}"
+      end
+    end
+
+    test "every known reason code has its own French sentence" do
+      english = Map.new(known_hold_codes(), &{&1, book_hold_reason(&1)})
+      Gettext.put_locale(CinderWeb.Gettext, "fr")
+
+      for {code, sentence} <- english do
+        french = book_hold_reason(code)
+        assert french not in [code, sentence], "#{code} has no French sentence"
+        assert french =~ ~r/^\p{Lu}.*\.$/u, "#{code} reads #{inspect(french)}"
+      end
+
+      assert book_hold_reason("download_error: Paused on duplicate") =~
+               ~r/^#{Regex.escape(book_hold_reason("download_error"))} .+ Paused on duplicate$/
+    after
+      Gettext.put_locale(CinderWeb.Gettext, "en")
+    end
+
+    test "a stored code and detail reads as the code's sentence followed by the detail" do
+      assert book_hold_reason("download_error: Paused on duplicate") ==
+               "The download client reported that the download failed. Details: Paused on duplicate"
+
+      assert book_hold_reason("blocked_content: download contains setup.exe") ==
+               "The download holds a blocked file, such as a program, and no book. " <>
+                 "Details: download contains setup.exe"
+    end
+
+    test "a blank detail reads as the code's sentence alone" do
+      assert book_hold_reason("download_error: ") ==
+               "The download client reported that the download failed."
+    end
+
+    # Rows from before #733 read `download_failed` or a bare client message; a reason that was
+    # neither an atom nor a `{code, detail}` pair was stored inspected.
+    test "unknown or legacy text is shown as stored, and nil does not raise" do
+      for stored <- [
+            "download_failed",
+            "Paused on duplicate",
+            "Error: disk full",
+            "{:unexpected_destination_type, :directory}"
+          ],
+          do: assert(book_hold_reason(stored) == stored)
+
+      assert book_hold_reason(nil) == ""
     end
   end
 end

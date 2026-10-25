@@ -9,13 +9,19 @@ defmodule Cinder.Notifier.Discord do
 
   The webhook URL is a `Cinder.Settings` registry entry, overlaid onto
   `Application.get_env(:cinder, __MODULE__)[:webhook_url]`.
+
+  Embeds are English, with one exception to "the domain stays gettext-free" besides
+  `Cinder.Notifier.Email`: a held book's reason is worded by `CinderWeb.LiveHelpers.book_hold_reason/1`,
+  pinned to the canonical locale, so the page, the email and Discord share one set of sentences.
   """
   @behaviour Cinder.Notifier
   alias Cinder.Accounts.User
   alias Cinder.Catalog.Episode
   alias Cinder.HTTPPolicy
   alias Cinder.LibraryKind
+  alias Cinder.Locales
   alias Cinder.Util
+  alias CinderWeb.LiveHelpers
   require Logger
 
   @green 0x2ECC71
@@ -140,7 +146,7 @@ defmodule Cinder.Notifier.Discord do
       title: "⏸️ Book target held",
       description:
         "#{book_title(target)} (#{LibraryKind.format_label(target.media_kind)}) — " <>
-          escape(target.hold_reason),
+          escape(english_hold_reason(target.hold_reason)),
       color: @orange
     }
 
@@ -223,6 +229,15 @@ defmodule Cinder.Notifier.Discord do
   # must not raise inside a notification transport.
   defp book_title(%{work: %{title: title}}) when is_binary(title), do: escape(title)
   defp book_title(%{id: id}), do: "book target ##{id}"
+
+  # Discord is not localized, so the reason is worded in the canonical locale. The default
+  # `:async` dispatch already runs in a fresh task with the default locale; under `:sync` this runs
+  # in the holding process, which for a refused submission is the admin's LiveView, in their locale.
+  defp english_hold_reason(reason) do
+    Gettext.with_locale(CinderWeb.Gettext, Locales.canonical(), fn ->
+      LiveHelpers.book_hold_reason(reason)
+    end)
+  end
 
   # A season request's own :title column holds only the series name, so rendering it bare would
   # read "Frieren (2023)" for a request that was actually for one season.

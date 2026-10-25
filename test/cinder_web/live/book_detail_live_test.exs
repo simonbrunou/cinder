@@ -161,6 +161,20 @@ defmodule CinderWeb.BookDetailLiveTest do
       assert has_element?(lv, "button[phx-value-target_id='#{target.id}']", "Retry")
     end
 
+    test "a target held on a client's error shows the worded reason and the client's detail", %{
+      conn: conn
+    } do
+      {target, _work} = ebook_target()
+      {:ok, held} = Books.hold_target(target, {:download_error, "Paused on duplicate"})
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{held.work_id}")
+
+      assert lv |> element("#book-target-hold-reason-ebook") |> render() =~
+               "The download client reported that the download failed. Details: Paused on duplicate"
+
+      refute render(lv) =~ "download_error"
+    end
+
     test "a held audiobook target shows its hold reason, a Retry button, and no search panel", %{
       conn: conn
     } do
@@ -330,10 +344,15 @@ defmodule CinderWeb.BookDetailLiveTest do
       panel = "#ms-book-#{target.id}"
       lv |> element("#{panel} button[phx-value-index='0']", "Grab") |> render_click()
 
+      # The panel forwards the grab to the parent as a message; rendering waits for it.
       html = render(lv)
+      sentence = "This release&#39;s torrent file can&#39;t be read."
       held = Books.get_target(target.id)
       assert held.status == :held
-      assert html =~ held.hold_reason
+      assert held.hold_reason == "bad_torrent"
+      assert lv |> element("#flash-error") |> render() =~ sentence
+      assert lv |> element("#book-target-hold-reason-ebook") |> render() =~ sentence
+      refute html =~ "bad_torrent"
       assert has_element?(lv, "#book-target-state-ebook", "Needs attention")
       refute Books.Grabs.for_target(target.id)
     end
@@ -509,9 +528,13 @@ defmodule CinderWeb.BookDetailLiveTest do
       lv |> element("#{panel} button[phx-value-index='0']", "Grab") |> render_click()
 
       html = render(lv)
+      sentence = "This release&#39;s torrent file can&#39;t be read."
       held = Books.get_target(target.id)
       assert held.status == :held
-      assert html =~ held.hold_reason
+      assert held.hold_reason == "bad_torrent"
+      assert lv |> element("#flash-error") |> render() =~ sentence
+      assert lv |> element("#book-target-hold-reason-audiobook") |> render() =~ sentence
+      refute html =~ "bad_torrent"
       assert has_element?(lv, "#book-target-state-audiobook", "Needs attention")
       refute Books.Grabs.for_target(target.id)
     end

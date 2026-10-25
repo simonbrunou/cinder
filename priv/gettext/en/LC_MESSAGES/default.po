@@ -7258,3 +7258,138 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "special, manual grab only"
 msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "%{reason} Details: %{detail}"
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Another book already has a file at this book's library path."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder can no longer read the download link it saved for this release."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder can't tell the order of the audiobook's files."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Extracting the archive took too long."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The archive is damaged and can't be extracted."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The audiobook's files are not all in the same format."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The audiobook's files are tagged with different albums, so they may belong to different books."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The audiobook's files have different names, so they may belong to different books."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The audiobook's track numbers contradict each other."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download client can't use this release's download link."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download client no longer has this download."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download client refused this release."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download client reported that the download failed."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download finished, but the download client did not say where its files are."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download has no book file Cinder can import."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download has several book files, and Cinder can't tell which one to import."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download holds a blocked file, such as a program, and no book."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download stopped making progress."
+msgstr ""
+
+#: lib/cinder/notifier/email.ex
+#, elixir-autogen, elixir-format
+msgid "We're sorry — your request for %{title} could not be completed and has been parked. An admin may need to take a look. Reason: %{reason}"
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder won't read a file in the download: it is outside the download folders, a link, not a regular file, or in a format the import does not accept."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The archive holds a link, a special file, or a file whose path points outside it."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The archive holds more files than Cinder's limit."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The archive unpacks to more than Cinder's size limit."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The audiobook has more files than Cinder's limit."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "This release's torrent file can't be read."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download holds an archive Cinder can't extract: its format isn't supported on this install, its volume set is incomplete, it is nested or one of several, or other files sit beside it."
+msgstr ""

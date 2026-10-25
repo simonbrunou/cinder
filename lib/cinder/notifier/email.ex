@@ -28,6 +28,7 @@ defmodule Cinder.Notifier.Email do
   alias Cinder.HTTPPolicy
   alias Cinder.Mailer
   alias Cinder.Requests
+  alias CinderWeb.LiveHelpers
 
   require Logger
 
@@ -184,10 +185,12 @@ defmodule Cinder.Notifier.Email do
 
   defp notify_book(_target), do: :ok
 
-  # Mirrors `notify_movie/2`'s `{:failed, reason}` branch, reusing its exact copy: "could not be
-  # completed" reads fine for a held book too, and reusing the msgid needs no new French string.
-  # `target.hold_reason` is already sanitized/bounded (`Books.hold_reason/1`), so it is safe to
-  # interpolate directly here (never inspected remote text).
+  # Mirrors `notify_movie/2`'s `{:failed, reason}` branch, but the reason closes the body as its
+  # own sentence, the way `denied_body/2` ends on "Reason:": `LiveHelpers.book_hold_reason/1`
+  # words it in the recipient's locale (it runs inside `send_to/2`'s `with_locale`), and a full
+  # sentence would read wrong inside the movie copy's parentheses. `target.hold_reason` is already
+  # sanitized/bounded (`Books.hold_reason/1`), so its detail or fallback text is safe to
+  # interpolate (never inspected remote text).
   defp notify_book_held(%{work_id: work_id, media_kind: media_kind} = target)
        when is_integer(work_id) and is_atom(media_kind) do
     each_requester(Requests.approved_requesters_for_book(work_id, media_kind), fn ->
@@ -195,10 +198,10 @@ defmodule Cinder.Notifier.Email do
 
       {gettext("We couldn't get %{title}", title: title),
        gettext(
-         "We're sorry — your request for %{title} could not be completed (%{reason}) and has " <>
-           "been parked. An admin may need to take a look.",
+         "We're sorry — your request for %{title} could not be completed and has been parked. " <>
+           "An admin may need to take a look. Reason: %{reason}",
          title: title,
-         reason: target.hold_reason
+         reason: LiveHelpers.book_hold_reason(target.hold_reason)
        )}
     end)
   end

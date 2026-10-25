@@ -119,6 +119,10 @@ defmodule Cinder.Download.Watch do
   def failure?({code, _detail}), do: failure?(code)
   def failure?(code), do: code in @failure_codes
 
+  @doc "The bare codes `failure?/1` accepts. `CinderWeb.LiveHelpers.book_hold_reason/1` words each one."
+  @spec failure_codes() :: [atom()]
+  def failure_codes, do: @failure_codes
+
   @doc """
   The classifying code of `reason`: `{code, detail}` gives `code` (`{:download_error, "Paused"}`
   gives `:download_error`), any other value gives itself.

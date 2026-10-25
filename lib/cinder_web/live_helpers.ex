@@ -1,7 +1,8 @@
 defmodule CinderWeb.LiveHelpers do
   @moduledoc """
-  Small, view-agnostic helpers shared by the LiveViews. Pure functions only —
-  no markup (that lives in `CinderWeb.CoreComponents`).
+  Small, view-agnostic helpers shared by the LiveViews, and by the Discord and email notifiers
+  for `book_hold_reason/1`. Pure functions only — no markup (that lives in
+  `CinderWeb.CoreComponents`).
   """
   use Gettext, backend: CinderWeb.Gettext
 
@@ -219,6 +220,124 @@ defmodule CinderWeb.LiveHelpers do
 
   def anime_hold_reason(_reason),
     do: gettext("The Anime release preferences can't be satisfied for this title.")
+
+  @doc """
+  A held book target's stored `hold_reason` in words. `Cinder.Books.hold_target/5` stores a
+  reason code (`download_not_found`) or a code and a detail (`download_error: Paused on
+  duplicate`). A known code reads as its sentence, followed by the detail when there is one;
+  anything else (a row from before #733 reading `download_failed`, a bare client message, an
+  inspected tuple) is shown as stored, and `nil` reads as an empty string.
+
+  Shared by `/books/:id` and the Discord and email notifications for a held book. The generic
+  webhook keeps the stored code, which automations match on.
+  """
+  @spec book_hold_reason(String.t() | nil) :: String.t()
+  def book_hold_reason(nil), do: ""
+
+  def book_hold_reason(reason) when is_binary(reason) do
+    [code | detail] = String.split(reason, ": ", parts: 2)
+
+    case {hold_sentence(code), detail} do
+      {nil, _detail} -> reason
+      {sentence, []} -> sentence
+      {sentence, [detail]} -> with_detail(sentence, String.trim(detail))
+    end
+  end
+
+  defp with_detail(sentence, ""), do: sentence
+
+  defp with_detail(sentence, detail),
+    do: gettext("%{reason} Details: %{detail}", reason: sentence, detail: detail)
+
+  # `Cinder.Download.Watch.failure_codes/0`
+  defp hold_sentence("download_not_found"),
+    do: gettext("The download client no longer has this download.")
+
+  defp hold_sentence("no_content_path"),
+    do: gettext("The download finished, but the download client did not say where its files are.")
+
+  defp hold_sentence("download_error"),
+    do: gettext("The download client reported that the download failed.")
+
+  # The download watch's other two verdicts that hold a book.
+  defp hold_sentence("stalled"), do: gettext("The download stopped making progress.")
+
+  defp hold_sentence("blocked_content"),
+    do: gettext("The download holds a blocked file, such as a program, and no book.")
+
+  # `Cinder.Download.BookPoller.permanent_import_errors/0`
+  defp hold_sentence("no_book_file"),
+    do: gettext("The download has no book file Cinder can import.")
+
+  defp hold_sentence("ambiguous_book_files"),
+    do: gettext("The download has several book files, and Cinder can't tell which one to import.")
+
+  defp hold_sentence("unsupported_archive"),
+    do:
+      gettext(
+        "The download holds an archive Cinder can't extract: its format isn't supported on this install, its volume set is incomplete, it is nested or one of several, or other files sit beside it."
+      )
+
+  defp hold_sentence("unsafe_source"),
+    do:
+      gettext(
+        "Cinder won't read a file in the download: it is outside the download folders, a link, not a regular file, or in a format the import does not accept."
+      )
+
+  defp hold_sentence("book_file_exists"),
+    do: gettext("Another book already has a file at this book's library path.")
+
+  defp hold_sentence("archive_entry_limit"),
+    do: gettext("The archive holds more files than Cinder's limit.")
+
+  defp hold_sentence("archive_size_limit"),
+    do: gettext("The archive unpacks to more than Cinder's size limit.")
+
+  defp hold_sentence("archive_entry_unsafe"),
+    do:
+      gettext("The archive holds a link, a special file, or a file whose path points outside it.")
+
+  defp hold_sentence("archive_corrupt"),
+    do: gettext("The archive is damaged and can't be extracted.")
+
+  defp hold_sentence("archive_timeout"), do: gettext("Extracting the archive took too long.")
+
+  defp hold_sentence("mixed_book_filenames"),
+    do:
+      gettext(
+        "The audiobook's files have different names, so they may belong to different books."
+      )
+
+  defp hold_sentence("mixed_book_tags"),
+    do:
+      gettext(
+        "The audiobook's files are tagged with different albums, so they may belong to different books."
+      )
+
+  defp hold_sentence("track_order_unknown"),
+    do: gettext("Cinder can't tell the order of the audiobook's files.")
+
+  defp hold_sentence("track_order_contradictory"),
+    do: gettext("The audiobook's track numbers contradict each other.")
+
+  defp hold_sentence("container_mismatch"),
+    do: gettext("The audiobook's files are not all in the same format.")
+
+  defp hold_sentence("too_many_tracks"),
+    do: gettext("The audiobook has more files than Cinder's limit.")
+
+  # `Cinder.Download.permanent_submission_errors/0`
+  defp hold_sentence("unsupported_download_url"),
+    do: gettext("The download client can't use this release's download link.")
+
+  defp hold_sentence("bad_torrent"), do: gettext("This release's torrent file can't be read.")
+
+  defp hold_sentence("invalid_intent_release"),
+    do: gettext("Cinder can no longer read the download link it saved for this release.")
+
+  defp hold_sentence("add_rejected"), do: gettext("The download client refused this release.")
+
+  defp hold_sentence(_reason), do: nil
 
   @doc """
   Locale-aware short date ("Jun 3" / fr "3 juin"). Both the format string and the

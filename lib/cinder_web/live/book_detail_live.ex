@@ -28,7 +28,7 @@ defmodule CinderWeb.BookDetailLive do
   use CinderWeb, :live_view
 
   import CinderWeb.BookComponents, only: [book_state_badge: 1]
-  import CinderWeb.LiveHelpers, only: [book_badge_state: 2]
+  import CinderWeb.LiveHelpers, only: [book_badge_state: 2, book_hold_reason: 1]
 
   alias Cinder.Acquisition.Parser
   alias Cinder.Books
@@ -327,12 +327,12 @@ defmodule CinderWeb.BookDetailLive do
   # `Cinder.Download`'s permanent-submission-error set, a raw `%Ecto.Changeset{}`) is read back
   # from the target's own post-grab state rather than pattern-matched by atom: `grab_book_target/2`
   # already parks a permanently rejected submission `:held` with an exact reason before returning,
-  # so re-reading the fresh `hold_reason` off the just-reloaded work renders the real reason without
-  # this module needing to import `Cinder.Download`'s private error-atom list.
+  # so re-reading the fresh `hold_reason` off the just-reloaded work renders the real reason, in
+  # words (`book_hold_reason/1`), without this module matching on `Cinder.Download`'s error atoms.
   defp book_grab_flash({:error, _reason}, socket, target_id) do
     case Enum.find(socket.assigns.work.targets, &(&1.id == target_id)) do
       %BookTarget{status: :held, hold_reason: reason} when is_binary(reason) ->
-        {:error, reason}
+        {:error, book_hold_reason(reason)}
 
       _not_held ->
         {:error, gettext("Couldn't submit this release. Try again.")}
@@ -611,7 +611,7 @@ defmodule CinderWeb.BookDetailLive do
               id={"book-target-hold-reason-#{kind}"}
               class="text-sm text-warning"
             >
-              {target.hold_reason}
+              {book_hold_reason(target.hold_reason)}
             </p>
 
             <.status_badge

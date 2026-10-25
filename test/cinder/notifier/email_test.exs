@@ -486,6 +486,47 @@ defmodule Cinder.Notifier.EmailTest do
       assert_email_sent(to: alice.email, subject: "We couldn't get The Dispossessed")
     end
 
+    test "words a known hold reason, followed by the client's detail" do
+      configure_smtp!()
+      user = confirmed_user()
+      insert_approved_request!(user, "book", 82, media_kind: :ebook)
+
+      target = %{
+        work_id: 82,
+        media_kind: :ebook,
+        work: %{title: "The Dispossessed"},
+        hold_reason: "download_error: Paused on duplicate"
+      }
+
+      assert :ok = Email.notify({:book_target_held, target})
+
+      assert_receive {:email, email}
+
+      assert email.text_body ==
+               "We're sorry — your request for The Dispossessed could not be completed and has " <>
+                 "been parked. An admin may need to take a look. Reason: The download client " <>
+                 "reported that the download failed. Details: Paused on duplicate"
+    end
+
+    test "words the hold reason in the recipient's locale, not the caller's" do
+      configure_smtp!()
+      user = confirmed_user(locale: "fr")
+      insert_approved_request!(user, "book", 83, media_kind: :audiobook)
+
+      target = %{
+        work_id: 83,
+        media_kind: :audiobook,
+        work: %{title: "The Dispossessed"},
+        hold_reason: "track_order_unknown"
+      }
+
+      assert :ok = Email.notify({:book_target_held, target})
+
+      assert_receive {:email, email}
+      assert email.text_body =~ "Cinder ne parvient pas à déterminer l’ordre des fichiers"
+      refute email.text_body =~ "track_order_unknown"
+    end
+
     test "does not notify the requester of the other media kind of the same work" do
       configure_smtp!()
       user = confirmed_user()

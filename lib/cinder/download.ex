@@ -36,6 +36,13 @@ defmodule Cinder.Download do
     :add_rejected
   ]
 
+  @doc """
+  The submission errors that drop a reservation for good; a book target is also held on them
+  (`abandon_reserved/2`). `CinderWeb.LiveHelpers.book_hold_reason/1` words each one.
+  """
+  @spec permanent_submission_errors() :: [atom()]
+  def permanent_submission_errors, do: @permanent_submission_errors
+
   @doc "Reserves a durable downloader operation before any external side effect."
   def reserve_intent(%{release: %Release{download_url: url} = release} = attrs)
       when is_binary(url) do

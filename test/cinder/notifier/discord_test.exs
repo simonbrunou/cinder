@@ -82,6 +82,29 @@ defmodule Cinder.Notifier.DiscordTest do
     assert embed["color"] == 0xF39C12
   end
 
+  test "book_target_held words a known hold reason in English, whatever the caller's locale" do
+    expect_post()
+    # Under `:sync` dispatch (the test env), a refused submission notifies from the submitting
+    # admin's LiveView process, in that admin's locale.
+    Gettext.put_locale(CinderWeb.Gettext, "fr")
+
+    target = %{
+      work: %{title: "The Dispossessed"},
+      media_kind: :ebook,
+      hold_reason: "download_error: Paused on duplicate"
+    }
+
+    assert :ok = Discord.notify({:book_target_held, target})
+
+    assert_receive {:posted, %{"embeds" => [embed]}}
+
+    assert embed["description"] ==
+             "The Dispossessed (eBook) — The download client reported that the download failed. " <>
+               "Details: Paused on duplicate"
+  after
+    Gettext.put_locale(CinderWeb.Gettext, "en")
+  end
+
   test "externally sourced titles and hold reasons cannot render masked links or autolinks" do
     expect_post()
 

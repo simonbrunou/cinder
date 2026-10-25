@@ -87,6 +87,10 @@ defmodule Cinder.Download.BookPoller do
     :too_many_tracks
   ]
 
+  @doc "The import errors that hold a target at once. `CinderWeb.LiveHelpers.book_hold_reason/1` words each one."
+  @spec permanent_import_errors() :: [atom()]
+  def permanent_import_errors, do: @permanent_import_errors
+
   defp do_poll(_state) do
     isolate("stage reconciliation", fn -> StagedImport.reconcile() end)
 
