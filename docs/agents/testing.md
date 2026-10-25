@@ -27,3 +27,8 @@
   test restores its library roots and log `subtitle manifest write failed ... :unsafe_destination`.
   A test that turns subtitle languages on calls it first, so a task an earlier test queued runs
   while they are still off instead of consuming this test's provider expectations (#685).
+- A list built from a directory listing (`File.ls/1`, `Cinder.Library.PathPolicy.walk/2`,
+  `Cinder.Library.Filesystem`'s `find_files/1`, so `Cinder.Library.Sidecars.files/1` too) comes
+  in the order the disk returns. That is creation order on the btrfs dev host and can be any
+  order on CI, so neither a local nor a CI pass proves a test ignores it. A test compares such a
+  list sorted unless the code under test sorts it (#919).
