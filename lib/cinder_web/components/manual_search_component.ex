@@ -2,8 +2,9 @@ defmodule CinderWeb.ManualSearchComponent do
   @moduledoc """
   Interactive manual-search panel, shared by the movie and TV views. Queries the indexer
   asynchronously and lists every release with the release judge's verdict, letting the user grab
-  any one (overriding the band/blocklist, an anime policy, and for a movie found by IMDb id the
-  title guard: a release naming none of its titles is flagged "title doesn't match"), except a
+  any one (overriding the band/blocklist, an anime policy, and for a movie found by IMDb id or an
+  anime episode found by TVDB id the title guard: a release naming none of its titles, or for an
+  anime episode naming it with another series' year, is flagged "title doesn't match"), except a
   release with no client for its protocol or, for anime episodes, no stable episode mapping.
   Grabs are forwarded to the parent
   LiveView, which owns the Catalog writes, via

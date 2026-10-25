@@ -197,6 +197,177 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert_receive {:search_tv, 99, "Show", 1}
   end
 
+  # #699: a TVDB-scoped result is scope, not identity proof. The indexer reporting the series' own
+  # TVDB id proves it under any name, another series' id drops it, and otherwise its name has to
+  # lead with the title or an alias.
+  test "the anime episode sweep never takes an id-scoped result named after another series (#699)" do
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok, [raw("86 Eighty-Six S01E01 [1080p]", "other-series")]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert :no_match = Acquisition.best_anime_releases(series_context(99), [11])
+  end
+
+  test "an id-scoped episode result needs the series' TVDB id or a name leading with a title (#699)" do
+    context = %{
+      series_context(99)
+      | title: "Frieren: Beyond Journey's End",
+        aliases: [alias_map("Sousou no Frieren", :romaji), alias_map("葬送のフリーレン", :native)]
+    }
+
+    expect(IndexerMock, :search_tv, fn 99, "Frieren: Beyond Journey's End", 1 ->
+      {:ok,
+       [
+         raw("86 Eighty-Six S01E01 [1080p]", "other-name"),
+         Map.put(raw("86 Eighty-Six S01E01 [1080p]", "own-id"), :tvdb_id, 99),
+         Map.put(raw("[Group] Sousou no Frieren S01E01 [1080p]", "other-id"), :tvdb_id, 77),
+         raw("Not.Frieren.Beyond.Journeys.End.S01E01.1080p", "embedded"),
+         # The scene spelling drops the colon and the apostrophe the TMDB title has.
+         raw("Frieren.Beyond.Journeys.End.S01E01.1080p.WEB.H264-GRP", "scene"),
+         raw("[SubsPlease] Sousou no Frieren S01E01 (1080p)", "romaji"),
+         raw("[Group] 葬送のフリーレン S01E01 [1080p]", "native")
+       ]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 4, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(context, [11], [])
+
+    # The panel lists every dropped row as a title mismatch the operator may override.
+    assert Map.new(judged.rows, &{&1.release.download_url, &1.verdict}) == %{
+             "other-name" => {:rejected, :title_mismatch},
+             "own-id" => :ok,
+             "other-id" => {:rejected, :title_mismatch},
+             "embedded" => {:rejected, :title_mismatch},
+             "scene" => :ok,
+             "romaji" => :ok,
+             "native" => :ok
+           }
+
+    assert Enum.map(judged.kept, & &1.download_url) == ["own-id", "scene", "romaji", "native"]
+
+    for release <- judged.kept do
+      assert {:ok, %{assignments: [%{episode_ids: [11]}]}} =
+               Anime.select_episodes([release], context, [11]),
+             release.download_url
+    end
+  end
+
+  # A same-titled series of another year is another series: the season guard's ±1 year rule.
+  # With no series year, a year token can't conflict, so it opens a release tag.
+  test "an id-scoped episode result naming the title with another year is another series (#699)" do
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         raw("Show.1999.S01E01.1080p.WEB-DL-GRP", "scene-other-year"),
+         raw("[Group] Show (1999) S01E01 [1080p]", "anime-other-year"),
+         raw("Show.2021.S01E01.1080p.WEB-DL-GRP", "scene-own-year"),
+         raw("[Group] Show (2020) S01E01 [1080p]", "anime-own-year")
+       ]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(series_context(99), [11], [])
+
+    assert Map.new(judged.rows, &{&1.release.download_url, &1.verdict}) == %{
+             "scene-other-year" => {:rejected, :title_mismatch},
+             "anime-other-year" => {:rejected, :title_mismatch},
+             "scene-own-year" => :ok,
+             "anime-own-year" => :ok
+           }
+
+    # A year-shaped token inside an alias is the title, not a year.
+    context = %{
+      series_context(99)
+      | title: "Bubblegum Crisis Tokyo 2040",
+        year: 1998,
+        aliases: [alias_map("Bubblegum Crisis 2040", :alternative)]
+    }
+
+    expect(IndexerMock, :search_tv, fn 99, "Bubblegum Crisis Tokyo 2040", 1 ->
+      {:ok,
+       [
+         raw("Bubblegum.Crisis.2040.S01E01.1080p.BluRay-GRP", "alias-scene"),
+         raw("[Group] Bubblegum Crisis 2040 S01E01 [1080p]", "alias-anime")
+       ]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 3, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, %{kept: kept}, false} = Acquisition.judge_anime_episodes(context, [11], [])
+    assert Enum.map(kept, & &1.download_url) == ["alias-scene", "alias-anime"]
+
+    context = %{series_context(99) | title: "Frieren: Beyond Journey's End", year: nil}
+
+    expect(IndexerMock, :search_tv, fn 99, "Frieren: Beyond Journey's End", 1 ->
+      {:ok, [raw("Frieren.Beyond.Journeys.End.2023.S01E01.1080p.WEB.H264-GRP", "no-year")]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, %{assignments: [%{episode_ids: [11]}]}} =
+             Acquisition.best_anime_releases(context, [11])
+  end
+
+  # As #624 for movies: with no title or alias a scene name could spell (native script only),
+  # nothing can confirm or refute a release name, so the id scope stays the only evidence.
+  test "a series with no usable title keeps its id-scoped episode results (#699)" do
+    context = %{series_context(99) | title: "葬送のフリーレン"}
+
+    expect(IndexerMock, :search_tv, fn 99, "葬送のフリーレン", 1 ->
+      {:ok, [raw("Sousou no Frieren S01E01 [1080p]", "kept")]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, %{assignments: [%{episode_ids: [11], release: release}]}} =
+             Acquisition.best_anime_releases(context, [11])
+
+    assert release.download_url == "kept"
+  end
+
+  test "URL duplicates keep the TVDB id their copies report, none when only some are the series' (#699)" do
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         raw("Show S01E01 [1080p]", "one"),
+         Map.put(raw("Show S01E01 [720p]", "two"), :tvdb_id, 99),
+         Map.put(raw("Show S01E01 [480p]", "three"), :tvdb_id, 77),
+         Map.put(raw("Show S01E01 [2160p]", "four"), :tvdb_id, 77)
+       ]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn
+      "Show", categories: [5070] ->
+        {:ok,
+         [
+           Map.put(raw("Show S01E01 [1080p]", "one"), :tvdb_id, 99),
+           Map.put(raw("Show S01E01 [720p]", "two"), :tvdb_id, 77),
+           Map.put(raw("Show S01E01 [480p]", "three"), :tvdb_id, 88),
+           Map.put(raw("Show S01E01 [2160p]", "four"), :tvdb_id, 88)
+         ]}
+
+      "Show S01E01", categories: [5070] ->
+        {:ok,
+         [
+           Map.put(raw("Show S01E01 [720p]", "two"), :tvdb_id, 99),
+           Map.put(raw("Show S01E01 [480p]", "three"), :tvdb_id, 99)
+         ]}
+    end)
+
+    assert {:ok, [one, two, three, four], false} =
+             Anime.search_episodes(IndexerMock, series_context(99), [11], [])
+
+    assert {one.download_url, one.tvdb_id} == {"one", 99}
+    assert {two.download_url, two.tvdb_id} == {"two", nil}
+    assert {three.download_url, three.tvdb_id} == {"three", nil}
+    # Copies naming only other series keep one of their ids, which still drops the result.
+    assert {four.download_url, four.tvdb_id} == {"four", 77}
+  end
+
   test "a free-text result from a TVDB search union remains title-guarded" do
     context = %{series_context(99) | title: "Puella Magi Madoka Magica"}
 

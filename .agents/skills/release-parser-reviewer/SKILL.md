@@ -30,7 +30,7 @@ You have no memory between runs. Orient first, every run.
      the title-match guards behind `title_guard/2`.
    - `lib/cinder/acquisition/release_judge.ex` — the stages the sweep and the manual panel share
      (protocol → title guard → language; a standard season adds mapping last; anime episodes:
-     protocol → role → language → mapping),
+     protocol → role → title guard → language → mapping),
      `kept` (the selection pool, in indexer order), the private language stage and `pick/1`.
      `lib/cinder/acquisition/household_policy.ex` — `for_target/2` and `band/1`.
    - `lib/cinder/catalog/episode_search.ex` — `season_acquisition_context/2`, the inputs a standard

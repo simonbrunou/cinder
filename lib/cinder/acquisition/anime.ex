@@ -1007,7 +1007,7 @@ defmodule Cinder.Acquisition.Anime do
         releases =
           successes
           |> List.flatten()
-          |> deduplicate()
+          |> deduplicate(Map.get(context, :tvdb_id))
           |> apply_title_guard(context)
 
         {:ok, releases, failures != []}
@@ -1031,18 +1031,16 @@ defmodule Cinder.Acquisition.Anime do
 
   defp build_release(_result, _origin), do: []
 
-  defp deduplicate(releases) do
-    releases
-    |> Enum.reduce({[], %{}}, fn release, {keys, by_key} ->
-      key = release_key(release)
+  defp deduplicate(releases, series_tvdb_id) do
+    copies = Enum.group_by(releases, &release_key/1)
 
-      if Map.has_key?(by_key, key) do
-        {keys, Map.update!(by_key, key, &merge_release(&1, release))}
-      else
-        {keys ++ [key], Map.put(by_key, key, release)}
-      end
+    releases
+    |> Enum.uniq_by(&release_key/1)
+    |> Enum.map(fn release ->
+      [first | later] = Map.fetch!(copies, release_key(release))
+      merged = Enum.reduce(later, first, &merge_release(&2, &1))
+      %{merged | tvdb_id: reported_tvdb_id([first | later], series_tvdb_id)}
     end)
-    |> then(fn {keys, by_key} -> Enum.map(keys, &Map.fetch!(by_key, &1)) end)
   end
 
   defp release_key(%Release{download_url: url, protocol: protocol})
@@ -1065,6 +1063,17 @@ defmodule Cinder.Acquisition.Anime do
     }
   end
 
+  # The reported TVDB id is identity proof for an id-scoped episode result (#699), so it is decided
+  # once over every copy. Copies that disagree on whether it is the series' prove nothing, and the
+  # name decides; copies naming only other series keep one of their ids, which drops the result.
+  defp reported_tvdb_id(copies, series_tvdb_id) do
+    case copies |> Enum.map(& &1.tvdb_id) |> Enum.reject(&is_nil/1) |> Enum.uniq() do
+      [] -> nil
+      [tvdb_id] -> tvdb_id
+      [first | _] = tvdb_ids -> if series_tvdb_id in tvdb_ids, do: nil, else: first
+    end
+  end
+
   defp union(first, second), do: Enum.uniq((first || []) ++ (second || []))
 
   # A single garbled indexer title must not raise and stall the whole free-text search pass
@@ -1076,9 +1085,10 @@ defmodule Cinder.Acquisition.Anime do
   # parsing (which already sanitizes independently via `AnimeParser.parse/2`).
   #
   # The search guards only its free-text results, which answer a title and may name anything. An
-  # id-scoped result is the indexer's answer for the id: for a movie the release judge's title
-  # guard checks its name (`names_movie?/2`), so the manual-search panel can still list one naming
-  # another film for the operator to override; an episodic one is held to its stable-ID mapping.
+  # id-scoped result is the indexer's answer for the id, and the release judge's title guard
+  # checks its name (`names_movie?/2`, and for an episode `names_series?/2` through
+  # `Cinder.Acquisition.title_guard/2`), so the manual-search panel can still list one naming
+  # another title for the operator to override.
   defp apply_title_guard(releases, context) do
     Enum.filter(releases, fn release ->
       :id_scoped in release.query_origins or
@@ -1101,6 +1111,17 @@ defmodule Cinder.Acquisition.Anime do
       do: known_title_match?(title, context),
       else: free_text_match?(title, context)
   end
+
+  @doc """
+  Whether an anime episode release's name leads with the series title or an alias (native and
+  romaji titles live there), read as the search's free-text guard reads it: the bracketed group
+  stripped, then the title and a legal remainder (an episode coordinate, a year, a tag).
+  `Cinder.Acquisition.title_guard/2` is its one caller, for the release judge: an id-scoped
+  episode result the indexer reports no TVDB id on has to pass this or the scene-name reading
+  (#699).
+  """
+  def names_series?(%Release{} = release, context),
+    do: release.title |> AnimeParser.sanitize() |> known_title_match?(context)
 
   defp free_text_match?(release_title, %{kind: :movie} = context) do
     known_title_match?(release_title, context) and exact_movie_year?(release_title, context.year)

@@ -7,7 +7,7 @@ defmodule Cinder.CatalogSeriesTest do
   import Mox
   import Cinder.CatalogFixtures
 
-  alias Cinder.Acquisition.{Anime, Release}
+  alias Cinder.Acquisition.{Anime, Release, ReleaseJudge}
   alias Cinder.Catalog
   alias Cinder.Catalog.Episode
   alias Cinder.Catalog.Series
@@ -762,6 +762,30 @@ defmodule Cinder.CatalogSeriesTest do
       assert {:ok, grab} = Catalog.manual_grab_tv(series, 0, release)
       assert [linked] = grab |> Cinder.Repo.preload(:episodes) |> Map.fetch!(:episodes)
       assert linked.id == episode_zero.id
+    end
+
+    # #699: the sweep never takes a TVDB-scoped release naming another series, but the panel lists
+    # it as a title mismatch and the operator's grab goes through on its frozen mapping.
+    test "Anime manual grab takes a TVDB-scoped row the panel lists as a title mismatch" do
+      series = series_fixture(%{media_profile: :anime, monitor_strategy: :all, tvdb_id: 99})
+      episode = episode_fixture(season_fixture(series, %{season_number: 1}), %{episode_number: 1})
+      context = Catalog.anime_series_acquisition_context(series)
+
+      candidate =
+        %{title: "[Group] Other Show S01E01 [1080p]", download_url: "other-name"}
+        |> Release.new()
+        |> Map.put(:query_origins, [:id_scoped])
+
+      judged = ReleaseJudge.judge([candidate], {:anime_episodes, context, [episode.id]}, [])
+
+      assert [%{verdict: {:rejected, :title_mismatch}, release: release}] = judged.rows
+      assert judged.kept == []
+
+      expect(Cinder.Download.ClientMock, :add, fn _, _opts -> {:ok, "other-name"} end)
+
+      assert {:ok, grab} = Catalog.manual_grab_tv(series, 1, release)
+      assert [linked] = grab |> Cinder.Repo.preload(:episodes) |> Map.fetch!(:episodes)
+      assert linked.id == episode.id
     end
 
     test "Anime manual grab recomputes a scoped candidate after its corroborating alias changes" do

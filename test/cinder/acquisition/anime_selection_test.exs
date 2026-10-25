@@ -399,7 +399,10 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
              )
   end
 
-  test "an ID-scoped result keeps an exact standard coordinate under an alternate title" do
+  # #317 took this release on the TVDB-scoped query alone. #699 reverses that on purpose: an
+  # alternate title now needs the indexer to report the series' own TVDB id on the result, and
+  # the parser still reads its exact coordinate.
+  test "an ID-scoped result keeps an exact standard coordinate under an alternate title only with the series' TVDB id (#699)" do
     context = %{
       kind: :series,
       title: "Show",
@@ -410,13 +413,20 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       mappings: [mapping("cinder", "standard", "canonical", "S01E01", [11])]
     }
 
-    id_release =
+    id_release = fn tvdb_id ->
       Release.new(
-        raw("86 Eighty-Six S01E01 [1080p]", "id-scoped-alternate", query_origins: [:id_scoped])
+        raw("86 Eighty-Six S01E01 [1080p]", "id-scoped-alternate",
+          query_origins: [:id_scoped],
+          tvdb_id: tvdb_id
+        )
       )
+    end
+
+    assert :no_match = Anime.select_episodes([id_release.(nil)], context, [11], [])
+    assert :no_match = Anime.select_episodes([id_release.(77)], context, [11], [])
 
     assert {:ok, %{assignments: [assignment]}} =
-             Anime.select_episodes([id_release], context, [11], [])
+             Anime.select_episodes([id_release.(99)], context, [11], [])
 
     assert assignment.episode_ids == [11]
     assert assignment.mapping_snapshot["parser_context"]["allow_unscoped_standard"] == true

@@ -337,12 +337,15 @@ defmodule Cinder.Download.TvPollerTest do
 
     {:ok, _} = Catalog.save_scene_offset_coordinates(series, 3, 1)
 
+    # The indexer reports the series' TVDB id. Without it the name fails the title guard (#699):
+    # "Monogatari" goes on with "Series", not a release tag, and the series has no such alias.
     releases =
       for n <- 1..7 do
         %{
           title: "[smol] Monogatari Series Second Season S04E#{pad2(n)} [1080p]",
           size: 2_000_000_000,
-          download_url: "smol-#{n}"
+          download_url: "smol-#{n}",
+          tvdb_id: 99
         }
       end
 

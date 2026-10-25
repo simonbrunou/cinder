@@ -318,6 +318,33 @@ defmodule Cinder.Acquisition.ReleaseJudgeAnimeTest do
       assert row(judged, "[Group] Show OVA 1 [1080p]").release.resolved_episode_ids == [13]
     end
 
+    # #699: the operator may override a title mismatch, since its frozen mapping makes the grab
+    # safe; the sweep never takes it. A mismatch with no frozen mapping still says so first.
+    test "a TVDB-scoped row naming another series drops at the title guard, the panel's to override" do
+      other = episode_release("[Group] Other Show S01E01 [1080p]")
+      unmapped = episode_release("[Group] Other Show S01E05 [1080p]")
+      proved = episode_release("[Group] Other Show S01E02 [1080p]", tvdb_id: 99)
+      own = episode_release("[Group] Show S01E01 [1080p]")
+
+      judged = judge_episodes([other, unmapped, proved, own], anime_policy: policy())
+
+      assert %{dropped_at: :title_guard, verdict: {:rejected, :title_mismatch}, release: release} =
+               row(judged, other.title)
+
+      assert release.resolved_episode_ids == [11]
+      assert release.mapping_snapshot
+
+      assert %{dropped_at: :title_guard, verdict: {:rejected, :unsafe_anime_mapping}} =
+               row(judged, unmapped.title)
+
+      assert Enum.map(judged.kept, & &1.title) == [proved.title, own.title]
+
+      assert {:ok, %{assignments: assignments}} = ReleaseJudge.pick(judged)
+
+      assert Map.new(assignments, &{&1.release.title, &1.episode_ids}) ==
+               %{own.title => [11], proved.title => [12]}
+    end
+
     test "a release with no protocol has no client to go to" do
       judged =
         judge_episodes([episode_release("[Group] Show S01E01 [1080p]", protocol: nil)],

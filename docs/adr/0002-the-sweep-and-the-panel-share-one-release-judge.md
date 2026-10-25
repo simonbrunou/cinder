@@ -42,8 +42,10 @@ releases judged.
 
 ## Consequences
 
-The panel's verdict column is unchanged: only the IMDb-scoped and anime movie guards say "title
-doesn't match", because the Title.Year and season guards also reject for year evidence.
+The panel's verdict column is unchanged: only the IMDb-scoped and anime guards say "title doesn't
+match", because the Title.Year and season guards also reject for year evidence. The anime episode
+guard (#699, for a TVDB-scoped result) rejects for a year too, but only for a name that carries
+another series' year, which is a same-titled other series.
 
 Since #836, a TV row's verdict is the set-cover's for that release alone
 (`Scorer.verdict_for_season/4`). The set-cover bands by the still-wanted count, so the season guard

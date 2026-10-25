@@ -15,15 +15,15 @@ defmodule Cinder.Acquisition.ReleaseJudge do
   - `{:anime_episodes, context, wanted_ids}`: the wanted episodes of an anime series, by stable
     episode id (`Cinder.Catalog.anime_series_acquisition_context/1`).
 
-  `judge/3` runs these stages, in this order. An anime episode search has no title guard (its
-  search guards its free-text results and the stable-id mapping holds the rest), and a stage of
-  its own:
+  `judge/3` runs these stages, in this order. An anime episode search has a stage of its own:
 
   1. **Protocol.** A release whose protocol has no download client (`:protocols` in the
      household policy) is dropped.
   2. **Title guard.** A release whose name isn't the target's is dropped
-     (`Cinder.Acquisition.title_guard/2`). For anime episodes, **role** instead: a release the
-     anime parser doesn't read as a story episode (a creditless opening, an OVA) is dropped.
+     (`Cinder.Acquisition.title_guard/2`). For anime episodes, **role** comes first: a release
+     the anime parser doesn't read as a story episode (a creditless opening, an OVA) is dropped,
+     so the series' own OVA keeps that reason. Their title guard checks only TVDB-scoped results;
+     the search guards its free-text ones.
   3. **Language.** The title's audio pick filters what is left (`Cinder.Acquisition.Language`).
      A strict pick (french, dual) that would drop every survivor gives `:no_language_match` and
      keeps nothing, so the movie parks visibly. A soft one (original, any) falls back to the
@@ -53,9 +53,10 @@ defmodule Cinder.Acquisition.ReleaseJudge do
 
   - `dropped_at`: the first stage that dropped the release, or nil if it was kept.
   - `verdict`: why automatic selection would skip it, which the panel shows and the operator may
-    override. No client for the protocol comes first. Only the IMDb-scoped and anime movie
-    guards say `:title_mismatch`; the Title.Year and season guards also reject for a missing
-    year or the language before it, so they drop the row without a verdict of their own.
+    override. No client for the protocol comes first. Only the IMDb-scoped and the anime guards
+    say `:title_mismatch` (an anime episode one also for a name carrying another series' year);
+    the Title.Year and season guards also reject for a missing year or the language before it, so
+    they drop the row without a verdict of their own.
     `:conflicting_standard_numbering` marks a bridged coordinate that resolves two ways. An anime
     episode row with no frozen mapping is `:unsafe_anime_mapping` (the panel can't grab it), and
     one the role stage dropped is `:special_release` (the sweep never takes it; the operator
@@ -183,7 +184,7 @@ defmodule Cinder.Acquisition.ReleaseJudge do
   defp prepare(releases, _guard), do: releases
 
   defp stages({:anime_episodes, _context, _wanted_ids}),
-    do: [:protocol, :role, :language, :mapping]
+    do: [:protocol, :role, :title_guard, :language, :mapping]
 
   defp stages({:series, _series, _season_number, _wanted_numbers}),
     do: [:protocol, :title_guard, :language, :mapping]
@@ -257,6 +258,9 @@ defmodule Cinder.Acquisition.ReleaseJudge do
 
   defp verdict(_release, :role, {:anime_episodes, _, _}, _opts),
     do: {:rejected, :special_release}
+
+  defp verdict(_release, :title_guard, {:anime_episodes, _, _}, _opts),
+    do: {:rejected, :title_mismatch}
 
   defp verdict(release, _dropped_at, {:anime_episodes, _context, _wanted_ids}, opts),
     do: Anime.episode_verdict(release, opts)

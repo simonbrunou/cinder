@@ -152,6 +152,11 @@ defmodule Cinder.Acquisition do
   - `{:anime_movie, context}`: the anime movie queries. The anime guard
     (`Cinder.Acquisition.Anime.names_movie?/2`), and for an IMDb-scoped result the `{:imdb,
     context}` spelling as well.
+  - `{:anime_episodes, context, wanted_ids}`: the anime episode queries. A free-text result faced
+    the search's own guard. A TVDB-scoped one (#699) is kept when the indexer reports the series'
+    TVDB id on it, dropped when it reports another series' id, and otherwise has to lead with the
+    title or an alias, read the anime way (`Cinder.Acquisition.Anime.names_series?/2`) or the
+    scene way (the fold `names_title?/2` uses), with no year more than one off the series'.
 
   Only `Cinder.Acquisition.ReleaseJudge` calls this.
   """
@@ -170,6 +175,9 @@ defmodule Cinder.Acquisition do
            filter_id_scoped_movie([release], context) != [])
     end)
   end
+
+  def title_guard(releases, {:anime_episodes, context, _wanted_ids}),
+    do: Enum.filter(releases, &anime_episode_named?(&1, context))
 
   @doc """
   The one function that builds a standard TV season's release list, for the TV sweep (which takes
@@ -507,15 +515,27 @@ defmodule Cinder.Acquisition do
     |> reject_year_conflicts(series)
   end
 
-  defp tv_title_match?(%Release{tvdb_id: tvdb_id}, %{tvdb_id: tvdb_id})
+  defp tv_title_match?(release, series) do
+    case reported_tvdb_identity(release, series) do
+      :same -> true
+      :other -> false
+      :unreported -> tv_title_evidence?(release, series)
+    end
+  end
+
+  # What the indexer's reported TVDB id says about a result: proof either way once both the result
+  # and the target carry one.
+  defp reported_tvdb_identity(%Release{tvdb_id: tvdb_id}, %{tvdb_id: tvdb_id})
        when is_integer(tvdb_id),
-       do: true
+       do: :same
 
-  defp tv_title_match?(%Release{tvdb_id: result_id}, %{tvdb_id: target_id})
+  defp reported_tvdb_identity(%Release{tvdb_id: result_id}, %{tvdb_id: target_id})
        when is_integer(result_id) and is_integer(target_id),
-       do: false
+       do: :other
 
-  defp tv_title_match?(
+  defp reported_tvdb_identity(_release, _target), do: :unreported
+
+  defp tv_title_evidence?(
          %Release{title: title, query_origins: origins},
          %{year: year} = series
        )
@@ -524,14 +544,14 @@ defmodule Cinder.Acquisition do
 
   # A series with no year cannot use year evidence. Preserve the legacy provenance behavior there:
   # free-text results need the title guard; id-only results remain the best evidence available.
-  defp tv_title_match?(%Release{title: title, query_origins: origins}, series)
+  defp tv_title_evidence?(%Release{title: title, query_origins: origins}, series)
        when is_list(origins) do
     :free_text not in origins or :id_scoped in origins or search_title_match?(series, title)
   end
 
   # Other indexer implementations predate provenance. Preserve their legacy TVDB-scoped contract;
   # the configured Prowlarr implementation always tags its TV results above.
-  defp tv_title_match?(_release, _series), do: true
+  defp tv_title_evidence?(_release, _series), do: true
 
   # The tvdb_id-scoped query used to guarantee same-show results, but search_tv/3 now
   # unions in a free-text title query (so scraper indexers contribute — see
@@ -633,6 +653,59 @@ defmodule Cinder.Acquisition do
     case needles do
       [] -> candidates
       needles -> Enum.filter(candidates, &(&1.title |> untagged_tokens() |> spells_any?(needles)))
+    end
+  end
+
+  # The TVDB-scoped anime episode query is scope, not identity proof either (#699): an indexer can
+  # ignore the id, and the anime parser then reads an SxxEyy coordinate out of any name it returns.
+  # The season guard's identity rule holds: the series' own reported TVDB id proves a result under
+  # any name, another series' id disproves it. Otherwise the name has to lead with a title or an
+  # alias in one of the two readings release names need: the anime guard's (a bracketed group, an
+  # absolute number) or the scene fold's ("Frieren.Beyond.Journeys.End.S01E05" for "Frieren:
+  # Beyond Journey's End"). As in the season guard, a year more than one off the series' names a
+  # same-titled other series. As for an IMDb-scoped movie, a series with no title the fold can
+  # spell (native script only) can't check the Latin names releases mostly carry, so the id scope
+  # stays the evidence. A free-text result faced the anime search's own guard.
+  defp anime_episode_named?(%Release{query_origins: origins} = release, context) do
+    if :id_scoped in (origins || []),
+      do: tvdb_scoped_episode_named?(release, context),
+      else: true
+  end
+
+  defp tvdb_scoped_episode_named?(release, context) do
+    case reported_tvdb_identity(release, context) do
+      :same ->
+        true
+
+      :other ->
+        false
+
+      :unreported ->
+        (Anime.names_series?(release, context) or scene_names_series?(release.title, context)) and
+          not other_year?(release.title, context)
+    end
+  end
+
+  # `release_years/2` strips only the title it is given, and a name may lead with an alias that
+  # spells a year-shaped token ("Bubblegum Crisis 2040"), so the year conflicts under every title.
+  defp other_year?(release_title, %{year: year} = context) when is_integer(year) do
+    Enum.all?(
+      [context.title | Enum.map(context.aliases, & &1.title)],
+      &year_conflict?(release_title, %{context | title: &1})
+    )
+  end
+
+  defp other_year?(_release_title, _context), do: false
+
+  defp scene_names_series?(release_title, context) do
+    tokens = untagged_tokens(release_title)
+
+    [context.title | Enum.map(context.aliases, & &1.title)]
+    |> Enum.map(&title_needle/1)
+    |> Enum.reject(&(&1 == ""))
+    |> case do
+      [] -> true
+      needles -> Enum.any?(needles, &(tokens |> consume_leading(&1) |> search_tag_next?(context)))
     end
   end
 
@@ -831,6 +904,15 @@ defmodule Cinder.Acquisition do
         false
     end
   end
+
+  # The search side of the same boundary. Keeping a search result can be undone, so an unknown
+  # series year fails open here, as `reject_year_conflicts/2` does: any year token opens the tag.
+  defp search_tag_next?({:ok, [next | _]} = consumed, target) do
+    (is_nil(Map.get(target, :year)) and Regex.match?(@year_marker, next)) or
+      release_tag_next?(consumed, target)
+  end
+
+  defp search_tag_next?(consumed, target), do: release_tag_next?(consumed, target)
 
   defp title_needle(series_title) do
     needle = series_title |> tokens() |> Enum.join()
