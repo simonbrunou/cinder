@@ -7,12 +7,12 @@ defmodule Cinder.Health do
 
   `targets/1` is the one list of targets. The `/settings` Test buttons, the `/setup` gate and the
   `/dashboard` service-health rows all read it, so a new adapter with a `health/0` is one entry
-  here. Each external `health/0` keeps 3-second connect and receive timeouts; the concurrent
-  sweeps' backstop only guards against a probe that ignores its own.
+  here. Each external `health/0` keeps 3-second connect and receive timeouts; the probe timeout
+  budget only guards against a probe that ignores its own.
 
-  `check_all/0` and `check_targets/1` run their probes concurrently (`Task.async_stream/3`), so a
-  sweep's wall clock is bounded by its slowest probe instead of the sum of every probe's own
-  timeout.
+  Every check, `check/1` included, runs its probe in a task under that one budget. `check_all/0`
+  and `check_targets/1` run their probes concurrently (`Task.async_stream/3`), so a sweep's wall
+  clock is bounded by its slowest probe instead of the sum of every probe's own timeout.
   """
   alias Cinder.Books.Metadata
   alias Cinder.Download
@@ -164,13 +164,14 @@ defmodule Cinder.Health do
   Checks one target, by id, against the currently applied config. Never raises: a failure while
   resolving the adapter or inside its `health/0` is an `{:error, reason}`. A target with nothing
   wired is `{:error, :not_configured}`; an id no target has is `{:error, :unknown_target}` (the id
-  comes from the client, so callers ignore it).
+  comes from the client, so callers ignore it). The probe has `check_all/0`'s timeout budget: past
+  it, the check is `{:error, :timeout}`, so a caller waits no longer than the budget.
   """
   @spec check(term()) :: status()
   def check(id) do
     case Enum.find(@targets, &(&1.id == id)) do
       nil -> {:error, :unknown_target}
-      target -> run_target(target)
+      target -> Map.fetch!(check_targets([target]), target.id)
     end
   end
 
@@ -190,9 +191,9 @@ defmodule Cinder.Health do
   end
 
   @doc """
-  Checks the given targets concurrently, the way `check/1` checks one, and returns a map of each
-  target's id to its status. The sweep has `check_all/0`'s timeout budget: a probe that exceeds
-  it is `{:error, :timeout}` and does not hold up the others. Unlike `check_all/0`, it drops no
+  Checks the given targets concurrently and returns a map of each target's id to its status, as
+  `check/1` documents it. The sweep has `check_all/0`'s timeout budget: a probe that exceeds it
+  is `{:error, :timeout}` and does not hold up the others. Unlike `check_all/0`, it drops no
   target: a `:configured` target with nothing wired is `{:error, :not_configured}` here.
   """
   @spec check_targets([Target.t()]) :: %{String.t() => status()}

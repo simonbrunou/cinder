@@ -52,9 +52,10 @@ defmodule CinderWeb.SettingsLive do
     if settings_params?(params), do: save_settings(params, socket), else: {:noreply, socket}
   end
 
-  # Probes the saved config synchronously (each impl health/0 has a ~3s timeout).
+  # Probes the saved config synchronously: each impl's health/0 bounds its own calls, and
+  # `Health.check/1` gives up at the probe timeout budget (15 s), so the page blocks at most that.
   # ponytail: synchronous is fine for an admin-only page; revisit with start_async if
-  # the brief block ever annoys. The id is client-controlled; one no probe target has changes
+  # the block ever annoys. The id is client-controlled; one no probe target has changes
   # nothing.
   def handle_event("test", %{"target" => id}, socket) do
     case Health.check(id) do

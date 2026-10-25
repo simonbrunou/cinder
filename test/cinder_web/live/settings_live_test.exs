@@ -382,6 +382,28 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#settings-group-books", "Unreachable")
   end
 
+  test "a Test button whose probe outlasts the budget reads Timed out and the page answers again",
+       %{conn: conn} do
+    # `reset_cinder_env` restores the budget. Waited out, the indexer would read OK.
+    Application.put_env(:cinder, :health_probe_timeout_ms, 200)
+
+    stub(Cinder.Acquisition.IndexerMock, :health, fn ->
+      Process.sleep(5_000)
+      :ok
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
+
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv |> element("button", "Test Prowlarr") |> render_click()
+    # The badge reads Unreachable and names the reason in its title.
+    assert has_element?(lv, ~s|#settings-group-indexer .badge-error[title="Timed out"]|)
+
+    lv |> element("button", "Test TMDB") |> render_click()
+    assert has_element?(lv, "#settings-group-tmdb .badge-success", "OK")
+  end
+
   test "a Test event for an id no probe target has changes nothing", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/settings")
     before = render(lv)

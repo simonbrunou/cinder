@@ -333,6 +333,25 @@ defmodule Cinder.HTTPPolicyTest do
                )
     end
 
+    test "a caller that reaches the stub's owner only through $callers gets the stub's response" do
+      Req.Test.stub(Cinder.HTTPPolicyCallersStub, fn conn -> Req.Test.json(conn, %{ok: true}) end)
+
+      # The task can't grant access to the stub (it doesn't own it), as a `Cinder.Health` probe
+      # in a sweep task can't.
+      task =
+        Task.async(fn ->
+          HTTPPolicy.bounded_request(
+            [
+              url: "https://public.example/data",
+              plug: {Req.Test, Cinder.HTTPPolicyCallersStub}
+            ],
+            64
+          )
+        end)
+
+      assert {:ok, %{status: 200, body: %{"ok" => true}}} = Task.await(task)
+    end
+
     test "decodes structured +json media types" do
       Req.Test.stub(Cinder.HTTPPolicyProblemStub, fn conn ->
         conn

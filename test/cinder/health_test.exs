@@ -168,6 +168,24 @@ defmodule Cinder.HealthTest do
       assert Health.check("hardcover") == {:error, :not_configured}
     end
 
+    test "a probe exceeding the timeout budget reports :timeout once the budget expires" do
+      with_env(:health_probe_timeout_ms, 200)
+
+      stub(Cinder.Acquisition.IndexerMock, :health, fn ->
+        Process.sleep(5_000)
+        :ok
+      end)
+
+      started = System.monotonic_time(:millisecond)
+      assert Health.check("indexer") == {:error, :timeout}
+      elapsed = System.monotonic_time(:millisecond) - started
+
+      # Waited out, the probe answers `:ok` after 5 s. The check gives up at the 200 ms budget,
+      # and the upper bound leaves a loaded CPU its margin.
+      assert elapsed >= 200
+      assert elapsed < 1_000
+    end
+
     test "a failure while resolving the adapter is an error status, never a raise" do
       stub(Cinder.Books.PrimaryMetadataMock, :provider, fn -> raise "boom" end)
 
@@ -277,16 +295,21 @@ defmodule Cinder.HealthTest do
       parent = self()
 
       expect(Cinder.Library.FilesystemMock, :write_exclusive, fn path, "" ->
-        send(parent, {:probe_path, path})
+        send(parent, {:fs, :write_exclusive, path})
         :ok
       end)
 
       expect(Cinder.Library.FilesystemMock, :rm, fn path ->
-        assert_received {:probe_path, ^path}
+        send(parent, {:fs, :rm, path})
         :ok
       end)
 
       assert Health.check("movies_library") == :ok
+      # The probe runs in a task, so the callbacks report here. Each `assert_received` takes the
+      # oldest matching message, so this also checks the write came before the removal.
+      assert_received {:fs, first, path}
+      assert_received {:fs, second, ^path}
+      assert {first, second} == {:write_exclusive, :rm}
     end
   end
 

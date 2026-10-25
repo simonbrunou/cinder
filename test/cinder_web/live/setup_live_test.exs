@@ -483,6 +483,25 @@ defmodule CinderWeb.SetupLiveTest do
     assert html =~ "OK"
   end
 
+  test "a Test button whose probe outlasts the budget reads Timed out and the page answers again",
+       %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+    # `reset_cinder_env` restores the budget. Waited out, the indexer would read OK.
+    Application.put_env(:cinder, :health_probe_timeout_ms, 200)
+    stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(5_000) end)
+    stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+
+    lv |> element("button", "Test Prowlarr") |> render_click()
+    assert has_element?(lv, "#setup-check-indexer", "Timed out")
+    assert has_element?(lv, "#finish-setup[disabled]")
+
+    lv |> element("button", "Test TMDB") |> render_click()
+    assert has_element?(lv, "#setup-check-tmdb .hero-check-circle")
+  end
+
   test "native disclosures avoid server events and successful validation resets form state", %{
     conn: conn
   } do

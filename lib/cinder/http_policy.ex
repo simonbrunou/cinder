@@ -553,6 +553,12 @@ defmodule Cinder.HTTPPolicy do
 
   defp allow_req_test_result(:ok), do: :ok
   defp allow_req_test_result({:error, %{reason: :cant_allow_in_shared_mode}}), do: :ok
+
+  # `:not_allowed` means the caller has no access of its own to grant, as a `Cinder.Health` probe
+  # in a sweep task has none. When the caller reaches the stub's owner through `$callers`, the
+  # request task inherits that chain and `Req.Test` finds the owner through it. With no owner
+  # anywhere, the plug lookup raises in the task and the request is an `{:error, _}` all the same.
+  defp allow_req_test_result({:error, %{reason: :not_allowed}}), do: :ok
   defp allow_req_test_result({:error, reason}), do: {:error, reason}
 
   defp await_request(task, timeout_ms) do
