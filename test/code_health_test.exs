@@ -2,9 +2,10 @@ defmodule Cinder.CodeHealthTest do
   @moduledoc """
   Guards against a single `lib/` file regrowing into an unreviewable mega-module (the trigger for
   the 2026-07-26 `Cinder.Catalog` split), and fences the module boundaries earlier refactors
-  drew: the catalog's split by concept (#740), the staging engine (#739) and the guarded-write
-  adapters (#743). It also keeps new changelog entries in `changelog.d/` (#843), and the
-  Dockerfile's Tailwind pin on the configured version (#867).
+  drew: the catalog's split by concept (#740), the staging engine (#739), the guarded-write
+  adapters (#743) and the domain's distance from the web layer (#816). It also keeps new
+  changelog entries in `changelog.d/` (#843), and the Dockerfile's Tailwind pin on the configured
+  version (#867).
   """
   use ExUnit.Case, async: true
 
@@ -96,6 +97,77 @@ defmodule Cinder.CodeHealthTest do
 
     Enum.reverse(calls)
   end
+
+  # #816: every `CinderWeb` or `Gettext` module a domain module references, with the reason.
+  # docs/agents/architecture.md "Translation stays in the web layer" has the rule.
+  @allowed_refs %{
+    # The supervision tree starts the endpoint and its telemetry.
+    "lib/cinder/application.ex" => ["CinderWeb.Endpoint", "CinderWeb.Telemetry"],
+    # Composing the body is the email's only render step, in the recipient's locale.
+    "lib/cinder/notifier/email.ex" => ["CinderWeb.Gettext", "CinderWeb.LiveHelpers", "Gettext"],
+    # A held book's reason, worded in the canonical locale like the rest of the embed.
+    "lib/cinder/notifier/discord.ex" => ["CinderWeb.Gettext", "CinderWeb.LiveHelpers", "Gettext"]
+  }
+
+  test "a domain module references CinderWeb or Gettext only as @allowed_refs lists" do
+    offenders =
+      for path <- Path.wildcard("lib/cinder/**/*.ex"),
+          {ref, line} <- boundary_refs(path),
+          ref not in Map.get(@allowed_refs, path, []),
+          do: "#{path}: #{ref} (line #{line})"
+
+    assert offenders == [],
+           "the domain calls no CinderWeb module and translates nothing: emit a code or an " <>
+             "English msgid and let CinderWeb word it, or add a deliberate exception with its " <>
+             "reason to @allowed_refs:\n  " <> Enum.join(offenders, "\n  ")
+  end
+
+  test "every @allowed_refs entry is still referenced" do
+    stale =
+      for {path, refs} <- @allowed_refs,
+          found = if(File.exists?(path), do: boundary_refs(path), else: %{}),
+          ref <- refs,
+          not Map.has_key?(found, ref),
+          do: "#{path}: #{ref}"
+
+    assert stale == [],
+           "remove these @allowed_refs entries, nothing uses them now:\n  " <>
+             Enum.join(stale, "\n  ")
+  end
+
+  # Module name => first line it appears on.
+  defp boundary_refs(path) do
+    {:ok, ast} = path |> File.read!() |> Code.string_to_quoted()
+
+    {_ast, refs} =
+      Macro.prewalk(ast, %{}, fn
+        # `alias CinderWeb.{A, B}` parses as a call to `:{}`: record each submodule, not the base.
+        {{:., _, [{:__aliases__, meta, base}, :{}]}, _, children} = node, acc ->
+          names = for {:__aliases__, _, parts} <- children, do: base ++ parts
+
+          if boundary?(base),
+            do: {nil, Enum.reduce(names, acc, &put_ref(&2, &1, meta))},
+            else: {node, acc}
+
+        {:__aliases__, meta, parts} = node, acc ->
+          if boundary?(parts), do: {node, put_ref(acc, parts, meta)}, else: {node, acc}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    refs
+  end
+
+  # `Elixir.CinderWeb.Foo` names the same module as `CinderWeb.Foo`.
+  defp boundary?(parts),
+    do: match?([root | _] when root in [:CinderWeb, :Gettext], unprefixed(parts))
+
+  defp put_ref(acc, parts, meta),
+    do: Map.put_new(acc, parts |> unprefixed() |> Enum.join("."), meta[:line])
+
+  defp unprefixed([Elixir | parts]), do: parts
+  defp unprefixed(parts), do: parts
 
   # #740: the CI scripts drive the release over `bin/cinder rpc` with Elixir inside Python
   # strings the compiler never sees, so a rename in `lib/` used to surface only in CI's container

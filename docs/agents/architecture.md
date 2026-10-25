@@ -211,6 +211,20 @@ row with no further auth check. Once the row exists, the pipeline grabs it.
 - `/api/v1` request mutations route through `Cinder.Requests`. API actions never write request
   lifecycle state directly.
 
+## Translation stays in the web layer
+
+The domain (`lib/cinder/`) emits a code or an English msgid, and `CinderWeb` translates it at
+render time: `CinderWeb.SettingsLabels` for settings and health labels, `CinderWeb.LiveHelpers`
+for reasons such as `book_hold_reason/1`. Beyond translation, a domain module references no
+`CinderWeb` module at all. `@allowed_refs` in `test/code_health_test.exs` lists each exception
+with its reason; the test fails on a reference it does not list, and on an entry nothing uses.
+
+A notifier transport runs outside the caller's process in production and dev: under the default
+`:async` dispatch, `Cinder.Notifier.Dispatcher` runs it in a `Task.Supervisor` child, so the
+caller's Gettext locale never reaches it. A transport's own test calls it directly, in the test
+process, where a locale the test sets does reach it. A transport that translates pins its locale
+itself.
+
 ## Background work is supervised and bounded
 
 Download polling, import and the book/audiobook pollers run under the supervision tree, not in
