@@ -132,6 +132,34 @@ until it settles, and `StagedImport.reconcile/0` takes the same lock. The lock i
 through `:global` itself, so take it only through `run/1`. The residual-file Part decision from
 `/activity` does not take it yet (#783).
 
+## Most library writes go through the rooted helper
+
+For a path inside a library root, `Cinder.Library.Filesystem.Disk` runs these operations in a
+bounded subprocess, `priv/rooted_fs_main.py`, whose code is in `priv/rooted_fs.py`: `hold` (the
+open descriptor a write goes through), `mkdir`, `mkdir_near`, `rename`, `rename_exclusive`,
+`exchange`, `unlink`, `rmdir`, `chmod`, `reconcile_duplicates` and `sync_parent`. Each one opens
+the path's directories from the configured root through `open_beneath`, so a symlink swapped into
+a directory fails the call instead of redirecting it. `mkdir_p`, `ln`, `cp` and `cp_exclusive`
+stay plain `File` calls, guarded only by the caller's `PathPolicy` checks. A path outside every
+root falls back to `File` calls or `mv --exchange`.
+
+On a `fuse.mergerfs` mount, the creating operations (`hold` of a new file, `rename_exclusive`,
+`mkdir_near`) work on a backing branch, and so does an `exchange` the union refuses. The helper
+reads the branch from mergerfs's own `user.mergerfs.*` xattrs (`mergerfs_backing_location_fd`).
+A creating operation then proves that the union shows its file under the new name
+(`wait_for_unique_path`). The other operations act on the union path, and the mergerfs opens never
+cross into a nested mount.
+
+A library root may sit below the mount, as in prod, where the pool is at `/media` and each root is
+a folder in it. Take a path's place on a branch from the backing path of its directory or of the
+root, as `mergerfs_near_relative` does. Deriving it from the mount point breaks under a bind of a
+pool subdirectory, which `reconcile_duplicates` still does (#884).
+
+Tests have no mergerfs. In `test/cinder/library/filesystem/disk_rooted_test.exs`,
+`mergerfs_rename_shim!` and `mergerfs_shim!` (reached through `duplicate_tombstones!`) fake the
+mount check and the xattrs around the real helper. The `branch:` option of
+`mergerfs_rename_shim!` puts the mount above the library root.
+
 ## The imported quality has one owner
 
 What a movie or episode recorded about its file lives in its `imported_*` columns, and

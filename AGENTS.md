@@ -17,8 +17,8 @@ Audiobookshelf.
 Read the matching doc before you act:
 
 - [Architecture](docs/agents/architecture.md): before code that calls an external service or a
-  subprocess, writes a movie, episode or book status, creates a request, or runs in the
-  background.
+  subprocess, writes under a library root, writes a movie, episode or book status, creates a
+  request, or runs in the background.
 - [Configuration](docs/agents/configuration.md): before adding a setting or env var, or touching
   secrets, `/settings`, the auth plugs or `/api/v1`.
 - [Testing](docs/agents/testing.md): before writing a test or calling a task done.
