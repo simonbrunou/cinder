@@ -69,7 +69,13 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   failure is baseline and blocks every merge until a fix PR lands. `mix hex.audit` takes its
   accepted advisories from `ignore_advisories` in `mix.exs` (`hex/0`), each with a rationale
   comment. For Debian packages Trivy flags that a fresh `apt-get upgrade` fixes, set the
-  Dockerfile's `APT_REFRESH` to today's date so the cached layer rebuilds.
+  Dockerfile's `APT_REFRESH` to today's date so the cached layer rebuilds. When fix PRs block
+  each other, each red on an advisory another one fixes, carry them all on one branch: merge the
+  others' branches into it, so it goes green alone. #885 carried #865 (`plug_crypto`, red on
+  `container`) and #880 (`libbrotli1`, red on `dependency-audit`), and #865 also needed #885's
+  own CI fix. Close each carried PR as superseded once the carrier merges; its `changelog.d/`
+  fragment keeps its number. When `scripts/merge-pr --dry-run` prints `squash body from:` with a
+  carried commit, pass `--body-from=<sha of the carrier's own fix commit>`.
 - **Dependency rebuild.** A `mix.lock`, OTP or Elixir change misses the compiled-deps caches,
   so `test` and `dependency-audit` rebuild every dependency and download precompiled NIFs from
   GitHub releases. Erlang's `:httpc` refuses a response whose headers pass 10240 bytes (OTP 29),

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Merge a Cinder PR on Forgejo under AGENTS.md "Merge authority", pinned to the CI-tested head.
 #
-#   scripts/merge-pr [--dry-run] <pr-number> [squash|rebase|merge]
+#   scripts/merge-pr [--dry-run] [--body-from=<sha>] <pr-number> [squash|rebase|merge]
 #
 # The style defaults to squash, which keeps main linear with one `<title> (#n)` commit per PR;
-# rebase keeps a stacked queue's CI-tested commits as they are.
+# rebase keeps a stacked queue's CI-tested commits as they are. A squash takes its body from the
+# branch's first non-merge commit, and prints which one. When that commit is not the PR's own fix
+# (the branch carries another PR's commits first), pass --body-from with the fix commit's SHA. It
+# must be one of the non-merge commits in origin/main..<head>, and only a squash takes it.
 #
 # It stops at the first check that fails:
 #   1. the PR is open against main; its head SHA comes from the API, never from a local branch;
@@ -37,10 +40,12 @@ usage() {
 }
 
 dry_run=false
+body_from=
 args=()
 for arg in "$@"; do
   case $arg in
     --dry-run) dry_run=true ;;
+    --body-from=?*) body_from=${arg#--body-from=} ;;
     -h | --help) usage ;;
     *) args+=("$arg") ;;
   esac
@@ -58,6 +63,8 @@ fail() {
   echo "FAIL: $*" >&2
   exit 1
 }
+
+[[ -z $body_from || $style == squash ]] || fail "--body-from applies to a squash, not to $style"
 
 cd "$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 
@@ -156,12 +163,21 @@ check_against_main
 payload=$(jq -nc --arg style "$style" --arg sha "$sha" \
   '{Do: $style, head_commit_id: $sha, delete_branch_after_merge: true}')
 if [[ $style == squash ]]; then
-  # main's convention: the PR title with (#n), then the body of the branch's first commit (the
-  # fix itself, not a later review-fix or CI re-run commit).
+  # main's convention: the PR title with (#n), then the body of the PR's fix commit: the
+  # branch's first commit (not a later review-fix or CI re-run commit), or --body-from's.
   [[ $title == *"(#$pr)" ]] || title="$title (#$pr)"
-  first=$(git rev-list --reverse --no-merges "origin/main..$sha" | sed -n 1p)
-  [[ -n $first ]] || fail "#$pr has no commit that origin/main lacks"
-  message=$(git log -1 --format=%b "$first")
+  commits=$(git rev-list --reverse --no-merges "origin/main..$sha")
+  [[ -n $commits ]] || fail "#$pr has no commit that origin/main lacks"
+  if [[ -n $body_from ]]; then
+    body_commit=$(git rev-parse --verify -q "$body_from^{commit}") || fail "--body-from: $body_from is not a commit"
+    grep -qx "$body_commit" <<<"$commits" ||
+      fail "--body-from: $body_from is not one of #$pr's non-merge commits (origin/main..$sha)"
+    echo "squash body from: $(git log -1 --format='%h %s' "$body_commit")"
+  else
+    body_commit=$(sed -n 1p <<<"$commits")
+    echo "squash body from: $(git log -1 --format='%h %s' "$body_commit") (override with --body-from=<sha>)"
+  fi
+  message=$(git log -1 --format=%b "$body_commit")
   payload=$(jq -c --arg t "$title" --arg m "$message" \
     '. + {MergeTitleField: $t, MergeMessageField: $m}' <<<"$payload")
 fi
