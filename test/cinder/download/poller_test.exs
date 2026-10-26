@@ -469,7 +469,7 @@ defmodule Cinder.Download.PollerTest do
 
       log = capture_log(fn -> assert :ok = Poller.poll() end)
 
-      assert_received {:walking, walk}
+      assert_receive {:walking, walk}
       release_walk_on_exit(walk)
       assert %Movie{status: :downloaded, import_attempts: 9} = Repo.get!(Movie, movie.id)
       assert log =~ "did not answer"

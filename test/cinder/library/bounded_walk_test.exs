@@ -10,7 +10,10 @@ defmodule Cinder.Library.BoundedWalkTest do
   # A stuck walk logs a warning; a raising one, its task's crash.
   @moduletag :capture_log
 
-  @deadline 200
+  # A walk meant to stick runs under @stuck_deadline. Every other walk gets @deadline, far above
+  # what a loaded CI runner takes to start, run and crash a task: a 200 ms one missed it.
+  @stuck_deadline 300
+  @deadline 10_000
 
   setup do
     tasks = start_supervised!(Task.Supervisor)
@@ -23,24 +26,24 @@ defmodule Cinder.Library.BoundedWalkTest do
   end
 
   test "a walk that never returns ends with {:error, :timeout} at the deadline", %{guard: guard} do
-    {elapsed, result} = :timer.tc(fn -> run(guard, "/downloads", stuck_walk()) end, :millisecond)
+    {elapsed, result} = :timer.tc(fn -> stuck(guard, "/downloads") end, :millisecond)
 
     assert result == {:error, :timeout}
-    assert elapsed >= @deadline
-    assert elapsed < @deadline + 1_000
-    assert_received {:walking, _pid}
+    assert elapsed >= @stuck_deadline
+    assert elapsed < @stuck_deadline + 2_000
+    assert_receive {:walking, _pid}
   end
 
   test "a root with a stuck walk refuses a new walk at once, and other roots still walk", %{
     guard: guard
   } do
-    assert {:error, :timeout} = run(guard, "/downloads", stuck_walk())
-    assert_received {:walking, _pid}
+    assert {:error, :timeout} = stuck(guard, "/downloads")
+    assert_receive {:walking, _pid}
 
     {elapsed, result} = :timer.tc(fn -> run(guard, "/downloads", spy_walk()) end, :millisecond)
 
     assert result == {:error, :timeout}
-    assert elapsed < @deadline
+    assert elapsed < 1_000
     refute_received :spy_walked
 
     assert {:ok, []} = run(guard, "/usenet", spy_walk())
@@ -49,7 +52,7 @@ defmodule Cinder.Library.BoundedWalkTest do
 
   test "walks still running inside their deadline do not refuse one more", %{guard: guard} do
     held = stuck_walk()
-    first = Task.async(fn -> run(guard, "/downloads", held, 10_000) end)
+    first = Task.async(fn -> run(guard, "/downloads", held) end)
     assert_receive {:walking, first_walk}
 
     assert {:ok, []} = run(guard, "/downloads", spy_walk())
@@ -62,15 +65,15 @@ defmodule Cinder.Library.BoundedWalkTest do
   test "while the stuck-walk cap is reached, a walk under any root is refused at once, " <>
          "and walks work again once a stuck one returns",
        %{guard: guard} do
-    assert {:error, :timeout} = run(guard, "/downloads", stuck_walk())
-    assert_received {:walking, downloads_walk}
-    assert {:error, :timeout} = run(guard, "/usenet", stuck_walk())
-    assert_received {:walking, _usenet_walk}
+    assert {:error, :timeout} = stuck(guard, "/downloads")
+    assert_receive {:walking, downloads_walk}
+    assert {:error, :timeout} = stuck(guard, "/usenet")
+    assert_receive {:walking, _usenet_walk}
 
     {elapsed, result} = :timer.tc(fn -> run(guard, "/books", spy_walk()) end, :millisecond)
 
     assert result == {:error, :timeout}
-    assert elapsed < @deadline
+    assert elapsed < 1_000
     refute_received :spy_walked
 
     release_walk(downloads_walk, guard)
@@ -87,10 +90,10 @@ defmodule Cinder.Library.BoundedWalkTest do
     guard: guard,
     tasks: tasks
   } do
-    assert {:error, :timeout} = run(guard, "/downloads", stuck_walk())
-    assert_received {:walking, downloads_walk}
-    assert {:error, :timeout} = run(guard, "/usenet", stuck_walk())
-    assert_received {:walking, _usenet_walk}
+    assert {:error, :timeout} = stuck(guard, "/downloads")
+    assert_receive {:walking, downloads_walk}
+    assert {:error, :timeout} = stuck(guard, "/usenet")
+    assert_receive {:walking, _usenet_walk}
 
     stop_supervised!(BoundedWalk)
     guard = start_guard(tasks)
@@ -107,8 +110,8 @@ defmodule Cinder.Library.BoundedWalkTest do
   test "a walk that returns after its deadline leaves no reply in the caller's mailbox", %{
     guard: guard
   } do
-    assert {:error, :timeout} = run(guard, "/downloads", stuck_walk())
-    assert_received {:walking, walk}
+    assert {:error, :timeout} = stuck(guard, "/downloads")
+    assert_receive {:walking, walk}
 
     release_walk(walk, guard)
 
@@ -124,8 +127,11 @@ defmodule Cinder.Library.BoundedWalkTest do
   defp start_guard(tasks),
     do: start_supervised!({BoundedWalk, name: nil, task_supervisor: tasks})
 
-  defp run(guard, root, fun, timeout_ms \\ @deadline),
-    do: BoundedWalk.run(root, fun, server: guard, timeout_ms: timeout_ms)
+  defp run(guard, root, fun),
+    do: BoundedWalk.run(root, fun, server: guard, timeout_ms: @deadline)
+
+  defp stuck(guard, root),
+    do: BoundedWalk.run(root, stuck_walk(), server: guard, timeout_ms: @stuck_deadline)
 
   defp stuck_walk do
     test = self()

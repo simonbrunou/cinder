@@ -362,11 +362,13 @@ defmodule Cinder.Download.TvPollerTest do
     assert log =~ "did not answer"
   end
 
-  # The preflight's walk answers and the staging walk right after it sticks.
-  @tag timeout: 10_000
+  # The preflight's walk answers, under a deadline a loaded CI runner cannot miss, and the
+  # staging walk right after it sticks under a short one: `BoundedWalk.run/3` reads the deadline
+  # as each walk starts.
+  @tag timeout: 20_000
   test "an anime import holds (no attempt bump, no park) when the walk sticks after preflight" do
     put_env(:import_roots, ["/wedged"])
-    put_env(:walk_timeout_ms, 200)
+    put_env(:walk_timeout_ms, 10_000)
     {_series, season} = series_tree()
     episode = episode(season, 1)
     folder = "/wedged/Show.S01"
@@ -390,16 +392,19 @@ defmodule Cinder.Download.TvPollerTest do
     stub(Cinder.Library.FilesystemMock, :find_files, fn ^folder ->
       :counters.add(walks, 1, 1)
 
-      if :counters.get(walks, 1) == 1,
-        do: {:ok, [{source, stat.size}]},
-        else: hang_walk(test)
+      if :counters.get(walks, 1) == 1 do
+        Application.put_env(:cinder, :walk_timeout_ms, 300)
+        {:ok, [{source, stat.size}]}
+      else
+        hang_walk(test)
+      end
     end)
 
     start_supervised!({TvPoller, interval: 60_000})
 
     log = capture_log(fn -> assert :ok = TvPoller.poll() end)
 
-    assert_received {:walking, walk}
+    assert_receive {:walking, walk}
     release_walk_on_exit(walk)
     assert %Grab{download_attempts: 9, mapping_status: :resolved} = Repo.get!(Grab, grab.id)
     assert Repo.reload!(episode).grab_id == grab.id

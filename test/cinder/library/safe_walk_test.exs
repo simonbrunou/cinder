@@ -109,7 +109,7 @@ defmodule Cinder.Library.SafeWalkTest do
   test "a walk that never returns ends at the deadline, refuses the next walk under its root " <>
          "at once, and walks resume once it returns",
        %{downloads: downloads} do
-    put_env(filesystem: WedgedFilesystem, walk_timeout_ms: 200)
+    put_env(filesystem: WedgedFilesystem, walk_timeout_ms: 300)
     wedged = Path.join(downloads, "wedged")
     release = Path.join(downloads, "Release")
     File.mkdir_p!(wedged)
@@ -118,12 +118,15 @@ defmodule Cinder.Library.SafeWalkTest do
 
     {elapsed, result} = :timer.tc(fn -> Library.safe_walk(wedged) end, :millisecond)
     assert result == {:error, :timeout}
-    assert elapsed < 1_200
-    assert_received {:walking, walk}
+    assert elapsed < 2_300
+    assert_receive {:walking, walk}
 
+    # Walks meant to finish get a deadline a loaded CI runner cannot miss, so a refusal that came
+    # in well under it came at once.
+    put_env(:walk_timeout_ms, 10_000)
     {elapsed, result} = :timer.tc(fn -> Library.safe_walk(release) end, :millisecond)
     assert result == {:error, :timeout}
-    assert elapsed < 200
+    assert elapsed < 1_000
 
     release_walk(walk)
     assert Library.safe_walk(release) == {:ok, [{Path.join(release, "feature.mkv"), 5}]}
