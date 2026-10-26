@@ -14,6 +14,15 @@
 - Tests never hit the network or a real service. `config/test.exs` points each external-service
   behaviour at its Mox mock, so a test that needs service behaviour sets an expectation on the
   mock. The behaviour list is in [architecture.md](architecture.md).
+- Inject a one-time filesystem failure with `Cinder.Test.BarrierFilesystem.fail_once/1` or
+  `fail_in_order/1`. Each fails the test when the failure never fired. A failure armed by hand
+  with `Application.put_env` gets no such check: keep that for a failure that must stay armed.
+- A failure fires on the first matching operation whose source contains `source_contains`. A
+  bound reports the path it was opened or created at as its source. Only a bound created outside
+  the library roots reports its `/proc/<pid>/fd/<n>` path.
+- The identity probes that verify a subtitle exchange close bounds on the same paths. Arm a close
+  failure meant for after the exchange from a barrier, as `fail_close_after_exchange/4` in
+  `sidecar_transaction_test.exs` does.
 - A new UI string fails `translations_complete_test` until you run
   `MIX_ENV=test mix gettext.extract --merge` and write its French msgstr in
   `priv/gettext/fr/LC_MESSAGES/default.po`. When an existing msgid is close enough, the merge

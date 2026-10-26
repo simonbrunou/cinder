@@ -110,6 +110,43 @@ defmodule Cinder.Test.BarrierFilesystem do
     end)
   end
 
+  @doc """
+  Fails the first `operation` whose source contains `source_contains` with `reason`, once. The
+  test fails when it exits with the failure still armed: an injection that never fires lets the
+  test pass on the happy path. Call it from the test process, with no other `fail_once/1`
+  failure armed. A `callback` key is ignored here.
+
+  `phase: :post_effect` runs the real operation, then returns the error. Only `exchange`,
+  `rename_exclusive`, `rm`, `write_exclusive`, `write_bound` and `discard_bound` take it.
+  """
+  def fail_once(failure), do: arm(:filesystem_failure, Map.put(failure, :once, true))
+
+  @doc """
+  Fails each of `failures` in order, each an `operation`, `source_contains` and `reason` map with
+  an optional 0-arity `callback` run as it fires (`phase` is ignored): one is armed only once the
+  one before it fired. The test fails when it exits before every failure fired.
+  """
+  def fail_in_order(failures), do: arm(:filesystem_failures, failures)
+
+  defp arm(key, failure) do
+    if armed = Application.get_env(:cinder, key),
+      do: raise(ArgumentError, "a filesystem failure is still armed: #{inspect(armed)}")
+
+    ExUnit.Callbacks.on_exit(fn -> assert_fired(key) end)
+    Application.put_env(:cinder, :filesystem, __MODULE__)
+    Application.put_env(:cinder, key, failure)
+  end
+
+  # Clears what is still armed before failing, so it cannot fire in the next test.
+  defp assert_fired(key) do
+    if armed = Application.get_env(:cinder, key) do
+      Application.delete_env(:cinder, key)
+
+      raise ExUnit.AssertionError,
+        message: "an injected filesystem failure never fired, still armed: #{inspect(armed)}"
+    end
+  end
+
   # Deliberately NOT passed through `reported_identity/2`. Unlike `lstat/1` and the fd-stat in
   # `cp_exclusive/3` — both of which a path-hash union mount answers from the union — this
   # identity comes from the rooted helper's descriptor on the BACKING branch, which that mount

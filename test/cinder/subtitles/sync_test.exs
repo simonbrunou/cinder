@@ -1,6 +1,8 @@
 defmodule Cinder.Subtitles.SyncTest do
   use Cinder.DataCase, async: false
 
+  import Cinder.Test.BarrierFilesystem, only: [fail_once: 1]
+  import ExUnit.CaptureLog, only: [with_log: 1]
   import Mox
 
   alias Cinder.Library.Filesystem.Disk
@@ -758,13 +760,10 @@ defmodule Cinder.Subtitles.SyncTest do
     backup = SidecarTransaction.backup_path(path)
     metadata = Manifest.sync(Manifest.read(video), "en")
 
-    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
-
-    Application.put_env(:cinder, :filesystem_failure, %{
+    fail_once(%{
       operation: :moviehash_data,
       source_contains: Path.basename(video),
-      reason: :eio,
-      once: true
+      reason: :eio
     })
 
     assert [%{status: :review, reason: "moviehash_unavailable"}] = Sync.analyze_video(video)
@@ -825,13 +824,11 @@ defmodule Cinder.Subtitles.SyncTest do
   test "engine input close failure after completed analysis preserves the result", %{video: video} do
     path = managed_srt!(video)
     original = File.read!(path)
-    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
 
-    Application.put_env(:cinder, :filesystem_failure, %{
+    fail_once(%{
       operation: :close_bound,
       source_contains: Path.basename(path),
-      reason: :eio,
-      once: true
+      reason: :eio
     })
 
     stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
@@ -841,7 +838,9 @@ defmodule Cinder.Subtitles.SyncTest do
       {:ok, %{score: 30.0, offset_ms: 0, rate: 1.0}}
     end)
 
-    assert [%{status: :aligned}] = Sync.analyze_video(video)
+    {results, log} = with_log(fn -> Sync.analyze_video(video) end)
+    assert [%{status: :aligned}] = results
+    assert log =~ "descriptor close failed after completed subtitle analysis"
 
     assert File.read!(path) == original
     assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
@@ -1007,16 +1006,15 @@ defmodule Cinder.Subtitles.SyncTest do
       {:ok, %{score: 30.0, offset_ms: 1_000, rate: 1.0}}
     end)
 
-    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
-
-    Application.put_env(:cinder, :filesystem_failure, %{
+    fail_once(%{
       operation: :close_bound,
       source_contains: Path.basename(video),
-      reason: :eio,
-      once: true
+      reason: :eio
     })
 
-    assert [%{status: :corrected}] = Sync.analyze_video(video)
+    {results, log} = with_log(fn -> Sync.analyze_video(video) end)
+    assert [%{status: :corrected}] = results
+    assert log =~ "descriptor close failed after completed subtitle analysis"
     assert File.read!(path) =~ "00:00:02,000"
     assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
   end

@@ -4,6 +4,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   # `Cinder.Test.BarrierFilesystem` barrier, or a pending record written by hand.
   use Cinder.DataCase, async: false
 
+  import Cinder.Test.BarrierFilesystem, only: [fail_once: 1, fail_in_order: 1]
   import ExUnit.CaptureLog
 
   alias Cinder.Library.Filesystem.Disk
@@ -324,7 +325,6 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       ])
 
       assert {:error, {:descriptor_close_failed, :eio}} = manual(video, 2_000)
-      assert Application.get_env(:cinder, :filesystem_failures) == nil
       assert File.read!(path) == previous
       assert Manifest.sync(Manifest.read(video), "en") == previous_record
     end
@@ -1825,45 +1825,31 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     )
   end
 
-  defp fail_once(failure) do
-    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
-    Application.put_env(:cinder, :filesystem_failure, Map.put(failure, :once, true))
-  end
-
-  defp fail_in_order(failures) do
-    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
-    Application.put_env(:cinder, :filesystem_failures, failures)
-  end
-
   # Runs `fun` until the exchange onto `path` committed and the displaced inode was disposed of
   # (`:discard` empties it for `write/3` and `write/4`, `:unlink` removes its workspace name for
   # `swap/3`), then fails the next close of each descriptor in order: `:staged`, `:target`, or the
   # workspace `:directory` (only after `:staged`, whose path it contains). Armed any earlier, a
   # failure would hit the identity probes that verify the exchange instead. Returns `fun`'s result
-  # and the log, after checking every injected failure fired.
+  # and the log; `fail_in_order/1` fails the test if a failure never fired.
   defp fail_close_after_exchange(path, descriptors, fun, disposal \\ :discard) do
     use_barrier(disposal_barrier(disposal, path))
 
-    {result, log} =
-      with_log(fn ->
-        task = Task.async(fun)
-        assert_receive {:filesystem_barrier, pid, ref, _disposal, _displaced}, 15_000
+    with_log(fn ->
+      task = Task.async(fun)
+      assert_receive {:filesystem_barrier, pid, ref, _disposal, _displaced}, 15_000
 
-        fail_in_order(
-          for descriptor <- descriptors,
-              do: %{
-                operation: :close_bound,
-                source_contains: close_source(descriptor, path),
-                reason: :eio
-              }
-        )
+      fail_in_order(
+        for descriptor <- descriptors,
+            do: %{
+              operation: :close_bound,
+              source_contains: close_source(descriptor, path),
+              reason: :eio
+            }
+      )
 
-        send(pid, {ref, :continue})
-        Task.await(task, 15_000)
-      end)
-
-    assert Application.get_env(:cinder, :filesystem_failures) == nil
-    {result, log}
+      send(pid, {ref, :continue})
+      Task.await(task, 15_000)
+    end)
   end
 
   defp disposal_barrier(:discard, path), do: %{operation: :discard_bound, contains: path}
