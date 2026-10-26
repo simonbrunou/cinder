@@ -269,6 +269,48 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
             }} = HTTP.get_series(1396)
   end
 
+  test "get_series/1 carries the season and episode of the last and next episodes to air" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{
+        "id" => 1396,
+        "name" => "Breaking Bad",
+        "seasons" => [%{"season_number" => 1, "episode_count" => 10}],
+        "last_episode_to_air" => %{
+          "id" => 62_085,
+          "name" => "Pilot",
+          "season_number" => 1,
+          "episode_number" => 8,
+          "air_date" => "2008-03-09"
+        },
+        "next_episode_to_air" => %{"season_number" => 1, "episode_number" => 9}
+      })
+    end)
+
+    assert {:ok, series} = HTTP.get_series(1396)
+    assert series.last_episode_to_air == %{season_number: 1, episode_number: 8}
+    assert series.next_episode_to_air == %{season_number: 1, episode_number: 9}
+  end
+
+  test "get_series/1 leaves the last and next episodes nil when TMDB omits or garbles them" do
+    for {last, next} <- [
+          {nil, nil},
+          {%{"season_number" => 1}, %{"episode_number" => 9}},
+          {%{"season_number" => "1", "episode_number" => 8}, "soon"}
+        ] do
+      Req.Test.stub(Cinder.TMDBStub, fn conn ->
+        Req.Test.json(conn, %{
+          "id" => 7,
+          "name" => "Ended",
+          "seasons" => [],
+          "last_episode_to_air" => last,
+          "next_episode_to_air" => next
+        })
+      end)
+
+      assert {:ok, %{last_episode_to_air: nil, next_episode_to_air: nil}} = HTTP.get_series(7)
+    end
+  end
+
   test "get_series/1 parses translated titles from data.name" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/tv/1396"

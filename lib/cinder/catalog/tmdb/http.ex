@@ -689,11 +689,19 @@ defmodule Cinder.Catalog.TMDB.HTTP do
         for(
           s <- body["seasons"] || [],
           do: %{season_number: s["season_number"], episode_count: s["episode_count"]}
-        )
+        ),
+      last_episode_to_air: episode_coordinates(body["last_episode_to_air"]),
+      next_episode_to_air: episode_coordinates(body["next_episode_to_air"])
     }
 
     maybe_put_localizations(base, body)
   end
+
+  defp episode_coordinates(%{"season_number" => season, "episode_number" => episode})
+       when is_integer(season) and is_integer(episode),
+       do: %{season_number: season, episode_number: episode}
+
+  defp episode_coordinates(_episode), do: nil
 
   # Translations are only present on detail endpoints (get_movie / get_series) when
   # append_to_response=translations is requested. Search results never carry them, so this

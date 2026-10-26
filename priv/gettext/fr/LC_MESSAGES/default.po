@@ -7746,3 +7746,13 @@ msgstr ""
 "Ces séries sont ignorées par la recherche tant que leurs préférences anime "
 "ne peuvent pas être satisfaites. Faire la modification indiquée pour "
 "chacune lève aussitôt l'attente."
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "Up to date, airing"
+msgstr "À jour, en cours de diffusion"
+
+#: lib/cinder_web/live/series_discovery_live.ex
+#, elixir-autogen, elixir-format
+msgid "Every aired episode available"
+msgstr "Tous les épisodes diffusés sont disponibles"

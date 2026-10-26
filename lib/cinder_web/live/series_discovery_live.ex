@@ -7,7 +7,9 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   Denied) mirror the movie request-button pattern in `DiscoverLive`. A season already in the
   library — fully imported by Cinder, or held by the media server even for a show Cinder never
   added — reads Available instead of offering Request; a partly present one shows its episode
-  count. No monitor toggles — those stay on the admin `/series/:id` page.
+  count. A season still airing whose aired episodes are all on the server reads "Up to date,
+  airing" and keeps Request, so Cinder can monitor the episodes to come. No monitor toggles —
+  those stay on the admin `/series/:id` page.
   """
   use CinderWeb, :live_view
 
@@ -389,24 +391,43 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   # The seasons a bulk "Request all" should touch: exactly those still showing a per-season
   # Request button. Season 0 is already excluded from @seasons upstream.
-  defp requestable_season_numbers(%{
+  defp requestable_season_numbers(assigns) do
+    for {n, status, _hint} <- season_rows(assigns), requestable?(status), do: n
+  end
+
+  # The season statuses that keep a Request button. An airing season up to date on the server
+  # keeps it so Cinder can monitor the episodes still to come.
+  defp requestable?(status), do: status in [nil, :denied, :up_to_date_airing]
+
+  # `{season_number, status, hint}` per listed season: its badge status and the line under its
+  # label.
+  defp season_rows(%{
          seasons: seasons,
          season_availability: availability,
          requests_by_season: requests_by_season
        }) do
-    for %{season_number: n} <- seasons,
-        season_status(availability, requests_by_season, n) in [nil, :denied],
-        do: n
+    for %{season_number: n} <- seasons do
+      status = season_status(availability[n], requests_by_season[n])
+      {n, status, season_hint(availability[n], status)}
+    end
   end
 
   # Availability outranks a stale request status (mirrors the movie title_state precedence): a
-  # season already in the library must not read "Denied" with a re-Request button.
-  defp season_status(availability, requests_by_season, season_number) do
-    case availability[season_number] do
-      :available -> :available
-      _ -> requests_by_season[season_number]
-    end
-  end
+  # season already in the library must not read "Denied" with a re-Request button. Any request
+  # outranks "Up to date, airing", since it says what Cinder does about the episodes to come, a
+  # denial included; `season_hint/2` keeps the server's state in view.
+  defp season_status(:available, _request), do: :available
+  defp season_status(:up_to_date_airing, nil), do: :up_to_date_airing
+  defp season_status(_availability, request), do: request
+
+  # How much of a season is on hand when only part is, or, when a request's badge stands in for
+  # "Up to date, airing", that every aired episode is.
+  defp season_hint({:partial, _have, _total} = partial, _status), do: partial_hint(partial)
+
+  defp season_hint(:up_to_date_airing, status) when status != :up_to_date_airing,
+    do: gettext("Every aired episode available")
+
+  defp season_hint(_availability, _status), do: nil
 
   defp assign_requests_by_season(socket, user, tmdb_id) do
     # Bug A: list_for_user returns desc id (newest first); Map.put_new keeps the first
@@ -422,11 +443,14 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   # One verdict per season, from Cinder's own episodes and the media server's inventory alike, so
   # a season already on Plex/Jellyfin reads as available even for a show Cinder never added.
-  # `:available` once Cinder has fully landed the season or the server holds at least as many
-  # episodes as TMDB lists; `{:partial, have, total}` while either side holds some of it (the
-  # Request button stays); absent otherwise.
+  # `:available` once Cinder has fully landed the season or the server holds it all
+  # (`MediaServerSeasons.coverage/3`); `:up_to_date_airing` while it airs and the server holds
+  # every aired episode; `{:partial, have, total}` while either side holds some of it, counted
+  # against the aired total while it airs (`partial_total/4` has the exception). The Request
+  # button stays on the last two. Absent otherwise. `info` is TMDB's answer at mount, so an open
+  # page counts the episodes aired by then; a reload reads TMDB again.
   defp assign_availability(socket) do
-    %{tmdb_id: tmdb_id, seasons: seasons} = socket.assigns
+    %{tmdb_id: tmdb_id, seasons: seasons, info: info} = socket.assigns
     landed = MapSet.new(Catalog.available_season_keys(tmdb_id), fn {_tid, n} -> n end)
     progress = Catalog.season_progress_keys(tmdb_id)
     server = MediaServerSeasons.for_series(tmdb_id)
@@ -438,8 +462,9 @@ defmodule CinderWeb.SeriesDiscoveryLive do
             season_availability(
               MapSet.member?(landed, n),
               progress[{tmdb_id, n}],
-              on_server[n],
-              season[:episode_count]
+              on_server[n] || 0,
+              info,
+              season
             ),
           state != nil,
           into: %{},
@@ -451,24 +476,36 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     )
   end
 
-  defp season_availability(true, _progress, _on_server, _tmdb_total), do: :available
+  defp season_availability(true, _progress, _on_server, _info, _season), do: :available
 
-  defp season_availability(false, progress, on_server, tmdb_total) do
-    on_server = on_server || 0
+  defp season_availability(false, progress, on_server, info, %{season_number: n} = season) do
     %{available: imported, total: cinder_total} = progress || %{available: 0, total: nil}
     have = max(imported, on_server)
 
-    cond do
-      server_complete?(on_server, tmdb_total) -> :available
-      have > 0 -> {:partial, have, tmdb_total || cinder_total}
-      true -> nil
+    case MediaServerSeasons.coverage(info, n, on_server) do
+      :complete ->
+        :available
+
+      :up_to_date ->
+        :up_to_date_airing
+
+      {:incomplete, total} when have > 0 ->
+        {:partial, have, partial_total(total, have, season, cinder_total)}
+
+      {:incomplete, _total} ->
+        nil
     end
   end
 
-  defp server_complete?(on_server, tmdb_total) when is_integer(tmdb_total) and tmdb_total > 0,
-    do: on_server >= tmdb_total
+  # The total the server count fell short of, which is the aired total while the season airs.
+  # Cinder's own files can already reach it, since Cinder may count an episode aired before TMDB
+  # does: the hint then counts TMDB's listed total, never "8 of 8" beside a Request button.
+  defp partial_total(total, have, _season, _cinder_total)
+       when is_integer(total) and have < total,
+       do: total
 
-  defp server_complete?(_on_server, _tmdb_total), do: false
+  defp partial_total(_total, _have, season, cinder_total),
+    do: season[:episode_count] || cinder_total
 
   defp partial_hint({:partial, have, total}) when is_integer(total) and total > 0,
     do:
@@ -586,23 +623,20 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
       <ul class="divide-y divide-base-200">
         <li
-          :for={season <- @seasons}
+          :for={{n, status, hint} <- season_rows(assigns)}
           class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3"
         >
           <div class="flex flex-col">
-            <span class="font-medium">{season_label(season.season_number)}</span>
+            <span class="font-medium">{season_label(n)}</span>
             <span
-              :if={match?({:partial, _, _}, @season_availability[season.season_number])}
-              id={"seriesdiscovery-season-progress-#{season.season_number}"}
+              :if={hint}
+              id={"seriesdiscovery-season-progress-#{n}"}
               class="text-sm text-base-content/70"
             >
-              {partial_hint(@season_availability[season.season_number])}
+              {hint}
             </span>
           </div>
-          <.season_action
-            season_number={season.season_number}
-            status={season_status(@season_availability, @requests_by_season, season.season_number)}
-          />
+          <.season_action season_number={n} status={status} />
         </li>
       </ul>
 
@@ -621,28 +655,31 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     """
   end
 
+  # One flex item, so the row's justify-between keeps a badge beside its Request button.
   attr :season_number, :integer, required: true
   attr :status, :atom, default: nil
 
   defp season_action(assigns) do
     ~H"""
-    <.status_badge
-      :if={@status != nil}
-      id={"seriesdiscovery-season-status-#{@season_number}"}
-      kind={:request}
-      status={@status}
-    />
-    <.button
-      :if={@status in [nil, :denied]}
-      type="button"
-      phx-click="request_season"
-      phx-value-season={@season_number}
-      phx-disable-with={gettext("Requesting…")}
-      variant="primary"
-      size="sm"
-    >
-      {gettext("Request")}
-    </.button>
+    <div class="flex flex-wrap items-center justify-end gap-2">
+      <.status_badge
+        :if={@status != nil}
+        id={"seriesdiscovery-season-status-#{@season_number}"}
+        kind={:request}
+        status={@status}
+      />
+      <.button
+        :if={requestable?(@status)}
+        type="button"
+        phx-click="request_season"
+        phx-value-season={@season_number}
+        phx-disable-with={gettext("Requesting…")}
+        variant="primary"
+        size="sm"
+      >
+        {gettext("Request")}
+      </.button>
+    </div>
     """
   end
 end

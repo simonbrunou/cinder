@@ -55,6 +55,7 @@ defmodule CinderWeb.StatusBadgeTest do
     cases = [
       {%{kind: :request, status: :pending}, "Pending"},
       {%{kind: :request, status: :available}, "Available"},
+      {%{kind: :request, status: :up_to_date_airing}, "Up to date, airing"},
       {%{kind: :episode, status: :wanted}, "Wanted"},
       {%{kind: :episode, status: :upcoming}, "Upcoming"},
       {%{kind: :grab, status: :downloading}, "Downloading"},

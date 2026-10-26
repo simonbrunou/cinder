@@ -788,6 +788,11 @@ defmodule CinderWeb.CoreComponents do
   defp badge_spec(:request, :available),
     do: {gettext("Available"), "badge-success", "hero-check-circle"}
 
+  # A season still airing whose aired episodes are all on the media server: it keeps its Request
+  # button, so the icon differs from Available's.
+  defp badge_spec(:request, :up_to_date_airing),
+    do: {gettext("Up to date, airing"), "badge-success", "hero-signal"}
+
   # A book target the acquisition pipeline parked with an exact `hold_reason` — a dead download, a
   # refused payload, a rejected submission. Never auto-grabbed again, so it needs an operator, and
   # it must not keep reading "Approved".

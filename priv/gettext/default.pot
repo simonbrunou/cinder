@@ -7392,3 +7392,13 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "These series are skipped by the search sweep until their Anime preferences can be satisfied. Making the change each one names lifts its hold at once."
 msgstr ""
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "Up to date, airing"
+msgstr ""
+
+#: lib/cinder_web/live/series_discovery_live.ex
+#, elixir-autogen, elixir-format
+msgid "Every aired episode available"
+msgstr ""

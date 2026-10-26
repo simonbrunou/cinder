@@ -301,22 +301,21 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     refute has_element?(lv, "button", "Request all seasons")
   end
 
+  defp stub_got(fields) do
+    series =
+      Map.merge(%{tmdb_id: 1399, tvdb_id: 1, title: "GoT", year: 2011, poster_path: nil}, fields)
+
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 -> {:ok, series} end)
+  end
+
   defp stub_season_episode_counts do
-    stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
-      {:ok,
-       %{
-         tmdb_id: 1399,
-         tvdb_id: 1,
-         title: "GoT",
-         year: 2011,
-         poster_path: nil,
-         seasons: [
-           %{season_number: 1, episode_count: 10},
-           %{season_number: 2, episode_count: 10},
-           %{season_number: 3, episode_count: nil}
-         ]
-       }}
-    end)
+    stub_got(%{
+      seasons: [
+        %{season_number: 1, episode_count: 10},
+        %{season_number: 2, episode_count: 10},
+        %{season_number: 3, episode_count: nil}
+      ]
+    })
   end
 
   defp server_season(number, count),
@@ -395,6 +394,155 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
     refute has_element?(lv, "#seriesdiscovery-season-status-1")
     refute has_element?(lv, "#seriesdiscovery-season-progress-1")
+    assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+  end
+
+  # Seasons 1 and 2 each list 10 episodes on TMDB, announced ones included. `{season, episode}` of
+  # the last and next episodes to air.
+  defp stub_airing({last_season, last_episode}, {next_season, next_episode}) do
+    stub_got(%{
+      seasons: [
+        %{season_number: 1, episode_count: 10},
+        %{season_number: 2, episode_count: 10}
+      ],
+      last_episode_to_air: %{season_number: last_season, episode_number: last_episode},
+      next_episode_to_air: %{season_number: next_season, episode_number: next_episode}
+    })
+  end
+
+  defp request_season_1(user) do
+    {:ok, request} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "season",
+        target_id: 1399,
+        season_number: 1,
+        title: "GoT",
+        year: 2011,
+        poster_path: nil
+      })
+
+    request
+  end
+
+  test "an airing season up to date on the server reads Up to date, airing and keeps Request", %{
+    conn: conn
+  } do
+    stub_airing({1, 8}, {1, 9})
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 8), server_season(2, 8)])
+
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+
+    assert has_element?(lv, "#seriesdiscovery-season-status-1", "Up to date, airing")
+    refute has_element?(lv, "#seriesdiscovery-season-progress-1")
+    assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+
+    # Only the airing season counts its aired episodes.
+    assert has_element?(lv, "#seriesdiscovery-season-progress-2", "8 of 10 episodes available")
+    refute has_element?(lv, "#seriesdiscovery-season-status-2")
+
+    lv |> element("button", "Request all seasons") |> render_click()
+    render_async(lv)
+
+    assert Cinder.Requests.list_for_user(user) |> Enum.map(& &1.season_number) |> Enum.sort() ==
+             [1, 2]
+  end
+
+  test "a partly available airing season counts against its aired total", %{conn: conn} do
+    stub_airing({1, 8}, {1, 9})
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 7)])
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+
+    assert has_element?(lv, "#seriesdiscovery-season-progress-1", "7 of 8 episodes available")
+    refute has_element?(lv, "#seriesdiscovery-season-status-1")
+    assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+  end
+
+  test "a finished season and one whose premiere has not aired count TMDB's episode total", %{
+    conn: conn
+  } do
+    stub_airing({1, 10}, {2, 1})
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 8), server_season(2, 2)])
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+
+    assert has_element?(lv, "#seriesdiscovery-season-progress-1", "8 of 10 episodes available")
+    assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+    assert has_element?(lv, "#seriesdiscovery-season-progress-2", "2 of 10 episodes available")
+    refute has_element?(lv, "#seriesdiscovery-season-status-2")
+  end
+
+  test "a pending request on an up-to-date airing season reads Pending above the server's state",
+       %{
+         conn: conn
+       } do
+    stub_airing({1, 8}, {1, 9})
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 8)])
+    user = Cinder.AccountsFixtures.user_fixture()
+    request_season_1(user)
+
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+
+    assert has_element?(lv, "#seriesdiscovery-season-status-1", "Pending")
+    assert has_element?(lv, "#seriesdiscovery-season-progress-1", "Every aired episode available")
+    refute has_element?(lv, ~s(button[phx-value-season="1"]))
+  end
+
+  # The admin refused what Request would ask again, so the denial stays in view.
+  test "a denied request on an up-to-date airing season reads Denied above the server's state", %{
+    conn: conn
+  } do
+    stub_airing({1, 8}, {1, 9})
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 8)])
+    user = Cinder.AccountsFixtures.user_fixture()
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    {:ok, _} = user |> request_season_1() |> Cinder.Requests.deny_request(admin, "Not now")
+
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+
+    assert has_element?(lv, "#seriesdiscovery-season-status-1", "Denied")
+    assert has_element?(lv, "#seriesdiscovery-season-progress-1", "Every aired episode available")
+    assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+  end
+
+  test "an open page reads Up to date, airing once the server catches up", %{conn: conn} do
+    stub_airing({1, 8}, {1, 9})
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 7)])
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+    assert has_element?(lv, "#seriesdiscovery-season-progress-1", "7 of 8 episodes available")
+
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 8)])
+
+    assert has_element?(lv, "#seriesdiscovery-season-status-1", "Up to date, airing")
+    refute has_element?(lv, "#seriesdiscovery-season-progress-1")
+  end
+
+  # Cinder counts E09 aired (its own air dates) before TMDB does and holds its file, while the
+  # aired E05 is missing: 8 files against TMDB's 8 aired.
+  test "an airing season Cinder holds as many of as TMDB counts aired shows TMDB's total", %{
+    conn: conn
+  } do
+    stub_airing({1, 8}, {1, 9})
+    series = series_fixture(%{tmdb_id: 1399})
+    season = season_fixture(series, %{season_number: 1})
+
+    for n <- 1..9 do
+      file = if n != 5, do: "/tv/got-s01e#{n}.mkv"
+      episode_fixture(season, %{episode_number: n, air_date: ~D[2011-04-17], file_path: file})
+    end
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+
+    assert has_element?(lv, "#seriesdiscovery-season-progress-1", "8 of 10 episodes available")
     assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
   end
 

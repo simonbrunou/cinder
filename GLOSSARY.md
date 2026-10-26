@@ -236,6 +236,15 @@ A request target the household can watch on the media server now: a movie at `:a
 in Booklore or Audiobookshelf instead.
 _Avoid_: available (on its own, it also names the book and movie badge states)
 
+**Aired total**:
+The episode count a season's media-server inventory is judged against. While the season airs
+(TMDB's last and next episodes to air both fall in it, the last numbered 1 or more) it is the last
+aired episode's number, and
+a server holding that many reads **up to date, airing**, which keeps Request so Cinder can monitor
+the episodes to come. Any other season counts TMDB's episode count, announced episodes included,
+and a server holding that many reads Available.
+_Avoid_: episode count (on its own, TMDB's includes announced episodes)
+
 **Outstanding target**:
 A request target an approved request still waits on: it has not landed and no operator has stopped
 it. It holds one of its requester's quota slots under `auto_approve_all`. A target with no row stays

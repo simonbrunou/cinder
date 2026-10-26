@@ -4,8 +4,10 @@ defmodule Cinder.Catalog.MediaServerSeasons do
   show's TMDB id so a season already on Plex/Jellyfin reads as available on the request page even
   for a show Cinder never added. `Cinder.Library.MediaServer.Reconciler` writes it from each
   complete read; the request page and the TV cards read it, and see only the rows of the
-  configured server type (`Cinder.Settings.media_server_type/0`). Lives beside `Cinder.Catalog`
-  rather than behind delegates there only because `catalog.ex` sits at the code-health line cap.
+  configured server type (`Cinder.Settings.media_server_type/0`). `coverage/3` judges a season's
+  count against `aired_total/2`, which counts only aired episodes while the season airs.
+  Lives beside `Cinder.Catalog` rather than behind delegates there only because `catalog.ex` sits
+  at the code-health line cap.
   """
 
   import Ecto.Query
@@ -56,6 +58,49 @@ defmodule Cinder.Catalog.MediaServerSeasons do
     |> written_by(Settings.media_server_type())
     |> Repo.all()
     |> MapSet.new()
+  end
+
+  @doc """
+  The episode total a season's server count is judged against, from the normalized TMDB series
+  (`Cinder.Catalog.TMDB` `get_series/1`).
+
+  `{:airing, aired}` while the season airs: `next_episode_to_air` falls in it and so does
+  `last_episode_to_air`, whose episode number is `aired`. `{:listed, count}` for every other
+  season, a finished one or one whose premiere has not aired: TMDB's `episode_count`, which counts
+  announced episodes too, or `nil` when TMDB omits it or does not list the season.
+  """
+  def aired_total(series, season_number) do
+    case {series[:last_episode_to_air], series[:next_episode_to_air]} do
+      {%{season_number: ^season_number, episode_number: aired}, %{season_number: ^season_number}}
+      when is_integer(aired) and aired > 0 ->
+        {:airing, aired}
+
+      _ ->
+        {:listed, episode_count(series, season_number)}
+    end
+  end
+
+  @doc """
+  How much of a season the media server's `count` covers, by `aired_total/2`:
+
+    * `:up_to_date` for an airing season holding every aired episode; it has episodes to come.
+    * `:complete` for any other season holding at least TMDB's `episode_count`.
+    * `{:incomplete, total}` otherwise, with the total it was judged against: the aired total
+      while the season airs, else `episode_count`, which can be 0, or `nil` when TMDB has none.
+  """
+  def coverage(series, season_number, count) do
+    case aired_total(series, season_number) do
+      {:airing, aired} when count >= aired -> :up_to_date
+      {:listed, total} when is_integer(total) and total > 0 and count >= total -> :complete
+      {_rule, total} -> {:incomplete, total}
+    end
+  end
+
+  defp episode_count(series, season_number) do
+    Enum.find_value(series[:seasons] || [], fn
+      %{season_number: ^season_number} = season -> season[:episode_count]
+      _ -> nil
+    end)
   end
 
   # The reconciler keeps the last inventory through a failed read, so after a switch from Plex to
