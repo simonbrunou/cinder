@@ -15,8 +15,10 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   release-policy snapshot names a required audio or embedded-subtitle language.
 
   The binary is `ffprobe` on `PATH` by default; override with `config :cinder, :ffprobe_bin`. The
-  companion `ffmpeg` binary (used only by `extract_subtitle/2`) defaults to `ffmpeg` on `PATH`;
-  override with `config :cinder, :ffmpeg_bin`.
+  companion `ffmpeg` binary (used by `extract_subtitle/2` and `shot_changes/1`) defaults to
+  `ffmpeg` on `PATH`; override with `config :cinder, :ffmpeg_bin`. Those two calls and
+  `subtitle_tracks/1` read the whole file, so they run at the idle I/O class when `ionice` is on
+  `PATH` and at nice 10 when `nice` is (#862).
 
   ## Bounded subprocess execution (issue #447)
 
@@ -179,9 +181,9 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   @impl true
   def subtitle_tracks(path) do
-    case run_bounded(bin(), subtitle_track_args(path), subtitle_tracks_timeout_ms(),
-           stderr_to_stdout: true
-         ) do
+    {executable, args} = low_priority!(bin(), subtitle_track_args(path))
+
+    case run_bounded(executable, args, subtitle_tracks_timeout_ms(), stderr_to_stdout: true) do
       {:ok, out, 0} ->
         with {:ok, metadata} <- Jason.decode(out) do
           {:ok, parse_subtitle_tracks(metadata)}
@@ -202,10 +204,11 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     stderr_path =
       Path.join(System.tmp_dir!(), "cinder-ffmpeg-#{System.unique_integer([:positive])}.stderr")
 
-    ffmpeg = ffmpeg_executable!()
+    {executable, args} = low_priority!(ffmpeg_bin(), ffmpeg_args(path, index))
 
-    # The wrapper's `exec "$@"` replaces `/bin/sh` with ffmpeg under the same pid, so the pid the
-    # bound kills is ffmpeg itself, not a shell that would leave ffmpeg running.
+    # The wrapper's `exec "$@"` replaces `/bin/sh` with the command under the same pid, and
+    # `ionice` and `nice` exec ffmpeg in turn, so the pid the bound kills is ffmpeg itself, not a
+    # shell that would leave ffmpeg running.
     try do
       case run_bounded(
              "/bin/sh",
@@ -213,7 +216,7 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
                "-c",
                "exec \"$@\" 2> \"$#{@stderr_env}\"",
                "--",
-               ffmpeg | ffmpeg_args(path, index)
+               executable | args
              ],
              extract_timeout_ms(),
              env: [{@stderr_env, stderr_path}]
@@ -256,11 +259,9 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   @impl true
   def shot_changes(path) do
-    {executable, prefix} = niced(ffmpeg_executable!())
+    {executable, args} = low_priority!(ffmpeg_bin(), shot_change_args(path))
 
-    case run_bounded(executable, prefix ++ shot_change_args(path), shot_changes_timeout_ms(),
-           stderr_to_stdout: true
-         ) do
+    case run_bounded(executable, args, shot_changes_timeout_ms(), stderr_to_stdout: true) do
       {:ok, out, 0} -> {:ok, parse_shot_changes(out)}
       {:ok, out, code} -> {:error, {:ffmpeg_exit, code, tail(out)}}
       {:error, _reason} = error -> error
@@ -289,12 +290,28 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     |> Enum.dedup()
   end
 
-  # A whole-video decode runs at low priority so imports, ffprobe checks and the web UI keep the
-  # CPU they need.
-  defp niced(executable) do
-    case System.find_executable("nice") do
-      nil -> {executable, []}
-      nice -> {nice, ["-n", "10", executable]}
+  # A whole-file read or decode runs at the idle I/O class and nice 10, so playback, imports,
+  # ffprobe checks and the web UI get the disk and the CPU first (#862). The I/O class counts only
+  # under a disk scheduler that honours it (BFQ, mq-deadline), and only when the reader's own
+  # process issues the reads: through a FUSE mount such as mergerfs without passthrough, the
+  # mount's daemon reads at its own priority. Both tools exec their command, so the pid the bound
+  # kills stays the reader's own. A tool missing from PATH is skipped, and `-t` runs the command
+  # even if the kernel refuses the idle class.
+  #
+  # The reader is resolved first: spawned through `ionice` or `nice`, a missing one would come
+  # back as a non-zero exit instead of the `:enoent` each caller's `rescue` returns.
+  defp low_priority!(bin, args) do
+    executable = System.find_executable(bin) || raise ErlangError, original: :enoent
+
+    {executable, args}
+    |> prefixed("nice", ["-n", "10"])
+    |> prefixed("ionice", ["-c3", "-t"])
+  end
+
+  defp prefixed({executable, args}, tool, flags) do
+    case System.find_executable(tool) do
+      nil -> {executable, args}
+      path -> {path, flags ++ [executable | args]}
     end
   end
 
@@ -530,17 +547,6 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   defp shot_changes_timeout_ms,
     do: Application.get_env(:cinder, :ffmpeg_shot_changes_timeout_ms, @shot_changes_timeout_ms)
-
-  defp ffmpeg_executable! do
-    case System.find_executable(ffmpeg_bin()) do
-      nil ->
-        System.cmd(ffmpeg_bin(), [])
-        ffmpeg_bin()
-
-      executable ->
-        executable
-    end
-  end
 
   defp read_stderr(path) do
     case File.read(path) do

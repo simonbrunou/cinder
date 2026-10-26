@@ -465,11 +465,16 @@ exactly this cut, so a scene the release trimmed has no leftover lines. A full t
 exact language, not forced, and at least 200 lines; one not marked for the hearing impaired
 (SDH/CC) is preferred. It replaces a downloaded sidecar Cinder manages, except one retimed by hand
 in `/subtitle-sync`. Once written, it is kept for that file and not extracted again. Listing a
-file's tracks reads the whole file. Cinder does it at import, and in the 12h sweep only when the
-import probe saw a stream in that language; the answer is kept per file. A sweep spends at most 6
-hours on new own-track work. Own tracks get the timing rules below without an alignment (method
-`native` in `/subtitle-sync`). Those a sweep finds for files already in the library are queued
-behind other subtitle work and use cached shot changes only.
+file's tracks reads the whole file, and so does extracting one. Both run at nice 10 when `nice`
+is on `PATH`, and at the idle disk I/O class when `ionice` is; the image has both. The idle class
+lets playback and imports on the same disk read first only under a disk scheduler that honours
+I/O priority (BFQ, or mq-deadline from Linux 5.14; `none` and kyber ignore it), and only when
+Cinder's reader issues the disk reads itself: behind a FUSE mount such as mergerfs without
+passthrough, the mount's own process reads at its own priority. Cinder lists tracks at import,
+and in the 12h sweep only when the import probe saw a stream in that language; the answer is kept
+per file. A sweep spends at most 6 hours on new own-track work. Own tracks get the timing rules
+below without an alignment (method `native` in `/subtitle-sync`). Those a sweep finds for files
+already in the library are queued behind other subtitle work and use cached shot changes only.
 
 Cinder also aligns its managed sidecars without exposing half-written files. Alignment is
 **piecewise**: it corrects a constant delay, a framerate mismatch (including NTSC-timed subtitles
@@ -497,10 +502,10 @@ When the video's shot changes are known, lines are also timed to the edit:
   a second after it when that would make it too fast to read).
 
 Finding the cuts decodes the whole video, about 7 minutes of CPU per 45-minute episode on two
-cores, at low priority. It runs for a fresh download and for an explicit sync from
-`/subtitle-sync`, and the result is kept per file. A routine library scan uses kept cuts only.
-Syncing a title from `/subtitle-sync` therefore adds cuts to sidecars that were aligned without
-them.
+cores, at the same low CPU and disk priority as a track listing. It runs for a fresh download
+and for an explicit sync from `/subtitle-sync`, and the result is kept per file. A routine
+library scan uses kept cuts only. Syncing a title from `/subtitle-sync` therefore adds cuts to
+sidecars that were aligned without them.
 
 A sidecar that is already correct and already follows those rules is left byte-identical. When
 a sidecar is corrected the original is kept next to it as a hidden `.<name>.cinder-sync-original`

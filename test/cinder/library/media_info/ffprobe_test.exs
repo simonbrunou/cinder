@@ -2,6 +2,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   use ExUnit.Case, async: false
 
   alias Cinder.Acquisition.Language
+  alias Cinder.ConfigCase
   alias Cinder.Library.{MediaInfo.Ffprobe, PolicyVerifier}
 
   setup do
@@ -631,6 +632,199 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     assert {:error, %ErlangError{original: :enoent}} =
              Ffprobe.extract_subtitle("/media/movie.mkv", 2)
   end
+
+  test "shot_changes/1 surfaces a missing ffmpeg binary as an error instead of crashing" do
+    ConfigCase.put_env(:ffmpeg_bin, "definitely-not-a-real-binary")
+
+    assert {:error, %ErlangError{original: :enoent}} = Ffprobe.shot_changes("/media/movie.mkv")
+  end
+
+  # #862: the three whole-file reads run as `ionice -c3 -t nice -n 10 <reader> ...`, so a subtitle
+  # sweep leaves the disk and the CPU to playback and imports first. PATH holds only shims named
+  # `ionice` and `nice` that record their pid and arguments, then exec the real tool. The stub
+  # reader records the same, and the priority it runs at, read through the real tools by absolute
+  # path. That priority is relative to the suite's own, and `nix develop` on the dev host already
+  # runs at nice 16 and the idle class, so the recorded command lines carry the exact checks.
+  @whole_file_reads [
+    %{
+      fun: :subtitle_tracks,
+      args: ["/media/movie.mkv"],
+      bin: :ffprobe_bin,
+      timeout: :ffprobe_subtitle_tracks_timeout_ms,
+      success: ~S|printf '{"streams":[]}'|
+    },
+    %{
+      fun: :extract_subtitle,
+      args: ["/media/movie.mkv", 2],
+      bin: :ffmpeg_bin,
+      timeout: :ffmpeg_extract_timeout_ms,
+      success: ":"
+    },
+    %{
+      fun: :shot_changes,
+      args: ["/media/movie.mkv"],
+      bin: :ffmpeg_bin,
+      timeout: :ffmpeg_shot_changes_timeout_ms,
+      success: ":"
+    }
+  ]
+
+  describe "whole-file reads" do
+    @describetag :tmp_dir
+    setup :real_priority_tools
+
+    for read <- @whole_file_reads do
+      @read read
+
+      test "#{read.fun} runs the reader as ionice -c3 -t nice -n 10 <reader>", %{
+        tmp_dir: tmp,
+        tools: tools
+      } do
+        put_shims(tmp, tools, [:ionice, :nice])
+
+        assert {:ok, _out} = run_read(@read, tmp, tools)
+
+        [pid | argv] = recorded(tmp, "reader")
+        assert "/media/movie.mkv" in argv
+        assert recorded(tmp, "nice") == [pid, "-n", "10", reader(tmp) | argv]
+
+        assert recorded(tmp, "ionice") ==
+                 [pid, "-c3", "-t", shim(tmp, :nice), "-n", "10", reader(tmp) | argv]
+
+        assert priority(tmp) == {"idle", tools.niced}
+      end
+
+      test "#{read.fun} runs the bare reader when PATH has neither ionice nor nice", %{
+        tmp_dir: tmp,
+        tools: tools
+      } do
+        put_shims(tmp, tools, [])
+
+        assert {:ok, _out} = run_read(@read, tmp, tools)
+
+        assert "/media/movie.mkv" in recorded(tmp, "reader")
+        assert priority(tmp) == {tools.class, tools.niceness}
+      end
+
+      test "#{read.fun} still runs under nice -n 10 when PATH has no ionice", %{
+        tmp_dir: tmp,
+        tools: tools
+      } do
+        put_shims(tmp, tools, [:nice])
+
+        assert {:ok, _out} = run_read(@read, tmp, tools)
+
+        [pid | argv] = recorded(tmp, "reader")
+        assert recorded(tmp, "nice") == [pid, "-n", "10", reader(tmp) | argv]
+        assert priority(tmp) == {tools.class, tools.niced}
+      end
+
+      test "#{read.fun} still runs under ionice -c3 -t when PATH has no nice", %{
+        tmp_dir: tmp,
+        tools: tools
+      } do
+        put_shims(tmp, tools, [:ionice])
+
+        assert {:ok, _out} = run_read(@read, tmp, tools)
+
+        [pid | argv] = recorded(tmp, "reader")
+        assert recorded(tmp, "ionice") == [pid, "-c3", "-t", reader(tmp) | argv]
+        assert priority(tmp) == {"idle", tools.niceness}
+      end
+
+      # `ionice` and `nice` exec their command, so the pid the bound kills is the reader's own.
+      test "#{read.fun} timeout kills the reader that runs under ionice and nice", %{
+        tmp_dir: tmp,
+        tools: tools
+      } do
+        put_shims(tmp, tools, [:ionice, :nice])
+        ConfigCase.put_env(@read.timeout, @pid_bound_ms)
+
+        assert {:error, :timeout} = run_read(@read, tmp, tools, "exec #{tools.sleep} 30")
+
+        [pid | _argv] = recorded(tmp, "reader")
+        assert hd(recorded(tmp, "ionice")) == pid
+        System.put_env("PATH", tools.path)
+        assert process_gone?(String.to_integer(pid))
+      end
+    end
+  end
+
+  # The real tools, resolved before a test replaces PATH, and the priority this test process runs
+  # at, which a reader started with no prefix inherits.
+  defp real_priority_tools(_context) do
+    tools =
+      for name <- [:ionice, :nice, :sleep], into: %{} do
+        {name, System.find_executable(to_string(name)) || flunk("these tests need #{name}")}
+      end
+
+    {niceness, 0} = System.cmd(tools.nice, [])
+    niceness = niceness |> String.trim() |> String.to_integer()
+    {class, 0} = System.cmd(tools.ionice, [])
+
+    path = System.get_env("PATH")
+    on_exit(fn -> System.put_env("PATH", path) end)
+
+    %{
+      tools:
+        Map.merge(tools, %{
+          path: path,
+          class: io_class(class),
+          niceness: niceness,
+          niced: min(niceness + 10, 19)
+        })
+    }
+  end
+
+  # PATH holds only shims for the named tools. Each records its pid and arguments in
+  # `<tool>.log`, then execs the real tool in place.
+  defp put_shims(tmp, tools, names) do
+    File.mkdir_p!(Path.join(tmp, "bin"))
+
+    for name <- names do
+      File.write!(shim(tmp, name), """
+      #!/bin/sh
+      printf '%s\\n' "$$" "$@" > "#{Path.join(tmp, "#{name}.log")}"
+      exec #{Map.fetch!(tools, name)} "$@"
+      """)
+
+      File.chmod!(shim(tmp, name), 0o755)
+    end
+
+    System.put_env("PATH", Path.join(tmp, "bin"))
+  end
+
+  defp shim(tmp, name), do: Path.join([tmp, "bin", to_string(name)])
+  defp reader(tmp), do: Path.join(tmp, "reader")
+
+  # Calls `read` through a stub reader that records its pid and arguments in `reader.log` and its
+  # niceness and I/O class in `priority`, then runs `script` (by default, output the read parses
+  # as a success). Returns the read's result.
+  defp run_read(read, tmp, tools, script \\ nil) do
+    File.write!(reader(tmp), """
+    #!/bin/sh
+    echo "$(#{tools.nice}) $(#{tools.ionice})" > "#{Path.join(tmp, "priority")}"
+    printf '%s\\n' "$$" "$@" > "#{Path.join(tmp, "reader.log")}"
+    #{script || read.success}
+    """)
+
+    File.chmod!(reader(tmp), 0o755)
+    ConfigCase.put_env(read.bin, reader(tmp))
+    apply(Ffprobe, read.fun, read.args)
+  end
+
+  defp recorded(tmp, name),
+    do: tmp |> Path.join("#{name}.log") |> File.read!() |> String.split("\n", trim: true)
+
+  defp priority(tmp) do
+    [niceness, class] =
+      tmp |> Path.join("priority") |> File.read!() |> String.trim() |> String.split(" ", parts: 2)
+
+    {io_class(class), String.to_integer(niceness)}
+  end
+
+  # `ionice` prints `idle`, or `none: prio 4` and the like, whose prio varies by kernel.
+  defp io_class(output), do: output |> String.trim() |> String.split(":") |> hd()
 
   defp use_ffmpeg_bin(tmp, script) do
     path = Path.join(tmp, "ffmpeg")
