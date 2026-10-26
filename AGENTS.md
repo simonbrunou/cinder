@@ -43,19 +43,43 @@ Agents may merge their own PR without asking once all three hold:
 
 - a code review ran on the diff (the `code-review` skill or the `pr-review-toolkit:code-reviewer`
   agent) and its real findings are fixed;
-- CI is green on the pushed SHA;
-- the branch has no conflict with `origin/main`: after `git fetch origin`,
-  `git merge-tree --write-tree origin/main HEAD` exits 0.
+- CI is green on the PR's pushed SHA;
+- the pushed SHA has no conflict with `origin/main`. Right before merging, run `git fetch origin`,
+  then check that `git merge-tree --write-tree origin/main <pushed SHA>` exits 0.
 
-`scripts/merge-pr <n>` checks the last two on the PR's head, the `CHANGELOG.md` rule below and the
-`code_health_test` line cap on the merged tree, then merges pinned to that SHA. It cannot check
-the review.
+The pushed SHA is the PR's head on Forgejo, which `git ls-remote origin refs/pull/<n>/head`
+prints. It is the API's `head.sha` that `scripts/merge-pr` reads. A local checkout can hold
+commits that were never pushed, or sit on `main` when you merge another thread's PR. Merge with
+`scripts/merge-pr <n>`. It checks the last two conditions on the pushed SHA, the `CHANGELOG.md`
+rule below and the `code_health_test` line cap on the merged tree, then merges pinned to that
+SHA. It cannot check the review.
 
-A branch behind `main` with no conflict merges as it is, with no sync and no CI re-run. Accepted
-risk: two PRs that pass apart can break `main` together, and the next PR's CI shows it. On a
-conflict, merge `origin/main` into the branch, resolve it, run `mix test`, push, and wait for CI
-on the new head. Do the same for a PR whose diff touches `CHANGELOG.md` even without a conflict:
-a stale entry under `[Unreleased]` merges cleanly and turns `main` red.
+A branch behind `main` with no conflict merges as it is, with no sync and no CI re-run. The
+accepted risk is that two PRs that pass apart can break `main` together. The merging agent checks
+for that break after the merge. A newer push to `main` cancels the `ci.yml` run in progress, so
+in a burst of merges only the newest `main` commit's run is sure to finish. Run
+`git fetch origin`, then wait on the `CI / <job> (push)` statuses of `origin/main`'s head with
+`python3 -I ~/.agents/skills/forgejo-issues/scripts/forgejo.py ci cinder <sha>`
+([ci.md](docs/agents/ci.md) "Reading a run"). That head is your merge commit or a newer one.
+When the wait exits 1 on a job whose description reads `Has been cancelled`, fetch again. If
+`origin/main` moved, a newer push cancelled that run, so wait on the new head. If it did not,
+treat the run as red. When the newest run is red, search the open issues, since every agent that
+merged in the burst sees the same run. Unless one already covers that run, file one labelled
+`needs-triage` that names the failing job.
+
+The merge-tree check exits 1 in two cases, told apart by their output. A conflict prints
+`CONFLICT` lines on stdout. A SHA the clone lacks prints `<sha> - not something we can merge` on
+stderr instead. In that case, run `git fetch origin refs/pull/<n>/head` or correct the SHA, and
+check again. `scripts/merge-pr` fetches that ref and stops with `is not fetchable from origin`
+when the SHA is still missing, so its merge-tree step exits 1 only on a conflict, which it
+reports as `conflicts with origin/main`. On a conflict:
+
+1. Merge `origin/main` into the branch and resolve the conflict.
+2. Run `mix test`.
+3. Push, wait for CI on the new pushed SHA, and check all three conditions again on it.
+
+Do the same for a PR whose diff touches `CHANGELOG.md` even without a conflict, since a stale
+entry under `[Unreleased]` merges cleanly and turns `main` red.
 
 The production deploy that the merge triggers is accepted. Ask first only when the PR drops or
 rewrites stored data (a destructive migration, a backfill that overwrites rows).
