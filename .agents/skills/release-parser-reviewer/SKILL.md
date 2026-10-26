@@ -123,6 +123,21 @@ resolved id list. `kept` must stay in indexer order:
 `Scorer` breaks ties by input order. `HouseholdPolicy.band/1` returns only non-nil keys so it
 can't clobber Scorer defaults.
 
+**Name checks — a new or changed title guard:**
+- Judge it against both readings, with a real name of each. The anime prefix match fails on
+  scene punctuation (`Frieren.Beyond.Journeys.End.S01E05` for "Frieren: Beyond Journey's End").
+  The scene fold (`tokens/1`, `names_title?/2`) fails on absolute numbering
+  (`Sousou no Frieren - 05`); `names_title?/2` also stops at a leading `[Group]`.
+- A name check also needs year evidence, or it keeps a same-titled other series
+  (`Charmed.2018` for the 1998 series).
+- `release_years/2` strips only the title it is given, so over aliases a conflict must hold after
+  stripping each title (an alias "Bubblegum Crisis 2040" spells a year-shaped token).
+- On an unknown series year, `reject_year_conflicts/2` fails open and the import's
+  `names_title?/2` fails closed; keep each side's direction.
+- A change to the judge's stages or verdicts keeps the Consequences of
+  `docs/adr/0002-the-sweep-and-the-panel-share-one-release-judge.md` true (which guards say
+  "title doesn't match"). Report a break as "Contradicts ADR-0002, but worth reopening because…".
+
 **Library import — the file->episode contract and graceful park:**
 - `stage_episodes` maps files by parsing `SxxEyy` per file against the grab's episodes; a
   double-episode file yields one staged file that both episodes' rows point at; dedupe is
