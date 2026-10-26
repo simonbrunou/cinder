@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Seed a fresh worktree with the main checkout's deps/ and _build/test, then fetch what it lacks.
+#
+#   scripts/seed-worktree
+#
+# Run it from inside the worktree (docs/agents/workflow.md "Worktrees"). It seeds the worktree it
+# runs in, not the one holding the script, so a branch cut before the script existed can run the
+# main checkout's copy. The main checkout is the one that owns the shared .git directory.
+#
+# It copies rather than symlinks, since a shared _build compiles one branch into another's tree.
+# It leaves out what Cinder's own compile writes (_build/test/lib/cinder and
+# _build/test/phoenix-colocated/cinder), so the worktree compiles its own code and a mix test
+# running in the main checkout cannot delete a file from under the copy. Each copy is built under
+# _build/ and renamed into place once complete, so after a failed run (hex.pm down, a dependency
+# file vanishing mid-copy) the next run keeps what is complete and redoes the rest. The rename
+# fails rather than nesting when the destination appeared meanwhile.
+set -euo pipefail
+
+usage() {
+  sed -n '4p' "$0" | sed 's/^#   //' >&2
+  exit 2
+}
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+[[ $# -eq 0 ]] || usage
+
+root=$(git rev-parse --show-toplevel)
+common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
+main_checkout=$(dirname "$common_dir")
+real_root=$(cd "$root" && pwd -P)
+real_main_checkout=$(cd "$main_checkout" && pwd -P)
+
+if [[ $real_root == "$real_main_checkout" ]]; then
+  fail "$root is the main checkout; run this in a worktree"
+fi
+for dir in deps _build/test/lib; do
+  [[ -d $main_checkout/$dir ]] || fail "the main checkout has no $dir; run mix test in $main_checkout first"
+done
+
+cd "$root"
+mkdir -p _build
+rm -rf _build/deps.partial _build/test.partial
+
+if [[ -e deps ]]; then
+  echo "seed-worktree: deps already exists; kept"
+else
+  cp -a "$main_checkout/deps" _build/deps.partial
+  mv -T _build/deps.partial deps
+fi
+
+if [[ -e _build/test ]]; then
+  echo "seed-worktree: _build/test already exists; kept"
+else
+  mkdir _build/test.partial
+  tar -C "$main_checkout/_build/test" --anchored \
+    --exclude=./lib/cinder --exclude=./phoenix-colocated/cinder -cf - . |
+    tar -C _build/test.partial -xf -
+  mv -T _build/test.partial _build/test
+fi
+
+mix deps.get
+echo "OK: seeded $root"

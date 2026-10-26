@@ -35,15 +35,10 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
 
 ## Worktrees
 
-- A fresh T3 worktree has no `deps/` or `_build/`. Seed it with copies (a symlinked `_build`
-  compiles one branch into another's tree), then fetch what the main checkout lacks. Run each
-  step as its own command: Claude Code asks for approval when `rm` sits in a chained command,
-  and an unattended thread stalls on that prompt.
-  1. `cp -a ~/Projects/cinder/deps ./deps`
-  2. `mkdir -p _build`
-  3. `cp -a ~/Projects/cinder/_build/test _build/test`
-  4. `rm -rf _build/test/lib/cinder`
-  5. `mix deps.get`
+- A fresh T3 worktree has no `deps/` or `_build/`. Run `scripts/seed-worktree` in it before any
+  `mix` task: it copies the main checkout's `deps/` and `_build/test`, then runs `mix deps.get`.
+  After a failure, run it again: it keeps what is complete. On a branch cut before the script
+  existed, run `~/Projects/cinder/scripts/seed-worktree`. Its header says why it copies.
 - If a test then behaves like old code, run `MIX_ENV=test mix compile --force`.
 - The seed has only `_build/test`, and in the dev env a task recompiles every dependency first.
   `mix format`, `mix credo --strict` and `mix gettext.extract --merge` run in the test env by
