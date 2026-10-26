@@ -23,6 +23,7 @@ defmodule Cinder.Download.PollerTest do
   alias Cinder.Library.ImportStage
   alias Cinder.Repo
 
+  import Cinder.BoundedWalkHelpers
   import Cinder.CatalogFixtures
   import Cinder.ConfigCase
   import Cinder.LibraryStubs
@@ -452,6 +453,26 @@ defmodule Cinder.Download.PollerTest do
       assert :ok = Poller.poll()
       # :eacces (e.g. a read-only mount) is transient — stays :downloaded for retry.
       assert %Movie{status: :downloaded, import_attempts: 1} = Repo.get!(Movie, movie.id)
+    end
+
+    # A walk past its deadline ends the tick instead of the poller waiting on the mount, and holds
+    # the import without a strike: a wedged mount says nothing about the release (#779).
+    @tag timeout: 10_000
+    test "a walk a wedged mount never answers ends the tick and holds without a strike" do
+      put_env(import_roots: ["/downloads"], walk_timeout_ms: 200)
+      movie = last_strike(downloaded_movie(12, "/downloads/Inception.2010.1080p"))
+      start_supervised!({Poller, interval: 60_000})
+      stub_import_ok()
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+      test = self()
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _dir -> hang_walk(test) end)
+
+      log = capture_log(fn -> assert :ok = Poller.poll() end)
+
+      assert_received {:walking, walk}
+      release_walk_on_exit(walk)
+      assert %Movie{status: :downloaded, import_attempts: 9} = Repo.get!(Movie, movie.id)
+      assert log =~ "did not answer"
     end
   end
 

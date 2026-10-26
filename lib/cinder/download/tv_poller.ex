@@ -162,6 +162,9 @@ defmodule Cinder.Download.TvPoller do
       {:error, :download_roots_not_configured} ->
         hold_for_configuration(grab, :download_import_roots)
 
+      {:error, :timeout} ->
+        hold_for_mount(grab)
+
       {:error, reason} ->
         retry_or_park(grab, reason)
     end
@@ -180,6 +183,9 @@ defmodule Cinder.Download.TvPoller do
 
       {:error, {:release_policy_unavailable, reason}} ->
         retry_or_hold_verification(preflight.grab, reason)
+
+      {:error, :timeout} ->
+        hold_for_mount(preflight.grab)
 
       {:error, reason} ->
         retry_or_park(preflight.grab, reason)
@@ -223,6 +229,9 @@ defmodule Cinder.Download.TvPoller do
 
       {:error, :download_roots_not_configured} ->
         hold_for_configuration(grab, :download_import_roots)
+
+      {:error, :timeout} ->
+        hold_for_mount(grab)
 
       # Every remaining error is transient (a filesystem hiccup): the one deterministic
       # "unusable content" case surfaces as {:ok, [], _} above and is parked immediately, so
@@ -484,6 +493,17 @@ defmodule Cinder.Download.TvPoller do
   defp hold_for_configuration(grab, :download_import_roots) do
     Logger.warning(
       "tv grab #{grab.id}: download import roots not configured; holding the download until they are configured"
+    )
+  end
+
+  # The download folder's walk is past its deadline (`Cinder.Library.BoundedWalk`, #779). A wedged
+  # mount says nothing about the release, so hold without a strike: parking would delete the
+  # grab and re-search the episodes for content that imports once the mount answers.
+  defp hold_for_mount(grab) do
+    warn_throttled(
+      {:walk_timeout, grab.id},
+      "tv grab #{grab.id}: its download folder did not answer in time; a mount may be wedged. " <>
+        "Holding the download until it answers"
     )
   end
 

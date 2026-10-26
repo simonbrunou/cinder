@@ -413,6 +413,17 @@ defmodule Cinder.Download.BookPoller do
     :ok
   end
 
+  # The download folder's walk is past its deadline (`Cinder.Library.BoundedWalk`, #779). A wedged
+  # mount says nothing about the release, so wait without an attempt: the hold the budget ends in
+  # deletes the grab, and the download would have to be grabbed again once the mount answers.
+  defp handle_import_result({:error, :timeout}, grab, target) do
+    warn_throttled(
+      {:walk_timeout, grab.id},
+      "book target #{target.id} import held: its download folder did not answer in time; " <>
+        "a mount may be wedged. Will retry when it answers"
+    )
+  end
+
   defp handle_import_result({:error, reason}, grab, target),
     do: retry_or_hold(grab, target, reason)
 

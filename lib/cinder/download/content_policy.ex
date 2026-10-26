@@ -164,8 +164,8 @@ defmodule Cinder.Download.ContentPolicy do
   `content_path` as the whole downloads folder, whose walk finds other downloads' media.
 
   The walk is `Cinder.Library.safe_walk/1`, bounded and confined to the import roots. A walk that
-  cannot run (no import roots, an unsafe or unreadable path, past the traversal limit) has no
-  opinion. A single-file download is vetted by its own name.
+  cannot run (no import roots, an unsafe or unreadable path, past the traversal limit, past its
+  deadline on a wedged mount) has no opinion. A single-file download is vetted by its own name.
   """
   def vet_completed(client, download_id, content_path) do
     if enabled?() do

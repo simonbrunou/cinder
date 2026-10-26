@@ -21,6 +21,7 @@ defmodule Cinder.Library do
   alias Cinder.Library.{
     AnimeInventory,
     AnimePreflight,
+    BoundedWalk,
     EpisodeSources,
     ImportedQuality,
     ImportStage,
@@ -1043,13 +1044,24 @@ defmodule Cinder.Library do
     end
   end
 
+  # The walk every importer and the completion content check run in their tick, so it runs
+  # under `BoundedWalk`'s deadline: a wedged mount answers `{:error, :timeout}` (#779).
   @doc false
   def safe_walk(path) do
     case Settings.import_roots() do
-      [] -> {:error, :download_roots_not_configured}
-      roots -> path_policy().walk(path, roots: roots, filesystem: fs())
+      [] ->
+        {:error, :download_roots_not_configured}
+
+      roots ->
+        BoundedWalk.run(walk_root(path, roots), fn ->
+          path_policy().walk(path, roots: roots, filesystem: fs())
+        end)
     end
   end
+
+  # The import root a stuck walk counts against: the deepest one holding `path`, else `path`
+  # itself, which the walk refuses before any read.
+  defp walk_root(path, roots), do: PathPolicy.deepest_root(path, roots) || Path.expand(path)
 
   defp safe_destination(path, root),
     do: path_policy().destination(path, root, filesystem: fs())

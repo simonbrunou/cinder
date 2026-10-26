@@ -53,8 +53,15 @@ defmodule Cinder.Library.Filesystem.Disk do
   @impl true
   def dir?(path), do: File.dir?(path)
 
+  # `ls/1` and `lstat/1` are what `PathPolicy.walk/2` reads, so they skip the VM's one file
+  # server (`:file_server_2`), which every plain `File` call queues behind: a read hung on a
+  # wedged mount then pins only its own process, never every `File` caller in the app (#779).
+  # Same results as `File.ls/1` and `File.lstat/1`, which run these same calls inside that server.
   @impl true
-  def ls(path), do: File.ls(path)
+  def ls(path) do
+    with {:ok, names} <- :prim_file.list_dir(IO.chardata_to_string(path)),
+         do: {:ok, Enum.map(names, &IO.chardata_to_string/1)}
+  end
 
   # ANY unlistable directory in the tree — the root or a nested one — propagates as
   # {:error, reason}: an EACCES permission mismatch or an unmounted downloads volume must
@@ -452,7 +459,11 @@ defmodule Cinder.Library.Filesystem.Disk do
   defp identity(stat), do: {stat.major_device, stat.minor_device, stat.inode}
 
   @impl true
-  def lstat(path), do: File.lstat(path)
+  def lstat(path) do
+    with {:ok, info} <-
+           :file.read_link_info(IO.chardata_to_string(path), [:raw, time: :universal]),
+         do: {:ok, File.Stat.from_record(info)}
+  end
 
   @impl true
   def rename(source, dest) do
@@ -516,19 +527,10 @@ defmodule Cinder.Library.Filesystem.Disk do
     do: locate(path, Settings.library_roots() ++ Settings.import_roots())
 
   defp locate(path, roots) do
-    expanded = Path.expand(path)
-
-    roots
-    |> Enum.sort_by(&byte_size/1, :desc)
-    |> Enum.find_value(:outside_roots, fn root ->
-      root = Path.expand(root)
-
-      if expanded == root or String.starts_with?(expanded, root <> "/") do
-        {:ok, root, Path.relative_to(expanded, root)}
-      else
-        false
-      end
-    end)
+    case PathPolicy.deepest_root(path, roots) do
+      nil -> :outside_roots
+      root -> {:ok, root, Path.relative_to(Path.expand(path), root)}
+    end
   end
 
   # Supervised `Port` + `SIGKILL`-by-`os_pid` (#590) via `Cinder.BoundedCommand.run/4` — see

@@ -121,6 +121,17 @@ defmodule Cinder.Library.PathPolicy do
     path == root or String.starts_with?(path, root <> "/")
   end
 
+  @doc false
+  @spec deepest_root(String.t(), [String.t()]) :: String.t() | nil
+  def deepest_root(path, roots) do
+    path = Path.expand(path)
+
+    roots
+    |> Enum.map(&Path.expand/1)
+    |> Enum.filter(&contained?(path, &1))
+    |> Enum.max_by(&byte_size/1, &>=/2, fn -> nil end)
+  end
+
   defp under_any_root?(path, roots) do
     Enum.any?(roots, fn root -> valid_root?(root) and contained?(path, root) end)
   end

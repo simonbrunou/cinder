@@ -245,6 +245,16 @@ Every call a poller makes has a bound:
   `Cinder.Disk.CommandProbe`, a GenServer that owns its port across messages, and
   `Subtitles.Sync.Ffsubsync`, which runs under coreutils `timeout --kill-after`.
 - Archive extraction carries entry-count and expanded-size ceilings.
+- The directory walk every importer and the completion content check run,
+  `Cinder.Library.safe_walk/1`, goes through `Cinder.Library.BoundedWalk.run/3`: a supervised
+  task with a 30 s deadline that answers `{:error, :timeout}`. The three download pollers hold an
+  import on it without spending the retry budget, as on a full disk. A walk past its deadline is
+  never killed, since its read may still hold a dirty I/O scheduler thread. The guard counts it as
+  stuck until it returns, and while it does, a new walk under its root is refused at once, as is
+  any new walk once two are stuck. The walk's reads, `Filesystem.Disk.ls/1` and `lstat/1`, are raw
+  calls that skip the VM's one file server, so a read on a wedged mount blocks only its own
+  process, not every `File` call in the app. The `Sidecars` walks and the adoption scan have no
+  deadline yet (#944).
 
 The reason: one unbounded call in a single-tick poller freezes every target sharing that tick,
 not just the file or request in flight.

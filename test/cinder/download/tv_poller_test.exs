@@ -17,7 +17,9 @@ defmodule Cinder.Download.TvPollerTest do
   alias Cinder.Library.{ImportedQuality, ImportStage}
   alias Cinder.Repo
 
+  import Cinder.BoundedWalkHelpers
   import Cinder.CatalogFixtures
+  import Cinder.ConfigCase, only: [put_env: 2]
   import Cinder.LibraryStubs
   import Cinder.PollerHelpers
 
@@ -316,6 +318,92 @@ defmodule Cinder.Download.TvPollerTest do
     assert (attempts || 0) == 0
     assert Repo.get!(Episode, e1.id).file_path == nil
     assert log =~ "nearly full"
+  end
+
+  # One strike short of parking, so a strike here would delete the grab and re-search (#779).
+  test "import holds (no attempt bump, no park) while a wedged mount keeps the walk stuck" do
+    put_env(:import_roots, ["/wedged"])
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-wedged", :torrent, [e1.id])
+    {:ok, grab} = Catalog.mark_grab_downloaded(grab, "/wedged/pack")
+    grab |> Ecto.Changeset.change(download_attempts: 9) |> Repo.update!()
+    wedge_walks_under("/wedged")
+    start_supervised!({TvPoller, interval: 60_000})
+
+    log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+    assert %Grab{download_attempts: 9} = Repo.get!(Grab, grab.id)
+    assert %Episode{grab_id: grab_id, file_path: nil} = Repo.get!(Episode, e1.id)
+    assert grab_id == grab.id
+    assert log =~ "did not answer"
+  end
+
+  test "an anime preflight holds (no attempt bump, no park) while the walk is stuck" do
+    put_env(:import_roots, ["/wedged"])
+    {_series, season} = series_tree()
+    episode = episode(season, 1)
+
+    grab =
+      downloaded_snapshot_grab(
+        [episode],
+        "/wedged/Show.S01E01.1080p.mkv",
+        anime_standard_snapshot(episode)
+      )
+
+    grab |> Ecto.Changeset.change(download_attempts: 9) |> Repo.update!()
+    wedge_walks_under("/wedged")
+    start_supervised!({TvPoller, interval: 60_000})
+
+    log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+    assert %Grab{download_attempts: 9} = Repo.get!(Grab, grab.id)
+    assert Repo.reload!(episode).grab_id == grab.id
+    assert log =~ "did not answer"
+  end
+
+  # The preflight's walk answers and the staging walk right after it sticks.
+  @tag timeout: 10_000
+  test "an anime import holds (no attempt bump, no park) when the walk sticks after preflight" do
+    put_env(:import_roots, ["/wedged"])
+    put_env(:walk_timeout_ms, 200)
+    {_series, season} = series_tree()
+    episode = episode(season, 1)
+    folder = "/wedged/Show.S01"
+    source = Path.join(folder, "Show.S01E01.1080p.mkv")
+    grab = downloaded_snapshot_grab([episode], folder, anime_standard_snapshot(episode))
+    grab |> Ecto.Changeset.change(download_attempts: 9) |> Repo.update!()
+
+    stat = %File.Stat{
+      type: :regular,
+      size: 2_000_000_000,
+      major_device: 1,
+      inode: 117,
+      mtime: {{2026, 7, 13}, {12, 0, 0}}
+    }
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn ^folder -> true end)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^source -> {:ok, stat} end)
+    walks = :counters.new(1, [])
+    test = self()
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn ^folder ->
+      :counters.add(walks, 1, 1)
+
+      if :counters.get(walks, 1) == 1,
+        do: {:ok, [{source, stat.size}]},
+        else: hang_walk(test)
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000})
+
+    log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+    assert_received {:walking, walk}
+    release_walk_on_exit(walk)
+    assert %Grab{download_attempts: 9, mapping_status: :resolved} = Repo.get!(Grab, grab.id)
+    assert Repo.reload!(episode).grab_id == grab.id
+    assert log =~ "did not answer"
   end
 
   test "an operator season offset makes Second-Season episodes grab, incl. a native-collision episode (issue #156)" do

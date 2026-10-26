@@ -189,6 +189,18 @@ defmodule Cinder.Download.Poller do
     )
   end
 
+  # Hold (no attempt bump, no park) while the download folder's walk is past its deadline: a
+  # wedged mount says nothing about the release, and ten strikes would mark the movie
+  # `:import_failed` (or revert an upgrade) over files that import once the mount answers
+  # (`Cinder.Library.BoundedWalk`, #779).
+  defp record_import({:error, :timeout}, movie) do
+    warn_throttled(
+      {:walk_timeout, movie.id},
+      "holding #{phase(movie)} for movie #{movie.id}: its download folder did not answer in " <>
+        "time; a mount may be wedged. Will retry when it answers"
+    )
+  end
+
   defp record_import({:error, reason}, movie), do: MovieLifecycle.record_failure(movie, reason)
 
   defp phase(%Movie{status: :upgrading}), do: "upgrade"

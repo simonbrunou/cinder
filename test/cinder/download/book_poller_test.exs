@@ -12,6 +12,7 @@ defmodule Cinder.Download.BookPollerTest do
 
   import ExUnit.CaptureLog
   import Mox
+  import Cinder.BoundedWalkHelpers
   import Cinder.PollerHelpers
 
   alias Cinder.Books
@@ -799,6 +800,28 @@ defmodule Cinder.Download.BookPollerTest do
       assert grab.import_attempts == 0
       assert grab.content_path == release_dir
 
+      assert Repo.all(BookFile) == []
+      assert File.ls!(books) == []
+    end
+
+    # One attempt short of the hold, so an attempt here would hold the target and delete the grab:
+    # a wedged mount says nothing about the release (#779).
+    test "import holds (no attempt bump, no park) while a wedged mount keeps the walk stuck",
+         ctx do
+      %{grab: grab, target: target, books: books, release_dir: release_dir} =
+        downloading(ctx, "The Dispossessed.epub")
+
+      complete_download(release_dir)
+      wedge_walks_under(Path.dirname(release_dir))
+      # The first tick records the completed download, which starts its import attempts at 0.
+      assert capture_log(fn -> poll!() end) =~ "did not answer"
+      assert Repo.reload!(grab).content_path == release_dir
+      grab |> Repo.reload!() |> Ecto.Changeset.change(import_attempts: 9) |> Repo.update!()
+
+      assert capture_log(fn -> poll!() end) =~ "did not answer"
+
+      assert Repo.reload!(target).status == :monitored
+      assert Repo.reload!(grab).import_attempts == 9
       assert Repo.all(BookFile) == []
       assert File.ls!(books) == []
     end
