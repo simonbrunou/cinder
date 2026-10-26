@@ -7,6 +7,8 @@ defmodule Cinder.Catalog.MediaProfiles do
 
   import Ecto.Query, warn: false
 
+  alias Cinder.Acquisition.AnimePreferences
+
   alias Cinder.Catalog.{
     Episode,
     EpisodeCoordinate,
@@ -20,10 +22,11 @@ defmodule Cinder.Catalog.MediaProfiles do
     TitleAlias
   }
 
-  alias Cinder.Repo
+  alias Cinder.{Repo, Settings}
 
   @doc """
-  Sets the operator-owned handling profile for a movie or series and broadcasts the update.
+  Sets the operator-owned handling profile for a movie or series and broadcasts the update, then
+  decides its anime hold again (`reresolve_anime_hold/1`).
   Rescues a deleted-row race to `{:error, :stale_entry}` (mirrors write_movie_language/2) —
   the approval path calls this post-commit, where a raise would escape an already-committed
   approval.
@@ -32,7 +35,7 @@ defmodule Cinder.Catalog.MediaProfiles do
     with {:ok, updated} <-
            movie |> Movie.profile_changeset(%{media_profile: profile}) |> Repo.update() do
       Events.movie_updated(updated)
-      {:ok, updated}
+      reresolve_anime_hold(updated)
     end
   rescue
     Ecto.StaleEntryError -> {:error, :stale_entry}
@@ -42,7 +45,7 @@ defmodule Cinder.Catalog.MediaProfiles do
     with {:ok, updated} <-
            series |> Series.profile_changeset(%{media_profile: profile}) |> Repo.update() do
       Events.series_updated(updated.id)
-      {:ok, updated}
+      reresolve_anime_hold(updated)
     end
   rescue
     Ecto.StaleEntryError -> {:error, :stale_entry}
@@ -98,21 +101,22 @@ defmodule Cinder.Catalog.MediaProfiles do
   Sets a movie's preferred language. If the movie is parked because no release in
   the desired language was found, re-queues it so the poller re-searches. Otherwise
   just updates the field — the download/import pipeline is not disturbed for
-  in-flight or available movies (no quality-upgrade re-grab in this slice).
+  in-flight or available movies (no quality-upgrade re-grab in this slice). Then decides
+  its anime hold again (`reresolve_anime_hold/1`).
   """
   def set_movie_language(%Movie{} = movie, language) do
-    case write_movie_language(movie, language) do
-      {:ok, updated} ->
-        if updated.status in @language_retry_statuses do
-          MovieLifecycle.retry(updated)
-        else
-          Events.movie_updated(updated)
-          {:ok, updated}
-        end
+    with {:ok, updated} <- write_movie_language(movie, language),
+         {:ok, updated} <- requeue_or_announce(updated),
+         do: reresolve_anime_hold(updated)
+  end
 
-      {:error, _changeset} = error ->
-        error
-    end
+  defp requeue_or_announce(%Movie{status: status} = movie)
+       when status in @language_retry_statuses,
+       do: MovieLifecycle.retry(movie)
+
+  defp requeue_or_announce(movie) do
+    Events.movie_updated(movie)
+    {:ok, movie}
   end
 
   # Status-neutral pick fill for request approval (apply_requester_language/3, via
@@ -123,7 +127,7 @@ defmodule Cinder.Catalog.MediaProfiles do
     case write_movie_language(movie, language) do
       {:ok, updated} ->
         Events.movie_updated(updated)
-        {:ok, updated}
+        reresolve_anime_hold(updated)
 
       {:error, _changeset} = error ->
         error
@@ -141,7 +145,8 @@ defmodule Cinder.Catalog.MediaProfiles do
   @doc """
   Sets a series' preferred language and zeroes `search_attempts` on its still-wanted
   episodes (no file, no grab) so a previously language-stranded season re-enters the
-  search sweep. Available / in-flight episodes are untouched.
+  search sweep. Available / in-flight episodes are untouched. Then decides its anime hold
+  again (`reresolve_anime_hold/1`).
   """
   def set_series_language(%Series{} = series, language) do
     result =
@@ -154,7 +159,7 @@ defmodule Cinder.Catalog.MediaProfiles do
 
     with {:ok, updated} <- result do
       Events.series_updated(series.id)
-      {:ok, updated}
+      reresolve_anime_hold(updated)
     end
   rescue
     Ecto.StaleEntryError -> {:error, :stale_entry}
@@ -186,8 +191,9 @@ defmodule Cinder.Catalog.MediaProfiles do
   @doc """
   Marks a title held at search time because the Anime release preferences can't be
   satisfied for it (`AnimePreferences.resolve/2` failed), or clears the hold (`nil`).
-  A non-status flag written directly (monitor-toggle precedent, not pipeline state);
-  every sweep re-writes it at the resolve site, so the marker can't stick stale.
+  A non-status flag written directly (monitor-toggle precedent, not pipeline state).
+  A sweep re-writes it at the resolve site; the operator's fix lifts it through
+  `reresolve_anime_hold/1` and `SeriesCatalog.lift_unmonitored_anime_hold/1`.
   A no-op when unchanged — the sweep runs every tick, don't broadcast equal values.
   """
   def set_anime_hold(title, reason) do
@@ -212,6 +218,49 @@ defmodule Cinder.Catalog.MediaProfiles do
       Events.series_updated(updated.id)
       {:ok, updated}
     end
+  end
+
+  @doc """
+  Decides a held title's hold again from its current profile, Audio pick and anime defaults, as
+  the sweep would: a title that never searches through Anime, or whose preferences now resolve,
+  loses it, and one that fails another way gets the new reason. A title with no hold keeps none:
+  setting a hold is the sweeps' job. Call after the write that changed one of those inputs.
+
+  Decides from the row as committed, not from `title`, which a view may have read before a sweep
+  set the hold. Returns `title` carrying the hold as decided; a row deleted meanwhile holds none.
+  """
+  def reresolve_anime_hold(%schema{id: id} = title) do
+    case Repo.get(schema, id) do
+      %{anime_hold_reason: held} = fresh when is_binary(held) ->
+        with {:ok, decided} <- set_anime_hold(fresh, anime_hold_reason(fresh)),
+             do: {:ok, %{title | anime_hold_reason: decided.anime_hold_reason}}
+
+      _no_hold_or_deleted ->
+        {:ok, %{title | anime_hold_reason: nil}}
+    end
+  rescue
+    Ecto.StaleEntryError -> {:ok, %{title | anime_hold_reason: nil}}
+  end
+
+  # What a sweep visit decides: only a title that searches through Anime, directly or as an Auto
+  # title's fallback, resolves the preferences.
+  defp anime_hold_reason(title) do
+    summary = MediaProfile.summary(title)
+
+    if summary.effective == :anime or MediaProfile.auto_anime_fallback?(summary) do
+      case AnimePreferences.resolve(title, Settings.anime_defaults()) do
+        {:ok, _policy} -> nil
+        {:error, reason} -> reason
+      end
+    end
+  end
+
+  @doc "Runs `reresolve_anime_hold/1` on every held movie and series, after the anime defaults change."
+  def reresolve_anime_holds do
+    from(m in Movie, where: not is_nil(m.anime_hold_reason))
+    |> Repo.all()
+    |> Enum.concat(list_anime_held_series())
+    |> Enum.each(&reresolve_anime_hold/1)
   end
 
   @doc "Series currently held at search time on unsatisfiable Anime preferences (see `set_anime_hold/2`); surfaced on `/activity`."

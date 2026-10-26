@@ -1223,23 +1223,23 @@ defmodule Cinder.Download do
     context = Catalog.movie_acquisition_context(movie)
 
     case summary.effective do
-      :anime ->
-        anime_movie_result(movie, imdb_id, context, opts)
-
-      :standard ->
-        result = standard_movie_result(movie, imdb_id, context, opts)
-
-        if result == :no_match and MediaProfile.auto_anime_fallback?(summary),
-          do: anime_movie_result(movie, imdb_id, context, opts),
-          else: result
+      :anime -> anime_movie_result(movie, imdb_id, context, opts)
+      :standard -> standard_movie_result(movie, imdb_id, context, opts, summary)
     end
   end
 
-  # A profile switched back to Standard must not keep a stale Anime hold marker. A nil imdb_id
-  # (TMDB publishes none for this title) degrades to the guarded free-text search — see issue #195.
-  defp standard_movie_result(movie, imdb_id, context, opts) do
-    Catalog.set_anime_hold(movie, nil)
-    Acquisition.best_release(imdb_id, context, opts)
+  # One decision on the Anime hold per search: the anime fallback makes it when it runs, otherwise
+  # a stale marker goes the way the operator's fix would take it (#791). A nil imdb_id (TMDB
+  # publishes none for this title) degrades to the guarded free-text search — see issue #195.
+  defp standard_movie_result(movie, imdb_id, context, opts, summary) do
+    result = Acquisition.best_release(imdb_id, context, opts)
+
+    if result == :no_match and MediaProfile.auto_anime_fallback?(summary) do
+      anime_movie_result(movie, imdb_id, context, opts)
+    else
+      Catalog.reresolve_anime_hold(movie)
+      result
+    end
   end
 
   defp anime_movie_result(movie, imdb_id, context, opts) do

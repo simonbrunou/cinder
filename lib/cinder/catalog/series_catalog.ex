@@ -677,18 +677,45 @@ defmodule Cinder.Catalog.SeriesCatalog do
     end
   end
 
-  @doc "Sets one episode's `monitored` flag and broadcasts `{:series_updated, series_id}`."
+  @doc """
+  Sets one episode's `monitored` flag and broadcasts `{:series_updated, series_id}`. Unmonitoring
+  the series' last monitored episode lifts its anime hold (`lift_unmonitored_anime_hold/1`).
+  """
   def set_episode_monitored(%Episode{} = episode, monitored?) do
     with {:ok, episode} <-
            episode |> Ecto.Changeset.change(monitored: monitored?) |> Repo.update() do
-      Events.series_updated(Episodes.series_id(episode))
+      series_id = Episodes.series_id(episode)
+      Events.series_updated(series_id)
+      unless monitored?, do: lift_unmonitored_anime_hold(series_id)
       {:ok, episode}
     end
   end
 
   @doc """
+  Lifts a series' anime hold once it monitors no episode, as the `:none` strategy does: no sweep
+  visits such a series to decide the hold again. Call after the commit of a write that unmonitors
+  episodes, since the lift announces itself. Returns `:ok`.
+  """
+  def lift_unmonitored_anime_hold(series_id) do
+    held =
+      Repo.one(from s in Series, where: s.id == ^series_id and not is_nil(s.anime_hold_reason))
+
+    monitors_any? =
+      Repo.exists?(
+        from e in Episode,
+          join: s in Season,
+          on: e.season_id == s.id,
+          where: s.series_id == ^series_id and e.monitored == true
+      )
+
+    if held && not monitors_any?, do: MediaProfiles.set_anime_hold(held, nil)
+    :ok
+  end
+
+  @doc """
   Sets a season's `monitored` flag and cascades it to every episode in one transaction, then
-  broadcasts `{:series_updated, series_id}`.
+  broadcasts `{:series_updated, series_id}`. Unmonitoring the series' last monitored episode lifts
+  its anime hold (`lift_unmonitored_anime_hold/1`).
   """
   def set_season_monitored(%Season{} = season, monitored?) do
     result =
@@ -701,6 +728,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
 
     with {:ok, season} <- result do
       Events.series_updated(season.series_id)
+      unless monitored?, do: lift_unmonitored_anime_hold(season.series_id)
       {:ok, season}
     end
   end
@@ -740,8 +768,9 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   # `:none` also lifts an anime hold: no sweep visits a series monitoring nothing to re-evaluate it,
-  # so it would otherwise need attention forever. Any other strategy leaves it to the next sweep.
-  # Forced, so a caller's struct read before the sweep set the hold still clears it.
+  # so it would otherwise need attention forever. Forced, so a caller's struct read before the
+  # sweep set the hold still clears it. Another strategy can monitor nothing too (`:future` on an
+  # ended series), so the lift check runs after its commit.
   defp reapply_monitor_strategy(series, strategy) do
     tree_monitored = strategy != :none
 
@@ -767,6 +796,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
 
     with {:ok, series} <- result do
       Events.series_updated(series.id)
+      if tree_monitored, do: lift_unmonitored_anime_hold(series.id)
       {:ok, series}
     end
   end

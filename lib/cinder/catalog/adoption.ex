@@ -1,7 +1,7 @@
 defmodule Cinder.Catalog.Adoption do
   @moduledoc false
 
-  alias Cinder.Catalog.{Episode, Episodes, Identity, Profiles, Series}
+  alias Cinder.Catalog.{Episode, Episodes, Identity, MediaProfiles, Profiles, Series}
 
   alias Cinder.Repo
 
@@ -77,9 +77,11 @@ defmodule Cinder.Catalog.Adoption do
         mode: :immediate
       )
 
+    # The adoption may have switched the series' profile, so its anime hold is decided again (#791).
     case result do
       {:ok, {series, applied, updated}} ->
         publish(updated, [series.id])
+        MediaProfiles.reresolve_anime_hold(series)
         {:ok, Enum.reverse(applied)}
 
       {:error, failure} ->

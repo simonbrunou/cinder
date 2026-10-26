@@ -79,6 +79,15 @@ defmodule Cinder.CatalogFixtures do
   end
 
   @doc """
+  Puts a movie or series on an anime hold for `reason` through its one writer,
+  `Catalog.set_anime_hold/2`, as a sweep would, and returns the held title.
+  """
+  def anime_hold_fixture(title, reason) do
+    {:ok, held} = Catalog.set_anime_hold(title, reason)
+    held
+  end
+
+  @doc """
   Inserts a `Series` with sensible defaults (unique `tmdb_id`, title "Show",
   year 2008, monitored, `monitor_strategy: :future`). Override any field via `attrs`.
   """

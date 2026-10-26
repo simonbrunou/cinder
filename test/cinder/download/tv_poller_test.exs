@@ -405,6 +405,41 @@ defmodule Cinder.Download.TvPollerTest do
     assert Agent.get(searches, & &1) > 0
   end
 
+  # #791: the Standard search used to clear the hold, then the anime fallback re-set it from the
+  # struct read before the clear, a no-op, so the marker flipped on every tick.
+  test "an Auto anime-fallback series with invalid preferences keeps a steady hold" do
+    set_anime_defaults!(embedded_subtitle_mode: :require)
+
+    series =
+      series_fixture(%{
+        tvdb_id: 99,
+        monitor_strategy: :all,
+        original_language: "ja",
+        genres: ["Animation"]
+      })
+
+    wanted = episode(season_fixture(series), 1)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season -> {:ok, []} end)
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts -> {:ok, []} end)
+
+    Catalog.subscribe_series()
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    for _tick <- 1..2 do
+      assert :ok = TvPoller.poll()
+      assert Repo.get!(Series, series.id).anime_hold_reason == "subtitle_language_required"
+    end
+
+    # The hold kept the episode wanted, so the second tick visited the series again.
+    assert %Episode{grab_id: nil, search_attempts: 0} = Repo.get!(Episode, wanted.id)
+
+    # One announcement, the set, so the beacon toasts once: a lift in between would be a second.
+    id = series.id
+    assert_received {:series_updated, ^id}
+    refute_received {:series_updated, ^id}
+  end
+
   test "restart reconciliation creates one snapshot grab with every reserved episode" do
     series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
     first = episode(season_fixture(series, %{season_number: 1}), 25)

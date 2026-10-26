@@ -199,8 +199,12 @@ _Avoid_: held, stuck, failed
 A movie or series the search sweep skips because the household's anime preferences can't be
 satisfied for it, with the reason why: dual audio for a title whose original language is unknown,
 or embedded subtitles required with no subtitle languages set. Each reason clears only after the
-operator changes something, so an anime hold needs attention, and the next sweep lifts it.
-Cancelling a series, or setting its monitoring to none, lifts its hold at once.
+operator changes something, so an anime hold needs attention. Only a sweep sets a hold. The fix
+lifts it at once: a profile or Audio pick change, or a settings save that changes the anime
+preferences or subtitle languages, decides the hold again, and lifts it unless the preferences
+still fail. Cancelling a series, or leaving it no monitored episode (its monitoring set to none,
+or its last monitored season or episode unmonitored), lifts its hold at once too. A sweep that
+visits the title also lifts a hold once the preferences resolve.
 _Avoid_: preferences hold, anime block
 
 **Fix**:

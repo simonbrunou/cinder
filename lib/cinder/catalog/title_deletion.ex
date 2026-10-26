@@ -13,7 +13,20 @@ defmodule Cinder.Catalog.TitleDeletion do
   require Logger
 
   alias Cinder.Audit
-  alias Cinder.Catalog.{Attention, Episode, Episodes, Events, Grab, Grabs, Movie, Season, Series}
+
+  alias Cinder.Catalog.{
+    Attention,
+    Episode,
+    Episodes,
+    Events,
+    Grab,
+    Grabs,
+    Movie,
+    Season,
+    Series,
+    SeriesCatalog
+  }
+
   alias Cinder.Download
   alias Cinder.Library
   alias Cinder.Library.ImportedQuality
@@ -195,8 +208,10 @@ defmodule Cinder.Catalog.TitleDeletion do
   is attempted. The following transaction removes only successfully unlinked paths from every
   affected episode row and records the actual results in the audit; failed paths remain recorded.
   When every path is gone, imported metadata is cleared and `opts[:unmonitor]` also flips
-  `monitored` off. A partial or total unlink failure is logged and returned as `{:error, reason}`
-  after the truthful DB/audit write. Broadcasts `{:series_updated, series_id}` after a DB change.
+  `monitored` off, which lifts the series' anime hold when no episode stays monitored
+  (`SeriesCatalog.lift_unmonitored_anime_hold/1`). A partial or total unlink failure is logged and
+  returned as `{:error, reason}` after the truthful DB/audit write. Broadcasts
+  `{:series_updated, series_id}` after a DB change.
   """
   def delete_episode_file(episode, actor, opts \\ [])
 
@@ -210,15 +225,13 @@ defmodule Cinder.Catalog.TitleDeletion do
 
   defp delete_episode_paths(paths, episode, actor, opts) do
     results = unlink_paths(paths)
+    unmonitor? = Keyword.get(opts, :unmonitor, false)
 
     with {:ok, {updated, changed?}} <-
-           do_delete_episode_file_txn(
-             episode,
-             actor,
-             Keyword.get(opts, :unmonitor, false),
-             results
-           ) do
-      if changed?, do: Events.series_updated(Episodes.series_id(updated))
+           do_delete_episode_file_txn(episode, actor, unmonitor?, results) do
+      series_id = Episodes.series_id(updated)
+      if changed?, do: Events.series_updated(series_id)
+      if unmonitor?, do: SeriesCatalog.lift_unmonitored_anime_hold(series_id)
       episode_delete_result(updated, results)
     end
   end
@@ -330,9 +343,10 @@ defmodule Cinder.Catalog.TitleDeletion do
   Deletes every library file in a season (Sonarr per-season "delete episode files"): every unique
   primary/part path is attempted once, then one transaction removes only successful paths from the
   affected episode rows and records the actual per-path outcome. Fully cleared episodes also drop
-  imported metadata and are unmonitored when `opts[:unmonitor]` is true; partial and fully failed
-  rows keep every path still known to exist. Returns `{:ok, cleared_count, failed_count}`, where
-  `failed_count` counts episodes with at least one failed unlink.
+  imported metadata and are unmonitored when `opts[:unmonitor]` is true, which lifts the series'
+  anime hold when no episode stays monitored; partial and fully failed rows keep every path still
+  known to exist. Returns `{:ok, cleared_count, failed_count}`, where `failed_count` counts
+  episodes with at least one failed unlink.
   """
   def delete_season_files(%Season{} = season, actor, opts \\ []) do
     unmonitor? = Keyword.get(opts, :unmonitor, false)
@@ -347,6 +361,7 @@ defmodule Cinder.Catalog.TitleDeletion do
     with {:ok, cleared_count} <-
            do_delete_season_files_txn(season, actor, results, unmonitor?) do
       Events.series_updated(season.series_id)
+      if unmonitor?, do: SeriesCatalog.lift_unmonitored_anime_hold(season.series_id)
       {:ok, cleared_count, failed_count}
     end
   end

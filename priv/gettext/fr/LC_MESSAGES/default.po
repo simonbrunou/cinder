@@ -7574,14 +7574,6 @@ msgstr "Corriger sur la page du titre"
 msgid "Fix on detail page: %{title}"
 msgstr "Corriger sur la page du titre : %{title}"
 
-#: lib/cinder_web/live/activity_live.ex
-#, elixir-autogen, elixir-format
-msgid "These series are skipped by the search sweep until their Anime preferences can be satisfied. Make the change each one names; the next sweep then lifts its hold."
-msgstr ""
-"Ces séries sont ignorées par la recherche tant que leurs préférences anime "
-"ne peuvent pas être satisfaites. Faites la modification indiquée pour "
-"chacune ; la prochaine recherche lève alors l'attente."
-
 #: lib/cinder_web/live/dashboard_live.ex
 #, elixir-autogen, elixir-format
 msgid "%{count} movie needs attention"
@@ -7746,3 +7738,11 @@ msgstr "Le fichier torrent de cette version est illisible."
 #, elixir-autogen, elixir-format
 msgid "The download holds an archive Cinder can't extract: its format isn't supported on this install, its volume set is incomplete, it is nested or one of several, or other files sit beside it."
 msgstr "Le téléchargement contient une archive que Cinder ne peut pas extraire : format non pris en charge sur cette installation, jeu de volumes incomplet, archive imbriquée ou multiple, ou autres fichiers à côté."
+
+#: lib/cinder_web/live/activity_live.ex
+#, elixir-autogen, elixir-format
+msgid "These series are skipped by the search sweep until their Anime preferences can be satisfied. Making the change each one names lifts its hold at once."
+msgstr ""
+"Ces séries sont ignorées par la recherche tant que leurs préférences anime "
+"ne peuvent pas être satisfaites. Faire la modification indiquée pour "
+"chacune lève aussitôt l'attente."

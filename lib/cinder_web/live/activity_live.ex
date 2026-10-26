@@ -15,7 +15,7 @@ defmodule CinderWeb.ActivityLive do
   the reason — movies in the pipeline list, series in their own section (a held series has no
   movie row or grab to hang the badge on). Only the operator clears such a hold, so each row
   links to its fix (`Attention`'s `fix`): the title's Audio row on its detail page, or the
-  Subtitles group in Settings; the next sweep then lifts the hold. Live via the `movies` +
+  Subtitles group in Settings; saving that fix lifts the hold at once. Live via the `movies` +
   `series` topics. The "Background sweeps"
   section is the exception — a point-in-time snapshot read once at mount (its `last_run`/`next_run`
   values go stale until the page is reloaded), since a 12h sweep is rarely caught mid-run.
@@ -564,7 +564,7 @@ defmodule CinderWeb.ActivityLive do
         <h2 class="pb-3 text-lg font-semibold">{gettext("Held series")}</h2>
         <p class="pb-3 text-sm text-base-content/70">
           {gettext(
-            "These series are skipped by the search sweep until their Anime preferences can be satisfied. Make the change each one names; the next sweep then lifts its hold."
+            "These series are skipped by the search sweep until their Anime preferences can be satisfied. Making the change each one names lifts its hold at once."
           )}
         </p>
         <ul id="activity-held-series" class="space-y-2">

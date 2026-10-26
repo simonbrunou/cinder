@@ -78,6 +78,22 @@ defmodule Cinder.Download.PollerTest do
     movie
   end
 
+  # The anime hold each `{:movie_updated, _}` received so far carried for `id`, in order, with
+  # repeats collapsed: every change of the marker an open view saw.
+  defp announced_holds(id) do
+    fn ->
+      receive do
+        {:movie_updated, %Movie{id: ^id} = movie} -> {:ok, movie.anime_hold_reason}
+      after
+        0 -> :done
+      end
+    end
+    |> Stream.repeatedly()
+    |> Enum.take_while(&(&1 != :done))
+    |> Enum.map(fn {:ok, reason} -> reason end)
+    |> Enum.dedup()
+  end
+
   # Drives the free-disk prober (Cinder.Test.StubDisk) for a test's duration: `result` is a
   # `{:ok, stats}` / `{:error, reason}` tuple returned for every path.
   defp set_disk_stub!(result), do: put_env(:disk_stats_stub, result)
@@ -614,6 +630,35 @@ defmodule Cinder.Download.PollerTest do
 
       assert Repo.get!(Movie, movie.id).anime_hold_reason == nil
       assert Agent.get(searches, & &1) > 0
+    end
+
+    # #791: the Standard search used to clear the hold, then the anime fallback re-set it from the
+    # struct read before the clear, a no-op, so the marker flipped on every tick.
+    test "an Auto anime-fallback movie with invalid preferences keeps a steady hold" do
+      put_config(:anime_preferences, embedded_subtitle_mode: :require)
+
+      movie =
+        movie_fixture(%{
+          title: "Auto Anime",
+          year: 2020,
+          imdb_id: "tt-auto-anime",
+          original_language: "ja",
+          genres: ["Animation"]
+        })
+
+      stub(Cinder.Acquisition.IndexerMock, :search, fn _imdb_id -> {:ok, []} end)
+      stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, _opts -> {:ok, []} end)
+
+      Catalog.subscribe()
+      start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+
+      for _tick <- 1..2 do
+        assert :ok = Poller.poll()
+        assert Repo.get!(Movie, movie.id).anime_hold_reason == "subtitle_language_required"
+      end
+
+      # Set once and never unset in between, so the beacon toasts once.
+      assert announced_holds(movie.id) == [nil, "subtitle_language_required"]
     end
 
     test "search skips the grab (no park, no attempt bump) when the download root can't hold it" do

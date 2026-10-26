@@ -4,7 +4,7 @@ defmodule Cinder.Catalog.Profiles do
   import Ecto.Query
 
   alias Cinder.Books.{BookAuthorPolicy, BookTarget}
-  alias Cinder.Catalog.{Episode, Events, Movie, Profile, Season, Series}
+  alias Cinder.Catalog.{Episode, Events, MediaProfiles, Movie, Profile, Season, Series}
   alias Cinder.Library.PathPolicy
   alias Cinder.LibraryKind
   alias Cinder.Repo
@@ -219,15 +219,23 @@ defmodule Cinder.Catalog.Profiles do
     )
   end
 
+  # A published assignment is the operator's profile change: decide the title's anime hold again
+  # (#791). An unpublished one runs inside a caller's transaction, whose own publish decides it.
+  # The profile has committed either way, so a failed hold write leaves the hold to the next sweep.
   defp publish_assignment({:ok, title} = result, opts) do
     if Keyword.get(opts, :publish, true) do
       case title do
         %Movie{} = movie -> Events.movie_updated(movie)
         %Series{} = series -> Events.series_updated(series.id)
       end
-    end
 
-    result
+      case MediaProfiles.reresolve_anime_hold(title) do
+        {:ok, decided} -> {:ok, decided}
+        {:error, _hold_write} -> result
+      end
+    else
+      result
+    end
   end
 
   defp publish_assignment(error, _opts), do: error

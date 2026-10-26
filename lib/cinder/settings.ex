@@ -547,11 +547,20 @@ defmodule Cinder.Settings do
     # `Download.with_intent_lock/2` and `Library.with_lock/2` use) makes the whole
     # commit-then-overlay sequence one atomic unit per writer, so an older snapshot can never
     # apply after a newer commit.
-    :global.trans({{__MODULE__, :write}, self()}, fn -> commit_and_reload(puts, deletes) end)
+    anime_changed? =
+      :global.trans({{__MODULE__, :write}, self()}, fn ->
+        before = anime_defaults()
+        commit_and_reload(puts, deletes)
+        anime_defaults() != before
+      end)
 
     # After the commit AND after the env overlay, so a subscriber that re-reads on this message
     # sees the new values rather than racing the apply.
     Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, :settings_updated)
+
+    # An anime hold can name a fix made here (the subtitle languages): decide the held titles'
+    # holds again now instead of waiting for a sweep to visit them (#791).
+    if anime_changed?, do: Cinder.Catalog.reresolve_anime_holds()
     :ok
   end
 

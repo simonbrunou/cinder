@@ -97,6 +97,39 @@ defmodule Cinder.Requests.ApprovalTest do
     end
   end
 
+  # #791: an approval that points an existing title at a new profile is a profile change, so its
+  # publish decides the title's anime hold again.
+  describe "an approval that changes an existing held title's profile" do
+    test "lifts the hold of a movie and a series switched to Standard", ctx do
+      # Required subtitles with none set: an Anime title's hold stays until the profile changes.
+      Cinder.ConfigCase.put_config(:anime_preferences, embedded_subtitle_mode: :require)
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 603, title: "Existing"})
+      {:ok, movie} = Catalog.set_media_profile(movie, :anime)
+      {:ok, _held} = Catalog.set_anime_hold(movie, "subtitle_language_required")
+      movie_attrs = Map.put(attrs(:movie, ctx), :proposed_profile_id, ctx.profiles.movie.id)
+
+      assert {:ok, %Request{status: :approved}} =
+               approve(:admin_approval, movie_attrs, ctx.profiles.movie)
+
+      assert Repo.get!(Movie, movie.id).anime_hold_reason == nil
+
+      assert {:ok, %Request{status: :approved}} =
+               approve(:auto_approval, attrs(:season, ctx), nil)
+
+      {:ok, series} = Catalog.set_media_profile(Catalog.get_series_by_tmdb_id(1399), :anime)
+      {:ok, _held} = Catalog.set_anime_hold(series, "subtitle_language_required")
+
+      season_attrs =
+        %{attrs(:season, ctx) | season_number: 1}
+        |> Map.put(:proposed_profile_id, ctx.profiles.season.id)
+
+      assert {:ok, %Request{status: :approved}} =
+               approve(:admin_approval, season_attrs, ctx.profiles.season)
+
+      assert Repo.get!(Series, series.id).anime_hold_reason == nil
+    end
+  end
+
   describe "the quota decision" do
     # A flip turns a pending row the quota already counts into an approved one: it never grows the
     # count, and the admin is the authority. So a quota lowered after the request was filed must

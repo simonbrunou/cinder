@@ -169,8 +169,10 @@ defmodule Cinder.Catalog.UpgradeHunter do
         isolate("series #{series.id}", fn -> hunt_anime_series(series.id) end)
 
       :standard ->
-        # A profile switched back to Standard must not keep a stale Anime hold marker.
-        MediaProfiles.set_anime_hold(series, nil)
+        # A profile switched back to Standard must not keep a stale Anime hold marker. An Auto
+        # title's hold stays while its anime fallback would still fail, or the wanted-episode
+        # sweep's fallback would set it again on its next visit (#791).
+        MediaProfiles.reresolve_anime_hold(series)
         hunt_selected_standard_seasons(series.id, selected)
     end
   end

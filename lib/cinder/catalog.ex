@@ -149,6 +149,8 @@ defmodule Cinder.Catalog do
   defdelegate set_movie_language(movie, language), to: MediaProfiles
   defdelegate set_series_language(series, language), to: MediaProfiles
   defdelegate set_anime_hold(title, reason), to: MediaProfiles
+  defdelegate reresolve_anime_hold(title), to: MediaProfiles
+  defdelegate reresolve_anime_holds(), to: MediaProfiles
   defdelegate list_anime_held_series(), to: MediaProfiles
   defdelegate media_profile_summary(title), to: MediaProfiles
   defdelegate movie_acquisition_context(movie), to: MediaProfiles

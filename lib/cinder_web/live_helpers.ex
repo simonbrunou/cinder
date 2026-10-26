@@ -201,7 +201,8 @@ defmodule CinderWeb.LiveHelpers do
 
   @doc """
   Plain-English search-time hold reason (`anime_hold_reason`, the AnimePreferences.resolve
-  error) naming the fix — cleared automatically by the next sweep once preferences resolve.
+  error) naming the fix — cleared as soon as the operator makes that fix, or by a sweep once
+  preferences resolve.
   Shared by `/activity` (movies + held series) and `/my-requests` (a requester's own held
   movie rows).
   """

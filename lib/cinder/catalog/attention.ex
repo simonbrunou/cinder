@@ -123,7 +123,7 @@ defmodule Cinder.Catalog.Attention do
     end
   end
 
-  # Cancelling a series, or setting its monitoring to none, lifts its hold: no sweep would.
+  # Cancelling a series, or leaving it no monitored episode, lifts its hold: no sweep would.
   def classify(%Series{anime_hold_reason: nil}), do: %__MODULE__{phase: :idle}
   def classify(%Series{anime_hold_reason: reason}), do: anime_hold(reason, [])
 
@@ -211,12 +211,13 @@ defmodule Cinder.Catalog.Attention do
     %__MODULE__{phase: phase, reason: :anime_hold, badge: :anime_hold, actions: actions, fix: fix}
   end
 
-  # Each anime hold reason (an `AnimePreferences.resolve/2` error) and the fix that clears it. The
-  # sweep lifts a hold once preferences resolve, but both reasons resolve only after the operator
-  # changes something, so they need attention. A reason that cleared without the operator would
-  # map to `{:waiting, nil}` here. A reason this Cinder does not know still counts: after the
-  # profile on the detail page switches to Standard, the next sweep that visits the title lifts
-  # any anime hold.
+  # Each anime hold reason (an `AnimePreferences.resolve/2` error) and the fix that clears it.
+  # Saving that fix lifts the hold at once (`MediaProfiles.reresolve_anime_hold/1`, and
+  # `reresolve_anime_holds/0` for a settings save), but both reasons resolve only after the
+  # operator changes something, so they need attention. A reason that cleared without the
+  # operator would map to `{:waiting, nil}` here. A reason this Cinder does not know still counts:
+  # a profile or Audio pick change on the detail page decides the hold again, which replaces or
+  # lifts it.
   defp anime_hold_fix("original_language_required"), do: {:attention, :detail_page}
   defp anime_hold_fix("subtitle_language_required"), do: {:attention, :subtitle_settings}
   defp anime_hold_fix(_unknown), do: {:attention, :detail_page}

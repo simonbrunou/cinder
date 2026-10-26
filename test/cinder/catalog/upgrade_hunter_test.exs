@@ -288,6 +288,29 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       refute_grabbed()
     end
 
+    # #791: the wanted-episode sweep's anime fallback sets this hold, so lifting it here would
+    # make the two sweeps flip it in turn. The sweep keeps it while the preferences still fail.
+    test "keeps an Auto anime-fallback series' hold while its preferences fail", ctx do
+      Cinder.ConfigCase.put_config(:anime_preferences, embedded_subtitle_mode: :require)
+
+      series =
+        ctx.series
+        |> Ecto.Changeset.change(original_language: "ja", genres: ["Animation"])
+        |> Repo.update!()
+        |> anime_hold_fixture("subtitle_language_required")
+
+      watch_grabs()
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 -> {:ok, []} end)
+
+      poll()
+
+      assert Repo.get!(Cinder.Catalog.Series, series.id).anime_hold_reason ==
+               "subtitle_language_required"
+
+      refute_grabbed()
+    end
+
     test "leaves an episode alone when the offer is not better", ctx do
       watch_grabs()
 

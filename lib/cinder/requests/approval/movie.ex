@@ -60,7 +60,8 @@ defmodule Cinder.Requests.Approval.Movie do
   # :existing — re-read post-commit: the transaction's struct is a stale snapshot the moment it
   # commits, and an edit (or delete) landing before this reload wins over the requester's
   # confirm+fill. An edit in the reload→update window can still lose (no optimistic lock); accepted
-  # at household scale.
+  # at household scale. The approval may have switched the movie's profile, so its anime hold is
+  # decided again (#791).
   def publish(%{outcome: :existing, movie: movie} = created, approved) do
     case Repo.reload(movie) do
       nil ->
@@ -68,6 +69,7 @@ defmodule Cinder.Requests.Approval.Movie do
 
       fresh ->
         confirm_and_fill(fresh, approved, created)
+        Catalog.reresolve_anime_hold(fresh)
     end
 
     :ok

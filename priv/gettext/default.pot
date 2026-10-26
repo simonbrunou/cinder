@@ -7223,11 +7223,6 @@ msgstr ""
 msgid "Fix on detail page: %{title}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex
-#, elixir-autogen, elixir-format
-msgid "These series are skipped by the search sweep until their Anime preferences can be satisfied. Make the change each one names; the next sweep then lifts its hold."
-msgstr ""
-
 #: lib/cinder_web/live/dashboard_live.ex
 #, elixir-autogen, elixir-format
 msgid "%{count} movie needs attention"
@@ -7391,4 +7386,9 @@ msgstr ""
 #: lib/cinder_web/live_helpers.ex
 #, elixir-autogen, elixir-format
 msgid "The download holds an archive Cinder can't extract: its format isn't supported on this install, its volume set is incomplete, it is nested or one of several, or other files sit beside it."
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex
+#, elixir-autogen, elixir-format
+msgid "These series are skipped by the search sweep until their Anime preferences can be satisfied. Making the change each one names lifts its hold at once."
 msgstr ""

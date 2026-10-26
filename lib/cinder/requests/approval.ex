@@ -10,7 +10,8 @@ defmodule Cinder.Requests.Approval do
 
   1. `c:prepare/2`, before the transaction: provider I/O and reads, no writes.
   2. `c:create/2`, inside the transaction after the request write: creates or arms the target.
-  3. `c:publish/2`, after commit: announces the target's own change.
+  3. `c:publish/2`, after commit: announces the target's own change, and decides an existing
+     title's anime hold again when the approval changed its profile or Audio pick.
 
   Only `Cinder.Requests` calls an adapter. `c:create/2` writes a `:requested` movie or series row,
   or arms a book target, with no approval check of its own: the approval gate is its caller.
@@ -39,7 +40,10 @@ defmodule Cinder.Requests.Approval do
   """
   @callback create(prepared(), Profile.t() | nil) :: {:ok, created()} | {:error, term()}
 
-  @doc "Announces the target's own change after commit. Never announces the approval itself."
+  @doc """
+  Announces the target's own change after commit, and decides an existing title's anime hold again
+  (`Cinder.Catalog.reresolve_anime_hold/1`). Never announces the approval itself.
+  """
   @callback publish(created(), approved :: Request.t()) :: :ok
 
   @doc """

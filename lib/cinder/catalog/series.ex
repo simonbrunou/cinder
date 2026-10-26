@@ -51,7 +51,7 @@ defmodule Cinder.Catalog.Series do
     |> check_constraint(:profile_id, name: :series_profile_integrity)
   end
 
-  @doc "Changeset for the sweep-owned search-time Anime preferences hold marker (see `Cinder.Catalog.MediaProfiles.set_anime_hold/2`)."
+  @doc "Changeset for the search-time Anime preferences hold marker (see `Cinder.Catalog.MediaProfiles.set_anime_hold/2`)."
   def anime_hold_changeset(series, attrs), do: cast(series, attrs, [:anime_hold_reason])
 
   @doc "Changeset for the media-server inventory reconciler's opaque item id."

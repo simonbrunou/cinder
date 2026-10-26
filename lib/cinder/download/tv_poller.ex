@@ -535,13 +535,8 @@ defmodule Cinder.Download.TvPoller do
     summary = Catalog.media_profile_summary(series)
 
     case summary.effective do
-      :anime ->
-        search_anime_series(series, episodes)
-
-      :standard ->
-        # A profile switched back to Standard must not keep a stale Anime hold marker.
-        Catalog.set_anime_hold(series, nil)
-        search_standard_series(series, episodes, summary)
+      :anime -> search_anime_series(series, episodes)
+      :standard -> search_standard_series(series, episodes, summary)
     end
   end
 
@@ -573,10 +568,15 @@ defmodule Cinder.Download.TvPoller do
 
     search_failed? = Enum.any?(outcomes, &match?({_group, {:error, _reason}}, &1))
 
+    # One decision on the Anime hold per visit: the anime fallback makes it when it runs, otherwise
+    # a stale marker goes the way the operator's fix would take it (#791).
     if grabbed == [] and skipped == [] and not search_failed? and
-         MediaProfile.auto_anime_fallback?(summary),
-       do: search_anime_series(series, episodes),
-       else: bump_not_grabbed(episodes, grabbed ++ skipped)
+         MediaProfile.auto_anime_fallback?(summary) do
+      search_anime_series(series, episodes)
+    else
+      Catalog.reresolve_anime_hold(series)
+      bump_not_grabbed(episodes, grabbed ++ skipped)
+    end
   end
 
   # The season's release list is the manual panel's (`Acquisition.judge_season/3`); the sweep

@@ -5,12 +5,15 @@ defmodule Cinder.SettingsTest do
   import Mox
   import ExUnit.CaptureLog
 
+  import Cinder.CatalogFixtures,
+    only: [anime_hold_fixture: 2, movie_fixture: 1, series_fixture: 1]
+
   import Cinder.ConfigCase,
     only: [put_media_server_bootstrap: 1, put_plex_url: 1, store_media_server_type: 1]
 
-  alias Cinder.Acquisition.HouseholdPolicy
+  alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy}
   alias Cinder.Catalog
-  alias Cinder.Catalog.UpgradeHunter
+  alias Cinder.Catalog.{Attention, UpgradeHunter}
   alias Cinder.Health
   alias Cinder.LibraryKind
   alias Cinder.Settings
@@ -1691,6 +1694,50 @@ defmodule Cinder.SettingsTest do
       Settings.delete("plex_web_url")
 
       assert_receive :settings_updated
+    end
+  end
+
+  # #791: a hold that names a setting lifts when the operator saves the fix, with no sweep. The
+  # form refuses required subtitles with no language, so the raw save/2 seeds that env-only state.
+  describe "save/2 and anime holds" do
+    defp hold(title), do: Repo.reload!(title).anime_hold_reason
+
+    test "a save that sets subtitle languages lifts the holds that asked for them" do
+      assert :ok = Settings.save(%{"anime_embedded_subtitle_mode" => "require"})
+
+      movie =
+        movie_fixture(%{media_profile: :anime})
+        |> anime_hold_fixture("subtitle_language_required")
+
+      series =
+        series_fixture(%{media_profile: :anime})
+        |> anime_hold_fixture("subtitle_language_required")
+
+      count = Attention.attention_count()
+
+      assert :ok = Settings.save_form(%{"subtitle_languages" => "fr"})
+
+      assert hold(movie) == nil
+      assert hold(series) == nil
+      assert Attention.attention_count() == count - 2
+    end
+
+    test "a save that leaves the preferences failing keeps the hold and sets none" do
+      held_series =
+        series_fixture(%{media_profile: :anime, preferred_language: "dual"})
+        |> anime_hold_fixture("original_language_required")
+
+      unheld = series_fixture(%{media_profile: :anime, preferred_language: "dual"})
+
+      assert :ok = Settings.save_form(%{"subtitle_languages" => "fr"})
+
+      # Dual audio still needs the original language these series lack, so a save that set holds
+      # would have set one on `unheld`.
+      assert {:error, :original_language_required} =
+               AnimePreferences.resolve(unheld, Settings.anime_defaults())
+
+      assert hold(held_series) == "original_language_required"
+      assert hold(unheld) == nil
     end
   end
 

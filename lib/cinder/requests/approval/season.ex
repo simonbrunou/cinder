@@ -37,9 +37,12 @@ defmodule Cinder.Requests.Approval.Season do
     end
   end
 
+  # An existing series may have changed profile or Audio pick in the approval, so its anime hold is
+  # decided again (#791).
   @impl true
   def publish(series, _approved) do
     Events.series_updated(series.id)
+    Catalog.reresolve_anime_hold(series)
     :ok
   end
 end
