@@ -254,9 +254,8 @@ Every call a poller makes has a bound:
 - Archive extraction carries entry-count and expanded-size ceilings.
 - The directory walk every importer and the completion content check run,
   `Cinder.Library.safe_walk/1`, goes through `Cinder.Library.BoundedWalk.run/3`: a supervised
-  task with a 30 s deadline that answers `{:error, :timeout}`. The three download pollers hold an
-  import on it without spending the retry budget, as on a full disk. A walk past its deadline is
-  never killed, since its read may still hold a dirty I/O scheduler thread. The guard counts it as
+  task with a 30 s deadline that answers `{:error, :timeout}`. A walk past its deadline is never
+  killed, since its read may still hold a dirty I/O scheduler thread. The guard counts it as
   stuck until it returns, and while it does, a new walk under its root is refused at once, as is
   any new walk once two are stuck. The walk's reads, `Filesystem.Disk.ls/1` and `lstat/1`, are raw
   calls that skip the VM's one file server, so a read on a wedged mount blocks only its own
@@ -265,3 +264,21 @@ Every call a poller makes has a bound:
 
 The reason: one unbounded call in a single-tick poller freezes every target sharing that tick,
 not just the file or request in flight.
+
+An import failure in a download poller takes one of three paths, and each poller picks it:
+
+- A fact about the release ends the item at once: a `@permanent_import_errors` entry
+  (`MovieLifecycle`, `BookPoller`), a release-policy mismatch, a standard TV grab that imports
+  nothing.
+- A condition the release did not cause holds it without a strike: a library root under the
+  free-space floor (checked before staging; a movie upgrade skips it), a walk timeout, and for
+  movies and TV an unset download root or library path.
+- Any other error spends the retry budget, whose end parks the item, so a transient error that
+  keeps coming back still ends the download. The parks differ per pipeline, and a movie upgrade
+  or an unavailable policy probe ends otherwise; the code says how.
+
+The choice sits in `Poller.import_one/1` and `record_import/2` (then
+`MovieLifecycle.record_failure/2`), in `TvPoller.import_grab/1`, `import_standard_grab/1`,
+`import_grab_content/1`, `import_preflighted_grab/1` and `finalize_standard_staging/3`, and in
+`BookPoller.import_one/1` and `handle_import_result/3`. Read them before giving a new error its
+path.
