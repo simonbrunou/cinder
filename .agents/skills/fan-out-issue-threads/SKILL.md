@@ -10,9 +10,9 @@ merges it and runs a retro. You plan, launch, watch, verify and report, and the 
 code. The user reads your thread, not the children. For worker agents inside one session instead
 of T3 threads, see the `direct-parallel-worker-agents` skill.
 
-The **run record** of one issue is its thread id, PR, merge sha, filed issues and top retro
-items. Keep one per issue in a state file at `/tmp/fan-out-<parent or thread id>/state.md`, so a
-context reset loses nothing.
+The **run record** of one issue is its thread id, PR, merge sha, main CI result, filed issues
+and top retro items. Keep one per issue in a state file at
+`/tmp/fan-out-<parent or thread id>/state.md`, so a context reset loses nothing.
 
 ## 1. Collect the queue
 

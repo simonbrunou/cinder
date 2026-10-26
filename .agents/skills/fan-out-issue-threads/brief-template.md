@@ -14,7 +14,7 @@ otherwise delete that section. Send everything below the rule as the thread's fi
 | `{{TEST}}` | `mix test` | `nix develop -c bun run test` |
 | `{{SHIP}}` | Ship with the `ship-cinder-pr-on-forgejo` skill, and merge with `scripts/merge-pr <n>`. A user-visible change adds a `changelog.d/` fragment (AGENTS.md "Changelog"). | Open and merge the PR with `fj` as the global CLAUDE.md says, the body written with the `pr` skill. |
 | `{{CI_RULES}}` | delete the bullet | Run `scripts/wait-e2e-slot.sh` before each push, merge to `main` or rerun, as `docs/agents/testing.md` says. |
-| `{{DEPLOY}}` | the ship skill's deploy check | `scripts/smoke-prod.sh <new main sha>`, then read the CI run on the new `main` head as the Merge authority says |
+| `{{DEPLOY}}` | the ship skill's deploy check | `scripts/smoke-prod.sh <new main sha>` |
 | `{{REVIEWERS}}` | from SKILL.md step 3 | empty |
 
 For another repo, take each value from its `AGENTS.md` and `docs/agents/`.
@@ -79,8 +79,11 @@ write.
 - Run the final `git fetch origin` and the merge as two separate steps. Between them, re-check
   every "Merge authority" condition against the fresh `origin/main`.
 - Resolve conflicts as the repo's docs say.
-- After the merge, check the deploy in a bounded foreground loop with {{DEPLOY}}. On a failed
-  deploy, report and stop.
+- After the merge, wait on the CI run of the newest `main` commit as `AGENTS.md` "Merge
+  authority" says. When it is red, find or file its issue as that section says, with no
+  `Part of` line, send the issue number to the orchestrator, and go on to the deploy check.
+- Check the deploy in a bounded foreground loop with {{DEPLOY}}. On a failed deploy, report and
+  stop.
 
 ## Tests
 
@@ -123,8 +126,8 @@ every candidate, one PR per fix.
 
 ## Done when
 
-- The PR is merged with CI green, #{{N}} is closed, and the deploy check passed. Or you stopped
-  with a stated reason.
+- The PR is merged with CI green, #{{N}} is closed, you read the CI run of the newest `main`
+  commit, and the deploy check passed. Or you stopped with a stated reason.
 - Every issue you left is filed and linked from #{{N}}.
 - The retro ran, and each of its fixes is merged or listed with the reason it stayed open.
 
@@ -140,6 +143,7 @@ PR: <url, or none>
 Merge: <merge sha, or "not merged: <reason>">
 Tests: <the test result line>
 Change: <one line on what changed for the user or the code>
+Main CI: <green on <sha> | red on <sha>: #<issue> | n/a>
 Deploy: <ok | failed: <what> | n/a>
 Filed: <#n title; #n title | none>
 Retro fixes:
