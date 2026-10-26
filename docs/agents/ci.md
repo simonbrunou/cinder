@@ -75,7 +75,11 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
 - **New advisory.** `dependency-audit` and `container` go red on every PR once an advisory is
   published after `main`'s last green run, whatever the diff touches. Read the CVE lines in the
   job log: when they name dependencies or base-image packages the PR does not change, the
-  failure is baseline and blocks every merge until a fix PR lands. `mix hex.audit` takes its
+  failure is baseline and blocks every merge until a fix PR lands. For a Hex package, look for a
+  fixed release first and bump to it: a red `deps.audit` prints `First patched versions:`
+  (`NONE` when no release fixes it yet). A red `hex.audit` names none, but the advisory URL it
+  prints does, and `mix hex.info <package>` lists the recent releases. The bump rebuilds every
+  dependency (**Dependency rebuild** below). `mix hex.audit` takes its
   accepted advisories from `ignore_advisories` in `mix.exs` (`hex/0`), each with a rationale
   comment. For Debian packages Trivy flags that a fresh `apt-get upgrade` fixes, set the
   Dockerfile's `APT_REFRESH` to today's date so the cached layer rebuilds. When fix PRs block
@@ -87,10 +91,14 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   carried commit, pass `--body-from=<sha of the carrier's own fix commit>`.
 - **Dependency rebuild.** A `mix.lock`, OTP or Elixir change misses the compiled-deps caches,
   so `test` and `dependency-audit` rebuild every dependency and download precompiled NIFs from
-  GitHub releases. Erlang's `:httpc` refuses a response whose headers pass 10240 bytes (OTP 29),
-  and GitHub's release redirect has passed that (#867), so a download can print
-  `does not exist or cannot download: :enoent`. elixir_make then builds the NIF from source,
-  lazy_html with the `cmake` that `test` installs on a miss, so that line alone is not the
+  GitHub releases. The `container` job's image build redoes that work from its `mix deps.get`
+  layer on when `mix.exs` or `mix.lock` change, from `mix deps.compile` on when
+  `config/{config,prod}.exs` change, from the Tailwind download on when `TAILWIND_VERSION`
+  changes, and from the start when the Dockerfile's `ELIXIR_VERSION`, `OTP_VERSION` or
+  `DEBIAN_VERSION` change. Erlang's `:httpc` refuses a response whose headers
+  pass 10240 bytes (OTP 29), and GitHub's release redirect has passed that (#867), so a download
+  can print `does not exist or cannot download: :enoent`. elixir_make then builds the NIF from
+  source, lazy_html with the `cmake` that `test` installs on a miss, so that line alone is not the
   failure. The image build fetches Tailwind with `curl` for the same reason. To prove the NIF
   source-build fallback while the downloads work, put `config :elixir_make, :force_build,
   lazy_html: true, exqlite: true` in `config/test.exs` on a run whose compiled-deps cache
