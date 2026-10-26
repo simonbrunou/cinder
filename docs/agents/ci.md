@@ -101,24 +101,29 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
 
 ## Re-running CI
 
-- One PR: push an empty commit (`git commit --allow-empty -m "ci: re-run after <test> flake"`).
-  A squash merge drops it.
-- A PR in a stack: an empty commit forces every later PR to rebase and re-run, so re-run on the
-  same SHA by closing and reopening the PR, which fires `pull_request: reopened`:
+- Re-run a red job on the same SHA through the API. The call names one job of one run and adds
+  no commit, so it suits a PR, a PR in a stack and a `main` push run alike (#967's run 2410). On
+  `main`, re-run only a job of `origin/main`'s head. Find the run id as "Reading a run" says,
+  then list the run's jobs with
+  `curl ... "$API/actions/runs/<run id>/jobs" | jq -c '.[] | {id, name, status, attempt}'`.
+- A red job at `attempt` 1 gets the re-run:
+  `curl -s -X POST -H "Authorization: token $FJ_TOKEN" "$API/actions/jobs/<job id>/rerun"`,
+  which answers 204. A job at `attempt` above 1 was re-run already, by you or by another agent
+  in a merge burst: wait on it while it reads `waiting` or `running`.
+- When the POST answers anything but 204 on a PR, push an empty commit instead
+  (`git commit --allow-empty -m "ci: re-run after <test> flake"`, which a squash merge drops). In
+  a stack an empty commit forces every later PR to rebase and re-run, so close and reopen the PR
+  instead, which fires `pull_request: reopened` on the same SHA:
   `curl -s -X PATCH -H "Authorization: token $FJ_TOKEN" -H 'Content-Type: application/json' "$API/pulls/<n>" -d '{"state":"closed"}'`,
   wait about 20 s, then the same call with `{"state":"open"}`. Run both calls in one foreground
-  step and check each response, or the PR can stay closed.
-- A `main` push run: re-run a red job of `origin/main`'s head once, on the same SHA. Find the
-  run id as "Reading a run" says, then list the run's jobs with
-  `curl ... "$API/actions/runs/<run id>/jobs" | jq -c '.[] | {id, name, status, attempt}'`. A
-  red job at `attempt` 1 gets the re-run:
-  `curl -s -X POST -H "Authorization: token $FJ_TOKEN" "$API/actions/jobs/<job id>/rerun"`,
-  which answers 204. A job at `attempt` above 1 was re-run by another agent in the merge burst:
-  wait on it while it reads `waiting` or `running`, and treat the run as red if it fails again
-  (AGENTS.md "Merge authority"). A newer push to `main` cancels `main`'s run in progress, a
-  re-run included, so when one lands, wait on the new head.
-- Before you wait on the new run, confirm its statuses show `pending`, or the wait reads the old
+  step and check each response, or the PR can stay closed. On `main`, which has no PR to reopen,
+  a POST that fails leaves the run red.
+- Before you wait on the re-run, confirm its statuses show `pending`, or the wait reads the old
   failure.
+- When the re-run fails again, read its new log as "Judging a red run" says. On `main`, a job
+  that fails again leaves the run red (AGENTS.md "Merge authority").
+- A newer push to the same ref cancels its run in progress, a re-run included (`ci.yml`'s
+  `concurrency` group). On `main`, wait on the new head once one lands.
 
 ## Merge conflicts and translations
 
