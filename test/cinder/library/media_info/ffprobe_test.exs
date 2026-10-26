@@ -643,8 +643,8 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   # sweep leaves the disk and the CPU to playback and imports first. PATH holds only shims named
   # `ionice` and `nice` that record their pid and arguments, then exec the real tool. The stub
   # reader records the same, and the priority it runs at, read through the real tools by absolute
-  # path. That priority is relative to the suite's own, and `nix develop` on the dev host already
-  # runs at nice 16 and the idle class, so the recorded command lines carry the exact checks.
+  # path. That priority is relative to the suite's own, so the recorded command lines carry the
+  # exact checks (docs/agents/testing.md says why).
   @whole_file_reads [
     %{
       fun: :subtitle_tracks,

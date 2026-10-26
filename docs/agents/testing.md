@@ -40,6 +40,13 @@
   test restores its library roots and log `subtitle manifest write failed ... :unsafe_destination`.
   A test that turns subtitle languages on calls it first, so a task an earlier test queued runs
   while they are still off instead of consuming this test's provider expectations (#685).
+- A child process inherits the suite's own priority, and that priority differs by route. On the
+  dev host, `nix develop -c mix test` runs at nice 16, the idle I/O class and `SCHED_IDLE`
+  (ananicy-cpp's `nix` rule). CI runs at nice 0 and the default class. A test of a subprocess's
+  niceness or I/O class compares it with the suite's own. That check proves little at nice 16
+  and the idle class, since nice stops at 19 and the class is already idle, so the test also
+  pins the exact command line with recording shims on `PATH`, as
+  `Cinder.Library.MediaInfo.FfprobeTest` "whole-file reads" does (#862).
 - A list built from a directory listing (`File.ls/1`, `Cinder.Library.PathPolicy.walk/2`,
   `Cinder.Library.Filesystem`'s `find_files/1`, so `Cinder.Library.Sidecars.files/1` too) comes
   in the order the disk returns. That is creation order on the btrfs dev host and can be any
