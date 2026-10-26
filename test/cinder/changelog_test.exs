@@ -233,7 +233,7 @@ defmodule Cinder.ChangelogTest do
     end
   end
 
-  describe "release/3" do
+  describe "release/4" do
     @describetag :tmp_dir
 
     setup %{tmp_dir: root} do
@@ -255,6 +255,45 @@ defmodule Cinder.ChangelogTest do
       assert section(changelog, "1.2.0") ==
                "## [1.2.0] - 2026-10-21\n\n### Added\n- A feature.\n\n### Fixed\n" <>
                  "- **A fix (#843).**\n\n"
+
+      assert File.ls!(Path.join(root, "changelog.d")) == ["README.md"]
+    end
+
+    # CI runs as root, where `chmod` cannot make a delete fail, so the delete is injected (#856).
+    test "names the fragments it could not delete after writing CHANGELOG.md", %{tmp_dir: root} do
+      File.write!(Path.join(root, "changelog.d/843-fix.md"), "### Fixed\n- A fix.\n")
+      File.write!(Path.join(root, "changelog.d/850-feature.md"), "### Added\n- A feature.\n")
+      File.write!(Path.join(root, "changelog.d/860-change.md"), "### Changed\n- A change.\n")
+
+      delete = fn path ->
+        if Path.basename(path) == "850-feature.md", do: {:error, :eacces}, else: File.rm(path)
+      end
+
+      assert Changelog.release(root, "1.2.0", ~D[2026-10-21], delete: delete) ==
+               {:error, {:written, ["changelog.d/850-feature.md: permission denied"]}}
+
+      assert section(File.read!(Path.join(root, "CHANGELOG.md")), "1.2.0") ==
+               "## [1.2.0] - 2026-10-21\n\n### Added\n- A feature.\n\n### Changed\n" <>
+                 "- A change.\n\n### Fixed\n- A fix.\n\n"
+
+      assert Enum.sort(File.ls!(Path.join(root, "changelog.d"))) == [
+               "850-feature.md",
+               "README.md"
+             ]
+    end
+
+    test "counts a fragment that is already gone as deleted", %{tmp_dir: root} do
+      File.write!(Path.join(root, "changelog.d/843-fix.md"), "### Fixed\n- A fix.\n")
+      File.write!(Path.join(root, "changelog.d/850-feature.md"), "### Added\n- A feature.\n")
+
+      # Something else deletes 850-feature.md between the listing and the delete.
+      delete = fn path ->
+        if Path.basename(path) == "850-feature.md", do: File.rm!(path)
+        File.rm(path)
+      end
+
+      assert Changelog.release(root, "1.2.0", ~D[2026-10-21], delete: delete) ==
+               {:ok, ["changelog.d/843-fix.md", "changelog.d/850-feature.md"]}
 
       assert File.ls!(Path.join(root, "changelog.d")) == ["README.md"]
     end

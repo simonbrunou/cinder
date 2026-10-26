@@ -42,18 +42,22 @@ defmodule Cinder.Changelog do
   @doc """
   Folds the fragments in `root`'s `changelog.d/` into its `CHANGELOG.md` as `version`, then
   deletes them and returns their paths. Writes and deletes nothing when `fold/4` or the
-  fragment listing has a problem. The first fragment that cannot be deleted raises `File.Error`
-  after `CHANGELOG.md` is written, leaving it and the fragments after it in place.
+  fragment listing has a problem.
+
+  A fragment that cannot be deleted does not stop the others: once every delete was tried, the
+  result is `{:error, {:written, left}}`, where `CHANGELOG.md` holds the new section and `left`
+  names each fragment still in `changelog.d/`, as `"<path>: <reason>"`. The next release would
+  fold them a second time, so they are deleted by hand.
+
+  The `:delete` option replaces `File.rm/1`: it gets a fragment's full path and returns `:ok` or
+  `{:error, posix}`. `{:error, :enoent}` counts as deleted, since the fragment is gone.
   """
-  def release(root, version, %Date{} = date) do
+  def release(root, version, %Date{} = date, opts \\ []) do
     {changelog, fragments, strays} = load(root)
 
     case {fold(changelog, fragments, version, date), strays} do
       {{:ok, folded}, []} ->
-        File.write!(Path.join(root, "CHANGELOG.md"), folded)
-        paths = fragments |> Enum.sort_by(&order/1) |> Enum.map(&elem(&1, 0))
-        Enum.each(paths, &File.rm!(Path.join(root, &1)))
-        {:ok, paths}
+        write_release(root, folded, fragments, Keyword.get(opts, :delete, &File.rm/1))
 
       {{:ok, _folded}, strays} ->
         {:error, strays}
@@ -128,6 +132,27 @@ defmodule Cinder.Changelog do
     {File.read!(Path.join(root, "CHANGELOG.md")),
      for(name <- fragments, do: {"#{@dir}/#{name}", File.read!(Path.join(dir, name))}),
      problems ++ for(name <- Enum.sort(strays), do: "#{@dir}/#{name}: #{@stray}")}
+  end
+
+  # Writes `folded` to CHANGELOG.md, then tries to delete every fragment in fold order.
+  # `{:ok, paths}`, or `{:error, {:written, left}}` when a fragment is still in `changelog.d/`.
+  defp write_release(root, folded, fragments, delete) do
+    File.write!(Path.join(root, "CHANGELOG.md"), folded)
+    paths = fragments |> Enum.sort_by(&order/1) |> Enum.map(&elem(&1, 0))
+
+    case Enum.flat_map(paths, &delete_fragment(root, &1, delete)) do
+      [] -> {:ok, paths}
+      left -> {:error, {:written, left}}
+    end
+  end
+
+  # `[]` once `path` is gone, or `["<path>: <reason>"]` when it is still in `changelog.d/`.
+  defp delete_fragment(root, path, delete) do
+    case delete.(Path.join(root, path)) do
+      :ok -> []
+      {:error, :enoent} -> []
+      {:error, reason} -> ["#{path}: #{:file.format_error(reason)}"]
+    end
   end
 
   defp read(changelog, fragments) do
