@@ -51,6 +51,25 @@ defmodule Cinder.Catalog.Movie do
     :release_date
   ]
 
+  @transition_fields [
+    :status,
+    :download_id,
+    :download_protocol,
+    :release_title,
+    :release_policy_snapshot,
+    :verification_hold_origin,
+    :download_progress,
+    :download_speed,
+    :download_eta,
+    :imdb_id,
+    :file_path,
+    :part_file_paths,
+    :content_path,
+    :import_attempts,
+    :search_attempts,
+    :failure_reason
+  ]
+
   schema "movies" do
     field :tmdb_id, :integer
     field :imdb_id, :string
@@ -134,6 +153,9 @@ defmodule Cinder.Catalog.Movie do
   def creation_fields, do: @creation_fields
 
   @doc false
+  def transition_fields, do: @transition_fields ++ ImportedQuality.column_names(__MODULE__)
+
+  @doc false
   def changeset(movie, attrs) do
     movie
     |> cast(attrs, @creation_fields)
@@ -162,30 +184,10 @@ defmodule Cinder.Catalog.Movie do
     |> validate_inclusion(:preferred_language, Language.preferences())
   end
 
-  @doc "Changeset for pipeline state transitions (status + optional download_id/download_protocol/imdb_id/file_path/attempt counters)."
+  @doc "Changeset for pipeline state transitions: casts `transition_fields/0`, with `:status` required."
   def transition_changeset(movie, attrs) do
     movie
-    |> cast(
-      attrs,
-      [
-        :status,
-        :download_id,
-        :download_protocol,
-        :release_title,
-        :release_policy_snapshot,
-        :verification_hold_origin,
-        :download_progress,
-        :download_speed,
-        :download_eta,
-        :imdb_id,
-        :file_path,
-        :part_file_paths,
-        :content_path,
-        :import_attempts,
-        :search_attempts,
-        :failure_reason
-      ] ++ ImportedQuality.column_names(__MODULE__)
-    )
+    |> cast(attrs, transition_fields())
     |> reset_download_metrics(movie.status)
     |> advance_download_progress_at(movie)
     |> clear_failure_reason()

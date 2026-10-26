@@ -16,51 +16,101 @@ defmodule Cinder.CatalogFixtures do
     Series
   }
 
-  alias Cinder.Library.ImportedQuality
   alias Cinder.Repo
-
-  @movie_pipeline_keys [
-    :status,
-    :download_id,
-    :file_path,
-    :content_path,
-    :download_protocol,
-    :release_title
-  ]
 
   @doc """
   Creates a movie at `:requested`.
 
-  Defaults `tmdb_id` to a fresh unique integer and `title` to "Inception"; any
-  other key is passed through to `Catalog.add_movie/1`. Pipeline keys
-  (`:status`, `:download_id`, `:file_path`, `:download_protocol`, the `imported_*`
-  columns) are applied via a single `seed_movie_state/2` after creation, so a
-  downloading/downloaded fixture is a one-liner.
+  Defaults `tmdb_id` to a fresh unique integer and `title` to "Inception". Each key lands in
+  one place: `:media_profile` in `Movie.profile_changeset/2`, a `Movie.creation_fields/0` key in
+  `Catalog.add_movie/1`, and any other `Movie.transition_fields/0` key (`:status`,
+  `:download_id`, the attempt counters, the `imported_*` columns...) in `seed_movie_state/2`
+  after creation, so a downloading/downloaded fixture is a one-liner.
+
+  No passed value is dropped silently. It raises `ArgumentError` on a key none of them takes, on
+  a blank value `cast/3` empties (a blank string becomes the field's default, a blank list entry
+  is removed), and on a value `Movie.transition_changeset/2` clears at the movie's status. A
+  value that changeset clears only on the status change itself gets a second
+  `seed_movie_state/2` write, which broadcasts `{:movie_updated, movie}` again.
   """
   def movie_fixture(attrs \\ %{}) do
     attrs = Map.new(attrs)
-    {media_profile, attrs} = Map.pop(attrs, :media_profile)
+    {profile_attrs, rest} = Map.split(attrs, [:media_profile])
+    {create_attrs, rest} = Map.split(rest, Movie.creation_fields())
+    {pipeline, unknown} = Map.split(rest, Movie.transition_fields())
 
-    {pipeline, create_attrs} =
-      Map.split(attrs, @movie_pipeline_keys ++ ImportedQuality.column_names(Movie))
+    reject!(
+      Map.keys(unknown),
+      "it takes :media_profile and the atom keys Movie.creation_fields/0 or " <>
+        "Movie.transition_fields/0 lists"
+    )
+
+    reject!(emptied(attrs), "cast/3 reads their blank value as empty")
 
     create_attrs =
       Map.merge(%{tmdb_id: System.unique_integer([:positive]), title: "Inception"}, create_attrs)
 
     {:ok, movie} = Catalog.add_movie(create_attrs)
+    movie = if map_size(pipeline) == 0, do: movie, else: seed_pipeline(movie, pipeline)
 
-    movie =
-      if map_size(pipeline) == 0 do
-        movie
-      else
-        {:ok, movie} = seed_movie_state(movie, pipeline)
-        movie
-      end
-
-    if media_profile,
-      do: Repo.update!(Movie.profile_changeset(movie, %{media_profile: media_profile})),
-      else: movie
+    if map_size(profile_attrs) == 0,
+      do: movie,
+      else: Repo.update!(Movie.profile_changeset(movie, profile_attrs))
   end
+
+  # `Movie.transition_changeset/2` can clear a passed value on the status change it writes, so a
+  # value the first write cleared gets a second write with the status already in place. A value
+  # still cleared after that is one the movie's status never keeps.
+  defp seed_pipeline(movie, pipeline) do
+    {:ok, movie} = seed_movie_state(movie, pipeline)
+    movie = reseed(movie, pipeline, unseeded(movie, pipeline))
+
+    reject!(
+      unseeded(movie, pipeline),
+      "Movie.transition_changeset/2 clears them at status #{inspect(movie.status)}"
+    )
+
+    movie
+  end
+
+  defp reseed(movie, _pipeline, []), do: movie
+
+  defp reseed(movie, pipeline, keys) do
+    {:ok, movie} = seed_movie_state(movie, Map.take(pipeline, keys))
+    movie
+  end
+
+  # The passed keys whose value differs from the movie's: `cast/3` records only those as changes.
+  defp unseeded(movie, pipeline) do
+    movie
+    |> Ecto.Changeset.cast(pipeline, Map.keys(pipeline))
+    |> Map.fetch!(:changes)
+    |> Map.keys()
+  end
+
+  # The passed keys whose value `cast/3` empties (`""`, `"  "`, a blank list entry), found by
+  # casting once as usual and once with no empty values.
+  defp emptied(attrs) do
+    as_cast = cast_results(attrs, [])
+    as_given = cast_results(attrs, empty_values: [])
+    for key <- Map.keys(attrs), as_cast[key] != as_given[key], do: key
+  end
+
+  # Each key's cast value as `{:ok, value}`, or `:error` when its cast fails.
+  defp cast_results(attrs, opts) do
+    changeset = Ecto.Changeset.cast(%Movie{}, attrs, Map.keys(attrs), opts)
+
+    Map.new(attrs, fn {key, _value} ->
+      if Keyword.has_key?(changeset.errors, key),
+        do: {key, :error},
+        else: {key, {:ok, Ecto.Changeset.get_field(changeset, key)}}
+    end)
+  end
+
+  defp reject!([], _reason), do: :ok
+
+  defp reject!(keys, reason),
+    do: raise(ArgumentError, "movie_fixture/1 cannot take #{inspect(keys)}: #{reason}")
 
   @doc """
   Test-only seeding path: writes `attrs` (pipeline fields, `:status` included) straight onto
