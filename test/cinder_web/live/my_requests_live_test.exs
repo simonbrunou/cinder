@@ -4,6 +4,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
   import Mox
   import Phoenix.LiveViewTest
   import Cinder.CatalogFixtures, only: [seed_movie_state: 2]
+  import Cinder.ConfigCase, only: [put_media_server_web_url: 1]
 
   alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Books
@@ -771,22 +772,5 @@ defmodule CinderWeb.MyRequestsLiveTest do
   defp report_request_id(lv) do
     [_, id] = Regex.run(~r/report-issue-(\d+)/, render(lv))
     id
-  end
-
-  # Mirrors movie_discovery_live_test: writes the media_server_type row directly (Settings.put/2
-  # would run load_into_env/0 and flip the global :media_server impl off the Mox mock for the
-  # rest of the run). media_server_web_link/0 reads the row plus the impl's :web_url.
-  defp put_media_server_web_url(url) do
-    module = Cinder.Library.MediaServer.Plex
-    previous = Application.get_env(:cinder, module, [])
-    on_exit(fn -> Application.put_env(:cinder, module, previous) end)
-
-    Cinder.Repo.insert!(%Cinder.Settings.Setting{
-      key: "media_server_type",
-      value: "plex",
-      is_secret: false
-    })
-
-    Application.put_env(:cinder, module, Keyword.put(previous, :web_url, url))
   end
 end

@@ -208,7 +208,9 @@ defmodule Cinder.Settings.Registry do
   # operator-supplied value rather than something derivable from the server URL. One Plex section
   # per video kind, so a server with separate Movies/Shows libraries refreshes the right one.
   #
-  # Each option's `server` is the atom `Cinder.Settings.media_server_web_link/0` names it by. With
+  # Each option's `server` is the atom `Cinder.Settings.media_server_web_link/0` names it by, and
+  # the prefix its module writes on every item id ("plex:..."): the season inventory keeps only
+  # the configured server's rows by it (`Cinder.Catalog.MediaServerSeasons`). With
   # no listed type stored, the option whose `os_env` variable is set is the bootstrap choice for
   # the overlay, the form and the web link; with none set, the form shows the first option, the
   # overlay keeps the captured impl and the web link takes a uniquely configured web URL.

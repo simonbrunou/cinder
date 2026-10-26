@@ -43,6 +43,8 @@ defmodule CinderWeb.DiscoverLive do
       # from B4 an import flipping :monitored → :available). Without this the card badge and the
       # work page — which do share one fold — still drift apart on a live page.
       Books.subscribe_targets()
+      # A media-server type switch changes which server's seasons badge a TV card.
+      Settings.subscribe()
     end
 
     socket =
@@ -264,7 +266,8 @@ defmodule CinderWeb.DiscoverLive do
     {:noreply, assign_available_series(socket)}
   end
 
-  def handle_info(:media_server_seasons_updated, socket) do
+  def handle_info(event, socket)
+      when event in [:media_server_seasons_updated, :settings_updated] do
     {:noreply, assign_available_series(socket)}
   end
 

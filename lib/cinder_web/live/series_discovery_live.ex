@@ -321,9 +321,10 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     {:noreply, refresh_availability(socket)}
   end
 
-  # An admin switching media-server type/URL must not leave an open page linking at the old one.
+  # An admin switching media-server type/URL must not leave an open page linking at the old one,
+  # or counting the seasons only the old type held.
   def handle_info(:settings_updated, socket) do
-    {:noreply, assign_media_server(socket)}
+    {:noreply, refresh_availability(socket)}
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}

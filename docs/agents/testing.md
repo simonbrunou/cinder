@@ -21,6 +21,11 @@
   restores the same way. The household size band (`:tv_min_size`, `:tv_max_size`, read by
   `Cinder.Acquisition.HouseholdPolicy.band/1`) is one such key. When other test modules also read
   the key, as several read the band, set it from an `async: false` module.
+- A test picks the media server through `Cinder.ConfigCase` too: `store_media_server_type/1`
+  writes the type row without `Cinder.Settings.put/2`, which would swap the global impl off the
+  Mox mock for the rest of the run. `put_plex_url/1` and `put_media_server_bootstrap/1` set
+  process-global state (an OS env var, the overlay's boot capture), so only an `async: false`
+  module calls them. All three restore on exit.
 - Each committed movie or episode file queues a subtitle task on the one shared
   `Cinder.Subtitles.Fetcher`. A test calls `Cinder.LibraryStubs.await_subtitle_tasks/0` before
   it ends when an import it commits records sidecar languages, or the task can run after the

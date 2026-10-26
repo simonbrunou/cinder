@@ -5,6 +5,8 @@ defmodule CinderWeb.DiscoverLiveTest do
   import ExUnit.CaptureLog
   import Mox
   import Cinder.CatalogFixtures, only: [seed_movie_state: 2]
+  import Cinder.ConfigCase, only: [store_media_server_type: 1]
+  import Cinder.PollerHelpers, only: [poll_media_server_seasons: 2]
 
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
@@ -367,6 +369,35 @@ defmodule CinderWeb.DiscoverLiveTest do
       ])
 
     assert has_element?(lv, "#results", "Available")
+    assert has_element?(lv, ~s(#results a[href="/series/tmdb/1399"]))
+  end
+
+  # A wrong Jellyfin key fails every read, so the reconciler keeps Plex's rows stored; they stop
+  # counting once Jellyfin is the configured type (#721).
+  test "a TV card loses its Available badge after a switch to a failing Jellyfin", %{conn: conn} do
+    stub_tv([@got])
+
+    {:ok, :replaced} =
+      Catalog.MediaServerSeasons.replace([
+        %{tmdb_id: 1399, season_number: 1, episode_count: 10, item_id: "plex:machine-1:77"}
+      ])
+
+    setting = store_media_server_type("plex")
+
+    {:ok, lv, _html} = live(conn, ~p"/")
+    lv |> form("#search-form", %{"query" => "thrones"}) |> render_change()
+    assert has_element?(lv, "#results", "Available")
+
+    setting |> Ecto.Changeset.change(value: "jellyfin") |> Cinder.Repo.update!()
+    poll_media_server_seasons(:discover_switch_test, {:error, {:jellyfin_status, 401}})
+
+    # The failed read broadcasts nothing; the open page updates on the settings save's broadcast.
+    Phoenix.PubSub.broadcast(Cinder.PubSub, "settings", :settings_updated)
+    refute has_element?(lv, "#results", "Available")
+
+    {:ok, lv, _html} = live(conn, ~p"/")
+    lv |> form("#search-form", %{"query" => "thrones"}) |> render_change()
+    refute has_element?(lv, "#results", "Available")
     assert has_element?(lv, ~s(#results a[href="/series/tmdb/1399"]))
   end
 

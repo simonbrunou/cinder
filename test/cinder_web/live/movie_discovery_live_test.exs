@@ -4,6 +4,7 @@ defmodule CinderWeb.MovieDiscoveryLiveTest do
   import Phoenix.LiveViewTest
   import Mox
   import Cinder.CatalogFixtures, only: [seed_movie_state: 2]
+  import Cinder.ConfigCase, only: [put_media_server_web_url: 1]
 
   alias Cinder.Catalog
   alias Cinder.Requests
@@ -329,23 +330,6 @@ defmodule CinderWeb.MovieDiscoveryLiveTest do
 
       assert render_async(lv) =~ "Open in Plex"
       assert has_element?(lv, ~s(a[href="https://plex.example.com"]), "Open in Plex")
-    end
-
-    # The type row is written directly rather than via Settings.put/2: put triggers
-    # load_into_env/0, which would flip the global :media_server impl away from the Mox mock
-    # for the rest of the run. media_server_web_link/0 reads the row, not the impl.
-    defp put_media_server_web_url(url) do
-      module = Cinder.Library.MediaServer.Plex
-      previous = Application.get_env(:cinder, module, [])
-      on_exit(fn -> Application.put_env(:cinder, module, previous) end)
-
-      Cinder.Repo.insert!(%Cinder.Settings.Setting{
-        key: "media_server_type",
-        value: "plex",
-        is_secret: false
-      })
-
-      Application.put_env(:cinder, module, Keyword.put(previous, :web_url, url))
     end
   end
 end

@@ -3,6 +3,7 @@ defmodule CinderWeb.EntityDiscoveryLiveTest do
 
   import Phoenix.LiveViewTest
   import Mox
+  import Cinder.ConfigCase, only: [store_media_server_type: 1]
 
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
@@ -124,6 +125,28 @@ defmodule CinderWeb.EntityDiscoveryLiveTest do
       {:ok, lv, _html} = live(conn, ~p"/person/tmdb/500")
 
       assert has_element?(lv, ~s(#credits a[href="/series/tmdb/1399"]))
+    end
+
+    # Only the configured server type's seasons badge a TV credit (#721), so a type switch saved
+    # elsewhere reaches an open page through the settings broadcast.
+    test "a TV credit's Available badge follows a media-server type switch live", %{conn: conn} do
+      conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+      stub_person(%{})
+
+      {:ok, :replaced} =
+        Catalog.MediaServerSeasons.replace([
+          %{tmdb_id: 1399, season_number: 1, episode_count: 10, item_id: "plex:machine-1:77"}
+        ])
+
+      setting = store_media_server_type("plex")
+
+      {:ok, lv, _html} = live(conn, ~p"/person/tmdb/500")
+      assert has_element?(lv, "#credits", "Available")
+
+      setting |> Ecto.Changeset.change(value: "jellyfin") |> Cinder.Repo.update!()
+      Phoenix.PubSub.broadcast(Cinder.PubSub, "settings", :settings_updated)
+
+      refute has_element?(lv, "#credits", "Available")
     end
 
     test "an existing pending request shows a Pending badge instead of Add", %{conn: conn} do

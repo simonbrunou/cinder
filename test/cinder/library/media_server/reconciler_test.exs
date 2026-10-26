@@ -2,6 +2,11 @@ defmodule Cinder.Library.MediaServer.ReconcilerTest do
   use Cinder.DataCase, async: false
 
   import Cinder.CatalogFixtures
+
+  import Cinder.ConfigCase,
+    only: [put_media_server_bootstrap: 1, put_plex_url: 1, store_media_server_type: 1]
+
+  import Cinder.PollerHelpers, only: [poll_media_server_seasons: 2]
   import Mox
 
   alias Cinder.Catalog
@@ -97,22 +102,13 @@ defmodule Cinder.Library.MediaServer.ReconcilerTest do
   defp season(tmdb_id, number, count, item_id),
     do: %{tmdb_id: tmdb_id, season_number: number, episode_count: count, item_id: item_id}
 
-  defp poll_seasons(name, result) do
-    expect(MediaServerMock, :list_items, 2, fn _kind -> {:ok, []} end)
-    expect(MediaServerMock, :list_seasons, fn -> result end)
-
-    pid = start_supervised!({Reconciler, name: name}, id: name)
-    assert :ok = Reconciler.poll(pid)
-    stop_supervised!(name)
-  end
-
   test "a complete season inventory replaces the stored one and broadcasts only on change" do
     assert {:ok, :replaced} = MediaServerSeasons.replace([season(9, 1, 3, "plex:m:9")])
     Catalog.subscribe_series()
 
     # The same show listed twice keeps the season with more episodes.
     inventory = [season(1399, 1, 10, "plex:m:44"), season(1399, 1, 4, "plex:m:45")]
-    poll_seasons(:media_server_seasons_test, {:ok, inventory})
+    poll_media_server_seasons(:media_server_seasons_test, {:ok, inventory})
 
     assert [%{season_number: 1, episode_count: 10, item_id: "plex:m:44"}] =
              MediaServerSeasons.for_series(1399)
@@ -121,22 +117,88 @@ defmodule Cinder.Library.MediaServer.ReconcilerTest do
     assert MediaServerSeasons.series_tmdb_ids() == MapSet.new([1399])
     assert_receive :media_server_seasons_updated
 
-    poll_seasons(:media_server_seasons_again_test, {:ok, inventory})
+    poll_media_server_seasons(:media_server_seasons_again_test, {:ok, inventory})
     refute_receive :media_server_seasons_updated
   end
 
   test "a failed season read keeps the inventory; an unconfigured server clears it" do
     assert {:ok, :replaced} = MediaServerSeasons.replace([season(9, 1, 3, "plex:m:9")])
 
-    poll_seasons(:media_server_seasons_partial_test, {:error, :partial_inventory})
+    poll_media_server_seasons(:media_server_seasons_partial_test, {:error, :partial_inventory})
     assert [%{episode_count: 3}] = MediaServerSeasons.for_series(9)
 
-    poll_seasons(:media_server_seasons_section_test, {:error, {:plex_section_unset, :tv}})
+    poll_media_server_seasons(
+      :media_server_seasons_section_test,
+      {:error, {:plex_section_unset, :tv}}
+    )
+
     assert MediaServerSeasons.for_series(9) == []
 
     assert {:ok, :replaced} = MediaServerSeasons.replace([season(9, 1, 3, "plex:m:9")])
-    poll_seasons(:media_server_seasons_unconfigured_test, {:error, :not_configured})
+    poll_media_server_seasons(:media_server_seasons_unconfigured_test, {:error, :not_configured})
     assert MediaServerSeasons.for_series(9) == []
+  end
+
+  describe "after a media-server switch" do
+    # PLEX_URL picks Plex while no type is stored, so each test starts without it.
+    setup do
+      put_plex_url(nil)
+      :ok
+    end
+
+    test "a failing new server hides the old server's seasons until it is configured again" do
+      assert {:ok, :replaced} = MediaServerSeasons.replace([season(1399, 1, 10, "plex:m:44")])
+      setting = store_media_server_type("jellyfin")
+
+      poll_media_server_seasons(
+        :media_server_seasons_switch_test,
+        {:error, {:jellyfin_status, 401}}
+      )
+
+      assert MediaServerSeasons.for_series(1399) == []
+      assert MediaServerSeasons.series_tmdb_ids() == MapSet.new()
+
+      # Hidden at read time, not cleared: switching back to Plex shows them again.
+      setting |> Ecto.Changeset.change(value: "plex") |> Repo.update!()
+
+      assert [%{item_id: "plex:m:44"}] = MediaServerSeasons.for_series(1399)
+      assert MediaServerSeasons.series_tmdb_ids() == MapSet.new([1399])
+    end
+
+    test "a transient failure of the configured server keeps its seasons" do
+      assert {:ok, :replaced} = MediaServerSeasons.replace([season(1399, 1, 10, "plex:m:44")])
+      store_media_server_type("plex")
+
+      poll_media_server_seasons(:media_server_seasons_transient_test, {:error, :timeout})
+
+      assert [%{item_id: "plex:m:44"}] = MediaServerSeasons.for_series(1399)
+      assert MediaServerSeasons.series_tmdb_ids() == MapSet.new([1399])
+    end
+
+    # An env-only install switches by dropping PLEX_URL, which hands the server back to the
+    # bootstrap impl: config.exs's Jellyfin in prod, the Mox mock (no listed server) here.
+    test "with no type stored, PLEX_URL or else the bootstrap impl picks the seasons that count" do
+      assert {:ok, :replaced} =
+               MediaServerSeasons.replace([
+                 season(1399, 1, 10, "plex:m:44"),
+                 season(9, 1, 3, "jellyfin:show-9")
+               ])
+
+      poll_media_server_seasons(:media_server_seasons_unset_test, {:error, :timeout})
+      assert MediaServerSeasons.series_tmdb_ids() == MapSet.new([1399, 9])
+
+      put_media_server_bootstrap(Cinder.Library.MediaServer.Jellyfin)
+
+      assert MediaServerSeasons.for_series(1399) == []
+      assert [%{item_id: "jellyfin:show-9"}] = MediaServerSeasons.for_series(9)
+      assert MediaServerSeasons.series_tmdb_ids() == MapSet.new([9])
+
+      put_plex_url("http://plex.test:32400")
+
+      assert [%{item_id: "plex:m:44"}] = MediaServerSeasons.for_series(1399)
+      assert MediaServerSeasons.for_series(9) == []
+      assert MediaServerSeasons.series_tmdb_ids() == MapSet.new([1399])
+    end
   end
 
   test "is supervised only when polling is enabled" do

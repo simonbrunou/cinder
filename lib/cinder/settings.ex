@@ -155,13 +155,45 @@ defmodule Cinder.Settings do
   """
   @spec media_server_web_link() :: {:plex | :jellyfin, String.t()} | nil
   def media_server_web_link do
-    case Shape.running_media_server(@media_servers, get(@media_server.key)) do
+    case running_media_server() do
       %{} = option -> web_link_for(option)
       nil -> sole_configured_web_link()
     end
   end
 
-  @doc "Returns a title deep link for an opaque reconciled item id, or the server front door."
+  @doc """
+  The media server type Cinder runs against, picked as the env overlay picks its impl: the stored
+  `media_server_type`, else the option whose `os_env` variable is set (`PLEX_URL` picks Plex),
+  else the option whose module is the bootstrap impl (config.exs's Jellyfin). `nil` only when the
+  bootstrap is no listed server, as in tests, where it is the Mox mock.
+
+  Data a server wrote carries its type, so a reader uses this to ignore what the other type left
+  behind after a switch, as `Cinder.Catalog.MediaServerSeasons` does. It reads the bootstrap
+  snapshot, never the running impl (`Cinder.Library.MediaServer.impl/0`), which tests point at
+  the same Mox mock for both types. `media_server_web_link/0` keeps its own fallback when no type
+  is stored and no `os_env` is set.
+  """
+  @spec media_server_type() :: :plex | :jellyfin | nil
+  def media_server_type do
+    case running_media_server() || bootstrap_media_server() do
+      %{server: server} -> server
+      nil -> nil
+    end
+  end
+
+  defp running_media_server,
+    do: Shape.running_media_server(@media_servers, get(@media_server.key))
+
+  defp bootstrap_media_server do
+    bootstrap = Overlay.base(:media_server)
+    Enum.find(@media_servers, &(&1.module == bootstrap))
+  end
+
+  @doc """
+  Returns a title deep link for a reconciled item id, or the server front door. The id starts
+  with the server that wrote it (`"plex:"`, `"jellyfin:"`), so the other server's id gets the
+  front door.
+  """
   @spec media_server_web_link(String.t() | nil) :: {:plex | :jellyfin, String.t()} | nil
   def media_server_web_link(item_id), do: media_server_web_link(media_server_web_link(), item_id)
 

@@ -1,7 +1,9 @@
 defmodule Cinder.PollerHelpers do
   @moduledoc """
-  Shared helpers for the poller crash-recovery tests.
+  Shared helpers for the poller tests: crash recovery, and one-off polls a page test runs.
   """
+
+  alias Cinder.Library.MediaServer.Reconciler
 
   @doc """
   Stubs both download clients' `files/1` with an empty (clean) list.
@@ -17,6 +19,21 @@ defmodule Cinder.PollerHelpers do
     Mox.stub(Cinder.Download.SabnzbdClientMock, :files, fn _id -> {:ok, []} end)
     Mox.stub(Cinder.Library.FilesystemMock, :chmod, fn _path, _mode -> :ok end)
     :ok
+  end
+
+  @doc """
+  Runs one `Cinder.Library.MediaServer.Reconciler` poll under `name`, with empty movie and TV
+  inventories and a season read that returns `result`, then stops it. Erases the poll's
+  `last_run` on exit so `/activity` reads "not yet" in later tests.
+  """
+  def poll_media_server_seasons(name, result) do
+    ExUnit.Callbacks.on_exit(fn -> :persistent_term.erase({Reconciler, :last_run}) end)
+    Mox.expect(Cinder.Library.MediaServerMock, :list_items, 2, fn _kind -> {:ok, []} end)
+    Mox.expect(Cinder.Library.MediaServerMock, :list_seasons, fn -> result end)
+
+    pid = ExUnit.Callbacks.start_supervised!({Reconciler, name: name}, id: name)
+    :ok = Reconciler.poll(pid)
+    ExUnit.Callbacks.stop_supervised!(name)
   end
 
   @doc """

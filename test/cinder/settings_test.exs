@@ -5,6 +5,9 @@ defmodule Cinder.SettingsTest do
   import Mox
   import ExUnit.CaptureLog
 
+  import Cinder.ConfigCase,
+    only: [put_media_server_bootstrap: 1, put_plex_url: 1, store_media_server_type: 1]
+
   alias Cinder.Acquisition.HouseholdPolicy
   alias Cinder.Catalog
   alias Cinder.Catalog.UpgradeHunter
@@ -52,16 +55,6 @@ defmodule Cinder.SettingsTest do
       end
     end)
   end
-
-  # PLEX_URL is process-global and picks the bootstrap media server for the overlay, the form and
-  # the web link. A test that sets it restores the prior value on exit.
-  defp restore_plex_url_on_exit do
-    prior = System.get_env("PLEX_URL")
-    on_exit(fn -> put_plex_url(prior) end)
-  end
-
-  defp put_plex_url(nil), do: System.delete_env("PLEX_URL")
-  defp put_plex_url(url), do: System.put_env("PLEX_URL", url)
 
   describe "env_keys/0" do
     # Measured against the overlay before the setting definitions existed, so a key the overlay
@@ -892,7 +885,6 @@ defmodule Cinder.SettingsTest do
     # The Plex credentials' env var is also the bootstrap media-server choice: with no stored type
     # it picks the impl and the form's selection, and a stored type still wins over it.
     test "PLEX_URL selects Plex while no media server type is stored" do
-      restore_plex_url_on_exit()
       put_plex_url("http://plex.test:32400")
 
       assert Settings.load_into_env() == :ok
@@ -916,9 +908,8 @@ defmodule Cinder.SettingsTest do
     # the server the overlay runs, never a value no option matches, which the browser would show
     # as the first option and a save would then store.
     test "an unlisted stored type shows and runs the PLEX_URL choice" do
-      restore_plex_url_on_exit()
       put_plex_url("http://plex.test:32400")
-      Repo.insert!(%Setting{key: "media_server_type", value: "emby", is_secret: false})
+      store_media_server_type("emby")
 
       assert Settings.load_into_env() == :ok
       assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServer.Plex
@@ -1703,15 +1694,9 @@ defmodule Cinder.SettingsTest do
     end
   end
 
-  describe "media_server_web_link/0,1" do
-    # Writes the type row directly rather than via Settings.put/2: put triggers
-    # load_into_env/0, which flips the global :media_server impl away from the Mox mock and
-    # leaks into every later test in the run. media_server_web_link/0 reads the row, not the
-    # impl, so the row alone is what this needs.
-    defp set_media_server_type(type) do
-      Repo.insert!(%Setting{key: "media_server_type", value: type, is_secret: false})
-    end
-
+  # The type row is stored directly (`store_media_server_type/1`): both functions read the row,
+  # not the impl, and Settings.put/2 would flip the global impl off the Mox mock.
+  describe "media_server_web_link/0,1 and media_server_type/0" do
     defp set_web_url(server, url) do
       %{module: module} = Enum.find(@media_servers, &(&1.server == server))
       config = Application.get_env(:cinder, module, [])
@@ -1722,7 +1707,6 @@ defmodule Cinder.SettingsTest do
       # A leftover value on any server's module, or an exported PLEX_URL, would mask the case
       # under test.
       Enum.each(@media_servers, &set_web_url(&1.server, nil))
-      restore_plex_url_on_exit()
       put_plex_url(nil)
       :ok
     end
@@ -1734,7 +1718,7 @@ defmodule Cinder.SettingsTest do
         Repo.delete_all(Setting)
         Enum.each(@media_servers, &set_web_url(&1.server, "https://other.test"))
         set_web_url(server, "https://#{value}.test")
-        set_media_server_type(value)
+        store_media_server_type(value)
 
         assert Settings.media_server_web_link() == {server, "https://#{value}.test"}
 
@@ -1744,7 +1728,7 @@ defmodule Cinder.SettingsTest do
     end
 
     test "an unlisted stored type falls back to a uniquely configured URL" do
-      set_media_server_type("emby")
+      store_media_server_type("emby")
       set_web_url(:plex, "https://plex.test")
 
       assert Settings.media_server_web_link() == {:plex, "https://plex.test"}
@@ -1757,7 +1741,7 @@ defmodule Cinder.SettingsTest do
     test "follows the configured media server type" do
       set_web_url(:plex, "https://plex.test")
       set_web_url(:jellyfin, "https://jellyfin.test")
-      set_media_server_type("plex")
+      store_media_server_type("plex")
 
       assert Settings.media_server_web_link() == {:plex, "https://plex.test"}
     end
@@ -1765,7 +1749,7 @@ defmodule Cinder.SettingsTest do
     test "uses a matching item id and rejects it immediately after a provider switch" do
       set_web_url(:plex, "https://plex.test")
       set_web_url(:jellyfin, "https://jellyfin.test")
-      setting = set_media_server_type("plex")
+      setting = store_media_server_type("plex")
 
       assert Settings.media_server_web_link("plex:machine-1:42") ==
                {:plex,
@@ -1780,7 +1764,7 @@ defmodule Cinder.SettingsTest do
     test "follows the configured type when that type is Jellyfin" do
       set_web_url(:plex, "https://plex.test")
       set_web_url(:jellyfin, "https://jellyfin.test")
-      set_media_server_type("jellyfin")
+      store_media_server_type("jellyfin")
 
       assert Settings.media_server_web_link() == {:jellyfin, "https://jellyfin.test"}
     end
@@ -1788,7 +1772,7 @@ defmodule Cinder.SettingsTest do
     # The whole point of reading the type: a Plex household with a stale Jellyfin URL still
     # configured must not send people to a server that does not have the file.
     test "never falls back to the other server's URL once a type is set" do
-      set_media_server_type("plex")
+      store_media_server_type("plex")
       set_web_url(:jellyfin, "https://jellyfin.test")
 
       refute Settings.media_server_web_link()
@@ -1828,7 +1812,7 @@ defmodule Cinder.SettingsTest do
 
     test "an unlisted stored type follows PLEX_URL, as the overlay does" do
       put_plex_url("http://plex.test:32400")
-      set_media_server_type("emby")
+      store_media_server_type("emby")
       set_web_url(:jellyfin, "https://jellyfin.test")
 
       refute Settings.media_server_web_link()
@@ -1840,18 +1824,48 @@ defmodule Cinder.SettingsTest do
 
     test "a stored type wins over PLEX_URL" do
       put_plex_url("http://plex.test:32400")
-      set_media_server_type("jellyfin")
+      store_media_server_type("jellyfin")
       set_web_url(:plex, "https://plex.test")
       set_web_url(:jellyfin, "https://jellyfin.test")
 
       assert Settings.media_server_web_link() == {:jellyfin, "https://jellyfin.test"}
     end
 
+    # The season inventory drops the other type's rows by this (#721), so it follows the overlay:
+    # a listed stored type, else PLEX_URL, else the bootstrap impl. That is the Mox mock here,
+    # which names no server, and config.exs's Jellyfin in prod.
+    test "media_server_type/0 names the type the overlay runs" do
+      refute Settings.media_server_type()
+
+      put_media_server_bootstrap(Cinder.Library.MediaServer.Jellyfin)
+      assert Settings.media_server_type() == :jellyfin
+
+      put_plex_url("http://plex.test:32400")
+      assert Settings.media_server_type() == :plex
+
+      setting = store_media_server_type("jellyfin")
+      assert Settings.media_server_type() == :jellyfin
+
+      setting |> Ecto.Changeset.change(value: "emby") |> Repo.update!()
+      assert Settings.media_server_type() == :plex
+    end
+
+    # The season inventory keeps a row by its "<server>:" item id prefix, so each listed server's
+    # module must write and read its ids under its own server atom.
+    test "each server's module reads item ids prefixed with its server atom" do
+      for %{server: server, module: module} <- @media_servers do
+        set_web_url(server, "https://#{server}.test")
+
+        assert is_binary(module.deep_link("#{server}:machine-1:42"))
+        refute module.deep_link("other:machine-1:42")
+      end
+    end
+
     # A scheme-less host would render as a RELATIVE href (resolving against the current page),
     # and "javascript:" makes Phoenix's <.link> raise. Both are operator typos; no link beats a
     # broken link or a crashed page.
     test "ignores a value that is not an absolute http(s) URL" do
-      set_media_server_type("plex")
+      store_media_server_type("plex")
 
       for bad <- [
             "plex.example.com",

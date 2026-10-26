@@ -28,6 +28,8 @@ defmodule CinderWeb.EntityDiscoveryLive do
         Catalog.subscribe()
         Catalog.subscribe_series()
         Cinder.Requests.subscribe()
+        # A media-server type switch changes which server's seasons badge a TV card.
+        Cinder.Settings.subscribe()
       end
 
       {:ok,
@@ -104,7 +106,8 @@ defmodule CinderWeb.EntityDiscoveryLive do
     {:noreply, assign_available_series(socket)}
   end
 
-  def handle_info(:media_server_seasons_updated, socket) do
+  def handle_info(event, socket)
+      when event in [:media_server_seasons_updated, :settings_updated] do
     {:noreply, assign_available_series(socket)}
   end
 

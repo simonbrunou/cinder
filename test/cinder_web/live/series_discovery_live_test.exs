@@ -3,6 +3,8 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
   import Phoenix.LiveViewTest
   import Mox
   import Cinder.CatalogFixtures
+  import Cinder.ConfigCase, only: [put_media_server_web_url: 1, store_media_server_type: 1]
+  import Cinder.PollerHelpers, only: [poll_media_server_seasons: 2]
 
   alias Cinder.Catalog.MediaServerSeasons
 
@@ -368,6 +370,34 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
              [2, 3]
   end
 
+  # A wrong Jellyfin key fails every read, so the reconciler keeps Plex's rows stored; they stop
+  # counting once Jellyfin is the configured type (#721).
+  test "after a switch to a failing Jellyfin, a season only Plex held is requestable again", %{
+    conn: conn
+  } do
+    stub_season_episode_counts()
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 10)])
+    setting = store_media_server_type("plex")
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+    assert has_element?(lv, "#seriesdiscovery-season-status-1", "Available")
+    refute has_element?(lv, ~s(button[phx-value-season="1"]))
+
+    setting |> Ecto.Changeset.change(value: "jellyfin") |> Cinder.Repo.update!()
+    poll_media_server_seasons(:series_discovery_switch_test, {:error, {:jellyfin_status, 401}})
+
+    # The failed read broadcasts nothing; the open page updates on the settings save's broadcast.
+    Phoenix.PubSub.broadcast(Cinder.PubSub, "settings", :settings_updated)
+    refute has_element?(lv, "#seriesdiscovery-season-status-1")
+    assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+    refute has_element?(lv, "#seriesdiscovery-season-status-1")
+    refute has_element?(lv, "#seriesdiscovery-season-progress-1")
+    assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+  end
+
   test "a season Cinder has partly imported shows its episode count", %{conn: conn} do
     stub_season_episode_counts()
 
@@ -467,22 +497,5 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
 
     refute html =~ "More like this"
     refute has_element?(lv, "#series-recommendations")
-  end
-
-  # Writes the media_server_type row directly (not via Settings.put/2, which would flip the global
-  # :media_server impl away from the Mox mock for the rest of the run) and sets a web URL on the
-  # Plex impl config; media_server_web_link/0 reads both.
-  defp put_media_server_web_url(url) do
-    module = Cinder.Library.MediaServer.Plex
-    previous = Application.get_env(:cinder, module, [])
-    on_exit(fn -> Application.put_env(:cinder, module, previous) end)
-
-    Cinder.Repo.insert!(%Cinder.Settings.Setting{
-      key: "media_server_type",
-      value: "plex",
-      is_secret: false
-    })
-
-    Application.put_env(:cinder, module, Keyword.put(previous, :web_url, url))
   end
 end

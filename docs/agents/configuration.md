@@ -25,7 +25,9 @@ and slot, never by key. Code that reads a kind's library root calls
 or links a media server reads the `media_server_type` options (outside `Cinder.Settings.Shape`,
 through `Cinder.Settings.Registry.media_servers/0`): each one has a `value`, a `server` atom, a
 `module` and an `os_env`. It finds the server that runs with `Shape.running_media_server/2` (the
-stored type, else the option whose `os_env` is set), never with `Shape.option/2` alone.
+stored type, else the option whose `os_env` is set), never with `Shape.option/2` alone. Code that
+reads data a media server wrote, such as the season inventory, asks
+`Cinder.Settings.media_server_type/0`, which also names the bootstrap server when neither applies.
 
 A registry-driven loader `Application.put_env`s stored values onto a one-time bootstrap snapshot
 at boot (a one-shot supervised child, after PubSub and before the poller) and on every save. So
@@ -39,7 +41,7 @@ site:
 - `lib/cinder/settings/overlay.ex` applies the env-as-bootstrap overlay. The `PLEX_URL`
   media-server fallback is the Plex option's `os_env` in `Cinder.Settings.Registry`, and
   `Cinder.Settings.Shape` reads it through `Shape.running_media_server/2` for the overlay, the
-  form and `Cinder.Settings.media_server_web_link/0`.
+  form, `Cinder.Settings.media_server_web_link/0` and `Cinder.Settings.media_server_type/0`.
 - `lib/cinder_web/router.ex` reads the `CINDER_BASIC_AUTH_*` pair for the Basic gate.
 - `config/config.exs` reads `MIX_TAILWIND_PATH` into `config :tailwind, path:` each time Mix
   loads its config. Only the image build sets it, to its pinned Tailwind binary (#867).

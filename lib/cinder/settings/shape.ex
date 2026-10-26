@@ -306,8 +306,8 @@ defmodule Cinder.Settings.Shape do
   def enabled?(value), do: value in ["true", "1", "on"]
 
   # The media server option that runs: the stored one, else the one its os_env variable selects,
-  # else nil. The overlay, the form and Cinder.Settings.media_server_web_link/0 all pick through
-  # it.
+  # else nil. The overlay, the form, Cinder.Settings.media_server_web_link/0 and
+  # Cinder.Settings.media_server_type/0 all pick through it.
   @doc false
   def running_media_server(options, value),
     do: option(options, value) || os_env_option(options)
