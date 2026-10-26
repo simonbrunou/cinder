@@ -112,7 +112,14 @@ a `defdelegate` in the facade only when a caller outside the catalog needs it.
   - `Grabs`: the TV grab lifecycle, verification holds included.
   - `ManualGrab`: a release the operator picked.
   - `BlockedReleases`: the release blocklist.
-  - `MediaProfiles`, `Profiles`: a title's preferences.
+  - `Profiles`: named profiles and the profile a title points at. Three paths switch a title's
+    profile, each in its own transaction: the detail pages' picker (`assign_profile/3`, which
+    publishes), request approval (`assign_profile/3` with `publish: false`, published by its
+    `Cinder.Requests.Approval` adapter) and series adoption (`assign_in_transaction/3`). A change
+    that must follow every switch hooks each path after its commit, as the anime hold does (#791).
+    Movie adoption writes the profile in `MovieLifecycle.adopt/3` instead and leaves the movie
+    `:available`, where an anime hold does not count and the next search decides it again.
+  - `MediaProfiles`: a title's Audio pick, its anime hold and its acquisition context.
   - `TitleDeletion`: deleting and cancelling titles, and their audit.
   - `MetadataRefresh`: TMDB metadata and probed media info.
   - `Discovery`: TMDB reads.
