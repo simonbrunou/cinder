@@ -4,6 +4,13 @@
   `mix test` can check, then loop until it is green.
 - A bug fix starts with a test that reproduces the bug. Then make it pass.
 - New functionality, such as a choke-point, a state or a writer, ships with a test.
+- A lock test runs the waiter in another process than the holder: the lock id carries `self()`
+  and `StagedImport.run/1` is re-entrant, so a waiter in the holder's process never blocks. A
+  short `refute Task.yield(task, 100)` shows it blocked (`Cinder.Library.StagedImportTest`,
+  "run/1"). After the release, the waiter wakes at its next `:global.trans/2` retry, a random
+  sleep whose ceiling doubles from 250 ms to 8 s. What sets the await is how long the lock stays
+  held after the waiter starts: the default 5 s covers a few hundred ms, and a hold of seconds,
+  such as a whole `TvPoller.poll/0` import, needs about 15 s.
 - Tests never hit the network or a real service. `config/test.exs` points each external-service
   behaviour at its Mox mock, so a test that needs service behaviour sets an expectation on the
   mock. The behaviour list is in [architecture.md](architecture.md).
