@@ -108,6 +108,15 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   `curl -s -X PATCH -H "Authorization: token $FJ_TOKEN" -H 'Content-Type: application/json' "$API/pulls/<n>" -d '{"state":"closed"}'`,
   wait about 20 s, then the same call with `{"state":"open"}`. Run both calls in one foreground
   step and check each response, or the PR can stay closed.
+- A `main` push run: re-run a red job of `origin/main`'s head once, on the same SHA. Find the
+  run id as "Reading a run" says, then list the run's jobs with
+  `curl ... "$API/actions/runs/<run id>/jobs" | jq -c '.[] | {id, name, status, attempt}'`. A
+  red job at `attempt` 1 gets the re-run:
+  `curl -s -X POST -H "Authorization: token $FJ_TOKEN" "$API/actions/jobs/<job id>/rerun"`,
+  which answers 204. A job at `attempt` above 1 was re-run by another agent in the merge burst:
+  wait on it while it reads `waiting` or `running`, and treat the run as red if it fails again
+  (AGENTS.md "Merge authority"). A newer push to `main` cancels `main`'s run in progress, a
+  re-run included, so when one lands, wait on the new head.
 - Before you wait on the new run, confirm its statuses show `pending`, or the wait reads the old
   failure.
 
