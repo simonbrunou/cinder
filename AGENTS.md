@@ -53,7 +53,8 @@ prints. It is the API's `head.sha` that `scripts/merge-pr` reads. A local checko
 commits that were never pushed, or sit on `main` when you merge another thread's PR. Merge with
 `scripts/merge-pr <n>`. It checks the last two conditions on the pushed SHA, the `CHANGELOG.md`
 rule below and the `code_health_test` line cap on the merged tree, then merges pinned to that
-SHA. It cannot check the review.
+SHA. It cannot check the review. A squash appends `(#<n>)` to the PR title, so it refuses a title
+that already ends in another `(#N)`: name the issue in the squash body's `Closes #<issue>` instead.
 
 A branch behind `main` with no conflict merges as it is, with no sync and no CI re-run. The
 accepted risk is that two PRs that pass apart can break `main` together. The merging agent checks

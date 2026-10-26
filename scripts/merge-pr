@@ -14,6 +14,8 @@
 #
 # It stops at the first check that fails:
 #   1. the PR is open against main; its head SHA comes from the API, never from a local branch;
+#      a squash's PR title does not already end in another number, such as its issue's `(#n)`,
+#      since the squash appends the PR's own;
 #   2. CI is green on that SHA: every job of the head's .forgejo/workflows/ci.yml reports success
 #      as `<workflow> / <job> (pull_request)`, and the combined status is success;
 #   3. after `git fetch origin`, `git merge-tree --write-tree origin/main <sha>` exits 0;
@@ -102,10 +104,17 @@ api GET "/pulls/$pr"
 [[ $http_status == 200 ]] || fail "GET /pulls/$pr answered $http_status"
 read -r state merged base sha < <(jq -r '"\(.state) \(.merged) \(.base.ref) \(.head.sha)"' <<<"$http_body")
 title=$(jq -r .title <<<"$http_body")
+title=${title%"${title##*[![:space:]]}"}
 [[ $state == open && $merged == false ]] || fail "#$pr is $state (merged: $merged)"
 [[ $base == main ]] || fail "#$pr targets $base, not main"
 echo "#$pr: $title"
 echo "head: $sha"
+# main's subjects end in the PR number alone; `fix: x (#779) (#949)` names the issue twice over.
+# The squash below keeps a title's own `(#pr)`, so the check looks at what comes before it.
+if [[ $style == squash && ${title%"(#$pr)"} =~ \(#([0-9]+)\)[[:space:]]*$ ]]; then
+  bare=$(sed -E 's/[[:space:]]*\(#[0-9]+\)[[:space:]]*$//' <<<"${title%"(#$pr)"}")
+  fail "the title ends in (#${BASH_REMATCH[1]}), and the squash appends (#$pr). Retitle it with: fj pr -R origin edit $pr title \"$bare\" (give the title: without one, fj opens an editor). A retitle moves no SHA, so re-run this at once. Keep Closes #${BASH_REMATCH[1]} in the squash body (the fix commit's body or --body-file)."
+fi
 
 fetch_head() {
   git fetch -q origin
