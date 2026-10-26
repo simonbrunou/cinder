@@ -1,7 +1,10 @@
 # Changelog fragments
 
 A PR with a user-visible change adds one file here instead of editing `## [Unreleased]` in
-`CHANGELOG.md`, so two PRs never conflict on the changelog.
+`CHANGELOG.md`, so two PRs never conflict on the changelog. A PR that changes neither the
+release image nor a file a self-hoster builds or deploys with adds none, for example one touching
+only `test/`, `.forgejo/workflows/`, `scripts/`, `.gitignore`, `AGENTS.md`, `docs/agents/` or
+`.agents/skills/`.
 
 - Name it `<number>-<slug>.md`: the issue number (or the PR number when there is no issue),
   then a slug in lowercase letters, digits, `-` and `_`, for example `843-merge-no-conflict.md`.

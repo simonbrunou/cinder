@@ -34,8 +34,9 @@ Read the matching doc before you act:
 
 ## Changelog
 
-A PR with a user-visible change adds one fragment, `changelog.d/<number>-<slug>.md`, in the
-format of [changelog.d/README.md](changelog.d/README.md). `CHANGELOG.md` changes only in a release.
+A PR with a user-visible change adds one fragment, `changelog.d/<number>-<slug>.md`.
+[changelog.d/README.md](changelog.d/README.md) says which PRs need one and how to write it.
+`CHANGELOG.md` changes only in a release.
 
 ## Merge authority
 

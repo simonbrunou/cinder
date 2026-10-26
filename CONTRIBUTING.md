@@ -33,10 +33,11 @@ inspecting the running app over guessing.
   on a `Book*` module that has an `Audiobook*` sibling.
 - Keep diffs minimal and trace each change to the request; `credo --strict` and warnings-as-errors
   must stay clean.
-- A user-visible change adds a changelog fragment, `changelog.d/<number>-<slug>.md` (format in
-  [`changelog.d/README.md`](changelog.d/README.md)), instead of an entry under `[Unreleased]` in
-  `CHANGELOG.md`, so two PRs never conflict on the changelog. `test/code_health_test.exs` fails
-  on a new entry under `[Unreleased]` and on a fragment a release could not fold.
+- A user-visible change adds a changelog fragment, `changelog.d/<number>-<slug>.md` (which PRs
+  need one, and the format, in [`changelog.d/README.md`](changelog.d/README.md)), instead of an
+  entry under `[Unreleased]` in `CHANGELOG.md`, so two PRs never conflict on the changelog.
+  `test/code_health_test.exs` fails on a new entry under `[Unreleased]` and on a fragment a
+  release could not fold.
 
 See [`docs/agents/architecture.md`](docs/agents/architecture.md) for fuller architecture notes
 and [`ROADMAP.md`](ROADMAP.md) for historical scope.
