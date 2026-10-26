@@ -43,7 +43,7 @@ landed.
 - A lane is a sequence of issues that run one after another. Lanes run in parallel.
 - Put issues in one lane when they edit the same files or one blocks the other, and order each
   lane by its blocking edges.
-- Keep within the thread cap of the global CLAUDE.md's "T3 fan-out" section. The shared CI runner
+- Keep within the thread cap of the global CLAUDE.md's "T3 threads" section. The shared CI runner
   caps each repo further. Run at most two diversif threads, which take turns on E2E through
   diversif's `scripts/wait-e2e-slot.sh`, until homelab-stacks#254 gives E2E its own runner
   (diversif#478).
@@ -87,7 +87,7 @@ seeded, and add a paragraph on what is done and what remains.
 Cycle `t3_thread_wait` over the running threads with 15-20 minute timeouts, and post a status
 line each cycle. Each cycle also checks:
 
-- **Your queue**, read and emptied as the global CLAUDE.md's "T3 fan-out" section says.
+- **Your queue**, read and emptied as the global CLAUDE.md's "T3 threads" section says.
 - **New PRs and their CI**, in every repo the run touches and in nix. Two open `retro/*` PRs
   that change the same file are twins. Tell the later thread to close its PR, or to fold what it
   adds into the earlier one (nix#55 and nix#59, cinder#909 and cinder#911).
