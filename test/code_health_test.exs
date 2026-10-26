@@ -4,8 +4,8 @@ defmodule Cinder.CodeHealthTest do
   the 2026-07-26 `Cinder.Catalog` split), and fences the module boundaries earlier refactors
   drew: the catalog's split by concept (#740), the staging engine (#739), the guarded-write
   adapters (#743) and the domain's distance from the web layer (#816). It also keeps new
-  changelog entries in `changelog.d/` (#843), and the Dockerfile's Tailwind pin on the configured
-  version (#867).
+  changelog entries in `changelog.d/` (#843), the Dockerfile's Tailwind pin on the configured
+  version (#867), and the tests' media-server choice in `Cinder.ConfigCase` (#721).
   """
   use ExUnit.Case, async: true
 
@@ -225,6 +225,67 @@ defmodule Cinder.CodeHealthTest do
            "use `Cinder.LibraryStubs.candidate_path?/1` or `candidate_marker/0` instead of " <>
              "spelling out #{marker} in:\n  " <> Enum.join(offenders, "\n  ")
   end
+
+  # #721: a test picks the media server through `Cinder.ConfigCase`, which restores the
+  # process-global PLEX_URL and the overlay's boot capture, and writes the type row without
+  # reloading the overlay. Four test files had grown their own copies of those helpers.
+  test "only Cinder.ConfigCase sets the media server a test runs against" do
+    calls =
+      for path <- Path.wildcard("test/**/*.{ex,exs}"),
+          path != "test/support/config_case.ex",
+          call <- media_server_choice_writes(path),
+          do: "#{path}: #{call}"
+
+    assert calls == [],
+           "use `Cinder.ConfigCase.put_plex_url/1`, `store_media_server_type/1` or " <>
+             "`put_media_server_bootstrap/1` instead of:\n  " <> Enum.join(calls, "\n  ")
+  end
+
+  defp media_server_choice_writes(path) do
+    {:ok, ast} = path |> File.read!() |> Code.string_to_quoted()
+
+    {_ast, calls} =
+      Macro.prewalk(ast, [], fn
+        # The name alone, a map or a list of pairs: `mentions?/2` finds it in any of them.
+        {{:., _, [{:__aliases__, _, [:System]}, fun]}, meta, [env | _]} = node, acc
+        when fun in [:put_env, :delete_env] ->
+          {node, put_call(acc, mentions?(env, "PLEX_URL"), "System.#{fun} PLEX_URL", meta)}
+
+        # Only an insert writes the row; a `%Setting{}` match in an assert reads one.
+        {{:., _, [{:__aliases__, _, repo}, fun]}, meta, [row | _]} = node, acc
+        when repo in [[:Repo], [:Cinder, :Repo]] and fun in [:insert, :insert!] ->
+          {node, put_call(acc, media_server_type_row?(row), "Repo.#{fun} type row", meta)}
+
+        # The same insert at the end of a pipe, where the call itself has no row argument.
+        {:|>, _, [row, {{:., _, [{:__aliases__, _, repo}, fun]}, meta, _args}]} = node, acc
+        when repo in [[:Repo], [:Cinder, :Repo]] and fun in [:insert, :insert!] ->
+          {node, put_call(acc, media_server_type_row?(row), "Repo.#{fun} type row", meta)}
+
+        # The capture's key anywhere, so a copy that binds it to a variable first is caught too.
+        {:{}, meta, [{:__aliases__, _, settings}, :base, :media_server]} = node, acc ->
+          {node, put_call(acc, List.last(settings) == :Settings, "bootstrap capture key", meta)}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    Enum.reverse(calls)
+  end
+
+  defp put_call(acc, true, call, meta), do: ["#{call} (line #{meta[:line]})" | acc]
+  defp put_call(acc, false, _call, _meta), do: acc
+
+  defp mentions?(ast, literal) do
+    {_ast, found?} = Macro.prewalk(ast, false, &{&1, &2 or &1 == literal})
+    found?
+  end
+
+  defp media_server_type_row?({:%, _, [{:__aliases__, _, struct}, {:%{}, _, fields}]}),
+    do:
+      List.last(struct) == :Setting and
+        List.keyfind(fields, :key, 0) == {:key, "media_server_type"}
+
+  defp media_server_type_row?(_row), do: false
 
   # #743: a guarded-write adapter is reachable only through its owner, so no caller can write a
   # movie status around a `MovieLifecycle` verb, or a request around the approval gate.
