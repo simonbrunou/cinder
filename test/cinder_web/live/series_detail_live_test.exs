@@ -2100,6 +2100,67 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     refute Repo.exists?(Grab)
   end
 
+  # #924: a curated scene mapping, stored as the season offset panel saves one, reads "S02E05" as
+  # S01E33 while native S02E05 is wanted, so season 2's panel rejects "Test.Show.S02E05" and its
+  # grab reserves nothing.
+  test "a native result a vetted mapping assigns to another season refuses the manual grab", %{
+    conn: conn
+  } do
+    series =
+      series_fixture(
+        title: "Test Show",
+        tvdb_id: 99,
+        media_profile: :standard,
+        monitor_strategy: :all
+      )
+
+    s01e33 =
+      series
+      |> season_fixture(season_number: 1)
+      |> episode_fixture(episode_number: 33, file_path: "/lib/Test Show/S01E33.mkv")
+
+    season2 = season_fixture(series, season_number: 2)
+    s02e05 = episode_fixture(season2, episode_number: 5)
+
+    assert {:ok, _} =
+             Identity.replace_provider_coordinates(series, "offset", "offset", "scene", [
+               %{
+                 scheme: "scene",
+                 canonical_value: Episode.code(2, 5),
+                 precedence: :curated,
+                 episode_ids: [s01e33.id]
+               }
+             ])
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Test Show", 2 ->
+      {:ok,
+       [
+         %{
+           title: "Test.Show.S02E05.1080p.WEB-DL-GRP",
+           size: 2_000_000_000,
+           download_url: "vetted-elsewhere"
+         }
+       ]}
+    end)
+
+    expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+    {:ok, lv, _html} = live_series(conn, series)
+    lv |> element(~s(button[phx-value-season="2"]), "Find a better match") |> render_click()
+    assert render_async(lv) =~ "conflicting episode numbering"
+
+    lv |> element("#ms-season-#{season2.id} button", "Grab") |> render_click()
+
+    assert has_element?(
+             lv,
+             "#flash-error",
+             "This release's episode numbering is ambiguous. Nothing was grabbed."
+           )
+
+    refute Repo.exists?(Grab)
+    assert Repo.get!(Episode, s02e05.id).grab_id == nil
+  end
+
   # Regression for the PR #172 corruption bug: rewriting `title` onto the `@series` assign
   # meant a manual TV search under a non-canonical locale queried the indexer with the
   # French display title instead of the real one. Assigns now stay canonical.

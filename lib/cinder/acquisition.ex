@@ -90,16 +90,22 @@ defmodule Cinder.Acquisition do
   @doc """
   The releases the upgrade sweep grabs for one TV `season` of `series`. It builds the season's
   release list as `judge_season/3` does, without the numbering bridge: one query for the native
-  season, its duplicate results dropped, then judged, and takes the judge's pick
-  (`Cinder.Acquisition.ReleaseJudge.pick/1`, the set-cover `Scorer.select_for/4` over what the
-  judge keeps). `wanted_numbers` is the episode-number set the cover may claim, and `opts` the
-  household policy plus the facts the set-cover reads, such as `opts[:pack_episode_count]`, which
-  it passes as given.
+  season, its duplicate results dropped, a release a vetted mapping assigns to another season
+  marked, then judged, and takes the judge's pick (`Cinder.Acquisition.ReleaseJudge.pick/1`, the
+  set-cover `Scorer.select_for/4` over what the judge keeps). `wanted_numbers` is the
+  episode-number set the cover may claim, and `opts` the household policy plus the facts the
+  set-cover reads, such as `opts[:pack_episode_count]`, which it passes as given.
+  `opts[:mappings]` is the series' coordinate mappings
+  (`Cinder.Catalog.MediaProfiles.acquisition_mappings/1`), which only the mark reads.
 
   Returns `{:ok, [{%Release{}, [number]}]}`, `:no_match`, or `{:error, term}`.
   """
   def best_releases(series, season_number, wanted_numbers, opts \\ []) do
-    with {:ok, judged} <- judge_releases(series, season_number, wanted_numbers, nil, opts),
+    {mappings, opts} = Keyword.pop(opts, :mappings, [])
+    vetted_elsewhere = vetted_elsewhere_values(mappings, season_number)
+
+    with {:ok, judged} <-
+           judge_releases(series, season_number, wanted_numbers, nil, vetted_elsewhere, opts),
          do: ReleaseJudge.pick(judged)
   end
 
@@ -195,6 +201,14 @@ defmodule Cinder.Acquisition do
   episode numbers. A bridged release with a coordinate that resolves two ways is marked
   `:conflicting_standard_numbering`, and the judge drops it at its mapping stage.
 
+  A release of the native season gets the same mark when a vetted (`AnimeResolver.vetted?/1`)
+  scene or TVDB-aired mapping assigns one of its codes to another season's episode (#924): each
+  SxxEyy it names, or for a whole-season pack every vetted code of the season. The vetted reading
+  wins over the native one, so the panel refuses the release and the sweep never grabs it. For
+  anime, `AnimeResolver.strip_shadowed_canonical/1` lets a vetted scene mapping win the same way
+  (#156); this rule also counts aired mappings, and only a mapping to another season's episode.
+  An `:inferred` mapping, or one to an episode of the season itself, keeps the native reading.
+
   Then it judges the releases (guard `{:series, series, season_number, wanted_numbers}`) under
   `opts`, the household policy, plus the bridge's canonical-number map as
   `opts[:alternate_numbering]` and the season's episode count as `opts[:pack_episode_count]`
@@ -217,11 +231,12 @@ defmodule Cinder.Acquisition do
       context.season_number,
       wanted_numbers,
       standard_tv_numbering(context),
+      vetted_elsewhere_values(context.mappings, context.season_number),
       opts
     )
   end
 
-  defp judge_releases(series, season_number, wanted_numbers, numbering, opts) do
+  defp judge_releases(series, season_number, wanted_numbers, numbering, vetted_elsewhere, opts) do
     {alternate_seasons, opts} =
       case numbering do
         %{search_seasons: seasons, scorer: scorer} ->
@@ -238,6 +253,7 @@ defmodule Cinder.Acquisition do
           |> Enum.map(&Release.new/1)
           |> deduplicate_tv_releases()
           |> Enum.map(&resolve_bridged_release(&1, season_number, numbering))
+          |> Enum.map(&mark_vetted_elsewhere(&1, season_number, vetted_elsewhere))
 
         {:ok,
          ReleaseJudge.judge(releases, {:series, series, season_number, wanted_numbers}, opts)}
@@ -456,6 +472,39 @@ defmodule Cinder.Acquisition do
   end
 
   defp resolve_bridged_release(%Release{} = release, _native_season, _none), do: release
+
+  # The season's own codes that a vetted (`AnimeResolver.vetted?/1`) scene or TVDB-aired
+  # mapping assigns to another season's episode (#924), looked up across every mapping of the
+  # series: the bridge's numbering keeps only those touching the searched episodes. An episode's
+  # season is its canonical mapping's, and an episode without one counts as another season's.
+  defp vetted_elsewhere_values(mappings, season_number) do
+    season_by_id =
+      for mapping <- mappings,
+          AnimeResolver.canonical_native?(mapping),
+          id <- mapping.episode_ids,
+          into: %{},
+          do: {id, Episode.season_from_code(mapping.identity.canonical_value)}
+
+    for %{identity: identity, episode_ids: episode_ids} = mapping <- mappings,
+        identity.scheme in @standard_tv_bridged_schemes,
+        AnimeResolver.vetted?(mapping),
+        Episode.season_from_code(identity.canonical_value) == season_number,
+        Enum.any?(episode_ids, &(Map.get(season_by_id, &1) != season_number)),
+        into: MapSet.new(),
+        do: identity.canonical_value
+  end
+
+  # A release of the native season with a code in `vetted_elsewhere`: a whole-season pack holds
+  # every one of the season's, as a bridged pack does. One such code marks the whole release.
+  defp mark_vetted_elsewhere(%Release{season: native_season} = release, native_season, values) do
+    if release
+       |> standard_release_values(MapSet.to_list(values))
+       |> Enum.any?(&MapSet.member?(values, &1)),
+       do: %{release | resolution_evidence: :conflicting_standard_numbering},
+       else: release
+  end
+
+  defp mark_vetted_elsewhere(%Release{} = release, _native_season, _values), do: release
 
   defp standard_release_values(%Release{season: season, episodes: nil}, known_values)
        when is_integer(season) do

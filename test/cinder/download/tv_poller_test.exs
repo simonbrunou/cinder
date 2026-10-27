@@ -2486,6 +2486,93 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get!(Episode, episode.id).file_path == nil
   end
 
+  # #924: S01E33 was imported from a file named "S02E05", and a mapping reads that code as S01E33,
+  # while native S02E05 is wanted. A vetted mapping keeps season 2's sweep from grabbing "S02E05",
+  # or the "S02" pack, for native S02E05; an inferred one keeps the native reading.
+  for {label, scheme, precedence, title, grabbed?} <- [
+        {"a curated scene", "scene", :curated, "Vetted.Offset.S02E05", false},
+        {"a manual scene", "scene", :manual, "Vetted.Offset.S02E05", false},
+        {"a manual aired", "aired", :manual, "Vetted.Offset.S02E05", false},
+        {"a curated scene", "scene", :curated, "Vetted.Offset.S02", false},
+        {"an inferred scene", "scene", :inferred, "Vetted.Offset.S02E05", true},
+        {"an inferred aired", "aired", :inferred, "Vetted.Offset.S02E05", true},
+        {"an inferred scene", "scene", :inferred, "Vetted.Offset.S02", true}
+      ] do
+    test "#{label} mapping of S02E05 to S01E33: the sweep grabs #{title} #{grabbed?}" do
+      series =
+        series_fixture(%{title: "Vetted Offset", tvdb_id: 777, monitor_strategy: :all})
+
+      s01e33 =
+        series
+        |> season_fixture(%{season_number: 1})
+        |> episode(33, %{file_path: "/lib/Vetted Offset/S01E33.mkv"})
+
+      s02e05 = series |> season_fixture(%{season_number: 2}) |> episode(5)
+      put_coordinate(series, s01e33, unquote(scheme), unquote(precedence))
+      test_pid = self()
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 777, "Vetted Offset", season_number ->
+        send(test_pid, {:searched_season, season_number})
+
+        {:ok,
+         [
+           %{
+             title: unquote(title) <> ".1080p.WEB-DL-GRP",
+             size: 3_000_000_000,
+             download_url: unquote(title)
+           }
+         ]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+        send(test_pid, {:grab_attempted, release.download_url})
+        {:ok, "hash-vetted-offset"}
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+      assert :ok = TvPoller.poll()
+
+      assert_received {:searched_season, 2}
+
+      if unquote(grabbed?) do
+        assert_received {:grab_attempted, unquote(title)}
+        assert Repo.get!(Episode, s02e05.id).grab_id
+      else
+        refute_received {:grab_attempted, _}
+        assert Repo.all(Grab) == []
+        assert Repo.get!(Episode, s02e05.id).grab_id == nil
+      end
+    end
+  end
+
+  # Each mapping S02E05 -> `episode` as its writer stores it: the fold binds a manual one
+  # (`Identity.bind_manual_coordinate/3`, which today gets TVDB aired evidence; the manual scene
+  # row is #924's acceptance case), the season offset panel saves curated scene ones under
+  # "offset", a TMDB group sync writes inferred scene ones and a migration inferred aired ones.
+  defp put_coordinate(series, episode, scheme, :manual) do
+    {source, namespace} = provider_namespace(scheme)
+    attrs = %{source: source, scheme: scheme, namespace: namespace, canonical_value: "S02E05"}
+    assert {:ok, _} = Identity.bind_manual_coordinate(series, attrs, episode)
+  end
+
+  defp put_coordinate(series, episode, scheme, precedence) do
+    {source, namespace} =
+      if precedence == :curated, do: {"offset", "offset"}, else: provider_namespace(scheme)
+
+    assert {:ok, _} =
+             Identity.replace_provider_coordinates(series, source, namespace, scheme, [
+               %{
+                 scheme: scheme,
+                 canonical_value: "S02E05",
+                 precedence: precedence,
+                 episode_ids: [episode.id]
+               }
+             ])
+  end
+
+  defp provider_namespace("aired"), do: {"tvdb", "777"}
+  defp provider_namespace("scene"), do: {"tmdb", "group"}
+
   test "Standard alternate-season file without scene coordinates is parked and blocklisted" do
     {series, season} = series_tree()
     episode = episode(season, 29)

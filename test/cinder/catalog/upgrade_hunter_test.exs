@@ -9,7 +9,7 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
   @moduletag :capture_log
 
   alias Cinder.Acquisition.Release
-  alias Cinder.Catalog.{Episode, Grab, Movie, UpgradeHunter}
+  alias Cinder.Catalog.{Episode, Grab, Identity, Movie, UpgradeHunter}
   alias Cinder.Library.Upgrade
 
   import Cinder.CatalogFixtures
@@ -824,6 +824,63 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
       assert %Episode{grab_id: nil, file_path: "/lib/Show/S01E01.mkv"} =
                Repo.get!(Episode, ctx.episode.id)
+    end
+  end
+
+  # #924: native S02E05 holds a 720p file while a scene mapping reads a release's "S02E05" as
+  # S01E33. A vetted mapping keeps the upgrade sweep from replacing the file with S01E33's; an
+  # inferred one keeps the native reading, so the same offer is grabbed. Each is stored as its
+  # writer stores it: the season offset panel, then a TMDB group sync.
+  describe "a mapping that reads a native code as another season's episode" do
+    for {precedence, source, namespace, grabbed?} <- [
+          {:curated, "offset", "offset", false},
+          {:inferred, "tmdb", "group", true}
+        ] do
+      test "under a #{precedence} mapping the native upgrade is grabbed: #{grabbed?}" do
+        series = series_fixture(%{tvdb_id: 4343, title: "Offset Show", monitor_strategy: :all})
+        s01e33 = series |> season_fixture() |> episode_fixture(%{episode_number: 33})
+
+        s02e05 =
+          series
+          |> season_fixture(%{season_number: 2})
+          |> episode_fixture(%{
+            episode_number: 5,
+            file_path: "/lib/Offset Show/S02E05.mkv",
+            imported_resolution: "720p",
+            imported_size: 1_000_000_000
+          })
+
+        assert {:ok, _} =
+                 Identity.replace_provider_coordinates(
+                   series,
+                   unquote(source),
+                   unquote(namespace),
+                   "scene",
+                   [
+                     %{
+                       scheme: "scene",
+                       canonical_value: "S02E05",
+                       precedence: unquote(precedence),
+                       episode_ids: [s01e33.id]
+                     }
+                   ]
+                 )
+
+        stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4343, "Offset Show", 2 ->
+          {:ok, [release("Offset.Show.S02E05.1080p.BluRay-GRP", %{size: 4_000_000_000})]}
+        end)
+
+        watch_grabs()
+        poll()
+
+        if unquote(grabbed?) do
+          assert_received :grab_attempted
+          assert Repo.get!(Episode, s02e05.id).grab_id
+        else
+          refute_grabbed()
+          assert Repo.get!(Episode, s02e05.id).grab_id == nil
+        end
+      end
     end
   end
 

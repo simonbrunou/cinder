@@ -62,6 +62,17 @@ an episode due this tick. A season wanting an episode doesn't search the alterna
 reach only its imported ones, so the panel lists no bridged upgrade for those until nothing is
 wanted.
 
+Since #924 a native season's own search follows a vetted mapping as well. When a `:curated` or
+`:manual` scene or TVDB-aired mapping assigns a code of the season to another season's episode,
+the season's release naming that code, or its whole-season pack, is marked
+`:conflicting_standard_numbering`: the panel refuses it, and neither the sweep nor the upgrade
+sweep (`Cinder.Acquisition.best_releases/4`) grabs it. The cost: no release naming that code is
+grabbed for the native episode of the same code. An `:inferred` mapping, or a vetted one to an
+episode of the season itself, keeps the native reading. This extends the anime rule
+(`AnimeResolver.strip_shadowed_canonical/1`, #156), which covers vetted scene mappings only, to
+aired ones, and limits it to a mapping into another season. The import can't catch this case
+instead: it matches a grab's files only against that grab's own episodes.
+
 An anime row the judge keeps carries the anime selection's own verdict: the anime policy, then the
 quality rules, then the group wait. The group wait stays a verdict rather than a stage that drops
 rows, because the episode cover needs the delayed releases, in indexer order, to know which

@@ -591,7 +591,7 @@ defmodule Cinder.Acquisition.Anime do
   defp put_coordinate_scope(value, _coordinate), do: value
 
   # The scheme-bridging rule (which persisted schemes a parsed value also matches) lives once in
-  # `AnimeResolver.bridged_schemes/1`. `strip_shadowed_canonical/1` then lets an operator-reviewed
+  # `AnimeResolver.bridged_schemes/1`. `strip_shadowed_canonical/1` then lets a vetted
   # scene coordinate win over the coincidental native code of a *different* episode that shares the
   # same SxxEyy string (issue #156); an auto-derived `:inferred` scene coordinate leaves the native
   # canonical in place, so ordinary resolution is unchanged.

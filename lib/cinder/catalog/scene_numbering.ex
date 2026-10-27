@@ -233,7 +233,7 @@ defmodule Cinder.Catalog.SceneNumbering do
   def preview_scene_offset(_series, _from, _delta), do: []
 
   @doc """
-  Persists the `(from, delta)` season-offset scene coordinates for `series` as **operator-reviewed**
+  Persists the `(from, delta)` season-offset scene coordinates for `series` as **vetted**
   (`:curated`) rows in the `"offset"` namespace, replacing any it previously wrote (a `:manual`
   per-episode correction in that namespace survives). `from`/`delta` both `nil` clears them.
   Broadcasts on the `"series"` topic. Returns `{:ok, series}`, `{:error, :invalid_offset}` for

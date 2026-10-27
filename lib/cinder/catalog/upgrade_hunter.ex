@@ -274,7 +274,8 @@ defmodule Cinder.Catalog.UpgradeHunter do
           # Every file we can't link to an episode we hold becomes an operator residual decision
           # at import (#247), so filter such releases before the set cover picks them.
           full_claim_only: true,
-          pack_episode_count: season_size
+          pack_episode_count: season_size,
+          mappings: MediaProfiles.acquisition_mappings(series)
         ]
 
     case Acquisition.best_releases(

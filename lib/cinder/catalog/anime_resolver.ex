@@ -17,32 +17,29 @@ defmodule Cinder.Catalog.AnimeResolver do
   def bridged_schemes(_scheme), do: []
 
   @doc """
-  Drops the auto native-standard canonical mapping from a value's matched set when an
-  **operator-reviewed** (`:curated`/`:manual`) `"scene"` mapping for the same value points at a
+  Drops the auto native-standard canonical mapping from a value's matched set when a
+  **vetted** (`:curated`/`:manual`) `"scene"` mapping for the same value points at a
   *different* episode (issue #156).
 
   Rationale: for a franchise carried as one TMDB series (e.g. Monogatari), an operator's alternate
   season numbering (`S04E05` = Second-Season ep 5) collides by exact string with the real native
   code of a different cour (`S04E05` = Hanamonogatari ep 5). Without this, the native canonical
   mapping (`:manual`) outranks the scene coordinate and the alt-numbered release resolves to the
-  wrong episode and is dropped. Removing the coincidental native mapping lets the operator-reviewed
-  scene coordinate win.
+  wrong episode and is dropped. Removing the coincidental native mapping lets the vetted scene
+  coordinate win.
 
-  Scoped for safety (never-guess): only an operator-reviewed scene coordinate triggers the drop — an
+  Scoped for safety (never-guess): only a vetted scene coordinate triggers the drop — an
   auto-derived (`:inferred`) scene coordinate (e.g. an A6 TMDB-group sync) never silently overrides
   the native episode. A same-episode overlap (Frieren) is left untouched (the scene points at the
-  same id, so no drop fires). Two operator-reviewed scene coordinates for one value pointing at
+  same id, so no drop fires). Two vetted scene coordinates for one value pointing at
   different episodes are left intact so the resolver still reports `:ambiguous` (fail closed).
 
   Expects each mapping as `%{identity: %{source, scheme, namespace, ...}, precedence, episode_ids}`
-  and returns the list unchanged when no operator-reviewed scene mapping collides, so ordinary
+  and returns the list unchanged when no vetted scene mapping collides, so ordinary
   standard resolution is unaffected.
   """
   def strip_shadowed_canonical(matches) do
-    vetted_scene =
-      Enum.filter(matches, fn m ->
-        m.identity.scheme == "scene" and m.precedence in [:curated, :manual]
-      end)
+    vetted_scene = Enum.filter(matches, &(&1.identity.scheme == "scene" and vetted?(&1)))
 
     if vetted_scene == [] do
       matches
@@ -53,7 +50,20 @@ defmodule Cinder.Catalog.AnimeResolver do
     end
   end
 
-  defp canonical_native?(%{identity: identity}) do
+  @doc """
+  Whether an operator vetted `mapping`: `:curated` (a saved season offset) or `:manual` (a file
+  matched to an episode by hand). An `:inferred` mapping is auto-derived and never overrides a
+  native episode. The canonical mapping (`canonical_native?/1`) carries `:manual` precedence but
+  is the native code itself, not a vetted one.
+  """
+  def vetted?(%{precedence: precedence} = mapping),
+    do: precedence in [:curated, :manual] and not canonical_native?(mapping)
+
+  @doc """
+  Whether `mapping` is the canonical standard mapping every episode carries
+  (`Cinder.Catalog.MediaProfiles.acquisition_mappings/1`): its native SxxEyy code.
+  """
+  def canonical_native?(%{identity: identity}) do
     Map.get(identity, :source) == "cinder" and Map.get(identity, :namespace) == "canonical" and
       Map.get(identity, :scheme) == "standard"
   end

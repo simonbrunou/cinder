@@ -805,6 +805,113 @@ defmodule Cinder.AcquisitionTest do
     end
   end
 
+  # A coordinate mapping the operator vetted: a season offset (`:curated`) or a fold (`:manual`).
+  defp vetted(scheme, code, episode_ids, precedence),
+    do: %{coordinate(scheme, code, episode_ids) | precedence: precedence}
+
+  # The canonical standard mapping `acquisition_mappings/1` lists for every episode of the series.
+  defp canonical(code, episode_id) do
+    %{
+      identity: %{
+        source: "cinder",
+        scheme: "standard",
+        namespace: "canonical",
+        canonical_value: code
+      },
+      precedence: :manual,
+      episode_ids: [episode_id],
+      evidence: %{"kind" => "canonical_standard"}
+    }
+  end
+
+  # #924: native season 2 wants S02E05 (id 205), while a mapping reads a release's "S02E05" as
+  # S01E33 (id 133). Season 2 is native, so the bridge never searches it for season 1. The rule
+  # reads an episode's season from its canonical mapping, so a control whose mapping points inside
+  # season 2 seeds that episode's canonical mapping too.
+  describe "judge_season/3 and a vetted mapping to another season's episode (#924)" do
+    defp season_two(mappings, episodes \\ [%{id: 205, episode_number: 5, state: :wanted}]) do
+      season_context(
+        season_number: 2,
+        episode_count: 10,
+        native_seasons: MapSet.new([1, 2]),
+        episodes: episodes,
+        mappings:
+          [canonical("S01E33", 133), canonical("S02E05", 205), canonical("S02E07", 207)] ++
+            mappings
+      )
+    end
+
+    defp assert_dropped(judged, download_url) do
+      assert judged.kept == []
+      assert ReleaseJudge.pick(judged) == :no_match
+
+      assert %{
+               release: %Release{resolution_evidence: :conflicting_standard_numbering},
+               dropped_at: :mapping,
+               verdict: {:rejected, :conflicting_standard_numbering}
+             } = Enum.find(judged.rows, &(&1.release.download_url == download_url))
+    end
+
+    for {scheme, precedence} <- [{"scene", :curated}, {"scene", :manual}, {"aired", :manual}] do
+      test "a #{precedence} #{scheme} mapping drops the native release it assigns elsewhere" do
+        stub_seasons(%{2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")]})
+
+        context =
+          season_two([vetted(unquote(scheme), "S02E05", [133], unquote(precedence))])
+
+        assert {:ok, judged} = Acquisition.judge_season(context, [5], [])
+        assert_dropped(judged, "The.Office.S02E05.1080p.WEB-DL-GRP")
+        assert searched_seasons() == [2]
+      end
+    end
+
+    test "a whole-season pack holding a code a vetted mapping assigns elsewhere is dropped" do
+      stub_seasons(%{2 => [raw_tv("The.Office.S02.1080p.WEB-DL-GRP", size: 10 * @gb)]})
+      context = season_two([vetted("scene", "S02E05", [133], :curated)])
+
+      assert {:ok, judged} = Acquisition.judge_season(context, [5], [])
+      assert_dropped(judged, "The.Office.S02.1080p.WEB-DL-GRP")
+    end
+
+    test "one code a vetted mapping assigns elsewhere drops a multi-episode release whole" do
+      stub_seasons(%{2 => [raw_tv("The.Office.S02E04E05.1080p.WEB-DL-GRP", size: 4 * @gb)]})
+
+      context =
+        season_two(
+          [vetted("aired", "S02E05", [133], :manual)],
+          [
+            %{id: 204, episode_number: 4, state: :wanted},
+            %{id: 205, episode_number: 5, state: :wanted}
+          ]
+        )
+
+      assert {:ok, judged} = Acquisition.judge_season(context, [4, 5], [])
+      assert_dropped(judged, "The.Office.S02E04E05.1080p.WEB-DL-GRP")
+    end
+
+    # An auto-derived mapping never overrides the native episode (#156); a vetted one naming the
+    # native episode itself, or another episode of the same season, keeps the native reading too.
+    for {label, scheme, precedence, episode_id} <- [
+          {"an inferred scene mapping to another season", "scene", :inferred, 133},
+          {"an inferred aired mapping to another season", "aired", :inferred, 133},
+          {"a vetted scene mapping to the native episode itself", "scene", :curated, 205},
+          {"a vetted aired mapping to another episode of the season", "aired", :manual, 207}
+        ] do
+      test "#{label} keeps the native release" do
+        stub_seasons(%{2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")]})
+
+        context =
+          season_two([
+            vetted(unquote(scheme), "S02E05", [unquote(episode_id)], unquote(precedence))
+          ])
+
+        assert {:ok, judged} = Acquisition.judge_season(context, [5], [])
+        assert [%Release{resolution_evidence: nil}] = judged.kept
+        assert {:ok, [{%Release{season: 2, episodes: [5]}, [5]}]} = ReleaseJudge.pick(judged)
+      end
+    end
+  end
+
   describe "judge_season/3's alternate seasons" do
     # Episode `id` is scene `S0<season>E01`.
     defp bridged(pairs) do
@@ -896,6 +1003,21 @@ defmodule Cinder.AcquisitionTest do
 
       assert {:ok, chosen} = Acquisition.best_releases(series(), 1, [1, 2])
       assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() == [[1], [2]]
+    end
+
+    # #924: the upgrade sweep's season list has no bridge, but the series' mappings still keep it
+    # from reading natively a release a vetted mapping assigns to another season.
+    test "drops a native release a vetted mapping in `mappings:` assigns to another season" do
+      stub_seasons(%{2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")]})
+
+      mappings = [
+        canonical("S01E33", 133),
+        canonical("S02E05", 205),
+        vetted("scene", "S02E05", [133], :curated)
+      ]
+
+      assert :no_match = Acquisition.best_releases(series(), 2, [5], mappings: mappings)
+      assert {:ok, [{%Release{episodes: [5]}, [5]}]} = Acquisition.best_releases(series(), 2, [5])
     end
 
     test "keeps the TV language gate strict about untagged releases" do
