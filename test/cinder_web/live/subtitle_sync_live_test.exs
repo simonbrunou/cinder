@@ -627,13 +627,18 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
         movie |> Ecto.Changeset.change(file_path: replacement_video) |> Repo.update!()
       end)
 
-    # No SQLite write-lock reservation queues this behind the still-blocked moviehash read.
-    assert %{file_path: ^replacement_video} = Task.await(update, 100)
+    # No SQLite write-lock reservation queues this behind the apply, paused after its moviehash
+    # read. The barrier is released only after this await returns, so a write queued behind the
+    # paused apply could never succeed within any bound: the 15 s bound (#554's, for runner load)
+    # still proves the write is not blocked (#877).
+    assert %{file_path: ^replacement_video} = Task.await(update, 15_000)
 
     send(pid, {ref, :continue})
     # The scope no longer resolves this item (the movie now points at replacement_video, which
-    # has no tracked sidecar of its own) by the time the filesystem work completes.
-    assert {:error, :stale_scope} = Task.await(apply)
+    # has no tracked sidecar of its own) by the time the filesystem work completes. That work
+    # spawns a rooted helper per rooted filesystem operation, and under runner load their sum can
+    # pass the default 5 s await (#877).
+    assert {:error, :stale_scope} = Task.await(apply, 15_000)
     # The correction itself still landed — captured against the original video before the swap,
     # unaffected by it.
     assert File.read!(sidecar) =~ "00:00:02,000"
