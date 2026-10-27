@@ -49,8 +49,8 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   Every call this module makes (`probe/1`, `probe_policy/1`, `subtitle_tracks/1`,
   `extract_subtitle/2`, `frame_rate/1`, `shot_changes/1` and `health/0`) runs through
-  `Cinder.BoundedCommand.run/4`: a supervised `Port` killed with `SIGKILL` by its OS pid at the
-  bound (#510: `health/0`'s own `-version` no-file call used the lighter
+  `Cinder.BoundedCommand.run/4`: a supervised `Port` whose process group gets `SIGKILL` at the
+  bound (#510, #876: `health/0`'s own `-version` no-file call used the lighter
   `Task.async`/`Task.yield`/`Task.shutdown(:brutal_kill)` idiom until it was found to leak).
   `Task.shutdown(:brutal_kill)` only kills the *Elixir* task; closing a port does not kill the
   child OS process on the other end when that child never reads stdin, which is exactly `ffmpeg`
@@ -207,8 +207,9 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     {executable, args} = low_priority!(ffmpeg_bin(), ffmpeg_args(path, index))
 
     # The wrapper's `exec "$@"` replaces `/bin/sh` with the command under the same pid, and
-    # `ionice` and `nice` exec ffmpeg in turn, so the pid the bound kills is ffmpeg itself, not a
-    # shell that would leave ffmpeg running.
+    # `ionice` and `nice` exec ffmpeg in turn, so the pid the bound kills and waits on is ffmpeg
+    # itself, not a shell. The bound kills the whole process group too (#876), which would also
+    # reach an ffmpeg the shell ran without `exec`.
     try do
       case run_bounded(
              "/bin/sh",

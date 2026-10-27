@@ -161,8 +161,8 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspace do
   defp maybe_seal(bound, true), do: seal(bound)
   defp maybe_seal(_bound, false), do: :ok
 
-  # Supervised `Port` + `SIGKILL`-by-`os_pid` (#591) via `Cinder.BoundedCommand.run/4` -- see
-  # that module's moduledoc. `python3` is resolved from `PATH` inside `run/4` itself, exactly
+  # Supervised `Port` (#591) via `Cinder.BoundedCommand.run/4` -- see that module's moduledoc
+  # for how it kills. `python3` is resolved from `PATH` inside `run/4` itself, exactly
   # like `System.cmd/3` did, so a missing binary still raises the equivalent
   # `%ErlangError{original: :enoent}` shape the `rescue` below already wraps. A timeout is
   # treated like a non-zero exit (`:timeout` in the status position) rather than routed through
@@ -218,10 +218,10 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspace do
   defp finish_anonymous_operation({:raised, kind, reason, stacktrace}, _close_result),
     do: :erlang.raise(kind, reason, stacktrace)
 
-  # Kills the OS process behind `port` by pid before closing it (#591) -- `Port.close/1` alone
-  # does not terminate a child stuck in a blocking syscall against a wedged mount, the same
-  # #510-class defect `Disk.close_rooted_port/1` (#590) fixed in the same helper family.
-  # Delegates to `Cinder.BoundedCommand.kill_and_close/1`.
+  # Kills the OS process behind `port` before closing it (#591) -- `Port.close/1` alone does not
+  # terminate a child stuck in a blocking syscall against a wedged mount, the same #510-class
+  # defect `Disk.close_rooted_port/1` (#590) fixed in the same helper family. Delegates to
+  # `Cinder.BoundedCommand.kill_and_close/1`, whose doc says how it kills.
   defp close_holder(port), do: BoundedCommand.kill_and_close(port)
 
   defp identity(stat), do: {stat.major_device, stat.minor_device, stat.inode}

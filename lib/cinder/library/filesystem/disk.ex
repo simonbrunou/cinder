@@ -409,8 +409,8 @@ defmodule Cinder.Library.Filesystem.Disk do
     end
   end
 
-  # Supervised `Port` + `SIGKILL`-by-`os_pid` (#590) via `Cinder.BoundedCommand.run/4` — see
-  # that module's moduledoc. `executable` is resolved from `PATH` inside `run/4` itself, exactly
+  # Supervised `Port` (#590) via `Cinder.BoundedCommand.run/4` — see that module's moduledoc
+  # for how it kills. `executable` is resolved from `PATH` inside `run/4` itself, exactly
   # like `System.cmd/3` did, so a missing `mv` still raises the equivalent
   # `%ErlangError{original: :enoent}` shape the `rescue` below already wraps.
   defp run_command(executable, args) do
@@ -533,8 +533,8 @@ defmodule Cinder.Library.Filesystem.Disk do
     end
   end
 
-  # Supervised `Port` + `SIGKILL`-by-`os_pid` (#590) via `Cinder.BoundedCommand.run/4` — see
-  # that module's moduledoc. For the `@rooted_effect_operations` this module actually mutates
+  # Supervised `Port` (#590) via `Cinder.BoundedCommand.run/4` — see that module's moduledoc
+  # for how it kills. For the `@rooted_effect_operations` this module actually mutates
   # through, a timeout still routes through `decode_rooted_result/2`, exactly like a normal exit
   # does, using whatever output had already accumulated (in practice always empty — a hang here
   # is a blocking syscall before the helper's own JSON line is ever written): that
@@ -683,13 +683,12 @@ defmodule Cinder.Library.Filesystem.Disk do
 
   defp rooted_identity(_identity), do: nil
 
-  # Kills the OS process behind `port` by pid before closing it (#590) — `Port.close/1` alone
-  # does not terminate a child stuck in a blocking syscall against a wedged mount (the
+  # Kills the OS process behind `port` before closing it (#590) — `Port.close/1` alone does not
+  # terminate a child stuck in a blocking syscall against a wedged mount (the
   # `python3 priv/rooted_fs_main.py hold ...` process this closes was never proven to have reached
   # its own graceful `sys.stdin.buffer.read()` shutdown wait, especially on the timeout path
-  # above). Delegates to `Cinder.BoundedCommand.kill_and_close/1`, the same
-  # `Port.info(port, :os_pid)` + `kill -KILL` idiom issue #510 already proved for three other
-  # modules' own subprocesses.
+  # above). Delegates to `Cinder.BoundedCommand.kill_and_close/1`, the same kill every `run/4`
+  # caller gets; its doc says how it kills.
   defp close_rooted_port(port), do: BoundedCommand.kill_and_close(port)
 
   defp with_rooted_bound(root, relative, source_path, mode, callback) do
@@ -751,8 +750,8 @@ defmodule Cinder.Library.Filesystem.Disk do
     end)
   end
 
-  # Supervised `Port` + `SIGKILL`-by-`os_pid` (#590) via `Cinder.BoundedCommand.run/4` — see
-  # that module's moduledoc. `executable` is resolved from `PATH` inside `run/4` itself, exactly
+  # Supervised `Port` (#590) via `Cinder.BoundedCommand.run/4` — see that module's moduledoc
+  # for how it kills. `executable` is resolved from `PATH` inside `run/4` itself, exactly
   # like `System.cmd/3` did, so a missing `sync` still raises the equivalent
   # `%ErlangError{original: :enoent}` shape the `rescue` below already wraps.
   defp sync_directory(path) do

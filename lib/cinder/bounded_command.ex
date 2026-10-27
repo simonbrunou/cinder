@@ -1,9 +1,15 @@
 defmodule Cinder.BoundedCommand do
   @moduledoc """
-  Bounded external-command execution via a supervised `Port` + `SIGKILL`-by-`os_pid` (#447,
-  #510, #590). `System.cmd/3` has no `:timeout` option at all, so any caller shelling out through
-  it runs unbounded; `Task.shutdown(:brutal_kill)` only kills the *Elixir* side of a port, not a
-  child OS process that never reads stdin (ffprobe, ffmpeg, unrar).
+  Bounded external-command execution via a supervised `Port` + `SIGKILL` (#447, #510, #590).
+  `System.cmd/3` has no `:timeout` option at all, so any caller shelling out through it runs
+  unbounded; `Task.shutdown(:brutal_kill)` only kills the *Elixir* side of a port, not a child OS
+  process that never reads stdin (ffprobe, ffmpeg, unrar).
+
+  The kill goes to the command's whole process group, then to its pid (#876). A port's command
+  leads its own group, and a process it forks joins that group, so a wrapper script that runs
+  the real tool without `exec` stops with it instead of writing on after `run/4` returns. A
+  descendant that leaves the group (`setsid`, `setpgid`) is not reached. The reap that follows
+  waits only for the command's own exit, not for the rest of its group.
 
   `run/4` callers: `MediaInfo.Ffprobe`, `AudioProbe.Ffprobe`, `BookArchive.Rar` (listing and
   extraction), `Filesystem.Disk`'s rooted-helper, directory-sync and `mv --exchange` fallback
@@ -24,8 +30,8 @@ defmodule Cinder.BoundedCommand do
 
   @doc """
   Resolves `bin` on `PATH` (`Port.open/2` does no lookup for `:spawn_executable`, unlike
-  `System.cmd/3`), runs it as a supervised `Port`, and kills it by OS pid if it is still running
-  at `timeout_ms`.
+  `System.cmd/3`), runs it as a supervised `Port`, and kills its process group if it is still
+  running at `timeout_ms`.
 
   Returns `{:ok, output, status}` on a normal exit — the same `{output, status}` shape
   `System.cmd/3` itself returns, so a caller's existing zero/non-zero-exit handling is unchanged
@@ -64,11 +70,12 @@ defmodule Cinder.BoundedCommand do
   end
 
   @doc """
-  Kills the OS process behind an already-open `port` by pid, waits briefly for it to actually
-  exit, closes the port, and drains anything left in its mailbox — for a port whose lifecycle is
-  otherwise managed by the caller (e.g. `Cinder.Library.Filesystem.Disk.close_rooted_port/1`),
-  unlike one opened and fully supervised by `run/4`. Always returns `:ok`: closing an already-
-  managed port is best-effort cleanup, not a new failure mode for the caller to handle.
+  Kills the OS process behind an already-open `port`, with its process group, waits briefly for
+  it to actually exit, closes the port, and drains anything left in its mailbox — for a port whose
+  lifecycle is otherwise managed by the caller (e.g.
+  `Cinder.Library.Filesystem.Disk.close_rooted_port/1`), unlike one opened and fully supervised
+  by `run/4`. Always returns `:ok`: closing an already-managed port is best-effort cleanup, not a
+  new failure mode for the caller to handle.
   """
   @spec kill_and_close(port()) :: :ok
   def kill_and_close(port) do
@@ -244,11 +251,22 @@ defmodule Cinder.BoundedCommand do
 
   # The OS pid behind a `Port` is not otherwise reachable, and `Port.close/1` alone does not
   # guarantee the process actually stops (#510, #590).
+  #
+  # OTP's port spawner (`erl_child_setup`) calls `setsid` in the child, so the command leads its
+  # own process group, whose id is its pid. `kill -KILL -<pid>` reaches every process in that
+  # group, so a child the command forked stops writing too (#876). The group is named by the
+  # pid, never looked up: if the command leads no group, that kill fails and the pid kill after
+  # it still lands, so the kill is never weaker than a pid-only one. dash, the `/bin/sh` of the
+  # Debian image and of CI, refuses `kill -KILL -- -<pid>`; `kill -KILL -<pid>` works in dash,
+  # bash and busybox `sh` alike. A pid of 1 would make it `-1`, every process this user may
+  # signal, so the guard refuses it; no port child has that pid. Like the pid kill before it, the
+  # group kill could reach an unrelated process only if the command exited and its pid was reused
+  # in the moment before this runs.
   defp kill(port) do
-    with {:os_pid, pid} <- Port.info(port, :os_pid) do
+    with {:os_pid, pid} when is_integer(pid) and pid > 1 <- Port.info(port, :os_pid) do
       System.cmd(
         "/bin/sh",
-        ["-c", ~S|kill -KILL "$1"|, "kill", Integer.to_string(pid)],
+        ["-c", ~S|kill -KILL -"$1"; kill -KILL "$1"|, "kill", Integer.to_string(pid)],
         stderr_to_stdout: true
       )
     end

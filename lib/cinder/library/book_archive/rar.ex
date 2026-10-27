@@ -11,7 +11,9 @@ defmodule Cinder.Library.BookArchive.Rar do
   is. So the expanded-size ceiling here is enforced by SUPERVISION rather than by streaming
   control: the extraction runs through `Cinder.BoundedCommand.run/4`, whose `:check` option
   measures the destination directory's actual on-disk size every poll interval and kills the OS
-  process by pid the first time it is over the ceiling.
+  process and its process group the first time it is over the ceiling. Cinder's image ships no
+  `unrar`, so the operator supplies one, and a wrapper that runs the real extractor without `exec`
+  is killed with that extractor, not instead of it (#876).
 
   This is genuinely coarser-grained than the ZIP path's byte-exact, per-chunk enforcement: the
   bound is poll-interval × unrar's max write throughput in that window, not exact. It is still

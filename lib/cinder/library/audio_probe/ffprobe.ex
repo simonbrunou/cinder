@@ -6,7 +6,7 @@ defmodule Cinder.Library.AudioProbe.Ffprobe do
   timeout/projection disciplines:
 
   - **Time bound**: both `probe/1` and `health/0` run through `Cinder.BoundedCommand.run/4`, a
-    supervised `Port` killed with `SIGKILL` by its OS pid (`@probe_timeout` 10s for `probe/1`,
+    supervised `Port` whose process group gets `SIGKILL` (`@probe_timeout` 10s for `probe/1`,
     generous for even a large M4B's moov-atom-only read: `ffprobe` never decodes audio for
     `-show_entries`, only parses container metadata; `@health_timeout` 3s for `health/0`'s cheap
     no-file `-version` call, mirroring every other service's `health/0` bound). `Task.shutdown(
