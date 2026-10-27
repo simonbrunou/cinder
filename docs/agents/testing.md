@@ -2,6 +2,10 @@
 
 - `mix test` decides when a task is done. Before you start, write the done-when as something
   `mix test` can check, then loop until it is green.
+- When the issue carries a triage Agent Brief, the done-when names a test for each requirement
+  in **Desired behavior** as well as each **Acceptance criteria** box. On #972, prod's mount
+  layout, a `devino-hash` mount and `verify_legacy_selection`'s refusals were Desired-behavior
+  requirements with no test until the Spec review, which cost a second review round.
 - A bug fix starts with a test that reproduces the bug. Then make it pass.
 - New functionality, such as a choke-point, a state or a writer, ships with a test.
 - A lock test runs the waiter in another process than the holder: the lock id carries `self()`
