@@ -361,9 +361,19 @@ def mergerfs_mount(path):
 
 
 def mergerfs_control_xattr(mountpoint, name):
-    fd = open_mergerfs_path(mountpoint, ".mergerfs")
+    """Read a config xattr from the mount's own control file (#972).
+
+    mergerfs answers a read open of .mergerfs with ENOENT but serves its config
+    to a lookup, and fgetxattr refuses an O_PATH descriptor (EBADF), so the
+    xattr is read through the descriptor's /proc magic link. O_PATH | O_NOFOLLOW
+    hands back a symlink planted at .mergerfs itself; the control file is a
+    regular file, so anything else is refused instead of read.
+    """
+    fd = open_at_root(mountpoint, ".mergerfs", O_PATH | O_NOFOLLOW, resolve=RESOLVE_NO_XDEV)
     try:
-        return os.getxattr(fd, name)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "mergerfs control file is not a regular file")
+        return os.getxattr(f"/proc/self/fd/{fd}", name)
     finally:
         os.close(fd)
 
@@ -682,9 +692,10 @@ def mergerfs_branches(mountpoint):
     """Configured backing branches, read from the mount's own control file.
 
     branches/srcmounts are runtime CONFIG keys: mergerfs serves them only from
-    <mountpoint>/.mergerfs. The control file is opened without crossing mounts;
-    reading the keys from a target file or nested mount would trust
-    caller-writable metadata. legacy_union_identity reads inodecalc the same way.
+    <mountpoint>/.mergerfs. mergerfs_control_xattr looks the control file up
+    without following a link or crossing mounts; reading the keys from a target
+    file or nested mount would trust caller-writable metadata.
+    legacy_union_identity reads inodecalc the same way.
     """
     try:
         raw = os.fsdecode(mergerfs_control_xattr(mountpoint, MERGERFS_BRANCHES))

@@ -172,6 +172,13 @@ Tests have no mergerfs. In `test/cinder/library/filesystem/disk_rooted_test.exs`
 mount check and the xattrs around the real helper. The `branch:` option of
 `mergerfs_rename_shim!` puts the mount above the library root.
 
+The helper reads mergerfs's config (`branches`, `inodecalc`) from `<mount>/.mergerfs`, which
+mergerfs refuses to open for reading. `mergerfs_control_xattr` opens it with `O_PATH` and reads
+through `/proc/self/fd/<n>` (#972). The `duplicate_tombstones!` shims in `disk_rooted_test.exs`
+and `sidecar_transaction_test.exs` splice in `Cinder.Test.MergerfsControl.python/3`, which
+refuses the read open the same way. `mergerfs_rename_shim!` has no control file, so its reads
+fail and its `hold` reports no union identity.
+
 ## The imported quality has one owner
 
 What a movie or episode recorded about its file lives in its `imported_*` columns, and

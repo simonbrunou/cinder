@@ -10,6 +10,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   alias Cinder.Library.Filesystem.Disk
   alias Cinder.Subtitles.{Manifest, Moviehash, SidecarTransaction}
   alias Cinder.Subtitles.Sync.Timing
+  alias Cinder.Test.MergerfsControl
 
   # Delegates every operation to the real `Disk` filesystem, except it reports each
   # `write_bound/2` call back to the owning test process — so a test can pin "the reclaim path
@@ -737,6 +738,27 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert {:error, :estale} = manual(video, 2_000)
       assert File.exists?(backup)
       assert File.exists?(duplicate)
+    end
+
+    # Issue #972: with the control file readable, the helper derives a union identity from a
+    # hybrid-hash mount. A tombstone matching neither it nor a container proves nothing.
+    test "a tombstone recorded under neither identity stays fail-closed", %{
+      video: video,
+      tmp_dir: tmp
+    } do
+      %{path: path, backup: backup, duplicate: duplicate} =
+        duplicate_tombstones!(video, tmp,
+          recorded_identity: [38, 0, 123_456],
+          inodecalc: "hybrid-hash"
+        )
+
+      current = File.read!(path)
+
+      assert {:error, :estale} = manual(video, 2_000)
+      assert File.exists?(duplicate)
+      assert File.read!(backup) == ""
+      assert File.read!(path) == current
+      assert Manifest.sync(Manifest.read(video), "en") == nil
     end
 
     test "a nonzero duplicate container stays fail-closed", %{video: video, tmp_dir: tmp} do
@@ -1938,8 +1960,14 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   # Reproduces the production state behind issue #350: a corrected-then-reset track whose
   # manifest holds an owned backup tombstone with no record, while the logical backup path is a
   # zero-byte container on two mergerfs branches. The shim supplies the mergerfs surface (mount
-  # detection + allpaths) that the test environment cannot; the proofs and effects are the real
-  # helper.
+  # detection, allpaths, and the control file through Cinder.Test.MergerfsControl) that the test
+  # environment cannot; the proofs and effects are the real helper. `legacy_identity` records a
+  # tombstone identity that mergerfs also reports as the union identity; `recorded_identity`
+  # records one and leaves the union identity to the real helper. The logical path is the
+  # branch-0 container itself, so the union identity the helper reports (the logical
+  # descriptor's fstat) would equal the physical one, where real mergerfs would report a hash.
+  # `inodecalc` defaults to "path-hash" so the helper reports no union identity unless a test
+  # asks for one.
   defp duplicate_tombstones!(video, tmp, opts \\ []) do
     path = sidecar(video).sidecar_path
     original = File.read!(path)
@@ -1951,43 +1979,40 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     assert %{identity: identity} = Manifest.backup_tombstone(Manifest.read(video), "en")
     assert Manifest.sync(Manifest.read(video), "en") == nil
 
-    legacy_identity = opts[:legacy_identity]
+    recorded_identity = opts[:legacy_identity] || opts[:recorded_identity]
 
-    if legacy_identity do
-      assert :ok = Manifest.put_backup_tombstone(video, "en", legacy_identity)
+    if recorded_identity do
+      assert :ok = Manifest.put_backup_tombstone(video, "en", recorded_identity)
     end
 
     root = Application.fetch_env!(:cinder, :movies_library_path)
-    File.write!(Path.join(root, ".mergerfs"), "")
+    control = Path.join(root, ".mergerfs")
+    File.write!(control, "")
     relative = Path.relative_to(backup, root)
     branch = Path.join(tmp, "branch-b")
     duplicate = Path.join(branch, relative)
     File.mkdir_p!(Path.dirname(duplicate))
     File.write!(duplicate, "")
 
-    helper =
-      mergerfs_duplicate_helper!(
-        tmp,
-        backup,
-        [backup, duplicate],
-        [root, branch],
-        legacy_identity,
-        opts[:alias_identity] || false
-      )
+    layout = %{
+      logical: backup,
+      containers: [backup, duplicate],
+      branches: [root, branch],
+      control: control
+    }
+
+    helper = mergerfs_duplicate_helper!(tmp, layout, opts)
 
     Application.put_env(:cinder, :rooted_filesystem_helper, helper)
 
     %{path: path, backup: backup, duplicate: duplicate, original: original, identity: identity}
   end
 
-  defp mergerfs_duplicate_helper!(
-         tmp,
-         logical,
-         containers,
-         branches,
-         legacy_identity,
-         alias_identity
-       ) do
+  defp mergerfs_duplicate_helper!(tmp, layout, opts) do
+    %{logical: logical, branches: branches} = layout
+    legacy_identity = opts[:legacy_identity]
+    inodecalc = Keyword.get(opts, :inodecalc, "path-hash")
+    control_file = MergerfsControl.python(layout.control, branches, inodecalc: inodecalc)
     helper = Path.join(tmp, "mergerfs_duplicate_helper.py")
     real_helper = Path.expand("../../../priv/rooted_fs.py", __DIR__)
 
@@ -1996,10 +2021,10 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     import sys
 
     LOGICAL = #{inspect(logical)}
-    CONTAINERS = #{inspect(containers)}
+    CONTAINERS = #{inspect(layout.containers)}
     BRANCHES = #{inspect(branches)}
     LEGACY_IDENTITY = #{if legacy_identity, do: Jason.encode!(legacy_identity), else: "None"}
-    ALIAS_IDENTITY = #{if alias_identity, do: "True", else: "False"}
+    ALIAS_IDENTITY = #{if opts[:alias_identity], do: "True", else: "False"}
     REAL_HELPER = #{inspect(real_helper)}
 
     real_getxattr = os.getxattr
@@ -2012,12 +2037,6 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
             existing = [c for c in CONTAINERS if os.path.lexists(c)]
             if existing:
                 return b"\\0".join(os.fsencode(c) for c in existing)
-        if name in ("user.mergerfs.branches", "user.mergerfs.srcmounts"):
-            if not isinstance(path, int) or os.path.basename(
-                os.readlink(f"/proc/self/fd/{path}")
-            ) != ".mergerfs":
-                raise OSError(61, "ENODATA")
-            return os.fsencode(":".join(BRANCHES))
         # The surviving container IS the logical path here, so the mount maps
         # onto itself: this keeps the real mergerfs reactivation path (backing
         # location lookup + mapping verification) exercised after reconciling.
@@ -2034,6 +2053,8 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     namespace = {"__name__": "rooted_fs_shim", "__file__": REAL_HELPER}
     with open(REAL_HELPER, encoding="utf-8") as source:
         exec(compile(source.read(), REAL_HELPER, "exec"), namespace)
+
+    #{control_file}
 
     if LEGACY_IDENTITY is not None:
         namespace["legacy_union_identity"] = lambda mountpoint, fd: LEGACY_IDENTITY

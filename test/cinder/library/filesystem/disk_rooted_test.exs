@@ -3,11 +3,12 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
 
   import ExUnit.CaptureLog
 
+  alias Cinder.Library.Filesystem
   alias Cinder.Library.Filesystem.Disk
   alias Cinder.Library.PathPolicy
   alias Cinder.Subtitles.{Manifest, SidecarTransaction}
   alias Cinder.Subtitles.SidecarTransaction.AtomicFile
-  alias Cinder.Test.BarrierFilesystem
+  alias Cinder.Test.{BarrierFilesystem, MergerfsControl}
 
   setup %{tmp_dir: tmp} do
     keys = [
@@ -425,6 +426,118 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     assert File.exists?(owned)
   end
 
+  # Issue #972: the control-file read opens .mergerfs with O_PATH | O_NOFOLLOW, which hands
+  # back a planted symlink itself. Reading through the link would trust the target's xattrs.
+  @tag :tmp_dir
+  test "a symlink planted at the mergerfs control file is refused, not read through", %{
+    root: root,
+    tmp: tmp
+  } do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp, control_symlink: true)
+
+    assert {:error, :einval} = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.exists?(owned)
+    assert File.exists?(duplicate)
+  end
+
+  @tag :tmp_dir
+  test "duplicates recorded under the union identity are reconciled to the selected container",
+       %{root: root, tmp: tmp} do
+    %{path: path, owned: owned, duplicate: duplicate, union_identity: union_identity} =
+      duplicate_tombstones!(root, tmp)
+
+    assert :ok = Disk.reconcile_duplicate_containers(path, union_identity)
+    assert File.exists?(owned)
+    refute File.exists?(duplicate)
+  end
+
+  # verify_legacy_selection proves the union identity and mergerfs's selection again before each
+  # removal, so a change after reconcile's first check refuses instead of removing.
+  for {change, label} <- [
+        replace_logical: "the logical file is replaced",
+        reselect: "mergerfs selects another container"
+      ] do
+    @tag :tmp_dir
+    test "a union-identity reconcile is refused when #{label} after the check", %{
+      root: root,
+      tmp: tmp
+    } do
+      %{path: path, owned: owned, duplicate: duplicate, union_identity: union_identity} =
+        duplicate_tombstones!(root, tmp, after_legacy_check: unquote(change))
+
+      assert {:error, :estale} = Disk.reconcile_duplicate_containers(path, union_identity)
+      assert File.exists?(owned)
+      assert File.exists?(duplicate)
+    end
+  end
+
+  # path-hash derives the union inode from the path, so it proves nothing about the file.
+  @tag :tmp_dir
+  test "a union identity is not trusted when inodecalc does not hash the file", %{
+    root: root,
+    tmp: tmp
+  } do
+    %{path: path, owned: owned, duplicate: duplicate, union_identity: union_identity} =
+      duplicate_tombstones!(root, tmp, inodecalc: "path-hash")
+
+    assert {:error, :estale} = Disk.reconcile_duplicate_containers(path, union_identity)
+    assert File.exists?(owned)
+    assert File.exists?(duplicate)
+  end
+
+  # Prod's layout: the pool is mounted above the library roots, so the control file and the
+  # branch containers sit relative to the mount, not to the root.
+  @tag :tmp_dir
+  test "duplicates below a mount above the library root are reconciled", %{root: root, tmp: tmp} do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp, mount_above_root: true)
+
+    refute File.exists?(Path.join(root, ".mergerfs"))
+    assert :ok = Disk.reconcile_duplicate_containers(path, identity)
+    assert File.exists?(owned)
+    refute File.exists?(duplicate)
+  end
+
+  for inodecalc <- ["hybrid-hash", "devino-hash"] do
+    @tag :tmp_dir
+    test "a rooted hold on a #{inodecalc} mount reports the union identity", %{
+      root: root,
+      tmp: tmp
+    } do
+      %{path: path, identity: identity, union_identity: union_identity} =
+        duplicate_tombstones!(root, tmp, inodecalc: unquote(inodecalc))
+
+      assert {:ok, bound} = Disk.open_bound(path, [:read])
+
+      try do
+        assert bound.identity == identity
+        assert bound.union_identity == union_identity
+        assert Filesystem.identity?(bound, identity)
+        assert Filesystem.identity?(bound, union_identity)
+      after
+        Disk.close_bound(bound)
+      end
+    end
+  end
+
+  @tag :tmp_dir
+  test "a rooted hold on a path-hash mount reports no union identity", %{root: root, tmp: tmp} do
+    %{path: path, identity: identity, union_identity: union_identity} =
+      duplicate_tombstones!(root, tmp, inodecalc: "path-hash")
+
+    assert {:ok, bound} = Disk.open_bound(path, [:read])
+
+    try do
+      assert bound.identity == identity
+      assert bound.union_identity == nil
+      assert Filesystem.identity?(bound, identity)
+      refute Filesystem.identity?(bound, union_identity)
+    after
+      Disk.close_bound(bound)
+    end
+  end
+
   # Issue #758: the fetch side publishes a sidecar that may not exist yet without replacing one
   # that appeared meanwhile.
   describe "rename_exclusive/2" do
@@ -799,17 +912,26 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
   end
 
   # A real mergerfs mount is not available in the test environment, so the shim
-  # forces mergerfs_mount() to true and answers user.mergerfs.allpaths for the
-  # logical backup path with the two branch containers. Everything else -- the
+  # forces mergerfs_mount() to true, answers user.mergerfs.allpaths for the
+  # logical backup path with the two branch containers, and maps the logical path
+  # onto the owned container (fullpath/basepath). Cinder.Test.MergerfsControl
+  # answers the control file as real mergerfs does; `control_symlink` plants a
+  # symlink at <mount>/.mergerfs instead, whose target answers. `inodecalc` is
+  # passed on. The mount is the library root, or `tmp` above it with
+  # `mount_above_root`, as on prod. `after_legacy_check` replaces the logical file
+  # (`:replace_logical`) or makes mergerfs select the duplicate (`:reselect`)
+  # once reconcile has checked the union identity. Everything else -- the
   # zero-byte and identity proofs, the RENAME_NOREPLACE quarantine, the recheck
   # and the unlink -- is the real helper running against real files.
   defp duplicate_tombstones!(root, tmp, opts \\ []) do
     relative = "Movie/.subtitle.srt.cinder-sync-original"
     path = Path.join(root, relative)
+    mountpoint = if opts[:mount_above_root], do: tmp, else: root
+    backing_relative = Path.relative_to(path, mountpoint)
     branch_a = Path.join(tmp, "branch-a")
     branch_b = Path.join(tmp, "branch-b")
-    owned = Path.join(branch_a, relative)
-    duplicate = Path.join(branch_b, relative)
+    owned = Path.join(branch_a, backing_relative)
+    duplicate = Path.join(branch_b, backing_relative)
 
     Enum.each(
       [Path.dirname(path), Path.dirname(owned), Path.dirname(duplicate)],
@@ -818,23 +940,65 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
 
     Enum.each([path, owned, duplicate], &File.write!(&1, ""))
 
-    if Keyword.get(opts, :mergerfs, true), do: File.write!(Path.join(root, ".mergerfs"), "")
-
-    stat = File.stat!(owned)
-    identity = {stat.major_device, stat.minor_device, stat.inode}
+    control = control_file!(mountpoint, tmp, opts)
+    identity = file_identity(owned)
 
     containers =
       if opts[:repeat_duplicate], do: [owned, duplicate, duplicate], else: [owned, duplicate]
 
-    helper = mergerfs_shim!(tmp, containers, [branch_a, branch_b], root, opts)
+    layout = %{
+      containers: containers,
+      branches: [branch_a, branch_b],
+      mountpoint: mountpoint,
+      control: control,
+      logical: path,
+      selected: owned,
+      selected_branch: branch_a,
+      other: duplicate,
+      other_branch: branch_b
+    }
+
+    helper = mergerfs_shim!(tmp, layout, opts)
 
     Application.put_env(:cinder, :rooted_filesystem_helper, helper)
 
-    %{path: path, owned: owned, duplicate: duplicate, identity: identity}
+    %{
+      path: path,
+      owned: owned,
+      duplicate: duplicate,
+      identity: identity,
+      union_identity: file_identity(path)
+    }
   end
 
-  defp mergerfs_shim!(tmp, containers, branches, mountpoint, opts) do
+  defp control_file!(mountpoint, tmp, opts) do
+    control = Path.join(mountpoint, ".mergerfs")
+
+    cond do
+      not Keyword.get(opts, :mergerfs, true) ->
+        control
+
+      opts[:control_symlink] ->
+        target = Path.join(tmp, "planted-control")
+        File.write!(target, "")
+        File.ln_s!(target, control)
+        target
+
+      true ->
+        File.write!(control, "")
+        control
+    end
+  end
+
+  defp file_identity(path) do
+    stat = File.stat!(path)
+    {stat.major_device, stat.minor_device, stat.inode}
+  end
+
+  defp mergerfs_shim!(tmp, layout, opts) do
+    %{containers: containers, branches: branches, mountpoint: mountpoint} = layout
     fill_after_quarantine = opts[:fill_after_quarantine]
+    after_legacy_check = opts[:after_legacy_check] && Atom.to_string(opts[:after_legacy_check])
     mergerfs = Keyword.get(opts, :mergerfs, true)
     helper = Path.join(tmp, "mergerfs_shim.py")
     real_helper = Path.expand("../../../../priv/rooted_fs.py", __DIR__)
@@ -844,23 +1008,30 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     import sys
 
     CONTAINERS = #{inspect(containers)}
-    BRANCHES = #{inspect(branches)}
+    LOGICAL = #{inspect(layout.logical)}
+    OTHER = #{inspect(layout.other)}
+    OTHER_BRANCH = #{inspect(layout.other_branch)}
     REAL_HELPER = #{inspect(real_helper)}
     FILL_AFTER_QUARANTINE = #{python_literal(fill_after_quarantine)}
+    AFTER_LEGACY_CHECK = #{python_literal(after_legacy_check)}
+
+    # [fullpath, basepath] mergerfs reports for the logical path.
+    selected = [#{inspect(layout.selected)}, #{inspect(layout.selected_branch)}]
 
     real_getxattr = os.getxattr
+
+    def is_logical(path):
+        return isinstance(path, int) and os.path.samestat(os.fstat(path), os.stat(LOGICAL))
 
     def getxattr(path, name, **kwargs):
         if name == "user.mergerfs.allpaths":
             existing = [c for c in CONTAINERS if os.path.lexists(c)]
             if existing:
                 return b"\\0".join(os.fsencode(c) for c in existing)
-        if name in ("user.mergerfs.branches", "user.mergerfs.srcmounts"):
-            if not isinstance(path, int) or os.path.basename(
-                os.readlink(f"/proc/self/fd/{path}")
-            ) != ".mergerfs":
-                raise OSError(61, "ENODATA")
-            return os.fsencode(":".join(BRANCHES))
+        if name == "user.mergerfs.fullpath" and is_logical(path):
+            return os.fsencode(selected[0])
+        if name == "user.mergerfs.basepath" and is_logical(path):
+            return os.fsencode(selected[1])
         return real_getxattr(path, name, **kwargs)
 
     os.getxattr = getxattr
@@ -870,6 +1041,8 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     namespace = {"__name__": "rooted_fs_shim", "__file__": REAL_HELPER}
     with open(REAL_HELPER, encoding="utf-8") as source:
         exec(compile(source.read(), REAL_HELPER, "exec"), namespace)
+
+    #{MergerfsControl.python(layout.control, branches, Keyword.take(opts, [:inodecalc]))}
 
     MOUNTPOINT = #{inspect(mountpoint)} if #{if mergerfs, do: "True", else: "False"} else None
     namespace["mergerfs_mountpoint"] = lambda path: MOUNTPOINT
@@ -892,6 +1065,22 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
                     os.close(fd)
 
         namespace["rename_noreplace"] = rename_noreplace
+
+    # reconcile_duplicates reads the branches between its legacy identity check and
+    # verify_legacy_selection: change what mergerfs reports right there.
+    if AFTER_LEGACY_CHECK is not None:
+        real_mergerfs_branches = namespace["mergerfs_branches"]
+
+        def mergerfs_branches(mountpoint):
+            if AFTER_LEGACY_CHECK == "reselect":
+                selected[:] = [OTHER, OTHER_BRANCH]
+            else:
+                replacement = LOGICAL + ".replacement"
+                open(replacement, "w").close()
+                os.replace(replacement, LOGICAL)
+            return real_mergerfs_branches(mountpoint)
+
+        namespace["mergerfs_branches"] = mergerfs_branches
 
     sys.argv = [REAL_HELPER] + sys.argv[1:]
     operation = sys.argv[1] if len(sys.argv) > 1 else "unknown"
