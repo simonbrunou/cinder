@@ -40,18 +40,31 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
 
 - **Broken `main`.** Two PRs that pass apart can break `main` together (AGENTS.md "Merge
   authority"). Before blaming the diff for a red test it does not touch, check whether
-  `CI / test (push)` on `origin/main`'s head failed on the same test.
+  `CI / test (push)` on `origin/main`'s head failed on the same test. If it did, the red is
+  `main`'s: find or file its issue as AGENTS.md "Merge authority" says, and once the fix lands,
+  merge `origin/main` into your branch ("Re-running CI").
 - **Flake.** A failure is a flake only when both hold: the failing test touches nothing in the
-  diff, and the identical tree went green elsewhere (`git diff --stat <green sha> <red sha>`
-  prints nothing). A red run never counts as green.
+  diff, and the identical tree went green on CI (`git diff --stat <green sha> <red sha>` prints
+  nothing). A red run never counts as green. A fresh PR head has only its red run, so check the
+  two conditions at different times:
+  1. Before the re-run, check that the failing test touches nothing in the diff, and rule out
+     the other causes of a red test that this section names: **Broken `main`**, **Shared
+     state**, **CI runs the suite as root** and **Line cap**. When the test touches the diff, the
+     failure is the diff's to fix. When one of those causes fits, handle it as that bullet says.
+     Either way, the failure is not a flake, so skip the re-run.
+  2. Re-run the job once, as "Re-running CI" says. Only the re-run can supply the green run: a
+     green re-run of the identical tree (the same SHA, or an empty commit on it) makes the
+     failure a flake. A local `mix test` of that tree is not this green run (#916). It misses
+     failures that happen only on CI (**CI runs the suite as root**). Its timing also says
+     nothing about a wall-clock bound on the loaded runner.
 - **Wall-clock tests.** #637 (for #636) widened the subprocess bounds that raced process startup
   on the runner to 1 s. After a 436 ms run on #908, `Cinder.HTTPPolicyTest` "cancels a request
   blocked before headers at the wall-clock deadline" keeps its 100 ms deadline but asserts the
   elapsed time under 1 s instead of 300 ms. One tight-bound test still fails now and then on
   diffs that do not touch it: `Cinder.Library.Filesystem.DiskBoundedTest` "run_rooted's
   sync_parent timeout is reported distinctly from a malformed helper, and the OS process is
-  killed" (it got `{:error, :rooted_helper_timeout}` instead). Apply the flake rule before
-  re-running.
+  killed" (it got `{:error, :rooted_helper_timeout}` instead). Judge such a failure as **Flake**
+  says.
 - **Shared state.** Check order-dependent state before blaming a flake or a new test: the
   always-on `:login_pair` bucket of `Cinder.Accounts.IpRateLimiter`, keyed on the IP and the
   name (#686), and the suite-wide `Cinder.Subtitles.Fetcher` consuming another module's Mox
@@ -66,7 +79,8 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
 - **Line cap.** `test/code_health_test.exs` fails any `lib/**/*.ex` file over `@max_lines`
   (1500) lines, counted with `String.split(content, "\n")`, one more than `wc -l`. Two PRs that
   each grow a file near the cap pass apart and break `main` together, so count the lines of every
-  touched lib file on the merged tree before merging (`scripts/merge-pr` does).
+  touched lib file on the merged tree before merging (`scripts/merge-pr` does). On a red, split
+  the file as the test's failure message says.
 - **Trivy DB outage.** A red `container` job whose "Download the Trivy vulnerability DB" step
   fails on both repositories (`ghcr.io`, then `mirror.gcr.io`; #835, #841) is an upstream outage,
   not the diff. Outages have lasted hours. Re-run once another run's `CI / container` went green
@@ -120,7 +134,8 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   `main`, re-run only a job of `origin/main`'s head. Find the run id as "Reading a run" says,
   then list the run's jobs with
   `curl ... "$API/actions/runs/<run id>/jobs" | jq -c '.[] | {id, name, status, attempt}'`.
-- A red job at `attempt` 1 gets the re-run:
+- A red job at `attempt` 1 gets the re-run. A red test gets it only when it passes both checks
+  of step 1 of **Flake** ("Judging a red run"). The call is
   `curl -s -X POST -H "Authorization: token $FJ_TOKEN" "$API/actions/jobs/<job id>/rerun"`,
   which answers 204. A job at `attempt` above 1 was re-run already, by you or by another agent
   in a merge burst: wait on it while it reads `waiting` or `running`.
