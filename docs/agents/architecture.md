@@ -159,8 +159,22 @@ A creating operation then proves that the union shows its file under the new nam
 `rename_exclusive` moves its file back to the source (`move_back_shadowed`). It reports a plain
 `EEXIST` once the identity it held before the rename proves the file at the source is still
 Cinder's and both directories are synced; otherwise it reports the rename as committed.
-`mkdir_near` and the file create leave theirs committed (#905). The other operations act on the
-union path, and the mergerfs opens never cross into a nested mount.
+`mkdir_near` and the file create keep theirs: the new directory or zero-byte file stays on its
+branch, and the caller gets a post-effect `EEXIST`:
+`{:error, {:effect_committed, "mkdir_near", _}}` or `{:error, {:effect_committed, "hold", _}}`.
+That is accepted because every name they create is one only Cinder writes: a random token, a
+`System.unique_integer/1` name, or a deterministic name under the per-video lock
+`{{Cinder.Subtitles, video_path}, self()}` (a `Cinder.Subtitles.SidecarTransaction.AtomicFile`
+`write/3,4` workspace and its staged file, the sync backup `.<sidecar>.cinder-sync-original`). A
+second Cinder call on one name resolves the same branch while the anchor or parent stays put: the
+anchor's for `mkdir_near` (`mergerfs_near_relative`), the parent directory's for the file create.
+So it collides there instead of on another branch. `Disk.write/2` on a missing file creates the
+same way; nothing in `lib/` calls it today. A caller that creates a name another writer may also
+create (a sidecar's own name, an NFO) publishes through `rename_exclusive/2`, or first adds an
+undo that clears its container from the name, as `move_back_shadowed` does for
+`rename_exclusive`. A second Cinder instance on the pool is also such a writer: its
+`System.unique_integer/1` values and its per-video lock are its own (#905). The other operations
+act on the union path, and the mergerfs opens never cross into a nested mount.
 
 A library root may sit below the mount, as in prod, where the pool is at `/media` and each root is
 a folder in it. Take a path's place on a branch from the backing path of its directory or of the
