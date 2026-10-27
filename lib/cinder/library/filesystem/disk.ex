@@ -111,6 +111,11 @@ defmodule Cinder.Library.Filesystem.Disk do
   `identity` or mergerfs maps a verified legacy union identity to exactly one
   current backing container. Anything nonzero, ambiguous, or unowned is
   refused before a byte is touched.
+
+  A bind of a mergerfs pool subdirectory hides the pool's control file, so the
+  helper refuses it before it reads the control file or touches a container, with
+  `{:error, {:mergerfs_subdirectory_bind, mount_root}}` where `mount_root` is
+  the mount's mountinfo root field, such as `"/media"` (#884).
   """
   @spec reconcile_duplicate_containers(String.t(), {integer(), integer(), integer()}) ::
           :ok | {:error, term()}
@@ -596,6 +601,9 @@ defmodule Cinder.Library.Filesystem.Disk do
         {:error, {:rooted_helper_malformed, operation, output}}
     end
   end
+
+  defp rooted_reason(%{"reason" => "mergerfs_subdirectory_bind", "mount_root" => mount_root}),
+    do: {:mergerfs_subdirectory_bind, mount_root}
 
   defp rooted_reason(%{"reason" => reason}),
     do: Map.get(@posix_reasons, reason, {:rooted_error, reason})

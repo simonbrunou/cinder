@@ -773,6 +773,23 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert Manifest.sync(Manifest.read(video), "en") == nil
     end
 
+    # Issue #884: the correction returns the helper's refusal of a pool-subdirectory bind as is.
+    test "a bind of a mergerfs pool subdirectory fails the correction with the layout", %{
+      video: video,
+      tmp_dir: tmp
+    } do
+      %{path: path, backup: backup, duplicate: duplicate} =
+        duplicate_tombstones!(video, tmp, mount_root: "/media")
+
+      current = File.read!(path)
+
+      assert {:error, {:mergerfs_subdirectory_bind, "/media"}} = manual(video, 2_000)
+      assert File.read!(duplicate) == ""
+      assert File.read!(backup) == ""
+      assert File.read!(path) == current
+      assert Manifest.sync(Manifest.read(video), "en") == nil
+    end
+
     test "duplicate containers without a recorded tombstone stay fail-closed", %{
       video: video,
       tmp_dir: tmp
@@ -1967,7 +1984,8 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   # branch-0 container itself, so the union identity the helper reports (the logical
   # descriptor's fstat) would equal the physical one, where real mergerfs would report a hash.
   # `inodecalc` defaults to "path-hash" so the helper reports no union identity unless a test
-  # asks for one.
+  # asks for one. `mount_root` sets the mount's root field, `/` by default; another value models
+  # a bind of that pool subdirectory, through which no control file is reachable.
   defp duplicate_tombstones!(video, tmp, opts \\ []) do
     path = sidecar(video).sidecar_path
     original = File.read!(path)
@@ -1987,7 +2005,8 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
     root = Application.fetch_env!(:cinder, :movies_library_path)
     control = Path.join(root, ".mergerfs")
-    File.write!(control, "")
+    mount_root = Keyword.get(opts, :mount_root, "/")
+    if mount_root == "/", do: File.write!(control, "")
     relative = Path.relative_to(backup, root)
     branch = Path.join(tmp, "branch-b")
     duplicate = Path.join(branch, relative)
@@ -1998,6 +2017,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       logical: backup,
       containers: [backup, duplicate],
       branches: [root, branch],
+      mount_root: mount_root,
       control: control
     }
 
@@ -2023,6 +2043,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     LOGICAL = #{inspect(logical)}
     CONTAINERS = #{inspect(layout.containers)}
     BRANCHES = #{inspect(branches)}
+    MOUNT_ROOT = #{inspect(layout.mount_root)}
     LEGACY_IDENTITY = #{if legacy_identity, do: Jason.encode!(legacy_identity), else: "None"}
     ALIAS_IDENTITY = #{if opts[:alias_identity], do: "True", else: "False"}
     REAL_HELPER = #{inspect(real_helper)}
@@ -2076,9 +2097,9 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     # Scope the mergerfs illusion to the backup path, and keep it mergerfs after
     # the duplicate is gone so the post-reconciliation reactivation still runs
     # through hold_open_mergerfs rather than the ordinary rooted open.
-    real_mountpoint = namespace["mergerfs_mountpoint"]
-    namespace["mergerfs_mountpoint"] = (
-        lambda path: BRANCHES[0] if targeted() else real_mountpoint(path)
+    real_mount_fields = namespace["mergerfs_mount_fields"]
+    namespace["mergerfs_mount_fields"] = (
+        lambda path: (BRANCHES[0], MOUNT_ROOT) if targeted() else real_mount_fields(path)
     )
     namespace["mergerfs_mount"] = lambda path: targeted() or real_mount(path)
 

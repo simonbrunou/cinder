@@ -45,6 +45,18 @@ class EffectCommittedError(OSError):
     pass
 
 
+class SubdirectoryBindError(OSError):
+    """The mount is a bind of a mergerfs pool subdirectory, which reconcile refuses (#884).
+
+    fail() reports a reason that names this layout, and the mount's root field, in
+    place of the errno name.
+    """
+
+    def __init__(self, mount_root):
+        super().__init__(errno.EOPNOTSUPP, "mount is a bind of a mergerfs pool subdirectory")
+        self.mount_root = mount_root
+
+
 def emit(value):
     sys.stdout.write(json.dumps(value, separators=(",", ":")) + "\n")
     sys.stdout.flush()
@@ -52,16 +64,16 @@ def emit(value):
 
 def fail(operation, phase, exc):
     number = (exc.errno or errno.EIO) if isinstance(exc, OSError) else errno.EIO
-    emit(
-        {
-            "error": {
-                "operation": operation,
-                "phase": phase,
-                "errno": number,
-                "reason": errno.errorcode.get(number, "UNKNOWN"),
-            }
-        }
-    )
+    error = {
+        "operation": operation,
+        "phase": phase,
+        "errno": number,
+        "reason": errno.errorcode.get(number, "UNKNOWN"),
+    }
+    if isinstance(exc, SubdirectoryBindError):
+        error["reason"] = "mergerfs_subdirectory_bind"
+        error["mount_root"] = exc.mount_root
+    emit({"error": error})
 
 
 def checked_relative(value):
@@ -165,7 +177,8 @@ def hold_open_mergerfs(root, relative, flags, mode):
     try:
         basepath, backing_relative = mergerfs_backing_location_fd(union_fd)
         logical_identity = file_identity(union_fd)
-        union_identity = legacy_union_identity(mergerfs_mountpoint(root), union_fd)
+        mountpoint, _mount_root = mergerfs_mount_fields(root) or (None, None)
+        union_identity = legacy_union_identity(mountpoint, union_fd)
         backing_flags = flags & ~(os.O_CREAT | os.O_EXCL | os.O_TRUNC)
         backing_fd = open_at_root(
             basepath,
@@ -336,8 +349,12 @@ def mount_id(fd):
     raise OSError(errno.EIO, "open descriptor has no mount identity")
 
 
-def mergerfs_mountpoint(path):
-    """Mountpoint of path's opened mount, but only when it is mergerfs."""
+def mergerfs_mount_fields(path):
+    """(mount point, mount root) of path's opened mount, but only when it is mergerfs.
+
+    The mount root is mountinfo's root field: "/" for the pool itself, the bound
+    directory for a bind of a pool subdirectory (#884).
+    """
     fd = open_root(path)
     try:
         expected_id = mount_id(fd)
@@ -351,13 +368,16 @@ def mergerfs_mountpoint(path):
                 continue
             separator = fields.index("-")
             if fields[separator + 1] == "fuse.mergerfs":
-                return posixpath.normpath(mountinfo_unescape(fields[4]))
+                return (
+                    posixpath.normpath(mountinfo_unescape(fields[4])),
+                    posixpath.normpath(mountinfo_unescape(fields[3])),
+                )
             return None
     return None
 
 
 def mergerfs_mount(path):
-    return mergerfs_mountpoint(path) is not None
+    return mergerfs_mount_fields(path) is not None
 
 
 def mergerfs_control_xattr(mountpoint, name):
@@ -611,9 +631,15 @@ def reconcile_duplicates(args):
     # Anywhere else it is ordinary, caller-writable metadata, and trusting it
     # would let a forged xattr name arbitrary files -- including files outside
     # the configured roots -- as deletable "duplicates".
-    mountpoint = mergerfs_mountpoint(root)
-    if mountpoint is None:
+    mount = mergerfs_mount_fields(root)
+    if mount is None:
         raise OSError(errno.EINVAL, "logical path is not on a mergerfs mount")
+    mountpoint, mount_root = mount
+    # The control file sits at the pool root, out of reach through a bind of a
+    # pool subdirectory, and every container would sit below the bound directory
+    # on its branch. Refuse that layout before reading either.
+    if mount_root != "/":
+        raise SubdirectoryBindError(mount_root)
 
     fd = open_mergerfs_path(root, relative)
     try:

@@ -516,7 +516,11 @@ those passes had to leave alone.
 If `/media` is a mergerfs mount, bind every backing branch into the Cinder container read-write at
 the same absolute path mergerfs reports (for example, `/mnt/media1:/mnt/media1`); the single
 `/media` bind is still required. Without those backing mounts, alignment fails closed and leaves
-the subtitle unchanged.
+the subtitle unchanged. The `/media` bind must be the mergerfs pool root (for example,
+`/mnt/pool:/media`), not a folder inside the pool such as `/mnt/pool/media:/media`. mergerfs keeps
+its branch list at the pool root, so through a bind of a pool folder Cinder cannot clear an empty
+backup a past correction left on two branches: it refuses, and that correction fails with
+`mergerfs_subdirectory_bind` and the folder's path inside the pool (`/media` in that example).
 
 Separately from OpenSubtitles, any loose subtitle files (`.srt`, `.ass`, …) the release itself
 shipped are imported alongside the video only for folder/pack downloads — a bare single-file

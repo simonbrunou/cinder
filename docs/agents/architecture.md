@@ -165,19 +165,26 @@ union path, and the mergerfs opens never cross into a nested mount.
 A library root may sit below the mount, as in prod, where the pool is at `/media` and each root is
 a folder in it. Take a path's place on a branch from the backing path of its directory or of the
 root, as `mergerfs_near_relative` does. Deriving it from the mount point breaks under a bind of a
-pool subdirectory, which `reconcile_duplicates` still does (#884).
+pool subdirectory. `reconcile_duplicates` derives it so, and it needs the control file, which
+sits at the pool root, out of reach through such a bind. So it refuses a mount whose mount root
+(mountinfo's root field, which `mergerfs_mount_fields` returns with the mount point) is not `/`,
+before it reads the control file or touches a container, and
+`Disk.reconcile_duplicate_containers/2` returns
+`{:error, {:mergerfs_subdirectory_bind, mount_root}}` (#884).
 
 Tests have no mergerfs. In `test/cinder/library/filesystem/disk_rooted_test.exs`,
 `mergerfs_rename_shim!` and `mergerfs_shim!` (reached through `duplicate_tombstones!`) fake the
 mount check and the xattrs around the real helper. The `branch:` option of
-`mergerfs_rename_shim!` puts the mount above the library root.
+`mergerfs_rename_shim!` and the `mount_above_root:` option of `duplicate_tombstones!` put the
+mount above the library root.
 
 The helper reads mergerfs's config (`branches`, `inodecalc`) from `<mount>/.mergerfs`, which
 mergerfs refuses to open for reading. `mergerfs_control_xattr` opens it with `O_PATH` and reads
 through `/proc/self/fd/<n>` (#972). The `duplicate_tombstones!` shims in `disk_rooted_test.exs`
 and `sidecar_transaction_test.exs` splice in `Cinder.Test.MergerfsControl.python/3`, which
-refuses the read open the same way. `mergerfs_rename_shim!` has no control file, so its reads
-fail and its `hold` reports no union identity.
+refuses the read open the same way. Both take `mount_root:`, the mount root their mount check
+reports; any value but `/` also leaves no control file to reach. `mergerfs_rename_shim!` has no
+control file, so its reads fail and its `hold` reports no union identity.
 
 ## The imported quality has one owner
 

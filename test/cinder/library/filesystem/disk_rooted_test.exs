@@ -410,6 +410,58 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     assert {"", 0} = System.cmd("python3", ["-c", script, helper], stderr_to_stdout: true)
   end
 
+  # Issue #884: mountinfo's root field (field 4) is `/` for the pool itself and the bound
+  # directory for a bind of a pool subdirectory, escaped like the mount point (field 5).
+  @tag :tmp_dir
+  test "mergerfs mount detection reports the mount point and the mount's root field", %{
+    tmp: tmp
+  } do
+    helper = Path.expand("../../../../priv/rooted_fs.py", __DIR__)
+
+    script = """
+    import io
+    import json
+    import sys
+
+    namespace = {"__name__": "rooted_fs_test", "__file__": sys.argv[1]}
+    with open(sys.argv[1], encoding="utf-8") as source:
+        exec(compile(source.read(), sys.argv[1], "exec"), namespace)
+
+    MOUNTINFO = "".join(
+        line + "\\n"
+        for line in [
+            "41 1 0:40 / /media rw,relatime shared:1 - fuse.mergerfs pool rw,user_id=0",
+            "42 1 0:40 /media /srv/cinder\\\\040media rw shared:2 master:1 - fuse.mergerfs pool rw",
+            "43 1 0:40 /my\\\\040media /bound rw - fuse.mergerfs pool rw",
+            "44 1 8:1 / /data rw - ext4 /dev/sda1 rw",
+        ]
+    )
+
+    def fake_open(path, *args, **kwargs):
+        if path == "/proc/self/mountinfo":
+            return io.StringIO(MOUNTINFO)
+        return open(path, *args, **kwargs)
+
+    namespace["open"] = fake_open
+    results = []
+    for mount in ("41", "42", "43", "44", "45"):
+        namespace["mount_id"] = lambda fd, mount=mount: mount
+        results.append(namespace["mergerfs_mount_fields"](sys.argv[2]))
+    print(json.dumps(results))
+    """
+
+    assert {output, 0} =
+             System.cmd("python3", ["-c", script, helper, tmp], stderr_to_stdout: true)
+
+    assert Jason.decode!(output) == [
+             ["/media", "/"],
+             ["/srv/cinder media", "/media"],
+             ["/bound", "/my media"],
+             nil,
+             nil
+           ]
+  end
+
   # A container reachable under a second name is not wholly ours to remove:
   # unlinking this link would leave the bytes live under the other one.
   @tag :tmp_dir
@@ -486,8 +538,8 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     assert File.exists?(duplicate)
   end
 
-  # Prod's layout: the pool is mounted above the library roots, so the control file and the
-  # branch containers sit relative to the mount, not to the root.
+  # Prod's layout: the pool root is mounted (root field `/`) above the library roots, so the
+  # control file and the branch containers sit relative to the mount, not to the root.
   @tag :tmp_dir
   test "duplicates below a mount above the library root are reconciled", %{root: root, tmp: tmp} do
     %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
@@ -497,6 +549,28 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     assert :ok = Disk.reconcile_duplicate_containers(path, identity)
     assert File.exists?(owned)
     refute File.exists?(duplicate)
+  end
+
+  # Issue #884: through a bind of a pool subdirectory, mountinfo's root field is that directory,
+  # each container sits below it on its branch, and `.mergerfs` is out of reach (real mergerfs
+  # answers ENOENT; the shim creates no control file). The helper refuses with the layout before
+  # reading the control file, so a helper that read it first would report :enoent.
+  @tag :tmp_dir
+  test "a bind of a mergerfs pool subdirectory is refused with the layout", %{
+    root: root,
+    tmp: tmp
+  } do
+    %{path: path, owned: owned, duplicate: duplicate, identity: identity} =
+      duplicate_tombstones!(root, tmp, mount_root: "/media")
+
+    refute File.exists?(Path.join(root, ".mergerfs"))
+
+    assert {:error, {:mergerfs_subdirectory_bind, "/media"}} =
+             Disk.reconcile_duplicate_containers(path, identity)
+
+    assert File.exists?(owned)
+    assert File.exists?(duplicate)
+    assert Path.wildcard(Path.join(Path.dirname(duplicate), ".*cinder-duplicate-*")) == []
   end
 
   for inodecalc <- ["hybrid-hash", "devino-hash"] do
@@ -851,7 +925,7 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     with open(REAL_HELPER, encoding="utf-8") as source:
         exec(compile(source.read(), REAL_HELPER, "exec"), namespace)
 
-    namespace["mergerfs_mountpoint"] = lambda path: BRANCH
+    namespace["mergerfs_mount_fields"] = lambda path: (BRANCH, "/")
     namespace["mergerfs_mount"] = lambda path: True
 
     def on_call(name, number, effect):
@@ -918,7 +992,10 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
   # answers the control file as real mergerfs does; `control_symlink` plants a
   # symlink at <mount>/.mergerfs instead, whose target answers. `inodecalc` is
   # passed on. The mount is the library root, or `tmp` above it with
-  # `mount_above_root`, as on prod. `after_legacy_check` replaces the logical file
+  # `mount_above_root`, as on prod. `mount_root` sets the mount's root field, `/`
+  # by default: another value models a bind of that pool subdirectory, which puts
+  # each container below it on its branch and leaves no control file to reach.
+  # `after_legacy_check` replaces the logical file
   # (`:replace_logical`) or makes mergerfs select the duplicate (`:reselect`)
   # once reconcile has checked the union identity. Everything else -- the
   # zero-byte and identity proofs, the RENAME_NOREPLACE quarantine, the recheck
@@ -927,7 +1004,11 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     relative = "Movie/.subtitle.srt.cinder-sync-original"
     path = Path.join(root, relative)
     mountpoint = if opts[:mount_above_root], do: tmp, else: root
-    backing_relative = Path.relative_to(path, mountpoint)
+    mount_root = Keyword.get(opts, :mount_root, "/")
+
+    backing_relative =
+      Path.join(String.trim_leading(mount_root, "/"), Path.relative_to(path, mountpoint))
+
     branch_a = Path.join(tmp, "branch-a")
     branch_b = Path.join(tmp, "branch-b")
     owned = Path.join(branch_a, backing_relative)
@@ -940,7 +1021,7 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
 
     Enum.each([path, owned, duplicate], &File.write!(&1, ""))
 
-    control = control_file!(mountpoint, tmp, opts)
+    control = control_file!(mountpoint, mount_root, tmp, opts)
     identity = file_identity(owned)
 
     containers =
@@ -950,6 +1031,7 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
       containers: containers,
       branches: [branch_a, branch_b],
       mountpoint: mountpoint,
+      mount_root: mount_root,
       control: control,
       logical: path,
       selected: owned,
@@ -971,11 +1053,11 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     }
   end
 
-  defp control_file!(mountpoint, tmp, opts) do
+  defp control_file!(mountpoint, mount_root, tmp, opts) do
     control = Path.join(mountpoint, ".mergerfs")
 
     cond do
-      not Keyword.get(opts, :mergerfs, true) ->
+      not Keyword.get(opts, :mergerfs, true) or mount_root != "/" ->
         control
 
       opts[:control_symlink] ->
@@ -1044,9 +1126,9 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
 
     #{MergerfsControl.python(layout.control, branches, Keyword.take(opts, [:inodecalc]))}
 
-    MOUNTPOINT = #{inspect(mountpoint)} if #{if mergerfs, do: "True", else: "False"} else None
-    namespace["mergerfs_mountpoint"] = lambda path: MOUNTPOINT
-    namespace["mergerfs_mount"] = lambda path: MOUNTPOINT is not None
+    MOUNT = #{if mergerfs, do: "(#{inspect(mountpoint)}, #{inspect(layout.mount_root)})", else: "None"}
+    namespace["mergerfs_mount_fields"] = lambda path: MOUNT
+    namespace["mergerfs_mount"] = lambda path: MOUNT is not None
 
     # Simulate a writer that fills the container after the quarantine rename
     # but before the helper's final held-descriptor proof.
