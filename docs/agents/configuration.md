@@ -44,7 +44,8 @@ site:
   form, `Cinder.Settings.media_server_web_link/0` and `Cinder.Settings.media_server_type/0`.
 - `lib/cinder_web/router.ex` reads the `CINDER_BASIC_AUTH_*` pair for the Basic gate.
 - `config/config.exs` reads `MIX_TAILWIND_PATH` into `config :tailwind, path:` each time Mix
-  loads its config. Only the image build sets it, to its pinned Tailwind binary (#867).
+  loads its config. The image build sets it to its pinned Tailwind binary (#867), and the flake
+  dev shell to one in the Nix store (#889).
 
 ## Secrets
 

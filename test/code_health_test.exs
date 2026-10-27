@@ -4,8 +4,9 @@ defmodule Cinder.CodeHealthTest do
   the 2026-07-26 `Cinder.Catalog` split), and fences the module boundaries earlier refactors
   drew: the catalog's split by concept (#740), the staging engine (#739), the guarded-write
   adapters (#743) and the domain's distance from the web layer (#816). It also keeps new
-  changelog entries in `changelog.d/` (#843), the Dockerfile's Tailwind pin on the configured
-  version (#867), and the tests' media-server choice in `Cinder.ConfigCase` (#721).
+  changelog entries in `changelog.d/` (#843), the Dockerfile's and the flake's Tailwind pins on
+  the configured version (#867, #889), and the tests' media-server choice in `Cinder.ConfigCase`
+  (#721).
   """
   use ExUnit.Case, async: true
 
@@ -207,6 +208,22 @@ defmodule Cinder.CodeHealthTest do
     assert pinned == [Application.fetch_env!(:tailwind, :version)],
            "bump the Dockerfile's ARG TAILWIND_VERSION and both of its sha256 sums together " <>
              "with `config :tailwind, version:`"
+  end
+
+  # #889: the dev shell points MIX_TAILWIND_PATH at a Tailwind binary in the read-only Nix store.
+  # On a version mismatch, `tailwind.install --if-missing` downloads the configured version with
+  # :httpc and cannot write it there.
+  test "the flake pins the Tailwind version config.exs asks for" do
+    pinned =
+      Regex.run(~r/^\s*tailwindVersion = "(\S+)";$/m, File.read!("flake.nix"),
+        capture: :all_but_first
+      )
+
+    assert pinned == [Application.fetch_env!(:tailwind, :version)],
+           "bump these together: `config :tailwind, version:`, the Dockerfile's " <>
+             "ARG TAILWIND_VERSION and both of its sha256 sums, and flake.nix's " <>
+             "tailwindVersion and both of its sha256 sums (all from the release's " <>
+             "sha256sums.txt)"
   end
 
   # #739: the engine's scratch-file names are its own. Tests other than the staged-import ones

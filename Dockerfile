@@ -32,8 +32,9 @@ RUN apt-get update \
 # (#867, docs/agents/ci.md "Dependency rebuild"). MIX_TAILWIND_PATH feeds
 # `config :tailwind, path:`, so `tailwind.install --if-missing` finds the configured version there
 # and downloads nothing.
-# TAILWIND_VERSION must equal `config :tailwind, version:` (test/code_health_test.exs checks it);
-# take the new sums from the release's sha256sums.txt when you bump it.
+# TAILWIND_VERSION must equal `config :tailwind, version:` and flake.nix's tailwindVersion
+# (test/code_health_test.exs checks both); take the new sums from the release's sha256sums.txt
+# when you bump it.
 ARG TAILWIND_VERSION=4.1.12
 ENV MIX_TAILWIND_PATH=/usr/local/bin/tailwindcss
 RUN case "$(dpkg --print-architecture)" in \
