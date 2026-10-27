@@ -49,7 +49,10 @@ defmodule Cinder.Library.StagedImport do
            link_sidecars_from: String.t() | nil
          }
 
-  @typedoc "What a staged file's commit runs, besides linking the download's sidecars."
+  @typedoc """
+  What a staged file's commit runs, besides linking the download's sidecars. The list is the
+  sidecar languages the stager recorded for the file.
+  """
   @type effect ::
           {:movie, Cinder.Catalog.Movie.t(), [String.t()] | nil}
           | {:movie_part, Cinder.Catalog.Movie.t(), [String.t()] | nil}
@@ -193,35 +196,50 @@ defmodule Cinder.Library.StagedImport do
 
   defp run_effects(stage) do
     if match?({:claimed, _row}, ImportStage.claim_effects(stage.id)) do
-      if stage.link_sidecars_from, do: Sidecars.link(stage.link_sidecars_from, stage.dest)
-      run_effect(stage.effect, stage.dest)
+      placed =
+        if stage.link_sidecars_from,
+          do: Sidecars.link(stage.link_sidecars_from, stage.dest),
+          else: []
+
+      run_effect(stage.effect, stage.dest, placed)
     end
 
     :ok
   end
 
-  defp run_effect(nil, _dest), do: :ok
+  defp run_effect(nil, _dest, _placed), do: :ok
 
-  defp run_effect({:movie, movie, sidecar_languages}, dest) do
+  defp run_effect({:movie, movie, sidecar_languages}, dest, placed) do
     PostImport.refresh(:movies, dest)
-    fetch_movie_subtitles(movie, dest, sidecar_languages)
+    fetch_movie_subtitles(movie, dest, release_sidecars(sidecar_languages, placed))
   end
 
   # Parts skip the scan because the media-server scan is library-kind-wide.
-  defp run_effect({:movie_part, movie, sidecar_languages}, dest),
-    do: fetch_movie_subtitles(movie, dest, sidecar_languages)
+  defp run_effect({:movie_part, movie, sidecar_languages}, dest, placed),
+    do: fetch_movie_subtitles(movie, dest, release_sidecars(sidecar_languages, placed))
 
-  defp run_effect({:episodes, episodes, sidecar_languages}, dest) do
+  defp run_effect({:episodes, episodes, sidecar_languages}, dest, placed) do
     PostImport.refresh(:tv, dest)
-    PostImport.fetch_episode_subtitles(episodes, dest, sidecar_languages)
+
+    PostImport.fetch_episode_subtitles(
+      episodes,
+      dest,
+      release_sidecars(sidecar_languages, placed)
+    )
   end
 
-  defp fetch_movie_subtitles(movie, dest, sidecar_languages) do
+  # The subtitle task marks a recorded language's sidecar as Cinder-managed only when this commit
+  # placed that file or the manifest already tracks it, so a subtitle the user put next to the
+  # video stays theirs (#918).
+  defp release_sidecars(sidecar_languages, placed),
+    do: [languages: sidecar_languages, placed: placed]
+
+  defp fetch_movie_subtitles(movie, dest, release_sidecars) do
     PostImport.fetch_subtitles(
       fn -> Cinder.Subtitles.movie_criteria(movie) end,
       dest,
       :movies,
-      sidecar_languages
+      release_sidecars
     )
   end
 

@@ -106,7 +106,7 @@ defmodule Cinder.Library.SidecarsTest do
     assert Sidecars.srt_files(src) == [{srt, "en"}]
   end
 
-  test "link/2 hardlinks each sidecar next to the dest, renamed, returns languages" do
+  test "link/2 hardlinks each sidecar next to the dest, renamed, returns the placed paths" do
     dir = "/dl/Movie (2020)"
     src = "#{dir}/Movie (2020).mkv"
     dest = "/lib/Movie (2020)/Movie (2020).mkv"
@@ -121,7 +121,9 @@ defmodule Cinder.Library.SidecarsTest do
 
     expect(FilesystemMock, :ln, fn ^sub_src, ^sub_dest -> :ok end)
 
-    assert Sidecars.link(src, dest) == ["en"]
+    assert Sidecars.link(src, dest) == [sub_dest]
+    # #918 compares the placed paths with the canonical sidecar textually.
+    assert sub_dest == Cinder.Subtitles.sidecar_path(dest, "en")
   end
 
   test "files/1 requires a separator boundary so an unpadded E10 sidecar isn't matched to E1" do
@@ -143,7 +145,7 @@ defmodule Cinder.Library.SidecarsTest do
     assert Sidecars.files(src) == [{"#{dir}/Show.S01E1.en.srt", "en"}]
   end
 
-  test "link/2 dedups reported languages but still hardlinks every distinct sidecar file" do
+  test "link/2 hardlinks and reports every distinct sidecar file of one language" do
     dir = "/dl/Movie (2020)"
     src = "#{dir}/Movie (2020).mkv"
     dest = "/lib/Movie (2020)/Movie (2020).mkv"
@@ -161,7 +163,7 @@ defmodule Cinder.Library.SidecarsTest do
     expect(FilesystemMock, :ln, fn ^sub1_src, ^sub1_dest -> :ok end)
     expect(FilesystemMock, :ln, fn ^sub2_src, ^sub2_dest -> :ok end)
 
-    assert Sidecars.link(src, dest) == ["en"]
+    assert Sidecars.link(src, dest) == [sub1_dest, sub2_dest]
   end
 
   # Issue #201: `hi` read as the language must not also be re-emitted as a flag, or the Hindi
@@ -184,7 +186,7 @@ defmodule Cinder.Library.SidecarsTest do
     expect(FilesystemMock, :ln, fn ^hindi_src, ^hindi_dest -> :ok end)
     expect(FilesystemMock, :ln, fn ^french_hi_src, ^french_hi_dest -> :ok end)
 
-    assert Sidecars.link(src, dest) == ["hi", "fr"]
+    assert Sidecars.link(src, dest) == [hindi_dest, french_hi_dest]
   end
 
   describe "real path-policy sinks" do
@@ -230,7 +232,7 @@ defmodule Cinder.Library.SidecarsTest do
       File.mkdir_p!(Path.dirname(dest))
       fail_sidecar_links(sidecar)
 
-      assert Sidecars.link(video, dest) == ["en"]
+      assert Sidecars.link(video, dest) == [sidecar_dest]
       assert File.read!(sidecar_dest) == "subtitle"
     end
 
@@ -250,7 +252,7 @@ defmodule Cinder.Library.SidecarsTest do
       # link fails too — the branch the :exdev test never reaches.
       fail_all_links(:eopnotsupp)
 
-      assert Sidecars.link(video, dest) == ["en"]
+      assert Sidecars.link(video, dest) == [sidecar_dest]
       assert File.read!(sidecar_dest) == "subtitle"
       assert Path.wildcard(Path.join(Path.dirname(sidecar_dest), ".cinder-tmp-*")) == []
     end
@@ -307,7 +309,7 @@ defmodule Cinder.Library.SidecarsTest do
       assert Path.wildcard(Path.join(Path.dirname(sidecar_dest), ".cinder-tmp-*")) == []
 
       Application.put_env(:cinder, :exclusive_copy_file_module, :file)
-      assert Sidecars.link(video, dest) == ["en"]
+      assert Sidecars.link(video, dest) == [sidecar_dest]
       assert File.read!(sidecar_dest) == "a complete subtitle"
     end
 
@@ -385,7 +387,7 @@ defmodule Cinder.Library.SidecarsTest do
                []
 
       Application.put_env(:cinder, :exclusive_copy_file_module, :file)
-      assert Sidecars.link(video, dest) == ["en"]
+      assert Sidecars.link(video, dest) == [sidecar_dest]
       assert File.read!(sidecar_dest) == "a complete subtitle"
     end
 
@@ -577,7 +579,7 @@ defmodule Cinder.Library.SidecarsTest do
              ) == []
 
       Application.put_env(:cinder, :exclusive_copy_file_module, :file)
-      assert Sidecars.link(video, dest) == ["en"]
+      assert Sidecars.link(video, dest) == [sidecar_dest]
       assert File.read!(sidecar_dest) == "a complete subtitle"
     end
 

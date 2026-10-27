@@ -188,8 +188,10 @@ defmodule Cinder.SubtitlesTest do
     set_mox_global()
     Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "")
 
-    put!(Subtitles.sidecar_path(video, "fr"), "1\n00:00:01,000 --> 00:00:02,000\nFR SRT\n\n")
-    put!(Subtitles.sidecar_path(video, "en"), "1\n00:00:01,000 --> 00:00:02,000\nEN SRT\n\n")
+    fr = Subtitles.sidecar_path(video, "fr")
+    en = Subtitles.sidecar_path(video, "en")
+    put!(fr, "1\n00:00:01,000 --> 00:00:02,000\nFR SRT\n\n")
+    put!(en, "1\n00:00:01,000 --> 00:00:02,000\nEN SRT\n\n")
 
     manifest = Manifest.path(video)
     parent = self()
@@ -212,8 +214,18 @@ defmodule Cinder.SubtitlesTest do
     end)
 
     try do
-      assert :ok = Subtitles.fetch_after_import(fn -> %{} end, video, :movies, ["fr"])
-      assert :ok = Subtitles.fetch_after_import(fn -> %{} end, video, :movies, ["en"])
+      # As if each import placed its sidecar: an import marks only those (#918).
+      assert :ok =
+               Subtitles.fetch_after_import(fn -> %{} end, video, :movies,
+                 languages: ["fr"],
+                 placed: [fr]
+               )
+
+      assert :ok =
+               Subtitles.fetch_after_import(fn -> %{} end, video, :movies,
+                 languages: ["en"],
+                 placed: [en]
+               )
 
       assert_receive {:manifest_read_ready, first}, 15_000
       refute_receive {:manifest_read_ready, _second}, 200

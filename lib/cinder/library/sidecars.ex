@@ -2,8 +2,8 @@ defmodule Cinder.Library.Sidecars do
   @moduledoc """
   Loose subtitle files (`.srt`/`.ass`/…) that ship alongside a downloaded video. On import we
   hardlink or copy each belonging sidecar next to the imported video (renamed to the media-server's
-  `<video>.<lang>[.forced].<ext>` convention) so Jellyfin/Plex pick them up, and report their
-  languages for storage. Filesystem access goes through `Cinder.Library.Filesystem`.
+  `<video>.<lang>[.forced].<ext>` convention) so Jellyfin/Plex pick them up, and report the files
+  placed. Filesystem access goes through `Cinder.Library.Filesystem`.
   """
   require Logger
 
@@ -100,17 +100,19 @@ defmodule Cinder.Library.Sidecars do
     end)
   end
 
-  @doc "Places belonging sidecars next to `dest_video`; returns linked languages (best-effort)."
+  @doc """
+  Places belonging sidecars next to `dest_video` (best-effort) and returns the paths it placed. A
+  language alone would not do: a flagged or non-SRT sidecar shares it with `<video>.<lang>.srt`
+  (#918).
+  """
   def link(source_video, dest_video) do
     dest_stem = Path.rootname(dest_video)
 
-    langs =
-      for {path, lang} <- files(source_video),
-          do_link(path, dest_dir_name(dest_stem, path, lang)) == :ok do
-        lang
-      end
-
-    Enum.uniq(langs)
+    for {path, lang} <- files(source_video),
+        dest = dest_dir_name(dest_stem, path, lang),
+        do_link(path, dest) == :ok do
+      dest
+    end
   end
 
   defp dest_dir_name(dest_stem, src_path, lang) do

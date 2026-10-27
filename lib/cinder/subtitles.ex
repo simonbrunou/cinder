@@ -105,22 +105,28 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  @doc "Compatibility wrapper for existing import callers; Task 4 supplies provenance arguments."
-  @spec fetch_after_import((-> map()), String.t()) :: :ok
-  def fetch_after_import(criteria_fun, video_path),
-    do: fetch_after_import(criteria_fun, video_path, :movies, [])
+  @typedoc """
+  The release sidecars an import hands its subtitle task: `languages:`, the sidecar languages it
+  recorded next to the file, and `placed:`, the sidecar paths its commit placed there
+  (`Cinder.Library.Sidecars.link/2`). Either may be absent. Any other key, or a bare language
+  list, raises in `fetch_after_import/4`; `fetch_now/4` logs it and skips the fetch.
+  """
+  @type release_sidecars :: [languages: [String.t()] | nil, placed: [String.t()]]
 
   @doc """
-  Runs subtitle work off the import path and marks current release sidecars as Cinder-managed.
-  Enqueued on the single serializing `Cinder.Subtitles.Fetcher` — one fetch in flight at a time —
-  so a bulk import (a whole series added at once) can't burst OpenSubtitles into rate-limiting it
-  (issue #80).
+  Runs subtitle work off the import path and marks the release sidecars `fetch_now/4` may mark
+  as Cinder-managed. Enqueued on the single serializing `Cinder.Subtitles.Fetcher` — one fetch in
+  flight at a time — so a bulk import (a whole series added at once) can't burst OpenSubtitles
+  into rate-limiting it (issue #80).
   """
-  @spec fetch_after_import((-> map()), String.t(), :movies | :tv, [String.t()]) :: :ok
-  def fetch_after_import(criteria_fun, video_path, kind, release_sidecar_languages)
+  @spec fetch_after_import((-> map()), String.t(), :movies | :tv, release_sidecars()) :: :ok
+  def fetch_after_import(criteria_fun, video_path, kind, release_sidecars)
       when is_function(criteria_fun, 0) do
-    Fetcher.enqueue(criteria_fun, video_path, kind, release_sidecar_languages)
+    Fetcher.enqueue(criteria_fun, video_path, kind, release_sidecars!(release_sidecars))
   end
+
+  defp release_sidecars!(release_sidecars),
+    do: Keyword.validate!(release_sidecars, languages: nil, placed: [])
 
   defp fetch_languages(criteria_base, languages, video_path, kind) do
     criteria_base = with_moviehash(criteria_base, video_path)
@@ -611,10 +617,22 @@ defmodule Cinder.Subtitles do
   unit). `criteria_fun` runs INSIDE this rescue/catch so a preload/criteria surprise or a
   provider blow-up crashes nothing — it logs and the caller (the `Fetcher`) moves on to the next
   queued fetch.
+
+  First it marks a recorded language's canonical sidecar as a release sidecar only when the
+  import placed that exact file or the manifest already tracks the language. A subtitle the user
+  put next to the video gets no manifest entry, so no fetch overwrites it (#918).
   """
-  @spec fetch_now((-> map()), String.t(), :movies | :tv, [String.t()]) :: :ok | :quota_exceeded
-  def fetch_now(criteria_fun, video_path, kind, release_sidecar_languages) do
-    mark_release_sidecars(video_path, release_sidecar_languages)
+  @spec fetch_now((-> map()), String.t(), :movies | :tv, release_sidecars()) ::
+          :ok | :quota_exceeded
+  def fetch_now(criteria_fun, video_path, kind, release_sidecars) do
+    release_sidecars = release_sidecars!(release_sidecars)
+
+    mark_release_sidecars(
+      video_path,
+      release_sidecars[:languages],
+      {:placed, release_sidecars[:placed]}
+    )
+
     # An import: a track found in the new file is timed like a fresh download (`own_track/7`).
     fetch_missing(Map.put(criteria_fun.(), :fresh, true), video_path, kind)
   rescue
@@ -625,33 +643,39 @@ defmodule Cinder.Subtitles do
   end
 
   @doc """
-  Marks each of `languages`' canonical sidecars for `video_path` as Cinder-managed in the
-  manifest (origin `"release_sidecar"`), recomputing the moviehash fresh from the file. Used both
-  on the normal import path (via `fetch_now/4`) and by `Cinder.Library.Backfill` to repair a row
-  whose sidecars were never registered (issue #128).
+  Marks each of `languages`' existing canonical sidecars for `video_path` as Cinder-managed in
+  the manifest (origin `"release_sidecar"`), recomputing the moviehash fresh from the file. For
+  `Cinder.Library.Backfill`, which repairs a row whose sidecars were never registered (issue
+  #128). An import goes through `fetch_now/4`, which marks only the sidecars the import placed or
+  the manifest already tracks.
   """
   @spec mark_release_sidecars(String.t(), [String.t()] | nil) :: :ok
-  def mark_release_sidecars(_video_path, languages) when languages in [nil, []], do: :ok
+  def mark_release_sidecars(video_path, languages),
+    do: mark_release_sidecars(video_path, languages, :any)
 
-  def mark_release_sidecars(video_path, languages) do
+  defp mark_release_sidecars(_video_path, languages, _markable) when languages in [nil, []],
+    do: :ok
+
+  defp mark_release_sidecars(video_path, languages, markable) do
     moviehash = current_moviehash(video_path)
 
-    Enum.each(Enum.uniq(languages), &mark_release_sidecar(video_path, moviehash, &1))
+    Enum.each(Enum.uniq(languages), &mark_release_sidecar(video_path, moviehash, &1, markable))
 
     :ok
   end
 
-  defp mark_release_sidecar(video_path, moviehash, language) do
+  defp mark_release_sidecar(video_path, moviehash, language, markable) do
     :global.trans(lock_id(video_path), fn ->
       target = sidecar_path(video_path, language)
-      put_release_sidecar(video_path, moviehash, language, target)
+      put_release_sidecar(video_path, moviehash, language, target, markable)
     end)
   end
 
-  defp put_release_sidecar(video_path, moviehash, language, target) do
+  defp put_release_sidecar(video_path, moviehash, language, target, markable) do
     state = Manifest.read(video_path)
 
-    if sidecar_exists?(target) and not keep_registered?(state, moviehash, language, target) do
+    if sidecar_exists?(target) and markable?(markable, state, language, target) and
+         not keep_registered?(state, moviehash, language, target) do
       case Manifest.put(
              video_path,
              moviehash || state.video_moviehash,
@@ -664,6 +688,14 @@ defmodule Cinder.Subtitles do
       end
     end
   end
+
+  # Which existing canonical sidecars a marking may take over. Backfill may take any (`:any`). An
+  # import may take one it placed, or a language the manifest already tracks, read inside the
+  # video's lock.
+  defp markable?(:any, _state, _language, _target), do: true
+
+  defp markable?({:placed, placed}, state, language, target),
+    do: target in placed or Manifest.managed?(state, language)
 
   # A hash-verified (stable) entry is the sweeper's finished work; re-marking it as
   # release-provided — and rewriting the manifest's video_moviehash wholesale — would downgrade

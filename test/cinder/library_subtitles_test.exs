@@ -130,15 +130,35 @@ defmodule Cinder.LibrarySubtitlesTest do
     stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> send(parent, :moviehash) end)
     stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> send(parent, :provider_search) end)
 
-    for sidecars <- [nil, []] do
+    for sidecars <- [[languages: nil, placed: []], [languages: []], []] do
       assert :ok = Subtitles.fetch_after_import(fn -> %{} end, "/lib/M/M.mkv", :movies, sidecars)
       refute_receive :moviehash, 100
       refute_receive :provider_search
     end
   end
 
+  # #918: a bare language list cannot say which sidecars the import placed, so it never reaches
+  # the marking.
+  test "release sidecars that are not the import's keyword list raise at dispatch" do
+    for sidecars <- [["fr"], [languages: ["fr"], paths: []]] do
+      assert_raise ArgumentError, fn ->
+        Subtitles.fetch_after_import(fn -> %{} end, "/lib/M/M.mkv", :movies, sidecars)
+      end
+    end
+  end
+
   defp commit!(staged), do: LibraryStubs.commit_staged(staged)
+
   defp commit_episodes!(staged), do: :ok = LibraryStubs.commit_staged(staged)
+
+  # A manifest that tracks each of `languages`' canonical sidecars, with an origin an import
+  # re-marks (`"translated"`), so the re-mark shows.
+  defp tracked_manifest(video, languages),
+    do:
+      LibraryStubs.subtitle_manifest_json(
+        video,
+        Map.new(languages, &{&1, %{"origin" => "translated"}})
+      )
 
   # The subtitle half of an import against a real library under `tmp`: the sidecar a download
   # replaces is published through real descriptors (`AtomicFile`), so the filesystem mock
@@ -571,7 +591,10 @@ defmodule Cinder.LibrarySubtitlesTest do
   # "adopts" the existing dest (same inode as the download's content — e.g. the client re-served an
   # already-complete download) rather than placing fresh bytes, so it must scan dest's own
   # directory for cinder-named sidecars instead of recording "no sidecars".
-  test "adopt path (pre-existing dest, same inode) scans dest's sidecars and registers them as managed",
+  #
+  # The delete keeps the manifest dotfile beside the files, so the sidecars it tracked stay
+  # managed. One the user put there stays theirs (#918).
+  test "adopt path (pre-existing dest, same inode) scans dest's sidecars and keeps the tracked ones managed",
        %{subtitle_fs: fs} do
     parent = self()
     series = %Series{title: "Show", year: 2008, tmdb_id: 1}
@@ -587,16 +610,20 @@ defmodule Cinder.LibrarySubtitlesTest do
     season_dir = Path.dirname(dest)
     dest_en = Path.rootname(dest) <> ".en.srt"
     dest_fr = Path.rootname(dest) <> ".fr.srt"
+    dest_it = Path.rootname(dest) <> ".it.srt"
 
-    # The video (at both its download-side and library-side paths) and its two already-linked
-    # sidecars are all genuinely on disk — this is what "delete series, keep files" leaves behind.
+    # The video (at both its download-side and library-side paths), its two already-linked
+    # sidecars and their manifest are all genuinely on disk — this is what "delete series, keep
+    # files" leaves behind — and so is an Italian sidecar the user added by hand.
     Agent.update(
       fs,
       &Map.merge(&1, %{
         source => "video",
         dest => "video",
         dest_en => "SRT en",
-        dest_fr => "SRT fr"
+        dest_fr => "SRT fr",
+        dest_it => "hand SRT it",
+        Subtitles.Manifest.path(dest) => tracked_manifest(dest, ["en", "fr"])
       })
     )
 
@@ -605,8 +632,11 @@ defmodule Cinder.LibrarySubtitlesTest do
     stub(Cinder.Library.FilesystemMock, :dir?, fn path -> path in ["/dl/grab", season_dir] end)
 
     stub(Cinder.Library.FilesystemMock, :find_files, fn
-      "/dl/grab" -> {:ok, [{source, 9 * @gb}]}
-      ^season_dir -> {:ok, [{dest, 9 * @gb}, {dest_en, 1_000}, {dest_fr, 1_000}]}
+      "/dl/grab" ->
+        {:ok, [{source, 9 * @gb}]}
+
+      ^season_dir ->
+        {:ok, [{dest, 9 * @gb}, {dest_en, 1_000}, {dest_fr, 1_000}, {dest_it, 1_000}]}
     end)
 
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
@@ -631,7 +661,7 @@ defmodule Cinder.LibrarySubtitlesTest do
         assert {:ok, staged, []} = Library.stage_episodes("/dl/grab", [episode])
         assert [{7, ^dest, quality, true}] = StagedImport.record(staged)
 
-        assert quality.sidecar_subtitles == ["en", "fr"]
+        assert quality.sidecar_subtitles == ["en", "fr", "it"]
         commit_episodes!(staged)
         assert_receive :tv_scan
         assert_receive :subtitle_search
@@ -640,8 +670,11 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     assert log =~ "subtitle fetch for #{dest} (en) failed: :down"
 
-    assert dest |> Subtitles.Manifest.read() |> Subtitles.Manifest.managed?("en")
-    assert dest |> Subtitles.Manifest.read() |> Subtitles.Manifest.managed?("fr")
+    state = Subtitles.Manifest.read(dest)
+    # The import re-marked the tracked ones, so they are release sidecars now, not the seed's.
+    assert state.tracks["en"].origin == "release_sidecar"
+    assert state.tracks["fr"].origin == "release_sidecar"
+    refute Subtitles.Manifest.managed?(state, "it")
   end
 
   test "adopt path does not register a foreign-named sidecar belonging to a different episode",
@@ -668,12 +701,14 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     sibling_sub = Path.rootname(sibling_video) <> ".en.srt"
 
+    # The episode's own sidecar is tracked, as the delete-and-re-add case above leaves it (#918).
     Agent.update(
       fs,
       &Map.merge(&1, %{
         source => "video",
         dest => "video",
         dest_en => "SRT en",
+        Subtitles.Manifest.path(dest) => tracked_manifest(dest, ["en"]),
         sibling_video => "video",
         sibling_sub => "foreign SRT"
       })
@@ -713,7 +748,8 @@ defmodule Cinder.LibrarySubtitlesTest do
       LibraryStubs.await_subtitle_tasks()
     end)
 
-    assert dest |> Subtitles.Manifest.read() |> Subtitles.Manifest.managed?("en")
+    # Re-marked from the seed's origin: the marking ran for the episode's own video.
+    assert Subtitles.Manifest.read(dest).tracks["en"].origin == "release_sidecar"
 
     refute sibling_video
            |> Subtitles.Manifest.read()

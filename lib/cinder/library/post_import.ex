@@ -41,9 +41,9 @@ defmodule Cinder.Library.PostImport do
   # can't turn a correctly-placed file into :import_failed. `criteria_fun` is a thunk so it's built
   # inside the isolated task, not in the caller's argument.
   @doc false
-  def fetch_subtitles(criteria_fun, dest, kind, release_sidecar_languages)
+  def fetch_subtitles(criteria_fun, dest, kind, release_sidecars)
       when is_function(criteria_fun, 0) do
-    Cinder.Subtitles.fetch_after_import(criteria_fun, dest, kind, release_sidecar_languages)
+    Cinder.Subtitles.fetch_after_import(criteria_fun, dest, kind, release_sidecars)
   rescue
     e -> Logger.warning("subtitle fetch dispatch failed after importing #{dest}: #{inspect(e)}")
   catch
@@ -57,14 +57,14 @@ defmodule Cinder.Library.PostImport do
   # it covers, and concurrent fetches would race/overwrite the shared sidecar (issue #141) — the
   # lowest-numbered covered episode names the provider query.
   @doc false
-  def fetch_episode_subtitles([_ | _] = episodes, dest, release_sidecar_languages) do
+  def fetch_episode_subtitles([_ | _] = episodes, dest, release_sidecars) do
     episode = Enum.min_by(episodes, &{&1.season.season_number, &1.episode_number})
 
     fetch_subtitles(
       fn -> Cinder.Subtitles.episode_criteria(episode) end,
       dest,
       :tv,
-      release_sidecar_languages
+      release_sidecars
     )
   end
 

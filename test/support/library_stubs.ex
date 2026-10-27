@@ -1,8 +1,8 @@
 defmodule Cinder.LibraryStubs do
   @moduledoc """
   Shared helpers for library import tests: Mox stubs for the import path (filesystem + media
-  server), a catalog-style commit of a staged import, and a drain of the subtitle tasks that
-  commit queues.
+  server), a catalog-style commit of a staged import, a drain of the subtitle tasks that commit
+  queues, and a subtitle manifest to seed beside a library file.
 
   `stub/3` registers against the calling process, so each consuming test sets
   the Mox mode (private or global) and these stubs follow it.
@@ -36,6 +36,23 @@ defmodule Cinder.LibraryStubs do
   release's sidecars in the subtitle manifest and then fetches the missing languages.
   """
   def await_subtitle_tasks, do: :sys.get_state(Cinder.Subtitles.Fetcher)
+
+  @doc """
+  The JSON of a subtitle manifest for `video` that tracks each language in `tracks`
+  (`language => track fields`, `"origin"` among them) at its canonical `<video>.<language>.srt`.
+  Seeds what an earlier fetch or import left, for a test to write to disk or into a mocked
+  filesystem's contents.
+  """
+  def subtitle_manifest_json(video, tracks) do
+    stem = Path.basename(Path.rootname(video))
+
+    tracks =
+      Map.new(tracks, fn {language, fields} ->
+        {language, Map.put_new(fields, "file", "#{stem}.#{language}.srt")}
+      end)
+
+    Jason.encode!(%{"video_moviehash" => nil, "tracks" => tracks})
+  end
 
   @doc "The `{episode_id, dest}` pairs a staged TV import records, sorted by episode id."
   def episode_dests(staged) do

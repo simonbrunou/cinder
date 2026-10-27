@@ -27,12 +27,12 @@ defmodule Cinder.Subtitles.Fetcher do
   end
 
   @doc "Enqueue a just-imported file for a serialized subtitle fetch. Returns `:ok` immediately."
-  @spec enqueue((-> map()), String.t(), :movies | :tv, [String.t()]) :: :ok
-  def enqueue(criteria_fun, video_path, kind, release_sidecar_languages)
+  @spec enqueue((-> map()), String.t(), :movies | :tv, Subtitles.release_sidecars()) :: :ok
+  def enqueue(criteria_fun, video_path, kind, release_sidecars)
       when is_function(criteria_fun, 0) do
     GenServer.cast(
       __MODULE__,
-      {:fetch, criteria_fun, video_path, kind, release_sidecar_languages}
+      {:fetch, criteria_fun, video_path, kind, release_sidecars}
     )
   end
 
@@ -44,12 +44,12 @@ defmodule Cinder.Subtitles.Fetcher do
 
   @impl true
   def handle_cast(
-        {:fetch, criteria_fun, video_path, kind, release_sidecar_languages},
+        {:fetch, criteria_fun, video_path, kind, release_sidecars},
         task_supervisor
       ) do
     task =
       Task.Supervisor.async_nolink(task_supervisor, fn ->
-        Subtitles.fetch_now(criteria_fun, video_path, kind, release_sidecar_languages)
+        Subtitles.fetch_now(criteria_fun, video_path, kind, release_sidecars)
       end)
 
     # Synchronous by design: blocking this process on the awaited task is what serializes the
