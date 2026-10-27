@@ -88,7 +88,8 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   `container`) and #880 (`libbrotli1`, red on `dependency-audit`), and #865 also needed #885's
   own CI fix. Close each carried PR as superseded once the carrier merges; its `changelog.d/`
   fragment keeps its number. When `scripts/merge-pr --dry-run` prints `squash body from:` with a
-  carried commit, pass `--body-from=<sha of the carrier's own fix commit>`.
+  carried commit, pass `--body-from=<sha of the carrier's own fix commit>`. Once the fix is on
+  `main`, clear your own PR's red as "Re-running CI" says.
 - **Dependency rebuild.** A `mix.lock`, OTP or Elixir change misses the compiled-deps caches,
   so `test` and `dependency-audit` rebuild every dependency and download precompiled NIFs from
   GitHub releases. The `container` job's image build redoes that work from its `mix deps.get`
@@ -109,6 +110,11 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
 
 ## Re-running CI
 
+- A re-run tests the same SHA, and a PR job checks out the branch head, not a merge with
+  `main`. So a re-run clears only a red the same tree can pass, such as a flake or an upstream
+  outage. A red that a commit on `main` fixes, such as a new advisory, stays red (#974's run
+  2494 after #975): merge `origin/main` into your branch and push instead. In a stack, merge
+  it into the bottom PR's branch, then rebase the later ones.
 - Re-run a red job on the same SHA through the API. The call names one job of one run and adds
   no commit, so it suits a PR, a PR in a stack and a `main` push run alike (#967's run 2410). On
   `main`, re-run only a job of `origin/main`'s head. Find the run id as "Reading a run" says,
@@ -136,5 +142,6 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
 ## Merge conflicts and translations
 
 A branch syncs with `main` only on a conflict or a diff that touches `CHANGELOG.md` (AGENTS.md
-"Merge authority"). For a conflict in `priv/gettext`, follow [workflow.md](workflow.md) "Merge
-conflicts": `scripts/gettext-fill.exs` refills the French msgstrs from the side you did not take.
+"Merge authority"), or on a red that a commit on `main` fixes ("Re-running CI"). For a conflict
+in `priv/gettext`, follow [workflow.md](workflow.md) "Merge conflicts": `scripts/gettext-fill.exs`
+refills the French msgstrs from the side you did not take.
