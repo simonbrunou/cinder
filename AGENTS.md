@@ -43,7 +43,7 @@ A PR with a user-visible change adds one fragment, `changelog.d/<number>-<slug>.
 Agents may merge their own PR without asking once all three hold:
 
 - a code review ran on the diff (the `code-review` skill or the `pr-review-toolkit:code-reviewer`
-  agent) and its real findings are fixed;
+  agent) and its real findings are fixed, nits aside (the global agent rules define a nit);
 - CI is green on the PR's pushed SHA;
 - the pushed SHA has no conflict with `origin/main`. Right before merging, run `git fetch origin`,
   then check that `git merge-tree --write-tree origin/main <pushed SHA>` exits 0.
