@@ -464,11 +464,15 @@ defmodule Cinder.HTTPPolicyTest do
                    plug: {Req.Test, Cinder.HTTPPolicyBlockedStub}
                  ],
                  64,
-                 100
+                 500
                )
 
-      # 1 s, not 300 ms: a loaded CI runner took 436 ms (#908). A deadline of 1 s or more still
-      # fails this bound, and a request that ran to the stub's 5 s valve fails the match above.
+      # A 500 ms deadline, not 100 ms: a loaded CI runner took more than 100 ms to bring the
+      # request task to the stub, so the deadline fired first and the mailbox held no
+      # `{:request_started, _}` (#960). A 1 s bound, not 300 ms: a loaded runner returned 336 ms
+      # past the deadline (#908). Each delay now has 500 ms of room. A deadline of 1 s or more
+      # still fails this bound, and a request that ran to the stub's 5 s valve fails the match
+      # above.
       elapsed = System.monotonic_time(:millisecond) - started_at
       assert elapsed < 1_000
       assert_received {:request_started, request_pid}

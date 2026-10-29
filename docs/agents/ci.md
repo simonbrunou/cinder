@@ -58,9 +58,10 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
      failures that happen only on CI (**CI runs the suite as root**). Its timing also says
      nothing about a wall-clock bound on the loaded runner.
 - **Wall-clock tests.** #637 (for #636) widened the subprocess bounds that raced process startup
-  on the runner to 1 s. After a 436 ms run on #908, `Cinder.HTTPPolicyTest` "cancels a request
-  blocked before headers at the wall-clock deadline" keeps its 100 ms deadline but asserts the
-  elapsed time under 1 s instead of 300 ms. After a 3458 ms run on `main` (#984),
+  on the runner to 1 s. `Cinder.HTTPPolicyTest` "cancels a request blocked before headers at the
+  wall-clock deadline" runs a 500 ms deadline under a 1 s elapsed bound (#960), so neither a
+  runner slow to bring the request task to its stub nor the 336 ms past the deadline seen on #908
+  fails it. After a 3458 ms run on `main` (#984),
   `Cinder.Library.MediaInfo.FfprobeTest` "extract_subtitle/2 still times out when the process
   emits data faster than any poll tick" asserts the elapsed time under 5 s past its 1 s deadline
   instead of 2 s. One tight-bound test still fails now and then on
