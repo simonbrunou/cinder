@@ -23,6 +23,20 @@ and top retro items. Keep one per issue in a state file at
   thread whose branch never merged. Finish that branch instead of starting over (step 4).
 - Read the CI state of `main` and of the open PRs in each repo. When they share one red check,
   handle it first ("Repo-wide red check" below).
+- Audit cinder's `origin/main` lock too, since `main`'s statuses stay green after a new advisory
+  ([ci.md](../../../docs/agents/ci.md) "New advisory"). Bandit advisories reached the queue that
+  way on 2026-10-27 (#975) and 2026-10-29 (#999). It takes about 10 s:
+
+  ```sh
+  git -C ~/Projects/cinder fetch origin
+  git -C ~/Projects/cinder worktree add --detach /tmp/cinder-audit origin/main
+  nix develop /tmp/cinder-audit -c sh -c 'cd /tmp/cinder-audit && mix deps.get && mix hex.audit'
+  git -C ~/Projects/cinder worktree remove /tmp/cinder-audit
+  ```
+
+  Exit 1 with a package under `Advisories:` is a repo-wide red check. `mix hex.audit` compiles
+  nothing, so `mix deps.get` is all the seeding it needs. Use it over `mix deps.audit`, which
+  still passed on Bandit's EEF-CVE-2026-116078 12 hours after OSV published it.
 
 ### Repo-wide red check
 
