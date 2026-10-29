@@ -19,10 +19,14 @@ config :cinder, Cinder.Repo,
   # failures/run. One connection makes the suite deterministic with no real speed cost (async tests
   # can't truly parallelize on one connection anyway).
   pool_size: 1,
-  # With one connection, async tests queue for it. A generous queue_target/queue_interval makes a
-  # checkout WAIT rather than drop at the 50ms default.
-  queue_target: 5_000,
-  queue_interval: 5_000,
+  # With one connection, async tests queue for it, each holding it for its whole test.
+  # DBConnection drops a checkout that has queued past 2 x queue_target, so 30_000 puts the drop
+  # at 60 s, no sooner than ExUnit's default test timeout: a starved checkout fails as an ExUnit
+  # timeout with its stacktrace in `setup_sandbox/1`, not on `queue_timeout`. At 5_000 a loaded CI
+  # runner dropped checkouts after 10 to 15 s (#947: runs 2345, 2520, 2734). Pinned in
+  # repo_concurrency_test.exs.
+  queue_target: 30_000,
+  queue_interval: 30_000,
   # Coverage overhead delays lock release past the default 5000ms timeout.
   busy_timeout: 10_000,
   # journal_mode/foreign_keys/default_transaction_mode are pinned in config/config.exs; busy_timeout is overridden here for coverage.

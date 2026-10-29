@@ -24,6 +24,19 @@ defmodule Cinder.RepoConcurrencyTest do
     assert %{rows: [["wal"]]} = Repo.query!("PRAGMA journal_mode")
   end
 
+  # Every DataCase and ConnCase test holds the one Sandbox connection for its whole run, so an
+  # async test's checkout queues behind the other cases' tests. DBConnection drops a request that
+  # has queued past 2 x queue_target, and on a loaded CI runner that drop failed tests in
+  # `setup_sandbox/1` while ExUnit would still have let them run (#947). A `--timeout` above
+  # 2 x queue_target fails this test on purpose: raise queue_target with it. `--trace` passes,
+  # since the runner, not the configuration, swaps in its `:infinity` timeout.
+  test "Cinder.Repo's queue limit cannot drop a sandbox checkout before ExUnit's test timeout" do
+    config = Application.get_env(:cinder, Cinder.Repo)
+    assert config[:pool_size] == 1
+    assert config[:queue_interval] == config[:queue_target]
+    assert 2 * config[:queue_target] >= ExUnit.configuration()[:timeout]
+  end
+
   describe "two real connections racing a write lock" do
     setup do
       path = Path.join(System.tmp_dir!(), "cinder_busy_#{System.unique_integer([:positive])}.db")
