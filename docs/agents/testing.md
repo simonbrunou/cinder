@@ -27,6 +27,10 @@
 - The identity probes that verify a subtitle exchange close bounds on the same paths. Arm a close
   failure meant for after the exchange from a barrier, as `fail_close_after_exchange/4` in
   `sidecar_transaction_test.exs` does.
+- Release a barrier inside the log capture whose output the test asserts: send `{ref, :continue}`
+  from the `capture_log/1` or `with_log/1` function. The paused task logs as soon as it resumes,
+  so on a slow runner a release before the capture prints the warning to the console and the
+  capture reads `""` (#969).
 - A new UI string fails `translations_complete_test` until you run
   `MIX_ENV=test mix gettext.extract --merge` and write its French msgstr in
   `priv/gettext/fr/LC_MESSAGES/default.po`. When an existing msgid is close enough, the merge

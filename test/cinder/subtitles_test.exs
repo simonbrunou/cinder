@@ -963,9 +963,12 @@ defmodule Cinder.SubtitlesTest do
     assert_receive {:filesystem_barrier, pid, ref, :rename_exclusive, _staged}, 15_000
     File.rename!(parent, parent <> ".old")
     File.ln_s!(outside, parent)
-    send(pid, {ref, :continue})
 
-    log = capture_log(fn -> assert Task.await(task, 15_000) == :ok end)
+    log =
+      capture_log(fn ->
+        send(pid, {ref, :continue})
+        assert Task.await(task, 15_000) == :ok
+      end)
 
     assert log =~ "subtitle write failed for"
     assert log =~ "{:error, :eloop}"
@@ -1004,9 +1007,12 @@ defmodule Cinder.SubtitlesTest do
 
     File.rename!(parent, parent <> ".old")
     File.ln_s!(outside, parent)
-    send(pid, {ref, :continue})
 
-    log = capture_log(fn -> assert Task.await(task, 15_000) == :ok end)
+    log =
+      capture_log(fn ->
+        send(pid, {ref, :continue})
+        assert Task.await(task, 15_000) == :ok
+      end)
 
     assert log =~ "subtitle rollback failed for #{target}"
     assert log =~ "subtitle provenance write failed for"

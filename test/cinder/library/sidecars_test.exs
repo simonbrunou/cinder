@@ -336,9 +336,13 @@ defmodule Cinder.Library.SidecarsTest do
       {pid, ref, _quarantine_path} = await_barrier(:rename)
 
       File.write!(sidecar_dest, "concurrent replacement")
-      send(pid, {ref, :continue})
 
-      log = capture_log(fn -> assert Task.await(task) == [] end)
+      log =
+        capture_log(fn ->
+          send(pid, {ref, :continue})
+          assert Task.await(task) == []
+        end)
+
       assert log =~ "sidecar link rejected: :enospc"
 
       # The reclaim only ever acts on the quarantined copy of *its own* truncated output; the
@@ -610,9 +614,13 @@ defmodule Cinder.Library.SidecarsTest do
       # Publish a different file over the quarantine name, so its identity genuinely no longer
       # matches what `cp_exclusive` created — the mismatch the probe must NOT excuse here.
       ForeignFile.publish!(quarantine, "someone else's subtitle")
-      send(pid, {ref, :continue})
 
-      log = capture_log(fn -> assert Task.await(task) == [] end)
+      log =
+        capture_log(fn ->
+          send(pid, {ref, :continue})
+          assert Task.await(task) == []
+        end)
+
       assert log =~ "sidecar link rejected: :enospc"
       refute log =~ "identity not preserved across rename"
 
@@ -640,9 +648,12 @@ defmodule Cinder.Library.SidecarsTest do
       task = Task.async(fn -> Sidecars.link(video, dest) end)
       {pid, ref, _path} = await_barrier(:cp)
       File.write!(sidecar_dest, "manual")
-      send(pid, {ref, :continue})
 
-      log = capture_log(fn -> assert Task.await(task) == [] end)
+      log =
+        capture_log(fn ->
+          send(pid, {ref, :continue})
+          assert Task.await(task) == []
+        end)
 
       assert log =~ "sidecar link rejected: :eexist"
       assert File.read!(sidecar_dest) == "manual"
@@ -707,9 +718,12 @@ defmodule Cinder.Library.SidecarsTest do
       {pid, ref, _path} = await_barrier(:find_files)
       File.rename!(parent, parent <> ".old")
       File.ln_s!(outside, parent)
-      send(pid, {ref, :continue})
 
-      log = capture_log(fn -> assert Task.await(task) == [] end)
+      log =
+        capture_log(fn ->
+          send(pid, {ref, :continue})
+          assert Task.await(task) == []
+        end)
 
       assert log =~ "sidecar link rejected: :unsafe_destination"
       refute File.exists?(Path.join(outside, "Movie.en.srt"))
