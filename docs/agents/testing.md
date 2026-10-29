@@ -15,6 +15,11 @@
   sleep whose ceiling doubles from 250 ms to 8 s. What sets the await is how long the lock stays
   held after the waiter starts: the default 5 s covers a few hundred ms, and a hold of seconds,
   such as a whole `TvPoller.poll/0` import, needs about 15 s.
+- A migration test that runs on its own `Ecto.Repo` starts it with
+  `Cinder.MigrationRepoHelpers.start_repo!/2`, which waits for the repo's one connection to open.
+  A statement sent right after `start_supervised!/1` queues behind that open, and on a loaded
+  runner the pool dropped it on `queue_timeout` (#963). `test/code_health_test.exs` fails on a
+  private repo started another way.
 - Tests never hit the network or a real service. `config/test.exs` points each external-service
   behaviour at its Mox mock, so a test that needs service behaviour sets an expectation on the
   mock. The behaviour list is in [architecture.md](architecture.md).

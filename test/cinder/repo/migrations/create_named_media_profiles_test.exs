@@ -28,6 +28,8 @@ end
 defmodule Cinder.Repo.Migrations.CreateNamedMediaProfilesTest do
   use ExUnit.Case, async: false
 
+  alias Cinder.MigrationRepoHelpers
+
   alias Cinder.Repo.Migrations.{
     AddBookProfileKinds,
     CreateBooksCatalogAndTargets,
@@ -47,9 +49,9 @@ defmodule Cinder.Repo.Migrations.CreateNamedMediaProfilesTest do
         "cinder-profile-migration-#{System.unique_integer([:positive])}.db"
       )
 
-    start_supervised!(
-      {Repo,
-       database: database, pool_size: 1, telemetry_prefix: [:cinder, :profile_migration_test]}
+    MigrationRepoHelpers.start_repo!(Repo,
+      database: database,
+      telemetry_prefix: [:cinder, :profile_migration_test]
     )
 
     on_exit(fn -> File.rm(database) end)

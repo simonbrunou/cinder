@@ -6,7 +6,8 @@ defmodule Cinder.CodeHealthTest do
   adapters (#743) and the domain's distance from the web layer (#816). It also keeps new
   changelog entries in `changelog.d/` (#843), the Dockerfile's and the flake's Tailwind pins on
   the configured version (#867, #889), the tests' media-server choice in `Cinder.ConfigCase`
-  (#721), and each barrier release inside the log capture that asserts on it (#969).
+  (#721), each barrier release inside the log capture that asserts on it (#969), and the tests'
+  private repos on `Cinder.MigrationRepoHelpers` (#963).
   """
   use ExUnit.Case, async: true
 
@@ -303,6 +304,31 @@ defmodule Cinder.CodeHealthTest do
         List.keyfind(fields, :key, 0) == {:key, "media_server_type"}
 
   defp media_server_type_row?(_row), do: false
+
+  # #963: a private repo opens its connection after `start_supervised!/1` returns, so a statement
+  # sent straight away dropped on `queue_timeout` on a loaded runner.
+  # `Cinder.MigrationRepoHelpers.start_repo!/2` waits for the connection first.
+  test "every test that defines its own Ecto repo starts it through MigrationRepoHelpers" do
+    # The helper's own test also starts its repo the old way, to show the drop.
+    allowed = ["test/cinder/migration_repo_helpers_test.exs"]
+
+    offenders =
+      for path <- Path.wildcard("test/**/*.exs"),
+          path not in allowed,
+          source = File.read!(path),
+          [_, repo] <- Regex.scan(~r/defmodule ([\w.]+) do\s+use Ecto\.Repo\b/, source),
+          repo_started_directly?(source, repo) or not String.contains?(source, "start_repo!("),
+          do: "#{path} (#{repo})"
+
+    assert offenders == [],
+           "start a test's own repo with `Cinder.MigrationRepoHelpers.start_repo!/2`, not " <>
+             "`start_supervised!/1` or `start_link/1`, in:\n  " <> Enum.join(offenders, "\n  ")
+  end
+
+  defp repo_started_directly?(source, repo) do
+    name = Regex.escape(repo)
+    Regex.match?(~r/start_supervised!?\(\s*\{?\s*#{name}\b|\b#{name}\.start_link\b/, source)
+  end
 
   # #969: a task paused at a barrier logs as soon as `{ref, :continue}` releases it, so a capture
   # started after the release reads "" on a slow runner. The scan works per block, so it covers a
