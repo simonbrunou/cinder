@@ -20,6 +20,15 @@
   A statement sent right after `start_supervised!/1` queues behind that open, and on a loaded
   runner the pool dropped it on `queue_timeout` (#963). `test/code_health_test.exs` fails on a
   private repo started another way.
+- A boot-time DB read from any process but `Cinder.Supervisor` stalls every `mix test` until the
+  pool drops it: 60 to 90 s at the test env's `queue_target` (#1018). When you add a read at
+  boot, gate it off in `config/test.exs`, as `warn_unprotected_at_boot` does. When you change
+  `Cinder.Repo`'s test pool options, time the boot before and after. The cause:
+  `Cinder.Settings.start_link/1` reads the DB inside the supervisor, and the Sandbox boots in
+  `:auto` mode, so the supervisor owns the one connection until `test_helper.exs` switches to
+  `:manual`. On the dev host, `MIX_ENV=test mix run -e ':ok'` boots in about a second, and a
+  one-file `mix test` takes about 12 s, 10 of them Credo. A one-file run past 20 s whose ExUnit
+  run takes under a second points at such a stall.
 - Tests never hit the network or a real service. `config/test.exs` points each external-service
   behaviour at its Mox mock, so a test that needs service behaviour sets an expectation on the
   mock. The behaviour list is in [architecture.md](architecture.md).
