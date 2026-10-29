@@ -39,22 +39,37 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
 ## Judging a red run
 
 - **Broken `main`.** Two PRs that pass apart can break `main` together (AGENTS.md "Merge
-  authority"). Before blaming the diff for a red test it does not touch, check whether
-  `CI / test (push)` on `origin/main`'s head failed on the same test. If it did, the red is
-  `main`'s: find or file its issue as AGENTS.md "Merge authority" says, and once the fix lands,
-  merge `origin/main` into your branch ("Re-running CI").
+  authority"). A test that flakes under runner load also goes red on `main` now and then (#984),
+  so a red on `origin/main`'s head does not show that your tree inherits a break. A red test
+  that also failed on `origin/main`'s head and passes **Flake** step 1 first gets the PR's one
+  re-run (**Flake** step 2). Nothing before the re-run tells the two cases apart. An open
+  `CI flake:` issue that names the test misses a first sighting, and the logs zip of `main`'s run
+  holds only the newest attempt of each job. A later green `main` run of a tree that still holds
+  the test supports the flake reading, but does not replace the re-run. **Broken `main`** fits
+  only when the PR's re-run fails again on the same test and `CI / test (push)` on
+  `origin/main`'s head still fails on it. Read the head's status when you judge, not an older
+  red, since a green re-run of `main`'s job or a newer push changes it. When it fits, find or
+  file the issue for `main`'s red run as AGENTS.md "Merge authority" says. The wait ends when
+  `CI / test (push)` on `origin/main`'s head passes that test, whether a fix landed, a later push
+  ran green or `main`'s own re-run went green. A `success` status shows that. So does a red job
+  whose log ("Reading a run") holds the suite's `Result:` line and no longer names the test among
+  its failures. A red job with no `Result:` line does not prove the test passed, so keep waiting.
+  Then merge `origin/main` into your branch and push ("Re-running CI").
 - **Flake.** A failure is a flake only when both hold: the failing test touches nothing in the
   diff, and the identical tree went green on CI (`git diff --stat <green sha> <red sha>` prints
   nothing). A red run never counts as green. A fresh PR head has only its red run, so check the
   two conditions at different times:
   1. Before the re-run, check that the failing test touches nothing in the diff, and rule out
-     the other causes of a red test that this section names: **Broken `main`**, **Shared
-     state**, **CI runs the suite as root** and **Line cap**. When the test touches the diff, the
-     failure is the diff's to fix. When one of those causes fits, handle it as that bullet says.
-     Either way, the failure is not a flake, so skip the re-run.
+     three other causes of a red test: **Shared state**, **CI runs the suite as root** and
+     **Line cap**. When the test touches the diff, the failure is the diff's to fix. When one of
+     those three causes fits, handle it as that bullet says. Either way, the failure is not a
+     flake, so skip the re-run. A red on `origin/main`'s head on the same test is no reason to
+     skip it, since the re-run tells a flake from **Broken `main`**.
   2. Re-run the job once, as "Re-running CI" says. Only the re-run can supply the green run: a
      green re-run of the identical tree (the same SHA, or an empty commit on it) makes the
-     failure a flake. A local `mix test` of that tree is not this green run (#916). It misses
+     failure a flake, even when `CI / test (push)` on `origin/main`'s head failed the same test.
+     A re-run that fails again on the same test goes to **Broken `main`**, which says when that
+     cause fits. A local `mix test` of that tree is not this green run (#916). It misses
      failures that happen only on CI (**CI runs the suite as root**). Its timing also says
      nothing about a wall-clock bound on the loaded runner.
 - **Wall-clock tests.** #637 (for #636) widened the subprocess bounds that raced process startup
@@ -139,7 +154,9 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   `main`. So a re-run clears only a red the same tree can pass, such as a flake or an upstream
   outage. A red that a commit on `main` fixes, such as a new advisory, stays red (#974's run
   2494 after #975): merge `origin/main` into your branch and push instead. In a stack, merge
-  it into the bottom PR's branch, then rebase the later ones.
+  it into the bottom PR's branch, then rebase the later ones. A red test that `origin/main`'s
+  head also fails is the exception. Once it passes step 1 of **Flake** ("Judging a red run"), it
+  gets the re-run first, and **Broken `main`** says when to merge `origin/main` instead.
 - Re-run a red job on the same SHA through the API. The call names one job of one run and adds
   no commit, so it suits a PR, a PR in a stack and a `main` push run alike (#967's run 2410). On
   `main`, re-run only a job of `origin/main`'s head. Find the run id as "Reading a run" says,
@@ -160,14 +177,15 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   a POST that fails leaves the run red.
 - Before you wait on the re-run, confirm its statuses show `pending`, or the wait reads the old
   failure.
-- When the re-run fails again, read its new log as "Judging a red run" says. On `main`, a job
-  that fails again leaves the run red (AGENTS.md "Merge authority").
+- When the re-run fails again, read its new log as "Judging a red run" says. On a PR, check a
+  failure on the same test against **Broken `main`**. On `main`, a job that fails again leaves
+  the run red (AGENTS.md "Merge authority").
 - A newer push to the same ref cancels its run in progress, a re-run included (`ci.yml`'s
   `concurrency` group). On `main`, wait on the new head once one lands.
 
 ## Merge conflicts and translations
 
 A branch syncs with `main` only on a conflict or a diff that touches `CHANGELOG.md` (AGENTS.md
-"Merge authority"), or on a red that a commit on `main` fixes ("Re-running CI"). For a conflict
-in `priv/gettext`, follow [workflow.md](workflow.md) "Merge conflicts": `scripts/gettext-fill.exs`
-refills the French msgstrs from the side you did not take.
+"Merge authority"), or on a red that `main` clears ("Re-running CI", **Broken `main`**). For a
+conflict in `priv/gettext`, follow [workflow.md](workflow.md) "Merge conflicts":
+`scripts/gettext-fill.exs` refills the French msgstrs from the side you did not take.
