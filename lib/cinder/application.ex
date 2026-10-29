@@ -56,11 +56,14 @@ defmodule Cinder.Application do
     opts = [strategy: :one_for_one, name: Cinder.Supervisor]
     result = Supervisor.start_link(children, opts)
 
-    # ponytail: best-effort log, wrapped so a DB hiccup at boot can't crash start/2.
-    try do
-      warn_if_unprotected()
-    rescue
-      _ -> :ok
+    # ponytail: best-effort log, wrapped so a DB hiccup at boot can't crash start/2. The test env
+    # turns it off (config/test.exs).
+    if Application.get_env(:cinder, :warn_unprotected_at_boot, true) do
+      try do
+        warn_if_unprotected()
+      rescue
+        _ -> :ok
+      end
     end
 
     result

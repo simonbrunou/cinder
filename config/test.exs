@@ -234,6 +234,14 @@ config :cinder, Cinder.Accounts.JellyfinAuth.HTTP,
 # Poller tests start their own supervised instance.
 config :cinder, start_poller: false
 
+# Skip the user count behind Cinder.Application's boot warning for an unprotected instance.
+# `Cinder.Settings.start_link/1` reads the DB from inside Cinder.Supervisor, and the Sandbox boots
+# in :auto mode, so that process owns the one connection until test_helper.exs switches to
+# :manual. The count, run from the application master when no CINDER_BASIC_AUTH_* pair is set,
+# queued until the pool dropped it at 2 x queue_target: a `mix test` boot waited 10 to 15 s for a
+# warning it never printed, then 60 to 90 s once queue_target went to 30_000 (#1018).
+config :cinder, warn_unprotected_at_boot: false
+
 # Neutralize the (now on-by-default) stall reaper for the suite: reap tests enable it explicitly
 # with 0-window thresholds; every other poller test relies on it staying off.
 config :cinder, Cinder.Download.StallReaper, enabled: false
