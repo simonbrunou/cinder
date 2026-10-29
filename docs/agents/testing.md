@@ -30,7 +30,8 @@
 - Release a barrier inside the log capture whose output the test asserts: send `{ref, :continue}`
   from the `capture_log/1` or `with_log/1` function. The paused task logs as soon as it resumes,
   so on a slow runner a release before the capture prints the warning to the console and the
-  capture reads `""` (#969).
+  capture reads `""` (#969). `code_health_test.exs` fails on a release followed by a capture in
+  the same block.
 - A new UI string fails `translations_complete_test` until you run
   `MIX_ENV=test mix gettext.extract --merge` and write its French msgstr in
   `priv/gettext/fr/LC_MESSAGES/default.po`. When an existing msgid is close enough, the merge

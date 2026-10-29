@@ -5,8 +5,8 @@ defmodule Cinder.CodeHealthTest do
   drew: the catalog's split by concept (#740), the staging engine (#739), the guarded-write
   adapters (#743) and the domain's distance from the web layer (#816). It also keeps new
   changelog entries in `changelog.d/` (#843), the Dockerfile's and the flake's Tailwind pins on
-  the configured version (#867, #889), and the tests' media-server choice in `Cinder.ConfigCase`
-  (#721).
+  the configured version (#867, #889), the tests' media-server choice in `Cinder.ConfigCase`
+  (#721), and each barrier release inside the log capture that asserts on it (#969).
   """
   use ExUnit.Case, async: true
 
@@ -303,6 +303,73 @@ defmodule Cinder.CodeHealthTest do
         List.keyfind(fields, :key, 0) == {:key, "media_server_type"}
 
   defp media_server_type_row?(_row), do: false
+
+  # #969: a task paused at a barrier logs as soon as `{ref, :continue}` releases it, so a capture
+  # started after the release reads "" on a slow runner. The scan works per block, so it covers a
+  # helper that both releases and captures; a helper that releases before its caller captures is
+  # out of its reach.
+  test "no barrier release comes before the log capture that follows it" do
+    releases =
+      for path <- Path.wildcard("test/**/*.{ex,exs}"),
+          line <- path |> File.read!() |> releases_before_capture(),
+          do: "#{path}:#{line}"
+
+    assert releases == [],
+           "send `{ref, :continue}` from inside the `capture_log/1` or `with_log/1` function " <>
+             "(docs/agents/testing.md):\n  " <> Enum.join(releases, "\n  ")
+  end
+
+  test "the barrier scan flags a release before the capture, not one inside it" do
+    source = """
+    test "late" do
+      send(pid, {ref, :continue})
+      log = ExUnit.CaptureLog.capture_log(fn -> Task.await(task) end)
+    end
+
+    test "inside" do
+      with_log(fn ->
+        send(pid, {ref, :continue})
+        Task.await(task)
+      end)
+    end
+    """
+
+    assert releases_before_capture(source) == [2]
+  end
+
+  defp releases_before_capture(source) do
+    {:ok, ast} = Code.string_to_quoted(source)
+
+    {_ast, lines} =
+      Macro.prewalk(ast, [], fn
+        {:__block__, _, statements} = node, acc -> {node, late_releases(statements) ++ acc}
+        node, acc -> {node, acc}
+      end)
+
+    Enum.sort(lines)
+  end
+
+  defp late_releases(statements) do
+    for {{:send, meta, [_pid, {_ref, :continue}]}, index} <- Enum.with_index(statements),
+        statements |> Enum.drop(index + 1) |> Enum.any?(&captures_log?/1),
+        do: meta[:line]
+  end
+
+  defp captures_log?(ast) do
+    {_ast, found?} =
+      Macro.prewalk(ast, false, fn
+        {fun, _, args} = node, _acc when fun in [:capture_log, :with_log] and is_list(args) ->
+          {node, true}
+
+        {{:., _, [_module, fun]}, _, _args} = node, _acc when fun in [:capture_log, :with_log] ->
+          {node, true}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    found?
+  end
 
   # #743: a guarded-write adapter is reachable only through its owner, so no caller can write a
   # movie status around a `MovieLifecycle` verb, or a request around the approval gate.
