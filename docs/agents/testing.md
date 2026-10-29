@@ -37,6 +37,11 @@
   so on a slow runner a release before the capture prints the warning to the console and the
   capture reads `""` (#969). `code_health_test.exs` fails on a release followed by a capture in
   the same block.
+- A new repo-wide fence, a test that scans the sources for a pattern, goes in its own file under
+  `test/code_health/`, not in `test/code_health_test.exs`. Threads add fences in parallel: #1003
+  and #1005 each added one there, and the second to merge needed a `main` merge, a full
+  `mix test` and a second CI run. `Cinder.CodeHealth.FenceFilesTest` fails when
+  `code_health_test.exs` gains a test.
 - A new UI string fails `translations_complete_test` until you run
   `MIX_ENV=test mix gettext.extract --merge` and write its French msgstr in
   `priv/gettext/fr/LC_MESSAGES/default.po`. When an existing msgid is close enough, the merge

@@ -1,13 +1,9 @@
 defmodule Cinder.CodeHealthTest do
   @moduledoc """
   Guards against a single `lib/` file regrowing into an unreviewable mega-module (the trigger for
-  the 2026-07-26 `Cinder.Catalog` split), and fences the module boundaries earlier refactors
-  drew: the catalog's split by concept (#740), the staging engine (#739), the guarded-write
-  adapters (#743) and the domain's distance from the web layer (#816). It also keeps new
-  changelog entries in `changelog.d/` (#843), the Dockerfile's and the flake's Tailwind pins on
-  the configured version (#867, #889), the tests' media-server choice in `Cinder.ConfigCase`
-  (#721), each barrier release inside the log capture that asserts on it (#969), and the tests'
-  private repos on `Cinder.MigrationRepoHelpers` (#963).
+  the 2026-07-26 `Cinder.Catalog` split), and holds the repo-wide fences earlier issues drew. Most
+  fences have a comment that names the issue behind them. A new fence goes in its own file under
+  `test/code_health/`, and `Cinder.CodeHealth.FenceFilesTest` fails when this file gains a test.
   """
   use ExUnit.Case, async: true
 
