@@ -243,6 +243,13 @@ config :cinder, :enforce_setup, false
 config :cinder, :movies_library_path, "/tmp/cinder-test-library"
 config :cinder, :tv_library_path, "/tmp/cinder-test-tv-library"
 
+# Widen Cinder.Library.Filesystem.Disk's production subprocess bound (`@subprocess_timeout_ms`) for
+# the suite (#945): a loaded CI runner can take longer than that to start the rooted helper, which
+# failed tests that never set out to test a timeout. A real hang still fails its call after 20 s,
+# before ExUnit's 60 s per-test timeout. Tests of a Disk timeout (DiskBoundedTest) set their own
+# bound and restore this one in on_exit.
+config :cinder, :disk_subprocess_timeout_ms, 20_000
+
 # Neutralize the shipped default size bands: suite fixtures use arbitrary/tiny/absent sizes,
 # and the Settings band tests seed their own bootstrap snapshot explicitly.
 config :cinder,

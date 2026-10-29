@@ -44,7 +44,8 @@ defmodule Cinder.Library.Filesystem.Disk do
   # still turning a wedged FUSE/network mount into a bounded failure instead of holding
   # `Cinder.Library.StagedImport.run/1`'s household import lock indefinitely for as long as the
   # mount stays wedged. Overridable only as a test seam (mirrors `Cinder.Library.MediaInfo.
-  # Ffprobe.probe_timeout_ms/0`'s own convention) — production never sets this.
+  # Ffprobe.probe_timeout_ms/0`'s own convention) — production never sets this; `config/test.exs`
+  # widens it for the suite (#945).
   @subprocess_timeout_ms 5_000
 
   defp subprocess_timeout_ms,
