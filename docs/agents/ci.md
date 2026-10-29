@@ -60,7 +60,10 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
 - **Wall-clock tests.** #637 (for #636) widened the subprocess bounds that raced process startup
   on the runner to 1 s. After a 436 ms run on #908, `Cinder.HTTPPolicyTest` "cancels a request
   blocked before headers at the wall-clock deadline" keeps its 100 ms deadline but asserts the
-  elapsed time under 1 s instead of 300 ms. One tight-bound test still fails now and then on
+  elapsed time under 1 s instead of 300 ms. After a 3458 ms run on `main` (#984),
+  `Cinder.Library.MediaInfo.FfprobeTest` "extract_subtitle/2 still times out when the process
+  emits data faster than any poll tick" asserts the elapsed time under 5 s past its 1 s deadline
+  instead of 2 s. One tight-bound test still fails now and then on
   diffs that do not touch it: `Cinder.Library.Filesystem.DiskBoundedTest` "run_rooted's
   sync_parent timeout is reported distinctly from a malformed helper, and the OS process is
   killed" (it got `{:error, :rooted_helper_timeout}` instead). Judge such a failure as **Flake**

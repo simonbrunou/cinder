@@ -555,9 +555,14 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     elapsed = System.monotonic_time(:millisecond) - t0
 
     # Close to the configured bound (not merely "eventually finite") — proves the deadline fired
-    # on schedule rather than being starved indefinitely by the continuous stream of data.
+    # on schedule rather than being starved indefinitely by the continuous stream of data. The
+    # ceiling sits 5 s past the deadline because `elapsed` also counts the work outside it, which
+    # a loaded runner slows: the executable lookups and `Port.open/2` before the deadline starts,
+    # and after it fires the kill, the reap and the mailbox drain, while the stub burns a core and
+    # floods this mailbox until the kill lands. Run 2520 measured 3458 ms (#984). A deadline that
+    # never fires still fails, on the 15 s tag timeout above.
     assert elapsed >= @pid_bound_ms
-    assert elapsed < @pid_bound_ms + 2_000
+    assert elapsed < @pid_bound_ms + 5_000
 
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)
