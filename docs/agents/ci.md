@@ -80,12 +80,13 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   `Cinder.Library.MediaInfo.FfprobeTest` "extract_subtitle/2 still times out when the process
   emits data faster than any poll tick" asserts the elapsed time under 5 s past its 1 s deadline
   instead of 2 s. The test environment widens `Cinder.Library.Filesystem.Disk`'s
-  `:disk_subprocess_timeout_ms` to 20 s (#945), so only a test that sets its own bound can fail on
-  a Disk subprocess timeout from a slow start under load. In any other test, a Disk timeout such
-  as `{:error, :rooted_helper_timeout}` means the subprocess did not answer for 20 s: look for a
-  hang before calling it a flake. Two tight-bound tests still fail now and then on diffs that do
-  not touch them: `Cinder.Library.Filesystem.DiskBoundedTest` "run_rooted's sync_parent timeout
-  is reported distinctly from a malformed helper, and the OS process is killed" (it got
+  `:disk_subprocess_timeout_ms` to 20 s (#945), four times the production bound, to give a slow
+  start on a loaded runner headroom. In a test that does not set its own bound, a Disk timeout
+  such as `{:error, :rooted_helper_timeout}` therefore means the subprocess did not answer for
+  20 s: look for a hang, or a runner far more loaded than usual, before calling it a flake. Two
+  tight-bound tests still fail now and then on diffs that do not touch them:
+  `Cinder.Library.Filesystem.DiskBoundedTest` "run_rooted's sync_parent timeout is reported
+  distinctly from a malformed helper, and the OS process is killed" (it got
   `{:error, :rooted_helper_timeout}` instead), and `Cinder.LibrarySubtitlesTest` "folder movie
   import passes linked sidecars to the movies subtitle task", whose first
   `assert_receive :movie_scan` gave up after 5 s on a 1060 s run, and a scan reached the mock
