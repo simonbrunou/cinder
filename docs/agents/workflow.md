@@ -42,6 +42,14 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
   one-file budget. A second full suite takes the CPU the host's agent threads share: on #959 a
   Spec reviewer re-ran the full suite in a copy of the worktree and took 12 minutes.
 
+## Agent docs
+
+- Load the `writing-for-agents` skill before the first draft of an edit to `AGENTS.md` or a
+  `docs/agents/` file. Its description names only skills, `AGENTS.md` and `CLAUDE.md`, but its
+  body covers any doc an agent reads. On #1011 (for #992) the first draft of `ci.md` restated
+  one rule in three sections and ended a wait on a condition no status shows, against the
+  skill's "Pruning" and "Steps and completion criteria". Three review fix rounds followed.
+
 ## Worktrees
 
 - A fresh T3 worktree has no `deps/` or `_build/`. Run `scripts/seed-worktree` in it before any
