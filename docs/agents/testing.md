@@ -42,6 +42,16 @@
   and #1005 each added one there, and the second to merge needed a `main` merge, a full
   `mix test` and a second CI run. `Cinder.CodeHealth.FenceFilesTest` fails when
   `code_health_test.exs` gains a test.
+- Once a full `mix test` passed on the branch, a review fix commit that changes only Markdown
+  under `docs/agents/` or in `AGENTS.md`, or ordinary `#` comments in `.ex` and `.exs` files,
+  needs no second full suite before its push. Run the alias's compile, format and Credo gates
+  with the repo-wide fences: `mix test test/code_health_test.exs test/code_health` (about 30 s).
+  When a comment under `lib/` changed, add every file that `rg -l '"lib/' test` lists (about
+  2 minutes): some of them scan `lib/` with patterns that a comment can match. CI runs the full
+  suite on the push. Everything else runs the full `mix test`: a `@doc` or `@moduledoc`, other
+  Markdown (`books_b0_contract_test.exs` reads `docs/audits/` and `specs/`), a gettext catalog,
+  a merge of `origin/main` (AGENTS.md "Merge authority") and a release. On #905 and #945, a
+  second full run on such a fix took 4 to 5 minutes of the CPU the host's agent threads share.
 - A new UI string fails `translations_complete_test` until you run
   `MIX_ENV=test mix gettext.extract --merge` and write its French msgstr in
   `priv/gettext/fr/LC_MESSAGES/default.po`. When an existing msgid is close enough, the merge
