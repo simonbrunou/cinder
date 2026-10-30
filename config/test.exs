@@ -24,7 +24,8 @@ config :cinder, Cinder.Repo,
   # at 60 s, no sooner than ExUnit's default test timeout: a starved checkout fails as an ExUnit
   # timeout with its stacktrace in `setup_sandbox/1`, not on `queue_timeout`. At 5_000 a loaded CI
   # runner dropped checkouts after 10 to 15 s (#947: runs 2345, 2520, 2734). Pinned in
-  # repo_concurrency_test.exs.
+  # repo_concurrency_test.exs. An async test tagged a `timeout` above 2 x queue_target fails in
+  # `Cinder.DataCase.setup_sandbox/1` before its checkout (#1021).
   queue_target: 30_000,
   queue_interval: 30_000,
   # Coverage overhead delays lock release past the default 5000ms timeout.

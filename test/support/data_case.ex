@@ -112,15 +112,49 @@ defmodule Cinder.DataCase do
 
   @doc """
   Sets up the sandbox based on the test tags.
+
+  Raises before any checkout when `check_timeout_tag!/1` refuses the tags.
   """
-  def setup_sandbox(%{unboxed: true}) do
+  def setup_sandbox(tags) do
+    check_timeout_tag!(tags)
+    checkout_sandbox(tags)
+  end
+
+  defp checkout_sandbox(%{unboxed: true}) do
     :ok = Sandbox.checkout(Cinder.Repo, sandbox: false)
   end
 
-  def setup_sandbox(tags) do
+  defp checkout_sandbox(tags) do
     pid = Sandbox.start_owner!(Cinder.Repo, shared: not tags[:async])
     on_exit(fn -> Sandbox.stop_owner(pid) end)
   end
+
+  @doc """
+  Raises `ArgumentError` when an async test's `timeout` tag exceeds 2 x `Cinder.Repo`'s
+  `queue_target`, and returns `:ok` otherwise.
+
+  An async test's checkout queues for the test pool's one connection, and DBConnection drops a
+  request that has queued past 2 x `queue_target`. A longer `timeout` tag would let ExUnit run
+  the test past that drop, so its checkout could still fail on `queue_timeout` (#947, #1021).
+  Sync modules run after the async phase and never queue, so their tags pass.
+  """
+  def check_timeout_tag!(%{async: true, timeout: timeout}) do
+    queue_target = Keyword.fetch!(Application.fetch_env!(:cinder, Cinder.Repo), :queue_target)
+    bound = 2 * queue_target
+
+    unless is_integer(timeout) and timeout <= bound do
+      raise ArgumentError,
+            "async test tagged timeout: #{inspect(timeout)} exceeds 2 x Cinder.Repo's " <>
+              "queue_target (#{queue_target} ms), so DBConnection can drop its sandbox " <>
+              "checkout on queue_timeout at #{bound} ms, before ExUnit's timeout. Tag " <>
+              "timeout: #{bound} or less, or use async: false: sync modules run after the " <>
+              "async phase and never queue for the connection."
+    end
+
+    :ok
+  end
+
+  def check_timeout_tag!(_tags), do: :ok
 
   @doc """
   A helper that transforms changeset errors into a map of messages.
