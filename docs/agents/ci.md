@@ -79,16 +79,20 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   fails it. After a 3458 ms run on `main` (#984),
   `Cinder.Library.MediaInfo.FfprobeTest` "extract_subtitle/2 still times out when the process
   emits data faster than any poll tick" asserts the elapsed time under 5 s past its 1 s deadline
-  instead of 2 s. The test environment widens `Cinder.Library.Filesystem.Disk`'s
+  instead of 2 s. After a 3060 ms run on `main` (#1022),
+  `Cinder.Library.Filesystem.DiskBoundedTest` "run_rooted's sync_parent timeout is reported
+  distinctly from a malformed helper, and the OS process is killed" asserts the elapsed time
+  under 5 s past its 1 s bound instead of 2 s, since its window times two helper spawns and two
+  kills. The test environment widens `Cinder.Library.Filesystem.Disk`'s
   `:disk_subprocess_timeout_ms` to 20 s (#945), four times the production bound, to give a slow
   start on a loaded runner headroom. In a test that does not set its own bound, a Disk timeout
   such as `{:error, :rooted_helper_timeout}` therefore means the subprocess did not answer for
   20 s: look for a hang, or a runner far more loaded than usual, before calling it a flake. Two
-  tight-bound tests still fail now and then on diffs that do not touch them:
-  `Cinder.Library.Filesystem.DiskBoundedTest` "run_rooted's sync_parent timeout is reported
-  distinctly from a malformed helper, and the OS process is killed" (it got
-  `{:error, :rooted_helper_timeout}` instead), and `Cinder.LibrarySubtitlesTest` "folder movie
-  import passes linked sidecars to the movies subtitle task", whose first
+  tight-bound tests still fail now and then on diffs that do not touch them: that sync_parent
+  `DiskBoundedTest` test when its `hold` helper misses the same 1 s bound, which returns
+  `{:error, :rooted_helper_timeout}` and which the wider ceiling does not cover, and
+  `Cinder.LibrarySubtitlesTest` "folder movie import passes linked sidecars to the movies
+  subtitle task", whose first
   `assert_receive :movie_scan` gave up after 5 s on a 1060 s run, and a scan reached the mock
   only after the test had ended. #1007 leaves the cause open: the load, or the shared Fetcher
   that **Shared state** names. Judge such a failure as **Flake** says.

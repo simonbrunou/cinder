@@ -21,7 +21,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
   # killed a helper before it had written its pid file. The stubs sleep 3 s before writing their
   # marker, so a helper the bound failed to kill is still alive while `process_gone?/1` polls; one
   # that outlives the poll has written its marker by the time `process_gone?/1` returns true. The
-  # `< 3000` check and `process_gone?/1` carry the proof; the marker refute is a backstop.
+  # elapsed ceilings and `process_gone?/1` carry the proof; the marker refute is a backstop.
   @bound_ms 1_000
   @marker_wait_ms 2_500
 
@@ -213,7 +213,16 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     assert {:error, {:rooted_helper_exec_failed, "sync_parent", :timeout}} =
              Disk.write(path, "subtitle content")
 
-    assert System.monotonic_time(:millisecond) - t0 < 3000
+    # Unlike the other tests here, this window times more than one subprocess: the `hold`
+    # spawn and its fd line, the write and fsync through `/proc/<pid>/fd/<n>`, the `sync_parent`
+    # spawn and its 1 s deadline, then the kill and reap of `sync_parent` and of `hold`. A
+    # loaded runner slows every step but the deadline, and run 575 measured 3060 ms (#1022), so
+    # the ceiling sits 5 s past the bound. A deadline that never fires fails the pattern above
+    # instead: the stub exits after its 3 s sleep with no output, which decodes to
+    # `{:rooted_helper_malformed, "sync_parent", ""}`. The ceiling fails a kill, reap or port
+    # close that stalls for seconds, or a deadline 5 s late, which ExUnit's 60 s test timeout
+    # lets through.
+    assert System.monotonic_time(:millisecond) - t0 < @bound_ms + 5_000
 
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)
