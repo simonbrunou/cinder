@@ -11,6 +11,8 @@ Audiobookshelf.
   `compile --warnings-as-errors`, `format --check-formatted`, `credo --strict`, then the suite.
 - Mix and Hex manage dependencies. The Elixir/OTP toolchain comes from the Nix flake dev shell;
   if `mix` is not on `PATH`, run `nix develop --command mix test`.
+- Before the first `mix` task in a fresh worktree, install its dependencies with
+  `scripts/seed-worktree` ([workflow.md](docs/agents/workflow.md) "Worktrees").
 
 ## Topic docs
 
