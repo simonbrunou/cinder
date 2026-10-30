@@ -24,8 +24,10 @@ Read the matching doc before you act:
 - [Configuration](docs/agents/configuration.md): before adding a setting or env var, or touching
   secrets, `/settings`, the auth plugs or `/api/v1`.
 - [Testing](docs/agents/testing.md): before writing a test or calling a task done.
-- [Workflow](docs/agents/workflow.md): before starting a feature, an audit or a review, editing
-  `AGENTS.md` or `docs/agents/`, filing an issue, opening a PR, or cutting a release.
+- [Workflow](docs/agents/workflow.md): before starting a feature, an audit or a review, filing an
+  issue, opening a PR, or cutting a release.
+- The `writing-for-agents` skill, then [workflow.md](docs/agents/workflow.md) "Agent docs":
+  before your first edit to `AGENTS.md` or a `docs/agents/` file.
 - [CI](docs/agents/ci.md): before reading a red CI run, re-running CI, or merging.
 - [Subtitle sync](docs/agents/subtitle-sync.md): before changing `Cinder.Subtitles.Sync`, its
   engine or its timing rules.
