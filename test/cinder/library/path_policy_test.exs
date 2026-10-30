@@ -8,6 +8,7 @@ defmodule Cinder.Library.PathPolicyTest do
   alias Cinder.Library.Filesystem.Disk
   alias Cinder.Library.{PathPolicy, StagedImport}
   alias Cinder.Settings
+  alias Cinder.Test.DiskTask
 
   # A synthetic filesystem with one directory holding more entries than the 100k
   # traversal cap, so the entry limit trips without creating 100k real files.
@@ -370,7 +371,7 @@ defmodule Cinder.Library.PathPolicyTest do
       File.ln_s!(outside_show, show)
       send(pid, {ref, :continue})
 
-      assert Task.await(task) == :ok
+      assert DiskTask.await(task) == :ok
       assert File.dir?(outside_season)
     end
   end

@@ -13,8 +13,16 @@
   short `refute Task.yield(task, 100)` shows it blocked (`Cinder.Library.StagedImportTest`,
   "run/1"). After the release, the waiter wakes at its next `:global.trans/2` retry, a random
   sleep whose ceiling doubles from 250 ms to 8 s. What sets the await is how long the lock stays
-  held after the waiter starts: the default 5 s covers a few hundred ms, and a hold of seconds,
-  such as a whole `TvPoller.poll/0` import, needs about 15 s.
+  held after the waiter starts: the default 5 s covers a few hundred ms, and a hold of seconds
+  needs about 15 s. When the holder reaches a Disk subprocess, as a whole `TvPoller.poll/0`
+  import does, the waiter awaits with `Cinder.Test.DiskTask.await/1` instead (next bullet).
+- A test file that reaches a `Cinder.Library.Filesystem.Disk` subprocess (through Disk,
+  `stub_with(FilesystemMock, Disk)` or `Cinder.Test.BarrierFilesystem`) awaits every task with
+  `Cinder.Test.DiskTask.await/1`, which waits past the test-env Disk bound. `Task.await/1`'s 5 s
+  default, and the 15 s waits it replaced, failed a slow helper start as a `Task.await` exit
+  (#1012). `test/code_health/disk_task_await_test.exs` fails a `Task.await` or
+  `Task.await_many` in a file that names `BarrierFilesystem` or `Filesystem.Disk`, except one
+  inside `catch_exit/1`, the form kept for a task the test already killed.
 - A migration test that runs on its own `Ecto.Repo` starts it with
   `Cinder.MigrationRepoHelpers.start_repo!/2`, which waits for the repo's one connection to open.
   A statement sent right after `start_supervised!/1` queues behind that open, and on a loaded

@@ -5,6 +5,7 @@ defmodule Cinder.Subtitles.ManifestTest do
   import Mox
 
   alias Cinder.Subtitles.Manifest
+  alias Cinder.Test.DiskTask
 
   setup :verify_on_exit!
 
@@ -269,7 +270,7 @@ defmodule Cinder.Subtitles.ManifestTest do
 
     send(pid, {ref, :continue})
 
-    assert Task.await(task) == {:error, :unsafe_destination}
+    assert DiskTask.await(task) == {:error, :unsafe_destination}
     refute File.exists?(Path.join(outside, Path.basename(manifest)))
   end
 
@@ -296,7 +297,7 @@ defmodule Cinder.Subtitles.ManifestTest do
     assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, temporary}, 15_000
     File.ln_s!(outside, temporary)
     send(pid, {ref, :continue})
-    assert {:error, :eexist} = Task.await(task)
+    assert {:error, :eexist} = DiskTask.await(task)
     assert File.read!(outside) == "outside"
     refute File.exists?(Manifest.path(video))
   end

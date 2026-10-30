@@ -10,6 +10,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
   alias Cinder.Subtitles
   alias Cinder.Subtitles.{Manifest, SidecarTransaction, Sync}
   alias Cinder.Subtitles.Sync.Worker
+  alias Cinder.Test.DiskTask
 
   @moduletag :tmp_dir
 
@@ -629,16 +630,16 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     # No SQLite write-lock reservation queues this behind the apply, paused after its moviehash
     # read. The barrier is released only after this await returns, so a write queued behind the
-    # paused apply could never succeed within any bound: the 15 s bound (#554's, for runner load)
+    # paused apply could never succeed within any bound: `DiskTask`'s, wide for runner load (#554),
     # still proves the write is not blocked (#877).
-    assert %{file_path: ^replacement_video} = Task.await(update, 15_000)
+    assert %{file_path: ^replacement_video} = DiskTask.await(update)
 
     send(pid, {ref, :continue})
     # The scope no longer resolves this item (the movie now points at replacement_video, which
     # has no tracked sidecar of its own) by the time the filesystem work completes. That work
     # spawns a rooted helper per rooted filesystem operation, and under runner load their sum can
     # pass the default 5 s await (#877).
-    assert {:error, :stale_scope} = Task.await(apply, 15_000)
+    assert {:error, :stale_scope} = DiskTask.await(apply)
     # The correction itself still landed — captured against the original video before the swap,
     # unaffected by it.
     assert File.read!(sidecar) =~ "00:00:02,000"
@@ -703,7 +704,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     movie |> Ecto.Changeset.change(file_path: replacement_video) |> Repo.update!()
     send(pid, {ref, :continue})
 
-    html = Task.await(submit, 15_000)
+    html = DiskTask.await(submit)
 
     refute html =~ "Enter a valid delay/rate or timestamp anchors."
     assert html =~ "The correction was applied, but this item changed while it was being written."

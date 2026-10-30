@@ -10,7 +10,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   alias Cinder.Library.Filesystem.Disk
   alias Cinder.Subtitles.{Manifest, Moviehash, SidecarTransaction}
   alias Cinder.Subtitles.Sync.Timing
-  alias Cinder.Test.MergerfsControl
+  alias Cinder.Test.{DiskTask, MergerfsControl}
 
   # Delegates every operation to the real `Disk` filesystem, except it reports each
   # `write_bound/2` call back to the owning test process — so a test can pin "the reclaim path
@@ -202,7 +202,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       File.write!(video, @changed_video)
       send(pid, {ref, :continue})
 
-      assert {:error, :video_changed} = Task.await(task, 15_000)
+      assert {:error, :video_changed} = DiskTask.await(task)
       assert File.read!(path) == original
       assert Manifest.sync(Manifest.read(video), "en") == nil
     end
@@ -220,7 +220,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(backup) == original
 
       send(pid, {ref, :continue})
-      assert {:ok, :corrected, _} = Task.await(task, 15_000)
+      assert {:ok, :corrected, _} = DiskTask.await(task)
       assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
     end
 
@@ -237,7 +237,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       File.write!(path, external)
       send(pid, {ref, :continue})
 
-      assert {:error, :concurrent_change} = Task.await(task, 15_000)
+      assert {:error, :concurrent_change} = DiskTask.await(task)
       assert File.read!(path) == external
       assert File.read!(backup) == original
       assert Manifest.sync(Manifest.read(video), "en") == nil
@@ -264,7 +264,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       File.rename!(replacement, path)
       send(pid, {ref, :continue})
 
-      assert {:error, :concurrent_change} = Task.await(task, 15_000)
+      assert {:error, :concurrent_change} = DiskTask.await(task)
       assert File.read!(path) == external
       assert File.read!(backup) == original
       assert Manifest.sync(Manifest.read(video), "en") == nil
@@ -381,7 +381,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       })
 
       send(pid, {ref, :continue})
-      assert {:error, {:manifest, :eio}} = Task.await(task, 15_000)
+      assert {:error, {:manifest, :eio}} = DiskTask.await(task)
       assert File.read!(path) == original
       assert File.read!(backup) == ""
       assert Manifest.sync(Manifest.read(video), "en") == nil
@@ -411,7 +411,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       ])
 
       send(pid, {ref, :continue})
-      assert {:error, {:manifest_and_rollback_failed, :eio, :enospc}} = Task.await(task, 15_000)
+      assert {:error, {:manifest_and_rollback_failed, :eio, :enospc}} = DiskTask.await(task)
       assert File.read!(path) == original
       assert File.read!(backup) == original
       assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
@@ -440,7 +440,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       send(pid, {ref, :continue})
 
       assert {:error, {:manifest_and_rollback_failed, :eio, :concurrent_change}} =
-               Task.await(task, 15_000)
+               DiskTask.await(task)
 
       assert File.read!(path) == external
       assert File.read!(backup) == original
@@ -465,7 +465,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       })
 
       send(pid, {ref, :continue})
-      assert {:error, {:manifest, :eio}} = Task.await(task, 15_000)
+      assert {:error, {:manifest, :eio}} = DiskTask.await(task)
       assert File.read!(path) == previous
       assert Manifest.sync(Manifest.read(video), "en") == previous_record
     end
@@ -490,7 +490,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       ])
 
       send(pid, {ref, :continue})
-      assert {:error, {:manifest_and_rollback_failed, :eio, :eacces}} = Task.await(task, 15_000)
+      assert {:error, {:manifest_and_rollback_failed, :eio, :eacces}} = DiskTask.await(task)
       refute File.read!(path) == original
       assert File.read!(backup) == original
       assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
@@ -508,7 +508,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       File.write!(video, @changed_video)
       send(pid, {ref, :continue})
 
-      assert {:error, :video_changed} = Task.await(task, 15_000)
+      assert {:error, :video_changed} = DiskTask.await(task)
       assert File.read!(path) == original
       assert File.read!(backup) == ""
       assert Manifest.sync(Manifest.read(video), "en") == nil
@@ -534,7 +534,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       send(pid, {ref, :continue})
 
       assert {:error, {:correction_and_rollback_failed, :video_changed, :eacces}} =
-               Task.await(task, 15_000)
+               DiskTask.await(task)
 
       refute File.read!(path) == original
       assert File.read!(backup) == original
@@ -556,7 +556,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       File.ln_s!(outside, staged)
       send(pid, {ref, :continue})
 
-      assert {:error, _reason} = Task.await(task, 15_000)
+      assert {:error, _reason} = DiskTask.await(task)
       assert File.read!(outside) == "outside"
     end
 
@@ -1391,7 +1391,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       File.write!(path, "edited")
       send(pid, {ref, :continue})
 
-      assert {:error, {:write, {:error, :concurrent_change}}} = Task.await(task, 15_000)
+      assert {:error, {:write, {:error, :concurrent_change}}} = DiskTask.await(task)
       assert File.read!(path) == "edited"
       assert %{origin: "opensubtitles_hash"} = Manifest.read(video).tracks["en"]
       assert workspaces(path) == []
@@ -1405,7 +1405,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       File.write!(path, "edited")
       send(pid, {ref, :continue})
 
-      assert {:error, {:write, {:error, :captured_target_changed}}} = Task.await(task, 15_000)
+      assert {:error, {:write, {:error, :captured_target_changed}}} = DiskTask.await(task)
       assert File.read!(path) == "edited"
       assert %{origin: "opensubtitles_hash"} = Manifest.read(video).tracks["en"]
       assert workspaces(path) == []
@@ -1420,7 +1420,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       File.write!(target, "external")
       send(pid, {ref, :continue})
 
-      assert {:error, {:write, {:error, :concurrent_change}}} = Task.await(task, 15_000)
+      assert {:error, {:write, {:error, :concurrent_change}}} = DiskTask.await(task)
       assert File.read!(target) == "external"
       refute Map.has_key?(Manifest.read(video).tracks, "fr")
       assert workspaces(target) == []
@@ -1442,7 +1442,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       File.rename!(newer, path)
       send(pid, {ref, :continue})
 
-      assert {:error, {:write, {:error, :concurrent_change}}} = Task.await(task, 15_000)
+      assert {:error, {:write, {:error, :concurrent_change}}} = DiskTask.await(task)
       assert File.read!(path) == "newer"
       assert File.read!(download) == original
       assert workspaces(path) == []
@@ -1459,7 +1459,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       File.write!(target, @replacement)
       send(pid, {ref, :continue})
 
-      assert {:error, {:write, {:error, :concurrent_change}}} = Task.await(task, 15_000)
+      assert {:error, {:write, {:error, :concurrent_change}}} = DiskTask.await(task)
       refute Map.has_key?(Manifest.read(video).tracks, "fr")
     end
 
@@ -1805,7 +1805,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, _manifest}, 15_000
       File.write!(path, "edited")
       send(pid, {ref, :continue})
-      assert {:error, {:manifest, {:error, :eio}}} = Task.await(task, 15_000)
+      assert {:error, {:manifest, {:error, :eio}}} = DiskTask.await(task)
     end)
   end
 
@@ -1887,7 +1887,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       )
 
       send(pid, {ref, :continue})
-      Task.await(task, 15_000)
+      DiskTask.await(task)
     end)
   end
 

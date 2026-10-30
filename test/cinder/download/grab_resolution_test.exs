@@ -9,6 +9,7 @@ defmodule Cinder.Download.GrabResolutionTest do
   alias Cinder.Library
   alias Cinder.Library.StagedImport
   alias Cinder.Repo
+  alias Cinder.Test.DiskTask
 
   import Cinder.CatalogFixtures
 
@@ -128,7 +129,7 @@ defmodule Cinder.Download.GrabResolutionTest do
           state
         end)
       end
-      |> Task.await_many()
+      |> Enum.map(&DiskTask.await/1)
       |> Enum.sort()
 
     assert states == [:decided, :noop]

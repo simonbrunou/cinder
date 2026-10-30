@@ -7,6 +7,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
   alias Cinder.Library.Filesystem.Disk
   alias Cinder.Subtitles.{Manifest, Moviehash, SidecarTransaction, Sync}
+  alias Cinder.Test.DiskTask
 
   @moduletag :tmp_dir
 
@@ -812,7 +813,7 @@ defmodule Cinder.Subtitles.SyncTest do
     File.ln_s!(outside, path)
     send(pid, {ref, :continue})
 
-    assert [%{status: :failed}] = Task.await(task, 15_000)
+    assert [%{status: :failed}] = DiskTask.await(task)
     assert File.read!(outside) == subtitle(".srt")
     refute File.exists?(SidecarTransaction.backup_path(path))
 
@@ -962,7 +963,7 @@ defmodule Cinder.Subtitles.SyncTest do
     File.write!(path, external)
     send(engine, :release)
 
-    assert [%{status: :failed, reason: :concurrent_change}] = Task.await(task, 15_000)
+    assert [%{status: :failed, reason: :concurrent_change}] = DiskTask.await(task)
     assert File.read!(path) == external
     refute File.exists?(SidecarTransaction.backup_path(path))
     assert Manifest.sync(Manifest.read(video), "en") == nil
@@ -988,7 +989,7 @@ defmodule Cinder.Subtitles.SyncTest do
     File.write!(path, external)
     send(pid, {ref, :continue})
 
-    assert {:error, :externally_modified} = Task.await(task, 15_000)
+    assert {:error, :externally_modified} = DiskTask.await(task)
     assert File.read!(path) == external
     refute File.exists?(SidecarTransaction.backup_path(path))
     assert Manifest.sync(Manifest.read(video), "en") == nil

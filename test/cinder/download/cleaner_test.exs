@@ -12,6 +12,7 @@ defmodule Cinder.Download.CleanerTest do
   alias Cinder.Catalog.{Episode, Grab}
   alias Cinder.Download.{Cleaner, ClientMock, Intent, SabnzbdClientMock, TvPoller}
   alias Cinder.Library.StagedImport
+  alias Cinder.Test.DiskTask
 
   import Cinder.CatalogFixtures
 
@@ -259,10 +260,10 @@ defmodule Cinder.Download.CleanerTest do
       refute_received {:removed, _id, _opts}
 
       send(importer.pid, :settle)
-      assert :ok = Task.await(importer)
+      assert :ok = DiskTask.await(importer)
       # `:global.trans/2` retries a held lock after a random sleep whose ceiling doubles on each
       # retry, from 250 ms up to 8 s, so the sweep can take seconds to see the lock free.
-      assert :ok = Task.await(sweep, 15_000)
+      assert :ok = DiskTask.await(sweep)
       assert_received {:removed, "nzo-late", _opts}
     end
 
@@ -305,8 +306,8 @@ defmodule Cinder.Download.CleanerTest do
       refute Task.yield(sweep, 200)
 
       send(pid, {ref, :continue})
-      assert :ok = Task.await(importing, 15_000)
-      assert :ok = Task.await(sweep, 15_000)
+      assert :ok = DiskTask.await(importing)
+      assert :ok = DiskTask.await(sweep)
 
       imported = Repo.get!(Episode, episode.id)
       assert File.exists?(Path.rootname(imported.file_path) <> ".fr.srt")

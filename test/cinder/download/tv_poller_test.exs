@@ -16,6 +16,7 @@ defmodule Cinder.Download.TvPollerTest do
   alias Cinder.Download.{Poller, TvPoller}
   alias Cinder.Library.{ImportedQuality, ImportStage}
   alias Cinder.Repo
+  alias Cinder.Test.DiskTask
 
   import Cinder.BoundedWalkHelpers
   import Cinder.CatalogFixtures
@@ -727,7 +728,7 @@ defmodule Cinder.Download.TvPollerTest do
     assert %Grab{mapping_status: :resolved} = Repo.get!(Grab, grab.id)
     send(pid, {ref, :continue})
 
-    assert :ok = Task.await(poll)
+    assert :ok = DiskTask.await(poll)
     refute Repo.get(Grab, grab.id)
     assert Repo.get!(Episode, episode.id).file_path =~ "S01E01"
   end
@@ -1213,7 +1214,7 @@ defmodule Cinder.Download.TvPollerTest do
     File.write!(source, "after-mutation")
     send(pid, {ref, :continue})
 
-    assert :ok = Task.await(poll)
+    assert :ok = DiskTask.await(poll)
 
     assert %Grab{mapping_status: :resolved, download_attempts: 0} = Repo.get!(Grab, grab.id)
     assert Repo.aggregate(ImportStage, :count) == 0
@@ -1780,8 +1781,8 @@ defmodule Cinder.Download.TvPollerTest do
     refute Task.yield(observer, 50)
     send(pid, {ref, :continue})
 
-    assert :ok = Task.await(import)
-    assert :ok = Task.await(observer)
+    assert :ok = DiskTask.await(import)
+    assert :ok = DiskTask.await(observer)
     refute Repo.get(Grab, grab.id)
     assert Repo.get!(Episode, first.id).file_path =~ "S01E01"
     assert Repo.get!(Episode, second.id).file_path =~ "S01E02"
@@ -1904,7 +1905,7 @@ defmodule Cinder.Download.TvPollerTest do
     assert Enum.any?(File.ls!(Path.dirname(dest)), &String.starts_with?(&1, ".cinder-rollback-"))
 
     send(pid, {ref, :continue})
-    assert :ok = Task.await(poll)
+    assert :ok = DiskTask.await(poll)
 
     upgraded = Repo.reload!(episode)
     assert upgraded.file_path == dest
@@ -1942,7 +1943,7 @@ defmodule Cinder.Download.TvPollerTest do
     assert {:ok, _} = Catalog.cancel_grab(Repo.get!(Grab, grab.id))
     send(pid, {ref, :continue})
 
-    assert :ok = Task.await(poll)
+    assert :ok = DiskTask.await(poll)
     refute File.exists?(dest)
     assert Repo.get(Grab, grab.id) == nil
     assert Repo.get!(Episode, episode.id).file_path == nil

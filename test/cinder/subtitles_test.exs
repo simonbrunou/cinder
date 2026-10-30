@@ -12,6 +12,7 @@ defmodule Cinder.SubtitlesTest do
   alias Cinder.Subtitles.Manifest
   alias Cinder.Subtitles.Moviehash
   alias Cinder.Subtitles.Sync.Worker
+  alias Cinder.Test.DiskTask
 
   @moduletag :tmp_dir
   @zeros <<0::size(65_536 * 8)>>
@@ -967,7 +968,7 @@ defmodule Cinder.SubtitlesTest do
     log =
       capture_log(fn ->
         send(pid, {ref, :continue})
-        assert Task.await(task, 15_000) == :ok
+        assert DiskTask.await(task) == :ok
       end)
 
     assert log =~ "subtitle write failed for"
@@ -1011,7 +1012,7 @@ defmodule Cinder.SubtitlesTest do
     log =
       capture_log(fn ->
         send(pid, {ref, :continue})
-        assert Task.await(task, 15_000) == :ok
+        assert DiskTask.await(task) == :ok
       end)
 
     assert log =~ "subtitle rollback failed for #{target}"

@@ -8,6 +8,7 @@ defmodule Cinder.Library.SidecarsTest do
   alias Cinder.Library.SidecarQuarantine
   alias Cinder.Library.Sidecars
   alias Cinder.Test.BarrierFilesystem
+  alias Cinder.Test.DiskTask
   alias Cinder.Test.ForeignFile
 
   # Models a mid-stream write failure during `cp_exclusive`'s exclusive-copy fallback: the
@@ -340,7 +341,7 @@ defmodule Cinder.Library.SidecarsTest do
       log =
         capture_log(fn ->
           send(pid, {ref, :continue})
-          assert Task.await(task) == []
+          assert DiskTask.await(task) == []
         end)
 
       assert log =~ "sidecar link rejected: :enospc"
@@ -618,7 +619,7 @@ defmodule Cinder.Library.SidecarsTest do
       log =
         capture_log(fn ->
           send(pid, {ref, :continue})
-          assert Task.await(task) == []
+          assert DiskTask.await(task) == []
         end)
 
       assert log =~ "sidecar link rejected: :enospc"
@@ -652,7 +653,7 @@ defmodule Cinder.Library.SidecarsTest do
       log =
         capture_log(fn ->
           send(pid, {ref, :continue})
-          assert Task.await(task) == []
+          assert DiskTask.await(task) == []
         end)
 
       assert log =~ "sidecar link rejected: :eexist"
@@ -696,7 +697,7 @@ defmodule Cinder.Library.SidecarsTest do
       File.ln_s!(database, sidecar)
       send(pid, {ref, :continue})
 
-      assert Task.await(task) == []
+      assert DiskTask.await(task) == []
       refute File.exists?(sidecar_dest)
     end
 
@@ -722,7 +723,7 @@ defmodule Cinder.Library.SidecarsTest do
       log =
         capture_log(fn ->
           send(pid, {ref, :continue})
-          assert Task.await(task) == []
+          assert DiskTask.await(task) == []
         end)
 
       assert log =~ "sidecar link rejected: :unsafe_destination"

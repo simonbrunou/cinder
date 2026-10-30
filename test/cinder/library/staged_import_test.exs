@@ -17,7 +17,7 @@ defmodule Cinder.Library.StagedImportTest do
   alias Cinder.Catalog.Movie
   alias Cinder.Library.{ImportStage, StagedImport}
   alias Cinder.Repo
-  alias Cinder.Test.{BarrierFilesystem, ForeignFile}
+  alias Cinder.Test.{BarrierFilesystem, DiskTask, ForeignFile}
 
   @moduletag :tmp_dir
   @moduletag :capture_log
@@ -563,7 +563,7 @@ defmodule Cinder.Library.StagedImportTest do
           observer
         end)
 
-      assert :ok = Task.await(observer)
+      assert :ok = DiskTask.await(observer)
     end
 
     # `:global.trans/2` releases a lock when an inner call with the same id returns, which would
@@ -577,7 +577,7 @@ defmodule Cinder.Library.StagedImportTest do
           observer
         end)
 
-      assert :ok = Task.await(observer)
+      assert :ok = DiskTask.await(observer)
     end
   end
 
@@ -632,7 +632,7 @@ defmodule Cinder.Library.StagedImportTest do
       File.write!(dest, "user file")
       send(pid, {ref, :continue})
 
-      assert {:error, :eexist} = Task.await(staging)
+      assert {:error, :eexist} = DiskTask.await(staging)
       assert File.read!(dest) == "user file"
     end
 
@@ -674,8 +674,8 @@ defmodule Cinder.Library.StagedImportTest do
       refute Task.yield(observer, 100)
       send(pid, {ref, :continue})
 
-      assert {:ok, :ok} = Task.await(importer)
-      assert :ok = Task.await(observer)
+      assert {:ok, :ok} = DiskTask.await(importer)
+      assert :ok = DiskTask.await(observer)
       assert File.read!(early_dest) == "candidate"
       assert File.read!(late_dest) == "candidate"
       refute Repo.exists?(ImportStage)
@@ -708,8 +708,8 @@ defmodule Cinder.Library.StagedImportTest do
       refute Task.yield(observer, 50)
       send(pid, {ref, :continue})
 
-      assert {:ok, _staged, :placed} = Task.await(staging)
-      assert :ok = Task.await(observer)
+      assert {:ok, _staged, :placed} = DiskTask.await(staging)
+      assert :ok = DiskTask.await(observer)
       prepared = Repo.one!(ImportStage)
       assert prepared.state == :prepared
       assert DateTime.compare(prepared.next_attempt_at, DateTime.utc_now()) == :gt
@@ -733,7 +733,7 @@ defmodule Cinder.Library.StagedImportTest do
       # Another poller reconciles between the owner's write and its settle.
       writer = fn record, ids ->
         {:ok, :ok} = record_all(record, ids)
-        assert :ok = Task.await(Task.async(&StagedImport.reconcile/0))
+        assert :ok = DiskTask.await(Task.async(&StagedImport.reconcile/0))
         assert %ImportStage{state: :committed, effects_claimed_at: nil} = Repo.one!(ImportStage)
         :written
       end
@@ -819,7 +819,7 @@ defmodule Cinder.Library.StagedImportTest do
       File.write!(dest, "user file")
       send(pid, {ref, :continue})
 
-      assert {:error, :eexist} = Task.await(staging)
+      assert {:error, :eexist} = DiskTask.await(staging)
       assert File.read!(dest) == "user file"
       assert :ok = StagedImport.reconcile()
       assert File.read!(dest) == "user file"
@@ -892,7 +892,7 @@ defmodule Cinder.Library.StagedImportTest do
       File.write!(dest, "user replacement")
       send(pid, {ref, :continue})
 
-      assert {:error, :import_stage_destination_changed} = Task.await(staging)
+      assert {:error, :import_stage_destination_changed} = DiskTask.await(staging)
       assert File.read!(dest) == "user replacement"
       assert File.exists?(displaced)
       assert [%ImportStage{state: :preparing} = journal] = Repo.all(ImportStage)
@@ -988,8 +988,8 @@ defmodule Cinder.Library.StagedImportTest do
       refute Task.yield(second, 50)
       send(pid, {ref, :continue})
 
-      assert {:ok, staged, :placed} = Task.await(first)
-      assert {:error, :import_stage_busy} = Task.await(second)
+      assert {:ok, staged, :placed} = DiskTask.await(first)
+      assert {:error, :import_stage_busy} = DiskTask.await(second)
       assert File.read!(dest) == "first"
       assert :ok = StagedImport.rollback(staged)
     end
@@ -1012,7 +1012,7 @@ defmodule Cinder.Library.StagedImportTest do
       ForeignFile.publish!(dest, "user replacement")
       send(pid, {ref, :continue})
 
-      assert {:error, :import_stage_destination_changed} = Task.await(staging)
+      assert {:error, :import_stage_destination_changed} = DiskTask.await(staging)
       assert File.read!(dest) == "user replacement"
     end
 
@@ -1047,8 +1047,8 @@ defmodule Cinder.Library.StagedImportTest do
       assert_receive {:written, {:error, :stale_import_stage}}, 15_000
       send(pid, {ref, :continue})
 
-      assert :ok = Task.await(reconcile)
-      assert {:error, :stale_import_stage} = Task.await(owner)
+      assert :ok = DiskTask.await(reconcile)
+      assert {:error, :stale_import_stage} = DiskTask.await(owner)
       assert File.read!(dest) == "original"
     end
 
@@ -1127,8 +1127,8 @@ defmodule Cinder.Library.StagedImportTest do
 
       first = Task.async(&StagedImport.reconcile/0)
       second = Task.async(&StagedImport.reconcile/0)
-      assert :ok = Task.await(first)
-      assert :ok = Task.await(second)
+      assert :ok = DiskTask.await(first)
+      assert :ok = DiskTask.await(second)
 
       retrying = Repo.get!(ImportStage, stage.id)
       assert retrying.state == :rolling_back
@@ -1168,7 +1168,7 @@ defmodule Cinder.Library.StagedImportTest do
       assert [%ImportStage{state: :preparing, candidate_size: 9}] = Repo.all(ImportStage)
       send(pid, {ref, :continue})
 
-      assert {:ok, staged, :placed} = Task.await(staging)
+      assert {:ok, staged, :placed} = DiskTask.await(staging)
       assert {:error, :stale_status} = StagedImport.commit(staged, &refuse/2)
       assert File.read!(dest) == "user replacement"
     end

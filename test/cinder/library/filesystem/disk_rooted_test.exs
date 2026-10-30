@@ -8,7 +8,7 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
   alias Cinder.Library.PathPolicy
   alias Cinder.Subtitles.{Manifest, SidecarTransaction}
   alias Cinder.Subtitles.SidecarTransaction.AtomicFile
-  alias Cinder.Test.{BarrierFilesystem, MergerfsControl}
+  alias Cinder.Test.{BarrierFilesystem, DiskTask, MergerfsControl}
 
   setup %{tmp_dir: tmp} do
     keys = [
@@ -46,7 +46,7 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
     swap_parent!(path, moved, outside)
     send(pid, {ref, :continue})
 
-    assert {:error, :eloop} = Task.await(task)
+    assert {:error, :eloop} = DiskTask.await(task)
     assert File.read!(Path.join(outside, Path.basename(path))) == "outside"
   end
 
@@ -63,7 +63,7 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
     swap_parent!(path, moved, outside)
     send(pid, {ref, :continue})
 
-    assert {:error, reason} = Task.await(task)
+    assert {:error, reason} = DiskTask.await(task)
     assert reason in [:eloop, :enotdir]
     assert mode(outside_path) == 0o600
     assert mode(Path.join(moved, Path.basename(path))) == 0o600
@@ -87,7 +87,7 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
     swap_parent!(path, moved, outside)
     send(pid, {ref, :continue})
 
-    assert {:error, :eloop} = Task.await(task)
+    assert {:error, :eloop} = DiskTask.await(task)
     refute File.exists?(Path.join(outside, Path.basename(path)))
   end
 
@@ -114,7 +114,7 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
     swap_parent!(target, moved, outside)
     send(pid, {ref, :continue})
 
-    assert {:error, reason} = Task.await(task)
+    assert {:error, reason} = DiskTask.await(task)
     assert reason in [:eloop, :enotdir]
     assert File.read!(Path.join(outside, "subtitle.srt")) == "outside old"
     assert File.read!(Path.join(outside, "staged.srt")) == "outside new"
@@ -166,7 +166,7 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
     task = Task.async(fn -> AtomicFile.write(target, "new", "old", operation_id) end)
 
     refute_receive {:filesystem_barrier, _pid, _ref, :mkdir_exclusive, ^workspace}, 100
-    assert {:error, :unsafe_destination} = Task.await(task)
+    assert {:error, :unsafe_destination} = DiskTask.await(task)
 
     assert File.read!(target) == "old"
     refute File.exists?(workspace)
@@ -250,7 +250,7 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     File.write!(staged, "external")
     send(pid, {ref, :continue})
 
-    assert {:error, :pending_workspace_mismatch} = Task.await(task)
+    assert {:error, :pending_workspace_mismatch} = DiskTask.await(task)
     assert File.read!(target) == "old"
     assert File.read!(staged) == "external"
   end
@@ -276,7 +276,7 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     File.ln_s!(outside_parent, approved_parent)
     send(pid, {ref, :continue})
 
-    assert {:error, reason} = Task.await(task)
+    assert {:error, reason} = DiskTask.await(task)
     assert reason in [:eloop, :enotdir]
     assert File.read!(outside_path) == "outside"
   end
@@ -657,7 +657,7 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
       swap_parent!(dest, Path.join(root, "Movie.original"), outside)
       send(pid, {ref, :continue})
 
-      assert {:error, reason} = Task.await(task)
+      assert {:error, reason} = DiskTask.await(task)
       assert reason in [:eloop, :enotdir]
       assert File.ls!(outside) == []
       assert File.read!(Path.join(root, "Movie.original/.workspace/staged")) == "fetched"
