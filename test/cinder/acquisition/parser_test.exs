@@ -497,13 +497,15 @@ defmodule Cinder.Acquisition.ParserTest do
       assert %{season: 1, episodes: [3]} = Parser.parse("Show.S01E03-E01.1080p")
     end
 
-    # Counts reductions, not wall-clock time: reductions don't depend on how loaded the machine
-    # is, so the check holds on a busy CI runner (#679). Quadrupling the tail costs ~3.7x the
-    # work when parsing is linear; the old `acc ++ [n]` cost ~7x.
+    # Counts reductions, not wall-clock time (#679). The count still varies between runs: one CI
+    # parse cost 31% more than any local run (#1004), so the check keeps the lowest of 3 samples
+    # per size. 32k tokens cost 14.1x to 14.5x the reductions of 2k when parsing is linear (19.6x
+    # with 35% more on the 32k side), and 59x to 71x with the old `acc ++ [n]` tail. The old
+    # 16k/4k sizes overlapped: linear 3.8x and 5.02x on CI, quadratic 4.7x to 7.4x.
     test "a very long episode tail parses in linear time and keeps the episode list" do
       assert %{season: 1, episodes: [1]} = Parser.parse(long_tail(16_000))
 
-      assert parse_reductions(long_tail(16_000)) < 5 * parse_reductions(long_tail(4_000))
+      assert min_parse_reductions(long_tail(32_000)) < 25 * min_parse_reductions(long_tail(2_000))
     end
 
     test "a dot- or space-separated single episode is not mistaken for a season pack" do
@@ -556,6 +558,12 @@ defmodule Cinder.Acquisition.ParserTest do
   defp subtitle_claim("unknown"), do: :unknown
 
   defp long_tail(tokens), do: "Show.S01" <> String.duplicate("E1", tokens)
+
+  defp min_parse_reductions(title) do
+    1..3
+    |> Enum.map(fn _ -> parse_reductions(title) end)
+    |> Enum.min()
+  end
 
   # Parses in a fresh process so the count covers the parse alone.
   defp parse_reductions(title) do
