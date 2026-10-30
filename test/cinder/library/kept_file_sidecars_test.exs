@@ -100,6 +100,7 @@ defmodule Cinder.Library.KeptFileSidecarsTest do
       # refutes below are not vacuous.
       assert log =~ "kept existing"
       assert_receive {:scanned, :movies}
+      LibraryStubs.await_subtitle_tasks()
       assert File.read!(dest) == "held"
       refute File.exists?(Path.rootname(dest) <> ".fr.srt")
     end
@@ -128,6 +129,7 @@ defmodule Cinder.Library.KeptFileSidecarsTest do
       assert :ok = LibraryStubs.commit_staged(staged)
 
       assert_receive {:scanned, :movies}
+      LibraryStubs.await_subtitle_tasks()
       assert File.read!(Path.rootname(dest) <> ".fr.srt") == "1"
     end
   end
@@ -175,6 +177,7 @@ defmodule Cinder.Library.KeptFileSidecarsTest do
 
       assert log =~ "kept existing"
       assert_receive {:scanned, :tv}
+      LibraryStubs.await_subtitle_tasks()
       assert File.read!(dest) == "held"
       refute File.exists?(Path.rootname(dest) <> ".fr.srt")
     end
@@ -284,6 +287,7 @@ defmodule Cinder.Library.KeptFileSidecarsTest do
 
         # Positive anchor: the commit ran its effects, so the empty lists are not vacuous.
         assert_receive {:scanned, :movies}
+        LibraryStubs.await_subtitle_tasks()
         assert quality.sidecar_subtitles == []
         assert sidecars_on_disk(dest) == []
       end
