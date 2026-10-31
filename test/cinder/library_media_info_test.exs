@@ -313,10 +313,20 @@ defmodule Cinder.LibraryMediaInfoTest do
     end)
 
     stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+    # The commit's subtitle fetch marks the recorded sidecar language, which reads the manifest.
+    stub(Cinder.Library.FilesystemMock, :read, fn _ -> {:error, :enoent} end)
 
     assert {:ok, stage} = Library.stage_movie(movie)
     assert %{file_path: ^dest, quality: q} = StagedImport.record(stage)
-    assert :ok = commit!(stage)
+
+    # The Fetcher's task logs a crash, so the drain runs inside the capture.
+    log =
+      capture_log(fn ->
+        assert :ok = commit!(stage)
+        Cinder.LibraryStubs.await_subtitle_tasks()
+      end)
+
+    refute log =~ "subtitle fetch crashed"
 
     assert q.audio_languages == ["eng", "fre"]
     assert q.embedded_subtitles == ["eng"]
@@ -327,7 +337,6 @@ defmodule Cinder.LibraryMediaInfoTest do
     assert q.default_audio_language == "fre"
 
     assert_received {:ln, ^srt, ^sidecar_dest}
-    Cinder.LibraryStubs.await_subtitle_tasks()
   end
 
   # A French series ('original') episode with its season/series preloaded (what the TvPoller passes).
@@ -451,6 +460,8 @@ defmodule Cinder.LibraryMediaInfoTest do
     end)
 
     stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+    # The commit's subtitle fetch marks the recorded sidecar language, which reads the manifest.
+    stub(Cinder.Library.FilesystemMock, :read, fn _ -> {:error, :enoent} end)
 
     assert {:ok, stage, []} = Library.stage_episodes("/dl", [episode])
     assert [{7, ^dest, q, true}] = StagedImport.record(stage)
@@ -458,12 +469,19 @@ defmodule Cinder.LibraryMediaInfoTest do
     assert q.audio_languages == ["eng", "fre"]
     assert q.embedded_subtitles == ["eng"]
     assert q.sidecar_subtitles == ["fr"]
-    assert :ok = commit!(stage)
+
+    # The Fetcher's task logs a crash, so the drain runs inside the capture.
+    log =
+      capture_log(fn ->
+        assert :ok = commit!(stage)
+        Cinder.LibraryStubs.await_subtitle_tasks()
+      end)
+
+    refute log =~ "subtitle fetch crashed"
 
     assert_received {:ln, ^source, candidate}
     assert_received {:ln, ^candidate, ^dest}
 
     assert_received {:ln, ^srt, ^sidecar_dest}
-    Cinder.LibraryStubs.await_subtitle_tasks()
   end
 end

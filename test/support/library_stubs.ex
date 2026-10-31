@@ -31,15 +31,18 @@ defmodule Cinder.LibraryStubs do
   end
 
   @doc """
-  Returns once the shared `Cinder.Subtitles.Fetcher` has run every subtitle task queued so far.
-  It runs one cast at a time in mailbox order, so a synchronous round-trip waits for them. Each
-  committed movie or episode file queues one (`Cinder.Subtitles.fetch_after_import/4`), which marks the
-  release's sidecars in the subtitle manifest and then fetches the missing languages.
+  Returns `:ok` once the shared `Cinder.Subtitles.Fetcher` has run every subtitle task queued so
+  far. It runs one cast at a time in mailbox order, so a synchronous round-trip waits for them.
+  Each committed movie or episode file queues one (`Cinder.Subtitles.fetch_after_import/4`),
+  which marks the release's sidecars in the subtitle manifest and then fetches the missing
+  languages.
 
   The round-trip waits `Cinder.Test.DiskTask.timeout_ms/0` (30 s), then exits with a timeout.
   A task whose test points a library root at a real directory publishes its sidecar and manifest
   through a run of Disk subprocesses, and on a loaded runner they outlasted the 5 s
-  `:sys.get_state/1` default (#1007).
+  `:sys.get_state/1` default (#1007, #1028). `Cinder.DataCase.setup_sandbox/1` runs this at the
+  end of every test, and `test/code_health/fetcher_wait_test.exs` fails a test that waits on the
+  Fetcher another way.
   """
   def await_subtitle_tasks do
     _state = :sys.get_state(Cinder.Subtitles.Fetcher, DiskTask.timeout_ms())

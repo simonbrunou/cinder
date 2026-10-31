@@ -5,6 +5,7 @@ defmodule Cinder.Subtitles.SweeperTest do
   # see the per-test Mox expectations set up here.
   use Cinder.DataCase, async: false
 
+  import ExUnit.CaptureLog
   import Mox
   import Cinder.CatalogFixtures
 
@@ -196,6 +197,8 @@ defmodule Cinder.Subtitles.SweeperTest do
       ])
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:error, :enoent} end)
+    # After the empty provider result, the local fallback looks for the episode's folder.
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
 
     expect(Cinder.Subtitles.ProviderMock, :search, fn criteria ->
       send(parent, {:searched, criteria})
@@ -203,8 +206,9 @@ defmodule Cinder.Subtitles.SweeperTest do
     end)
 
     {:ok, pid} = start_supervised({Sweeper, name: :sweeper_test})
-    assert :ok = Sweeper.poll(pid)
+    log = capture_log(fn -> assert :ok = Sweeper.poll(pid) end)
     assert_receive {:searched, %{tmdb_id: 209_867, season: 2, episode: 1}}
+    refute log =~ "subtitle fetch crashed"
   end
 
   # A committed subtitle is published through the real rooted helper, so the video sits in a real

@@ -12,6 +12,7 @@ defmodule Cinder.Download.CleanerTest do
   alias Cinder.Catalog.{Episode, Grab}
   alias Cinder.Download.{Cleaner, ClientMock, Intent, SabnzbdClientMock, TvPoller}
   alias Cinder.Library.StagedImport
+  alias Cinder.LibraryStubs
   alias Cinder.Test.DiskTask
 
   import Cinder.CatalogFixtures
@@ -316,7 +317,7 @@ defmodule Cinder.Download.CleanerTest do
 
       # The Fetcher runs one job at a time, so this returns once the import's subtitle fetch is
       # done, while the test still owns the database connection.
-      :sys.get_state(Cinder.Subtitles.Fetcher)
+      LibraryStubs.await_subtitle_tasks()
     end
 
     test "still leaves a completed torrent below its limits alone" do

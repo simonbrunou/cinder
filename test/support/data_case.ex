@@ -65,13 +65,23 @@ defmodule Cinder.DataCase do
   end
 
   @doc """
-  Sets up the sandbox based on the test tags.
+  Sets up the sandbox based on the test tags, and drains the shared `Cinder.Subtitles.Fetcher`
+  when the test ends.
 
   Raises before any checkout when `check_timeout_tag!/1` refuses the tags.
+
+  Every committed import queues a subtitle fetch on the Fetcher, and most tests that commit never
+  wait for it. Left queued, the fetch ran inside a later test, which could have turned subtitle
+  languages on and stubbed the mocks it calls (#685, #1028). The drain is registered after the
+  checkout, and ExUnit runs `on_exit` callbacks last-registered first, so it runs before the
+  sandbox owner stops and a draining fetch can still read the database. The test's Mox stubs are
+  gone by then, so a test whose fetch calls a mock still awaits it in its own body
+  (docs/agents/testing.md).
   """
   def setup_sandbox(tags) do
     check_timeout_tag!(tags)
     checkout_sandbox(tags)
+    on_exit(&Cinder.LibraryStubs.await_subtitle_tasks/0)
   end
 
   defp checkout_sandbox(%{unboxed: true}) do

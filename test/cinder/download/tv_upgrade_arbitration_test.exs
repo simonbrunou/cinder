@@ -511,6 +511,10 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
 
       start_supervised!({TvPoller, interval: 60_000})
       assert :ok = TvPoller.poll()
+      # E05's recorded sidecar language makes its subtitle task read the manifest. Run it while
+      # `real_tv_library/1` still points `:filesystem` at Disk, not after its `on_exit` restores
+      # the mock (#1028).
+      LibraryStubs.await_subtitle_tasks()
 
       # Imported, not parked. `poll/0` runs the import inside `isolate/2`, which swallows a raise
       # and still returns `:ok` — and every assertion below is an "unchanged" one, so without this

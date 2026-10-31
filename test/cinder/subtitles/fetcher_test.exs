@@ -3,8 +3,10 @@ defmodule Cinder.Subtitles.FetcherTest do
   # mutates the shared OpenSubtitles :languages config (blank by default so other suites don't fetch).
   use Cinder.DataCase, async: false
 
+  import ExUnit.CaptureLog
   import Mox
 
+  alias Cinder.LibraryStubs
   alias Cinder.Subtitles
 
   # Global mode: each fetch runs on its own isolated task, not the test process, so it must see
@@ -63,7 +65,7 @@ defmodule Cinder.Subtitles.FetcherTest do
     send(worker_2, :release)
 
     # Drain before the next test resets Mox's global stubs out from under a lingering fetch.
-    :sys.get_state(Cinder.Subtitles.Fetcher)
+    LibraryStubs.await_subtitle_tasks()
   end
 
   test "a crashing fetch doesn't kill the Fetcher; the next queued fetch still runs" do
@@ -75,13 +77,18 @@ defmodule Cinder.Subtitles.FetcherTest do
       %{tmdb_id: 2} -> send(test, :second_ran) && {:ok, []}
     end)
 
-    enqueue(1, "/lib/a.mkv")
-    enqueue(2, "/lib/b.mkv")
+    # The Fetcher's task logs the crash, so the drain runs inside the capture: it returns once
+    # both fetches are done.
+    log =
+      capture_log(fn ->
+        enqueue(1, "/lib/a.mkv")
+        enqueue(2, "/lib/b.mkv")
+        LibraryStubs.await_subtitle_tasks()
+      end)
 
-    assert_receive :second_ran
+    assert_received :second_ran
     assert Process.alive?(fetcher)
-
-    # Drain before the next test resets Mox's global stubs out from under a lingering fetch.
-    :sys.get_state(Cinder.Subtitles.Fetcher)
+    assert log =~ "subtitle fetch crashed for /lib/a.mkv (en)"
+    assert log =~ "provider boom"
   end
 end
