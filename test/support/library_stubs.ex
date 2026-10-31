@@ -12,6 +12,7 @@ defmodule Cinder.LibraryStubs do
 
   alias Cinder.Library.{ImportStage, StagedImport}
   alias Cinder.Repo
+  alias Cinder.Test.DiskTask
 
   @doc """
   Commits `staged` the way a catalog writer does: one transaction that marks every staged file
@@ -34,8 +35,16 @@ defmodule Cinder.LibraryStubs do
   It runs one cast at a time in mailbox order, so a synchronous round-trip waits for them. Each
   committed movie or episode file queues one (`Cinder.Subtitles.fetch_after_import/4`), which marks the
   release's sidecars in the subtitle manifest and then fetches the missing languages.
+
+  The round-trip waits `Cinder.Test.DiskTask.timeout_ms/0` (30 s), then exits with a timeout.
+  A task whose test points a library root at a real directory publishes its sidecar and manifest
+  through a run of Disk subprocesses, and on a loaded runner they outlasted the 5 s
+  `:sys.get_state/1` default (#1007).
   """
-  def await_subtitle_tasks, do: :sys.get_state(Cinder.Subtitles.Fetcher)
+  def await_subtitle_tasks do
+    _state = :sys.get_state(Cinder.Subtitles.Fetcher, DiskTask.timeout_ms())
+    :ok
+  end
 
   @doc """
   The JSON of a subtitle manifest for `video` that tracks each language in `tracks`

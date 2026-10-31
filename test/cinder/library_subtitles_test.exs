@@ -391,9 +391,13 @@ defmodule Cinder.LibrarySubtitlesTest do
     assert quality.sidecar_subtitles == ["en"]
     assert :ok = commit!(stage)
 
-    assert_receive :movie_scan
-    assert_receive :subtitle_search
-    assert_receive :movie_scan
+    # The first scan comes from the commit itself; the search and the second scan come from the
+    # Fetcher's task, which publishes through real Disk subprocesses and outlasted a 5 s
+    # assert_receive on a loaded runner (#1007). Drain the Fetcher, then read the mailbox.
+    LibraryStubs.await_subtitle_tasks()
+    assert_received :movie_scan
+    assert_received :subtitle_search
+    assert_received :movie_scan
 
     assert Enum.any?(Agent.get(fs, &Map.get(&1, :writes, [])), fn {_path, content} ->
              content =~ "release_sidecar"
@@ -577,9 +581,12 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     assert quality.sidecar_subtitles == ["en"]
     commit_episodes!(staged)
-    assert_receive :tv_scan
-    assert_receive :subtitle_search
-    assert_receive :tv_scan
+
+    # Drained like the movie test above (#1007).
+    LibraryStubs.await_subtitle_tasks()
+    assert_received :tv_scan
+    assert_received :subtitle_search
+    assert_received :tv_scan
 
     assert Enum.any?(Agent.get(fs, &Map.get(&1, :writes, [])), fn {_path, content} ->
              content =~ "release_sidecar"

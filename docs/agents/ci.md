@@ -89,12 +89,7 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   the production bound, to give a slow start on a loaded runner headroom. In a test that does not
   set its own bound, a Disk timeout such as `{:error, :rooted_helper_timeout}` therefore means
   the subprocess did not answer for 20 s: look for a hang, or a runner far more loaded than
-  usual, before calling it a flake. One tight-bound test still fails now and then on diffs that
-  do not touch it: `Cinder.LibrarySubtitlesTest` "folder movie import passes linked sidecars to
-  the movies subtitle task", whose first `assert_receive :movie_scan` gave up after 5 s on a
-  1060 s run, and a scan reached the mock only after the test had ended. #1007 leaves the cause
-  open: the load, or the shared Fetcher that **Shared state** names. Judge such a failure as
-  **Flake** says.
+  usual, before calling it a flake.
 - **Shared state.** Check order-dependent state before blaming a flake or a new test: the
   always-on `:login_pair` bucket of `Cinder.Accounts.IpRateLimiter`, keyed on the IP and the
   name (#686), and the suite-wide `Cinder.Subtitles.Fetcher` consuming another module's Mox
