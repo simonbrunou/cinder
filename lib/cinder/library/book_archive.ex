@@ -57,6 +57,10 @@ defmodule Cinder.Library.BookArchive do
     extraction from the same, untouched original archive — not a second, differently-named
     artifact competing with the first as a loose candidate file.
 
+  A wipe that fails (a leftover the import cannot remove, `eacces` or `ebusy`) ends the attempt
+  with `{:error, posix}` before any extraction, so the book poller spends its retry budget on it
+  and then holds the target. The wipe goes through the configured `Cinder.Library.Filesystem`.
+
   Each resolver's own directory walk excludes this exact reserved name (`scratch_dir_name/0`)
   before `archive_candidate/1` sees the folder, so neither a fresh nor an orphaned instance is
   ever mistaken for a second, unrelated book file.
@@ -187,11 +191,16 @@ defmodule Cinder.Library.BookArchive do
   defp safe_archive_source(archive_path),
     do: Library.safe_source_file(archive_path, @extractable_extensions)
 
+  # `rm_rf/1` reports a failure as `{:error, posix, path}`; the attempt ends with the two-tuple
+  # the `with` above and the poller's import-result handling match (#973).
   defp reset_scratch_dir(scratch_dir) do
-    with {:ok, _removed} <- File.rm_rf(scratch_dir) do
-      File.mkdir_p(scratch_dir)
+    case fs().rm_rf(scratch_dir) do
+      {:ok, _removed} -> File.mkdir_p(scratch_dir)
+      {:error, reason, _path} -> {:error, reason}
     end
   end
+
+  defp fs, do: Application.fetch_env!(:cinder, :filesystem)
 
   defp extract(archive_path, scratch_dir, opts) do
     extension = extension(archive_path)

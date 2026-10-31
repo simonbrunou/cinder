@@ -6,7 +6,10 @@ defmodule Cinder.Library.BookArchiveTest do
   """
   use ExUnit.Case, async: false
 
+  import Mox
+
   alias Cinder.Library.BookArchive
+  alias Cinder.Library.Filesystem.Disk
 
   @moduletag :tmp_dir
 
@@ -229,6 +232,26 @@ defmodule Cinder.Library.BookArchiveTest do
       assert {:ok, ["book.epub"], :epub} = result
     end
 
+    # #973: `File.rm_rf/1` reports a failure as `{:error, posix, path}`, a three-tuple the `with`
+    # had no clause for, so a leftover scratch directory that cannot be removed raised
+    # `WithClauseError` inside the book poller on every tick. CI runs as root, where no chmod
+    # makes the removal fail, so the failure goes through the `Filesystem` behaviour instead.
+    test "a scratch directory that cannot be removed ends the attempt with its posix reason",
+         %{downloads: downloads} do
+      dir = Path.join(downloads, "release")
+      File.mkdir_p!(dir)
+      archive = Path.join(dir, "book.zip")
+      :zip.create(String.to_charlist(archive), [{~c"book.epub", "epub bytes"}])
+      File.mkdir_p!(Path.join(dir, ".cinder-extract"))
+      refuse_scratch_removal()
+
+      result =
+        BookArchive.extract_and_resolve(archive, fn _scratch_dir -> flunk("resolve_fun ran") end)
+
+      assert_received {:scratch_removal_refused, _path}
+      assert result == {:error, :eacces}
+    end
+
     test "a corrupt archive is refused, containment error passed through", %{downloads: downloads} do
       dir = Path.join(downloads, "release")
       File.mkdir_p!(dir)
@@ -313,5 +336,22 @@ defmodule Cinder.Library.BookArchiveTest do
 
       assert {:ok, _scratch_dir, :epub} = result
     end
+  end
+
+  # Refuses the removal of every scratch directory with `eacces`, the way `File.rm_rf/1` reports
+  # it, and tells the test process it fired. Every other call reaches the real disk.
+  defp refuse_scratch_removal do
+    parent = self()
+    Cinder.ConfigCase.put_env(:filesystem, Cinder.Library.FilesystemMock)
+    stub_with(Cinder.Library.FilesystemMock, Disk)
+
+    stub(Cinder.Library.FilesystemMock, :rm_rf, fn path ->
+      if Path.basename(path) == BookArchive.scratch_dir_name() do
+        send(parent, {:scratch_removal_refused, path})
+        {:error, :eacces, path}
+      else
+        Disk.rm_rf(path)
+      end
+    end)
   end
 end

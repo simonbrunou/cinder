@@ -20,6 +20,8 @@ defmodule Cinder.Download.BookPollerTest do
   alias Cinder.Catalog
   alias Cinder.Download
   alias Cinder.Download.{BookPoller, Intent}
+  alias Cinder.Library.BookArchive
+  alias Cinder.Library.Filesystem.Disk
   alias Cinder.Repo
   alias Cinder.Test.FakeUnrar
   alias Ecto.Adapters.SQL.Sandbox
@@ -825,6 +827,42 @@ defmodule Cinder.Download.BookPollerTest do
       assert Repo.all(BookFile) == []
       assert File.ls!(books) == []
     end
+
+    # #973: the refused removal raised `WithClauseError`, which `isolate/2` logged without
+    # touching the grab, so the target retried forever and never held. The attempt count is the
+    # proof the import result was handled: a missing log line would also fit the swallowed raise.
+    test "a leftover scratch directory that cannot be removed spends the budget, then holds",
+         ctx do
+      %{grab: grab, target: target, books: books, release_dir: release_dir} =
+        downloading(ctx, "book.epub")
+
+      File.rm!(Path.join(release_dir, "book.epub"))
+
+      :zip.create(String.to_charlist(Path.join(release_dir, "release.zip")), [
+        {~c"The Dispossessed.epub", epub_bytes()}
+      ])
+
+      File.mkdir_p!(Path.join(release_dir, BookArchive.scratch_dir_name()))
+      refuse_scratch_removal()
+
+      complete_download(release_dir)
+      capture_log(fn -> poll!() end)
+
+      assert_received {:scratch_removal_refused, _path}
+      assert Repo.reload!(target).status == :monitored
+      assert Repo.reload!(grab).import_attempts == 1
+
+      grab |> Repo.reload!() |> Ecto.Changeset.change(import_attempts: 9) |> Repo.update!()
+      capture_log(fn -> poll!() end)
+
+      assert_received {:scratch_removal_refused, _path}
+      target = Repo.reload!(target)
+      assert target.status == :held
+      assert target.hold_reason =~ "eacces"
+      refute Repo.get(BookGrab, grab.id)
+      assert Repo.all(BookFile) == []
+      assert File.ls!(books) == []
+    end
   end
 
   describe "idempotency" do
@@ -1339,6 +1377,24 @@ defmodule Cinder.Download.BookPollerTest do
     saved = Application.get_env(:cinder, Cinder.Download.StallReaper, [])
     Application.put_env(:cinder, Cinder.Download.StallReaper, Keyword.merge(saved, opts))
     on_exit(fn -> Application.put_env(:cinder, Cinder.Download.StallReaper, saved) end)
+  end
+
+  # Refuses the removal of every book-archive scratch directory with `eacces`, the way
+  # `File.rm_rf/1` reports it, and tells the test process it fired. Every other call reaches the
+  # real disk. Call it after `downloading/2`, whose library setup selects `Disk` itself.
+  defp refuse_scratch_removal do
+    parent = self()
+    Cinder.ConfigCase.put_env(:filesystem, Cinder.Library.FilesystemMock)
+    stub_with(Cinder.Library.FilesystemMock, Disk)
+
+    stub(Cinder.Library.FilesystemMock, :rm_rf, fn path ->
+      if Path.basename(path) == BookArchive.scratch_dir_name() do
+        send(parent, {:scratch_removal_refused, path})
+        {:error, :eacces, path}
+      else
+        Disk.rm_rf(path)
+      end
+    end)
   end
 
   defp complete_download(release_dir, remote_id \\ "remote-1") do
