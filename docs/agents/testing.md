@@ -64,6 +64,12 @@
   and #1005 each added one there, and the second to merge needed a `main` merge, a full
   `mix test` and a second CI run. `Cinder.CodeHealth.FenceFilesTest` fails when
   `code_health_test.exs` gains a test.
+- A fence matches the scanned language's syntax, not its lines or substrings. An Elixir fence
+  walks the AST from `Code.string_to_quoted/1` (`code_health_test.exs`), and
+  `test/code_health/ci_browser_wait_test.exs` tokenizes the Python CI scripts. Give it fixtures
+  for the pattern split across lines and for the pattern inside a comment and inside a string.
+  On #1039, a per-line fence flagged prose, then a trailing comment, and missed a call split
+  across lines: two re-check rounds, about 40 minutes, before it tokenized.
 - Once a full `mix test` passed on the branch, a review fix commit that changes only Markdown
   under `docs/agents/` or in `AGENTS.md`, or ordinary `#` comments in `.ex` and `.exs` files,
   needs no second full suite before its push. Run the alias's compile, format and Credo gates
