@@ -168,8 +168,11 @@ That is accepted because every name they create is one only Cinder writes: a ran
 `write/3,4` workspace and its staged file, the sync backup `.<sidecar>.cinder-sync-original`). A
 second Cinder call on one name resolves the same branch while the anchor or parent stays put: the
 anchor's for `mkdir_near` (`mergerfs_near_relative`), the parent directory's for the file create.
-So it collides there instead of on another branch. `Disk.write/2` on a missing file creates the
-same way; nothing in `lib/` calls it today. A caller that creates a name another writer may also
+So it collides there instead of on another branch. A `mkdir_near` that loses there fails to rename
+its private `.<name>.cinder-create-<hex>` directory onto the name, removes that directory, and
+still reports the post-effect `EEXIST` (#996). It removes the directory after any failed rename,
+but only while the private name still holds the one it created and the directory is empty.
+`Disk.write/2` on a missing file creates the same way; nothing in `lib/` calls it today. A caller that creates a name another writer may also
 create (a sidecar's own name, an NFO) publishes through `rename_exclusive/2`, or first adds an
 undo that clears its container from the name, as `move_back_shadowed` does for
 `rename_exclusive`. A second Cinder instance on the pool is also such a writer: its

@@ -836,6 +836,91 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     end
   end
 
+  # Issue #996: two mkdir_near calls on one name resolve the same branch, so the one that renames
+  # second fails there, after it created its private directory. The shim interferes right before
+  # that rename.
+  describe "on mergerfs, a mkdir_near whose rename fails" do
+    @describetag :tmp_dir
+
+    test "removes its private directory when another call takes the name first", %{
+      root: root,
+      tmp: tmp
+    } do
+      %{folder: folder, video: video, workspace: workspace} =
+        workspace_race!(root, tmp, :name_taken)
+
+      assert {:error, {:effect_committed, "mkdir_near", %{"reason" => "EEXIST"}}} =
+               Disk.mkdir_exclusive_near(workspace, video, 0o700)
+
+      assert Enum.sort(File.ls!(folder)) == Enum.sort([Path.basename(workspace), "Movie.mkv"])
+      assert File.read!(Path.join(workspace, "winner")) == "winner"
+    end
+
+    test "removes its private directory whatever the rename's error", %{root: root, tmp: tmp} do
+      %{folder: folder, video: video, workspace: workspace} =
+        workspace_race!(root, tmp, :create_rename_fails)
+
+      assert {:error, {:effect_committed, "mkdir_near", %{"reason" => "EIO"}}} =
+               Disk.mkdir_exclusive_near(workspace, video, 0o700)
+
+      assert File.ls!(folder) == ["Movie.mkv"]
+    end
+
+    test "keeps a private name that no longer holds the directory it created", %{
+      root: root,
+      tmp: tmp
+    } do
+      %{folder: folder, video: video, workspace: workspace} =
+        workspace_race!(root, tmp, :name_taken_private_replaced)
+
+      assert {:error, {:effect_committed, "mkdir_near", %{"reason" => "EEXIST"}}} =
+               Disk.mkdir_exclusive_near(workspace, video, 0o700)
+
+      assert [private] = private_directories(folder, workspace)
+      assert File.ls!(private) == []
+      assert File.ls!(Path.join(folder, "moved-original")) == []
+
+      assert Enum.sort(File.ls!(folder)) ==
+               Enum.sort([
+                 Path.basename(workspace),
+                 Path.basename(private),
+                 "moved-original",
+                 "Movie.mkv"
+               ])
+    end
+
+    test "keeps its private directory once something was written into it", %{
+      root: root,
+      tmp: tmp
+    } do
+      %{folder: folder, video: video, workspace: workspace} =
+        workspace_race!(root, tmp, :name_taken_private_filled)
+
+      assert {:error, {:effect_committed, "mkdir_near", %{"reason" => "EEXIST"}}} =
+               Disk.mkdir_exclusive_near(workspace, video, 0o700)
+
+      assert [private] = private_directories(folder, workspace)
+      assert File.read!(Path.join(private, "kept")) == "kept"
+      assert File.read!(Path.join(workspace, "winner")) == "winner"
+    end
+  end
+
+  defp workspace_race!(root, tmp, interfere) do
+    folder = Path.join(root, "Movie")
+    video = Path.join(folder, "Movie.mkv")
+    workspace = Path.join(folder, ".cinder-subtitle-sync-cas-#{String.duplicate("c", 22)}")
+    File.mkdir_p!(folder)
+    File.write!(video, "video")
+    mergerfs_rename_shim!(root, tmp, workspace, interfere: interfere)
+    %{folder: folder, video: video, workspace: workspace}
+  end
+
+  defp private_directories(folder, workspace) do
+    Path.wildcard(Path.join(folder, ".#{Path.basename(workspace)}.cinder-create-*"),
+      match_dot: true
+    )
+  end
+
   defp absent_sidecar!(root, tmp) do
     folder = Path.join(root, "Movie")
     video = Path.join(folder, "Movie.mkv")
@@ -879,7 +964,12 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
   # back: another file replaces `dest` right after the rename onto it (`:after_rename`) or
   # right before the move back (`:before_move_back`), or the move back's directory sync fails
   # (`:unsynced_move_back`); each rename and directory sync the helper then tries is logged to
-  # `effects`. The renames and proofs are the real helper's.
+  # `effects`. For `mkdir_near`, `interfere` acts right before its rename onto `dest`: another
+  # call creates `dest` holding a `winner` file (`:name_taken`), and then also moves the private
+  # directory aside to `moved-original` and creates an empty one at its name
+  # (`:name_taken_private_replaced`), or writes a `kept` file into it
+  # (`:name_taken_private_filled`); or the rename fails with `EIO` (`:create_rename_fails`). The
+  # renames and proofs are the real helper's.
   defp mergerfs_rename_shim!(root, tmp, dest, opts \\ []) do
     branch = Keyword.get(opts, :branch, root)
     branch_b = Path.join(tmp, "branch-b")
@@ -952,8 +1042,30 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
             file.write("replacement")
         os.replace(replacement, DEST)
 
-    def fail_sync():
+    def fail_eio():
         raise OSError(5, "EIO")
+
+    def private_directory():
+        parent = posixpath.dirname(DEST)
+        prefix = "." + posixpath.basename(DEST) + ".cinder-create-"
+        [name] = [name for name in os.listdir(parent) if name.startswith(prefix)]
+        return posixpath.join(parent, name)
+
+    def take_name():
+        os.mkdir(DEST)
+        with open(posixpath.join(DEST, "winner"), "w", encoding="utf-8") as file:
+            file.write("winner")
+
+    def take_name_and_replace_private():
+        take_name()
+        private = private_directory()
+        os.rename(private, posixpath.join(posixpath.dirname(DEST), "moved-original"))
+        os.mkdir(private)
+
+    def take_name_and_fill_private():
+        take_name()
+        with open(posixpath.join(private_directory(), "kept"), "w", encoding="utf-8") as file:
+            file.write("kept")
 
     def log_effect(name, effect):
         real = namespace[name]
@@ -970,7 +1082,15 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     elif INTERFERE == "before_move_back":
         on_call("rename_with_flags", 2, replace_dest)
     elif INTERFERE == "unsynced_move_back":
-        on_call("sync_parents", 2, fail_sync)
+        on_call("sync_parents", 2, fail_eio)
+    elif INTERFERE == "name_taken":
+        on_call("rename_noreplace", 1, take_name)
+    elif INTERFERE == "name_taken_private_replaced":
+        on_call("rename_noreplace", 1, take_name_and_replace_private)
+    elif INTERFERE == "name_taken_private_filled":
+        on_call("rename_noreplace", 1, take_name_and_fill_private)
+    elif INTERFERE == "create_rename_fails":
+        on_call("rename_noreplace", 1, fail_eio)
 
     if INTERFERE is not None:
         log_effect("rename_with_flags", "rename")

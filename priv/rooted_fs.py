@@ -1057,6 +1057,7 @@ def mkdir_near(args):
             try:
                 rename_noreplace(parent, private, basename)
             except OSError as exc:
+                remove_unnamed_directory(parent, private, identity)
                 fail("mkdir_near", "post_effect", exc)
                 return
             sync_parents(parent)
@@ -1071,6 +1072,24 @@ def mkdir_near(args):
         emit({"ok": "mkdir_near"})
     finally:
         os.close(parent)
+
+
+def remove_unnamed_directory(parent, private, identity):
+    """Best-effort removal of the private directory a failed mkdir_near rename leaves (#996).
+
+    The rename's error is what mkdir_near reports either way, so a failure here is ignored:
+    the directory stays, or its removal may not be synced. It is removed only while the
+    private name still holds the identity recorded right after mkdir. The rmdir resolves the NAME, so what makes it safe is the
+    128-bit unguessable private name, as for remove_proven_tombstone, plus rmdir refusing a
+    non-empty directory.
+    """
+    try:
+        if identity_at(parent, private) != identity:
+            return
+        os.rmdir(private, dir_fd=parent)
+        os.fsync(parent)
+    except OSError:
+        pass
 
 
 def chmod(args):
