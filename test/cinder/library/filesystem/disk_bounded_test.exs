@@ -203,7 +203,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     root = library_root!(tmp)
     pidfile = Path.join(tmp, "sync_parent.pid")
     marker = Path.join(tmp, "sync_parent_survived")
-    hanging_sync_parent_helper!(tmp, pidfile, marker)
+    fake_python3!(tmp, pidfile, marker)
     Application.put_env(:cinder, :disk_subprocess_timeout_ms, @bound_ms)
 
     path = Path.join(root, "subtitle.srt")
@@ -266,51 +266,42 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     Application.put_env(:cinder, :rooted_filesystem_helper, helper)
   end
 
-  # Dispatches on `sys.argv[1]` like the real `rooted_fs.py`: `hold` genuinely opens the target
-  # for read/write and emits a real fd (mirroring `open_rooted_bound/4`'s "write" mode) so
-  # `Disk.write/2`'s own `File.write/2`/`sync_file/1` through the `/proc/<pid>/fd/<n>` path
-  # succeed normally; `sync_parent` — the one call this test exercises — writes its own pid,
-  # sleeps past the configured bound, then writes `marker` and exits, never emitting the real
-  # helper's JSON result line.
-  defp hanging_sync_parent_helper!(tmp, pidfile, marker) do
-    helper = Path.join(tmp, "hanging_sync_parent_helper.py")
+  # A `/bin/sh` script first on `PATH` as `python3`, so both of `Disk.write/2`'s spawns skip
+  # Python's startup: on the loaded runner it missed the 1 s bound in each of them (#1024), and a
+  # `/bin/sh` start costs about a sixteenth of a Python one. `Disk` passes the helper path first,
+  # which the script ignores, and it dispatches on the operation like the real `rooted_fs.py`.
+  # `hold` opens the target read-write on fd 3 and emits it, so `Disk.write/2` writes and fsyncs
+  # through `/proc/<pid>/fd/3`, then waits on stdin with a builtin loop that forks no child.
+  # `sync_parent`, the call this test times out, writes its own pid, sleeps past the bound, then
+  # writes `marker`, never emitting the real helper's JSON result line. Any other operation fails
+  # and never reaches the real `python3`, so another caller that lands in the window shows up.
+  defp fake_python3!(tmp, pidfile, marker) do
+    bin_dir = Path.join(tmp, "bin")
+    File.mkdir_p!(bin_dir)
+    path = Path.join(bin_dir, "python3")
 
-    File.write!(helper, """
-    import errno
-    import json
-    import os
-    import sys
-    import time
-
-    def emit(payload):
-        sys.stdout.write(json.dumps(payload, separators=(",", ":")) + "\\n")
-        sys.stdout.flush()
-
-    def hold(root, relative, mode):
-        fd = os.open(
-            os.path.join(root, relative),
-            os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
-        )
-        emit({"ok": {"fd": fd}})
-        sys.stdin.buffer.read()
-        os.close(fd)
-
-    def hanging_sync_parent():
-        with open(#{inspect(pidfile)}, "w") as f:
-            f.write(str(os.getpid()))
-        time.sleep(3)
-        with open(#{inspect(marker)}, "w") as f:
-            f.write("")
-
-    if sys.argv[1] == "hold" and len(sys.argv) == 5:
-        hold(sys.argv[2], sys.argv[3], sys.argv[4])
-    elif sys.argv[1] == "sync_parent" and len(sys.argv) == 4:
-        hanging_sync_parent()
-    else:
-        raise OSError(errno.EINVAL, "invalid rooted operation")
+    File.write!(path, """
+    #!/bin/sh
+    case "$2" in
+      hold)
+        exec 3<>"$3/$4"
+        echo '{"ok":{"fd":3}}'
+        while read -r line; do :; done
+        ;;
+      sync_parent)
+        echo $$ > #{shell_quote(pidfile)}
+        sleep 3
+        touch #{shell_quote(marker)}
+        ;;
+      *)
+        echo "fake python3: unexpected operation $2" >&2
+        exit 1
+        ;;
+    esac
     """)
 
-    Application.put_env(:cinder, :rooted_filesystem_helper, helper)
+    File.chmod!(path, 0o755)
+    System.put_env("PATH", bin_dir <> ":" <> System.get_env("PATH"))
   end
 
   # Emits stdout continuously, as fast as CPython can write, so a fixed poll-tick supervisor
