@@ -88,7 +88,8 @@ Do the same for a PR whose diff touches `CHANGELOG.md` even without a conflict, 
 entry under `[Unreleased]` merges cleanly and turns `main` red.
 
 The production deploy that the merge triggers is accepted. Ask first only when the PR drops or
-rewrites stored data (a destructive migration, a backfill that overwrites rows).
+rewrites stored data (a destructive migration, a backfill that overwrites rows). After the merge,
+check that deploy as the `ship-cinder-pr-on-forgejo` skill's "Verify the prod deploy" says.
 
 ## Agent skills
 
