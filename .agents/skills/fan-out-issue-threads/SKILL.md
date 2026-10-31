@@ -56,7 +56,11 @@ landed.
 
 - A lane is a sequence of issues that run one after another. Lanes run in parallel.
 - Put issues in one lane when they edit the same files or one blocks the other, and order each
-  lane by its blocking edges.
+  lane by its blocking edges. Read what each issue changes from its Agent Brief's **Desired
+  behavior** and **Key interfaces**, not only from the paths its body names, and plan an issue
+  added mid-run against the threads still running. On 2026-10-31, #1007 and #1028 ran in
+  parallel and both widened `Cinder.LibraryStubs.await_subtitle_tasks/0`. The second to merge
+  spent 23 minutes on the conflict, a full `mix test` and a second CI run.
 - Keep within the thread cap of the global CLAUDE.md's "T3 threads" section. The shared CI runner
   caps each repo further. Run at most two diversif threads, which take turns on E2E through
   diversif's `scripts/wait-e2e-slot.sh`, until homelab-stacks#254 gives E2E its own runner
