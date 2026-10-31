@@ -298,7 +298,7 @@ defmodule Cinder.Download.CleanerTest do
 
       start_supervised!({TvPoller, interval: 60_000})
       importing = Task.async(&TvPoller.poll/0)
-      assert_receive {:filesystem_barrier, pid, ref, :ln, _sidecar}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :ln, _sidecar}, DiskTask.timeout_ms()
 
       # The import has deleted the grab and is about to link the release's subtitle.
       refute Repo.get(Grab, grab.id)

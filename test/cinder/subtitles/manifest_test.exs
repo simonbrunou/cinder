@@ -258,7 +258,10 @@ defmodule Cinder.Subtitles.ManifestTest do
     end)
 
     task = Task.async(fn -> Manifest.put(video, "hash", "fr", "embedded") end)
-    assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, temporary}, 15_000
+
+    assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, temporary},
+                   DiskTask.timeout_ms()
+
     backup = parent <> ".old"
     File.rename!(parent, backup)
     File.ln_s!(outside, parent)
@@ -294,7 +297,10 @@ defmodule Cinder.Subtitles.ManifestTest do
     on_exit(fn -> Application.delete_env(:cinder, :filesystem_barrier) end)
 
     task = Task.async(fn -> Manifest.put(video, "hash", "fr", "embedded") end)
-    assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, temporary}, 15_000
+
+    assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, temporary},
+                   DiskTask.timeout_ms()
+
     File.ln_s!(outside, temporary)
     send(pid, {ref, :continue})
     assert {:error, :eexist} = DiskTask.await(task)

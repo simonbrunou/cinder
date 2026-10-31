@@ -198,7 +198,9 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       use_barrier(%{operation: :moviehash_data, contains: Path.basename(video)})
       task = Task.async(fn -> manual(video, 0) end)
 
-      assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video},
+                     DiskTask.timeout_ms()
+
       File.write!(video, @changed_video)
       send(pid, {ref, :continue})
 
@@ -214,7 +216,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     } do
       use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-"})
       task = Task.async(fn -> manual(video, 1_000) end)
-      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
 
       assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
       assert File.read!(backup) == original
@@ -233,7 +235,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       external = String.replace(original, "One", "External edit")
       use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-"})
       task = Task.async(fn -> manual(video, 1_000) end)
-      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
       File.write!(path, external)
       send(pid, {ref, :continue})
 
@@ -260,7 +262,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       })
 
       task = Task.async(fn -> manual(video, 1_000) end)
-      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
       File.rename!(replacement, path)
       send(pid, {ref, :continue})
 
@@ -372,7 +374,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     } do
       use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-"})
       task = Task.async(fn -> manual(video, 1_000) end)
-      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
 
       fail_once(%{
         operation: :write_exclusive,
@@ -395,7 +397,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     } do
       use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-"})
       task = Task.async(fn -> manual(video, 1_000) end)
-      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
 
       fail_in_order([
         %{
@@ -426,7 +428,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       external = String.replace(original, "One", "Concurrent edit")
       use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-"})
       task = Task.async(fn -> manual(video, 1_000) end)
-      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
 
       fail_in_order([
         %{
@@ -456,7 +458,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       previous_record = Manifest.sync(Manifest.read(video), "en")
       use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-"})
       task = Task.async(fn -> manual(video, 2_000) end)
-      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
 
       fail_once(%{
         operation: :write_exclusive,
@@ -478,7 +480,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     } do
       use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-"})
       task = Task.async(fn -> manual(video, 1_000) end)
-      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
 
       fail_in_order([
         %{
@@ -504,7 +506,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     } do
       use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-"})
       task = Task.async(fn -> manual(video, 1_000) end)
-      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
       File.write!(video, @changed_video)
       send(pid, {ref, :continue})
 
@@ -522,7 +524,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     } do
       use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-"})
       task = Task.async(fn -> manual(video, 1_000) end)
-      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
       File.write!(video, @changed_video)
 
       fail_once(%{
@@ -552,7 +554,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       })
 
       task = Task.async(fn -> manual(video, 1_000) end)
-      assert_receive {:filesystem_barrier, pid, ref, :create_bound, staged}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :create_bound, staged}, DiskTask.timeout_ms()
       File.ln_s!(outside, staged)
       send(pid, {ref, :continue})
 
@@ -1387,7 +1389,10 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       })
 
       task = Task.async(fn -> replace(video, @replacement) end)
-      assert_receive {:filesystem_barrier, pid, ref, :mkdir_exclusive, _workspace}, 15_000
+
+      assert_receive {:filesystem_barrier, pid, ref, :mkdir_exclusive, _workspace},
+                     DiskTask.timeout_ms()
+
       File.write!(path, "edited")
       send(pid, {ref, :continue})
 
@@ -1401,7 +1406,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       use_barrier(%{operation: :exchange, phase: :before, contains: ".cinder-subtitle-sync-"})
 
       task = Task.async(fn -> replace(video, @replacement) end)
-      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
       File.write!(path, "edited")
       send(pid, {ref, :continue})
 
@@ -1416,7 +1421,10 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       use_barrier(%{operation: :rename_exclusive, phase: :before, contains: "cas-"})
 
       task = Task.async(fn -> replace_fr(video, @replacement) end)
-      assert_receive {:filesystem_barrier, pid, ref, :rename_exclusive, _staged}, 15_000
+
+      assert_receive {:filesystem_barrier, pid, ref, :rename_exclusive, _staged},
+                     DiskTask.timeout_ms()
+
       File.write!(target, "external")
       send(pid, {ref, :continue})
 
@@ -1436,7 +1444,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-staged"})
 
       task = Task.async(fn -> replace(video, @replacement) end)
-      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
       newer = Path.join(tmp, "newer.srt")
       File.write!(newer, "newer")
       File.rename!(newer, path)
@@ -1455,7 +1463,10 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       use_barrier(%{operation: :rename_exclusive, phase: :before, contains: "cas-"})
 
       task = Task.async(fn -> replace_fr(video, @replacement) end)
-      assert_receive {:filesystem_barrier, pid, ref, :rename_exclusive, _staged}, 15_000
+
+      assert_receive {:filesystem_barrier, pid, ref, :rename_exclusive, _staged},
+                     DiskTask.timeout_ms()
+
       File.write!(target, @replacement)
       send(pid, {ref, :continue})
 
@@ -1802,7 +1813,10 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
     capture_log(fn ->
       task = Task.async(fun)
-      assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, _manifest}, 15_000
+
+      assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, _manifest},
+                     DiskTask.timeout_ms()
+
       File.write!(path, "edited")
       send(pid, {ref, :continue})
       assert {:error, {:manifest, {:error, :eio}}} = DiskTask.await(task)
@@ -1875,7 +1889,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
     with_log(fn ->
       task = Task.async(fun)
-      assert_receive {:filesystem_barrier, pid, ref, _disposal, _displaced}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, _disposal, _displaced}, DiskTask.timeout_ms()
 
       fail_in_order(
         for descriptor <- descriptors,
@@ -1916,7 +1930,10 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   defp kill_at_barrier(fun, operation) do
     {:ok, task} = Task.start(fun)
     monitor = Process.monitor(task)
-    assert_receive {:filesystem_barrier, ^task, _ref, ^operation, paused_path}, 15_000
+
+    assert_receive {:filesystem_barrier, ^task, _ref, ^operation, paused_path},
+                   DiskTask.timeout_ms()
+
     Process.exit(task, :kill)
     assert_receive {:DOWN, ^monitor, :process, ^task, :killed}
     paused_path

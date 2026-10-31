@@ -71,7 +71,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync")
     assert has_element?(view, "#subtitle-sync-loading")
-    assert_receive {:filesystem_barrier, pid, ref, :find_files, _path}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, :find_files, _path}, DiskTask.timeout_ms()
 
     send(pid, {ref, :continue})
     render_async(view)
@@ -94,7 +94,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     })
 
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
-    assert_receive {:filesystem_barrier, pid, ref, :find_files, _path}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, :find_files, _path}, DiskTask.timeout_ms()
 
     result = fn method, offset ->
       %{
@@ -621,7 +621,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
         Sync.manual_in_scope({:movie, movie.id}, item.id, 1_000, 1.0, fingerprint)
       end)
 
-    assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video}, DiskTask.timeout_ms()
 
     update =
       Task.async(fn ->
@@ -700,7 +700,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
         view |> form("#subtitle-sync-form", params) |> render_submit()
       end)
 
-    assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video}, DiskTask.timeout_ms()
     movie |> Ecto.Changeset.change(file_path: replacement_video) |> Repo.update!()
     send(pid, {ref, :continue})
 

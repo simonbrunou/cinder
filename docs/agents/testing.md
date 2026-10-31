@@ -17,12 +17,17 @@
   needs about 15 s. When the holder reaches a Disk subprocess, as a whole `TvPoller.poll/0`
   import does, the waiter awaits with `Cinder.Test.DiskTask.await/1` instead (next bullet).
 - A test file that reaches a `Cinder.Library.Filesystem.Disk` subprocess (through Disk,
-  `stub_with(FilesystemMock, Disk)` or `Cinder.Test.BarrierFilesystem`) awaits every task with
-  `Cinder.Test.DiskTask.await/1`, which waits past the test-env Disk bound. `Task.await/1`'s 5 s
+  `stub_with(FilesystemMock, Disk)` or `Cinder.Test.BarrierFilesystem`) waits past the test-env
+  Disk bound. It awaits every task with `Cinder.Test.DiskTask.await/1`, and passes
+  `Cinder.Test.DiskTask.timeout_ms()` to every `assert_receive` of a `{:filesystem_barrier, ...}`
+  message and of any other message its task sends after a Disk call. `Task.await/1`'s 5 s
   default, and the 15 s waits it replaced, failed a slow helper start as a `Task.await` exit
-  (#1012). `test/code_health/disk_task_await_test.exs` fails a `Task.await` or
-  `Task.await_many` in a file that names `BarrierFilesystem` or `Filesystem.Disk`, except one
-  inside `catch_exit/1`, the form kept for a task the test already killed.
+  (#1012). A barrier message comes only after the Disk calls the paused task ran first, so a 5 s
+  or 15 s wait fails the same start as a missing message (#1034). Two fences scan each file that
+  names `BarrierFilesystem` or `Filesystem.Disk`. `test/code_health/disk_task_await_test.exs`
+  fails a `Task.await` or `Task.await_many`, except one inside `catch_exit/1`, the form kept for
+  a task the test already killed. `test/code_health/disk_barrier_wait_test.exs` fails a barrier
+  `assert_receive` whose timeout is not `DiskTask.timeout_ms()`. It sees only barrier messages.
 - A migration test that runs on its own `Ecto.Repo` starts it with
   `Cinder.MigrationRepoHelpers.start_repo!/2`, which waits for the repo's one connection to open.
   A statement sent right after `start_supervised!/1` queues behind that open, and on a loaded

@@ -42,7 +42,7 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
     barrier!(:open_bound, path)
 
     task = Task.async(fn -> BarrierFilesystem.open_bound(path, [:read, :raw, :binary]) end)
-    assert_receive {:filesystem_barrier, pid, ref, :open_bound, ^path}
+    assert_receive {:filesystem_barrier, pid, ref, :open_bound, ^path}, DiskTask.timeout_ms()
     swap_parent!(path, moved, outside)
     send(pid, {ref, :continue})
 
@@ -59,7 +59,7 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
     barrier!(:chmod, path)
 
     task = Task.async(fn -> BarrierFilesystem.chmod(path, 0o644) end)
-    assert_receive {:filesystem_barrier, pid, ref, :chmod, ^path}
+    assert_receive {:filesystem_barrier, pid, ref, :chmod, ^path}, DiskTask.timeout_ms()
     swap_parent!(path, moved, outside)
     send(pid, {ref, :continue})
 
@@ -83,7 +83,7 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
     barrier!(:create_bound, path)
 
     task = Task.async(fn -> BarrierFilesystem.create_bound(path, "managed") end)
-    assert_receive {:filesystem_barrier, pid, ref, :create_bound, ^path}
+    assert_receive {:filesystem_barrier, pid, ref, :create_bound, ^path}, DiskTask.timeout_ms()
     swap_parent!(path, moved, outside)
     send(pid, {ref, :continue})
 
@@ -110,7 +110,7 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
     barrier!(:exchange, staged)
 
     task = Task.async(fn -> BarrierFilesystem.exchange(staged, target) end)
-    assert_receive {:filesystem_barrier, pid, ref, :exchange, ^staged}
+    assert_receive {:filesystem_barrier, pid, ref, :exchange, ^staged}, DiskTask.timeout_ms()
     swap_parent!(target, moved, outside)
     send(pid, {ref, :continue})
 
@@ -245,7 +245,10 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     barrier!(:mkdir_exclusive, workspace)
 
     task = Task.async(fn -> AtomicFile.write(target, "new", "old", operation_id) end)
-    assert_receive {:filesystem_barrier, pid, ref, :mkdir_exclusive, ^workspace}
+
+    assert_receive {:filesystem_barrier, pid, ref, :mkdir_exclusive, ^workspace},
+                   DiskTask.timeout_ms()
+
     File.mkdir!(workspace)
     File.write!(staged, "external")
     send(pid, {ref, :continue})
@@ -270,7 +273,7 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
     barrier!(:open_bound, path)
 
     task = Task.async(fn -> BarrierFilesystem.open_bound(path, [:read, :raw, :binary]) end)
-    assert_receive {:filesystem_barrier, pid, ref, :open_bound, ^path}
+    assert_receive {:filesystem_barrier, pid, ref, :open_bound, ^path}, DiskTask.timeout_ms()
     moved_parent = approved_parent <> "-moved"
     File.rename!(approved_parent, moved_parent)
     File.ln_s!(outside_parent, approved_parent)
@@ -653,7 +656,10 @@ print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason
       barrier!(:rename_exclusive, source)
 
       task = Task.async(fn -> BarrierFilesystem.rename_exclusive(source, dest) end)
-      assert_receive {:filesystem_barrier, pid, ref, :rename_exclusive, ^source}
+
+      assert_receive {:filesystem_barrier, pid, ref, :rename_exclusive, ^source},
+                     DiskTask.timeout_ms()
+
       swap_parent!(dest, Path.join(root, "Movie.original"), outside)
       send(pid, {ref, :continue})
 

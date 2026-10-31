@@ -721,7 +721,7 @@ defmodule Cinder.Download.TvPollerTest do
     start_supervised!({TvPoller, interval: 60_000})
 
     poll = Task.async(fn -> TvPoller.poll() end)
-    assert_receive {:filesystem_barrier, pid, ref, :ln, _candidate}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, :ln, _candidate}, DiskTask.timeout_ms()
 
     # The preflight decision (mapping_status: :resolved) commits before the hardlink is even
     # attempted — so a crash mid-link never leaves a grab that looks unexamined.
@@ -1210,7 +1210,7 @@ defmodule Cinder.Download.TvPollerTest do
     start_supervised!({TvPoller, interval: 60_000})
 
     poll = Task.async(fn -> TvPoller.poll() end)
-    assert_receive {:filesystem_barrier, pid, ref, :lstat, ^source}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, :lstat, ^source}, DiskTask.timeout_ms()
     File.write!(source, "after-mutation")
     send(pid, {ref, :continue})
 
@@ -1772,7 +1772,7 @@ defmodule Cinder.Download.TvPollerTest do
     movie_pid = start_supervised!({Poller, interval: 60_000})
     import = Task.async(fn -> TvPoller.poll(tv_pid) end)
 
-    assert_receive {:filesystem_barrier, pid, ref, :cp, _candidate}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, :cp, _candidate}, DiskTask.timeout_ms()
     prepared = Enum.find(ImportStage.list(), &(&1.state == :prepared))
     assert prepared
     ImportStage.update!(prepared, %{next_attempt_at: DateTime.add(DateTime.utc_now(), -1)})
@@ -1898,7 +1898,7 @@ defmodule Cinder.Download.TvPollerTest do
     })
 
     poll = Task.async(fn -> TvPoller.poll() end)
-    assert_receive {:filesystem_barrier, pid, ref, :ln, ^dest}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, :ln, ^dest}, DiskTask.timeout_ms()
 
     assert File.read!(dest) == "candidate"
     assert File.exists?(part)
@@ -1937,7 +1937,7 @@ defmodule Cinder.Download.TvPollerTest do
     })
 
     poll = Task.async(fn -> TvPoller.poll() end)
-    assert_receive {:filesystem_barrier, pid, ref, operation, dest}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, operation, dest}, DiskTask.timeout_ms()
     assert operation == :ln
     assert File.read!(dest) == "candidate"
     assert {:ok, _} = Catalog.cancel_grab(Repo.get!(Grab, grab.id))

@@ -808,7 +808,7 @@ defmodule Cinder.Subtitles.SyncTest do
     stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
     task = Task.async(fn -> Sync.analyze_video(video) end)
 
-    assert_receive {:filesystem_barrier, pid, ref, :open_bound, ^path}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, :open_bound, ^path}, DiskTask.timeout_ms()
     File.rm!(path)
     File.ln_s!(outside, path)
     send(pid, {ref, :continue})
@@ -985,7 +985,7 @@ defmodule Cinder.Subtitles.SyncTest do
     })
 
     task = Task.async(fn -> Sync.manual(item, 1_000, 1.0, fingerprint) end)
-    assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video}, DiskTask.timeout_ms()
     File.write!(path, external)
     send(pid, {ref, :continue})
 

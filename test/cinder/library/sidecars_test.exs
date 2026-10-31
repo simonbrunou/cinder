@@ -770,7 +770,7 @@ defmodule Cinder.Library.SidecarsTest do
   end
 
   defp await_barrier(operation) do
-    assert_receive {:filesystem_barrier, pid, ref, ^operation, path}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, ^operation, path}, DiskTask.timeout_ms()
     {pid, ref, path}
   end
 end

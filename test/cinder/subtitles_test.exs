@@ -228,7 +228,7 @@ defmodule Cinder.SubtitlesTest do
                  placed: [en]
                )
 
-      assert_receive {:manifest_read_ready, first}, 15_000
+      assert_receive {:manifest_read_ready, first}, DiskTask.timeout_ms()
       refute_receive {:manifest_read_ready, _second}, 200
 
       # Each task reads the manifest twice inside its lock: the keep_verified? pre-check, then
@@ -236,18 +236,18 @@ defmodule Cinder.SubtitlesTest do
       # first task released the lock — that's the serialization being proven.
       first_ref = Process.monitor(first)
       send(first, :continue_manifest_read)
-      assert_receive {:manifest_read_ready, ^first}, 15_000
+      assert_receive {:manifest_read_ready, ^first}, DiskTask.timeout_ms()
       send(first, :continue_manifest_read)
 
-      assert_receive {:DOWN, ^first_ref, :process, ^first, :normal}, 15_000
+      assert_receive {:DOWN, ^first_ref, :process, ^first, :normal}, DiskTask.timeout_ms()
 
-      assert_receive {:manifest_read_ready, second}, 15_000
+      assert_receive {:manifest_read_ready, second}, DiskTask.timeout_ms()
       second_ref = Process.monitor(second)
       send(second, :continue_manifest_read)
-      assert_receive {:manifest_read_ready, ^second}, 15_000
+      assert_receive {:manifest_read_ready, ^second}, DiskTask.timeout_ms()
       send(second, :continue_manifest_read)
 
-      assert_receive {:DOWN, ^second_ref, :process, ^second, :normal}, 15_000
+      assert_receive {:DOWN, ^second_ref, :process, ^second, :normal}, DiskTask.timeout_ms()
 
       Agent.update(barrier, &%{&1 | active: false})
 
@@ -961,7 +961,9 @@ defmodule Cinder.SubtitlesTest do
 
     task = Task.async(fn -> Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies) end)
 
-    assert_receive {:filesystem_barrier, pid, ref, :rename_exclusive, _staged}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, :rename_exclusive, _staged},
+                   DiskTask.timeout_ms()
+
     File.rename!(parent, parent <> ".old")
     File.ln_s!(outside, parent)
 
@@ -1002,7 +1004,9 @@ defmodule Cinder.SubtitlesTest do
 
     task = Task.async(fn -> Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies) end)
 
-    assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, manifest_temporary}, 15_000
+    assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, manifest_temporary},
+                   DiskTask.timeout_ms()
+
     assert File.exists?(target)
     assert String.contains?(manifest_temporary, ".cinder-subtitle-manifest-")
 

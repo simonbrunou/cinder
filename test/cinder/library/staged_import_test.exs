@@ -628,7 +628,7 @@ defmodule Cinder.Library.StagedImportTest do
       })
 
       staging = Task.async(fn -> place(source, dest, library) end)
-      assert_receive {:filesystem_barrier, pid, ref, :cp, _candidate}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :cp, _candidate}, DiskTask.timeout_ms()
       File.write!(dest, "user file")
       send(pid, {ref, :continue})
 
@@ -669,7 +669,7 @@ defmodule Cinder.Library.StagedImportTest do
           end)
         end)
 
-      assert_receive {:filesystem_barrier, pid, ref, :cp, _candidate}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :cp, _candidate}, DiskTask.timeout_ms()
       observer = Task.async(&StagedImport.reconcile/0)
       refute Task.yield(observer, 100)
       send(pid, {ref, :continue})
@@ -702,7 +702,7 @@ defmodule Cinder.Library.StagedImportTest do
       })
 
       staging = Task.async(fn -> StagedImport.run(fn -> place(source, dest, library) end) end)
-      assert_receive {:filesystem_barrier, pid, ref, :cp, _candidate}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :cp, _candidate}, DiskTask.timeout_ms()
 
       observer = Task.async(&StagedImport.reconcile/0)
       refute Task.yield(observer, 50)
@@ -815,7 +815,7 @@ defmodule Cinder.Library.StagedImportTest do
       })
 
       staging = Task.async(fn -> place(source, dest, library) end)
-      assert_receive {:filesystem_barrier, pid, ref, :cp_exclusive, ^dest}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :cp_exclusive, ^dest}, DiskTask.timeout_ms()
       File.write!(dest, "user file")
       send(pid, {ref, :continue})
 
@@ -847,7 +847,7 @@ defmodule Cinder.Library.StagedImportTest do
 
       staging = Task.async(fn -> place(source, dest, library, on_collision: :replace) end)
       Process.unlink(staging.pid)
-      assert_receive {:filesystem_barrier, pid, _ref, :cp_exclusive, ^dest}, 15_000
+      assert_receive {:filesystem_barrier, pid, _ref, :cp_exclusive, ^dest}, DiskTask.timeout_ms()
       journal = Repo.one!(ImportStage)
       assert journal.state == :preparing
       assert journal.staged_inode
@@ -886,7 +886,7 @@ defmodule Cinder.Library.StagedImportTest do
       })
 
       staging = Task.async(fn -> place(source, dest, library) end)
-      assert_receive {:filesystem_barrier, pid, ref, :cp_exclusive, ^dest}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :cp_exclusive, ^dest}, DiskTask.timeout_ms()
       displaced = dest <> ".opened"
       File.rename!(dest, displaced)
       File.write!(dest, "user replacement")
@@ -952,7 +952,10 @@ defmodule Cinder.Library.StagedImportTest do
 
         staging = Task.async(fn -> place(source, dest, library, on_collision: on_collision) end)
         Process.unlink(staging.pid)
-        assert_receive {:filesystem_barrier, pid, _ref, :cp_exclusive_created, ^dest}, 15_000
+
+        assert_receive {:filesystem_barrier, pid, _ref, :cp_exclusive_created, ^dest},
+                       DiskTask.timeout_ms()
+
         journal = Repo.one!(ImportStage)
         assert journal.staged_inode == nil
         assert File.exists?(dest)
@@ -982,7 +985,7 @@ defmodule Cinder.Library.StagedImportTest do
       })
 
       first = Task.async(fn -> place(first_source, dest, library) end)
-      assert_receive {:filesystem_barrier, pid, ref, :lstat, _candidate}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :lstat, _candidate}, DiskTask.timeout_ms()
 
       second = Task.async(fn -> place(second_source, dest, library) end)
       refute Task.yield(second, 50)
@@ -1008,7 +1011,7 @@ defmodule Cinder.Library.StagedImportTest do
       })
 
       staging = Task.async(fn -> place(source, dest, library, on_collision: :replace) end)
-      assert_receive {:filesystem_barrier, pid, ref, :lstat, _candidate}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :lstat, _candidate}, DiskTask.timeout_ms()
       ForeignFile.publish!(dest, "user replacement")
       send(pid, {ref, :continue})
 
@@ -1031,7 +1034,9 @@ defmodule Cinder.Library.StagedImportTest do
       })
 
       reconcile = Task.async(&StagedImport.reconcile/0)
-      assert_receive {:import_stage_claim_barrier, pid, ref, _stage_id, :rolling_back}, 15_000
+
+      assert_receive {:import_stage_claim_barrier, pid, ref, _stage_id, :rolling_back},
+                     DiskTask.timeout_ms()
 
       test = self()
 
@@ -1044,7 +1049,7 @@ defmodule Cinder.Library.StagedImportTest do
           end)
         end)
 
-      assert_receive {:written, {:error, :stale_import_stage}}, 15_000
+      assert_receive {:written, {:error, :stale_import_stage}}, DiskTask.timeout_ms()
       send(pid, {ref, :continue})
 
       assert :ok = DiskTask.await(reconcile)
@@ -1163,7 +1168,7 @@ defmodule Cinder.Library.StagedImportTest do
       })
 
       staging = Task.async(fn -> place(source, dest, library) end)
-      assert_receive {:filesystem_barrier, pid, ref, :ln, ^dest}, 15_000
+      assert_receive {:filesystem_barrier, pid, ref, :ln, ^dest}, DiskTask.timeout_ms()
       ForeignFile.publish!(dest, "user replacement")
       assert [%ImportStage{state: :preparing, candidate_size: 9}] = Repo.all(ImportStage)
       send(pid, {ref, :continue})
@@ -1202,7 +1207,7 @@ defmodule Cinder.Library.StagedImportTest do
 
       staging = Task.async(fn -> place(source, dest, library, on_collision: :replace) end)
       Process.unlink(staging.pid)
-      assert_receive {:filesystem_barrier, pid, _ref, :ln, ^dest}, 15_000
+      assert_receive {:filesystem_barrier, pid, _ref, :ln, ^dest}, DiskTask.timeout_ms()
       assert File.read!(dest) == "candidate"
       Process.exit(pid, :kill)
       catch_exit(Task.await(staging))
@@ -1235,7 +1240,7 @@ defmodule Cinder.Library.StagedImportTest do
       })
 
       {owner, ref} = spawn_monitor(fn -> StagedImport.commit(staged, &record_all/2) end)
-      assert_receive {:filesystem_barrier, ^owner, _ref, :rm, backup}, 15_000
+      assert_receive {:filesystem_barrier, ^owner, _ref, :rm, backup}, DiskTask.timeout_ms()
       assert Repo.one!(ImportStage).state == :cleaning
       assert File.read!(dest) == "candidate"
       assert File.exists?(backup)
