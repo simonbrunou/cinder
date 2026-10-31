@@ -249,12 +249,16 @@ def handle_poster_route(route):
         route.abort()
 
 
+# The readiness check after a navigation, over either LiveView transport. Navigations keep
+# Playwright's default "load" wait, not "networkidle" (#1030): on a loaded runner the WebSocket
+# can miss longPollFallbackMs, and a connected long-poll client keeps a poll request open, so
+# the network does not go idle.
 def wait_for_liveview(page):
     expect(page.locator("[data-phx-main].phx-connected")).to_have_count(1, timeout=10_000)
 
 
 def login(page):
-    response = page.goto(f"{BASE_URL}/users/log-in", wait_until="networkidle")
+    response = page.goto(f"{BASE_URL}/users/log-in")
     assert response and response.ok, "login page did not render"
     login_form = page.locator("#login_form_password")
     expect(login_form).to_be_visible()
@@ -267,7 +271,7 @@ def login(page):
 
 
 def goto_library(page):
-    page.goto(f"{BASE_URL}/library", wait_until="networkidle")
+    page.goto(f"{BASE_URL}/library")
     wait_for_liveview(page)
 
 

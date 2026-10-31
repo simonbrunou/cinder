@@ -14,6 +14,10 @@ SCREENSHOT_DIR = os.environ.get("CINDER_SMOKE_SCREENSHOT_DIR")
 BROWSER_CHANNEL = os.environ.get("CINDER_SMOKE_BROWSER_CHANNEL")
 
 
+# The readiness check after a navigation, over either LiveView transport. Navigations keep
+# Playwright's default "load" wait, not "networkidle" (#1030): on a loaded runner the WebSocket
+# can miss longPollFallbackMs, and a connected long-poll client keeps a poll request open, so
+# the network does not go idle.
 def wait_for_liveview(page):
     expect(page.locator("[data-phx-main].phx-connected")).to_have_count(1, timeout=10_000)
 
@@ -34,7 +38,7 @@ with sync_playwright() as playwright:
     )
     page.on("pageerror", lambda error: browser_errors.append(str(error)))
 
-    response = page.goto(f"{BASE_URL}/users/register", wait_until="networkidle")
+    response = page.goto(f"{BASE_URL}/users/register")
     assert response and response.ok, "registration page did not render"
     expect(page.locator("#registration_form")).to_be_visible()
     wait_for_liveview(page)
