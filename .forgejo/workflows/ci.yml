@@ -36,7 +36,7 @@ jobs:
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
         id: beam
         with:
-          otp-version: "29.1.1"
+          otp-version: "29.1.2"
           elixir-version: "1.20.4"
 
       # Dependency sources, shared with the dependency-audit job (same key).
@@ -98,7 +98,7 @@ jobs:
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
         id: beam
         with:
-          otp-version: "29.1.1"
+          otp-version: "29.1.2"
           elixir-version: "1.20.4"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
