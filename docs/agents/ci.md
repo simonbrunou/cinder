@@ -152,7 +152,14 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   misses, then revert it before the merge (#885's run 347). The `test` log shows the miss: the
   cmake install step runs only then. A green `test` job saves the cache under its exact key, so a
   later run with the same `mix.lock`, OTP and Elixir restores the NIFs and rebuilds nothing,
-  flag or not.
+  flag or not. To prove the fallback locally, put the same line in `config/test.exs`, run
+  `MIX_BUILD_ROOT=$(mktemp -d) MIX_ENV=test mix deps.compile lazy_html exqlite --include-children`
+  inside `nix develop`, which supplies `cmake`, then revert the line. A source build prints
+  lazy_html's `-o .../priv/liblazy_html.so` link line and exqlite's `CC sqlite3_nif.o`, and a
+  download prints neither. Without `--include-children`, the command fails on an empty build
+  with `Unchecked dependencies for environment prod` and `the dependency build is outdated` for
+  `elixir_make` and each NIF's other deps, because Mix then builds them from inside that NIF's
+  compile and checks them against statuses it cached before they were built (#983).
 
 ## Re-running CI
 
