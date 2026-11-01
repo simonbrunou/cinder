@@ -64,8 +64,17 @@ jobs:
       # #867: on a miss, a precompiled NIF download from GitHub can fail on OTP 29 :httpc's
       # header cap (docs/agents/ci.md "Dependency rebuild"). elixir_make then builds the NIF
       # from source: exqlite needs only the image's C compiler, lazy_html also needs cmake.
+      # 3 tries 30 s apart for an Ubuntu mirror caught mid-sync, as the container job's
+      # `playwright install-deps` has.
       - if: steps.deps-build.outputs.cache-hit != 'true'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake
+        run: |
+          for attempt in 1 2 3; do
+            sudo apt-get update && break
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            echo "apt-get update failed (attempt $attempt of 3); retrying in 30 s"
+            sleep 30
+          done
+          sudo apt-get install -y --no-install-recommends cmake
 
       - run: mix deps.get
 
@@ -166,8 +175,17 @@ jobs:
 
           python3 -m venv "$RUNNER_TEMP/cinder-browser-smoke"
           "$RUNNER_TEMP/cinder-browser-smoke/bin/pip" install --disable-pip-version-check playwright==1.61.0
+          # Chromium's system libraries come from apt. On run 3138 an archive.ubuntu.com server
+          # answered `apt-get update` with a Packages file of the wrong size ("Mirror sync in
+          # progress?"), and the job's re-run passed: give apt 3 tries 30 s apart.
+          for attempt in 1 2 3; do
+            "$RUNNER_TEMP/cinder-browser-smoke/bin/playwright" install-deps chromium && break
+            if [ "$attempt" = 3 ]; then exit 1; fi
+            echo "playwright install-deps failed (attempt $attempt of 3); retrying in 30 s"
+            sleep 30
+          done
           # Playwright's own Chromium (cdn.playwright.dev), not Google Chrome from dl.google.com (#842).
-          "$RUNNER_TEMP/cinder-browser-smoke/bin/playwright" install --with-deps chromium
+          "$RUNNER_TEMP/cinder-browser-smoke/bin/playwright" install chromium
 
       - name: Browser smoke
         env:
