@@ -5,6 +5,8 @@ defmodule Cinder.HealthTest do
 
   alias Cinder.Health
   alias Cinder.Library.SidecarQuarantine
+  alias Cinder.Test.BarrierFilesystem
+  alias Cinder.Test.DiskTask
   alias Cinder.Test.Rendezvous
 
   setup :verify_on_exit!
@@ -287,6 +289,7 @@ defmodule Cinder.HealthTest do
       # writability check must go further than that.
       stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
       stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> {:error, :eacces} end)
+      stub(Cinder.Library.FilesystemMock, :rm, fn _ -> {:error, :enoent} end)
       assert Health.check("movies_library") == {:error, :eacces}
     end
 
@@ -311,6 +314,60 @@ defmodule Cinder.HealthTest do
       assert_received {:fs, first, path}
       assert_received {:fs, second, ^path}
       assert {first, second} == {:write_exclusive, :rm}
+    end
+
+    # `Disk.write_exclusive/2` creates the probe with `O_EXCL` before a write, fsync or parent sync
+    # can fail, and that failure keeps the file (#995).
+    @tag :tmp_dir
+    test "a library root check removes a probe whose create committed before the error", %{
+      tmp_dir: root
+    } do
+      with_env(:movies_library_path, root)
+      # `fail_once/1` points `:filesystem` at BarrierFilesystem and leaves it there; this puts the
+      # mock back on exit.
+      with_env(:filesystem, BarrierFilesystem)
+      # The create can start the rooted Disk helper, which has the test-env subprocess bound.
+      with_env(:health_probe_timeout_ms, DiskTask.timeout_ms())
+
+      BarrierFilesystem.fail_once(%{
+        operation: :write_exclusive,
+        source_contains: ".cinder-health-probe-",
+        reason: :eio,
+        phase: :post_effect
+      })
+
+      assert Health.check("movies_library") == {:error, :eio}
+      assert Path.wildcard(Path.join(root, ".cinder-health-probe-*"), match_dot: true) == []
+    end
+
+    # A mergerfs create whose unique-path wait fails reports the hold Cinder's own create made.
+    test "a committed probe create is removed, and a failed removal keeps the create's error" do
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+
+      parent = self()
+      committed = {:error, {:effect_committed, "hold", %{"reason" => "EEXIST"}}}
+
+      expect(Cinder.Library.FilesystemMock, :write_exclusive, fn path, "" ->
+        send(parent, {:fs, :write_exclusive, path})
+        committed
+      end)
+
+      expect(Cinder.Library.FilesystemMock, :rm, fn path ->
+        send(parent, {:fs, :rm, path})
+        {:error, :eio}
+      end)
+
+      assert Health.check("movies_library") == committed
+      assert_received {:fs, :write_exclusive, path}
+      assert_received {:fs, :rm, ^path}
+    end
+
+    test "a probe name another file already holds is never removed" do
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      expect(Cinder.Library.FilesystemMock, :write_exclusive, fn _, "" -> {:error, :eexist} end)
+      expect(Cinder.Library.FilesystemMock, :rm, 0, fn _ -> :ok end)
+
+      assert Health.check("movies_library") == {:error, :eexist}
     end
   end
 

@@ -386,12 +386,29 @@ defmodule Cinder.Health do
       fs = Application.fetch_env!(:cinder, :filesystem)
       probe = Path.join(path, ".cinder-health-probe-#{System.unique_integer([:positive])}")
 
-      with :ok <- fs.mkdir_p(path),
-           :ok <- fs.write_exclusive(probe, "") do
+      with :ok <- fs.mkdir_p(path), do: write_probe(fs, probe)
+    end)
+  end
+
+  defp write_probe(fs, probe) do
+    case fs.write_exclusive(probe, "") do
+      :ok ->
         fs.rm(probe)
         :ok
-      end
-    end)
+
+      # The one error where the file under the probe name is not ours to remove.
+      {:error, :eexist} = error ->
+        error
+
+      # `write_exclusive/2` can fail after its `O_EXCL` create: a later write, fsync or
+      # parent-sync error, or a mergerfs `:effect_committed` hold, keeps the file. Remove the
+      # name, or each failing check leaves another probe in the library root (#995). After an
+      # error before the create, the removal finds nothing. The check reports the create's
+      # error whatever the removal returns.
+      {:error, _reason} = error ->
+        fs.rm(probe)
+        error
+    end
   end
 
   defp short(mod), do: mod |> Module.split() |> List.last()
