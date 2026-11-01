@@ -319,7 +319,7 @@ defmodule Cinder.Notifier.Discord do
     # No word boundary, matching discord.py's and discord.js's canonical escapes: Discord matches
     # the substring, so "@everyone" inside "@everyones" would still ping. The zero-width space
     # lands mid-word but renders identically.
-    |> String.replace(~r/@(everyone|here)/i, "@​\\1")
+    |> String.replace(~r/@(everyone|here)/i, "@" <> <<0x200B::utf8>> <> "\\1")
   end
 
   # Backslash-escapes every Discord markdown metacharacter so externally sourced text renders as

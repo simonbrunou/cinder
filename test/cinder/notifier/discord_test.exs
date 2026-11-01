@@ -370,7 +370,7 @@ defmodule Cinder.Notifier.DiscordTest do
     assert :ok = Discord.notify({:request_created, request_with("@herefordshire")})
 
     assert_receive {:posted, %{"embeds" => [embed]}}
-    assert String.replace(embed["description"], "​", "") =~ "@herefordshire"
+    assert String.replace(embed["description"], <<0x200B::utf8>>, "") =~ "@herefordshire"
   end
 
   # The boundary-less form is the point: a keyword followed by more word characters must not
