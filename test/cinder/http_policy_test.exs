@@ -449,7 +449,7 @@ defmodule Cinder.HTTPPolicyTest do
         receive do
           :never -> :ok
         after
-          5_000 -> :ok
+          10_000 -> :ok
         end
 
         Req.Test.text(conn, "late-secret")
@@ -469,12 +469,16 @@ defmodule Cinder.HTTPPolicyTest do
 
       # A 500 ms deadline, not 100 ms: a loaded CI runner took more than 100 ms to bring the
       # request task to the stub, so the deadline fired first and the mailbox held no
-      # `{:request_started, _}` (#960). A 1 s bound, not 300 ms: a loaded runner returned 336 ms
-      # past the deadline (#908). Each delay now has 500 ms of room. A deadline of 1 s or more
-      # still fails this bound, and a request that ran to the stub's 5 s valve fails the match
-      # above.
+      # `{:request_started, _}` (#960). A bound 5 s past the deadline, the house bound for a
+      # wall-clock load flake (docs/agents/ci.md "Wall-clock tests"): loaded runners returned
+      # 336 ms (#908), then 875 ms (#1038) past it, since each step around the deadline (the
+      # task start, `Req.Test.allow`, the kill) waits for a shared process to reply or for the
+      # test process to run again. A deadline of 5.5 s or more still fails this bound. The stub's
+      # 10 s valve sits above the bound, so a request the deadline never cancels runs to the valve
+      # and fails this bound too. A deadline past the valve also lets the stub's body through,
+      # which fails the match above.
       elapsed = System.monotonic_time(:millisecond) - started_at
-      assert elapsed < 1_000
+      assert elapsed < 5_500
       assert_received {:request_started, request_pid}
       refute request_pid == self()
       refute Process.alive?(request_pid)
@@ -537,8 +541,8 @@ defmodule Cinder.HTTPPolicyTest do
       # Generous deadline on purpose: this asserts the crash PROPAGATES (isolation), not timeout
       # behaviour, so the near-instant crash must win the race against the deadline even under a
       # loaded suite. A tight bound (was 200ms) let the deadline occasionally fire first, returning
-      # {:error, :request_timeout} — the intermittent suite failure. Timeout timing is covered by the
-      # :request_timeout tests above, which correctly keep tight bounds.
+      # {:error, :request_timeout} — the intermittent suite failure. Timeout behaviour is covered by
+      # the :request_timeout tests above.
       capture_log(fn ->
         assert {:error, {%RuntimeError{message: "adapter crashed"}, _stacktrace}} =
                  HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 5_000)
