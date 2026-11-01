@@ -85,7 +85,10 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   distinctly from a malformed helper, and the OS process is killed" asserts the elapsed time
   under 5 s past its 1 s bound instead of 2 s, since its window times two helper spawns and two
   kills. Both spawns run a `/bin/sh` stub found on `PATH` as `python3`, because Python's start
-  missed the 1 s bound in each of them on the runner (#1024). The test environment widens
+  missed the 1 s bound in each of them on the runner (#1024).
+  `Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest` serves every helper spawn from a `/bin/sh`
+  stub found on `PATH` as `python3`, because on the runner Python's start missed the 1 s bound in
+  its `hold` and before its `seal` stub's pid write (#1043). The test environment widens
   `Cinder.Library.Filesystem.Disk`'s `:disk_subprocess_timeout_ms` to 20 s (#945), four times
   the production bound, to give a slow start on a loaded runner headroom. In a test that does not
   set its own bound, a Disk timeout such as `{:error, :rooted_helper_timeout}` therefore means

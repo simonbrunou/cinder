@@ -357,12 +357,14 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
   defp wait_for_pidfile(pidfile, attempts \\ 50)
   defp wait_for_pidfile(_pidfile, 0), do: flunk("stub process never wrote its pid file")
 
+  # An empty pid file counts as missing: a stub creates the file before it writes its pid, and a
+  # stub killed in between leaves it empty (#1043).
   defp wait_for_pidfile(pidfile, attempts) do
     case File.read(pidfile) do
-      {:ok, content} ->
+      {:ok, content} when content != "" ->
         content |> String.trim() |> String.to_integer()
 
-      {:error, :enoent} ->
+      missing when missing in [{:ok, ""}, {:error, :enoent}] ->
         Process.sleep(20)
         wait_for_pidfile(pidfile, attempts - 1)
     end
