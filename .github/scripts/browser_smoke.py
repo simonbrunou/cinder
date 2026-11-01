@@ -72,7 +72,10 @@ with sync_playwright() as playwright:
     wait_for_liveview(page)
 
     page.get_by_role("link", name="Dashboard", exact=True).click()
-    expect(page).to_have_url(re.compile(r"/dashboard$"))
+    # Discover and the Dashboard sit in different live_sessions, so this click is a full page load,
+    # not a live navigation. A loaded runner took 4.2 s from click to connect (#1041), so it gets
+    # the login redirect's 15 s instead of the 5 s default.
+    expect(page).to_have_url(re.compile(r"/dashboard$"), timeout=15_000)
     wait_for_liveview(page)
     # Dashboard health list is rendered only after Health.check_all/0 completes. Health probes
     # now run concurrently (Cinder.Health.check_all/0 via Task.async_stream), so the sweep's
