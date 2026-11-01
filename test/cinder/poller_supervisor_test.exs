@@ -21,6 +21,9 @@ defmodule Cinder.PollerSupervisorTest do
     def handle_continue(:schedule, _state), do: raise("permanently bad interval")
   end
 
+  # 500 polls 10 ms apart: Cinder.Supervisor gets 5 s to handle PollerSupervisor's exit.
+  @polls 500
+
   # Regression for #456, verified empirically first: booting a real Cinder.Download.Poller with a
   # permanently invalid `interval` (before this fix) took Cinder.Repo and CinderWeb.Endpoint down
   # a few seconds later — `MIX_ENV=dev mix run -e` against the real app, `:start_poller` on and
@@ -62,12 +65,20 @@ defmodule Cinder.PollerSupervisorTest do
       end)
     end)
 
+    poller_pid = Process.whereis(Cinder.PollerSupervisor)
+    poller_supervisor = Process.monitor(poller_pid)
+
     capture_log(fn ->
       {:ok, _pid} = Supervisor.start_child(Cinder.PollerSupervisor, PermanentCrashLooper)
-      # Long enough for PollerSupervisor's own budget (16 restarts / 5s, near-instant crashes) to
-      # exhaust and for it to terminate for good.
-      Process.sleep(500)
+      # PollerSupervisor's own budget (16 restarts / 5s) runs out on the 17th crash, and it
+      # terminates. A fixed sleep here was too short for those crashes on a loaded runner (#1062).
+      assert_receive {:DOWN, ^poller_supervisor, :process, _object, _reason}
     end)
+
+    # The :DOWN reaches this process, and the exit reaches Cinder.Supervisor, in no fixed order.
+    # Once the dead pid leaves Cinder.Supervisor's children, it has handled the exit: it dropped a
+    # `restart: :temporary` child, or restarted one that lost that option under a new pid.
+    await_child_exit_handled(poller_pid, @polls)
 
     assert Process.whereis(Cinder.Repo) == repo_pid
     assert Process.whereis(CinderWeb.Endpoint) == endpoint_pid
@@ -123,5 +134,17 @@ defmodule Cinder.PollerSupervisorTest do
 
     assert_receive {:EXIT, ^top, _reason}
     refute Process.alive?(top)
+  end
+
+  defp await_child_exit_handled(pid, 0),
+    do: flunk("Cinder.Supervisor still lists the exited #{inspect(pid)} among its children.")
+
+  defp await_child_exit_handled(pid, polls) do
+    if Enum.any?(Supervisor.which_children(Cinder.Supervisor), &match?({_id, ^pid, _, _}, &1)) do
+      Process.sleep(10)
+      await_child_exit_handled(pid, polls - 1)
+    else
+      :ok
+    end
   end
 end
