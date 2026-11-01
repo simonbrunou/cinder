@@ -83,10 +83,23 @@ itself is in [CONTRIBUTING.md](../../CONTRIBUTING.md) "Releasing (maintainers)".
    `mix test`, push and wait for CI before it merges (AGENTS.md "Merge authority";
    `scripts/merge-pr` refuses otherwise). Once it merged, check that `changelog.d/` on `main`
    holds only `README.md`.
-3. Tag the merge commit once Forgejo CI is green on it, meaning the three `CI / <job> (push)`
-   statuses on that SHA are `success` ([ci.md](ci.md)):
-   `git tag -a v<version> <sha> -m "Cinder <version>" && git push origin v<version>`. `origin`
-   is Forgejo.
+3. Tag the merge commit itself once its own three `CI / <job> (push)` statuses are `success`.
+   A green run on a later `main` commit tests a different tree, and the tag's workflow runs no
+   tests. Wait with `forgejo.py ci cinder <sha>` ([ci.md](ci.md) "Reading a run"). Exit 0 means
+   tag it: `git tag -a v<version> <sha> -m "Cinder <version>" && git push origin v<version>`.
+   `origin` is Forgejo. On exit 1, run `git fetch origin`, then:
+   - **Cancelled**: the exit 1 line says every failed context reads `Has been cancelled`, and
+     `origin/main` points at a later commit. A later merge cancelled the run. The line says to
+     wait on the new head; for the tag, re-run instead. Wait until `origin/main`'s head run has
+     finished, so the re-run cannot disturb the check its merging agent waits on:
+     `forgejo.py ci cinder --follow main` exits 0 or 1. Then find the merge commit's run with
+     `curl ... "$API/actions/runs?head_sha=<full sha>" | jq '.workflow_runs[0].id'` (a short SHA
+     matches no run) and list its jobs ([ci.md](ci.md) "Re-running CI"). POST a rerun for each
+     job whose `status` reads `cancelled`, whatever its `attempt`, and leave the `success` ones.
+     Then wait on the SHA again as that section says. A merge that lands during the re-run
+     cancels it too: start this bullet over.
+   - **Red**: anything else, a cancelled run with `origin/main` still at the merge commit
+     included. Judge it as [ci.md](ci.md) "Judging a red run" says.
 4. GitHub gets the tag through Forgejo's push mirror. Check with
    `git ls-remote --tags github v<version>`. If it is still missing after a minute, trigger the
    mirror with `curl -s -X POST -H "Authorization: token $FJ_TOKEN" "$API/push_mirrors-sync"`

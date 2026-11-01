@@ -172,14 +172,16 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   gets the re-run first, and **Broken `main`** says when to merge `origin/main` instead.
 - Re-run a red job on the same SHA through the API. The call names one job of one run and adds
   no commit, so it suits a PR, a PR in a stack and a `main` push run alike (#967's run 2410). On
-  `main`, re-run only a job of `origin/main`'s head. Find the run id as "Reading a run" says,
+  `main`, re-run only a job of `origin/main`'s head, or a cancelled job of a release PR's merge
+  commit ([workflow.md](workflow.md) "Releasing" step 3). Find the run id as "Reading a run" says,
   then list the run's jobs with
   `curl ... "$API/actions/runs/<run id>/jobs" | jq -c '.[] | {id, name, status, attempt}'`.
 - A red job at `attempt` 1 gets the re-run. A red test gets it only when it passes both checks
   of step 1 of **Flake** ("Judging a red run"). The call is
   `curl -s -X POST -H "Authorization: token $FJ_TOKEN" "$API/actions/jobs/<job id>/rerun"`,
   which answers 204. A job at `attempt` above 1 was re-run already, by you or by another agent
-  in a merge burst: wait on it while it reads `waiting` or `running`.
+  in a merge burst: wait on it while it reads `waiting` or `running`. A release PR's merge commit
+  re-runs each `cancelled` job at any `attempt` ([workflow.md](workflow.md) "Releasing" step 3).
 - When the POST answers anything but 204 on a PR, push an empty commit instead
   (`git commit --allow-empty -m "ci: re-run after <test> flake"`, which a squash merge drops). In
   a stack an empty commit forces every later PR to rebase and re-run, so close and reopen the PR
@@ -194,7 +196,9 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   failure on the same test against **Broken `main`**. On `main`, a job that fails again leaves
   the run red (AGENTS.md "Merge authority").
 - A newer push to the same ref cancels its run in progress, a re-run included (`ci.yml`'s
-  `concurrency` group). On `main`, wait on the new head once one lands.
+  `concurrency` group). On `main`, wait on the new head once one lands, except for the tag of a
+  release, which needs the release PR's merge commit itself green ([workflow.md](workflow.md)
+  "Releasing" step 3).
 
 ## Merge conflicts and translations
 
