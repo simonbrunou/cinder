@@ -142,12 +142,13 @@ defmodule Cinder.Settings do
   The browser-reachable media-server URL a household member should open, or `nil` when the
   operator has not set one.
 
-  Resolved from the stored `media_server_type`, else the option whose `os_env` variable is set
-  (`PLEX_URL` picks Plex): the same choice that picks the impl in the env overlay, so a Plex
-  instance never links at a leftover Jellyfin URL. The server atom and its module come from that
-  definition's options. When neither applies, this falls back to a *uniquely* configured web URL
-  and otherwise returns `nil`: with both set and no choice, either answer is a guess, and sending
-  someone to the wrong server is worse than showing no link.
+  It links at the server `media_server_type/0` names, the one the env overlay runs, so a Plex
+  instance never links at a leftover Jellyfin URL and a Jellyfin one never at a leftover Plex URL.
+  That server's web URL is the answer, or `nil` when it has none. The server atom and its module
+  come from that definition's options. Only when the bootstrap is no listed server, so no server
+  is named, does this fall back to a *uniquely* configured web URL and otherwise return `nil`:
+  with both set and no server known, either answer is a guess, and sending someone to the wrong
+  server is worse than showing no link.
 
   When the background media-server inventory has reconciled a title, pass its opaque item id to
   `media_server_web_link/1` for a title deep link. A missing or stale id retains this front-door
@@ -155,7 +156,7 @@ defmodule Cinder.Settings do
   """
   @spec media_server_web_link() :: {:plex | :jellyfin, String.t()} | nil
   def media_server_web_link do
-    case running_media_server() do
+    case media_server_option() do
       %{} = option -> web_link_for(option)
       nil -> sole_configured_web_link()
     end
@@ -170,19 +171,21 @@ defmodule Cinder.Settings do
   Data a server wrote carries its type, so a reader uses this to ignore what the other type left
   behind after a switch, as `Cinder.Catalog.MediaServerSeasons` does. It reads the bootstrap
   snapshot, never the running impl (`Cinder.Library.MediaServer.impl/0`), which tests point at
-  the same Mox mock for both types. `media_server_web_link/0` keeps its own fallback when no type
-  is stored and no `os_env` is set.
+  the same Mox mock for both types. `media_server_web_link/0` links at the server this names.
   """
   @spec media_server_type() :: :plex | :jellyfin | nil
   def media_server_type do
-    case running_media_server() || bootstrap_media_server() do
+    case media_server_option() do
       %{server: server} -> server
       nil -> nil
     end
   end
 
-  defp running_media_server,
-    do: Shape.running_media_server(@media_servers, get(@media_server.key))
+  # The option the overlay runs, or nil when the bootstrap is no listed server. The type and the
+  # web link both pick through it, so they cannot name different servers.
+  defp media_server_option do
+    Shape.running_media_server(@media_servers, get(@media_server.key)) || bootstrap_media_server()
+  end
 
   defp bootstrap_media_server do
     bootstrap = Overlay.base(:media_server)

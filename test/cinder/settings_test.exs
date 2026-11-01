@@ -1774,7 +1774,9 @@ defmodule Cinder.SettingsTest do
       end
     end
 
-    test "an unlisted stored type falls back to a uniquely configured URL" do
+    # The suite's bootstrap is the Mox mock, which names no listed server, so the server is
+    # unknown here. Prod's bootstrap is config.exs's Jellyfin (the bootstrap tests below).
+    test "an unlisted stored type and a bootstrap that is no listed server fall back to a uniquely configured URL" do
       store_media_server_type("emby")
       set_web_url(:plex, "https://plex.test")
 
@@ -1825,16 +1827,46 @@ defmodule Cinder.SettingsTest do
       refute Settings.media_server_web_link()
     end
 
-    test "with no type saved, uses a uniquely configured URL" do
+    test "with no type saved and a bootstrap that is no listed server, uses a uniquely configured URL" do
       set_web_url(:jellyfin, "https://jellyfin.test")
 
       assert Settings.media_server_web_link() == {:jellyfin, "https://jellyfin.test"}
     end
 
-    # Either answer would be a guess, and the wrong one is worse than none.
-    test "with no type saved and both configured, refuses to guess" do
+    # With the server unknown, either answer would be a guess, and the wrong one is worse than
+    # none.
+    test "with no type saved, a bootstrap that is no listed server and both configured, refuses to guess" do
       set_web_url(:plex, "https://plex.test")
       set_web_url(:jellyfin, "https://jellyfin.test")
+
+      refute Settings.media_server_web_link()
+    end
+
+    # With no type saved and no PLEX_URL, the overlay keeps its boot capture, which is
+    # config.exs's Jellyfin in prod. The link follows it, so an install that dropped PLEX_URL
+    # never links at a leftover Plex URL (#939).
+    test "with no type saved, a Jellyfin bootstrap never links at Plex" do
+      put_media_server_bootstrap(Cinder.Library.MediaServer.Jellyfin)
+      set_web_url(:plex, "https://plex.test")
+
+      refute Settings.media_server_web_link()
+      refute Settings.media_server_web_link("plex:machine-1:42")
+    end
+
+    test "with no type saved, a Jellyfin bootstrap links at Jellyfin, the type it names" do
+      put_media_server_bootstrap(Cinder.Library.MediaServer.Jellyfin)
+      set_web_url(:plex, "https://plex.test")
+      set_web_url(:jellyfin, "https://jellyfin.test")
+
+      assert {server, "https://jellyfin.test"} = Settings.media_server_web_link()
+      assert server == :jellyfin
+      assert server == Settings.media_server_type()
+    end
+
+    test "an unlisted stored type follows a Jellyfin bootstrap, as the overlay does" do
+      put_media_server_bootstrap(Cinder.Library.MediaServer.Jellyfin)
+      store_media_server_type("emby")
+      set_web_url(:plex, "https://plex.test")
 
       refute Settings.media_server_web_link()
     end

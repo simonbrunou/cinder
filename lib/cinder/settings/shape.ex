@@ -307,7 +307,8 @@ defmodule Cinder.Settings.Shape do
 
   # The media server option that runs: the stored one, else the one its os_env variable selects,
   # else nil. The overlay, the form, Cinder.Settings.media_server_web_link/0 and
-  # Cinder.Settings.media_server_type/0 all pick through it.
+  # Cinder.Settings.media_server_type/0 all pick through it. On nil, the overlay keeps its boot
+  # capture, and the type and the web link name the option whose module that capture is.
   @doc false
   def running_media_server(options, value),
     do: option(options, value) || os_env_option(options)

@@ -22,12 +22,15 @@ is named after its key), and `Cinder.Settings.Shape` only for a new shape. An ov
 assembles one env value from several keys finds each definition with `Registry.one!/1`, by target
 and slot, never by key. Code that reads a kind's library root calls
 `Cinder.Settings.configured_library_path/2` and never builds the env key itself. Code that picks
-or links a media server reads the `media_server_type` options (outside `Cinder.Settings.Shape`,
-through `Cinder.Settings.Registry.media_servers/0`): each one has a `value`, a `server` atom, a
-`module` and an `os_env`. It finds the server that runs with `Shape.running_media_server/2` (the
-stored type, else the option whose `os_env` is set), never with `Shape.option/2` alone. Code that
-reads data a media server wrote, such as the season inventory, asks
-`Cinder.Settings.media_server_type/0`, which also names the bootstrap server when neither applies.
+a media server reads the `media_server_type` options (outside `Cinder.Settings.Shape`, through
+`Cinder.Settings.Registry.media_servers/0`): each one has a `value`, a `server` atom, a `module`
+and an `os_env`. It finds the server that runs with `Shape.running_media_server/2` (the stored
+type, else the option whose `os_env` is set), never with `Shape.option/2` alone. Code that reads
+data a media server wrote, such as the season inventory, asks
+`Cinder.Settings.media_server_type/0`, and code that links at the server asks
+`Cinder.Settings.media_server_web_link/0`. Both pick through one private step that also names the
+bootstrap server when neither applies, so whenever the type names a server, the link names the
+same one.
 
 A registry-driven loader `Application.put_env`s stored values onto a one-time bootstrap snapshot
 at boot (a one-shot supervised child, after PubSub and before the poller) and on every save. So

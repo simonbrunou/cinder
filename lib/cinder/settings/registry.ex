@@ -213,7 +213,9 @@ defmodule Cinder.Settings.Registry do
   # the configured server's rows by it (`Cinder.Catalog.MediaServerSeasons`). With
   # no listed type stored, the option whose `os_env` variable is set is the bootstrap choice for
   # the overlay, the form and the web link; with none set, the form shows the first option, the
-  # overlay keeps the captured impl and the web link takes a uniquely configured web URL.
+  # overlay keeps the captured impl, and the type and the web link name the option whose module
+  # that impl is. Only when that impl is no listed module (the suite's Mox mock) does the web link
+  # take a uniquely configured web URL.
   @media_server [
                   new(
                     "media_server_type",
