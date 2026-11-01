@@ -7,7 +7,8 @@ defmodule Cinder.Subtitles.Manifest do
 
   # `own_track`: the video's own full subtitle track in that language, extracted by
   # `Cinder.Subtitles` in preference to a download (spec 069). `embedded` is the older last-resort
-  # extraction when OpenSubtitles has nothing, which stays open to a later download.
+  # extraction when OpenSubtitles has nothing, which stays open to a later download. Both record
+  # the moviehash of the file they came out of (`source_moviehash`).
   @origins ~w(opensubtitles_hash opensubtitles_id own_track embedded translated release_sidecar)
   @sync_statuses ~w(aligned review applying)
   # `native`: the timing rules on the video's own track, with no alignment to run.
@@ -64,11 +65,13 @@ defmodule Cinder.Subtitles.Manifest do
       track = if file, do: Map.put(track, :file, file), else: track
       track = if managed_sha256, do: Map.put(track, :managed_sha256, managed_sha256), else: track
 
-      # An own track belongs to the file it came out of: the manifest-wide hash is rewritten by
-      # every language's write, so after an upgrade at the same path it would vouch for a track
-      # extracted from the replaced file.
+      # An own or embedded track belongs to the file it came out of: the manifest-wide hash is
+      # rewritten by every language's write, so after an upgrade at the same path it would vouch
+      # for a track extracted from the replaced file. An embedded track stays open to a download
+      # (`stable?/3` ignores its source hash); the hash only spares the next sweep an extraction
+      # whose result it already holds (#861).
       track =
-        if to_string(origin) == "own_track" and is_binary(moviehash),
+        if to_string(origin) in ["own_track", "embedded"] and is_binary(moviehash),
           do: Map.put(track, :source_moviehash, moviehash),
           else: track
 
@@ -299,6 +302,13 @@ defmodule Cinder.Subtitles.Manifest do
   end
 
   def stable?(_state, _moviehash, _language), do: false
+
+  # The language's sidecar is the embedded track extracted from the file `moviehash` identifies.
+  @spec embedded_from?(map(), String.t() | nil, String.t()) :: boolean()
+  def embedded_from?(state, moviehash, language) when is_binary(moviehash),
+    do: match?(%{origin: "embedded", source_moviehash: ^moviehash}, state.tracks[language])
+
+  def embedded_from?(_state, _moviehash, _language), do: false
 
   @spec provisional?(map(), String.t() | nil, String.t()) :: boolean()
   def provisional?(state, moviehash, language),

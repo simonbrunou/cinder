@@ -17,12 +17,18 @@ defmodule Cinder.Subtitles.Translator.LibreTranslate do
 
   @impl true
   def translate(cues, target) when is_list(cues) do
-    case cfg(:base_url) do
-      base when is_binary(base) and base != "" ->
-        translate_all(String.trim_trailing(base, "/") <> "/translate", cues, target)
+    if configured?() do
+      translate_all(String.trim_trailing(cfg(:base_url), "/") <> "/translate", cues, target)
+    else
+      {:error, :not_configured}
+    end
+  end
 
-      _ ->
-        {:error, :not_configured}
+  @impl true
+  def configured? do
+    case cfg(:base_url) do
+      base when is_binary(base) -> base != ""
+      _ -> false
     end
   end
 

@@ -10,6 +10,8 @@ defmodule Cinder.Subtitles.Srt do
   @cue_separator ~r/\A(.*?)((?:\r?\n){2,}|\z)/s
   @cue ~r/\A(?<prefix>\d+(?:\r?\n)[^\r\n]*-->[^\r\n]*(?:\r?\n))(?<dialogue>[^\r\n]+(?:\r?\n[^\r\n]+)*)(?<ending>\r?\n)?\z/
 
+  # A default track this rejects is never extracted again for its file
+  # (`Cinder.Subtitles.TrackRejection`): accepting more here means deleting the `:srt` rejections.
   @spec parse(binary()) :: {:ok, t()} | {:error, :invalid_srt}
   def parse(@bom <> srt), do: parse_cues(srt, [], @bom)
   def parse(srt) when is_binary(srt), do: parse_cues(srt, [], "")

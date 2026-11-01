@@ -30,6 +30,9 @@ defmodule Cinder.Subtitles.Sync.Timing do
 
   def retime(_source, _extension, _offset_ms, _rate), do: {:error, :invalid_adjustment}
 
+  # An own track this rejects is never extracted again for its file
+  # (`Cinder.Subtitles.TrackRejection`): accepting more here means deleting the `:timing`
+  # rejections.
   @spec validate(binary(), String.t()) :: :ok | {:error, atom()}
   def validate(source, extension) when is_binary(source) and is_binary(extension) do
     extension = String.downcase(extension)

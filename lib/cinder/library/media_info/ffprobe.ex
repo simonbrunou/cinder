@@ -179,18 +179,20 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     e -> {:error, e}
   end
 
+  # ffprobe logs a damaged block as a `[matroska,webm @ 0x...]` line on stderr and still exits 0,
+  # so stderr stays out of the JSON it prints on stdout (#861).
   @impl true
   def subtitle_tracks(path) do
     {executable, args} = low_priority!(bin(), subtitle_track_args(path))
 
-    case run_bounded(executable, args, subtitle_tracks_timeout_ms(), stderr_to_stdout: true) do
-      {:ok, out, 0} ->
+    case run_stderr_apart(executable, args, subtitle_tracks_timeout_ms()) do
+      {:ok, out} ->
         with {:ok, metadata} <- Jason.decode(out) do
           {:ok, parse_subtitle_tracks(metadata)}
         end
 
-      {:ok, out, code} ->
-        {:error, {:ffprobe_exit, code, String.trim(out)}}
+      {:exit, code, stderr} ->
+        {:error, {:ffprobe_exit, code, stderr}}
 
       {:error, _reason} = error ->
         error
@@ -201,36 +203,42 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   @impl true
   def extract_subtitle(path, index) do
+    {executable, args} = low_priority!(ffmpeg_bin(), ffmpeg_args(path, index))
+
+    case run_stderr_apart(executable, args, extract_timeout_ms()) do
+      {:ok, out} -> {:ok, out}
+      {:exit, code, stderr} -> {:error, {:ffmpeg_exit, code, stderr}}
+      {:error, _reason} = error -> error
+    end
+  rescue
+    e -> {:error, e}
+  end
+
+  # Runs the command with its stderr in a temporary file, so stdout holds only what it prints
+  # there. A non-zero exit comes back with that stderr, trimmed.
+  #
+  # The wrapper's `exec "$@"` replaces `/bin/sh` with the command under the same pid, and `ionice`
+  # and `nice` exec the reader in turn, so the pid the bound kills and waits on is the reader
+  # itself, not a shell. The bound kills the whole process group too (#876), which would also
+  # reach a reader the shell ran without `exec`.
+  defp run_stderr_apart(executable, args, timeout_ms) do
     stderr_path =
       Path.join(System.tmp_dir!(), "cinder-ffmpeg-#{System.unique_integer([:positive])}.stderr")
 
-    {executable, args} = low_priority!(ffmpeg_bin(), ffmpeg_args(path, index))
-
-    # The wrapper's `exec "$@"` replaces `/bin/sh` with the command under the same pid, and
-    # `ionice` and `nice` exec ffmpeg in turn, so the pid the bound kills and waits on is ffmpeg
-    # itself, not a shell. The bound kills the whole process group too (#876), which would also
-    # reach an ffmpeg the shell ran without `exec`.
     try do
       case run_bounded(
              "/bin/sh",
-             [
-               "-c",
-               "exec \"$@\" 2> \"$#{@stderr_env}\"",
-               "--",
-               executable | args
-             ],
-             extract_timeout_ms(),
+             ["-c", "exec \"$@\" 2> \"$#{@stderr_env}\"", "--", executable | args],
+             timeout_ms,
              env: [{@stderr_env, stderr_path}]
            ) do
         {:ok, out, 0} -> {:ok, out}
-        {:ok, _out, code} -> {:error, {:ffmpeg_exit, code, read_stderr(stderr_path)}}
+        {:ok, _out, code} -> {:exit, code, read_stderr(stderr_path)}
         {:error, _reason} = error -> error
       end
     after
       File.rm(stderr_path)
     end
-  rescue
-    e -> {:error, e}
   end
 
   @impl true

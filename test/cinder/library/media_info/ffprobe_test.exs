@@ -466,6 +466,26 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
              {:error, {:ffmpeg_exit, 7, "cannot decode"}}
   end
 
+  # #861: ffprobe logs a damaged block on stderr and still exits 0. Merged into stdout, that line
+  # broke the JSON, and the failed probe read the whole file again on every sweep.
+  @tag :tmp_dir
+  test "subtitle_tracks/1 parses stdout's JSON when ffprobe also logs to stderr", %{tmp_dir: tmp} do
+    use_ffprobe_bin(tmp, """
+    printf '[matroska,webm @ 0x1] Invalid block\\n' >&2
+    printf '{"streams":[{"index":2,"codec_name":"subrip","nb_read_packets":"900"}]}'
+    """)
+
+    assert {:ok, [%{index: 2, packet_count: 900}]} = Ffprobe.subtitle_tracks("/media/movie.mkv")
+  end
+
+  @tag :tmp_dir
+  test "subtitle_tracks/1 returns trimmed stderr on a failed process", %{tmp_dir: tmp} do
+    use_ffprobe_bin(tmp, "printf '{'; printf 'Invalid data found\\n' >&2; exit 1")
+
+    assert Ffprobe.subtitle_tracks("/media/movie.mkv") ==
+             {:error, {:ffprobe_exit, 1, "Invalid data found"}}
+  end
+
   @tag :tmp_dir
   test "probe/1 kills a hung ffprobe process and returns {:error, :timeout} within its bound", %{
     tmp_dir: tmp
@@ -831,11 +851,14 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   # `ionice` prints `idle`, or `none: prio 4` and the like, whose prio varies by kernel.
   defp io_class(output), do: output |> String.trim() |> String.split(":") |> hd()
 
-  defp use_ffmpeg_bin(tmp, script) do
-    path = Path.join(tmp, "ffmpeg")
+  defp use_ffmpeg_bin(tmp, script), do: use_bin(tmp, :ffmpeg_bin, "ffmpeg", script)
+  defp use_ffprobe_bin(tmp, script), do: use_bin(tmp, :ffprobe_bin, "ffprobe", script)
+
+  defp use_bin(tmp, key, name, script) do
+    path = Path.join(tmp, name)
     File.write!(path, "#!/bin/sh\n#{script}\n")
     File.chmod!(path, 0o755)
-    Application.put_env(:cinder, :ffmpeg_bin, path)
+    ConfigCase.put_env(key, path)
   end
 
   defp use_hanging_ffprobe(tmp) do

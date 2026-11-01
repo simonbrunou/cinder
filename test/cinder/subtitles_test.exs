@@ -7,6 +7,7 @@ defmodule Cinder.SubtitlesTest do
   import Mox
   import ExUnit.CaptureLog
 
+  alias Cinder.ConfigCase
   alias Cinder.Library.Filesystem.Disk
   alias Cinder.Subtitles
   alias Cinder.Subtitles.Manifest
@@ -53,6 +54,7 @@ defmodule Cinder.SubtitlesTest do
 
     stub_with(Cinder.Library.FilesystemMock, Disk)
     stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> :too_small end)
+    stub(Cinder.Subtitles.TranslatorMock, :configured?, fn -> true end)
 
     stub(Cinder.Library.FilesystemMock, :read, fn path ->
       send(self(), {:read, path})
@@ -679,6 +681,134 @@ defmodule Cinder.SubtitlesTest do
     end
   end
 
+  # #861: listing a video's tracks and extracting one each read the whole file. A sweep over a file
+  # that did not change must not read it again for a result that cannot change. The stubs count
+  # every read and every commit (a commit asks the media server to scan): an unstubbed mock would
+  # raise inside fetch_one/6's rescue, and a negative test could not tell that from no read.
+  describe "a sweep over a file it already read" do
+    # An ASS typesetting track converted to SRT: a blank line inside a cue fails both the timing
+    # check and the SRT parser (Monogatari on prod).
+    @broken "1\n00:00:01,000 --> 00:00:02,000\nLine one\n\nLine after blank\n\n" <>
+              "2\n00:00:03,000 --> 00:00:04,000\nTwo\n\n"
+    @srt "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n"
+
+    setup do
+      ConfigCase.put_env(:media_info, Cinder.Library.MediaInfoMock)
+      put_moviehash!(131_072)
+      test = self()
+      stub(Cinder.Library.MediaServerMock, :scan, fn kind -> send(test, {:scan, kind}) && :ok end)
+      :ok
+    end
+
+    test "does not extract an own track the timing check rejected", %{video: video} do
+      stub_reads(video, {:ok, [own_track(3, "fre")]}, %{3 => {:ok, @broken}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:error, :down} end)
+      criteria = %{imdb_id: "tt1", embedded_subtitles: ["fre"]}
+
+      assert effects(criteria, video) == [:probe, {:extract, 3}]
+      assert effects(criteria, video) == []
+    end
+
+    test "does not extract and write an embedded sidecar it already holds", %{video: video} do
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{2 => {:ok, @srt}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:extract, 2}, {:scan, :movies}]
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) == @srt
+      assert effects(%{imdb_id: "tt1"}, video) == []
+    end
+
+    test "still replaces an embedded sidecar with an OpenSubtitles match", %{video: video} do
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{2 => {:ok, @srt}})
+      expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      expect(Cinder.Subtitles.ProviderMock, :search, fn _ ->
+        {:ok, [result(1, "fr", moviehash_match: true)]}
+      end)
+
+      download = "1\n00:00:01,000 --> 00:00:02,000\nHASH SRT\n\n"
+      expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, download} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:extract, 2}, {:scan, :movies}]
+      assert effects(%{imdb_id: "tt1"}, video) == [{:scan, :movies}]
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) == download
+      assert %{tracks: %{"fr" => %{origin: "opensubtitles_hash"}}} = Manifest.read(video)
+    end
+
+    test "does not extract a default track that did not parse as a translation source", %{
+      video: video
+    } do
+      stub_reads(video, {:ok, [track(3, "eng", default?: true)]}, %{3 => {:ok, @broken}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:extract, 3}]
+      assert effects(%{imdb_id: "tt1"}, video) == []
+    end
+
+    # With no translator the sidecars are still looked at: one in the wanted language under another
+    # name is copied to the target.
+    test "does not extract the default track when no translator is configured", %{video: video} do
+      stub_reads(video, {:ok, [track(3, "eng", default?: true)]}, %{3 => {:ok, @srt}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub(Cinder.Subtitles.TranslatorMock, :configured?, fn -> false end)
+      put!(Path.join(Path.dirname(video), "M.fre.srt"), @srt)
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:scan, :movies}]
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) == @srt
+      assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(video)
+    end
+
+    # ffprobe's stderr merged into its JSON once broke the probe of a whole file on every sweep.
+    test "does not probe again a file whose probe output did not parse", %{video: video} do
+      stub_reads(video, {:error, %Jason.DecodeError{position: 0, data: ""}}, %{})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:error, :down} end)
+      criteria = %{imdb_id: "tt1", embedded_subtitles: ["fre"]}
+
+      assert effects(criteria, video) == [:probe]
+      assert effects(criteria, video) == []
+    end
+
+    # A busy disk times out a probe and fails an extraction the same way a damaged file would.
+    test "probes and extracts again after a timeout", %{video: video} do
+      stub_reads(video, {:error, :timeout}, %{})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:error, :down} end)
+      criteria = %{imdb_id: "tt1", embedded_subtitles: ["fre"]}
+
+      assert effects(criteria, video) == [:probe]
+      assert effects(criteria, video) == [:probe]
+
+      put_moviehash!(131_073)
+      stub_reads(video, {:ok, [own_track(3, "fre")]}, %{3 => {:error, :timeout}})
+
+      assert effects(criteria, video) == [:probe, {:extract, 3}]
+      assert effects(criteria, video) == [{:extract, 3}]
+    end
+
+    # Monogatari on prod: one English track, the default, that fails both checks, and French
+    # wanted too. Each check asked for the same track, so a sweep read the file three times, and
+    # every sweep wrote the English sidecar again. A file whose moviehash changed is read again.
+    test "reads a file once, then not until it changes", %{video: video} do
+      ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "en,fr")
+      stub_reads(video, {:ok, [own_track(3, "eng", default?: true)]}, %{3 => {:ok, @broken}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      criteria = %{
+        imdb_id: "tt1",
+        embedded_subtitles: ["eng"],
+        own_track_until: System.monotonic_time(:millisecond) + 60_000
+      }
+
+      assert effects(criteria, video) == [:probe, {:extract, 3}, {:scan, :movies}]
+      assert %{tracks: %{"en" => %{origin: "embedded"}}} = Manifest.read(video)
+      assert effects(criteria, video) == []
+
+      put_moviehash!(131_073)
+
+      assert effects(criteria, video) == [:probe, {:extract, 3}, {:scan, :movies}]
+      assert effects(criteria, video) == []
+    end
+  end
+
   test "a cn (Cantonese) target selects a generically-tagged chi embedded track, not a fallback translation (#573)",
        %{video: video} do
     Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "cn")
@@ -879,7 +1009,10 @@ defmodule Cinder.SubtitlesTest do
       {:ok, [%{index: 3, language: "en", default?: true, forced?: false}]}
     end)
 
-    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 3 ->
+    # A translation could not replace the target, so the default track is not even extracted: that
+    # would read the whole file for nothing (#861).
+    stub(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, index ->
+      send(self(), {:extract, index})
       {:ok, "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n"}
     end)
 
@@ -889,8 +1022,13 @@ defmodule Cinder.SubtitlesTest do
 
     stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
 
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+    log =
+      capture_log(fn ->
+        assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+      end)
 
+    refute_received {:extract, _index}
+    refute log =~ "crashed"
     assert File.read!(target) == "1\n00:00:01,000 --> 00:00:02,000\nBonjour original\n\n"
     assert %{tracks: %{"fr" => %{origin: "release_sidecar"}}} = Manifest.read(video)
   end
@@ -1069,6 +1207,55 @@ defmodule Cinder.SubtitlesTest do
   end
 
   defp put_manifest!(video, manifest), do: put!(Manifest.path(video), Jason.encode!(manifest))
+
+  defp put_moviehash!(size) do
+    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> {:ok, {size, @zeros, @zeros}} end)
+  end
+
+  defp track(index, language, overrides \\ []) do
+    Map.merge(
+      %{index: index, language: language, default?: false, forced?: false, packet_count: 50},
+      Map.new(overrides)
+    )
+  end
+
+  # Long enough to be the video's own track (`Cinder.Subtitles.OwnTrack`).
+  defp own_track(index, language, overrides \\ []),
+    do: track(index, language, Keyword.put_new(overrides, :packet_count, 900))
+
+  # The two whole-file reads, each reported to the test: listing the tracks (`probe`) and
+  # extracting one (`contents` maps a track index to the extraction's result).
+  defp stub_reads(video, probe, contents) do
+    test = self()
+
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      send(test, :probe)
+      probe
+    end)
+
+    stub(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, index ->
+      send(test, {:extract, index})
+      Map.fetch!(contents, index)
+    end)
+  end
+
+  # One sweep's fetch for `video`: the reads and media-server scans it made, in order. A crash
+  # inside the fetch is logged and swallowed, so the log is checked for one.
+  defp effects(criteria, video) do
+    log = capture_log(fn -> assert :ok = Subtitles.fetch_missing(criteria, video, :movies) end)
+    refute log =~ "crashed"
+    drain_effects([])
+  end
+
+  defp drain_effects(acc) do
+    receive do
+      :probe -> drain_effects([:probe | acc])
+      {:extract, _index} = read -> drain_effects([read | acc])
+      {:scan, _kind} = scan -> drain_effects([scan | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
 
   defp fail_manifest_writes do
     stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
