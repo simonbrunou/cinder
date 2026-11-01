@@ -5,6 +5,8 @@ defmodule CinderWeb.SetupLiveTest do
   import Phoenix.LiveViewTest
   import Mox
 
+  alias Cinder.Test.Rendezvous
+
   setup :set_mox_global
   setup :reset_cinder_env
 
@@ -12,15 +14,15 @@ defmodule CinderWeb.SetupLiveTest do
   # and for each download protocol (the form sends every select's value), which wires the real
   # Jellyfin, qBittorrent and SABnzbd clients: their health runs through the Req.Test stubs
   # below. TMDB, the indexer and the library roots stay on their Mox mocks, and the client
-  # mocks answer only before the first save. `delay_ms` makes each setup target's probe take
-  # that long: one sleep per probe, on a call its health check makes exactly once.
-  defp stub_all_services_ok(delay_ms \\ 0) do
-    stub(Cinder.Catalog.TMDBMock, :health, fn -> sleep_ok(delay_ms) end)
-    stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(delay_ms) end)
-    stub(Cinder.Download.ClientMock, :health, fn -> sleep_ok(delay_ms) end)
-    stub(Cinder.Download.SabnzbdClientMock, :health, fn -> sleep_ok(delay_ms) end)
+  # mocks answer only before the first save. Each setup target's probe calls `answer` once, on a
+  # call its health check makes exactly once, and fails when `answer` returns an error.
+  defp stub_all_services_ok(answer \\ fn -> :ok end) do
+    stub(Cinder.Catalog.TMDBMock, :health, answer)
+    stub(Cinder.Acquisition.IndexerMock, :health, answer)
+    stub(Cinder.Download.ClientMock, :health, answer)
+    stub(Cinder.Download.SabnzbdClientMock, :health, answer)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> sleep_ok(delay_ms) end)
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> answer.() end)
     stub(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
 
     Req.Test.set_req_test_to_shared()
@@ -34,16 +36,14 @@ defmodule CinderWeb.SetupLiveTest do
           |> Req.Test.text("Ok.")
 
         "/api/v2/app/webapiVersion" ->
-          sleep_ok(delay_ms)
-          Req.Test.text(conn, "2.8.5")
+          reply(conn, answer, &Req.Test.text(&1, "2.8.5"))
       end
     end)
 
     Req.Test.stub(Cinder.SabnzbdStub, fn conn ->
       case conn.params["mode"] do
         "queue" ->
-          sleep_ok(delay_ms)
-          Req.Test.json(conn, %{"queue" => %{"slots" => []}})
+          reply(conn, answer, &Req.Test.json(&1, %{"queue" => %{"slots" => []}}))
 
         "get_config" ->
           Req.Test.json(conn, %{"config" => %{"misc" => %{}}})
@@ -51,9 +51,16 @@ defmodule CinderWeb.SetupLiveTest do
     end)
 
     Req.Test.stub(Cinder.JellyfinStub, fn conn ->
-      sleep_ok(delay_ms)
-      Req.Test.json(conn, %{})
+      reply(conn, answer, &Req.Test.json(&1, %{}))
     end)
+  end
+
+  # Sends the canned response once `answer` returns `:ok`, and a 503 when it returns an error.
+  defp reply(conn, answer, respond) do
+    case answer.() do
+      :ok -> respond.(conn)
+      {:error, reason} -> Plug.Conn.send_resp(conn, 503, inspect(reason))
+    end
   end
 
   defp sleep_ok(ms) do
@@ -369,23 +376,19 @@ defmodule CinderWeb.SetupLiveTest do
   test "Save & validate checks the setup targets at once, not one after another", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)
-    delay_ms = 400
-    stub_all_services_ok(delay_ms)
+    # Every setup target's probe reaches one stubbed call (nine today), and each call waits
+    # there until all of them have arrived. Timing the click instead failed on a loaded runner
+    # (#1046).
+    targets = Cinder.Health.targets(setup: :required) ++ Cinder.Health.targets(setup: :any)
+    rendezvous = Rendezvous.new(length(targets))
+    stub_all_services_ok(fn -> Rendezvous.arrive(rendezvous) end)
 
     {:ok, lv, _html} = live(conn, ~p"/setup")
-
-    started = System.monotonic_time(:millisecond)
     lv |> form("#setup-form", @valid_params_with_books) |> render_submit()
-    elapsed = System.monotonic_time(:millisecond) - started
 
+    # Finish alone does not prove it: the download group stays green with one client up.
+    assert Rendezvous.result(rendezvous) == %{arrived: length(targets), met: length(targets)}
     assert has_element?(lv, "#finish-setup:not([disabled])")
-    # Each setup target sleeps `delay_ms`: one after another the click costs one per target
-    # (nine today), at once about one (~450ms measured). Three leaves the rest of the click a
-    # loaded CPU's margin, and catches a serial sweep only while more than three targets sleep.
-    targets = Cinder.Health.targets(setup: :required) ++ Cinder.Health.targets(setup: :any)
-    assert length(targets) > 3
-    assert elapsed >= delay_ms
-    assert elapsed < 3 * delay_ms
   end
 
   test "a setup target that outlasts the timeout budget reads as timed out", %{conn: conn} do

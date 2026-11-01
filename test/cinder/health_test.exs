@@ -5,6 +5,7 @@ defmodule Cinder.HealthTest do
 
   alias Cinder.Health
   alias Cinder.Library.SidecarQuarantine
+  alias Cinder.Test.Rendezvous
 
   setup :verify_on_exit!
 
@@ -440,30 +441,24 @@ defmodule Cinder.HealthTest do
 
     test "runs probes concurrently instead of paying their sum" do
       stub_check_all_services()
-      sleep_ms = 200
 
-      for mock <- [
-            Cinder.Catalog.TMDBMock,
-            Cinder.Acquisition.IndexerMock,
-            Cinder.Books.PrimaryMetadataMock,
-            Cinder.Books.SecondaryMetadataMock,
-            Cinder.Library.MediaServerMock,
-            Cinder.Library.AudiobookServerMock
-          ] do
-        stub(mock, :health, fn ->
-          Process.sleep(sleep_ms)
-          :ok
-        end)
-      end
+      mocks = [
+        Cinder.Catalog.TMDBMock,
+        Cinder.Acquisition.IndexerMock,
+        Cinder.Books.PrimaryMetadataMock,
+        Cinder.Books.SecondaryMetadataMock,
+        Cinder.Library.MediaServerMock,
+        Cinder.Library.AudiobookServerMock
+      ]
 
-      started = System.monotonic_time(:millisecond)
+      # Each probe waits in its stub until all of them have arrived, which only a concurrent
+      # sweep lets happen. A wall-clock bound fails on a loaded runner instead (#1046).
+      rendezvous = Rendezvous.new(length(mocks))
+      for mock <- mocks, do: stub(mock, :health, fn -> Rendezvous.arrive(rendezvous) end)
+
       Health.check_all()
-      elapsed = System.monotonic_time(:millisecond) - started
 
-      # Six probes at `sleep_ms` each cost `6 * sleep_ms` serially; concurrently the sweep costs
-      # one `sleep_ms`. Assert well under half the serial sum so this stays deterministic on a
-      # loaded CI box instead of chasing the concurrent figure exactly.
-      assert elapsed < 3 * sleep_ms
+      assert Rendezvous.result(rendezvous) == %{arrived: length(mocks), met: length(mocks)}
     end
 
     test "a probe exceeding the timeout budget reports :timeout without blocking other rows" do
