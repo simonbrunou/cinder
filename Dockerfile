@@ -12,7 +12,9 @@
 #   - Ex: docker.io/hexpm/elixir:1.20.4-erlang-29.1.2-debian-trixie-20261005-slim
 #
 # Elixir and OTP must match `otp-version`/`elixir-version` in .forgejo/workflows/ci.yml, so
-# the release is built with the toolchain the test suite ran on. Bump them together.
+# the release is built with the toolchain the test suite ran on. Bump them together
+# (test/code_health/beam_version_pins_test.exs checks both), and the flake's nixpkgs with them
+# (docs/agents/ci.md "Dependency rebuild").
 ARG ELIXIR_VERSION=1.20.4
 ARG OTP_VERSION=29.1.2
 ARG DEBIAN_VERSION=trixie-20261005-slim

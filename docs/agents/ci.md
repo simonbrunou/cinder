@@ -159,7 +159,15 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   download prints neither. Without `--include-children`, the command fails on an empty build
   with `Unchecked dependencies for environment prod` and `the dependency build is outdated` for
   `elixir_make` and each NIF's other deps, because Mix then builds them from inside that NIF's
-  compile and checks them against statuses it cached before they were built (#983).
+  compile and checks them against statuses it cached before they were built (#983). An OTP or
+  Elixir bump moves three pins: every `erlef/setup-beam` step's `otp-version` and
+  `elixir-version`, the Dockerfile's `OTP_VERSION` and `ELIXIR_VERSION`, and `flake.lock`'s
+  nixpkgs. `test/code_health/beam_version_pins_test.exs` fails `mix test` when the first two
+  differ, and its message says what to do when an upstream lags. No test reads the flake, so
+  check the dev shell with `nix develop . -c elixir -e 'IO.puts(:code.root_dir());
+  IO.puts(System.version())'`: the first line ends in `erlang-<OTP version>/lib/erlang`. When
+  either version lags, run `nix flake update`. `nix eval --inputs-from . nixpkgs#...` reads the
+  registry's nixpkgs, not the lock, so its answer says nothing about the dev shell (#1040).
 
 ## Re-running CI
 

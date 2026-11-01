@@ -24,6 +24,9 @@
           # `attribute 'elixir_1_20' missing`, the locked nixpkgs predates the 1.20
           # packaging — run `nix flake update`, or fall back to the known-good
           # baseline: `beam = pkgs.beam.packages.erlang_28; elixir = beam.elixir_1_19;`.
+          # Their patch versions come from flake.lock's nixpkgs, which no test compares with
+          # CI: after an OTP or Elixir bump, check them as docs/agents/ci.md "Dependency
+          # rebuild" says.
           beam = pkgs.beam.packages.erlang_29;
           elixir = beam.elixir_1_20;
           # A python3 that can import ffsubsync, so `python3 priv/ffsubsync_runner.py ...` runs the

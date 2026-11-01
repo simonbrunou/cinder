@@ -32,7 +32,9 @@ jobs:
       # support older Elixir/OTP than what you build on.
       # Exact versions, the same as ELIXIR_VERSION/OTP_VERSION in the Dockerfile, so the suite
       # runs on the toolchain the release is built with (floating "29"/"1.20" once let CI run
-      # newer versions than production). Bump them together.
+      # newer versions than production). Bump them together:
+      # test/code_health/beam_version_pins_test.exs fails `mix test` when any setup-beam step
+      # differs from the Dockerfile.
       - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1
         id: beam
         with:
