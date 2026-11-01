@@ -41,6 +41,13 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
   check the author's claims checks them against that line and the diff, within the same
   one-file budget. A second full suite takes the CPU the host's agent threads share: on #959 a
   Spec reviewer re-ran the full suite in a copy of the worktree and took 12 minutes.
+- Paste this section into each reviewer's brief before you start the reviewer. Briefs written
+  from the `code-review` skill alone let reviewers run tests or a mutation in the author's
+  checkout on #884, #960, #1004 and #939.
+- In a T3 thread, start each `delegate_task` reviewer at high effort in `target.options`
+  (`reasoningEffort: "high"` for Codex, whose default model starts at `low`; `effort: "high"`
+  for Claude), and with `isolation: "worktree"` when its brief allows the mutation check. The
+  Codex reviewers on #1025 and #939 ran at `low` and ran no mutation check.
 
 ## Agent docs
 
