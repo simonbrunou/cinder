@@ -40,9 +40,9 @@ defmodule Cinder.LibraryStubs do
   The round-trip waits `Cinder.Test.DiskTask.timeout_ms/0` (30 s), then exits with a timeout.
   A task whose test points a library root at a real directory publishes its sidecar and manifest
   through a run of Disk subprocesses, and on a loaded runner they outlasted the 5 s
-  `:sys.get_state/1` default (#1007, #1028). `Cinder.DataCase.setup_sandbox/1` runs this at the
-  end of every test, and `test/code_health/fetcher_wait_test.exs` fails a test that waits on the
-  Fetcher another way.
+  `:sys.get_state/1` default (#1007, #1028). `Cinder.DataCase.drain_subtitle_fetcher!/1` runs
+  this at the end of every test, and `test/code_health/fetcher_wait_test.exs` fails a test that
+  waits on the Fetcher another way.
   """
   def await_subtitle_tasks do
     _state = :sys.get_state(Cinder.Subtitles.Fetcher, DiskTask.timeout_ms())

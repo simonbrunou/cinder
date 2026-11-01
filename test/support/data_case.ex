@@ -74,14 +74,15 @@ defmodule Cinder.DataCase do
   wait for it. Left queued, the fetch ran inside a later test, which could have turned subtitle
   languages on and stubbed the mocks it calls (#685, #1028). The drain is registered after the
   checkout, and ExUnit runs `on_exit` callbacks last-registered first, so it runs before the
-  sandbox owner stops and a draining fetch can still read the database. The test's Mox stubs are
-  gone by then, so a test whose fetch calls a mock still awaits it in its own body
-  (docs/agents/testing.md).
+  sandbox owner stops and a draining fetch can still read the database. The test's own `on_exit`
+  callbacks and Mox stubs are gone by then, so `drain_subtitle_fetcher!/1` fails a test that is
+  not async when a fetch left to the drain logs a warning (#1047). Such a test awaits its fetch in
+  its own body (docs/agents/testing.md).
   """
   def setup_sandbox(tags) do
     check_timeout_tag!(tags)
     checkout_sandbox(tags)
-    on_exit(&Cinder.LibraryStubs.await_subtitle_tasks/0)
+    on_exit(fn -> drain_subtitle_fetcher!(tags) end)
   end
 
   defp checkout_sandbox(%{unboxed: true}) do
@@ -119,6 +120,37 @@ defmodule Cinder.DataCase do
   end
 
   def check_timeout_tag!(_tags), do: :ok
+
+  @doc """
+  Waits for every subtitle fetch queued on `Cinder.Subtitles.Fetcher` with
+  `Cinder.LibraryStubs.await_subtitle_tasks/0`, and returns `:ok`. `setup_sandbox/1` runs it when
+  a test ends.
+
+  For a test that is not async, it captures every warning-or-above line logged while it waits,
+  and flunks when there is one (#1047). A sync test runs alone, so such a line comes from the
+  fetches that test left queued, or from another process it left running. An async test's drain
+  can run another async test's fetch, so for an async test it only waits.
+  """
+  def drain_subtitle_fetcher!(%{async: true}), do: Cinder.LibraryStubs.await_subtitle_tasks()
+
+  def drain_subtitle_fetcher!(_tags) do
+    {:ok, log} =
+      ExUnit.CaptureLog.with_log([level: :warning], &Cinder.LibraryStubs.await_subtitle_tasks/0)
+
+    if log != "" do
+      ExUnit.Assertions.flunk("""
+      These lines were logged while the end-of-test drain ran the subtitle fetches this test left \
+      queued:
+
+      #{log}
+      The drain runs after this test's own on_exit callbacks and once its Mox stubs are gone. \
+      Await the fetches in the test body with Cinder.LibraryStubs.await_subtitle_tasks/0, inside \
+      the capture_log/1 whose output the test asserts (docs/agents/testing.md).\
+      """)
+    end
+
+    :ok
+  end
 
   @doc """
   A helper that transforms changeset errors into a map of messages.

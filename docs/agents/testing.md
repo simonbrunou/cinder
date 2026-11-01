@@ -109,18 +109,22 @@
   module calls them. All three restore on exit.
 - Each committed movie or episode file queues a subtitle task on the one shared
   `Cinder.Subtitles.Fetcher`. `Cinder.DataCase.setup_sandbox/1`, which `DataCase` and `ConnCase`
-  run, drains the Fetcher with `Cinder.LibraryStubs.await_subtitle_tasks/0` when each test ends,
+  run, drains the Fetcher with `Cinder.DataCase.drain_subtitle_fetcher!/1` when each test ends,
   before the sandbox owner stops. A task left queued used to run inside a later test and, once
   that test turned subtitle languages on, use up its provider expectations (#685, #1028). The
-  helper waits `Cinder.Test.DiskTask.timeout_ms()`, since a task can write its manifest through a
-  Disk subprocess. `test/code_health/fetcher_wait_test.exs` fails a test that waits on the
-  Fetcher with `:sys` directly.
+  drain waits through `Cinder.LibraryStubs.await_subtitle_tasks/0`, which waits
+  `Cinder.Test.DiskTask.timeout_ms()`, since a task can write its manifest through a Disk
+  subprocess. `test/code_health/fetcher_wait_test.exs` fails a test that waits on the Fetcher
+  with `:sys` directly.
 - That drain runs after the test's own `on_exit` callbacks and after its Mox stubs are gone. So
   a test awaits its own tasks in its body with `await_subtitle_tasks/0` when an import it commits
   records sidecar languages, or when it turns subtitle languages on. Left to the drain, such a
   task calls a mock with no stub, or logs `subtitle manifest write failed ... :unsafe_destination`
-  once the test has restored its library roots. Put the call inside the `capture_log/1` whose
-  output the test asserts: the Fetcher's task does the logging.
+  once the test has restored its library roots. In a test that is not async, the drain then
+  fails the test and quotes every warning-or-above line logged while it ran (#1047). Timing
+  decides whether a task is left to the drain, so such a test can pass one run and fail the next.
+  An async test's drain only waits, since it can run another async test's task. Put the call
+  inside the `capture_log/1` whose output the test asserts: the Fetcher's task does the logging.
 - A child process inherits the suite's own priority, and that priority differs by route. On the
   dev host, `nix develop -c mix test` runs at nice 16, the idle I/O class and `SCHED_IDLE`
   (ananicy-cpp's `nix` rule). CI runs at nice 0 and the default class. A test of a subprocess's
