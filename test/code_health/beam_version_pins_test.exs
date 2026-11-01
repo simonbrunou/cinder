@@ -260,6 +260,10 @@ defmodule Cinder.CodeHealth.BeamVersionPinsTest do
     '''
 
     assert problems(@workflow, dockerfile) == []
+
+    # A comment after a Unicode space is still a comment.
+    led = <<0xA0::utf8>> <> "# a comment that continues nothing either \\\n" <> dockerfile
+    assert problems(@workflow, led) == []
   end
 
   test "a continued line before the first FROM fails" do
@@ -281,6 +285,21 @@ defmodule Cinder.CodeHealth.BeamVersionPinsTest do
              "Dockerfile:4 continues onto the next line with \\, which this check cannot read",
              "Dockerfile sets no default for ARG ELIXIR_VERSION"
            ]
+
+    # Docker strips every carriage return before a line feed, so this line continues too.
+    crlf = "ARG ELIXIR_VERSION=1.20.4 OTP_VERSION=29.1.2 \\\r\r\nFROM debian\n"
+
+    assert problems(@workflow, crlf) == [
+             "Dockerfile:1 continues onto the next line with \\, which this check cannot read",
+             "Dockerfile sets no default for ARG ELIXIR_VERSION",
+             "Dockerfile sets no default for ARG OTP_VERSION"
+           ]
+
+    assert problems(@workflow, <<0xFF>> <> @dockerfile) == [
+             "Dockerfile is not valid UTF-8, which this check cannot read",
+             "Dockerfile sets no default for ARG ELIXIR_VERSION",
+             "Dockerfile sets no default for ARG OTP_VERSION"
+           ]
   end
 
   test "an ARG after the first FROM does not count" do
@@ -300,12 +319,21 @@ defmodule Cinder.CodeHealth.BeamVersionPinsTest do
 
     assert problems(@workflow, dockerfile) == ["Dockerfile sets no default for ARG OTP_VERSION"]
 
-    with_bom = "﻿FROM docker.io/hexpm/elixir:1.20.3-erlang-29.1.1-debian-trixie\n" <> @dockerfile
+    # Docker skips a byte order mark, and the Unicode spaces before an instruction as it skips
+    # ASCII ones, so neither may hide the first FROM or an ARG.
+    stage = "FROM docker.io/hexpm/elixir:1.20.3-erlang-29.1.1-debian-trixie\n"
 
-    assert problems(@workflow, with_bom) == [
-             "Dockerfile sets no default for ARG ELIXIR_VERSION",
-             "Dockerfile sets no default for ARG OTP_VERSION"
-           ]
+    for lead <- [<<0xFEFF::utf8>>, <<0xA0::utf8>>, " " <> <<0x2003::utf8>>] do
+      assert {lead, problems(@workflow, lead <> stage <> @dockerfile)} ==
+               {lead,
+                [
+                  "Dockerfile sets no default for ARG ELIXIR_VERSION",
+                  "Dockerfile sets no default for ARG OTP_VERSION"
+                ]}
+    end
+
+    spaced = String.replace(@dockerfile, "ARG OTP_VERSION", <<0xA0::utf8>> <> "ARG OTP_VERSION")
+    assert problems(@workflow, spaced) == []
   end
 
   defp problems(workflow, dockerfile \\ @dockerfile),
@@ -489,13 +517,22 @@ defmodule Cinder.CodeHealth.BeamVersionPinsTest do
   # \ or ` there fails rather than being joined, so this reader needs neither Docker's
   # continuation rules nor the escape directive that changes them.
   defp dockerfile_args(path, source) do
-    # Docker skips a byte order mark, which would otherwise hide a FROM on the first line.
+    if String.valid?(source),
+      do: preamble_args(path, source),
+      else: {[], ["#{path} is not valid UTF-8, which this check cannot read"]}
+  end
+
+  # Docker skips a byte order mark, which would otherwise hide a FROM on the first line, and
+  # strips every carriage return before a line feed. The u flag makes \s match the Unicode spaces
+  # Docker trims before an instruction.
+  defp preamble_args(path, source) do
     source
-    |> String.trim_leading("﻿")
-    |> String.split(~r/\r?\n/)
+    |> String.trim_leading(<<0xFEFF::utf8>>)
+    |> String.split("\n")
+    |> Enum.map(&String.trim_trailing(&1, "\r"))
     |> Enum.with_index(1)
-    |> Enum.take_while(fn {line, _number} -> not Regex.match?(~r/\A\s*FROM\s/i, line) end)
-    |> Enum.reject(fn {line, _number} -> String.trim(line) == "" or line =~ ~r/\A\s*#/ end)
+    |> Enum.take_while(fn {line, _number} -> not Regex.match?(~r/\A\s*FROM\s/iu, line) end)
+    |> Enum.reject(fn {line, _number} -> String.trim(line) == "" or line =~ ~r/\A\s*#/u end)
     |> Enum.map(&preamble_line(path, &1))
     |> Enum.unzip()
     |> then(fn {args, problems} -> {Enum.concat(args), Enum.concat(problems)} end)
@@ -511,7 +548,7 @@ defmodule Cinder.CodeHealth.BeamVersionPinsTest do
          ]}
 
       nil ->
-        case Regex.run(~r/\A\s*ARG\s+(.*)\z/i, line, capture: :all_but_first) do
+        case Regex.run(~r/\A\s*ARG\s+(.*)\z/iu, line, capture: :all_but_first) do
           [declarations] -> {Enum.map(OptionParser.split(declarations), &arg_default/1), []}
           nil -> {[], []}
         end
