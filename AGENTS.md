@@ -63,14 +63,15 @@ that already ends in another `(#N)`: name the issue in the squash body's `Closes
 A branch behind `main` with no conflict merges as it is, with no sync and no CI re-run. The
 accepted risk is that two PRs that pass apart can break `main` together. The merging agent checks
 for that break after the merge. A newer push to `main` cancels the `ci.yml` run in progress, so
-in a burst of merges only the newest `main` commit's run is sure to finish. Run
-`git fetch origin`, then wait on the `CI / <job> (push)` statuses of `origin/main`'s head with
-`python3 -I ~/.agents/skills/forgejo-issues/scripts/forgejo.py ci cinder <sha>`
-([ci.md](docs/agents/ci.md) "Reading a run"). That head is your merge commit or a newer one.
-When the wait exits 1 on a job whose description reads `Has been cancelled`, fetch again. If
-`origin/main` moved, a newer push cancelled that run, so wait on the new head. If it did not,
-treat the run as red. When the newest run is red, search the open issues, since every agent that
-merged in the burst sees the same run. Unless one already covers that run, file one labelled
+in a burst of merges only the newest `main` commit's run is sure to finish. Wait on the
+`CI / <job> (push)` statuses of `main`'s head with
+`python3 -I ~/.agents/skills/forgejo-issues/scripts/forgejo.py ci cinder --follow main`
+([ci.md](docs/agents/ci.md) "Reading a run" says how to run it and where every exit code is
+listed). It follows `main` on the forge and ends only on its head. That head is your merge commit
+or a newer one. Exit 0 means it is green. Any exit 1 is a red run, whether a job failed or every
+failed job reads `Has been cancelled`, which follow mode reports only while `main` still points
+at that commit. When the newest run is red, search the open issues, since every agent that merged
+in the burst sees the same run. Unless one already covers that run, file one labelled
 `needs-triage` that names the failing job.
 
 The merge-tree check exits 1 in two cases, told apart by their output. A conflict prints
