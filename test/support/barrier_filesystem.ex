@@ -116,6 +116,11 @@ defmodule Cinder.Test.BarrierFilesystem do
   test pass on the happy path. Call it from the test process, with no other `fail_once/1`
   failure armed. A `callback` key is ignored here.
 
+  Arming sets `:filesystem` to this module for the rest of the test, after the failure fired
+  too. The test's exit puts back the value `:filesystem` held just before arming, or deletes the
+  key when it was unset, even when the failure never fired. The caller needs no restore of its
+  own.
+
   `phase: :post_effect` runs the real operation, then returns the error. Only `exchange`,
   `rename_exclusive`, `rm`, `write_exclusive`, `write_bound` and `discard_bound` take it.
   """
@@ -124,7 +129,8 @@ defmodule Cinder.Test.BarrierFilesystem do
   @doc """
   Fails each of `failures` in order, each an `operation`, `source_contains` and `reason` map with
   an optional 0-arity `callback` run as it fires (`phase` is ignored): one is armed only once the
-  one before it fired. The test fails when it exits before every failure fired.
+  one before it fired. The test fails when it exits before every failure fired. Arming sets and
+  the exit restores `:filesystem` as `fail_once/1` says.
   """
   def fail_in_order(failures), do: arm(:filesystem_failures, failures)
 
@@ -133,7 +139,8 @@ defmodule Cinder.Test.BarrierFilesystem do
       do: raise(ArgumentError, "a filesystem failure is still armed: #{inspect(armed)}")
 
     ExUnit.Callbacks.on_exit(fn -> assert_fired(key) end)
-    Application.put_env(:cinder, :filesystem, __MODULE__)
+    # Registered after `assert_fired/1`, so its restore runs before that check can raise.
+    Cinder.ConfigCase.put_env(:filesystem, __MODULE__)
     Application.put_env(:cinder, key, failure)
   end
 

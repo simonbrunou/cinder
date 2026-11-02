@@ -323,9 +323,6 @@ defmodule Cinder.HealthTest do
       tmp_dir: root
     } do
       with_env(:movies_library_path, root)
-      # `fail_once/1` points `:filesystem` at BarrierFilesystem and leaves it there; this puts the
-      # mock back on exit.
-      with_env(:filesystem, BarrierFilesystem)
       # The create can start the rooted Disk helper, which has the test-env subprocess bound.
       with_env(:health_probe_timeout_ms, DiskTask.timeout_ms())
 
