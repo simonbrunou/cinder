@@ -3,6 +3,8 @@ defmodule Cinder.Disk.CommandProbe do
 
   use GenServer
 
+  alias Cinder.BoundedCommand
+
   @missing_path_status 66
   @reap_wait 100
   @call_headroom 1_000
@@ -180,22 +182,19 @@ defmodule Cinder.Disk.CommandProbe do
   defp exit_result(@missing_path_status, _output), do: {:error, :enoent}
   defp exit_result(status, _output), do: {:error, {:df_exit, status}}
 
+  # The group-then-pid kill `BoundedCommand` uses, so a process the probe's shell or `df` forked
+  # dies with it (#976). The port stays open: a `df` that outlives `SIGKILL` on a wedged mount
+  # keeps the probe `:draining`.
   defp kill(port) do
     with {:os_pid, pid} <- Port.info(port, :os_pid) do
-      killer = Application.get_env(:cinder, :disk_probe_killer, &kill_os_process/1)
+      killer =
+        Application.get_env(:cinder, :disk_probe_killer, &BoundedCommand.kill_os_process/1)
+
       _ = killer.(pid)
     end
 
     :ok
   catch
     _kind, _reason -> :ok
-  end
-
-  defp kill_os_process(pid) do
-    System.cmd(
-      "/bin/sh",
-      ["-c", ~S|kill -KILL "$1"|, "kill", Integer.to_string(pid)],
-      stderr_to_stdout: true
-    )
   end
 end

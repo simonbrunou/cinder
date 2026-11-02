@@ -15,8 +15,9 @@ defmodule Cinder.BoundedCommand do
   extraction), `Filesystem.Disk`'s rooted-helper, directory-sync and `mv --exchange` fallback
   calls, and `Subtitles.Sync.EngineWorkspace`'s seal call. A port the caller keeps open across
   calls (`Filesystem.Disk`'s rooted port, `EngineWorkspace`'s holder) closes through
-  `kill_and_close/1` instead. Outside this module: `Cinder.Disk.CommandProbe` is a GenServer that
-  owns its port across messages, and `Subtitles.Sync.Ffsubsync` runs under coreutils
+  `kill_and_close/1` instead. Two commands run outside both: `Cinder.Disk.CommandProbe` is a
+  GenServer that owns its port across messages, though its timeout kills the same way through
+  `kill_os_process/1` (#976), and `Subtitles.Sync.Ffsubsync` runs under coreutils
   `timeout --kill-after`.
 
   The caller owns the port, so every port message is consumed or drained before `run/4` returns,
@@ -85,6 +86,37 @@ defmodule Cinder.BoundedCommand do
     drain_immediate(port)
     :ok
   end
+
+  @doc """
+  Sends `SIGKILL` to the process group of the port command whose OS pid is `os_pid`, then to
+  `os_pid` itself (#876). `run/4` and `kill_and_close/1` kill through it, and so does
+  `Cinder.Disk.CommandProbe`, which owns its port across messages (#976). Returns `:ok` once the
+  kill ran, failed or not, or `:ignored`, without running it, for anything but an integer above 1.
+  """
+  @spec kill_os_process(term()) :: :ok | :ignored
+  # OTP's port spawner (`erl_child_setup`) calls `setsid` in the child, so the command leads its
+  # own process group, whose id is its pid. `kill -KILL -<pid>` reaches every process in that
+  # group, so a child the command forked stops writing too. The group is named by the pid, never
+  # looked up: if the command leads no group, that kill fails and the pid kill after it still
+  # lands, so the kill is never weaker than a pid-only one. dash, the `/bin/sh` of the Debian
+  # image and of CI, refuses `kill -KILL -- -<pid>`; `kill -KILL -<pid>` works in dash, bash and
+  # busybox `sh` alike. A pid of 1 would make it `-1`, every process this user may signal, so the
+  # guard refuses it; no port child has that pid. Like the pid kill before it, the group kill
+  # could reach an unrelated process only if the command exited and its pid was reused in the
+  # moment before this runs.
+  def kill_os_process(os_pid) when is_integer(os_pid) and os_pid > 1 do
+    System.cmd(
+      "/bin/sh",
+      ["-c", ~S|kill -KILL -"$1"; kill -KILL "$1"|, "kill", Integer.to_string(os_pid)],
+      stderr_to_stdout: true
+    )
+
+    :ok
+  catch
+    _kind, _reason -> :ok
+  end
+
+  def kill_os_process(_os_pid), do: :ignored
 
   defp open_and_supervise(exe, args, timeout_ms, opts) do
     # Both raise on a malformed option, before anything is spawned: a raise once the process runs
@@ -251,26 +283,8 @@ defmodule Cinder.BoundedCommand do
 
   # The OS pid behind a `Port` is not otherwise reachable, and `Port.close/1` alone does not
   # guarantee the process actually stops (#510, #590).
-  #
-  # OTP's port spawner (`erl_child_setup`) calls `setsid` in the child, so the command leads its
-  # own process group, whose id is its pid. `kill -KILL -<pid>` reaches every process in that
-  # group, so a child the command forked stops writing too (#876). The group is named by the
-  # pid, never looked up: if the command leads no group, that kill fails and the pid kill after
-  # it still lands, so the kill is never weaker than a pid-only one. dash, the `/bin/sh` of the
-  # Debian image and of CI, refuses `kill -KILL -- -<pid>`; `kill -KILL -<pid>` works in dash,
-  # bash and busybox `sh` alike. A pid of 1 would make it `-1`, every process this user may
-  # signal, so the guard refuses it; no port child has that pid. Like the pid kill before it, the
-  # group kill could reach an unrelated process only if the command exited and its pid was reused
-  # in the moment before this runs.
   defp kill(port) do
-    with {:os_pid, pid} when is_integer(pid) and pid > 1 <- Port.info(port, :os_pid) do
-      System.cmd(
-        "/bin/sh",
-        ["-c", ~S|kill -KILL -"$1"; kill -KILL "$1"|, "kill", Integer.to_string(pid)],
-        stderr_to_stdout: true
-      )
-    end
-
+    with {:os_pid, pid} <- Port.info(port, :os_pid), do: kill_os_process(pid)
     :ok
   catch
     _kind, _reason -> :ok

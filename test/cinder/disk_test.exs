@@ -4,6 +4,7 @@ defmodule Cinder.DiskTest do
   use ExUnit.Case, async: false
 
   alias Cinder.Disk
+  alias Cinder.Test.OsProcess
 
   describe "stats/1" do
     @tag :tmp_dir
@@ -160,6 +161,42 @@ defmodule Cinder.DiskTest do
       restore_env(saved)
 
       assert eventually(fn -> match?({:ok, _stats}, Disk.stats(tmp)) end)
+    end
+
+    # #976: a probe timeout kills the probe's whole process group, as `BoundedCommand` does, so a
+    # process the fake `df` forked dies with it. The child sleeps 10 s, longer than the 500 ms
+    # timeout, the 100 ms reap wait and `OsProcess.dead?/1`'s 1 s poll together, so it is dead
+    # there only if the kill reached it. A non-interactive shell has no job control, so the child
+    # stays in the probe's group.
+    @tag :tmp_dir
+    test "kills what the df probe forked when it times out", %{tmp_dir: tmp} do
+      saved = save_env([:disk_probe_timeout, :disk_df_bin])
+      child_pid_file = Path.join(tmp, "forking-df.child")
+      probe_pid_file = Path.join(tmp, "forking-df.pid")
+
+      forking_df =
+        write_fake_df(tmp, "forking-df", """
+        sleep 10 &
+        echo $! > '#{child_pid_file}.tmp' && mv '#{child_pid_file}.tmp' '#{child_pid_file}'
+        echo $$ > '#{probe_pid_file}.tmp' && mv '#{probe_pid_file}.tmp' '#{probe_pid_file}'
+        exec sleep 30
+        """)
+
+      on_exit(fn ->
+        kill_recorded_pids(child_pid_file)
+        kill_recorded_pids(probe_pid_file)
+        restore_env(saved)
+      end)
+
+      Application.put_env(:cinder, :disk_df_bin, forking_df)
+      Application.put_env(:cinder, :disk_probe_timeout, 500)
+
+      assert Disk.stats(tmp) == {:error, :timeout}
+
+      # The kill must have had a child to reach, or this test proves nothing.
+      assert File.exists?(child_pid_file), "the fake df had not forked its child by the timeout"
+      child_pid = child_pid_file |> File.read!() |> String.trim() |> String.to_integer()
+      assert OsProcess.dead?(child_pid)
     end
 
     @tag :tmp_dir

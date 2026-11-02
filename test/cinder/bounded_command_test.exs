@@ -6,6 +6,7 @@ defmodule Cinder.BoundedCommandTest do
   use ExUnit.Case, async: true
 
   alias Cinder.BoundedCommand
+  alias Cinder.Test.OsProcess
 
   @moduletag :tmp_dir
 
@@ -41,7 +42,7 @@ defmodule Cinder.BoundedCommandTest do
                {:error, {:halted, :too_big}}
 
       assert System.monotonic_time(:millisecond) - t0 < 3_000
-      assert process_dead?(read_pid!(pidfile))
+      assert OsProcess.dead?(read_pid!(pidfile))
 
       # The caller owns the port, and a poller GenServer has no catch-all `handle_info/2`.
       refute_receive {_port, {:data, _data}}, 200
@@ -91,7 +92,7 @@ defmodule Cinder.BoundedCommandTest do
         BoundedCommand.run(bin, [], 10_000, check: {20, check})
       end
 
-      assert process_dead?(read_pid!(pidfile))
+      assert OsProcess.dead?(read_pid!(pidfile))
       refute_receive {_port, {:data, _data}}, 200
       refute_receive {_port, {:exit_status, _status}}, 50
     end
@@ -119,14 +120,14 @@ defmodule Cinder.BoundedCommandTest do
         BoundedCommand.run(bin, [], 10_000, check: {20, check})
       end
 
-      assert process_dead?(read_pid!(pidfile))
+      assert OsProcess.dead?(read_pid!(pidfile))
     end
   end
 
   # #876: a halt or a timeout kills the command's whole process group, not only its pid. The
-  # child sleeps 5 s, longer than the 1 s deadline, the 200 ms reap wait and `process_dead?/1`'s
-  # 1 s poll together, so it can only be dead there if the kill reached it, and a killed child
-  # writes nothing more.
+  # child sleeps 5 s, longer than the 1 s deadline, the 200 ms reap wait and
+  # `OsProcess.dead?/1`'s 1 s poll together, so it can only be dead there if the kill reached it,
+  # and a killed child writes nothing more.
   describe "run/4 kills what the command forked" do
     test "on a check halt", %{tmp_dir: tmp} do
       child_pidfile = Path.join(tmp, "child.pid")
@@ -136,7 +137,7 @@ defmodule Cinder.BoundedCommandTest do
       assert BoundedCommand.run(bin, [], 10_000, check: {20, check}) ==
                {:error, {:halted, :too_big}}
 
-      assert process_dead?(read_pid!(child_pidfile))
+      assert OsProcess.dead?(read_pid!(child_pidfile))
     end
 
     test "on the deadline", %{tmp_dir: tmp} do
@@ -147,7 +148,31 @@ defmodule Cinder.BoundedCommandTest do
 
       # The kill must have had a child to reach, or this test proves nothing.
       assert File.exists?(child_pidfile), "the stub had not forked its child by the deadline"
-      assert process_dead?(read_pid!(child_pidfile))
+      assert OsProcess.dead?(read_pid!(child_pidfile))
+    end
+  end
+
+  # #976: the guard keeps `kill -KILL -1`, every process this user may signal, from ever running.
+  # No test passes 1 or a negative pid, since a broken guard would then kill the test host. A pid
+  # of 0 takes the same refusal, and if the guard let it through, its kill would reach only the
+  # shell running it, which leads a process group of its own.
+  describe "kill_os_process/1" do
+    test "kills a running process" do
+      port =
+        Port.open({:spawn_executable, System.find_executable("sleep")}, [
+          :exit_status,
+          args: ["30"]
+        ])
+
+      {:os_pid, os_pid} = Port.info(port, :os_pid)
+
+      assert BoundedCommand.kill_os_process(os_pid) == :ok
+      assert_receive {^port, {:exit_status, _status}}, 5_000
+    end
+
+    test "runs no kill for anything but an integer above 1" do
+      assert BoundedCommand.kill_os_process(0) == :ignored
+      assert BoundedCommand.kill_os_process(nil) == :ignored
     end
   end
 
@@ -175,33 +200,4 @@ defmodule Cinder.BoundedCommandTest do
 
   # Every caller's check only fires once the pid file exists, so it is there to read.
   defp read_pid!(pidfile), do: pidfile |> File.read!() |> String.trim() |> String.to_integer()
-
-  # A SIGKILL is not instantaneous from here, so this polls a short bounded window. A forked
-  # child whose parent died is reparented, and the CI job container's PID 1 may never reap it. A
-  # zombie still answers `kill -0`, so this reads the process state instead: gone, zombie (`Z`) or
-  # dead (`X`) all mean it runs no more code. A process reaped mid-read answers `:esrch`. The
-  # command name in parentheses may hold spaces, so the state is the first field after the last
-  # `)`.
-  defp process_dead?(pid, attempts \\ 50)
-  defp process_dead?(_pid, 0), do: false
-
-  defp process_dead?(pid, attempts) do
-    case File.read("/proc/#{pid}/stat") do
-      {:ok, stat} ->
-        state =
-          stat |> String.split(")") |> List.last() |> String.trim_leading() |> String.first()
-
-        if state in ["Z", "X"] do
-          true
-        else
-          Process.sleep(20)
-          process_dead?(pid, attempts - 1)
-        end
-
-      # Without `/proc` (not Linux) every pid would read as gone, and the test would prove
-      # nothing.
-      {:error, reason} when reason in [:enoent, :esrch] ->
-        File.dir?("/proc/self") or flunk("process_dead?/2 reads /proc, which this host lacks")
-    end
-  end
 end
