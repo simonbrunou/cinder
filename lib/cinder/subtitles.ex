@@ -202,7 +202,10 @@ defmodule Cinder.Subtitles do
 
       case own_track_content(video_path, moviehash, track, cache) do
         {{:ok, content}, cache} ->
-          commit(video_path, kind, language, moviehash, "own_track", target, content, enqueue)
+          commit(video_path, kind, language, moviehash, "own_track", target, content,
+            enqueue: enqueue
+          )
+
           {:committed, cache}
 
         {:none, cache} ->
@@ -340,38 +343,41 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  # The search ran first, so an OpenSubtitles match still replaces an embedded sidecar. One this
-  # file's own track already produced is not extracted and committed again (#861).
+  # The search ran first, so an OpenSubtitles match still replaces an embedded sidecar.
   defp local_fallback(video_path, kind, language, moviehash, state, cache) do
     target = sidecar_path(video_path, language)
     exists? = sidecar_exists?(target)
 
-    cond do
-      not writable?(state, language, exists?) ->
-        {:ok, cache}
+    if writable?(state, language, exists?) do
+      held = if exists?, do: Manifest.embedded_track(state, moviehash, language)
 
-      exists? and Manifest.embedded_from?(state, moviehash, language) ->
-        {:ok, cache}
+      {source, cache} =
+        local_source(video_path, language, moviehash, target, exists?, held, cache)
 
-      true ->
-        {source, cache} = local_source(video_path, language, moviehash, target, exists?, cache)
+      case source do
+        {:embedded, content, index} ->
+          commit(video_path, kind, language, moviehash, "embedded", target, content,
+            source_track: index
+          )
 
-        case source do
-          {:direct, content, origin} ->
-            commit(video_path, kind, language, moviehash, origin, target, content)
+        {:direct, content, origin} ->
+          commit(video_path, kind, language, moviehash, origin, target, content)
 
-          {:translate, srt} ->
-            translate_and_commit(video_path, kind, language, moviehash, target, srt)
+        {:translate, srt} ->
+          translate_and_commit(video_path, kind, language, moviehash, target, srt)
 
-          nil ->
-            :ok
-        end
+        nil ->
+          :ok
+      end
 
-        {:ok, cache}
+      {:ok, cache}
+    else
+      {:ok, cache}
     end
   end
 
-  defp local_source(video_path, language, moviehash, target, exists?, cache) do
+  # `held` is the track the target was extracted from, when it came out of this very file.
+  defp local_source(video_path, language, moviehash, target, exists?, held, cache) do
     {tracks, cache} = subtitle_tracks(video_path, moviehash, cache)
 
     # Language.raw_track_satisfies?/2, not exact equality against the raw track code: a "cn"
@@ -388,25 +394,40 @@ defmodule Cinder.Subtitles do
     # exact track must not give up before trying a usable, merely-ambiguous one (#575), mirroring
     # Reference.select/4's existing cascade.
     #
+    # A target already extracted from this file is not extracted and committed again (#861). Only
+    # the candidates ranked ahead of its track are tried: a busy disk fails an extraction the way a
+    # damaged file does, and must not leave a lesser track in place for good (#1071).
+    #
     # With the target in place nothing else is looked for. A translation could not replace it, so
     # the default track is not extracted for one (#861), and a sidecar in the same language would
     # be copied over it again on every sweep (#1070).
-    case first_extracted(video_path, candidates, cache) do
+    case first_extracted(video_path, ranked_ahead(candidates, held), cache) do
       {nil, cache} when exists? ->
         {nil, cache}
 
       {nil, cache} ->
         default_or_sidecar(video_path, language, moviehash, target, tracks, cache)
 
-      {content, cache} ->
-        {{:direct, content, "embedded"}, cache}
+      {{index, content}, cache} ->
+        {{:embedded, content, index}, cache}
+    end
+  end
+
+  # None when the held track is the first candidate. All of them when the target records no track,
+  # or one that is no candidate today: the cascade then runs once and records the track it takes.
+  defp ranked_ahead(candidates, nil), do: candidates
+
+  defp ranked_ahead(candidates, held) do
+    case Enum.find_index(candidates, &(&1.index == held)) do
+      nil -> candidates
+      position -> Enum.take(candidates, position)
     end
   end
 
   defp first_extracted(video_path, candidates, cache) do
     Enum.reduce_while(candidates, {nil, cache}, fn track, {nil, cache} ->
       case extract(video_path, track, cache) do
-        {{:ok, content}, cache} -> {:halt, {content, cache}}
+        {{:ok, content}, cache} -> {:halt, {{track.index, content}, cache}}
         {:error, cache} -> {:cont, {nil, cache}}
       end
     end)
@@ -626,12 +647,14 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  defp commit(video_path, kind, language, moviehash, origin, target, content, enqueue \\ :fresh) do
+  # `opts`: `enqueue:` (`:fresh`, the default, or `:background`) and `source_track:`, the embedded
+  # track the content came from.
+  defp commit(video_path, kind, language, moviehash, origin, target, content, opts \\ []) do
     sidecar = %{video_path: video_path, sidecar_path: target, language: language}
 
-    case SidecarTransaction.replace(sidecar, content, origin, moviehash) do
+    case SidecarTransaction.replace(sidecar, content, origin, moviehash, opts[:source_track]) do
       :ok ->
-        after_commit(video_path, kind, language, origin, enqueue)
+        after_commit(video_path, kind, language, origin, Keyword.get(opts, :enqueue, :fresh))
 
       {:error, {:manifest, error}} ->
         Logger.warning(

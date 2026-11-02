@@ -261,14 +261,18 @@ defmodule Cinder.Subtitles.SidecarTransaction do
 
   `{:error, {:write, error}}` and `{:error, {:manifest, error}}` carry the failing call's own
   return value.
+
+  `source_track` is the index of the embedded track the bytes came from, recorded for origin
+  `embedded` only.
   """
-  @spec replace(sidecar(), iodata(), String.t(), String.t() | nil) ::
+  @spec replace(sidecar(), iodata(), String.t(), String.t() | nil, non_neg_integer() | nil) ::
           :ok | {:error, {:write | :manifest, term()}}
   def replace(
         %{video_path: video_path, sidecar_path: target, language: language},
         content,
         origin,
-        moviehash
+        moviehash,
+        source_track \\ nil
       ) do
     content = IO.iodata_to_binary(content)
     state = Manifest.read(video_path)
@@ -285,7 +289,8 @@ defmodule Cinder.Subtitles.SidecarTransaction do
              origin,
              target,
              sha256(content),
-             previous_sync
+             previous_sync,
+             source_track
            ) do
         :ok ->
           retire_replaced(video_path, language, target, previous_sync)

@@ -8,7 +8,8 @@ defmodule Cinder.Subtitles.Manifest do
   # `own_track`: the video's own full subtitle track in that language, extracted by
   # `Cinder.Subtitles` in preference to a download (spec 069). `embedded` is the older last-resort
   # extraction when OpenSubtitles has nothing, which stays open to a later download. Both record
-  # the moviehash of the file they came out of (`source_moviehash`).
+  # the moviehash of the file they came out of (`source_moviehash`); an embedded one also records
+  # the index of the track it came from (`source_track`).
   @origins ~w(opensubtitles_hash opensubtitles_id own_track embedded translated release_sidecar)
   @sync_statuses ~w(aligned review applying)
   # `native`: the timing rules on the video's own track, with no alignment to run.
@@ -46,7 +47,8 @@ defmodule Cinder.Subtitles.Manifest do
           String.t() | atom(),
           String.t() | nil,
           String.t() | nil,
-          map() | nil
+          map() | nil,
+          non_neg_integer() | nil
         ) ::
           :ok | {:error, term()}
   def put(
@@ -56,24 +58,17 @@ defmodule Cinder.Subtitles.Manifest do
         origin,
         sidecar_path \\ nil,
         managed_sha256 \\ nil,
-        replacement_cleanup_sync \\ nil
+        replacement_cleanup_sync \\ nil,
+        source_track \\ nil
       ) do
     with {:ok, file} <- normalize_put_file(video_path, sidecar_path),
          {:ok, managed_sha256} <- normalize_put_sha256(managed_sha256),
-         {:ok, replacement_cleanup_sync} <- normalize_put_sync(replacement_cleanup_sync) do
+         {:ok, replacement_cleanup_sync} <- normalize_put_sync(replacement_cleanup_sync),
+         {:ok, source_track} <- normalize_put_source_track(source_track) do
       track = %{origin: to_string(origin)}
       track = if file, do: Map.put(track, :file, file), else: track
       track = if managed_sha256, do: Map.put(track, :managed_sha256, managed_sha256), else: track
-
-      # An own or embedded track belongs to the file it came out of: the manifest-wide hash is
-      # rewritten by every language's write, so after an upgrade at the same path it would vouch
-      # for a track extracted from the replaced file. An embedded track stays open to a download
-      # (`stable?/3` ignores its source hash); the hash only spares the next sweep an extraction
-      # whose result it already holds (#861).
-      track =
-        if to_string(origin) in ["own_track", "embedded"] and is_binary(moviehash),
-          do: Map.put(track, :source_moviehash, moviehash),
-          else: track
+      track = Map.merge(track, source(to_string(origin), moviehash, source_track))
 
       track =
         if replacement_cleanup_sync,
@@ -96,6 +91,23 @@ defmodule Cinder.Subtitles.Manifest do
       write(video_path, state)
     end
   end
+
+  # An own or embedded track belongs to the file it came out of: the manifest-wide hash is
+  # rewritten by every language's write, so after an upgrade at the same path it would vouch for a
+  # track extracted from the replaced file. An embedded track stays open to a download (`stable?/3`
+  # ignores its source hash); the hash only spares the next sweep an extraction whose result it
+  # already holds (#861). Its track index lets that sweep still try the tracks ranked ahead of it
+  # (#1071); without the hash, nothing could tell it is the same file.
+  defp source("own_track", moviehash, _track) when is_binary(moviehash),
+    do: %{source_moviehash: moviehash}
+
+  defp source("embedded", moviehash, nil) when is_binary(moviehash),
+    do: %{source_moviehash: moviehash}
+
+  defp source("embedded", moviehash, track) when is_binary(moviehash),
+    do: %{source_moviehash: moviehash, source_track: track}
+
+  defp source(_origin, _moviehash, _track), do: %{}
 
   @spec put_sync(String.t(), String.t(), map()) :: :ok | {:error, term()}
   def put_sync(video_path, language, sync) do
@@ -303,12 +315,17 @@ defmodule Cinder.Subtitles.Manifest do
 
   def stable?(_state, _moviehash, _language), do: false
 
-  # The language's sidecar is the embedded track extracted from the file `moviehash` identifies.
-  @spec embedded_from?(map(), String.t() | nil, String.t()) :: boolean()
-  def embedded_from?(state, moviehash, language) when is_binary(moviehash),
-    do: match?(%{origin: "embedded", source_moviehash: ^moviehash}, state.tracks[language])
+  # The index of the track the language's embedded sidecar was extracted from, when it came out
+  # of the file `moviehash` identifies and recorded one; nil otherwise.
+  @spec embedded_track(map(), String.t() | nil, String.t()) :: non_neg_integer() | nil
+  def embedded_track(state, moviehash, language) when is_binary(moviehash) do
+    case state.tracks[language] do
+      %{origin: "embedded", source_moviehash: ^moviehash, source_track: index} -> index
+      _track -> nil
+    end
+  end
 
-  def embedded_from?(_state, _moviehash, _language), do: false
+  def embedded_track(_state, _moviehash, _language), do: nil
 
   @spec provisional?(map(), String.t() | nil, String.t()) :: boolean()
   def provisional?(state, moviehash, language),
@@ -350,6 +367,7 @@ defmodule Cinder.Subtitles.Manifest do
           |> Map.merge(normalize_optional_reset_cleanup_sync(track))
           |> Map.merge(normalize_optional_backup_tombstone(track))
           |> Map.merge(normalize_optional_source_moviehash(track))
+          |> Map.merge(normalize_optional_source_track(track))
 
         {:cont, {:ok, Map.put(acc, language, normalized)}}
 
@@ -363,6 +381,13 @@ defmodule Cinder.Subtitles.Manifest do
        do: %{source_moviehash: moviehash}
 
   defp normalize_optional_source_moviehash(_track), do: %{}
+
+  # Anything else reads as no recorded track, which costs one extraction, not the manifest.
+  defp normalize_optional_source_track(%{"source_track" => index})
+       when is_integer(index) and index >= 0,
+       do: %{source_track: index}
+
+  defp normalize_optional_source_track(_track), do: %{}
 
   defp normalize_optional_sync(%{"sync_invalid?" => true}), do: %{sync_invalid?: true}
 
@@ -461,6 +486,13 @@ defmodule Cinder.Subtitles.Manifest do
   defp normalize_put_sha256(value) do
     if valid_sha256?(value), do: {:ok, value}, else: {:error, :invalid_managed_sha256}
   end
+
+  defp normalize_put_source_track(nil), do: {:ok, nil}
+
+  defp normalize_put_source_track(index) when is_integer(index) and index >= 0,
+    do: {:ok, index}
+
+  defp normalize_put_source_track(_index), do: {:error, :invalid_source_track}
 
   defp normalize_put_sync(nil), do: {:ok, nil}
 

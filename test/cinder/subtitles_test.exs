@@ -13,6 +13,7 @@ defmodule Cinder.SubtitlesTest do
   alias Cinder.Subtitles.Manifest
   alias Cinder.Subtitles.Moviehash
   alias Cinder.Subtitles.Sync.Worker
+  alias Cinder.Subtitles.TrackProbe
   alias Cinder.Subtitles.TrackRejection
   alias Cinder.Test.DiskTask
 
@@ -737,6 +738,84 @@ defmodule Cinder.SubtitlesTest do
       assert %{tracks: %{"fr" => %{origin: "opensubtitles_hash"}}} = Manifest.read(video)
     end
 
+    # #1071: the fallback tries the tracks in preference order (#575), and a busy disk fails one
+    # extraction the way a damaged file does. The sidecar records the track it came from, so a
+    # later sweep tries again the tracks ranked ahead of it, never the one it already holds.
+    test "takes the first track once a passing failure on it left the sidecar the second", %{
+      video: video
+    } do
+      stub_extractions(video, [track(2, "fre"), track(3, "fre")], %{
+        2 => [{:error, :timeout}, {:ok, @srt}],
+        3 => [{:ok, @other}]
+      })
+
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      target = Subtitles.sidecar_path(video, "fr")
+
+      assert effects(%{imdb_id: "tt1"}, video) ==
+               [:probe, {:extract, 2}, {:extract, 3}, {:scan, :movies}]
+
+      assert File.read!(target) == @other
+      assert effects(%{imdb_id: "tt1"}, video) == [{:extract, 2}, {:scan, :movies}]
+      assert File.read!(target) == @srt
+      assert %{tracks: %{"fr" => %{origin: "embedded", source_track: 2}}} = Manifest.read(video)
+      assert effects(%{imdb_id: "tt1"}, video) == []
+    end
+
+    test "extracts only the tracks ranked ahead of the one the sidecar came from", %{
+      video: video
+    } do
+      stub_extractions(video, [track(2, "fre"), track(3, "fre"), track(4, "fre")], %{
+        2 => [{:error, :timeout}],
+        3 => [{:error, :timeout}],
+        4 => [{:ok, @srt}]
+      })
+
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) ==
+               [:probe, {:extract, 2}, {:extract, 3}, {:extract, 4}, {:scan, :movies}]
+
+      assert %{origin: "embedded", source_track: 4} = entry = Manifest.read(video).tracks["fr"]
+
+      for _sweep <- 1..2 do
+        assert effects(%{imdb_id: "tt1"}, video) == [{:extract, 2}, {:extract, 3}]
+        assert File.read!(Subtitles.sidecar_path(video, "fr")) == @srt
+        assert Manifest.read(video).tracks["fr"] == entry
+      end
+    end
+
+    # Entries written between #1068 and #1071 record no track. The probe row is stored, as it is
+    # for every file an embedded sidecar came out of.
+    for {label, recorded} <- [
+          {"no track", %{}},
+          {"a track that is no candidate", %{source_track: 9}}
+        ] do
+      test "extracts once an embedded sidecar from this file that records #{label}", %{
+        video: video
+      } do
+        moviehash = Moviehash.compute(131_072, @zeros, @zeros)
+        target = Subtitles.sidecar_path(video, "fr")
+
+        entry =
+          Map.merge(
+            %{origin: "embedded", source_moviehash: moviehash},
+            unquote(Macro.escape(recorded))
+          )
+
+        put!(target, @other)
+        put_manifest!(video, %{video_moviehash: moviehash, tracks: %{"fr" => entry}})
+        assert {:ok, _tracks} = TrackProbe.tracks(moviehash, fn -> {:ok, [track(2, "fre")]} end)
+        stub_reads(video, {:ok, [track(2, "fre")]}, %{2 => {:ok, @srt}})
+        stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+        assert effects(%{imdb_id: "tt1"}, video) == [{:extract, 2}, {:scan, :movies}]
+        assert File.read!(target) == @srt
+        assert %{tracks: %{"fr" => %{origin: "embedded", source_track: 2}}} = Manifest.read(video)
+        assert effects(%{imdb_id: "tt1"}, video) == []
+      end
+    end
+
     test "does not extract a default track that did not parse as a translation source", %{
       video: video
     } do
@@ -1363,6 +1442,25 @@ defmodule Cinder.SubtitlesTest do
       send(test, {:extract, index})
       Map.fetch!(contents, index)
     end)
+  end
+
+  # As stub_reads/3, but each track's extractions return its `results` in turn, then the last one.
+  defp stub_extractions(video, tracks, results) do
+    test = self()
+    results = start_supervised!({Agent, fn -> results end})
+    stub_reads(video, {:ok, tracks}, %{})
+
+    stub(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, index ->
+      send(test, {:extract, index})
+      Agent.get_and_update(results, &next_result(&1, index))
+    end)
+  end
+
+  defp next_result(results, index) do
+    case Map.fetch!(results, index) do
+      [result] -> {result, results}
+      [result | rest] -> {result, Map.put(results, index, rest)}
+    end
   end
 
   # A file with no default track, or with one the SRT parser already rejected as a translation

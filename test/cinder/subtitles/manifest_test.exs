@@ -174,6 +174,62 @@ defmodule Cinder.Subtitles.ManifestTest do
              Manifest.put(video, "hash", "fr", "opensubtitles_hash", "../outside.srt")
   end
 
+  # #1071: the track an embedded sidecar came from, next to the moviehash of its file.
+  @tag :tmp_dir
+  test "put/8 records the source track of an embedded sidecar and read/1 keeps it", %{
+    tmp_dir: tmp
+  } do
+    video = configure_disk(tmp)
+
+    assert :ok = Manifest.put(video, "hash", "fr", "embedded", nil, nil, nil, 3)
+    state = Manifest.read(video)
+    assert %{origin: "embedded", source_moviehash: "hash", source_track: 3} = state.tracks["fr"]
+    assert Manifest.embedded_track(state, "hash", "fr") == 3
+    assert Manifest.embedded_track(state, "other-hash", "fr") == nil
+    assert Manifest.embedded_track(state, nil, "fr") == nil
+
+    for origin <- ~w(own_track opensubtitles_hash translated) do
+      assert :ok = Manifest.put(video, "hash", "fr", origin, nil, nil, nil, 3)
+      refute Map.has_key?(Manifest.read(video).tracks["fr"], :source_track)
+    end
+
+    assert :ok = Manifest.put(video, nil, "fr", "embedded", nil, nil, nil, 3)
+    refute Map.has_key?(Manifest.read(video).tracks["fr"], :source_track)
+
+    for index <- [-1, 1.5, "3"] do
+      assert {:error, :invalid_source_track} =
+               Manifest.put(video, "hash", "fr", "embedded", nil, nil, nil, index)
+    end
+  end
+
+  test "read/1 drops a source track that is no non-negative integer and keeps the rest" do
+    for index <- [-1, 1.5, "3", nil, [3]] do
+      expect(Cinder.Library.FilesystemMock, :read, fn "/lib/M/.M.mkv.cinder-subtitles.json" ->
+        {:ok,
+         Jason.encode!(%{
+           "video_moviehash" => "hash",
+           "tracks" => %{
+             "fr" => %{
+               "origin" => "embedded",
+               "source_moviehash" => "hash",
+               "source_track" => index
+             }
+           }
+         })}
+      end)
+
+      log =
+        capture_log(fn ->
+          assert Manifest.read("/lib/M/M.mkv") == %{
+                   video_moviehash: "hash",
+                   tracks: %{"fr" => %{origin: "embedded", source_moviehash: "hash"}}
+                 }
+        end)
+
+      refute log =~ "malformed"
+    end
+  end
+
   test "put/4 writes a temporary manifest before renaming it into place" do
     manifest = "/lib/M/.M.mkv.cinder-subtitles.json"
 
