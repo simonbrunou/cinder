@@ -4,13 +4,15 @@
 #   scripts/merge-pr [--dry-run] [--body-from=<sha> | --body-file=<file>] <pr-number> [squash|rebase|merge]
 #
 # The style defaults to squash, which keeps main linear with one `<title> (#n)` commit per PR;
-# rebase keeps a stacked queue's CI-tested commits as they are. A squash takes its body from the
-# branch's first non-merge commit, and prints which one. When that commit is not the PR's own fix
-# (the branch carries another PR's commits first), pass --body-from with the fix commit's SHA. It
-# must be one of the non-merge commits in origin/main..<head>. When review commits changed what
-# the fix commit's message says, write the body that describes the final diff to a file and pass
-# --body-file instead: rewording the commit would need a push and a new CI run. Only a squash
-# takes either, and only one of them.
+# rebase keeps a stacked queue's CI-tested commits as they are. A squash of one non-merge commit
+# takes that commit's body, and prints which one. A squash of several stops, lists them and
+# shows the first one's message, until it gets --body-from or --body-file (on the dry run too):
+# after review or CI commits, the first message can describe a diff the PR no longer has.
+# --body-from takes the body of the commit it names, which must be one of the non-merge commits
+# in origin/main..<head>: the first one when its message still holds, or the PR's own fix when
+# the branch carries another PR's commits first. --body-file takes a body that describes the
+# final diff: rewording the commit would need a push and a new CI run. Only a squash takes
+# either, and only one of them.
 #
 # It stops at the first check that fails:
 #   1. the PR is open against main; its head SHA comes from the API, never from a local branch;
@@ -23,7 +25,8 @@
 #      first, since a stale [Unreleased] entry merges cleanly and turns main red);
 #   5. every lib/**/*.ex file the PR touches stays within test/code_health_test.exs's @max_lines
 #      on the merged tree. This one is a pre-check beyond AGENTS.md: two PRs that each grow a
-#      near-cap file pass apart and break main together.
+#      near-cap file pass apart and break main together;
+#   6. a squash of several non-merge commits got --body-from or --body-file.
 # Then it POSTs the merge with head_commit_id (Forgejo answers 409 when the branch moved after
 # CI) and delete_branch_after_merge, retries a 405 every 20 s for up to 5 minutes, re-running
 # checks 3 to 5 before each attempt, and asserts the PR reports merged.
@@ -188,8 +191,7 @@ payload=$(jq -nc --arg style "$style" --arg sha "$sha" \
   '{Do: $style, head_commit_id: $sha, delete_branch_after_merge: true}')
 if [[ $style == squash ]]; then
   # main's convention: the PR title with (#n), then the body of the PR's fix commit: the
-  # branch's first commit (not a later review-fix or CI re-run commit), --body-from's, or
-  # --body-file's text.
+  # branch's only commit, --body-from's, or --body-file's text.
   [[ $title == *"(#$pr)" ]] || title="$title (#$pr)"
   commits=$(git rev-list --reverse --no-merges "origin/main..$sha")
   [[ -n $commits ]] || fail "#$pr has no commit that origin/main lacks"
@@ -204,6 +206,16 @@ if [[ $style == squash ]]; then
       echo "squash body from: $(git log -1 --format='%h %s' "$body_commit")"
     else
       body_commit=$(sed -n 1p <<<"$commits")
+      # With review or CI commits after it, the first commit's message can describe a diff the
+      # PR no longer has (#1014, #1089), so the caller picks the body after reading it.
+      count=$(wc -l <<<"$commits")
+      if ((count > 1)); then
+        echo "#$pr has $count non-merge commits:" >&2
+        git log --no-walk=unsorted --format='  %h %s' --stdin <<<"$commits" >&2
+        echo "The first one's message:" >&2
+        git log -1 --format=%B "$body_commit" | sed 's/^/  | /' >&2
+        fail "read that message against the final diff, then pass --body-from=$(git rev-parse --short "$body_commit") to keep it, --body-from=<another listed sha>, or --body-file=<file> with a body that describes the final diff"
+      fi
       echo "squash body from: $(git log -1 --format='%h %s' "$body_commit") (override with --body-from=<sha> or --body-file=<file>)"
     fi
     message=$(git log -1 --format=%b "$body_commit")

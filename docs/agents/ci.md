@@ -138,9 +138,9 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   others' branches into it, so it goes green alone. #885 carried #865 (`plug_crypto`, red on
   `container`) and #880 (`libbrotli1`, red on `dependency-audit`), and #865 also needed #885's
   own CI fix. Close each carried PR as superseded once the carrier merges; its `changelog.d/`
-  fragment keeps its number. When `scripts/merge-pr --dry-run` prints `squash body from:` with a
-  carried commit, pass `--body-from=<sha of the carrier's own fix commit>`. Once the fix is on
-  `main`, clear your own PR's red as "Re-running CI" says.
+  fragment keeps its number. A carrier holds several commits, so `scripts/merge-pr --dry-run`
+  stops and lists them: pass `--body-from=<sha of the carrier's own fix commit>`. Once the fix
+  is on `main`, clear your own PR's red as "Re-running CI" says.
 - **Dependency rebuild.** A `mix.lock`, OTP or Elixir change misses the compiled-deps caches,
   so `test` and `dependency-audit` rebuild every dependency and download precompiled NIFs from
   GitHub releases. The `container` job's image build redoes that work from its `mix deps.get`
@@ -196,7 +196,8 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   in a merge burst: wait on it while it reads `waiting` or `running`. A release PR's merge commit
   re-runs each `cancelled` job at any `attempt` ([workflow.md](workflow.md) "Releasing" step 3).
 - When the POST answers anything but 204 on a PR, push an empty commit instead
-  (`git commit --allow-empty -m "ci: re-run after <test> flake"`, which a squash merge drops). In
+  (`git commit --allow-empty -m "ci: re-run after <test> flake"`, which a squash merge drops;
+  `scripts/merge-pr` then stops until you pass `--body-from=<sha of the fix commit>`). In
   a stack an empty commit forces every later PR to rebase and re-run, so close and reopen the PR
   instead, which fires `pull_request: reopened` on the same SHA:
   `curl -s -X PATCH -H "Authorization: token $FJ_TOKEN" -H 'Content-Type: application/json' "$API/pulls/<n>" -d '{"state":"closed"}'`,
