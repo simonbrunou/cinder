@@ -245,7 +245,8 @@ defmodule CinderWeb.RequestsLiveTest do
 
     {:ok, lv, _html} = live(conn, ~p"/requests")
 
-    lv |> element("button[phx-click='approve'][phx-value-id='#{req.id}']") |> render_click()
+    # The row offers no Approve button (#883): a forged event still reaches the domain refusal.
+    render_click(lv, "approve", %{"id" => to_string(req.id)})
     render_async(lv)
 
     assert has_element?(lv, "#flash-error", "This kind of request isn't supported yet.")
@@ -314,11 +315,54 @@ defmodule CinderWeb.RequestsLiveTest do
 
     {:ok, lv, _html} = live(conn, ~p"/requests")
 
-    lv |> element("button[phx-click='reopen'][phx-value-id='#{req.id}']") |> render_click()
+    # The row offers no Reopen button (#883): a forged event still reaches the domain refusal.
+    render_click(lv, "reopen", %{"id" => to_string(req.id)})
 
     assert has_element?(lv, "#flash-error", "This kind of request isn't supported yet.")
     refute has_element?(lv, "#flash-error", "Couldn't reopen that request.")
     assert %{status: :denied, denial_reason: "later"} = Cinder.Repo.reload(req)
+  end
+
+  # A row from before #770 that no approval can create offers no control that only fails: the
+  # admin can still deny a pending one and delete either (#883).
+  for type <- ["series", "episode"] do
+    test "a pending #{type} request offers no Approve, only Deny and Delete", %{conn: conn} do
+      req =
+        Cinder.Repo.insert!(%Cinder.Requests.Request{
+          user_id: user_fixture().id,
+          target_type: unquote(type),
+          target_id: 1399,
+          title: "Legacy #{unquote(type)}",
+          status: :pending
+        })
+
+      {:ok, lv, _html} = live(conn, ~p"/requests")
+
+      assert has_element?(lv, "#request-#{req.id}", "Legacy #{unquote(type)}")
+      refute has_element?(lv, "#approval-profile-form-#{req.id}")
+      refute has_element?(lv, "button[phx-click='approve'][phx-value-id='#{req.id}']")
+      assert has_element?(lv, "button[phx-click='start_deny'][phx-value-id='#{req.id}']")
+      assert has_element?(lv, "button[phx-click='start_delete'][phx-value-id='#{req.id}']")
+      assert has_element?(lv, "input[phx-click='toggle_select'][phx-value-id='#{req.id}']")
+    end
+
+    test "a denied #{type} request offers no Reopen, only Delete", %{conn: conn} do
+      req =
+        Cinder.Repo.insert!(%Cinder.Requests.Request{
+          user_id: user_fixture().id,
+          target_type: unquote(type),
+          target_id: 1399,
+          title: "Legacy #{unquote(type)}",
+          status: :denied,
+          denial_reason: "later"
+        })
+
+      {:ok, lv, _html} = live(conn, ~p"/requests")
+
+      assert has_element?(lv, "#request-#{req.id}", "Legacy #{unquote(type)}")
+      refute has_element?(lv, "button[phx-click='reopen'][phx-value-id='#{req.id}']")
+      assert has_element?(lv, "button[phx-click='start_delete'][phx-value-id='#{req.id}']")
+    end
   end
 
   test "bulk approve approves every selected pending request", %{conn: conn} do

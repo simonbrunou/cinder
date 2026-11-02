@@ -1,7 +1,8 @@
 defmodule CinderWeb.RequestsLive do
   @moduledoc """
   Admin requests screen at `/requests`. Lists every request with a status badge,
-  supports approve/deny on pending rows, and a confirm-then-delete on any row.
+  supports approve/deny on pending rows, and a confirm-then-delete on any row. Approve and
+  reopen show only on a row `Requests.approvable_target?/1` accepts.
 
   Delete warning (intentional, surfaced in the confirm panel): there is no FK
   from a request to the catalog row it spawned, so deleting a request does NOT
@@ -446,7 +447,7 @@ defmodule CinderWeb.RequestsLive do
             </div>
             <.status_badge id={"requests-status-#{r.id}"} kind={:request} status={r.status} />
             <form
-              :if={r.status == :pending}
+              :if={r.status == :pending and Requests.approvable_target?(r)}
               id={"approval-profile-form-#{r.id}"}
               phx-change="set_approval_profile"
               class="flex flex-wrap items-center gap-2"
@@ -465,7 +466,7 @@ defmodule CinderWeb.RequestsLive do
               />
             </form>
             <.button
-              :if={r.status == :pending}
+              :if={r.status == :pending and Requests.approvable_target?(r)}
               variant="primary"
               size="sm"
               phx-click="approve"
@@ -492,7 +493,7 @@ defmodule CinderWeb.RequestsLive do
               {gettext("Deny")}
             </.button>
             <.button
-              :if={r.status == :denied}
+              :if={r.status == :denied and Requests.approvable_target?(r)}
               variant="ghost"
               size="sm"
               phx-click="reopen"

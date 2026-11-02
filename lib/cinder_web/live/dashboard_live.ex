@@ -520,6 +520,7 @@ defmodule CinderWeb.DashboardLive do
               </div>
               <div class="mt-3 flex flex-wrap items-center gap-2">
                 <form
+                  :if={Requests.approvable_target?(r)}
                   id={"dashboard-approval-form-#{r.id}"}
                   phx-submit="approve"
                   class="flex flex-wrap items-center gap-2"

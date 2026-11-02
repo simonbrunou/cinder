@@ -401,17 +401,34 @@ defmodule CinderWeb.DashboardLiveTest do
       tv = Enum.find(Catalog.list_profiles(:tv), &(&1.handling == :standard))
       {:ok, lv, _html} = live(conn, ~p"/dashboard")
 
-      lv
-      |> form("#dashboard-approval-form-#{req.id}", %{
-        "_id" => to_string(req.id),
-        "profile_id" => to_string(tv.id)
-      })
-      |> render_submit()
+      # The row offers no approve form (#883): a forged event still reaches the domain refusal.
+      render_submit(lv, "approve", %{"_id" => to_string(req.id), "profile_id" => to_string(tv.id)})
 
       render_async(lv)
 
       assert has_element?(lv, "#flash-error", "This kind of request isn't supported yet.")
       assert Cinder.Repo.get(Cinder.Requests.Request, req.id).status == :pending
+    end
+
+    # A row from before #770 that no approval can create still lists so the admin can deny it,
+    # but offers no approve form that only fails (#883).
+    for type <- ["series", "episode"] do
+      test "a pending #{type} request offers no approve form, only Deny", %{conn: conn} do
+        req =
+          Cinder.Repo.insert!(%Cinder.Requests.Request{
+            user_id: Cinder.AccountsFixtures.user_fixture().id,
+            target_type: unquote(type),
+            target_id: 1399,
+            title: "Legacy #{unquote(type)}",
+            status: :pending
+          })
+
+        {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+        assert has_element?(lv, "#pending-#{req.id}", "Legacy #{unquote(type)}")
+        refute has_element?(lv, "#dashboard-approval-form-#{req.id}")
+        assert has_element?(lv, "#pending-#{req.id} button[phx-click='start_deny']")
+      end
     end
 
     test "approving from the dashboard behaves identically to /requests", %{conn: conn} do
