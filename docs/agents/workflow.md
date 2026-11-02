@@ -99,12 +99,11 @@ itself is in [CONTRIBUTING.md](../../CONTRIBUTING.md) "Releasing (maintainers)".
      `origin/main` points at a later commit. A later merge cancelled the run. The line says to
      wait on the new head; for the tag, re-run instead. Wait until `origin/main`'s head run has
      finished, so the re-run cannot disturb the check its merging agent waits on:
-     `forgejo.py ci cinder --follow main` exits 0 or 1. Then find the merge commit's run with
-     `curl ... "$API/actions/runs?head_sha=<full sha>" | jq '.workflow_runs[0].id'` (a short SHA
-     matches no run) and list its jobs ([ci.md](ci.md) "Re-running CI"). POST a rerun for each
-     job whose `status` reads `cancelled`, whatever its `attempt`, and leave the `success` ones.
-     Then wait on the SHA again as that section says. A merge that lands during the re-run
-     cancels it too: start this bullet over.
+     `forgejo.py ci cinder --follow main` exits 0 or 1. Then find the merge commit's `push` run
+     and list its jobs ([ci.md](ci.md) "Re-running CI"). POST a rerun for each job whose
+     `status` reads `cancelled`, whatever its `attempt`, and leave the `success` ones. Then wait
+     on the SHA again as that section says. A merge that lands during the re-run cancels it too:
+     start this bullet over.
    - **Red**: anything else, a cancelled run with `origin/main` still at the merge commit
      included. Judge it as [ci.md](ci.md) "Judging a red run" says.
 4. GitHub gets the tag through Forgejo's push mirror. Check with

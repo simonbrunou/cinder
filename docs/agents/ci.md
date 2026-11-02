@@ -30,10 +30,15 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   `curl ... "$API/commits/<sha>/status" | jq '{state, statuses: [.statuses[] | {context, status}]}'`.
 - Job logs: `curl ... -o logs.zip "$API/actions/runs/<run id>/logs"` returns a zip with
   one `<job>-<task id>-attempt-<n>.log` per job. Find the run id from the head SHA with
-  `curl ... "$API/actions/runs?page=1&limit=10" | jq '[.workflow_runs[] | select(.commit_sha | startswith("<sha8>"))][0].id'`.
-  Without `page`, `limit` is ignored and every run comes back. A status's `target_url`
-  (`/actions/runs/<n>/jobs/<m>`) carries the run's index in the repo, not the id the logs
-  endpoint needs.
+  `curl ... "$API/actions/runs?head_sha=<full sha>" | jq '[.workflow_runs[] | select(.event == "<push or pull_request>")][0].id'`.
+  Pass the full 40-character SHA, which `git rev-parse <sha>` prints. A short one matches no run
+  and prints `null`. One SHA can carry both a `push` and a `pull_request` run, so name the event
+  you want in the `select`. Forgejo files the run of a push to an open PR as `pull_request_sync`
+  while its `event` field reads `pull_request`, so the `select` finds it and the URL's
+  `&event=pull_request` filter would not. A PR closed and reopened on the same SHA leaves several
+  runs of one event. The API lists runs newest first, so `[0]` is the newest. A status's
+  `target_url` (`/actions/runs/<n>/jobs/<m>`) carries the run's index in the repo, not the id the
+  logs endpoint needs.
 - Grep a test log for `\d+\) test`, `Result:`, `FAIL:` and `FATAL`, then delete it.
 
 ## Judging a red run
