@@ -2,6 +2,8 @@ defmodule Cinder.Subtitles.Sync.Ffsubsync do
   @moduledoc false
   @behaviour Cinder.Subtitles.Sync.Engine
 
+  alias Cinder.LowPriority
+
   @default_timeout_seconds 900
 
   # Piecewise ("alass-style") alignment: the cost, in seconds of speech overlap, of letting the
@@ -55,7 +57,15 @@ defmodule Cinder.Subtitles.Sync.Ffsubsync do
     run(runner_python(), args, output, token)
   end
 
+  # Against an audio reference, the runner and the `ffmpeg` it starts read and decode the whole
+  # video, so every run goes under `Cinder.LowPriority` (#954). A text-reference run reads only
+  # small subtitle files, but its alignment is CPU work too: under contention nice 10 slows it
+  # down, a cost #954 accepts within the same 900 s bound. `timeout` stays the outer process: it
+  # leads a process group of its own that the command joins, and its kill signals that whole
+  # group, so it reaches the runner and every `ffmpeg` it forked. A missing interpreter still
+  # exits 127, now from the innermost prefix tool.
   defp run(executable, args, output, token) do
+    {executable, args} = LowPriority.command(executable, args)
     command = ["--kill-after=5s", Integer.to_string(timeout_seconds()), executable | args]
 
     case System.cmd(timeout_bin(), command, stderr_to_stdout: true) do

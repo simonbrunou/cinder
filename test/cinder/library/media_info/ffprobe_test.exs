@@ -5,6 +5,9 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   alias Cinder.ConfigCase
   alias Cinder.Library.{MediaInfo.Ffprobe, PolicyVerifier}
 
+  import Cinder.Test.PriorityShims,
+    only: [put_shims: 3, shim: 2, write_stub!: 4, recorded: 2, priority: 1]
+
   setup do
     ffmpeg_bin = Application.get_env(:cinder, :ffmpeg_bin)
     ffprobe_bin = Application.get_env(:cinder, :ffprobe_bin)
@@ -665,11 +668,8 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   end
 
   # #862: the three whole-file reads run as `ionice -c3 -t nice -n 10 <reader> ...`, so a subtitle
-  # sweep leaves the disk and the CPU to playback and imports first. PATH holds only shims named
-  # `ionice` and `nice` that record their pid and arguments, then exec the real tool. The stub
-  # reader records the same, and the priority it runs at, read through the real tools by absolute
-  # path. That priority is relative to the suite's own, so the recorded command lines carry the
-  # exact checks (docs/agents/testing.md says why).
+  # sweep leaves the disk and the CPU to playback and imports first. `Cinder.Test.PriorityShims`
+  # says how the shims and the stub reader pin it.
   @whole_file_reads [
     %{
       fun: :subtitle_tracks,
@@ -696,7 +696,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
 
   describe "whole-file reads" do
     @describetag :tmp_dir
-    setup :real_priority_tools
+    setup {Cinder.Test.PriorityShims, :real_priority_tools}
 
     for read <- @whole_file_reads do
       @read read
@@ -775,81 +775,16 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     end
   end
 
-  # The real tools, resolved before a test replaces PATH, and the priority this test process runs
-  # at, which a reader started with no prefix inherits.
-  defp real_priority_tools(_context) do
-    tools =
-      for name <- [:ionice, :nice, :sleep], into: %{} do
-        {name, System.find_executable(to_string(name)) || flunk("these tests need #{name}")}
-      end
-
-    {niceness, 0} = System.cmd(tools.nice, [])
-    niceness = niceness |> String.trim() |> String.to_integer()
-    {class, 0} = System.cmd(tools.ionice, [])
-
-    path = System.get_env("PATH")
-    on_exit(fn -> System.put_env("PATH", path) end)
-
-    %{
-      tools:
-        Map.merge(tools, %{
-          path: path,
-          class: io_class(class),
-          niceness: niceness,
-          niced: min(niceness + 10, 19)
-        })
-    }
-  end
-
-  # PATH holds only shims for the named tools. Each records its pid and arguments in
-  # `<tool>.log`, then execs the real tool in place.
-  defp put_shims(tmp, tools, names) do
-    File.mkdir_p!(Path.join(tmp, "bin"))
-
-    for name <- names do
-      File.write!(shim(tmp, name), """
-      #!/bin/sh
-      printf '%s\\n' "$$" "$@" > "#{Path.join(tmp, "#{name}.log")}"
-      exec #{Map.fetch!(tools, name)} "$@"
-      """)
-
-      File.chmod!(shim(tmp, name), 0o755)
-    end
-
-    System.put_env("PATH", Path.join(tmp, "bin"))
-  end
-
-  defp shim(tmp, name), do: Path.join([tmp, "bin", to_string(name)])
   defp reader(tmp), do: Path.join(tmp, "reader")
 
   # Calls `read` through a stub reader that records its pid and arguments in `reader.log` and its
   # niceness and I/O class in `priority`, then runs `script` (by default, output the read parses
   # as a success). Returns the read's result.
   defp run_read(read, tmp, tools, script \\ nil) do
-    File.write!(reader(tmp), """
-    #!/bin/sh
-    echo "$(#{tools.nice}) $(#{tools.ionice})" > "#{Path.join(tmp, "priority")}"
-    printf '%s\\n' "$$" "$@" > "#{Path.join(tmp, "reader.log")}"
-    #{script || read.success}
-    """)
-
-    File.chmod!(reader(tmp), 0o755)
+    write_stub!(tmp, tools, "reader", script || read.success)
     ConfigCase.put_env(read.bin, reader(tmp))
     apply(Ffprobe, read.fun, read.args)
   end
-
-  defp recorded(tmp, name),
-    do: tmp |> Path.join("#{name}.log") |> File.read!() |> String.split("\n", trim: true)
-
-  defp priority(tmp) do
-    [niceness, class] =
-      tmp |> Path.join("priority") |> File.read!() |> String.trim() |> String.split(" ", parts: 2)
-
-    {io_class(class), String.to_integer(niceness)}
-  end
-
-  # `ionice` prints `idle`, or `none: prio 4` and the like, whose prio varies by kernel.
-  defp io_class(output), do: output |> String.trim() |> String.split(":") |> hd()
 
   defp use_ffmpeg_bin(tmp, script), do: use_bin(tmp, :ffmpeg_bin, "ffmpeg", script)
   defp use_ffprobe_bin(tmp, script), do: use_bin(tmp, :ffprobe_bin, "ffprobe", script)

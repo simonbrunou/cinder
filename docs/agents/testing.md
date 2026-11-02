@@ -147,7 +147,7 @@
   (ananicy-cpp's `nix` rule). CI runs at nice 0 and the default class. A test of a subprocess's
   niceness or I/O class compares it with the suite's own. That check proves little at nice 16
   and the idle class, since nice stops at 19 and the class is already idle, so the test also
-  pins the exact command line with recording shims on `PATH`, as
+  pins the exact command line with `Cinder.Test.PriorityShims`' recording shims on `PATH`, as
   `Cinder.Library.MediaInfo.FfprobeTest` "whole-file reads" does (#862).
 - A list built from a directory listing (`File.ls/1`, `Cinder.Library.PathPolicy.walk/2`,
   `Cinder.Library.Filesystem`'s `find_files/1`, so `Cinder.Library.Sidecars.files/1` too) comes

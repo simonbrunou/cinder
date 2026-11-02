@@ -284,7 +284,8 @@ Every call a poller makes has a bound:
   `BoundedCommand.kill_and_close/1`, which kills the same way. The exceptions are
   `Cinder.Disk.CommandProbe`, a GenServer that owns its port across messages and kills the same
   way through `BoundedCommand.kill_os_process/1` (#976), and `Subtitles.Sync.Ffsubsync`, which
-  runs under coreutils `timeout --kill-after`.
+  runs under coreutils `timeout --kill-after`, with `ionice` and `nice` between `timeout` and the
+  interpreter (#954).
 - Archive extraction carries entry-count and expanded-size ceilings.
 - The directory walk every importer and the completion content check run,
   `Cinder.Library.safe_walk/1`, goes through `Cinder.Library.BoundedWalk.run/3`: a supervised
@@ -298,6 +299,11 @@ Every call a poller makes has a bound:
 
 The reason: one unbounded call in a single-tick poller freezes every target sharing that tick,
 not just the file or request in flight.
+
+A subprocess that reads or decodes a whole video, in a poller or not, takes its command line from
+`Cinder.LowPriority.command/2`. It runs at nice 10 and the idle I/O class, so playback and
+imports get the disk and the CPU first (#862, #954). Its moduledoc lists where the idle class has
+no effect.
 
 An import failure in a download poller takes one of three paths, and each poller picks it:
 

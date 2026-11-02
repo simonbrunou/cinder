@@ -484,7 +484,9 @@ one file. Those are the cases where the opening scene looks perfect and the last
 out. A correction keeps every line in its original order: where the timing changes, a line can
 move earlier only by the pause in front of it, so two lines that were not on screen together in
 the download are never shown together. The reference is one of the video's text subtitle tracks
-when it has any (the same language first), otherwise its audio. Against a subtitle track, sung
+when it has any (the same language first), otherwise its audio. Aligning against audio reads and
+decodes the whole video, so every alignment runs at the same low CPU and disk priority as a track
+listing. Against a subtitle track, sung
 lines (`♪ … ♪`) and placeholder lines with no words are ignored on both sides, because one track
 may subtitle a song that the other leaves out; against audio they still count, since singing is
 audible. After alignment, an `.srt`/`.vtt` sidecar also gets the timing rules of the Netflix

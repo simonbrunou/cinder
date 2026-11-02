@@ -18,7 +18,7 @@ defmodule Cinder.BoundedCommand do
   `kill_and_close/1` instead. Two commands run outside both: `Cinder.Disk.CommandProbe` is a
   GenServer that owns its port across messages, though its timeout kills the same way through
   `kill_os_process/1` (#976), and `Subtitles.Sync.Ffsubsync` runs under coreutils
-  `timeout --kill-after`.
+  `timeout --kill-after`, with `ionice` and `nice` inside it (#954).
 
   The caller owns the port, so every port message is consumed or drained before `run/4` returns,
   timeout or not. A stray `{port, {:data, _}}`/`{port, {:exit_status, _}}` surviving past the

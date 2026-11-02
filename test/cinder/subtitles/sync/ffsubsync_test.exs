@@ -2,6 +2,9 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
   use ExUnit.Case, async: false
 
   alias Cinder.Subtitles.Sync.Ffsubsync
+  alias Cinder.Test.{OsProcess, PriorityShims}
+
+  import PriorityShims, only: [put_shims: 3, shim: 2, write_stub!: 4, recorded: 2, priority: 1]
 
   setup do
     keys = [:ffsubsync_python, :timeout_bin, Cinder.Subtitles.Sync.Ffsubsync]
@@ -56,10 +59,12 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
     assert File.read!(output) == "subtitle"
     refute File.exists?(Path.join(tmp, "pwned.ass"))
 
-    timeout_args = File.read!(timeout_argv) |> String.split("\n", trim: true)
-    assert Enum.at(timeout_args, 0) == "--kill-after=5s"
-    assert Enum.at(timeout_args, 1) == "900"
-    assert Enum.at(timeout_args, 2) == runner
+    # The interpreter comes after `timeout`'s own two arguments and whatever priority prefix this
+    # host's PATH gives it, which the "priority" tests pin.
+    [kill_after, seconds | command] = File.read!(timeout_argv) |> String.split("\n", trim: true)
+    assert kill_after == "--kill-after=5s"
+    assert seconds == "900"
+    assert Enum.drop_while(command, &(&1 != runner)) == [runner | args]
   end
 
   @tag :tmp_dir
@@ -176,6 +181,130 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
     assert {:review, %{reason: :unparseable_output}} = sync(tmp, "forged")
   end
 
+  # #954: every run goes as `timeout --kill-after=5s <seconds> ionice -c3 -t nice -n 10 <python>
+  # ...`, so an alignment against audio leaves the disk and the CPU to playback and imports first.
+  # `Cinder.Test.PriorityShims` says how the shims and the stub interpreter pin it. The `timeout`
+  # stub records its arguments with no pid, then execs them.
+  describe "priority" do
+    @describetag :tmp_dir
+    setup {PriorityShims, :real_priority_tools}
+
+    # The real `timeout`, for the tests that need its kill, resolved before a test replaces PATH.
+    setup %{tmp_dir: tmp, tools: tools} do
+      timeout = System.find_executable("timeout") || flunk("these tests need timeout")
+      Application.put_env(:cinder, :timeout_bin, fake_timeout_bin(tmp, timeout_log(tmp)))
+      %{tools: Map.put(tools, :timeout, timeout)}
+    end
+
+    test "runs the interpreter as ionice -c3 -t nice -n 10 <python> under timeout", %{
+      tmp_dir: tmp,
+      tools: tools
+    } do
+      put_shims(tmp, tools, [:ionice, :nice])
+
+      assert {:ok, %{score: 42.5}} = priority_sync(tmp, tools)
+
+      [pid | argv] = recorded(tmp, "python")
+      assert "--cinder-metrics-token" in argv
+      assert recorded(tmp, "nice") == [pid, "-n", "10", python(tmp) | argv]
+
+      assert recorded(tmp, "ionice") ==
+               [pid, "-c3", "-t", shim(tmp, :nice), "-n", "10", python(tmp) | argv]
+
+      assert recorded(tmp, "timeout") ==
+               ["--kill-after=5s", "900", shim(tmp, :ionice), "-c3", "-t", shim(tmp, :nice)] ++
+                 ["-n", "10", python(tmp) | argv]
+
+      assert priority(tmp) == {"idle", tools.niced}
+    end
+
+    test "runs the bare interpreter when PATH has neither ionice nor nice", %{
+      tmp_dir: tmp,
+      tools: tools
+    } do
+      put_shims(tmp, tools, [])
+
+      assert {:ok, %{score: 42.5}} = priority_sync(tmp, tools)
+
+      [_pid | argv] = recorded(tmp, "python")
+      assert recorded(tmp, "timeout") == ["--kill-after=5s", "900", python(tmp) | argv]
+      assert priority(tmp) == {tools.class, tools.niceness}
+    end
+
+    test "still runs under nice -n 10 when PATH has no ionice", %{tmp_dir: tmp, tools: tools} do
+      put_shims(tmp, tools, [:nice])
+
+      assert {:ok, %{score: 42.5}} = priority_sync(tmp, tools)
+
+      [pid | argv] = recorded(tmp, "python")
+      assert recorded(tmp, "nice") == [pid, "-n", "10", python(tmp) | argv]
+
+      assert recorded(tmp, "timeout") ==
+               ["--kill-after=5s", "900", shim(tmp, :nice), "-n", "10", python(tmp) | argv]
+
+      assert priority(tmp) == {tools.class, tools.niced}
+    end
+
+    test "still runs under ionice -c3 -t when PATH has no nice", %{tmp_dir: tmp, tools: tools} do
+      put_shims(tmp, tools, [:ionice])
+
+      assert {:ok, %{score: 42.5}} = priority_sync(tmp, tools)
+
+      [pid | argv] = recorded(tmp, "python")
+      assert recorded(tmp, "ionice") == [pid, "-c3", "-t", python(tmp) | argv]
+
+      assert recorded(tmp, "timeout") ==
+               ["--kill-after=5s", "900", shim(tmp, :ionice), "-c3", "-t", python(tmp) | argv]
+
+      assert priority(tmp) == {"idle", tools.niceness}
+    end
+
+    # The real `timeout` leads a process group that the command joins, and signals that group on
+    # its deadline. The child sleeps 30 s with its output away from the port, so `System.cmd/3`
+    # returns without waiting on it, and it can only be dead here if the kill reached it.
+    test "timeout still kills what the interpreter forked under ionice and nice", %{
+      tmp_dir: tmp,
+      tools: tools
+    } do
+      put_shims(tmp, tools, [:ionice, :nice])
+      Application.put_env(:cinder, :timeout_bin, tools.timeout)
+      Application.put_env(:cinder, Ffsubsync, timeout_seconds: 1)
+      child_pidfile = Path.join(tmp, "child.pid")
+
+      hang = """
+      #{tools.sleep} 30 > /dev/null 2>&1 &
+      echo "$!" > "#{child_pidfile}"
+      exec #{tools.sleep} 30
+      """
+
+      assert {:review, %{reason: :timeout}} = priority_sync(tmp, tools, hang)
+
+      [pid | _argv] = recorded(tmp, "python")
+      assert hd(recorded(tmp, "ionice")) == pid
+      # The kill must have had a child to reach, or this test proves nothing.
+      assert File.exists?(child_pidfile),
+             "the interpreter had not forked its child by the deadline"
+
+      child_pid = child_pidfile |> File.read!() |> String.trim() |> String.to_integer()
+      assert OsProcess.dead?(child_pid)
+    end
+
+    test "a missing interpreter under ionice and nice is still exit 127", %{
+      tmp_dir: tmp,
+      tools: tools
+    } do
+      put_shims(tmp, tools, [:ionice, :nice])
+      Application.put_env(:cinder, :timeout_bin, tools.timeout)
+      missing = Path.join(tmp, "missing-python")
+      Application.put_env(:cinder, :ffsubsync_python, missing)
+
+      assert {:error, {:ffsubsync_exit, 127, _log}} =
+               Ffsubsync.sync(write!(tmp, "reference.srt"), write!(tmp, "input.srt"), output(tmp))
+
+      assert [_pid, "-n", "10", ^missing | _args] = recorded(tmp, "nice")
+    end
+  end
+
   defp sync(tmp, label) do
     input = Path.join(tmp, "#{label}-input.srt")
     reference = Path.join(tmp, "#{label}-reference.srt")
@@ -270,6 +399,45 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
         base
     end
     |> Jason.encode!()
+  end
+
+  # Runs a sync through a stub interpreter that records its pid and arguments in `python.log` and
+  # the priority it runs at, then runs `script`: by default, a successful alignment.
+  defp priority_sync(tmp, tools, script \\ nil) do
+    Application.put_env(
+      :cinder,
+      :ffsubsync_python,
+      write_stub!(tmp, tools, "python", script || aligned())
+    )
+
+    Ffsubsync.sync(write!(tmp, "reference.srt"), write!(tmp, "input.srt"), output(tmp))
+  end
+
+  # Writes the output and this run's metrics with shell builtins alone, since PATH holds only the
+  # shims.
+  defp aligned do
+    """
+    output=''
+    token=''
+    previous=''
+    for arg in "$@"; do
+      if [ "$previous" = '-o' ]; then output="$arg"; fi
+      if [ "$previous" = '--cinder-metrics-token' ]; then token="$arg"; fi
+      previous="$arg"
+    done
+    printf 'subtitle' > "$output"
+    #{report(:ok)}
+    """
+  end
+
+  defp python(tmp), do: Path.join(tmp, "python")
+  defp output(tmp), do: Path.join(tmp, "output.srt")
+  defp timeout_log(tmp), do: Path.join(tmp, "timeout.log")
+
+  defp write!(tmp, name) do
+    path = Path.join(tmp, name)
+    File.write!(path, name)
+    path
   end
 
   defp fake_timeout_bin(tmp, argv) do

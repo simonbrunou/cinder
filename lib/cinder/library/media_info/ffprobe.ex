@@ -68,6 +68,7 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   alias Cinder.Acquisition.Language
   alias Cinder.BoundedCommand
+  alias Cinder.LowPriority
 
   @ignored ~w(und unknown)
   @text_codecs ~w(subrip ass ssa mov_text text webvtt)
@@ -299,29 +300,15 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     |> Enum.dedup()
   end
 
-  # A whole-file read or decode runs at the idle I/O class and nice 10, so playback, imports,
-  # ffprobe checks and the web UI get the disk and the CPU first (#862). The I/O class counts only
-  # under a disk scheduler that honours it (BFQ, mq-deadline), and only when the reader's own
-  # process issues the reads: through a FUSE mount such as mergerfs without passthrough, the
-  # mount's daemon reads at its own priority. Both tools exec their command, so the pid the bound
-  # kills stays the reader's own. A tool missing from PATH is skipped, and `-t` runs the command
-  # even if the kernel refuses the idle class.
+  # A whole-file read or decode runs at the idle I/O class and nice 10 (#862), through
+  # `Cinder.LowPriority`. Both tools exec their command, so the pid the bound kills stays the
+  # reader's own.
   #
   # The reader is resolved first: spawned through `ionice` or `nice`, a missing one would come
   # back as a non-zero exit instead of the `:enoent` each caller's `rescue` returns.
   defp low_priority!(bin, args) do
     executable = System.find_executable(bin) || raise ErlangError, original: :enoent
-
-    {executable, args}
-    |> prefixed("nice", ["-n", "10"])
-    |> prefixed("ionice", ["-c3", "-t"])
-  end
-
-  defp prefixed({executable, args}, tool, flags) do
-    case System.find_executable(tool) do
-      nil -> {executable, args}
-      path -> {path, flags ++ [executable | args]}
-    end
+    LowPriority.command(executable, args)
   end
 
   defp tail(out) do
