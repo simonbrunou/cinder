@@ -193,20 +193,6 @@ defmodule Cinder.CodeHealthTest do
   defp exported?(module, fun),
     do: Code.ensure_loaded?(module) and Keyword.has_key?(module.__info__(:functions), fun)
 
-  # #867: the Dockerfile fetches Tailwind with curl against pinned sha256 sums. On a version
-  # mismatch, `tailwind.install --if-missing` replaces that binary with its own unverified download,
-  # or fails on the GitHub redirect the curl step avoids.
-  test "the Dockerfile pins the Tailwind version config.exs asks for" do
-    pinned =
-      Regex.run(~r/^ARG TAILWIND_VERSION=(\S+)$/m, File.read!("Dockerfile"),
-        capture: :all_but_first
-      )
-
-    assert pinned == [Application.fetch_env!(:tailwind, :version)],
-           "bump the Dockerfile's ARG TAILWIND_VERSION and both of its sha256 sums together " <>
-             "with `config :tailwind, version:`"
-  end
-
   # #889: the dev shell points MIX_TAILWIND_PATH at a Tailwind binary in the read-only Nix store.
   # On a version mismatch, `tailwind.install --if-missing` downloads the configured version with
   # :httpc and cannot write it there.

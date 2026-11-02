@@ -35,8 +35,10 @@ RUN apt-get update \
 # `config :tailwind, path:`, so `tailwind.install --if-missing` finds the configured version there
 # and downloads nothing.
 # TAILWIND_VERSION must equal `config :tailwind, version:` and flake.nix's tailwindVersion
-# (test/code_health_test.exs checks both); take the new sums from the release's sha256sums.txt
-# when you bump it.
+# (test/code_health/tailwind_dockerfile_pin_test.exs and test/code_health_test.exs check them);
+# take the new sums from the release's sha256sums.txt when you bump it. Set it on this one ARG
+# line only, and read it as ${TAILWIND_VERSION}: tailwind_dockerfile_pin_test.exs fails on any
+# other form.
 ARG TAILWIND_VERSION=4.1.12
 ENV MIX_TAILWIND_PATH=/usr/local/bin/tailwindcss
 RUN case "$(dpkg --print-architecture)" in \

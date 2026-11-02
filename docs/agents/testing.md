@@ -72,11 +72,15 @@
   and where each line is one whole statement, and fail on every form there that the reader
   cannot read. `test/code_health/beam_version_pins_test.exs` reads only the lines before the
   Dockerfile's first `FROM`, where Docker allows only `ARG`, and fails on a line there that
-  continues onto the next. Give a fence fixtures for the pattern split across lines and for the
-  pattern inside a comment and inside a string. On #1039, a per-line fence flagged prose, then a
-  trailing comment, and missed a call split across lines: two re-check rounds, about 40
-  minutes, before it tokenized. On #1040, a Dockerfile reader that copied BuildKit's heredoc,
-  continuation and escape rules took two review rounds, 14 minutes, before it took that route.
+  continues onto the next. When no such part holds the pin, scan the whole file and fail on
+  every mention but the pin line and the one reference form:
+  `test/code_health/tailwind_dockerfile_pin_test.exs` does so for `ARG TAILWIND_VERSION`, after
+  the builder's `FROM`, and allows only `${TAILWIND_VERSION}`. Give a fence fixtures for the
+  pattern split across lines and for the pattern inside a comment and inside a string. On #1039,
+  a per-line fence flagged prose, then a trailing comment, and missed a call split across lines:
+  two re-check rounds, about 40 minutes, before it tokenized. On #1040, a Dockerfile reader
+  that copied BuildKit's heredoc, continuation and escape rules took two review rounds,
+  14 minutes, before it took that route.
 - Once a full `mix test` passed on the branch, a review fix commit that changes only Markdown
   under `docs/agents/` or in `AGENTS.md`, or ordinary `#` comments in `.ex` and `.exs` files,
   needs no second full suite before its push. Run the alias's compile, format and Credo gates
