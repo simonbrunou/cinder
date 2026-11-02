@@ -29,7 +29,8 @@ defmodule Cinder.CatalogFixtures do
 
   No passed value is dropped silently. It raises `ArgumentError` on a key none of them takes, on
   a blank value `cast/3` empties (a blank string becomes the field's default, a blank list entry
-  is removed), and on a value `Movie.transition_changeset/2` clears at the movie's status. A
+  is removed), on a `nil` for a column the `movies` table declares NOT NULL (all three before any
+  write), and on a value `Movie.transition_changeset/2` clears at the movie's status. A
   value that changeset clears only on the status change itself gets a second
   `seed_movie_state/2` write, which broadcasts `{:movie_updated, movie}` again.
   """
@@ -46,6 +47,7 @@ defmodule Cinder.CatalogFixtures do
     )
 
     reject!(emptied(attrs), "cast/3 reads their blank value as empty")
+    reject!(nulled(attrs), "their movies column is NOT NULL")
 
     create_attrs =
       Map.merge(%{tmdb_id: System.unique_integer([:positive]), title: "Inception"}, create_attrs)
@@ -105,6 +107,22 @@ defmodule Cinder.CatalogFixtures do
         do: {key, :error},
         else: {key, {:ok, Ecto.Changeset.get_field(changeset, key)}}
     end)
+  end
+
+  # The passed keys whose value is nil and whose column is NOT NULL. The NOT NULL set comes from
+  # the table itself, so no column list is kept here (#849), and the query runs only for a nil.
+  defp nulled(attrs), do: not_null(for {key, nil} <- attrs, do: key)
+
+  defp not_null([]), do: []
+
+  defp not_null(keys) do
+    %{rows: rows} =
+      Repo.query!(~s|SELECT name FROM pragma_table_info(?) WHERE "notnull" = 1|, [
+        Movie.__schema__(:source)
+      ])
+
+    columns = MapSet.new(rows, fn [name] -> name end)
+    Enum.filter(keys, &(Atom.to_string(Movie.__schema__(:field_source, &1)) in columns))
   end
 
   defp reject!([], _reason), do: :ok

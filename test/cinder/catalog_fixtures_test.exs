@@ -3,7 +3,7 @@ defmodule Cinder.CatalogFixturesTest do
   # from a state other than the one it wrote (#849).
   use Cinder.DataCase, async: true
 
-  alias Cinder.Catalog.Movie
+  alias Cinder.Catalog.{Events, Movie}
 
   import Cinder.CatalogFixtures
 
@@ -92,10 +92,65 @@ defmodule Cinder.CatalogFixturesTest do
       assert Repo.aggregate(Movie, :count) == 0
     end
 
-    test "writes a passed nil media profile instead of skipping it" do
-      assert_raise Exqlite.Error, ~r/NOT NULL constraint failed: movies.media_profile/, fn ->
+    test "raises on a nil media profile, naming it, and creates no row" do
+      assert_raise ArgumentError, ~r/:media_profile/, fn ->
         movie_fixture(%{media_profile: nil})
       end
+
+      assert Repo.aggregate(Movie, :count) == 0
+    end
+
+    test "raises on a nil media profile next to a pipeline key before any write or broadcast" do
+      :ok = Events.subscribe_movies()
+      tmdb_id = System.unique_integer([:positive])
+
+      assert_raise ArgumentError, ~r/:media_profile/, fn ->
+        movie_fixture(%{tmdb_id: tmdb_id, media_profile: nil, status: :searching})
+      end
+
+      assert Repo.aggregate(Movie, :count) == 0
+      # The topic is global, so only a broadcast for this call's movie counts.
+      refute_receive {:movie_updated, %Movie{tmdb_id: ^tmdb_id}}
+    end
+
+    test "raises on a nil for any NOT NULL column, naming the key, and creates no row" do
+      for key <- [:status, :search_attempts, :part_file_paths, :preferred_language, :title] do
+        assert_raise ArgumentError, ~r/#{inspect(key)}/, fn -> movie_fixture(%{key => nil}) end
+      end
+
+      assert Repo.aggregate(Movie, :count) == 0
+    end
+
+    test "names every passed nil key whose column is NOT NULL in one raise" do
+      error =
+        assert_raise ArgumentError, fn ->
+          movie_fixture(%{media_profile: nil, status: nil, imdb_id: nil})
+        end
+
+      assert error.message =~ ":media_profile"
+      assert error.message =~ ":status"
+      refute error.message =~ ":imdb_id"
+    end
+
+    test "keeps a nil for a nullable column" do
+      assert %Movie{imdb_id: nil} = movie_fixture(%{imdb_id: nil})
+
+      # `localizations` defaults to %{}, so only its nil shows the value was kept, not dropped.
+      movie =
+        movie_fixture(%{
+          localizations: nil,
+          status: :available,
+          file_path: nil,
+          content_path: nil,
+          imported_resolution: nil
+        })
+
+      assert %Movie{
+               localizations: nil,
+               file_path: nil,
+               content_path: nil,
+               imported_resolution: nil
+             } = Repo.get!(Movie, movie.id)
     end
 
     test "raises on a passed value the status would clear, naming the key" do
