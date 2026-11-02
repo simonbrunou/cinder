@@ -16,6 +16,7 @@ otherwise delete that section. Send everything below the rule as the thread's fi
 | `{{CI_RULES}}` | delete the bullet | Run `scripts/wait-e2e-slot.sh` before each push, merge to `main` or rerun, as `docs/agents/testing.md` says. |
 | `{{DEPLOY}}` | the ship skill's deploy check | `scripts/smoke-prod.sh <new main sha>` |
 | `{{REVIEWERS}}` | from SKILL.md step 3 | empty |
+| `{{REVIEW_RULES}}` | Brief and start each reviewer, re-reviews included, as `docs/agents/workflow.md` "Review" says. | empty |
 
 For another repo, take each value from its `AGENTS.md` and `docs/agents/`.
 
@@ -58,7 +59,8 @@ write.
 - Build test-first with the `tdd` skill. Pick the test seam yourself and record it in the PR
   body.
 - Review before the first push with the `code-review` skill (Standards and Spec){{REVIEWERS}}.
-  Fix the findings, re-review the fix diff once, and post the review summary as a PR comment.
+  {{REVIEW_RULES}} Fix the findings, re-review the fix diff once, and post the review summary as
+  a PR comment.
 - {{SHIP}} The PR body ends with `Closes #{{N}}` and `Part of #{{PARENT}}`. Call
   `link_pull_request` right after opening it.
 
@@ -117,9 +119,10 @@ every candidate, one PR per fix.
   list the target repo's open PRs and read the diff of each `retro/*` PR that touches your file.
   When one already carries your fix, push onto it or skip yours.
 - Run the `code-review` skill on each fix PR and fix its findings, then merge it under the target
-  repo's Merge authority once CI is green, following the CI rules above. In nix, `just build`
-  must also exit 0 in the worktree, and a PR on a path its Merge authority leaves to the user
-  stays open for the report.
+  repo's Merge authority once CI is green, following the CI rules above. On a fix PR in
+  {{REPO}}, brief and start the reviewers as the review bullet under "How" says. In nix,
+  `just build` must also exit 0 in the worktree, and a PR on a path its Merge authority leaves to
+  the user stays open for the report.
 - After a nix merge on sbrn, roll it out in `~/Projects/nix` as nix's Merge authority says.
   Another thread may be rolling out there at the same time. When the clone is dirty or a step
   fails, leave the clone as it is and name the failure in the report, as that section says.
