@@ -71,6 +71,10 @@ write.
   per review round.
 - Wait for CI in the foreground with `forgejo.py ci` (the `forgejo-issues` skill), running it
   again while it exits 3. A background process dies when your turn ends.
+- While a `delegate_task` you started has not reported, end your turn and wait for CI after the
+  report: a delegate's report, or its failure, reaches you only when your turn ends. A nudge from
+  the orchestrator in that time gets the same answer: end the turn again. A delegate still
+  unreported 45 minutes after you started it has hung: `task_cancel` it and start a fresh one.
 - Read a red job's log before rerunning it. When a check is red on code your diff does not touch,
   read what the repo's docs say about red runs, and tell the orchestrator when it looks
   repo-wide. Send to the orchestrator with `t3_thread_send` and mode `steer`, so the message

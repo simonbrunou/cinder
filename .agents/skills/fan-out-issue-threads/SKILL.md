@@ -119,7 +119,9 @@ line each cycle. Each cycle also checks:
   nobody will answer, so `t3_thread_interrupt` the thread, then `t3_thread_send` it a resume
   message. `pendingRequestCount: 1` also shows during a plain long-running command, so it alone
   marks no stall. A thread idle for 10 minutes with work left, or settled with no REPORT block,
-  gets a `t3_thread_send` nudge to finish in the foreground.
+  gets a `t3_thread_send` nudge to finish in the foreground, or to end its turn again while a
+  `delegate_task` it started has not reported. A thread waits idle for such a report, and only
+  the thread knows which of its delegates it still needs.
 
 When a thread completes, read its REPORT block (step 6), then check Forgejo for the PR
 `merged: true`, the issue closed and `origin/main` moved. Launch a lane's next issue only after
