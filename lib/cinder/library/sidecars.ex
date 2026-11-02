@@ -34,6 +34,9 @@ defmodule Cinder.Library.Sidecars do
   @doc "ISO code from a sidecar filename; flags stripped; unknown/absent -> \"und\"."
   def language(filename), do: filename |> classify() |> elem(0)
 
+  @doc "Flags (`forced`, `sdh`, `cc`, `hi`) from a sidecar filename; a `hi` that `language/1` reads as Hindi is not one."
+  def flags(filename), do: filename |> classify() |> elem(1)
+
   # One decision for both readings, so a `hi` consumed as the language can't ALSO be re-emitted as
   # a flag by link/2 — which would name a Hindi sidecar `<stem>.hi.hi.srt`.
   defp classify(filename) do
@@ -116,11 +119,9 @@ defmodule Cinder.Library.Sidecars do
   end
 
   defp dest_dir_name(dest_stem, src_path, lang) do
-    flag = src_path |> flags_of() |> Enum.map_join(&".#{&1}")
+    flag = src_path |> flags() |> Enum.map_join(&".#{&1}")
     "#{dest_stem}.#{lang}#{flag}#{String.downcase(Path.extname(src_path))}"
   end
-
-  defp flags_of(path), do: path |> classify() |> elem(1)
 
   defp do_link(src, dest) do
     with {:ok, src} <-

@@ -360,11 +360,8 @@ defmodule Cinder.Subtitles do
           {:direct, content, origin} ->
             commit(video_path, kind, language, moviehash, origin, target, content)
 
-          {:translate, srt} when not exists? ->
+          {:translate, srt} ->
             translate_and_commit(video_path, kind, language, moviehash, target, srt)
-
-          {:translate, _srt} ->
-            :ok
 
           nil ->
             :ok
@@ -390,9 +387,16 @@ defmodule Cinder.Subtitles do
     # Try every matching candidate in preference order, not just the best one - an unextractable
     # exact track must not give up before trying a usable, merely-ambiguous one (#575), mirroring
     # Reference.select/4's existing cascade.
+    #
+    # With the target in place nothing else is looked for. A translation could not replace it, so
+    # the default track is not extracted for one (#861), and a sidecar in the same language would
+    # be copied over it again on every sweep (#1070).
     case first_extracted(video_path, candidates, cache) do
+      {nil, cache} when exists? ->
+        {nil, cache}
+
       {nil, cache} ->
-        default_or_sidecar(video_path, language, moviehash, target, exists?, tracks, cache)
+        default_or_sidecar(video_path, language, moviehash, target, tracks, cache)
 
       {content, cache} ->
         {{:direct, content, "embedded"}, cache}
@@ -409,29 +413,19 @@ defmodule Cinder.Subtitles do
   end
 
   # The default track is only a translation source, so it is not extracted when no translation
-  # can come of it (#861). Every sweep used to extract it and drop the result. With the target in
-  # place nothing is looked for: a sidecar in the same language would be copied over it again on
-  # every sweep. With no translator, the sidecars are looked at as if there were no default track.
-  # So are they without a default track, or with one whose content did not parse for this
-  # moviehash.
-  defp default_or_sidecar(video_path, language, moviehash, target, exists?, tracks, cache) do
+  # can come of it (#861). Every sweep used to extract it and drop the result. With no translator,
+  # the sidecars are looked at as if there were no default track. So are they without a default
+  # track, or with one whose content did not parse for this moviehash.
+  defp default_or_sidecar(video_path, language, moviehash, target, tracks, cache) do
     track = default_track(tracks, moviehash)
 
-    cond do
-      is_nil(track) ->
-        sidecar_source(video_path, language, target, cache)
-
-      exists? ->
-        {nil, cache}
-
-      not translator().configured?() ->
-        sidecar_source(video_path, language, target, cache)
-
-      true ->
-        case default_srt(video_path, moviehash, track, cache) do
-          {{:ok, srt}, cache} -> {{:translate, srt}, cache}
-          {:none, cache} -> sidecar_source(video_path, language, target, cache)
-        end
+    if is_nil(track) or not translator().configured?() do
+      sidecar_source(video_path, language, target, cache)
+    else
+      case default_srt(video_path, moviehash, track, cache) do
+        {{:ok, srt}, cache} -> {{:translate, srt}, cache}
+        {:none, cache} -> sidecar_source(video_path, language, target, cache)
+      end
     end
   end
 
@@ -491,18 +485,27 @@ defmodule Cinder.Subtitles do
     end
   end
 
+  # A same-language sidecar with no flag wins over a hearing-impaired one, as in
+  # `Cinder.Subtitles.OwnTrack.select/2`.
   defp sidecar_source(video_path, language, target, cache) do
     {sidecars, cache} = srt_sidecars(video_path, cache)
-    candidates = Enum.reject(sidecars, fn {path, _language} -> same_path?(path, target) end)
 
-    case Enum.find(candidates, fn {_path, source_language} -> source_language == language end) do
-      {path, _language} ->
+    candidates =
+      Enum.reject(sidecars, fn {path, _language, _flags} -> same_path?(path, target) end)
+
+    same_language =
+      candidates
+      |> Enum.filter(fn {_path, source_language, _flags} -> source_language == language end)
+      |> Enum.sort_by(fn {_path, _language, flags} -> flags != [] end)
+
+    case same_language do
+      [{path, _language, _flags} | _] ->
         case read(path) do
           {:ok, content} -> {{:direct, content, "translated"}, cache}
           :error -> translation_sidecar(video_path, language, candidates, cache)
         end
 
-      nil ->
+      [] ->
         translation_sidecar(video_path, language, candidates, cache)
     end
   end
@@ -512,7 +515,7 @@ defmodule Cinder.Subtitles do
   defp translation_sidecar(video_path, _language, sidecars, %{sidecar_srt: :unknown} = cache) do
     result =
       case sidecars do
-        [{path, _language} | _] ->
+        [{path, _language, _flags} | _] ->
           with {:ok, content} <- read(path),
                {:ok, srt} <- parse_srt(content, video_path) do
             {:ok, srt}
@@ -533,8 +536,15 @@ defmodule Cinder.Subtitles do
   defp result_to_source({:ok, srt}, cache), do: {{:translate, srt}, cache}
   defp result_to_source(:none, cache), do: {nil, cache}
 
+  # A forced sidecar is never a source (#1070): like a forced track, it holds only the lines the
+  # audio does not carry.
   defp srt_sidecars(video_path, %{sidecars: :unknown} = cache) do
-    sidecars = Sidecars.srt_files(video_path)
+    sidecars =
+      for {path, language} <- Sidecars.srt_files(video_path),
+          flags = Sidecars.flags(path),
+          "forced" not in flags,
+          do: {path, language, flags}
+
     {sidecars, %{cache | sidecars: sidecars}}
   end
 

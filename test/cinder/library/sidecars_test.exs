@@ -66,6 +66,19 @@ defmodule Cinder.Library.SidecarsTest do
     assert Sidecars.language("Movie (2020).hi.fr.srt") == "fr"
   end
 
+  # #1070: the subtitle fallback skips a forced sidecar and prefers an unflagged one, so a lone
+  # `hi` read as Hindi must not come back as the hearing-impaired flag.
+  test "flags/1 lists the flags language/1 stripped, with a lone hi read as Hindi" do
+    assert Sidecars.flags("Movie (2020).en.srt") == []
+    assert Sidecars.flags("Movie (2020).eng.forced.srt") == ["forced"]
+    assert Sidecars.flags("Movie (2020).en.sdh.srt") == ["sdh"]
+    assert Sidecars.flags("Movie (2020).en.cc.srt") == ["cc"]
+    assert Sidecars.flags("Movie (2020).fr.hi.srt") == ["hi"]
+    assert Sidecars.flags("Movie (2020).hi.srt") == []
+    assert Sidecars.flags("Movie (2020).hi.forced.srt") == ["forced"]
+    assert Sidecars.flags("Movie (2020).forced.srt") == ["forced"]
+  end
+
   test "files/1 returns stem-matching sidecars with languages" do
     dir = "/dl/Movie (2020)"
     src = "#{dir}/Movie (2020).mkv"
