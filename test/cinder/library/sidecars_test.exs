@@ -79,6 +79,65 @@ defmodule Cinder.Library.SidecarsTest do
     assert Sidecars.flags("Movie (2020).forced.srt") == ["forced"]
   end
 
+  # #1087: a flag word counts only in the trailing run of flag and language tokens, so a title
+  # word or a release tag (`CC` is the Criterion Collection's) is no flag.
+  for {name, reading} <- [
+        {"Forced.Entry.1983.1080p.BluRay.x264-GRP.fr.srt", {"fr", []}},
+        {"Hi.Mom.2021.1080p.WEB-DL.fr.srt", {"fr", []}},
+        {"Movie.1960.CC.1080p.BluRay.x264-GRP.en.srt", {"en", []}},
+        {"Hi.Mom.2021.1080p.WEB-DL.fr.hi.srt", {"fr", ["hi"]}},
+        {"Forced.Entry.1983.1080p.BluRay.x264-GRP.forced.srt", {"und", ["forced"]}},
+        {"Movie (2020).hi.forced.srt", {"hi", ["forced"]}},
+        {"Movie (2020).hi.fr.srt", {"fr", ["hi"]}},
+        {"Movie (2020).fr.hi.srt", {"fr", ["hi"]}},
+        {"Movie (2020).hi.srt", {"hi", []}},
+        {"Movie (2020).eng.forced.srt", {"en", ["forced"]}},
+        # A full language name belongs to the run as an ISO code does.
+        {"Hi.Mom.2021.1080p.WEB-DL.hi.French.srt", {"fr", ["hi"]}},
+        # The flags come in name order.
+        {"Forced.Entry.1983.1080p.BluRay.x264-GRP.fr.sdh.forced.srt", {"fr", ["sdh", "forced"]}},
+        # #201: a lone `hi` in the run is Hindi, and the title's `Hi` is no flag either.
+        {"Hi.Mom.2021.1080p.WEB-DL.hi.srt", {"hi", []}}
+      ] do
+    test "language/1 and flags/1 read #{name} as #{inspect(reading)}" do
+      assert reading(unquote(name)) == unquote(Macro.escape(reading))
+    end
+  end
+
+  # #1087: the title's tokens never change the reading, so a scene-named sidecar reads as the
+  # library-named one with the same tail. Each title ends in a token that is neither a flag nor a
+  # language: a title word right before the tail is out of scope (`Show.S01E01.Hi.fr.srt`).
+  test "a scene title's flag words never change the reading of the tail after it" do
+    tail_tokens = ~w(fr fre French hi forced sdh cc)
+
+    # Every tail of up to three of those tokens, repeats included: each step puts one token in
+    # front of every tail of the step before.
+    tails =
+      [[]]
+      |> Stream.iterate(fn shorter ->
+        for token <- tail_tokens, tail <- shorter, do: [token | tail]
+      end)
+      |> Enum.take(4)
+      |> Enum.concat()
+
+    titles = [
+      "Forced.Entry.1983.1080p.BluRay.x264-GRP",
+      "Hi.Mom.2021.1080p.WEB-DL",
+      "Movie.1960.CC.1080p.BluRay.x264-GRP",
+      "Sdh.Forced.Cc.Hi.2020.x264-GRP"
+    ]
+
+    mismatches =
+      for title <- titles,
+          tail <- tails,
+          name = Enum.join([title | tail] ++ ["srt"], "."),
+          reference = Enum.join(["Movie (2020)" | tail] ++ ["srt"], "."),
+          reading(name) != reading(reference),
+          do: {name, reading(name), reading(reference)}
+
+    assert mismatches == []
+  end
+
   test "files/1 returns stem-matching sidecars with languages" do
     dir = "/dl/Movie (2020)"
     src = "#{dir}/Movie (2020).mkv"
@@ -201,6 +260,27 @@ defmodule Cinder.Library.SidecarsTest do
     expect(FilesystemMock, :ln, fn ^french_hi_src, ^french_hi_dest -> :ok end)
 
     assert Sidecars.link(src, dest) == [hindi_dest, french_hi_dest]
+  end
+
+  # #1087: a flag word in the scene title reached the library name. The title's `Forced` named a
+  # full French subtitle forced, and the title's `Hi` doubled the real flag (`.fr.hi.hi.srt`).
+  for {release, library, tail} <- [
+        {"Forced.Entry.1983.1080p.BluRay.x264-GRP", "Forced Entry (1983)", "fr.srt"},
+        {"Hi.Mom.2021.1080p.WEB-DL", "Hi Mom (2021)", "fr.hi.srt"}
+      ] do
+    test "link/2 places #{release}.#{tail} as <dest stem>.#{tail}" do
+      dir = "/dl/#{unquote(release)}"
+      src = "#{dir}/#{unquote(release)}.mkv"
+      dest = "/lib/#{unquote(library)}/#{unquote(library)}.mkv"
+      sub_src = "#{dir}/#{unquote(release)}.#{unquote(tail)}"
+      sub_dest = "#{Path.rootname(dest)}.#{unquote(tail)}"
+
+      expect(FilesystemMock, :dir?, fn ^dir -> true end)
+      expect(FilesystemMock, :find_files, fn ^dir -> {:ok, [{src, 900}, {sub_src, 10}]} end)
+      expect(FilesystemMock, :ln, fn ^sub_src, ^sub_dest -> :ok end)
+
+      assert Sidecars.link(src, dest) == [sub_dest]
+    end
   end
 
   describe "real path-policy sinks" do
@@ -786,4 +866,6 @@ defmodule Cinder.Library.SidecarsTest do
     assert_receive {:filesystem_barrier, pid, ref, ^operation, path}, DiskTask.timeout_ms()
     {pid, ref, path}
   end
+
+  defp reading(name), do: {Sidecars.language(name), Sidecars.flags(name)}
 end

@@ -34,7 +34,10 @@ defmodule Cinder.Library.Sidecars do
   @doc "ISO code from a sidecar filename; flags stripped; unknown/absent -> \"und\"."
   def language(filename), do: filename |> classify() |> elem(0)
 
-  @doc "Flags (`forced`, `sdh`, `cc`, `hi`) from a sidecar filename; a `hi` that `language/1` reads as Hindi is not one."
+  @doc """
+  Flags (`forced`, `sdh`, `cc`, `hi`) from the trailing run of flag and language tokens of a
+  sidecar filename, in name order; a `hi` that `language/1` reads as Hindi is not one.
+  """
   def flags(filename), do: filename |> classify() |> elem(1)
 
   # One decision for both readings, so a `hi` consumed as the language can't ALSO be re-emitted as
@@ -47,7 +50,7 @@ defmodule Cinder.Library.Sidecars do
       |> String.split(".")
       |> Enum.map(&String.downcase/1)
 
-    flags = Enum.filter(tokens, &(&1 in @flags))
+    flags = trailing_flags(tokens)
 
     case resolve(tokens, @flags) do
       nil -> ambiguous_reading(tokens, flags)
@@ -55,8 +58,23 @@ defmodule Cinder.Library.Sidecars do
     end
   end
 
+  # A flag word is a flag only in the name's trailing run of flag and language tokens, which the
+  # first token that is neither ends (#1087). Before it, the word belongs to the title or a release
+  # tag: `Forced.Entry.1983…fr.srt` and `Hi.Mom.2021…fr.srt` are full French subtitles, and
+  # `Movie.1960.CC…en.srt` carries the Criterion Collection's tag. The language reading needs no
+  # such limit: the last non-flag token lies inside the run whenever it is a language.
+  defp trailing_flags(tokens) do
+    tokens
+    |> Enum.reverse()
+    |> Enum.take_while(&(&1 in @flags or language_code(&1) != nil))
+    |> Enum.filter(&(&1 in @flags))
+    |> Enum.reverse()
+  end
+
   # Nothing resolved with every flag stripped, so retry letting the ambiguous ones be languages.
-  # Only reachable when the last non-flag token is itself `hi`, i.e. exactly the shadowed case.
+  # The retry finds a language only when the last token that is not `forced`, `sdh` or `cc` is a
+  # `hi`, i.e. exactly the shadowed case. Only those flags follow that `hi`, so it sits in the
+  # trailing run and `flags` holds it.
   defp ambiguous_reading(tokens, flags) do
     case resolve(tokens, @flags -- @ambiguous_flags) do
       nil -> {"und", flags}
@@ -67,9 +85,11 @@ defmodule Cinder.Library.Sidecars do
   defp resolve(tokens, strip) do
     case tokens |> Enum.reject(&(&1 in strip)) |> List.last() do
       nil -> nil
-      token -> @aliases[token] || @names[token]
+      token -> language_code(token)
     end
   end
+
+  defp language_code(token), do: @aliases[token] || @names[token]
 
   @doc "Sidecar files belonging to `source_video` (stem match, or any sub when the folder holds one video)."
   def files(source_video) do

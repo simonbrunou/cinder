@@ -922,6 +922,34 @@ defmodule Cinder.SubtitlesTest do
       end
     end
 
+    # #1087: a flag word in a scene-named sidecar's title is no flag. Read as forced, this one
+    # was never a source.
+    test "copies a lone sidecar whose scene title holds Forced to a missing target", %{
+      video: video
+    } do
+      name = "Forced.Entry.1983.1080p.BluRay.x264-GRP.fr.srt"
+      put!(Path.join(Path.dirname(video), name), @srt)
+      stub_default_track(video, :none)
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:scan, :movies}]
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) == @srt
+      assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(video)
+    end
+
+    # Read as hearing-impaired, the sidecar listed first lost to `M.fre.srt`.
+    test "ranks a sidecar whose scene title holds Hi as an unflagged one", %{video: video} do
+      scene = Path.join(Path.dirname(video), "Hi.Mom.2021.1080p.WEB-DL.fr.srt")
+      put!(Path.join(Path.dirname(video), "M.fre.srt"), @other)
+      put!(scene, @srt)
+      list_first(scene)
+      stub_default_track(video, :none)
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:scan, :movies}]
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) == @srt
+    end
+
     # The steps before the sidecars still replace a managed target.
     test "an embedded track in the language still replaces a managed target beside a sidecar", %{
       video: video
