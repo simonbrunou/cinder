@@ -5,7 +5,13 @@
 - When the issue carries a triage Agent Brief, the done-when names a test for each requirement
   in **Desired behavior** as well as each **Acceptance criteria** box. On #972, prod's mount
   layout, a `devino-hash` mount and `verify_legacy_selection`'s refusals were Desired-behavior
-  requirements with no test until the Spec review, which cost a second review round.
+  requirements with no test until the Spec review, which cost a second review round. A clause
+  that keeps today's behaviour ("as today", "still") or sets a count ("logged once") is a
+  requirement too: its test goes red when a mutation breaks only that clause. A count's test sets
+  up each way the count can repeat. On #1072, two "as today" fallbacks and a "logged once" had no
+  such test until the Spec review. The count could repeat through two callers of one check or
+  through two wanted languages sharing one track, and the second had no test until a re-check.
+  Closing them took two more review rounds, about 25 minutes.
 - A bug fix starts with a test that reproduces the bug. Then make it pass.
 - New functionality, such as a choke-point, a state or a writer, ships with a test.
 - A lock test runs the waiter in another process than the holder: the lock id carries `self()`
