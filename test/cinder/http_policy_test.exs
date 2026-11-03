@@ -5,6 +5,8 @@ defmodule Cinder.HTTPPolicyTest do
 
   alias Cinder.HTTPPolicy
 
+  @request_task_event [:cinder, :http, :request_task]
+
   @public_ipv4 {93, 184, 216, 34}
   @public_ipv6 {0x2606, 0x2800, 0x220, 0x1, 0x248, 0x1893, 0x25C8, 0x1946}
 
@@ -457,32 +459,124 @@ defmodule Cinder.HTTPPolicyTest do
 
       started_at = System.monotonic_time(:millisecond)
 
-      assert {:error, :request_timeout} =
-               HTTPPolicy.bounded_request(
-                 [
-                   url: "https://public.example/blocked",
-                   plug: {Req.Test, Cinder.HTTPPolicyBlockedStub}
-                 ],
-                 64,
-                 500
-               )
+      task_pid =
+        Cinder.TelemetryHelpers.capture(@request_task_event, fn ->
+          HTTPPolicy.bounded_request(
+            [
+              url: "https://public.example/blocked",
+              plug: {Req.Test, Cinder.HTTPPolicyBlockedStub}
+            ],
+            64,
+            500
+          )
+        end)
+        |> assert_killed_at_deadline(started_at)
 
-      # A 500 ms deadline, not 100 ms: a loaded CI runner took more than 100 ms to bring the
-      # request task to the stub, so the deadline fired first and the mailbox held no
-      # `{:request_started, _}` (#960). A bound 5 s past the deadline, the house bound for a
-      # wall-clock load flake (docs/agents/ci.md "Wall-clock tests"): loaded runners returned
-      # 336 ms (#908), then 875 ms (#1038) past it, since each step around the deadline (the
-      # task start, `Req.Test.allow`, the kill) waits for a shared process to reply or for the
-      # test process to run again. A deadline of 5.5 s or more still fails this bound. The stub's
-      # 10 s valve sits above the bound, so a request the deadline never cancels runs to the valve
-      # and fails this bound too. A deadline past the valve also lets the stub's body through,
-      # which fails the match above.
-      elapsed = System.monotonic_time(:millisecond) - started_at
-      assert elapsed < 5_500
-      assert_received {:request_started, request_pid}
-      refute request_pid == self()
-      refute Process.alive?(request_pid)
-      refute_received _late_task_message
+      # A runner slower than the deadline to bring the task to the stub leaves no stub message
+      # (#1092), so the test found the task through the event above and the message is optional.
+      receive do
+        {:request_started, request_pid} -> assert request_pid == task_pid
+      after
+        0 -> :ok
+      end
+
+      assert late_messages() == []
+    end
+
+    test "cancels a request whose task reaches the stub only after the deadline" do
+      parent = self()
+
+      Req.Test.stub(Cinder.HTTPPolicySlowStartStub, fn conn ->
+        send(parent, {:request_started, self()})
+        Req.Test.text(conn, "late-secret")
+      end)
+
+      # A request step holds the task for 10 s before Req's pipeline reaches the plug: the slow
+      # task start of #1092, made longer than every bound here. The deadline kills the task during
+      # the hold, and the elapsed bound below ends before the hold does, so a call that passes it
+      # killed the task before the stub ran and the test can refute the stub's message outright. A
+      # deadline that never cancels lets the hold end and the stub's body through, which fails the
+      # match and the bound.
+      request =
+        [
+          url: "https://public.example/slow-start",
+          plug: {Req.Test, Cinder.HTTPPolicySlowStartStub}
+        ]
+        |> Req.new()
+        |> Req.Request.append_request_steps(
+          slow_start: fn request ->
+            receive do
+              :never -> :ok
+            after
+              10_000 -> :ok
+            end
+
+            request
+          end
+        )
+
+      started_at = System.monotonic_time(:millisecond)
+
+      Cinder.TelemetryHelpers.capture(@request_task_event, fn ->
+        HTTPPolicy.bounded_request(request, 64, 500)
+      end)
+      |> assert_killed_at_deadline(started_at)
+
+      assert late_messages() == []
+    end
+
+    test "gives each of two concurrent calls its own request task event" do
+      parent = self()
+
+      Req.Test.stub(Cinder.HTTPPolicyConcurrentStub, fn conn ->
+        # The request task's `$callers` starts with the process that called `bounded_request/3`.
+        [caller | _] = Process.get(:"$callers")
+        send(parent, {:request_started, caller, self()})
+
+        # Hold each request until the test has seen both, so the two calls overlap. The valve
+        # only keeps a lost release from hanging the suite.
+        receive do
+          :release -> :ok
+        after
+          10_000 -> :ok
+        end
+
+        Req.Test.text(conn, "ok")
+      end)
+
+      call = fn ->
+        HTTPPolicy.bounded_request(
+          [
+            url: "https://public.example/concurrent",
+            plug: {Req.Test, Cinder.HTTPPolicyConcurrentStub}
+          ],
+          64,
+          30_000
+        )
+      end
+
+      {{caller_tasks, stub_tasks, results}, events} =
+        Cinder.TelemetryHelpers.capture(@request_task_event, fn ->
+          caller_tasks = [Task.async(call), Task.async(call)]
+          assert_receive {:request_started, first_caller, first_task}
+          assert_receive {:request_started, second_caller, second_task}
+          send(first_task, :release)
+          send(second_task, :release)
+          stub_tasks = %{first_caller => first_task, second_caller => second_task}
+          {caller_tasks, stub_tasks, Task.await_many(caller_tasks)}
+        end)
+
+      assert [{:ok, %{body: "ok"}}, {:ok, %{body: "ok"}}] = results
+      caller_pids = Enum.map(caller_tasks, & &1.pid)
+      assert Enum.sort(Map.keys(stub_tasks)) == Enum.sort(caller_pids)
+
+      # Each caller's event names the task that reached the stub for that caller, and only it.
+      for caller <- caller_pids do
+        assert request_task_pids(events, caller) == [Map.fetch!(stub_tasks, caller)]
+      end
+
+      assert [first_task, second_task] = Map.values(stub_tasks)
+      refute first_task == second_task
     end
 
     test "emits [:cinder, :http, :request] with the host, duration, and :ok on success" do
@@ -559,5 +653,40 @@ defmodule Cinder.HTTPPolicyTest do
       assert byte_size(sanitized) <= 500
       assert String.starts_with?(sanitized, "remoteforged:")
     end
+  end
+
+  # Checks a `bounded_request/3` call that the 500 ms deadline cancelled, from the
+  # `{result, events}` of `Cinder.TelemetryHelpers.capture/2`, and returns its request task's pid.
+  #
+  # The elapsed bound sits 5 s past the deadline, the house bound for a wall-clock load flake
+  # (docs/agents/ci.md "Wall-clock tests"). Loaded runners returned 336 ms (#908), then 875 ms
+  # (#1038) past the deadline, since each step around it (the task start, `Req.Test.allow`, the
+  # kill) waits for a shared process to reply or for the test process to run again. A deadline of
+  # 5.5 s or more still fails this bound. Both tests hold the task for 10 s, above the bound (the
+  # stub's valve, the slow-start step), so a request the deadline never cancels fails the bound
+  # too. A deadline past those 10 s also lets the stub's body through, which fails the result
+  # match.
+  defp assert_killed_at_deadline({result, events}, started_at) do
+    assert {:error, :request_timeout} = result
+    elapsed = System.monotonic_time(:millisecond) - started_at
+    assert elapsed < 5_500
+    assert [task_pid] = request_task_pids(events, self())
+    refute Process.alive?(task_pid)
+    task_pid
+  end
+
+  # The request tasks that `caller`'s own `bounded_request/3` calls started, from the events of
+  # `Cinder.TelemetryHelpers.capture/2`. Its handler forwards the event from every process, so a
+  # concurrent async test's call is in `events` too: the caller in the metadata tells them apart.
+  defp request_task_pids(events, caller) do
+    for {_measurements, %{caller: ^caller, task_pid: task_pid}} <- events, do: task_pid
+  end
+
+  # The test process's mailbox, without the events `Cinder.TelemetryHelpers.capture/2` forwarded
+  # after it drained. A process that found its handler before `:telemetry.detach/1` can still
+  # send one, so another async test's `bounded_request/3` call can leave one here.
+  defp late_messages do
+    {:messages, messages} = Process.info(self(), :messages)
+    Enum.reject(messages, &match?({:telemetry_captured, _ref, _measurements, _metadata}, &1))
   end
 end

@@ -233,6 +233,8 @@ defmodule Cinder.HTTPPolicy do
         end
       end)
 
+    emit_request_task_telemetry(request, task)
+
     result =
       case allow_req_test(request, owner, task.pid) do
         :ok ->
@@ -246,6 +248,19 @@ defmodule Cinder.HTTPPolicy do
 
     emit_http_telemetry(request, result, started_at)
     result
+  end
+
+  # `[:cinder, :http, :request_task]` fires once per `bounded_request/2,3` call, in the caller,
+  # as soon as the request task exists. The task still waits for its gate message and the deadline
+  # has not started, so a slow handler cannot eat into the deadline. The metadata carries the
+  # task's pid and the caller's: a test finds its own call's task through it, even when the
+  # deadline kills that task before the request reaches its stub (#1092).
+  defp emit_request_task_telemetry(request, task) do
+    :telemetry.execute(
+      [:cinder, :http, :request_task],
+      %{system_time: System.system_time()},
+      %{host: request_host(request), caller: self(), task_pid: task.pid}
+    )
   end
 
   # `[:cinder, :http, :request]` fires once per `bounded_request/2,3` call, timing the whole
