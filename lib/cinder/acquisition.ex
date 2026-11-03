@@ -159,10 +159,11 @@ defmodule Cinder.Acquisition do
     (`Cinder.Acquisition.Anime.names_movie?/2`), and for an IMDb-scoped result the `{:imdb,
     context}` spelling as well.
   - `{:anime_episodes, context, wanted_ids}`: the anime episode queries. A free-text result faced
-    the search's own guard. A TVDB-scoped one (#699) is kept when the indexer reports the series'
-    TVDB id on it, dropped when it reports another series' id, and otherwise has to lead with the
-    title or an alias, read the anime way (`Cinder.Acquisition.Anime.names_series?/2`) or the
-    scene way (the fold `names_title?/2` uses), with no year more than one off the series'.
+    the search's own guard (`Cinder.Acquisition.Anime.names_series?/2`, then
+    `another_anime_series?/2`). A TVDB-scoped one (#699) is kept when the indexer reports the
+    series' TVDB id on it, dropped when it reports another series' id, and otherwise has to lead
+    with the title or an alias, read the anime way (`Cinder.Acquisition.Anime.names_series?/2`) or
+    the scene way (the fold `names_title?/2` uses), with no year more than one off the series'.
 
   Only `Cinder.Acquisition.ReleaseJudge` calls this.
   """
@@ -184,6 +185,28 @@ defmodule Cinder.Acquisition do
 
   def title_guard(releases, {:anime_episodes, context, _wanted_ids}),
     do: Enum.filter(releases, &anime_episode_named?(&1, context))
+
+  @doc """
+  The identity half of the anime episode search's free-text guard (#871), for a result whose name
+  already leads with the series title or an alias (`Cinder.Acquisition.Anime` checks that half).
+  The reported TVDB id decides as it does for a TVDB-scoped result (#699): another series' id makes
+  the result another series, and the series' own id proves it under any year. With no id to
+  compare, the result is another series when every year in its name is more than one off the
+  series' year, under the title and under every alias in turn, so an alias that spells a
+  year-shaped token ("Bubblegum Crisis 2040") is no conflict. A series with no year has none.
+
+  `release.tvdb_id` is the id the search's de-duplication settled over the result's copies, so
+  copies that report different ids, one of them the series', count as no id. A series with no
+  TVDB id has no id to compare. The anime episode search's free-text guard in
+  `Cinder.Acquisition.Anime` is this function's one caller.
+  """
+  def another_anime_series?(%Release{} = release, context) do
+    case reported_tvdb_identity(release, context) do
+      :same -> false
+      :other -> true
+      :unreported -> other_year?(release.title, context)
+    end
+  end
 
   @doc """
   The one function that builds a standard TV season's release list, for the TV sweep (which takes
@@ -747,7 +770,8 @@ defmodule Cinder.Acquisition do
   # Beyond Journey's End"). As in the season guard, a year more than one off the series' names a
   # same-titled other series. As for an IMDb-scoped movie, a series with no title the fold can
   # spell (native script only) can't check the Latin names releases mostly carry, so the id scope
-  # stays the evidence. A free-text result faced the anime search's own guard.
+  # stays the evidence. A free-text result faced the anime search's own guard, which reads the same
+  # reported id and year (`another_anime_series?/2`, #871) but never lets the id excuse the name.
   defp anime_episode_named?(%Release{query_origins: origins} = release, context) do
     if :id_scoped in (origins || []),
       do: tvdb_scoped_episode_named?(release, context),

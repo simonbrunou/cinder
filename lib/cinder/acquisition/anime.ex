@@ -1,6 +1,7 @@
 defmodule Cinder.Acquisition.Anime do
   @moduledoc "Bounded anime-aware query planning and release aggregation."
 
+  alias Cinder.Acquisition
   alias Cinder.Acquisition.{AnimeParser, AnimePreferences, Release, ReleaseJudge, Scorer}
   alias Cinder.Catalog.{AnimeResolver, Episode, TitleAlias}
   alias Cinder.Download.Intent
@@ -1063,9 +1064,11 @@ defmodule Cinder.Acquisition.Anime do
     }
   end
 
-  # The reported TVDB id is identity proof for an id-scoped episode result (#699), so it is decided
-  # once over every copy. Copies that disagree on whether it is the series' prove nothing, and the
-  # name decides; copies naming only other series keep one of their ids, which drops the result.
+  # The reported TVDB id is identity proof for an episode result, id-scoped (#699) or free-text
+  # (#871), so it is decided once over every copy. A copy reporting no id adds nothing. Copies that
+  # report different ids, one of them the series', prove nothing, and the name and its year decide;
+  # copies naming only other series keep one of their ids, which drops the result when the series
+  # has a TVDB id.
   defp reported_tvdb_id(copies, series_tvdb_id) do
     case copies |> Enum.map(& &1.tvdb_id) |> Enum.reject(&is_nil/1) |> Enum.uniq() do
       [] -> nil
@@ -1078,22 +1081,34 @@ defmodule Cinder.Acquisition.Anime do
 
   # A single garbled indexer title must not raise and stall the whole free-text search pass
   # (#451): `known_title_match?/2` and `exact_movie_year?/2` below both run `/u`-flagged regexes
-  # against the release title. Sanitize once, here, at the point every release enters the guard —
-  # `AnimeParser.sanitize/1` scrubs to valid UTF-8 (a no-op on already-valid input) — reusing the
-  # parser's scrub instead of a third copy. Only the guard's local view is sanitized; `release.title`
-  # itself is never mutated, so it stays intact for display, `mapping_snapshot`, and downstream
-  # parsing (which already sanitizes independently via `AnimeParser.parse/2`).
+  # against the release title. Sanitize where every free-text release enters those checks
+  # (`free_text_kept?/2`, and `names_series?/2` for an episode): `AnimeParser.sanitize/1` scrubs
+  # to valid UTF-8 (a no-op on already-valid input), reusing the parser's scrub instead of a
+  # third copy. The episode year check sanitizes on its own (`Cinder.Acquisition`'s `tokens/1`).
+  # Only the guard's local view is sanitized; `release.title` itself is never mutated, so it stays
+  # intact for display, `mapping_snapshot`, and downstream parsing (which already sanitizes
+  # independently via `AnimeParser.parse/2`).
   #
   # The search guards only its free-text results, which answer a title and may name anything. An
   # id-scoped result is the indexer's answer for the id, and the release judge's title guard
   # checks its name (`names_movie?/2`, and for an episode `names_series?/2` through
   # `Cinder.Acquisition.title_guard/2`), so the manual-search panel can still list one naming
-  # another title for the operator to override.
+  # another title for the operator to override. A free-text episode result also has to be the
+  # series and not a same-titled other one, by its reported TVDB id or its year
+  # (`Cinder.Acquisition.another_anime_series?/2`, #871). The series' own id does not excuse a
+  # name that fails the title check. The guard stays here, not in the judge, so the panel never
+  # lists the free-text results naming another series (#775).
   defp apply_title_guard(releases, context) do
     Enum.filter(releases, fn release ->
-      :id_scoped in release.query_origins or
-        free_text_match?(AnimeParser.sanitize(release.title), context)
+      :id_scoped in release.query_origins or free_text_kept?(release, context)
     end)
+  end
+
+  defp free_text_kept?(release, %{kind: :movie} = context),
+    do: release.title |> AnimeParser.sanitize() |> free_text_match?(context)
+
+  defp free_text_kept?(release, context) do
+    names_series?(release, context) and not Acquisition.another_anime_series?(release, context)
   end
 
   @doc """
@@ -1116,9 +1131,9 @@ defmodule Cinder.Acquisition.Anime do
   Whether an anime episode release's name leads with the series title or an alias (native and
   romaji titles live there), read as the search's free-text guard reads it: the bracketed group
   stripped, then the title and a legal remainder (an episode coordinate, a year, a tag).
-  `Cinder.Acquisition.title_guard/2` is its one caller, for the release judge: an id-scoped
-  episode result the indexer reports no TVDB id on has to pass this or the scene-name reading
-  (#699).
+  It has two callers. The search's free-text guard needs it of every free-text result.
+  `Cinder.Acquisition.title_guard/2`, for the release judge, needs it or the scene-name reading of
+  an id-scoped episode result the indexer reports no TVDB id on (#699).
   """
   def names_series?(%Release{} = release, context),
     do: release.title |> AnimeParser.sanitize() |> known_title_match?(context)

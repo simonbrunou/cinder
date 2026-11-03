@@ -385,6 +385,178 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert {:ok, [], false} = Anime.search_episodes(IndexerMock, context, [11], [])
   end
 
+  # #871: the free-text guard reads the reported TVDB id the way #699's id-scoped rule does, and a
+  # year more than one off the series' names a same-titled other series, as in the season guard.
+  test "the anime episode sweep never takes a free-text result naming another year (#871)" do
+    sweep = fn name ->
+      answer_free_text(series_context(99), 2, [raw(name, name)])
+      Acquisition.best_anime_releases(series_context(99), [11])
+    end
+
+    assert :no_match = sweep.("Show.S01E01.1999.1080p.WEB-DL-GRP")
+
+    assert {:ok, %{assignments: [%{episode_ids: [11], release: release}]}} =
+             sweep.("Show.S01E01.2020.1080p.WEB-DL-GRP")
+
+    assert release.query_origins == [:free_text]
+
+    # Every year has to be off: one within a year of the series' keeps the result.
+    assert {:ok, %{assignments: [%{episode_ids: [11]}]}} =
+             sweep.("Show.S01E01.2020.1999.1080p.WEB-DL-GRP")
+  end
+
+  # Dropped in the search, as a free-text result naming another title is (#775), so the panel never
+  # lists them.
+  test "the manual search never lists a free-text result naming another year (#871)" do
+    context = %{
+      series_context(99)
+      | mappings: [mapping("standard", "S01E01", [11]), mapping("absolute", "1", [11])]
+    }
+
+    answer_free_text(context, 3, [
+      raw("[Group] Show S01E01 (1999) [1080p]", "year-after-coordinate"),
+      raw("[Group] Show - 01 [1080p] (1999)", "year-after-absolute"),
+      raw("Show.1999.S01E01.1080p.WEB-DL-GRP", "scene-year-before"),
+      raw("[Group] Show (1999) S01E01 [1080p]", "anime-year-before"),
+      raw("Show.S01E01.2021.1080p.WEB-DL-GRP", "one-year-off"),
+      # The absolute mapping reads "01": the year, not the number, drops "year-after-absolute".
+      raw("[Group] Show - 01 [720p]", "absolute-no-year")
+    ])
+
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(context, [11], [])
+
+    assert Map.new(judged.rows, &{&1.release.download_url, &1.verdict}) == %{
+             "one-year-off" => :ok,
+             "absolute-no-year" => :ok
+           }
+  end
+
+  # Decided in triage (#871): another series' reported TVDB id drops a free-text result, as it does
+  # an id-scoped one (#699) and a season result (`tv_title_match?/2`).
+  test "the anime episode sweep never takes a free-text result reporting another series' TVDB id (#871)" do
+    sweep = fn reported_id ->
+      result = Map.put(raw("[Group] Show S01E01 [720p]", "free-text"), :tvdb_id, reported_id)
+      answer_free_text(series_context(99), 2, [result])
+      Acquisition.best_anime_releases(series_context(99), [11])
+    end
+
+    assert :no_match = sweep.(77)
+    assert {:ok, %{assignments: [%{episode_ids: [11]}]}} = sweep.(99)
+    assert {:ok, %{assignments: [%{episode_ids: [11]}]}} = sweep.(nil)
+
+    answer_free_text(series_context(99), 2, [
+      Map.put(raw("[Group] Show S01E01 [720p]", "other-id"), :tvdb_id, 77),
+      Map.put(raw("[Group] Show S01E01 [1080p]", "own-id"), :tvdb_id, 99)
+    ])
+
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(series_context(99), [11], [])
+    assert Enum.map(judged.rows, & &1.release.download_url) == ["own-id"]
+  end
+
+  test "a free-text result reporting the series' TVDB id skips the year rule, not the name guard (#871)" do
+    sweep = fn name ->
+      answer_free_text(series_context(99), 2, [Map.put(raw(name, name), :tvdb_id, 99)])
+      Acquisition.best_anime_releases(series_context(99), [11])
+    end
+
+    assert {:ok, %{assignments: [%{episode_ids: [11]}]}} =
+             sweep.("Show.S01E01.1999.1080p.WEB-DL-GRP")
+
+    # Asserted on the search, where the guard runs: the sweep's mapping stage drops some names of
+    # another series on its own ("86 Eighty-Six S01E01 [1080p]").
+    answer_free_text(series_context(99), 2, [
+      Map.put(raw("Show Spinoff S01E01 [1080p]", "spinoff"), :tvdb_id, 99)
+    ])
+
+    assert {:ok, [], false} = Anime.search_episodes(IndexerMock, series_context(99), [11], [])
+  end
+
+  # A year-shaped token inside an alias is the title, not a year.
+  test "a free-text result leading with a title or an alias that spells a year is kept (#871)" do
+    context = %{
+      series_context(99)
+      | title: "Bubblegum Crisis Tokyo 2040",
+        year: 1998,
+        aliases: [alias_map("Bubblegum Crisis 2040", :alternative)]
+    }
+
+    for name <- [
+          "Bubblegum.Crisis.2040.S01E01.1080p.BluRay-GRP",
+          "Bubblegum.Crisis.Tokyo.2040.S01E01.1080p.BluRay-GRP"
+        ] do
+      answer_free_text(context, 3, [raw(name, name)])
+
+      assert {:ok, %{assignments: [%{episode_ids: [11], release: %{download_url: ^name}}]}} =
+               Acquisition.best_anime_releases(context, [11])
+    end
+  end
+
+  test "the free-text year rule needs a series year, and the TVDB id rule a series TVDB id (#871)" do
+    context = %{series_context(99) | year: nil}
+    answer_free_text(context, 2, [raw("Show.S01E01.1999.1080p.WEB-DL-GRP", "no-series-year")])
+
+    assert {:ok, %{assignments: [%{release: %{download_url: "no-series-year"}}]}} =
+             Acquisition.best_anime_releases(context, [11])
+
+    # With no series TVDB id, the season query is free text too.
+    expect(IndexerMock, :search_tv, fn nil, "Show", 1 ->
+      {:ok,
+       [
+         Map.put(raw("[Group] Show S01E01 [720p]", "other-id"), :tvdb_id, 77),
+         raw("Show.S01E01.1999.1080p.WEB-DL-GRP", "other-year")
+       ]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(series_context(nil), [11], [])
+    assert Enum.map(judged.rows, & &1.release.download_url) == ["other-id"]
+    assert Enum.map(judged.kept, & &1.download_url) == ["other-id"]
+  end
+
+  # The guard runs on the search's de-duplicated results: copies that report different ids, one of
+  # them the series', carry none, so the year rule decides.
+  test "the free-text guard reads the TVDB id the URL copies settle on (#871)" do
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, []} end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn
+      "Show", categories: [5070] ->
+        {:ok,
+         [
+           Map.put(raw("Show.S01E01.1999.1080p.WEB-DL-GRP", "own-first"), :tvdb_id, 99),
+           Map.put(raw("[Group] Show S01E01 [1080p]", "other-first"), :tvdb_id, 77)
+         ]}
+
+      "Show S01E01", categories: [5070] ->
+        {:ok,
+         [
+           Map.put(raw("Show.S01E01.1999.1080p.WEB-DL-GRP", "own-first"), :tvdb_id, 77),
+           Map.put(raw("[Group] Show S01E01 [1080p]", "other-first"), :tvdb_id, 99)
+         ]}
+    end)
+
+    assert {:ok, [release], false} =
+             Anime.search_episodes(IndexerMock, series_context(99), [11], [])
+
+    assert {release.download_url, release.tvdb_id} == {"other-first", nil}
+  end
+
+  # A result the id-scoped query also returned is judged as an id-scoped one (#699), where the
+  # series' own reported TVDB id proves it under any name.
+  test "a result the id-scoped query also returned skips the free-text guard (#871)" do
+    result = Map.put(raw("86 Eighty-Six S01E01 [1080p]", "both"), :tvdb_id, 99)
+
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, [result]} end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn
+      "Show", categories: [5070] -> {:ok, [result]}
+      _query, categories: [5070] -> {:ok, []}
+    end)
+
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(series_context(99), [11], [])
+    assert [%{download_url: "both", query_origins: [:id_scoped, :free_text]}] = judged.kept
+  end
+
   test "a nil-TVDB search is guarded as free text" do
     context = series_context(nil)
 
@@ -657,6 +829,21 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
       indexer_id: nil,
       published_at: nil
     }
+  end
+
+  # The season query answers nothing and the series' title query answers `results`, so every result
+  # reaches the search as free text. `query_count` is the number of free-text queries the context
+  # sends: its titles plus one per queryable coordinate.
+  defp answer_free_text(context, query_count, results) do
+    tvdb_id = context.tvdb_id
+    title = context.title
+
+    expect(IndexerMock, :search_tv, fn ^tvdb_id, ^title, 1 -> {:ok, []} end)
+
+    expect(IndexerMock, :search_tv_query, query_count, fn
+      ^title, categories: [5070] -> {:ok, results}
+      _query, categories: [5070] -> {:ok, []}
+    end)
   end
 
   defp receive_queries(tag, count) do
