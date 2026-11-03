@@ -20,6 +20,12 @@ only `test/`, `.forgejo/workflows/`, `scripts/`, `.gitignore`, `AGENTS.md`, `doc
 - **A short bold summary (#843).** What changed for the user, and what they should do about it.
 ```
 
+Each sentence about what Cinder does holds on every path the fragment covers: each fallback or
+other writer that still runs, and each case the code handles another way (a file with no
+moviehash, an entry written before the change). Prove each one with a run that goes red when it
+is false, such as a throwaway test, or cut it. On #1072 the first fragment held three such
+sentences, each false on some path: three findings over two review rounds, about 22 minutes.
+
 `mix test` parses every fragment (`test/code_health_test.exs`), so a malformed one fails on its
 own PR. A release runs `mix cinder.changelog.release`, which folds every fragment into the new
 dated section of `CHANGELOG.md` and deletes it; see "Releasing" in `CONTRIBUTING.md`.
