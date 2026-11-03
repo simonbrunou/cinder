@@ -150,7 +150,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
            Timing.retime(source, Path.extname(item.sidecar_path), sync.offset_ms, sync.rate),
          true <- sha256(adjusted) == sync.applied_sha256,
          :ok <- Moviehash.verify(item.video_path, sync.moviehash),
-         :ok <- AtomicFile.write(item.sidecar_path, adjusted, current, sync.operation_id),
+         :ok <-
+           published(AtomicFile.write(item.sidecar_path, adjusted, current, sync.operation_id)),
          :ok <- Moviehash.verify(item.video_path, sync.moviehash) do
       finalize(item)
     else
@@ -163,11 +164,13 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
 
     with :ok <- Backup.verify_present(item.sidecar_path, sync),
          :ok <-
-           AtomicFile.recover(
-             item.sidecar_path,
-             sync.operation_id,
-             sync.expected_sha256,
-             sync.applied_sha256
+           published(
+             AtomicFile.recover(
+               item.sidecar_path,
+               sync.operation_id,
+               sync.expected_sha256,
+               sync.applied_sha256
+             )
            ),
          :ok <- Moviehash.verify(item.video_path, sync.moviehash) do
       finalize(item)
@@ -175,6 +178,13 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
       {:error, _reason} -> {:review, :apply_recovery_failed, item}
     end
   end
+
+  # `{:publication_committed, _}` means the target holds the applied bytes and only a step after
+  # the exchange went unacknowledged, so recovery records the correction as it does after `:ok`.
+  # `finalize/1` cannot tell that apart from a failed write: its workspace check also passes
+  # while the target still holds the expected bytes beside the staged ones.
+  defp published({:error, {:publication_committed, _detail}}), do: :ok
+  defp published(result), do: result
 
   defp finalize(item) do
     sync = item.sync

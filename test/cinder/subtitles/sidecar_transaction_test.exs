@@ -911,6 +911,104 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
     end
 
+    # A manual correction is recomputed from the original (`replay`), an automatic one is
+    # published from its staged bytes (`resume_staged`).
+    for {kind, interruption, method} <- [
+          {"a manual", :manual, "manual"},
+          {"an automatic", :automatic, "audio"}
+        ] do
+      test "records #{kind} correction whose recovery published it unacknowledged", %{
+        video: video,
+        path: path
+      } do
+        interrupt_before_exchange!(video, unquote(interruption))
+
+        {result, _log} = fail_close_after_exchange(path, [:staged], fn -> recover(video) end)
+
+        assert_recorded_correction(result, video, path, unquote(method))
+      end
+
+      test "records #{kind} correction whose recovery exchange went unacknowledged", %{
+        video: video,
+        path: path
+      } do
+        interrupt_before_exchange!(video, unquote(interruption))
+
+        fail_once(%{
+          operation: :exchange,
+          source_contains: ".cinder-subtitle-sync-write-",
+          phase: :post_effect,
+          reason: :eio
+        })
+
+        assert_recorded_correction(recover(video), video, path, unquote(method))
+      end
+
+      test "records #{kind} correction whose recovery discard went unacknowledged", %{
+        video: video,
+        path: path
+      } do
+        interrupt_before_exchange!(video, unquote(interruption))
+
+        fail_once(%{
+          operation: :discard_bound,
+          source_contains: Path.basename(path),
+          phase: :post_effect,
+          reason: :eio
+        })
+
+        assert_recorded_correction(recover(video), video, path, unquote(method))
+      end
+
+      test "holds #{kind} correction whose recovery exchange failed for review", %{
+        video: video,
+        path: path,
+        original: original
+      } do
+        interrupt_before_exchange!(video, unquote(interruption))
+
+        fail_once(%{
+          operation: :exchange,
+          source_contains: ".cinder-subtitle-sync-write-",
+          reason: :eio
+        })
+
+        assert {:review, :apply_recovery_failed, _sidecar} = recover(video)
+        assert File.read!(path) == original
+        assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
+      end
+
+      test "holds #{kind} correction whose video changed during an unacknowledged recovery", %{
+        video: video,
+        path: path
+      } do
+        interrupt_before_exchange!(video, unquote(interruption))
+
+        {result, _log} =
+          fail_close_after_exchange(path, [:staged], fn -> recover(video) end,
+            paused: fn -> File.write!(video, @changed_video) end
+          )
+
+        assert {:review, :apply_recovery_failed, _sidecar} = result
+        assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+        assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
+      end
+
+      test "holds #{kind} correction whose original changed during an unacknowledged recovery",
+           %{video: video, path: path, backup: backup} do
+        interrupt_before_exchange!(video, unquote(interruption))
+
+        {result, _log} =
+          fail_close_after_exchange(path, [:staged], fn -> recover(video) end,
+            paused: fn -> File.write!(backup, "tampered") end
+          )
+
+        assert {:review, :apply_recovery_failed, _sidecar} = result
+        assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+        assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
+      end
+    end
+
     test "validates a staged pathname without deleting it", %{
       video: video,
       path: path,
@@ -1497,7 +1595,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
           path,
           [:staged],
           fn -> replace(video, @replacement) end,
-          :unlink
+          disposal: :unlink
         )
 
       assert :ok = result
@@ -2016,17 +2114,20 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   end
 
   # Runs `fun` until the exchange onto `path` committed and the displaced inode was disposed of
-  # (`:discard` empties it for `write/3` and `write/4`, `:unlink` removes its workspace name for
-  # `swap/3`), then fails the next close of each descriptor in order: `:staged`, `:target`, or the
-  # workspace `:directory` (only after `:staged`, whose path it contains). Armed any earlier, a
-  # failure would hit the identity probes that verify the exchange instead. Returns `fun`'s result
-  # and the log; `fail_in_order/1` fails the test if a failure never fired.
-  defp fail_close_after_exchange(path, descriptors, fun, disposal \\ :discard) do
-    use_barrier(disposal_barrier(disposal, path))
+  # (the `disposal:` option: `:discard`, the default, empties it for `write/3` and `write/4`,
+  # `:unlink` removes its workspace name for `swap/3`), then fails the next close of each
+  # descriptor in order: `:staged`, `:target`, or the workspace `:directory` (only after
+  # `:staged`, whose path it contains). Armed any earlier, a failure would hit the identity probes
+  # that verify the exchange instead. A `paused:` function runs while `fun` waits after the
+  # exchange. Returns `fun`'s result and the log; `fail_in_order/1` fails the test if a failure
+  # never fired.
+  defp fail_close_after_exchange(path, descriptors, fun, opts \\ []) do
+    use_barrier(disposal_barrier(Keyword.get(opts, :disposal, :discard), path))
 
     with_log(fn ->
       task = Task.async(fun)
       assert_receive {:filesystem_barrier, pid, ref, _disposal, _displaced}, DiskTask.timeout_ms()
+      Keyword.get(opts, :paused, fn -> :ok end).()
 
       fail_in_order(
         for descriptor <- descriptors,
@@ -2081,6 +2182,29 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
     assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
     assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
+  end
+
+  # A first correction killed just before its exchange: its staged bytes wait in the workspace
+  # and its pending record reads "applying".
+  defp interrupt_before_exchange!(video, :manual) do
+    use_barrier(%{operation: :exchange, phase: :before, contains: ".cinder-subtitle-sync-write-"})
+    kill_at_barrier(fn -> manual(video, 1_000) end, :exchange)
+    assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
+  end
+
+  # The same, recorded as automatic: recovery publishes its staged bytes instead of recomputing.
+  defp interrupt_before_exchange!(video, :automatic) do
+    interrupt_before_exchange!(video, :manual)
+    record = Manifest.sync(Manifest.read(video), "en")
+    assert :ok = Manifest.put_sync(video, "en", %{record | method: "audio", score: 30.0})
+  end
+
+  # A recovery that recorded the interrupted correction: its bytes and an "aligned" record that
+  # keeps the correction's `method`.
+  defp assert_recorded_correction(result, video, path, method) do
+    assert {:ok, %{sync: %{status: "aligned", method: ^method}}} = result
+    assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+    assert %{status: "aligned", method: ^method} = Manifest.sync(Manifest.read(video), "en")
   end
 
   # Runs `fun` until it reaches the barrier at `operation`, then kills it there: a crash at that
