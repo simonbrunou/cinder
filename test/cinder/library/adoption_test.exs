@@ -207,20 +207,19 @@ defmodule Cinder.Library.AdoptionTest do
   test "a library root whose walk never returns is scan_failed at the deadline, the next scan " <>
          "refuses it at once, and the other roots still scan",
        %{tmp_dir: tmp} do
-    # `scan_roots/4` scans the longer of the two movie roots first, so the wedged root goes first
-    # and the Anime root after it shows the scan carries on past a timeout.
     wedged = Path.join(tmp, "wedged")
     anime = Path.join(tmp, "anime")
-    tv = Path.join(tmp, "tv")
     movie = Path.join(anime, "Dune (2021) {tmdb-438631}/Dune (2021) {tmdb-438631}.mkv")
-    Enum.each([wedged, Path.dirname(movie), tv], &File.mkdir_p!/1)
+    Enum.each([wedged, Path.dirname(movie)], &File.mkdir_p!/1)
     File.write!(movie, "video")
 
+    # Only the wedged root, so the shrunk deadline never reaches a healthy root: a loaded CI
+    # runner took more than 300 ms to scan one (#1118).
     put_env(
       filesystem: Cinder.Test.WedgedFilesystem,
       movies_library_path: wedged,
-      movies_anime_library_path: anime,
-      tv_library_path: tv,
+      movies_anime_library_path: nil,
+      tv_library_path: nil,
       adoption_scan_timeout_ms: 300,
       wedged_filesystem_test: self()
     )
@@ -229,24 +228,24 @@ defmodule Cinder.Library.AdoptionTest do
     assert elapsed < 2_300
     assert_receive {:walking, walk}
     release_walk_on_exit(walk)
-
-    assert [
-             %{kind: :movie, path: ^movie, status: :auto_matched, media_profile: :anime},
-             %{kind: :movie, directory: ^wedged, reason: {:scan_failed, :timeout}}
-           ] = candidates
+    assert [%{directory: ^wedged, reason: {:scan_failed, :timeout}}] = candidates
 
     # Scans meant to finish get a deadline a loaded CI runner cannot miss, so a refusal that came
     # in well under it came at once.
     put_env(:adoption_scan_timeout_ms, 10_000)
     {elapsed, candidates} = :timer.tc(&Adoption.scan/0, :millisecond)
     assert elapsed < 1_000
+    assert [%{directory: ^wedged, reason: {:scan_failed, :timeout}}] = candidates
+    refute_received {:walking, _refused_walk}
+
+    # `scan_roots/4` scans the longer of the two movie roots first, so the Anime root, scanned
+    # after the refused wedged root, shows the scan carries on past it.
+    put_env(:movies_anime_library_path, anime)
 
     assert [
-             %{kind: :movie, path: ^movie},
+             %{kind: :movie, path: ^movie, status: :auto_matched, media_profile: :anime},
              %{kind: :movie, directory: ^wedged, reason: {:scan_failed, :timeout}}
-           ] = candidates
-
-    refute_received {:walking, _refused_walk}
+           ] = Adoption.scan()
   end
 
   test "adoption from an explicit named root assigns that exact profile" do
