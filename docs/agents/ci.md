@@ -93,7 +93,11 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   missed the 1 s bound in each of them on the runner (#1024).
   `Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest` serves every helper spawn from a `/bin/sh`
   stub found on `PATH` as `python3`, because on the runner Python's start missed the 1 s bound in
-  its `hold` and before its `seal` stub's pid write (#1043). The test environment widens
+  its `hold` and before its `seal` stub's pid write (#1043). After a 6425 ms run on PR #1086
+  (run 676, #1091), `Cinder.BoundedCommandTest` "run/4 with :check a check that halts kills the
+  OS process and returns its reason" asserts the elapsed time under 9 s instead of 3 s, since its
+  window times the stub's start. The bound stays below the call's 10 s timeout, so a halt that
+  waits for that timeout before it kills the stub still fails it. The test environment widens
   `Cinder.Library.Filesystem.Disk`'s `:disk_subprocess_timeout_ms` to 20 s (#945), four times
   the production bound, to give a slow start on a loaded runner headroom. In a test that does not
   set its own bound, a Disk timeout such as `{:error, :rooted_helper_timeout}` therefore means

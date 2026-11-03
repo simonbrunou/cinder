@@ -41,7 +41,12 @@ defmodule Cinder.BoundedCommandTest do
       assert BoundedCommand.run(bin, [], 10_000, check: {20, check}) ==
                {:error, {:halted, :too_big}}
 
-      assert System.monotonic_time(:millisecond) - t0 < 3_000
+      # The window times the stub's start and pid write, one check interval, the kill's `/bin/sh`
+      # fork and the reap of up to 200 ms. A loaded runner took 6425 ms (run 676, #1091), so the
+      # ceiling is 9 s. The result pattern proves the check ended the call. Only this ceiling
+      # fails a halt path that leaves the stub running until the call's 10 s timeout, which caps
+      # the ceiling, or until the stub's own 30 s exit: `dead?/1` passes whichever ended the stub.
+      assert System.monotonic_time(:millisecond) - t0 < 9_000
       assert OsProcess.dead?(read_pid!(pidfile))
 
       # The caller owns the port, and a poller GenServer has no catch-all `handle_info/2`.
