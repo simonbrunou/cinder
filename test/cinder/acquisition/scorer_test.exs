@@ -37,6 +37,15 @@ defmodule Cinder.Acquisition.ScorerTest do
   defp titles(chosen),
     do: chosen |> Enum.map(fn {release, _covered} -> release.title end) |> Enum.sort()
 
+  # #895's scene split: native S01 holds 24 episodes, and scene S02E01 to S02E12 number native 13
+  # to 24 one to one.
+  defp scene_split(numbering \\ Map.new(1..12, &{&1, [&1 + 12]})),
+    do: [pack_episode_count: 24, alternate_numbering: %{2 => numbering}]
+
+  defp scene_s02_pack(size),
+    do:
+      release(title: "Show.S02.1080p", season: 2, episodes: nil, resolution: "1080p", size: size)
+
   describe "select/2" do
     test "happy path: picks the band-fitting 1080p from a mixed list" do
       releases = [
@@ -490,32 +499,88 @@ defmodule Cinder.Acquisition.ScorerTest do
       assert {:ok, [{^e1, [1]}, {^pack, [2]}]} = Scorer.select_for([pack, e1], 1, [1, 2], opts)
     end
 
-    # The season band is the whole cover rerun with whole-season packs banded by the season's episode count:
-    # an alternate-season pack widens too, and a release the pack's pick shrinks into band is taken
-    # after it.
+    # The season band is the whole cover rerun with whole-season packs banded by the episodes they
+    # hold: an alternate-season pack widens too, and a release the pack's pick shrinks into band is
+    # taken after it.
+    #
+    # The scene season used to map 2 native episodes with a 12 GB pack, which passed only because
+    # the season band sized it by the native 22. Banded by the 2 it maps (#895), it fails the 1 GB
+    # per-episode cap in both passes. So scene S02 now maps 12 native episodes, 2 of them wanted,
+    # and its 10 GB fits 12 × 1 GB but not the native season's 24 × 0.5 GB.
     test "the season band reruns the whole cover, alternate-season packs included" do
-      # Scene season 2 numbers native episodes 1 and 2.
-      alternate =
-        release(title: "alt", season: 2, episodes: nil, resolution: "1080p", size: 12 * @gb)
+      alternate = scene_s02_pack(10 * @gb)
 
       range =
         release(
           title: "range",
           season: 1,
-          episodes: [1, 2, 3, 4],
+          episodes: [11, 12, 13, 14],
           resolution: "1080p",
           size: 15 * div(@gb, 10)
         )
 
-      opts = [
-        min_size: div(@gb, 2),
-        max_size: 1 * @gb,
-        pack_episode_count: 22,
-        alternate_numbering: %{2 => %{1 => [1], 2 => [2]}}
-      ]
+      opts = [min_size: div(@gb, 2), max_size: 1 * @gb] ++ scene_split()
 
-      assert {:ok, [{^alternate, [1, 2]}, {^range, [3, 4]}]} =
-               Scorer.select_for([alternate, range], 1, [1, 2, 3, 4], opts)
+      assert {:ok, [{^alternate, [13, 14]}, {^range, [11, 12]}]} =
+               Scorer.select_for([alternate, range], 1, [11, 12, 13, 14], opts)
+    end
+
+    # #895: the season band sizes an alternate-season pack by the native episodes its numbering
+    # maps, not by the native season's count. A scene S02 pack holds 12 of native S01's 24.
+    test "the season band rejects an alternate-season pack too big for the episodes it maps" do
+      opts = [max_size: 1 * @gb] ++ scene_split()
+      wanted = Enum.to_list(13..24)
+
+      # 20 GB is 1.67 GB per episode of the 12 it holds, though it fits the native 24 × 1 GB.
+      pack = scene_s02_pack(20 * @gb)
+
+      assert :no_match = Scorer.select_for([pack], 1, wanted, opts)
+      assert {:rejected, :out_of_band} = Scorer.verdict_for_season(pack, 1, wanted, opts)
+
+      # A native S01 pack of the same size still holds the native season's 24.
+      native = %{pack | title: "Show.S01.1080p", season: 1}
+
+      assert {:ok, [{^native, ^wanted}]} = Scorer.select_for([native], 1, wanted, opts)
+      assert :ok = Scorer.verdict_for_season(native, 1, wanted, opts)
+    end
+
+    test "the season band takes an alternate-season pack sized for the episodes it maps" do
+      opts = [min_size: div(@gb, 2), max_size: 1 * @gb] ++ scene_split()
+
+      # 8 GB is 0.67 GB per episode of the 12 it holds, though it is under the native 24 × 0.5 GB.
+      # The first pass bands it by the 2 wanted it covers (1 to 2 GB) and skips it.
+      pack = scene_s02_pack(8 * @gb)
+
+      assert {:ok, [{^pack, [20, 21]}]} = Scorer.select_for([pack], 1, [20, 21], opts)
+      assert :ok = Scorer.verdict_for_season(pack, 1, [20, 21], opts)
+    end
+
+    # The count is the distinct native numbers, which `k` counts too, not the scene episodes. Each
+    # numbering maps native 13 to 24, so each pack is banded by 12 episodes (6 to 12 GB). Each size
+    # fits that band but not the band of the other count each numbering could give (11 or 13).
+    test "the season band counts the distinct native episodes an alternate season maps" do
+      # Scene S02E01 is native E13 and E14 in one file: 11 scene episodes. 11.5 GB is over 11 × 1 GB.
+      double =
+        Map.new(1..11, fn
+          1 -> {1, [13, 14]}
+          e -> {e, [e + 13]}
+        end)
+
+      # Scene S02E01 and S02E02 are the two halves of native E13: 13 scene episodes, 13 mapped
+      # numbers. 6.25 GB is under 13 × 0.5 GB.
+      halves = Map.new(1..13, fn e -> {e, [max(e + 11, 13)]} end)
+
+      for {numbering, size} <- [{double, 115 * div(@gb, 10)}, {halves, 625 * div(@gb, 100)}] do
+        opts = [min_size: div(@gb, 2), max_size: 1 * @gb] ++ scene_split(numbering)
+        pack = scene_s02_pack(size)
+
+        message = inspect(numbering, charlists: :as_lists)
+
+        assert Scorer.select_for([pack], 1, [20, 21], opts) == {:ok, [{pack, [20, 21]}]},
+               message
+
+        assert Scorer.verdict_for_season(pack, 1, [20, 21], opts) == :ok, message
+      end
     end
 
     test "releases for another season (and movies) are ignored" do

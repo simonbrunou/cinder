@@ -13,8 +13,12 @@ So the cover decides its order in one place, the `select_for/4` doc, and callers
 
 1. Two passes. The cover first bands every release by the still-wanted episodes it covers. Only
    when that selects nothing does it run again with each whole-season pack banded by
-   `max(k, pack_episode_count)`, the season's real episode count: the season band. That second
-   pass is the old retry, unchanged, alternate-season packs included.
+   `max(k, n)`, where `n` is the episodes the pack holds: the season band. A native-season pack
+   holds `pack_episode_count`, the season's real episode count. That second pass is the old
+   retry, except for an alternate-season pack: it holds the distinct native episodes its
+   numbering maps (#895), or the native episodes of the season its mappings name, searched or
+   not, when that count is larger (#1117). The old retry gave it the native count, so a scene S02
+   holding 12 of native S01's 24 episodes was sized as 24.
 2. Each greedy step takes a release whose language tag satisfies the audio target before an
    untagged one, then the one covering the most still-needed episodes, then the best
    `rank_key/2`. Within a pass, untagged then covers only what nothing tagged in that band can,

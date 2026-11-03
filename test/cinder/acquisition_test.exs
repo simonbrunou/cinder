@@ -9,6 +9,7 @@ defmodule Cinder.AcquisitionTest do
   alias Cinder.Acquisition.Anime
   alias Cinder.Acquisition.Release
   alias Cinder.Acquisition.ReleaseJudge
+  alias Cinder.Catalog.Episode
   alias Cinder.Catalog.Series
 
   setup :verify_on_exit!
@@ -802,6 +803,153 @@ defmodule Cinder.AcquisitionTest do
                dropped_at: :mapping,
                verdict: {:rejected, :conflicting_standard_numbering}
              } = row
+    end
+
+    # The season band sizes a bare scene-season pack by the native episodes the scene season holds
+    # (#895). The bridge maps only the searched episodes, so an unmonitored missing one, or one with
+    # a grab in flight, is in no coordinate the cover reads. The band still counts it, as
+    # `pack_episode_count` counts every row of the native season (#1117).
+    test "the season band counts a scene season's unsearched native episodes" do
+      # Native S01 holds 24 episodes and scene S02E01 to S02E12 are native 13 to 24. Native 13 to
+      # 18 are unmonitored and missing, so the season's search skips them.
+      mappings =
+        Enum.flat_map(13..24, fn n ->
+          [
+            canonical(Episode.code(1, n), n),
+            coordinate("scene", Episode.code(2, n - 12), [n])
+          ]
+        end)
+
+      context =
+        season_context(
+          episode_count: 24,
+          episodes: Enum.map(19..24, &searched/1),
+          mappings: mappings
+        )
+
+      # 10 GB is 0.83 GB per episode of the 12 the pack holds; 15 GB is 1.25, though it fits the
+      # native season's 24 × 1 GB.
+      for {size, verdict} <- [{10 * @gb, :ok}, {15 * @gb, {:rejected, :out_of_band}}] do
+        stub_seasons(%{
+          1 => [],
+          2 => [raw_tv("The.Office.S02.1080p.WEB-DL-GRP", size: size, download_url: "pack")]
+        })
+
+        assert {:ok, judged} =
+                 Acquisition.judge_season(context, Enum.to_list(19..24), max_size: 1 * @gb)
+
+        # The pack still links only the searched episodes.
+        assert [%{release: %Release{resolved_episode_ids: ids}, verdict: ^verdict}] = judged.rows
+        assert ids == Enum.to_list(19..24)
+
+        if verdict == :ok,
+          do: assert({:ok, [{%Release{size: ^size}, ^ids}]} = ReleaseJudge.pick(judged)),
+          else: assert(:no_match = ReleaseJudge.pick(judged))
+      end
+    end
+
+    # A scene season that straddles two native seasons is banded by the part this native season's
+    # mappings give it, a proxy as the native count is.
+    test "the season band counts only this native season's part of a straddling scene season" do
+      # Scene S03E01 to S03E04 are native S01E21 to S01E24, and S03E05 to S03E12 are native S02E01
+      # to S02E08.
+      mappings =
+        Enum.flat_map(21..24, &[canonical(Episode.code(1, &1), &1)]) ++
+          Enum.flat_map(1..8, &[canonical(Episode.code(2, &1), 200 + &1)]) ++
+          Enum.map(1..12, fn n ->
+            coordinate("scene", Episode.code(3, n), [if(n <= 4, do: n + 20, else: 196 + n)])
+          end)
+
+      stub_seasons(%{
+        1 => [],
+        3 => [raw_tv("The.Office.S03.1080p.WEB-DL-GRP", size: 6 * @gb, download_url: "pack")]
+      })
+
+      context =
+        season_context(
+          episode_count: 24,
+          episodes: Enum.map(21..24, &searched/1),
+          mappings: mappings
+        )
+
+      # 6 GB is 0.5 GB per episode of the 12 the pack holds, over 1 GB for the 4 of native S01.
+      assert {:ok, judged} =
+               Acquisition.judge_season(context, Enum.to_list(21..24), max_size: 1 * @gb)
+
+      assert [%{verdict: {:rejected, :out_of_band}}] = judged.rows
+      assert :no_match = ReleaseJudge.pick(judged)
+    end
+
+    # A pack covering no still-wanted episode (an upgrade from the panel) is banded by what it
+    # carries (`Scorer.verdict/2`): its frozen ids count only the searched episodes, so the band
+    # counts the unsearched ones of its scene season too, as the season band does (#1117).
+    test "a scene pack covering no wanted episode is banded by every episode its season holds" do
+      # Scene S02E01 to S02E12 are native 13 to 24. Native 19 to 24 are imported; 13 to 18 are
+      # unmonitored and missing, so the season's search skips them.
+      mappings =
+        Enum.flat_map(13..24, fn n ->
+          [
+            canonical(Episode.code(1, n), n),
+            coordinate("scene", Episode.code(2, n - 12), [n])
+          ]
+        end)
+
+      context =
+        season_context(
+          episode_count: 24,
+          episodes: Enum.map(19..24, &searched(&1, :available)),
+          mappings: mappings
+        )
+
+      for {size, verdict} <- [{10 * @gb, :ok}, {15 * @gb, {:rejected, :out_of_band}}] do
+        stub_seasons(%{
+          1 => [],
+          2 => [raw_tv("The.Office.S02.1080p.WEB-DL-GRP", size: size, download_url: "pack")]
+        })
+
+        assert {:ok, judged} =
+                 Acquisition.judge_season(
+                   context,
+                   Acquisition.searchable_numbers(context),
+                   max_size: 1 * @gb
+                 )
+
+        assert [%{verdict: ^verdict}] = judged.rows
+      end
+    end
+
+    # A scene coordinate shadows an aired one on the same episode (`prefer_scene_mappings/3`), in the
+    # season band's count too, so an aired numbering of the season can't widen a scene pack's band.
+    test "the season band counts a scene season's episodes, not an aired numbering's" do
+      # Scene S01 is native 1 to 12 and scene S02 native 13 to 24, while TVDB's aired numbering
+      # calls the whole native season S02.
+      mappings =
+        Enum.flat_map(1..24, fn n ->
+          [
+            canonical(Episode.code(1, n), n),
+            coordinate("scene", Episode.code(div(n - 1, 12) + 1, rem(n - 1, 12) + 1), [n]),
+            coordinate("aired", Episode.code(2, n), [n])
+          ]
+        end)
+
+      stub_seasons(%{
+        1 => [],
+        2 => [raw_tv("The.Office.S02.1080p.WEB-DL-GRP", size: 20 * @gb, download_url: "pack")]
+      })
+
+      context =
+        season_context(
+          episode_count: 24,
+          episodes: Enum.map(1..18, &searched(&1, :available)) ++ Enum.map(19..24, &searched/1),
+          mappings: mappings
+        )
+
+      # 20 GB is 1.67 GB per episode of the 12 scene S02 holds, though it fits aired S02's 24.
+      assert {:ok, judged} =
+               Acquisition.judge_season(context, Enum.to_list(19..24), max_size: 1 * @gb)
+
+      assert [%{verdict: {:rejected, :out_of_band}}] = judged.rows
+      assert :no_match = ReleaseJudge.pick(judged)
     end
   end
 

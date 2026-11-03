@@ -67,7 +67,12 @@ defmodule Cinder.Acquisition.Scorer do
 
   1. **Two passes.** The cover first bands every release by the still-wanted episodes it covers.
      Only when that selects nothing does it run again with each whole-season pack banded by
-     `max(k, opts[:pack_episode_count])`, the episodes the season holds: the season band (#268).
+     `max(k, n)`, where `n` is the episodes the pack holds: the season band (#268). A pack of the
+     native season holds `opts[:pack_episode_count]`. A pack of an alternate season holds the
+     distinct native episodes its `opts[:alternate_numbering]` maps (#895), so a scene S02 that
+     numbers native 13 to 24 is banded by 12, not by the native season's 24. When
+     `opts[:alternate_pack_episode_count][season]` is larger, that count wins: the numbering maps
+     only the searched episodes, and it counts the unsearched ones too (#1117).
      With 4 of 22 episodes wanted, a 19.7 GB pack is ~0.9 GB per episode, not 4.9. A pack that
      only fits the season band never competes with an in-band release, so four 1 GB singles
      don't collapse into one 19.7 GB pack, and it waits while in-band releases cover any of the
@@ -104,8 +109,8 @@ defmodule Cinder.Acquisition.Scorer do
 
     coverage_fun = &claimable_coverage(&1, &2, season, alternate_numbering, opts)
 
-    Enum.find_value(pack_episodes_per_pass(opts), :no_match, fn pack_episodes ->
-      band = {min_size, max_size, pack_episodes}
+    Enum.find_value(pack_episodes_per_pass(season, opts), :no_match, fn pack_episodes_of ->
+      band = {min_size, max_size, pack_episodes_of}
 
       case cover(candidates, MapSet.new(wanted_episodes), [], band, coverage_fun, opts) do
         :no_match -> nil
@@ -114,11 +119,46 @@ defmodule Cinder.Acquisition.Scorer do
     end)
   end
 
-  # The episodes a whole-season pack is banded by in each pass of `select_for/4`: the still-wanted
-  # ones it covers (0 adds nothing to its coverage), then the season band.
-  defp pack_episodes_per_pass(opts), do: [0 | List.wrap(Keyword.get(opts, :pack_episode_count))]
+  # The episodes a whole-season pack is banded by in each pass of `select_for/4`, as a function of
+  # the pack's season: the still-wanted ones it covers (0 adds nothing to its coverage), then the
+  # season band.
+  defp pack_episodes_per_pass(season, opts) do
+    covered_only = fn _pack_season -> 0 end
 
-  defp pack_episodes(opts), do: Keyword.get(opts, :pack_episode_count) || 0
+    case Keyword.get(opts, :pack_episode_count) do
+      nil -> [covered_only]
+      count -> [covered_only, season_band(season, count, opts)]
+    end
+  end
+
+  # The episodes a bare pack of each season holds in the season band. A native-season pack holds
+  # the season's episode count. An alternate-season pack holds the distinct native episodes its
+  # numbering maps, which `k` counts too (#895): a scene S02 numbering native 13 to 24 holds 12, not
+  # the native season's 24. The numbering maps only the searched episodes, so where
+  # `opts[:alternate_pack_episode_count]` counts more of that season's native episodes (an
+  # unmonitored missing one, one with a grab in flight), the larger count wins (#1117), as the
+  # native count counts every row. Both are proxies: a scene season that straddles two native
+  # seasons holds the part this native season's mappings give it. The numbering's key for the
+  # native season itself, if any, is read as native, as `alternate_coverage/4` reads it.
+  defp season_band(season, count, opts) do
+    held =
+      opts
+      |> Keyword.get(:alternate_numbering, %{})
+      |> Map.new(fn {alternate_season, numbering} ->
+        mapped = MapSet.size(mapped_natives(numbering, Map.keys(numbering)))
+        {alternate_season, max(mapped, bridge_count(opts, alternate_season))}
+      end)
+      |> Map.put(season, count)
+
+    &Map.fetch!(held, &1)
+  end
+
+  # The stable-id cover's one pass (`select_for_ids/3`, `verdict_for_ids/2`): every whole-season
+  # pack is banded by `opts[:pack_episode_count]`, whatever its season.
+  defp pack_episodes_of(opts) do
+    count = Keyword.get(opts, :pack_episode_count) || 0
+    fn _pack_season -> count end
+  end
 
   @doc """
   Selects releases by resolved stable episode IDs.
@@ -134,7 +174,7 @@ defmodule Cinder.Acquisition.Scorer do
     {min_size, max_size, preferred, sources, release_blocklist, _preferred_terms, blocked_terms} =
       rules(opts)
 
-    band = {min_size, max_size, pack_episodes(opts)}
+    band = {min_size, max_size, pack_episodes_of(opts)}
 
     result =
       releases
@@ -153,7 +193,9 @@ defmodule Cinder.Acquisition.Scorer do
   predicates with `select/2`, so the panel verdict and the auto-pick can never drift.
 
   A TV release is banded per episode by what it carries: the episodes it names, its stable ids,
-  or `opts[:pack_episode_count]` for a whole-season pack. A season row the cover could take uses
+  or `opts[:pack_episode_count]` for a whole-season pack. A bare alternate-season pack's stable ids
+  are the searched episodes the bridge resolved, so `opts[:alternate_pack_episode_count]` for its
+  season counts the rest too when larger (#1117). A season row the cover could take uses
   `verdict_for_season/4` instead.
   """
   def verdict(%Release{} = release, opts \\ []),
@@ -162,9 +204,11 @@ defmodule Cinder.Acquisition.Scorer do
   @doc """
   `verdict/2` for a release the standard season cover takes alone: its size band is
   `select_for/4`'s, both passes included. A release covering `k` still-wanted episodes fits when
-  it is in band at `k` episodes, or, for a whole-season pack, at the season band `max(k,
-  opts[:pack_episode_count])`. `season`, `wanted_episodes` and `opts` are what `select_for/4`
-  takes.
+  it is in band at `k` episodes, or, for a whole-season pack, at the season band `max(k, n)`, with
+  `n` the episodes the pack holds as `select_for/4` counts them (`opts[:pack_episode_count]`, or
+  for an alternate-season pack the native episodes its numbering maps, or
+  `opts[:alternate_pack_episode_count]` when larger). `season`, `wanted_episodes` and `opts` are
+  what `select_for/4` takes.
 
   For a release covering at least one still-wanted episode this is `:ok` exactly when
   `select_for([release], season, wanted_episodes, opts)` matches. So a multi-episode release that
@@ -173,8 +217,9 @@ defmodule Cinder.Acquisition.Scorer do
 
   A release covering none (an upgrade in an imported season, another season's release) is one the
   cover never takes. It keeps `verdict/2`'s band by what it carries: the episodes it names or
-  resolves to, else for a whole-season pack the season's episode count, the band the upgrade
-  sweep's season pass uses. So the panel still tells the operator whether an upgrade fits.
+  resolves to (for a bare alternate-season pack, `opts[:alternate_pack_episode_count]` when
+  larger), else for a whole-season pack the season's episode count, the band the upgrade sweep's
+  season pass uses. So the panel still tells the operator whether an upgrade fits.
   """
   def verdict_for_season(%Release{} = release, season, wanted_episodes, opts \\ []) do
     case MapSet.size(season_coverage(release, season, wanted_episodes, opts)) do
@@ -182,7 +227,9 @@ defmodule Cinder.Acquisition.Scorer do
         verdict(release, opts)
 
       k ->
-        multipliers = Enum.map(pack_episodes_per_pass(opts), &banded_episodes(release, k, &1))
+        multipliers =
+          Enum.map(pack_episodes_per_pass(season, opts), &banded_episodes(release, k, &1))
+
         classify(release, multipliers, opts)
     end
   end
@@ -205,7 +252,7 @@ defmodule Cinder.Acquisition.Scorer do
   """
   def verdict_for_ids(%Release{} = release, opts \\ []) do
     ids = release.resolved_episode_ids || []
-    classify(release, [banded_episodes(release, length(ids), pack_episodes(opts))], opts)
+    classify(release, [banded_episodes(release, length(ids), pack_episodes_of(opts))], opts)
   end
 
   # The release is in band when it fits the size band scaled by any of `multipliers`.
@@ -273,14 +320,24 @@ defmodule Cinder.Acquisition.Scorer do
   defp episodes_multiplier(%Release{episodes: eps}, _opts) when is_list(eps) and eps != [],
     do: length(eps)
 
-  defp episodes_multiplier(%Release{resolved_episode_ids: ids}, _opts)
+  defp episodes_multiplier(%Release{resolved_episode_ids: ids} = release, opts)
        when is_list(ids) and ids != [],
-       do: length(ids)
+       do: max(length(ids), alternate_pack_episodes(release, opts))
 
   defp episodes_multiplier(%Release{season: season}, opts) when not is_nil(season),
     do: Keyword.get(opts, :pack_episode_count) || 1
 
   defp episodes_multiplier(_movie_release, _opts), do: 1
+
+  # The bridge's count of a bare alternate-season pack's native episodes, searched or not (#1117);
+  # 0 for any other release, or where no bridge ran.
+  defp alternate_pack_episodes(%Release{episodes: nil, season: season}, opts),
+    do: bridge_count(opts, season)
+
+  defp alternate_pack_episodes(_release, _opts), do: 0
+
+  defp bridge_count(opts, alternate_season),
+    do: opts |> Keyword.get(:alternate_pack_episode_count, %{}) |> Map.get(alternate_season, 0)
 
   @doc """
   The ascending sort key `select/2` ranks by (language → resolution → source → preferred title
@@ -351,9 +408,9 @@ defmodule Cinder.Acquisition.Scorer do
   end
 
   # `band` is one pass's per-episode size bounds plus the episodes a whole-season pack is banded by
-  # in that pass.
+  # in that pass, as a function of the pack's season.
   defp cover(candidates, needed, chosen, band, coverage_fun, opts) do
-    {min_size, max_size, pack_episodes} = band
+    {min_size, max_size, pack_episodes_of} = band
 
     scored =
       if MapSet.size(needed) == 0 do
@@ -366,7 +423,7 @@ defmodule Cinder.Acquisition.Scorer do
           # against k×the band (a pack is allowed proportionally more size), but never
           # against less than the episodes a whole-season pack CARRIES in this pass.
           k = MapSet.size(cov)
-          banded = banded_episodes(release, k, pack_episodes)
+          banded = banded_episodes(release, k, pack_episodes_of)
           k == 0 or not within_band?(release, scale(min_size, banded), scale(max_size, banded))
         end)
       end
@@ -416,13 +473,14 @@ defmodule Cinder.Acquisition.Scorer do
     season_numbering = Map.fetch!(numbering, season)
     episodes = release.episodes || Map.keys(season_numbering)
 
-    covered =
-      episodes
-      |> Enum.flat_map(&Map.get(season_numbering, &1, []))
-      |> MapSet.new()
-
-    MapSet.intersection(covered, needed)
+    MapSet.intersection(mapped_natives(season_numbering, episodes), needed)
   end
+
+  # The native episode numbers that `alternate_episodes` of one alternate season map onto. A bare
+  # pack of that season names every mapped episode, so its coverage and its season band
+  # (`season_band/3`) count the same set.
+  defp mapped_natives(season_numbering, alternate_episodes),
+    do: alternate_episodes |> Enum.flat_map(&Map.get(season_numbering, &1, [])) |> MapSet.new()
 
   defp id_coverage(%Release{resolved_episode_ids: resolved_episode_ids}, needed) do
     ids = MapSet.new(resolved_episode_ids || [])
@@ -451,21 +509,24 @@ defmodule Cinder.Acquisition.Scorer do
   defp scale(nil, _k), do: nil
   defp scale(size, k), do: k * size
 
-  # The episodes a release CARRIES in a cover pass that bands whole-season packs by `pack_episodes`:
-  # a bare-season pack carries the whole season, everything else is banded by its coverage alone.
-  # 0 (not 1, unlike `episodes_multiplier/2`) leaves the multiplier at the coverage, which is
+  # The episodes a release CARRIES in a cover pass that bands whole-season packs by
+  # `pack_episodes_of`, a function of the pack's season: a bare-season pack carries what the pass
+  # says its season holds (`season_band/3`), everything else is banded by its coverage alone. 0
+  # (not 1, unlike `episodes_multiplier/2`) leaves the multiplier at the coverage, which is
   # `select_for/4`'s first pass; running that pass first means the season band can only gain
   # matches, never lose a small pack to a newly-scaled `min_size` (#268). The count is a proxy: an
   # ongoing season's unaired rows inflate it, and a half-season pack ("S05A") parses as a pack of
   # that season.
-  defp carried(%Release{episodes: nil, season: season}, pack_episodes) when not is_nil(season),
-    do: pack_episodes
+  defp carried(%Release{episodes: nil, season: season}, pack_episodes_of)
+       when not is_nil(season),
+       do: pack_episodes_of.(season)
 
-  defp carried(_release, _pack_episodes), do: 0
+  defp carried(_release, _pack_episodes_of), do: 0
 
   # The episodes a release covering `k` still-needed ones is banded by in a cover pass that bands
-  # whole-season packs by `pack_episodes`. The covers and their verdicts share it.
-  defp banded_episodes(release, k, pack_episodes), do: max(k, carried(release, pack_episodes))
+  # whole-season packs by `pack_episodes_of`. The covers and their verdicts share it.
+  defp banded_episodes(release, k, pack_episodes_of),
+    do: max(k, carried(release, pack_episodes_of))
 
   # The cover's season filter: a release of the native season, or of an alternate season the
   # numbering maps.

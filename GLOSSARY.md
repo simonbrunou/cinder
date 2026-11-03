@@ -25,7 +25,9 @@ fits. Each step takes a release whose audio tag satisfies the title's audio pick
 untagged one (a TV season only; an anime policy judges audio its own way), then the one covering
 the most still-wanted episodes, then the better-ranked release. Size is judged per episode,
 against the still-wanted episodes a release covers. For a TV season, only when nothing fits that
-way is a whole-season pack judged against the whole season, the **season band**.
+way is a whole-season pack judged against the episodes it holds, the **season band**: the whole
+season, or for an alternate-numbered pack the native episodes its season's mappings name,
+unsearched ones included (#895, #1117).
 _Avoid_: cover set, the picker, rung
 
 **Household policy**:

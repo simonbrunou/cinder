@@ -211,8 +211,9 @@ defmodule Cinder.Acquisition do
 
   Then it judges the releases (guard `{:series, series, season_number, wanted_numbers}`) under
   `opts`, the household policy, plus the bridge's canonical-number map as
-  `opts[:alternate_numbering]` and the season's episode count as `opts[:pack_episode_count]`
-  (`Scorer.select_for/4`).
+  `opts[:alternate_numbering]`, the season's episode count as `opts[:pack_episode_count]` and, as
+  `opts[:alternate_pack_episode_count]`, how many of the season's episodes each alternate season
+  holds, searched or not (`Scorer.select_for/4`, `Scorer.verdict_for_season/4`).
 
   Only `wanted_numbers` differs between the two callers. The sweep passes the episodes it searches
   this tick (no pending grab, under the attempt cap, out of backoff), because it grabs on its own
@@ -239,8 +240,11 @@ defmodule Cinder.Acquisition do
   defp judge_releases(series, season_number, wanted_numbers, numbering, vetted_elsewhere, opts) do
     {alternate_seasons, opts} =
       case numbering do
-        %{search_seasons: seasons, scorer: scorer} ->
-          {seasons, Keyword.put(opts, :alternate_numbering, scorer)}
+        %{search_seasons: seasons, scorer: scorer, held: held} ->
+          {seasons,
+           opts
+           |> Keyword.put(:alternate_numbering, scorer)
+           |> Keyword.put(:alternate_pack_episode_count, held)}
 
         nil ->
           {[], opts}
@@ -273,8 +277,9 @@ defmodule Cinder.Acquisition do
   defp wanted?(%{state: state}), do: state != :available
 
   # The bounded scene/TVDB-aired bridge: `scorer` is the canonical-number map the set-cover reads,
-  # `search_seasons` the alternate seasons searched, `episode_ids` each resolved coordinate's
-  # stable episode ids and `conflicts` the coordinates that resolve two ways.
+  # `search_seasons` the alternate seasons searched, `held` how many native episodes each of them
+  # holds (`alternate_held/3`), `episode_ids` each resolved coordinate's stable episode ids and
+  # `conflicts` the coordinates that resolve two ways.
   defp standard_tv_numbering(%{episodes: episodes} = context) do
     numbers_by_id = Map.new(episodes, &{&1.id, &1.episode_number})
     searched_ids = MapSet.new(Map.keys(numbers_by_id))
@@ -293,6 +298,7 @@ defmodule Cinder.Acquisition do
     initial = %{
       scorer: %{},
       search_seasons: alternate_seasons,
+      held: alternate_held(context.mappings, context.season_number, alternate_seasons),
       episode_ids: %{},
       conflicts: MapSet.new()
     }
@@ -317,6 +323,38 @@ defmodule Cinder.Acquisition do
         _unusable -> numbering
       end
     end)
+  end
+
+  # How many native episodes of `season_number` each alternate season's bridged coordinates name,
+  # searched or not: the season band of a bare pack of that season (#1117). `scorer` maps only the
+  # searched episodes, so an unmonitored missing one, or one with a grab in flight, would band the
+  # pack below what it holds, while `pack_episode_count` counts every row of the native season. An
+  # episode's season is its canonical mapping's. A scene coordinate shadows an aired one on the
+  # same episode, as `prefer_scene_mappings/3` rules for the searched ones, so an aired numbering
+  # that names the whole season S02 can't widen a scene S02 pack's band.
+  defp alternate_held(mappings, season_number, alternate_seasons) do
+    season_by_id = native_season_by_id(mappings)
+    every_id = for mapping <- mappings, id <- mapping.episode_ids, into: MapSet.new(), do: id
+
+    for %{identity: identity} = mapping <- prefer_scene_mappings(mappings, every_id, MapSet.new()),
+        identity.scheme in @standard_tv_bridged_schemes,
+        alternate_season = Episode.season_from_code(identity.canonical_value),
+        alternate_season in alternate_seasons,
+        id <- mapping.episode_ids,
+        Map.get(season_by_id, id) == season_number,
+        uniq: true do
+      {alternate_season, id}
+    end
+    |> Enum.frequencies_by(fn {alternate_season, _id} -> alternate_season end)
+  end
+
+  # Each episode's native season, read from its canonical mapping.
+  defp native_season_by_id(mappings) do
+    for mapping <- mappings,
+        AnimeResolver.canonical_native?(mapping),
+        id <- mapping.episode_ids,
+        into: %{},
+        do: {id, Episode.season_from_code(mapping.identity.canonical_value)}
   end
 
   # The alternate seasons the bridge searches, at most `@max_alternate_seasons`. A native season is
@@ -478,12 +516,7 @@ defmodule Cinder.Acquisition do
   # series: the bridge's numbering keeps only those touching the searched episodes. An episode's
   # season is its canonical mapping's, and an episode without one counts as another season's.
   defp vetted_elsewhere_values(mappings, season_number) do
-    season_by_id =
-      for mapping <- mappings,
-          AnimeResolver.canonical_native?(mapping),
-          id <- mapping.episode_ids,
-          into: %{},
-          do: {id, Episode.season_from_code(mapping.identity.canonical_value)}
+    season_by_id = native_season_by_id(mappings)
 
     for %{identity: identity, episode_ids: episode_ids} = mapping <- mappings,
         identity.scheme in @standard_tv_bridged_schemes,

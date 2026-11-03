@@ -75,10 +75,14 @@ You have no memory between runs. Orient first, every run.
   must not strand). Do not swap these.
 - TV per-episode size band: a release covering k episodes is judged against k x band.
   `select_for` runs two passes (ADR 0003): the still-wanted band, then, only after a clean
-  `:no_match`, whole-season packs banded by `max(k, pack_episode_count)`. Each greedy step
-  picks by `{language_rank, -coverage, rank_key}`; ties keep input order; partial coverage is
-  fine. Don't make it require full coverage, fold the season band into the pick key, or let a
-  pack that only fits the season band compete with in-band releases.
+  `:no_match`, whole-season packs banded by `max(k, n)`: `n` is `pack_episode_count` for a
+  native-season pack, and for an alternate-season pack the distinct native episodes its
+  `alternate_numbering` maps (#895), or `alternate_pack_episode_count`, which also counts the
+  unsearched ones, when larger (#1117). Each greedy step picks by
+  `{language_rank, -coverage, rank_key}`; ties keep input order; partial coverage is fine. Don't
+  make it require full coverage, fold the season band into the pick key, let a pack that only
+  fits the season band compete with in-band releases, or band an alternate-season pack by the
+  native season's count.
 
 **Standard season search — one list for the sweep and the panel (#837, ADR 0002):**
 - `Acquisition.judge_season/3` builds the list for both callers from
