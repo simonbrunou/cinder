@@ -72,9 +72,10 @@ in a burst of merges only the newest `main` commit's run is sure to finish. Wait
 listed). It follows `main` on the forge and ends only on its head. That head is your merge commit
 or a newer one. Exit 0 means it is green. Any exit 1 is a red run, whether a job failed or every
 failed job reads `Has been cancelled`, which follow mode reports only while `main` still points
-at that commit. When the newest run is red, search the open issues, since every agent that merged
-in the burst sees the same run. Unless one already covers that run, file one labelled
-`needs-triage` that names the failing job.
+at that commit. When the newest run is red, first re-run its red jobs as [ci.md](docs/agents/ci.md)
+"Re-running CI" says, which also names the reds that get no re-run. When the run is still red
+after that, search the open issues, since every agent that merged in the burst sees the same run.
+Unless one already covers that run, file one labelled `needs-triage` that names the failing job.
 
 The merge-tree check exits 1 in two cases, told apart by their output. A conflict prints
 `CONFLICT` lines on stdout. A SHA the clone lacks prints `<sha> - not something we can merge` on
