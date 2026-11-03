@@ -51,8 +51,10 @@ defmodule Cinder.Library.Filesystem.Disk do
   defp subprocess_timeout_ms,
     do: Application.get_env(:cinder, :disk_subprocess_timeout_ms, @subprocess_timeout_ms)
 
+  # Raw, like `ls/1` and `lstat/1` below: `Cinder.Library.Sidecars.files/1` checks the folder with
+  # it before its walk (#944). Same results as `File.dir?/1`.
   @impl true
-  def dir?(path), do: File.dir?(path)
+  def dir?(path), do: File.dir?(path, [:raw])
 
   # `ls/1` and `lstat/1` are what `PathPolicy.walk/2` reads, so they skip the VM's one file
   # server (`:file_server_2`), which every plain `File` call queues behind: a read hung on a

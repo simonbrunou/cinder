@@ -11,14 +11,21 @@ defmodule Cinder.Library.Adoption do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Movie, MovieLifecycle, Profile, Series}
   alias Cinder.Library
+  alias Cinder.Library.BoundedWalk
   alias Cinder.Locales
   alias Cinder.Settings
 
   @candidate_limit 5
+  @scan_timeout_ms 300_000
   @provider_tag ~r/^(.*?)\s*\{((?:tmdb|tvdb)-\d+|imdb-tt\d+)\}\s*$/iu
   @title_year ~r/^(.*?)\s*\((\d{4})\)\s*$/u
 
-  @doc "Returns adoption candidates for every unmanaged video in both library roots."
+  @doc """
+  Returns adoption candidates for every unmanaged video in both library roots.
+
+  A root whose read misses its `Cinder.Library.BoundedWalk` deadline, or that the guard refuses,
+  becomes that root's `{:scan_failed, :timeout}` candidate, and the other roots still scan.
+  """
   def scan do
     managed = managed_paths()
 
@@ -200,11 +207,9 @@ defmodule Cinder.Library.Adoption do
     |> Enum.reduce({[], MapSet.new()}, fn destination, {candidates, seen} ->
       %{path: root} = destination
 
-      case filesystem().find_files(root) do
-        {:ok, files} ->
-          fresh = Enum.reject(files, &MapSet.member?(seen, normalize_path(elem(&1, 0))))
+      case read_root(root, seen) do
+        {:ok, files, {fresh, identities}} ->
           seen = Enum.reduce(files, seen, &MapSet.put(&2, normalize_path(elem(&1, 0))))
-          {fresh, identities} = snapshot_files(fresh)
 
           discovered =
             fresh
@@ -220,6 +225,26 @@ defmodule Cinder.Library.Adoption do
     end)
     |> elem(0)
   end
+
+  # A library root's walk and its identity snapshot share one `BoundedWalk` deadline (#944).
+  # `docs/agents/architecture.md` ("Background work is supervised and bounded") gives the basis
+  # for its 5 minutes and the reason an off-tick scan is bounded at all.
+  defp read_root(root, seen) do
+    BoundedWalk.run(
+      Path.expand(root),
+      fn ->
+        with {:ok, files} <- filesystem().find_files(root) do
+          fresh = Enum.reject(files, &MapSet.member?(seen, normalize_path(elem(&1, 0))))
+          {:ok, files, snapshot_files(fresh)}
+        end
+      end,
+      timeout_ms: scan_timeout_ms()
+    )
+  end
+
+  # A test seam, like `BoundedWalk`'s `:walk_timeout_ms`: production never sets it.
+  defp scan_timeout_ms,
+    do: Application.get_env(:cinder, :adoption_scan_timeout_ms, @scan_timeout_ms)
 
   defp snapshot_files(files) do
     Enum.reduce(files, {[], %{}}, fn {path, walked_size}, {verified, identities} ->

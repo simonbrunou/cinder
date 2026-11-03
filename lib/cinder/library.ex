@@ -1053,15 +1053,11 @@ defmodule Cinder.Library do
         {:error, :download_roots_not_configured}
 
       roots ->
-        BoundedWalk.run(walk_root(path, roots), fn ->
+        BoundedWalk.run(BoundedWalk.walk_root(path, roots), fn ->
           path_policy().walk(path, roots: roots, filesystem: fs())
         end)
     end
   end
-
-  # The import root a stuck walk counts against: the deepest one holding `path`, else `path`
-  # itself, which the walk refuses before any read.
-  defp walk_root(path, roots), do: PathPolicy.deepest_root(path, roots) || Path.expand(path)
 
   defp safe_destination(path, root),
     do: path_policy().destination(path, root, filesystem: fs())

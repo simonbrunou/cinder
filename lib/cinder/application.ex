@@ -25,8 +25,8 @@ defmodule Cinder.Application do
         # Owns notifier deliveries so a slow transport (e.g. SMTP) runs off the emitting pipeline's
         # critical path instead of wedging a poller tick (Cinder.Notifier.Dispatcher).
         {Task.Supervisor, name: Cinder.Notifier.TaskSupervisor},
-        # Owns poller directory walks and counts the ones a wedged mount keeps stuck, so a walk
-        # past its deadline returns {:error, :timeout} instead of freezing the tick (issue #779).
+        # Owns bounded directory walks and counts the ones a wedged mount keeps stuck, so a walk
+        # past its deadline returns {:error, :timeout} instead of freezing its caller (#779, #944).
         {Task.Supervisor, name: Cinder.Library.BoundedWalk.TaskSupervisor},
         Cinder.Library.BoundedWalk,
         # Off-tick, best-effort subtitle fetches dispatched from the import path — serialized through

@@ -8,6 +8,7 @@ defmodule Cinder.Library.Sidecars do
   require Logger
 
   alias Cinder.Acquisition.Parser
+  alias Cinder.Library.BoundedWalk
   alias Cinder.Library.Filesystem
   alias Cinder.Library.Filesystem.RenameIdentity
   alias Cinder.Library.PathPolicy
@@ -91,11 +92,27 @@ defmodule Cinder.Library.Sidecars do
 
   defp language_code(token), do: @aliases[token] || @names[token]
 
-  @doc "Sidecar files belonging to `source_video` (stem match, or any sub when the folder holds one video)."
+  @doc """
+  Sidecar files belonging to `source_video` (stem match, or any sub when the folder holds one
+  video).
+
+  Its reads run under `Cinder.Library.BoundedWalk`'s deadline, keyed by the deepest source root
+  holding the video's folder (#944). A listing past the deadline, or one the guard refuses, answers
+  `[]`, as any other failure does.
+  """
   def files(source_video) do
     dir = Path.dirname(source_video)
     roots = source_roots()
 
+    case BoundedWalk.run(BoundedWalk.walk_root(dir, roots), fn ->
+           list(source_video, dir, roots)
+         end) do
+      {:error, :timeout} -> []
+      files -> files
+    end
+  end
+
+  defp list(source_video, dir, roots) do
     with {:ok, source_video} <-
            path_policy().source_file(source_video, roots, @video_exts, filesystem: fs()),
          true <- fs().dir?(dir),

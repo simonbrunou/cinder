@@ -287,15 +287,24 @@ Every call a poller makes has a bound:
   runs under coreutils `timeout --kill-after`, with `ionice` and `nice` between `timeout` and the
   interpreter (#954).
 - Archive extraction carries entry-count and expanded-size ceilings.
-- The directory walk every importer and the completion content check run,
-  `Cinder.Library.safe_walk/1`, goes through `Cinder.Library.BoundedWalk.run/3`: a supervised
-  task with a 30 s deadline that answers `{:error, :timeout}`. A walk past its deadline is never
-  killed, since its read may still hold a dirty I/O scheduler thread. The guard counts it as
-  stuck until it returns, and while it does, a new walk under its root is refused at once, as is
-  any new walk once two are stuck. The walk's reads, `Filesystem.Disk.ls/1` and `lstat/1`, are raw
-  calls that skip the VM's one file server, so a read on a wedged mount blocks only its own
-  process, not every `File` call in the app. The `Sidecars` walks and the adoption scan have no
-  deadline yet (#944).
+- Three directory walks go through `Cinder.Library.BoundedWalk.run/3`, a supervised task with a
+  deadline that answers `{:error, :timeout}`: `Cinder.Library.safe_walk/1`, which every importer
+  and the completion content check run (30 s); `Sidecars.files/1` (30 s); and each library
+  root's walk and identity snapshot in `Adoption.scan/0` (5 min: the walk's 100,000-entry cap at
+  two reads of about 1 ms per entry). The adoption scan runs off the poller tick, but with no
+  bound each reload of a page stuck scanning would pin one more dirty I/O scheduler thread
+  (#944). A walk past its deadline is never killed, since its read may still hold such a thread.
+  The guard counts it as stuck until it returns, and while it does, a new walk under its root is
+  refused at once, as is any new walk under any root once two are stuck. The walks' reads,
+  `Filesystem.Disk.ls/1`, `lstat/1` and `dir?/1`, are raw calls that skip the VM's one file
+  server, so a read on a wedged mount blocks only its own process, not every `File` call in the
+  app.
+- The exception is a single-path read, such as `PathPolicy.source_file/4` or `destination/3`. It
+  skips the file server too but has no deadline, so one hung on a wedged mount still holds the
+  poller tick it runs in (#779). `Sidecars.sweep_temps/2`, the walk on the import's sidecar copy
+  fallback, stays unbounded because of them: `destination/3` reads the same folder with no
+  deadline just before the sweep and just after it, so a deadline on the sweep alone frees
+  nothing.
 
 The reason: one unbounded call in a single-tick poller freezes every target sharing that tick,
 not just the file or request in flight.

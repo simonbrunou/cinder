@@ -1,20 +1,3 @@
-defmodule Cinder.Library.SafeWalkTest.WedgedFilesystem do
-  @moduledoc false
-  # Lists like `Disk`, except a directory named `wedged`, where `ls/1` hangs the way a read on a
-  # wedged mount does (`Cinder.BoundedWalkHelpers.hang_walk/1`).
-
-  alias Cinder.BoundedWalkHelpers
-  alias Cinder.Library.Filesystem.Disk
-
-  defdelegate lstat(path), to: Disk
-
-  def ls(dir) do
-    if Path.basename(dir) == "wedged",
-      do: BoundedWalkHelpers.hang_walk(Application.fetch_env!(:cinder, :wedged_filesystem_test)),
-      else: Disk.ls(dir)
-  end
-end
-
 defmodule Cinder.Library.SafeWalkTest do
   @moduledoc """
   `Cinder.Library.safe_walk/1` over the real `Cinder.Library.PathPolicy` and
@@ -30,7 +13,7 @@ defmodule Cinder.Library.SafeWalkTest do
 
   alias Cinder.Library
   alias Cinder.Library.Filesystem.Disk
-  alias Cinder.Library.SafeWalkTest.WedgedFilesystem
+  alias Cinder.Test.WedgedFilesystem
 
   @moduletag :tmp_dir
   # A stuck walk logs a warning.

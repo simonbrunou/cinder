@@ -24,6 +24,22 @@ defmodule Cinder.BoundedWalkHelpers do
   end
 
   @doc """
+  Runs `fun` in a task while the VM's one file server (`:file_server_2`) is suspended, and returns
+  `Task.yield/2`'s answer, or `nil` when `fun` was still blocked after `timeout_ms`. Call `fun`
+  once beforehand, so the blocked run loads no code.
+  """
+  def yield_while_file_server_blocked(fun, timeout_ms \\ 2_000) do
+    :ok = :sys.suspend(:file_server_2)
+
+    try do
+      task = Task.async(fun)
+      Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill)
+    after
+      :sys.resume(:file_server_2)
+    end
+  end
+
+  @doc """
   Releases a walk `hang_walk/1` holds and returns once `guard` has seen it return, so the guard
   admits walks under its root again.
   """

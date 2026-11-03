@@ -1,13 +1,13 @@
 defmodule Cinder.Library.BoundedWalk do
   @moduledoc """
-  Runs a poller's directory walk under a wall-clock deadline (issue #779).
+  Runs a directory walk under a wall-clock deadline (issues #779, #944).
 
-  `Cinder.Library.safe_walk/1`, the walk every importer and the completion content check run in
-  their tick, goes through `run/3`. The walk runs in a task under
-  `Cinder.Library.BoundedWalk.TaskSupervisor`. One that has not returned within the deadline
-  (30 s) answers `{:error, :timeout}`. The three download pollers hold the import on it without
-  spending the retry budget, as they do on a full disk, and the completion content check takes it
-  as no opinion, like any walk that cannot run.
+  `docs/agents/architecture.md` ("Background work is supervised and bounded") lists the walks
+  that go through `run/3`. Each caller's own docs say what it does with a timeout.
+
+  The walk runs in a task under `Cinder.Library.BoundedWalk.TaskSupervisor`. One that has not
+  returned within the deadline (30 s unless the caller passes `:timeout_ms`) answers
+  `{:error, :timeout}`.
 
   A walk past its deadline is never killed. Its read may still sit in the kernel on a wedged
   mount, holding one of the VM's dirty I/O scheduler threads (10 by default, which the SQLite
@@ -27,11 +27,13 @@ defmodule Cinder.Library.BoundedWalk do
   The deadline alone would not be enough, because the reads behind
   `Cinder.Library.PathPolicy.walk/2` used to go through the VM's one file server: a read stuck
   there blocked every `File` call in the app. `Cinder.Library.Filesystem.Disk` now answers
-  `ls/1` and `lstat/1` with raw calls that skip it.
+  `ls/1`, `lstat/1` and `dir?/1` with raw calls that skip it.
   """
   use GenServer
 
   require Logger
+
+  alias Cinder.Library.PathPolicy
 
   @timeout_ms 30_000
   @max_stuck 2
@@ -43,11 +45,19 @@ defmodule Cinder.Library.BoundedWalk do
   end
 
   @doc """
+  The `root` key for a walk of `path` confined to `roots`: the deepest of `roots` holding `path`,
+  else `path` itself, which such a walk refuses before any read.
+  """
+  @spec walk_root(String.t(), [String.t()]) :: String.t()
+  def walk_root(path, roots), do: PathPolicy.deepest_root(path, roots) || Path.expand(path)
+
+  @doc """
   Runs `fun`, a walk under `root`, and returns its result, or `{:error, :timeout}` when it misses
   its deadline or the guard refuses it. A raise in `fun` raises in the caller.
 
-  `root` is the key the guard counts a stuck walk against: the import root the walk reads under.
-  Options, for tests: `:server` (the guard) and `:timeout_ms` (the deadline).
+  `root` is the key the guard counts a stuck walk against: the root the walk reads under.
+
+  Options: `:timeout_ms`, the deadline, 30 s by default; and, for tests, `:server`, the guard.
   """
   @spec run(term(), (-> result), keyword()) :: result | {:error, :timeout} when result: term()
   def run(root, fun, opts \\ []) do
@@ -84,8 +94,8 @@ defmodule Cinder.Library.BoundedWalk do
     {:error, :timeout}
   end
 
-  # A test seam, like `Cinder.Library.Filesystem.Disk`'s `:disk_subprocess_timeout_ms`:
-  # production never sets it.
+  # The default deadline's test seam, like `Cinder.Library.Filesystem.Disk`'s
+  # `:disk_subprocess_timeout_ms`: production never sets it.
   defp timeout_ms, do: Application.get_env(:cinder, :walk_timeout_ms, @timeout_ms)
 
   @impl true

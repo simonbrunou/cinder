@@ -1,7 +1,9 @@
 defmodule Cinder.Library.AdoptionTest do
   use Cinder.DataCase, async: false
 
+  import Cinder.BoundedWalkHelpers
   import Cinder.CatalogFixtures
+  import Cinder.ConfigCase
   import Mox
 
   alias Cinder.Catalog
@@ -196,6 +198,55 @@ defmodule Cinder.Library.AdoptionTest do
 
     assert %{adopted: 1, skipped: 0} = Adoption.adopt([anime_candidate])
     assert %Movie{media_profile: :anime, file_path: ^anime} = Catalog.get_movie_by_tmdb_id(20)
+  end
+
+  # #944: an unbounded scan hangs here, so fail in seconds rather than at ExUnit's 60 s default.
+  @tag :tmp_dir
+  @tag :capture_log
+  @tag timeout: 10_000
+  test "a library root whose walk never returns is scan_failed at the deadline, the next scan " <>
+         "refuses it at once, and the other roots still scan",
+       %{tmp_dir: tmp} do
+    # `scan_roots/4` scans the longer of the two movie roots first, so the wedged root goes first
+    # and the Anime root after it shows the scan carries on past a timeout.
+    wedged = Path.join(tmp, "wedged")
+    anime = Path.join(tmp, "anime")
+    tv = Path.join(tmp, "tv")
+    movie = Path.join(anime, "Dune (2021) {tmdb-438631}/Dune (2021) {tmdb-438631}.mkv")
+    Enum.each([wedged, Path.dirname(movie), tv], &File.mkdir_p!/1)
+    File.write!(movie, "video")
+
+    put_env(
+      filesystem: Cinder.Test.WedgedFilesystem,
+      movies_library_path: wedged,
+      movies_anime_library_path: anime,
+      tv_library_path: tv,
+      adoption_scan_timeout_ms: 300,
+      wedged_filesystem_test: self()
+    )
+
+    {elapsed, candidates} = :timer.tc(&Adoption.scan/0, :millisecond)
+    assert elapsed < 2_300
+    assert_receive {:walking, walk}
+    release_walk_on_exit(walk)
+
+    assert [
+             %{kind: :movie, path: ^movie, status: :auto_matched, media_profile: :anime},
+             %{kind: :movie, directory: ^wedged, reason: {:scan_failed, :timeout}}
+           ] = candidates
+
+    # Scans meant to finish get a deadline a loaded CI runner cannot miss, so a refusal that came
+    # in well under it came at once.
+    put_env(:adoption_scan_timeout_ms, 10_000)
+    {elapsed, candidates} = :timer.tc(&Adoption.scan/0, :millisecond)
+    assert elapsed < 1_000
+
+    assert [
+             %{kind: :movie, path: ^movie},
+             %{kind: :movie, directory: ^wedged, reason: {:scan_failed, :timeout}}
+           ] = candidates
+
+    refute_received {:walking, _refused_walk}
   end
 
   test "adoption from an explicit named root assigns that exact profile" do
