@@ -465,9 +465,10 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   end
 
   # A completed reversal's displaced content is truncated to empty by `discard_bound` after
-  # exchange (see `finalize_exchange`), leaving this exact directory and an empty staged file as
-  # a tombstone — nothing was ever published from it beyond what the exchange already verified,
-  # so it's never itself a conflict. Recognized only when the target still reads as the
+  # exchange, or replaced by a fresh empty file when another name shares it (see
+  # `dispose_displaced`), leaving this exact directory and an empty staged file as a tombstone —
+  # nothing was ever published from it beyond what the exchange already verified, so it's never
+  # itself a conflict. Recognized only when the target still reads as the
   # pre-reversal `expected_sha256`: empty content alone must not authorize reuse of a workspace
   # whose target has moved to some other, unaccounted-for state.
   defp verify_pending_workspace(target, staged, expected_sha256, applied_sha256) do
@@ -770,27 +771,80 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     end
   end
 
-  # `:discard` empties the displaced inode and keeps its name as the workspace tombstone that
-  # pending records and deterministic reversals read. `:unlink` (`swap/3`) only removes the
-  # displaced inode's workspace name: a fetch may displace a release sidecar, which is a hardlink
-  # into a download that may still be seeding, so its bytes must survive under that other name.
-  defp dispose_displaced(_staged_path, current, :discard, committed_warning) do
-    case fs().discard_bound(current) do
+  # `:discard` leaves an empty workspace tombstone that pending records and deterministic
+  # reversals read: it empties a displaced inode that only the workspace names, and otherwise puts
+  # a fresh empty file in its place (`replace_shared_tombstone/2`). `:unlink` (`swap/3`) only
+  # removes the displaced inode's workspace name. Either way a release sidecar, a hardlink into a
+  # download that may still be seeding, keeps its bytes under that other name (#860).
+  defp dispose_displaced(staged_path, current, :discard, committed_warning) do
+    case empty_displaced(staged_path, current) do
       :ok ->
         committed_result(committed_warning)
 
-      {:error, {:effect_committed, _operation, _detail} = reason} ->
+      {:error, {:discard, {:effect_committed, _operation, _detail} = reason}} ->
         {:committed_unacknowledged, merge_committed_warnings(committed_warning, reason)}
 
-      {:error, reason} ->
+      {:error, {:discard, reason}} ->
         {:committed_unacknowledged,
          merge_committed_warnings(committed_warning, {:discard_failed, reason})}
+
+      {:error, {:replace, reason}} ->
+        {:committed_unacknowledged,
+         merge_committed_warnings(committed_warning, {:tombstone_replace_failed, reason})}
     end
   end
 
   defp dispose_displaced(staged_path, current, :unlink, committed_warning) do
     remove_workspace_name(staged_path, current)
     committed_result(committed_warning)
+  end
+
+  # Leaves an empty tombstone at the staged name, which still holds the displaced inode. A failure
+  # is tagged with the step that failed: `:discard` or `:replace`.
+  defp empty_displaced(staged_path, current) do
+    {step, result} =
+      if workspace_only_name?(current),
+        do: {:discard, fs().discard_bound(current)},
+        else: {:replace, replace_shared_tombstone(staged_path, current)}
+
+    case result do
+      :ok -> :ok
+      {:error, reason} -> {:error, {step, reason}}
+    end
+  end
+
+  # The bound inode's live link count, read through its descriptor. Only a count of exactly one
+  # proves the workspace holds its one name; an unreadable count reads as shared, since the
+  # replacement below never changes the inode's bytes.
+  defp workspace_only_name?(bound), do: match?({:ok, %{links: 1}}, File.stat(bound.path))
+
+  # Renames a fresh empty file over the staged name, so the workspace keeps an empty tombstone
+  # with one link and drops its name for the displaced inode without changing its bytes. At every
+  # point the staged name holds either the displaced inode or the fresh file, and the target
+  # already holds the published bytes, which is all `recover/4` reads. A crash after the create
+  # leaves the fresh file beside a staged name that still holds the displaced inode, so the
+  # download's file keeps that second name: nothing removes a `write/3,4` workspace yet (#795).
+  defp replace_shared_tombstone(staged_path, current) do
+    fresh_path = Path.join(Path.dirname(staged_path), ".cinder-subtitle-sync-write-tombstone")
+
+    with_created_bound(fresh_path, "", fn fresh ->
+      case rename_over_displaced(fresh_path, staged_path, current) do
+        :ok ->
+          verify_bound_path(staged_path, fresh)
+
+        {:error, {:effect_committed, _operation, _detail}} = error ->
+          error
+
+        {:error, _reason} = error ->
+          remove_workspace_name(fresh_path, fresh)
+          error
+      end
+    end)
+  end
+
+  defp rename_over_displaced(fresh_path, staged_path, current) do
+    with :ok <- verify_bound_path(staged_path, current),
+         do: fs().rename(fresh_path, staged_path)
   end
 
   defp committed_result(nil), do: {:committed, :ok}
@@ -840,10 +894,16 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     {:moved_unverified, :concurrent_change}
   end
 
-  defp preserve_published_external(_staged_path, current, :discard) do
-    case fs().discard_bound(current) do
-      :ok -> {:external_preserved, {:error, :concurrent_change}}
-      {:error, reason} -> {:preserved, {:error, {:external_preservation_discard_failed, reason}}}
+  defp preserve_published_external(staged_path, current, :discard) do
+    case empty_displaced(staged_path, current) do
+      :ok ->
+        {:external_preserved, {:error, :concurrent_change}}
+
+      {:error, {:discard, reason}} ->
+        {:preserved, {:error, {:external_preservation_discard_failed, reason}}}
+
+      {:error, {:replace, reason}} ->
+        {:preserved, {:error, {:external_preservation_replace_failed, reason}}}
     end
   end
 

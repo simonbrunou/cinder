@@ -165,7 +165,9 @@ branch, and the caller gets a post-effect `EEXIST`:
 That is accepted because every name they create is one only Cinder writes: a random token, a
 `System.unique_integer/1` name, or a deterministic name under the per-video lock
 `{{Cinder.Subtitles, video_path}, self()}` (a `Cinder.Subtitles.SidecarTransaction.AtomicFile`
-`write/3,4` workspace and its staged file, the sync backup `.<sidecar>.cinder-sync-original`). A
+`write/3,4` workspace, its staged file and the fresh tombstone
+`.cinder-subtitle-sync-write-tombstone` it renames over a shared staged file (#860), the sync
+backup `.<sidecar>.cinder-sync-original`). A
 second Cinder call on one name resolves the same branch while the anchor or parent stays put: the
 anchor's for `mkdir_near` (`mergerfs_near_relative`), the parent directory's for the file create.
 So it collides there instead of on another branch. A `mkdir_near` that loses there fails to rename

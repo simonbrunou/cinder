@@ -699,6 +699,7 @@ defmodule Cinder.Subtitles do
   defp normalize_sidecar_mode(target) do
     case safe_destination(target) do
       {:ok, target} ->
+        # Mode only, so a hardlinked download keeps seeding; the media server needs 0644 (#860).
         case fs().chmod(target, 0o644) do
           :ok ->
             :ok

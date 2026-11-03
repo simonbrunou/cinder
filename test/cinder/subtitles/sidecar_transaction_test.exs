@@ -676,6 +676,123 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     end
   end
 
+  # Issue #860: a release sidecar is a hardlink into a download that may still be seeding. A
+  # correction exchanges a new inode in, and the inode it displaces keeps its bytes there.
+  describe "publish/4 over a sidecar hardlinked into a download" do
+    test "a correction and a reset leave the download's bytes alone", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      download = hardlink_download!(path, tmp)
+
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 1
+      assert [staged] = workspace_staged_files(path)
+      assert_fresh_tombstone(staged)
+
+      assert :ok = reset(video)
+      assert File.read!(path) == original
+      assert File.read!(download) == original
+      for staged <- workspace_staged_files(path), do: assert_fresh_tombstone(staged)
+    end
+
+    test "a sidecar replaced right after the correction's exchange keeps the download's bytes", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      download = hardlink_download!(path, tmp)
+
+      assert {:error, :concurrent_change} =
+               replace_after_exchange(path, tmp, fn -> manual(video, 1_000) end)
+
+      assert File.read!(path) == "newer"
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 1
+      assert [staged] = workspace_staged_files(path)
+      assert_fresh_tombstone(staged)
+    end
+
+    test "a sidecar with no other name still goes through discard_bound when replaced after the exchange",
+         %{
+           video: video,
+           path: path,
+           tmp_dir: tmp
+         } do
+      fail_once(%{operation: :discard_bound, source_contains: Path.basename(path), reason: :eio})
+
+      assert {:error, {:external_preservation_discard_failed, :eio}} =
+               replace_after_exchange(path, tmp, fn -> manual(video, 1_000) end)
+
+      assert File.read!(path) == "newer"
+    end
+
+    test "a correction killed after creating the fresh tombstone is finished by recover", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      download = hardlink_download!(path, tmp)
+      use_barrier(%{operation: :create_bound, contains: ".cinder-subtitle-sync-write-tombstone"})
+      kill_at_barrier(fn -> manual(video, 1_000) end, :create_bound)
+
+      assert [staged] = workspace_staged_files(path)
+      assert File.read!(staged) == original
+      assert_killed_correction_recovers(video, path, original, download)
+    end
+
+    test "a correction killed after renaming the fresh tombstone is finished by recover", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      download = hardlink_download!(path, tmp)
+      use_barrier(%{operation: :rename, contains: ".cinder-subtitle-sync-write-staged"})
+      kill_at_barrier(fn -> manual(video, 1_000) end, :rename)
+
+      assert [staged] = workspace_staged_files(path)
+      assert_fresh_tombstone(staged)
+      assert_killed_correction_recovers(video, path, original, download)
+    end
+
+    test "a failed tombstone rename leaves the pending record for recovery", %{
+      video: video,
+      path: path,
+      original: original,
+      backup: backup,
+      tmp_dir: tmp
+    } do
+      download = hardlink_download!(path, tmp)
+
+      fail_once(%{
+        operation: :rename,
+        source_contains: ".cinder-subtitle-sync-write-tombstone",
+        reason: :eio
+      })
+
+      assert {:error, {:publication_committed, {:tombstone_replace_failed, :eio}}} =
+               manual(video, 1_000)
+
+      assert File.read!(download) == original
+
+      assert [] =
+               path
+               |> Path.dirname()
+               |> Path.join(".cinder-subtitle-sync-cas-*/.cinder-subtitle-sync-write-tombstone")
+               |> Path.wildcard(match_dot: true)
+
+      assert_unacknowledged_correction(video, path, original, backup)
+      assert File.read!(download) == original
+    end
+  end
+
   # Issues #344 and #350: a mergerfs library whose logical backup path spans backing branches.
   describe "publish/4 on a mergerfs library" do
     test "reactivates a verified legacy backup tombstone and rebinds its identity", %{
@@ -1539,16 +1656,10 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       tmp_dir: tmp
     } do
       download = hardlink_download!(path, tmp)
-      use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-staged"})
 
-      task = Task.async(fn -> replace(video, @replacement) end)
-      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
-      newer = Path.join(tmp, "newer.srt")
-      File.write!(newer, "newer")
-      File.rename!(newer, path)
-      send(pid, {ref, :continue})
+      assert {:error, {:write, {:error, :concurrent_change}}} =
+               replace_after_exchange(path, tmp, fn -> replace(video, @replacement) end)
 
-      assert {:error, {:write, {:error, :concurrent_change}}} = DiskTask.await(task)
       assert File.read!(path) == "newer"
       assert File.read!(download) == original
       assert workspaces(path) == []
@@ -2025,6 +2136,40 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     File.mkdir_p!(Path.dirname(download))
     File.ln!(path, download)
     download
+  end
+
+  # Runs `fun` until its exchange onto `path` committed, renames "newer" over `path` there, and
+  # returns `fun`'s result.
+  defp replace_after_exchange(path, tmp, fun) do
+    use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-staged"})
+    task = Task.async(fun)
+    assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
+    newer = Path.join(tmp, "newer.srt")
+    File.write!(newer, "newer")
+    File.rename!(newer, path)
+    send(pid, {ref, :continue})
+    DiskTask.await(task)
+  end
+
+  # The workspace tombstone recovery and the reversal reuse read: empty, and no name but its own.
+  defp assert_fresh_tombstone(staged) do
+    assert File.read!(staged) == ""
+    assert File.stat!(staged).links == 1
+  end
+
+  # A correction killed after its exchange: the corrected bytes and the pending record stay, and
+  # `recover/2` records them. The download keeps its bytes through that and a reset.
+  defp assert_killed_correction_recovers(video, path, original, download) do
+    assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+    assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
+    assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+    assert :ok = SidecarTransaction.reconcile(video, moviehash!(video))
+    assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
+    assert File.read!(download) == original
+
+    assert :ok = reset(video)
+    assert File.read!(path) == original
+    assert File.read!(download) == original
   end
 
   defp fail_manifest_once do
