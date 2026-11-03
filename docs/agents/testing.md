@@ -162,3 +162,12 @@
   in the order the disk returns. That is creation order on the btrfs dev host and can be any
   order on CI, so neither a local nor a CI pass proves a test ignores it. A test compares such a
   list sorted unless the code under test sorts it (#919).
+- A test that shrinks a deadline so a call waits it out (`:walk_timeout_ms`,
+  `:adoption_scan_timeout_ms`, `:health_probe_timeout_ms`, a `timeout_ms:` option) runs only
+  that call under the shrunk value. Every call meant to finish gets a deadline a loaded CI runner
+  cannot miss: 10 s, as `Cinder.Library.BoundedWalkTest` and `SafeWalkTest` set it. A refusal
+  meant to come at once runs under that 10 s too, with an `elapsed` assert far below it, so the
+  assert shows it did not wait the deadline out. On #1118 a healthy library root ran under the
+  same 300 ms as the wedged one, missed it on the loaded runner and turned `main` red: 43
+  minutes from the red run to the fix's merge. `Cinder.HealthTest` still runs its healthy probes
+  under the hung one's 200 ms (#1123).
