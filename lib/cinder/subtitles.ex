@@ -200,7 +200,7 @@ defmodule Cinder.Subtitles do
       enqueue = if Map.get(criteria_base, :fresh), do: :fresh, else: :background
       track = OwnTrack.select(tracks, language)
 
-      case own_track_content(video_path, moviehash, track, cache) do
+      case timed_content(video_path, moviehash, track, cache) do
         {{:ok, content}, cache} ->
           commit(video_path, kind, language, moviehash, "own_track", target, content,
             enqueue: enqueue
@@ -216,34 +216,37 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  defp own_track_content(_video_path, _moviehash, nil, cache), do: {:none, cache}
+  # A track's content once it passed the timing check, which the own track and the embedded
+  # fallback both run on the same extracted bytes. A rejection is stored per moviehash and track,
+  # so neither extracts the track again for this file (`TrackRejection` `:timing`). It is also
+  # kept for the fetch, so a file without a moviehash is checked and logged once per fetch.
+  defp timed_content(_video_path, _moviehash, nil, cache), do: {:none, cache}
 
-  defp own_track_content(video_path, moviehash, track, cache) do
-    if TrackRejection.rejected?(moviehash, track.index, :timing) do
+  defp timed_content(video_path, moviehash, track, cache) do
+    if MapSet.member?(cache.timing_rejected, track.index) or
+         TrackRejection.rejected?(moviehash, track.index, :timing) do
       {:none, cache}
     else
       case extract(video_path, track, cache) do
-        {{:ok, content}, cache} ->
-          {validated_own_track(content, video_path, moviehash, track), cache}
-
-        {:error, cache} ->
-          {:none, cache}
+        {{:ok, content}, cache} -> validated_content(content, video_path, moviehash, track, cache)
+        {:error, cache} -> {:none, cache}
       end
     end
   end
 
-  defp validated_own_track(content, video_path, moviehash, track) do
+  defp validated_content(content, video_path, moviehash, track, cache) do
     case Timing.validate(content, ".srt") do
       :ok ->
-        {:ok, content}
+        {{:ok, content}, cache}
 
       {:error, reason} ->
         Logger.info(
-          "own subtitle track #{track.index} of #{video_path} rejected: #{inspect(reason)}"
+          "subtitle track #{track.index} of #{video_path} failed the timing check: " <>
+            inspect(reason)
         )
 
         TrackRejection.reject(moviehash, track.index, :timing)
-        :none
+        {:none, %{cache | timing_rejected: MapSet.put(cache.timing_rejected, track.index)}}
     end
   end
 
@@ -394,6 +397,9 @@ defmodule Cinder.Subtitles do
     # exact track must not give up before trying a usable, merely-ambiguous one (#575), mirroring
     # Reference.select/4's existing cascade.
     #
+    # Each candidate must pass the timing check the own track passes (#1072). One it rejects is
+    # passed over like one that did not extract, and is not extracted again for this file.
+    #
     # A target already extracted from this file is not extracted and committed again (#861). Only
     # the candidates ranked ahead of its track are tried: a busy disk fails an extraction the way a
     # damaged file does, and must not leave a lesser track in place for good (#1071).
@@ -401,12 +407,13 @@ defmodule Cinder.Subtitles do
     # With the target in place nothing else is looked for. A translation could not replace it, so
     # the default track is not extracted for one (#861), and a sidecar in the same language would
     # be copied over it again on every sweep (#1070).
-    case first_extracted(video_path, ranked_ahead(candidates, held), cache) do
+    case first_passing(video_path, moviehash, ranked_ahead(candidates, held), cache) do
       {nil, cache} when exists? ->
         {nil, cache}
 
       {nil, cache} ->
-        default_or_sidecar(video_path, language, moviehash, target, tracks, cache)
+        default = default_track(tracks, candidates, moviehash)
+        default_or_sidecar(video_path, language, moviehash, target, default, cache)
 
       {{index, content}, cache} ->
         {{:embedded, content, index}, cache}
@@ -424,11 +431,12 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  defp first_extracted(video_path, candidates, cache) do
+  # The first candidate that extracts and passes the timing check.
+  defp first_passing(video_path, moviehash, candidates, cache) do
     Enum.reduce_while(candidates, {nil, cache}, fn track, {nil, cache} ->
-      case extract(video_path, track, cache) do
+      case timed_content(video_path, moviehash, track, cache) do
         {{:ok, content}, cache} -> {:halt, {{track.index, content}, cache}}
-        {:error, cache} -> {:cont, {nil, cache}}
+        {:none, cache} -> {:cont, {nil, cache}}
       end
     end)
   end
@@ -436,10 +444,8 @@ defmodule Cinder.Subtitles do
   # The default track is only a translation source, so it is not extracted when no translation
   # can come of it (#861). Every sweep used to extract it and drop the result. With no translator,
   # the sidecars are looked at as if there were no default track. So are they without a default
-  # track, or with one whose content did not parse for this moviehash.
-  defp default_or_sidecar(video_path, language, moviehash, target, tracks, cache) do
-    track = default_track(tracks, moviehash)
-
+  # track (`default_track/3`).
+  defp default_or_sidecar(video_path, language, moviehash, target, track, cache) do
     if is_nil(track) or not translator().configured?() do
       sidecar_source(video_path, language, target, cache)
     else
@@ -450,10 +456,17 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  defp default_track(tracks, moviehash) do
-    case Enum.find(tracks, &(&1.default? and not &1.forced?)) do
-      nil -> nil
-      track -> if TrackRejection.rejected?(moviehash, track.index, :srt), do: nil, else: track
+  # None when the default track did not parse for this moviehash, or when it is itself one of the
+  # candidates in the wanted language. The cascade passed such a track over because it did not
+  # extract or failed the timing check. A translation keeps the cue times of its source and is
+  # not timing-checked, so translating it would write the rejected times as the sidecar (#1072).
+  defp default_track(tracks, candidates, moviehash) do
+    track = Enum.find(tracks, &(&1.default? and not &1.forced?))
+
+    cond do
+      is_nil(track) or track in candidates -> nil
+      TrackRejection.rejected?(moviehash, track.index, :srt) -> nil
+      true -> track
     end
   end
 
@@ -898,6 +911,7 @@ defmodule Cinder.Subtitles do
     %{
       tracks: :unknown,
       extracted: %{},
+      timing_rejected: MapSet.new(),
       default_srt: :unknown,
       sidecars: :unknown,
       sidecar_srt: :unknown

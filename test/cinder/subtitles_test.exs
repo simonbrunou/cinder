@@ -689,7 +689,8 @@ defmodule Cinder.SubtitlesTest do
   # raise inside fetch_one/6's rescue, and a negative test could not tell that from no read.
   describe "a sweep over a file it already read" do
     # An ASS typesetting track converted to SRT: a blank line inside a cue fails both the timing
-    # check and the SRT parser (Monogatari on prod).
+    # check, which the own-track path and the embedded fallback run, and the SRT parser, which
+    # a translation source must pass (Monogatari on prod).
     @broken "1\n00:00:01,000 --> 00:00:02,000\nLine one\n\nLine after blank\n\n" <>
               "2\n00:00:03,000 --> 00:00:04,000\nTwo\n\n"
     @srt "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n"
@@ -1019,7 +1020,8 @@ defmodule Cinder.SubtitlesTest do
 
     # Monogatari on prod: one English track, the default, that fails both checks, and French
     # wanted too. Each check asked for the same track, so a sweep read the file three times, and
-    # every sweep wrote the English sidecar again. A file whose moviehash changed is read again.
+    # the embedded fallback wrote the track the timing check had rejected as the English sidecar
+    # (#1072). A file whose moviehash changed is read again.
     test "reads a file once, then not until it changes", %{video: video} do
       ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "en,fr")
       stub_reads(video, {:ok, [own_track(3, "eng", default?: true)]}, %{3 => {:ok, @broken}})
@@ -1031,14 +1033,130 @@ defmodule Cinder.SubtitlesTest do
         own_track_until: System.monotonic_time(:millisecond) + 60_000
       }
 
-      assert effects(criteria, video) == [:probe, {:extract, 3}, {:scan, :movies}]
-      assert %{tracks: %{"en" => %{origin: "embedded"}}} = Manifest.read(video)
+      assert effects(criteria, video) == [:probe, {:extract, 3}]
+      refute File.exists?(Subtitles.sidecar_path(video, "en"))
+      refute Map.has_key?(Manifest.read(video).tracks, "en")
       assert effects(criteria, video) == []
 
       put_moviehash!(131_073)
 
-      assert effects(criteria, video) == [:probe, {:extract, 3}, {:scan, :movies}]
+      assert effects(criteria, video) == [:probe, {:extract, 3}]
       assert effects(criteria, video) == []
+    end
+
+    # #1072: the embedded fallback checks each candidate as the own-track path does, and the
+    # rejection it stores keeps a later sweep from reading the file again for that track.
+    test "commits the next candidate after one the timing check rejects", %{video: video} do
+      stub_reads(video, {:ok, [track(2, "fre"), track(3, "fre")]}, %{
+        2 => {:ok, @broken},
+        3 => {:ok, @srt}
+      })
+
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) ==
+               [:probe, {:extract, 2}, {:extract, 3}, {:scan, :movies}]
+
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) == @srt
+      assert %{tracks: %{"fr" => %{origin: "embedded", source_track: 3}}} = Manifest.read(video)
+      assert effects(%{imdb_id: "tt1"}, video) == []
+    end
+
+    # Under 200 cues, so the own-track path does not select it even when the import saw the stream.
+    test "writes no sidecar from a lone candidate the timing check rejects", %{video: video} do
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{2 => {:ok, @broken}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      criteria = %{imdb_id: "tt1", embedded_subtitles: ["fre"]}
+
+      assert effects(criteria, video) == [:probe, {:extract, 2}]
+      refute File.exists?(Subtitles.sidecar_path(video, "fr"))
+      assert TrackRejection.rejected?(Moviehash.compute(131_072, @zeros, @zeros), 2, :timing)
+      assert effects(criteria, video) == []
+    end
+
+    # The content parses as SRT, so only the guard keeps it from being translated into its own
+    # language.
+    test "never translates a default candidate the timing check rejects into its language", %{
+      video: video
+    } do
+      reversed = "1\n00:00:02,000 --> 00:00:01,000\nHello\n\n"
+      stub_reads(video, {:ok, [track(2, "fre", default?: true)]}, %{2 => {:ok, reversed}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:extract, 2}]
+      refute_received {:translate, _language}
+      refute File.exists?(Subtitles.sidecar_path(video, "fr"))
+      assert effects(%{imdb_id: "tt1"}, video) == []
+      refute_received {:translate, _language}
+    end
+
+    # With no candidate left, a default track in another language is still the translation
+    # source, and a sidecar in the language is still copied.
+    test "translates the default track once the timing check rejects every candidate", %{
+      video: video
+    } do
+      stub_reads(video, {:ok, [track(2, "fre"), track(3, "eng", default?: true)]}, %{
+        2 => {:ok, @broken},
+        3 => {:ok, @srt}
+      })
+
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) ==
+               [:probe, {:extract, 2}, {:extract, 3}, {:scan, :movies}]
+
+      assert_received {:translate, "fr"}
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) =~ "Hello"
+      assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(video)
+    end
+
+    test "copies a sidecar in the language once the timing check rejects every candidate", %{
+      video: video
+    } do
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{2 => {:ok, @broken}})
+      put!(Path.join(Path.dirname(video), "M.fre.srt"), @other)
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:extract, 2}, {:scan, :movies}]
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) == @other
+      assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(video)
+    end
+
+    # Without a moviehash nothing is stored, so each sweep probes and extracts again. The own
+    # track and the embedded fallback check the same track in one fetch, and its rejection is
+    # logged once.
+    test "checks a rejected candidate again on every sweep without a moviehash", %{video: video} do
+      stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> :too_small end)
+      stub_reads(video, {:ok, [own_track(2, "fre")]}, %{2 => {:ok, @broken}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      criteria = %{imdb_id: "tt1", embedded_subtitles: ["fre"]}
+
+      for _sweep <- 1..2 do
+        log = info_log(fn -> assert :ok = Subtitles.fetch_missing(criteria, video, :movies) end)
+        assert length(Regex.scan(~r/track 2 of .* failed the timing check/, log)) == 1
+        assert drain_effects([]) == [:probe, {:extract, 2}]
+        refute File.exists?(Subtitles.sidecar_path(video, "fr"))
+      end
+
+      assert Repo.aggregate(TrackRejection, :count) == 0
+    end
+
+    # A generic "chi" track is a candidate for both Chinese targets: one fetch checks it once.
+    test "logs one rejection for a track two wanted languages share", %{video: video} do
+      ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "zh,cn")
+      stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> :too_small end)
+      stub_reads(video, {:ok, [track(2, "chi")]}, %{2 => {:ok, @broken}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      log =
+        info_log(fn ->
+          assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+        end)
+
+      assert length(Regex.scan(~r/track 2 of .* failed the timing check/, log)) == 1
+      assert drain_effects([]) == [:probe, {:extract, 2}]
     end
   end
 
@@ -1524,6 +1642,14 @@ defmodule Cinder.SubtitlesTest do
     log = capture_log(fn -> assert :ok = Subtitles.fetch_missing(criteria, video, :movies) end)
     refute log =~ "crashed"
     drain_effects([])
+  end
+
+  # A timing rejection logs at info, below the test env's :warning level. The level comes back on
+  # exit, which runs even for a test ExUnit killed.
+  defp info_log(fun) do
+    Logger.configure(level: :info)
+    on_exit(fn -> Logger.configure(level: :warning) end)
+    capture_log(fun)
   end
 
   defp drain_effects(acc) do
