@@ -123,14 +123,18 @@ defmodule Cinder.Test.BarrierFilesystem do
 
   `phase: :post_effect` runs the real operation, then returns the error. Only `exchange`,
   `rename_exclusive`, `rm`, `write_exclusive`, `write_bound` and `discard_bound` take it.
+
+  An optional `excludes` string skips every source that contains it, for a path that another
+  path contains: a directory's path is part of the path of each file inside it.
   """
   def fail_once(failure), do: arm(:filesystem_failure, Map.put(failure, :once, true))
 
   @doc """
   Fails each of `failures` in order, each an `operation`, `source_contains` and `reason` map with
-  an optional 0-arity `callback` run as it fires (`phase` is ignored): one is armed only once the
-  one before it fired. The test fails when it exits before every failure fired. Arming sets and
-  the exit restores `:filesystem` as `fail_once/1` says.
+  an optional `excludes` as `fail_once/1` says and an optional 0-arity `callback` run as it fires
+  (`phase` is ignored): one is armed only once the one before it fired. The test fails when it
+  exits before every failure fired. Arming sets and the exit restores `:filesystem` as
+  `fail_once/1` says.
   """
   def fail_in_order(failures), do: arm(:filesystem_failures, failures)
 
@@ -429,7 +433,7 @@ defmodule Cinder.Test.BarrierFilesystem do
          source
        )
        when is_binary(contains) do
-    if String.contains?(source, contains) do
+    if source_matches?(failure, source, contains) do
       store_failure_sequence(rest)
       run_failure_callback(failure)
       {:error, reason}
@@ -439,6 +443,12 @@ defmodule Cinder.Test.BarrierFilesystem do
   end
 
   defp match_sequence_failure(_failure, _rest, _operation, _source), do: :no_match
+
+  # A failure or a barrier matches a path that contains `contains` and not its `excludes`.
+  defp source_matches?(failure_or_barrier, source, contains),
+    do:
+      String.contains?(source, contains) and
+        not String.contains?(source, Map.get(failure_or_barrier, :excludes, "\0"))
 
   defp run_failure_callback(%{callback: callback}) when is_function(callback, 0), do: callback.()
   defp run_failure_callback(_failure), do: :ok
@@ -457,7 +467,7 @@ defmodule Cinder.Test.BarrierFilesystem do
   end
 
   defp failure_result(failure, source, contains, reason) do
-    if String.contains?(source, contains) do
+    if source_matches?(failure, source, contains) do
       if Map.get(failure, :once, false),
         do: Application.delete_env(:cinder, :filesystem_failure)
 
@@ -470,9 +480,7 @@ defmodule Cinder.Test.BarrierFilesystem do
   end
 
   defp maybe_pause(barrier, owner, operation, path, contains) do
-    excluded? = String.contains?(path, Map.get(barrier, :excludes, "\0"))
-
-    if String.contains?(path, contains) and not excluded? do
+    if source_matches?(barrier, path, contains) do
       if Map.get(barrier, :once, false), do: Application.delete_env(:cinder, :filesystem_barrier)
       ref = make_ref()
       send(owner, {:filesystem_barrier, self(), ref, operation, path})

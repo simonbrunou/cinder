@@ -54,9 +54,11 @@
 - Inject a one-time filesystem failure with `Cinder.Test.BarrierFilesystem.fail_once/1` or
   `fail_in_order/1`. Each fails the test when the failure never fired. A failure armed by hand
   with `Application.put_env` gets no such check: keep that for a failure that must stay armed.
-- A failure fires on the first matching operation whose source contains `source_contains`. A
-  bound reports the path it was opened or created at as its source. Only a bound created outside
-  the library roots reports its `/proc/<pid>/fd/<n>` path.
+- A failure fires on the first matching operation whose source contains `source_contains` and
+  not its optional `excludes`. A bound reports the path it was opened or created at as its
+  source. Only a bound created outside the library roots reports its `/proc/<pid>/fd/<n>` path.
+  A file's path contains its directory's, so a failure meant for a directory's close excludes
+  the files inside it, as `directory_close_failure/1` in `sidecar_transaction_test.exs` does.
 - The identity probes that verify a subtitle exchange close bounds on the same paths. Arm a close
   failure meant for after the exchange from a barrier, as `fail_close_after_exchange/4` in
   `sidecar_transaction_test.exs` does.

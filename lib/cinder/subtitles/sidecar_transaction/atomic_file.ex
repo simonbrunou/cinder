@@ -101,7 +101,9 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   after the move and `to` could not be read back there: whatever holds the name now is left
   alone.
   `{:error, {:publication_committed, detail}}` means the target holds `to`, but a step after the
-  effect was not acknowledged. Any other error leaves whatever the workspace still holds there.
+  effect was not acknowledged. `{:error, {:operation_and_descriptor_close_failed, reason, close}}`
+  is `{:error, reason}` from a workspace directory that also failed to close. Any other error
+  leaves whatever the workspace still holds there.
   """
   @spec swap(String.t(), binary() | :absent, binary() | :absent) :: :ok | {:error, term()}
   def swap(target, same, same) when is_binary(same), do: verify_unchanged(target, same)
@@ -142,6 +144,23 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   defp settle_unverified({:error, {:descriptor_close_failed, _} = reason}, target, to)
        when is_binary(to),
        do: settle_by_target(reason, target, to)
+
+  # The workspace directory also failed to close after a result that was not committed: settle
+  # that result alone, and keep the close reason beside whatever it settled to.
+  defp settle_unverified(
+         {:error, {:operation_and_descriptor_close_failed, inner, close_reason}},
+         target,
+         to
+       ) do
+    case settle_unverified({:error, inner}, target, to) do
+      {:error, {:publication_committed, settled}} ->
+        {:error,
+         {:publication_committed, {:operation_and_descriptor_close_failed, settled, close_reason}}}
+
+      {:error, unsettled} ->
+        {:error, {:operation_and_descriptor_close_failed, unsettled, close_reason}}
+    end
+  end
 
   defp settle_unverified(result, _target, _to), do: result
 

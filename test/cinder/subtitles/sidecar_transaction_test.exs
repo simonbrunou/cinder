@@ -1571,6 +1571,143 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert workspaces(target) == []
     end
 
+    test "an unverified create whose workspace fails to close still records the fetched track", %{
+      video: video
+    } do
+      target = Path.rootname(video) <> ".fr.srt"
+
+      fail_in_order([
+        %{operation: :open_bound, source_contains: ".fr.srt", reason: :eio},
+        directory_close_failure()
+      ])
+
+      log = capture_log(fn -> assert :ok = replace_fr(video, @replacement) end)
+      assert log =~ "subtitle publication unacknowledged"
+      assert log =~ "{:operation_and_descriptor_close_failed, :concurrent_change, :eio}"
+      assert_fetched_track(video, target, "fr", "embedded")
+    end
+
+    test "staged and workspace descriptors that fail to close after the create record the track",
+         %{video: video} do
+      target = Path.rootname(video) <> ".fr.srt"
+
+      fail_in_order([
+        %{operation: :open_bound, source_contains: ".fr.srt", reason: :eio},
+        %{
+          operation: :close_bound,
+          source_contains: ".cinder-subtitle-sync-write-staged",
+          reason: :eio
+        },
+        directory_close_failure()
+      ])
+
+      log = capture_log(fn -> assert :ok = replace_fr(video, @replacement) end)
+
+      assert log =~
+               "{:operation_and_descriptor_close_failed, {:descriptor_close_failed, :eio}, :eio}"
+
+      assert_fetched_track(video, target, "fr", "embedded")
+    end
+
+    test "an unverified exchange whose workspace fails to close still records the fetched track",
+         %{video: video, path: path} do
+      use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-staged"})
+
+      log =
+        capture_log(fn ->
+          task = Task.async(fn -> replace(video, @replacement) end)
+
+          assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged},
+                         DiskTask.timeout_ms()
+
+          # Armed after the exchange: `swap/3` opens the target before it, too.
+          fail_in_order([
+            %{operation: :open_bound, source_contains: path, reason: :eio},
+            directory_close_failure()
+          ])
+
+          send(pid, {ref, :continue})
+          assert :ok = DiskTask.await(task)
+        end)
+
+      assert log =~ "{:operation_and_descriptor_close_failed, :concurrent_change, :eio}"
+      assert_fetched_track(video, path, "en", "opensubtitles_id")
+    end
+
+    test "an unverified create whose workspace fails to close is not recorded once edited", %{
+      video: video
+    } do
+      target = Path.rootname(video) <> ".fr.srt"
+
+      fail_in_order([
+        %{operation: :open_bound, source_contains: ".fr.srt", reason: :eio},
+        directory_close_failure(%{callback: fn -> File.write!(target, "edited") end})
+      ])
+
+      capture_log(fn ->
+        assert {:error,
+                {:write,
+                 {:error, {:operation_and_descriptor_close_failed, :concurrent_change, :eio}}}} =
+                 replace_fr(video, @replacement)
+      end)
+
+      assert File.read!(target) == "edited"
+      refute Map.has_key?(Manifest.read(video).tracks, "fr")
+    end
+
+    test "an unverified create whose workspace fails to close is not recorded once unreadable", %{
+      video: video,
+      tmp_dir: tmp
+    } do
+      target = Path.rootname(video) <> ".fr.srt"
+      outside = Path.join(tmp, "outside.srt")
+      File.write!(outside, @replacement)
+
+      # The fetched bytes stay reachable, through a symlink `safe_read/1` refuses to follow.
+      swap_for_symlink = fn ->
+        File.rm!(target)
+        File.ln_s!(outside, target)
+      end
+
+      fail_in_order([
+        %{operation: :open_bound, source_contains: ".fr.srt", reason: :eio},
+        directory_close_failure(%{callback: swap_for_symlink})
+      ])
+
+      capture_log(fn ->
+        assert {:error,
+                {:write,
+                 {:error, {:operation_and_descriptor_close_failed, :concurrent_change, :eio}}}} =
+                 replace_fr(video, @replacement)
+      end)
+
+      assert File.read_link!(target) == outside
+      refute Map.has_key?(Manifest.read(video).tracks, "fr")
+    end
+
+    test "identical bytes created first stay unrecorded when the workspace fails to close", %{
+      video: video
+    } do
+      target = Path.rootname(video) <> ".fr.srt"
+      use_barrier(%{operation: :rename_exclusive, phase: :before, contains: "cas-"})
+      fail_in_order([directory_close_failure()])
+
+      task = Task.async(fn -> replace_fr(video, @replacement) end)
+
+      assert_receive {:filesystem_barrier, pid, ref, :rename_exclusive, _staged},
+                     DiskTask.timeout_ms()
+
+      File.write!(target, @replacement)
+      send(pid, {ref, :continue})
+
+      assert {:error,
+              {:write,
+               {:error, {:operation_and_descriptor_close_failed, :concurrent_change, :eio}}}} =
+               DiskTask.await(task)
+
+      refute Map.has_key?(Manifest.read(video).tracks, "fr")
+    end
+
     test "a rollback that cannot read back what it retracted puts it back", %{video: video} do
       target = Path.rootname(video) <> ".fr.srt"
 
@@ -1913,6 +2050,27 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   defp close_source(:staged, _path), do: ".cinder-subtitle-sync-write-staged"
   defp close_source(:target, path), do: path
   defp close_source(:directory, _path), do: ".cinder-subtitle-sync-cas-"
+
+  # The workspace directory's close alone: the staged file's path contains the directory's.
+  defp directory_close_failure(overrides \\ %{}) do
+    Map.merge(
+      %{
+        operation: :close_bound,
+        source_contains: close_source(:directory, nil),
+        excludes: close_source(:staged, nil),
+        reason: :eio
+      },
+      overrides
+    )
+  end
+
+  # A fetch recorded despite an unacknowledged publication: its bytes, its track, no workspace.
+  defp assert_fetched_track(video, target, language, origin) do
+    assert File.read!(target) == @replacement
+    assert %{origin: ^origin, managed_sha256: managed} = Manifest.read(video).tracks[language]
+    assert managed == digest(@replacement)
+    assert workspaces(target) == []
+  end
 
   # A correction whose exchange committed unacknowledged: the corrected bytes and the pending
   # record stay until `recover/2` records them.
