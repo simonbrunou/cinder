@@ -193,22 +193,6 @@ defmodule Cinder.CodeHealthTest do
   defp exported?(module, fun),
     do: Code.ensure_loaded?(module) and Keyword.has_key?(module.__info__(:functions), fun)
 
-  # #889: the dev shell points MIX_TAILWIND_PATH at a Tailwind binary in the read-only Nix store.
-  # On a version mismatch, `tailwind.install --if-missing` downloads the configured version with
-  # :httpc and cannot write it there.
-  test "the flake pins the Tailwind version config.exs asks for" do
-    pinned =
-      Regex.run(~r/^\s*tailwindVersion = "(\S+)";$/m, File.read!("flake.nix"),
-        capture: :all_but_first
-      )
-
-    assert pinned == [Application.fetch_env!(:tailwind, :version)],
-           "bump these together: `config :tailwind, version:`, the Dockerfile's " <>
-             "ARG TAILWIND_VERSION and both of its sha256 sums, and flake.nix's " <>
-             "tailwindVersion and both of its sha256 sums (all from the release's " <>
-             "sha256sums.txt)"
-  end
-
   # #739: the engine's scratch-file names are its own. Tests other than the staged-import ones
   # reach them through `Cinder.LibraryStubs`, so renaming them touches two files.
   test "only the staged-import tests and LibraryStubs spell out the candidate file name" do

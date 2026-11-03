@@ -35,7 +35,7 @@ RUN apt-get update \
 # `config :tailwind, path:`, so `tailwind.install --if-missing` finds the configured version there
 # and downloads nothing.
 # TAILWIND_VERSION must equal `config :tailwind, version:` and flake.nix's tailwindVersion
-# (test/code_health/tailwind_dockerfile_pin_test.exs and test/code_health_test.exs check them);
+# (test/code_health/tailwind_dockerfile_pin_test.exs and tailwind_flake_pin_test.exs check them);
 # take the new sums from the release's sha256sums.txt when you bump it. Set it on this one ARG
 # line only, and read it as ${TAILWIND_VERSION}: tailwind_dockerfile_pin_test.exs fails on any
 # other form.
