@@ -22,9 +22,14 @@ only `test/`, `.forgejo/workflows/`, `scripts/`, `.gitignore`, `AGENTS.md`, `doc
 
 Each sentence about what Cinder does holds on every path the fragment covers: each fallback or
 other writer that still runs, and each case the code handles another way (a file with no
-moviehash, an entry written before the change). Prove each one with a run that goes red when it
-is false, such as a throwaway test, or cut it. On #1072 the first fragment held three such
-sentences, each false on some path: three findings over two review rounds, about 22 minutes.
+moviehash, an entry written before the change). Prove each one, wording taken from a code comment
+or the issue's brief included, with a run that goes red when it is false, such as a throwaway
+test, or cut it. On #1072 the first fragment held three such sentences, each false on some path:
+three findings over two review rounds, about 22 minutes. On #871, "duplicates of one result that
+disagree on whether they carry the series' id count as carrying none" came from a #699 code
+comment and the triage brief. It was false for one copy with the series' id and one with none,
+which settle on the series' id, and the code comment held the same clause: two re-check rounds,
+about 14 minutes.
 
 `mix test` parses every fragment (`test/code_health_test.exs`), so a malformed one fails on its
 own PR. A release runs `mix cinder.changelog.release`, which folds every fragment into the new
