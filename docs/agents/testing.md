@@ -124,12 +124,20 @@
   full suite before its push. Run the alias's compile, format and Credo gates with the
   repo-wide fences: `mix test test/code_health_test.exs test/code_health` (about 30 s).
   When a comment under `lib/` changed, add every file that `rg -l '"lib/' test` lists (about
-  2 minutes): some of them scan `lib/` with patterns that a comment can match. CI runs the full
-  suite on the push. Everything else runs the full `mix test`: a `@doc` or `@moduledoc`, other
-  Markdown (`books_b0_contract_test.exs` reads `docs/audits/` and `specs/`), a gettext catalog,
-  a merge of `origin/main` (AGENTS.md "Merge authority") and a release. On #905, #945 and #873,
-  another full run on such a fix took 4 to 5.5 minutes of the CPU the host's agent threads
-  share.
+  2 minutes): some of them scan `lib/` with patterns that a comment can match. A review fix
+  commit whose changes are `_test.exs` files, alone or with the kinds above, runs that
+  `mix test` with more files added: each changed test file that still exists, and every file that
+  `rg -l <path> test -g '*_test.exs'` lists for each changed path and for a renamed file's old
+  path (`git diff --name-status -M HEAD^` shows both once the fix is committed).
+  `books_b0_contract_test.exs` reads test names out of the files it names, and apart from it
+  only the fences read the test sources. A test file can still break another one through shared
+  state, such as an `async:` flag or a config key it no longer restores. On #1123, four full
+  runs after test-only fixes took 21 minutes, and one on #1127 took 7 minutes. CI runs the full
+  suite on the push, which runs every file these short runs skip. Everything else runs
+  the full `mix test`: a `@doc` or `@moduledoc`, other Markdown (`books_b0_contract_test.exs`
+  reads `docs/audits/` and `specs/`), a gettext catalog, a merge of `origin/main` (AGENTS.md
+  "Merge authority") and a release. On #905, #945 and #873, another full run on such a fix took
+  4 to 5.5 minutes of the CPU the host's agent threads share.
 - A new UI string fails `translations_complete_test` until you run
   `MIX_ENV=test mix gettext.extract --merge` and write its French msgstr in
   `priv/gettext/fr/LC_MESSAGES/default.po`. When an existing msgid is close enough, the merge
