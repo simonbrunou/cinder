@@ -181,3 +181,21 @@
   the deadline out. On #1118 a healthy library root ran under the same 300 ms as the wedged one,
   missed it on the loaded runner and turned `main` red: 43 minutes from the red run to the fix's
   merge.
+- A task that a shrunk deadline kills can die before its stub runs, since a loaded runner can
+  start it past the deadline. A test that reads that stub's report (its pid, a message) passes
+  without it. `Cinder.HTTPPolicyTest` proves the kill through the pid a telemetry event gives it,
+  so it reads the report with `after 0` ([ci.md](ci.md) "Wall-clock tests"). A test whose only
+  way to the task is that report waits long enough that a stub the code left alive still
+  reports: 1 s, as `Cinder.HealthTest` "a map budget kills only the probe it names, and a probe it
+  omits outlasts that budget" waits. An `after 0` returns before a report still on its way.
+  On #1123, with each probe started 300 ms late, an `assert_received` of the killed probe's pid
+  failed, and a helper process that waited for that pid without a bound held a healthy probe until
+  its 15 s budget ran out.
+- A probe meant to answer after its deadline answers on a signal the test sends only after 10 s
+  with the probe still alive, never after a sleep: a caller that wakes late reads a reply that
+  came after the deadline. Every probe the test holds back meanwhile gets a budget longer than the
+  test can hold it. `Cinder.HealthTest` "a probe that answers past its budget times out even
+  behind a slower probe" does this with a helper process that releases each probe. On #1123 a
+  probe that slept 500 ms against its 200 ms budget read `:ok` with the caller woken 400 ms late.
+  The cases in this bullet and the one above took a review and two re-check rounds, about
+  47 minutes from the first finding to the last fix.
