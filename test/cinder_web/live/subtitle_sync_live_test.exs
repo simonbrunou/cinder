@@ -3,6 +3,8 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
   import Cinder.AccountsFixtures
   import Cinder.CatalogFixtures
+  import Cinder.Test.BarrierFilesystem, only: [fail_once: 1]
+  import ExUnit.CaptureLog, only: [with_log: 1]
   import Phoenix.LiveViewTest
 
   alias Cinder.Catalog.{Episode, Season, Series}
@@ -794,6 +796,34 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     assert html =~ "Original subtitle could not be restored."
     assert File.read!(sidecar) == corrected
     assert Manifest.sync(Manifest.read(video), "en") == metadata
+  end
+
+  # Issue #1127: the restore's exchange put the original back, unacknowledged.
+  test "reset whose restore went unacknowledged reports the original restored", %{
+    conn: conn,
+    movies: movies
+  } do
+    {movie, video, sidecar, item} = managed_movie!(movies, "Unacknowledged")
+    original = File.read!(sidecar)
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+
+    fail_once(%{
+      operation: :exchange,
+      source_contains: ".cinder-subtitle-sync-write-",
+      phase: :post_effect,
+      reason: :eio
+    })
+
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
+
+    {_html, _log} =
+      with_log(fn -> view |> element("#reset-subtitle-#{item.id}") |> render_click() end)
+
+    assert has_element?(view, "#flash-info", "Original subtitle restored.")
+    refute has_element?(view, "#flash-error")
+    assert File.read!(sidecar) == original
+    assert Manifest.sync(Manifest.read(video), "en") == nil
   end
 
   test "subtitle sync route is admin-only", %{conn: conn} do

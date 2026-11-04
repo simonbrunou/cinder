@@ -724,6 +724,37 @@ defmodule Cinder.Subtitles.SyncTest do
     assert File.read!(SidecarTransaction.backup_path(path)) == ""
   end
 
+  # Issue #1127: the restore's exchange put the original back, unacknowledged.
+  test "a changed moviehash whose restore went unacknowledged analyzes afresh", %{video: video} do
+    path = managed_srt!(video)
+    original = File.read!(path)
+    [item] = Sync.discover(video)
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+
+    File.write!(video, "x" <> String.duplicate("v", 131_071))
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, input, output ->
+      assert File.read!(input) == original
+      File.write!(output, original)
+      {:ok, %{score: 30.0, offset_ms: 0, rate: 1.0}}
+    end)
+
+    fail_once(%{
+      operation: :exchange,
+      source_contains: ".cinder-subtitle-sync-write-",
+      phase: :post_effect,
+      reason: :eio
+    })
+
+    {result, log} = with_log(fn -> Sync.analyze_video(video) end)
+
+    assert [%{status: :aligned}] = result
+    assert File.read!(path) == original
+    assert File.read!(SidecarTransaction.backup_path(path)) == ""
+    assert log =~ "subtitle publication unacknowledged for #{path}"
+  end
+
   test "video replacement rejects a mismatched immutable backup", %{video: video} do
     path = managed_srt!(video)
     [item] = Sync.discover(video)

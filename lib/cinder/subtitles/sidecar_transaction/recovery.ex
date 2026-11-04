@@ -241,11 +241,12 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
     end
   end
 
-  # `{:publication_committed, _}` means the target holds the applied bytes and only a step after
-  # the exchange went unacknowledged, so recovery records the correction as it does after `:ok`.
-  # `finalize/1` cannot tell that apart from a failed write: its workspace check also passes
-  # while the target still holds the expected bytes beside the staged ones. The warning is
-  # logged here, before the checks that can still hold the item for review.
+  # `{:publication_committed, _}` means the target holds the bytes the write put there and only a
+  # step after the exchange went unacknowledged, so recovery goes on as it does after `:ok`: it
+  # records a recovered correction, or finishes a reset or a replaced video's cleanup with the
+  # original back. `finalize/1` cannot tell that apart from a failed write: its workspace check
+  # also passes while the target still holds the expected bytes beside the staged ones. The
+  # warning is logged here, before the later steps that can still fail.
   defp published(item, {:error, {:publication_committed, detail}}) do
     Logger.warning(
       "subtitle publication unacknowledged for #{item.sidecar_path}: #{inspect(detail)}"
@@ -309,7 +310,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
       true ->
         with {:ok, current} <- safe_read(item.sidecar_path),
              {:ok, original} <- Backup.read_original(item.sidecar_path, item.sync),
-             do: AtomicFile.write(item.sidecar_path, original, current)
+             do: published(item, AtomicFile.write(item.sidecar_path, original, current))
     end
   end
 
@@ -359,7 +360,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
        when source != applied do
     if regular_file?(Backup.path(item.sidecar_path)) do
       with {:ok, original} <- Backup.read_original(item.sidecar_path, sync),
-           do: AtomicFile.write(item.sidecar_path, original, current)
+           do: published(item, AtomicFile.write(item.sidecar_path, original, current))
     else
       {:error, :missing_backup}
     end

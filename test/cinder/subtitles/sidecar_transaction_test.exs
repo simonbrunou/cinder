@@ -1347,6 +1347,25 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert Manifest.sync(Manifest.read(video), "en") != nil
     end
 
+    # Issue #1127: the restore's exchange put the original back; a step after it went
+    # unacknowledged.
+    for failure <- [:close, :exchange, :discard] do
+      test "a replaced video whose restore went unacknowledged (#{failure}) retires the original",
+           %{video: video, path: path, original: original, backup: backup} do
+        assert {:ok, :corrected, _} = manual(video, 1_000)
+        File.write!(video, @changed_video)
+
+        {result, log} = unacknowledged_write(unquote(failure), path, fn -> recover(video) end)
+
+        assert {:ok, %{sync: nil}} = result
+        assert File.read!(path) == original
+        assert File.read!(backup) == ""
+        assert Manifest.sync(Manifest.read(video), "en") == nil
+        assert Manifest.replacement_cleanup_sync(Manifest.read(video), "en") == nil
+        assert_unacknowledged_warning(log, path, unacknowledged_detail(unquote(failure)))
+      end
+    end
+
     test "a failed journal write keeps the original for a retry", %{
       video: video,
       path: path,
@@ -1627,6 +1646,81 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(path) == external
       assert SidecarTransaction.stranded_backup?(path)
       assert Manifest.sync(Manifest.read(video), "en") == record
+    end
+
+    # Issue #1127: the restore's exchange put the original back; a step after it went
+    # unacknowledged.
+    for failure <- [:close, :exchange, :discard] do
+      test "a reset whose restore went unacknowledged (#{failure}) finishes on the first call", %{
+        video: video,
+        path: path,
+        original: original,
+        backup: backup
+      } do
+        assert {:ok, :corrected, _} = manual(video, 1_000)
+
+        {result, log} = unacknowledged_write(unquote(failure), path, fn -> reset(video) end)
+
+        assert :ok = result
+        assert_reset_finished(video, path, original, backup)
+        assert_unacknowledged_warning(log, path, unacknowledged_detail(unquote(failure)))
+      end
+    end
+
+    test "a journaled reset whose restore went unacknowledged finishes on the first call", %{
+      video: video,
+      path: path,
+      original: original,
+      backup: backup
+    } do
+      assert {:ok, :corrected, %{sync: record}} = manual(video, 1_000)
+      assert :ok = Manifest.begin_reset_cleanup(video, "en", record)
+
+      {result, log} = unacknowledged_write(:close, path, fn -> reset(video) end)
+
+      assert :ok = result
+      assert_reset_finished(video, path, original, backup)
+      assert_unacknowledged_warning(log, path, unacknowledged_detail(:close))
+    end
+
+    test "reconcile finishes a reset journal whose restore went unacknowledged", %{
+      video: video,
+      path: path,
+      original: original,
+      backup: backup
+    } do
+      assert {:ok, :corrected, %{sync: record}} = manual(video, 1_000)
+      assert :ok = Manifest.begin_reset_cleanup(video, "en", record)
+
+      {result, log} = unacknowledged_write(:close, path, fn -> reconcile(video) end)
+
+      assert :ok = result
+      assert_reset_finished(video, path, original, backup)
+      assert_unacknowledged_warning(log, path, unacknowledged_detail(:close))
+    end
+
+    test "a reset whose restore exchange failed keeps the corrected bytes and journal", %{
+      video: video,
+      path: path,
+      backup: backup
+    } do
+      assert {:ok, :corrected, %{sync: record}} = manual(video, 1_000)
+      corrected = File.read!(path)
+
+      fail_once(%{
+        operation: :exchange,
+        source_contains: ".cinder-subtitle-sync-write-",
+        reason: :eio
+      })
+
+      {result, log} = with_log(fn -> reset(video) end)
+
+      assert {:error, :eio} = result
+      assert File.read!(path) == corrected
+      assert File.exists?(backup)
+      assert Manifest.sync(Manifest.read(video), "en") == record
+      assert Manifest.reset_cleanup_sync(Manifest.read(video), "en") == record
+      refute log =~ "subtitle publication unacknowledged"
     end
   end
 
@@ -2954,7 +3048,49 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
   end
 
-  # The one warning a recovery logs when its write published the correction unacknowledged.
+  # Runs `fun` with its write's exchange onto `path` committed and one step after it failed: the
+  # staged descriptor's close, the exchange's own acknowledgement, or the displaced inode's
+  # discard. Returns `fun`'s result and the log.
+  defp unacknowledged_write(:close, path, fun),
+    do: fail_close_after_exchange(path, [:staged], fun)
+
+  defp unacknowledged_write(:exchange, _path, fun) do
+    fail_once(%{
+      operation: :exchange,
+      source_contains: ".cinder-subtitle-sync-write-",
+      phase: :post_effect,
+      reason: :eio
+    })
+
+    with_log(fun)
+  end
+
+  defp unacknowledged_write(:discard, path, fun) do
+    fail_once(%{
+      operation: :discard_bound,
+      source_contains: Path.basename(path),
+      phase: :post_effect,
+      reason: :eio
+    })
+
+    with_log(fun)
+  end
+
+  # The `{:publication_committed, detail}` each `unacknowledged_write/3` failure gives.
+  defp unacknowledged_detail(:close), do: {:descriptor_close_failed, :eio}
+  defp unacknowledged_detail(:exchange), do: {:effect_committed, "exchange", :eio}
+  defp unacknowledged_detail(:discard), do: {:effect_committed, "discard_bound", :eio}
+
+  # A reset that put the original back and retired it: no record and no reset journal.
+  defp assert_reset_finished(video, path, original, backup) do
+    assert File.read!(path) == original
+    assert File.read!(backup) == ""
+    assert Manifest.sync(Manifest.read(video), "en") == nil
+    assert Manifest.reset_cleanup_sync(Manifest.read(video), "en") == nil
+  end
+
+  # The one warning a recovery logs when its write published a correction, or restored the
+  # original, unacknowledged.
   defp assert_unacknowledged_warning(log, path, detail) do
     assert [line] =
              log
