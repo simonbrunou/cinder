@@ -18,7 +18,8 @@ defmodule Cinder.Download.OrphanFolders do
 
   A folder is not classified at all (`hold` is set instead of `class`) while a symlink or other
   non-regular entry is inside it, something in it changed in the last hour (a download or unpack
-  may still be writing), it is unreadable, or it is implausibly large to walk.
+  may still be writing), it is unreadable or its survey misses its deadline (both `:unreadable`),
+  or it is implausibly large to walk.
 
   ## What counts as a reference
 
@@ -39,7 +40,15 @@ defmodule Cinder.Download.OrphanFolders do
   job the client already knew when the snapshot was taken, and a later job can only reserve a new
   key (its intent row is read at delete time).
 
-  All filesystem access goes through the configured `Cinder.Library.Filesystem`.
+  All filesystem access goes through the configured `Cinder.Library.Filesystem`. The listing and
+  survey reads under the import roots run under `Cinder.Library.BoundedWalk.run/3`, keyed by the
+  import root they read under, so a wedged mount ends them with an error or a hold instead of
+  blocking the call (#1113): each root's listing (30 s), and each job folder's survey, which
+  `clear/3` shares with its `lstat` of the folder (5 minutes). `docs/agents/architecture.md`
+  ("Background work is supervised and bounded") gives the bases. A walk past its deadline keeps
+  counting against its root until it returns, so a stuck survey also makes the next `scan/0` fail
+  on that root. The classification reads (the library files' `lstat`, the moviehash of each
+  video) and the delete have no deadline.
   """
   import Ecto.Query
 
@@ -49,6 +58,7 @@ defmodule Cinder.Download.OrphanFolders do
   alias Cinder.Download
   alias Cinder.Download.Intent
   alias Cinder.Library
+  alias Cinder.Library.BoundedWalk
   alias Cinder.Library.Deletion
   alias Cinder.Repo
   alias Cinder.Settings
@@ -73,6 +83,9 @@ defmodule Cinder.Download.OrphanFolders do
   @recent_seconds 3600
   @max_entries 100_000
   @max_depth 32
+  # One job folder's survey: `@max_entries` at two reads of about 1 ms each, as the adoption
+  # scan's walk (`Cinder.Library.Adoption`).
+  @survey_timeout_ms 300_000
 
   @doc "The classes that may be cleared in bulk."
   @spec safe_classes() :: [class()]
@@ -84,6 +97,10 @@ defmodule Cinder.Download.OrphanFolders do
   Returns `{:ok, %{folders: folders, referenced: count}}` (`referenced` is how many job folders
   were skipped as still in use), or an error: `:import_roots_not_explicit`,
   `{:root_unreadable, root, reason}` or `{:client_list_failed, protocol, reason}`.
+
+  The reason is `:timeout` when a root's listing misses its `Cinder.Library.BoundedWalk` deadline
+  or the guard refuses it, as it does while an earlier walk under that root is stuck, a folder
+  survey included. A folder whose survey misses its deadline or is refused is held `:unreadable`.
   """
   @spec scan() :: {:ok, %{folders: [folder()], referenced: non_neg_integer()}} | {:error, term()}
   def scan do
@@ -109,6 +126,8 @@ defmodule Cinder.Download.OrphanFolders do
   (`clear_download_folder`, entity `{"DownloadFolder", nil}`, detail `path`/`key`/`class`/`size`)
   attributed to `actor`. Skip reasons: `:not_a_job_folder`, `:gone`,
   `:referenced`, `{:held, hold}`, `{:class, class}` and `{:delete_failed, reason}` (logged).
+  A folder whose `lstat` and survey miss their shared deadline, or that the guard refuses, is
+  skipped with `{:held, :unreadable}`.
   """
   @spec clear([String.t()], [class()], Cinder.Accounts.User.t() | nil) ::
           {:ok, %{cleared: [String.t()], skipped: [{String.t(), term()}]}} | {:error, term()}
@@ -129,19 +148,21 @@ defmodule Cinder.Download.OrphanFolders do
   end
 
   defp clear_one(path, allowed, {roots, client_keys}, actor, state) do
-    case job_folder(path, roots) do
-      {:ok, folder} -> clear_folder(folder, allowed, client_keys, actor, state)
+    with {:ok, folder} <- job_folder(path, roots),
+         {:ok, surveyed} <- resurvey(folder) do
+      clear_folder(surveyed, allowed, client_keys, actor, state)
+    else
       {:skip, reason} -> {{path, {:skip, reason}}, state}
     end
   end
 
-  defp clear_folder(folder, allowed, client_keys, actor, state) do
-    case survey_and_classify(folder, state) do
+  defp clear_folder(surveyed, allowed, client_keys, actor, state) do
+    case classify_surveyed(surveyed, state) do
       {:ok, classified, state} ->
         {guarded_delete(classified, allowed, client_keys, actor), state}
 
       {:skip, reason} ->
-        {{folder.path, {:skip, reason}}, state}
+        {{surveyed.path, {:skip, reason}}, state}
     end
   end
 
@@ -177,17 +198,31 @@ defmodule Cinder.Download.OrphanFolders do
 
     with true <- root in roots,
          {:ok, key} <- Deletion.job_folder_key(name) do
-      case fs().lstat(expanded) do
-        {:ok, %File.Stat{type: :directory}} -> {:ok, folder(root, name, key)}
-        {:error, :enoent} -> {:skip, :gone}
-        _other -> {:skip, :not_a_job_folder}
-      end
+      {:ok, folder(root, name, key)}
     else
       _ -> {:skip, :not_a_job_folder}
     end
   end
 
   defp job_folder(_path, _roots), do: {:skip, :not_a_job_folder}
+
+  # The folder's `lstat` and its survey share one deadline under its import root (#1113).
+  defp resurvey(folder) do
+    now = System.os_time(:second)
+
+    reread = fn ->
+      case fs().lstat(folder.path) do
+        {:ok, %File.Stat{type: :directory}} -> {:ok, survey(folder, now)}
+        {:error, :enoent} -> {:skip, :gone}
+        _other -> {:skip, :not_a_job_folder}
+      end
+    end
+
+    case within_survey_deadline(folder, reread) do
+      {:error, :timeout} -> {:ok, held(folder, :unreadable)}
+      result -> result
+    end
+  end
 
   defp folder(root, name, key) do
     %{
@@ -201,19 +236,13 @@ defmodule Cinder.Download.OrphanFolders do
     }
   end
 
-  defp survey_and_classify(folder, state) do
-    surveyed = survey(folder, System.os_time(:second))
-
-    case surveyed do
-      %{hold: nil, files: files} ->
-        state = ensure_index(state, files)
-        {class, cache} = classify_files(files, state.index, state.cache)
-        {:ok, %{surveyed | class: class}, %{state | cache: cache}}
-
-      %{hold: hold} ->
-        {:skip, {:held, hold}}
-    end
+  defp classify_surveyed(%{hold: nil, files: files} = surveyed, state) do
+    state = ensure_index(state, files)
+    {class, cache} = classify_files(files, state.index, state.cache)
+    {:ok, %{surveyed | class: class}, %{state | cache: cache}}
   end
+
+  defp classify_surveyed(%{hold: hold}, _state), do: {:skip, {:held, hold}}
 
   # The library index is only worth building (one `lstat` per library file) when a folder holds a
   # video to compare; it is then kept for the rest of the call.
@@ -255,7 +284,16 @@ defmodule Cinder.Download.OrphanFolders do
     end)
   end
 
+  # The root's `ls` and the `lstat` of each entry named like a job folder share one deadline,
+  # `BoundedWalk`'s default (#1113).
   defp root_candidates(root) do
+    case BoundedWalk.run(root, fn -> list_root(root) end) do
+      {:error, :timeout} -> {:error, {:root_unreadable, root, :timeout}}
+      result -> result
+    end
+  end
+
+  defp list_root(root) do
     case fs().ls(root) do
       {:ok, names} ->
         {:ok, names |> Enum.sort() |> Enum.map(&candidate(root, &1)) |> Enum.reject(&is_nil/1)}
@@ -367,9 +405,30 @@ defmodule Cinder.Download.OrphanFolders do
         })
 
       {:error, hold} ->
-        Map.merge(folder, %{files: [], hold: hold})
+        held(folder, hold)
     end
   end
+
+  defp held(folder, hold), do: Map.merge(folder, %{files: [], hold: hold})
+
+  # `scan/0`'s survey of one job folder, under its import root's deadline (#1113).
+  defp bounded_survey(folder, now) do
+    case within_survey_deadline(folder, fn -> survey(folder, now) end) do
+      {:error, :timeout} -> held(folder, :unreadable)
+      surveyed -> surveyed
+    end
+  end
+
+  # A survey that misses its deadline, or that the guard refuses, answers `{:error, :timeout}`.
+  defp within_survey_deadline(folder, fun),
+    do: BoundedWalk.run(folder.root, fun, timeout_ms: survey_timeout_ms())
+
+  # Public only so a test pins the 5-minute default, which no test can wait out.
+  # `:orphan_folder_survey_timeout_ms` is a test seam, like `BoundedWalk`'s `:walk_timeout_ms`:
+  # production never sets it.
+  @doc false
+  def survey_timeout_ms,
+    do: Application.get_env(:cinder, :orphan_folder_survey_timeout_ms, @survey_timeout_ms)
 
   defp walk(_dir, depth, _acc, _now) when depth > @max_depth, do: {:error, :too_large}
 
@@ -434,7 +493,7 @@ defmodule Cinder.Download.OrphanFolders do
 
   defp classify_all(candidates) do
     now = System.os_time(:second)
-    surveyed = Enum.map(candidates, &survey(&1, now))
+    surveyed = Enum.map(candidates, &bounded_survey(&1, now))
     state = Enum.reduce(surveyed, %{index: nil, cache: %{}}, &ensure_index_for(&1, &2))
 
     {folders, _state} =

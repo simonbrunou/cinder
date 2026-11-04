@@ -289,18 +289,21 @@ Every call a poller makes has a bound:
   runs under coreutils `timeout --kill-after`, with `ionice` and `nice` between `timeout` and the
   interpreter (#954).
 - Archive extraction carries entry-count and expanded-size ceilings.
-- Three directory walks go through `Cinder.Library.BoundedWalk.run/3`, a supervised task with a
+- Five directory walks go through `Cinder.Library.BoundedWalk.run/3`, a supervised task with a
   deadline that answers `{:error, :timeout}`: `Cinder.Library.safe_walk/1`, which every importer
-  and the completion content check run (30 s); `Sidecars.files/1` (30 s); and each library
-  root's walk and identity snapshot in `Adoption.scan/0` (5 min: the walk's 100,000-entry cap at
-  two reads of about 1 ms per entry). The adoption scan runs off the poller tick, but with no
-  bound each reload of a page stuck scanning would pin one more dirty I/O scheduler thread
-  (#944). A walk past its deadline is never killed, since its read may still hold such a thread.
-  The guard counts it as stuck until it returns, and while it does, a new walk under its root is
-  refused at once, as is any new walk under any root once two are stuck. The walks' reads,
-  `Filesystem.Disk.ls/1`, `lstat/1` and `dir?/1`, are raw calls that skip the VM's one file
-  server, so a read on a wedged mount blocks only its own process, not every `File` call in the
-  app.
+  and the completion content check run (30 s); `Sidecars.files/1` (30 s); each library root's
+  walk and identity snapshot in `Adoption.scan/0` (5 min: the walk's 100,000-entry cap at two
+  reads of about 1 ms per entry); and, in `Download.OrphanFolders`, each import root's listing
+  (30 s: at most one read per entry with no entry cap, so some 30,000 entries) and each job
+  folder's survey, which `clear/3` shares with its `lstat` of the folder (5 min: the survey's
+  100,000-entry cap at two reads per entry). The adoption and orphan-folder scans run off the
+  poller tick, but with no bound each reload of a page stuck scanning would pin one more dirty
+  I/O scheduler thread (#944, #1113). A walk past its deadline is never killed, since its read
+  may still hold such a thread. The guard counts it as stuck until it returns, and while it does,
+  a new walk under its root is refused at once, as is any new walk under any root once two are
+  stuck. The walks' reads, `Filesystem.Disk.ls/1`, `lstat/1` and `dir?/1`, are raw calls that
+  skip the VM's one file server, so a read on a wedged mount blocks only its own process, not
+  every `File` call in the app.
 - The exception is a single-path read, such as `PathPolicy.source_file/4` or `destination/3`. It
   skips the file server too but has no deadline, so one hung on a wedged mount still holds the
   poller tick it runs in (#779). `Sidecars.sweep_temps/2`, the walk on the import's sidecar copy

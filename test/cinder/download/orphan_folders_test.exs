@@ -2,6 +2,8 @@ defmodule Cinder.Download.OrphanFoldersTest do
   # async: false — flips process-global Application env (filesystem, import roots).
   use Cinder.DataCase, async: false
 
+  import Cinder.BoundedWalkHelpers
+  import Cinder.ConfigCase
   import Ecto.Query
   import Mox
 
@@ -10,6 +12,9 @@ defmodule Cinder.Download.OrphanFoldersTest do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, Movie}
   alias Cinder.Download.{ClientMock, Intent, OrphanFolders, SabnzbdClientMock}
+  alias Cinder.Library
+  alias Cinder.Library.Filesystem.Disk
+  alias Cinder.Library.FilesystemMock
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -544,9 +549,141 @@ defmodule Cinder.Download.OrphanFoldersTest do
     end
   end
 
+  # #1113: an unbounded read hangs in each of these, so fail in seconds rather than at ExUnit's
+  # 60 s default. Each shrinks only the deadline of the walk it hangs: a refusal meant to come at
+  # once runs under 10 s, which a loaded CI runner cannot miss, with an `elapsed` assert far below.
+  describe "a wedged mount" do
+    @tag timeout: 10_000
+    test "a root whose listing never returns is unreadable at the deadline, and the next scan " <>
+           "refuses it at once",
+         ctx do
+      wedge(:ls, ctx.downloads)
+      put_env(:walk_timeout_ms, 300)
+
+      {elapsed, result} = :timer.tc(&OrphanFolders.scan/0, :millisecond)
+      assert elapsed < 2_300
+      assert_receive {:walking, walk}
+      release_walk_on_exit(walk)
+      assert result == {:error, {:root_unreadable, ctx.downloads, :timeout}}
+
+      put_env(:walk_timeout_ms, 10_000)
+      {elapsed, result} = :timer.tc(&OrphanFolders.scan/0, :millisecond)
+      assert elapsed < 1_000
+      assert result == {:error, {:root_unreadable, ctx.downloads, :timeout}}
+      refute_received {:walking, _refused_walk}
+    end
+
+    @tag timeout: 10_000
+    test "the lstat of a job folder in the root shares the root listing's deadline", ctx do
+      # The root's only entry, so the hung `lstat` is the listing's last read.
+      folder = job_folder(ctx.downloads)
+      wedge(:lstat, folder.path)
+      put_env(:walk_timeout_ms, 300)
+
+      {elapsed, result} = :timer.tc(&OrphanFolders.scan/0, :millisecond)
+      assert elapsed < 2_300
+      assert_receive {:walking, walk}
+      release_walk_on_exit(walk)
+      assert result == {:error, {:root_unreadable, ctx.downloads, :timeout}}
+    end
+
+    @tag timeout: 10_000
+    test "a job folder whose survey never returns is held unreadable at the deadline, and its " <>
+           "stuck walk then refuses its import root at once",
+         ctx do
+      # Both hang. The scan surveys them in name order, so the second is refused at once: held
+      # too, and its read never starts.
+      folder = job_folder(ctx.downloads, "A")
+      later = job_folder(ctx.downloads, "B")
+      wedge(:ls, [folder.path, later.path])
+      put_env(:orphan_folder_survey_timeout_ms, 300)
+
+      {elapsed, result} = :timer.tc(&OrphanFolders.scan/0, :millisecond)
+      assert elapsed < 2_300
+      assert_receive {:walking, walk}
+      release_walk_on_exit(walk)
+      refute_received {:walking, _refused_walk}
+      assert {:ok, %{folders: folders, referenced: 0}} = result
+      assert length(folders) == 2
+      assert %{hold: :unreadable, class: nil} = by_key(folders, folder.key)
+      assert %{hold: :unreadable, class: nil} = by_key(folders, later.key)
+
+      # The stuck survey counts against the folder's import root, so every walk under that root
+      # is refused at once: clear's re-survey, the next scan's root listing, an importer walk.
+      put_env(:orphan_folder_survey_timeout_ms, 10_000)
+      put_env(:walk_timeout_ms, 10_000)
+      clear = fn -> OrphanFolders.clear([folder.path], OrphanFolders.safe_classes(), nil) end
+
+      {elapsed, result} = :timer.tc(clear, :millisecond)
+      assert elapsed < 1_000
+      assert result == {:ok, %{cleared: [], skipped: [{folder.path, {:held, :unreadable}}]}}
+      assert File.dir?(folder.path)
+
+      {elapsed, result} = :timer.tc(&OrphanFolders.scan/0, :millisecond)
+      assert elapsed < 1_000
+      assert result == {:error, {:root_unreadable, ctx.downloads, :timeout}}
+
+      assert Library.safe_walk(folder.path) == {:error, :timeout}
+      refute_received {:walking, _refused_walk}
+    end
+
+    test "a job folder's survey deadline is 5 minutes unless the test seam sets it" do
+      assert Application.fetch_env(:cinder, :orphan_folder_survey_timeout_ms) == :error
+      assert OrphanFolders.survey_timeout_ms() == 300_000
+
+      put_env(:orphan_folder_survey_timeout_ms, 1_234)
+      assert OrphanFolders.survey_timeout_ms() == 1_234
+    end
+
+    @tag timeout: 10_000
+    test "clear/3 skips a folder whose survey never returns as held unreadable at the deadline",
+         ctx do
+      folder = job_folder(ctx.downloads)
+      wedge(:ls, folder.path)
+      put_env(:orphan_folder_survey_timeout_ms, 300)
+      clear = fn -> OrphanFolders.clear([folder.path], OrphanFolders.safe_classes(), nil) end
+
+      {elapsed, result} = :timer.tc(clear, :millisecond)
+      assert elapsed < 2_300
+      assert_receive {:walking, walk}
+      release_walk_on_exit(walk)
+      assert result == {:ok, %{cleared: [], skipped: [{folder.path, {:held, :unreadable}}]}}
+      assert File.dir?(folder.path)
+    end
+
+    @tag timeout: 10_000
+    test "clear/3's lstat of the folder shares its survey's deadline", ctx do
+      folder = job_folder(ctx.downloads)
+      wedge(:lstat, folder.path)
+      put_env(:orphan_folder_survey_timeout_ms, 300)
+      clear = fn -> OrphanFolders.clear([folder.path], OrphanFolders.safe_classes(), nil) end
+
+      {elapsed, result} = :timer.tc(clear, :millisecond)
+      assert elapsed < 2_300
+      assert_receive {:walking, walk}
+      release_walk_on_exit(walk)
+      assert result == {:ok, %{cleared: [], skipped: [{folder.path, {:held, :unreadable}}]}}
+      assert File.dir?(folder.path)
+    end
+  end
+
   # --- fixtures ---------------------------------------------------------------------------
 
   defp key, do: Ecto.UUID.generate()
+
+  # The real disk, except that `op` (`:ls` or `:lstat`) on each of `paths` hangs the way a read on
+  # a wedged mount does (`hang_walk/1`). Keep the hung read the last one its walk makes: when the
+  # test ends, the walk returns and would read on through stubs whose owner is gone.
+  defp wedge(op, paths) do
+    test = self()
+    paths = List.wrap(paths)
+    put_env(:filesystem, FilesystemMock)
+    stub_with(FilesystemMock, Disk)
+
+    stub(FilesystemMock, op, fn path ->
+      if path in paths, do: hang_walk(test), else: apply(Disk, op, [path])
+    end)
+  end
 
   # An empty `<title>.cinder-<key>` folder under `downloads`.
   defp job_folder(downloads, title \\ "Show") do

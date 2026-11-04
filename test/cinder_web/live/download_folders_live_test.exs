@@ -3,6 +3,8 @@ defmodule CinderWeb.DownloadFoldersLiveTest do
   # their own processes, so the mocks are global.
   use CinderWeb.ConnCase, async: false
 
+  import Cinder.BoundedWalkHelpers
+  import Cinder.ConfigCase
   import Ecto.Query
   import Mox
   import Phoenix.LiveViewTest
@@ -315,6 +317,40 @@ defmodule CinderWeb.DownloadFoldersLiveTest do
       assert has_element?(lv, "#folder-#{folder.key}", "Changed in the last hour")
       refute has_element?(lv, "#folder-#{folder.key} button")
       refute has_element?(lv, "#clear-safe")
+    end
+
+    # #1113: an unbounded scan keeps the spinner up, so fail in seconds rather than at ExUnit's
+    # 60 s default.
+    @tag timeout: 10_000
+    test "a download folder whose listing never returns drops the spinner for the " <>
+           "could-not-be-read alert at the deadline",
+         ctx do
+      wedged = Path.join(ctx.tmp_dir, "wedged")
+      File.mkdir_p!(wedged)
+
+      put_env(
+        filesystem: Cinder.Test.WedgedFilesystem,
+        import_roots: [wedged],
+        explicit_import_roots: [wedged],
+        walk_timeout_ms: 300,
+        wedged_filesystem_test: self()
+      )
+
+      {:ok, lv, html} = live(ctx.conn, ~p"/settings/download-folders")
+      assert_receive {:walking, walk}
+      release_walk_on_exit(walk)
+
+      # The connected mount's render: `has_element?/2` would render again, maybe past the deadline.
+      assert html |> LazyHTML.from_fragment() |> LazyHTML.query("#folders-busy") |> Enum.any?()
+
+      render_async(lv, 2_300)
+      refute has_element?(lv, "#folders-busy")
+
+      assert has_element?(
+               lv,
+               "#folders-error",
+               "The download folder #{wedged} could not be read."
+             )
     end
 
     test "says so when every job folder is still in use", ctx do
