@@ -347,7 +347,7 @@ defmodule Cinder.Acquisition.AnimeParser do
   # Range separators accept the ASCII hyphen plus the wave-dash variants (~ 〜 ～) used by
   # CJK-origin uploaders, e.g. a Nyaa batch range written 总第67~77 (A5 dogfood F3, issue #106).
   defp standard_coordinates(remainder, context, direct_only?) do
-    remainder = strip_context_year_prefix(remainder, context)
+    remainder = strip_year_before_standard(remainder, context, direct_only?)
 
     case Regex.run(standard_coordinate_pattern(direct_only?), remainder) do
       nil ->
@@ -359,11 +359,37 @@ defmodule Cinder.Acquisition.AnimeParser do
     end
   end
 
-  defp strip_context_year_prefix(remainder, %{year: year}) when is_integer(year) do
-    Regex.replace(~r/^\D*?#{year}\D*?(?=S\d{1,3}E\d{1,4})/iu, remainder, "")
+  # A year token between the matched title and the first coordinate is metadata, as it is after
+  # the coordinate (#1132). The title guards (#871 in the search, #699 in the release judge)
+  # decide whether that year names another series. Under a blocked title (`direct_only?`) the
+  # coordinate has to follow the title directly, so only separators, and brackets or parentheses
+  # around the year, may sit between them: the words of an omitted longer alias can come before
+  # the year ("Foo - The Arc (2021) S01E02"), and that coordinate cannot be read as the series'.
+  defp strip_year_before_standard(remainder, context, direct_only?) do
+    Regex.replace(year_before_standard_pattern(direct_only?), remainder, fn matched, year ->
+      if year_token?(year, context), do: "", else: matched
+    end)
   end
 
-  defp strip_context_year_prefix(remainder, _context), do: remainder
+  defp year_before_standard_pattern(false),
+    do: ~r/^\D*?(\d{4})\D*?(?=(?<![\p{L}\p{N}])S\d{1,3}E\d{1,4})/iu
+
+  defp year_before_standard_pattern(true),
+    do:
+      ~r/^[\s._\-–—]*(?|\(\s*(\d{4})\s*\)|\[\s*(\d{4})\s*\]|(\d{4}))[\s._\-–—]*(?=(?<![\p{L}\p{N}])S\d{1,3}E\d{1,4})/iu
+
+  # Before a bare absolute number, only separators, and brackets or parentheses around the year,
+  # may sit between the title and the number. A bare year joined to the next number by one dot or
+  # hyphen reads as a year-month date, so "Show.2020.01" keeps no coordinate.
+  defp strip_year_before_absolute(remainder, context) do
+    Regex.replace(
+      ~r/^[\s._\-–—]*(?|\(\s*(\d{4})\s*\)|\[\s*(\d{4})\s*\]|(\d{4})(?![.-]?\d))[\s._\-–—]*(?=(?:总?第\s*)?\d)/u,
+      remainder,
+      fn matched, year -> if year_token?(year, context), do: "", else: matched end
+    )
+  end
+
+  defp year_token?(value, context), do: year?(String.to_integer(value), value, context)
 
   defp standard_coordinate_pattern(true),
     do:
@@ -448,6 +474,8 @@ defmodule Cinder.Acquisition.AnimeParser do
   # Absolute range separators also accept en/em dashes used in human-written arc batch titles,
   # plus the CJK wave-dash variants (~ 〜 ～), e.g. 总第67~77.
   defp absolute_coordinates(remainder, context) do
+    remainder = strip_year_before_absolute(remainder, context)
+
     case Regex.run(
            ~r/^\s*(?:[-–—._]\s*)?(?:总?第\s*)?(\d{1,6})(?:\s*[-–—~〜～]\s*(\d{1,6}))?(?:v\d+)?[话集]?(?:\b|$)/iu,
            remainder

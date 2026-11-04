@@ -1,6 +1,7 @@
 defmodule Cinder.Library.AnimePreflightTest do
   use ExUnit.Case, async: true
 
+  alias Cinder.Acquisition.{Anime, Release}
   alias Cinder.Catalog.{Episode, TitleAlias}
   alias Cinder.Download.Intent
   alias Cinder.Library.AnimePreflight
@@ -695,6 +696,111 @@ defmodule Cinder.Library.AnimePreflightTest do
       "inventory" => [
         %{
           "relative_path" => "Foo Bar S01E02.mkv",
+          "size" => 1000,
+          "major_device" => 1,
+          "inode" => 201,
+          "mtime" => 100
+        }
+      ],
+      "episodes" => [%{"id" => 11, "season_number" => 1, "episode_number" => 2}]
+    }
+
+    assert {:needs_mapping, result} = run_fixture(fixture)
+    assert result.issue["reason"] == "unresolved_file"
+  end
+
+  # #1132: a grab's files carrying a year between the title and the coordinate import, whichever
+  # query found the grab. A TVDB-scoped grab already read `Show.2021.S01E01` (its unscoped
+  # standard reading); a free-text one did not.
+  test "frozen replay reads a year before the file's coordinate (#1132)" do
+    episodes = [
+      %{id: 11, season_number: 1, episode_number: 1},
+      %{id: 12, season_number: 1, episode_number: 2}
+    ]
+
+    context = %{
+      kind: :series,
+      title: "Show",
+      year: 2020,
+      tvdb_id: 99,
+      aliases: [],
+      episodes: episodes,
+      mappings: [
+        selection_mapping("standard", "S01E01", [11]),
+        selection_mapping("standard", "S01E02", [12]),
+        selection_mapping("absolute", "1", [11]),
+        selection_mapping("absolute", "2", [12])
+      ]
+    }
+
+    cases = [
+      {"[Group] Show - 01-02 [1080p]", [11, 12],
+       ["[Group] Show (2020) - 01 [1080p].mkv", "[Group] Show (2020) - 02 [1080p].mkv"]},
+      {"[Group] Show - 01 [1080p]", [11], ["[Group] Show (2020) - 01 [1080p].mkv"]},
+      {"[Group] Show S01E01-E02 [1080p]", [11, 12],
+       ["Show.2021.S01E01.1080p.mkv", "Show.2021.S01E02.1080p.mkv"]}
+    ]
+
+    for {release_title, wanted_ids, files} <- cases, origin <- [:free_text, :id_scoped] do
+      release =
+        Release.new(%{
+          title: release_title,
+          download_url: release_title,
+          size: 1,
+          protocol: :torrent,
+          query_origins: [origin]
+        })
+
+      assert {:ok, %{assignments: [%{episode_ids: ^wanted_ids, mapping_snapshot: snapshot}]}} =
+               Anime.select_episodes([release], context, wanted_ids, [])
+
+      inventory =
+        files
+        |> Enum.with_index(1)
+        |> Enum.map(fn {path, inode} ->
+          %{
+            relative_path: path,
+            identity: %{size: 1000, major_device: 1, inode: inode, mtime: 100}
+          }
+        end)
+
+      expected = files |> Enum.zip(Enum.map(wanted_ids, &[&1])) |> Map.new()
+
+      grabbed = Enum.filter(episodes, &(&1.id in wanted_ids))
+      outcome = AnimePreflight.run(snapshot, inventory, grabbed)
+      assert match?({:ok, _result}, outcome), "#{release_title} (#{origin})"
+      {:ok, result} = outcome
+      assert assignment_map(result.assignments) == expected
+    end
+  end
+
+  # #1132: a year before the coordinate does not let an omitted longer alias's words through.
+  test "frozen replay keeps a blocked title direct-only past a year before the coordinate" do
+    fixture = %{
+      "snapshot_version" => 3,
+      "parser_context" => %{
+        "title" => "Foo",
+        "aliases" => [],
+        "blocked_titles" => ["Foo"],
+        "allow_unscoped_standard" => false,
+        "year" => 2020
+      },
+      "mappings" => [
+        %{
+          "identity" => %{
+            "source" => "cinder",
+            "scheme" => "standard",
+            "namespace" => "canonical",
+            "canonical_value" => "S01E02"
+          },
+          "precedence" => "curated",
+          "episode_ids" => [11],
+          "evidence" => nil
+        }
+      ],
+      "inventory" => [
+        %{
+          "relative_path" => "Foo - The Arc (2021) S01E02.mkv",
           "size" => 1000,
           "major_device" => 1,
           "inode" => 201,
@@ -1466,5 +1572,19 @@ defmodule Cinder.Library.AnimePreflightTest do
 
   defp assignment_map(assignments) do
     Map.new(assignments, &{&1.relative_path, &1.episode_ids})
+  end
+
+  defp selection_mapping(scheme, value, episode_ids) do
+    %{
+      identity: %{
+        source: "fixture",
+        scheme: scheme,
+        namespace: "fixture",
+        canonical_value: value
+      },
+      precedence: :manual,
+      episode_ids: episode_ids,
+      evidence: %{"kind" => "fixture"}
+    }
   end
 end

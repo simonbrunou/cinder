@@ -557,6 +557,100 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert [%{download_url: "both", query_origins: [:id_scoped, :free_text]}] = judged.kept
   end
 
+  # #1132: to the parser, a year between the title and the coordinate is metadata, as it is after
+  # the coordinate. The title guards (#871 in the search, #699 in the release judge) decide whether
+  # that year names another series.
+  test "a year between the title and the episode coordinate is read from either query (#1132)" do
+    context = absolute_series_context()
+
+    names = [
+      "Show.2021.S01E01.1080p.WEB-DL-GRP",
+      "Show.2020.S01E01.1080p.WEB-DL-GRP",
+      "[Group] Show (2020) - 01 [1080p]",
+      "[Group] Show - 01 [1080p] (2020)"
+    ]
+
+    answer_free_text(context, 3, Enum.map(names, &raw(&1, &1)))
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(context, [11], [])
+    assert verdicts(judged) == Map.new(names, &{&1, :ok})
+
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, Enum.map(names, &raw(&1, &1))} end)
+    expect(IndexerMock, :search_tv_query, 3, fn _query, categories: [5070] -> {:ok, []} end)
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(context, [11], [])
+    assert verdicts(judged) == Map.new(names, &{&1, :ok})
+
+    for name <- ["Show.2021.S01E01.1080p.WEB-DL-GRP", "[Group] Show (2020) - 01 [1080p]"] do
+      answer_free_text(context, 3, [raw(name, name)])
+
+      assert {:ok, %{assignments: [%{episode_ids: [11], release: %{download_url: ^name}}]}} =
+               Acquisition.best_anime_releases(context, [11])
+    end
+  end
+
+  # A year joined to the next number by one dot or hyphen is the year-month date shape, not a year
+  # and an episode (#1132).
+  test "a free-text year before the coordinate is metadata in every spelling but a date (#1132)" do
+    context = absolute_series_context()
+
+    read = [
+      "Show.2019.S01E01.1080p.WEB-DL-GRP",
+      "[Group] Show (2021) S01E01 [1080p]",
+      "[Group] Show (2021) - 01 [1080p]",
+      "[Group] Show 2020 - 01 [1080p]",
+      "[Group] Show [2020] - 01 [1080p]"
+    ]
+
+    answer_free_text(context, 3, Enum.map(["Show.2020.01.1080p.WEB-DL-GRP" | read], &raw(&1, &1)))
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(context, [11], [])
+
+    assert verdicts(judged) ==
+             Map.new(read, &{&1, :ok})
+             |> Map.put("Show.2020.01.1080p.WEB-DL-GRP", {:rejected, :unsafe_anime_mapping})
+  end
+
+  # The parser reads the year; the guards still decide it (#871, #699).
+  test "the guards still decide a year the parser now reads before the coordinate (#1132)" do
+    name = "Show.1999.S01E01.1080p.WEB-DL-GRP"
+    answer_free_text(series_context(99), 2, [Map.put(raw(name, "own-id"), :tvdb_id, 99)])
+
+    assert {:ok, %{assignments: [%{episode_ids: [11], release: %{download_url: "own-id"}}]}} =
+             Acquisition.best_anime_releases(series_context(99), [11])
+
+    answer_free_text(series_context(99), 2, [
+      raw(name, "no-id"),
+      raw("[Group] Show S01E01 [1080p]", "control")
+    ])
+
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(series_context(99), [11], [])
+    assert verdicts(judged) == %{"control" => :ok}
+
+    # With no series year, a year token can't conflict.
+    context = %{series_context(99) | year: nil}
+    name = "Show.2023.S01E01.1080p.WEB-DL-GRP"
+    answer_free_text(context, 2, [raw(name, name)])
+
+    assert {:ok, %{assignments: [%{episode_ids: [11], release: %{download_url: ^name}}]}} =
+             Acquisition.best_anime_releases(context, [11])
+
+    context = absolute_series_context()
+
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         raw("[Group] Show (1999) - 01 [1080p]", "other-year"),
+         raw("[Group] Show (2021) - 01 [1080p]", "one-year-off")
+       ]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 3, fn _query, categories: [5070] -> {:ok, []} end)
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(context, [11], [])
+
+    assert verdicts(judged) == %{
+             "other-year" => {:rejected, :title_mismatch},
+             "one-year-off" => :ok
+           }
+  end
+
   test "a nil-TVDB search is guarded as free text" do
     context = series_context(nil)
 
@@ -764,6 +858,15 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
       mappings: [mapping("standard", "S01E01", [11])]
     }
   end
+
+  defp absolute_series_context do
+    %{
+      series_context(99)
+      | mappings: [mapping("standard", "S01E01", [11]), mapping("absolute", "1", [11])]
+    }
+  end
+
+  defp verdicts(judged), do: Map.new(judged.rows, &{&1.release.download_url, &1.verdict})
 
   defp worst_case_series_context(coordinate_32, coordinate_33) do
     episodes =

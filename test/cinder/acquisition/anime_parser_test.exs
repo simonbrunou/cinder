@@ -159,6 +159,24 @@ defmodule Cinder.Acquisition.AnimeParserTest do
 
     assert %{coordinates: [], role: :unknown} =
              AnimeParser.parse("[DB] Foo - The Arc S01E02 [1080p]", blocked_context)
+
+    # A year right after a blocked title is metadata, but it does not let an omitted longer
+    # alias's words through, whichever year it is (#1132).
+    for release <- ["[DB] Foo (2021) S01E02 [1080p]", "[DB] Foo.2020.S01E02.1080p"] do
+      assert AnimeParser.parse(release, blocked_context).coordinates == [
+               %{scheme: "standard", values: ["S01E02"]}
+             ],
+             release
+    end
+
+    for release <- [
+          "[DB] Foo - The Arc (2021) S01E02 [1080p]",
+          "[DB] Foo - The Arc 2020 S01E02 [1080p]",
+          "[DB] Foo (2021) WEBS01E02 [1080p]",
+          "[DB] Foo 2020S01E02 [1080p]"
+        ] do
+      assert AnimeParser.parse(release, blocked_context).coordinates == [], release
+    end
   end
 
   test "rejects a chained standard range instead of parsing a later subset" do
@@ -404,6 +422,88 @@ defmodule Cinder.Acquisition.AnimeParserTest do
 
     assert %{coordinates: [], role: :unknown} =
              AnimeParser.parse("Show AV1S01E01 [1080p]", known_context)
+  end
+
+  # #1132: a year token between the title and the first coordinate is metadata, as it is after
+  # the coordinate. The title guards (#871 in the search, #699 in the release judge) decide whether
+  # it names another series.
+  test "reads a coordinate after a year token, but not after a date or another number" do
+    context = %{
+      kind: :series,
+      titles: ["Show"],
+      scene_titles: [%{title: "Arc", season: 11, source: "tmdb", namespace: "author-order"}],
+      allow_unscoped_standard: false,
+      year: 2020
+    }
+
+    next_year = Date.utc_today().year + 1
+
+    for release <- [
+          "Show.2021.S01E01.1080p.WEB-DL-GRP",
+          "Show.1900.S01E01.1080p",
+          "Show.#{next_year}.S01E01.1080p",
+          "Show Foo (2021) S01E01 [1080p]"
+        ] do
+      assert AnimeParser.parse(release, context).coordinates == [
+               %{scheme: "standard", values: ["S01E01"]}
+             ],
+             release
+    end
+
+    for release <- [
+          "[Group] Show (2021) - 01 [1080p]",
+          "[Group] Show [2020] - 01 [1080p]",
+          "[Group] Show ( 2020 ) - 01 [1080p]",
+          "[Group] Show (2020)-01 [1080p]",
+          "Show_2020_01.mkv",
+          "Show.(2020).01.mkv",
+          "Show 2020 第01话.mkv",
+          "Show - 2020 – 01.mkv",
+          "Show 1900 01.mkv",
+          "Show #{next_year} 01.mkv"
+        ] do
+      assert AnimeParser.parse(release, context).coordinates == [
+               %{scheme: "absolute", values: ["1"]}
+             ],
+             release
+    end
+
+    assert %{coordinates: [%{scheme: "scene", values: ["S11E05"]}]} =
+             AnimeParser.parse("[DB] Arc (2020) - 05 [1080p]", context)
+
+    # The context's own year is a year token outside 1900 to next year too.
+    late_context = %{context | year: next_year + 2}
+
+    assert AnimeParser.parse("Show.#{next_year + 2}.S01E01.1080p", late_context).coordinates ==
+             [%{scheme: "standard", values: ["S01E01"]}]
+
+    assert AnimeParser.parse("Show (#{next_year + 2}) - 01 [1080p]", late_context).coordinates ==
+             [%{scheme: "absolute", values: ["1"]}]
+
+    # No coordinate: a 4-digit number before 1900, after next year or inside a longer number; a
+    # second number after the year; a coordinate glued to a word or to the year; and, before an
+    # absolute number, the year-month date shape (a bare year, then one dot or hyphen), words
+    # beside the year or unmatched brackets.
+    for release <- [
+          "Show 2021 WEBS01E01 [1080p]",
+          "Show 2020S01E01 [1080p]",
+          "Show.1899.S01E01.1080p",
+          "Show.#{next_year + 1}.S01E01.1080p",
+          "Show.20201.S01E01.1080p",
+          "Show 1899 - 01 [1080p]",
+          "Show #{next_year + 1} - 01 [1080p]",
+          "Show 20201 - 01 [1080p]",
+          "Show 12020 - 01 [1080p]",
+          "Show.2020.01.1080p.WEB-DL-GRP",
+          "Show 2020-01 [1080p]",
+          "Show (2020.01) [1080p]",
+          "Show Foo (2020) - 01 [1080p]",
+          "Show (2020) Foo - 01 [1080p]",
+          "Show (2020] - 01 [1080p]",
+          "Show 2020 2021 S01E01 [1080p]"
+        ] do
+      assert AnimeParser.parse(release, context).coordinates == [], release
+    end
   end
 
   test "rejects a chained scoped range instead of importing a truncated prefix" do
