@@ -68,8 +68,17 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
      three other causes of a red test: **Shared state**, **CI runs the suite as root** and
      **Line cap**. When the test touches the diff, the failure is the diff's to fix. When one of
      those three causes fits, handle it as that bullet says. Either way, the failure is not a
-     flake, so skip the re-run. A red on `origin/main`'s head on the same test is no reason to
-     skip it, since the re-run tells a flake from **Broken `main`**.
+     flake, so skip the re-run.
+     - On a PR, the diff is the PR's own. A red on `origin/main`'s head on the same test is no
+       reason to skip the re-run, since the re-run tells a flake from **Broken `main`**.
+     - On a red test of `origin/main`'s head, the head's run can be the first one to test several
+       merges ("Re-running CI"), so the diff is `git diff --name-only <last green sha> <head sha>`.
+       The last green sha is the first commit that `git rev-list --first-parent <head sha>^`
+       lists whose `CI / test (push)` status reads `success` (`$API/commits/<sha>/status`,
+       "Reading a run"). Only that context decides: a commit whose `container` or
+       `dependency-audit` job failed is the last green when its `test` passed, and a `failure`
+       that reads `Has been cancelled` is not green. A skipped re-run leaves the run red for the
+       search and the issue that AGENTS.md "Merge authority" asks for.
   2. Re-run the job once, as "Re-running CI" says. Only the re-run can supply the green run: a
      green re-run of the identical tree (the same SHA, or an empty commit on it) makes the
      failure a flake, even when `CI / test (push)` on `origin/main`'s head failed the same test.
