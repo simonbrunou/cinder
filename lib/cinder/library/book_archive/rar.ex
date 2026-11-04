@@ -59,6 +59,7 @@ defmodule Cinder.Library.BookArchive.Rar do
 
   alias Cinder.BoundedCommand
   alias Cinder.Library.BookArchive.EntryPath
+  alias Cinder.Library.Filesystem.Disk
 
   # Same rationale as the ZIP path's identical constants — see
   # `Cinder.Library.BookArchive.Zip`'s module attributes.
@@ -141,9 +142,11 @@ defmodule Cinder.Library.BookArchive.Rar do
   # honoured `-ol-`, so every path actually written is `lstat`'d (never `stat`) after the fact
   # and the whole archive is refused the moment anything but a regular file or a directory
   # turns up. Recursion only ever descends into an entry `lstat` itself confirms is a genuine
-  # directory, so a symlinked directory is refused here rather than walked into.
+  # directory, so a symlinked directory is refused here rather than walked into. Both walks here
+  # read through `Disk.ls/1` and `Disk.lstat/1`, which skip the VM's one file server, so a read
+  # hung on a wedged downloads mount pins only this process (#1114).
   defp verify_extracted_regular(dir) do
-    case File.ls(dir) do
+    case Disk.ls(dir) do
       {:ok, names} -> verify_names_regular(dir, names)
       {:error, _reason} -> {:error, :archive_entry_unsafe}
     end
@@ -159,7 +162,7 @@ defmodule Cinder.Library.BookArchive.Rar do
   end
 
   defp verify_entry_regular(path) do
-    case File.lstat(path) do
+    case Disk.lstat(path) do
       {:ok, %File.Stat{type: :directory}} -> verify_extracted_regular(path)
       {:ok, %File.Stat{type: :regular}} -> :ok
       {:ok, %File.Stat{}} -> {:error, :archive_entry_unsafe}
@@ -248,14 +251,14 @@ defmodule Cinder.Library.BookArchive.Rar do
   # Recursion here only ever descends into an entry `lstat` itself confirms is a genuine
   # directory, matching `verify_extracted_regular/1`'s own walk below.
   defp dir_size(dir) do
-    case File.ls(dir) do
+    case Disk.ls(dir) do
       {:ok, names} -> Enum.reduce(names, 0, &(&2 + entry_size(Path.join(dir, &1))))
       {:error, _reason} -> 0
     end
   end
 
   defp entry_size(path) do
-    case File.lstat(path) do
+    case Disk.lstat(path) do
       {:ok, %File.Stat{type: :directory}} -> dir_size(path)
       {:ok, %File.Stat{type: :regular, size: size}} -> size
       _other_or_vanished -> 0

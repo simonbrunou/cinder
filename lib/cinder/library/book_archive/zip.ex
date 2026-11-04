@@ -132,8 +132,10 @@ defmodule Cinder.Library.BookArchive.Zip do
     end
   end
 
+  # Raw, like the archive's open: the archive sits in the downloads, so a plain stat hung on a
+  # wedged mount would hold the VM's one file server (#1114).
   defp archive_size(archive_path) do
-    case File.stat(archive_path) do
+    case File.stat(archive_path, [:raw]) do
       {:ok, %File.Stat{size: size}} -> {:ok, size}
       {:error, _reason} -> {:error, :archive_corrupt}
     end

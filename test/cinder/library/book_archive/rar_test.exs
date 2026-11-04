@@ -380,6 +380,34 @@ defmodule Cinder.Library.BookArchive.RarTest do
                  poll_interval: 1_000
                )
     end
+
+    # The size measure lstats each entry, so a planted symlinked directory counts as nothing,
+    # however large the tree it names. The entry check then refuses the archive as unsafe.
+    test "a symlinked directory naming a tree over max_expanded_size is refused as unsafe, " <>
+           "not measured",
+         %{fakebin: fakebin, original_path: original_path, dest: dest, tmp: tmp} do
+      outside = Path.join(tmp, "outside_dir")
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "large.bin"), :binary.copy("x", 64 * 1024))
+
+      FakeUnrar.install(fakebin, original_path, """
+      #!/bin/sh
+      case "$1" in
+        lb) printf 'book.epub\\n'; exit 0 ;;
+        x)
+          printf 'epub bytes' > "$7book.epub"
+          ln -s #{outside} "$7evil_dir"
+          exit 0
+          ;;
+      esac
+      """)
+
+      assert {:error, :archive_entry_unsafe} =
+               Rar.extract("/tmp/evil.rar", dest,
+                 max_expanded_size: 1024,
+                 poll_interval: 1_000
+               )
+    end
   end
 
   defp dir_size(dir) do

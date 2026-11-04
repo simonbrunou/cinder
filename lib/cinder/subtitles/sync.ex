@@ -304,7 +304,7 @@ defmodule Cinder.Subtitles.Sync do
     do: run_engine(item, moviehash, "audio", item.video_path)
 
   defp apply_native(item, moviehash, input) do
-    with {:ok, source} <- File.read(input.path) do
+    with {:ok, source} <- File.read(input.path, [:raw]) do
       metrics = %{offset_ms: 0, rate: 1.0, shot_changes: is_list(Map.get(item, :shot_changes))}
       apply_engine_output(item, moviehash, "native", source, source, metrics)
     end
@@ -358,7 +358,7 @@ defmodule Cinder.Subtitles.Sync do
     reference_extension = if method == "audio", do: Path.extname(item.video_path), else: ".srt"
     input_extension = Path.extname(item.sidecar_path)
 
-    with {:ok, source} <- File.read(input.path),
+    with {:ok, source} <- File.read(input.path, [:raw]),
          {:ok, {engine_result, output_result}} <-
            EngineWorkspace.run(
              reference,

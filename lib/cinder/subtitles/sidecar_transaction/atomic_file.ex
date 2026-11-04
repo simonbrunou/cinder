@@ -253,7 +253,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   defp verify_created(target, staged_path, staged, content, committed_warning) do
     with :ok <- verify_bound_path(target, staged),
-         {:ok, ^content} <- File.read(staged.path) do
+         {:ok, ^content} <- File.read(staged.path, [:raw]) do
       committed_result(committed_warning)
     else
       _unverified ->
@@ -295,7 +295,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   end
 
   defp retracted_identity(retracted, expected) do
-    case File.read(retracted.path) do
+    case File.read(retracted.path, [:raw]) do
       {:ok, ^expected} -> {:matches, retracted.identity}
       {:ok, _changed} -> :changed
       {:error, _reason} = error -> error
@@ -513,7 +513,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   # Checks the held inode itself, through its descriptor, then removes its one name only while it
   # still names that inode.
   defp unlink_tombstone(staged_path, staged, cutoff) do
-    with {:ok, stat} <- File.stat(staged.path),
+    with {:ok, stat} <- File.stat(staged.path, [:raw]),
          :tombstone <- tombstone(stat, cutoff),
          :ok <- verify_bound_path(staged_path, staged) do
       case fs().rm(staged_path) do
@@ -554,7 +554,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   defp recovery_data(target, directory, staged_path, expected_sha256, applied_sha256) do
     with_bound(target, [:read, :raw, :binary], fn target_bound ->
-      with {:ok, target_content} <- File.read(target_bound.path) do
+      with {:ok, target_content} <- File.read(target_bound.path, [:raw]) do
         recover_target_content(
           target_content,
           directory,
@@ -587,7 +587,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   end
 
   defp verify_recovery_staged(target, staged, applied) do
-    case File.read(staged.path) do
+    case File.read(staged.path, [:raw]) do
       {:ok, content} ->
         if sha256(content) == applied,
           do: {:resume, target, content},
@@ -643,7 +643,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   end
 
   defp cleanup_workspace_contents(target, directory, staged_path, expected, applied) do
-    case File.read(target.path) do
+    case File.read(target.path, [:raw]) do
       {:ok, target_content} ->
         if sha256(target_content) == applied do
           :ok
@@ -669,7 +669,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   end
 
   defp cleanup_bound_workspace(target, _directory, _staged_path, staged, expected, applied) do
-    with {:ok, staged_content} <- File.read(staged.path),
+    with {:ok, staged_content} <- File.read(staged.path, [:raw]),
          do: verify_pending_workspace(target, staged_content, expected, applied)
   end
 
@@ -746,7 +746,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          expected_current,
          disposal
        ) do
-    case File.read(current.path) do
+    case File.read(current.path, [:raw]) do
       {:ok, ^content} ->
         :ok
 
@@ -807,7 +807,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          expected_current,
          disposal
        ) do
-    case File.read(staged.path) do
+    case File.read(staged.path, [:raw]) do
       {:ok, ^content} ->
         perform_atomic_operation(
           target,
@@ -861,10 +861,12 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          disposal
        ) do
     # `staged.path` may be the bound descriptor's own `/proc/<pid>/fd/<n>` reference rather than
-    # the plain pathname (see `Disk.create_bound/2`/`open_bound/2`): `File.stat/1` follows that
+    # the plain pathname (see `Disk.create_bound/2`/`open_bound/2`): `File.stat/2` follows that
     # reference to the still-open inode's live metadata, tying the check to the exact descriptor
     # `staged` already holds rather than re-walking a pathname a concurrent rename could swap.
-    case File.stat(staged.path) do
+    # Raw, like every read of a bound here, so a wedged mount never holds the VM's one file server
+    # (#1114).
+    case File.stat(staged.path, [:raw]) do
       {:ok, %{links: 1}} ->
         restage_reclaimed_workspace(
           target,
@@ -936,7 +938,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   end
 
   defp exchange_if_current(target, staged_path, current, staged, expected, content, disposal) do
-    case File.read(current.path) do
+    case File.read(current.path, [:raw]) do
       {:ok, ^expected} ->
         case fs().exchange(staged_path, target) do
           :ok ->
@@ -1046,7 +1048,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   # The bound inode's live link count, read through its descriptor. Only a count of exactly one
   # proves the workspace holds its one name; an unreadable count reads as shared, since the
   # replacement below never changes the inode's bytes.
-  defp workspace_only_name?(bound), do: match?({:ok, %{links: 1}}, File.stat(bound.path))
+  defp workspace_only_name?(bound), do: match?({:ok, %{links: 1}}, File.stat(bound.path, [:raw]))
 
   # Renames a fresh empty file over the staged name, so the workspace keeps an empty tombstone
   # with one link and drops its name for the displaced inode without changing its bytes. At every
@@ -1101,8 +1103,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   end
 
   defp verify_exchanged_bytes(current, staged, expected, content) do
-    with {:ok, published} <- File.read(staged.path),
-         {:ok, captured} <- File.read(current.path),
+    with {:ok, published} <- File.read(staged.path, [:raw]),
+         {:ok, captured} <- File.read(current.path, [:raw]),
          do: classify_exchanged_bytes(published, captured, content, expected),
          else: (_ -> {:error, :concurrent_change})
   end

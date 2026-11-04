@@ -155,7 +155,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.Backup do
 
     with_bound(backup, [:read, :raw, :binary], fn bound ->
       with true <- Filesystem.identity?(bound, expected_identity) || {:error, :unexpected_backup},
-           {:ok, content} <- File.read(bound.path),
+           {:ok, content} <- File.read(bound.path, [:raw]),
            :ok <- retire_content(bound, content, sync) do
         verify_bound_identity(backup, bound.identity)
       end
@@ -177,7 +177,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.Backup do
   end
 
   defp verify_discarded(bound) do
-    case File.read(bound.path) do
+    case File.read(bound.path, [:raw]) do
       {:ok, ""} -> :ok
       {:ok, _other} -> {:error, :backup_retirement_mismatch}
       {:error, _reason} = error -> error
@@ -279,7 +279,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.Backup do
 
     with_bound(backup, [:read, :raw, :binary], fn bound ->
       with true <- Filesystem.identity?(bound, expected_identity) || {:error, :unexpected_backup},
-           {:ok, current} <- File.read(bound.path),
+           {:ok, current} <- File.read(bound.path, [:raw]),
            :ok <- reactivate_bytes(bound, current, expected_source),
            :ok <- Manifest.put_backup_tombstone(item.video_path, item.language, bound.identity),
            :ok <- verify_bound_identity(backup, bound.identity) do

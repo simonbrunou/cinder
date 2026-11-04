@@ -60,6 +60,10 @@ defmodule Cinder.Library.Filesystem.Disk do
   # server (`:file_server_2`), which every plain `File` call queues behind: a read hung on a
   # wedged mount then pins only its own process, never every `File` caller in the app (#779).
   # Same results as `File.ls/1` and `File.lstat/1`, which run these same calls inside that server.
+  # Every other read of a mount path in this module passes `:raw` for the same reason (#1114),
+  # and `Cinder.CodeHealth.MountPathRawReadsTest` fails a `File` or `:file` read without it. The
+  # `System.find_executable/1` before each rooted helper still queues on the server, but it reads
+  # `PATH` on local disk, not a mount.
   @impl true
   def ls(path) do
     with {:ok, names} <- :prim_file.list_dir(IO.chardata_to_string(path)),
@@ -248,10 +252,10 @@ defmodule Cinder.Library.Filesystem.Disk do
   def read(path) do
     case rooted_location(path) do
       {:ok, root, relative} ->
-        with_rooted_bound(root, relative, path, "read", &File.read(&1.path))
+        with_rooted_bound(root, relative, path, "read", &File.read(&1.path, [:raw]))
 
       :outside_roots ->
-        File.read(path)
+        File.read(path, [:raw])
     end
   end
 
@@ -320,8 +324,10 @@ defmodule Cinder.Library.Filesystem.Disk do
     end
   end
 
+  # Raw whatever `modes` says: `bind_open_file/2` needs a raw handle (`:prim_file.get_handle/1`
+  # raises on any other), and a raw open skips the VM's one file server (#1114).
   defp open_unrooted_bound(path, modes) do
-    with {:ok, io} <- File.open(path, modes) do
+    with {:ok, io} <- File.open(path, [:raw | modes]) do
       case bind_open_file(path, io) do
         {:ok, bound} ->
           {:ok, bound}
@@ -443,8 +449,8 @@ defmodule Cinder.Library.Filesystem.Disk do
     with handle when is_binary(handle) <- :prim_file.get_handle(io),
          fd = :binary.decode_unsigned(handle, :little),
          descriptor_path = "/proc/#{System.pid()}/fd/#{fd}",
-         {:ok, path_stat} <- File.lstat(path),
-         {:ok, descriptor_stat} <- File.stat(descriptor_path),
+         {:ok, path_stat} <- File.lstat(path, [:raw]),
+         {:ok, descriptor_stat} <- File.stat(descriptor_path, [:raw]),
          true <- same_regular_file?(path_stat, descriptor_stat) do
       {:ok, %{io: io, path: descriptor_path, identity: identity(path_stat)}}
     else
@@ -657,7 +663,7 @@ defmodule Cinder.Library.Filesystem.Disk do
         {:os_pid, os_pid} = Port.info(port, :os_pid)
         descriptor_path = "/proc/#{os_pid}/fd/#{fd}"
 
-        case File.stat(descriptor_path) do
+        case File.stat(descriptor_path, [:raw]) do
           {:ok, stat} ->
             {:ok,
              %{
@@ -797,9 +803,9 @@ defmodule Cinder.Library.Filesystem.Disk do
   end
 
   defp moviehash_bound(descriptor_path) do
-    with {:ok, %{size: size}} <- File.stat(descriptor_path),
+    with {:ok, %{size: size}} <- File.stat(descriptor_path, [:raw]),
          true <- size >= @moviehash_min || :too_small,
-         {:ok, io} <- File.open(descriptor_path, [:read, :binary]) do
+         {:ok, io} <- File.open(descriptor_path, [:read, :raw, :binary]) do
       try do
         with {:ok, head} when byte_size(head) == @moviehash_chunk <-
                :file.pread(io, 0, @moviehash_chunk),

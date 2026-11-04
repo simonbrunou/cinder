@@ -19,10 +19,12 @@ defmodule Cinder.Download.PathMapping do
 
   @spec validate_local_prefix(String.t() | nil, String.t() | nil) ::
           :ok | {:error, {:path_mapping_local_prefix_unreadable, String.t()}}
+  # The stat is raw: the local prefix is a downloads mount, and a plain stat hung on a wedged one
+  # would hold the VM's one file server, which every other `File` call queues behind (#1114).
   def validate_local_prefix(remote_prefix, local_prefix) do
     with {:ok, _remote, local} <- prefixes(remote_prefix, local_prefix),
          {:ok, %{type: :directory, access: access}} when access in [:read, :read_write] <-
-           File.stat(local) do
+           File.stat(local, [:raw]) do
       :ok
     else
       :noop -> :ok
