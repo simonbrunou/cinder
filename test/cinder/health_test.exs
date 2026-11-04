@@ -56,6 +56,48 @@ defmodule Cinder.HealthTest do
 
   defp row(rows, id), do: Enum.find(rows, &(&1.id == id))
 
+  defp sleep_ok(ms) do
+    Process.sleep(ms)
+    :ok
+  end
+
+  defp targets(ids), do: Enum.flat_map(ids, &Health.targets(id: &1))
+
+  defp answer_when_told(conductor, probe) do
+    send(conductor, {probe, self()})
+
+    receive do
+      :answer -> :ok
+    end
+  end
+
+  # Holds the tmdb probe until the indexer probe is gone. When nothing kills the indexer within
+  # 10 s, it has the indexer answer first, long past a shrunk budget, then releases tmdb. An
+  # indexer killed before it reaches its stub never reports, so tmdb goes free after 10 s.
+  defp answer_indexer_late do
+    receive do
+      {:indexer, indexer} ->
+        ref = Process.monitor(indexer)
+
+        receive do
+          {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+        after
+          10_000 ->
+            send(indexer, :answer)
+
+            receive do
+              {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+            end
+        end
+    after
+      10_000 -> :ok
+    end
+
+    receive do
+      {:tmdb, tmdb} -> send(tmdb, :answer)
+    end
+  end
+
   describe "targets/1" do
     test "every probe target has one unique id and sits in a settings group, in group order" do
       targets = Health.targets()
@@ -187,6 +229,16 @@ defmodule Cinder.HealthTest do
       # and the upper bound leaves a loaded CPU its margin.
       assert elapsed >= 200
       assert elapsed < 1_000
+    end
+
+    test "a map budget applies the entry for the checked target's id, and the default elsewhere" do
+      with_env(:health_probe_timeout_ms, %{"indexer" => 200})
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(5_000) end)
+      # Past the indexer's 200 ms, so only a budget of its own lets it answer.
+      stub(Cinder.Catalog.TMDBMock, :health, fn -> sleep_ok(300) end)
+
+      assert Health.check("indexer") == {:error, :timeout}
+      assert Health.check("tmdb") == :ok
     end
 
     test "a failure while resolving the adapter is an error status, never a raise" do
@@ -374,8 +426,7 @@ defmodule Cinder.HealthTest do
       stub(Cinder.Acquisition.IndexerMock, :health, fn -> {:error, :down} end)
       stub(Cinder.Library.AudiobookServerMock, :health, fn -> {:warning, :slow} end)
 
-      targets =
-        Enum.flat_map(~w(tmdb indexer audiobook_server ebook_library), &Health.targets(id: &1))
+      targets = targets(~w(tmdb indexer audiobook_server ebook_library))
 
       assert Health.check_targets(targets) == %{
                "tmdb" => :ok,
@@ -386,17 +437,68 @@ defmodule Cinder.HealthTest do
     end
 
     test "a probe exceeding the timeout budget reports :timeout without holding up the others" do
-      with_env(:health_probe_timeout_ms, 200)
+      with_env(:health_probe_timeout_ms, %{"indexer" => 200})
       stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(2_000) end)
+
+      assert Health.check_targets(targets(~w(tmdb indexer))) == %{
+               "tmdb" => :ok,
+               "indexer" => {:error, :timeout}
+             }
+    end
+
+    test "a map budget kills only the probe it names, and a probe it omits outlasts that budget" do
+      with_env(:health_probe_timeout_ms, %{"indexer" => 200})
+      parent = self()
 
       stub(Cinder.Acquisition.IndexerMock, :health, fn ->
-        Process.sleep(2_000)
-        :ok
+        send(parent, {:indexer_probe, self()})
+        sleep_ok(2_000)
       end)
 
-      targets = Health.targets(id: "tmdb") ++ Health.targets(id: "indexer")
+      stub(Cinder.Catalog.TMDBMock, :health, fn -> sleep_ok(300) end)
 
-      assert Health.check_targets(targets) == %{"tmdb" => :ok, "indexer" => {:error, :timeout}}
+      assert Health.check_targets(targets(~w(tmdb indexer))) == %{
+               "tmdb" => :ok,
+               "indexer" => {:error, :timeout}
+             }
+
+      # A loaded runner can kill the indexer before it reaches its stub, leaving no pid to check.
+      # An indexer left running reaches its stub within the wait and fails the refute.
+      receive do
+        {:indexer_probe, probe} -> refute Process.alive?(probe)
+      after
+        1_000 -> :ok
+      end
+    end
+
+    test "a probe that answers past its budget times out even behind a slower probe" do
+      # tmdb's budget outlasts every wait of the conductor's.
+      with_env(:health_probe_timeout_ms, %{"indexer" => 200, "tmdb" => 30_000})
+      conductor = start_supervised!({Task, &answer_indexer_late/0})
+
+      # Each probe answers only when the conductor says so, so no answer races a deadline.
+      stub(Cinder.Catalog.TMDBMock, :health, fn -> answer_when_told(conductor, :tmdb) end)
+
+      stub(Cinder.Acquisition.IndexerMock, :health, fn ->
+        answer_when_told(conductor, :indexer)
+      end)
+
+      assert Health.check_targets(targets(~w(tmdb indexer))) == %{
+               "tmdb" => :ok,
+               "indexer" => {:error, :timeout}
+             }
+    end
+
+    test "an integer budget applies to every probe of the sweep" do
+      with_env(:health_probe_timeout_ms, 200)
+      stub(Cinder.Catalog.TMDBMock, :health, fn -> sleep_ok(2_000) end)
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(2_000) end)
+
+      assert Health.check_targets(targets(~w(tmdb indexer))) == %{
+               "tmdb" => {:error, :timeout},
+               "indexer" => {:error, :timeout}
+             }
     end
 
     test "no targets is an empty map" do
@@ -517,12 +619,8 @@ defmodule Cinder.HealthTest do
 
     test "a probe exceeding the timeout budget reports :timeout without blocking other rows" do
       stub_check_all_services()
-      with_env(:health_probe_timeout_ms, 200)
-
-      stub(Cinder.Acquisition.IndexerMock, :health, fn ->
-        Process.sleep(2_000)
-        :ok
-      end)
+      with_env(:health_probe_timeout_ms, %{"indexer" => 200})
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(2_000) end)
 
       rows = Health.check_all()
 
@@ -531,14 +629,45 @@ defmodule Cinder.HealthTest do
       assert row(rows, "media_server").status == :ok
     end
 
+    test "a map budget names a row by its id, and a row it omits outlasts that budget, in order" do
+      stub_check_all_services()
+      with_env(:health_probe_timeout_ms, %{"indexer" => 200})
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(2_000) end)
+      stub(Cinder.Catalog.TMDBMock, :health, fn -> sleep_ok(300) end)
+
+      rows = Health.check_all()
+
+      assert row(rows, "indexer").status == {:error, :timeout}
+      assert row(rows, "tmdb").status == :ok
+      # The indexer's deadline comes first, and its row still keeps its settings-group place.
+      assert Enum.map(rows, & &1.id) ==
+               ~w(tmdb indexer torrent usenet media_server audiobook_server movies_library
+                  tv_library openlibrary hardcover)
+    end
+
+    test "a map budget names a finding row by its id" do
+      stub_check_all_services()
+      with_env(:health_probe_timeout_ms, %{"sidecar_files" => 200})
+      path = "/library/movies/Movie (2020)/.cinder-sidecar-quarantine-slow"
+
+      :ok =
+        SidecarQuarantine.record("/library/movies/Movie (2020)/Movie.en.srt", path, "occupied")
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn ^path ->
+        Process.sleep(2_000)
+        {:ok, %File.Stat{}}
+      end)
+
+      rows = Health.check_all()
+
+      assert row(rows, "sidecar_files").status == {:error, :timeout}
+      assert row(rows, "tmdb").status == :ok
+    end
+
     test "a timed-out row still names the adapter the operator picked" do
       stub_check_all_services()
-      with_env(:health_probe_timeout_ms, 200)
-
-      stub(Cinder.Download.ClientMock, :health, fn ->
-        Process.sleep(2_000)
-        :ok
-      end)
+      with_env(:health_probe_timeout_ms, %{"torrent" => 200})
+      stub(Cinder.Download.ClientMock, :health, fn -> sleep_ok(2_000) end)
 
       assert %{status: {:error, :timeout}, adapter: "ClientMock"} =
                row(Health.check_all(), "torrent")

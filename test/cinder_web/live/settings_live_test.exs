@@ -384,8 +384,9 @@ defmodule CinderWeb.SettingsLiveTest do
 
   test "a Test button whose probe outlasts the budget reads Timed out and the page answers again",
        %{conn: conn} do
-    # `reset_cinder_env` restores the budget. Waited out, the indexer would read OK.
-    Application.put_env(:cinder, :health_probe_timeout_ms, 200)
+    # The indexer alone gets the shrunk budget, which `reset_cinder_env` restores. Waited out, it
+    # would read OK.
+    Application.put_env(:cinder, :health_probe_timeout_ms, %{"indexer" => 200})
 
     stub(Cinder.Acquisition.IndexerMock, :health, fn ->
       Process.sleep(5_000)

@@ -10,9 +10,17 @@ defmodule Cinder.Health do
   here. Each external `health/0` keeps 3-second connect and receive timeouts; the probe timeout
   budget only guards against a probe that ignores its own.
 
-  Every check, `check/1` included, runs its probe in a task under that one budget. `check_all/0`
-  and `check_targets/1` run their probes concurrently (`Task.async_stream/3`), so a sweep's wall
-  clock is bounded by its slowest probe instead of the sum of every probe's own timeout.
+  Every check, `check/1` included, runs its probe in a task under a timeout budget counted from
+  the probe's own start. Past it, a probe that has not answered is killed and reads
+  `{:error, :timeout}`, and every other probe keeps its own status. `check_all/0` and
+  `check_targets/1` start all their probes at once, so a sweep's wall clock is bounded by its
+  slowest probe instead of the sum of every probe's own timeout.
+
+  The budget is 15 s. The `:cinder` env key `:health_probe_timeout_ms`, which no config sets,
+  lets a test shrink it: one integer gives every probe of a check that budget, and a map from
+  probe id to milliseconds gives each probe it names its own, the others keeping 15 s. The id is
+  the target's `id`; in `check_all/0` it is the row's `id`, which also names the finding rows
+  `stored_credentials` and `sidecar_files`.
   """
   alias Cinder.Books.Metadata
   alias Cinder.Download
@@ -24,7 +32,8 @@ defmodule Cinder.Health do
   # Backstop above the worst individual probe today (~12s: qBittorrent/SABnzbd's login + probe
   # round trip, or Plex's 2 video kinds × 6s) — the normal bound is each impl's own timeout, this
   # only guards against a probe that ignores its own timeout and hangs outright. Overridable via
-  # `:health_probe_timeout_ms` so tests can shrink it instead of waiting out the real default.
+  # `:health_probe_timeout_ms` (moduledoc) so a test can shrink the budget of the one probe meant
+  # to time out instead of waiting out the real default.
   @probe_timeout_ms 15_000
 
   # TMDB drives discovery, requests, and the monitored-series refresh; the indexer drives every
@@ -164,8 +173,8 @@ defmodule Cinder.Health do
   Checks one target, by id, against the currently applied config. Never raises: a failure while
   resolving the adapter or inside its `health/0` is an `{:error, reason}`. A target with nothing
   wired is `{:error, :not_configured}`; an id no target has is `{:error, :unknown_target}` (the id
-  comes from the client, so callers ignore it). The probe has `check_all/0`'s timeout budget: past
-  it, the check is `{:error, :timeout}`, so a caller waits no longer than the budget.
+  comes from the client, so callers ignore it). Past the probe's timeout budget (moduledoc), the
+  check is `{:error, :timeout}`, so a caller waits no longer than the budget.
   """
   @spec check(term()) :: status()
   def check(id) do
@@ -181,8 +190,8 @@ defmodule Cinder.Health do
   `targets/0` order, followed by the stored-credentials and retained-sidecar findings. `label` is
   an English msgid. `adapter` names the wired module of a `names_adapter` target, even when its
   probe fails or times out, and is `nil` elsewhere. A `:configured` target that is not
-  configured, and a finding with nothing to report, have no row. A probe that exceeds the timeout
-  budget reports `{:error, :timeout}` for its row without affecting any other row.
+  configured, and a finding with nothing to report, have no row. A probe that exceeds its timeout
+  budget (moduledoc) reports `{:error, :timeout}` for its row without affecting any other row.
   """
   def check_all do
     for {row, status} <- concurrently(dashboard_probes()), status != :skip do
@@ -192,9 +201,10 @@ defmodule Cinder.Health do
 
   @doc """
   Checks the given targets concurrently and returns a map of each target's id to its status, as
-  `check/1` documents it. The sweep has `check_all/0`'s timeout budget: a probe that exceeds it
-  is `{:error, :timeout}` and does not hold up the others. Unlike `check_all/0`, it drops no
-  target: a `:configured` target with nothing wired is `{:error, :not_configured}` here.
+  `check/1` documents it. Each probe has its own timeout budget (moduledoc): a probe that exceeds
+  it is `{:error, :timeout}` and does not hold up the others.
+  Unlike `check_all/0`, it drops no target: a `:configured` target with nothing wired is
+  `{:error, :not_configured}` here.
   """
   @spec check_targets([Target.t()]) :: %{String.t() => status()}
   def check_targets(targets) do
@@ -214,26 +224,55 @@ defmodule Cinder.Health do
         Enum.map(@targets, & &1.label) ++ [@stored_credentials.label, @sidecar_files.label]
       )
 
-  # Runs each `{key, fun}` probe in its own task and returns `{key, status}` pairs in input order.
-  # A probe past the timeout budget is killed and reads `{:error, :timeout}`. A raise or exit
-  # inside a probe is already a status (`safely/1`). The tasks are linked to the caller, so any
-  # other exit takes the caller down too, unless the caller traps exits, in which case that
-  # probe reads `{:error, reason}`.
+  # Runs each `{key, fun}` probe in its own task, all started at once, and returns
+  # `{key, status}` pairs in input order. Each probe has its own budget (`budget_ms/2`), counted
+  # from its own start, which `Task.async_stream/3` cannot give: it takes one timeout for every
+  # task. A probe that has not answered by then is killed and reads `{:error, :timeout}`. A raise
+  # or exit inside a probe is already a status (`safely/1`).
+  #
+  # The tasks are awaited in deadline order, so no task is looked at after its deadline: in input
+  # order, a 200 ms probe queued behind a 15 s one that answers at 5 s could answer at 2 s and
+  # read its status. A reply that arrives while its task is being killed is kept.
+  #
+  # The tasks are linked to the caller, so any other exit takes the caller down too, unless the
+  # caller traps exits, in which case that probe reads `{:error, reason}`. A trapping caller also
+  # receives each task's `{:EXIT, pid, :normal}`; no caller of this module traps exits.
   defp concurrently(probes) do
-    timeout = Application.get_env(:cinder, :health_probe_timeout_ms, @probe_timeout_ms)
+    budgets = Application.get_env(:cinder, :health_probe_timeout_ms, @probe_timeout_ms)
 
-    probes
-    |> Task.async_stream(fn {_key, fun} -> fun.() end,
-      ordered: true,
-      max_concurrency: max(length(probes), 1),
-      on_timeout: :kill_task,
-      timeout: timeout
-    )
-    |> Enum.zip_with(probes, fn
-      {:ok, status}, {key, _fun} -> {key, status}
-      {:exit, :timeout}, {key, _fun} -> {key, {:error, :timeout}}
-      {:exit, reason}, {key, _fun} -> {key, {:error, reason}}
-    end)
+    tasks =
+      for {key, fun} <- probes do
+        task = Task.async(fun)
+        {key, task, System.monotonic_time(:millisecond) + budget_ms(budgets, key)}
+      end
+
+    statuses =
+      tasks
+      |> Enum.sort_by(fn {_key, _task, deadline} -> deadline end)
+      |> Map.new(fn {_key, task, deadline} -> {task.ref, await_probe(task, deadline)} end)
+
+    for {key, task, _deadline} <- tasks, do: {key, Map.fetch!(statuses, task.ref)}
+  end
+
+  # `:health_probe_timeout_ms` is one budget for every probe, or a map from probe id to that
+  # probe's budget. An id the map lacks gets the default.
+  defp budget_ms(budgets, key) when is_map(budgets),
+    do: Map.get(budgets, probe_id(key), @probe_timeout_ms)
+
+  defp budget_ms(budget, _key), do: budget
+
+  # `check_all/0` keys each probe by its row, the other two paths by the target id.
+  defp probe_id(%{id: id}), do: id
+  defp probe_id(id), do: id
+
+  defp await_probe(task, deadline) do
+    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+    case Task.yield(task, remaining) || Task.shutdown(task, :brutal_kill) do
+      {:ok, status} -> status
+      nil -> {:error, :timeout}
+      {:exit, reason} -> {:error, reason}
+    end
   end
 
   # Ordered `{row, fun}` pairs: the row's id, label and adapter are known upfront (cheap, no

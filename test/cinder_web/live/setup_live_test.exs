@@ -396,9 +396,9 @@ defmodule CinderWeb.SetupLiveTest do
     conn = log_in_user(conn, admin)
     stub_all_services_ok()
 
-    # A budget the HTTP-stubbed rows clear on a loaded CPU (`reset_cinder_env` restores it), and
-    # an indexer that answers green only well past it: waited out, its row would read OK.
-    Application.put_env(:cinder, :health_probe_timeout_ms, 1_000)
+    # The indexer alone gets the shrunk budget (`reset_cinder_env` restores it), and answers green
+    # only well past it: waited out, its row would read OK.
+    Application.put_env(:cinder, :health_probe_timeout_ms, %{"indexer" => 200})
     stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(5_000) end)
 
     {:ok, lv, _html} = live(conn, ~p"/setup")
@@ -490,8 +490,9 @@ defmodule CinderWeb.SetupLiveTest do
        %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)
-    # `reset_cinder_env` restores the budget. Waited out, the indexer would read OK.
-    Application.put_env(:cinder, :health_probe_timeout_ms, 200)
+    # The indexer alone gets the shrunk budget, which `reset_cinder_env` restores. Waited out, it
+    # would read OK.
+    Application.put_env(:cinder, :health_probe_timeout_ms, %{"indexer" => 200})
     stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(5_000) end)
     stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
 
