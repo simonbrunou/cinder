@@ -49,8 +49,9 @@ defmodule Cinder.Subtitles.SidecarTransaction do
   @doc """
   Replays the cleanup journals of every track of `video_path`: interrupted resets (for the
   current `moviehash` only) and interrupted replacements. Once both replay, removes up to 50
-  workspace tombstones in the video's folder that have not changed for an hour and that no
-  record it can read there names (`AtomicFile.sweep/3`). The sweep never fails the call.
+  workspace tombstones and interrupted disposals in the video's folder that have not changed for
+  an hour and that no record it can read there names (`AtomicFile.sweep/3`). The sweep never
+  fails the call.
   """
   @spec reconcile(String.t(), String.t()) :: :ok | {:error, term()}
   defdelegate reconcile(video_path, moviehash), to: Recovery

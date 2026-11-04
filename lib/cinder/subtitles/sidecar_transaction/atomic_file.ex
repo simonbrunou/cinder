@@ -14,6 +14,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   @operation_id ~r/\A[A-Za-z0-9_-]{22}\z/
   @workspace_prefix ".cinder-subtitle-sync-cas-"
   @staged_name ".cinder-subtitle-sync-write-staged"
+  # Only `replace_shared_tombstone/2` creates this name, after its exchange committed.
+  @tombstone_name ".cinder-subtitle-sync-write-tombstone"
   # A sweep leaves a workspace that changed within this long: an operation still at work in it,
   # under another video's lock, changed it moments ago.
   @sweep_min_age_seconds 3_600
@@ -357,6 +359,13 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   The workspace goes only while it is a bare tombstone: the staged name alone, on an empty
   regular file with no other name, or no entry at all. One already gone counts as removed.
+
+  A disposal killed between creating its fresh tombstone and renaming it over the staged name
+  (`replace_shared_tombstone/2`) leaves two entries: the staged name on a regular file with
+  another name, a download's file for one, and the fresh tombstone, an empty regular file with
+  one name. That workspace goes too: renaming the fresh tombstone over the staged name finishes
+  the disposal, which drops only the workspace's name for the shared file and never writes it.
+
   Anything else stays, and a warning names its path, as does a step that fails.
   """
   @spec retire(String.t(), String.t()) :: :ok
@@ -376,16 +385,18 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   Removes the workspaces earlier operations left in `directory`, up to `:limit` of them (50 by
   default), and returns how many it removed.
 
-  A workspace goes only while it is a bare tombstone, as `retire/2` says, whose directory and
-  staged file have not changed for an hour, and whose operation id is not among
-  `protected.(names)`, where `names` is what `directory` lists. A workspace that fails a step
-  stays, and a warning names its path.
+  A workspace goes only while it is a bare tombstone or an interrupted disposal, as `retire/2`
+  says, whose directory and entries have not changed for an hour, and whose operation id is not
+  among `protected.(names)`, where `names` is what `directory` lists. A workspace that fails a
+  step stays, and a warning names its path.
 
   The caller holds one video's lock, but the workspaces of every video in `directory` sit there.
   Another video's operation that is still at work changed its workspace within the hour.
   `protected` returns the ids that the records in the directory still name. That covers a
   pending correction and the reversals a record's reset or rollback would reuse. Any other
-  tombstone is safe to remove: a later reversal that needs its name makes a fresh workspace.
+  tombstone is safe to remove: a later reversal that needs its name makes a fresh workspace. An
+  interrupted disposal's staged name holds an inode its exchange displaced, never bytes waiting
+  to be published.
   """
   @spec sweep(String.t(), ([String.t()] -> Enumerable.t()), keyword()) :: non_neg_integer()
   def sweep(directory, protected, opts \\ []) do
@@ -428,7 +439,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   defp sweep_workspace(directory, cutoff, {removed, budget}) do
     case classify_workspace(directory, cutoff) do
-      {kind, _path} = retirable when kind in [:tombstone, :empty] ->
+      {kind, _path} = retirable when kind in [:tombstone, :empty, :interrupted] ->
         retirable
         |> retire_classified(cutoff)
         |> count_swept(directory, removed, budget - 1)
@@ -453,8 +464,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     do: Logger.warning("subtitle workspace kept at #{directory}: #{inspect(reason)}")
 
   # `:absent`, `{:kept, reason}`, `{:error, reason}`, or what `retire_classified/2` removes:
-  # `{:empty, directory}` or `{:tombstone, staged_path}`. With a `cutoff` (gregorian seconds), a
-  # directory or staged file modified after it is kept.
+  # `{:empty, directory}`, `{:tombstone, staged_path}` or `{:interrupted, directory}`. With a
+  # `cutoff` (gregorian seconds), a directory or entry modified after it is kept.
   defp classify_workspace(directory, cutoff) do
     with {:ok, directory} <- safe_destination(directory),
          do: classify_directory(directory, fs().lstat(directory), cutoff)
@@ -480,6 +491,15 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          do: {:tombstone, staged_path}
   end
 
+  defp classify_entries(directory, {:ok, entries}, cutoff)
+       when entries in [[@staged_name, @tombstone_name], [@tombstone_name, @staged_name]] do
+    with {:ok, staged} <- fs().lstat(Path.join(directory, @staged_name)),
+         {:ok, fresh} <- fs().lstat(Path.join(directory, @tombstone_name)),
+         :shared <- shared_displaced(staged, cutoff),
+         :tombstone <- tombstone(fresh, cutoff),
+         do: {:interrupted, directory}
+  end
+
   defp classify_entries(_directory, {:ok, _entries}, _cutoff), do: {:kept, :not_a_tombstone}
   defp classify_entries(_directory, {:error, :enoent}, _cutoff), do: :absent
   defp classify_entries(_directory, {:error, _reason} = error, _cutoff), do: error
@@ -488,6 +508,13 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     do: if(settled?(stat, cutoff), do: :tombstone, else: {:kept, :recent})
 
   defp tombstone(_stat, _cutoff), do: {:kept, :not_a_tombstone}
+
+  # An interrupted disposal's staged file: the displaced inode, which has a name outside the
+  # workspace too, so dropping the workspace's name never removes its last one.
+  defp shared_displaced(%{type: :regular, links: links} = stat, cutoff) when links > 1,
+    do: if(settled?(stat, cutoff), do: :shared, else: {:kept, :recent})
+
+  defp shared_displaced(_stat, _cutoff), do: {:kept, :not_a_tombstone}
 
   defp settled?(_stat, nil), do: true
 
@@ -508,7 +535,37 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          do: remove_workspace_directory(Path.dirname(staged_path))
   end
 
+  # Finishes the interrupted disposal, which leaves a bare tombstone, then retires that. A kill
+  # after any step leaves a state a later retirement still removes: the two entries, the bare
+  # tombstone, or no entry.
+  defp retire_classified({:interrupted, directory}, cutoff) do
+    with {:ok, staged_path} <- safe_destination(Path.join(directory, @staged_name)),
+         {:ok, fresh_path} <- safe_destination(Path.join(directory, @tombstone_name)),
+         :ok <-
+           with_bound(staged_path, [:read, :raw, :binary], fn displaced ->
+             finish_disposal(staged_path, displaced, fresh_path, cutoff)
+           end),
+         do: remove_workspace_directory(directory)
+  end
+
   defp retire_classified(unretirable, _cutoff), do: unretirable
+
+  defp finish_disposal(staged_path, displaced, fresh_path, cutoff) do
+    with_bound(fresh_path, [:read, :raw, :binary], fn fresh ->
+      with {:ok, displaced_stat} <- File.stat(displaced.path),
+           :shared <- shared_displaced(displaced_stat, cutoff),
+           {:ok, fresh_stat} <- File.stat(fresh.path),
+           :tombstone <- tombstone(fresh_stat, cutoff),
+           :ok <- verify_bound_path(fresh_path, fresh),
+           :ok <-
+             committed_as_ok(rename_over_displaced(fresh_path, staged_path, displaced)),
+           do: unlink_tombstone(staged_path, fresh, cutoff)
+    end)
+  end
+
+  # A rename whose effect committed did rename: `unlink_tombstone/3` checks the name next.
+  defp committed_as_ok({:error, {:effect_committed, _operation, _detail}}), do: :ok
+  defp committed_as_ok(result), do: result
 
   # Checks the held inode itself, through its descriptor, then removes its one name only while it
   # still names that inode.
@@ -1055,10 +1112,10 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   # point the staged name holds either the displaced inode or the fresh file, and the target
   # already holds the published bytes, which is all `recover/4` reads. A crash after the create
   # leaves the fresh file beside a staged name that still holds the displaced inode, so the
-  # download's file keeps that second name: `retire/2` and `sweep/3` leave a workspace with two
-  # entries alone (#1131).
+  # download's file keeps that second name until `retire/2` or `sweep/3` finishes this rename
+  # (#1131).
   defp replace_shared_tombstone(staged_path, current) do
-    fresh_path = Path.join(Path.dirname(staged_path), ".cinder-subtitle-sync-write-tombstone")
+    fresh_path = Path.join(Path.dirname(staged_path), @tombstone_name)
 
     with_created_bound(fresh_path, "", fn fresh ->
       case rename_over_displaced(fresh_path, staged_path, current) do

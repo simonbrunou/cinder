@@ -751,6 +751,8 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(path) == "newer"
     end
 
+    # #1131: the kill leaves the download's inode at the staged name beside the empty fresh
+    # tombstone. The recovery's final record retires that workspace.
     test "a correction killed after creating the fresh tombstone is finished by recover", %{
       video: video,
       path: path,
@@ -758,12 +760,83 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       tmp_dir: tmp
     } do
       download = hardlink_download!(path, tmp)
-      use_barrier(%{operation: :create_bound, contains: ".cinder-subtitle-sync-write-tombstone"})
-      kill_at_barrier(fn -> manual(video, 1_000) end, :create_bound)
+      workspace = kill_at_fresh_tombstone!(video, path, download)
 
-      assert [staged] = workspace_staged_files(path)
-      assert File.read!(staged) == original
-      assert_killed_correction_recovers(video, path, original, download)
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+      assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
+      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+      refute File.exists?(workspace)
+      assert workspaces(path) == []
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 1
+
+      assert :ok = reconcile(video)
+      assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
+      assert :ok = reset(video)
+      assert File.read!(path) == original
+      assert File.read!(download) == original
+    end
+
+    test "a sweep retires a killed correction's workspace its recovery kept, and a reset goes on",
+         %{video: video, path: path, original: original, tmp_dir: tmp} do
+      download = hardlink_download!(path, tmp)
+      workspace = kill_at_fresh_tombstone!(video, path, download)
+      fail_once(%{operation: :rename, source_contains: @tombstone, reason: :eio})
+
+      {result, log} = with_log(fn -> recover(video) end)
+      assert {:ok, %{sync: %{status: "aligned"}}} = result
+      assert log =~ "subtitle workspace kept at #{workspace}: :eio"
+      assert Enum.sort(File.ls!(workspace)) == [@staged, @tombstone]
+
+      age!(workspace)
+      assert :ok = reconcile(video)
+      refute File.exists?(workspace)
+      assert File.stat!(download).links == 1
+
+      assert :ok = reset(video)
+      assert File.read!(path) == original
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 1
+    end
+
+    test "a killed correction whose download was deleted keeps the file's last name", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      download = hardlink_download!(path, tmp)
+      workspace = kill_at_fresh_tombstone!(video, path, download)
+      File.rm!(download)
+
+      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+      age!(workspace)
+      assert :ok = reconcile(video)
+      assert Enum.sort(File.ls!(workspace)) == [@staged, @tombstone]
+      assert File.read!(Path.join(workspace, @staged)) == original
+      assert File.stat!(Path.join(workspace, @staged)).links == 1
+    end
+
+    test "reconcile leaves a killed correction's workspace to its pending record's recovery", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      download = hardlink_download!(path, tmp)
+      workspace = kill_at_fresh_tombstone!(video, path, download)
+      age!(workspace)
+
+      assert :ok = reconcile(video)
+      assert Enum.sort(File.ls!(workspace)) == [@staged, @tombstone]
+      assert same_inode?(Path.join(workspace, @staged), download)
+      assert File.stat!(download).links == 2
+
+      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+      assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
+      refute File.exists?(workspace)
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 1
     end
 
     test "a correction killed after renaming the fresh tombstone is finished by recover", %{
@@ -1578,7 +1651,9 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
     test "leaves a workspace whose directory or staged file changed within the hour", %{
       video: video,
-      path: path
+      path: path,
+      original: original,
+      tmp_dir: tmp
     } do
       young = plant_workspace!(path, %{@staged => ""})
       young_empty = plant_workspace!(path, %{})
@@ -1588,11 +1663,21 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       young_directory = plant_workspace!(path, %{@staged => ""})
       age!(young_directory)
       File.touch!(young_directory)
+      {young_interrupted, _} = plant_interrupted_disposal!(path, tmp, original)
+      {young_shared, _} = plant_interrupted_disposal!(path, tmp, original)
+      age!(young_shared)
+      File.touch!(Path.join(young_shared, @staged))
+      {young_fresh, _} = plant_interrupted_disposal!(path, tmp, original)
+      age!(young_fresh)
+      File.touch!(Path.join(young_fresh, @tombstone))
 
       assert :ok = reconcile(video)
 
       for workspace <- [young, young_empty, young_staged, young_directory],
           do: assert(File.dir?(workspace))
+
+      for workspace <- [young_interrupted, young_shared, young_fresh],
+          do: assert(Enum.sort(File.ls!(workspace)) == [@staged, @tombstone])
     end
 
     test "leaves a workspace a pending record names", %{video: video, path: path} do
@@ -1648,13 +1733,9 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       two_links = plant_workspace!(path, %{@staged => ""})
       File.ln!(Path.join(two_links, @staged), Path.join(tmp, "outside"))
       extra_entry = plant_workspace!(path, %{@staged => "", "other" => ""})
-      # A correction of a hardlinked sidecar killed between creating the fresh tombstone and
-      # renaming it over the staged name (#1131).
-      shared = plant_workspace!(path, %{@staged => original, @tombstone => ""})
-      File.ln!(Path.join(shared, @staged), Path.join(tmp, "download"))
       not_an_id = Path.join(Path.dirname(path), ".cinder-subtitle-sync-cas-short")
       File.mkdir!(not_an_id)
-      kept = [with_content, two_links, extra_entry, shared, not_an_id]
+      kept = [with_content, two_links, extra_entry, not_an_id]
       Enum.each(kept, &age!/1)
 
       assert :ok = reconcile(video)
@@ -1662,8 +1743,152 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(Path.join(extra_entry, @staged)) == ""
       assert File.read!(Path.join(with_content, @staged)) == original
       assert File.stat!(Path.join(tmp, "outside")).links == 2
-      assert File.read!(Path.join(tmp, "download")) == original
-      assert File.stat!(Path.join(tmp, "download")).links == 2
+    end
+
+    # #1131: the two entries a correction of a hardlinked sidecar leaves when killed between
+    # creating the fresh tombstone and renaming it over the staged name.
+    test "retires an interrupted disposal and keeps the download's inode as it was", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      {workspace, download} = plant_interrupted_disposal!(path, tmp, original)
+      age!(workspace)
+      before = File.stat!(download)
+
+      # Stays armed: a `discard_bound` on the staged name would empty the download's inode.
+      Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+
+      Application.put_env(:cinder, :filesystem_failure, %{
+        operation: :discard_bound,
+        source_contains: @staged,
+        reason: :discard_forbidden
+      })
+
+      assert :ok = reconcile(video)
+      refute File.exists?(workspace)
+      assert %{operation: :discard_bound} = Application.get_env(:cinder, :filesystem_failure)
+      assert File.read!(download) == original
+      assert %{links: 1} = after_sweep = File.stat!(download)
+
+      assert Map.take(after_sweep, [:inode, :major_device, :size, :mtime]) ==
+               Map.take(before, [:inode, :major_device, :size, :mtime])
+    end
+
+    test "a sweep never renames the fresh tombstone over a staged name that changed", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      {workspace, download} = plant_interrupted_disposal!(path, tmp, original)
+      age!(workspace)
+      use_barrier(%{operation: :open_bound, phase: :before, contains: @staged, once: false})
+
+      log =
+        capture_log(fn ->
+          task = Task.async(fn -> reconcile(video) end)
+          # The first open holds the staged file, the second checks its name before the rename.
+          assert_receive {:filesystem_barrier, pid, ref, :open_bound, _staged},
+                         DiskTask.timeout_ms()
+
+          send(pid, {ref, :continue})
+
+          assert_receive {:filesystem_barrier, ^pid, ref, :open_bound, staged},
+                         DiskTask.timeout_ms()
+
+          newer = Path.join(tmp, "newer")
+          File.write!(newer, "newer")
+          File.rename!(newer, staged)
+          Application.delete_env(:cinder, :filesystem_barrier)
+          send(pid, {ref, :continue})
+          assert :ok = DiskTask.await(task)
+        end)
+
+      assert File.read!(Path.join(workspace, @staged)) == "newer"
+      assert_fresh_tombstone(Path.join(workspace, @tombstone))
+      assert File.read!(download) == original
+      assert log =~ "subtitle workspace kept at #{workspace}: :concurrent_change"
+    end
+
+    test "leaves an interrupted disposal whose entries do not match", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      {tombstone_bytes, _} =
+        plant_interrupted_disposal!(path, tmp, original, %{@tombstone => "bytes"})
+
+      {tombstone_two_links, _} = plant_interrupted_disposal!(path, tmp, original)
+
+      File.ln!(
+        Path.join(tombstone_two_links, @tombstone),
+        Path.join(tmp, "tombstone-elsewhere")
+      )
+
+      {third_entry, _} = plant_interrupted_disposal!(path, tmp, original, %{"other" => ""})
+      single_link = plant_workspace!(path, %{@staged => original, @tombstone => ""})
+      kept = [tombstone_bytes, tombstone_two_links, third_entry, single_link]
+      Enum.each(kept, &age!/1)
+
+      assert :ok = reconcile(video)
+
+      for workspace <- kept do
+        assert File.read!(Path.join(workspace, @staged)) == original
+        assert File.exists?(Path.join(workspace, @tombstone))
+      end
+
+      for {workspace, links} <- [
+            {tombstone_bytes, 2},
+            {tombstone_two_links, 2},
+            {third_entry, 2},
+            {single_link, 1}
+          ],
+          do: assert(File.stat!(Path.join(workspace, @staged)).links == links)
+
+      assert File.read!(Path.join(tombstone_bytes, @tombstone)) == "bytes"
+      assert File.stat!(Path.join(tmp, "tombstone-elsewhere")).links == 2
+      assert File.exists?(Path.join(third_entry, "other"))
+    end
+
+    # What each kill leaves: every entry with whether it is empty and its link count.
+    for {step, barrier, left} <- [
+          {"holding the fresh tombstone",
+           %{operation: :open_bound, phase: :before, contains: @tombstone},
+           %{@staged => {false, 2}, @tombstone => {true, 1}}},
+          {"renaming the fresh tombstone", %{operation: :rename, contains: @staged},
+           %{@staged => {true, 1}}},
+          {"removing the staged name", %{operation: :rm, contains: @staged}, %{}}
+        ] do
+      test "a sweep of an interrupted disposal killed after #{step} is finished later", %{
+        video: video,
+        path: path,
+        original: original,
+        tmp_dir: tmp
+      } do
+        {workspace, download} = plant_interrupted_disposal!(path, tmp, original)
+        age!(workspace)
+        use_barrier(unquote(Macro.escape(barrier)))
+        kill_at_barrier(fn -> reconcile(video) end, unquote(barrier.operation))
+        Application.put_env(:cinder, :filesystem, Disk)
+
+        entries =
+          Map.new(File.ls!(workspace), fn name ->
+            entry = Path.join(workspace, name)
+            {name, {File.read!(entry) == "", File.stat!(entry).links}}
+          end)
+
+        assert entries == unquote(Macro.escape(left))
+        assert File.read!(download) == original
+
+        age!(workspace)
+        assert :ok = reconcile(video)
+        refute File.exists?(workspace)
+        assert File.read!(download) == original
+        assert File.stat!(download).links == 1
+      end
     end
 
     test "leaves the tombstone a reset of the current record would reuse", %{
@@ -2467,6 +2692,37 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     File.chmod!(workspace, 0o700)
     for {name, content} <- entries, do: File.write!(Path.join(workspace, name), content)
     workspace
+  end
+
+  # The two entries `replace_shared_tombstone/2` leaves when killed between creating the fresh
+  # tombstone and renaming it over the staged name (#1131): the staged name still holds a
+  # download's file, with `content`, beside an empty fresh tombstone. `extra` adds or overrides
+  # entries. Returns the workspace and the download's path.
+  defp plant_interrupted_disposal!(path, tmp, content, extra \\ %{}) do
+    workspace = plant_workspace!(path, Map.merge(%{@staged => content, @tombstone => ""}, extra))
+    download = Path.join(tmp, "downloads/#{Path.basename(workspace)}.srt")
+    File.mkdir_p!(Path.dirname(download))
+    File.ln!(Path.join(workspace, @staged), download)
+    {workspace, download}
+  end
+
+  # Kills a correction of the sidecar at `path`, hardlinked to `download`, right after it created
+  # the fresh tombstone. Returns its workspace, whose staged name still holds the download's file.
+  defp kill_at_fresh_tombstone!(video, path, download) do
+    use_barrier(%{operation: :create_bound, contains: @tombstone})
+    kill_at_barrier(fn -> manual(video, 1_000) end, :create_bound)
+
+    assert [workspace] = workspaces(path)
+    assert Enum.sort(File.ls!(workspace)) == [@staged, @tombstone]
+    assert same_inode?(Path.join(workspace, @staged), download)
+    assert File.stat!(download).links == 2
+    assert_fresh_tombstone(Path.join(workspace, @tombstone))
+    workspace
+  end
+
+  defp same_inode?(left, right) do
+    identity = &Map.take(File.stat!(&1), [:major_device, :minor_device, :inode])
+    identity.(left) == identity.(right)
   end
 
   # Backdates a workspace and its entries past the hour a sweep waits.
