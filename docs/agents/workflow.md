@@ -41,13 +41,30 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
   check the author's claims checks them against that line and the diff, within the same
   one-file budget. A second full suite takes the CPU the host's agent threads share: on #959 a
   Spec reviewer re-ran the full suite in a copy of the worktree and took 12 minutes.
-- Paste this section into each reviewer's brief before you start the reviewer. Briefs written
+- Paste the bullet above into each reviewer's brief before you start the reviewer. Briefs written
   from the `code-review` skill alone let reviewers run tests or a mutation in the author's
   checkout on #884, #960, #1004 and #939.
 - In a T3 thread, start each `delegate_task` reviewer at high effort in `target.options`
   (`reasoningEffort: "high"` for Codex, whose default model starts at `low`; `effort: "high"`
   for Claude), and with `isolation: "worktree"` when its brief allows the mutation check. The
   Codex reviewers on #1025 and #939 ran at `low` and ran no mutation check.
+- Once you have read the report of a reviewer you started with the Agent tool's
+  `isolation: "worktree"`, remove its worktree and branch, named by the `agentId:` line of the
+  Agent result. Claude Code keeps the worktree once the reviewer checks out the reviewed commit,
+  and it can leave the branch even when it removes the worktree. So run these steps from any
+  checkout, whether or not the result prints `worktreePath:`. `<path>` is
+  `~/Projects/cinder/.claude/worktrees/agent-<agentId>`.
+  1. When `<path>` is gone, go to step 3. Otherwise this command must print at least one ref:
+     `git -C ~/Projects/cinder for-each-ref --exclude='refs/heads/worktree-agent-*' --contains "$(git -C <path> rev-parse HEAD)"`.
+     When it prints nothing, the worktree holds a commit that only it has. Keep the worktree and
+     its branch, name them in your report, and stop here.
+  2. Run `git -C ~/Projects/cinder worktree remove <path>`. When it exits 128, its message says
+     which case you are in:
+     - `cannot remove a locked working tree`: a live agent holds the lock. Keep the worktree and
+       its branch, and stop here. `--force` refuses a locked worktree too.
+     - `contains modified or untracked files`: the reviewer's throwaway mutation check left
+       them. Read `git -C <path> status --short`, then run the command again with `--force`.
+  3. Run `git -C ~/Projects/cinder branch -D worktree-agent-<agentId>`.
 
 ## Agent docs
 
