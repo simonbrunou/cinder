@@ -31,6 +31,14 @@ comment and the triage brief. It was false for one copy with the series' id and 
 which settle on the series' id, and the code comment held the same clause: two re-check rounds,
 about 14 minutes.
 
+A sentence that says Cinder removes, cleans up or repairs something covers the paths where that
+step fails or never runs. Say "tries to" or name what Cinder logs when it fails, and name what
+must hold first: each condition the code checks, and each earlier step in the same call that can
+stop it. On #1131 the fragment said a recovery "removes" a hidden folder and an analysis removes
+the rest. Review found it false when the download's file was deleted first, when the removal
+failed, and when a reset or replacement cleanup stopped `reconcile/2` before its sweep: three
+review rounds, about 22 minutes.
+
 When a PR changes which release or file names a parser reads, show the change with example names
 and leave the full rule to the code. A sentence that restates the rule in general words is a
 claim about every name. On #1132, the fragment said in general words which years before an
