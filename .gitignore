@@ -47,9 +47,13 @@ __pycache__/
 .env
 
 # Personal agent-client layer. Claude Code reads repo skills only from
-# .claude/skills, so that one entry is a tracked link to .agents/skills.
+# .claude/skills, so that entry is a tracked link to .agents/skills. The shared
+# .claude/settings.json and the hook scripts it runs from .claude/hooks are tracked
+# too, so every worktree runs them (#1134); settings.local.json stays personal.
 /.claude/*
 !/.claude/skills
+!/.claude/settings.json
+!/.claude/hooks
 
 # Nix / direnv
 .direnv/
