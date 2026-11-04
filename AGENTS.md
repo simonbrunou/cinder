@@ -91,14 +91,18 @@ reports as `conflicts with origin/main`. On a conflict:
 Do the same for a PR whose diff touches `CHANGELOG.md` even without a conflict, since a stale
 entry under `[Unreleased]` merges cleanly and turns `main` red.
 
-A PR that adds or widens a fence, a test that scans the sources
-([testing.md](docs/agents/testing.md)), can turn `main` red with no conflict too, since a PR
-merged after its CI ran can add a line the fence fails. Right before merging one, run
-`git fetch origin`. When `origin/main` has commits the pushed SHA lacks, run
-`git switch --detach <pushed SHA>`, merge `origin/main` and run the file of each fence the PR adds
-or widens. When they pass, push nothing and merge the pushed SHA. When one fails, fix the line it
-names, run `mix test`, push with `git push origin HEAD:<branch>` and wait for CI. Then check the
-three conditions and this one again before merging.
+A fence, a test that scans the sources ([testing.md](docs/agents/testing.md)), can turn `main`
+red with no conflict too. A PR merged after a fence PR's CI ran can add a line the fence fails,
+and a PR whose CI ran before a fence reached `main` never ran it (#1155, fixed by #1161). Right
+before merging, run `git fetch origin`. When `origin/main` has commits the pushed SHA lacks, the
+fences to run are each one the PR adds or widens, plus each file that
+`git diff --name-only --diff-filter=d <pushed SHA>...origin/main -- test` prints and that is
+`test/code_health_test.exs`, sits under `test/code_health/` or names `"lib/` (the source
+scanners elsewhere, as `rg -l '"lib/' test` lists them). When that list is not empty, run
+`git switch --detach <pushed SHA>`, merge `origin/main` and run those files. When they pass, push
+nothing and merge the pushed SHA. When one fails, fix the line it names, run `mix test`, push
+with `git push origin HEAD:<branch>` and wait for CI. Then check the three conditions and this
+one again before merging.
 
 The production deploy that the merge triggers is accepted. Ask first only when the PR drops or
 rewrites stored data (a destructive migration, a backfill that overwrites rows). After the merge,
