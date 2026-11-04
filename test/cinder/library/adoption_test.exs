@@ -486,8 +486,10 @@ defmodule Cinder.Library.AdoptionTest do
     assert %{status: :matched} = Enum.find(candidate.files, &(&1.path == clean))
 
     for path <- [dupe_a, dupe_b] do
-      assert %{status: :unmatched, reason: {:duplicate_episode_claim, [{1, 1}]}} =
-               Enum.find(candidate.files, &(&1.path == path)),
+      assert match?(
+               %{status: :unmatched, reason: {:duplicate_episode_claim, [{1, 1}]}},
+               Enum.find(candidate.files, &(&1.path == path))
+             ),
              "expected #{path} to be held as a duplicate claim"
     end
   end

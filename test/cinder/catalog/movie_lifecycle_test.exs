@@ -1437,8 +1437,11 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
 
           assert committed?(result), label
           assert MovieLifecycle.legal?(from, to), "#{label} took #{from} -> #{to}"
-          assert [{%{count: 1}, %{kind: :movie, to: ^to}}] = events, label
-          assert [%Movie{status: ^to}] = broadcasts, label
+
+          assert match?([{%{count: 1}, %{kind: :movie, to: ^to}}], events),
+                 "#{label}: #{inspect(events)}"
+
+          assert match?([%Movie{status: ^to}], broadcasts), "#{label}: #{inspect(broadcasts)}"
           {verb, from, to}
         end
 

@@ -73,8 +73,8 @@ defmodule Cinder.HTTPPolicyTest do
       resolver = fn _host -> flunk("literal addresses must not use DNS") end
 
       for url <- forbidden do
-        assert {:error, :forbidden_address} = HTTPPolicy.validate_untrusted_url(url, resolver),
-               url
+        validated = HTTPPolicy.validate_untrusted_url(url, resolver)
+        assert match?({:error, :forbidden_address}, validated), "#{url}: #{inspect(validated)}"
       end
     end
 
@@ -192,8 +192,8 @@ defmodule Cinder.HTTPPolicyTest do
       # No brackets: this takes a bare host, e.g. the un-bracketed form `URI.new/1` already
       # produces for `http://[::1]`'s `.host`, not a URL's bracketed authority component.
       for host <- ["127.0.0.1", "169.254.169.254", "10.0.0.1", "::1"] do
-        assert {:error, :forbidden_address} = HTTPPolicy.validate_untrusted_host(host, resolver),
-               host
+        validated = HTTPPolicy.validate_untrusted_host(host, resolver)
+        assert match?({:error, :forbidden_address}, validated), "#{host}: #{inspect(validated)}"
       end
     end
 

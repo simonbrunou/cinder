@@ -249,9 +249,10 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert Enum.map(judged.kept, & &1.download_url) == ["own-id", "scene", "romaji", "native"]
 
     for release <- judged.kept do
-      assert {:ok, %{assignments: [%{episode_ids: [11]}]}} =
-               Anime.select_episodes([release], context, [11]),
-             release.download_url
+      selected = Anime.select_episodes([release], context, [11])
+
+      assert match?({:ok, %{assignments: [%{episode_ids: [11]}]}}, selected),
+             "#{release.download_url}: #{inspect(selected)}"
     end
   end
 

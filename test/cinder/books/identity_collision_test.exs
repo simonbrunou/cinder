@@ -110,15 +110,17 @@ defmodule Cinder.Books.IdentityCollisionTest do
     assert length(lossy) == 6
 
     for title <- lossy do
-      assert :none = Identity.select([candidate(title, 1)], "#{title} #{@author}"),
+      assert match?(:none, Identity.select([candidate(title, 1)], "#{title} #{@author}")),
              "#{inspect(title)} must stay unresolved rather than match on its Latin residue"
     end
   end
 
   test "the spellings within a group do still resolve to each other" do
     for {group, :resolvable} <- @groups, query_title <- group, stored_title <- group do
-      assert {:ok, _candidate, _evidence} =
-               Identity.select([candidate(stored_title, 1)], "#{query_title} #{@author}"),
+      assert match?(
+               {:ok, _candidate, _evidence},
+               Identity.select([candidate(stored_title, 1)], "#{query_title} #{@author}")
+             ),
              "#{inspect(query_title)} should resolve to #{inspect(stored_title)}"
     end
   end

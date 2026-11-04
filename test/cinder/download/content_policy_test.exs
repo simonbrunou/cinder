@@ -46,11 +46,13 @@ defmodule Cinder.Download.ContentPolicyTest do
     # quietly reopen this false positive.
     test "passes an e-book or audiobook release that carries a blocked file alongside the book" do
       for kind <- BookKind.all(), format <- BookKind.accepted_formats(kind) do
-        assert :ok =
+        assert match?(
+                 :ok,
                  ContentPolicy.check([
                    "The Dispossessed/The Dispossessed.#{format}",
                    "The Dispossessed/RARBG_DO_NOT_MIRROR.exe"
-                 ]),
+                 ])
+               ),
                "#{kind} .#{format} release was blocked"
       end
     end
@@ -60,7 +62,10 @@ defmodule Cinder.Download.ContentPolicyTest do
     test "a book format no importer publishes does not shield an executable" do
       for kind <- BookKind.all(),
           format <- BookKind.fetch!(kind).known_formats -- accepted_book_formats() do
-        assert {:blocked, _} = ContentPolicy.check(["The Dispossessed.#{format}", "setup.exe"]),
+        assert match?(
+                 {:blocked, _},
+                 ContentPolicy.check(["The Dispossessed.#{format}", "setup.exe"])
+               ),
                "#{kind} .#{format} shielded the executable"
       end
     end
@@ -133,7 +138,7 @@ defmodule Cinder.Download.ContentPolicyTest do
             "evil.exe:$DATA",
             "evil.lnk:Zone.Identifier"
           ] do
-        assert {:blocked, _} = ContentPolicy.check([name]), "#{name} slipped through"
+        assert match?({:blocked, _}, ContentPolicy.check([name])), "#{name} slipped through"
       end
     end
 

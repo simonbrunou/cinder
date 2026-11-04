@@ -140,8 +140,10 @@ defmodule Cinder.Books.IdentityTest do
 
       expect(PrimaryMetadataMock, :get_work, fn "id" -> {:ok, work("id")} end)
 
-      assert {:ok, %{provider: :openlibrary}} =
-               Identity.resolve("Norwegian Wood Haruki Murakami"),
+      assert match?(
+               {:ok, %{provider: :openlibrary}},
+               Identity.resolve("Norwegian Wood Haruki Murakami")
+             ),
              "order #{inspect(names)} should resolve"
     end
   end
@@ -226,7 +228,7 @@ defmodule Cinder.Books.IdentityTest do
 
       expect(SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
 
-      assert {:unresolved, :no_reliable_match} = Identity.resolve(query),
+      assert match?({:unresolved, :no_reliable_match}, Identity.resolve(query)),
              "#{query} must not resolve to #{other_work}"
     end
   end
@@ -311,7 +313,8 @@ defmodule Cinder.Books.IdentityTest do
 
       expect(PrimaryMetadataMock, :get_work, fn "id" -> {:ok, work("id")} end)
 
-      assert {:ok, %{provider: :openlibrary}} = Identity.resolve(query), "#{title} should resolve"
+      assert match?({:ok, %{provider: :openlibrary}}, Identity.resolve(query)),
+             "#{title} should resolve"
     end
   end
 
@@ -331,7 +334,7 @@ defmodule Cinder.Books.IdentityTest do
 
       expect(SecondaryMetadataMock, :search, fn _query -> {:ok, []} end)
 
-      assert {:unresolved, :no_reliable_match} = Identity.resolve(query),
+      assert match?({:unresolved, :no_reliable_match}, Identity.resolve(query)),
              "#{query} must not resolve to #{other_work}"
     end
   end
@@ -344,7 +347,8 @@ defmodule Cinder.Books.IdentityTest do
 
       expect(PrimaryMetadataMock, :get_work, fn "id" -> {:ok, work("id")} end)
 
-      assert {:ok, %{provider: :openlibrary}} = Identity.resolve(query), "#{query} should resolve"
+      assert match?({:ok, %{provider: :openlibrary}}, Identity.resolve(query)),
+             "#{query} should resolve"
     end
   end
 
@@ -373,7 +377,7 @@ defmodule Cinder.Books.IdentityTest do
 
       expect(PrimaryMetadataMock, :get_work, fn "id" -> {:ok, work("id")} end)
 
-      assert {:ok, %{provider: :openlibrary}} = Identity.resolve("#{title} A Author"),
+      assert match?({:ok, %{provider: :openlibrary}}, Identity.resolve("#{title} A Author")),
              "#{title} should resolve"
     end
   end

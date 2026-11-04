@@ -300,7 +300,10 @@ defmodule CinderWeb.BookManualSearchComponentTest do
     assert loaded.assigns.state == :loaded
 
     for params <- [%{"index" => "-1"}, %{"index" => "abc"}, %{"index" => "1.5"}, %{}] do
-      assert {:noreply, _socket} = BookManualSearchComponent.handle_event("grab", params, loaded),
+      assert match?(
+               {:noreply, _socket},
+               BookManualSearchComponent.handle_event("grab", params, loaded)
+             ),
              "expected #{inspect(params)} to be a no-op"
 
       refute_received {:manual_grab, _mode, _target, _release}

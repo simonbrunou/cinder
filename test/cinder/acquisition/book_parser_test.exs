@@ -89,7 +89,7 @@ defmodule Cinder.Acquisition.BookParserTest do
             "[{alt}] Mary Renault - The Persian Boy",
             "[{fmt}] Donald E. Westlake - The Italian Job"
           ] do
-        assert %{language: nil} = parse(ctx, name), "leaked a language from #{name}"
+        assert match?(%{language: nil}, parse(ctx, name)), "leaked a language from #{name}"
       end
     end
 
@@ -105,7 +105,7 @@ defmodule Cinder.Acquisition.BookParserTest do
             "[{fmt}] The English Patient",
             "({alt}) The Persian Boy"
           ] do
-        assert %{language: nil} = parse(ctx, name), "leaked a language from #{name}"
+        assert match?(%{language: nil}, parse(ctx, name)), "leaked a language from #{name}"
       end
     end
 
@@ -115,7 +115,7 @@ defmodule Cinder.Acquisition.BookParserTest do
             "Toni Morrison - Beloved ({fmt}) MULTILINGUAL",
             "Toni Morrison - Beloved ({fmt}) [MULTI]"
           ] do
-        assert %{language: "MULTI"} = parse(ctx, name), "missed MULTI in #{name}"
+        assert match?(%{language: "MULTI"}, parse(ctx, name)), "missed MULTI in #{name}"
       end
     end
 

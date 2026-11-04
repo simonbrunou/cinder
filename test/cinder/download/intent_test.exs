@@ -309,16 +309,18 @@ defmodule Cinder.Download.IntentTest do
     for {label, invalid} <- invalid_snapshots(fixture.snapshot) do
       marked = %{fixture.release | mapping_snapshot: invalid}
 
-      assert {:error, :invalid_mapping_snapshot} =
-               Download.reserve_intent(%{
-                 kind: :season_pack,
-                 target_id: fixture.first.id,
-                 episode_ids: [fixture.first.id, fixture.second.id],
-                 protocol: :torrent,
-                 release: marked,
-                 mapping_snapshot: invalid
-               }),
-             label
+      reserved =
+        Download.reserve_intent(%{
+          kind: :season_pack,
+          target_id: fixture.first.id,
+          episode_ids: [fixture.first.id, fixture.second.id],
+          protocol: :torrent,
+          release: marked,
+          mapping_snapshot: invalid
+        })
+
+      assert match?({:error, :invalid_mapping_snapshot}, reserved),
+             "#{label}: #{inspect(reserved)}"
     end
 
     movie = movie_fixture()

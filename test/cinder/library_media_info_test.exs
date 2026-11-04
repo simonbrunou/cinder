@@ -179,13 +179,16 @@ defmodule Cinder.LibraryMediaInfoTest do
 
       case expected do
         :reject ->
-          assert {:error,
-                  {:release_policy_mismatch,
-                   %{tmdb_runtime_minutes: ^tmdb, file_runtime_minutes: ^file}}} = result,
+          assert match?(
+                   {:error,
+                    {:release_policy_mismatch,
+                     %{tmdb_runtime_minutes: ^tmdb, file_runtime_minutes: ^file}}},
+                   result
+                 ),
                  "#{file} min for a #{tmdb} min movie should be rejected"
 
         :import ->
-          assert {:ok, @dest} = staged_dest(result),
+          assert match?({:ok, @dest}, staged_dest(result)),
                  "#{inspect(file)} min for a #{inspect(tmdb)} min movie should import"
 
           {:ok, stage} = result

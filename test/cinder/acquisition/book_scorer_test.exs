@@ -738,22 +738,26 @@ defmodule Cinder.Acquisition.BookScorerTest do
       # through supplies "eng" — which upcased to "ENG" and matched no tag the parser emits,
       # rejecting a correctly-tagged English release as the wrong language.
       for code <- ["eng", "en"] do
-        assert {:accept, %{language: "ENGLISH"}} =
+        assert match?(
+                 {:accept, %{language: "ENGLISH"}},
                  BookScorer.evaluate(
                    release(ctx, "Toni Morrison - Beloved [ENGLISH] ({fmt})"),
                    @beloved,
                    language: code
-                 ),
+                 )
+               ),
                "#{code} did not match ENGLISH"
       end
 
       for code <- ["fre", "fra", "fr"] do
-        assert {:accept, %{language: "FRENCH"}} =
+        assert match?(
+                 {:accept, %{language: "FRENCH"}},
                  BookScorer.evaluate(
                    release(ctx, "Toni Morrison - Beloved [FRENCH] ({fmt})"),
                    @beloved,
                    language: code
-                 ),
+                 )
+               ),
                "#{code} did not match FRENCH"
       end
     end
@@ -842,11 +846,13 @@ defmodule Cinder.Acquisition.BookScorerTest do
       {min, max} = BookKind.size_band(ctx.kind)
 
       for size <- [min, max] do
-        assert {:accept, _evidence} =
+        assert match?(
+                 {:accept, _evidence},
                  BookScorer.evaluate(
                    release(ctx, "Toni Morrison - Beloved ({fmt})", size: size),
                    @beloved
-                 ),
+                 )
+               ),
                "#{size} bytes was refused"
       end
 
@@ -1077,7 +1083,7 @@ defmodule Cinder.Acquisition.BookScorerTest do
     assert triggers |> Map.keys() |> Enum.sort() == Enum.sort(BookScorer.reasons())
 
     for reason <- BookScorer.reasons() do
-      assert {:reject, ^reason} = triggers[reason].(),
+      assert match?({:reject, ^reason}, triggers[reason].()),
              "#{inspect(reason)}'s fixture did not trigger it"
     end
   end
