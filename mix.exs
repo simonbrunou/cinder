@@ -144,7 +144,8 @@ defmodule Cinder.MixProject do
         "credo --strict",
         "ecto.create --quiet",
         "ecto.migrate --quiet",
-        "test"
+        # Fails the run on a compiler warning from a test file too (#855).
+        "test --warnings-as-errors"
       ],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
       "assets.build": ["compile", "tailwind cinder", "esbuild cinder"],

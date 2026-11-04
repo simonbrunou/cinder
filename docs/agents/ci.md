@@ -39,7 +39,8 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   runs of one event. The API lists runs newest first, so `[0]` is the newest. A status's
   `target_url` (`/actions/runs/<n>/jobs/<m>`) carries the run's index in the repo, not the id the
   logs endpoint needs.
-- Grep a test log for `\d+\) test`, `Result:`, `FAIL:` and `FATAL`, then delete it.
+- Grep a test log for `\d+\) test`, `Result:`, `FAIL:`, `FATAL`, `ERROR! Test suite aborted` and
+  `warning:`, then delete it.
 
 ## Judging a red run
 
@@ -137,6 +138,14 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   each grow a file near the cap pass apart and break `main` together, so count the lines of every
   touched lib file on the merged tree before merging (`scripts/merge-pr` does). On a red, split
   the file as the test's failure message says.
+- **Test-file warning.** A red `test` job whose `Result:` line counts no failure and is followed
+  by `ERROR! Test suite aborted after successful execution due to warnings` failed on a warning
+  that the alias's `test --warnings-as-errors` makes fatal. Above the `Result:` line, either a
+  compiler `warning:` block names a test file and line to fix, or
+  `warning: the following files do not match` lists a file under `test/` whose name ends in
+  neither `_test.exs` nor `_helper.exs`, outside `test/support/`: rename or move it. After a
+  compiler-warning abort, `mix test --failed` prints `There are no tests to run` and exits 0, so
+  check the fix by running the file the warning names.
 - **Trivy DB outage.** A red `container` job whose "Download the Trivy vulnerability DB" step
   fails on both repositories (`ghcr.io`, then `mirror.gcr.io`; #835, #841) is an upstream outage,
   not the diff. Outages have lasted hours. Re-run once another run's `CI / container` went green
@@ -209,7 +218,8 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   then list the run's jobs with
   `curl ... "$API/actions/runs/<run id>/jobs" | jq -c '.[] | {id, name, status, attempt}'`.
 - A red job at `attempt` 1 gets the re-run. A red test gets it only when it passes both checks
-  of step 1 of **Flake** ("Judging a red run"). The call is
+  of step 1 of **Flake** ("Judging a red run"), and a **Test-file warning** never does, since the
+  same tree prints the same warning. The call is
   `curl -s -X POST -H "Authorization: token $FJ_TOKEN" "$API/actions/jobs/<job id>/rerun"`,
   which answers 204. A job at `attempt` above 1 was re-run already, by you or by another agent
   in a merge burst: wait on it while it reads `waiting` or `running`. A release PR's merge commit

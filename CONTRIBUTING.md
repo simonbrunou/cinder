@@ -11,8 +11,9 @@ mix phx.server   # run the app at http://localhost:4000
 ```
 
 `mix test` is the **source of truth** and the only "is it green" gate. The alias runs, in order:
-`compile --warnings-as-errors`, `format --check-formatted`, `credo --strict`, then the suite. Run
-it before every commit; CI runs the same thing on every push and PR.
+`compile --warnings-as-errors`, `format --check-formatted`, `credo --strict`, then the suite with
+`--warnings-as-errors`, so a compiler warning from a test file fails it too. Run it before every
+commit; CI runs the same thing on every push and PR.
 
 In dev the [Tidewave](https://hexdocs.pm/tidewave) MCP is wired (`/tidewave/mcp`) — prefer it for
 inspecting the running app over guessing.

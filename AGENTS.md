@@ -8,7 +8,8 @@ Audiobookshelf.
 ## Commands
 
 - `mix test` is the only green gate, locally and in CI. The alias runs
-  `compile --warnings-as-errors`, `format --check-formatted`, `credo --strict`, then the suite.
+  `compile --warnings-as-errors`, `format --check-formatted`, `credo --strict`, then
+  `test --warnings-as-errors`, which also fails on a compiler warning from a test file.
 - Mix and Hex manage dependencies. The Elixir/OTP toolchain comes from the Nix flake dev shell;
   if `mix` is not on `PATH`, run `nix develop --command mix test`.
 - Before the first `mix` task in a fresh worktree, install its dependencies with

@@ -81,7 +81,7 @@ jobs:
       - run: mix deps.get
 
       # `mix test` is the project alias: compile --warnings-as-errors,
-      # format --check-formatted, credo --strict, ecto create/migrate, test.
+      # format --check-formatted, credo --strict, ecto create/migrate, test --warnings-as-errors.
       #
       # #396: a flake sighting's failure detail is otherwise lost — a local `mix test --failed`
       # rerun can pass and clear the manifest before anyone captures the diff. `tee` keeps the
