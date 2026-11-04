@@ -19,6 +19,22 @@
   put a year after a blocked title. The new year reading then let a name with another alias's
   words before any year read as the series' own episode, where only the series' own year did
   before. The release-parser review found it, and the fix took about 20 minutes.
+- A fix that keeps a behaviour across an Elixir or OTP upgrade answers like the old version on
+  every input class, not only on the cases the issue names. Before review, run one table of
+  inputs through the changed module's public functions, a row per input class that the changed
+  code or the upgraded function tells apart. Run it on the merge base's code under the old
+  version, then on the branch under both versions: every row matches the merge base's answer,
+  except a row the PR body names with the answer you chose and why. The old dev shell is
+  `nix develop <dir>` on a scratch directory outside any git checkout, holding the merge base's
+  `flake.nix` and `flake.lock`, and `elixir --version` there prints the old version; pass
+  `MIX_BUILD_ROOT=<dir>/_build` so the branch's `_build` stays. Write the table as a script for
+  `MIX_ENV=test mix run --no-start`. For the merge base's side, save
+  `git show <merge base>:<path>` to a file, and the script loads it with `Code.compile_file/1`
+  after `Code.compiler_options(ignore_module_conflict: true)`. On #1102, the fix for Elixir 1.20.5's
+  dropped redirect port answered unlike 1.20.4 on four classes: a non-HTTP scheme, a missing host
+  and a non-UTF-8 host, each with an out-of-range port, and `//:70000/x`, which 1.20.4 resolved.
+  Review flagged the first and the last one round apart, about 27 minutes from the first finding
+  to the second fix. A re-check's table of 41 Locations over both versions found the last.
 - A bug fix starts with a test that reproduces the bug. Then make it pass.
 - New functionality, such as a choke-point, a state or a writer, ships with a test.
 - A lock test runs the waiter in another process than the holder: the lock id carries `self()`
