@@ -924,14 +924,16 @@ defmodule Cinder.Library.StagedImportTest do
       assert File.exists?(journal.dest)
     end
 
+    # The value reaches the body through the context, not `unquote`: an unquoted `:keep` would
+    # make the type checker flag `on_collision == :replace` as always false in that copy.
     for {label, on_collision} <- [{"fresh", :keep}, {"replacement", :replace}] do
+      @tag on_collision: on_collision
       test "a pre-journal exclusive-copy crash quarantines an unknown #{label} destination", %{
         downloads: downloads,
         library: library,
+        on_collision: on_collision,
         tmp_dir: tmp
       } do
-        on_collision = unquote(on_collision)
-
         {source, dest} =
           if on_collision == :replace,
             do: replacement_files(downloads, library, "Crash"),

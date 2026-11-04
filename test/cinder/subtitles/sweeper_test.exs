@@ -9,7 +9,6 @@ defmodule Cinder.Subtitles.SweeperTest do
   import Mox
   import Cinder.CatalogFixtures
 
-  alias Cinder.Catalog
   alias Cinder.Catalog.Identity
   alias Cinder.Subtitles.Sweeper
 

@@ -700,7 +700,12 @@ defmodule Cinder.SubtitlesTest do
       ConfigCase.put_env(:media_info, Cinder.Library.MediaInfoMock)
       put_moviehash!(131_072)
       test = self()
-      stub(Cinder.Library.MediaServerMock, :scan, fn kind -> send(test, {:scan, kind}) && :ok end)
+
+      stub(Cinder.Library.MediaServerMock, :scan, fn kind ->
+        send(test, {:scan, kind})
+        :ok
+      end)
+
       :ok
     end
 

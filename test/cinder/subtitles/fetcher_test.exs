@@ -73,8 +73,12 @@ defmodule Cinder.Subtitles.FetcherTest do
     fetcher = Process.whereis(Cinder.Subtitles.Fetcher)
 
     stub(Cinder.Subtitles.ProviderMock, :search, fn
-      %{tmdb_id: 1} -> raise "provider boom"
-      %{tmdb_id: 2} -> send(test, :second_ran) && {:ok, []}
+      %{tmdb_id: 1} ->
+        raise "provider boom"
+
+      %{tmdb_id: 2} ->
+        send(test, :second_ran)
+        {:ok, []}
     end)
 
     # The Fetcher's task logs the crash, so the drain runs inside the capture: it returns once
