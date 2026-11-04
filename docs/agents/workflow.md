@@ -73,6 +73,13 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
   body covers any doc an agent reads. On #1011 (for #992) the first draft of `ci.md` restated
   one rule in three sections and ended a wait on a condition no status shows, against the
   skill's "Pruning" and "Steps and completion criteria". Three review fix rounds followed.
+- A doc sentence about what a tool prints or does (an abort line, a flag's effect, a retry) holds
+  on every path in the tool's source that reaches it, not only on the case its help text or your
+  first run shows. Read that source first (`elixir -e 'IO.puts(:code.lib_dir(:mix))'` prints
+  Mix's directory, its tasks under `lib/mix/tasks/`; an Elixir dependency's source is in
+  `deps/<name>/lib`), then prove each path with a run. On #1170 the first draft of `ci.md`
+  "Test-file warning" repeated `mix help test` and missed two paths of Mix's `tasks/test.ex`.
+  Two re-check rounds found them, 15 minutes from the first fix commit to the last.
 
 ## Worktrees
 
