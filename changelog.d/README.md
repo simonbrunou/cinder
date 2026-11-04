@@ -39,6 +39,21 @@ the rest. Review found it false when the download's file was deleted first, when
 failed, and when a reset or replacement cleanup stopped `reconcile/2` before its sweep: three
 review rounds, about 22 minutes.
 
+A sentence that says Cinder no longer hangs or waits forever names the call the change bounds and
+the reads it bounds there, such as "the scan" and "a download folder's file listing", never only
+the trigger ("a wedged mount"). Name each step with no deadline that the claim still covers,
+whether a read, a write or a delete, or narrow the claim until it no longer covers that step.
+Start from the brief's **Out of scope** list, and prove it complete like any other brief wording.
+A sentence about what a later call does after a timeout also holds for a call that an earlier
+step ends first, and for a call that starts while the first one is still waiting out its
+deadline. On #1113 the fragment first said the page "no longer scans forever on a wedged mount",
+which named only the trigger while the moviehash and library-file reads have no deadline. It
+then said the page "no longer waits forever on a download folder whose file listing stops
+answering", which still covered the delete, and the delete has no deadline either. Last, "each
+new scan of its download folder ends at once with "could not be read"" was false when a download
+client failed its health check first, and for a scan started while the first was still waiting
+out its deadline: three review rounds, about 35 minutes from the first finding to the last fix.
+
 When a PR changes which release or file names a parser reads, show the change with example names
 and leave the full rule to the code. A sentence that restates the rule in general words is a
 claim about every name. On #1132, the fragment said in general words which years before an
