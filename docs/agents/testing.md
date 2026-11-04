@@ -37,6 +37,15 @@
   to the second fix. A re-check's table of 41 Locations over both versions found the last.
 - A bug fix starts with a test that reproduces the bug. Then make it pass.
 - New functionality, such as a choke-point, a state or a writer, ships with a test.
+- A throwaway test, one that only reports what the code does, runs into the `mix test` alias's
+  format and Credo checks before ExUnit starts. Before you edit an existing test file, copy it
+  outside `test/` and restore it after the run; delete a new file. Run `mix format <file>` and
+  `mix credo --strict <file>` before `mix test`: Credo's default config fails `IO.inspect`,
+  `dbg` and a call to a module three or more names deep (`Cinder.Subtitles.Sync.Timing`) without
+  an alias. Report from the test body with
+  `flunk(inspect(value, limit: :infinity, printable_limit: :infinity))`, since `inspect/1` cuts
+  long lists and strings. On #1132 and #1127 the format check and then Credo stopped such a test
+  before it ran.
 - A lock test runs the waiter in another process than the holder: the lock id carries `self()`
   and `StagedImport.run/1` is re-entrant, so a waiter in the holder's process never blocks. A
   short `refute Task.yield(task, 100)` shows it blocked (`Cinder.Library.StagedImportTest`,
