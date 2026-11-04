@@ -85,6 +85,9 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
   @changed_video "x" <> String.duplicate("v", 131_071)
   @replacement "1\n00:00:10,000 --> 00:00:11,000\nReplacement\n\n"
+  # A workspace's entries: persisted names, so spelled out here.
+  @staged ".cinder-subtitle-sync-write-staged"
+  @tombstone ".cinder-subtitle-sync-write-tombstone"
 
   setup %{tmp_dir: tmp} do
     keys = [
@@ -598,12 +601,28 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert Manifest.sync(Manifest.read(video), "en") == nil
     end
 
-    test "a committed exchange leaves an empty workspace tombstone", %{video: video, path: path} do
+    test "a completed correction leaves no workspace beside the sidecar", %{
+      video: video,
+      path: path
+    } do
       assert {:ok, :corrected, _} = manual(video, 1_000)
 
-      assert [staged] = workspace_staged_files(path)
-      assert File.read!(staged) == ""
+      assert workspaces(path) == []
       assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+    end
+
+    test "a workspace that fails to retire is logged and the correction still records", %{
+      video: video,
+      path: path
+    } do
+      fail_once(%{operation: :rm, source_contains: @staged, reason: :eio})
+
+      {result, log} = with_log(fn -> manual(video, 1_000) end)
+
+      assert {:ok, :corrected, _} = result
+      assert [workspace] = workspaces(path)
+      assert log =~ "subtitle workspace kept at #{workspace}: :eio"
+      assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
     end
 
     test "identical correct and reset cycles never collide with a retired workspace", %{
@@ -691,13 +710,13 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
       assert File.read!(download) == original
       assert File.stat!(download).links == 1
-      assert [staged] = workspace_staged_files(path)
-      assert_fresh_tombstone(staged)
+      assert workspaces(path) == []
 
       assert :ok = reset(video)
       assert File.read!(path) == original
       assert File.read!(download) == original
-      for staged <- workspace_staged_files(path), do: assert_fresh_tombstone(staged)
+      assert [staged] = workspace_staged_files(path)
+      assert_fresh_tombstone(staged)
     end
 
     test "a sidecar replaced right after the correction's exchange keeps the download's bytes", %{
@@ -760,6 +779,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert [staged] = workspace_staged_files(path)
       assert_fresh_tombstone(staged)
       assert_killed_correction_recovers(video, path, original, download)
+      refute File.exists?(Path.dirname(staged))
     end
 
     test "a failed tombstone rename leaves the pending record for recovery", %{
@@ -1007,7 +1027,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.dir?(workspace)
 
       assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
-      assert File.read!(Path.join(workspace, ".cinder-subtitle-sync-write-staged")) == ""
+      refute File.exists?(workspace)
       assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
     end
 
@@ -1023,8 +1043,13 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
       assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
 
-      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+      # The pending record names the workspace, so a sweep leaves it for `recover/2`.
+      age!(Path.dirname(staged))
+      assert :ok = SidecarTransaction.reconcile(video, moviehash!(video))
       assert File.dir?(Path.dirname(staged))
+
+      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+      refute File.exists?(Path.dirname(staged))
       assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
     end
 
@@ -1529,6 +1554,282 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(path) == external
       assert SidecarTransaction.stranded_backup?(path)
       assert Manifest.sync(Manifest.read(video), "en") == record
+    end
+  end
+
+  # Issue #795: `reconcile/2` sweeps the workspace tombstones earlier corrections and resets left
+  # in the video's folder, once they are an hour old and no record there names them.
+  describe "reconcile/2 retiring workspaces" do
+    test "retires an old empty tombstone no record names", %{video: video, path: path} do
+      workspace = plant_workspace!(path, %{@staged => ""})
+      age!(workspace)
+
+      assert :ok = reconcile(video)
+      refute File.exists?(workspace)
+    end
+
+    test "retires an old workspace with no entry", %{video: video, path: path} do
+      workspace = plant_workspace!(path, %{})
+      age!(workspace)
+
+      assert :ok = reconcile(video)
+      refute File.exists?(workspace)
+    end
+
+    test "leaves a workspace whose directory or staged file changed within the hour", %{
+      video: video,
+      path: path
+    } do
+      young = plant_workspace!(path, %{@staged => ""})
+      young_empty = plant_workspace!(path, %{})
+      young_staged = plant_workspace!(path, %{@staged => ""})
+      age!(young_staged)
+      File.touch!(Path.join(young_staged, @staged))
+      young_directory = plant_workspace!(path, %{@staged => ""})
+      age!(young_directory)
+      File.touch!(young_directory)
+
+      assert :ok = reconcile(video)
+
+      for workspace <- [young, young_empty, young_staged, young_directory],
+          do: assert(File.dir?(workspace))
+    end
+
+    test "leaves a workspace a pending record names", %{video: video, path: path} do
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      first = File.read!(path)
+      assert {:ok, :corrected, %{sync: record}} = manual(video, 2_000)
+      id = operation_id()
+      named = plant_workspace!(path, %{@staged => ""}, id)
+      # The workspace a rollback of the second correction, `AtomicFile.write/3` back to the first
+      # one's bytes, would reuse.
+      rollback_id =
+        SidecarTransaction.AtomicFile.reversal_id(path, record.applied_sha256, digest(first))
+
+      rollback = plant_workspace!(path, %{@staged => ""}, rollback_id)
+      unnamed = plant_workspace!(path, %{@staged => ""})
+      assert :ok = Manifest.put_sync(video, "en", pending(record, first, id))
+      Enum.each([named, rollback, unnamed], &age!/1)
+
+      assert :ok = reconcile(video)
+      assert File.read!(Path.join(named, @staged)) == ""
+      assert File.read!(Path.join(rollback, @staged)) == ""
+      refute File.exists?(unnamed)
+    end
+
+    test "leaves a workspace another video's pending record names in the same folder", %{
+      video: video,
+      path: path
+    } do
+      other = Path.join(Path.dirname(video), "Other.mkv")
+      File.write!(other, String.duplicate("o", 131_072))
+      other_path = managed_srt!(other)
+      other_original = File.read!(other_path)
+      record = record(moviehash!(other), other_original, shifted(other_original))
+      id = operation_id()
+      assert :ok = Manifest.put_sync(other, "en", pending(record, other_original, id))
+      named = plant_workspace!(path, %{@staged => ""}, id)
+      unnamed = plant_workspace!(path, %{@staged => ""})
+      age!(named)
+      age!(unnamed)
+
+      assert :ok = reconcile(video)
+      assert File.read!(Path.join(named, @staged)) == ""
+      refute File.exists?(unnamed)
+    end
+
+    test "leaves workspaces holding bytes, another name or another entry", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      with_content = plant_workspace!(path, %{@staged => original})
+      two_links = plant_workspace!(path, %{@staged => ""})
+      File.ln!(Path.join(two_links, @staged), Path.join(tmp, "outside"))
+      extra_entry = plant_workspace!(path, %{@staged => "", "other" => ""})
+      # A correction of a hardlinked sidecar killed between creating the fresh tombstone and
+      # renaming it over the staged name (#1131).
+      shared = plant_workspace!(path, %{@staged => original, @tombstone => ""})
+      File.ln!(Path.join(shared, @staged), Path.join(tmp, "download"))
+      not_an_id = Path.join(Path.dirname(path), ".cinder-subtitle-sync-cas-short")
+      File.mkdir!(not_an_id)
+      kept = [with_content, two_links, extra_entry, shared, not_an_id]
+      Enum.each(kept, &age!/1)
+
+      assert :ok = reconcile(video)
+      for workspace <- kept, do: assert(File.dir?(workspace))
+      assert File.read!(Path.join(extra_entry, @staged)) == ""
+      assert File.read!(Path.join(with_content, @staged)) == original
+      assert File.stat!(Path.join(tmp, "outside")).links == 2
+      assert File.read!(Path.join(tmp, "download")) == original
+      assert File.stat!(Path.join(tmp, "download")).links == 2
+    end
+
+    test "leaves the tombstone a reset of the current record would reuse", %{
+      video: video,
+      path: path
+    } do
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      assert :ok = reset(video)
+      assert [reversal] = workspaces(path)
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      age!(reversal)
+
+      assert :ok = reconcile(video)
+      assert [^reversal] = workspaces(path)
+
+      assert :ok = reset(video)
+      age!(reversal)
+      assert :ok = reconcile(video)
+      assert workspaces(path) == []
+    end
+
+    test "a reset creates a fresh workspace once a sweep retired its tombstone", %{
+      video: video,
+      path: path,
+      original: original
+    } do
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      assert :ok = reset(video)
+      assert [reversal] = workspaces(path)
+      age!(reversal)
+      assert :ok = reconcile(video)
+      assert workspaces(path) == []
+
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      assert :ok = reset(video)
+      assert File.read!(path) == original
+      assert [^reversal] = workspaces(path)
+      assert_fresh_tombstone(Path.join(reversal, @staged))
+    end
+
+    test "a sweep leaves a staged name that changed after it held the tombstone", %{
+      video: video,
+      path: path,
+      tmp_dir: tmp
+    } do
+      workspace = plant_workspace!(path, %{@staged => ""})
+      age!(workspace)
+      use_barrier(%{operation: :open_bound, phase: :before, contains: @staged, once: false})
+
+      log =
+        capture_log(fn ->
+          task = Task.async(fn -> reconcile(video) end)
+          # The first open holds the tombstone, the second checks its name before the removal.
+          assert_receive {:filesystem_barrier, pid, ref, :open_bound, _staged},
+                         DiskTask.timeout_ms()
+
+          send(pid, {ref, :continue})
+
+          assert_receive {:filesystem_barrier, ^pid, ref, :open_bound, staged},
+                         DiskTask.timeout_ms()
+
+          newer = Path.join(tmp, "newer")
+          File.write!(newer, "newer")
+          File.rename!(newer, staged)
+          Application.delete_env(:cinder, :filesystem_barrier)
+          send(pid, {ref, :continue})
+          assert :ok = DiskTask.await(task)
+        end)
+
+      assert File.read!(Path.join(workspace, @staged)) == "newer"
+      assert log =~ "subtitle workspace kept at #{workspace}: :concurrent_change"
+    end
+
+    test "a reset and a correction go on after a sweep killed in their reversal's workspace", %{
+      video: video,
+      path: path,
+      original: original
+    } do
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      assert :ok = reset(video)
+      assert [reversal] = workspaces(path)
+      age!(reversal)
+      use_barrier(%{operation: :rm, contains: @staged})
+      kill_at_barrier(fn -> reconcile(video) end, :rm)
+      assert File.ls!(reversal) == []
+      Application.put_env(:cinder, :filesystem, Disk)
+
+      # The same correction names that reversal again, so the sweep keeps its empty directory.
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      age!(reversal)
+      assert :ok = reconcile(video)
+      assert File.ls!(reversal) == []
+
+      assert :ok = reset(video)
+      assert File.read!(path) == original
+      assert [^reversal] = workspaces(path)
+      assert_fresh_tombstone(Path.join(reversal, @staged))
+      assert {:ok, :corrected, _} = manual(video, 2_000)
+      assert File.read!(path) =~ "00:00:03,000"
+    end
+
+    test "a reset replaces a workspace with no entry at its own name", %{
+      video: video,
+      path: path,
+      original: original
+    } do
+      assert {:ok, :corrected, %{sync: record}} = manual(video, 1_000)
+
+      id =
+        SidecarTransaction.AtomicFile.reversal_id(
+          path,
+          record.applied_sha256,
+          record.source_sha256
+        )
+
+      workspace = plant_workspace!(path, %{}, id)
+
+      assert :ok = reset(video)
+      assert File.read!(path) == original
+      assert [^workspace] = workspaces(path)
+      assert_fresh_tombstone(Path.join(workspace, @staged))
+    end
+
+    test "a sweep killed before removing the directory is finished by a later one", %{
+      video: video,
+      path: path
+    } do
+      workspace = plant_workspace!(path, %{@staged => ""})
+      age!(workspace)
+      use_barrier(%{operation: :rm, contains: @staged})
+      kill_at_barrier(fn -> reconcile(video) end, :rm)
+      assert File.ls!(workspace) == []
+
+      Application.put_env(:cinder, :filesystem, Disk)
+      assert :ok = reconcile(video)
+      assert File.dir?(workspace)
+
+      age!(workspace)
+      assert :ok = reconcile(video)
+      refute File.exists?(workspace)
+    end
+
+    test "a tombstone that fails to retire is logged and reconcile still succeeds", %{
+      video: video,
+      path: path
+    } do
+      workspace = plant_workspace!(path, %{@staged => ""})
+      age!(workspace)
+      fail_once(%{operation: :rm, source_contains: @staged, reason: :eio})
+
+      {result, log} = with_log(fn -> reconcile(video) end)
+
+      assert :ok = result
+      assert File.dir?(workspace)
+      assert log =~ "subtitle workspace kept at #{workspace}: :eio"
+    end
+
+    test "stops after its limit and leaves the rest for the next sweep", %{path: path} do
+      planted = for _ <- 1..3, do: plant_workspace!(path, %{@staged => ""})
+      Enum.each(planted, &age!/1)
+      directory = Path.dirname(path)
+
+      assert 2 = SidecarTransaction.AtomicFile.sweep(directory, fn _names -> [] end, limit: 2)
+      assert [_left] = workspaces(path)
+      assert 1 = SidecarTransaction.AtomicFile.sweep(directory, fn _names -> [] end, limit: 2)
+      assert workspaces(path) == []
     end
   end
 
@@ -2154,6 +2455,26 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
   defp recover(video), do: SidecarTransaction.recover(sidecar(video), moviehash!(video))
   defp reset(video), do: SidecarTransaction.restore_original(sidecar(video), moviehash!(video))
+  defp reconcile(video), do: SidecarTransaction.reconcile(video, moviehash!(video))
+
+  defp operation_id, do: Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
+
+  # A workspace beside `path` holding `entries` (name => bytes), the way a correction or a reset
+  # leaves one. Returns its path.
+  defp plant_workspace!(path, entries, id \\ operation_id()) do
+    workspace = Path.join(Path.dirname(path), ".cinder-subtitle-sync-cas-#{id}")
+    File.mkdir!(workspace)
+    File.chmod!(workspace, 0o700)
+    for {name, content} <- entries, do: File.write!(Path.join(workspace, name), content)
+    workspace
+  end
+
+  # Backdates a workspace and its entries past the hour a sweep waits.
+  defp age!(workspace) do
+    old = System.os_time(:second) - 7_200
+    for name <- File.ls!(workspace), do: File.touch!(Path.join(workspace, name), old)
+    File.touch!(workspace, old)
+  end
 
   defp replace(video, content) do
     sidecar = %{video_path: video, sidecar_path: sidecar(video).sidecar_path, language: "en"}

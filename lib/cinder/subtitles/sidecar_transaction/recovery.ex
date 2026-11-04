@@ -15,8 +15,64 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
   @spec reconcile(String.t(), String.t()) :: :ok | {:error, term()}
   def reconcile(video_path, moviehash) do
     with :ok <- reduce_tracks(video_path, &reconcile_reset(&1, video_path, moviehash)),
-         do: reduce_tracks(video_path, &reconcile_replacement(&1, video_path))
+         :ok <- reduce_tracks(video_path, &reconcile_replacement(&1, video_path)) do
+      sweep_workspaces(video_path)
+    end
   end
+
+  # The video's folder holds the workspaces of every video in it, a season's other episodes
+  # included, so the ids any manifest there names stay.
+  defp sweep_workspaces(video_path) do
+    directory = Path.dirname(video_path)
+    removed = AtomicFile.sweep(directory, &named_operation_ids(directory, &1))
+
+    if removed > 0,
+      do: Logger.info("removed #{removed} subtitle workspaces in #{directory}")
+
+    :ok
+  end
+
+  defp named_operation_ids(directory, names) do
+    for name <- names,
+        video_path = Manifest.video_path(Path.join(directory, name)),
+        {_language, track} <- Manifest.read(video_path).tracks,
+        id <- track_operation_ids(video_path, track),
+        do: id
+  end
+
+  defp track_operation_ids(video_path, %{file: file} = track) do
+    sidecar_path = Path.join(Path.dirname(video_path), file)
+
+    for key <- [:sync, :reset_cleanup_sync, :replacement_cleanup_sync],
+        sync = Map.get(track, key),
+        id <- record_operation_ids(sidecar_path, sync),
+        do: id
+  end
+
+  defp track_operation_ids(_video_path, _track), do: []
+
+  # A pending correction's own id, and the reversal ids that `reconcile_reversal/1` and a
+  # rollback, a reset or a replaced video's restore derive from the record.
+  defp record_operation_ids(
+         sidecar_path,
+         %{
+           status: "applying",
+           operation_id: id,
+           applied_sha256: applied,
+           expected_sha256: expected
+         } = sync
+       ),
+       do:
+         [id, AtomicFile.reversal_id(sidecar_path, applied, expected)] ++
+           settled_ids(sidecar_path, sync)
+
+  defp record_operation_ids(sidecar_path, sync), do: settled_ids(sidecar_path, sync)
+
+  defp settled_ids(sidecar_path, %{applied_sha256: applied, source_sha256: source})
+       when applied != source,
+       do: [AtomicFile.reversal_id(sidecar_path, applied, source)]
+
+  defp settled_ids(_sidecar_path, _sync), do: []
 
   defp reduce_tracks(video_path, reconcile) do
     video_path
@@ -218,6 +274,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
              sync.applied_sha256
            ),
          :ok <- Manifest.put_sync(item.video_path, item.language, record) do
+      :ok = AtomicFile.retire(item.sidecar_path, sync.operation_id)
       {:ok, %{item | sync: record}}
     else
       {:error, _reason} -> {:review, :apply_recovery_failed, item}

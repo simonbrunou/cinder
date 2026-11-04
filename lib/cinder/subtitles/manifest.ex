@@ -16,13 +16,26 @@ defmodule Cinder.Subtitles.Manifest do
   @sync_methods ~w(embedded audio native manual)
   @sidecar_extensions ~w(.srt .ass .ssa .sub .vtt)
   @sha256 ~r/\A[0-9a-f]{64}\z/
+  @manifest_suffix ".cinder-subtitles.json"
 
   @spec path(String.t()) :: String.t()
   def path(video_path) do
     Path.join(
       Path.dirname(video_path),
-      "." <> Path.basename(video_path) <> ".cinder-subtitles.json"
+      "." <> Path.basename(video_path) <> @manifest_suffix
     )
+  end
+
+  @doc "The video whose manifest `path/1` puts at `manifest_path`, or nil for any other name."
+  @spec video_path(String.t()) :: String.t() | nil
+  def video_path(manifest_path) do
+    with "." <> name <- Path.basename(manifest_path),
+         video when video != "" <- String.replace_suffix(name, @manifest_suffix, ""),
+         true <- video != name do
+      Path.join(Path.dirname(manifest_path), video)
+    else
+      _other -> nil
+    end
   end
 
   @spec read(String.t()) :: %{video_moviehash: String.t() | nil, tracks: map()}

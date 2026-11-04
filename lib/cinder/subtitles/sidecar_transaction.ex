@@ -15,6 +15,7 @@ defmodule Cinder.Subtitles.SidecarTransaction do
 
     * No byte reaches the sidecar before a pending record names its hash.
     * The final record is written only after the bytes.
+    * The correction's workspace is removed only after its final record.
     * `{:publication_committed, _}` is never rolled back; the pending record stays for
       `recover/2`.
 
@@ -47,7 +48,9 @@ defmodule Cinder.Subtitles.SidecarTransaction do
 
   @doc """
   Replays the cleanup journals of every track of `video_path`: interrupted resets (for the
-  current `moviehash` only) and interrupted replacements.
+  current `moviehash` only) and interrupted replacements. Once both replay, removes up to 50
+  workspace tombstones in the video's folder that have not changed for an hour and that no
+  record it can read there names (`AtomicFile.sweep/3`). The sweep never fails the call.
   """
   @spec reconcile(String.t(), String.t()) :: :ok | {:error, term()}
   defdelegate reconcile(video_path, moviehash), to: Recovery
@@ -148,7 +151,7 @@ defmodule Cinder.Subtitles.SidecarTransaction do
   defp exchange(sidecar, current, content, record, backup_created?, operation_id) do
     case AtomicFile.write(sidecar.sidecar_path, content, current, operation_id) do
       :ok ->
-        commit(sidecar, current, content, record, backup_created?)
+        commit(sidecar, current, content, record, backup_created?, operation_id)
 
       {:error, {:publication_committed, _detail}} = committed ->
         committed
@@ -158,9 +161,10 @@ defmodule Cinder.Subtitles.SidecarTransaction do
     end
   end
 
-  defp commit(sidecar, current, content, record, backup_created?) do
+  defp commit(sidecar, current, content, record, backup_created?, operation_id) do
     with :ok <- Moviehash.verify(sidecar.video_path, record.moviehash),
          :ok <- put_record(sidecar, record) do
+      :ok = AtomicFile.retire(sidecar.sidecar_path, operation_id)
       {:ok, :corrected, %{sidecar | sync: record}}
     else
       {:error, reason} -> rollback(sidecar, current, content, backup_created?, reason)
