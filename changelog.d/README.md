@@ -31,6 +31,14 @@ comment and the triage brief. It was false for one copy with the series' id and 
 which settle on the series' id, and the code comment held the same clause: two re-check rounds,
 about 14 minutes.
 
+When a PR changes which release or file names a parser reads, show the change with example names
+and leave the full rule to the code. A sentence that restates the rule in general words is a
+claim about every name. On #1132, the fragment said in general words which years before an
+episode number Cinder reads. Review found it false for a second number, a hyphen after a
+bracketed year, an `S01E01` after a dotted year, a title that an omitted alias starts with, and
+brackets that did not match or held more than spaces. Those five findings took three review
+rounds, about 45 minutes, which one code-fix commit shared.
+
 `mix test` parses every fragment (`test/code_health_test.exs`), so a malformed one fails on its
 own PR. A release runs `mix cinder.changelog.release`, which folds every fragment into the new
 dated section of `CHANGELOG.md` and deletes it; see "Releasing" in `CONTRIBUTING.md`.
