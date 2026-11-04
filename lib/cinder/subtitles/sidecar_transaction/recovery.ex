@@ -10,6 +10,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
   import Cinder.Subtitles.SafeFile,
     only: [safe_read: 1, sha256: 1, file_sha256: 1, regular_file?: 1]
 
+  require Logger
+
   @spec reconcile(String.t(), String.t()) :: :ok | {:error, term()}
   def reconcile(video_path, moviehash) do
     with :ok <- reduce_tracks(video_path, &reconcile_reset(&1, video_path, moviehash)),
@@ -151,7 +153,10 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
          true <- sha256(adjusted) == sync.applied_sha256,
          :ok <- Moviehash.verify(item.video_path, sync.moviehash),
          :ok <-
-           published(AtomicFile.write(item.sidecar_path, adjusted, current, sync.operation_id)),
+           published(
+             item,
+             AtomicFile.write(item.sidecar_path, adjusted, current, sync.operation_id)
+           ),
          :ok <- Moviehash.verify(item.video_path, sync.moviehash) do
       finalize(item)
     else
@@ -165,6 +170,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
     with :ok <- Backup.verify_present(item.sidecar_path, sync),
          :ok <-
            published(
+             item,
              AtomicFile.recover(
                item.sidecar_path,
                sync.operation_id,
@@ -182,9 +188,17 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
   # `{:publication_committed, _}` means the target holds the applied bytes and only a step after
   # the exchange went unacknowledged, so recovery records the correction as it does after `:ok`.
   # `finalize/1` cannot tell that apart from a failed write: its workspace check also passes
-  # while the target still holds the expected bytes beside the staged ones.
-  defp published({:error, {:publication_committed, _detail}}), do: :ok
-  defp published(result), do: result
+  # while the target still holds the expected bytes beside the staged ones. The warning is
+  # logged here, before the checks that can still hold the item for review.
+  defp published(item, {:error, {:publication_committed, detail}}) do
+    Logger.warning(
+      "subtitle publication unacknowledged for #{item.sidecar_path}: #{inspect(detail)}"
+    )
+
+    :ok
+  end
+
+  defp published(_item, result), do: result
 
   defp finalize(item) do
     sync = item.sync

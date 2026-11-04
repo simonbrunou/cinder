@@ -1124,6 +1124,54 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
         assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
         assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
       end
+
+      test "logs the unacknowledged discard of #{kind} correction its recovery records", %{
+        video: video,
+        path: path
+      } do
+        interrupt_before_exchange!(video, unquote(interruption))
+
+        fail_once(%{
+          operation: :discard_bound,
+          source_contains: Path.basename(path),
+          phase: :post_effect,
+          reason: :eio
+        })
+
+        {result, log} = with_log(fn -> recover(video) end)
+
+        assert_recorded_correction(result, video, path, unquote(method))
+        assert_unacknowledged_warning(log, path, {:effect_committed, "discard_bound", :eio})
+      end
+
+      # The warning comes from the write's result, before the checks that hold the item.
+      test "logs the unacknowledged publication of #{kind} correction held for review", %{
+        video: video,
+        path: path
+      } do
+        interrupt_before_exchange!(video, unquote(interruption))
+
+        {result, log} =
+          fail_close_after_exchange(path, [:staged], fn -> recover(video) end,
+            paused: fn -> File.write!(video, @changed_video) end
+          )
+
+        assert {:review, :apply_recovery_failed, _sidecar} = result
+        assert log =~ "descriptor close failed after committed subtitle publication: :eio"
+        assert_unacknowledged_warning(log, path, {:descriptor_close_failed, :eio})
+      end
+
+      test "logs no unacknowledged publication for #{kind} correction its recovery confirms", %{
+        video: video,
+        path: path
+      } do
+        interrupt_before_exchange!(video, unquote(interruption))
+
+        {result, log} = with_log(fn -> recover(video) end)
+
+        assert_recorded_correction(result, video, path, unquote(method))
+        refute log =~ "subtitle publication unacknowledged"
+      end
     end
 
     test "validates a staged pathname without deleting it", %{
@@ -2327,6 +2375,16 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
     assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
     assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
+  end
+
+  # The one warning a recovery logs when its write published the correction unacknowledged.
+  defp assert_unacknowledged_warning(log, path, detail) do
+    assert [line] =
+             log
+             |> String.split("\n")
+             |> Enum.filter(&(&1 =~ "subtitle publication unacknowledged"))
+
+    assert line =~ "[warning] subtitle publication unacknowledged for #{path}: #{inspect(detail)}"
   end
 
   # A first correction killed just before its exchange: its staged bytes wait in the workspace
