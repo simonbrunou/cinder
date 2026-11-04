@@ -358,13 +358,37 @@ defmodule Cinder.HTTPPolicy do
     is_integer(port) and port in 1..65_535
   end
 
+  # Since Elixir 1.20.5, `URI.parse/1` sets `port: nil` for a port outside 0..65535, so the merged
+  # URI has no port and `effective_port/1` reads it as the scheme's default. `URI.new/1` keeps such
+  # a port but rejects Locations the merge accepts, such as `/files/a b`. So a dropped port is
+  # refused here, after the scheme and host checks as `normalize_http_uri/1` orders them:
+  # `ftp://host:70000/` still reads `:unsupported_scheme`, which the download clients turn into
+  # the permanent `:unsupported_download_url`.
   defp merge_uri(current, location) when is_binary(location) do
-    {:ok, URI.merge(current, location)}
+    with {:ok, merged, port_dropped} <- parse_and_merge(current, location),
+         {:ok, _uri} <- normalize_http_uri(merged) do
+      if port_dropped, do: {:error, :invalid_port}, else: {:ok, merged}
+    end
+  end
+
+  defp merge_uri(_current, _location), do: {:error, :invalid_url}
+
+  defp parse_and_merge(current, location) do
+    relative = URI.parse(location)
+    {:ok, URI.merge(current, relative), dropped_port?(relative)}
   rescue
     _error -> {:error, :invalid_url}
   end
 
-  defp merge_uri(_current, _location), do: {:error, :invalid_url}
+  # Only the deprecated `authority` field keeps the port text that parse dropped. Under `http`, an
+  # authority without a port parses to port 80, so `nil` means it named a port that parse dropped.
+  # A scheme-relative Location parses to `port: nil` with no port or a dropped one, hence the
+  # re-parse. The merge ignores a scheme-relative authority with no host (`//:70000/x`), port
+  # included, and an absolute one (`https://:70000/x`) fails the host check first.
+  defp dropped_port?(%URI{host: host, authority: authority}) when is_binary(host),
+    do: URI.parse("http://" <> authority).port == nil
+
+  defp dropped_port?(%URI{}), do: false
 
   defp prevent_downgrade(%URI{scheme: "https"}, %URI{scheme: "http"}),
     do: {:error, :https_downgrade}

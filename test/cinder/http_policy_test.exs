@@ -10,6 +10,18 @@ defmodule Cinder.HTTPPolicyTest do
   @public_ipv4 {93, 184, 216, 34}
   @public_ipv6 {0x2606, 0x2800, 0x220, 0x1, 0x248, 0x1893, 0x25C8, 0x1946}
 
+  # Elixir 1.20.5's `URI.parse/1` drops each of these ports, so the merged URI alone would have no
+  # port and read as 443 (#1102): above 65535, seven digits (parse's other drop branch),
+  # scheme-relative, an IPv6 host, and a path that `URI.new/1` rejects.
+  @out_of_range_port_locations [
+    "https://public.example:65536/next",
+    "https://cdn.example:70000/next",
+    "https://cdn.example:1234567/next",
+    "//cdn.example:70000/next",
+    "https://[2606:2800:220:1:248:1893:25c8:1946]:70000/next",
+    "https://cdn.example:70000/a b"
+  ]
+
   describe "same_origin?/2" do
     test "normalizes scheme and host case and default ports" do
       assert HTTPPolicy.same_origin?("HTTP://Example.COM/path", "http://example.com:80/other")
@@ -236,6 +248,31 @@ defmodule Cinder.HTTPPolicyTest do
     end
   end
 
+  describe "out-of-range ports on a source URL or an untrusted redirect" do
+    test "validate_source_url/3 and source_request_target/3 refuse one on the source's own host" do
+      resolver = &refuse_dns/1
+
+      for url <- ["https://indexer.example:65536/get", "https://indexer.example:70000/a b"] do
+        validated = HTTPPolicy.validate_source_url(url, "https://indexer.example", resolver)
+        assert validated == {:error, :invalid_port}, "#{url}: #{inspect(validated)}"
+
+        target = HTTPPolicy.source_request_target(url, "https://indexer.example", resolver)
+        assert target == {:error, :invalid_port}, "#{url}: #{inspect(target)}"
+      end
+    end
+
+    test "untrusted_redirect_target/3 refuses one before any DNS lookup" do
+      resolver = &refuse_dns/1
+
+      for location <- @out_of_range_port_locations do
+        target =
+          HTTPPolicy.untrusted_redirect_target("https://public.example/start", location, resolver)
+
+        assert target == {:error, :invalid_port}, "#{location}: #{inspect(target)}"
+      end
+    end
+  end
+
   describe "resolve_redirect/3" do
     test "allows relative same-origin redirects for configured origins" do
       assert {:ok, %URI{} = uri} =
@@ -284,6 +321,63 @@ defmodule Cinder.HTTPPolicyTest do
                  "https://api.example:65536/next",
                  :same_origin
                )
+    end
+
+    test "rejects an out-of-range redirect port under each policy, before any DNS lookup" do
+      resolver = &refuse_dns/1
+
+      for location <- @out_of_range_port_locations,
+          {label, policy} <- [same_origin: :same_origin, resolver: resolver] do
+        result =
+          HTTPPolicy.resolve_redirect("https://public.example:443/start", location, policy)
+
+        assert result == {:error, :invalid_port},
+               "#{location} under #{label}: #{inspect(result)}"
+      end
+    end
+
+    # The download clients turn a redirect's `:unsupported_scheme` into `:unsupported_download_url`,
+    # which parks a movie's search at once, where `:invalid_port` counts one failed attempt. So an
+    # out-of-range port keeps the answer of the scheme and host checks.
+    test "checks a redirect's scheme and host before its out-of-range port" do
+      for {location, expected} <- [
+            {"ftp://cdn.example:70000/next", {:error, :unsupported_scheme}},
+            {"https://:70000/next", {:error, :missing_host}}
+          ],
+          {label, policy} <- [same_origin: :same_origin, resolver: &refuse_dns/1] do
+        result = HTTPPolicy.resolve_redirect("https://public.example/start", location, policy)
+        assert result == expected, "#{location} under #{label}: #{inspect(result)}"
+      end
+    end
+
+    test "resolves a Location with no port or an in-range port as the merge does" do
+      resolver = fn _host -> {:ok, [@public_ipv4]} end
+
+      for {location, expected} <- [
+            {"/files/a b", "https://public.example/files/a b"},
+            {"//public.example/next", "https://public.example/next"},
+            {"https://public.example:/next", "https://public.example/next"},
+            {"//public.example:00443/next", "https://public.example/next"},
+            # The merge ignores an authority with no host, so its port too.
+            {"//:70000/next", "https://public.example/next"}
+          ],
+          {label, policy} <- [same_origin: :same_origin, resolver: resolver] do
+        resolved =
+          with {:ok, uri} <-
+                 HTTPPolicy.resolve_redirect("https://public.example/start", location, policy),
+               do: {:ok, URI.to_string(uri)}
+
+        assert resolved == {:ok, expected}, "#{location} under #{label}"
+      end
+
+      assert {:ok, %URI{port: 8443} = uri} =
+               HTTPPolicy.resolve_redirect(
+                 "https://public.example/start",
+                 "https://cdn.example:8443/next",
+                 resolver
+               )
+
+      assert URI.to_string(uri) == "https://cdn.example:8443/next"
     end
 
     test "revalidates every untrusted redirect destination" do
@@ -681,6 +775,8 @@ defmodule Cinder.HTTPPolicyTest do
   defp request_task_pids(events, caller) do
     for {_measurements, %{caller: ^caller, task_pid: task_pid}} <- events, do: task_pid
   end
+
+  defp refuse_dns(host), do: flunk("an out-of-range port must not resolve #{host}")
 
   # The test process's mailbox, without the events `Cinder.TelemetryHelpers.capture/2` forwarded
   # after it drained. A process that found its handler before `:telemetry.detach/1` can still
