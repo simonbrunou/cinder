@@ -552,9 +552,9 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   defp finish_disposal(staged_path, displaced, fresh_path, cutoff) do
     with_bound(fresh_path, [:read, :raw, :binary], fn fresh ->
-      with {:ok, displaced_stat} <- File.stat(displaced.path),
+      with {:ok, displaced_stat} <- File.stat(displaced.path, [:raw]),
            :shared <- shared_displaced(displaced_stat, cutoff),
-           {:ok, fresh_stat} <- File.stat(fresh.path),
+           {:ok, fresh_stat} <- File.stat(fresh.path, [:raw]),
            :tombstone <- tombstone(fresh_stat, cutoff),
            :ok <- verify_bound_path(fresh_path, fresh),
            :ok <-
