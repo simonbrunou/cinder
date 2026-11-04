@@ -3,15 +3,22 @@
 - `mix test` decides when a task is done. Before you start, write the done-when as something
   `mix test` can check, then loop until it is green.
 - When the issue carries a triage Agent Brief, the done-when names a test for each requirement
-  in **Desired behavior** as well as each **Acceptance criteria** box. On #972, prod's mount
-  layout, a `devino-hash` mount and `verify_legacy_selection`'s refusals were Desired-behavior
-  requirements with no test until the Spec review, which cost a second review round. A clause
+  in **Desired behavior**, each **Acceptance criteria** box and each rule that **Key interfaces**
+  keeps unchanged. On #972, prod's mount layout, a `devino-hash` mount and
+  `verify_legacy_selection`'s refusals were Desired-behavior requirements with no test until the
+  Spec review, which cost a second review round. A clause
   that keeps today's behaviour ("as today", "still") or sets a count ("logged once") is a
   requirement too: its test goes red when a mutation breaks only that clause. A count's test sets
   up each way the count can repeat. On #1072, two "as today" fallbacks and a "logged once" had no
   such test until the Spec review. The count could repeat through two callers of one check or
   through two wanted languages sharing one track, and the second had no test until a re-check.
-  Closing them took two more review rounds, about 25 minutes.
+  Closing them took two more review rounds, about 25 minutes. A rule that Key interfaces keeps
+  unchanged gets one test for each path of the new behaviour that reaches the rule, red when that
+  path skips it. An existing test of the rule without the new behaviour does not count. On #1132,
+  the brief kept the blocked-title rules (`AnimeParser`'s `blocked_titles`) unchanged. No test
+  put a year after a blocked title. The new year reading then let a name with another alias's
+  words before any year read as the series' own episode, where only the series' own year did
+  before. The release-parser review found it, and the fix took about 20 minutes.
 - A bug fix starts with a test that reproduces the bug. Then make it pass.
 - New functionality, such as a choke-point, a state or a writer, ships with a test.
 - A lock test runs the waiter in another process than the holder: the lock id carries `self()`
