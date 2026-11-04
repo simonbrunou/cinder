@@ -77,7 +77,8 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
 ## Worktrees
 
 - A fresh T3 worktree has no `deps/` or `_build/`. Run `scripts/seed-worktree` in it before any
-  `mix` task: it copies the main checkout's `deps/` and `_build/test`, then runs `mix deps.get`.
+  `mix` task: it copies the main checkout's `deps/` and `_build/test`, runs `mix deps.get`, then
+  runs CI's two dependency audits.
   After a failure, run it again: it keeps what is complete. On a branch cut before the script
   existed, run `~/Projects/cinder/scripts/seed-worktree`. Its header says why it copies.
 - If a test then behaves like old code, run `MIX_ENV=test mix compile --force`.

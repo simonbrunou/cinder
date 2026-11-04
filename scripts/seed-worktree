@@ -14,6 +14,11 @@
 # _build/ and renamed into place once complete, so after a failed run (hex.pm down, a dependency
 # file vanishing mid-copy) the next run keeps what is complete and redoes the rest. The rename
 # fails rather than nesting when the destination appeared meanwhile.
+#
+# It then runs the two audits of CI's dependency-audit job, `mix hex.audit` and `mix deps.audit`,
+# in the test env. When one fails, it prints that audit's output and ends on a WARNING line, still
+# with exit 0: an advisory or a retired package published after main's last green run turns that
+# job red on every PR (on #855, 31 minutes before CI showed it).
 set -euo pipefail
 
 usage() {
@@ -64,3 +69,18 @@ fi
 
 mix deps.get
 echo "OK: seeded $root"
+
+failed=""
+for audit in hex.audit deps.audit; do
+  if ! output=$(env MIX_ENV=test mix "$audit" 2>&1); then
+    printf '%s\n' "$output"
+    failed="${failed:+$failed and }mix $audit"
+  fi
+done
+if [[ -n $failed ]]; then
+  echo "WARNING: $failed failed on this mix.lock (output above). When it names an advisory or a" \
+    "retired package, CI / dependency-audit is red on every PR until a fix merges: see" \
+    "docs/agents/ci.md \"New advisory\"."
+else
+  echo "OK: mix hex.audit and mix deps.audit passed"
+fi
