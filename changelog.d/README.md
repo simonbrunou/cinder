@@ -54,6 +54,17 @@ new scan of its download folder ends at once with "could not be read"" was false
 client failed its health check first, and for a scan started while the first was still waiting
 out its deadline: three review rounds, about 35 minutes from the first finding to the last fix.
 
+A sentence about what Cinder did before the fix ("raised an error", "failed") holds on the merge
+base for every input the sentence covers. List the input classes from the sentence's own words,
+not from the fix's tests, and pair the bad input with each thing the merge base drops or rejects
+first, in its own code or in a library call it makes. Run each through the merge base's code,
+loaded as [testing.md](../docs/agents/testing.md)'s Elixir-upgrade bullet loads it, and write
+"could" when one took another path. On #1178 the fragment said a magnet holding a byte that is
+not valid UTF-8 raised an error before. On the merge base, a tracker holding `@` and a
+percent-encoded `%FF` was dropped by the `@` check before `URI.new/1` parsed the tracker, and
+`dn=a b\xff` returned `{:error, :bad_magnet}`, since `URI.new/1` rejects the space before it
+reaches the byte. The Spec review found both, and the fragment fix took about 6 minutes.
+
 When a PR changes which release or file names a parser reads, show the change with example names
 and leave the full rule to the code. A sentence that restates the rule in general words is a
 claim about every name. On #1132, the fragment said in general words which years before an
