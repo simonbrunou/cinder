@@ -17,15 +17,27 @@ defmodule Cinder.CodeHealth.MountPathRawCallsTest do
     "lib/cinder/bounded_command.ex",
     "lib/cinder/download/path_mapping.ex",
     "lib/cinder/library/book_archive.ex",
-    "lib/cinder/library/book_archive/rar.ex",
-    "lib/cinder/library/book_archive/zip.ex",
-    "lib/cinder/library/filesystem/disk.ex",
+    "lib/cinder/library/filesystem.ex",
     "lib/cinder/raw_file.ex",
-    "lib/cinder/subtitles/sidecar_transaction/atomic_file.ex",
-    "lib/cinder/subtitles/sidecar_transaction/backup.ex",
-    "lib/cinder/subtitles/sidecar_transaction/bound.ex",
-    "lib/cinder/subtitles/sidecar_transaction/workspace.ex",
+    "lib/cinder/subtitles/sidecar_transaction.ex",
     "lib/cinder/subtitles/sync.ex"
+  ]
+
+  # Every module in these directories works on import, library or descriptor paths, so the fence
+  # scans each one, a module split out of another included: #1196 split `Bound` and `Workspace`
+  # out of `AtomicFile`, and the fence missed them until #1197 listed them.
+  @module_dirs [
+    "lib/cinder/library/book_archive",
+    "lib/cinder/library/filesystem",
+    "lib/cinder/subtitles/sidecar_transaction"
+  ]
+
+  # Modules the directories above must still hold: a move out of them would drop the module from
+  # the scan with no failure.
+  @dir_modules [
+    "lib/cinder/library/filesystem/disk.ex",
+    "lib/cinder/subtitles/sidecar_transaction/bound.ex",
+    "lib/cinder/subtitles/sidecar_transaction/workspace.ex"
   ]
 
   # `File.ls/1`, `File.ls!/1` and `:file.list_dir/1` take no `:raw`, so every call fails.
@@ -44,11 +56,18 @@ defmodule Cinder.CodeHealth.MountPathRawCallsTest do
   @erlang_raw_calls @erlang_reads ++ @erlang_writes
 
   test "the mount-path modules call the filesystem with :raw" do
-    assert Enum.reject(@modules, &File.exists?/1) == [],
-           "A module this fence scans moved or was renamed: update @modules."
+    assert Enum.reject(@modules ++ @module_dirs, &File.exists?/1) == [],
+           "A module or directory this fence scans moved or was renamed: update @modules or " <>
+             "@module_dirs."
+
+    paths = fence_paths()
+
+    assert @dir_modules -- paths == [],
+           "A module this fence scans through @module_dirs moved: update @module_dirs or " <>
+             "@dir_modules."
 
     found =
-      for path <- @modules,
+      for path <- paths,
           line <- path |> File.read!() |> file_server_call_lines(),
           do: "#{path}:#{line}"
 
@@ -61,6 +80,20 @@ defmodule Cinder.CodeHealth.MountPathRawCallsTest do
              "File.write(path, content, [:raw])), list a directory with " <>
              "Cinder.Library.Filesystem.Disk.ls/1, or change the filesystem through " <>
              "Cinder.RawFile (#1114, #1146)."
+  end
+
+  @tag :tmp_dir
+  test "the scan picks each listed module and every .ex module below each listed directory",
+       %{tmp_dir: tmp} do
+    for path <- ["listed.ex", "dir/split_out.ex", "dir/nested/deeper.ex", "dir/notes.md"] do
+      File.mkdir_p!(Path.dirname(Path.join(tmp, path)))
+      File.write!(Path.join(tmp, path), "")
+    end
+
+    scanned = scanned_paths([Path.join(tmp, "listed.ex")], [Path.join(tmp, "dir")])
+
+    assert Enum.map(scanned, &Path.relative_to(&1, tmp)) ==
+             ["dir/nested/deeper.ex", "dir/split_out.ex", "listed.ex"]
   end
 
   test "the scan flags each non-raw read form and passes raw reads, raw writes, comments and " <>
@@ -185,6 +218,12 @@ defmodule Cinder.CodeHealth.MountPathRawCallsTest do
     # Lines 2 to 41 hold one form each that skips `:raw` (line 39 passes one to a call that takes
     # none), and line 44 opens the call split across lines.
     assert file_server_call_lines(source) == Enum.to_list(2..41) ++ [44]
+  end
+
+  defp fence_paths, do: scanned_paths(@modules, @module_dirs)
+
+  defp scanned_paths(modules, dirs) do
+    Enum.sort(modules ++ Enum.flat_map(dirs, &Path.wildcard(Path.join(&1, "**/*.ex"))))
   end
 
   # The lines of the calls in the parsed source that reach the file server: a read or write
