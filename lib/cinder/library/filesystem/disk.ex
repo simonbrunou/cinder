@@ -1,7 +1,7 @@
 defmodule Cinder.Library.Filesystem.Disk do
   @moduledoc """
   Real `Cinder.Library.Filesystem` impl over the local filesystem.
-  `ln/2` is a hardlink (`File.ln/2`); when the library and downloads live on
+  `ln/2` is a hardlink (`Cinder.RawFile.ln/2`); when the library and downloads live on
   different filesystems the hardlink fails with `:exdev` and `Cinder.Library`
   falls back to an exclusive, bounded streaming copy instead.
   """
@@ -9,6 +9,7 @@ defmodule Cinder.Library.Filesystem.Disk do
 
   alias Cinder.BoundedCommand
   alias Cinder.Library.PathPolicy
+  alias Cinder.RawFile
   alias Cinder.Settings
 
   @moviehash_chunk 65_536
@@ -61,9 +62,10 @@ defmodule Cinder.Library.Filesystem.Disk do
   # wedged mount then pins only its own process, never every `File` caller in the app (#779).
   # Same results as `File.ls/1` and `File.lstat/1`, which run these same calls inside that server.
   # Every other read of a mount path in this module passes `:raw` for the same reason (#1114),
-  # and `Cinder.CodeHealth.MountPathRawReadsTest` fails a `File` or `:file` read without it. The
-  # `System.find_executable/1` before each rooted helper still queues on the server, but it reads
-  # `PATH` on local disk, not a mount.
+  # every write and other change skips it through `Cinder.RawFile` or a raw open (#1146), and each
+  # subprocess looks its executable up through `BoundedCommand.find_executable/1`, which skips it
+  # too.
+  # `Cinder.CodeHealth.MountPathRawCallsTest` fails a `File` or `:file` call that reaches it.
   @impl true
   def ls(path) do
     with {:ok, names} <- :prim_file.list_dir(IO.chardata_to_string(path)),
@@ -82,13 +84,13 @@ defmodule Cinder.Library.Filesystem.Disk do
     do: PathPolicy.walk(dir, filesystem: __MODULE__)
 
   @impl true
-  def mkdir_p(dir), do: File.mkdir_p(dir)
+  def mkdir_p(dir), do: RawFile.mkdir_p(dir)
 
   @impl true
   def mkdir_exclusive(dir, mode) do
     case rooted_location(dir) do
       {:ok, root, relative} -> run_rooted("mkdir", [root, relative, Integer.to_string(mode, 8)])
-      :outside_roots -> with :ok <- File.mkdir(dir), do: File.chmod(dir, mode)
+      :outside_roots -> with :ok <- RawFile.mkdir(dir), do: RawFile.chmod(dir, mode)
     end
   end
 
@@ -143,10 +145,10 @@ defmodule Cinder.Library.Filesystem.Disk do
   end
 
   @impl true
-  def ln(source, dest), do: File.ln(source, dest)
+  def ln(source, dest), do: RawFile.ln(source, dest)
 
   @impl true
-  def cp(source, dest), do: File.cp(source, dest)
+  def cp(source, dest), do: RawFile.cp(source, dest)
 
   @impl true
   def cp_exclusive(source, dest, on_create),
@@ -295,12 +297,12 @@ defmodule Cinder.Library.Filesystem.Disk do
   def chmod(path, mode) do
     case rooted_location(path) do
       {:ok, root, relative} -> run_rooted("chmod", [root, relative, Integer.to_string(mode, 8)])
-      :outside_roots -> File.chmod(path, mode)
+      :outside_roots -> RawFile.chmod(path, mode)
     end
   end
 
   defp unrooted_write(path, content) do
-    with :ok <- File.write(path, content),
+    with :ok <- RawFile.write(path, content),
          :ok <- sync_file(path),
          do: sync_directories([Path.dirname(path)])
   end
@@ -371,7 +373,7 @@ defmodule Cinder.Library.Filesystem.Disk do
 
   @impl true
   def write_bound(%{path: descriptor_path}, content) do
-    with :ok <- File.write(descriptor_path, content), do: sync_file(descriptor_path)
+    with :ok <- RawFile.write(descriptor_path, content), do: sync_file(descriptor_path)
   end
 
   @impl true
@@ -486,7 +488,7 @@ defmodule Cinder.Library.Filesystem.Disk do
         run_rooted("rename", [source_root, source_relative, dest_root, dest_relative])
 
       _ ->
-        with :ok <- File.rename(source, dest),
+        with :ok <- RawFile.rename(source, dest),
              do: sync_directories([Path.dirname(source), Path.dirname(dest)])
     end
   end
@@ -505,12 +507,12 @@ defmodule Cinder.Library.Filesystem.Disk do
         run_rooted("rename_exclusive", [source_root, source_relative, dest_root, dest_relative])
 
       _ ->
-        with :ok <- File.ln(source, dest), do: unlink_linked_source(source, dest)
+        with :ok <- RawFile.ln(source, dest), do: unlink_linked_source(source, dest)
     end
   end
 
   defp unlink_linked_source(source, dest) do
-    with :ok <- File.rm(source),
+    with :ok <- RawFile.rm(source),
          :ok <- sync_directories([Path.dirname(source), Path.dirname(dest)]),
          do: :ok,
          else: ({:error, reason} -> {:error, {:effect_committed, "rename_exclusive", reason}})
@@ -520,7 +522,7 @@ defmodule Cinder.Library.Filesystem.Disk do
   def rm(path) do
     case rooted_location(path) do
       {:ok, root, relative} -> run_rooted("unlink", [root, relative])
-      :outside_roots -> with :ok <- File.rm(path), do: sync_directories([Path.dirname(path)])
+      :outside_roots -> with :ok <- RawFile.rm(path), do: sync_directories([Path.dirname(path)])
     end
   end
 
@@ -528,12 +530,12 @@ defmodule Cinder.Library.Filesystem.Disk do
   def rmdir(dir) do
     case rooted_location(dir) do
       {:ok, root, relative} -> run_rooted("rmdir", [root, relative])
-      :outside_roots -> with :ok <- File.rmdir(dir), do: sync_directories([Path.dirname(dir)])
+      :outside_roots -> with :ok <- RawFile.rmdir(dir), do: sync_directories([Path.dirname(dir)])
     end
   end
 
   @impl true
-  def rm_rf(path), do: File.rm_rf(path)
+  def rm_rf(path), do: RawFile.rm_rf(path)
 
   defp rooted_location(path), do: locate(path, Settings.library_roots())
 
@@ -628,7 +630,7 @@ defmodule Cinder.Library.Filesystem.Disk do
   end
 
   defp open_rooted_bound(root, relative, source_path, mode) do
-    python = System.find_executable("python3") || "python3"
+    python = BoundedCommand.find_executable("python3") || "python3"
 
     port =
       Port.open(
@@ -743,7 +745,7 @@ defmodule Cinder.Library.Filesystem.Disk do
   end
 
   defp write_and_sync_rooted(bound, root, relative, content) do
-    with :ok <- File.write(bound.path, content),
+    with :ok <- RawFile.write(bound.path, content),
          :ok <- sync_file(bound.path),
          do: run_rooted("sync_parent", [root, relative])
   end

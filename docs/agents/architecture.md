@@ -148,8 +148,9 @@ open descriptor a write goes through), `mkdir`, `mkdir_near`, `rename`, `rename_
 `exchange`, `unlink`, `rmdir`, `chmod`, `reconcile_duplicates` and `sync_parent`. Each one opens
 the path's directories from the configured root through `open_beneath`, so a symlink swapped into
 a directory fails the call instead of redirecting it. `mkdir_p`, `ln`, `cp` and `cp_exclusive`
-stay plain `File` calls, guarded only by the caller's `PathPolicy` checks. A path outside every
-root falls back to `File` calls or `mv --exchange`.
+run in the VM instead, through `Cinder.RawFile` or a raw open, guarded only by the caller's
+`PathPolicy` checks. A path outside every root falls back to `Cinder.RawFile` calls, raw opens or
+`mv --exchange`.
 
 On a `fuse.mergerfs` mount, the creating operations (`hold` of a new file, `rename_exclusive`,
 `mkdir_near`) work on a backing branch, and so does an `exchange` the union refuses. The helper
@@ -306,9 +307,9 @@ Every call a poller makes has a bound:
   walks' reads, `Filesystem.Disk.ls/1`, `lstat/1` and `dir?/1`, are raw calls that skip the VM's
   one file server, so a read on a wedged mount blocks only its own process, not
   every `File` call in the app.
-- The exception is a single-path read, such as `PathPolicy.source_file/4` or `destination/3`. It
-  skips the file server too but has no deadline, so one hung on a wedged mount still holds the
-  poller tick it runs in (#779). `Sidecars.sweep_temps/2`, the walk on the import's sidecar copy
+- The exception is a single-path read or write, such as `PathPolicy.source_file/4`,
+  `destination/3` or a `Cinder.RawFile` call. It skips the file server too (#1114, #1146) but has
+  no deadline, so one hung on a wedged mount still holds the poller tick it runs in (#779). `Sidecars.sweep_temps/2`, the walk on the import's sidecar copy
   fallback, stays unbounded because of them: `destination/3` reads the same folder with no
   deadline just before the sweep and just after it, so a deadline on the sweep alone frees
   nothing.

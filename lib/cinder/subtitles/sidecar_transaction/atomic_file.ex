@@ -9,6 +9,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   require Logger
 
+  alias Cinder.RawFile
   alias Cinder.Subtitles.SidecarTransaction.Workspace
 
   import Cinder.Subtitles.SafeFile, only: [fs: 0, safe_destination: 1, safe_read: 1, sha256: 1]
@@ -232,7 +233,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   defp create(target, staged_path, content) do
     with_created_bound(staged_path, content, fn staged ->
       operation =
-        with :ok <- File.chmod(staged.path, 0o644),
+        with :ok <- RawFile.chmod(staged.path, 0o644),
              do: rename_onto_absent(target, staged_path, staged, content)
 
       finish_atomic_operation(operation, :unlink, staged_path, staged)
@@ -759,7 +760,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          disposal
        ) do
     operation =
-      with :ok <- File.chmod(staged.path, 0o644) do
+      with :ok <- RawFile.chmod(staged.path, 0o644) do
         exchange_if_current(
           target,
           staged_path,

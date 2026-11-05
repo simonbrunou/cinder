@@ -46,6 +46,7 @@ defmodule Cinder.Library.BookArchive.Zip do
   """
 
   alias Cinder.Library.BookArchive.EntryPath
+  alias Cinder.RawFile
 
   # Generous for a chaptered audiobook (dozens of per-chapter files); far below
   # PathPolicy's own generic, whole-filesystem-walk @max_entries (100_000) — this ceiling is
@@ -307,14 +308,14 @@ defmodule Cinder.Library.BookArchive.Zip do
   end
 
   defp extract_entry(_fd, %{directory?: true} = plan, used, _max_expanded_size) do
-    case File.mkdir_p(plan.target) do
+    case RawFile.mkdir_p(plan.target) do
       :ok -> {:ok, used}
       {:error, _reason} -> {:error, :archive_corrupt}
     end
   end
 
   defp extract_entry(fd, plan, used, max_expanded_size) do
-    with :ok <- File.mkdir_p(Path.dirname(plan.target)),
+    with :ok <- RawFile.mkdir_p(Path.dirname(plan.target)),
          {:ok, data_offset} <- local_data_offset(fd, plan) do
       stream_entry(fd, plan, data_offset, used, max_expanded_size)
     end
@@ -409,7 +410,7 @@ defmodule Cinder.Library.BookArchive.Zip do
   end
 
   defp discard(target, error) do
-    _ = File.rm(target)
+    _ = RawFile.rm(target)
     error
   end
 

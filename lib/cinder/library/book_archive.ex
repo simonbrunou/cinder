@@ -69,6 +69,7 @@ defmodule Cinder.Library.BookArchive do
   alias Cinder.Download.ContentPolicy
   alias Cinder.Library
   alias Cinder.Library.BookArchive.{Rar, Zip}
+  alias Cinder.RawFile
 
   @scratch_dir_name ".cinder-extract"
   @archive_extensions ~w(.rar .zip .7z .gz .bz2 .xz .tar .cbz .cbr)
@@ -195,7 +196,7 @@ defmodule Cinder.Library.BookArchive do
   # the `with` above and the poller's import-result handling match (#973).
   defp reset_scratch_dir(scratch_dir) do
     case fs().rm_rf(scratch_dir) do
-      {:ok, _removed} -> File.mkdir_p(scratch_dir)
+      {:ok, _removed} -> RawFile.mkdir_p(scratch_dir)
       {:error, reason, _path} -> {:error, reason}
     end
   end
@@ -221,7 +222,7 @@ defmodule Cinder.Library.BookArchive do
   # `:error` clause is the only shape this function needs to special-case; anything else a
   # `resolve_fun` returns is success, unconditionally.
   defp finish({:error, _reason} = error, scratch_dir) do
-    _ = File.rm_rf(scratch_dir)
+    _ = RawFile.rm_rf(scratch_dir)
     error
   end
 

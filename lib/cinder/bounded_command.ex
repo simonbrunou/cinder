@@ -30,9 +30,9 @@ defmodule Cinder.BoundedCommand do
   @reap_wait_ms 200
 
   @doc """
-  Resolves `bin` on `PATH` (`Port.open/2` does no lookup for `:spawn_executable`, unlike
-  `System.cmd/3`), runs it as a supervised `Port`, and kills its process group if it is still
-  running at `timeout_ms`.
+  Resolves `bin` on `PATH` with `find_executable/1` (`Port.open/2` does no lookup for
+  `:spawn_executable`, unlike `System.cmd/3`), runs it as a supervised `Port`, and kills its
+  process group if it is still running at `timeout_ms`.
 
   Returns `{:ok, output, status}` on a normal exit — the same `{output, status}` shape
   `System.cmd/3` itself returns, so a caller's existing zero/non-zero-exit handling is unchanged
@@ -64,9 +64,67 @@ defmodule Cinder.BoundedCommand do
           | {:error, Exception.t()}
           | {:error, {:port_open_failed, term()}}
   def run(bin, args, timeout_ms, opts \\ []) do
-    case System.find_executable(bin) do
+    case find_executable(bin) do
       nil -> {:error, %ErlangError{original: :enoent}}
       exe -> open_and_supervise(exe, args, timeout_ms, opts)
+    end
+  end
+
+  @doc """
+  Resolves `program` as `System.find_executable/1` does, reading `PATH` at the time of the call,
+  but without the VM's one file server (`:file_server_2`): `System.find_executable/1` stats each
+  candidate through that server, so a write hung there on a wedged mount would hold every lookup
+  until the mount answers (#1146). Returns the absolute or `PATH`-joined name, or `nil`.
+
+  As in `:os.find_executable/1` on Unix, an absolute `program` is checked as it is, and any other
+  is joined to each `PATH` element in turn, an empty element meaning `.` and a double-quoted one
+  losing its quotes. The first candidate that is a regular file, after following symlinks, with
+  any execute bit set wins.
+  """
+  @spec find_executable(String.t()) :: String.t() | nil
+  def find_executable(program) when is_binary(program) do
+    if String.contains?(program, <<0>>) do
+      raise ArgumentError,
+            "cannot execute #{inspect(__MODULE__)}.find_executable/1 for path with null byte, " <>
+              "got: #{inspect(program)}"
+    end
+
+    name = String.to_charlist(program)
+
+    found =
+      case :filename.pathtype(name) do
+        :relative ->
+          :os.getenv(~c"PATH", ~c"")
+          |> path_elements()
+          |> Enum.find_value(&executable(:filename.join(&1, name)))
+
+        _absolute ->
+          executable(name)
+      end
+
+    found && List.to_string(found)
+  end
+
+  defp path_elements(path), do: path |> :string.split(~c":", :all) |> Enum.map(&path_element/1)
+
+  defp path_element([]), do: ~c"."
+
+  defp path_element([?" | rest] = element) do
+    case Enum.reverse(rest) do
+      [?" | inner] -> Enum.reverse(inner)
+      _unquoted -> element
+    end
+  end
+
+  defp path_element(element), do: element
+
+  defp executable(candidate) do
+    case File.stat(candidate, [:raw]) do
+      {:ok, %File.Stat{type: :regular, mode: mode}} when Bitwise.band(mode, 0o111) != 0 ->
+        candidate
+
+      _other ->
+        nil
     end
   end
 
