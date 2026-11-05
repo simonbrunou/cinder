@@ -58,9 +58,14 @@ landed.
 - Put issues in one lane when they edit the same files or one blocks the other, and order each
   lane by its blocking edges. Read what each issue changes from its Agent Brief's **Desired
   behavior** and **Key interfaces**, not only from the paths its body names, and plan an issue
-  added mid-run against the threads still running. On 2026-10-31, #1007 and #1028 ran in
-  parallel and both widened `Cinder.LibraryStubs.await_subtitle_tasks/0`. The second to merge
-  spent 23 minutes on the conflict, a full `mix test` and a second CI run.
+  added mid-run against the threads still running. Count test files too: two briefs that name
+  the same entry point each add a test to its test file. Compare first each pair of queued or
+  running issues where one's body or brief names the other, since the triage that wrote the
+  reference found both on one code path. On 2026-10-31, #1007 and #1028 ran in parallel and
+  both widened `Cinder.LibraryStubs.await_subtitle_tasks/0`; the second to merge spent 23 minutes
+  on the conflict, a full `mix test` and a second CI run. On 2026-11-05, #1178 and #1158 named
+  each other and Transmission's `add/2`, ran in parallel and appended a test after the same
+  Transmission test, and #1180 (for #1178) spent 49 minutes on the same three steps.
 - Keep within the thread cap of the global CLAUDE.md's "T3 threads" section. The shared CI runner
   caps each repo further. Run at most two diversif threads, which take turns on E2E through
   diversif's `scripts/wait-e2e-slot.sh`, until homelab-stacks#254 gives E2E its own runner
