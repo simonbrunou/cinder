@@ -62,6 +62,20 @@ bracketed year, an `S01E01` after a dotted year, a title that an omitted alias s
 brackets that did not match or held more than spaces. Those five findings took three review
 rounds, about 45 minutes, which one code-fix commit shared.
 
+When a PR changes a mechanism that several callers share, such as `BoundedWalk`'s guard, a lock
+or a deadline, say what the mechanism now does. A sentence about what a caller then does or shows
+is a claim about every path through that caller: prove it on each path, as above, or cut it. For
+a deadline, the "no longer hangs" paragraph above applies too. On #1168 the fragment named what
+each page and the imports would do once a listing left waiting by a closed page counted as
+stuck. Review found each of those claims false on some path: an import keys its walk by the
+deepest root that holds the path, a broader library root still walks into a nested one, the
+adoption page shows results only when its whole scan ends, the download folders scan's moviehash
+and library-file reads skip the guard, and a restarted guard watches no earlier caller. Each of
+four review rounds found a false sentence, about 20 minutes from the first finding to the last
+fix. The fragment that passed states the guard's rule ("A folder listing that is still waiting
+when its page closes now counts as stuck at once") and one page effect that both page tests show:
+a reload "no longer starts one more stuck listing of the same folder".
+
 `mix test` parses every fragment (`test/code_health_test.exs`), so a malformed one fails on its
 own PR. A release runs `mix cinder.changelog.release`, which folds every fragment into the new
 dated section of `CHANGELOG.md` and deletes it; see "Releasing" in `CONTRIBUTING.md`.
