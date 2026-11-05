@@ -215,20 +215,20 @@ defmodule Cinder.HealthTest do
 
     test "a probe exceeding the timeout budget reports :timeout once the budget expires" do
       with_env(:health_probe_timeout_ms, 200)
-
-      stub(Cinder.Acquisition.IndexerMock, :health, fn ->
-        Process.sleep(5_000)
-        :ok
-      end)
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(10_000) end)
 
       started = System.monotonic_time(:millisecond)
       assert Health.check("indexer") == {:error, :timeout}
       elapsed = System.monotonic_time(:millisecond) - started
 
-      # Waited out, the probe answers `:ok` after 5 s. The check gives up at the 200 ms budget,
-      # and the upper bound leaves a loaded CPU its margin.
+      # The check gives up at the 200 ms budget. The upper bound sits 5 s past it, the house bound
+      # for a wall-clock load flake (docs/agents/ci.md "Wall-clock tests"). Waited out, the probe
+      # answers `:ok` after 10 s, above that bound: a check that waits it out reads that `:ok`, or
+      # fails the bound when it reports `:timeout` only after the hold. A test process running
+      # late enough to read that `:ok` is already past the bound, so the status match adds no
+      # flake of its own.
       assert elapsed >= 200
-      assert elapsed < 1_000
+      assert elapsed < 5_200
     end
 
     test "a map budget applies the entry for the checked target's id, and the default elsewhere" do
