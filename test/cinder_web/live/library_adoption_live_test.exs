@@ -1,6 +1,8 @@
 defmodule CinderWeb.LibraryAdoptionLiveTest do
   use CinderWeb.ConnCase, async: false
 
+  import Cinder.BoundedWalkHelpers
+  import Cinder.ConfigCase
   import Mox
   import Phoenix.LiveViewTest
 
@@ -68,6 +70,39 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     assert %Movie{status: :available, file_path: ^path} = Catalog.get_movie_by_tmdb_id(10)
     assert has_element?(view, "#flash-info", "Adopted 1; skipped 0.")
     assert has_element?(view, "#no-unmanaged-files", "No unmanaged files found")
+  end
+
+  # #1168: the page closes inside the 10 s deadline, as `close_page_during_walk/2` says.
+  @tag :tmp_dir
+  @tag :capture_log
+  @tag timeout: 20_000
+  test "a scan after the page was closed during a stuck scan starts no second walk and reports " <>
+         "the library root unscannable at once",
+       %{conn: conn, tmp_dir: tmp} do
+    wedged = Path.join(tmp, "wedged")
+    File.mkdir_p!(wedged)
+
+    put_env(
+      filesystem: Cinder.Test.WedgedFilesystem,
+      movies_library_path: wedged,
+      movies_anime_library_path: nil,
+      tv_library_path: nil,
+      adoption_scan_timeout_ms: 10_000,
+      wedged_filesystem_test: self()
+    )
+
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    view |> element("#scan-library") |> render_click()
+    assert_receive {:walking, walk}
+    release_walk_on_exit(walk)
+    close_page_during_walk(view.pid, walk)
+
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    view |> element("#scan-library") |> render_click()
+    render_async(view, 2_000)
+
+    assert has_element?(view, "#unmatched-candidates", "This library root could not be scanned.")
+    refute_received {:walking, _second_walk}
   end
 
   # Regression: mode flips at click but results arrive async — switching scan modes must not

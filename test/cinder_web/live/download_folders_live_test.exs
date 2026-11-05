@@ -353,6 +353,39 @@ defmodule CinderWeb.DownloadFoldersLiveTest do
              )
     end
 
+    # #1168: the page closes inside the 10 s deadline, as `close_page_during_walk/2` says.
+    @tag timeout: 20_000
+    test "reopening the page after closing it during a stuck scan starts no second walk and " <>
+           "reports the download folder unreadable at once",
+         ctx do
+      wedged = Path.join(ctx.tmp_dir, "wedged")
+      File.mkdir_p!(wedged)
+
+      put_env(
+        filesystem: Cinder.Test.WedgedFilesystem,
+        import_roots: [wedged],
+        explicit_import_roots: [wedged],
+        walk_timeout_ms: 10_000,
+        wedged_filesystem_test: self()
+      )
+
+      {:ok, lv, _html} = live(ctx.conn, ~p"/settings/download-folders")
+      assert_receive {:walking, walk}
+      release_walk_on_exit(walk)
+      close_page_during_walk(lv.pid, walk)
+
+      {:ok, lv, _html} = live(ctx.conn, ~p"/settings/download-folders")
+      render_async(lv, 2_000)
+
+      assert has_element?(
+               lv,
+               "#folders-error",
+               "The download folder #{wedged} could not be read."
+             )
+
+      refute_received {:walking, _second_walk}
+    end
+
     test "says so when every job folder is still in use", ctx do
       in_use = job_folder(ctx.downloads)
 

@@ -69,6 +69,27 @@ defmodule Cinder.BoundedWalkHelpers do
   end
 
   @doc """
+  Stops `live_view`, a LiveView pid, the way a closed or reloaded tab does, with
+  `{:shutdown, :closed}`, while `walk`, a walk its scan started, hangs. Returns once the app's
+  guard has seen the scan exit (#1168). Traps exits in the test, which is linked to the test client
+  proxy that stops with the LiveView.
+
+  A LiveView that stops on its own socket's close waits up to 5 s for its async tasks in a test
+  (`await_asyncs_on_graceful_shutdown`), never in production: this one stops at once, as in
+  production.
+  """
+  def close_page_during_walk(live_view, walk) do
+    {:dictionary, dictionary} = Process.info(walk, :dictionary)
+    [scan | _callers] = Keyword.fetch!(dictionary, :"$callers")
+    ref = Process.monitor(scan)
+    Process.flag(:trap_exit, true)
+    Process.exit(live_view, {:shutdown, :closed})
+    assert_receive {:DOWN, ^ref, :process, ^scan, {:shutdown, :closed}}
+    _ = :sys.get_state(BoundedWalk)
+    :ok
+  end
+
+  @doc """
   Leaves a walk stuck under `root` in the app's guard, so every walk under `root` answers
   `{:error, :timeout}` at once until the test ends (`release_walk_on_exit/1`).
   """

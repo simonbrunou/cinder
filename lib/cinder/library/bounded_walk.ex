@@ -18,11 +18,17 @@ defmodule Cinder.Library.BoundedWalk do
     does not stack a second stuck walk on the same mount;
   - once two walks are stuck in total, under any roots, every new walk is refused the same way.
 
+  A walk also counts as stuck, before its deadline, once its caller exits while it still runs,
+  since no caller is left to report the deadline (#1168). A page's scan exits that way when the
+  page is closed or reloaded: `start_async` links it to the LiveView. So a reload no longer starts
+  one more walk on a wedged mount, at a cost: a healthy walk whose page closes mid-walk counts as
+  stuck until it finishes, and the guard logs a warning for it.
+
   A refused walk never starts. The cap gates admissions: walks already running when the first one
   crosses its deadline can still end up stuck, at most one more per caller walking at that moment.
-  Walks that are only running, not stuck, never refuse one another. A restarted guard has lost its
-  count, so it takes every walk still running under its task supervisor as stuck until it returns.
-  Those count towards the total cap only, since their roots are unknown.
+  Walks running inside their deadline under a living caller never refuse one another. A restarted
+  guard has lost its count, so it takes every walk still running under its task supervisor as
+  stuck until it returns. Those count towards the total cap only, since their roots are unknown.
 
   The deadline alone would not be enough, because the reads behind
   `Cinder.Library.PathPolicy.walk/2` used to go through the VM's one file server: a read stuck
@@ -63,10 +69,12 @@ defmodule Cinder.Library.BoundedWalk do
   def run(root, fun, opts \\ []) do
     server = Keyword.get(opts, :server, __MODULE__)
     timeout_ms = Keyword.get_lazy(opts, :timeout_ms, &timeout_ms/0)
+    caller = self()
 
     # Started from the caller, not the guard, so the task inherits the caller's `$callers`.
     with {:ok, task_supervisor} <- GenServer.call(server, {:admit, root}) do
-      task = Task.Supervisor.async_nolink(task_supervisor, fun)
+      task =
+        Task.Supervisor.async_nolink(task_supervisor, fn -> walk(server, root, caller, fun) end)
 
       # `Task.ignore/1` still hands back a result that landed right at the deadline.
       case Task.yield(task, timeout_ms) || Task.ignore(task) do
@@ -75,6 +83,29 @@ defmodule Cinder.Library.BoundedWalk do
         nil -> mark_stuck(server, root, task.pid, timeout_ms)
       end
     end
+  end
+
+  # The walk's task, not its caller, tells the guard that the walk started and that it returned,
+  # so the guard watches the caller and learns when it exits first (#1168). The guard monitors a
+  # caller that already exited with an at-once `:noproc`, so no start goes unwatched. Both calls
+  # wait for the guard's reply, and the return call runs before the task replies: by the time the
+  # caller can see the result, a raise or an exit, the guard no longer watches it.
+  defp walk(server, root, caller, fun) do
+    :ok = GenServer.call(server, {:started, root, caller, self()})
+
+    try do
+      fun.()
+    after
+      returned(server)
+    end
+  end
+
+  # A guard that stopped after this walk started has nothing left to forget, and a restarted one
+  # learns the return from the walk's exit. The result still reaches the caller.
+  defp returned(server) do
+    GenServer.call(server, {:returned, self()})
+  catch
+    :exit, _reason -> :ok
   end
 
   # Before #779 the walk ran in the caller, so a raise or an exit reached it directly.
@@ -110,7 +141,9 @@ defmodule Cinder.Library.BoundedWalk do
         {pid, :unknown_root}
       end)
 
-    {:ok, %{task_supervisor: task_supervisor, stuck: stuck}}
+    # `walks` holds each walk running inside its deadline, task pid to its root and the monitor
+    # on its caller; `stuck`, each stuck walk, task pid to its root.
+    {:ok, %{task_supervisor: task_supervisor, stuck: stuck, walks: %{}}}
   end
 
   @impl true
@@ -120,13 +153,63 @@ defmodule Cinder.Library.BoundedWalk do
       else: {:reply, {:ok, state.task_supervisor}, state}
   end
 
-  # A pid that already exited answers the monitor with `:noproc` at once, which frees its slot.
-  def handle_call({:stuck, root, pid}, _from, state) do
-    Process.monitor(pid)
-    {:reply, :ok, put_in(state.stuck[pid], root)}
+  # A walk its caller already reported stuck, before the task got here, is monitored and counted
+  # already: its caller has nothing left to report.
+  def handle_call({:started, root, caller, task}, _from, state) do
+    if Map.has_key?(state.stuck, task) do
+      {:reply, :ok, state}
+    else
+      Process.monitor(task)
+      walk = %{root: root, caller: Process.monitor(caller)}
+      {:reply, :ok, put_in(state.walks[task], walk)}
+    end
+  end
+
+  def handle_call({:returned, task}, _from, state), do: {:reply, :ok, forget(state, task)}
+
+  # From a living caller whose walk missed its deadline. A task that has not registered yet, or has
+  # already returned, is monitored here; one that already exited answers with `:noproc` at once,
+  # which frees its slot.
+  def handle_call({:stuck, root, task}, _from, state) do
+    {walk, walks} = Map.pop(state.walks, task)
+
+    if walk,
+      do: Process.demonitor(walk.caller, [:flush]),
+      else: Process.monitor(task)
+
+    {:reply, :ok, %{state | walks: walks, stuck: Map.put(state.stuck, task, root)}}
   end
 
   @impl true
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, state),
-    do: {:noreply, update_in(state.stuck, &Map.delete(&1, pid))}
+  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
+    case Enum.find(state.walks, fn {_task, walk} -> walk.caller == ref end) do
+      {task, walk} -> {:noreply, orphan(state, task, walk.root)}
+      nil -> {:noreply, forget(state, pid)}
+    end
+  end
+
+  # The walk's caller exited before it reported the walk stuck, so nobody will: the walk counts as
+  # stuck now, healthy or not, until it returns (#1168). A task that already exited without
+  # returning, such as a killed one, is not counted: its own `:DOWN` is on its way.
+  defp orphan(state, task, root) do
+    state = %{state | walks: Map.delete(state.walks, task)}
+
+    if Process.alive?(task) do
+      Logger.warning(
+        "directory walk under #{inspect(root)} still runs, but its caller exited before " <>
+          "reporting it past its deadline; a mount may be wedged. New walks under it fail " <>
+          "until it returns."
+      )
+
+      put_in(state.stuck[task], root)
+    else
+      state
+    end
+  end
+
+  defp forget(state, task) do
+    {walk, walks} = Map.pop(state.walks, task)
+    if walk, do: Process.demonitor(walk.caller, [:flush])
+    %{state | walks: walks, stuck: Map.delete(state.stuck, task)}
+  end
 end

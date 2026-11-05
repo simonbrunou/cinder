@@ -299,10 +299,12 @@ Every call a poller makes has a bound:
   100,000-entry cap at two reads per entry). The adoption and orphan-folder scans run off the
   poller tick, but with no bound each reload of a page stuck scanning would pin one more dirty
   I/O scheduler thread (#944, #1113). A walk past its deadline is never killed, since its read
-  may still hold such a thread. The guard counts it as stuck until it returns, and while it does,
-  a new walk under its root is refused at once, as is any new walk under any root once two are
-  stuck. The walks' reads, `Filesystem.Disk.ls/1`, `lstat/1` and `dir?/1`, are raw calls that
-  skip the VM's one file server, so a read on a wedged mount blocks only its own process, not
+  may still hold such a thread. The guard counts it as stuck until it returns. It also counts a
+  walk as stuck before its deadline once the walk's caller exits while the walk still runs, as a
+  page's scan does when the page is closed or reloaded (#1168). While a walk is stuck, a new walk
+  under its root is refused at once, as is any new walk under any root once two are stuck. The
+  walks' reads, `Filesystem.Disk.ls/1`, `lstat/1` and `dir?/1`, are raw calls that skip the VM's
+  one file server, so a read on a wedged mount blocks only its own process, not
   every `File` call in the app.
 - The exception is a single-path read, such as `PathPolicy.source_file/4` or `destination/3`. It
   skips the file server too but has no deadline, so one hung on a wedged mount still holds the
