@@ -37,7 +37,15 @@ must hold first: each condition the code checks, and each earlier step in the sa
 stop it. On #1131 the fragment said a recovery "removes" a hidden folder and an analysis removes
 the rest. Review found it false when the download's file was deleted first, when the removal
 failed, and when a reset or replacement cleanup stopped `reconcile/2` before its sweep: three
-review rounds, about 22 minutes.
+review rounds, about 22 minutes. When many checks come before the step, name them all at once by
+an outcome of the call that only paths through the step reach, and read the code for each path to
+that outcome. On #1149 the step empties the old subtitle an interrupted correction left in its
+hidden workspace folder, and "a recovery that records the interrupted correction tries to empty
+that file, or to drop the folder's name for a download's file" covers every check that recovery
+passed. A list of four such checks had missed three, among them a subtitle edited since the
+correction and a workspace that cannot be opened. The outcome "a reset that finishes" then held
+only once it read "a reset that finishes on the same video", since a reset on a replaced video
+finishes without the step: three re-check rounds, about 16 minutes.
 
 A sentence that says Cinder no longer hangs or waits forever names the call the change bounds and
 the reads it bounds there, such as "the scan" and "a download folder's file listing", never only
