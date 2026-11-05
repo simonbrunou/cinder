@@ -9,18 +9,20 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   require Logger
 
+  alias Cinder.Subtitles.SidecarTransaction.Workspace
+
   import Cinder.Subtitles.SafeFile, only: [fs: 0, safe_destination: 1, safe_read: 1, sha256: 1]
 
-  @operation_id ~r/\A[A-Za-z0-9_-]{22}\z/
-  @workspace_prefix ".cinder-subtitle-sync-cas-"
-  @staged_name ".cinder-subtitle-sync-write-staged"
-  # Only `replace_shared_tombstone/2` creates this name, after its exchange committed.
-  @tombstone_name ".cinder-subtitle-sync-write-tombstone"
-  # A sweep leaves a workspace that changed within this long: an operation still at work in it,
-  # under another video's lock, changed it moments ago.
-  @sweep_min_age_seconds 3_600
-  # Each workspace a sweep retires costs a few rooted-helper calls under the video's lock.
-  @sweep_limit 50
+  import Cinder.Subtitles.SidecarTransaction.Bound,
+    only: [
+      finish_bound: 2,
+      merge_committed_warnings: 2,
+      path_identity: 1,
+      verify_bound_path: 2,
+      verify_path_identity: 2,
+      with_bound: 3,
+      with_created_bound: 3
+    ]
 
   @spec write(String.t(), binary(), binary()) :: :ok | {:error, term()}
   def write(target, content, expected_current) do
@@ -30,14 +32,14 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   @spec write(String.t(), binary(), binary(), String.t()) :: :ok | {:error, term()}
   def write(target, content, expected_current, operation_id) when is_binary(operation_id) do
-    if Regex.match?(@operation_id, operation_id),
+    if Workspace.valid_id?(operation_id),
       do: do_write(target, content, expected_current, operation_id),
       else: {:error, :invalid_operation_id}
   end
 
   defp do_write(target, content, expected_current, operation_id) do
-    directory = workspace_path(target, operation_id)
-    staged_path = Path.join(directory, @staged_name)
+    directory = Workspace.path(target, operation_id)
+    staged_path = Workspace.staged_path(directory)
 
     with {:ok, target} <- safe_destination(target),
          {:ok, directory} <- safe_destination(directory),
@@ -85,7 +87,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          content,
          expected_current
        ) do
-    with :removed <- remove_workspace_directory(directory),
+    with :removed <- Workspace.remove_directory(directory),
          :ok <- mkdir_workspace(directory, target) do
       fresh_workspace(target, directory, staged_path, content, expected_current)
     else
@@ -99,7 +101,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   # Runs `operation` with the workspace directory held open. A publication's committed marker
   # becomes its result only here, after the staged and target descriptors closed, so a close
-  # failure after the effect stays a committed publication (`finish_bound_operation/2`).
+  # failure after the effect stays a committed publication (`Bound.finish_bound/2`).
   defp in_workspace(directory, operation) do
     with_bound(directory, [:read, :raw, :binary], fn _directory_bound ->
       {:directory_bound_result, acknowledged(operation.())}
@@ -160,8 +162,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   defp swap_through_workspace(target, from, to) do
     operation_id = Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
-    directory = workspace_path(target, operation_id)
-    staged_path = Path.join(directory, @staged_name)
+    directory = Workspace.path(target, operation_id)
+    staged_path = Workspace.staged_path(directory)
 
     with {:ok, target} <- safe_destination(target),
          {:ok, directory} <- safe_destination(directory),
@@ -340,7 +342,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   @spec cleanup_pending(String.t(), String.t(), String.t(), String.t()) ::
           :ok | {:error, term()}
   def cleanup_pending(target, operation_id, expected_sha256, applied_sha256) do
-    if is_binary(operation_id) and Regex.match?(@operation_id, operation_id) do
+    if Workspace.valid_id?(operation_id) do
       cleanup_pending_workspace(target, operation_id, expected_sha256, applied_sha256)
     else
       {:error, :invalid_operation_id}
@@ -353,252 +355,13 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     cleanup_pending(target, operation_id, expected_sha256, content_sha256)
   end
 
-  @doc """
-  Removes the workspace `write/4` used for `operation_id` beside `target`. Call it once the final
-  record that ends that correction is written: nothing reads the workspace after that.
-
-  The workspace goes only while it is a bare tombstone: the staged name alone, on an empty
-  regular file with no other name, or no entry at all. One already gone counts as removed.
-
-  A disposal killed between creating its fresh tombstone and renaming it over the staged name
-  (`replace_shared_tombstone/2`), or whose rename failed, leaves two entries: the staged name on
-  a regular file with another name, a download's file for one, and the fresh tombstone, an empty
-  regular file with one name. That workspace goes too: renaming the fresh tombstone over the
-  staged name finishes the disposal, which drops only the workspace's name for the shared file
-  and never writes it.
-
-  Anything else stays, and a warning names its path, as does a step that fails.
-  """
-  @spec retire(String.t(), String.t()) :: :ok
-  def retire(target, operation_id) do
-    directory = workspace_path(target, operation_id)
-
-    result =
-      if Regex.match?(@operation_id, operation_id),
-        do: directory |> classify_workspace(nil) |> retire_classified(nil),
-        else: {:error, :invalid_operation_id}
-
-    with {_kept_or_error, reason} <- result, do: log_kept_workspace(directory, reason)
-    :ok
-  end
-
-  @doc """
-  Removes the workspaces earlier operations left in `directory`, up to `:limit` of them (50 by
-  default), and returns how many it removed.
-
-  A workspace goes only while it is a bare tombstone or an interrupted disposal (killed, or whose
-  rename failed), as `retire/2` says, whose directory and entries have not changed for an hour,
-  and whose operation id is not among `protected.(names)`, where `names` is what `directory`
-  lists. A workspace that fails a step stays, and a warning names its path.
-
-  The caller holds one video's lock, but the workspaces of every video in `directory` sit there.
-  Another video's operation that is still at work changed its workspace within the hour.
-  `protected` returns the ids that the records in the directory still name. That covers a
-  pending correction and the reversals a record's reset or rollback would reuse. Any other
-  tombstone is safe to remove: a later reversal that needs its name makes a fresh workspace. An
-  interrupted disposal's staged name holds an inode its exchange displaced, never bytes waiting
-  to be published.
-  """
-  @spec sweep(String.t(), ([String.t()] -> Enumerable.t()), keyword()) :: non_neg_integer()
-  def sweep(directory, protected, opts \\ []) do
-    case fs().ls(directory) do
-      {:ok, names} ->
-        sweep_names(directory, names, protected, Keyword.get(opts, :limit, @sweep_limit))
-
-      {:error, reason} ->
-        Logger.warning("subtitle workspaces not swept in #{directory}: #{inspect(reason)}")
-        0
-    end
-  end
-
-  defp sweep_names(directory, names, protected, limit) do
-    case Enum.flat_map(names, &workspace_id/1) do
-      [] ->
-        0
-
-      ids ->
-        protected = MapSet.new(protected.(names))
-        cutoff = gregorian_now() - @sweep_min_age_seconds
-
-        ids
-        |> Enum.reject(&MapSet.member?(protected, &1))
-        |> Enum.reduce_while({0, limit}, fn id, acc ->
-          sweep_workspace(Path.join(directory, @workspace_prefix <> id), cutoff, acc)
-        end)
-        |> elem(0)
-    end
-  end
-
-  defp workspace_id(@workspace_prefix <> id),
-    do: if(Regex.match?(@operation_id, id), do: [id], else: [])
-
-  defp workspace_id(_name), do: []
-
-  # Only a workspace that looks retirable spends the limit: the checks before it read metadata in
-  # this process, the removal goes through the rooted helper.
-  defp sweep_workspace(_directory, _cutoff, {removed, 0}), do: {:halt, {removed, 0}}
-
-  defp sweep_workspace(directory, cutoff, {removed, budget}) do
-    case classify_workspace(directory, cutoff) do
-      {kind, _path} = retirable when kind in [:tombstone, :empty, :interrupted] ->
-        retirable
-        |> retire_classified(cutoff)
-        |> count_swept(directory, removed, budget - 1)
-
-      {:error, reason} ->
-        log_kept_workspace(directory, reason)
-        {:cont, {removed, budget}}
-
-      _absent_or_kept ->
-        {:cont, {removed, budget}}
-    end
-  end
-
-  defp count_swept(:removed, _directory, removed, budget), do: {:cont, {removed + 1, budget}}
-
-  defp count_swept({_kept_or_error, reason}, directory, removed, budget) do
-    log_kept_workspace(directory, reason)
-    {:cont, {removed, budget}}
-  end
-
-  defp log_kept_workspace(directory, reason),
-    do: Logger.warning("subtitle workspace kept at #{directory}: #{inspect(reason)}")
-
-  # `:absent`, `{:kept, reason}`, `{:error, reason}`, or what `retire_classified/2` removes:
-  # `{:empty, directory}`, `{:tombstone, staged_path}` or `{:interrupted, directory}`. With a
-  # `cutoff` (gregorian seconds), a directory or entry modified after it is kept.
-  defp classify_workspace(directory, cutoff) do
-    with {:ok, directory} <- safe_destination(directory),
-         do: classify_directory(directory, fs().lstat(directory), cutoff)
-  end
-
-  defp classify_directory(directory, {:ok, %{type: :directory} = stat}, cutoff) do
-    if settled?(stat, cutoff),
-      do: classify_entries(directory, fs().ls(directory), cutoff),
-      else: {:kept, :recent}
-  end
-
-  defp classify_directory(_directory, {:ok, _stat}, _cutoff), do: {:kept, :not_a_directory}
-  defp classify_directory(_directory, {:error, :enoent}, _cutoff), do: :absent
-  defp classify_directory(_directory, {:error, _reason} = error, _cutoff), do: error
-
-  defp classify_entries(directory, {:ok, []}, _cutoff), do: {:empty, directory}
-
-  defp classify_entries(directory, {:ok, [@staged_name]}, cutoff) do
-    staged_path = Path.join(directory, @staged_name)
-
-    with {:ok, stat} <- fs().lstat(staged_path),
-         :tombstone <- tombstone(stat, cutoff),
-         do: {:tombstone, staged_path}
-  end
-
-  defp classify_entries(directory, {:ok, entries}, cutoff)
-       when entries in [[@staged_name, @tombstone_name], [@tombstone_name, @staged_name]] do
-    with {:ok, staged} <- fs().lstat(Path.join(directory, @staged_name)),
-         {:ok, fresh} <- fs().lstat(Path.join(directory, @tombstone_name)),
-         :shared <- shared_displaced(staged, cutoff),
-         :tombstone <- tombstone(fresh, cutoff),
-         do: {:interrupted, directory}
-  end
-
-  defp classify_entries(_directory, {:ok, _entries}, _cutoff), do: {:kept, :not_a_tombstone}
-  defp classify_entries(_directory, {:error, :enoent}, _cutoff), do: :absent
-  defp classify_entries(_directory, {:error, _reason} = error, _cutoff), do: error
-
-  defp tombstone(%{type: :regular, size: 0, links: 1} = stat, cutoff),
-    do: if(settled?(stat, cutoff), do: :tombstone, else: {:kept, :recent})
-
-  defp tombstone(_stat, _cutoff), do: {:kept, :not_a_tombstone}
-
-  # An interrupted disposal's staged file: the displaced inode, which has a name outside the
-  # workspace too, so dropping the workspace's name never removes its last one.
-  defp shared_displaced(%{type: :regular, links: links} = stat, cutoff) when links > 1,
-    do: if(settled?(stat, cutoff), do: :shared, else: {:kept, :recent})
-
-  defp shared_displaced(_stat, _cutoff), do: {:kept, :not_a_tombstone}
-
-  defp settled?(_stat, nil), do: true
-
-  defp settled?(%{mtime: mtime}, cutoff),
-    do: :calendar.datetime_to_gregorian_seconds(mtime) <= cutoff
-
-  defp gregorian_now, do: :calendar.datetime_to_gregorian_seconds(:calendar.universal_time())
-
-  # `rmdir` refuses a directory that gained an entry since it was listed.
-  defp retire_classified({:empty, directory}, _cutoff), do: remove_workspace_directory(directory)
-
-  defp retire_classified({:tombstone, staged_path}, cutoff) do
-    with {:ok, staged_path} <- safe_destination(staged_path),
-         :ok <-
-           with_bound(staged_path, [:read, :raw, :binary], fn staged ->
-             unlink_tombstone(staged_path, staged, cutoff)
-           end),
-         do: remove_workspace_directory(Path.dirname(staged_path))
-  end
-
-  # Finishes the interrupted disposal, which leaves a bare tombstone, then retires that. A kill
-  # after any step leaves a state a later retirement still removes: the two entries, the bare
-  # tombstone, or no entry.
-  defp retire_classified({:interrupted, directory}, cutoff) do
-    with {:ok, staged_path} <- safe_destination(Path.join(directory, @staged_name)),
-         {:ok, fresh_path} <- safe_destination(Path.join(directory, @tombstone_name)),
-         :ok <-
-           with_bound(staged_path, [:read, :raw, :binary], fn displaced ->
-             finish_disposal(staged_path, displaced, fresh_path, cutoff)
-           end),
-         do: remove_workspace_directory(directory)
-  end
-
-  defp retire_classified(unretirable, _cutoff), do: unretirable
-
-  defp finish_disposal(staged_path, displaced, fresh_path, cutoff) do
-    with_bound(fresh_path, [:read, :raw, :binary], fn fresh ->
-      with {:ok, displaced_stat} <- File.stat(displaced.path, [:raw]),
-           :shared <- shared_displaced(displaced_stat, cutoff),
-           {:ok, fresh_stat} <- File.stat(fresh.path, [:raw]),
-           :tombstone <- tombstone(fresh_stat, cutoff),
-           :ok <- verify_bound_path(fresh_path, fresh),
-           :ok <-
-             committed_as_ok(rename_over_displaced(fresh_path, staged_path, displaced)),
-           do: unlink_tombstone(staged_path, fresh, cutoff)
-    end)
-  end
-
-  # A rename whose effect committed did rename: `unlink_tombstone/3` checks the name next.
-  defp committed_as_ok({:error, {:effect_committed, _operation, _detail}}), do: :ok
-  defp committed_as_ok(result), do: result
-
-  # Checks the held inode itself, through its descriptor, then removes its one name only while it
-  # still names that inode.
-  defp unlink_tombstone(staged_path, staged, cutoff) do
-    with {:ok, stat} <- File.stat(staged.path, [:raw]),
-         :tombstone <- tombstone(stat, cutoff),
-         :ok <- verify_bound_path(staged_path, staged) do
-      case fs().rm(staged_path) do
-        :ok -> :ok
-        {:error, {:effect_committed, _operation, _detail}} -> :ok
-        {:error, _reason} = error -> error
-      end
-    end
-  end
-
-  defp remove_workspace_directory(directory) do
-    case fs().rmdir(directory) do
-      :ok -> :removed
-      {:error, {:effect_committed, _operation, _detail}} -> :removed
-      {:error, :enoent} -> :removed
-      {:error, reason} when reason in [:eexist, :enotempty] -> {:kept, :not_a_tombstone}
-      {:error, _reason} = error -> error
-    end
-  end
-
   @spec recover(String.t(), String.t(), String.t(), String.t()) :: :ok | {:error, term()}
   def recover(target, operation_id, expected_sha256, applied_sha256) do
-    with true <- is_binary(operation_id) and Regex.match?(@operation_id, operation_id),
+    with true <- Workspace.valid_id?(operation_id),
          {:ok, target} <- safe_destination(target),
-         {:ok, directory} <- safe_destination(workspace_path(target, operation_id)),
+         {:ok, directory} <- safe_destination(Workspace.path(target, operation_id)),
          {:ok, staged_path} <-
-           safe_destination(Path.join(directory, @staged_name)) do
+           safe_destination(Workspace.staged_path(directory)) do
       case recovery_data(target, directory, staged_path, expected_sha256, applied_sha256) do
         :ok -> :ok
         {:resume, expected, applied} -> write(target, applied, expected, operation_id)
@@ -657,8 +420,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   end
 
   defp cleanup_pending_workspace(target, operation_id, expected_sha256, applied_sha256) do
-    directory = workspace_path(target, operation_id)
-    staged_path = Path.join(directory, @staged_name)
+    directory = Workspace.path(target, operation_id)
+    staged_path = Workspace.staged_path(directory)
 
     with {:ok, target} <- safe_destination(target),
          {:ok, directory} <- safe_destination(directory),
@@ -676,14 +439,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   defp cleanup_authorized_workspace(target, directory, staged_path, expected, applied) do
     case fs().open_bound(directory, [:read, :raw, :binary]) do
       {:ok, directory_bound} ->
-        finish_bound(directory_bound, fn directory_bound ->
-          cleanup_authorized_bound(
-            target,
-            directory_bound,
-            staged_path,
-            expected,
-            applied
-          )
+        finish_bound(directory_bound, fn _directory_bound ->
+          cleanup_authorized_bound(target, staged_path, expected, applied)
         end)
 
       {:error, :enoent} ->
@@ -694,74 +451,96 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     end
   end
 
-  defp cleanup_authorized_bound(target, directory, staged_path, expected, applied) do
+  defp cleanup_authorized_bound(target, staged_path, expected, applied) do
     with_bound(target, [:read, :raw, :binary], fn target_bound ->
-      cleanup_workspace_contents(target_bound, directory, staged_path, expected, applied)
+      with {:ok, target_content} <- File.read(target_bound.path, [:raw]),
+           do: cleanup_target_content(sha256(target_content), staged_path, expected, applied)
     end)
   end
 
-  defp cleanup_workspace_contents(target, directory, staged_path, expected, applied) do
-    case File.read(target.path, [:raw]) do
-      {:ok, target_content} ->
-        if sha256(target_content) == applied do
-          :ok
-        else
-          cleanup_target_content(target_content, directory, staged_path, expected, applied)
-        end
-
-      {:error, _reason} = error ->
-        error
-    end
-  end
-
-  defp cleanup_target_content(target, directory, staged_path, expected, applied) do
+  # A target that holds the applied bytes is a finished publication whatever its workspace holds:
+  # the staged file is read only to finish its disposal, so nothing found there fails the cleanup.
+  defp cleanup_target_content(target_hash, staged_path, expected, applied) do
     result =
       with_bound(staged_path, [:read, :raw, :binary], fn staged ->
-        cleanup_bound_workspace(target, directory, staged_path, staged, expected, applied)
+        cleanup_bound_workspace(target_hash, staged_path, staged, expected, applied)
       end)
 
-    case result do
-      {:error, :enoent} -> cleanup_empty_workspace(target, expected, applied)
-      result -> result
+    cond do
+      target_hash == applied -> :ok
+      result == {:error, :enoent} -> cleanup_empty_workspace(target_hash, expected, applied)
+      true -> result
     end
   end
 
-  defp cleanup_bound_workspace(target, _directory, _staged_path, staged, expected, applied) do
-    with {:ok, staged_content} <- File.read(staged.path, [:raw]),
-         do: verify_pending_workspace(target, staged_content, expected, applied)
+  defp cleanup_bound_workspace(target_hash, staged_path, staged, expected, applied) do
+    with {:ok, staged_content} <- File.read(staged.path, [:raw]) do
+      if displaced?(target_hash, sha256(staged_content), expected, applied),
+        do: finish_displaced(staged_path, staged),
+        else: verify_pending_workspace(target_hash, staged_content, expected, applied)
+    end
   end
+
+  # The inode an exchange displaced: the bytes the target held before the write, beside a target
+  # that holds either side. Work still pending is the reverse, the applied bytes staged beside a
+  # target that holds the expected ones, which `recover/4` and a reused `write/4` publish.
+  defp displaced?(target_hash, staged_hash, expected, applied),
+    do: staged_hash == expected and target_hash in [expected, applied]
+
+  # Finishes the disposal a kill or a failed step after the exchange left undone (#1149), the way
+  # the exchange does it (`empty_displaced/2`), or by renaming over the staged name the fresh
+  # tombstone an interrupted `replace_shared_tombstone/2` left beside it, whatever the staged
+  # inode's link count. Either way the workspace ends a bare tombstone. A step that fails leaves
+  # the workspace, with a warning naming it, and the cleanup still passes: the target's bytes are
+  # all a record or a reset reads.
+  defp finish_displaced(staged_path, staged) do
+    directory = Path.dirname(staged_path)
+    fresh_path = Workspace.tombstone_path(directory)
+
+    result =
+      case fs().lstat(fresh_path) do
+        {:error, :enoent} -> empty_displaced(staged_path, staged)
+        {:ok, _fresh} -> Workspace.replace_displaced(staged_path, staged, fresh_path)
+        {:error, _reason} = error -> error
+      end
+
+    with {_kept_or_error, reason} <- result do
+      Logger.warning(
+        "subtitle workspace kept at #{directory}: #{inspect(disposal_failure(reason))}"
+      )
+    end
+
+    :ok
+  end
+
+  defp disposal_failure({:discard, reason}), do: {:discard_failed, reason}
+  defp disposal_failure({:replace, reason}), do: {:tombstone_replace_failed, reason}
+  defp disposal_failure(reason), do: reason
 
   # A workspace with no staged name holds no staged bytes and no displaced inode, so nothing is
   # pending in it while the target holds either side. An exchange always leaves a name there, and
-  # only `swap/3` (its own random ids), `retire/2` and `sweep/3` (an empty file with one name)
-  # remove one. So the directory is a crash between the mkdir and the create, a retirement killed
-  # before its rmdir, or someone else's: a write that reuses the name replaces it.
-  defp cleanup_empty_workspace(target, expected, applied) do
-    if sha256(target) in [expected, applied],
+  # only `swap/3` (its own random ids), `Workspace.retire/2` and `Workspace.sweep/3` remove one.
+  # So the directory is a crash between the mkdir and the create, a retirement killed before its
+  # rmdir, or someone else's: a write that reuses the name replaces it.
+  defp cleanup_empty_workspace(target_hash, expected, applied) do
+    if target_hash in [expected, applied],
       do: :ok,
       else: {:error, :pending_workspace_mismatch}
   end
 
-  # A completed reversal's displaced content is truncated to empty by `discard_bound` after
-  # exchange, or replaced by a fresh empty file when another name shares it (see
-  # `dispose_displaced`), leaving this exact directory and an empty staged file as a tombstone —
-  # nothing was ever published from it beyond what the exchange already verified, so it's never
-  # itself a conflict. Recognized only when the target still reads as the
+  # Beside a target that does not hold the applied bytes. Staged applied bytes beside the expected
+  # ones are work still pending. A completed reversal's displaced content is truncated to empty
+  # by `discard_bound` after exchange, or replaced by a fresh empty file when another name shares
+  # it (see `dispose_displaced`), leaving this exact directory and an empty staged file as a
+  # tombstone — nothing was ever published from it beyond what the exchange already verified, so
+  # it's never itself a conflict. Recognized only when the target still reads as the
   # pre-reversal `expected_sha256`: empty content alone must not authorize reuse of a workspace
   # whose target has moved to some other, unaccounted-for state.
-  defp verify_pending_workspace(target, staged, expected_sha256, applied_sha256) do
+  defp verify_pending_workspace(target_hash, staged, expected_sha256, applied_sha256) do
     cond do
-      {sha256(target), sha256(staged)} in [
-        {expected_sha256, applied_sha256},
-        {applied_sha256, expected_sha256}
-      ] ->
-        :ok
-
-      staged == "" and sha256(target) == expected_sha256 ->
-        :ok
-
-      true ->
-        {:error, :pending_workspace_mismatch}
+      target_hash == expected_sha256 and sha256(staged) == applied_sha256 -> :ok
+      staged == "" and target_hash == expected_sha256 -> :ok
+      true -> {:error, :pending_workspace_mismatch}
     end
   end
 
@@ -1063,7 +842,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   # `:discard` leaves an empty workspace tombstone that pending records and deterministic
   # reversals read: it empties a displaced inode that only the workspace names, and otherwise puts
   # a fresh empty file in its place (`replace_shared_tombstone/2`). A correction's final record
-  # retires it (`retire/2`); `sweep/3` retires one no record names. `:unlink` (`swap/3`) only
+  # retires it (`Workspace.retire/2`); `Workspace.sweep/3` retires one no record names. `:unlink` (`swap/3`) only
   # removes the displaced inode's workspace name. Either way a release sidecar, a hardlink into a
   # download that may still be seeding, keeps its bytes under that other name (#860).
   defp dispose_displaced(staged_path, current, :discard, committed_warning) do
@@ -1114,10 +893,10 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   # already holds the published bytes, which is all `recover/4` reads. A crash after the create,
   # or a rename that fails after the check proved the staged name still holds the displaced
   # inode, leaves the fresh file beside that staged name, so the download's file keeps that
-  # second name until `retire/2` or `sweep/3` finishes this rename (#1131, #1156). When the check
+  # second name until `Workspace.retire/2` or `Workspace.sweep/3` finishes this rename (#1131, #1156). When the check
   # fails, nothing proves the staged name still holds the displaced inode, so the fresh file goes.
   defp replace_shared_tombstone(staged_path, current) do
-    fresh_path = Path.join(Path.dirname(staged_path), @tombstone_name)
+    fresh_path = staged_path |> Path.dirname() |> Workspace.tombstone_path()
 
     with_created_bound(fresh_path, "", fn fresh ->
       case verify_bound_path(staged_path, current) do
@@ -1137,16 +916,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     with :ok <- fs().rename(fresh_path, staged_path), do: verify_bound_path(staged_path, fresh)
   end
 
-  defp rename_over_displaced(fresh_path, staged_path, current) do
-    with :ok <- verify_bound_path(staged_path, current),
-         do: fs().rename(fresh_path, staged_path)
-  end
-
   defp committed_result(nil), do: {:committed, :ok}
   defp committed_result(reason), do: {:committed_unacknowledged, reason}
-
-  defp merge_committed_warnings(nil, reason), do: reason
-  defp merge_committed_warnings(first, second), do: {first, second}
 
   defp verify_exchanged_files(target, staged_path, current, staged, expected, content) do
     case {verify_bound_path(target, staged), verify_bound_path(staged_path, current)} do
@@ -1230,108 +1001,6 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     end
   end
 
-  defp verify_bound_path(path, bound), do: verify_path_identity(path, bound.identity)
-
-  defp verify_path_identity(path, expected_identity) do
-    case path_identity(path) do
-      {:ok, ^expected_identity} -> :ok
-      _other -> {:error, :concurrent_change}
-    end
-  end
-
-  defp path_identity(path) do
-    with_bound(path, [:read, :raw, :binary], fn bound -> {:ok, bound.identity} end)
-  end
-
-  defp with_bound(path, modes, callback) do
-    case fs().open_bound(path, modes) do
-      {:ok, bound} -> finish_bound(bound, callback)
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp with_created_bound(path, content, callback) do
-    case fs().create_bound(path, content) do
-      {:ok, bound} -> finish_bound(bound, callback)
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp finish_bound(bound, callback) do
-    operation =
-      try do
-        {:returned, callback.(bound)}
-      catch
-        kind, reason -> {:raised, kind, reason, __STACKTRACE__}
-      end
-
-    close_result = fs().close_bound(bound)
-    finish_bound_operation(operation, close_result)
-  end
-
-  defp finish_bound_operation({:returned, {:directory_bound_result, result}}, :ok),
-    do: result
-
-  defp finish_bound_operation(
-         {:returned, {:directory_bound_result, :ok}},
-         {:error, reason}
-       ) do
-    Logger.warning(
-      "directory descriptor close failed after subtitle publication: #{inspect(reason)}"
-    )
-
-    :ok
-  end
-
-  defp finish_bound_operation(
-         {:returned,
-          {:directory_bound_result, {:error, {:publication_committed, _detail}} = committed}},
-         {:error, reason}
-       ) do
-    Logger.warning(
-      "directory descriptor close failed after unacknowledged subtitle publication: #{inspect(reason)}"
-    )
-
-    committed
-  end
-
-  defp finish_bound_operation(
-         {:returned, {:directory_bound_result, {:error, operation_reason}}},
-         {:error, close_reason}
-       ),
-       do: {:error, {:operation_and_descriptor_close_failed, operation_reason, close_reason}}
-
-  defp finish_bound_operation({:returned, result}, :ok), do: result
-
-  # The bytes are published, but the failed close leaves them unacknowledged: the caller gets
-  # `{:publication_committed, _}`, so a correction keeps its pending record for
-  # `SidecarTransaction.recover/2`.
-  defp finish_bound_operation({:returned, {:committed, :ok}}, {:error, reason}) do
-    Logger.warning(
-      "descriptor close failed after committed subtitle publication: #{inspect(reason)}"
-    )
-
-    {:committed_unacknowledged, {:descriptor_close_failed, reason}}
-  end
-
-  defp finish_bound_operation(
-         {:returned, {:committed_unacknowledged, committed_warning}},
-         {:error, reason}
-       ) do
-    Logger.warning(
-      "descriptor close failed after unacknowledged subtitle publication: #{inspect(reason)}"
-    )
-
-    {:committed_unacknowledged,
-     merge_committed_warnings(committed_warning, {:descriptor_close_failed, reason})}
-  end
-
-  defp finish_bound_operation({:returned, _result}, {:error, reason}),
-    do: {:error, {:descriptor_close_failed, reason}}
-
-  defp finish_bound_operation({:raised, kind, reason, stacktrace}, _close_result),
-    do: :erlang.raise(kind, reason, stacktrace)
-
   # A committed marker leaves the staged and target bounds as it is: `in_workspace/2` turns it
   # into the result once they closed.
   defp finish_atomic_operation({marker, _detail} = committed, _disposal, _staged_path, _identity)
@@ -1405,16 +1074,5 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     :crypto.hash(:sha256, [target, 0, expected_sha256, 0, content_sha256])
     |> binary_part(0, 16)
     |> Base.url_encode64(padding: false)
-  end
-
-  defp workspace_path(target, nil),
-    do: temporary(target, @workspace_prefix, "")
-
-  defp workspace_path(target, operation_id),
-    do: Path.join(Path.dirname(target), @workspace_prefix <> operation_id)
-
-  defp temporary(path, prefix, extension) do
-    token = Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
-    Path.join(Path.dirname(path), "#{prefix}#{token}#{extension}")
   end
 end

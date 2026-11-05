@@ -53,6 +53,23 @@ defmodule Cinder.Subtitles.Manifest do
     end
   end
 
+  @doc """
+  The manifest of `video_path` as `read/1` decodes it, telling a missing manifest, which reads as
+  an empty one, from one it cannot read (`{:error, reason}`) or decode (`{:error, :malformed}`).
+  Logs nothing.
+  """
+  @spec fetch(String.t()) ::
+          {:ok, %{video_moviehash: String.t() | nil, tracks: map()}} | {:error, term()}
+  def fetch(video_path) do
+    with {:ok, manifest_path} <- safe_destination(path(video_path)) do
+      case fs().read(manifest_path) do
+        {:ok, json} -> decode_state(json)
+        {:error, :enoent} -> {:ok, empty()}
+        {:error, _reason} = error -> error
+      end
+    end
+  end
+
   @spec put(
           String.t(),
           String.t() | nil,
@@ -354,15 +371,24 @@ defmodule Cinder.Subtitles.Manifest do
   def verified?(state, language), do: origin(state, language) in ~w(opensubtitles_hash own_track)
 
   defp decode(json, video_path) do
+    case decode_state(json) do
+      {:ok, state} ->
+        state
+
+      {:error, :malformed} ->
+        Logger.warning("subtitle manifest is malformed for #{video_path}")
+        empty()
+    end
+  end
+
+  defp decode_state(json) do
     with {:ok, %{"video_moviehash" => moviehash, "tracks" => tracks}}
          when is_map(tracks) <- Jason.decode(json),
          true <- is_binary(moviehash) or is_nil(moviehash),
          {:ok, tracks} <- normalize_tracks(tracks) do
-      %{video_moviehash: moviehash, tracks: tracks}
+      {:ok, %{video_moviehash: moviehash, tracks: tracks}}
     else
-      _ ->
-        Logger.warning("subtitle manifest is malformed for #{video_path}")
-        empty()
+      _ -> {:error, :malformed}
     end
   end
 

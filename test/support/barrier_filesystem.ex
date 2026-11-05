@@ -231,7 +231,10 @@ defmodule Cinder.Test.BarrierFilesystem do
   @impl true
   defdelegate rm_rf(path), to: Disk
   @impl true
-  defdelegate read(path), to: Disk
+  def read(path) do
+    with :ok <- injected_failure(:read, path, path), do: Disk.read(path)
+  end
+
   @impl true
   defdelegate read_prefix(path, bytes), to: Disk
 

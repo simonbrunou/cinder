@@ -4,7 +4,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
   # file left behind: cleanup journals, pending records, stale immutable originals, resets.
 
   alias Cinder.Subtitles.{Manifest, Moviehash}
-  alias Cinder.Subtitles.SidecarTransaction.{AtomicFile, Backup}
+  alias Cinder.Subtitles.SidecarTransaction.{AtomicFile, Backup, Workspace}
   alias Cinder.Subtitles.Sync.Timing
 
   import Cinder.Subtitles.SafeFile,
@@ -24,7 +24,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
   # included, so the ids any manifest there names stay.
   defp sweep_workspaces(video_path) do
     directory = Path.dirname(video_path)
-    removed = AtomicFile.sweep(directory, &named_operation_ids(directory, &1))
+    removed = Workspace.sweep(directory, &folder_records(directory, &1))
 
     if removed > 0,
       do: Logger.info("removed #{removed} subtitle workspaces in #{directory}")
@@ -32,18 +32,66 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
     :ok
   end
 
-  defp named_operation_ids(directory, names) do
-    for name <- names,
-        video_path = Manifest.video_path(Path.join(directory, name)),
-        {_language, track} <- Manifest.read(video_path).tracks,
-        id <- track_operation_ids(video_path, track),
-        do: id
+  @record_keys [:sync, :reset_cleanup_sync, :replacement_cleanup_sync]
+  @invalid_record_keys [
+    :sync_invalid?,
+    :reset_cleanup_sync_invalid?,
+    :replacement_cleanup_sync_invalid?
+  ]
+
+  # What `Workspace.sweep/3` needs from every manifest in the folder: the operation ids their
+  # records name, and each track's sidecar and immutable original, whose bytes Cinder keeps. A
+  # manifest it cannot read in full could name any workspace there, so it ends the read.
+  defp folder_records(directory, names) do
+    names
+    |> Enum.flat_map(&manifest_video(directory, &1))
+    |> Enum.reduce_while({:ok, [], []}, fn video_path, {:ok, ids, candidates} ->
+      case readable_tracks(video_path) do
+        {:ok, tracks} ->
+          {:cont,
+           {:ok, Enum.flat_map(tracks, &track_operation_ids(video_path, &1)) ++ ids,
+            Enum.flat_map(tracks, &track_candidates(video_path, &1)) ++ candidates}}
+
+        {:error, reason} ->
+          {:halt, {:error, {Manifest.path(video_path), reason}}}
+      end
+    end)
   end
+
+  defp manifest_video(directory, name) do
+    case Manifest.video_path(Path.join(directory, name)) do
+      nil -> []
+      video_path -> [video_path]
+    end
+  end
+
+  defp readable_tracks(video_path) do
+    with {:ok, %{tracks: tracks}} <- Manifest.fetch(video_path) do
+      case Enum.find(tracks, &unreadable_record?/1) do
+        nil -> {:ok, Map.values(tracks)}
+        {language, _track} -> {:error, {:unreadable_record, language}}
+      end
+    end
+  end
+
+  # A record that did not decode names no id. Nor does one on a track with no sidecar file, from
+  # which its reversal ids derive.
+  defp unreadable_record?({_language, track}) do
+    Enum.any?(@invalid_record_keys, &Map.get(track, &1, false)) or
+      (not Map.has_key?(track, :file) and Enum.any?(@record_keys, &Map.has_key?(track, &1)))
+  end
+
+  defp track_candidates(video_path, %{file: file}) do
+    sidecar_path = Path.join(Path.dirname(video_path), file)
+    [sidecar_path, Backup.path(sidecar_path)]
+  end
+
+  defp track_candidates(_video_path, _track), do: []
 
   defp track_operation_ids(video_path, %{file: file} = track) do
     sidecar_path = Path.join(Path.dirname(video_path), file)
 
-    for key <- [:sync, :reset_cleanup_sync, :replacement_cleanup_sync],
+    for key <- @record_keys,
         sync = Map.get(track, key),
         id <- record_operation_ids(sidecar_path, sync),
         do: id
@@ -275,7 +323,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
              sync.applied_sha256
            ),
          :ok <- Manifest.put_sync(item.video_path, item.language, record) do
-      :ok = AtomicFile.retire(item.sidecar_path, sync.operation_id)
+      :ok = Workspace.retire(item.sidecar_path, sync.operation_id)
       {:ok, %{item | sync: record}}
     else
       {:error, _reason} -> {:review, :apply_recovery_failed, item}

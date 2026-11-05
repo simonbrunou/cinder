@@ -34,6 +34,61 @@ defmodule Cinder.Subtitles.ManifestTest do
     assert log =~ "subtitle manifest"
   end
 
+  test "read/1 falls back without a warning when the manifest cannot be read" do
+    expect(Cinder.Library.FilesystemMock, :read, fn "/lib/M/.M.mkv.cinder-subtitles.json" ->
+      {:error, :eacces}
+    end)
+
+    log =
+      capture_log(fn ->
+        assert Manifest.read("/lib/M/M.mkv") == %{video_moviehash: nil, tracks: %{}}
+      end)
+
+    assert log == ""
+  end
+
+  test "fetch/1 reads a missing manifest as an empty one" do
+    expect(Cinder.Library.FilesystemMock, :read, fn "/lib/M/.M.mkv.cinder-subtitles.json" ->
+      {:error, :enoent}
+    end)
+
+    assert Manifest.fetch("/lib/M/M.mkv") == {:ok, %{video_moviehash: nil, tracks: %{}}}
+  end
+
+  test "fetch/1 says why it cannot read or decode a manifest, and logs nothing" do
+    Cinder.Library.FilesystemMock
+    |> expect(:read, fn "/lib/M/.M.mkv.cinder-subtitles.json" -> {:error, :eacces} end)
+    |> expect(:read, fn "/lib/M/.M.mkv.cinder-subtitles.json" -> {:ok, "not json"} end)
+    |> expect(:read, fn "/lib/M/.M.mkv.cinder-subtitles.json" -> {:ok, ~s({"tracks": {}})} end)
+
+    log =
+      capture_log(fn ->
+        assert Manifest.fetch("/lib/M/M.mkv") == {:error, :eacces}
+        assert Manifest.fetch("/lib/M/M.mkv") == {:error, :malformed}
+        assert Manifest.fetch("/lib/M/M.mkv") == {:error, :malformed}
+      end)
+
+    assert log == ""
+  end
+
+  test "fetch/1 decodes a manifest the way read/1 does" do
+    json =
+      Jason.encode!(%{
+        "video_moviehash" => "hash",
+        "tracks" => %{
+          "fr" => %{"origin" => "embedded", "source_moviehash" => "hash", "sync" => "invalid"}
+        }
+      })
+
+    stub(Cinder.Library.FilesystemMock, :read, fn "/lib/M/.M.mkv.cinder-subtitles.json" ->
+      {:ok, json}
+    end)
+
+    assert {:ok, state} = Manifest.fetch("/lib/M/M.mkv")
+    assert state == Manifest.read("/lib/M/M.mkv")
+    assert %{"fr" => %{sync_invalid?: true}} = state.tracks
+  end
+
   test "stable?/3 needs a current hash and provisional?/3 invalidates an old hash" do
     state = %{video_moviehash: "old", tracks: %{"fr" => %{origin: "opensubtitles_hash"}}}
 

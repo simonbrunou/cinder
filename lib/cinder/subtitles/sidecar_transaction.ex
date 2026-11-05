@@ -33,7 +33,7 @@ defmodule Cinder.Subtitles.SidecarTransaction do
   require Logger
 
   alias Cinder.Subtitles.{Manifest, Moviehash, SafeFile}
-  alias Cinder.Subtitles.SidecarTransaction.{AtomicFile, Backup, Recovery}
+  alias Cinder.Subtitles.SidecarTransaction.{AtomicFile, Backup, Recovery, Workspace}
 
   import SafeFile,
     only: [fs: 0, safe_destination: 1, safe_read: 1, sha256: 1]
@@ -49,9 +49,11 @@ defmodule Cinder.Subtitles.SidecarTransaction do
   @doc """
   Replays the cleanup journals of every track of `video_path`: interrupted resets (for the
   current `moviehash` only) and interrupted replacements. Once both replay, removes up to 50
-  workspace tombstones and interrupted disposals in the video's folder that have not changed for
-  an hour and that no record it can read there names (`AtomicFile.sweep/3`). The sweep never
-  fails the call.
+  workspaces in the video's folder that have not changed for an hour and that no record there
+  names: workspace tombstones, interrupted disposals, and staged files holding the bytes of a
+  track's sidecar or immutable original (`Workspace.sweep/3`). A manifest in the folder that it
+  cannot read or decode, or that holds a record it cannot decode or one on a track with no
+  sidecar file, stops the sweep with one warning. The sweep never fails the call.
   """
   @spec reconcile(String.t(), String.t()) :: :ok | {:error, term()}
   defdelegate reconcile(video_path, moviehash), to: Recovery
@@ -165,7 +167,7 @@ defmodule Cinder.Subtitles.SidecarTransaction do
   defp commit(sidecar, current, content, record, backup_created?, operation_id) do
     with :ok <- Moviehash.verify(sidecar.video_path, record.moviehash),
          :ok <- put_record(sidecar, record) do
-      :ok = AtomicFile.retire(sidecar.sidecar_path, operation_id)
+      :ok = Workspace.retire(sidecar.sidecar_path, operation_id)
       {:ok, :corrected, %{sidecar | sync: record}}
     else
       {:error, reason} -> rollback(sidecar, current, content, backup_created?, reason)
