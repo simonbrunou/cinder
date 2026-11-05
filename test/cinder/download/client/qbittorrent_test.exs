@@ -783,6 +783,28 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert {:ok, _hash} = QBittorrent.add(%{download_url: magnet})
   end
 
+  test "add/1 strips a magnet tracker whose decoded host is not valid UTF-8" do
+    test_pid = self()
+    good = "udp://tracker.example:1337/announce"
+
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/torrents/add"
+      send(test_pid, {:posted, conn.params["urls"]})
+      Req.Test.text(conn, "Ok.")
+    end)
+
+    magnet =
+      "magnet:?xt=urn:btih:#{@hash}&dn=Movie" <>
+        "&tr=#{URI.encode_www_form("http://\xff.example/announce")}" <>
+        "&tr=#{URI.encode_www_form(good)}"
+
+    assert {:ok, _hash} = QBittorrent.add(%{download_url: magnet})
+    assert_received {:posted, posted}
+
+    assert Enum.to_list(URI.query_decoder(URI.parse(posted).query)) ==
+             [{"xt", "urn:btih:#{@hash}"}, {"dn", "Movie"}, {"tr", good}]
+  end
+
   test "add/1 strips a forbidden non-HTTP (udp) magnet tracker, keeping the xt" do
     stub_qbit(fn conn ->
       refute conn.params["urls"] =~ "127.0.0.1"

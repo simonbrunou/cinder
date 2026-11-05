@@ -75,6 +75,39 @@ defmodule Cinder.Download.Client.TransmissionTest do
     assert {:error, :unsupported_download_url} = Transmission.add(%{download_url: bad})
   end
 
+  test "add/2 rejects a magnet that is not valid UTF-8 instead of raising" do
+    stub_rpc(fn _conn, _request ->
+      flunk("a magnet that is not valid UTF-8 must never reach Transmission")
+    end)
+
+    bad = "magnet:?xt=urn:btih:#{@hash}&dn=\xff"
+    assert {:error, :unsupported_download_url} = Transmission.add(%{download_url: bad})
+  end
+
+  test "add/2 submits a magnet without a tracker whose decoded host is not valid UTF-8" do
+    test_pid = self()
+    good = "udp://good.example:1/a"
+
+    stub_rpc(fn conn, request ->
+      case request["method"] do
+        "torrent-add" ->
+          send(test_pid, {:submitted, request["arguments"]["filename"]})
+          success(conn, %{"torrent-added" => %{"hashString" => @hash}})
+      end
+    end)
+
+    magnet =
+      "magnet:?xt=urn:btih:#{@hash}&dn=Movie" <>
+        "&tr=#{URI.encode_www_form("http://\xff.example/announce")}" <>
+        "&tr=#{URI.encode_www_form(good)}"
+
+    assert {:ok, @hash} = Transmission.add(%{download_url: magnet})
+    assert_received {:submitted, submitted}
+
+    assert Enum.to_list(URI.query_decoder(URI.parse(submitted).query)) ==
+             [{"xt", "urn:btih:#{@hash}"}, {"dn", "Movie"}, {"tr", good}]
+  end
+
   # Transmission fetches through `Cinder.Download.Client.Fetch`, which follows the redirect (#1158).
   test "add/2 refuses a fetch redirect whose host is not valid UTF-8, before Transmission hears of it" do
     Req.Test.stub(Cinder.TransmissionStub, fn conn ->

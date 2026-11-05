@@ -211,40 +211,50 @@ defmodule Cinder.Download.Torrent do
   returned by `vet.(hosts)` (`vet` receives every candidate host, in order, so it can
   dedupe, cap and bound lookups); `ws`/`as`/`xs` likewise (http/https only). Keys are
   matched case-insensitively by the segment before the first dot, so `TR`, `tr.1`, `tr.`
-  and `tr.x` are all trackers. `x.pe`, `x.pe.*`, `dht` and `dht.*` are dropped outright.
-  Every other param (`xt`, `dn`, ...) is untouched, so the infohash is unchanged. Returns
-  `{:error, :bad_magnet}` when the magnet cannot be parsed.
+  and `tr.x` are all trackers. An endpoint whose percent-decoded value is not valid UTF-8 is
+  dropped like an unparseable one, and `vet` never sees its host. `x.pe`, `x.pe.*`, `dht`
+  and `dht.*` are dropped outright. Every other param (`xt`, `dn`, ...) is untouched, so the
+  infohash is unchanged. Returns `{:error, :bad_magnet}` when the magnet is not valid UTF-8
+  or cannot be parsed.
   """
   @spec sanitize_magnet(String.t(), ([String.t()] -> MapSet.t(String.t()))) ::
           {:ok, String.t()} | {:error, :bad_magnet}
   def sanitize_magnet(magnet, vet) when is_binary(magnet) do
-    case URI.new(magnet) do
-      {:ok, %URI{query: query} = uri} when is_binary(query) ->
-        pairs = Enum.to_list(URI.query_decoder(query))
+    # URI.new/1 raises FunctionClauseError, not ArgumentError, on a byte that is not valid
+    # UTF-8, so the magnet is checked first. The rescue still catches only ArgumentError, so
+    # any other raise from `vet` surfaces.
+    with true <- String.valid?(magnet),
+         {:ok, %URI{query: query} = uri} when is_binary(query) <- URI.new(magnet) do
+      pairs = Enum.to_list(URI.query_decoder(query))
 
-        hosts =
-          for {key, value} <- pairs,
-              kind = magnet_key(key),
-              kind in ~w(tr ws as xs),
-              {:ok, host} <- [endpoint_host(value, endpoint_schemes(kind))],
-              do: host
+      hosts =
+        for {key, value} <- pairs,
+            kind = magnet_key(key),
+            kind in ~w(tr ws as xs),
+            {:ok, host} <- [magnet_endpoint_host(kind, value)],
+            do: host
 
-        allowed = vet.(hosts)
+      allowed = vet.(hosts)
 
-        clean =
-          pairs
-          |> Enum.filter(fn {key, value} ->
-            keep_magnet_param?(magnet_key(key), value, allowed)
-          end)
-          |> URI.encode_query()
+      clean =
+        pairs
+        |> Enum.filter(fn {key, value} ->
+          keep_magnet_param?(magnet_key(key), value, allowed)
+        end)
+        |> URI.encode_query()
 
-        {:ok, URI.to_string(%{uri | query: clean})}
-
-      _ ->
-        {:error, :bad_magnet}
+      {:ok, URI.to_string(%{uri | query: clean})}
+    else
+      _ -> {:error, :bad_magnet}
     end
   rescue
     ArgumentError -> {:error, :bad_magnet}
+  end
+
+  # A percent-decoded endpoint value can hold any byte; one that is not valid UTF-8 anywhere
+  # (host, path, query, ...) would make URI.new/1 raise, so it is dropped as unparseable.
+  defp magnet_endpoint_host(kind, value) do
+    if String.valid?(value), do: endpoint_host(value, endpoint_schemes(kind)), else: :error
   end
 
   # Clients disagree on suffixes (`tr.1`, `tr.`, `tr.x`), so a key is classified by its
@@ -259,8 +269,12 @@ defmodule Cinder.Download.Torrent do
 
   defp keep_magnet_param?(kind, _value, _allowed) when kind in ~w(x.pe dht), do: false
 
-  defp keep_magnet_param?(kind, value, allowed) when kind in ~w(tr ws as xs),
-    do: endpoint_ok?(kind, value, &MapSet.member?(allowed, &1))
+  defp keep_magnet_param?(kind, value, allowed) when kind in ~w(tr ws as xs) do
+    case magnet_endpoint_host(kind, value) do
+      {:ok, host} -> MapSet.member?(allowed, host)
+      :error -> false
+    end
+  end
 
   defp keep_magnet_param?(_kind, _value, _allowed), do: true
 

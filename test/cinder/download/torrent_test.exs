@@ -236,6 +236,14 @@ defmodule Cinder.Download.TorrentTest do
       refute clean =~ "nodes"
       assert Torrent.infohash(clean) == {:ok, hash}
     end
+
+    test "errors on an embedded URL that is not valid UTF-8" do
+      assert {:error, :bad_torrent} =
+               Torrent.sanitize_embedded_urls(
+                 "d8:announce10:http://\xff/a4:infod4:name1:xee",
+                 &MapSet.new/1
+               )
+    end
   end
 
   describe "sanitize_magnet/2" do
@@ -281,6 +289,91 @@ defmodule Cinder.Download.TorrentTest do
                )
 
       assert {:error, :bad_magnet} = Torrent.sanitize_magnet("magnet:", &MapSet.new/1)
+    end
+
+    @btih "urn:btih:0123456789abcdef0123456789abcdef01234567"
+
+    # URI.new/1 raises FunctionClauseError, not ArgumentError, on a byte that is not valid
+    # UTF-8 anywhere in the endpoint value (#1178).
+    for {label, key, url} <- [
+          {"a tr with 0xFF in the host", "tr", "http://\xff.example/announce"},
+          {"a tr with 0xFF in the path", "tr", "http://ok.example/a\xff"},
+          {"a tr with 0xFF in the query", "tr", "http://ok.example/a?q=\xff"},
+          {"a tr with 0xFF in the fragment", "tr", "http://ok.example/a#\xff"},
+          {"a tr with 0xFF in the port", "tr", "http://ok.example:\xff/a"},
+          {"a tr with 0xFF in the scheme", "tr", "ht\xfftp://ok.example/a"},
+          {"a ws with 0xFF in the host", "ws", "http://\xff.example/f"},
+          {"an as with 0xFF in the host", "as", "http://\xff.example/f"},
+          {"an xs with 0xFF in the host", "xs", "http://\xff.example/f"},
+          {"a TR.1 with 0xFF in the host", "TR.1", "http://\xff.example/announce"}
+        ] do
+      test "drops #{label} and keeps the other params" do
+        magnet = "magnet:?#{@xt}&dn=Movie&#{unquote(key)}=#{enc(unquote(url))}"
+
+        assert {:ok, clean} = Torrent.sanitize_magnet(magnet, &MapSet.new/1)
+        assert URI.decode_query(URI.parse(clean).query) == %{"xt" => @btih, "dn" => "Movie"}
+      end
+    end
+
+    test "never hands the vetter a host from an endpoint that is not valid UTF-8" do
+      good = "udp://good.example:1/a"
+      test_pid = self()
+
+      vet = fn hosts ->
+        send(test_pid, {:vetted, hosts})
+        MapSet.new(hosts)
+      end
+
+      for bad <- ["http://\xff.example/announce", "http://ok.example/a\xff"] do
+        magnet = "magnet:?#{@xt}&tr=#{enc(bad)}&tr=#{enc(good)}"
+
+        assert {:ok, clean} = Torrent.sanitize_magnet(magnet, vet)
+        assert_received {:vetted, ["good.example"]}
+
+        assert Enum.to_list(URI.query_decoder(URI.parse(clean).query)) ==
+                 [{"xt", @btih}, {"tr", good}]
+      end
+    end
+
+    test "rejects a magnet string that is not valid UTF-8 without vetting it" do
+      vet = fn hosts -> flunk("vet was called with #{inspect(hosts)}") end
+      magnet = "magnet:?#{@xt}&tr=#{enc("udp://good.example:1/a")}&dn=\xff"
+
+      assert {:error, :bad_magnet} = Torrent.sanitize_magnet(magnet, vet)
+    end
+
+    test "lets a raise from the vetter through rather than reporting a bad magnet" do
+      vet = fn _hosts -> raise "vet boom" end
+      magnet = "magnet:?#{@xt}&tr=#{enc("udp://good.example:1/a")}"
+
+      assert_raise RuntimeError, "vet boom", fn -> Torrent.sanitize_magnet(magnet, vet) end
+    end
+
+    test "keeps a non-endpoint param whose decoded value is not valid UTF-8, re-encoded" do
+      clean_xt = "xt=urn%3Abtih%3A0123456789abcdef0123456789abcdef01234567"
+
+      assert Torrent.sanitize_magnet("magnet:?#{@xt}&dn=%FF", &MapSet.new/1) ==
+               {:ok, "magnet:?#{clean_xt}&dn=%FF"}
+
+      assert Torrent.sanitize_magnet("magnet:?xt=urn:btih:%FF", &MapSet.new/1) ==
+               {:ok, "magnet:?xt=urn%3Abtih%3A%FF"}
+
+      assert Torrent.sanitize_magnet("magnet:?#{@xt}&%FF=1", &MapSet.new/1) ==
+               {:ok, "magnet:?#{clean_xt}&%FF=1"}
+    end
+
+    test "drops x.pe and a non-ASCII endpoint host, and rejects a raw non-ASCII magnet" do
+      clean = "magnet:?xt=urn%3Abtih%3A0123456789abcdef0123456789abcdef01234567"
+
+      assert Torrent.sanitize_magnet("magnet:?#{@xt}&x.pe=%FF", &MapSet.new/1) == {:ok, clean}
+
+      assert Torrent.sanitize_magnet(
+               "magnet:?#{@xt}&tr=#{enc("http://é.example/a")}",
+               &MapSet.new/1
+             ) == {:ok, clean}
+
+      assert Torrent.sanitize_magnet("magnet:?#{@xt}&dn=é", &MapSet.new/1) ==
+               {:error, :bad_magnet}
     end
 
     defp enc(s), do: URI.encode_www_form(s)
