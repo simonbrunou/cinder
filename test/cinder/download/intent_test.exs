@@ -786,6 +786,36 @@ defmodule Cinder.Download.IntentTest do
     refute capped.last_error =~ "secret"
   end
 
+  # `Cinder.HTTPPolicy` answers `:invalid_url` for a fetch redirect whose host is not valid UTF-8
+  # (#1158). It stays out of `permanent_submission_errors/0`, so that intent backs off and the pass
+  # still submits the next one.
+  test "an :invalid_url from the client backs off its intent and the pass submits the next one" do
+    {:ok, bad} = reserve_movie_intent(movie_fixture(%{status: :searching}).id, release("Bad"))
+    good_movie = movie_fixture(%{status: :searching})
+    {:ok, good} = reserve_movie_intent(good_movie.id, release("Good"))
+    bad_key = bad.operation_key
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, opts ->
+      case Keyword.fetch!(opts, :operation_key) do
+        ^bad_key -> {:error, :invalid_url}
+        _key -> {:ok, "remote-good"}
+      end
+    end)
+
+    assert :ok = Download.reconcile_pending_intents([:movie])
+
+    saved = Repo.get!(Intent, bad.id)
+    assert saved.status == :reserved
+    assert saved.attempt_count == 1
+    assert DateTime.after?(saved.next_attempt_at, DateTime.utc_now())
+    assert saved.last_error == ":invalid_url"
+
+    refute Repo.get(Intent, good.id)
+    assert Repo.get!(Cinder.Catalog.Movie, good_movie.id).download_id == "remote-good"
+  end
+
   test "a committed movie retry generation is charged once across crash replay" do
     movie = movie_fixture(%{status: :searching})
     {:ok, movie} = seed_movie_state(movie, %{status: :searching, search_attempts: 3})

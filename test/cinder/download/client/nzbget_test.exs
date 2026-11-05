@@ -52,6 +52,24 @@ defmodule Cinder.Download.Client.NzbgetTest do
              )
   end
 
+  # NZBGet fetches through `Cinder.Download.Client.Fetch`, which follows the redirect (#1158).
+  test "add/2 refuses a fetch redirect whose host is not valid UTF-8, before NZBGet hears of it" do
+    Req.Test.stub(Cinder.NzbgetStub, fn conn ->
+      case conn.request_path do
+        "/jsonrpc" ->
+          flunk("NZBGet must not be contacted when the fetch redirect is invalid")
+
+        "/redirect" ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://\xff.example/file.nzb")
+          |> Plug.Conn.send_resp(302, "")
+      end
+    end)
+
+    assert {:error, :invalid_url} =
+             Nzbget.add(%{download_url: "https://provider.test/redirect"}, operation_key: @key)
+  end
+
   test "find_by_operation_key/1 searches queue and history by the exact marker" do
     stub(fn conn, request ->
       case request["method"] do

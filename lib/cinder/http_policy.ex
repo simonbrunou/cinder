@@ -57,14 +57,9 @@ defmodule Cinder.HTTPPolicy do
   @spec validate_untrusted_host(String.t(), resolver()) :: :ok | {:error, atom()}
   def validate_untrusted_host(host, resolver \\ &resolve_host/1)
       when is_binary(host) and is_function(resolver, 1) do
-    case normalize_host(host) do
-      "" ->
-        {:error, :missing_host}
-
-      normalized_host ->
-        with {:ok, addresses} <- addresses(normalized_host, resolver),
-             do: validate_addresses(addresses)
-    end
+    with {:ok, normalized_host} <- normalize_host(host),
+         {:ok, addresses} <- addresses(normalized_host, resolver),
+         do: validate_addresses(addresses)
   end
 
   @doc "Validates a remote URL, allowing an exact recorded source origin to be private."
@@ -311,28 +306,45 @@ defmodule Cinder.HTTPPolicy do
   end
 
   defp new_uri(%URI{} = uri), do: {:ok, uri}
-  defp new_uri(url) when is_binary(url), do: URI.new(url)
+
+  # `URI.new/1` raises `FunctionClauseError` on a byte that is not valid UTF-8 anywhere in the URL.
+  defp new_uri(url) when is_binary(url) do
+    if String.valid?(url), do: URI.new(url), else: {:error, :invalid_url}
+  end
+
   defp new_uri(_url), do: {:error, :invalid_url}
 
+  # The checks run in this order: scheme, host, port. The download clients turn a redirect's
+  # `:unsupported_scheme` into the permanent `:unsupported_download_url`, so a bad host or port
+  # behind a non-HTTP scheme still reads as that scheme.
   defp normalize_http_uri(%URI{} = uri) do
     scheme = uri.scheme && String.downcase(uri.scheme, :ascii)
-    host = uri.host && normalize_host(uri.host)
-    uri = %{uri | scheme: scheme, host: host}
 
-    cond do
-      scheme not in ["http", "https"] -> {:error, :unsupported_scheme}
-      host in [nil, ""] -> {:error, :missing_host}
-      not valid_port?(uri) -> {:error, :invalid_port}
-      true -> {:ok, uri}
+    with :ok <- supported_scheme(scheme),
+         {:ok, host} <- normalize_host(uri.host) do
+      uri = %{uri | scheme: scheme, host: host}
+      if valid_port?(uri), do: {:ok, uri}, else: {:error, :invalid_port}
     end
   end
 
-  defp normalize_host(host) do
-    host = String.downcase(host, :ascii)
+  defp supported_scheme(scheme) when scheme in ["http", "https"], do: :ok
+  defp supported_scheme(_scheme), do: {:error, :unsupported_scheme}
 
-    case :inet.parse_address(String.to_charlist(host)) do
-      {:ok, address} -> address |> :inet.ntoa() |> List.to_string()
-      {:error, :einval} -> host
+  # A redirect's Location comes from a remote server, and `URI.parse/1` keeps its host bytes as
+  # they came. `String.to_charlist/1` raises on bytes that are not valid UTF-8, so such a host is
+  # refused before it (#1158).
+  defp normalize_host(host) when host in [nil, ""], do: {:error, :missing_host}
+
+  defp normalize_host(host) do
+    if String.valid?(host) do
+      host = String.downcase(host, :ascii)
+
+      case :inet.parse_address(String.to_charlist(host)) do
+        {:ok, address} -> {:ok, address |> :inet.ntoa() |> List.to_string()}
+        {:error, :einval} -> {:ok, host}
+      end
+    else
+      {:error, :invalid_url}
     end
   end
 

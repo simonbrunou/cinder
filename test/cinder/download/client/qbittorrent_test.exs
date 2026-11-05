@@ -668,6 +668,23 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              QBittorrent.add(%{download_url: "https://tracker.test/dl/123"})
   end
 
+  test "add/1 refuses a redirect whose host is not valid UTF-8, before qBittorrent hears of it" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"93.184.216.34", "/dl/123"} ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://\xff.example/file.torrent")
+          |> Plug.Conn.send_resp(302, "")
+
+        {_, path} ->
+          flunk("qBittorrent must not be contacted when the fetch redirect is invalid: #{path}")
+      end
+    end)
+
+    assert {:error, :invalid_url} =
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123"})
+  end
+
   test "login cools down after a definitive auth failure: one attempt per process" do
     parent = self()
 

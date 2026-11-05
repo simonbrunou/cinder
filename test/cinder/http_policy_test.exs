@@ -22,6 +22,9 @@ defmodule Cinder.HTTPPolicyTest do
     "https://cdn.example:70000/a b"
   ]
 
+  # An absolute and a scheme-relative Location whose host holds a byte that is not valid UTF-8.
+  @invalid_host_locations ["https://\xff.example/x", "//\xff.example/x"]
+
   describe "same_origin?/2" do
     test "normalizes scheme and host case and default ports" do
       assert HTTPPolicy.same_origin?("HTTP://Example.COM/path", "http://example.com:80/other")
@@ -415,6 +418,179 @@ defmodule Cinder.HTTPPolicyTest do
     end
   end
 
+  # A remote server picks a redirect's Location, and Req passes its bytes on as they came. A host
+  # whose bytes are not valid UTF-8 raised from host normalization or `URI.new/1` (#1158).
+  describe "a URL or host whose bytes are not valid UTF-8" do
+    test "resolve_redirect/3 refuses such a host under each policy, before any DNS lookup" do
+      for location <- @invalid_host_locations,
+          {label, policy} <- [
+            same_origin: :same_origin,
+            untrusted: :untrusted,
+            resolver: &refuse_invalid_host_dns/1
+          ] do
+        result = HTTPPolicy.resolve_redirect("https://public.example/start", location, policy)
+
+        assert result == {:error, :invalid_url},
+               "#{inspect(location)} under #{label}: #{inspect(result)}"
+      end
+    end
+
+    test "untrusted_redirect_target/3 refuses such a host before any DNS lookup" do
+      for location <- @invalid_host_locations do
+        result =
+          HTTPPolicy.untrusted_redirect_target(
+            "https://public.example/start",
+            location,
+            &refuse_invalid_host_dns/1
+          )
+
+        assert result == {:error, :invalid_url}, "#{inspect(location)}: #{inspect(result)}"
+      end
+    end
+
+    test "validate_untrusted_url/2 and untrusted_request_target/2 refuse such a byte anywhere in a string URL, and in a parsed host" do
+      for url <- [
+            "https://\xff.example/x",
+            "https://public.example/a\xff",
+            URI.parse("https://\xff.example/x")
+          ] do
+        validated = HTTPPolicy.validate_untrusted_url(url, &refuse_invalid_host_dns/1)
+        assert validated == {:error, :invalid_url}, "#{inspect(url)}: #{inspect(validated)}"
+
+        target = HTTPPolicy.untrusted_request_target(url, &refuse_invalid_host_dns/1)
+        assert target == {:error, :invalid_url}, "#{inspect(url)}: #{inspect(target)}"
+      end
+    end
+
+    test "validate_source_url/3 and source_request_target/3 refuse such a host, and such a path off the source's origin" do
+      for url <- [
+            "https://\xff.example/x",
+            URI.parse("https://\xff.example/x"),
+            "https://other.example/a\xff"
+          ] do
+        validated =
+          HTTPPolicy.validate_source_url(
+            url,
+            "https://public.example",
+            &refuse_invalid_host_dns/1
+          )
+
+        assert validated == {:error, :invalid_url}, "#{inspect(url)}: #{inspect(validated)}"
+
+        target =
+          HTTPPolicy.source_request_target(
+            url,
+            "https://public.example",
+            &refuse_invalid_host_dns/1
+          )
+
+        assert target == {:error, :invalid_url}, "#{inspect(url)}: #{inspect(target)}"
+      end
+    end
+
+    test "validate_source_url/3 and source_request_target/3 still accept such a path on the source's own origin" do
+      url = "https://public.example/a\xff"
+
+      assert {:ok, %URI{host: "public.example", path: "/a\xff"}} =
+               HTTPPolicy.validate_source_url(
+                 url,
+                 "https://public.example",
+                 &refuse_invalid_host_dns/1
+               )
+
+      assert {:ok, %{uri: %URI{host: "public.example", path: "/a\xff"}, connect_options: []}} =
+               HTTPPolicy.source_request_target(
+                 url,
+                 "https://public.example",
+                 &refuse_invalid_host_dns/1
+               )
+    end
+
+    test "same_origin?/2 is false when either side has such a host" do
+      invalid = "https://\xff.example/"
+      valid = "https://public.example/"
+
+      for left <- [invalid, URI.parse(invalid)],
+          right <- [invalid, URI.parse(invalid), valid, URI.parse(valid)] do
+        refute HTTPPolicy.same_origin?(left, right), "#{inspect(left)} vs #{inspect(right)}"
+        refute HTTPPolicy.same_origin?(right, left), "#{inspect(right)} vs #{inspect(left)}"
+      end
+    end
+
+    test "validate_untrusted_host/2 refuses such a host before any DNS lookup" do
+      assert {:error, :invalid_url} =
+               HTTPPolicy.validate_untrusted_host("\xff.example", &refuse_invalid_host_dns/1)
+    end
+
+    # The download clients turn `:unsupported_scheme` into the permanent `:unsupported_download_url`,
+    # and an invalid host must not read as `:invalid_port`. The `:0` port survives the parse and
+    # fails the port check; the `:70000` one is the port that the merge drops (#1102).
+    test "a redirect's scheme comes before its host bytes, and its host bytes before its port" do
+      cases = [
+        {"ftp://\xff.example/x", {:error, :unsupported_scheme}},
+        {"https://\xff.example:70000/x", {:error, :invalid_url}},
+        {"https://\xff.example:0/x", {:error, :invalid_url}}
+      ]
+
+      for {location, expected} <- cases,
+          {label, policy} <- [same_origin: :same_origin, resolver: &refuse_invalid_host_dns/1] do
+        result = HTTPPolicy.resolve_redirect("https://public.example/start", location, policy)
+        assert result == expected, "#{inspect(location)} under #{label}: #{inspect(result)}"
+      end
+
+      for {location, expected} <- cases do
+        result =
+          HTTPPolicy.untrusted_redirect_target(
+            "https://public.example/start",
+            location,
+            &refuse_invalid_host_dns/1
+          )
+
+        assert result == expected, "#{inspect(location)}: #{inspect(result)}"
+      end
+    end
+
+    test "a valid UTF-8 non-ASCII host and a percent-encoded host still reach the resolver" do
+      parent = self()
+
+      resolver = fn host ->
+        send(parent, {:resolved, host})
+        {:ok, [@public_ipv4]}
+      end
+
+      for host <- ["é.example", "%ff.example"] do
+        assert {:ok, %{uri: %URI{host: ^host}}} =
+                 HTTPPolicy.untrusted_redirect_target(
+                   "https://public.example/start",
+                   "https://#{host}/x",
+                   resolver
+                 )
+
+        assert_received {:resolved, ^host}
+
+        assert :ok = HTTPPolicy.validate_untrusted_host(host, resolver)
+        assert_received {:resolved, ^host}
+      end
+    end
+
+    test "such a byte in a redirect's path or query still resolves" do
+      resolver = fn _host -> {:ok, [@public_ipv4]} end
+
+      for {location, expected} <- [
+            {"/a\xffb", "https://public.example/a\xffb"},
+            {"/a?q=\xff", "https://public.example/a?q=\xff"}
+          ],
+          {label, policy} <- [same_origin: :same_origin, resolver: resolver] do
+        resolved =
+          with {:ok, uri} <-
+                 HTTPPolicy.resolve_redirect("https://public.example/start", location, policy),
+               do: {:ok, URI.to_string(uri)}
+
+        assert resolved == {:ok, expected}, "#{inspect(location)} under #{label}"
+      end
+    end
+  end
+
   describe "bounded_request/2" do
     test "decodes application/json only after bounded collection" do
       Req.Test.stub(Cinder.HTTPPolicyStub, fn conn -> Req.Test.json(conn, %{ok: true}) end)
@@ -777,6 +953,9 @@ defmodule Cinder.HTTPPolicyTest do
   end
 
   defp refuse_dns(host), do: flunk("an out-of-range port must not resolve #{host}")
+
+  defp refuse_invalid_host_dns(host),
+    do: flunk("a URL that is not valid UTF-8 must not resolve #{inspect(host)}")
 
   # The test process's mailbox, without the events `Cinder.TelemetryHelpers.capture/2` forwarded
   # after it drained. A process that found its handler before `:telemetry.detach/1` can still

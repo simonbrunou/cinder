@@ -75,6 +75,25 @@ defmodule Cinder.Download.Client.TransmissionTest do
     assert {:error, :unsupported_download_url} = Transmission.add(%{download_url: bad})
   end
 
+  # Transmission fetches through `Cinder.Download.Client.Fetch`, which follows the redirect (#1158).
+  test "add/2 refuses a fetch redirect whose host is not valid UTF-8, before Transmission hears of it" do
+    Req.Test.stub(Cinder.TransmissionStub, fn conn ->
+      if conn.host == "93.184.216.34" do
+        conn
+        |> Plug.Conn.put_resp_header("location", "https://\xff.example/file.torrent")
+        |> Plug.Conn.send_resp(302, "")
+      else
+        flunk("Transmission must not be contacted when the fetch redirect is invalid")
+      end
+    end)
+
+    assert {:error, :invalid_url} =
+             Transmission.add(
+               %{download_url: "https://tracker.test/dl/123"},
+               operation_key: "op-123"
+             )
+  end
+
   test "add/2 fetches and submits bounded torrent bytes without a network request" do
     infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
     torrent_bytes = "d8:announce11:http://x/an4:info" <> infoval <> "e"

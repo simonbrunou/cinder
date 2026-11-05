@@ -1,0 +1,2 @@
+### Fixed
+- **An `http` or `https` download redirect to a host name that is not valid UTF-8 no longer holds up other grabs (#1158).** Cinder raised an error when a download client followed such a redirect, and the grabs queued behind it were not sent to the client. Cinder now refuses the redirect as an invalid URL: that grab is retried after a wait, as after a timeout, and the grabs behind it are sent.

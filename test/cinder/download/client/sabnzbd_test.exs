@@ -127,6 +127,23 @@ defmodule Cinder.Download.Client.SabnzbdTest do
              Sabnzbd.add(%{download_url: "http://provider.test/redirect"})
   end
 
+  test "add/1 refuses a fetch redirect whose host is not valid UTF-8, before SABnzbd hears of it" do
+    stub(fn conn ->
+      case conn.request_path do
+        "/api" ->
+          flunk("SABnzbd must not be contacted when the fetch redirect is invalid")
+
+        "/redirect" ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://\xff.example/file.nzb")
+          |> Plug.Conn.send_resp(302, "")
+      end
+    end)
+
+    assert {:error, :invalid_url} =
+             Sabnzbd.add(%{download_url: "http://provider.test/redirect"})
+  end
+
   test "add/2 names the job with the operation key when the release has no title" do
     stub_fetch_then_addfile(fn conn ->
       assert conn.params["nzbname"] == "cinder-op-123"
