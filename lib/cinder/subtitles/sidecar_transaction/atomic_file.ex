@@ -361,10 +361,11 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   regular file with no other name, or no entry at all. One already gone counts as removed.
 
   A disposal killed between creating its fresh tombstone and renaming it over the staged name
-  (`replace_shared_tombstone/2`) leaves two entries: the staged name on a regular file with
-  another name, a download's file for one, and the fresh tombstone, an empty regular file with
-  one name. That workspace goes too: renaming the fresh tombstone over the staged name finishes
-  the disposal, which drops only the workspace's name for the shared file and never writes it.
+  (`replace_shared_tombstone/2`), or whose rename failed, leaves two entries: the staged name on
+  a regular file with another name, a download's file for one, and the fresh tombstone, an empty
+  regular file with one name. That workspace goes too: renaming the fresh tombstone over the
+  staged name finishes the disposal, which drops only the workspace's name for the shared file
+  and never writes it.
 
   Anything else stays, and a warning names its path, as does a step that fails.
   """
@@ -385,10 +386,10 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   Removes the workspaces earlier operations left in `directory`, up to `:limit` of them (50 by
   default), and returns how many it removed.
 
-  A workspace goes only while it is a bare tombstone or an interrupted disposal, as `retire/2`
-  says, whose directory and entries have not changed for an hour, and whose operation id is not
-  among `protected.(names)`, where `names` is what `directory` lists. A workspace that fails a
-  step stays, and a warning names its path.
+  A workspace goes only while it is a bare tombstone or an interrupted disposal (killed, or whose
+  rename failed), as `retire/2` says, whose directory and entries have not changed for an hour,
+  and whose operation id is not among `protected.(names)`, where `names` is what `directory`
+  lists. A workspace that fails a step stays, and a warning names its path.
 
   The caller holds one video's lock, but the workspaces of every video in `directory` sit there.
   Another video's operation that is still at work changed its workspace within the hour.
@@ -1110,26 +1111,30 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   # Renames a fresh empty file over the staged name, so the workspace keeps an empty tombstone
   # with one link and drops its name for the displaced inode without changing its bytes. At every
   # point the staged name holds either the displaced inode or the fresh file, and the target
-  # already holds the published bytes, which is all `recover/4` reads. A crash after the create
-  # leaves the fresh file beside a staged name that still holds the displaced inode, so the
-  # download's file keeps that second name until `retire/2` or `sweep/3` finishes this rename
-  # (#1131).
+  # already holds the published bytes, which is all `recover/4` reads. A crash after the create,
+  # or a rename that fails after the check proved the staged name still holds the displaced
+  # inode, leaves the fresh file beside that staged name, so the download's file keeps that
+  # second name until `retire/2` or `sweep/3` finishes this rename (#1131, #1156). When the check
+  # fails, nothing proves the staged name still holds the displaced inode, so the fresh file goes.
   defp replace_shared_tombstone(staged_path, current) do
     fresh_path = Path.join(Path.dirname(staged_path), @tombstone_name)
 
     with_created_bound(fresh_path, "", fn fresh ->
-      case rename_over_displaced(fresh_path, staged_path, current) do
+      case verify_bound_path(staged_path, current) do
         :ok ->
-          verify_bound_path(staged_path, fresh)
-
-        {:error, {:effect_committed, _operation, _detail}} = error ->
-          error
+          rename_fresh_tombstone(fresh_path, staged_path, fresh)
 
         {:error, _reason} = error ->
           remove_workspace_name(fresh_path, fresh)
           error
       end
     end)
+  end
+
+  # A rename error leaves the fresh tombstone in the workspace: beside the staged name when the
+  # rename did not happen, at the staged name when its effect committed.
+  defp rename_fresh_tombstone(fresh_path, staged_path, fresh) do
+    with :ok <- fs().rename(fresh_path, staged_path), do: verify_bound_path(staged_path, fresh)
   end
 
   defp rename_over_displaced(fresh_path, staged_path, current) do

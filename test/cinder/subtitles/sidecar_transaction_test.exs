@@ -855,34 +855,79 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       refute File.exists?(Path.dirname(staged))
     end
 
-    test "a failed tombstone rename leaves the pending record for recovery", %{
-      video: video,
-      path: path,
-      original: original,
-      backup: backup,
-      tmp_dir: tmp
-    } do
+    # #1156: a failed rename keeps the fresh tombstone, so the workspace holds the two entries a
+    # kill after the create leaves (#1131), and the recovery's final record retires them.
+    test "a failed tombstone rename leaves the pending record for recovery, which retires the workspace",
+         %{video: video, path: path, original: original, backup: backup, tmp_dir: tmp} do
       download = hardlink_download!(path, tmp)
-
-      fail_once(%{
-        operation: :rename,
-        source_contains: ".cinder-subtitle-sync-write-tombstone",
-        reason: :eio
-      })
+      fail_once(%{operation: :rename, source_contains: @tombstone, reason: :eio})
 
       assert {:error, {:publication_committed, {:tombstone_replace_failed, :eio}}} =
                manual(video, 1_000)
 
-      assert File.read!(download) == original
-
-      assert [] =
-               path
-               |> Path.dirname()
-               |> Path.join(".cinder-subtitle-sync-cas-*/.cinder-subtitle-sync-write-tombstone")
-               |> Path.wildcard(match_dot: true)
+      assert_failed_rename_entries(path, original, download)
 
       assert_unacknowledged_correction(video, path, original, backup)
+      assert workspaces(path) == []
       assert File.read!(download) == original
+      assert File.stat!(download).links == 1
+    end
+
+    # #1156: the correction's abort clears its record, so no record names the workspace and only a
+    # sweep retires it.
+    test "a failed tombstone rename after the sidecar was replaced leaves a workspace a sweep retires",
+         %{video: video, path: path, original: original, tmp_dir: tmp} do
+      download = hardlink_download!(path, tmp)
+      fail_once(%{operation: :rename, source_contains: @tombstone, reason: :eio})
+
+      assert {:error, {:external_preservation_replace_failed, :eio}} =
+               replace_after_exchange(path, tmp, fn -> manual(video, 1_000) end)
+
+      workspace = assert_failed_rename_entries(path, original, download)
+      assert File.read!(path) == "newer"
+      assert Manifest.sync(Manifest.read(video), "en") == nil
+
+      assert :ok = reconcile(video)
+      assert Enum.sort(File.ls!(workspace)) == [@staged, @tombstone]
+      assert File.stat!(download).links == 2
+
+      age!(workspace)
+      assert :ok = reconcile(video)
+      refute File.exists?(workspace)
+      assert workspaces(path) == []
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 1
+      assert File.read!(path) == "newer"
+    end
+
+    # The check before the rename finds another file at the staged name: the disposal never
+    # verified that file, so it removes its fresh tombstone and leaves the staged name alone.
+    test "a staged name replaced before the tombstone rename keeps only that name", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      download = hardlink_download!(path, tmp)
+      use_barrier(%{operation: :create_bound, contains: @tombstone})
+      task = Task.async(fn -> manual(video, 1_000) end)
+
+      assert_receive {:filesystem_barrier, pid, ref, :create_bound, fresh_path},
+                     DiskTask.timeout_ms()
+
+      workspace = Path.dirname(fresh_path)
+      other = Path.join(tmp, "other.srt")
+      File.write!(other, "other")
+      File.rename!(other, Path.join(workspace, @staged))
+      send(pid, {ref, :continue})
+
+      assert {:error, {:publication_committed, {:tombstone_replace_failed, :concurrent_change}}} =
+               DiskTask.await(task)
+
+      assert File.ls!(workspace) == [@staged]
+      assert File.read!(Path.join(workspace, @staged)) == "other"
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 1
     end
   end
 
@@ -2809,6 +2854,19 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     assert [workspace] = workspaces(path)
     assert Enum.sort(File.ls!(workspace)) == [@staged, @tombstone]
     assert same_inode?(Path.join(workspace, @staged), download)
+    assert File.stat!(download).links == 2
+    assert_fresh_tombstone(Path.join(workspace, @tombstone))
+    workspace
+  end
+
+  # The two entries a failed rename of the fresh tombstone leaves (#1156), the same a kill right
+  # after its create leaves: the staged name still holds the download's file, with `original`,
+  # beside the empty fresh tombstone. Returns the workspace.
+  defp assert_failed_rename_entries(path, original, download) do
+    assert [workspace] = workspaces(path)
+    assert Enum.sort(File.ls!(workspace)) == [@staged, @tombstone]
+    assert same_inode?(Path.join(workspace, @staged), download)
+    assert File.read!(download) == original
     assert File.stat!(download).links == 2
     assert_fresh_tombstone(Path.join(workspace, @tombstone))
     workspace
