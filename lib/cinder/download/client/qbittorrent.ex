@@ -47,7 +47,7 @@ defmodule Cinder.Download.Client.QBittorrent do
   @impl true
   def add(%{download_url: "magnet:" <> _ = magnet}, opts) do
     case torrent_id(magnet) do
-      {:ok, hash} -> add_magnet(magnet, hash, opts)
+      {:ok, hash} when is_binary(hash) -> add_magnet(magnet, hash, opts)
       :error -> {:error, :unsupported_download_url}
     end
   end
@@ -523,8 +523,12 @@ defmodule Cinder.Download.Client.QBittorrent do
   @b32_btih ~r/\Aurn:btih:([a-zA-Z2-7]{32})\z/
   @hex_btmh ~r/\Aurn:btmh:1220([a-fA-F0-9]{64})\z/
 
+  # URI.new/1 can raise FunctionClauseError on a byte that is not valid UTF-8, so the magnet is
+  # checked first. It returns {:error, part} on a character it rejects (`>`, `<`, a space) and a
+  # URI with no query for a bare `magnet:`; neither has an infohash to read.
   defp torrent_id("magnet:" <> _ = magnet) do
-    with {:ok, %URI{query: query}} when is_binary(query) <- URI.new(magnet) do
+    with true <- String.valid?(magnet),
+         {:ok, %URI{query: query}} when is_binary(query) <- URI.new(magnet) do
       topics =
         for {key, topic} <- URI.query_decoder(query), String.downcase(key) == "xt", do: topic
 
@@ -532,9 +536,9 @@ defmodule Cinder.Download.Client.QBittorrent do
         :error -> find_topic(topics, &decode_btih/1)
         result -> result
       end
+    else
+      _ -> :error
     end
-  rescue
-    _ -> :error
   end
 
   defp find_topic(topics, decode) do

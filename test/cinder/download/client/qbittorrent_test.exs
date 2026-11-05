@@ -124,6 +124,42 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end
   end
 
+  # Reports every request before it flunks, so a test can refute a request even when Req
+  # swallows the stub's raise.
+  defp report_qbit_requests do
+    test_pid = self()
+
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      send(test_pid, {:qbit_request, conn.request_path})
+      flunk("qBittorrent must not hear of this magnet: #{conn.request_path}")
+    end)
+  end
+
+  test "add/1 rejects an unparseable magnet instead of raising or posting it" do
+    report_qbit_requests()
+
+    # URI.new/1 returns {:error, part} on each of these characters.
+    for tail <- ["&tr=http://192.168.1.10:8123/x?a=>", "&a=<b", " x"] do
+      magnet = "magnet:?xt=urn:btih:#{@hash}" <> tail
+      assert {:error, :unsupported_download_url} = QBittorrent.add(%{download_url: magnet})
+    end
+
+    refute_received {:qbit_request, _}
+  end
+
+  test "add/1 rejects a magnet with no query instead of reading an infohash from it" do
+    report_qbit_requests()
+    assert {:error, :unsupported_download_url} = QBittorrent.add(%{download_url: "magnet:"})
+    refute_received {:qbit_request, _}
+  end
+
+  test "add/1 rejects a magnet that is not valid UTF-8 instead of raising or posting it" do
+    report_qbit_requests()
+    magnet = "magnet:?xt=urn:btih:#{@hash}&dn=\xff"
+    assert {:error, :unsupported_download_url} = QBittorrent.add(%{download_url: magnet})
+    refute_received {:qbit_request, _}
+  end
+
   test "add/1 accepts the qBittorrent 5.1+ JSON add-response and returns the hash" do
     stub_qbit(fn conn ->
       assert conn.request_path == "/api/v2/torrents/add"
@@ -627,6 +663,32 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
     assert {:ok, "0123456789abcdef0123456789abcdef01234567"} =
              QBittorrent.add(%{download_url: "https://tracker.test/dl/123"})
+  end
+
+  test "add/1 rejects an unparseable redirect-to-magnet without contacting qBittorrent" do
+    test_pid = self()
+    magnet = "magnet:?xt=urn:btih:#{@hash}&tr=http://192.168.1.10:8123/x?a=>"
+
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"93.184.216.34", "/dl/123"} ->
+          send(test_pid, :fetched)
+
+          conn
+          |> Plug.Conn.put_resp_header("location", magnet)
+          |> Plug.Conn.send_resp(302, "")
+
+        {_, path} ->
+          send(test_pid, {:qbit_request, path})
+          flunk("qBittorrent must not hear of an unparseable magnet: #{path}")
+      end
+    end)
+
+    assert {:error, :unsupported_download_url} =
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123"})
+
+    assert_received :fetched
+    refute_received {:qbit_request, _}
   end
 
   test "add/1 follows an http redirect to the torrent file" do
