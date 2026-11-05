@@ -79,7 +79,7 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
     assert {:ok, %{id: 8, email: nil, username: "managed"}} = HTTP.account("user-token")
   end
 
-  test "server_ids/1 keeps only resources whose provides mentions server" do
+  test "server_ids/1 keeps resources whose provides mentions server and drops a player" do
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
       assert conn.request_path == "/api/v2/resources"
       assert Plug.Conn.get_req_header(conn, "x-plex-token") == ["user-token"]
@@ -90,6 +90,27 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
         %{"provides" => "server", "clientIdentifier" => "server-1"},
         %{"provides" => "player", "clientIdentifier" => "player-1"},
         %{"provides" => "server,client", "clientIdentifier" => "server-2"}
+      ])
+    end)
+
+    assert {:ok, ["server-1", "server-2"]} = HTTP.server_ids("user-token")
+  end
+
+  # On 2026-11-05 plex.tv listed Plex Media Server as `provides: "controller"` for the owner
+  # and every shared user alike, which locked every account out of Plex sign-in.
+  test "server_ids/1 keeps a Plex Media Server whatever its provides says" do
+    Req.Test.stub(Cinder.PlexTvStub, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Req.Test.json([
+        %{
+          "provides" => "controller",
+          "product" => "Plex Media Server",
+          "clientIdentifier" => "server-1"
+        },
+        %{"provides" => "player", "product" => "Plex Web", "clientIdentifier" => "player-1"},
+        %{"product" => "Plex for Roku", "clientIdentifier" => "roku-1"},
+        %{"product" => "Plex Media Server", "clientIdentifier" => "server-2"}
       ])
     end)
 

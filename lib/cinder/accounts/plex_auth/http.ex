@@ -149,11 +149,18 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
     end
   end
 
+  # plex.tv lists Plex Media Server as `provides: "controller"` (seen on 2026-11-05), so
+  # `product` identifies a server too; a `provides` naming "server" still counts.
   defp server_client_ids(resources) do
-    for %{"provides" => provides, "clientIdentifier" => id} <- resources,
-        is_binary(provides) and String.contains?(provides, "server"),
-        do: id
+    for %{"clientIdentifier" => id} = resource <- resources, server?(resource), do: id
   end
+
+  defp server?(%{"product" => "Plex Media Server"}), do: true
+
+  defp server?(%{"provides" => provides}) when is_binary(provides),
+    do: String.contains?(provides, "server")
+
+  defp server?(_resource), do: false
 
   defp fetch_identity(url) do
     config = Application.get_env(:cinder, __MODULE__, [])
