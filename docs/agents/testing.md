@@ -237,4 +237,5 @@
   behind a slower probe" does this with a helper process that releases each probe. On #1123 a
   probe that slept 500 ms against its 200 ms budget read `:ok` with the caller woken 400 ms late.
   The cases in this bullet and the one above took a review and two re-check rounds, about
-  47 minutes from the first finding to the last fix.
+  47 minutes from the first finding to the last fix. `test/code_health/req_stub_sleep_test.exs`
+  fails a sleep in a `Req.Test` stub's `fn`; its header names forms it skips.
