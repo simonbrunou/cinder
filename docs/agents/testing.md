@@ -127,6 +127,14 @@
   character where Docker applies none (`` ` `` with no `# escape=` directive, or the end of a
   heredoc body line). Three review rounds, about 50 minutes from the first finding to the last
   fix, found them.
+- Before review, list in the PR body each form the sources use to reach a fence's pattern (`rg`
+  for the call, its wrappers and its aliases). Give each form the fence catches a fixture. Name
+  each form it misses in its header, after an "include" lead-in such as
+  `test/code_health/req_stub_sleep_test.exs`'s "Forms the walk does not follow include:", and
+  show each one with a fixture or a throwaway probe. On #1219 the Standards review found that
+  fence's header promised less than its walk enforced, the Spec review found a `defp stub(fun)`
+  wrapper that hid 50 SABnzbd stubs from it, and three re-check rounds found its header's list of
+  missed forms false or incomplete: about 33 minutes from the first finding to the last fix.
 - The fence run is the alias's compile, format and Credo gates with the repo-wide fences:
   `mix test test/code_health_test.exs test/code_health` (under 30 s). Before a branch's first
   full `mix test`, do the fence run with each test file the branch added or changed appended.
