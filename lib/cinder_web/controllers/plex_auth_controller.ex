@@ -22,12 +22,15 @@ defmodule CinderWeb.PlexAuthController do
   account's watchlist with. Storing it is not opting in; the toggle lives in `/users/settings`.
 
   Every failure path is a generic flash + redirect — never leaking plex.tv or internal error
-  detail — to `/users/log-in` for `:login`, `/users/settings` for `:link`.
+  detail — to `/users/log-in` for `:login`, `/users/settings` for `:link`. It also writes one
+  `plex_signin refused` warning naming the intent, the step that refused and its reason
+  (`CinderWeb.SignInRefusal`), so an operator can tell the failing step from the log.
   """
   use CinderWeb, :controller
 
   alias Cinder.Accounts
   alias Cinder.Accounts.PlexAuth
+  alias CinderWeb.SignInRefusal
 
   def start(conn, _params) do
     intent = intent_for(conn)
@@ -40,7 +43,12 @@ defmodule CinderWeb.PlexAuthController do
         start_pin(conn, intent)
 
       true ->
-        error_redirect(conn, intent, gettext("Plex sign-in is not configured."))
+        refuse(
+          conn,
+          intent,
+          SignInRefusal.refusal(:config, :not_configured),
+          gettext("Plex sign-in is not configured.")
+        )
     end
   end
 
@@ -54,8 +62,13 @@ defmodule CinderWeb.PlexAuthController do
         |> put_session(:plex_intent, intent)
         |> redirect(external: PlexAuth.auth_url(code, forward_url))
 
-      {:error, _reason} ->
-        error_redirect(conn, intent, gettext("Could not start Plex sign-in. Please try again."))
+      {:error, reason} ->
+        refuse(
+          conn,
+          intent,
+          SignInRefusal.refusal(:start_pin, reason),
+          gettext("Could not start Plex sign-in. Please try again.")
+        )
     end
   end
 
@@ -70,7 +83,12 @@ defmodule CinderWeb.PlexAuthController do
   end
 
   defp dispatch_callback(conn, nil, intent) do
-    error_redirect(conn, intent, gettext("Plex sign-in session expired. Please try again."))
+    refuse(
+      conn,
+      intent,
+      SignInRefusal.refusal(:session, :missing_pin),
+      gettext("Plex sign-in session expired. Please try again.")
+    )
   end
 
   defp dispatch_callback(conn, pin_id, intent), do: resolve_pin(conn, pin_id, intent)
@@ -81,43 +99,48 @@ defmodule CinderWeb.PlexAuthController do
         resolve_account(conn, token, intent)
 
       {:error, :pending} ->
-        error_redirect(conn, intent, gettext("Plex sign-in was not completed. Please try again."))
+        refuse(
+          conn,
+          intent,
+          SignInRefusal.refusal(:check_pin, :pending),
+          gettext("Plex sign-in was not completed. Please try again.")
+        )
 
-      {:error, _reason} ->
-        error_redirect(conn, intent, gettext("Plex sign-in failed. Please try again."))
+      {:error, reason} ->
+        refuse(
+          conn,
+          intent,
+          SignInRefusal.refusal(:check_pin, reason),
+          gettext("Plex sign-in failed. Please try again.")
+        )
     end
   end
 
   defp resolve_account(conn, token, :login) do
-    with {:ok, account} <- PlexAuth.impl().account(token),
-         :ok <- authorize_server_access(token),
-         {:ok, user} <- Accounts.login_or_register_plex_user(account) do
+    with {:ok, account} <- SignInRefusal.at(:account, PlexAuth.impl().account(token)),
+         :ok <- authorize_server_access(token, account),
+         {:ok, user} <-
+           SignInRefusal.at(:account_write, Accounts.login_or_register_plex_user(account)) do
       Accounts.store_plex_token(user, token)
       CinderWeb.UserAuth.log_in_user(conn, user)
     else
-      {:error, :admin_password_required} ->
-        error_redirect(
-          conn,
-          :login,
-          gettext("Administrators can't sign in with Plex. Sign in with your password instead.")
-        )
-
-      {:error, :no_email} ->
-        error_redirect(
-          conn,
-          :login,
-          gettext("Your Plex account has no email address; sign in with a password instead.")
-        )
-
-      {:error, _reason} ->
-        error_redirect(conn, :login, gettext("Plex sign-in failed. Please try again."))
+      {:refused, _step, reason, _fields} = refusal ->
+        refuse(conn, :login, refusal, login_failure(reason))
     end
   end
 
   defp resolve_account(conn, token, :link) do
     case current_user(conn) do
+      # The session asked to link, but its user is no longer signed in: there is no account to
+      # link to, so the visitor goes back to the log-in page.
       nil ->
-        error_redirect(conn, :login, gettext("Plex sign-in failed. Please try again."))
+        refuse(
+          conn,
+          :link,
+          SignInRefusal.refusal(:session, :logged_out),
+          gettext("Plex sign-in failed. Please try again."),
+          :login
+        )
 
       user ->
         if Accounts.sudo_mode?(user) do
@@ -129,32 +152,55 @@ defmodule CinderWeb.PlexAuthController do
   end
 
   defp link_account(conn, token, user) do
-    with {:ok, account} <- PlexAuth.impl().account(token),
-         :ok <- authorize_server_access(token),
-         {:ok, linked} <- Accounts.link_plex_to_user(user, account) do
+    with {:ok, account} <- SignInRefusal.at(:account, PlexAuth.impl().account(token)),
+         :ok <- authorize_server_access(token, account),
+         {:ok, linked} <-
+           SignInRefusal.at(:account_write, Accounts.link_plex_to_user(user, account)) do
       Accounts.store_plex_token(linked, token)
 
       conn
       |> put_flash(:info, gettext("Your Plex account is now linked."))
       |> redirect(to: ~p"/users/settings")
     else
-      _ ->
-        error_redirect(
+      {:refused, _step, _reason, _fields} = refusal ->
+        refuse(
           conn,
           :link,
+          refusal,
           gettext("Could not link your Plex account. Please try again.")
         )
     end
   end
 
+  # The admin and no-email refusals keep their own flash whichever step returned them, as before
+  # the steps were tagged.
+  defp login_failure(:admin_password_required),
+    do: gettext("Administrators can't sign in with Plex. Sign in with your password instead.")
+
+  defp login_failure(:no_email),
+    do: gettext("Your Plex account has no email address; sign in with a password instead.")
+
+  defp login_failure(_reason), do: gettext("Plex sign-in failed. Please try again.")
+
   # Allow iff the household's configured Plex server's machine id is among the resource
   # ids plex.tv lists for this Plex account (owner or shared user); anyone else is rejected.
-  defp authorize_server_access(token) do
-    with {:ok, server_id} <- PlexAuth.impl().server_machine_id(),
-         {:ok, ids} <- PlexAuth.impl().resource_ids(token) do
-      if server_id in ids, do: :ok, else: {:error, :forbidden}
+  # A refusal logs the account's plex.tv id and how many ids the list held, never the list.
+  defp authorize_server_access(token, account) do
+    with {:ok, server_id} <-
+           SignInRefusal.at(:server_machine_id, PlexAuth.impl().server_machine_id()),
+         {:ok, ids} <- SignInRefusal.at(:server_ids, PlexAuth.impl().resource_ids(token)) do
+      if server_id in ids,
+        do: :ok,
+        else:
+          SignInRefusal.refusal(:server_access, :forbidden,
+            plex_id: plex_id(account),
+            resources: length(ids)
+          )
     end
   end
+
+  defp plex_id(%{id: id}), do: id
+  defp plex_id(_account), do: nil
 
   defp intent_for(conn) do
     if current_user(conn), do: :link, else: :login
@@ -173,11 +219,20 @@ defmodule CinderWeb.PlexAuthController do
   end
 
   defp require_reauth(conn) do
-    error_redirect(
+    refuse(
       conn,
       :link,
+      SignInRefusal.refusal(:sudo, :reauth_required),
       gettext("Please re-enter your password before linking your Plex account.")
     )
+  end
+
+  # Every failure path ends here: one warning line naming the step and the reason, then the flash
+  # and the redirect. `back_to` is the intent whose page the visitor returns to, when it differs
+  # from the intent logged.
+  defp refuse(conn, intent, refusal, message, back_to \\ nil) do
+    SignInRefusal.warn(:plex, refusal, intent: intent)
+    error_redirect(conn, back_to || intent, message)
   end
 
   defp error_redirect(conn, :link, message) do

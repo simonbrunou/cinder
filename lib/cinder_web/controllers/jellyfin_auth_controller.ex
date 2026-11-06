@@ -25,7 +25,9 @@ defmodule CinderWeb.JellyfinAuthController do
   disabled or passwordless).
 
   Every failure path is a generic flash + redirect — never leaking Jellyfin or internal error
-  detail — to `/users/log-in` for `:login`, `/users/settings` for `:link`.
+  detail — to `/users/log-in` for `:login`, `/users/settings` for `:link`. It also writes one
+  `jellyfin_signin refused` warning naming the intent, the step that refused and its reason
+  (`CinderWeb.SignInRefusal`), never the username or the password.
   """
   use CinderWeb, :controller
 
@@ -33,6 +35,7 @@ defmodule CinderWeb.JellyfinAuthController do
   alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Accounts.JellyfinAuth
   alias CinderWeb.Plugs.RemoteIp
+  alias CinderWeb.SignInRefusal
 
   @ip_bucket :login
   @pair_bucket :login_pair
@@ -46,16 +49,31 @@ defmodule CinderWeb.JellyfinAuthController do
         require_reauth(conn)
 
       not JellyfinAuth.configured?() ->
-        error_redirect(conn, intent, gettext("Jellyfin sign-in is not configured."))
+        refuse(
+          conn,
+          intent,
+          SignInRefusal.refusal(:config, :not_configured),
+          gettext("Jellyfin sign-in is not configured.")
+        )
 
       throttled?(conn, username) ->
-        error_redirect(conn, intent, gettext("Jellyfin sign-in failed. Please try again."))
+        refuse(
+          conn,
+          intent,
+          SignInRefusal.refusal(:throttle, :rate_limited),
+          gettext("Jellyfin sign-in failed. Please try again.")
+        )
 
       # Jellyfin lets a passwordless user in with an empty password, and Cinder's own LAN
       # position would make that a sign-in for anyone on the internet. Rejected after the throttle
       # so it still spends the budget, and before any upstream call.
       password == "" ->
-        error_redirect(conn, intent, gettext("Jellyfin sign-in failed. Please try again."))
+        refuse(
+          conn,
+          intent,
+          SignInRefusal.refusal(:password, :empty),
+          gettext("Jellyfin sign-in failed. Please try again.")
+        )
 
       true ->
         authenticate(conn, intent, username, password)
@@ -64,20 +82,22 @@ defmodule CinderWeb.JellyfinAuthController do
 
   # A forged/malformed POST (missing or non-string fields) fails closed.
   def create(conn, _params) do
-    error_redirect(
+    refuse(
       conn,
       intent_for(conn),
+      SignInRefusal.refusal(:params, :malformed),
       gettext("Jellyfin sign-in failed. Please try again.")
     )
   end
 
   defp authenticate(conn, intent, username, password) do
-    with {:ok, account} <- JellyfinAuth.impl().authenticate(username, password),
+    with {:ok, account} <-
+           SignInRefusal.at(:authenticate, JellyfinAuth.impl().authenticate(username, password)),
          :ok <- check_remote_access(conn, account) do
       resolve(conn, intent, account, username)
     else
-      {:error, _reason} ->
-        error_redirect(conn, intent, gettext("Jellyfin sign-in failed. Please try again."))
+      {:refused, _step, _reason, _fields} = refusal ->
+        refuse(conn, intent, refusal, gettext("Jellyfin sign-in failed. Please try again."))
     end
   end
 
@@ -88,7 +108,7 @@ defmodule CinderWeb.JellyfinAuthController do
   defp check_remote_access(conn, account) do
     if Map.get(account, :remote_access) == true or RemoteIp.private_peer?(conn.remote_ip),
       do: :ok,
-      else: {:error, :remote_access_denied}
+      else: SignInRefusal.refusal(:remote_access, :remote_access_denied)
   end
 
   defp resolve(conn, :login, account, username) do
@@ -98,8 +118,13 @@ defmodule CinderWeb.JellyfinAuthController do
         IpRateLimiter.clear(@pair_bucket, pair_key(conn, username))
         CinderWeb.UserAuth.log_in_user(conn, user)
 
-      {:error, _reason} ->
-        error_redirect(conn, :login, gettext("Jellyfin sign-in failed. Please try again."))
+      {:error, reason} ->
+        refuse(
+          conn,
+          :login,
+          SignInRefusal.refusal(:account_write, reason),
+          gettext("Jellyfin sign-in failed. Please try again.")
+        )
     end
   end
 
@@ -112,10 +137,11 @@ defmodule CinderWeb.JellyfinAuthController do
         |> put_flash(:info, gettext("Your Jellyfin account is now linked."))
         |> redirect(to: ~p"/users/settings")
 
-      {:error, _changeset} ->
-        error_redirect(
+      {:error, reason} ->
+        refuse(
           conn,
           :link,
+          SignInRefusal.refusal(:account_write, reason),
           gettext("Could not link your Jellyfin account. Please try again.")
         )
     end
@@ -156,11 +182,19 @@ defmodule CinderWeb.JellyfinAuthController do
   end
 
   defp require_reauth(conn) do
-    error_redirect(
+    refuse(
       conn,
       :link,
+      SignInRefusal.refusal(:sudo, :reauth_required),
       gettext("Please re-enter your password before linking your Jellyfin account.")
     )
+  end
+
+  # Every failure path ends here: one warning line naming the step and the reason, then the flash
+  # and the redirect.
+  defp refuse(conn, intent, refusal, message) do
+    SignInRefusal.warn(:jellyfin, refusal, intent: intent)
+    error_redirect(conn, intent, message)
   end
 
   defp error_redirect(conn, :link, message) do
