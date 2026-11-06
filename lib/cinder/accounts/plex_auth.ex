@@ -2,8 +2,9 @@ defmodule Cinder.Accounts.PlexAuth do
   @moduledoc """
   Behaviour for "Sign in with Plex" (PIN-based OAuth against plex.tv): create a
   PIN, poll it for a linked auth token, fetch the signed-in Plex account, and
-  check which servers that account can reach. Real impl:
-  `Cinder.Accounts.PlexAuth.HTTP`.
+  list the ids of the resources plex.tv lists for that account (`resource_ids/1`), which
+  the caller matches against the household server's machine id (`server_machine_id/0`).
+  Real impl: `Cinder.Accounts.PlexAuth.HTTP`.
 
   `watchlist/1` rides along here because it is the same plex.tv account API and the
   same per-user token — the watchlist lives on the Plex ACCOUNT, not on the household's
@@ -17,7 +18,17 @@ defmodule Cinder.Accounts.PlexAuth do
   @callback account(String.t()) ::
               {:ok, %{id: integer(), email: String.t() | nil, username: String.t() | nil}}
               | {:error, term()}
-  @callback server_ids(String.t()) :: {:ok, [String.t()]} | {:error, term()}
+  @doc """
+  The `clientIdentifier` of every resource plex.tv lists for the account owning `token`, in
+  plex.tv's order, whatever its `product`, `provides` or `owned` say. A resource without a
+  non-empty string id is dropped.
+  """
+  @callback resource_ids(String.t()) :: {:ok, [String.t()]} | {:error, term()}
+
+  @doc """
+  The configured local Plex server's machine id, read from its `/identity`. Anything but a
+  non-empty string is `{:error, :unexpected_response}`.
+  """
   @callback server_machine_id() :: {:ok, String.t()} | {:error, term()}
 
   @typedoc """

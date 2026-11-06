@@ -7,7 +7,7 @@ defmodule Cinder.Accounts.JellyfinAuth do
 
   Authenticating against the household's own server IS the authorization check — unlike Plex,
   whose plex.tv account is global and needs a separate "can this account reach our server?"
-  probe (`PlexAuth.server_ids/1`), only someone the configured server already knows can succeed
+  probe (`PlexAuth.resource_ids/1`), only someone the configured server already knows can succeed
   here.
   """
 

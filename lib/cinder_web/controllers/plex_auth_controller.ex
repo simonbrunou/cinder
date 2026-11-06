@@ -147,11 +147,11 @@ defmodule CinderWeb.PlexAuthController do
     end
   end
 
-  # Allow iff the household's configured Plex server is among the servers this
-  # Plex account can reach (owner or shared user); anyone else is rejected.
+  # Allow iff the household's configured Plex server's machine id is among the resource
+  # ids plex.tv lists for this Plex account (owner or shared user); anyone else is rejected.
   defp authorize_server_access(token) do
     with {:ok, server_id} <- PlexAuth.impl().server_machine_id(),
-         {:ok, ids} <- PlexAuth.impl().server_ids(token) do
+         {:ok, ids} <- PlexAuth.impl().resource_ids(token) do
       if server_id in ids, do: :ok, else: {:error, :forbidden}
     end
   end

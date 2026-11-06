@@ -79,7 +79,7 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
     assert {:ok, %{id: 8, email: nil, username: "managed"}} = HTTP.account("user-token")
   end
 
-  test "server_ids/1 keeps resources whose provides mentions server and drops a player" do
+  test "resource_ids/1 sends the token and keeps every resource, players included" do
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
       assert conn.request_path == "/api/v2/resources"
       assert Plug.Conn.get_req_header(conn, "x-plex-token") == ["user-token"]
@@ -93,12 +93,12 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
       ])
     end)
 
-    assert {:ok, ["server-1", "server-2"]} = HTTP.server_ids("user-token")
+    assert {:ok, ["server-1", "player-1", "server-2"]} = HTTP.resource_ids("user-token")
   end
 
   # On 2026-11-05 plex.tv listed Plex Media Server as `provides: "controller"` for the owner
   # and every shared user alike, which locked every account out of Plex sign-in.
-  test "server_ids/1 keeps a Plex Media Server whatever its provides says" do
+  test "resource_ids/1 keeps a Plex Media Server whatever its provides says" do
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
@@ -114,7 +114,66 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
       ])
     end)
 
-    assert {:ok, ["server-1", "server-2"]} = HTTP.server_ids("user-token")
+    assert {:ok, ["server-1", "player-1", "roku-1", "server-2"]} =
+             HTTP.resource_ids("user-token")
+  end
+
+  # plex.tv documents none of these labels, and `provides` changed twice on 2026-11-05: the
+  # caller's match on the server's machine id is the whole gate, so no label filters an id out.
+  test "resource_ids/1 returns every id in list order, whatever product, provides or owned say" do
+    Req.Test.stub(Cinder.PlexTvStub, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Req.Test.json([
+        %{"provides" => "controller", "clientIdentifier" => "controller-1"},
+        %{"provides" => "player", "product" => "Plex for LG", "clientIdentifier" => "player-1"},
+        %{"product" => "Plexamp", "clientIdentifier" => "no-provides-1"},
+        %{"clientIdentifier" => "bare-1"},
+        %{"provides" => "controller", "product" => "Plex Web", "clientIdentifier" => "web-1"},
+        # A shared user's copy of the household server is not theirs.
+        %{"product" => "Plex Media Server", "owned" => false, "clientIdentifier" => "shared-1"},
+        %{"product" => "Plex Media Server", "owned" => true, "clientIdentifier" => "owned-1"}
+      ])
+    end)
+
+    assert {:ok,
+            [
+              "controller-1",
+              "player-1",
+              "no-provides-1",
+              "bare-1",
+              "web-1",
+              "shared-1",
+              "owned-1"
+            ]} =
+             HTTP.resource_ids("user-token")
+  end
+
+  test "resource_ids/1 drops a resource whose clientIdentifier is not a non-empty string" do
+    Req.Test.stub(Cinder.PlexTvStub, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Req.Test.json([
+        %{"product" => "Plex Media Server", "clientIdentifier" => nil},
+        %{"product" => "Plex Media Server", "provides" => "server"},
+        %{"product" => "Plex Media Server", "clientIdentifier" => ""},
+        %{"product" => "Plex Media Server", "clientIdentifier" => 42},
+        "not-a-resource",
+        %{"product" => "Plex Media Server", "clientIdentifier" => "server-1"}
+      ])
+    end)
+
+    assert {:ok, ["server-1"]} = HTTP.resource_ids("user-token")
+  end
+
+  test "resource_ids/1 returns {:error, :unexpected_response} for a body that is not a list" do
+    Req.Test.stub(Cinder.PlexTvStub, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Req.Test.json(%{"clientIdentifier" => "server-1"})
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.resource_ids("user-token")
   end
 
   test "server_machine_id/0 hits the configured local server's /identity" do
@@ -128,6 +187,19 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
     end)
 
     assert {:ok, "abc-123"} = HTTP.server_machine_id()
+  end
+
+  test "server_machine_id/0 returns {:error, :unexpected_response} for a machineIdentifier that is not a non-empty string" do
+    for machine_id <- [nil, "", 42] do
+      Req.Test.stub(Cinder.PlexTvStub, fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Req.Test.json(%{"MediaContainer" => %{"machineIdentifier" => machine_id}})
+      end)
+
+      assert HTTP.server_machine_id() == {:error, :unexpected_response},
+             "machineIdentifier #{inspect(machine_id)} passed"
+    end
   end
 
   test "server_machine_id/0 returns {:error, :not_configured} when the local server url is blank" do

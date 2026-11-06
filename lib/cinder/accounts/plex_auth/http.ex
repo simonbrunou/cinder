@@ -2,7 +2,9 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
   @moduledoc """
   Real `Cinder.Accounts.PlexAuth` impl, backed by `Req`, against plex.tv's
   PIN-based OAuth API: create/check a PIN (`/api/v2/pins`), fetch the signed-in
-  account (`/api/v2/user`), and list the servers it can reach (`/api/v2/resources`).
+  account (`/api/v2/user`), and list the `clientIdentifier` of every resource plex.tv
+  lists for it, whatever its labels say, skipping an id that is not a non-empty string
+  (`/api/v2/resources`).
   `server_machine_id/0` instead hits the configured local Plex server's
   unauthenticated `/identity`, and `watchlist/1` hits the account-level discover
   host (`https://discover.provider.plex.tv`).
@@ -63,14 +65,14 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
   end
 
   @impl true
-  def server_ids(token) do
+  def resource_ids(token) do
     request(:get, "/api/v2/resources",
       headers: [{"x-plex-token", token}],
       params: [includeHttps: 1]
     )
     |> result()
     |> case do
-      {:ok, resources} when is_list(resources) -> {:ok, server_client_ids(resources)}
+      {:ok, resources} when is_list(resources) -> {:ok, client_ids(resources)}
       {:ok, _other} -> {:error, :unexpected_response}
       {:error, reason} -> {:error, reason}
     end
@@ -149,18 +151,13 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
     end
   end
 
-  # plex.tv lists Plex Media Server as `provides: "controller"` (seen on 2026-11-05), so
-  # `product` identifies a server too; a `provides` naming "server" still counts.
-  defp server_client_ids(resources) do
-    for %{"clientIdentifier" => id} = resource <- resources, server?(resource), do: id
+  # No label filters an id out. plex.tv documents neither `product` nor `provides`, and on
+  # 2026-11-05 it listed the household server as `provides: "controller"`, then as "server"
+  # again a few hours later. The caller's exact match on the server's machine id is the gate,
+  # and every label is reported to plex.tv by the device itself, as the id is.
+  defp client_ids(resources) do
+    for %{"clientIdentifier" => id} when is_binary(id) and id != "" <- resources, do: id
   end
-
-  defp server?(%{"product" => "Plex Media Server"}), do: true
-
-  defp server?(%{"provides" => provides}) when is_binary(provides),
-    do: String.contains?(provides, "server")
-
-  defp server?(_resource), do: false
 
   defp fetch_identity(url) do
     config = Application.get_env(:cinder, __MODULE__, [])
@@ -179,9 +176,15 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
     |> HTTPPolicy.bounded_request(@max_response_bytes)
     |> result()
     |> case do
-      {:ok, %{"MediaContainer" => %{"machineIdentifier" => id}}} -> {:ok, id}
-      {:ok, _other} -> {:error, :unexpected_response}
-      {:error, reason} -> {:error, reason}
+      {:ok, %{"MediaContainer" => %{"machineIdentifier" => id}}}
+      when is_binary(id) and id != "" ->
+        {:ok, id}
+
+      {:ok, _other} ->
+        {:error, :unexpected_response}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

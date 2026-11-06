@@ -85,7 +85,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
       end)
 
       expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
-      expect(Cinder.Accounts.PlexAuthMock, :server_ids, fn _token -> {:ok, ["machine-1"]} end)
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token -> {:ok, ["machine-1"]} end)
 
       conn =
         conn
@@ -117,7 +117,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
       end)
 
       expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
-      expect(Cinder.Accounts.PlexAuthMock, :server_ids, fn _token -> {:ok, ["machine-1"]} end)
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token -> {:ok, ["machine-1"]} end)
 
       conn =
         conn
@@ -141,7 +141,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
       end)
 
       expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
-      expect(Cinder.Accounts.PlexAuthMock, :server_ids, fn _token -> {:ok, ["machine-1"]} end)
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token -> {:ok, ["machine-1"]} end)
 
       conn =
         conn
@@ -168,9 +168,12 @@ defmodule CinderWeb.PlexAuthControllerTest do
       assert redirected_to(conn) == ~p"/users/log-in"
     end
 
-    test "SECURITY: rejects an account whose server_ids don't include the configured server", %{
+    test "SECURITY: rejects an account whose resource_ids don't include the configured server", %{
       conn: conn
     } do
+      # With no admin, registration refuses on its own (:admin_required), and this test would
+      # pass without the server gate.
+      _admin = admin_fixture()
       count_before = Repo.aggregate(User, :count)
 
       expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 99 -> {:ok, "plex-auth-token"} end)
@@ -181,7 +184,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_ids, fn _token ->
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token ->
         {:ok, ["some-other-machine"]}
       end)
 
@@ -193,6 +196,37 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       refute get_session(conn, :user_token)
       assert Phoenix.Flash.get(conn.assigns.flash, :error)
+      assert redirected_to(conn) == ~p"/users/log-in"
+      assert Repo.aggregate(User, :count) == count_before
+    end
+
+    # resource_ids/1 now returns every device on the account, so the match on the machine id
+    # is the whole gate: an id that only resembles it lets nobody in.
+    test "SECURITY: rejects an account whose resource ids only resemble the server's", %{
+      conn: conn
+    } do
+      _admin = admin_fixture()
+      count_before = Repo.aggregate(User, :count)
+
+      expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 104 -> {:ok, "near-miss-token"} end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :account, fn "near-miss-token" ->
+        {:ok, %{id: 667, email: "near-miss@example.com", username: "near-miss"}}
+      end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token ->
+        {:ok, ["MACHINE-1", "machine-10", "machine-1 ", "xmachine-1"]}
+      end)
+
+      conn =
+        conn
+        |> init_test_session(%{})
+        |> put_session(:plex_pin_id, 104)
+        |> get(~p"/auth/plex/callback")
+
+      refute get_session(conn, :user_token)
       assert redirected_to(conn) == ~p"/users/log-in"
       assert Repo.aggregate(User, :count) == count_before
     end
@@ -220,7 +254,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
       end)
 
       expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
-      expect(Cinder.Accounts.PlexAuthMock, :server_ids, fn _token -> {:ok, ["machine-1"]} end)
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token -> {:ok, ["machine-1"]} end)
 
       conn =
         conn
@@ -250,7 +284,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
       end)
 
       expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
-      expect(Cinder.Accounts.PlexAuthMock, :server_ids, fn _token -> {:ok, ["machine-1"]} end)
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token -> {:ok, ["machine-1"]} end)
 
       conn =
         conn
@@ -301,7 +335,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_ids, fn _token ->
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token ->
         {:ok, ["some-other-machine"]}
       end)
 
@@ -333,7 +367,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
       end)
 
       expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
-      expect(Cinder.Accounts.PlexAuthMock, :server_ids, fn _token -> {:ok, ["machine-1"]} end)
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token -> {:ok, ["machine-1"]} end)
 
       conn =
         conn
