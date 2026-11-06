@@ -127,15 +127,21 @@
   character where Docker applies none (`` ` `` with no `# escape=` directive, or the end of a
   heredoc body line). Three review rounds, about 50 minutes from the first finding to the last
   fix, found them.
+- The fence run is the alias's compile, format and Credo gates with the repo-wide fences:
+  `mix test test/code_health_test.exs test/code_health` (under 30 s). Before a branch's first
+  full `mix test`, do the fence run with each test file the branch added or changed appended.
+  Once its gates pass, a full run takes about 7 minutes. On #1205 it ended red on a new test's
+  `assert {:error, :unexpected_response} = HTTP.server_machine_id(), message`, which
+  `test/code_health/assert_match_message_test.exs` rejects: 8 minutes for what the fence run
+  reports in 16 s.
 - Once a full `mix test` passed on the branch, a review fix commit that changes only Markdown
   under `docs/agents/`, in `AGENTS.md` or in a `changelog.d/` fragment (`code_health_test.exs`
   checks each fragment), or ordinary `#` comments in `.ex` and `.exs` files, needs no second
-  full suite before its push. Run the alias's compile, format and Credo gates with the
-  repo-wide fences: `mix test test/code_health_test.exs test/code_health` (about 30 s).
+  full suite before its push. Do the fence run.
   When a comment under `lib/` changed, add every file that `rg -l '"lib/' test` lists (about
   2 minutes): some of them scan `lib/` with patterns that a comment can match. A review fix
-  commit whose changes are `_test.exs` files, alone or with the kinds above, runs that
-  `mix test` with more files added: each changed test file that still exists, and every file that
+  commit whose changes are `_test.exs` files, alone or with the kinds above, does the fence run
+  with more files added: each changed test file that still exists, and every file that
   `rg -l <path> test -g '*_test.exs'` lists for each changed path and for a renamed file's old
   path (`git diff --name-status -M HEAD^` shows both once the fix is committed).
   `books_b0_contract_test.exs` reads test names out of the files it names, and apart from it
