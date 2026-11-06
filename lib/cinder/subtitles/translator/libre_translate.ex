@@ -13,6 +13,8 @@ defmodule Cinder.Subtitles.Translator.LibreTranslate do
   # given box's throughput without a code change.
   @default_batch_size 50
   @default_receive_timeout 60_000
+  # The largest timeout Erlang accepts: above it, `Task.yield/2` in `HTTPPolicy` raises.
+  @max_receive_timeout 4_294_967_295
   @max_batch_bytes 8 * 1024 * 1024
 
   @impl true
@@ -72,19 +74,23 @@ defmodule Cinder.Subtitles.Translator.LibreTranslate do
   defp request(url, cues, target) do
     with {:ok, body} <- Jason.encode(request_body(cues, target)),
          true <- byte_size(body) <= @max_batch_bytes do
+      # The setting is the batch's total deadline too: `bounded_request/2` would stop every
+      # batch at its 60 s default, whatever the setting says (#1200).
+      timeout = receive_timeout()
+
       [
         method: :post,
         url: url,
         body: body,
         headers: [{"content-type", "application/json"}],
-        receive_timeout: receive_timeout(),
+        receive_timeout: timeout,
         pool_timeout: 5_000,
         connect_options: [timeout: 5_000]
       ]
       |> Keyword.merge(req_options())
       |> Keyword.put(:redirect, false)
       |> Req.new()
-      |> HTTPPolicy.bounded_request(@max_batch_bytes)
+      |> HTTPPolicy.bounded_request(@max_batch_bytes, timeout)
     else
       false -> {:error, :request_too_large}
       {:error, _reason} -> {:error, :invalid_request}
@@ -109,7 +115,7 @@ defmodule Cinder.Subtitles.Translator.LibreTranslate do
 
   defp receive_timeout do
     case cfg(:receive_timeout) do
-      timeout when is_integer(timeout) and timeout > 0 -> timeout
+      timeout when is_integer(timeout) and timeout > 0 -> min(timeout, @max_receive_timeout)
       _ -> @default_receive_timeout
     end
   end
