@@ -182,8 +182,12 @@ defmodule CinderWeb.SignInRefusalTest do
       assert SignInRefusal.render(<<0xFF, 0xFE>>) == "string"
     end
 
-    test "other terms print as inspect/1 writes them" do
-      assert SignInRefusal.render(self()) =~ "#PID<"
+    test "any other term prints as term, a bitstring holding an email included" do
+      for other <- [self(), make_ref(), fn -> :ok end, <<"me@example.com", 1::3>>] do
+        assert SignInRefusal.render(other) == "term", inspect(other)
+      end
+
+      assert SignInRefusal.render({:error, <<"me@example.com", 1::3>>}) == "{error,term}"
     end
   end
 

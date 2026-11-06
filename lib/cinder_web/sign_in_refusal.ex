@@ -24,7 +24,9 @@ defmodule CinderWeb.SignInRefusal do
       that message's fixed text with each value it interpolated shown as `<value>`
       ("The ID Token has expired", `Invalid issuer <value> in ID Token`). Any other string prints
       as `string`;
-    * an atom or a number prints as `to_string/1` writes it.
+    * an atom or a number prints as `to_string/1` writes it;
+    * any other term (a pid, a reference, a function, a bitstring that is not a whole number of
+      bytes) prints as `term`.
 
   The result then goes through `Cinder.HTTPPolicy.sanitize_log/1`, which drops line breaks and
   keeps 500 bytes. A value holding a space, a `"` or a `=` is quoted, as logfmt quotes it.
@@ -95,7 +97,8 @@ defmodule CinderWeb.SignInRefusal do
 
   defp text(value) when is_atom(value), do: Atom.to_string(value)
   defp text(value) when is_number(value), do: to_string(value)
-  defp text(value), do: inspect(value)
+  # inspect/1 would print a bitstring's bytes, which can spell out an email.
+  defp text(_value), do: "term"
 
   @doc """
   The error messages Assent's OpenID flow returns as a bare string (`Assent.Strategy.OIDC`,

@@ -54,6 +54,14 @@ site:
 
 - Secret rows are Cloak-encrypted at rest, with a key derived from `SECRET_KEY_BASE`.
 - A secret never appears in a form value, a socket assign or a log line.
+- A refused Plex, Jellyfin or OIDC sign-in or link logs through `CinderWeb.SignInRefusal`, whose
+  `render/1` prints only the closed set of shapes its moduledoc lists. An identity provider's
+  library writes what it rejected into its message text (Assent's
+  `Invalid issuer "<iss>" in ID Token`) and the whole HTTP response into an exception's
+  `message/1`, so neither `HTTPPolicy.sanitize_log/1` nor a mask over that text keeps a claim's
+  email out. On #1214 the first renderer passed Assent's strings through `sanitize_log/1`, and
+  the mask that followed (quoted values, words holding `@`) still leaked three shapes: two review
+  rounds, about 24 minutes from the first finding to a clean re-check.
 - Session and LiveView signing salts are derived from `secret_key_base` at runtime in
   `config/runtime.exs`, so nothing crypto-related is committed. `signing_salt` is a salt, not a
   secret; the secret is `secret_key_base`.
