@@ -38,18 +38,50 @@ defmodule Cinder.Subtitles.Manifest do
     end
   end
 
+  @doc """
+  The manifest of `video_path` for a caller that only reads it: `load/1`'s, or an empty one when
+  `load/1` cannot read it.
+  """
   @spec read(String.t()) :: %{video_moviehash: String.t() | nil, tracks: map()}
   def read(video_path) do
-    case safe_destination(path(video_path)) do
-      {:ok, manifest_path} -> read_manifest(manifest_path, video_path)
-      {:error, :unsafe_destination} -> empty()
+    case load(video_path) do
+      {:ok, state} -> state
+      {:error, {:unreadable_manifest, _reason}} -> empty()
     end
   end
 
-  defp read_manifest(manifest_path, video_path) do
+  @doc """
+  The manifest of `video_path` for a caller that writes from what it reads. A missing manifest
+  reads as an empty one. So does a malformed one, with a warning: a retry cannot repair it, and
+  refusing would block every later write for the video. A manifest file whose read returns an
+  error other than `:enoent` is `{:error, {:unreadable_manifest, reason}}`, with one warning
+  naming the video and the reason: starting from an empty state there would drop every other
+  language's record (#1202).
+
+  A manifest path that `safe_destination/1` refuses still reads as an empty one, silently. That
+  refusal also covers a failed `lstat` on the way to the manifest (#1210).
+  """
+  @spec load(String.t()) ::
+          {:ok, %{video_moviehash: String.t() | nil, tracks: map()}}
+          | {:error, {:unreadable_manifest, term()}}
+  def load(video_path) do
+    case safe_destination(path(video_path)) do
+      {:ok, manifest_path} -> load_manifest(manifest_path, video_path)
+      {:error, :unsafe_destination} -> {:ok, empty()}
+    end
+  end
+
+  defp load_manifest(manifest_path, video_path) do
     case fs().read(manifest_path) do
-      {:ok, json} -> decode(json, video_path)
-      _ -> empty()
+      {:ok, json} ->
+        {:ok, decode(json, video_path)}
+
+      {:error, :enoent} ->
+        {:ok, empty()}
+
+      {:error, reason} ->
+        Logger.warning("subtitle manifest cannot be read for #{video_path}: #{inspect(reason)}")
+        {:error, {:unreadable_manifest, reason}}
     end
   end
 
@@ -94,7 +126,8 @@ defmodule Cinder.Subtitles.Manifest do
     with {:ok, file} <- normalize_put_file(video_path, sidecar_path),
          {:ok, managed_sha256} <- normalize_put_sha256(managed_sha256),
          {:ok, replacement_cleanup_sync} <- normalize_put_sync(replacement_cleanup_sync),
-         {:ok, source_track} <- normalize_put_source_track(source_track) do
+         {:ok, source_track} <- normalize_put_source_track(source_track),
+         {:ok, state} <- load(video_path) do
       track = %{origin: to_string(origin)}
       track = if file, do: Map.put(track, :file, file), else: track
       track = if managed_sha256, do: Map.put(track, :managed_sha256, managed_sha256), else: track
@@ -104,8 +137,6 @@ defmodule Cinder.Subtitles.Manifest do
         if replacement_cleanup_sync,
           do: Map.put(track, :replacement_cleanup_sync, replacement_cleanup_sync),
           else: track
-
-      state = read(video_path)
 
       track =
         case get_in(state, [:tracks, language, :backup_tombstone]) do
@@ -141,29 +172,32 @@ defmodule Cinder.Subtitles.Manifest do
 
   @spec put_sync(String.t(), String.t(), map()) :: :ok | {:error, term()}
   def put_sync(video_path, language, sync) do
-    state = read(video_path)
-
-    with {:ok, sync} <- normalize_sync(sync),
+    with {:ok, state} <- load(video_path),
+         {:ok, sync} <- normalize_sync(sync),
          %{origin: _origin} = track <- get_in(state, [:tracks, language]) do
       track = track |> Map.delete(:sync_invalid?) |> Map.put(:sync, sync)
       write(video_path, put_in(state, [:tracks, language], track))
     else
       nil -> {:error, :unknown_track}
       :error -> {:error, :invalid_sync}
+      {:error, _reason} = error -> error
     end
   end
 
   @spec clear_sync(String.t(), String.t()) :: :ok | {:error, term()}
-  def clear_sync(video_path, language) do
-    state = read(video_path)
+  def clear_sync(video_path, language),
+    do: drop_fields(video_path, language, [:sync, :sync_invalid?])
 
-    case get_in(state, [:tracks, language]) do
-      %{origin: _origin} = track ->
-        track = Map.drop(track, [:sync, :sync_invalid?])
-        write(video_path, put_in(state, [:tracks, language], track))
+  # Drops `fields` from `language`'s track. A manifest without that track has nothing to drop.
+  defp drop_fields(video_path, language, fields) do
+    with {:ok, state} <- load(video_path) do
+      case get_in(state, [:tracks, language]) do
+        %{origin: _origin} = track ->
+          write(video_path, put_in(state, [:tracks, language], Map.drop(track, fields)))
 
-      nil ->
-        :ok
+        nil ->
+          :ok
+      end
     end
   end
 
@@ -173,9 +207,8 @@ defmodule Cinder.Subtitles.Manifest do
 
   @spec begin_replacement_cleanup(String.t(), String.t(), map()) :: :ok | {:error, term()}
   def begin_replacement_cleanup(video_path, language, sync) do
-    state = read(video_path)
-
-    with {:ok, sync} <- normalize_sync(sync),
+    with {:ok, state} <- load(video_path),
+         {:ok, sync} <- normalize_sync(sync),
          %{origin: _origin} = track <- get_in(state, [:tracks, language]) do
       track =
         track
@@ -186,24 +219,13 @@ defmodule Cinder.Subtitles.Manifest do
     else
       nil -> {:error, :unknown_track}
       :error -> {:error, :invalid_replacement_cleanup_sync}
+      {:error, _reason} = error -> error
     end
   end
 
   @spec clear_replacement_cleanup(String.t(), String.t()) :: :ok | {:error, term()}
-  def clear_replacement_cleanup(video_path, language) do
-    state = read(video_path)
-
-    case get_in(state, [:tracks, language]) do
-      %{origin: _origin} = track ->
-        write(
-          video_path,
-          put_in(state, [:tracks, language], Map.delete(track, :replacement_cleanup_sync))
-        )
-
-      nil ->
-        :ok
-    end
-  end
+  def clear_replacement_cleanup(video_path, language),
+    do: drop_fields(video_path, language, [:replacement_cleanup_sync])
 
   @spec reset_cleanup_sync(map(), String.t()) :: map() | nil
   def reset_cleanup_sync(state, language),
@@ -211,9 +233,8 @@ defmodule Cinder.Subtitles.Manifest do
 
   @spec begin_reset_cleanup(String.t(), String.t(), map()) :: :ok | {:error, term()}
   def begin_reset_cleanup(video_path, language, sync) do
-    state = read(video_path)
-
-    with {:ok, sync} <- normalize_put_sync(sync),
+    with {:ok, state} <- load(video_path),
+         {:ok, sync} <- normalize_put_sync(sync),
          %{origin: _origin} = track <- get_in(state, [:tracks, language]) do
       write(
         video_path,
@@ -227,9 +248,8 @@ defmodule Cinder.Subtitles.Manifest do
 
   @spec finish_reset_cleanup(String.t(), String.t(), map()) :: :ok | {:error, term()}
   def finish_reset_cleanup(video_path, language, sync) do
-    state = read(video_path)
-
-    with {:ok, sync} <- normalize_sync(sync),
+    with {:ok, state} <- load(video_path),
+         {:ok, sync} <- normalize_sync(sync),
          %{origin: _origin} = track <- get_in(state, [:tracks, language]) do
       track =
         track
@@ -240,22 +260,13 @@ defmodule Cinder.Subtitles.Manifest do
     else
       nil -> {:error, :unknown_track}
       :error -> {:error, :invalid_sync}
+      {:error, _reason} = error -> error
     end
   end
 
   @spec finish_reset_cleanup(String.t(), String.t()) :: :ok | {:error, term()}
-  def finish_reset_cleanup(video_path, language) do
-    state = read(video_path)
-
-    case get_in(state, [:tracks, language]) do
-      %{origin: _origin} = track ->
-        track = Map.drop(track, [:sync, :sync_invalid?, :reset_cleanup_sync])
-        write(video_path, put_in(state, [:tracks, language], track))
-
-      nil ->
-        :ok
-    end
-  end
+  def finish_reset_cleanup(video_path, language),
+    do: drop_fields(video_path, language, [:sync, :sync_invalid?, :reset_cleanup_sync])
 
   @spec backup_tombstone(map(), String.t()) :: map() | nil
   def backup_tombstone(state, language),
@@ -263,9 +274,8 @@ defmodule Cinder.Subtitles.Manifest do
 
   @spec put_backup_tombstone(String.t(), String.t(), term()) :: :ok | {:error, term()}
   def put_backup_tombstone(video_path, language, identity) do
-    state = read(video_path)
-
-    with {:ok, tombstone} <- normalize_backup_tombstone(%{identity: identity}),
+    with {:ok, state} <- load(video_path),
+         {:ok, tombstone} <- normalize_backup_tombstone(%{identity: identity}),
          %{origin: _origin} = track <- get_in(state, [:tracks, language]) do
       write(
         video_path,
@@ -274,24 +284,13 @@ defmodule Cinder.Subtitles.Manifest do
     else
       nil -> {:error, :unknown_track}
       :error -> {:error, :invalid_backup_tombstone}
+      {:error, _reason} = error -> error
     end
   end
 
   @spec clear_backup_tombstone(String.t(), String.t()) :: :ok | {:error, term()}
-  def clear_backup_tombstone(video_path, language) do
-    state = read(video_path)
-
-    case get_in(state, [:tracks, language]) do
-      %{origin: _origin} = track ->
-        write(
-          video_path,
-          put_in(state, [:tracks, language], Map.delete(track, :backup_tombstone))
-        )
-
-      nil ->
-        :ok
-    end
-  end
+  def clear_backup_tombstone(video_path, language),
+    do: drop_fields(video_path, language, [:backup_tombstone])
 
   @spec sync(map(), String.t()) :: map() | nil
   def sync(state, language), do: get_in(state, [:tracks, language, :sync])

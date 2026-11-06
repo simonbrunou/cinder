@@ -4,6 +4,7 @@ defmodule Cinder.SubtitlesTest do
   # and a test overrides only the call it is about (the video's moviehash, a failing write).
   use Cinder.DataCase, async: false
 
+  import Cinder.Test.BarrierFilesystem, only: [fail_once: 1]
   import Mox
   import ExUnit.CaptureLog
 
@@ -452,6 +453,59 @@ defmodule Cinder.SubtitlesTest do
 
     assert log =~ "subtitle provenance write failed for #{video} (fr): {:error, :eio}"
     refute File.exists?(target)
+  end
+
+  # #1202: the download arrives, but the manifest it must be recorded in cannot be read.
+  test "a manifest that cannot be read keeps the previous managed sidecar and every record", %{
+    video: video
+  } do
+    target = Subtitles.sidecar_path(video, "fr")
+    put!(target, "1\n00:00:01,000 --> 00:00:02,000\nOLD SRT\n\n")
+
+    put_manifest!(video, %{
+      video_moviehash: nil,
+      tracks: %{"en" => %{origin: "embedded"}, "fr" => %{origin: "opensubtitles_id"}}
+    })
+
+    manifest_path = Manifest.path(video)
+    manifest = File.read!(manifest_path)
+
+    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn ^video ->
+      {:ok, {131_072, @zeros, @zeros}}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :read, fn
+      ^manifest_path ->
+        if Process.get(:manifest_unreadable), do: {:error, :eio}, else: Disk.read(manifest_path)
+
+      path ->
+        Disk.read(path)
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ ->
+      {:ok, [result(1, "fr", moviehash_match: true)]}
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 1 ->
+      Process.put(:manifest_unreadable, true)
+      {:ok, "1\n00:00:01,000 --> 00:00:02,000\nNEW SRT\n\n"}
+    end)
+
+    deny(Cinder.Library.MediaServerMock, :scan, 1)
+
+    log =
+      capture_log(fn ->
+        assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+      end)
+
+    assert log =~ "subtitle manifest cannot be read for #{video}: :eio"
+
+    assert log =~
+             "subtitle provenance write failed for #{video} (fr): " <>
+               "{:error, {:unreadable_manifest, :eio}}"
+
+    assert File.read!(target) == "1\n00:00:01,000 --> 00:00:02,000\nOLD SRT\n\n"
+    assert File.read!(manifest_path) == manifest
   end
 
   test "a provider failure does not call an embedded source or LibreTranslate", %{video: video} do
@@ -1389,6 +1443,64 @@ defmodule Cinder.SubtitlesTest do
     assert %{tracks: %{"fr" => %{origin: "release_sidecar"}}} = Manifest.read(video)
   end
 
+  # #1202: on an unreadable manifest the marking cannot see the verified track it must keep, so it
+  # skips the language, even though the next read succeeds.
+  describe "release-sidecar marking whose manifest read fails" do
+    test "from a backfill keeps a verified track and its sync record", %{video: video} do
+      manifest = put_verified_track!(video, nil)
+      fail_once(%{operation: :read, source_contains: ".cinder-subtitles.json", reason: :eio})
+
+      log = capture_log(fn -> assert :ok = Subtitles.mark_release_sidecars(video, ["fr"]) end)
+
+      assert File.read!(Manifest.path(video)) == manifest
+      assert log =~ "subtitle manifest cannot be read for #{video}: :eio"
+
+      assert log =~
+               "subtitle release sidecar left unmarked for #{Subtitles.sidecar_path(video, "fr")}"
+    end
+
+    test "skips only the language whose read failed", %{video: video} do
+      verified = Jason.decode!(put_verified_track!(video, nil))["tracks"]["fr"]
+      put!(Subtitles.sidecar_path(video, "en"), "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n")
+      fail_once(%{operation: :read, source_contains: ".cinder-subtitles.json", reason: :eio})
+
+      capture_log(fn -> assert :ok = Subtitles.mark_release_sidecars(video, ["fr", "en"]) end)
+
+      assert %{"fr" => ^verified, "en" => %{"origin" => "release_sidecar", "file" => "M.en.srt"}} =
+               Jason.decode!(File.read!(Manifest.path(video)))["tracks"]
+    end
+
+    test "from an import keeps a verified track and returns the fetch's answer", %{
+      video: video
+    } do
+      put!(video, String.duplicate("v", 131_072))
+      fail_once(%{operation: :read, source_contains: ".cinder-subtitles.json", reason: :eio})
+      # The failure swapped `FilesystemMock` for `BarrierFilesystem`, which hashes the real file.
+      assert {:ok, moviehash} = Moviehash.of_file(video)
+      manifest = put_verified_track!(video, moviehash)
+      target = Subtitles.sidecar_path(video, "fr")
+      # The stable French track needs no fetch; the English one makes the fetch's answer visible.
+      Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "fr,en")
+
+      expect(Cinder.Subtitles.ProviderMock, :search, fn %{languages: ["en"]} ->
+        {:error, :quota_exceeded}
+      end)
+
+      log =
+        capture_log(fn ->
+          assert :quota_exceeded =
+                   Subtitles.fetch_now(fn -> %{imdb_id: "tt1"} end, video, :movies,
+                     languages: ["fr"],
+                     placed: [target]
+                   )
+        end)
+
+      assert File.read!(Manifest.path(video)) == manifest
+      assert log =~ "subtitle release sidecar left unmarked for #{target}"
+      refute log =~ "crashed"
+    end
+  end
+
   test "sidecar_source never reclassifies the canonical target as its own translation source",
        %{video: video} do
     Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
@@ -1563,6 +1675,31 @@ defmodule Cinder.SubtitlesTest do
   end
 
   defp put_manifest!(video, manifest), do: put!(Manifest.path(video), Jason.encode!(manifest))
+
+  # A hash-verified French sidecar with a sync record, as a finished sweep leaves it. Returns the
+  # manifest's bytes.
+  defp put_verified_track!(video, moviehash) do
+    put!(Subtitles.sidecar_path(video, "fr"), "1\n00:00:01,000 --> 00:00:02,000\nBonjour\n\n")
+
+    sync = %{
+      status: "aligned",
+      method: "audio",
+      moviehash: moviehash,
+      source_sha256: String.duplicate("a", 64),
+      applied_sha256: String.duplicate("b", 64),
+      offset_ms: 1_000,
+      rate: 1.0,
+      score: 42.5,
+      reason: nil
+    }
+
+    put_manifest!(video, %{
+      video_moviehash: moviehash || "0123456789abcdef",
+      tracks: %{"fr" => %{origin: "opensubtitles_hash", file: "M.fr.srt", sync: sync}}
+    })
+
+    File.read!(Manifest.path(video))
+  end
 
   defp put_moviehash!(size) do
     stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> {:ok, {size, @zeros, @zeros}} end)

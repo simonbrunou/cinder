@@ -1,6 +1,7 @@
 defmodule Cinder.Subtitles.ManifestTest do
   use Cinder.DataCase, async: false
 
+  import Cinder.Test.BarrierFilesystem, only: [fail_once: 1]
   import ExUnit.CaptureLog
   import Mox
 
@@ -34,10 +35,19 @@ defmodule Cinder.Subtitles.ManifestTest do
     assert log =~ "subtitle manifest"
   end
 
-  test "read/1 falls back without a warning when the manifest cannot be read" do
-    expect(Cinder.Library.FilesystemMock, :read, fn "/lib/M/.M.mkv.cinder-subtitles.json" ->
-      {:error, :eacces}
-    end)
+  # #1202: a manifest that cannot be read is no missing one, and a writer refuses to start from it.
+  test "read/1 falls back and warns when the manifest cannot be read, and not when it is missing" do
+    Cinder.Library.FilesystemMock
+    |> expect(:read, fn "/lib/M/.M.mkv.cinder-subtitles.json" -> {:error, :eacces} end)
+    |> expect(:read, fn "/lib/M/.M.mkv.cinder-subtitles.json" -> {:error, :enoent} end)
+
+    log =
+      capture_log(fn ->
+        assert Manifest.read("/lib/M/M.mkv") == %{video_moviehash: nil, tracks: %{}}
+      end)
+
+    assert log =~ "subtitle manifest cannot be read for /lib/M/M.mkv: :eacces"
+    assert unreadable_warnings(log) == 1
 
     log =
       capture_log(fn ->
@@ -285,6 +295,119 @@ defmodule Cinder.Subtitles.ManifestTest do
     end
   end
 
+  @tag :tmp_dir
+  test "put/8 whose manifest read fails writes nothing and keeps the other tracks", %{
+    tmp_dir: tmp
+  } do
+    video = configure_disk(tmp)
+    assert :ok = Manifest.put(video, "hash", "en", "opensubtitles_hash")
+    before = File.read!(Manifest.path(video))
+    fail_manifest_read(:rooted_helper_timeout)
+
+    log =
+      capture_log(fn ->
+        assert {:error, {:unreadable_manifest, :rooted_helper_timeout}} =
+                 Manifest.put(video, "hash", "fr", "opensubtitles_hash")
+      end)
+
+    assert log =~ "subtitle manifest cannot be read for #{video}: :rooted_helper_timeout"
+    assert unreadable_warnings(log) == 1
+    assert File.read!(Manifest.path(video)) == before
+    assert temporary_manifests(video) == []
+
+    assert :ok = Manifest.put(video, "hash", "fr", "opensubtitles_hash")
+    assert Map.keys(Manifest.read(video).tracks) == ["en", "fr"]
+  end
+
+  @tag :tmp_dir
+  test "every other writer whose manifest read fails returns the reason and writes nothing", %{
+    tmp_dir: tmp
+  } do
+    video = configure_disk(tmp)
+    sync = valid_sync()
+
+    File.write!(
+      Manifest.path(video),
+      Jason.encode!(%{
+        video_moviehash: "hash",
+        tracks: %{
+          "en" => %{origin: "opensubtitles_hash", sync: sync},
+          "fr" => %{
+            origin: "opensubtitles_hash",
+            sync: sync,
+            replacement_cleanup_sync: sync,
+            reset_cleanup_sync: sync,
+            backup_tombstone: %{identity: [1, 2, 3]}
+          }
+        }
+      })
+    )
+
+    before = File.read!(Manifest.path(video))
+
+    for {name, writer} <- writers(sync) do
+      fail_manifest_read(:eio)
+      {result, log} = with_log(fn -> writer.(video) end)
+
+      assert {name, result} == {name, {:error, {:unreadable_manifest, :eio}}}
+      assert {name, unreadable_warnings(log)} == {name, 1}
+      assert {name, log =~ "subtitle manifest cannot be read for #{video}: :eio"} == {name, true}
+      assert {name, File.read!(Manifest.path(video))} == {name, before}
+    end
+
+    assert temporary_manifests(video) == []
+  end
+
+  @tag :tmp_dir
+  test "a writer on a readable or missing manifest without the language answers as before", %{
+    tmp_dir: tmp
+  } do
+    video = configure_disk(tmp)
+    sync = valid_sync()
+    # The four writers that only clear a field find nothing to clear.
+    clears =
+      ~w(clear_sync clear_replacement_cleanup finish_reset_cleanup_2 clear_backup_tombstone)a
+
+    for manifest <- [
+          Jason.encode!(%{video_moviehash: "hash", tracks: %{"en" => %{origin: "embedded"}}}),
+          nil
+        ] do
+      if manifest,
+        do: File.write!(Manifest.path(video), manifest),
+        else: File.rm(Manifest.path(video))
+
+      for {name, writer} <- writers(sync) do
+        {result, log} = with_log(fn -> writer.(video) end)
+        expected = if name in clears, do: :ok, else: {:error, :unknown_track}
+
+        assert {name, result} == {name, expected}
+        assert {name, log} == {name, ""}
+
+        assert {name, File.read(Manifest.path(video))} ==
+                 {name, if(manifest, do: {:ok, manifest}, else: {:error, :enoent})}
+      end
+
+      assert :ok = Manifest.put(video, "hash", "fr", "opensubtitles_hash")
+
+      expected = if manifest, do: ["en", "fr"], else: ["fr"]
+      assert Map.keys(Manifest.read(video).tracks) == expected
+    end
+  end
+
+  # #1202's out of scope: a manifest that reads but does not decode stays a fresh start, since a
+  # retry cannot repair it.
+  @tag :tmp_dir
+  test "put/8 over a malformed manifest still writes from an empty one", %{tmp_dir: tmp} do
+    video = configure_disk(tmp)
+    File.write!(Manifest.path(video), "not json")
+
+    log = capture_log(fn -> assert :ok = Manifest.put(video, "hash", "fr", "embedded") end)
+
+    assert log =~ "subtitle manifest is malformed for #{video}"
+    assert unreadable_warnings(log) == 0
+    assert Map.keys(Manifest.read(video).tracks) == ["fr"]
+  end
+
   test "put/4 writes a temporary manifest before renaming it into place" do
     manifest = "/lib/M/.M.mkv.cinder-subtitles.json"
 
@@ -432,6 +555,31 @@ defmodule Cinder.Subtitles.ManifestTest do
       reason: nil
     }
   end
+
+  # The ten writers but `put/8`, each writing language "fr" of `video`.
+  defp writers(sync) do
+    [
+      put_sync: &Manifest.put_sync(&1, "fr", sync),
+      clear_sync: &Manifest.clear_sync(&1, "fr"),
+      begin_replacement_cleanup: &Manifest.begin_replacement_cleanup(&1, "fr", sync),
+      clear_replacement_cleanup: &Manifest.clear_replacement_cleanup(&1, "fr"),
+      begin_reset_cleanup: &Manifest.begin_reset_cleanup(&1, "fr", sync),
+      finish_reset_cleanup_3: &Manifest.finish_reset_cleanup(&1, "fr", sync),
+      finish_reset_cleanup_2: &Manifest.finish_reset_cleanup(&1, "fr"),
+      put_backup_tombstone: &Manifest.put_backup_tombstone(&1, "fr", [1, 2, 3]),
+      clear_backup_tombstone: &Manifest.clear_backup_tombstone(&1, "fr")
+    ]
+  end
+
+  # Fails the next read of a manifest, and only that one.
+  defp fail_manifest_read(reason),
+    do: fail_once(%{operation: :read, source_contains: ".cinder-subtitles.json", reason: reason})
+
+  defp unreadable_warnings(log),
+    do: length(String.split(log, "subtitle manifest cannot be read")) - 1
+
+  defp temporary_manifests(video),
+    do: Path.wildcard(Path.join(Path.dirname(video), ".cinder-subtitle-manifest-*"))
 
   defp configure_disk(tmp) do
     keys = [:filesystem, :path_policy, :movies_library_path, :tv_library_path]

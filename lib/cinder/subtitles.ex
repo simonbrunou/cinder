@@ -787,7 +787,8 @@ defmodule Cinder.Subtitles do
   the manifest (origin `"release_sidecar"`), recomputing the moviehash fresh from the file. For
   `Cinder.Library.Backfill`, which repairs a row whose sidecars were never registered (issue
   #128). An import goes through `fetch_now/4`, which marks only the sidecars the import placed or
-  the manifest already tracks.
+  the manifest already tracks. Both leave a language unmarked, with a warning, when its manifest
+  cannot be read (`Manifest.load/1`).
   """
   @spec mark_release_sidecars(String.t(), [String.t()] | nil) :: :ok
   def mark_release_sidecars(video_path, languages),
@@ -811,9 +812,19 @@ defmodule Cinder.Subtitles do
     end)
   end
 
+  # A manifest that cannot be read would hide the verified track or the cleanup journal the
+  # marking must keep, so the language is left unmarked (#1202).
   defp put_release_sidecar(video_path, moviehash, language, target, markable) do
-    state = Manifest.read(video_path)
+    case Manifest.load(video_path) do
+      {:ok, state} ->
+        put_release_sidecar(video_path, moviehash, language, target, markable, state)
 
+      {:error, reason} ->
+        Logger.warning("subtitle release sidecar left unmarked for #{target}: #{inspect(reason)}")
+    end
+  end
+
+  defp put_release_sidecar(video_path, moviehash, language, target, markable, state) do
     if sidecar_exists?(target) and markable?(markable, state, language, target) and
          not keep_registered?(state, moviehash, language, target) do
       case Manifest.put(

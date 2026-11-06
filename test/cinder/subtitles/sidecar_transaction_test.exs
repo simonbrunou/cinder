@@ -3200,6 +3200,38 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert workspaces(target) == []
     end
 
+    # #1202: an unreadable manifest names no previous record to journal, so nothing is published.
+    test "a replacement whose manifest read fails publishes nothing", %{
+      video: video,
+      path: path,
+      backup: backup
+    } do
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      sidecar = %{video_path: video, sidecar_path: path, language: "en"}
+      moviehash = moviehash!(video)
+      manifest = File.read!(Manifest.path(video))
+      current = File.read!(path)
+      original = File.read!(backup)
+      fail_once(%{operation: :read, source_contains: ".cinder-subtitles.json", reason: :eio})
+
+      log =
+        capture_log(fn ->
+          assert {:error, {:manifest, {:error, {:unreadable_manifest, :eio}}}} =
+                   SidecarTransaction.replace(
+                     sidecar,
+                     @replacement,
+                     "opensubtitles_id",
+                     moviehash
+                   )
+        end)
+
+      assert log =~ "subtitle manifest cannot be read for #{video}: :eio"
+      assert File.read!(path) == current
+      assert File.read!(Manifest.path(video)) == manifest
+      assert File.read!(backup) == original
+      assert workspaces(path) == []
+    end
+
     test "a failed manifest write never empties the file the replacement displaced", %{
       video: video,
       path: path,

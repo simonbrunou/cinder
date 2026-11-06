@@ -264,7 +264,8 @@ defmodule Cinder.Subtitles.SidecarTransaction do
   :concurrent_change}}}`). There is no pending record: a crash between the publication and the
   manifest write leaves bytes `recover/2` holds for review. If the manifest write fails, the
   sidecar is swapped back to what the snapshot saw, but only while it still holds the fetched
-  bytes.
+  bytes. A manifest that `Manifest.load/1` cannot read stops the replacement before it publishes
+  anything.
 
   `{:error, {:write, error}}` and `{:error, {:manifest, error}}` carry the failing call's own
   return value.
@@ -275,18 +276,36 @@ defmodule Cinder.Subtitles.SidecarTransaction do
   @spec replace(sidecar(), iodata(), String.t(), String.t() | nil, non_neg_integer() | nil) ::
           :ok | {:error, {:write | :manifest, term()}}
   def replace(
-        %{video_path: video_path, sidecar_path: target, language: language},
+        %{video_path: video_path, language: language} = sidecar,
         content,
         origin,
         moviehash,
         source_track \\ nil
       ) do
     content = IO.iodata_to_binary(content)
-    state = Manifest.read(video_path)
 
-    previous_sync =
-      Manifest.replacement_cleanup_sync(state, language) || Manifest.sync(state, language)
+    # A manifest that cannot be read hides the previous record the new track must journal, so
+    # nothing is published.
+    case Manifest.load(video_path) do
+      {:ok, state} ->
+        previous_sync =
+          Manifest.replacement_cleanup_sync(state, language) || Manifest.sync(state, language)
 
+        publish_replacement(sidecar, content, origin, moviehash, source_track, previous_sync)
+
+      error ->
+        {:error, {:manifest, error}}
+    end
+  end
+
+  defp publish_replacement(
+         %{video_path: video_path, sidecar_path: target, language: language},
+         content,
+         origin,
+         moviehash,
+         source_track,
+         previous_sync
+       ) do
     with {:ok, previous} <- snapshot(target),
          :ok <- publish_fetched(target, previous, content) do
       case Manifest.put(
