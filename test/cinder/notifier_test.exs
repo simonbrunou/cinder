@@ -1,7 +1,9 @@
 defmodule Cinder.NotifierTest do
   use ExUnit.Case, async: false
+  import Cinder.ConfigCase
   import ExUnit.CaptureLog
 
+  alias Cinder.Accounts.User
   alias Cinder.Notifier
 
   test "Log impl logs each event and returns :ok" do
@@ -52,9 +54,7 @@ defmodule Cinder.NotifierTest do
   end
 
   test "notify/1 never lets a misbehaving impl crash the caller" do
-    original = Application.fetch_env!(:cinder, :notifier)
-    Application.put_env(:cinder, :notifier, Cinder.NotifierTest.Raising)
-    on_exit(fn -> Application.put_env(:cinder, :notifier, original) end)
+    put_env(:notifier, Cinder.NotifierTest.Raising)
 
     log =
       capture_log(fn ->
@@ -62,6 +62,21 @@ defmodule Cinder.NotifierTest do
       end)
 
     assert log =~ "notifier failed"
+  end
+
+  test "notify/1's warning names a failed event by its ids, never the user's email or username" do
+    put_env(:notifier, Cinder.NotifierTest.Raising)
+    user = %User{id: 7, email: "kim@example.com", plex_username: "kim-plex"}
+
+    log =
+      capture_log(fn ->
+        assert :ok = Notifier.notify({:sign_in_refused, user, :server_access})
+        assert :ok = Notifier.notify({:user_registered, user})
+      end)
+
+    assert log =~ "notifier failed for sign_in_refused #7: nope"
+    assert log =~ "notifier failed for user_registered user #7: nope"
+    refute log =~ "kim"
   end
 
   defmodule Raising do

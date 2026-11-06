@@ -199,6 +199,15 @@ defmodule Cinder.Notifier.Discord do
       color: @red
     }
 
+  # A household member Cinder knows could not sign in with Plex or link it: the admin hears of it
+  # before the member has to tell them. The display name, never the email (#184).
+  defp embed({:sign_in_refused, user, step}),
+    do: %{
+      title: "🔒 Plex sign-in refused",
+      description: "#{display_name(user)} — #{refusal_step(step)} (step #{escape(step)})",
+      color: @red
+    }
+
   # `:account_activated` is deliberately absent: it's a per-user "you're in now" message (Email's
   # job), not a household-channel signal — the admin already saw `:user_registered` and did the
   # activating. Keeping it out of Discord also keeps requester PII off this admin channel (#184).
@@ -207,6 +216,20 @@ defmodule Cinder.Notifier.Discord do
   # --- helpers ---
 
   defp maintenance_name(key), do: Map.get(@maintenance_names, key, detail(key))
+
+  # The steps of `CinderWeb.PlexAuthController` after plex.tv returned a token, in words.
+  defp refusal_step(:account), do: "plex.tv did not return their Plex account"
+
+  defp refusal_step(:server_machine_id),
+    do: "Cinder could not read the household Plex server's id"
+
+  defp refusal_step(:server_ids), do: "plex.tv did not list the servers their account can reach"
+
+  defp refusal_step(:server_access),
+    do: "their Plex account has no access to the household Plex server"
+
+  defp refusal_step(:account_write), do: "Cinder could not save their account"
+  defp refusal_step(_step), do: "a sign-in step refused them"
 
   defp hold_summary(:needs_mapping), do: "needs episode mapping"
   defp hold_summary(:verification_blocked), do: "failed release verification"

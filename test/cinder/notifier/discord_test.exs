@@ -519,6 +519,68 @@ defmodule Cinder.Notifier.DiscordTest do
     end
   end
 
+  # A refused user whose Plex username is the given (attacker-controlled) text. The email is set
+  # to prove it never reaches the payload.
+  defp refused(plex_username, step \\ :server_access),
+    do:
+      {:sign_in_refused, %User{id: 9, email: "kim@example.com", plex_username: plex_username},
+       step}
+
+  describe "sign_in_refused" do
+    test "posts a red embed naming the user and the step in words, never the email" do
+      expect_post()
+      assert :ok = Discord.notify(refused("kim"))
+
+      assert_receive {:posted, %{"embeds" => [embed], "allowed_mentions" => %{"parse" => []}}}
+      assert embed["title"] == "🔒 Plex sign-in refused"
+
+      assert embed["description"] ==
+               "kim — their Plex account has no access to the household Plex server " <>
+                 "(step server\\_access)"
+
+      assert embed["color"] == 0xE74C3C
+      refute Jason.encode!(embed) =~ "kim@example.com"
+    end
+
+    test "names the user through display_name/1: no link survives, @everyone is broken" do
+      expect_post()
+      assert :ok = Discord.notify(refused("[x](https://evil)"))
+      assert_receive {:posted, %{"embeds" => [embed]}}
+      assert String.starts_with?(embed["description"], "xhttpsevil — ")
+      refute embed["description"] =~ "://"
+      refute embed["description"] =~ "]("
+
+      assert :ok = Discord.notify(refused("@everyone"))
+      assert_receive {:posted, %{"embeds" => [embed]}}
+      assert String.starts_with?(embed["description"], "@" <> <<0x200B::utf8>> <> "everyone — ")
+      refute embed["description"] =~ "@everyone"
+    end
+
+    test "a user with no linked username reads as their id" do
+      expect_post()
+      assert :ok = Discord.notify({:sign_in_refused, %User{id: 9}, :account})
+      assert_receive {:posted, %{"embeds" => [embed]}}
+      assert String.starts_with?(embed["description"], "user #9 — ")
+    end
+
+    test "every step after the PIN check reads in words" do
+      expect_post()
+
+      for {step, words} <- [
+            account: "plex.tv did not return their Plex account",
+            server_machine_id: "Cinder could not read the household Plex server's id",
+            server_ids: "plex.tv did not list the servers their account can reach",
+            server_access: "their Plex account has no access to the household Plex server",
+            account_write: "Cinder could not save their account",
+            later_step: "a sign-in step refused them"
+          ] do
+        assert :ok = Discord.notify(refused("kim", step))
+        assert_receive {:posted, %{"embeds" => [embed]}}
+        assert embed["description"] =~ "kim — #{words} (step ", inspect(step)
+      end
+    end
+  end
+
   test "health/0 rejects an oversized JSON response" do
     Req.Test.stub(Cinder.DiscordStub, fn conn ->
       conn

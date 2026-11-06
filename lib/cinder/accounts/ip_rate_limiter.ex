@@ -27,6 +27,11 @@ defmodule Cinder.Accounts.IpRateLimiter do
       `/users/settings`, 5 per hour, so a pending account cannot use the confirmation mail as a
       relay to attacker-chosen addresses. Honors `:ip_rate_limiting` like the IP buckets (user ids
       repeat across sandboxed tests, so an always-on key would bleed between tests).
+    * `:sign_in_refused` — not a throttle on an attempt but on the admin notice a refused Plex
+      sign-in or link sends for a user Cinder knows (`Cinder.Accounts.notify_sign_in_refused/2`),
+      keyed on the user id: 1 per hour, so a member retrying eight times in a few minutes sends
+      one notice. Honors `:ip_rate_limiting` like the IP buckets (user ids repeat across
+      sandboxed tests).
 
   The other buckets are config-gated via `Application.get_env(:cinder,
   :ip_rate_limiting, true)` (default ON; `config/test.exs` defaults it OFF) because every
@@ -62,14 +67,15 @@ defmodule Cinder.Accounts.IpRateLimiter do
 
   @table :cinder_ip_attempts
   @limit 10
-  @limits %{user_email: 5}
+  @limits %{user_email: 5, sign_in_refused: 1}
   @window_ms %{
     login_pair: 15 * 60 * 1000,
     login: 60_000,
     registration: 60_000,
     request_cancel: 60 * 60 * 1000,
     user_password: 15 * 60 * 1000,
-    user_email: 60 * 60 * 1000
+    user_email: 60 * 60 * 1000,
+    sign_in_refused: 60 * 60 * 1000
   }
   @sweep_ms 60_000
 

@@ -6,7 +6,7 @@ defmodule Cinder.Accounts do
   import Ecto.Query, warn: false
   alias Cinder.Repo
 
-  alias Cinder.Accounts.{User, UserNotifier, UserToken}
+  alias Cinder.Accounts.{IpRateLimiter, User, UserNotifier, UserToken}
   alias Cinder.Audit
   alias Cinder.Audit.AdminAudit
   alias Cinder.Library.MediaServer
@@ -139,6 +139,29 @@ defmodule Cinder.Accounts do
   # Repo.get_by(User, plex_id: nil) — that compiles to `WHERE plex_id IS NULL` and would
   # match an arbitrary password-only user (or raise MultipleResultsError). Fail closed.
   def login_or_register_plex_user(_account), do: {:error, :invalid_account}
+
+  @doc """
+  The user whose linked Plex identity is `plex_id`, or `nil`. A `plex_id` that is not an integer
+  (a malformed plex.tv answer) finds nobody, for the reason `login_or_register_plex_user/1` gives.
+  """
+  def get_user_by_plex_id(plex_id) when is_integer(plex_id),
+    do: Repo.get_by(User, plex_id: plex_id)
+
+  def get_user_by_plex_id(_plex_id), do: nil
+
+  @doc """
+  Tells the admins that Cinder refused a Plex sign-in or link for `user` at `step`, the step
+  `CinderWeb.SignInRefusal` names (`:server_access`, ...): one `{:sign_in_refused, user, step}`
+  notifier event. At most one per user per hour (`Cinder.Accounts.IpRateLimiter`'s
+  `:sign_in_refused` bucket), so a member retrying sends one notice. Best effort, like every
+  notifier event: it always returns `:ok`.
+  """
+  def notify_sign_in_refused(%User{id: id} = user, step) do
+    if IpRateLimiter.check_and_register(:sign_in_refused, id) == :ok,
+      do: Notifier.notify({:sign_in_refused, user, step})
+
+    :ok
+  end
 
   defp refresh_plex_username(user, account) do
     user

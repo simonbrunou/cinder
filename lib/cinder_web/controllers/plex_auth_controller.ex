@@ -25,6 +25,19 @@ defmodule CinderWeb.PlexAuthController do
   detail — to `/users/log-in` for `:login`, `/users/settings` for `:link`. It also writes one
   `plex_signin refused` warning naming the intent, the step that refused and its reason
   (`CinderWeb.SignInRefusal`), so an operator can tell the failing step from the log.
+
+  A refusal that names a user Cinder knows also tells the admins, through
+  `Accounts.notify_sign_in_refused/2` (one `{:sign_in_refused, user, step}` notifier event, at
+  most one per user per hour):
+
+    * `:login`: a refusal after plex.tv returned the account, when a user has that Plex account
+      linked. `:admin_password_required` sends none, since an admin's Plex sign-in is refused by
+      design.
+    * `:link`: a refusal after the callback's sudo check, naming the signed-in user.
+
+  Nothing is sent for a refusal before `check_pin/1` returned a token (`start/2`, the PIN
+  check, an expired session), for the sudo re-auth redirect, or for a `:login` with a Plex
+  account nobody has linked.
   """
   use CinderWeb, :controller
 
@@ -117,13 +130,10 @@ defmodule CinderWeb.PlexAuthController do
   end
 
   defp resolve_account(conn, token, :login) do
-    with {:ok, account} <- SignInRefusal.at(:account, PlexAuth.impl().account(token)),
-         :ok <- authorize_server_access(token, account),
-         {:ok, user} <-
-           SignInRefusal.at(:account_write, Accounts.login_or_register_plex_user(account)) do
-      Accounts.store_plex_token(user, token)
-      CinderWeb.UserAuth.log_in_user(conn, user)
-    else
+    case SignInRefusal.at(:account, PlexAuth.impl().account(token)) do
+      {:ok, account} ->
+        log_in_account(conn, token, account)
+
       {:refused, _step, reason, _fields} = refusal ->
         refuse(conn, :login, refusal, login_failure(reason))
     end
@@ -151,6 +161,34 @@ defmodule CinderWeb.PlexAuthController do
     end
   end
 
+  # plex.tv returned the account, so a refusal from here on concerns a known Plex identity: when a
+  # user has it linked, the admins hear of it (`notify_linked_user/3`).
+  defp log_in_account(conn, token, account) do
+    with :ok <- authorize_server_access(token, account),
+         {:ok, user} <-
+           SignInRefusal.at(:account_write, Accounts.login_or_register_plex_user(account)) do
+      Accounts.store_plex_token(user, token)
+      CinderWeb.UserAuth.log_in_user(conn, user)
+    else
+      {:refused, step, reason, _fields} = refusal ->
+        notify_linked_user(account, step, reason)
+        refuse(conn, :login, refusal, login_failure(reason))
+    end
+  end
+
+  # An admin's Plex sign-in is refused by design, not by a fault, so it sends no notice. A Plex
+  # account no user has linked (a stranger) finds nobody.
+  defp notify_linked_user(_account, _step, :admin_password_required), do: :ok
+
+  defp notify_linked_user(account, step, _reason) do
+    case Accounts.get_user_by_plex_id(plex_id(account)) do
+      nil -> :ok
+      user -> Accounts.notify_sign_in_refused(user, step)
+    end
+  end
+
+  # Every refusal here comes after plex.tv returned a token for the signed-in user's own link, so
+  # each one tells the admins, naming that user.
   defp link_account(conn, token, user) do
     with {:ok, account} <- SignInRefusal.at(:account, PlexAuth.impl().account(token)),
          :ok <- authorize_server_access(token, account),
@@ -162,7 +200,9 @@ defmodule CinderWeb.PlexAuthController do
       |> put_flash(:info, gettext("Your Plex account is now linked."))
       |> redirect(to: ~p"/users/settings")
     else
-      {:refused, _step, _reason, _fields} = refusal ->
+      {:refused, step, _reason, _fields} = refusal ->
+        Accounts.notify_sign_in_refused(user, step)
+
         refuse(
           conn,
           :link,

@@ -16,6 +16,7 @@ defmodule Cinder.Notifier.Dispatcher do
   """
   @behaviour Cinder.Notifier
 
+  alias Cinder.Notifier
   alias Cinder.Notifier.{Discord, Email, Log, Webhook}
 
   require Logger
@@ -47,7 +48,7 @@ defmodule Cinder.Notifier.Dispatcher do
 
     case Task.yield(task, @delivery_timeout) || Task.shutdown(task, :brutal_kill) do
       nil ->
-        Logger.warning("#{inspect(transport)} notify timed out for #{event_summary(event)}")
+        Logger.warning("#{inspect(transport)} notify timed out for #{Notifier.summary(event)}")
 
       _ ->
         :ok
@@ -58,25 +59,9 @@ defmodule Cinder.Notifier.Dispatcher do
     transport.notify(event)
   rescue
     _e ->
-      Logger.warning("#{inspect(transport)} notify failed for #{event_summary(event)}")
+      Logger.warning("#{inspect(transport)} notify failed for #{Notifier.summary(event)}")
   catch
     kind, _value ->
-      Logger.warning("#{inspect(transport)} notify #{kind} for #{event_summary(event)}")
+      Logger.warning("#{inspect(transport)} notify #{kind} for #{Notifier.summary(event)}")
   end
-
-  defp event_summary({type, payload, _reason}) when is_atom(type),
-    do: event_summary({type, payload})
-
-  defp event_summary({:user_registered, %{id: id}}) when is_integer(id),
-    do: "user_registered user ##{id}"
-
-  defp event_summary({type, %{id: id, user_id: user_id}})
-       when is_atom(type) and is_integer(id) and is_integer(user_id),
-       do: "#{type} ##{id} user ##{user_id}"
-
-  defp event_summary({type, %{id: id}}) when is_atom(type) and is_integer(id),
-    do: "#{type} ##{id}"
-
-  defp event_summary({type, _payload}) when is_atom(type), do: Atom.to_string(type)
-  defp event_summary(_event), do: "unknown_event"
 end

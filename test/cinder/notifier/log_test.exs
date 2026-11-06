@@ -3,6 +3,7 @@ defmodule Cinder.Notifier.LogTest do
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
 
+  alias Cinder.Accounts.User
   alias Cinder.Notifier.Log
 
   setup do
@@ -19,6 +20,24 @@ defmodule Cinder.Notifier.LogTest do
 
     assert log =~ "[notifier] account activated: user #7"
     refute log =~ "kim@example.com"
+  end
+
+  test "sign_in_refused logs the user id and the step, never the email or a username" do
+    user = %User{
+      id: 7,
+      email: "kim@example.com",
+      plex_username: "kim-plex",
+      jellyfin_username: "kim-jellyfin",
+      oidc_name: "Kim"
+    }
+
+    log =
+      capture_log(fn ->
+        assert :ok = Log.notify({:sign_in_refused, user, :server_access})
+      end)
+
+    assert log =~ "[notifier] sign-in refused: user #7 at step server_access"
+    refute log =~ ~r/kim/i
   end
 
   test "book_target_held logs the title and the sanitized hold reason" do

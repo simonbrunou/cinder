@@ -63,6 +63,11 @@ defmodule Cinder.Notifier.Log do
   def notify({:episodes_search_exhausted, episodes}),
     do: log("episode search exhausted: #{episodes_summary(episodes)}")
 
+  # The user id and the step only: the catch-all below would inspect the whole User, whose email
+  # and Plex username are not redacted.
+  def notify({:sign_in_refused, %{id: id}, step}),
+    do: log("sign-in refused: user ##{id} at step #{step}")
+
   def notify({:maintenance_completed, key}),
     do: log("maintenance completed: #{key}")
 

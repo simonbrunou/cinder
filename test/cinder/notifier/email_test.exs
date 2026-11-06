@@ -62,6 +62,17 @@ defmodule Cinder.Notifier.EmailTest do
     end
   end
 
+  describe "sign_in_refused" do
+    test "emails nobody, neither the refused user nor an admin" do
+      configure_smtp!()
+      _admin = admin_fixture()
+      user = confirmed_user()
+
+      assert :ok = Email.notify({:sign_in_refused, user, :server_access})
+      refute_email_sent()
+    end
+  end
+
   describe "request_approved" do
     test "emails the requester" do
       configure_smtp!()

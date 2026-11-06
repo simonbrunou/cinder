@@ -64,6 +64,25 @@ defmodule Cinder.Notifier.WebhookTest do
     assert reason == "{:http_status, 500}"
   end
 
+  test "sign_in_refused carries the user's id and the step, never the email or a username" do
+    configure(url: @url)
+    expect_post()
+
+    user = %User{
+      id: 7,
+      email: "kim@example.com",
+      plex_id: 42,
+      plex_username: "kim-plex",
+      jellyfin_username: "kim-jellyfin",
+      oidc_name: "Kim"
+    }
+
+    assert :ok = Webhook.notify({:sign_in_refused, user, :server_access})
+
+    assert_receive {:posted, body, _headers}
+    assert body == %{"event" => "sign_in_refused", "id" => 7, "reason" => "server_access"}
+  end
+
   test "the maintenance events name the operation, and exhausted searches list the episodes" do
     configure(url: @url)
     expect_post()
