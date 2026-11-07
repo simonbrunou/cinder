@@ -140,11 +140,64 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # The job drives the runner CT's Docker daemon, shared by every job on the
-      # runner: names are per run so two concurrent runs never collide.
-      CINDER_IMAGE: cinder:ci-${{ github.run_id }}
-      CINDER_SMOKE_CONTAINER: cinder-ci-${{ github.run_id }}
+      # runner. Names carry the run id so two concurrent runs never collide, and the
+      # attempt so a re-run never shares them with an earlier attempt of its run (#1193):
+      # an attempt the runner lost runs no cleanup step and leaves its container behind,
+      # and one cut off from the forge can still be running when the re-run starts, so
+      # with one name per run its cleanup steps would remove the re-run's container and
+      # image. Forgejo numbers run_attempt per job, not per run: re-running only this job
+      # makes it 2 while `test` stays at 1.
+      CINDER_IMAGE: cinder:ci-${{ github.run_id }}-${{ github.run_attempt }}
+      CINDER_SMOKE_CONTAINER: cinder-ci-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # #1193: remove what earlier attempts of this run left behind, by name. The names
+      # are this attempt's with its number swapped out. The image goes by tag, never by
+      # ID: a push run and a pull_request run of one SHA build the same image ID.
+      # `--force` would skip a missing name, but `image rm` still prints an error for it,
+      # so the step checks first. `shell: bash` runs it with `-e`, so a failed `docker` call
+      # fails the step, and `((...))` needs bash. test/code_health/ci_container_attempt_test.exs
+      # runs this text against a stub docker.
+      - name: Remove earlier attempts' container and image
+        shell: bash
+        env:
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          case "$RUN_ATTEMPT" in
+            '' | 0* | *[!0-9]*)
+              echo "::error::github.run_attempt is '$RUN_ATTEMPT', not a positive integer, so the container and image names do not tell this run's attempts apart"
+              exit 1
+              ;;
+          esac
+          container_base=${CINDER_SMOKE_CONTAINER%-"$RUN_ATTEMPT"}
+          image_base=${CINDER_IMAGE%-"$RUN_ATTEMPT"}
+          if [ "$container_base" = "$CINDER_SMOKE_CONTAINER" ] || [ "$image_base" = "$CINDER_IMAGE" ]; then
+            echo "::error::CINDER_SMOKE_CONTAINER ($CINDER_SMOKE_CONTAINER) and CINDER_IMAGE ($CINDER_IMAGE) must both end in -$RUN_ATTEMPT"
+            exit 1
+          fi
+          if [ "$RUN_ATTEMPT" = 1 ]; then
+            echo "This is attempt 1: no earlier attempt to clean up"
+          fi
+          for ((n = 1; n < RUN_ATTEMPT; n++)); do
+            container="$container_base-$n"
+            image="$image_base-$n"
+            found=$(docker ps --all --quiet --filter "name=^/$container\$")
+            if [ -n "$found" ]; then
+              docker rm --force "$container" >/dev/null
+              container_state=removed
+            else
+              container_state=absent
+            fi
+            found=$(docker images --quiet "$image")
+            if [ -n "$found" ]; then
+              docker image rm --force "$image" >/dev/null
+              image_state=removed
+            else
+              image_state=absent
+            fi
+            echo "Attempt $n: container $container $container_state, image $image $image_state"
+          done
 
       - run: docker build --check .
       - run: docker build -t "$CINDER_IMAGE" .
@@ -156,6 +209,7 @@ jobs:
         # publishing a port: a `-p 127.0.0.1:4000:4000` publish would land on the
         # runner CT, not here. Sharing the namespace keeps 127.0.0.1:4000 local.
         run: |
+          echo "Booting container $CINDER_SMOKE_CONTAINER from image $CINDER_IMAGE"
           docker run --detach --name "$CINDER_SMOKE_CONTAINER" --network "container:$(hostname)" \
             -e SECRET_KEY_BASE=ci-only-not-a-real-secret-key-base-0123456789abcdefghijklmnopqrstuvwxyz \
             -e DATABASE_PATH=/data/cinder.db \
