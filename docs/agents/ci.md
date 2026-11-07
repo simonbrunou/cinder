@@ -15,6 +15,33 @@
 - `dependency-audit` runs `mix hex.audit` and `mix deps.audit`.
 - The runner is shared with other repositories, so a PR's jobs can queue behind their runs.
 
+## Browser scripts locally
+
+To run `browser_smoke.py` and `browser_lifecycle.py` before CI does, as a fix or a test of client
+JS needs, follow the `container` job on the host with these changes:
+
+1. Export the `CINDER_SMOKE_*` values of the job's "Browser smoke" step, with
+   `CINDER_SMOKE_BASE_URL=http://127.0.0.1:<port>` for a free `<port>`, and
+   `CINDER_SMOKE_CONTAINER=<name>`. The boot below reads `CINDER_SMOKE_BOOTSTRAP_TOKEN`. Leave
+   `CINDER_SMOKE_BROWSER_CHANNEL` unset: CI runs Playwright's bundled Chromium (#842).
+2. `docker build -t cinder:<tag> .`
+3. `docker rm --force <name>`, since the job boots a fresh container for each run. Then run the
+   "Boot a fresh instance" step's `docker run` with `--name <name>`, image `cinder:<tag>`, and
+   `-p 127.0.0.1:<port>:4000` in place of `--network "container:$(hostname)"`, which joins the
+   job container's network. Wait for `curl -fs http://127.0.0.1:<port>/healthz` as the step does
+   (30 tries, 1 s apart), then run its `mark_setup_complete` eval through `docker exec <name>`.
+4. Build the venv on `/usr/bin/python3` and install the Playwright version the job pins; skip the
+   job's `playwright install-deps`, which installs apt packages. A venv on the nix `python3`
+   fails to import Playwright's `greenlet` with `libstdc++.so.6: cannot open shared object file`
+   (#702; nix#79 logged it on 2026-10-31). Playwright uses the browsers already in
+   `~/.cache/ms-playwright`; run `<venv>/bin/playwright install chromium` when that folder lacks
+   the build the pinned version expects.
+5. Run `<venv>/bin/python .github/scripts/browser_smoke.py`, then `browser_lifecycle.py` the same
+   way: the smoke registers the account the lifecycle cases log in with. The run passed when both
+   exit 0, and the lifecycle script then prints `All <n> lifecycle cases passed.` With
+   `CINDER_SMOKE_SCREENSHOT_DIR` set, the lifecycle script saves a full-page screenshot of each
+   failed case; `docker logs <name>` shows the server's side.
+
 ## Changing a workflow
 
 - A `run:` step with logic of its own (a guard, a loop, a branch on a value) that you add, or

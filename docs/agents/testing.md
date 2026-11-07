@@ -37,6 +37,9 @@
   to the second fix. A re-check's table of 41 Locations over both versions found the last.
 - A bug fix starts with a test that reproduces the bug. Then make it pass.
 - New functionality, such as a choke-point, a state or a writer, ships with a test.
+- A fix or a feature in client JS (`assets/js/`) gets its test as a case in a browser script
+  under `.github/scripts/`, which `mix test` does not run: [ci.md](ci.md) "Browser scripts
+  locally" says how to run one.
 - Run a red run, a mutation check or a throwaway test with `mix test.unchecked`, which takes the
   same arguments as `mix test` (`<file>:<line>`, `--failed`, `--only`, `--seed`). It creates and
   migrates the test database, then runs ExUnit without the `mix test` alias's gates: compile
