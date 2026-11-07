@@ -450,9 +450,7 @@ defmodule Cinder.CodeHealthTest do
            "the following `:for` row(s) render a `data-poster` element — directly or via " <>
              "#{poster_callees} — without an `id`. morphdom treats a keyless `:for` row as " <>
              "a positional patch (it reuses the previous occupant's element instead of " <>
-             "inserting a new one), so LiveView's onNodeAdded never fires for nodes nested " <>
-             "inside it and the poster-failure handling in assets/js/app.js (#592/#594) " <>
-             "silently never runs — see #597. Key the row with a stable `id`, the way " <>
+             "inserting a new one) — see #597. Key the row with a stable `id`, the way " <>
              "media_card/detail_poster/thumb_poster and the cast_strip cast list already " <>
              "are:\n" <>
              Enum.map_join(offenders, "\n", fn {file, line, el} -> "  #{file}:#{line} #{el}" end)

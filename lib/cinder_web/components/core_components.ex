@@ -1003,7 +1003,7 @@ defmodule CinderWeb.CoreComponents do
     doc:
       "set when :for-iterated with no keyed wrapper (e.g. DiscoverComponents.media_grid/1) " <>
         "so morphdom recognizes a genuinely new card as an insertion, not a positional morph " <>
-        "of the previous occupant — without it, onNodeAdded never sees a live-inserted poster"
+        "of the previous occupant (#597)"
 
   attr :poster_path, :string, default: nil
   attr :title, :string, required: true

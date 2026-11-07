@@ -71,10 +71,11 @@ const Kindle = {
 }
 
 // Posters arrive over the network at unpredictable times: an initial page load, a live
-// navigation/patch, or a bare PubSub-driven re-render that inserts a brand-new node (no
-// page-loading event fires for that last case at all). Fade in only the ones that were not
-// already cached; a cached grid must render instantly. No per-card hook and no generated ids —
-// processPoster is applied to every matching <img>, wherever it came from.
+// navigation/patch, a bare PubSub-driven re-render that inserts a brand-new node (no
+// page-loading event fires for that case at all), or a patch that changes a poster's src.
+// Fade in only the ones that were not already cached; a cached grid must render instantly. No
+// per-card hook and no generated ids — processPoster is applied to every matching <img>,
+// wherever it came from.
 const revealPoster = img => img.classList.add("poster-shown")
 
 // A failed poster (TMDB 404, blocked CDN, offline) must hide and expose the gradient/box
@@ -108,17 +109,37 @@ const fadeUncachedPosters = () => {
   document.querySelectorAll(posterSelector).forEach(processPoster)
 }
 
+// The classes above that only app.js adds; the server never renders them.
+const posterClientClasses = ["poster-fade", "poster-shown", "poster-broken"]
+
+// LiveView patches an <img> it keeps by copying the server-rendered attributes onto it, which
+// drops data-poster-seen and the client classes. That happens to every poster whose parent a
+// diff re-renders: the status badge is media_card's slot, so a status change re-renders the
+// whole card (#702). A failed poster would then show the broken-image glyph and alt text
+// again. onBeforeElUpdated runs before that copy, so writing the client state onto the
+// incoming element (toEl) carries it across the patch, the way LiveView's own
+// JS.ignore_attributes does. The listeners and the 3-second reveal processPoster set up stay
+// on the element, which LiveView keeps. Only while the src stays the same: a new src is a new
+// image, so the patch drops the old one's state and sweepPatchedPosters processes it again.
+const keepPosterState = (fromEl, toEl) => {
+  if (!fromEl.matches("img[data-poster][data-poster-seen]")) return
+  if (fromEl.getAttribute("src") !== toEl.getAttribute("src")) return
+  toEl.dataset.posterSeen = fromEl.dataset.posterSeen
+  posterClientClasses
+    .filter(name => fromEl.classList.contains(name))
+    .forEach(name => toEl.classList.add(name))
+}
+
 // A plain server-pushed diff from a handle_info/assign (dashboard polling, a PubSub-driven
 // movie/request row insert) never touches liveSocket.connect() or a phx:page-loading-* event —
-// those only fire for full joins, live navigation, and reconnects. onNodeAdded is LiveView's own
-// per-patch hook and is the only thing that sees nodes inserted that way. The added node may BE
-// the <img> (a bare poster patch) or may CONTAIN one or more (a whole <.thumb_poster>/
-// <.media_card> inserted as a unit), so both the node itself and its descendants are checked.
-// data-poster-seen keeps this idempotent against the startup/page-loading-stop sweeps below.
-const fadePosterNode = node => {
-  if (!(node instanceof Element)) return
-  if (node.matches(posterSelector)) processPoster(node)
-  node.querySelectorAll(posterSelector).forEach(processPoster)
+// those only fire for full joins, live navigation, and reconnects. onPatchEnd is LiveView's own
+// per-patch hook, called once a patch is in the DOM with the element it patched. Every poster
+// that patch inserted, or whose src it changed, lacks data-poster-seen there; a poster whose
+// state keepPosterState carried keeps it, so the sweep skips it. data-poster-seen also keeps
+// this idempotent against the startup/page-loading-stop sweeps below.
+const sweepPatchedPosters = container => {
+  if (container.matches(posterSelector)) processPoster(container)
+  container.querySelectorAll(posterSelector).forEach(processPoster)
 }
 
 const FormState = {
@@ -155,7 +176,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
   hooks: {...colocatedHooks, DisclosureState, FormState, Kindle},
-  dom: {onNodeAdded: fadePosterNode},
+  dom: {onBeforeElUpdated: keepPosterState, onPatchEnd: sweepPatchedPosters},
 })
 
 // Show progress bar on live navigation and form submits

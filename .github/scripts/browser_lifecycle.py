@@ -5,8 +5,11 @@ Two real bugs shipped in #592 and reached review only after `mix test` (4422 pas
 `browser_smoke.py` both went green, because nothing in the suite touched either lifecycle:
   - Case 4 below is the actual kindle "error"-kind false-flare bug.
   - Case 5 below is the actual live-insert poster gap.
-The other five cases cover the rest of each lifecycle's real branches so a future change to
-either has the same chance of being caught before review as everything else in this app.
+The other five of the first seven cases cover the rest of each lifecycle's real branches so a
+future change to either has the same chance of being caught before review as everything else in
+this app. Cases 8 to 10 cover #702: a failed poster whose card a live update re-renders, a
+poster whose `src` a live update changes, and a stalled poster whose 3-second reveal must
+survive a re-render.
 
 Driving mechanism: `docker exec <container> /app/bin/cinder rpc '<expr>'`, never `eval`. `eval`
 boots a disconnected temporary node (`:nonode@nohost`) whose Catalog broadcasts can never reach
@@ -178,6 +181,20 @@ def broadcast_movie_created(movie_id):
     )
 
 
+def set_poster_path(movie_id, poster_path):
+    """Writes a new `poster_path` and announces the fresh row with
+    `Cinder.Catalog.Events.movie_updated/1`. `/library` upserts the struct the announcement
+    carries, so the card re-renders with the new `src`. A plain field write: the poster is
+    metadata, not a lifecycle status."""
+    rpc(
+        f"movie = Cinder.Catalog.Movie |> Cinder.Repo.get!({movie_id}) "
+        f"|> Ecto.Changeset.change(poster_path: {_elixir_string(poster_path)}) "
+        f"|> Cinder.Repo.update!(); "
+        f"Cinder.Catalog.Events.movie_updated(movie); "
+        f'IO.puts("RPCRESULT:ok")'
+    )
+
+
 # ---------------------------------------------------------------------------------------------
 # Browser-side harness
 # ---------------------------------------------------------------------------------------------
@@ -234,7 +251,13 @@ def flare_filter(page, badge_id):
     return page.evaluate("(id) => window.__kindleFilters[id] || null", badge_id)
 
 
-POSTER_BEHAVIOR = {}  # poster_path suffix -> "fail" | "success"
+POSTER_BEHAVIOR = {}  # poster_path suffix -> "fail" | "success" | "stall"
+# Requests the "stall" behavior holds open. The case that stalls them aborts them before it
+# ends: Playwright prints a CancelledError traceback for a route still pending at browser close.
+STALLED_ROUTES = []
+# The poster fade-in transition (app.css `.poster-fade.poster-shown`, 320 ms) plus headroom. A
+# read this long after a patch sees a poster the patch faded out at opacity 0, not mid-fade.
+POSTER_FADE_SETTLE_MS = 1_000
 
 
 def handle_poster_route(route):
@@ -244,6 +267,8 @@ def handle_poster_route(route):
         route.fulfill(status=200, content_type="image/png", body=TINY_PNG)
     elif behavior == "fail":
         route.abort()
+    elif behavior == "stall":
+        STALLED_ROUTES.append(route)  # no answer, so the image stays loading
     else:
         # Any poster path we didn't seed ourselves must never reach the real CDN.
         route.abort()
@@ -428,7 +453,7 @@ def case_4_no_false_flare_after_error_kind(page):
 
 def case_5_live_inserted_poster(page):
     """A poster inserted by a pure PubSub-driven handle_info re-render (no navigation, no
-    page-loading event at all) still gets failure handling via LiveSocket's onNodeAdded.
+    page-loading event at all) still gets failure handling via LiveSocket's onPatchEnd sweep.
     Self-contained: navigates to /library itself rather than assuming a prior case left the
     page there, so cases stay independently runnable regardless of CASES order or subsetting.
     Navigate-and-settle happens before the movie exists, so its arrival is still a pure
@@ -478,16 +503,15 @@ def case_6_cached_failure_before_listener_attach(page):
         expect(fail_img).to_have_class(re.compile(r"\bposter-broken\b"), timeout=5_000)
         # The control is asserted by outcome (loaded and fully opaque), never by `.poster-shown`.
         # app.js adds that class only on its fade-in branch (the image was still loading when a
-        # sweep ran) and LiveView's join patch then resets every client-added class on the
-        # morphed <img>, so whether it is present depends on whether the image finished before
-        # or after the join, not on anything a user sees. A poster that already finished
-        # loading is deliberately left unfaded: a cached grid renders instantly.
+        # sweep ran), so whether it is present depends on whether the image finished before or
+        # after that sweep, not on anything a user sees. A poster that already finished loading
+        # is deliberately left unfaded: a cached grid renders instantly.
         expect(ok_img).to_have_js_property("naturalWidth", 1, timeout=5_000)
         expect(ok_img).to_have_css("opacity", "1", timeout=5_000)
 
         # Read the final computed state before the bracket exits and the real poller resumes:
         # once resumed, its very next tick can touch these still-:requested movies and cause a
-        # live re-render that wipes the client-only classes we're about to assert on.
+        # live re-render. Case 8 covers a re-render; this case covers the first sweep alone.
         fail_display = fail_img.evaluate("(el) => getComputedStyle(el).display")
         ok_broken = ok_img.evaluate("(el) => el.classList.contains('poster-broken')")
 
@@ -531,6 +555,165 @@ def case_7_reduced_motion_static_alternative(page):
         )
 
 
+POSTER_STATE_JS = """(el) => ({
+  broken: el.classList.contains("poster-broken"),
+  seen: el.dataset.posterSeen ?? null,
+  display: getComputedStyle(el).display,
+  opacity: getComputedStyle(el).opacity,
+})"""
+
+
+def poster_state(img):
+    """The poster's client state, read once with no retry: a wait that retried until
+    `poster-broken` came back would pass a poster that showed the glyph in between."""
+    return img.evaluate(POSTER_STATE_JS)
+
+
+def case_8_failed_poster_survives_live_rerender(page):
+    """A failed poster stays hidden when a live update re-renders its card (#702). The status
+    badge is media_card's slot, so a status change re-renders the whole card and morphdom
+    copies the server's attributes onto the poster <img>. That used to drop the client-added
+    `poster-broken` and `data-poster-seen`, nothing processed the poster again, and the
+    browser's broken-image glyph and alt text showed until the next navigation. A control
+    poster that loads goes through the same re-renders and must keep showing."""
+    fail_path = "/case8-rerender-failure.jpg"
+    ok_path = "/case8-rerender-control.jpg"
+    POSTER_BEHAVIOR[fail_path] = "fail"
+    POSTER_BEHAVIOR[ok_path] = "success"
+
+    with SuspendedPoller():
+        fail_id = seed_movie("Case8 Rerender Failure", poster_path=fail_path)
+        ok_id = seed_movie("Case8 Rerender Control", poster_path=ok_path)
+        goto_library(page)
+
+        fail_img = page.locator(f"#movie-{fail_id} img[data-poster]")
+        ok_img = page.locator(f"#movie-{ok_id} img[data-poster]")
+        expect(fail_img).to_have_class(re.compile(r"\bposter-broken\b"), timeout=5_000)
+        expect(ok_img).to_have_js_property("naturalWidth", 1, timeout=5_000)
+        expect(ok_img).to_have_css("opacity", "1", timeout=5_000)
+
+        # Three re-renders of each card: :requested -> :searching (the badge swaps <span> for
+        # <div>), :searching -> :downloading, then a progress write.
+        states = []
+        for movie_id in (fail_id, ok_id):
+            start_search(movie_id)
+            wait_for_badge_text(page, movie_id, "Searching")
+        states.append(("searching", poster_state(fail_img), poster_state(ok_img)))
+        for movie_id in (fail_id, ok_id):
+            start_download(movie_id, 0.4)
+            wait_for_badge_text(page, movie_id, "40%")
+        states.append(("downloading", poster_state(fail_img), poster_state(ok_img)))
+
+    for step, failed, control in states:
+        if not failed["broken"] or failed["display"] != "none":
+            raise CaseFailure(
+                f"case 8 (failed poster survives a live re-render), after {step}: expected the "
+                f"failed poster to keep .poster-broken and display:none, got {failed!r} for "
+                f"movie {fail_id}"
+            )
+        if control["broken"] or control["display"] == "none" or control["opacity"] != "1":
+            raise CaseFailure(
+                f"case 8 control, after {step}: expected the loaded poster to keep showing, got "
+                f"{control!r} for movie {ok_id}"
+            )
+
+
+def case_9_poster_src_change_is_processed_again(page):
+    """A poster whose `src` a live update changes is processed again as a new image (#702): a
+    failed poster that gets a working `src` shows instead of keeping the old one's broken
+    state, and a working poster that gets a failing `src` hides instead of showing the glyph.
+    LiveView keeps the same <img> element across both patches."""
+    first_fail = "/case9-first-failure.jpg"
+    then_ok = "/case9-then-success.jpg"
+    then_fail = "/case9-then-failure.jpg"
+    POSTER_BEHAVIOR[first_fail] = "fail"
+    POSTER_BEHAVIOR[then_ok] = "success"
+    POSTER_BEHAVIOR[then_fail] = "fail"
+
+    with SuspendedPoller():
+        movie_id = seed_movie("Case9 Src Change", poster_path=first_fail)
+        goto_library(page)
+
+        img = page.locator(f"#movie-{movie_id} img[data-poster]")
+        expect(img).to_have_class(re.compile(r"\bposter-broken\b"), timeout=5_000)
+        page.evaluate(
+            "(id) => { window.__case9Img = document.querySelector(`#movie-${id} img[data-poster]`) }",
+            movie_id,
+        )
+
+        set_poster_path(movie_id, then_ok)
+        expect(img).to_have_attribute("src", re.compile(re.escape(then_ok) + "$"), timeout=5_000)
+        expect(img).to_have_js_property("naturalWidth", 1, timeout=5_000)
+        expect(img).to_have_css("opacity", "1", timeout=5_000)
+        loaded = poster_state(img)
+
+        set_poster_path(movie_id, then_fail)
+        expect(img).to_have_attribute("src", re.compile(re.escape(then_fail) + "$"), timeout=5_000)
+        try:
+            expect(img).to_have_class(re.compile(r"\bposter-broken\b"), timeout=5_000)
+        except AssertionError:
+            pass  # reported below with the full state
+        failed_again = poster_state(img)
+        same_element = page.evaluate(
+            "(id) => window.__case9Img === document.querySelector(`#movie-${id} img[data-poster]`)",
+            movie_id,
+        )
+
+    if not same_element:
+        raise CaseFailure(
+            "case 9 setup: LiveView replaced the poster <img> instead of patching its src, so "
+            f"this case no longer tests a src change on one element (movie {movie_id})"
+        )
+    if loaded["broken"] or loaded["display"] == "none":
+        raise CaseFailure(
+            "case 9 (src change, failure -> success): expected the poster to show its new image, "
+            f"got {loaded!r} for movie {movie_id}"
+        )
+    if not failed_again["broken"] or failed_again["display"] != "none":
+        raise CaseFailure(
+            "case 9 (src change, success -> failure): expected the poster to hide its new failed "
+            f"image with .poster-broken and display:none, got {failed_again!r} for movie "
+            f"{movie_id}"
+        )
+
+
+def case_10_stalled_poster_stays_revealed_across_live_rerender(page):
+    """A poster whose request never answers is revealed by app.js's 3-second fallback, and a
+    live re-render of its card keeps it revealed (#702). The fix carries the client state
+    across a patch that keeps the src. Processing such a poster again after the patch instead
+    would fade it out once more on every re-render, since it is still loading."""
+    stall_path = "/case10-stalled.jpg"
+    POSTER_BEHAVIOR[stall_path] = "stall"
+
+    with SuspendedPoller():
+        try:
+            movie_id = seed_movie("Case10 Stalled Poster", poster_path=stall_path)
+            goto_library(page)
+
+            img = page.locator(f"#movie-{movie_id} img[data-poster]")
+            expect(img).to_have_class(re.compile(r"\bposter-shown\b"), timeout=10_000)
+            before = img.evaluate("(el) => ({complete: el.complete})")
+
+            start_search(movie_id)
+            wait_for_badge_text(page, movie_id, "Searching")
+            page.wait_for_timeout(POSTER_FADE_SETTLE_MS)
+            after = poster_state(img)
+        finally:
+            while STALLED_ROUTES:
+                STALLED_ROUTES.pop().abort()
+
+    if before["complete"]:
+        raise CaseFailure(
+            "case 10 setup: the stalled poster finished loading, so this case no longer tests a "
+            f"poster that is still loading (movie {movie_id})"
+        )
+    if after["broken"] or after["display"] == "none" or after["opacity"] != "1":
+        raise CaseFailure(
+            "case 10 (stalled poster stays revealed across a live re-render): expected opacity 1 "
+            f"and no .poster-broken after the re-render, got {after!r} for movie {movie_id}"
+        )
+
+
 CASES = [
     ("case1_no_flare_on_initial_load", case_1_no_flare_on_initial_load),
     ("case2_exactly_one_flare_on_transition", case_2_exactly_one_flare_on_transition),
@@ -539,6 +722,12 @@ CASES = [
     ("case5_live_inserted_poster", case_5_live_inserted_poster),
     ("case6_cached_failure_before_listener_attach", case_6_cached_failure_before_listener_attach),
     ("case7_reduced_motion_static_alternative", case_7_reduced_motion_static_alternative),
+    ("case8_failed_poster_survives_live_rerender", case_8_failed_poster_survives_live_rerender),
+    ("case9_poster_src_change_is_processed_again", case_9_poster_src_change_is_processed_again),
+    (
+        "case10_stalled_poster_stays_revealed_across_live_rerender",
+        case_10_stalled_poster_stays_revealed_across_live_rerender,
+    ),
 ]
 
 
