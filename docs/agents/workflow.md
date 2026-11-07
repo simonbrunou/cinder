@@ -37,10 +37,11 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
 
 - Every review sub-agent's prompt gives the author's full `mix test` result line, to trust as it
   would green CI, and limits execution to a mutation check: revert the fix in the sub-agent's own
-  worktree, seeded as "Worktrees" below says, and run only that test file. A reviewer told to
-  check the author's claims checks them against that line and the diff, within the same
-  one-file budget. A second full suite takes the CPU the host's agent threads share: on #959 a
-  Spec reviewer re-ran the full suite in a copy of the worktree and took 12 minutes.
+  worktree, seeded as "Worktrees" below says, and run only that test file with
+  `mix test.unchecked <file>` ([testing.md](testing.md)). A reviewer told to check the author's
+  claims checks them against that line and the diff, within the same one-file budget. A second
+  full suite takes the CPU the host's agent threads share: on #959 a Spec reviewer re-ran the
+  full suite in a copy of the worktree and took 12 minutes.
 - Paste the bullet above into each reviewer's brief before you start the reviewer. Briefs written
   from the `code-review` skill alone let reviewers run tests or a mutation in the author's
   checkout on #884, #960, #1004 and #939.
@@ -90,8 +91,9 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
   existed, run `~/Projects/cinder/scripts/seed-worktree`. Its header says why it copies.
 - If a test then behaves like old code, run `MIX_ENV=test mix compile --force`.
 - The seed has only `_build/test`, and in the dev env a task recompiles every dependency first.
-  `mix format`, `mix credo --strict` and `mix gettext.extract --merge` run in the test env by
-  default (`cli/0` in `mix.exs`). Run any other standalone task as `MIX_ENV=test mix <task>`.
+  `mix format`, `mix credo --strict`, `mix gettext.extract --merge` and `mix test.unchecked` run
+  in the test env by default (`cli/0` in `mix.exs`). Run any other standalone task as
+  `MIX_ENV=test mix <task>`.
 
 ## Merge conflicts
 

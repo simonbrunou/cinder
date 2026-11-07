@@ -29,7 +29,16 @@ defmodule Cinder.MixProject do
 
   # The standalone tasks the docs name run in the env a seeded worktree holds
   # (docs/agents/workflow.md "Worktrees").
-  def cli, do: [preferred_envs: [format: :test, credo: :test, "gettext.extract": :test]]
+  def cli do
+    [
+      preferred_envs: [
+        format: :test,
+        credo: :test,
+        "gettext.extract": :test,
+        "test.unchecked": :test
+      ]
+    ]
+  end
 
   # Two LOW advisories that `mix hex.audit` (a required CI check) fails on, both terminal
   # escape-sequence injection in an *interactive* mix task run by a developer — `mix
@@ -147,6 +156,10 @@ defmodule Cinder.MixProject do
         # Fails the run on a compiler warning from a test file too (#855).
         "test --warnings-as-errors"
       ],
+      # For red runs and mutation checks (docs/agents/testing.md): `test` without its compile,
+      # format and Credo gates. It calls the ExUnit task itself, since a "test" entry here
+      # resolves to the gated alias above.
+      "test.unchecked": ["ecto.create --quiet", "ecto.migrate --quiet", &Mix.Tasks.Test.run/1],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
       "assets.build": ["compile", "tailwind cinder", "esbuild cinder"],
       "assets.deploy": [
