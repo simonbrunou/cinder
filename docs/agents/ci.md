@@ -113,12 +113,18 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   (run 676, #1091), `Cinder.BoundedCommandTest` "run/4 with :check a check that halts kills the
   OS process and returns its reason" asserts the elapsed time under 9 s instead of 3 s, since its
   window times the stub's start. The bound stays below the call's 10 s timeout, so a halt that
-  waits for that timeout before it kills the stub still fails it. The test environment widens
-  `Cinder.Library.Filesystem.Disk`'s `:disk_subprocess_timeout_ms` to 20 s (#945), four times
-  the production bound, to give a slow start on a loaded runner headroom. In a test that does not
-  set its own bound, a Disk timeout such as `{:error, :rooted_helper_timeout}` therefore means
-  the subprocess did not answer for 20 s: look for a hang, or a runner far more loaded than
-  usual, before calling it a flake.
+  waits for that timeout before it kills the stub still fails it. After a 5336 ms run on PR #1214
+  (run 900, #1216), "run/4 with :check a check interval longer than the timeout does not extend
+  the deadline" asserts the elapsed time under 9 s instead of 3 s. The bound stays below its
+  10 s check interval, which a deadline extended by that interval waits for. After a 3496 ms run
+  on `main` (run 904, #1216), "run/4 with :check continuous output cannot starve the check"
+  asserts the elapsed time under 9 s instead of 3 s. The bound stays below the call's 10 s
+  timeout, so a third check that comes late but before that timeout still fails it. The test
+  environment widens `Cinder.Library.Filesystem.Disk`'s `:disk_subprocess_timeout_ms` to 20 s
+  (#945), four times the production bound, to give a slow start on a loaded runner headroom. In a
+  test that does not set its own bound, a Disk timeout such as `{:error, :rooted_helper_timeout}`
+  therefore means the subprocess did not answer for 20 s: look for a hang, or a runner far more
+  loaded than usual, before calling it a flake.
 - **Shared state.** Check order-dependent state before blaming a flake or a new test: the
   always-on `:login_pair` bucket of `Cinder.Accounts.IpRateLimiter`, keyed on the IP and the
   name (#686), and the suite-wide `Cinder.Subtitles.Fetcher` consuming another module's Mox

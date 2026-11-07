@@ -72,7 +72,13 @@ defmodule Cinder.BoundedCommandTest do
       assert BoundedCommand.run(bin, [], 10_000, check: {50, check}) ==
                {:error, {:halted, :third_check}}
 
-      assert System.monotonic_time(:millisecond) - t0 < 3_000
+      # The window times the stub's start, three 50 ms check intervals, the kill's `/bin/sh` fork
+      # and the reap of up to 200 ms, which consumes the output the stub wrote meanwhile. A loaded
+      # runner took 3496 ms (run 904, #1216), so the ceiling is 9 s. The result pattern alone
+      # fails the #506 regression, a check that never runs, since the call then times out. Only
+      # this ceiling fails a third check that comes late but before the call's 10 s timeout,
+      # which caps the ceiling: a third check due after that timeout fails the result pattern.
+      assert System.monotonic_time(:millisecond) - t0 < 9_000
     end
 
     test "a check interval longer than the timeout does not extend the deadline", %{
@@ -83,7 +89,13 @@ defmodule Cinder.BoundedCommandTest do
 
       t0 = System.monotonic_time(:millisecond)
       assert BoundedCommand.run(bin, [], 200, check: {10_000, check}) == {:error, {:timeout, ""}}
-      assert System.monotonic_time(:millisecond) - t0 < 3_000
+
+      # The window times the stub's start, the 200 ms deadline, the kill's `/bin/sh` fork and the
+      # reap of up to 200 ms. A loaded runner took 5336 ms (run 900, #1216), so the ceiling is
+      # 9 s. Only this ceiling fails a deadline that the check interval extends: the loop tests
+      # the deadline before a due check, so such a call still returns this timeout, but no sooner
+      # than the 10 s check interval after the port opens, which caps the ceiling.
+      assert System.monotonic_time(:millisecond) - t0 < 9_000
     end
 
     test "a check that raises kills the OS process before the exception propagates", %{
