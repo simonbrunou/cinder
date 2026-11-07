@@ -61,6 +61,23 @@ defmodule Cinder.HealthTest do
     :ok
   end
 
+  # Runs `call`, a check that a hung probe holds past its 200 ms budget, and returns the check's
+  # result. Each such probe holds 10 s before it answers. The check kills it at the budget. The
+  # upper bound sits 5 s past that budget, the house bound for a wall-clock load flake
+  # (docs/agents/ci.md "Wall-clock tests"). The 10 s hold sits above that bound: a check that
+  # waits the probe out reads its answer, or fails the bound when it reports `:timeout` only
+  # after the hold. A test process running late enough to read that answer is already past the
+  # bound, so the caller's status match adds no flake of its own (#1192).
+  defp timed_at_budget(call) do
+    started = System.monotonic_time(:millisecond)
+    result = call.()
+    elapsed = System.monotonic_time(:millisecond) - started
+
+    assert elapsed >= 200
+    assert elapsed < 5_200
+    result
+  end
+
   defp targets(ids), do: Enum.flat_map(ids, &Health.targets(id: &1))
 
   defp answer_when_told(conductor, probe) do
@@ -233,11 +250,11 @@ defmodule Cinder.HealthTest do
 
     test "a map budget applies the entry for the checked target's id, and the default elsewhere" do
       with_env(:health_probe_timeout_ms, %{"indexer" => 200})
-      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(5_000) end)
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(10_000) end)
       # Past the indexer's 200 ms, so only a budget of its own lets it answer.
       stub(Cinder.Catalog.TMDBMock, :health, fn -> sleep_ok(300) end)
 
-      assert Health.check("indexer") == {:error, :timeout}
+      assert timed_at_budget(fn -> Health.check("indexer") end) == {:error, :timeout}
       assert Health.check("tmdb") == :ok
     end
 
@@ -439,9 +456,9 @@ defmodule Cinder.HealthTest do
     test "a probe exceeding the timeout budget reports :timeout without holding up the others" do
       with_env(:health_probe_timeout_ms, %{"indexer" => 200})
       stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
-      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(2_000) end)
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(10_000) end)
 
-      assert Health.check_targets(targets(~w(tmdb indexer))) == %{
+      assert timed_at_budget(fn -> Health.check_targets(targets(~w(tmdb indexer))) end) == %{
                "tmdb" => :ok,
                "indexer" => {:error, :timeout}
              }
@@ -453,12 +470,12 @@ defmodule Cinder.HealthTest do
 
       stub(Cinder.Acquisition.IndexerMock, :health, fn ->
         send(parent, {:indexer_probe, self()})
-        sleep_ok(2_000)
+        sleep_ok(10_000)
       end)
 
       stub(Cinder.Catalog.TMDBMock, :health, fn -> sleep_ok(300) end)
 
-      assert Health.check_targets(targets(~w(tmdb indexer))) == %{
+      assert timed_at_budget(fn -> Health.check_targets(targets(~w(tmdb indexer))) end) == %{
                "tmdb" => :ok,
                "indexer" => {:error, :timeout}
              }
@@ -492,10 +509,10 @@ defmodule Cinder.HealthTest do
 
     test "an integer budget applies to every probe of the sweep" do
       with_env(:health_probe_timeout_ms, 200)
-      stub(Cinder.Catalog.TMDBMock, :health, fn -> sleep_ok(2_000) end)
-      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(2_000) end)
+      stub(Cinder.Catalog.TMDBMock, :health, fn -> sleep_ok(10_000) end)
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(10_000) end)
 
-      assert Health.check_targets(targets(~w(tmdb indexer))) == %{
+      assert timed_at_budget(fn -> Health.check_targets(targets(~w(tmdb indexer))) end) == %{
                "tmdb" => {:error, :timeout},
                "indexer" => {:error, :timeout}
              }
@@ -620,9 +637,9 @@ defmodule Cinder.HealthTest do
     test "a probe exceeding the timeout budget reports :timeout without blocking other rows" do
       stub_check_all_services()
       with_env(:health_probe_timeout_ms, %{"indexer" => 200})
-      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(2_000) end)
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(10_000) end)
 
-      rows = Health.check_all()
+      rows = timed_at_budget(&Health.check_all/0)
 
       assert row(rows, "indexer").status == {:error, :timeout}
       assert row(rows, "tmdb").status == :ok
@@ -632,10 +649,10 @@ defmodule Cinder.HealthTest do
     test "a map budget names a row by its id, and a row it omits outlasts that budget, in order" do
       stub_check_all_services()
       with_env(:health_probe_timeout_ms, %{"indexer" => 200})
-      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(2_000) end)
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(10_000) end)
       stub(Cinder.Catalog.TMDBMock, :health, fn -> sleep_ok(300) end)
 
-      rows = Health.check_all()
+      rows = timed_at_budget(&Health.check_all/0)
 
       assert row(rows, "indexer").status == {:error, :timeout}
       assert row(rows, "tmdb").status == :ok
@@ -654,11 +671,11 @@ defmodule Cinder.HealthTest do
         SidecarQuarantine.record("/library/movies/Movie (2020)/Movie.en.srt", path, "occupied")
 
       stub(Cinder.Library.FilesystemMock, :lstat, fn ^path ->
-        Process.sleep(2_000)
+        Process.sleep(10_000)
         {:ok, %File.Stat{}}
       end)
 
-      rows = Health.check_all()
+      rows = timed_at_budget(&Health.check_all/0)
 
       assert row(rows, "sidecar_files").status == {:error, :timeout}
       assert row(rows, "tmdb").status == :ok
@@ -667,10 +684,10 @@ defmodule Cinder.HealthTest do
     test "a timed-out row still names the adapter the operator picked" do
       stub_check_all_services()
       with_env(:health_probe_timeout_ms, %{"torrent" => 200})
-      stub(Cinder.Download.ClientMock, :health, fn -> sleep_ok(2_000) end)
+      stub(Cinder.Download.ClientMock, :health, fn -> sleep_ok(10_000) end)
 
       assert %{status: {:error, :timeout}, adapter: "ClientMock"} =
-               row(Health.check_all(), "torrent")
+               row(timed_at_budget(&Health.check_all/0), "torrent")
     end
 
     test "surfaces a 'Sidecar files' warning row for a retained sidecar whose file still exists" do
