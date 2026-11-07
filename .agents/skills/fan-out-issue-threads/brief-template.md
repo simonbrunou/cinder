@@ -86,8 +86,9 @@ write.
   every "Merge authority" condition against the fresh `origin/main`.
 - Resolve conflicts as the repo's docs say.
 - After the merge, wait on the CI run of the newest `main` commit as `AGENTS.md` "Merge
-  authority" says. When it is red, find or file its issue as that section says, with no
-  `Part of` line, send the issue number to the orchestrator, and go on to the deploy check.
+  authority" says, or skip it where that section lets you. When it is red, find or file its
+  issue as that section says, with no `Part of` line, send the issue number to the orchestrator,
+  and go on to the deploy check.
 - Check the deploy in a bounded foreground loop with {{DEPLOY}}. On a failed deploy, report and
   stop.
 
@@ -134,7 +135,8 @@ every candidate, one PR per fix.
 ## Done when
 
 - The PR is merged with CI green, #{{N}} is closed, you read the CI run of the newest `main`
-  commit, and the deploy check passed. Or you stopped with a stated reason.
+  commit or `AGENTS.md` let you skip it, and the deploy check passed. Or you stopped with a
+  stated reason.
 - Every issue you left is filed and linked from #{{N}}.
 - The retro ran, and each of its fixes is merged or listed with the reason it stayed open.
 
@@ -150,7 +152,7 @@ PR: <url, or none>
 Merge: <merge sha, or "not merged: <reason>">
 Tests: <the test result line>
 Change: <one line on what changed for the user or the code>
-Main CI: <green on <sha> | red on <sha>: #<issue> | n/a>
+Main CI: <green on <sha> | red on <sha>: #<issue> | skipped: same tree as <pushed sha> | n/a>
 Deploy: <ok | failed: <what> | n/a>
 Filed: <#n title; #n title | none>
 Retro fixes:

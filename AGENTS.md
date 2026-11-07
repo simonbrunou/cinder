@@ -65,9 +65,14 @@ A squash of several non-merge commits stops until you pass `--body-from=<sha>` o
 
 A branch behind `main` with no conflict merges as it is, with no sync and no CI re-run. The
 accepted risk is that two PRs that pass apart can break `main` together. The merging agent checks
-for that break after the merge. A newer push to `main` cancels the `ci.yml` run in progress, so
-in a burst of merges only the newest `main` commit's run is sure to finish. Wait on the
-`CI / <job> (push)` statuses of `main`'s head with
+for that break after the merge. `scripts/merge-pr` prints the merge SHA as `MERGED: #<n> as <sha>`.
+Run `git fetch origin`, then `git rev-parse <merge SHA>^{tree} <pushed SHA>^{tree}`. The same hash
+twice means the merge commit holds the files that the PR's CI passed, since that run checks out
+the pushed SHA itself, and the `push` run of `ci.yml` repeats the same three jobs on those files.
+Skip the wait below then: on #1221 it held the thread about 50 minutes. Two different hashes mean
+the merge holds files CI has not tested together, so wait. A newer push to `main` cancels the
+`ci.yml` run in progress, so in a burst of merges only the newest `main` commit's run is sure to
+finish. Wait on the `CI / <job> (push)` statuses of `main`'s head with
 `python3 -I ~/.agents/skills/forgejo-issues/scripts/forgejo.py ci cinder --follow main`
 ([ci.md](docs/agents/ci.md) "Reading a run" says how to run it and where every exit code is
 listed). It follows `main` on the forge and ends only on its head. That head is your merge commit
@@ -75,7 +80,7 @@ or a newer one. Exit 0 means it is green. Any exit 1 is a red run, whether a job
 failed job reads `Has been cancelled`, which follow mode reports only while `main` still points
 at that commit. When the newest run is red, first re-run its red jobs as [ci.md](docs/agents/ci.md)
 "Re-running CI" says, which also names the reds that get no re-run. When the run is still red
-after that, search the open issues, since every agent that merged in the burst sees the same run.
+after that, search the open issues, since every agent that waited in the burst sees the same run.
 Unless one already covers that run, file one labelled `needs-triage` that names the failing job.
 
 The merge-tree check exits 1 in two cases, told apart by their output. A conflict prints
