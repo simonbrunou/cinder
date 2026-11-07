@@ -472,6 +472,56 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:error, :unsupported_download_url} = Sabnzbd.add(%{download_url: nil})
   end
 
+  defp drain_requests(acc \\ []) do
+    receive do
+      {:request, host, path} -> drain_requests([{host, path} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  # The torrent clients read a download_url's scheme in any letter case (#1195). SABnzbd keeps
+  # answering each of these links as it did before that change.
+  test "add/1 answers upper-case magnet and http(s) links, ftp and a redirect to MAGNET: as before" do
+    test_pid = self()
+    hash = "0123456789abcdef0123456789abcdef01234567"
+    fetched = &[{"93.184.216.34", &1}]
+
+    stub(fn conn ->
+      send(test_pid, {:request, conn.host, conn.request_path})
+
+      case conn.request_path do
+        "/dl/" <> scheme ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "#{scheme}:?xt=urn:btih:#{hash}")
+          |> Plug.Conn.send_resp(302, "")
+
+        _ ->
+          Plug.Conn.send_resp(conn, 500, "")
+      end
+    end)
+
+    for {url, expected, requests} <- [
+          {"MAGNET:?xt=urn:btih:#{hash}&dn=Movie", {:error, :unsupported_scheme}, []},
+          {"Magnet:?xt=urn:btih:#{hash}&dn=Movie", {:error, :unsupported_scheme}, []},
+          {"MAGNET:?xt=urn:btih:#{hash}&dn=a b", {:error, " "}, []},
+          {"MAGNET:?xt=urn:btih:#{hash}&dn=a>b", {:error, ">"}, []},
+          {"MAGNET:", {:error, :unsupported_scheme}, []},
+          {"HTTP://indexer.example/file.torrent", {:error, {:nzb_fetch_status, 500}},
+           fetched.("/file.torrent")},
+          {"HTTPS://indexer.example/file.torrent", {:error, {:nzb_fetch_status, 500}},
+           fetched.("/file.torrent")},
+          {"ftp://indexer.example/file.torrent", {:error, :unsupported_scheme}, []},
+          {"https://indexer.example/dl/MAGNET", {:error, :unsupported_download_url},
+           fetched.("/dl/MAGNET")},
+          {"https://indexer.example/dl/magnet", {:error, :unsupported_download_url},
+           fetched.("/dl/magnet")}
+        ] do
+      assert {url, Sabnzbd.add(%{download_url: url})} == {url, expected}
+      assert {url, drain_requests()} == {url, requests}
+    end
+  end
+
   test "add/1 does not retry a transient failure (no duplicate downloads)" do
     # Re-enable Req's default retry for this test; the addfile path must override it to false.
     # Without the fix a 503 on the side-effecting POST would be retried up to 3×, re-queuing it.

@@ -207,6 +207,35 @@ defmodule Cinder.Download.Torrent do
   end
 
   @doc """
+  Reads which path a torrent client takes for a `download_url`, from its scheme compared
+  ASCII case-insensitively (RFC 3986 section 3.1), so an indexer's `MAGNET:` or `HTTP://` link
+  reads like its lower-case form. Returns `:magnet` for a `magnet:` link, `:http` for an
+  `http://` or `https://` URL, and `:unsupported` for anything else: another scheme, no scheme,
+  or an `http:` with no `//` authority, which RFC 9110 section 4.2.1 does not allow.
+  """
+  @spec download_url_kind(binary()) :: :magnet | :http | :unsupported
+  def download_url_kind(url) when is_binary(url) do
+    cond do
+      magnet?(url) -> :magnet
+      ascii_prefix?(url, "http://") or ascii_prefix?(url, "https://") -> :http
+      true -> :unsupported
+    end
+  end
+
+  @doc """
+  Whether `url` starts with the `magnet:` scheme in any ASCII letter case.
+  """
+  @spec magnet?(binary()) :: boolean()
+  def magnet?(url) when is_binary(url), do: ascii_prefix?(url, "magnet:")
+
+  # `String.downcase/2` in `:ascii` mode works byte by byte, so a prefix that is not valid
+  # UTF-8 compares unequal instead of raising.
+  defp ascii_prefix?(url, prefix) do
+    size = byte_size(prefix)
+    byte_size(url) >= size and String.downcase(binary_part(url, 0, size), :ascii) == prefix
+  end
+
+  @doc """
   Filters a magnet URI's endpoint params. `tr` is kept when its tracker host is in the set
   returned by `vet.(hosts)` (`vet` receives every candidate host, in order, so it can
   dedupe, cap and bound lookups); `ws`/`as`/`xs` likewise (http/https only). Keys are

@@ -378,4 +378,28 @@ defmodule Cinder.Download.TorrentTest do
 
     defp enc(s), do: URI.encode_www_form(s)
   end
+
+  describe "download_url_kind/1" do
+    test "reads the scheme in any ASCII letter case, and refuses every other link" do
+      for {url, kind} <- [
+            {"magnet:?xt=urn:btih:x", :magnet},
+            {"MAGNET:?xt=urn:btih:x", :magnet},
+            {"mAgNeT:", :magnet},
+            {"http://indexer.example/a.torrent", :http},
+            {"HtTpS://indexer.example/a.torrent", :http},
+            {"MAGNET", :unsupported},
+            {"magnet", :unsupported},
+            {"HTTPS:/indexer.example/a.torrent", :unsupported},
+            {"http:indexer.example/a.torrent", :unsupported},
+            {"ftp://indexer.example/a.torrent", :unsupported},
+            {" magnet:?xt=urn:btih:x", :unsupported},
+            {"", :unsupported},
+            # A first byte that is not valid UTF-8 compares unequal instead of raising.
+            {"\xffagnet:?xt=urn:btih:x", :unsupported},
+            {"magnet:\xff", :magnet}
+          ] do
+        assert {url, Torrent.download_url_kind(url)} == {url, kind}
+      end
+    end
+  end
 end

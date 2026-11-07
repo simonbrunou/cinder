@@ -24,14 +24,26 @@ defmodule Cinder.Download.Client.Transmission do
   def add(release), do: add(release, [])
 
   @impl true
-  def add(%{download_url: "magnet:" <> _ = magnet}, opts) do
+  def add(%{download_url: url} = release, opts) when is_binary(url) do
+    case Torrent.download_url_kind(url) do
+      :magnet -> add_magnet(url, opts)
+      :http -> fetch_and_add(url, release, opts)
+      :unsupported -> {:error, :unsupported_download_url}
+    end
+  end
+
+  def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
+
+  # `sanitize_magnet/2` rebuilds the link with a lower-case `magnet:` scheme, so Transmission
+  # never sees an indexer's `MAGNET:` spelling.
+  defp add_magnet(magnet, opts) do
     case Torrent.sanitize_magnet(magnet, &vet_hosts/1) do
       {:ok, clean} -> add_arguments(%{"filename" => clean}, opts)
       {:error, :bad_magnet} -> {:error, :unsupported_download_url}
     end
   end
 
-  def add(%{download_url: url} = release, opts) when is_binary(url) do
+  defp fetch_and_add(url, release, opts) do
     fetch_opts = [
       max_bytes: @max_torrent_bytes,
       error_tag: :torrent_fetch_status,
@@ -43,12 +55,10 @@ defmodule Cinder.Download.Client.Transmission do
 
     case Fetch.bytes(url, Map.get(release, :download_url_origin), fetch_opts) do
       {:ok, bytes} -> add_torrent(bytes, opts)
-      {:magnet, magnet} -> add(%{download_url: magnet}, opts)
+      {:magnet, magnet} -> add_magnet(magnet, opts)
       {:error, reason} -> {:error, reason}
     end
   end
-
-  def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
 
   defp add_torrent(bytes, opts) do
     with {:ok, clean} <- Torrent.sanitize_embedded_urls(bytes, &vet_hosts/1) do

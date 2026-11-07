@@ -1,6 +1,7 @@
 defmodule Cinder.Download.Client.Fetch do
   @moduledoc false
 
+  alias Cinder.Download.Torrent
   alias Cinder.HTTPPolicy
 
   @max_redirects 5
@@ -50,13 +51,12 @@ defmodule Cinder.Download.Client.Fetch do
 
   defp redirect(response, current, trust, opts) do
     case Req.Response.get_header(response, "location") do
-      ["magnet:" <> _ = magnet | _] ->
-        if Keyword.get(opts, :allow_magnet, false),
-          do: {:magnet, magnet},
-          else: {:error, :unsupported_download_url}
-
       [location | _] ->
-        follow_redirect(current, location, trust, opts)
+        cond do
+          not Torrent.magnet?(location) -> follow_redirect(current, location, trust, opts)
+          Keyword.get(opts, :allow_magnet, false) -> {:magnet, location}
+          true -> {:error, :unsupported_download_url}
+        end
 
       [] ->
         {:error, {Keyword.fetch!(opts, :error_tag), response.status}}

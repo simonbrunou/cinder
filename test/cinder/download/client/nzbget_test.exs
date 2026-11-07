@@ -70,6 +70,57 @@ defmodule Cinder.Download.Client.NzbgetTest do
              Nzbget.add(%{download_url: "https://provider.test/redirect"}, operation_key: @key)
   end
 
+  defp drain_requests(acc \\ []) do
+    receive do
+      {:request, host, path} -> drain_requests([{host, path} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  # The torrent clients read a download_url's scheme in any letter case (#1195), and the shared
+  # fetch helper reads a magnet `Location` that way too. NZBGet keeps answering each of these
+  # links as it did before that change, and keeps refusing a redirect to a magnet.
+  test "add/2 answers upper-case magnet and http(s) links, ftp and a redirect to MAGNET: as before" do
+    test_pid = self()
+    hash = "0123456789abcdef0123456789abcdef01234567"
+    fetched = &[{"93.184.216.34", &1}]
+
+    Req.Test.stub(Cinder.NzbgetStub, fn conn ->
+      send(test_pid, {:request, conn.host, conn.request_path})
+
+      case conn.request_path do
+        "/dl/" <> scheme ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "#{scheme}:?xt=urn:btih:#{hash}")
+          |> Plug.Conn.send_resp(302, "")
+
+        _ ->
+          Plug.Conn.send_resp(conn, 500, "")
+      end
+    end)
+
+    for {url, expected, requests} <- [
+          {"MAGNET:?xt=urn:btih:#{hash}&dn=Movie", {:error, :unsupported_scheme}, []},
+          {"Magnet:?xt=urn:btih:#{hash}&dn=Movie", {:error, :unsupported_scheme}, []},
+          {"MAGNET:?xt=urn:btih:#{hash}&dn=a b", {:error, " "}, []},
+          {"MAGNET:?xt=urn:btih:#{hash}&dn=a>b", {:error, ">"}, []},
+          {"MAGNET:", {:error, :unsupported_scheme}, []},
+          {"HTTP://indexer.example/file.torrent", {:error, {:nzb_fetch_status, 500}},
+           fetched.("/file.torrent")},
+          {"HTTPS://indexer.example/file.torrent", {:error, {:nzb_fetch_status, 500}},
+           fetched.("/file.torrent")},
+          {"ftp://indexer.example/file.torrent", {:error, :unsupported_scheme}, []},
+          {"https://indexer.example/dl/MAGNET", {:error, :unsupported_download_url},
+           fetched.("/dl/MAGNET")},
+          {"https://indexer.example/dl/magnet", {:error, :unsupported_download_url},
+           fetched.("/dl/magnet")}
+        ] do
+      assert {url, Nzbget.add(%{download_url: url}, operation_key: @key)} == {url, expected}
+      assert {url, drain_requests()} == {url, requests}
+    end
+  end
+
   test "find_by_operation_key/1 searches queue and history by the exact marker" do
     stub(fn conn, request ->
       case request["method"] do

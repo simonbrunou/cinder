@@ -45,18 +45,25 @@ defmodule Cinder.Download.Client.QBittorrent do
   def add(release), do: add(release, [])
 
   @impl true
-  def add(%{download_url: "magnet:" <> _ = magnet}, opts) do
+  def add(%{download_url: url} = release, opts) when is_binary(url) do
+    case Torrent.download_url_kind(url) do
+      :magnet -> add_magnet(url, opts)
+      :http -> add_torrent_url(release, opts)
+      :unsupported -> {:error, :unsupported_download_url}
+    end
+  end
+
+  def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
+
+  defp add_magnet(magnet, opts) do
     case torrent_id(magnet) do
       {:ok, hash} when is_binary(hash) -> add_magnet(magnet, hash, opts)
       :error -> {:error, :unsupported_download_url}
     end
   end
 
-  def add(%{download_url: "http://" <> _} = release, opts), do: add_torrent_url(release, opts)
-  def add(%{download_url: "https://" <> _} = release, opts), do: add_torrent_url(release, opts)
-
-  def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
-
+  # `sanitize_magnet/2` rebuilds the link with a lower-case `magnet:` scheme, so qBittorrent
+  # never sees an indexer's `MAGNET:` spelling.
   defp add_magnet(magnet, hash, opts) do
     case Torrent.sanitize_magnet(magnet, &vet_hosts/1) do
       {:ok, clean} -> post_magnet(clean, hash, opts)
@@ -110,7 +117,7 @@ defmodule Cinder.Download.Client.QBittorrent do
       {:ok, bytes} -> add_torrent_bytes(bytes, opts)
       # Magnet-only indexers answer their proxied downloadUrl with a 3xx to a
       # magnet: URI — route it through the magnet add path.
-      {:magnet, magnet} -> add(%{download_url: magnet}, opts)
+      {:magnet, magnet} -> add_magnet(magnet, opts)
       {:error, reason} -> {:error, reason}
     end
   end
@@ -212,8 +219,7 @@ defmodule Cinder.Download.Client.QBittorrent do
 
       {:ok, %{status: status} = resp} when status in [301, 302, 303, 307, 308] ->
         case Req.Response.get_header(resp, "location") do
-          ["magnet:" <> _ = magnet | _] -> {:magnet, magnet}
-          [location | _] -> follow_redirect(target.uri, location, trust, hops)
+          [location | _] -> redirect(target.uri, location, trust, hops)
           [] -> {:error, {:torrent_fetch_status, status}}
         end
 
@@ -223,6 +229,12 @@ defmodule Cinder.Download.Client.QBittorrent do
       other ->
         error(other)
     end
+  end
+
+  defp redirect(url, location, trust, hops) do
+    if Torrent.magnet?(location),
+      do: {:magnet, location},
+      else: follow_redirect(url, location, trust, hops)
   end
 
   defp follow_redirect(_url, _location, _trust, 0), do: {:error, :too_many_redirects}
@@ -526,7 +538,7 @@ defmodule Cinder.Download.Client.QBittorrent do
   # URI.new/1 can raise FunctionClauseError on a byte that is not valid UTF-8, so the magnet is
   # checked first. It returns {:error, part} on a character it rejects (`>`, `<`, a space) and a
   # URI with no query for a bare `magnet:`; neither has an infohash to read.
-  defp torrent_id("magnet:" <> _ = magnet) do
+  defp torrent_id(magnet) do
     with true <- String.valid?(magnet),
          {:ok, %URI{query: query}} when is_binary(query) <- URI.new(magnet) do
       topics =

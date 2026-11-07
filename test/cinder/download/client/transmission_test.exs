@@ -5,21 +5,21 @@ defmodule Cinder.Download.Client.TransmissionTest do
 
   @hash "0123456789abcdef0123456789abcdef01234567"
 
-  defp stub_rpc(handler) do
-    Req.Test.stub(Cinder.TransmissionStub, fn conn ->
-      assert Plug.Conn.get_req_header(conn, "authorization") != []
+  defp stub_rpc(handler), do: Req.Test.stub(Cinder.TransmissionStub, &serve_rpc(&1, handler))
 
-      case Plug.Conn.get_req_header(conn, "x-transmission-session-id") do
-        ["test-session"] ->
-          {:ok, body, conn} = Plug.Conn.read_body(conn)
-          handler.(conn, Jason.decode!(body))
+  defp serve_rpc(conn, handler) do
+    assert Plug.Conn.get_req_header(conn, "authorization") != []
 
-        [] ->
-          conn
-          |> Plug.Conn.put_resp_header("x-transmission-session-id", "test-session")
-          |> Plug.Conn.send_resp(409, "")
-      end
-    end)
+    case Plug.Conn.get_req_header(conn, "x-transmission-session-id") do
+      ["test-session"] ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        handler.(conn, Jason.decode!(body))
+
+      [] ->
+        conn
+        |> Plug.Conn.put_resp_header("x-transmission-session-id", "test-session")
+        |> Plug.Conn.send_resp(409, "")
+    end
   end
 
   defp success(conn, arguments),
@@ -166,6 +166,130 @@ defmodule Cinder.Download.Client.TransmissionTest do
                %{download_url: "https://tracker.test/file.torrent"},
                operation_key: "op-123"
              )
+  end
+
+  # Serves the torrent fetch (the test resolver maps every host to 93.184.216.34) with `fetch`,
+  # and the RPC endpoint with `handler` as `stub_rpc/1` does.
+  defp stub_fetch_and_rpc(fetch, handler) do
+    Req.Test.stub(Cinder.TransmissionStub, fn conn ->
+      if conn.host == "93.184.216.34", do: fetch.(conn), else: serve_rpc(conn, handler)
+    end)
+  end
+
+  # Reports every request before it flunks, so a test can refute a request even when Req
+  # swallows the stub's raise.
+  defp report_requests do
+    test_pid = self()
+
+    Req.Test.stub(Cinder.TransmissionStub, fn conn ->
+      send(test_pid, {:request, conn.host, conn.request_path})
+      flunk("no request may leave for this download_url: #{conn.host}#{conn.request_path}")
+    end)
+  end
+
+  defp report_submission(test_pid) do
+    fn conn, %{"method" => "torrent-add"} = request ->
+      send(test_pid, {:submitted, request["arguments"]["filename"]})
+      success(conn, %{"torrent-added" => %{"hashString" => @hash}})
+    end
+  end
+
+  # RFC 3986 section 3.1: a URI scheme is case-insensitive, and an indexer may send `MAGNET:`.
+  test "add/2 submits an upper- or mixed-case magnet as the lower-case link it submits" do
+    stub_rpc(report_submission(self()))
+
+    for scheme <- ["magnet", "MAGNET", "Magnet"] do
+      url = "#{scheme}:?xt=urn:btih:#{@hash}&dn=Movie"
+      assert Transmission.add(%{download_url: url}) == {:ok, @hash}
+    end
+
+    assert_received {:submitted, "magnet:?" <> _ = lower}
+    assert_received {:submitted, ^lower}
+    assert_received {:submitted, ^lower}
+  end
+
+  test "add/2 refuses an upper-case magnet it cannot parse, before any request" do
+    report_requests()
+
+    for url <- [
+          "MAGNET:?xt=urn:btih:#{@hash}&dn=a b",
+          "MAGNET:?xt=urn:btih:#{@hash}&dn=a>b",
+          "MAGNET:?xt=urn:btih:#{@hash}&dn=\xff",
+          "MAGNET:"
+        ] do
+      assert Transmission.add(%{download_url: url}) == {:error, :unsupported_download_url}
+    end
+
+    refute_received {:request, _, _}
+  end
+
+  test "add/2 fetches an HTTP:// or HTTPS:// torrent URL as it fetches the lower-case form" do
+    test_pid = self()
+
+    torrent_bytes =
+      "d8:announce11:http://x/an4:infod6:lengthi5e4:name5:M.mkv12:piece lengthi16384eee"
+
+    stub_fetch_and_rpc(
+      fn conn ->
+        send(test_pid, {:fetched, conn.scheme, conn.port, conn.request_path})
+        Req.Test.text(conn, torrent_bytes)
+      end,
+      fn conn, %{"method" => "torrent-add"} = request ->
+        send(test_pid, {:submitted, Base.decode64!(request["arguments"]["metainfo"])})
+        success(conn, %{"torrent-added" => %{"hashString" => @hash}})
+      end
+    )
+
+    for scheme <- ["http", "HTTP", "https", "HTTPS"] do
+      url = "#{scheme}://indexer.example/file.torrent"
+      assert Transmission.add(%{download_url: url}) == {:ok, @hash}
+      assert_received {:submitted, ^torrent_bytes}
+    end
+
+    assert_received {:fetched, :http, 80, "/file.torrent"}
+    assert_received {:fetched, :http, 80, "/file.torrent"}
+    assert_received {:fetched, :https, 443, "/file.torrent"}
+    assert_received {:fetched, :https, 443, "/file.torrent"}
+  end
+
+  test "add/2 refuses a download_url that is neither a magnet nor an http(s) URL, before any request" do
+    report_requests()
+
+    for url <- [
+          "ftp://indexer.example/file.torrent",
+          "indexer.example/file.torrent",
+          "",
+          # RFC 9110 section 4.2.1: an http(s) URI carries a `//` authority.
+          "http:indexer.example/file.torrent",
+          "HTTPS:/indexer.example/file.torrent"
+        ] do
+      assert Transmission.add(%{download_url: url}) == {:error, :unsupported_download_url}
+    end
+
+    refute_received {:request, _, _}
+  end
+
+  test "add/2 adds the magnet a fetch redirect to MAGNET: names, as it does for magnet:" do
+    test_pid = self()
+
+    stub_fetch_and_rpc(
+      fn conn ->
+        scheme = String.trim_leading(conn.request_path, "/dl/")
+
+        conn
+        |> Plug.Conn.put_resp_header("location", "#{scheme}:?xt=urn:btih:#{@hash}&dn=Movie")
+        |> Plug.Conn.send_resp(302, "")
+      end,
+      report_submission(test_pid)
+    )
+
+    for scheme <- ["magnet", "MAGNET"] do
+      url = "https://indexer.example/dl/#{scheme}"
+      assert Transmission.add(%{download_url: url}) == {:ok, @hash}
+    end
+
+    assert_received {:submitted, "magnet:?" <> _ = lower}
+    assert_received {:submitted, ^lower}
   end
 
   test "find_by_operation_key/1 and list_managed/0 use exact Cinder labels" do
