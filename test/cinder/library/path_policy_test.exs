@@ -8,7 +8,7 @@ defmodule Cinder.Library.PathPolicyTest do
   alias Cinder.Library.Filesystem.Disk
   alias Cinder.Library.{PathPolicy, StagedImport}
   alias Cinder.Settings
-  alias Cinder.Test.DiskTask
+  alias Cinder.Test.{BarrierFilesystem, DiskTask}
 
   # A synthetic filesystem with one directory holding more entries than the 100k
   # traversal cap, so the entry limit trips without creating 100k real files.
@@ -126,6 +126,49 @@ defmodule Cinder.Library.PathPolicyTest do
 
     assert {:error, :unsafe_destination} =
              PathPolicy.destination(sibling_path, root, filesystem: File)
+  end
+
+  # #1210: the manifest's path check tells a failed lstat from a refusal; destination/3's other
+  # callers keep the refusal. Both root orders, so neither the first nor the last root's answer
+  # can stand in for the one that holds the path.
+  @tag :tmp_dir
+  test "check_destination reports a failed lstat from the root holding the path", %{
+    tmp_dir: tmp
+  } do
+    movies = Path.join(tmp, "movies")
+    tv = Path.join(tmp, "tv")
+    folder = Path.join(movies, "Movie")
+    path = Path.join(folder, "Movie.mkv")
+    File.mkdir_p!(folder)
+    File.mkdir_p!(tv)
+    File.ln_s!(folder, Path.join(movies, "Linked"))
+    linked = Path.join(movies, "Linked/Movie.mkv")
+    opts = [filesystem: BarrierFilesystem]
+
+    for roots <- [[movies, tv], [tv, movies]] do
+      fail_folder_lstat(folder, :eio)
+
+      assert {roots, PathPolicy.check_destination(path, roots, opts)} ==
+               {roots, {:error, {:lstat, :eio}}}
+
+      fail_folder_lstat(folder, :rooted_helper_timeout)
+
+      assert {roots, PathPolicy.destination(path, roots, opts)} ==
+               {roots, {:error, :unsafe_destination}}
+
+      assert {roots, PathPolicy.check_destination(path, roots, opts)} == {roots, {:ok, path}}
+
+      assert {roots, PathPolicy.check_destination(linked, roots, opts)} ==
+               {roots, {:error, :unsafe_destination}}
+    end
+
+    fail_folder_lstat(folder, :eacces)
+    assert PathPolicy.check_destination(path, movies, opts) == {:error, {:lstat, :eacces}}
+    fail_folder_lstat(folder, :eacces)
+    assert PathPolicy.destination(path, movies, opts) == {:error, :unsafe_destination}
+
+    assert PathPolicy.check_destination(path, tv, opts) == {:error, :unsafe_destination}
+    assert PathPolicy.check_destination(path, [], opts) == {:error, :unsafe_destination}
   end
 
   @tag :tmp_dir
@@ -377,6 +420,16 @@ defmodule Cinder.Library.PathPolicyTest do
   end
 
   defp commit!(staged), do: Cinder.LibraryStubs.commit_staged(staged)
+
+  # Fails the next `lstat` of `folder` itself, not of the file inside it.
+  defp fail_folder_lstat(folder, reason) do
+    BarrierFilesystem.fail_once(%{
+      operation: :lstat,
+      source_contains: folder,
+      excludes: "Movie.mkv",
+      reason: reason
+    })
+  end
 
   defp configure_roots(tmp) do
     downloads = Path.join(tmp, "downloads")

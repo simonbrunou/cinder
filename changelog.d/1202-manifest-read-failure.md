@@ -7,5 +7,5 @@
   its sync record. When the read a manifest write starts from fails this way, the write now
   changes nothing, fails, and logs `subtitle manifest cannot be read` with the video and the
   reason. Release-sidecar marking whose read fails this way leaves that language unmarked, with a
-  warning. A write still starts from an empty manifest when Cinder cannot check the manifest's
-  path, or when the manifest reads but does not decode, as before.
+  warning. A write still starts from an empty manifest when the manifest reads but does not
+  decode, as before.

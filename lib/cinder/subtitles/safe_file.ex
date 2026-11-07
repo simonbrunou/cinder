@@ -30,6 +30,15 @@ defmodule Cinder.Subtitles.SafeFile do
   def safe_destination(path),
     do: path_policy().destination(path, Settings.video_library_roots(), filesystem: fs())
 
+  @doc """
+  `safe_destination/1`, but a failed `lstat` on the way to `path` is `{:error, {:lstat, reason}}`
+  instead of a refusal (`PathPolicy.check_destination/3`).
+  """
+  @spec check_destination(String.t()) ::
+          {:ok, String.t()} | {:error, :unsafe_destination} | {:error, {:lstat, term()}}
+  def check_destination(path),
+    do: path_policy().check_destination(path, Settings.video_library_roots(), filesystem: fs())
+
   @doc "Removes a file under a video root, refusing anything PathPolicy will not delete."
   @spec safe_remove(String.t()) :: :ok | {:error, term()}
   def safe_remove(path) do

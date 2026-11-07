@@ -19,6 +19,7 @@ defmodule Cinder.LibraryTest do
     end
 
     defdelegate destination(path, root, opts), to: Cinder.Test.PermissivePathPolicy
+    defdelegate check_destination(path, root, opts), to: Cinder.Test.PermissivePathPolicy
     defdelegate deletable_file(path, roots, opts), to: Cinder.Test.PermissivePathPolicy
     defdelegate deletable_source(path, roots, opts), to: Cinder.Test.PermissivePathPolicy
     defdelegate walk(path, opts), to: Cinder.Test.PermissivePathPolicy

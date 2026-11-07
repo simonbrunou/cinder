@@ -28,16 +28,35 @@ defmodule Cinder.Library.PathPolicy do
 
   @spec destination(String.t(), String.t() | [String.t()], keyword()) ::
           {:ok, String.t()} | {:error, :unsafe_destination}
-  def destination(path, roots, opts) when is_list(roots) do
-    Enum.find_value(roots, {:error, :unsafe_destination}, fn root ->
-      case destination(path, root, opts) do
-        {:ok, _expanded} = ok -> ok
-        {:error, :unsafe_destination} -> nil
+  def destination(path, roots, opts) do
+    case check_destination(path, roots, opts) do
+      {:error, {:lstat, _reason}} -> {:error, :unsafe_destination}
+      result -> result
+    end
+  end
+
+  @doc """
+  `destination/3` for a caller that must tell a refused path from one it could not check. An
+  `lstat` of an existing component that fails with anything but `:enoent` is
+  `{:error, {:lstat, reason}}`, where `destination/3` answers `{:error, :unsafe_destination}`. A
+  symlink component, a path outside the root and an invalid root stay
+  `{:error, :unsafe_destination}`. With a list of roots, the first root that accepts the path
+  wins, then the first failed `lstat`, so a root that does not contain the path never hides the
+  reason from the one that does.
+  """
+  @spec check_destination(String.t(), String.t() | [String.t()], keyword()) ::
+          {:ok, String.t()} | {:error, :unsafe_destination} | {:error, {:lstat, term()}}
+  def check_destination(path, roots, opts) when is_list(roots) do
+    Enum.reduce_while(roots, {:error, :unsafe_destination}, fn root, answer ->
+      case {check_destination(path, root, opts), answer} do
+        {{:ok, _expanded} = ok, _answer} -> {:halt, ok}
+        {{:error, {:lstat, _reason}} = failed, {:error, :unsafe_destination}} -> {:cont, failed}
+        {{:error, _reason}, answer} -> {:cont, answer}
       end
     end)
   end
 
-  def destination(path, root, opts) do
+  def check_destination(path, root, opts) do
     filesystem = Keyword.fetch!(opts, :filesystem)
     expanded = Path.expand(path)
 
@@ -46,6 +65,7 @@ defmodule Cinder.Library.PathPolicy do
          :ok <- safe_components(expanded, filesystem, true) do
       {:ok, expanded}
     else
+      {:error, reason} when reason != :symlink -> {:error, {:lstat, reason}}
       _ -> {:error, :unsafe_destination}
     end
   end

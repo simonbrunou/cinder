@@ -5,6 +5,7 @@ defmodule Cinder.Subtitles.ManifestTest do
   import ExUnit.CaptureLog
   import Mox
 
+  alias Cinder.Settings
   alias Cinder.Subtitles.Manifest
   alias Cinder.Test.DiskTask
 
@@ -408,6 +409,140 @@ defmodule Cinder.Subtitles.ManifestTest do
     assert Map.keys(Manifest.read(video).tracks) == ["fr"]
   end
 
+  # #1210: a path check whose `lstat` fails cannot tell whether the manifest is there, so a writer
+  # refuses to start from an empty one. The movies and tv roots are both configured, and the
+  # reason comes from the movies root, which holds the video.
+  @tag :tmp_dir
+  test "put/8 whose path check fails on the folder's lstat writes nothing and keeps the tracks",
+       %{
+         tmp_dir: tmp
+       } do
+    video = configure_disk(tmp)
+
+    assert [Path.join(tmp, "movies"), Path.join(tmp, "tv")] -- Settings.video_library_roots() ==
+             []
+
+    assert :ok = Manifest.put(video, "hash", "en", "opensubtitles_hash")
+    before = File.read!(Manifest.path(video))
+
+    for reason <- [:rooted_helper_timeout, :eio] do
+      fail_folder_lstat(video, reason)
+
+      log =
+        capture_log(fn ->
+          assert {reason, Manifest.put(video, "hash", "fr", "opensubtitles_hash")} ==
+                   {reason, {:error, {:unreadable_manifest, reason}}}
+        end)
+
+      assert log =~ "subtitle manifest cannot be read for #{video}: #{inspect(reason)}"
+      assert {reason, unreadable_warnings(log)} == {reason, 1}
+      assert {reason, File.read!(Manifest.path(video))} == {reason, before}
+      assert {reason, temporary_manifests(video)} == {reason, []}
+    end
+
+    assert :ok = Manifest.put(video, "hash", "fr", "opensubtitles_hash")
+    assert Map.keys(Manifest.read(video).tracks) == ["en", "fr"]
+  end
+
+  @tag :tmp_dir
+  test "read/1 whose path check fails on the folder's lstat warns once and reads empty", %{
+    tmp_dir: tmp
+  } do
+    video = configure_disk(tmp)
+    assert :ok = Manifest.put(video, "hash", "en", "opensubtitles_hash")
+
+    for reason <- [:rooted_helper_timeout, :eio] do
+      fail_folder_lstat(video, reason)
+
+      {state, log} = with_log(fn -> Manifest.read(video) end)
+
+      assert {reason, state} == {reason, %{video_moviehash: nil, tracks: %{}}}
+
+      assert {reason, log =~ "subtitle manifest cannot be read for #{video}: #{inspect(reason)}"} ==
+               {reason, true}
+
+      assert {reason, unreadable_warnings(log)} == {reason, 1}
+
+      {state, log} = with_log(fn -> Manifest.read(video) end)
+
+      assert {reason, Map.keys(state.tracks)} == {reason, ["en"]}
+      assert {reason, log} == {reason, ""}
+    end
+  end
+
+  @tag :tmp_dir
+  test "every other writer whose path check fails on the folder's lstat writes nothing", %{
+    tmp_dir: tmp
+  } do
+    video = configure_disk(tmp)
+    sync = valid_sync()
+
+    File.write!(
+      Manifest.path(video),
+      Jason.encode!(%{
+        video_moviehash: "hash",
+        tracks: %{
+          "en" => %{origin: "opensubtitles_hash", sync: sync},
+          "fr" => %{
+            origin: "opensubtitles_hash",
+            sync: sync,
+            replacement_cleanup_sync: sync,
+            reset_cleanup_sync: sync,
+            backup_tombstone: %{identity: [1, 2, 3]}
+          }
+        }
+      })
+    )
+
+    before = File.read!(Manifest.path(video))
+
+    for {name, writer} <- writers(sync) do
+      fail_folder_lstat(video, :eio)
+      {result, log} = with_log(fn -> writer.(video) end)
+
+      assert {name, result} == {name, {:error, {:unreadable_manifest, :eio}}}
+      assert {name, unreadable_warnings(log)} == {name, 1}
+      assert {name, log =~ "subtitle manifest cannot be read for #{video}: :eio"} == {name, true}
+      assert {name, File.read!(Manifest.path(video))} == {name, before}
+    end
+
+    assert temporary_manifests(video) == []
+  end
+
+  # A symlinked folder or a path outside every video root is no transient failure: `write/2`
+  # refuses it too, so the refusal reads as an empty manifest and logs nothing, as before #1210.
+  @tag :tmp_dir
+  test "a symlinked video folder or a video outside every root is refused without a warning", %{
+    tmp_dir: tmp
+  } do
+    real_video = configure_disk(tmp)
+    assert :ok = Manifest.put(real_video, "hash", "en", "opensubtitles_hash")
+    before = File.read!(Manifest.path(real_video))
+    linked = Path.join(Path.dirname(Path.dirname(real_video)), "Linked")
+    File.ln_s!(Path.dirname(real_video), linked)
+    outside = Path.join(tmp, "outside/Movie/Movie.mkv")
+    File.mkdir_p!(Path.dirname(outside))
+    File.write!(outside, "video")
+    File.write!(Manifest.path(outside), before)
+
+    for video <- [Path.join(linked, Path.basename(real_video)), outside] do
+      {result, log} = with_log(fn -> Manifest.put(video, "hash", "fr", "opensubtitles_hash") end)
+
+      assert {video, result} == {video, {:error, :unsafe_destination}}
+      assert {video, log} == {video, ""}
+
+      {state, log} = with_log(fn -> Manifest.read(video) end)
+
+      assert {video, state} == {video, %{video_moviehash: nil, tracks: %{}}}
+      assert {video, log} == {video, ""}
+    end
+
+    assert File.read!(Manifest.path(real_video)) == before
+    assert File.read!(Manifest.path(outside)) == before
+    assert temporary_manifests(real_video) == []
+    assert temporary_manifests(outside) == []
+  end
+
   test "put/4 writes a temporary manifest before renaming it into place" do
     manifest = "/lib/M/.M.mkv.cinder-subtitles.json"
 
@@ -574,6 +709,17 @@ defmodule Cinder.Subtitles.ManifestTest do
   # Fails the next read of a manifest, and only that one.
   defp fail_manifest_read(reason),
     do: fail_once(%{operation: :read, source_contains: ".cinder-subtitles.json", reason: reason})
+
+  # Fails the next `lstat` of the video's folder, the path check's walk, and only that one. The
+  # manifest's own path holds the video's name, so it is excluded.
+  defp fail_folder_lstat(video, reason) do
+    fail_once(%{
+      operation: :lstat,
+      source_contains: Path.dirname(video),
+      excludes: Path.basename(video),
+      reason: reason
+    })
+  end
 
   defp unreadable_warnings(log),
     do: length(String.split(log, "subtitle manifest cannot be read")) - 1

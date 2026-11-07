@@ -3,7 +3,8 @@ defmodule Cinder.Subtitles.Manifest do
 
   require Logger
 
-  import Cinder.Subtitles.SafeFile, only: [fs: 0, safe_destination: 1, safe_remove: 1]
+  import Cinder.Subtitles.SafeFile,
+    only: [check_destination: 1, fs: 0, safe_destination: 1, safe_remove: 1]
 
   # `own_track`: the video's own full subtitle track in that language, extracted by
   # `Cinder.Subtitles` in preference to a download (spec 069). `embedded` is the older last-resort
@@ -58,31 +59,34 @@ defmodule Cinder.Subtitles.Manifest do
   naming the video and the reason: starting from an empty state there would drop every other
   language's record (#1202).
 
-  A manifest path that `safe_destination/1` refuses still reads as an empty one, silently. That
-  refusal also covers a failed `lstat` on the way to the manifest (#1210).
+  A failed `lstat` other than `:enoent` while checking the manifest's path is the same error and
+  warning, with the `lstat` reason: the check could not tell whether the manifest is there (#1210).
+  A manifest path the check refuses (a symlink on the way, a path outside every video root) still
+  reads as an empty one, silently: `write/2` refuses that path too, so no writer can replace the
+  manifest there and no record is lost.
   """
   @spec load(String.t()) ::
           {:ok, %{video_moviehash: String.t() | nil, tracks: map()}}
           | {:error, {:unreadable_manifest, term()}}
   def load(video_path) do
-    case safe_destination(path(video_path)) do
+    case check_destination(path(video_path)) do
       {:ok, manifest_path} -> load_manifest(manifest_path, video_path)
+      {:error, {:lstat, reason}} -> unreadable(video_path, reason)
       {:error, :unsafe_destination} -> {:ok, empty()}
     end
   end
 
   defp load_manifest(manifest_path, video_path) do
     case fs().read(manifest_path) do
-      {:ok, json} ->
-        {:ok, decode(json, video_path)}
-
-      {:error, :enoent} ->
-        {:ok, empty()}
-
-      {:error, reason} ->
-        Logger.warning("subtitle manifest cannot be read for #{video_path}: #{inspect(reason)}")
-        {:error, {:unreadable_manifest, reason}}
+      {:ok, json} -> {:ok, decode(json, video_path)}
+      {:error, :enoent} -> {:ok, empty()}
+      {:error, reason} -> unreadable(video_path, reason)
     end
+  end
+
+  defp unreadable(video_path, reason) do
+    Logger.warning("subtitle manifest cannot be read for #{video_path}: #{inspect(reason)}")
+    {:error, {:unreadable_manifest, reason}}
   end
 
   @doc """

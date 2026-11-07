@@ -14,6 +14,9 @@ defmodule Cinder.Test.PermissivePathPolicy do
       else: {:error, :unsafe_destination}
   end
 
+  # Runs no `lstat`, so no check fails one.
+  def check_destination(path, roots, opts), do: destination(path, roots, opts)
+
   def deletable_file(_path, _roots, _opts), do: :ok
   def deletable_source(_path, _roots, _opts), do: :ok
 
