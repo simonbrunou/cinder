@@ -4,12 +4,17 @@ defmodule Cinder.CodeHealth.CommentLineLengthTest do
   # `Task.start` or `config.exs`, so a long comment line naming such a function or file passes
   # `credo --strict`. Credo also never reads config/ or priv/, and `mix format` wraps code, never
   # comments. On #1029 an edit joined two comment lines into one of 153 characters, and only a
-  # reviewer saw it. This fence measures each comment in lib/, test/, config/, priv/, scripts/,
-  # mix.exs and .formatter.exs from the parser's own comment list, and skips a comment holding a
-  # URL, as Credo means to.
+  # reviewer saw it. Edits that lengthened a wrapped comment line, or joined two, without
+  # rewrapping left four lines of 109 to 117 characters in lib/, and on #1222 a reviewer caught
+  # a 113-character join: all passed this fence's old bound of 120. With those four and two other
+  # lines rewrapped, the longest comment left ran to 104, so the bound sits at 105. This fence
+  # measures each comment in the .ex and .exs files under lib/, test/, config/, priv/ and
+  # scripts/, plus mix.exs and .formatter.exs, from the parser's own comment list, and skips a
+  # comment holding a URL, as Credo means to. Forms the walk does not follow include: a comment
+  # in a shell script under scripts/, a Python helper under priv/ or a HEEx template.
   use ExUnit.Case, async: true
 
-  @max 120
+  @max 105
 
   test "no comment line runs past #{@max} characters" do
     paths =
@@ -27,9 +32,9 @@ defmodule Cinder.CodeHealth.CommentLineLengthTest do
   end
 
   test "a comment counts from column 1, and a URL comment or a string's # does not" do
-    over = "  # " <> String.duplicate("x", 117)
-    at_max = "  # " <> String.duplicate("x", 116)
-    url = "  # https://example.com/" <> String.duplicate("x", 120)
+    over = "  # " <> String.duplicate("x", @max - 3)
+    at_max = "  # " <> String.duplicate("x", @max - 4)
+    url = "  # https://example.com/" <> String.duplicate("x", @max)
 
     source = """
     defmodule M do
@@ -40,12 +45,18 @@ defmodule Cinder.CodeHealth.CommentLineLengthTest do
       def f, do: :ok
     #{url}
     #{at_max}
-      def g, do: :ok # #{String.duplicate("x", 102)}
+      def g, do: :ok # #{String.duplicate("x", @max - 18)}
       def h, do: "#{over}"
     end
     """
 
-    assert long_comments(source) == [{2, 121}, {9, 121}]
+    assert long_comments(source) == [{2, @max + 1}, {9, @max + 1}]
+  end
+
+  test "a 113-character comment fails, as the join a reviewer caught on #1222 did" do
+    joined = "  # " <> String.duplicate("x", 109)
+
+    assert long_comments("defmodule M do\n#{joined}\nend\n") == [{2, 113}]
   end
 
   # The `{line, width}` of each comment wider than `@max`, counting the code before it on its

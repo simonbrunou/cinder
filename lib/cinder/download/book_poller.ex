@@ -302,11 +302,12 @@ defmodule Cinder.Download.BookPoller do
   # --- audiobookshelf scan phase ---
 
   # Retryable, not one-shot: unlike a staged import's post-commit effects (claimed once per
-  # journal row by `Cinder.Library.StagedImport.commit/2`, regardless of their own success), this re-derives its
-  # work from `audiobookshelf_scanned_at: nil` every tick, so a scan failure simply leaves the
-  # target here to be retried next tick — the roadmap's "refresh failure is recoverable without
-  # re-downloading" requirement. The already-`:available`, already-on-disk file is never touched
-  # by any of this: the download/import path and this scan-request path share no failure state.
+  # journal row by `Cinder.Library.StagedImport.commit/2`, regardless of their own success), this
+  # re-derives its work from `audiobookshelf_scanned_at: nil` every tick, so a scan failure simply
+  # leaves the target here to be retried next tick — the roadmap's "refresh failure is recoverable
+  # without re-downloading" requirement. The already-`:available`, already-on-disk file is never
+  # touched by any of this: the download/import path and this scan-request path share no failure
+  # state.
   #
   # `AudiobookServer.scan/0` takes no per-book argument — it triggers a WHOLE-LIBRARY rescan, the
   # only shape Audiobookshelf's API offers. Calling it once per pending target would issue N

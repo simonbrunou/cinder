@@ -843,9 +843,10 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   # `:discard` leaves an empty workspace tombstone that pending records and deterministic
   # reversals read: it empties a displaced inode that only the workspace names, and otherwise puts
   # a fresh empty file in its place (`replace_shared_tombstone/2`). A correction's final record
-  # retires it (`Workspace.retire/2`); `Workspace.sweep/3` retires one no record names. `:unlink` (`swap/3`) only
-  # removes the displaced inode's workspace name. Either way a release sidecar, a hardlink into a
-  # download that may still be seeding, keeps its bytes under that other name (#860).
+  # retires it (`Workspace.retire/2`); `Workspace.sweep/3` retires one no record names. `:unlink`
+  # (`swap/3`) only removes the displaced inode's workspace name. Either way a release sidecar, a
+  # hardlink into a download that may still be seeding, keeps its bytes under that other name
+  # (#860).
   defp dispose_displaced(staged_path, current, :discard, committed_warning) do
     case empty_displaced(staged_path, current) do
       :ok ->
@@ -894,8 +895,9 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   # already holds the published bytes, which is all `recover/4` reads. A crash after the create,
   # or a rename that fails after the check proved the staged name still holds the displaced
   # inode, leaves the fresh file beside that staged name, so the download's file keeps that
-  # second name until `Workspace.retire/2` or `Workspace.sweep/3` finishes this rename (#1131, #1156). When the check
-  # fails, nothing proves the staged name still holds the displaced inode, so the fresh file goes.
+  # second name until `Workspace.retire/2` or `Workspace.sweep/3` finishes this rename
+  # (#1131, #1156). When the check fails, nothing proves the staged name still holds the
+  # displaced inode, so the fresh file goes.
   defp replace_shared_tombstone(staged_path, current) do
     fresh_path = staged_path |> Path.dirname() |> Workspace.tombstone_path()
 
