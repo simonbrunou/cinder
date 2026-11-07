@@ -15,6 +15,18 @@
 - `dependency-audit` runs `mix hex.audit` and `mix deps.audit`.
 - The runner is shared with other repositories, so a PR's jobs can queue behind their runs.
 
+## Changing a workflow
+
+- A `run:` step with logic of its own (a guard, a loop, a branch on a value) that you add, or
+  whose logic you change, gets a test under `test/code_health/` that runs the step's text from
+  the YAML under the runner's shell flags, as `test/code_health/ci_container_attempt_test.exs`
+  does (its `@bash_flags`). The test puts a stub first on `PATH` for each external command whose
+  result the step acts on, and fails each of those calls in turn. On #1223 the step's red runs
+  lived in a scratch harness until the Standards review, about 20 minutes from that finding to the
+  pushed test. That test's stub then failed every call, which stopped the removal step at its
+  first `docker ps`, and the re-check found three later `docker` calls whose failure no test
+  reached.
+
 ## Reading a run
 
 Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
