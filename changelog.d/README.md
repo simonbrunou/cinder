@@ -20,6 +20,21 @@ only `test/`, `.forgejo/workflows/`, `scripts/`, `.gitignore`, `AGENTS.md`, `doc
 - **A short bold summary (#843).** What changed for the user, and what they should do about it.
 ```
 
+Each kind of sentence below has its own paragraph, in the order of this list. Read the first one
+always, and each other one whose kind the fragment holds; a new paragraph adds its kind here. On
+#964 the author read the first 60 lines, which then ended above the paragraph on what Cinder did
+before the fix, and the fragment's account of the bug took a review and two re-check rounds:
+about 29 minutes from the first finding to the last fix.
+
+- every sentence about what Cinder does;
+- a sentence about a path whose code reads a list or setting an install can configure;
+- what such lists hold, or what a check over them decides;
+- that Cinder removes, cleans up or repairs something;
+- that Cinder no longer hangs or waits forever, or what a later call does after a timeout;
+- what Cinder did before the fix, which must hold on the merge base;
+- which release or file names a parser reads;
+- what the callers of a shared mechanism do.
+
 Each sentence about what Cinder does holds on every path the fragment covers: each fallback or
 other writer that still runs, and each case the code handles another way (a file with no
 moviehash, an entry written before the change). Prove each one, wording taken from a code comment
