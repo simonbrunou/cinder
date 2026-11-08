@@ -13,6 +13,15 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   """
   use CinderWeb, :live_view
 
+  defmodule Reread do
+    @moduledoc false
+    # The page's TMDB re-read (`reread_series/1`): whether a broadcast asked for one, whether one
+    # runs, and the timer of the window the last one opened (nil once it has ended).
+    defstruct due?: false, reading?: false, window: nil
+  end
+
+  alias __MODULE__.Reread
+
   import CinderWeb.DiscoverComponents
   import CinderWeb.LiveHelpers
   import CinderWeb.RequestHelpers, only: [assign_request_state: 1, normalize_profile: 2]
@@ -27,6 +36,9 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   require Logger
 
   @picks Language.preferences()
+
+  # The shortest time between the starts of two TMDB re-reads of the series (`reread_series/1`).
+  @tmdb_reread_interval :timer.minutes(5)
 
   @impl true
   def mount(%{"tmdb_id" => raw}, _session, socket) do
@@ -47,15 +59,15 @@ defmodule CinderWeb.SeriesDiscoveryLive do
        socket
        |> assign(
          tmdb_id: tmdb_id,
-         info: info,
          current_user: user,
          preferred_language: "original",
          proposed_profile: nil,
          tv_profiles: Catalog.list_profiles(:tv),
          movie_profiles: Catalog.list_profiles(:movies),
-         recommendations: []
+         recommendations: [],
+         tmdb_reread: %Reread{}
        )
-       |> assign(seasons: Enum.filter(info.seasons, &(&1.season_number != 0)))
+       |> assign_series(info)
        |> refresh_requests()
        |> assign_media_server()
        |> assign_request_state()
@@ -228,6 +240,16 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     {:noreply, socket}
   end
 
+  def handle_async(:tmdb_series, {:ok, {:ok, info}}, socket) do
+    {:noreply, socket |> assign_series(info) |> refresh_requests() |> reread_done()}
+  end
+
+  def handle_async(:tmdb_series, {:ok, {:error, reason}}, socket),
+    do: {:noreply, reread_failed(socket, reason)}
+
+  def handle_async(:tmdb_series, {:exit, reason}, socket),
+    do: {:noreply, reread_failed(socket, reason)}
+
   defp request_error(socket),
     do: put_flash(socket, :error, gettext("Couldn't complete that request. Please try again."))
 
@@ -314,13 +336,17 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   end
 
   # Episode imports ride the "series" topic, as does a changed media-server season inventory;
-  # either can flip a season's badge live.
+  # either can flip a season's badge live. Each also asks for a fresh TMDB answer.
   def handle_info({event, _id}, socket) when event in [:series_updated, :series_deleted] do
-    {:noreply, refresh_availability(socket)}
+    {:noreply, socket |> refresh_availability() |> reread_series()}
   end
 
   def handle_info(:media_server_seasons_updated, socket) do
-    {:noreply, refresh_availability(socket)}
+    {:noreply, socket |> refresh_availability() |> reread_series()}
+  end
+
+  def handle_info(:tmdb_reread_window_ended, socket) do
+    {:noreply, socket |> end_reread_window() |> maybe_reread_series()}
   end
 
   # An admin switching media-server type/URL must not leave an open page linking at the old one,
@@ -334,6 +360,54 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   defp refresh_availability(socket) do
     socket |> refresh_requests() |> assign_request_state() |> assign_media_server()
   end
+
+  # Season 0 (Specials) can't be requested, so the season list leaves it out.
+  defp assign_series(socket, info) do
+    assign(socket, info: info, seasons: Enum.filter(info.seasons, &(&1.season_number != 0)))
+  end
+
+  # TMDB's answer says which seasons still air (`MediaServerSeasons.aired_total/2`), so a page
+  # holding the mount's answer would read "Up to date, airing" past a finale until a reload. An
+  # inventory or series broadcast therefore marks a fresh read due, after the page has refreshed
+  # from the answer it holds. The read runs off-process, one at a time, and opens a window of
+  # @tmdb_reread_interval in which no other read starts. A read that falls due inside the window,
+  # or while a read runs, starts once both have ended, however many broadcasts asked for it. The
+  # mount's read opens no window, so the first broadcast reads at once.
+  defp reread_series(socket), do: socket |> update_reread(due?: true) |> maybe_reread_series()
+
+  defp maybe_reread_series(
+         %{assigns: %{tmdb_reread: %Reread{due?: true, reading?: false, window: nil}}} = socket
+       ) do
+    tmdb_id = socket.assigns.tmdb_id
+    window = Process.send_after(self(), :tmdb_reread_window_ended, @tmdb_reread_interval)
+
+    socket
+    |> update_reread(due?: false, reading?: true, window: window)
+    |> start_async(:tmdb_series, fn -> Catalog.tmdb_series(tmdb_id) end)
+  end
+
+  defp maybe_reread_series(socket), do: socket
+
+  defp reread_done(socket), do: socket |> update_reread(reading?: false) |> maybe_reread_series()
+
+  # A failed re-read (a 404 included) keeps the held answer: the page stays as it was, with no
+  # flash.
+  defp reread_failed(socket, reason) do
+    Logger.warning("TMDB re-read of series #{socket.assigns.tmdb_id} failed: #{inspect(reason)}")
+    reread_done(socket)
+  end
+
+  # A test sends the window's end before the timer fires; cancelling the timer keeps it from
+  # ending a later window.
+  defp end_reread_window(%{assigns: %{tmdb_reread: %Reread{window: nil}}} = socket), do: socket
+
+  defp end_reread_window(%{assigns: %{tmdb_reread: %Reread{window: window}}} = socket) do
+    Process.cancel_timer(window)
+    update_reread(socket, window: nil)
+  end
+
+  defp update_reread(socket, changes),
+    do: assign(socket, :tmdb_reread, struct!(socket.assigns.tmdb_reread, changes))
 
   # A show Cinder never added has no reconciled series row, but its media-server season
   # inventory still names the show's item, so the link deep-links there too.
@@ -447,8 +521,10 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   # (`MediaServerSeasons.coverage/3`); `:up_to_date_airing` while it airs and the server holds
   # every aired episode; `{:partial, have, total}` while either side holds some of it, counted
   # against the aired total while it airs (`partial_total/4` has the exception). The Request
-  # button stays on the last two. Absent otherwise. `info` is TMDB's answer at mount, so an open
-  # page counts the episodes aired by then; a reload reads TMDB again.
+  # button stays on the last two. Absent otherwise. `info` is TMDB's latest answer: the mount's,
+  # then each re-read an inventory or series broadcast starts, at most one per
+  # @tmdb_reread_interval (`reread_series/1`). So an open page counts the episodes aired by its
+  # latest read.
   defp assign_availability(socket) do
     %{tmdb_id: tmdb_id, seasons: seasons, info: info} = socket.assigns
     landed = MapSet.new(Catalog.available_season_keys(tmdb_id), fn {_tid, n} -> n end)

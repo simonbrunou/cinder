@@ -2,6 +2,7 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
   use CinderWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import Mox
+  import ExUnit.CaptureLog, only: [capture_log: 1]
   import Cinder.CatalogFixtures
   import Cinder.ConfigCase, only: [put_media_server_web_url: 1, store_media_server_type: 1]
   import Cinder.PollerHelpers, only: [poll_media_server_seasons: 2]
@@ -302,11 +303,13 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
   end
 
   defp stub_got(fields) do
-    series =
-      Map.merge(%{tmdb_id: 1399, tvdb_id: 1, title: "GoT", year: 2011, poster_path: nil}, fields)
-
+    series = got(fields)
     stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 -> {:ok, series} end)
   end
+
+  defp got(fields),
+    do:
+      Map.merge(%{tmdb_id: 1399, tvdb_id: 1, title: "GoT", year: 2011, poster_path: nil}, fields)
 
   defp stub_season_episode_counts do
     stub_got(%{
@@ -399,15 +402,17 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
 
   # Seasons 1 and 2 each list 10 episodes on TMDB, announced ones included. `{season, episode}` of
   # the last and next episodes to air.
-  defp stub_airing({last_season, last_episode}, {next_season, next_episode}) do
-    stub_got(%{
+  defp stub_airing(last, next), do: stub_got(airing_fields(last, next))
+
+  defp airing_fields({last_season, last_episode}, {next_season, next_episode}) do
+    %{
       seasons: [
         %{season_number: 1, episode_count: 10},
         %{season_number: 2, episode_count: 10}
       ],
       last_episode_to_air: %{season_number: last_season, episode_number: last_episode},
       next_episode_to_air: %{season_number: next_season, episode_number: next_episode}
-    })
+    }
   end
 
   defp request_season_1(user) do
@@ -544,6 +549,200 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
 
     assert has_element?(lv, "#seriesdiscovery-season-progress-1", "8 of 10 episodes available")
     assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+  end
+
+  # Season 1 airs up to E09 with E10 next, and the server holds all 9: "Up to date, airing".
+  defp open_airing_page(conn) do
+    stub_airing({1, 9}, {1, 10})
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 9)])
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+    assert has_element?(lv, "#seriesdiscovery-season-status-1", "Up to date, airing")
+    assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+    lv
+  end
+
+  # Stubs `get_series` with GoT as `stub_airing/2` builds it, and reports each call the page
+  # makes. A call from the test process (a request the test creates reads TMDB too) goes
+  # unreported.
+  defp stub_counted_airing(last, next) do
+    series = got(airing_fields(last, next))
+    test = self()
+
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+      if self() != test, do: send(test, :tmdb_series_read)
+      {:ok, series}
+    end)
+  end
+
+  defp failed_read(:raise), do: raise("TMDB stub crash")
+  defp failed_read(reply), do: reply
+
+  defp broadcast_series(message), do: Phoenix.PubSub.broadcast(Cinder.PubSub, "series", message)
+
+  test "an open page reads Available once TMDB stops listing a next episode in the season", %{
+    conn: conn
+  } do
+    lv = open_airing_page(conn)
+
+    # The finale aired: TMDB's next episode is in season 2, and the server picks up E10.
+    stub_airing({1, 10}, {2, 1})
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 10)])
+    render_async(lv)
+
+    assert has_element?(lv, "#seriesdiscovery-season-status-1", "Available")
+    refute has_element?(lv, ~s(button[phx-value-season="1"]))
+  end
+
+  for {label, message} <- [
+        {"an inventory change", :media_server_seasons_updated},
+        {"a series update", {:series_updated, 1}},
+        {"a series deletion", {:series_deleted, 1}}
+      ] do
+    test "#{label} re-reads TMDB", %{conn: conn} do
+      lv = open_airing_page(conn)
+      stub_counted_airing({1, 10}, {2, 1})
+
+      broadcast_series(unquote(Macro.escape(message)))
+      render_async(lv)
+
+      # The server still holds 9 of the finished season's 10.
+      assert_received :tmdb_series_read
+      assert has_element?(lv, "#seriesdiscovery-season-progress-1", "9 of 10 episodes available")
+      refute has_element?(lv, "#seriesdiscovery-season-status-1")
+    end
+  end
+
+  test "settings and request broadcasts refresh the page from the held TMDB answer", %{
+    conn: conn
+  } do
+    stub_airing({1, 9}, {1, 10})
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 9)])
+    user = Cinder.AccountsFixtures.user_fixture()
+    {:ok, lv, _html} = conn |> log_in_user(user) |> live(~p"/series/tmdb/1399")
+    stub_counted_airing({1, 10}, {2, 1})
+
+    Phoenix.PubSub.broadcast(Cinder.PubSub, "settings", :settings_updated)
+    request_season_1(user)
+    render_async(lv)
+
+    refute_received :tmdb_series_read
+    assert has_element?(lv, "#seriesdiscovery-season-status-1", "Pending")
+    assert has_element?(lv, "#seriesdiscovery-season-progress-1", "Every aired episode available")
+  end
+
+  test "a re-read lists the seasons TMDB now lists, still without Specials", %{conn: conn} do
+    lv = open_airing_page(conn)
+    refute has_element?(lv, ~s(button[phx-value-season="3"]))
+
+    stub_got(%{
+      seasons: [
+        %{season_number: 0, episode_count: 2},
+        %{season_number: 1, episode_count: 10},
+        %{season_number: 2, episode_count: 10},
+        %{season_number: 3, episode_count: 8}
+      ],
+      last_episode_to_air: %{season_number: 1, episode_number: 9},
+      next_episode_to_air: %{season_number: 1, episode_number: 10}
+    })
+
+    broadcast_series(:media_server_seasons_updated)
+    render_async(lv)
+
+    assert has_element?(lv, ~s(button[phx-value-season="3"]), "Request")
+    refute has_element?(lv, ~s(button[phx-value-season="0"]))
+  end
+
+  test "triggers inside the re-read window wait for it to end, then read TMDB once", %{
+    conn: conn
+  } do
+    lv = open_airing_page(conn)
+    stub_counted_airing({1, 9}, {1, 10})
+
+    broadcast_series(:media_server_seasons_updated)
+    render_async(lv)
+    assert_received :tmdb_series_read
+
+    # The finale airs inside the window: neither trigger reads TMDB yet.
+    stub_counted_airing({1, 10}, {2, 1})
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 10)])
+    broadcast_series({:series_updated, 1})
+    render_async(lv)
+
+    refute_received :tmdb_series_read
+    assert has_element?(lv, "#seriesdiscovery-season-status-1", "Up to date, airing")
+
+    send(lv.pid, :tmdb_reread_window_ended)
+    render_async(lv)
+
+    assert_received :tmdb_series_read
+    refute_received :tmdb_series_read
+    assert has_element?(lv, "#seriesdiscovery-season-status-1", "Available")
+  end
+
+  test "a trigger while a read is in flight waits for that read, then reads once", %{conn: conn} do
+    lv = open_airing_page(conn)
+    series = got(airing_fields({1, 10}, {2, 1}))
+    test = self()
+    in_flight = :counters.new(1, [])
+
+    # Each read reports how many reads are in flight, itself included, then waits for release.
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+      :counters.add(in_flight, 1, 1)
+      send(test, {:tmdb_series_read, self(), :counters.get(in_flight, 1)})
+
+      receive do
+        :release -> :counters.sub(in_flight, 1, 1)
+      after
+        10_000 -> :counters.sub(in_flight, 1, 1)
+      end
+
+      {:ok, series}
+    end)
+
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 10)])
+    assert_receive {:tmdb_series_read, first, 1}, 5_000
+
+    # The window ends while that read hangs; a new trigger still waits for it.
+    send(lv.pid, :tmdb_reread_window_ended)
+    broadcast_series(:media_server_seasons_updated)
+    render(lv)
+    refute_receive {:tmdb_series_read, _pid, _in_flight}, 200
+
+    send(first, :release)
+    assert_receive {:tmdb_series_read, second, 1}, 5_000
+    send(second, :release)
+    render_async(lv)
+
+    refute_received {:tmdb_series_read, _pid, _in_flight}
+    assert has_element?(lv, "#seriesdiscovery-season-status-1", "Available")
+  end
+
+  for {label, reply} <- [
+        {"an error", {:error, :timeout}},
+        {"a 404", {:error, {:tmdb_status, 404}}},
+        {"a crash", :raise}
+      ] do
+    test "a re-read that fails with #{label} keeps the page as it was, with no flash", %{
+      conn: conn
+    } do
+      lv = open_airing_page(conn)
+      reply = unquote(Macro.escape(reply))
+      stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 -> failed_read(reply) end)
+
+      log =
+        capture_log(fn ->
+          {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 10)])
+          render_async(lv)
+        end)
+
+      assert log =~ "TMDB re-read of series 1399 failed"
+      assert has_element?(lv, "#seriesdiscovery-season-status-1", "Up to date, airing")
+      assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+      refute has_element?(lv, "#flash-error")
+      refute has_element?(lv, "#flash-info")
+    end
   end
 
   test "a season Cinder has partly imported shows its episode count", %{conn: conn} do
