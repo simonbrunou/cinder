@@ -15,7 +15,7 @@ the two can't disagree, and it also names the stage that dropped a release befor
 download client for its protocol, a name that isn't the target's, the audio pick, for anime
 episodes a release that isn't a story episode or doesn't map to the wanted episodes, or for a TV
 season an alternate-numbered release that could name two different sets of episodes, or a native
-one a **vetted mapping** assigns to another season. Books have no automatic selection.
+one a **vetted mapping** assigns to another episode. Books have no automatic selection.
 _Avoid_: filter, matcher, release decision
 
 **Set-cover**:
@@ -89,9 +89,10 @@ _Avoid_: media (on its own), item
 **Vetted mapping**:
 An episode coordinate mapping an operator reviewed: `:curated` (a saved season offset) or
 `:manual` (a file matched to an episode by hand). When a vetted scene or aired mapping assigns a
-code to another season's episode, it wins over the native reading of that code: a TV season's
-search never reads a release naming the code as its own episode of that code. An `:inferred`
-mapping, derived by a provider sync or a migration, never wins over a native episode.
+code to any episode other than that code's native one, in another season or the same one, it
+wins over the native reading of that code: a TV season's search never reads a release naming the
+code as its own episode of that code. An `:inferred` mapping, derived by a provider sync or a
+migration, never wins over a native episode.
 _Avoid_: operator-reviewed mapping, operator-vetted mapping
 
 ### Downloads

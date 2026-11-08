@@ -38,7 +38,7 @@ defmodule Cinder.Acquisition.ReleaseJudge do
   4. **Mapping**, anime episodes and standard seasons. An anime release that doesn't resolve to
      wanted stable episode ids, or whose mapping snapshot can't be frozen, is dropped: a grab
      could link no episode. A season release with an alternate-numbered coordinate that resolves
-     two ways, or a native one a vetted mapping assigns to another season's episode
+     two ways, or a native one a vetted mapping assigns to an episode other than its native one
      (`:conflicting_standard_numbering`, `Cinder.Acquisition.judge_season/3`), is dropped: a grab
      couldn't tell which episodes it holds.
 
@@ -59,7 +59,7 @@ defmodule Cinder.Acquisition.ReleaseJudge do
     the Title.Year and season guards also reject for a missing year or the language before it, so
     they drop the row without a verdict of their own.
     `:conflicting_standard_numbering` marks a bridged coordinate that resolves two ways, or a
-    native one a vetted mapping assigns to another season's episode. An anime
+    native one a vetted mapping assigns to an episode other than its native one. An anime
     episode row with no frozen mapping is `:unsafe_anime_mapping` (the panel can't grab it), and
     one the role stage dropped is `:special_release` (the sweep never takes it; the operator
     may). The rest is the selection's own rules for one release: `Scorer.verdict/2` for a movie,

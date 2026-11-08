@@ -884,6 +884,78 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     end
   end
 
+  # #986: native S02E05 holds a 720p file while a mapping reads a release's "S02E05" as native
+  # S02E07, which holds the file a fold matched to it. A vetted mapping keeps the upgrade sweep
+  # from replacing S02E05's file with S02E07's; an inferred one keeps the native reading, so the
+  # same offer is grabbed. Each is stored as its writer stores it: the fold, the season offset
+  # panel, then a TMDB group sync.
+  describe "a mapping that reads a native code as another episode of the season" do
+    for {label, precedence, grabbed?} <- [
+          {"manual aired", :manual, false},
+          {"curated scene", :curated, false},
+          {"inferred scene", :inferred, true}
+        ] do
+      test "under a #{label} mapping to S02E07 the native upgrade is grabbed: #{grabbed?}" do
+        series = series_fixture(%{tvdb_id: 4343, title: "Offset Show", monitor_strategy: :all})
+        season = season_fixture(series, %{season_number: 2})
+
+        s02e05 =
+          episode_fixture(season, %{
+            episode_number: 5,
+            file_path: "/lib/Offset Show/S02E05.mkv",
+            imported_resolution: "720p",
+            imported_size: 1_000_000_000
+          })
+
+        s02e07 =
+          episode_fixture(season, %{
+            episode_number: 7,
+            file_path: "/lib/Offset Show/S02E07.mkv",
+            imported_resolution: "1080p",
+            imported_source: "bluray",
+            imported_size: 4_000_000_000
+          })
+
+        put_same_season_mapping(series, s02e07, unquote(precedence))
+
+        stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4343, "Offset Show", 2 ->
+          {:ok, [release("Offset.Show.S02E05.1080p.BluRay-GRP", %{size: 4_000_000_000})]}
+        end)
+
+        watch_grabs()
+        poll()
+
+        if unquote(grabbed?) do
+          assert_received :grab_attempted
+          assert Repo.get!(Episode, s02e05.id).grab_id
+        else
+          refute_grabbed()
+          assert Repo.get!(Episode, s02e05.id).grab_id == nil
+        end
+      end
+    end
+  end
+
+  defp put_same_season_mapping(series, episode, :manual) do
+    attrs = %{source: "tvdb", scheme: "aired", namespace: "4343", canonical_value: "S02E05"}
+    assert {:ok, _} = Identity.bind_manual_coordinate(series, attrs, episode)
+  end
+
+  defp put_same_season_mapping(series, episode, precedence) do
+    {source, namespace} =
+      if precedence == :curated, do: {"offset", "offset"}, else: {"tmdb", "group"}
+
+    assert {:ok, _} =
+             Identity.replace_provider_coordinates(series, source, namespace, "scene", [
+               %{
+                 scheme: "scene",
+                 canonical_value: "S02E05",
+                 precedence: precedence,
+                 episode_ids: [episode.id]
+               }
+             ])
+  end
+
   # #278 on the TV side: the pack's advertised size is the whole container, each episode's is one
   # file, so a pack out-weighs every file it itself delivered. Deliberately its own series and
   # season: the "episodes" describe seeds a 720p E01, and a genuine resolution winner anywhere in

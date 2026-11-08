@@ -974,8 +974,8 @@ defmodule Cinder.AcquisitionTest do
 
   # #924: native season 2 wants S02E05 (id 205), while a mapping reads a release's "S02E05" as
   # S01E33 (id 133). Season 2 is native, so the bridge never searches it for season 1. The rule
-  # reads an episode's season from its canonical mapping, so a control whose mapping points inside
-  # season 2 seeds that episode's canonical mapping too.
+  # finds a code's native episode by its canonical mapping, so `season_two/2` seeds those of 133,
+  # 205 and 207.
   describe "judge_season/3 and a vetted mapping to another season's episode (#924)" do
     defp season_two(mappings, episodes \\ [%{id: 205, episode_number: 5, state: :wanted}]) do
       season_context(
@@ -1038,12 +1038,11 @@ defmodule Cinder.AcquisitionTest do
     end
 
     # An auto-derived mapping never overrides the native episode (#156); a vetted one naming the
-    # native episode itself, or another episode of the same season, keeps the native reading too.
+    # native episode itself keeps the native reading too.
     for {label, scheme, precedence, episode_id} <- [
           {"an inferred scene mapping to another season", "scene", :inferred, 133},
           {"an inferred aired mapping to another season", "aired", :inferred, 133},
-          {"a vetted scene mapping to the native episode itself", "scene", :curated, 205},
-          {"a vetted aired mapping to another episode of the season", "aired", :manual, 207}
+          {"a vetted scene mapping to the native episode itself", "scene", :curated, 205}
         ] do
       test "#{label} keeps the native release" do
         stub_seasons(%{2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")]})
@@ -1057,6 +1056,95 @@ defmodule Cinder.AcquisitionTest do
         assert [%Release{resolution_evidence: nil}] = judged.kept
         assert {:ok, [{%Release{season: 2, episodes: [5]}, [5]}]} = ReleaseJudge.pick(judged)
       end
+    end
+
+    # An episode with no canonical mapping is no code's native episode, so a vetted mapping to it
+    # assigns the code elsewhere.
+    test "a vetted mapping to an episode with no canonical mapping drops the native release" do
+      stub_seasons(%{2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")]})
+      context = season_two([vetted("aired", "S02E05", [999], :manual)])
+
+      assert {:ok, judged} = Acquisition.judge_season(context, [5], [])
+      assert_dropped(judged, "The.Office.S02E05.1080p.WEB-DL-GRP")
+    end
+  end
+
+  # #986: a vetted mapping to another episode of the same season wins over the native reading
+  # too. Native S02E05 (id 205) and S02E07 (id 207) are both wanted, and the mapping reads a
+  # release's "S02E05" as S02E07, as a fold of a file named "S02E05" into S02E07 stores it.
+  describe "judge_season/3 and a vetted mapping to another episode of the season (#986)" do
+    defp both_wanted(mappings) do
+      season_two(mappings, [
+        %{id: 205, episode_number: 5, state: :wanted},
+        %{id: 207, episode_number: 7, state: :wanted}
+      ])
+    end
+
+    defp dropped_row?(judged, download_url) do
+      match?(
+        %{
+          release: %Release{resolution_evidence: :conflicting_standard_numbering},
+          dropped_at: :mapping,
+          verdict: {:rejected, :conflicting_standard_numbering}
+        },
+        Enum.find(judged.rows, &(&1.release.download_url == download_url))
+      )
+    end
+
+    # The release naming the folded code and the whole-season pack are dropped; the release naming
+    # the mapped episode's own code still covers it (#987 decides whether it should).
+    for {scheme, precedence} <- [{"scene", :curated}, {"scene", :manual}, {"aired", :manual}] do
+      test "a #{precedence} #{scheme} mapping drops the native release it assigns to S02E07" do
+        stub_seasons(%{
+          2 => [
+            raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP"),
+            raw_tv("The.Office.S02.1080p.WEB-DL-GRP", size: 10 * @gb),
+            raw_tv("The.Office.S02E07.1080p.WEB-DL-GRP")
+          ]
+        })
+
+        context =
+          both_wanted([vetted(unquote(scheme), "S02E05", [207], unquote(precedence))])
+
+        assert {:ok, judged} = Acquisition.judge_season(context, [5, 7], [])
+        assert dropped_row?(judged, "The.Office.S02E05.1080p.WEB-DL-GRP")
+        assert dropped_row?(judged, "The.Office.S02.1080p.WEB-DL-GRP")
+
+        assert [%Release{episodes: [7], resolution_evidence: nil}] = judged.kept
+        assert {:ok, [{%Release{season: 2, episodes: [7]}, [7]}]} = ReleaseJudge.pick(judged)
+      end
+    end
+
+    for scheme <- ["scene", "aired"] do
+      test "an inferred #{scheme} mapping to S02E07 keeps the native release" do
+        stub_seasons(%{2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")]})
+        context = both_wanted([vetted(unquote(scheme), "S02E05", [207], :inferred)])
+
+        assert {:ok, judged} = Acquisition.judge_season(context, [5, 7], [])
+        assert [%Release{resolution_evidence: nil}] = judged.kept
+        assert {:ok, [{%Release{season: 2, episodes: [5]}, [5]}]} = ReleaseJudge.pick(judged)
+      end
+    end
+
+    # Only a vetted mapping naming the code's native episode alone keeps the native reading: one
+    # that also names another episode assigns the code elsewhere.
+    test "a vetted mapping naming the native episode and S02E07 drops the native release" do
+      stub_seasons(%{2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")]})
+      context = both_wanted([vetted("scene", "S02E05", [205, 207], :curated)])
+
+      assert {:ok, judged} = Acquisition.judge_season(context, [5, 7], [])
+      assert_dropped(judged, "The.Office.S02E05.1080p.WEB-DL-GRP")
+    end
+
+    # A code with no native episode of its own (a file named "S02E30" folded into S02E07) assigns
+    # every episode it names elsewhere, and a whole-season pack holds every vetted code of the
+    # season.
+    test "a whole-season pack holding a vetted code with no native episode is dropped" do
+      stub_seasons(%{2 => [raw_tv("The.Office.S02.1080p.WEB-DL-GRP", size: 10 * @gb)]})
+      context = both_wanted([vetted("aired", "S02E30", [207], :manual)])
+
+      assert {:ok, judged} = Acquisition.judge_season(context, [5, 7], [])
+      assert_dropped(judged, "The.Office.S02.1080p.WEB-DL-GRP")
     end
   end
 

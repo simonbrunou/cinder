@@ -2546,6 +2546,65 @@ defmodule Cinder.Download.TvPollerTest do
     end
   end
 
+  # #986: a mapping reads the code "S02E05" as S02E07, as a fold of a file named "S02E05" into
+  # S02E07 stores it, while native S02E05 and S02E07 are both wanted. A vetted mapping keeps
+  # season 2's sweep from grabbing "S02E05", or the "S02" pack, for native S02E05, while "S02E07"
+  # still covers S02E07; an inferred one keeps the native reading. `covered` lists the episode
+  # numbers the grab holds.
+  for {label, scheme, precedence, title, covered} <- [
+        {"a manual aired", "aired", :manual, "Same.Season.S02E05", []},
+        {"a curated scene", "scene", :curated, "Same.Season.S02E05", []},
+        {"a manual scene", "scene", :manual, "Same.Season.S02E05", []},
+        {"a manual aired", "aired", :manual, "Same.Season.S02", []},
+        {"a manual aired", "aired", :manual, "Same.Season.S02E07", [7]},
+        {"an inferred aired", "aired", :inferred, "Same.Season.S02E05", [5]},
+        {"an inferred scene", "scene", :inferred, "Same.Season.S02E05", [5]},
+        {"an inferred aired", "aired", :inferred, "Same.Season.S02", [5, 7]}
+      ] do
+    test "#{label} mapping of S02E05 to S02E07: the sweep grabs #{title} for #{inspect(covered)}" do
+      series = series_fixture(%{title: "Same Season", tvdb_id: 777, monitor_strategy: :all})
+      season = season_fixture(series, %{season_number: 2})
+      episodes = %{5 => episode(season, 5), 7 => episode(season, 7)}
+      put_coordinate(series, episodes[7], unquote(scheme), unquote(precedence))
+      test_pid = self()
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 777, "Same Season", season_number ->
+        send(test_pid, {:searched_season, season_number})
+
+        {:ok,
+         [
+           %{
+             title: unquote(title) <> ".1080p.WEB-DL-GRP",
+             size: 3_000_000_000,
+             download_url: unquote(title)
+           }
+         ]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+        send(test_pid, {:grab_attempted, release.download_url})
+        {:ok, "hash-same-season"}
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+      assert :ok = TvPoller.poll()
+
+      assert_received {:searched_season, 2}
+
+      if unquote(covered) == [] do
+        refute_received {:grab_attempted, _}
+        assert Repo.all(Grab) == []
+      else
+        assert_received {:grab_attempted, unquote(title)}
+      end
+
+      for {number, episode} <- episodes do
+        assert is_integer(Repo.get!(Episode, episode.id).grab_id) ==
+                 number in unquote(covered)
+      end
+    end
+  end
+
   # Each mapping S02E05 -> `episode` as its writer stores it: the fold binds a manual one
   # (`Identity.bind_manual_coordinate/3`, which today gets TVDB aired evidence; the manual scene
   # row is #924's acceptance case), the season offset panel saves curated scene ones under

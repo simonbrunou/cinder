@@ -90,7 +90,7 @@ defmodule Cinder.Acquisition do
   @doc """
   The releases the upgrade sweep grabs for one TV `season` of `series`. It builds the season's
   release list as `judge_season/3` does, without the numbering bridge: one query for the native
-  season, its duplicate results dropped, a release a vetted mapping assigns to another season
+  season, its duplicate results dropped, a release a vetted mapping assigns to another episode
   marked, then judged, and takes the judge's pick (`Cinder.Acquisition.ReleaseJudge.pick/1`, the
   set-cover `Scorer.select_for/4` over what the judge keeps). `wanted_numbers` is the
   episode-number set the cover may claim, and `opts` the household policy plus the facts the
@@ -225,12 +225,13 @@ defmodule Cinder.Acquisition do
   `:conflicting_standard_numbering`, and the judge drops it at its mapping stage.
 
   A release of the native season gets the same mark when a vetted (`AnimeResolver.vetted?/1`)
-  scene or TVDB-aired mapping assigns one of its codes to another season's episode (#924): each
-  SxxEyy it names, or for a whole-season pack every vetted code of the season. The vetted reading
-  wins over the native one, so the panel refuses the release and the sweep never grabs it. For
-  anime, `AnimeResolver.strip_shadowed_canonical/1` lets a vetted scene mapping win the same way
-  (#156); this rule also counts aired mappings, and only a mapping to another season's episode.
-  An `:inferred` mapping, or one to an episode of the season itself, keeps the native reading.
+  scene or TVDB-aired mapping assigns one of its codes to any episode other than that code's
+  native one, in another season (#924) or the same one (#986): each SxxEyy it names, or for a
+  whole-season pack every vetted code of the season. The vetted reading wins over the native one,
+  so the panel refuses the release and the sweep never grabs it. For anime,
+  `AnimeResolver.strip_shadowed_canonical/1` lets a vetted scene mapping win the same way (#156);
+  this rule also counts aired mappings. An `:inferred` mapping, or a vetted one naming only the
+  code's native episode, keeps the native reading.
 
   Then it judges the releases (guard `{:series, series, season_number, wanted_numbers}`) under
   `opts`, the household policy, plus the bridge's canonical-number map as
@@ -535,19 +536,30 @@ defmodule Cinder.Acquisition do
   defp resolve_bridged_release(%Release{} = release, _native_season, _none), do: release
 
   # The season's own codes that a vetted (`AnimeResolver.vetted?/1`) scene or TVDB-aired
-  # mapping assigns to another season's episode (#924), looked up across every mapping of the
-  # series: the bridge's numbering keeps only those touching the searched episodes. An episode's
-  # season is its canonical mapping's, and an episode without one counts as another season's.
+  # mapping assigns to an episode other than the code's native one, in another season (#924) or
+  # the same one (#986), looked up across every mapping of the series: the bridge's numbering
+  # keeps only those touching the searched episodes. A code's native episode is the one whose
+  # canonical mapping carries it, so an episode without a canonical mapping, or any episode of a
+  # code no episode carries, counts as elsewhere.
   defp vetted_elsewhere_values(mappings, season_number) do
-    season_by_id = native_season_by_id(mappings)
+    native_ids_by_value = native_ids_by_value(mappings)
 
-    for %{identity: identity, episode_ids: episode_ids} = mapping <- mappings,
+    for %{identity: %{canonical_value: value} = identity, episode_ids: episode_ids} = mapping <-
+          mappings,
         identity.scheme in @standard_tv_bridged_schemes,
         AnimeResolver.vetted?(mapping),
-        Episode.season_from_code(identity.canonical_value) == season_number,
-        Enum.any?(episode_ids, &(Map.get(season_by_id, &1) != season_number)),
+        Episode.season_from_code(value) == season_number,
+        native_ids = Map.get(native_ids_by_value, value, MapSet.new()),
+        Enum.any?(episode_ids, &(not MapSet.member?(native_ids, &1))),
         into: MapSet.new(),
-        do: identity.canonical_value
+        do: value
+  end
+
+  defp native_ids_by_value(mappings) do
+    mappings
+    |> Enum.filter(&AnimeResolver.canonical_native?/1)
+    |> Enum.group_by(& &1.identity.canonical_value, & &1.episode_ids)
+    |> Map.new(fn {value, ids} -> {value, ids |> List.flatten() |> MapSet.new()} end)
   end
 
   # A release of the native season with a code in `vetted_elsewhere`: a whole-season pack holds
