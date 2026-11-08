@@ -17,23 +17,37 @@ defmodule Cinder.Library.BookArchive do
   Scene and usenet releases ship their `.rar` set with an `.nfo` and an `.sfv`, and public-tracker
   releases add a 0-byte `RARBG_DO_NOT_MIRROR.exe`. `archive_candidate/1` picks a folder's one
   archive for extraction (a `.rar` main volume together with its `.rNN` volumes) when every other
-  file beside it is a companion, a file that can never be the book: `.nfo`, `.sfv`, `.md5`,
-  `.par2`, `.txt`, `.url`, `.jpg`, `.jpeg`, `.png`, and every extension in
-  `Cinder.Download.ContentPolicy.blocked_extensions/0` (`.exe`, `.lnk`, ... by default). The
-  blocked list is read at call time, so an install's configured list counts too, and a blocked
-  file is a companion whatever its size (#781).
+  file beside it is a companion, a file that can never be the book. A file `archive?/1` does not
+  flag is a companion when either rule holds:
 
-  Those nine extensions are fixed on purpose. Any other file beside an archive could be the
-  release, or a second book: an accepted format of either kind, an audio file an audiobook import
-  refuses (`.flac`, `.m4a`, ...), a second archive `archive?/1` flags, or an unknown extension.
-  Each of those keeps the folder an `:unsupported_archive` refusal rather than a guess. (`.zipx`
-  is on `ContentPolicy`'s default blocked list, so it counts as a companion, not a second
-  archive.)
+  1. Its plain extension, the downcased `Path.extname/1`, is `.nfo`, `.sfv`, `.md5`, `.par2`,
+     `.txt`, `.url`, `.jpg`, `.jpeg`, `.png`, or in
+     `Cinder.Download.ContentPolicy.blocked_extensions/0` (`.exe`, `.lnk`, ... by default)
+     (#781).
+  2. `Cinder.Download.ContentPolicy.blocked_name?/1` reads its name as blocked, and its plain
+     extension is neither an accepted format of either book kind nor in
+     `Cinder.Library.AudiobookSources.other_audio_extensions/0` (#903).
 
-  A companion matches on its plain extension. `ContentPolicy` also reads a name with a trailing
-  dot or an alternate-data-stream suffix (`x.exe.`, `x.exe:$DATA`) as blocked; beside an archive
-  such a file is not a companion and the folder still refuses. That can only hold a release,
-  never publish a wrong one.
+  The blocked list is read at call time, so an install's configured list counts under both
+  rules, and a blocked file is a companion whatever its size.
+
+  Rule 2 follows the download content check. It reads the extension of the file name and of the
+  part before the first colon, each with trailing dots and spaces stripped, so
+  `RARBG_DO_NOT_MIRROR.exe.`, `x.exe ` and `x.exe:$DATA` (an alternate data stream) are a filler
+  `.exe` to it, and `ContentPolicy.check/1` passes them beside a `.rar` set or a `.zip`, which
+  its default `media_extensions/0` counts as media. Their plain extensions (`.`, `.exe `,
+  `.exe:$data`) are ones neither resolver publishes. The guard keeps a name such as
+  `x.exe:y.epub` or `x.exe:y.flac` refused: its plain extension is one a resolver acts on, and an
+  other-audio file must never be silently dropped (#504). The guard narrows rule 2 only: an
+  install that blocks `.flac` itself makes `x.exe:y.flac` a companion under rule 1, as it makes
+  `bonus.flac` one. `x.exe:y.zip` needs no guard, since `archive?/1` reads it as a second
+  archive. The nine fixed extensions stay on the plain match, so `x.nfo.` refuses.
+
+  Any other file beside an archive could be the release, or a second book: an accepted format of
+  either kind, an audio file an audiobook import refuses (`.flac`, `.m4a`, ...), a second archive
+  `archive?/1` flags, or an unknown extension in a name the content check does not block. Each
+  of those keeps the folder an `:unsupported_archive` refusal rather than a guess. (`.zipx` is on
+  `ContentPolicy`'s default blocked list, so it counts as a companion, not a second archive.)
 
   A companion is never published: it sits beside the archive, outside the scratch directory, and
   only what the extracted archive resolves to reaches the library.
@@ -66,8 +80,10 @@ defmodule Cinder.Library.BookArchive do
   ever mistaken for a second, unrelated book file.
   """
 
+  alias Cinder.Acquisition.BookKind
   alias Cinder.Download.ContentPolicy
   alias Cinder.Library
+  alias Cinder.Library.AudiobookSources
   alias Cinder.Library.BookArchive.{Rar, Zip}
   alias Cinder.RawFile
 
@@ -138,10 +154,23 @@ defmodule Cinder.Library.BookArchive do
     end
   end
 
-  # Read at call time, never copied, so an install's configured blocked list counts too.
+  # Read at call time, never copied, so an install's configured blocked list counts too. The
+  # second clause is the moduledoc's normalised reading, guarded by `resolver_extension?/1`.
   defp companion?(path) do
     extension = extension(path)
-    extension in @companion_extensions or extension in ContentPolicy.blocked_extensions()
+
+    extension in @companion_extensions or extension in ContentPolicy.blocked_extensions() or
+      (ContentPolicy.blocked_name?(path) and not resolver_extension?(extension))
+  end
+
+  # A plain extension one of the two resolvers acts on: an accepted format of either book kind,
+  # which it publishes, or an other-audio file, which the audiobook import refuses (#504). Read
+  # from where each list lives, at call time, so neither can drift from this guard.
+  defp resolver_extension?(extension) do
+    accepted =
+      for kind <- BookKind.all(), format <- BookKind.accepted_formats(kind), do: ".#{format}"
+
+    extension in accepted or extension in AudiobookSources.other_audio_extensions()
   end
 
   defp rar_volume?(path), do: Regex.match?(~r/^\.r\d{2}$/u, extension(path))

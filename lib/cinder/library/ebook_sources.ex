@@ -30,11 +30,12 @@ defmodule Cinder.Library.EbookSources do
   regular file — see each extractor's own moduledoc for exactly how, and why (both were built
   only after establishing what Erlang's own `:zip` module can and cannot verify).
 
-  A folder's archive may sit beside companions, files that can never be the book: `.nfo`,
-  `.sfv`, `.md5`, `.par2`, `.txt`, `.url`, `.jpg`, `.jpeg`, `.png`, and every extension in
-  `Cinder.Download.ContentPolicy.blocked_extensions/0` (a filler `.exe`, ...). They are ignored
-  for the extraction decision and never published. `Cinder.Library.BookArchive.archive_candidate/1`
-  makes that decision for both book kinds, and its "Companions" section gives the reasons (#781).
+  A folder's archive may sit beside companions, files that can never be the book, such as an
+  `.nfo`, an `.sfv`, a cover `.jpg`, a filler `.exe` (#781) or a filler whose name the download
+  content check reads as blocked, such as `x.exe:$DATA` (#903). They are ignored for the
+  extraction decision and never published. `Cinder.Library.BookArchive.archive_candidate/1`
+  makes that decision for both book kinds, and its "Companions" section gives the full rule and
+  the reasons.
 
   `.7z`, and a folder that mixes an archive with any non-companion file, still refuse outright
   with `:unsupported_archive` — the former because nothing here parses that format at all, the

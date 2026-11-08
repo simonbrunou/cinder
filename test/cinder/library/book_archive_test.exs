@@ -8,7 +8,8 @@ defmodule Cinder.Library.BookArchiveTest do
 
   import Mox
 
-  alias Cinder.Library.BookArchive
+  alias Cinder.Acquisition.BookKind
+  alias Cinder.Library.{AudiobookSources, BookArchive}
   alias Cinder.Library.Filesystem.Disk
 
   @moduletag :tmp_dir
@@ -59,11 +60,57 @@ defmodule Cinder.Library.BookArchiveTest do
       assert BookArchive.archive_candidate(~w(r.rar r.r00 r.r01 r.nfo r.sfv)) == {:ok, "r.rar"}
     end
 
-    # `x.exe.` is blocked by `ContentPolicy`'s normalised reading but is no companion here: a
-    # companion matches on its plain extension, and the folder refuses rather than guesses.
+    # #903: a name the download content check reads as blocked only after normalising it (a
+    # trailing dot or space, an alternate-data-stream suffix) is a filler too. Its plain
+    # extension is one neither resolver acts on, so it can never be the book.
+    test "a name the content check reads as blocked is a companion beside a zip or a .rar set" do
+      for name <- [
+            "x.exe.",
+            "x.exe ",
+            "x.exe:$DATA",
+            "RARBG_DO_NOT_MIRROR.exe.",
+            "x.lnk:Zone.Identifier",
+            "x.exe:y.foo"
+          ] do
+        assert BookArchive.archive_candidate(["r.zip", name]) == {:ok, "r.zip"}, name
+
+        assert BookArchive.archive_candidate(["r.rar", "r.r00", name]) == {:ok, "r.rar"},
+               name
+      end
+    end
+
+    # A name the content check reads as blocked still refuses when its plain extension is one a
+    # resolver acts on: an accepted format of either book kind, or an other-audio file an
+    # audiobook import refuses rather than drop (#504). `x.exe:y.zip` is a second archive.
     test "anything that could be the book, or is unknown, keeps the folder refused" do
       for name <-
-            ~w(b.epub b.mobi b.azw3 b.pdf b.m4b b.mp3 b.flac b.m4a b.docx b.zip noext x.exe.) do
+            ~w(b.epub b.mobi b.azw3 b.pdf b.m4b b.mp3 b.flac b.m4a b.docx b.zip noext
+               x.exe:y.epub x.exe:y.m4b x.exe:y.flac x.exe:y.zip x.EXE:y.EPUB) do
+        assert BookArchive.archive_candidate(["r.zip", name]) == {:error, :unsupported_archive},
+               name
+
+        assert BookArchive.archive_candidate(["r.rar", "r.r00", name]) ==
+                 {:error, :unsupported_archive},
+               name
+      end
+    end
+
+    test "a blocked name whose plain extension a resolver acts on refuses, for every such format" do
+      formats =
+        for kind <- BookKind.all(), format <- BookKind.accepted_formats(kind), do: ".#{format}"
+
+      for extension <- formats ++ AudiobookSources.other_audio_extensions() do
+        name = "x.exe:y" <> extension
+
+        assert BookArchive.archive_candidate(["r.zip", name]) == {:error, :unsupported_archive},
+               name
+      end
+    end
+
+    # The fixed nine extensions stay on the plain match: only the blocked list gets the
+    # content check's normalised reading.
+    test "a fixed companion extension with a trailing dot is no companion" do
+      for name <- ["r.nfo.", "r.jpg ", "r.txt:$DATA"] do
         assert BookArchive.archive_candidate(["r.zip", name]) == {:error, :unsupported_archive},
                name
       end
@@ -86,6 +133,33 @@ defmodule Cinder.Library.BookArchiveTest do
 
       assert BookArchive.archive_candidate(~w(r.zip RARBG_DO_NOT_MIRROR.exe)) ==
                {:error, :unsupported_archive}
+    end
+
+    # #903: the normalised reading uses the configured list too, never the default.
+    test "a configured blocked list is read for a normalised name as well" do
+      Cinder.ConfigCase.put_config(Cinder.Download.ContentPolicy, blocked_extensions: ~w(.APK))
+
+      assert BookArchive.archive_candidate(["r.zip", "x.apk."]) == {:ok, "r.zip"}
+      assert BookArchive.archive_candidate(["r.zip", "x.apk:$DATA"]) == {:ok, "r.zip"}
+
+      assert BookArchive.archive_candidate(["r.zip", "x.exe."]) ==
+               {:error, :unsupported_archive}
+    end
+
+    # The guard only narrows rule 2. An install that blocks an extension itself makes any file
+    # with that plain extension a companion under rule 1, whatever comes before it.
+    test "a plain extension the install blocks itself is a companion under rule 1" do
+      Cinder.ConfigCase.put_config(Cinder.Download.ContentPolicy,
+        blocked_extensions: ~w(.exe .flac .7z)
+      )
+
+      assert BookArchive.archive_candidate(["r.zip", "x.exe:y.flac"]) == {:ok, "r.zip"}
+
+      assert BookArchive.archive_candidate(["r.zip", "x.exe:y.epub"]) ==
+               {:error, :unsupported_archive}
+
+      # An archive is never a companion, blocked or not: it is a second archive.
+      assert BookArchive.archive_candidate(["r.zip", "x.7z"]) == {:error, :unsupported_archive}
     end
   end
 

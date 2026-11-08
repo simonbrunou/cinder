@@ -368,6 +368,32 @@ defmodule Cinder.Download.AudiobookPollerTest do
 
       assert [%BookFile{format: :m4b}] = Repo.all(BookFile)
     end
+
+    # #903: a filler the content check reads as `.exe` only after normalising its name (here an
+    # alternate-data-stream suffix) is a companion too, and never reaches the library.
+    test "a .rar set with a normalised filler beside it imports the audiobook alone", ctx do
+      %{target: target, audiobooks: audiobooks, release_dir: release_dir} = downloading(ctx, %{})
+
+      %{fakebin: fakebin, original_path: original_path} = ctx
+      script = FakeUnrar.extracting(fakebin, "The Dispossessed.m4b", m4b_bytes())
+      FakeUnrar.install(fakebin, original_path, script)
+
+      files = ["release.rar", "release.r00", "filler.exe:$DATA"]
+      for name <- files, do: File.write!(Path.join(release_dir, name), "")
+
+      stub(Cinder.Download.ClientMock, :files, fn _id -> {:ok, files} end)
+
+      complete_download(release_dir)
+      poll!()
+
+      assert Repo.reload!(target).status == :available
+
+      assert File.ls!(Path.join([audiobooks, "Ursula K. Le Guin", "The Dispossessed"])) == [
+               "The Dispossessed.m4b"
+             ]
+
+      assert [%BookFile{format: :m4b}] = Repo.all(BookFile)
+    end
   end
 
   describe "atomic partial-failure — fresh import" do

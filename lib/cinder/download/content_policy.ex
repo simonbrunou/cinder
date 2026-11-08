@@ -109,6 +109,17 @@ defmodule Cinder.Download.ContentPolicy do
     end
   end
 
+  @doc """
+  Whether `check/1` reads `name` as carrying a blocked extension. `check/1` reads the extension
+  of the file name and of the part before its first colon, each with trailing dots and spaces
+  stripped, so `x.exe`, `x.exe.`, `x.exe ` and `x.exe:$DATA` are all blocked names. It answers
+  for the one name only: `check/1` still passes a blocked name that sits beside real media.
+  `Cinder.Library.BookArchive` calls it to tell a filler beside a book archive (#903).
+  """
+  @spec blocked_name?(String.t()) :: boolean()
+  def blocked_name?(name) when is_binary(name),
+    do: tagged?({name, extensions(name)}, blocked_extensions())
+
   defp tagged?({_name, exts}, set), do: Enum.any?(exts, &(&1 in set))
 
   # A bare `Path.extname/1` match is defeated by one appended byte: `evil.exe.` reads as `"."`,

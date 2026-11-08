@@ -478,6 +478,39 @@ defmodule Cinder.Library.AudiobookSourcesTest do
       assert track.format == :m4b
     end
 
+    # #903: a filler whose name the download content check reads as `.exe` only after
+    # normalising it is a companion too.
+    test "a .rar set with a trailing-dot filler beside it extracts and resolves", %{
+      downloads: downloads,
+      fakebin: fakebin,
+      original_path: original_path
+    } do
+      script = FakeUnrar.extracting(fakebin, "The Dispossessed.m4b", m4b_bytes())
+      FakeUnrar.install(fakebin, original_path, script)
+
+      dir = Path.join(downloads, "TrailingDotRar")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "release.rar"), "main volume")
+      File.write!(Path.join(dir, "release.r00"), "volume 2")
+      File.write!(Path.join(dir, "RARBG_DO_NOT_MIRROR.exe."), "")
+
+      assert {:ok, [track]} = AudiobookSources.resolve(dir)
+      assert Path.basename(track.path) == "The Dispossessed.m4b"
+    end
+
+    # #903: a blocked name whose plain extension is an other-audio file still refuses, so the
+    # stray audio is never silently dropped (#504).
+    test "a blocked name over an other-audio extension beside an archive still refuses", %{
+      downloads: downloads
+    } do
+      dir = Path.join(downloads, "Mixed")
+      File.mkdir_p!(dir)
+      zip_m4b(dir)
+      File.write!(Path.join(dir, "x.exe:bonus.flac"), m4b_bytes())
+
+      assert {:error, :unsupported_archive} = AudiobookSources.resolve(dir)
+    end
+
     test "a zip with a cover image beside it extracts and resolves", %{downloads: downloads} do
       dir = Path.join(downloads, "CoveredZip")
       File.mkdir_p!(dir)

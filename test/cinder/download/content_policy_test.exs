@@ -162,6 +162,65 @@ defmodule Cinder.Download.ContentPolicyTest do
       assert :ok = ContentPolicy.check([nil, 42])
       assert {:blocked, _} = ContentPolicy.check([nil, "bad.exe"])
     end
+
+    # `Cinder.Library.BookArchive`'s companion rule leans on this (#903).
+    test "passes a normalised filler beside a .rar set or a .zip" do
+      for name <- ["RARBG_DO_NOT_MIRROR.exe.", "filler.exe ", "filler.exe:$DATA"] do
+        assert ContentPolicy.check(["r.rar", "r.r00", name]) == :ok, name
+        assert ContentPolicy.check(["r.zip", name]) == :ok, name
+      end
+    end
+  end
+
+  # #903: the one name's half of `check/1`, which `Cinder.Library.BookArchive` reads.
+  describe "blocked_name?/1" do
+    test "is true for a blocked extension, plain or normalised" do
+      for name <- [
+            "x.exe",
+            "x.exe.",
+            "x.exe ",
+            "x.exe:$DATA",
+            "evil.lnk:Zone.Identifier",
+            "Release/RARBG_DO_NOT_MIRROR.EXE."
+          ] do
+        assert ContentPolicy.blocked_name?(name), name
+      end
+    end
+
+    test "is false for a colon-titled video and for a scene file" do
+      for name <- ["[SubsPlease] Re:Zero - 01.mkv", "RARBG_DO_NOT_MIRROR.nfo", "x.txt:$DATA"] do
+        refute ContentPolicy.blocked_name?(name), name
+      end
+    end
+
+    # Both answers come from the one reading, so a lone name with no media reading is blocked
+    # by `check/1` exactly when the predicate says so.
+    test "agrees with check/1 on a lone name" do
+      for name <- [
+            "evil.exe.",
+            "evil.exe..",
+            "evil.exe ",
+            "evil.exe . ",
+            "evil.exe:$DATA",
+            "evil.lnk:Zone.Identifier",
+            "x.exe:y.foo",
+            "PAYLOAD.EXE",
+            "RARBG_DO_NOT_MIRROR.nfo",
+            "notes.txt",
+            "x.txt:$DATA"
+          ] do
+        assert ContentPolicy.blocked_name?(name) ==
+                 match?({:blocked, _}, ContentPolicy.check([name])),
+               name
+      end
+    end
+
+    test "reads the configured blocked list" do
+      Cinder.ConfigCase.put_config(ContentPolicy, blocked_extensions: [".APK"])
+
+      assert ContentPolicy.blocked_name?("x.apk.")
+      refute ContentPolicy.blocked_name?("x.exe.")
+    end
   end
 
   describe "vet/2 and vet_completed/3" do

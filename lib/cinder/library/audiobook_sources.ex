@@ -16,11 +16,13 @@ defmodule Cinder.Library.AudiobookSources do
 
   1. **Extraction** — `Cinder.Library.BookArchive.archive_candidate/1`, the one decision both
      book kinds share: one archive with nothing but companions beside it, or none, recursing
-     into an extracted scratch directory exactly once. The companions are `.nfo`, `.sfv`,
-     `.md5`, `.par2`, `.txt`, `.url`, `.jpg`, `.jpeg`, `.png`, and every extension in
-     `Cinder.Download.ContentPolicy.blocked_extensions/0` (a filler `.exe`, ...); a loose
-     track, an other-audio file or any other file beside an archive is `:unsupported_archive`
-     (#781). `BookArchive`'s "Companions" section gives the reasons.
+     into an extracted scratch directory exactly once. A companion can never be the book: an
+     `.nfo`, an `.sfv`, a cover `.jpg`, a filler `.exe` (#781), or a filler whose name the
+     download content check reads as blocked, such as `x.exe:$DATA` (#903). Unless the install
+     blocks its extension itself, a loose track or an other-audio file beside an archive is
+     `:unsupported_archive` even under such a name (`x.exe:y.flac`). So is any other file that
+     is not a companion. `BookArchive`'s "Companions" section gives the full rule and the
+     reasons.
   2. **Candidate collection** — every `.m4b`/`.mp3` file is a candidate. A stray *other audio*
      file (`.m4a`/`.aac`/`.flac`/`.ogg`/`.wma`/`.wav`/`.aiff`/`.aif`/`.aifc`) alongside at least
      one accepted candidate is never silently ignored: `safe_source/1`'s own extension
@@ -209,6 +211,14 @@ defmodule Cinder.Library.AudiobookSources do
       true -> validate_and_order(accepted)
     end
   end
+
+  @doc """
+  The audio extensions an audiobook import refuses rather than drops, dot-prefixed: a stray one
+  beside the tracks is `:unsafe_source` (#504). `Cinder.Library.BookArchive` reads it so a
+  filler name never hides one beside an archive (#903).
+  """
+  @spec other_audio_extensions() :: [String.t()]
+  def other_audio_extensions, do: @other_audio_extensions
 
   defp accepted_file?(path), do: String.downcase(Path.extname(path)) in @accepted_extensions
 

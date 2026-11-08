@@ -765,6 +765,35 @@ defmodule Cinder.Download.BookPollerTest do
       assert [%BookFile{format: :epub}] = Repo.all(BookFile)
     end
 
+    # #903: a filler the content check reads as `.exe` only after normalising its name (here an
+    # alternate-data-stream suffix) is a companion too, and never reaches the library.
+    test "a .rar set with a normalised filler beside it imports the book alone", ctx do
+      %{target: target, release_dir: release_dir, books: books} =
+        downloading(ctx, "book.epub")
+
+      {:ok, %{fakebin: fakebin, original_path: original_path}} = FakeUnrar.fakebin(ctx)
+      script = FakeUnrar.extracting(fakebin, "The Dispossessed.epub", epub_bytes())
+      FakeUnrar.install(fakebin, original_path, script)
+
+      File.rm!(Path.join(release_dir, "book.epub"))
+
+      files = ["release.rar", "release.r00", "filler.exe:$DATA"]
+      for name <- files, do: File.write!(Path.join(release_dir, name), "")
+
+      stub(Cinder.Download.ClientMock, :files, fn _id -> {:ok, files} end)
+
+      complete_download(release_dir)
+      poll!()
+
+      assert Repo.reload!(target).status == :available
+
+      assert File.ls!(Path.join([books, "Ursula K. Le Guin", "The Dispossessed"])) == [
+               "The Dispossessed.epub"
+             ]
+
+      assert [%BookFile{format: :epub}] = Repo.all(BookFile)
+    end
+
     test "a completed download with no content path holds", ctx do
       %{target: target} = downloading(ctx, "book.epub")
 

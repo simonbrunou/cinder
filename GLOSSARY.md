@@ -69,11 +69,14 @@ specific evidence first: a few of those identifiers, then author and title, then
 _Avoid_: search strategy, query list
 
 **Companion**:
-A file beside a book download's one archive that can never be the book, from a fixed list: scene
-files such as the `.nfo` and `.sfv`, a cover image, and any file whose extension the download
-content check blocks, such as a filler `.exe`. The archive still extracts with companions beside
-it, and a companion is never imported. Any other file beside the archive holds the book as an
-unsupported archive.
+A file beside a book download's one archive that can never be the book: scene files such as the
+`.nfo` and `.sfv`, a `.jpg` or `.png` cover image, and any file whose extension the download
+content check blocks, such as a filler `.exe`. A name the content check reads as blocked counts
+too, such as `x.exe.` or `x.exe:$DATA`, unless its plain extension is not blocked itself and is
+either a format a book import accepts or an audio file an audiobook import refuses. A second
+archive, such as `x.exe:y.zip`, is never a companion. The archive still extracts with companions
+beside it, and a companion is never imported. Any other file beside the archive holds the book as
+an unsupported archive.
 _Avoid_: sidecar (a subtitle file beside a video), extras
 
 ### Catalog

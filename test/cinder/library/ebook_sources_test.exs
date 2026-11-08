@@ -388,6 +388,41 @@ defmodule Cinder.Library.EbookSourcesTest do
       assert Path.basename(path) == "book.epub"
     end
 
+    # #903: a filler whose name the download content check reads as `.exe` only after
+    # normalising it is a companion too.
+    test "a .rar set with a trailing-dot filler beside it extracts and resolves", %{
+      downloads: downloads,
+      fakebin: fakebin,
+      original_path: original_path
+    } do
+      install_epub_unrar(fakebin, original_path)
+
+      dir = Path.join(downloads, "TrailingDotRar")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "release.rar"), "main volume")
+      File.write!(Path.join(dir, "release.r00"), "volume 2")
+      File.write!(Path.join(dir, "RARBG_DO_NOT_MIRROR.exe."), "")
+
+      assert {:ok, path, :epub} = EbookSources.resolve(dir)
+      assert Path.basename(path) == "book.epub"
+    end
+
+    # #903: a blocked name whose plain extension is a book format could still be a book.
+    test "a blocked name over a book format beside an archive still refuses", %{
+      downloads: downloads
+    } do
+      dir = Path.join(downloads, "MixedBlockedBook")
+      File.mkdir_p!(dir)
+
+      :zip.create(String.to_charlist(Path.join(dir, "release.zip")), [
+        {~c"book.epub", epub_bytes()}
+      ])
+
+      File.write!(Path.join(dir, "x.exe:Other Book.epub"), epub_bytes())
+
+      assert {:error, :unsupported_archive} = EbookSources.resolve(dir)
+    end
+
     test "unrar being absent degrades a .rar release to :unsupported_archive, not a crash", %{
       downloads: downloads,
       fakebin: fakebin
