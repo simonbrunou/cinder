@@ -151,13 +151,14 @@
   `test/code_health/assert_match_message_test.exs` rejects: 8 minutes for what the fence run
   reports in 16 s.
 - Once a full `mix test` passed on the branch, a review fix commit that changes only Markdown
-  under `docs/agents/`, in `AGENTS.md` or in a `changelog.d/` fragment (`code_health_test.exs`
-  checks each fragment), or ordinary `#` comments in `.ex` and `.exs` files, needs no second
-  full suite before its push. Do the fence run.
-  When a comment under `lib/` changed, add every file that `rg -l '"lib/' test` lists (about
-  2 minutes): some of them scan `lib/` with patterns that a comment can match. A review fix
-  commit whose changes are `_test.exs` files, alone or with the kinds above, does the fence run
-  with more files added: each changed test file that still exists, and every file that
+  under `docs/agents/`, in `AGENTS.md`, in `GLOSSARY.md` or in a `changelog.d/` fragment
+  (`code_health_test.exs` checks each fragment), ordinary `#` comments in `.ex` and `.exs` files,
+  or `@doc` and `@moduledoc` text in `.ex` files of modules no `doctest` names, needs no second
+  full suite before its push. Do the fence run. When a comment or doc text under `lib/` changed,
+  add every file that `rg -l '"lib/' test` lists (about 2 minutes): some of them scan `lib/` with
+  patterns that a comment or doc text can match. A review fix commit whose changes are
+  `_test.exs` files, alone or with the kinds above, does the fence run with more files added:
+  each changed test file that still exists, and every file that
   `rg -l <path> test -g '*_test.exs'` lists for each changed path and for a renamed file's old
   path (`git diff --name-status -M HEAD^` shows both once the fix is committed).
   `books_b0_contract_test.exs` reads test names out of the files it names, and apart from it
@@ -165,10 +166,12 @@
   state, such as an `async:` flag or a config key it no longer restores. On #1123, four full
   runs after test-only fixes took 21 minutes, and one on #1127 took 7 minutes. CI runs the full
   suite on the push, which runs every file these short runs skip. Everything else runs
-  the full `mix test`: a `@doc` or `@moduledoc`, other Markdown (`books_b0_contract_test.exs`
-  reads `docs/audits/` and `specs/`), a gettext catalog, a merge of `origin/main` (AGENTS.md
-  "Merge authority") and a release. On #905, #945 and #873, another full run on such a fix took
-  4 to 5.5 minutes of the CPU the host's agent threads share.
+  the full `mix test`: the doc text of a module that a `doctest` names, other Markdown
+  (`books_b0_contract_test.exs` reads `docs/audits/` and `specs/`), a gettext catalog, a merge of
+  `origin/main` (AGENTS.md "Merge authority") and a release. On #905, #945 and #873, another
+  full run on such a fix took 4 to 5.5 minutes of the CPU the host's agent threads share. On
+  #903, three full runs after fixes to `@moduledoc` text, `GLOSSARY.md` and tests took about
+  20 minutes.
 - A new UI string fails `translations_complete_test` until you run
   `MIX_ENV=test mix gettext.extract --merge` and write its French msgstr in
   `priv/gettext/fr/LC_MESSAGES/default.po`. When an existing msgid is close enough, the merge
