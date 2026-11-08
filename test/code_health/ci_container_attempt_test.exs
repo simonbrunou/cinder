@@ -38,7 +38,10 @@ defmodule Cinder.CodeHealth.CiContainerAttemptTest do
       for f in "$state"/containers/*; do
         [ -e "$f" ] || continue
         name=${f##*/}
-        if printf '%s\n' "/$name" "$name" | grep -Eq -- "$regex"; then echo "id-$name"; fi
+        # grep reads every line, not -q: a grep that quits on the first match can leave the
+        # second line unwritten, and with SIGPIPE ignored, as the BEAM's children inherit it,
+        # bash then prints "printf: write error: Broken pipe" into the output under test.
+        if printf '%s\n' "/$name" "$name" | grep -E -- "$regex" >/dev/null; then echo "id-$name"; fi
       done
       ;;
     "rm --force "*)
