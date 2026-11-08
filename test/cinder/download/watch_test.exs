@@ -12,6 +12,8 @@ defmodule Cinder.Download.WatchTest do
 
   import ExUnit.CaptureLog
   import Mox
+  import Cinder.BoundedWalkHelpers
+  import Cinder.ConfigCase
 
   alias Cinder.Download.{StallReaper, Watch}
 
@@ -108,6 +110,35 @@ defmodule Cinder.Download.WatchTest do
                {:completed, "/dl/Movie"}
     end
 
+    # Only a walk timeout holds (#946). Waiting changes none of these answers, so each stays no
+    # opinion, as the one above does.
+    for reason <- [:enoent, :unsafe_source, :traversal_limit] do
+      @reason reason
+
+      test "is completed when its disk walk answers #{inspect(reason)}" do
+        status({:ok, %{state: :completed, progress: 1.0, content_path: "/dl/Movie"}}, @usenet)
+        files([], @usenet)
+        stub(Cinder.Library.FilesystemMock, :dir?, fn "/dl/Movie" -> true end)
+        stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl/Movie" -> {:error, @reason} end)
+
+        assert Watch.check(download(%{download_protocol: :usenet}), track()) ==
+                 {:completed, "/dl/Movie"}
+
+        refute_received {:tracked, _id, _attrs}
+      end
+    end
+
+    test "is completed when no import root is configured for its disk walk" do
+      put_env(:import_roots, [])
+      status({:ok, %{state: :completed, progress: 1.0, content_path: "/dl/Movie"}}, @usenet)
+      files([], @usenet)
+
+      assert Watch.check(download(%{download_protocol: :usenet}), track()) ==
+               {:completed, "/dl/Movie"}
+
+      refute_received {:tracked, _id, _attrs}
+    end
+
     # A client can report the whole downloads folder as the content path, whose walk finds other
     # downloads' media. The client's own file list still blocks the fake.
     test "is blocked content on the client's file list whatever the disk holds" do
@@ -116,6 +147,64 @@ defmodule Cinder.Download.WatchTest do
       disk("/dl", [{"/dl/setup.exe", 1_024}, {"/dl/Other/Other.mkv", 4_000_000_000}])
 
       assert Watch.check(download(), track()) == {:blocked_content, "download contains setup.exe"}
+    end
+  end
+
+  # The disk walk answers `{:error, :timeout}` past its deadline on a wedged mount, or at once while
+  # another walk under the same import root is stuck, as here. Nothing is known about the files
+  # then, so the download waits for the check instead of completing without it, and the next tick
+  # checks again (#946).
+  describe "a completed download whose disk walk times out" do
+    setup do
+      put_env(:import_roots, ["/dl"])
+      %{walk: wedge_walks_under("/dl")}
+    end
+
+    test "holds until the walk runs, then is blocked content", %{walk: walk} do
+      status({:ok, %{state: :completed, progress: 1.0, content_path: "/dl/Movie"}}, @usenet)
+      files([], @usenet)
+      disk("/dl/Movie", [{"/dl/Movie/Movie.mkv.lnk", 1_024}, {"/dl/Movie/readme.txt", 64}])
+
+      assert Watch.check(download(%{download_protocol: :usenet}), track()) ==
+               :content_check_timeout
+
+      # The client has stopped moving it, so the speed and ETA on screen are no longer live.
+      assert_received {:tracked, "dl-1", %{download_speed: nil, download_eta: nil} = attrs}
+      refute Map.has_key?(attrs, :download_progress)
+
+      release_walk(walk)
+      status({:ok, %{state: :completed, progress: 1.0, content_path: "/dl/Movie"}}, @usenet)
+      files([], @usenet)
+
+      assert Watch.check(download(%{download_protocol: :usenet}), track()) ==
+               {:blocked_content, "download contains Movie.mkv.lnk"}
+    end
+
+    test "holds until the walk runs, then is completed", %{walk: walk} do
+      status({:ok, %{state: :completed, progress: 1.0, content_path: "/dl/Movie"}}, @usenet)
+      files([], @usenet)
+      disk("/dl/Movie", [{"/dl/Movie/Movie.mkv", 4_000_000_000}])
+
+      assert Watch.check(download(%{download_protocol: :usenet}), track()) ==
+               :content_check_timeout
+
+      release_walk(walk)
+      status({:ok, %{state: :completed, progress: 1.0, content_path: "/dl/Movie"}}, @usenet)
+      files([], @usenet)
+
+      assert Watch.check(download(%{download_protocol: :usenet}), track()) ==
+               {:completed, "/dl/Movie"}
+    end
+
+    # The client's list is read first, so a fake it already names is blocked without the walk.
+    test "is blocked content on the client's file list while the walk is stuck" do
+      status({:ok, %{state: :completed, progress: 1.0, content_path: "/dl/Movie"}})
+      files(["Movie/Movie.mkv.lnk", "Movie/readme.txt"])
+
+      assert Watch.check(download(), track()) ==
+               {:blocked_content, "download contains Movie.mkv.lnk"}
+
+      refute_received {:tracked, _id, _attrs}
     end
   end
 

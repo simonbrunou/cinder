@@ -339,3 +339,16 @@ The choice sits in `Poller.import_one/1` and `record_import/2` (then
 `import_grab_content/1`, `import_preflighted_grab/1` and `finalize_standard_staging/3`, and in
 `BookPoller.import_one/1` and `handle_import_result/3`. Read them before giving a new error its
 path.
+
+The completion content check (`ContentPolicy.vet_completed/3`) holds on a walk timeout too. The
+watch answers `:content_check_timeout`, and each poller's `advance/1` keeps the download in
+transit without spending any budget, so the next tick checks it again. `:enotdir`, a single-file
+download, is checked by its own name, and every other walk error has no opinion. The reason: the
+pollers watch a download only until it is recorded as downloaded, so a download recorded while
+its walk timed out reaches the importer without the check. A movie fake then parks
+`:import_failed` on `:no_video_file` for an operator, where the check blocklists the release,
+fences its client job for removal and re-queues the movie (#946). The hold costs two things.
+A client that drops the finished job meanwhile answers `:download_not_found`, which spends the
+download budget; at its end a movie or TV release is blocklisted and a book target held. And
+nothing bounds the hold: the stall reaper reads only a client `:downloading` status, so a mount
+that never answers holds the download, as it holds the import.

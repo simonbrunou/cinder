@@ -102,6 +102,16 @@ defmodule Cinder.Download.TvPoller do
 
       {:unreachable, _reason} ->
         :ok
+
+      # Completed, but its disk check walk timed out on a wedged mount: hold without a strike and
+      # check again next tick. Marking it downloaded would import it without the check (#946).
+      :content_check_timeout ->
+        warn_throttled(
+          {:content_check_timeout, grab.id},
+          "holding completed download for tv grab #{grab.id}: its download folder did not " <>
+            "answer the content check in time; a mount may be wedged. Will check again when it " <>
+            "answers"
+        )
     end
   end
 

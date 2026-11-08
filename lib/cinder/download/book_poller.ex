@@ -156,6 +156,16 @@ defmodule Cinder.Download.BookPoller do
 
       {:unreachable, reason} ->
         status_unavailable(grab, reason)
+
+      # Completed, but its disk check walk timed out on a wedged mount: hold without a strike and
+      # check again next tick. Marking it downloaded would import it without the check (#946).
+      :content_check_timeout ->
+        warn_throttled(
+          {:content_check_timeout, grab.id},
+          "holding completed download for book grab #{grab.id}: its download folder did not " <>
+            "answer the content check in time; a mount may be wedged. Will check again when it " <>
+            "answers"
+        )
     end
   end
 

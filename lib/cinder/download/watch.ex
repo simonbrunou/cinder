@@ -15,7 +15,8 @@ defmodule Cinder.Download.Watch do
      under that path). Blocked content is small enough to finish between two ticks, so the first
      status a poller ever sees for it is often `:completed`; vetting only in flight misses exactly
      that download. A usenet client has no file list for a job already in history, so for usenet
-     the disk is the only list left at that point.
+     the disk is the only list left at that point. When that disk walk times out on a wedged
+     mount, the verdict is `:content_check_timeout` and the download waits for the check.
   4. While `:downloading`, record progress, speed and ETA through the writer, THEN ask the stall
      reaper, on the progress clock that write returned. After an outage longer than the reaper's
      absolute cap, the clock the row carried at tick start is stale by definition, so reading it
@@ -87,6 +88,12 @@ defmodule Cinder.Download.Watch do
   - `:no_client`: no client is configured for the download's protocol. Nothing was called.
   - `{:unreachable, reason}`: the status call failed, or answered outside the client contract.
     Live speed and ETA were cleared through the writer; progress is kept.
+  - `:content_check_timeout`: the client reports `:completed` with a path and its file list is
+    clean, but the walk of the files on disk timed out on a wedged mount
+    (`ContentPolicy.vet_completed/3`). Live speed and ETA were cleared through the writer;
+    progress is kept. A poller holds the download in transit without spending any budget, and the
+    next tick checks it again: a download recorded as downloaded is never watched again, so it
+    would import without its disk check (#946).
   """
   @type verdict ::
           {:completed, String.t()}
@@ -96,6 +103,7 @@ defmodule Cinder.Download.Watch do
           | :stalled
           | :no_client
           | {:unreachable, term()}
+          | :content_check_timeout
 
   @doc "Watches `download` for one tick and returns its verdict. See the moduledoc."
   @spec check(download(), track()) :: verdict()
@@ -137,9 +145,7 @@ defmodule Cinder.Download.Watch do
   defp check_with(client, download, track) do
     case client.status(download.download_id) do
       {:ok, %{state: :completed, content_path: path}} when is_binary(path) and path != "" ->
-        client
-        |> ContentPolicy.vet_completed(download.download_id, path)
-        |> vetted(fn -> {:completed, path} end)
+        vet_completed(client, download, path, track)
 
       {:ok, %{state: :completed}} ->
         {:failed, :no_content_path}
@@ -167,6 +173,17 @@ defmodule Cinder.Download.Watch do
     do: {:download_error, detail}
 
   defp download_error(_status), do: :download_error
+
+  defp vet_completed(client, download, path, track) do
+    case ContentPolicy.vet_completed(client, download.download_id, path) do
+      {:error, :timeout} ->
+        clear_estimates(download, track)
+        :content_check_timeout
+
+      vetted ->
+        vetted(vetted, fn -> {:completed, path} end)
+    end
+  end
 
   defp vetted({:blocked, detail}, _continue), do: {:blocked_content, detail}
   defp vetted(:ok, continue), do: continue.()
@@ -204,7 +221,10 @@ defmodule Cinder.Download.Watch do
   end
 
   defp unreachable(download, track, reason) do
-    track.(download, %{download_speed: nil, download_eta: nil})
+    clear_estimates(download, track)
     {:unreachable, reason}
   end
+
+  defp clear_estimates(download, track),
+    do: track.(download, %{download_speed: nil, download_eta: nil})
 end

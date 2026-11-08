@@ -12,7 +12,9 @@ defmodule Cinder.Download.ContentPolicy do
   `check/1` is pure: no DB, no HTTP. `vet/2` and `vet_completed/3` are the impure edges — they
   fetch the list via `Cinder.Download.Client.files/1`, and on completion also from disk, and hand
   it to `check/1`. A client or a disk that cannot answer yields `:ok`: a check that could not run
-  must never be the thing that kills a download.
+  must never be the thing that kills a download. The one exception is a disk walk that times out
+  on a wedged mount: `vet_completed/3` reports it, and the download waits until the walk runs
+  (#946).
 
   ## Why the payload must be the *whole* download
 
@@ -175,9 +177,17 @@ defmodule Cinder.Download.ContentPolicy do
   `content_path` as the whole downloads folder, whose walk finds other downloads' media.
 
   The walk is `Cinder.Library.safe_walk/1`, bounded and confined to the import roots. A walk that
-  cannot run (no import roots, an unsafe or unreadable path, past the traversal limit, past its
-  deadline on a wedged mount) has no opinion. A single-file download is vetted by its own name.
+  cannot run (no import roots, an unsafe or unreadable path, past the traversal limit) has no
+  opinion. A single-file download is vetted by its own name.
+
+  A walk that answers `{:error, :timeout}`, past its deadline on a wedged mount or refused at once
+  while another walk under the same import root is stuck, returns `{:error, :timeout}`.
+  `Cinder.Download.Watch` holds the download on it and checks again next tick: the pollers stop
+  watching a download once it is recorded as downloaded, so it would import without its disk
+  check (#946).
   """
+  @spec vet_completed(module(), String.t(), String.t()) ::
+          :ok | {:blocked, String.t()} | {:error, :timeout}
   def vet_completed(client, download_id, content_path) do
     if enabled?() do
       with :ok <- vet_files(client, download_id), do: vet_disk(content_path)
@@ -190,6 +200,7 @@ defmodule Cinder.Download.ContentPolicy do
     case Library.safe_walk(content_path) do
       {:ok, entries} -> entries |> Enum.map(fn {path, _size} -> path end) |> check()
       {:error, :enotdir} -> check([content_path])
+      {:error, :timeout} -> {:error, :timeout}
       {:error, _reason} -> :ok
     end
   end

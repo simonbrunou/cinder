@@ -136,6 +136,16 @@ defmodule Cinder.Download.Poller do
       {:unreachable, _reason} ->
         :ok
 
+      # Completed, but its disk check walk timed out on a wedged mount: hold without a strike and
+      # check again next tick. Marking it downloaded would import it without the check (#946).
+      :content_check_timeout ->
+        warn_throttled(
+          {:content_check_timeout, movie.id},
+          "holding completed #{download_phase(movie)} for movie #{movie.id}: its download " <>
+            "folder did not answer the content check in time; a mount may be wedged. " <>
+            "Will check again when it answers"
+        )
+
       failure ->
         MovieLifecycle.record_failure(movie, failure)
     end
@@ -205,4 +215,7 @@ defmodule Cinder.Download.Poller do
 
   defp phase(%Movie{status: :upgrading}), do: "upgrade"
   defp phase(_movie), do: "import"
+
+  defp download_phase(%Movie{status: :upgrading}), do: "upgrade download"
+  defp download_phase(_movie), do: "download"
 end

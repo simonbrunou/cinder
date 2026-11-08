@@ -3542,7 +3542,7 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   # Which states are vetted is `Download.Watch`'s rule, pinned in `WatchTest`; these pin what a
-  # blocked-content verdict does to a grab.
+  # blocked-content verdict, and a content check that timed out, do to a grab.
   describe "content policy" do
     setup do
       {series, season} = series_tree()
@@ -3554,6 +3554,42 @@ defmodule Cinder.Download.TvPollerTest do
       end)
 
       %{series: series, episode: e1, grab: grab}
+    end
+
+    # The disk check of a completed download can time out on a wedged mount. Marking the grab
+    # downloaded then would import it unchecked, so it holds without a strike, and the first tick
+    # whose walk runs checks it (#946). One strike short of parking, so a leaked strike parks.
+    test "a completed download whose content check walk is stuck holds without a strike", ctx do
+      put_env(:import_roots, ["/wedged"])
+      walk = wedge_walks_under("/wedged")
+      ctx.grab |> Ecto.Changeset.change(download_attempts: 9) |> Repo.update!()
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-tv-fake" ->
+        {:ok, %{state: :completed, progress: 1.0, content_path: "/wedged/Show.S01E04"}}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn "hash-tv-fake", _opts -> :ok end)
+      start_supervised!({TvPoller, interval: 60_000})
+
+      log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+      assert :ok = TvPoller.poll()
+
+      assert %Grab{content_path: nil, download_attempts: 9} = Repo.get!(Grab, ctx.grab.id)
+      assert Repo.get!(Episode, ctx.episode.id).grab_id == ctx.grab.id
+      assert Catalog.blocked_release_titles_for_series(ctx.series.id) == []
+      assert log =~ "did not answer the content check"
+
+      release_walk(walk)
+      stub(Cinder.Library.FilesystemMock, :dir?, &(&1 == "/wedged/Show.S01E04"))
+
+      stub(Cinder.Library.FilesystemMock, :find_files, fn "/wedged/Show.S01E04" ->
+        {:ok, [{"/wedged/Show.S01E04/Show.S01E04.mkv.lnk", 1_024}]}
+      end)
+
+      capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+      refute Repo.get(Grab, ctx.grab.id)
+      assert Catalog.blocked_release_titles_for_series(ctx.series.id) == ["Show.S01E04-FAKE"]
     end
 
     test "a fake payload parks on the FIRST tick: removed, blocklisted, episodes re-search",

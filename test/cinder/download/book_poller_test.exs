@@ -836,25 +836,56 @@ defmodule Cinder.Download.BookPollerTest do
     end
 
     # One attempt short of the hold, so an attempt here would hold the target and delete the grab:
-    # a wedged mount says nothing about the release (#779).
+    # a wedged mount says nothing about the release (#779). The download is recorded before the
+    # wedge: a completion tick under a wedged mount holds before it records anything (#946).
     test "import holds (no attempt bump, no park) while a wedged mount keeps the walk stuck",
          ctx do
       %{grab: grab, target: target, books: books, release_dir: release_dir} =
         downloading(ctx, "The Dispossessed.epub")
 
-      complete_download(release_dir)
+      {:ok, grab} = Books.Grabs.mark_downloaded(grab, release_dir)
+      grab |> Ecto.Changeset.change(import_attempts: 9) |> Repo.update!()
       wedge_walks_under(Path.dirname(release_dir))
-      # The first tick records the completed download, which starts its import attempts at 0.
-      assert capture_log(fn -> poll!() end) =~ "did not answer"
-      assert Repo.reload!(grab).content_path == release_dir
-      grab |> Repo.reload!() |> Ecto.Changeset.change(import_attempts: 9) |> Repo.update!()
 
-      assert capture_log(fn -> poll!() end) =~ "did not answer"
+      assert capture_log(fn -> poll!() end) =~ "did not answer in time"
 
       assert Repo.reload!(target).status == :monitored
       assert Repo.reload!(grab).import_attempts == 9
       assert Repo.all(BookFile) == []
       assert File.ls!(books) == []
+    end
+
+    # The disk check of a completed download can time out on a wedged mount. Recording the grab
+    # as downloaded then would import it unchecked, so it holds without spending the download
+    # budget, and the first tick whose walk runs checks it (#946). One attempt short of the hold,
+    # so a spent attempt would hold the target.
+    test "a completed download whose content check walk is stuck holds without an attempt",
+         ctx do
+      %{grab: grab, target: target, books: books, release_dir: release_dir} =
+        downloading(ctx, "The Dispossessed.epub")
+
+      walk = wedge_walks_under(Path.dirname(release_dir))
+      grab |> Ecto.Changeset.change(import_attempts: 9) |> Repo.update!()
+
+      stub(Cinder.Download.ClientMock, :status, fn "remote-1" ->
+        {:ok, %{state: :completed, progress: 1.0, content_path: release_dir}}
+      end)
+
+      for _tick <- 1..2 do
+        assert capture_log(fn -> poll!() end) =~ "did not answer the content check"
+      end
+
+      grab = Repo.reload!(grab)
+      assert grab.content_path == nil
+      assert grab.import_attempts == 9
+      assert Repo.reload!(target).status == :monitored
+      assert Repo.all(BookFile) == []
+      assert File.ls!(books) == []
+
+      release_walk(walk)
+      capture_log(fn -> poll!() end)
+
+      assert Repo.reload!(target).status == :available
     end
 
     # #973: the refused removal raised `WithClauseError`, which `isolate/2` logged without

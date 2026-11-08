@@ -325,6 +325,85 @@ defmodule Cinder.Download.PollerTest do
       assert [%{release_title: "Movie.2024.1080p-FAKE", reason: "blocked_content"}] =
                Repo.all(BlockedRelease)
     end
+
+    # The disk check of a completed download can time out on a wedged mount. Marking the movie
+    # downloaded then would import it unchecked, so it holds without a strike, and the first tick
+    # whose walk runs checks it (#946). One strike short of the budget, so a leaked strike parks.
+    test "a completed download whose content check walk is stuck holds without a strike" do
+      put_env(:import_roots, ["/downloads"])
+      walk = wedge_walks_under("/downloads")
+
+      movie =
+        last_strike(downloading_movie(91, "hash-wedged", release_title: "Movie.2024.1080p-FAKE"))
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-wedged" ->
+        {:ok, %{state: :completed, progress: 1.0, content_path: "/downloads/Movie"}}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn "hash-wedged", _opts -> :ok end)
+      start_supervised!({Poller, interval: 60_000})
+
+      log = capture_log(fn -> assert :ok = Poller.poll() end)
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :downloading, import_attempts: 9, content_path: nil} =
+               Repo.get!(Movie, movie.id)
+
+      assert Repo.all(BlockedRelease) == []
+      assert log =~ "did not answer the content check"
+
+      release_walk(walk)
+      stub(Cinder.Library.FilesystemMock, :dir?, &(&1 == "/downloads/Movie"))
+
+      stub(Cinder.Library.FilesystemMock, :find_files, fn "/downloads/Movie" ->
+        {:ok, [{"/downloads/Movie/Movie.mkv.lnk", 1_024}, {"/downloads/Movie/readme.txt", 64}]}
+      end)
+
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :requested, download_id: nil} = Repo.get!(Movie, movie.id)
+
+      assert [%{release_title: "Movie.2024.1080p-FAKE", reason: "blocked_content"}] =
+               Repo.all(BlockedRelease)
+    end
+
+    # The same hold for an upgrade, which `advance/1` watches too: a leaked strike at the end of
+    # its budget would revert it to :available and drop the replacement (#946).
+    test "a completed upgrade whose content check walk is stuck holds without a strike" do
+      put_env(:import_roots, ["/downloads"])
+      wedge_walks_under("/downloads")
+
+      movie =
+        last_strike(
+          movie_fixture(%{
+            tmdb_id: 93,
+            status: :upgrading,
+            download_id: "hash-up-wedged",
+            download_protocol: :torrent,
+            release_title: "Better.1080p-GRP",
+            file_path: "/lib/M (2020)/M (2020).mkv",
+            imported_resolution: "720p"
+          })
+        )
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-up-wedged" ->
+        {:ok, %{state: :completed, progress: 1.0, content_path: "/downloads/Better.1080p"}}
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+
+      log = capture_log(fn -> assert :ok = Poller.poll() end)
+      assert :ok = Poller.poll()
+
+      assert %Movie{
+               status: :upgrading,
+               import_attempts: 9,
+               download_id: "hash-up-wedged",
+               file_path: "/lib/M (2020)/M (2020).mkv"
+             } = Repo.get!(Movie, movie.id)
+
+      assert log =~ "holding completed upgrade download for movie #{movie.id}"
+    end
   end
 
   describe "staged import results:" do
