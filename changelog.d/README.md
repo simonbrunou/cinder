@@ -31,6 +31,14 @@ comment and the triage brief. It was false for one copy with the series' id and 
 which settle on the series' id, and the code comment held the same clause: two re-check rounds,
 about 14 minutes.
 
+A path includes each value an install can configure for a list or setting that the code on the
+path reads, such as `Cinder.Download.ContentPolicy`'s blocked and media extension lists. A
+sentence holds under any configured value, or it names the values it assumes ("With the default
+blocked and media lists"). On #903 the fragment said which names beside a book archive count as
+filler and which still hold the book. Review found its last sentence false for an install whose
+blocked list adds `.flac`, then a re-check found its first sentences false for one that leaves
+out `.exe`: about 17 minutes from the first finding to the last fix.
+
 A sentence that says Cinder removes, cleans up or repairs something covers the paths where that
 step fails or never runs. Say "tries to" or name what Cinder logs when it fails, and name what
 must hold first: each condition the code checks, and each earlier step in the same call that can
