@@ -12,6 +12,7 @@ defmodule Cinder.Requests.ApprovalTest do
   alias Cinder.Books.BookTarget
   alias Cinder.Catalog
   alias Cinder.Catalog.{Movie, Series}
+  alias Cinder.CatalogFixtures
   alias Cinder.Requests
   alias Cinder.Requests.Request
   alias Cinder.Settings
@@ -127,6 +128,27 @@ defmodule Cinder.Requests.ApprovalTest do
                approve(:admin_approval, season_attrs, ctx.profiles.season)
 
       assert Repo.get!(Series, series.id).anime_hold_reason == nil
+    end
+
+    # #942: a held Anime search leaves the movie searching, and the profile guard lets it switch.
+    for path <- @paths do
+      test "lifts the hold of a searching movie switched to Standard (#{path})", ctx do
+        Cinder.ConfigCase.put_config(:anime_preferences, embedded_subtitle_mode: :require)
+        anime = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :anime))
+        {:ok, movie} = Catalog.add_movie(%{tmdb_id: 603, title: "Existing"})
+        {:ok, movie} = Catalog.assign_profile(movie, anime)
+        {:ok, movie} = CatalogFixtures.seed_movie_state(movie, %{status: :searching})
+        {:ok, _held} = Catalog.set_anime_hold(movie, "subtitle_language_required")
+        movie_attrs = Map.put(attrs(:movie, ctx), :proposed_profile_id, ctx.profiles.movie.id)
+
+        assert {:ok, %Request{status: :approved}} =
+                 approve(unquote(path), movie_attrs, ctx.profiles.movie)
+
+        assert %Movie{status: :searching, profile_id: profile_id, anime_hold_reason: nil} =
+                 Repo.get!(Movie, movie.id)
+
+        assert profile_id == ctx.profiles.movie.id
+      end
     end
   end
 

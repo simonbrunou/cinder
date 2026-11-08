@@ -32,6 +32,15 @@ defmodule Cinder.Catalog.AnimeHoldTest do
   defp standard_profile(kind),
     do: Enum.find(Catalog.list_profiles(kind), &(&1.handling == :standard))
 
+  # Where a poller tick leaves an Anime-profile movie whose preferences fail: `Download.start/1`
+  # moves it to searching first, and the held search keeps that status.
+  defp held_searching_movie(reason) do
+    anime = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :anime))
+    {:ok, movie} = Catalog.assign_profile(movie_fixture(), anime)
+    {:ok, movie} = seed_movie_state(movie, %{status: :searching})
+    held(movie, reason)
+  end
+
   describe "a profile or Audio pick change" do
     test "a held series whose Audio pick now resolves loses its hold, and the count drops" do
       # Dual audio needs the original language, which this series does not know.
@@ -66,8 +75,8 @@ defmodule Cinder.Catalog.AnimeHoldTest do
       assert_received {:movie_updated, %Movie{anime_hold_reason: nil}}
     end
 
-    # The detail pages switch a profile through `assign_profile/2`. It refuses a searching movie
-    # (an acquisition is in progress), so the movie here waits as requested.
+    # The detail pages switch a profile through `assign_profile/2`. The movie here waits as
+    # requested; the next test switches one whose held search left it searching.
     test "a held movie and a held series assigned the Standard profile lose their hold" do
       require_subtitles!()
       movie = held(movie_fixture(%{media_profile: :anime}), "subtitle_language_required")
@@ -85,6 +94,46 @@ defmodule Cinder.Catalog.AnimeHoldTest do
       assert hold(series) == nil
       assert Attention.attention_count() == count - 2
       assert_received {:movie_updated, %Movie{anime_hold_reason: nil}}
+    end
+
+    # A held Anime search leaves the movie searching and makes no indexer call, so the profile
+    # guard lets it switch (#942). The hold it counts on /activity is the one that lifts.
+    test "a held Anime movie that is searching switches to Standard and loses its hold" do
+      require_subtitles!()
+      movie = held_searching_movie("subtitle_language_required")
+      standard = standard_profile(:movies)
+      count = Attention.attention_count()
+
+      assert {:ok, %Movie{anime_hold_reason: nil}} = Catalog.assign_profile(movie, standard)
+
+      assert %Movie{
+               status: :searching,
+               profile_id: profile_id,
+               media_profile: :standard,
+               anime_hold_reason: nil
+             } = Repo.reload!(movie)
+
+      assert profile_id == standard.id
+      assert Attention.attention_count() == count - 1
+    end
+
+    # The guard looks at the search the movie runs now, not at the profile it moves to, and the
+    # switch decides the hold again from the new profile.
+    test "a held Anime movie that is searching may switch to another Anime profile" do
+      require_subtitles!()
+      # Stale on purpose: the subtitle rule is what fails now.
+      movie = held_searching_movie("original_language_required")
+
+      {:ok, other_anime} =
+        Catalog.create_profile(%{name: "Anime 942", kind: :movies, handling: :anime})
+
+      assert {:ok, %Movie{anime_hold_reason: "subtitle_language_required"}} =
+               Catalog.assign_profile(movie, other_anime)
+
+      assert %Movie{profile_id: profile_id, anime_hold_reason: "subtitle_language_required"} =
+               Repo.reload!(movie)
+
+      assert profile_id == other_anime.id
     end
 
     # Adopting on-disk files into a profile's library assigns that profile to the series.

@@ -76,6 +76,45 @@ defmodule CinderWeb.MovieDetailLiveTest do
     :exit, _reason -> :ok
   end
 
+  # #942: a held Anime search leaves the movie searching, and its profile may still change.
+  test "a searching movie on an anime hold switches to Standard and loses its hold",
+       %{conn: conn} do
+    [anime, standard] =
+      for handling <- [:anime, :standard],
+          do: Enum.find(Catalog.list_profiles(:movies), &(&1.handling == handling))
+
+    {:ok, movie} = Catalog.assign_profile(movie_fixture(), anime)
+    {:ok, movie} = seed_movie_state(movie, %{status: :searching})
+    movie = anime_hold_fixture(movie, "subtitle_language_required")
+    {:ok, view, _} = live_movie(conn, movie)
+
+    view
+    |> form("#movie-profile-form", %{"profile_id" => to_string(standard.id)})
+    |> render_change()
+
+    refute has_element?(view, "#flash-error")
+    assert %Movie{profile_id: profile_id, anime_hold_reason: nil} = Repo.reload(movie)
+    assert profile_id == standard.id
+  end
+
+  test "a profile change refused while a download is in progress says so", %{conn: conn} do
+    {:ok, movie} = seed_movie_state(movie_fixture(), %{status: :downloading})
+    anime = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :anime))
+    {:ok, view, _} = live_movie(conn, movie)
+
+    view
+    |> form("#movie-profile-form", %{"profile_id" => to_string(anime.id)})
+    |> render_change()
+
+    assert has_element?(
+             view,
+             "#flash-error",
+             "The profile can't change while a download is in progress."
+           )
+
+    assert Repo.reload(movie).profile_id == nil
+  end
+
   test "admin changes a movie profile and manages a manual alias", %{conn: conn} do
     movie = movie_fixture()
     anime = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :anime))
@@ -178,6 +217,8 @@ defmodule CinderWeb.MovieDetailLiveTest do
     {:ok, view, _} = live_movie(conn, movie)
 
     render_hook(view, "set_media_profile", %{"media_profile" => "forged"})
+    # Only an acquisition in progress gets its own flash.
+    assert has_element?(view, "#flash-error", "Couldn't update the profile.")
 
     render_hook(view, "save_alias", %{
       "alias" => %{"id" => "not-an-id", "title" => "Forged create"}

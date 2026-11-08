@@ -5,6 +5,7 @@ defmodule Cinder.Catalog.ProfilesTest do
   alias Cinder.Books.BookTarget
   alias Cinder.Catalog
   alias Cinder.Catalog.{Movie, Profile, Series}
+  alias Cinder.Download.Intent
   alias Cinder.Requests
   alias Cinder.Requests.Request
   alias Ecto.Adapters.SQL
@@ -309,6 +310,62 @@ defmodule Cinder.Catalog.ProfilesTest do
              Catalog.assign_profile(series, profile!(:tv, :anime))
   end
 
+  # #942: only a held Anime search may switch while searching. Each case below breaks one of its
+  # conditions and keeps the guard. The switch that passes is in `AnimeHoldTest`.
+  describe "a searching movie on an anime hold" do
+    test "is refused when it carries no hold" do
+      movie = movie_fixture()
+      {:ok, movie} = assign_media(movie, :anime)
+      {:ok, movie} = seed_movie_state(movie, %{status: :searching})
+
+      assert_refused(movie)
+    end
+
+    # Auto runs its Standard search every tick and searches through Anime only as a fallback.
+    test "is refused when its search does not run through Anime" do
+      fallback = %{original_language: "ja", genres: ["Animation"]}
+
+      assert_refused(held_movie(:auto, :searching, fallback))
+      assert_refused(held_movie(:standard, :searching))
+    end
+
+    # `Download.start/1` reconciles a pending intent before it searches, so it can still attach.
+    test "is refused while a download intent for it is pending" do
+      for status <- [:reserved, :submitted] do
+        movie = held_movie(:anime, :searching)
+
+        Repo.insert!(%Intent{
+          operation_key: Ecto.UUID.generate(),
+          kind: :movie,
+          target_id: movie.id,
+          protocol: :torrent,
+          release: %{"title" => "Held.Release-GRP"},
+          status: status,
+          remote_id: if(status == :submitted, do: "hash-942")
+        })
+
+        assert_refused(movie)
+      end
+    end
+
+    test "is refused past searching" do
+      for status <- [:downloading, :downloaded, :upgrading] do
+        assert_refused(held_movie(:anime, status))
+      end
+    end
+
+    test "leaves the series guard as it is" do
+      series = series_fixture()
+      {:ok, series} = Catalog.assign_profile(series, profile!(:tv, :anime))
+      series = anime_hold_fixture(series, "subtitle_language_required")
+      episode = series |> season_fixture() |> episode_fixture()
+      assert {:ok, _grab} = Catalog.create_grab("profile-942", :torrent, [episode.id])
+
+      assert {:error, :acquisition_in_progress} =
+               Catalog.assign_profile(series, profile!(:tv, :standard))
+    end
+  end
+
   test "each kind retains one profile" do
     for profile <- Catalog.list_profiles(:tv) |> Enum.drop(1) do
       assert {:ok, _profile} = Catalog.delete_profile(profile)
@@ -370,5 +427,25 @@ defmodule Cinder.Catalog.ProfilesTest do
 
   defp profile!(kind, handling) do
     Catalog.list_profiles(kind) |> Enum.find(&(&1.handling == handling))
+  end
+
+  defp held_movie(media, status, attrs \\ %{}) do
+    movie = movie_fixture(attrs)
+    {:ok, movie} = assign_media(movie, media)
+    {:ok, movie} = seed_movie_state(movie, %{status: status})
+    anime_hold_fixture(movie, "subtitle_language_required")
+  end
+
+  # Auto is no profile: a fixture movie starts on it.
+  defp assign_media(movie, :auto), do: {:ok, movie}
+
+  defp assign_media(movie, handling),
+    do: Catalog.assign_profile(movie, profile!(:movies, handling))
+
+  defp assert_refused(movie) do
+    assert {:error, :acquisition_in_progress} =
+             Catalog.assign_profile(movie, profile!(:movies, :standard))
+
+    assert Repo.reload!(movie).profile_id == movie.profile_id
   end
 end

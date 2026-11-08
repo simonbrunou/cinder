@@ -262,7 +262,16 @@ defmodule CinderWeb.SeriesDetailLive do
          {:ok, _} <- Catalog.assign_profile(socket.assigns.series, profile) do
       {:noreply, socket}
     else
-      _ -> {:noreply, put_flash(socket, :error, gettext("Couldn't update the profile."))}
+      {:error, :acquisition_in_progress} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("The profile can't change while a download is in progress.")
+         )}
+
+      _ ->
+        {:noreply, put_flash(socket, :error, gettext("Couldn't update the profile."))}
     end
   end
 

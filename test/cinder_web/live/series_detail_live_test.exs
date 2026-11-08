@@ -266,6 +266,27 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     refute has_element?(view, "#series-scene-offset-form")
   end
 
+  # #942: a series with an attached grab keeps its profile, and the page says why.
+  test "a profile change refused while a download is in progress says so", %{conn: conn} do
+    series = create_series(6_942)
+    anime = Enum.find(Catalog.list_profiles(:tv), &(&1.handling == :anime))
+    {:ok, episode} = Catalog.set_episode_monitored(first_episode(series.id), true)
+    assert {:ok, _grab} = Catalog.create_grab("profile-942", :torrent, [episode.id])
+    {:ok, view, _} = live_series(conn, series)
+
+    view
+    |> form("#series-profile-form", %{"profile_id" => to_string(anime.id)})
+    |> render_change()
+
+    assert has_element?(
+             view,
+             "#flash-error",
+             "The profile can't change while a download is in progress."
+           )
+
+    assert Repo.reload(series).profile_id == nil
+  end
+
   test "series identity events tolerate forged profiles and aliases", %{conn: conn} do
     series = create_series(6_901)
     other = series_fixture()
@@ -273,6 +294,8 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     {:ok, view, _} = live_series(conn, series)
 
     render_hook(view, "set_media_profile", %{"media_profile" => "forged"})
+    # Only an acquisition in progress gets its own flash.
+    assert has_element?(view, "#flash-error", "Couldn't update the profile.")
     render_hook(view, "edit_alias", %{"id" => "not-an-id"})
     render_hook(view, "delete_alias", %{"id" => other_alias.id})
 

@@ -7402,3 +7402,9 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "Every aired episode available"
 msgstr ""
+
+#: lib/cinder_web/live/movie_detail_live.ex
+#: lib/cinder_web/live/series_detail_live.ex
+#, elixir-autogen, elixir-format
+msgid "The profile can't change while a download is in progress."
+msgstr ""

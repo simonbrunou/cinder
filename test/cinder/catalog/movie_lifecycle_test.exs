@@ -1296,6 +1296,29 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       assert %Movie{status: :import_failed, file_path: nil} = Repo.reload!(held)
     end
 
+    # #942 lets a held Anime search switch profile through `Profiles.ensure_assignment_safe/3`.
+    # Adoption refuses an acquiring movie before it reaches that guard, so a held search still
+    # refuses, with or without a profile to assign.
+    test "never adopts over a searching movie on an anime hold" do
+      [anime, standard] =
+        for handling <- [:anime, :standard],
+            do: Enum.find(Catalog.list_profiles(:movies), &(&1.handling == handling))
+
+      {:ok, movie} = Catalog.assign_profile(movie_fixture(), anime)
+      {:ok, movie} = seed_movie_state(movie, %{status: :searching})
+      movie = anime_hold_fixture(movie, "subtitle_language_required")
+
+      for opts <- [[], [profile: {standard.id, :auto}]] do
+        assert {:error, :acquisition_in_progress} =
+                 MovieLifecycle.adopt(%{tmdb_id: movie.tmdb_id}, @path, opts)
+      end
+
+      assert %Movie{status: :searching, file_path: nil, profile_id: profile_id} =
+               Repo.reload!(movie)
+
+      assert profile_id == anime.id
+    end
+
     test "refuses an empty path" do
       assert {:error, :invalid_file_path} = MovieLifecycle.adopt(%{tmdb_id: 1, title: "M"}, "")
     end

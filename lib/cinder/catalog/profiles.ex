@@ -5,6 +5,7 @@ defmodule Cinder.Catalog.Profiles do
 
   alias Cinder.Books.{BookAuthorPolicy, BookTarget}
   alias Cinder.Catalog.{Episode, Events, MediaProfiles, Movie, Profile, Season, Series}
+  alias Cinder.Download
   alias Cinder.Library.PathPolicy
   alias Cinder.LibraryKind
   alias Cinder.Repo
@@ -149,8 +150,17 @@ defmodule Cinder.Catalog.Profiles do
     end
   end
 
+  # A movie whose Anime search is held stays searching, but that search fails on its preferences
+  # before any indexer call, so nothing it could grab imports into the old root (#942). An Auto
+  # movie that holds through its anime fallback runs its Standard search first, and a pending
+  # intent can still attach a download (`Download.start/1` reconciles it before it searches), so
+  # both stay refused. Accepted residual: a settings save that makes the preferences resolve can
+  # meet a tick that read the movie before the switch, and that tick searches under Anime.
+  defp acquisition_in_progress?(%Movie{status: :searching} = movie),
+    do: not held_anime_search?(movie)
+
   defp acquisition_in_progress?(%Movie{status: status}),
-    do: status in [:searching, :downloading, :downloaded, :upgrading]
+    do: status in [:downloading, :downloaded, :upgrading]
 
   defp acquisition_in_progress?(%Series{id: id}) do
     Repo.exists?(
@@ -159,6 +169,12 @@ defmodule Cinder.Catalog.Profiles do
         on: e.season_id == season.id,
         where: season.series_id == ^id and not is_nil(e.grab_id)
     )
+  end
+
+  defp held_anime_search?(%Movie{} = movie) do
+    is_binary(movie.anime_hold_reason) and
+      MediaProfiles.media_profile_summary(movie).effective == :anime and
+      not Download.movie_intent_pending?(movie.id)
   end
 
   defp profile_id(%Profile{id: id}), do: id

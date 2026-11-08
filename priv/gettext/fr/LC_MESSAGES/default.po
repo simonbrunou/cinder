@@ -7756,3 +7756,9 @@ msgstr "À jour, en cours de diffusion"
 #, elixir-autogen, elixir-format
 msgid "Every aired episode available"
 msgstr "Tous les épisodes diffusés sont disponibles"
+
+#: lib/cinder_web/live/movie_detail_live.ex
+#: lib/cinder_web/live/series_detail_live.ex
+#, elixir-autogen, elixir-format
+msgid "The profile can't change while a download is in progress."
+msgstr "Le profil ne peut pas changer pendant un téléchargement en cours."
