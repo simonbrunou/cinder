@@ -16,6 +16,18 @@ and top retro items. Keep one per issue in a state file at
 
 ## 1. Collect the queue
 
+- Start by re-running the `container` job of cinder's `main` head. Its Trivy scan of the image's
+  Debian and Python packages downloads a fresh DB each run, but `main` runs CI only on a push, so
+  its green `container` status can predate an advisory. The zlib advisory reached the queue that
+  way on 2026-11-08 (#1238). Run `git -C ~/Projects/cinder fetch origin`, find the job of
+  `origin/main`'s head as [ci.md](../../../docs/agents/ci.md) "Re-running CI" says, and POST its
+  re-run whatever its status and `attempt` read. About 5 s later, check that
+  `CI / container (push)` reads `pending`: after a failed POST the old green stays, and the wait
+  below would end on it. When it does not, POST once more and check again about 5 s later. When it
+  still does not, skip the wait and write "container re-run: not run: POST <code>" in the
+  summary. The job takes about 5 minutes. Before you leave step 1, wait on it with
+  `forgejo.py ci cinder --follow main` and judge a red as ci.md "Judging a red run" says. A Trivy
+  row is a repo-wide red check, and ci.md "New advisory" gives the fix for a Debian one.
 - List the issues ([issue-tracker.md](../../../docs/agents/issue-tracker.md)) and read each one's
   body, comments and dependencies. A decision comment on the issue is part of the spec. The list
   endpoint returns 50 issues a page, so read every page.
