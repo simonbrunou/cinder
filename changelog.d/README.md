@@ -39,6 +39,15 @@ filler and which still hold the book. Review found its last sentence false for a
 blocked list adds `.flac`, then a re-check found its first sentences false for one that leaves
 out `.exe`: about 17 minutes from the first finding to the last fix.
 
+A sentence that says what such lists hold, or what a check over them decides ("an installer with
+no video beside it"), names the class alone ("a fake download"). Otherwise, besides the run that
+proves each sentence, read it both ways against the default lists before review: each entry
+against the sentence's words, and each class the sentence names against the entries.
+`ContentPolicy`'s book entries come from `Cinder.Acquisition.BookKind.accepted_formats/1`. On #946
+the fragment described a fake in a parenthetical. It left out archives and scripts, assumed the
+default lists and counted a book in any format: four fix commits over about 39 minutes, and the
+merged text still left out `.zipx`.
+
 A sentence that says Cinder removes, cleans up or repairs something covers the paths where that
 step fails or never runs. Say "tries to" or name what Cinder logs when it fails, and name what
 must hold first: each condition the code checks, and each earlier step in the same call that can
