@@ -1589,6 +1589,36 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       end
     end
 
+    # #1169: the cleanup after a changed video restores the original through the reversal a reset
+    # makes. Its failed discard left the corrected bytes at the reversal's staged name, and the
+    # same correction on the new video derives the same reversal id.
+    test "the same correction and reset go on after a cleanup whose discard failed", %{
+      video: video,
+      path: path,
+      original: original,
+      backup: backup
+    } do
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      corrected = File.read!(path)
+      File.write!(video, @changed_video)
+      fail_displaced_discard_once(path)
+
+      {result, log} = with_log(fn -> recover(video) end)
+      assert {:ok, %{sync: nil}} = result
+      assert log =~ "discard_failed"
+      assert File.read!(path) == original
+      assert [staged] = workspace_staged_files(path)
+      assert File.read!(staged) == corrected
+
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      assert File.read!(path) == corrected
+      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+      assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
+      assert :ok = reset(video)
+      assert_reset_finished(video, path, original, backup)
+      assert_settled_reversal(path, staged)
+    end
+
     test "a failed journal write keeps the original for a retry", %{
       video: video,
       path: path,
@@ -1849,6 +1879,33 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert :ok = reset(video)
       assert File.read!(path) == original
       assert_fresh_tombstone(staged)
+    end
+
+    # #1169: a reset whose discard of the inode its exchange displaced failed finished, but left
+    # the corrected bytes at its staged name. The same correction derives the same reversal id, so
+    # its reset meets that workspace and empties them.
+    test "the same correction and reset go on after a reset whose discard failed", %{
+      video: video,
+      path: path,
+      original: original,
+      backup: backup
+    } do
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      corrected = File.read!(path)
+      fail_displaced_discard_once(path)
+
+      {result, log} = with_log(fn -> reset(video) end)
+      assert :ok = result
+      assert log =~ "discard_failed"
+      assert File.read!(path) == original
+      assert [staged] = workspace_staged_files(path)
+      assert File.read!(staged) == corrected
+
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      assert File.read!(path) == corrected
+      assert :ok = reset(video)
+      assert_reset_finished(video, path, original, backup)
+      assert_settled_reversal(path, staged)
     end
 
     test "a reset killed before its exchange publishes its staged original on the next reset", %{
@@ -3533,6 +3590,31 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   defp assert_fresh_tombstone(staged) do
     assert File.read!(staged) == ""
     assert File.stat!(staged).links == 1
+  end
+
+  # Fails, before its effect, the next discard of a bound opened at the sidecar's name: the inode
+  # a write's exchange displaced. The immutable original's name contains the sidecar's too, and its
+  # retirement discards it after that inode. The exclusion keeps the failure off the original even
+  # if that order changes.
+  defp fail_displaced_discard_once(path) do
+    fail_once(%{
+      operation: :discard_bound,
+      source_contains: Path.basename(path),
+      excludes: ".cinder-sync-original",
+      reason: :eio
+    })
+  end
+
+  # A finished reversal's workspace beside `path`, whose staged name is `staged`: the only one left,
+  # holding at most an empty staged file with no other name.
+  defp assert_settled_reversal(path, staged) do
+    workspace = Path.dirname(staged)
+    assert workspaces(path) -- [workspace] == []
+
+    if File.exists?(workspace) do
+      assert File.ls!(workspace) -- [@staged] == []
+      if File.exists?(staged), do: assert_fresh_tombstone(staged)
+    end
   end
 
   # A correction killed after its exchange: the corrected bytes and the pending record stay, and
