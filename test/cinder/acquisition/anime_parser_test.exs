@@ -424,9 +424,10 @@ defmodule Cinder.Acquisition.AnimeParserTest do
              AnimeParser.parse("Show AV1S01E01 [1080p]", known_context)
   end
 
-  # #1132: a year token between the title and the first coordinate is metadata, as it is after
-  # the coordinate. The title guards (#871 in the search, #699 in the release judge) decide whether
-  # it names another series.
+  # #1132: a year token between the title and an `SxxEyy` is metadata, as it is after the
+  # coordinate. The title guards (#871 in the search, #699 in the release judge) decide whether it
+  # names another series. Before a bare absolute number, only the series' own year is (#1138): a
+  # later season's fansub name can carry that season's year and restart its numbering.
   test "reads a coordinate after a year token, but not after a date or another number" do
     context = %{
       kind: :series,
@@ -451,16 +452,14 @@ defmodule Cinder.Acquisition.AnimeParserTest do
     end
 
     for release <- [
-          "[Group] Show (2021) - 01 [1080p]",
+          "[Group] Show (2020) - 01 [1080p]",
           "[Group] Show [2020] - 01 [1080p]",
           "[Group] Show ( 2020 ) - 01 [1080p]",
           "[Group] Show (2020)-01 [1080p]",
           "Show_2020_01.mkv",
           "Show.(2020).01.mkv",
           "Show 2020 第01话.mkv",
-          "Show - 2020 – 01.mkv",
-          "Show 1900 01.mkv",
-          "Show #{next_year} 01.mkv"
+          "Show - 2020 – 01.mkv"
         ] do
       assert AnimeParser.parse(release, context).coordinates == [
                %{scheme: "absolute", values: ["1"]}
@@ -470,6 +469,20 @@ defmodule Cinder.Acquisition.AnimeParserTest do
 
     assert %{coordinates: [%{scheme: "scene", values: ["S11E05"]}]} =
              AnimeParser.parse("[DB] Arc (2020) - 05 [1080p]", context)
+
+    # Any other year before a bare absolute number, under the title or a scene alias, leaves the
+    # name with no coordinate and marked invalid (#1138).
+    for release <- [
+          "[Group] Show (2021) - 01 [1080p]",
+          "Show 1900 01.mkv",
+          "Show #{next_year} 01.mkv",
+          "[DB] Arc (2021) - 05 [1080p]"
+        ] do
+      parsed = AnimeParser.parse(release, context)
+
+      assert match?(%{coordinates: [], invalid_coordinate: true}, parsed),
+             inspect({release, parsed})
+    end
 
     # The context's own year is a year token outside 1900 to next year too.
     late_context = %{context | year: next_year + 2}
@@ -504,6 +517,23 @@ defmodule Cinder.Acquisition.AnimeParserTest do
         ] do
       assert AnimeParser.parse(release, context).coordinates == [], release
     end
+  end
+
+  # #1138: with no series year, any year before a bare absolute number could be a later season's,
+  # so none is read past. Before an `SxxEyy`, which names its own season, any year still is.
+  test "a series with no year reads past no year before a bare absolute number" do
+    context = %{kind: :series, titles: ["Frieren"], allow_unscoped_standard: false, year: nil}
+
+    parsed = AnimeParser.parse("[Group] Frieren (2023) - 01 [1080p]", context)
+    assert %{coordinates: [], invalid_coordinate: true} = parsed
+
+    assert AnimeParser.parse("Frieren.2023.S01E01.1080p", context).coordinates == [
+             %{scheme: "standard", values: ["S01E01"]}
+           ]
+
+    assert AnimeParser.parse("[Group] Frieren - 01 [1080p]", context).coordinates == [
+             %{scheme: "absolute", values: ["1"]}
+           ]
   end
 
   test "rejects a chained scoped range instead of importing a truncated prefix" do

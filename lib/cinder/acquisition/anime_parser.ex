@@ -378,16 +378,22 @@ defmodule Cinder.Acquisition.AnimeParser do
     do:
       ~r/^[\s._\-–—]*(?|\(\s*(\d{4})\s*\)|\[\s*(\d{4})\s*\]|(\d{4}))[\s._\-–—]*(?=(?<![\p{L}\p{N}])S\d{1,3}E\d{1,4})/iu
 
-  # Before a bare absolute number, only separators, and brackets or parentheses around the year,
-  # may sit between the title and the number. A bare year joined to the next number by one dot or
-  # hyphen reads as a year-month date, so "Show.2020.01" keeps no coordinate.
+  # Before a bare absolute number, only the series' own year is metadata (#1138). A later season
+  # can be released under the series' title with its own premiere year and restart its numbering,
+  # so "Show (2017) - 01" for a 2016 series is not read as the series' episode 1. A series with no
+  # year reads past none. Only separators, and brackets or parentheses around the year, may sit
+  # between the title and the number. A bare year joined to the next number by one dot or hyphen
+  # reads as a year-month date, so "Show.2020.01" keeps no coordinate.
   defp strip_year_before_absolute(remainder, context) do
     Regex.replace(
       ~r/^[\s._\-–—]*(?|\(\s*(\d{4})\s*\)|\[\s*(\d{4})\s*\]|(\d{4})(?![.-]?\d))[\s._\-–—]*(?=(?:总?第\s*)?\d)/u,
       remainder,
-      fn matched, year -> if year_token?(year, context), do: "", else: matched end
+      fn matched, year -> if own_year?(year, context), do: "", else: matched end
     )
   end
+
+  defp own_year?(value, %{year: year}) when is_integer(year), do: String.to_integer(value) == year
+  defp own_year?(_value, _context), do: false
 
   defp year_token?(value, context), do: year?(String.to_integer(value), value, context)
 

@@ -814,6 +814,57 @@ defmodule Cinder.Library.AnimePreflightTest do
     assert result.issue["reason"] == "unresolved_file"
   end
 
+  # #1138: a file named with a later season's year, one past the series', before a bare absolute
+  # number maps no episode, so it cannot import as the series' first episode.
+  test "frozen replay reads past the series' own year only before a bare absolute number (#1138)" do
+    episode = %{id: 11, season_number: 1, episode_number: 1}
+
+    context = %{
+      kind: :series,
+      title: "Show",
+      year: 2016,
+      tvdb_id: 99,
+      aliases: [],
+      episodes: [episode],
+      mappings: [
+        selection_mapping("standard", "S01E01", [11]),
+        selection_mapping("absolute", "1", [11])
+      ]
+    }
+
+    release =
+      Release.new(%{
+        title: "[Group] Show - 01 [1080p]",
+        download_url: "grab",
+        size: 1,
+        protocol: :torrent,
+        query_origins: [:free_text]
+      })
+
+    assert {:ok, %{assignments: [%{episode_ids: [11], mapping_snapshot: snapshot}]}} =
+             Anime.select_episodes([release], context, [11], [])
+
+    assert snapshot["parser_context"]["year"] == 2016
+
+    inventory = fn path ->
+      [
+        %{
+          relative_path: path,
+          identity: %{size: 1000, major_device: 1, inode: 1, mtime: 100}
+        }
+      ]
+    end
+
+    own_year = "[Group] Show (2016) - 01 [1080p].mkv"
+    assert {:ok, result} = AnimePreflight.run(snapshot, inventory.(own_year), [episode])
+    assert assignment_map(result.assignments) == %{own_year => [11]}
+
+    later_season = "[Group] Show (2017) - 01 [1080p].mkv"
+
+    assert {:needs_mapping, _result} =
+             AnimePreflight.run(snapshot, inventory.(later_season), [episode])
+  end
+
   test "frozen replay does not reinterpret malformed coordinates as a typed special" do
     fixture = %{
       "snapshot_version" => 2,
