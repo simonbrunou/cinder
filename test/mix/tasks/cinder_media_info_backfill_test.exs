@@ -2,10 +2,12 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
   use Cinder.DataCase, async: false
   import Mox
   import Cinder.CatalogFixtures
+  import ExUnit.CaptureIO
 
   alias Cinder.Catalog.Episode
   alias Cinder.Library.{Backfill, Filesystem.Disk}
   alias Cinder.Subtitles.{Manifest, Moviehash, SidecarTransaction, Sync}
+  alias Mix.Tasks.Cinder.MediaInfo.Backfill, as: BackfillTask
 
   setup :verify_on_exit!
 
@@ -88,48 +90,48 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
   end
 
   test "re-registers an existing damaged row's sidecars as managed in the subtitle manifest (issue #128)" do
-    movie = movie_fixture(%{status: :available, file_path: "/lib/D (2020)/D (2020).mkv"})
-    sidecar = "/lib/D (2020)/D (2020).fr.srt"
-
-    # A row imported before sidecar bookkeeping existed (or damaged by the adopt-path bug): the
-    # sidecar is genuinely on disk, but the manifest never recorded it as Cinder-managed.
-    fs = start_supervised!({Agent, fn -> %{sidecar => "existing SRT"} end})
-
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
-    stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, [{sidecar, 10}]} end)
-
-    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
-      if Agent.get(fs, &Map.has_key?(&1, path)), do: {:ok, %File.Stat{}}, else: {:error, :enoent}
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :read, fn path ->
-      case Agent.get(fs, &Map.get(&1, path)) do
-        content when is_binary(content) -> {:ok, content}
-        _ -> {:error, :enoent}
-      end
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
-      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
-      :ok
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
-      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
-      :ok
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :rename, fn source, dest ->
-      Agent.get_and_update(fs, fn files ->
-        {:ok, files |> Map.delete(source) |> Map.put(dest, Map.fetch!(files, source))}
-      end)
-    end)
+    movie = damaged_row("D")
 
     refute movie.file_path |> Manifest.read() |> Manifest.managed?("fr")
 
-    Backfill.run()
+    Backfill.run(register_untracked: true)
 
     assert movie.file_path |> Manifest.read() |> Manifest.managed?("fr")
+    # The opt-in changes only the manifest marking, not the media-info columns (#993).
+    assert Cinder.Catalog.get_movie_by_id(movie.id).imported_sidecar_subtitles == ["fr"]
+  end
+
+  # Nothing on disk tells the damaged row's sidecar from one the user placed (#993).
+  test "leaves a sidecar the manifest does not track unmanaged without the opt-in" do
+    movie = damaged_row("U")
+
+    Backfill.run()
+
+    refute movie.file_path |> Manifest.read() |> Manifest.managed?("fr")
+    assert Cinder.Catalog.get_movie_by_id(movie.id).imported_sidecar_subtitles == ["fr"]
+  end
+
+  describe "the mix task" do
+    test "registers an untracked sidecar only with --register-untracked" do
+      movie = damaged_row("T")
+
+      assert capture_io(fn -> BackfillTask.run([]) end) =~ "Media-info backfill complete."
+      refute movie.file_path |> Manifest.read() |> Manifest.managed?("fr")
+
+      assert capture_io(fn -> BackfillTask.run(["--register-untracked"]) end) =~
+               "Media-info backfill complete."
+
+      assert movie.file_path |> Manifest.read() |> Manifest.managed?("fr")
+    end
+
+    test "refuses an unknown switch or an argument before it backfills anything" do
+      movie = damaged_row("A")
+
+      assert_raise OptionParser.ParseError, fn -> BackfillTask.run(["--register-untrack"]) end
+      assert_raise Mix.Error, fn -> BackfillTask.run(["register-untracked"]) end
+
+      assert Cinder.Catalog.get_movie_by_id(movie.id).imported_sidecar_subtitles == nil
+    end
   end
 
   test "a re-run keeps a hash-verified manifest entry instead of downgrading it" do
@@ -196,7 +198,8 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
 
     assert movie.file_path |> Manifest.read() |> Manifest.stable?(moviehash, "fr")
 
-    Backfill.run()
+    # The untracked `en` registers only with the opt-in (#993).
+    Backfill.run(register_untracked: true)
 
     state = Manifest.read(movie.file_path)
     assert state.video_moviehash == moviehash
@@ -414,4 +417,46 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
 
   defp digest(content),
     do: content |> then(&:crypto.hash(:sha256, &1)) |> Base.encode16(case: :lower)
+
+  # A row imported before sidecar bookkeeping existed (or damaged by the adopt-path bug): the
+  # sidecar is genuinely on disk, but the manifest never recorded it as Cinder-managed.
+  defp damaged_row(name) do
+    movie =
+      movie_fixture(%{status: :available, file_path: "/lib/#{name} (2020)/#{name} (2020).mkv"})
+
+    sidecar = "/lib/#{name} (2020)/#{name} (2020).fr.srt"
+    fs = start_supervised!({Agent, fn -> %{sidecar => "existing SRT"} end})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, [{sidecar, 10}]} end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+      if Agent.get(fs, &Map.has_key?(&1, path)), do: {:ok, %File.Stat{}}, else: {:error, :enoent}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :read, fn path ->
+      case Agent.get(fs, &Map.get(&1, path)) do
+        content when is_binary(content) -> {:ok, content}
+        _ -> {:error, :enoent}
+      end
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :rename, fn source, dest ->
+      Agent.get_and_update(fs, fn files ->
+        {:ok, files |> Map.delete(source) |> Map.put(dest, Map.fetch!(files, source))}
+      end)
+    end)
+
+    movie
+  end
 end

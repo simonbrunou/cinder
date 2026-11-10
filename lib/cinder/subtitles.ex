@@ -767,7 +767,7 @@ defmodule Cinder.Subtitles do
   def fetch_now(criteria_fun, video_path, kind, release_sidecars) do
     release_sidecars = release_sidecars!(release_sidecars)
 
-    mark_release_sidecars(
+    mark_canonical_sidecars(
       video_path,
       release_sidecars[:languages],
       {:placed, release_sidecars[:placed]}
@@ -785,19 +785,33 @@ defmodule Cinder.Subtitles do
   @doc """
   Marks each of `languages`' existing canonical sidecars for `video_path` as Cinder-managed in
   the manifest (origin `"release_sidecar"`), recomputing the moviehash fresh from the file. For
-  `Cinder.Library.Backfill`, which repairs a row whose sidecars were never registered (issue
-  #128). An import goes through `fetch_now/4`, which marks only the sidecars the import placed or
-  the manifest already tracks. Both leave a language unmarked, with a warning, when its manifest
-  cannot be read (`Manifest.load/1`).
-  """
-  @spec mark_release_sidecars(String.t(), [String.t()] | nil) :: :ok
-  def mark_release_sidecars(video_path, languages),
-    do: mark_release_sidecars(video_path, languages, :any)
+  `Cinder.Library.Backfill`. By default it marks only a language the manifest already tracks, as
+  an import's `fetch_now/4` does, so a subtitle the user put next to the video in an untracked
+  language stays theirs (#993).
 
-  defp mark_release_sidecars(_video_path, languages, _markable) when languages in [nil, []],
+  `register_untracked: true` marks an untracked language's sidecar too: the repair for a row whose
+  sidecars were never registered (issue #128). Nothing on disk tells a sidecar a release shipped
+  from one the user placed, so a hand-placed subtitle can then become managed, and the next fetch
+  for a wanted language may replace it.
+
+  Either way a language whose manifest cannot be read (`Manifest.load/1`) stays unmarked, with a
+  warning.
+  """
+  @spec mark_release_sidecars(String.t(), [String.t()] | nil, register_untracked: boolean()) ::
+          :ok
+  def mark_release_sidecars(video_path, languages, opts \\ []) do
+    markable =
+      if Keyword.validate!(opts, register_untracked: false)[:register_untracked],
+        do: :any,
+        else: :tracked
+
+    mark_canonical_sidecars(video_path, languages, markable)
+  end
+
+  defp mark_canonical_sidecars(_video_path, languages, _markable) when languages in [nil, []],
     do: :ok
 
-  defp mark_release_sidecars(video_path, languages, markable) do
+  defp mark_canonical_sidecars(video_path, languages, markable) do
     moviehash = current_moviehash(video_path)
 
     Enum.each(Enum.uniq(languages), &mark_release_sidecar(video_path, moviehash, &1, markable))
@@ -840,10 +854,11 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  # Which existing canonical sidecars a marking may take over. Backfill may take any (`:any`). An
-  # import may take one it placed, or a language the manifest already tracks, read inside the
-  # video's lock.
+  # Which existing canonical sidecars a marking may take over, with the manifest read inside the
+  # video's lock. Backfill takes a language the manifest already tracks (`:tracked`), or any with
+  # the operator's opt-in (`:any`). An import takes one it placed, or a tracked language.
   defp markable?(:any, _state, _language, _target), do: true
+  defp markable?(:tracked, state, language, _target), do: Manifest.managed?(state, language)
 
   defp markable?({:placed, placed}, state, language, target),
     do: target in placed or Manifest.managed?(state, language)
@@ -913,9 +928,10 @@ defmodule Cinder.Subtitles do
   @doc """
   Hands `video_path`'s managed sidecar in `language` back to the user: drops the language's
   release-sidecar entry from the manifest, under the video's lock, so no fetch writes to that file
-  while it is there (#994), until the media-info backfill marks it again. An import before #918
-  could mark a subtitle the user put next to the video as a release sidecar, and the backfill
-  marks one too. An operator runs it over `bin/cinder rpc` (`docs/operating.md`, "Subtitles").
+  while it is there (#994), until a media-info backfill run with its opt-in marks it again
+  (`Cinder.Library.Backfill.run/1`, `register_untracked: true`). An import before #918 could mark
+  a subtitle the user put next to the video as a release sidecar, and so can that opt-in. An
+  operator runs it over `bin/cinder rpc` (`docs/operating.md`, "Subtitles").
   `language` is the code in the sidecar's name (`<video>.<language>.srt`), as the manifest
   records it.
 

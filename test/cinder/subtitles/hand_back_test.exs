@@ -133,17 +133,35 @@ defmodule Cinder.Subtitles.HandBackTest do
     end
   end
 
-  # `docs/operating.md` tells the operator to hand a subtitle back after a backfill run, since the
-  # backfill records every canonical sidecar it finds (#993 decides whether it should).
-  test "a media-info backfill records a handed-back sidecar again", %{video: video} do
-    put_tracks!(video, %{"fr" => release_sidecar()})
-    movie_fixture(%{status: :available, file_path: video})
-    assert :ok = Subtitles.hand_back(video, "fr")
+  # A handed-back sidecar is one the manifest does not track, which the media-info backfill
+  # registers only with its opt-in (#993). `docs/operating.md` tells the operator to hand a
+  # subtitle back after such a run.
+  describe "a media-info backfill after the hand-back" do
+    test "leaves the sidecar with the user by default", %{video: video} do
+      put_tracks!(video, %{"fr" => release_sidecar()})
+      movie = movie_fixture(%{status: :available, file_path: video})
+      stub_source(:id, video)
+      assert :ok = Subtitles.hand_back(video, "fr")
 
-    Backfill.run()
+      Backfill.run()
 
-    assert %{tracks: %{"fr" => %{origin: "release_sidecar"}}} = Manifest.read(video)
-    assert File.read!(Subtitles.sidecar_path(video, "fr")) == @hand_placed
+      refute video |> Manifest.read() |> Manifest.managed?("fr")
+      assert :ok = Subtitles.fetch_missing(Subtitles.movie_criteria(movie), video, :movies)
+      assert_received {:searched, "fr"}
+      refute_received {:downloaded, _file_id}
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) == @hand_placed
+    end
+
+    test "records the sidecar again with the opt-in", %{video: video} do
+      put_tracks!(video, %{"fr" => release_sidecar()})
+      movie_fixture(%{status: :available, file_path: video})
+      assert :ok = Subtitles.hand_back(video, "fr")
+
+      Backfill.run(register_untracked: true)
+
+      assert %{tracks: %{"fr" => %{origin: "release_sidecar"}}} = Manifest.read(video)
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) == @hand_placed
+    end
   end
 
   describe "hand_back/2" do

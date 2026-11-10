@@ -1446,28 +1446,58 @@ defmodule Cinder.SubtitlesTest do
   # #1202: on an unreadable manifest the marking cannot see the verified track it must keep, so it
   # skips the language, even though the next read succeeds.
   describe "release-sidecar marking whose manifest read fails" do
-    test "from a backfill keeps a verified track and its sync record", %{video: video} do
-      manifest = put_verified_track!(video, nil)
-      fail_once(%{operation: :read, source_contains: ".cinder-subtitles.json", reason: :eio})
+    # A backfill marks only a tracked language by default, and an untracked one too with the
+    # opt-in (#993).
+    for {opts, path} <- [{[], "by default"}, {[register_untracked: true], "with the opt-in"}] do
+      test "from a backfill #{path} keeps a verified track and its sync record", %{video: video} do
+        manifest = put_verified_track!(video, nil)
+        fail_once(%{operation: :read, source_contains: ".cinder-subtitles.json", reason: :eio})
 
-      log = capture_log(fn -> assert :ok = Subtitles.mark_release_sidecars(video, ["fr"]) end)
+        log =
+          capture_log(fn ->
+            assert :ok = Subtitles.mark_release_sidecars(video, ["fr"], unquote(opts))
+          end)
 
-      assert File.read!(Manifest.path(video)) == manifest
-      assert log =~ "subtitle manifest cannot be read for #{video}: :eio"
+        assert File.read!(Manifest.path(video)) == manifest
+        assert log =~ "subtitle manifest cannot be read for #{video}: :eio"
 
-      assert log =~
-               "subtitle release sidecar left unmarked for #{Subtitles.sidecar_path(video, "fr")}"
+        assert log =~
+                 "subtitle release sidecar left unmarked for #{Subtitles.sidecar_path(video, "fr")}"
+      end
     end
 
-    test "skips only the language whose read failed", %{video: video} do
-      verified = Jason.decode!(put_verified_track!(video, nil))["tracks"]["fr"]
-      put!(Subtitles.sidecar_path(video, "en"), "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n")
-      fail_once(%{operation: :read, source_contains: ".cinder-subtitles.json", reason: :eio})
+    # The read fails once, on `fr`, and `en` is marked after it. By default the marking takes
+    # only a tracked language, so `en` starts as a provider track whose bytes changed.
+    for {opts, tracked_en?, path} <- [
+          {[], true, "by default"},
+          {[register_untracked: true], false, "with the opt-in"}
+        ] do
+      test "skips only the language whose read failed, #{path}", %{video: video} do
+        verified = Jason.decode!(put_verified_track!(video, nil))["tracks"]["fr"]
+        put!(Subtitles.sidecar_path(video, "en"), "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n")
 
-      capture_log(fn -> assert :ok = Subtitles.mark_release_sidecars(video, ["fr", "en"]) end)
+        if unquote(tracked_en?) do
+          en = %{
+            origin: "opensubtitles_id",
+            file: "M.en.srt",
+            managed_sha256: String.duplicate("d", 64)
+          }
 
-      assert %{"fr" => ^verified, "en" => %{"origin" => "release_sidecar", "file" => "M.en.srt"}} =
-               Jason.decode!(File.read!(Manifest.path(video)))["tracks"]
+          state = Jason.decode!(File.read!(Manifest.path(video)))
+          put_manifest!(video, put_in(state, ["tracks", "en"], en))
+        end
+
+        fail_once(%{operation: :read, source_contains: ".cinder-subtitles.json", reason: :eio})
+
+        capture_log(fn ->
+          assert :ok = Subtitles.mark_release_sidecars(video, ["fr", "en"], unquote(opts))
+        end)
+
+        assert %{
+                 "fr" => ^verified,
+                 "en" => %{"origin" => "release_sidecar", "file" => "M.en.srt"}
+               } = Jason.decode!(File.read!(Manifest.path(video)))["tracks"]
+      end
     end
 
     test "from an import keeps a verified track and returns the fetch's answer", %{

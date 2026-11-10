@@ -555,13 +555,40 @@ doesn't shell out to Bazarr instead of building its own fetch: Bazarr has no sta
 mode, it reads its media list from Sonarr/Radarr's API — so running it against Cinder's library
 would mean also running Sonarr/Radarr, defeating the point of Cinder replacing them.
 
+### Media-info backfill
+
+The media-info backfill reads the audio and subtitle languages of every available movie with a
+file and every episode with a file again, and records them in the database. It records a
+`<video>.<lang>.srt` next to such a file as a sidecar Cinder manages only in a language Cinder
+already manages for that video, so a subtitle you put there yourself in another language stays
+yours. The release image has no Mix, so run it over `rpc`:
+
+```sh
+docker compose exec cinder bin/cinder rpc 'Cinder.Library.Backfill.run()'
+```
+
+Media imported before Cinder kept a record of its subtitle files can have sidecars it never
+recorded. To also record a `<video>.<lang>.srt` in a language Cinder does not manage yet, add the
+opt-in:
+
+```sh
+docker compose exec cinder bin/cinder rpc \
+  'Cinder.Library.Backfill.run(register_untracked: true)'
+```
+
+Cinder cannot tell those files from a subtitle you put next to the video yourself, so with the
+opt-in a subtitle you placed can become managed too, and the next subtitle fetch for a wanted
+language may replace it. Hand it back afterwards, as the next section says. From a source
+checkout, `mix cinder.media_info.backfill` runs the same backfill, and `--register-untracked` is
+its opt-in.
+
 ### Handing a subtitle back
 
 A subtitle fetch replaces only the sidecars Cinder manages: the ones the hidden
 `.<video file name>.cinder-subtitles.json` next to the video records. A subtitle you put next to
-the video yourself is not one of them. An import by an earlier Cinder version could still record
-one as a sidecar that came with the release, and the media-info backfill
-(`mix cinder.media_info.backfill`) records one too. A later fetch can then replace it with an
+the video yourself is not one of them. An import or a media-info backfill by an earlier Cinder
+version could still record one as a sidecar that came with the release, and so can a backfill
+run with the opt-in (see "Media-info backfill" above). A later fetch can then replace it with an
 OpenSubtitles download or a track from the video. To give it back to you, run this with the
 video's full path as the container sees it and the language code from the subtitle's file name
 (`fr` for `Movie (2020) {tmdb-1}.fr.srt`, in the same case):
@@ -572,9 +599,10 @@ docker compose exec cinder bin/cinder rpc \
 ```
 
 `:ok` means Cinder no longer manages that subtitle, and the video's other languages stay as they
-were. No fetch writes to the file while it is there, until a media-info backfill run records it
-as the release's again: run the command after any backfill, not before. If you delete the file, a
-later fetch can write a new subtitle there, and Cinder manages that one.
+were. No fetch writes to the file while it is there, until a media-info backfill run with the
+opt-in records it as the release's again: run the command after any such run, not before. A
+backfill run without the opt-in leaves it with you. If you delete the file, a later fetch can
+write a new subtitle there, and Cinder manages that one.
 
 These three refusals change nothing:
 
