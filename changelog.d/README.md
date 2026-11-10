@@ -116,7 +116,12 @@ claim about every name. On #1132, the fragment said in general words which years
 episode number Cinder reads. Review found it false for a second number, a hyphen after a
 bracketed year, an `S01E01` after a dotted year, a title that an omitted alias starts with, and
 brackets that did not match or held more than spaces. Those five findings took three review
-rounds, about 45 minutes, which one code-fix commit shared.
+rounds, about 45 minutes, which one code-fix commit shared. Use example names in the bold summary
+too. When your PR makes false a sentence of another unreleased fragment about which names a
+parser reads, narrow that sentence with example names the same way. On #1138, the first draft
+restated the new rule in the body of the new fragment and of the narrowed #1132 fragment, and
+both bold summaries stated a rule in general words: two review rounds, about 8 minutes from the
+first finding to their fix.
 
 When a PR changes a mechanism that several callers share, such as `BoundedWalk`'s guard, a lock
 or a deadline, say what the mechanism now does. A sentence about what a caller then does or shows
