@@ -11,9 +11,20 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
   # ${tailwindVersion} dropped, the fence keeps only the file's ASCII letters, joined across
   # lines, and fails on each tailwindVersion left, in code, a comment or a string alike. That
   # catches a name in quotes or escapes, one split across lines, and one built from strings with
-  # nothing but symbols between them. A name Nix builds from parts with other letters between
-  # them (a comment, a function call) and supplies through `with`, or a binding from another
-  # file, is past any text check.
+  # nothing but symbols between them.
+  #
+  # #1103: a name Nix builds from parts with other letters between them (a comment, a function
+  # call) never shows in those letters. A `let` refuses a built name and a `rec` set does not
+  # scope one, but `with` brings it into scope, and `with import ./x.nix;` supplies the name with
+  # no mention in flake.nix at all. So the fence also fails on every `with` in the raw
+  # lines, in code, a comment or a string alike: each one with no ASCII letter, digit, _, ' or -
+  # right before or after it. Those are the bytes a Nix name holds, so `withPackages` and `x-with`
+  # are names, not the keyword. Forms this check does not catch include: a ${tailwindVersion}
+  # read in another file, which the fence does not read; `builtins.scopedImport`, which can
+  # supply the name to the file it imports, and which `builtins.${"scoped" + /* c */ "Import"}`
+  # reaches without spelling its own name; a built name in the `__overrides` of a `rec` set or a
+  # `let { ... }` block that holds the pin line, which replaces the pin's value for the
+  # references in that set (#1261).
   use ExUnit.Case, async: true
 
   @version "4.1.12"
@@ -21,6 +32,9 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
   # A whole line: leading and trailing blanks, never a carriage return, and a value with no
   # quote, escape or interpolation.
   @pin ~r/\A[ \t]*tailwindVersion = "([^"\\$]+)";[ \t]*\z/
+
+  # A `with` that no byte a Nix name can hold touches on either side, so `withPackages` passes.
+  @with_keyword ~r/(?<![A-Za-z0-9_'-])with(?![A-Za-z0-9_'-])/
 
   @bump "bump these together: `config :tailwind, version:`, the Dockerfile's " <>
           "ARG TAILWIND_VERSION and both of its sha256 sums, and flake.nix's " <>
@@ -51,6 +65,9 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
   @mention_problem "names tailwindVersion other than as ${tailwindVersion}, " <>
                      "which this check cannot read"
 
+  @with_problem "uses with, which can bring tailwindVersion into scope where this check " <>
+                  "cannot see it: write the attribute path out in code, and reword prose"
+
   @no_pin ~s(flake.nix has no line tailwindVersion = "<version>";)
 
   test "the flake pins the Tailwind version config.exs asks for" do
@@ -64,8 +81,8 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
            "flake.nix's Tailwind pin disagrees with `config :tailwind, version:` or cannot be " <>
              "read:\n  " <>
              Enum.join(problems, "\n  ") <>
-             "\n\nSet the version on the one line tailwindVersion = \"<version>\";, and read it " <>
-             "only as ${tailwindVersion}, in code, comments and strings alike."
+             "\n\nSet the version on the one line tailwindVersion = \"<version>\";, read it " <>
+             "only as ${tailwindVersion}, and write no with, in code, comments and strings alike."
   end
 
   test "the fixture passes, and a pin that differs from the config fails" do
@@ -108,7 +125,6 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
     for line <- [
           ~S(      "tailwind\Version" = "4.1.13";),
           ~S(      ${"tailwindVersion"} = "4.1.13";),
-          ~S(      t = with { ${"tailwind" + "Version"} = "4.1.13"; }; tailwindcss;),
           "      inherit (s) tailwindVersion;",
           "      f = tailwindVersion: tailwindcss;",
           "      f = { tailwindVersion ? \"4.1.13\" }: tailwindcss;",
@@ -119,6 +135,11 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
       flake = String.replace(@flake, @pin_line, @pin_line <> line <> "\n")
       assert {line, problems(flake)} == {line, [mention(7)]}
     end
+
+    # The name it builds shows in the letters, so the `with` fails on both counts.
+    built = ~S(      t = with { ${"tailwind" + "Version"} = "4.1.13"; }; tailwindcss;)
+    flake = String.replace(@flake, @pin_line, @pin_line <> built <> "\n")
+    assert problems(flake) == [mention(7), with_used(7)]
 
     bare =
       String.replace(@flake, ~s(version = "${tailwindVersion}";), "version = tailwindVersion;")
@@ -141,7 +162,54 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
               "Version"} = "4.1.13"; }; pkgs\
       """)
 
-    assert problems(supplied) == [mention(9)]
+    assert problems(supplied) == [mention(9), with_used(9)]
+  end
+
+  test "a with that supplies a name the letters never show fails on its line" do
+    # With the pin in a comment, each `with` supplies the references their tailwindVersion.
+    commented = String.replace(@flake, @pin_line, "      /*\n" <> @pin_line <> "      */\n")
+
+    for scope <- [
+          ~S(with { ${"tailwind" + /* x */ "Version"} = "4.1.13"; };),
+          ~S|with { ${"tailwind" + (builtins.substring 0 1 "Vx") + "ersion"} = "4.1.13"; };|,
+          "with import ./x.nix;"
+        ] do
+      flake = String.replace(commented, "tailwindcss = pkgs", "tailwindcss = #{scope} pkgs")
+      assert {scope, problems(flake)} == {scope, [with_used(9)]}
+    end
+  end
+
+  test "every with fails, in code, a comment or a string, and a longer name passes" do
+    # After (, ;, =, :, ${ and */, and before {, Nix reads the keyword.
+    for line <- [
+          "      t = (with pkgs; tailwindcss_4);",
+          "      t = assert true;with pkgs; tailwindcss_4;",
+          "      t =with pkgs; tailwindcss_4;",
+          "      f = { x }:with pkgs; tailwindcss_4;",
+          ~S(      s = "${with pkgs; tailwindcss_4.version}";),
+          "      t = /* c */with pkgs; tailwindcss_4;",
+          "      t = with{ a = 1; }; a;",
+          "      # built with nixfmt",
+          ~s(      s = "built with nixfmt";)
+        ] do
+      flake = String.replace(@flake, @pin_line, @pin_line <> line <> "\n")
+      assert {line, problems(flake)} == {line, [with_used(7)]}
+    end
+
+    start =
+      String.replace(@flake, @pin_line, @pin_line <> "      t =\nwith pkgs; tailwindcss_4;\n")
+
+    assert problems(start) == [with_used(8)]
+
+    # A byte a Nix name holds, on either side, makes a longer name.
+    for line <- [
+          "      python = pkgs.python3.withPackages (ps: [ ]);",
+          "      # without a venv"
+          | for(byte <- ~w(a Z 0 _ ' -), do: "      # x#{byte}with with#{byte}x")
+        ] do
+      flake = String.replace(@flake, @pin_line, @pin_line <> line <> "\n")
+      assert {line, problems(flake)} == {line, []}
+    end
   end
 
   test "a flake with no pin line fails" do
@@ -175,6 +243,8 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
 
   defp mention(number), do: "flake.nix:#{number} " <> @mention_problem
 
+  defp with_used(number), do: "flake.nix:#{number} " <> @with_problem
+
   defp second_pin(number),
     do: "flake.nix:#{number} is one of 2 pin lines, and this check reads only one"
 
@@ -191,7 +261,9 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
     pins = Enum.filter(lines, fn {line, _number} -> line =~ @pin end)
     no_pin = if pins == [], do: [~s(#{path} has no line tailwindVersion = "<version>";)], else: []
 
-    (count_problems(pins) ++ mention_problems(lines, pins) ++ mismatch_problems(pins, version))
+    (count_problems(pins) ++
+       mention_problems(lines, pins) ++
+       with_problems(lines) ++ mismatch_problems(pins, version))
     |> Enum.uniq()
     |> Enum.sort_by(&elem(&1, 0))
     |> Enum.map(fn {number, problem} -> "#{path}:#{number} #{problem}" end)
@@ -222,6 +294,11 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
 
     for {start, _length} <- :binary.matches(text, "tailwindVersion"),
         do: {elem(numbers, start), @mention_problem}
+  end
+
+  # Each line holding a `with`, read on the raw line: the letters-only text joins words.
+  defp with_problems(lines) do
+    for {line, number} <- lines, line =~ @with_keyword, do: {number, @with_problem}
   end
 
   defp mismatch_problems([{line, number}], version) do

@@ -24,26 +24,27 @@
           # `attribute 'elixir_1_20' missing`, the locked nixpkgs predates the 1.20
           # packaging — run `nix flake update`, or fall back to the known-good
           # baseline: `beam = pkgs.beam.packages.erlang_28; elixir = beam.elixir_1_19;`.
-          # Their patch versions come from flake.lock's nixpkgs, which no test compares with
+          # Their patch versions come from flake.lock's nixpkgs, which no test checks against
           # CI: after an OTP or Elixir bump, check them as docs/agents/ci.md "Dependency
           # rebuild" says.
           beam = pkgs.beam.packages.erlang_29;
           elixir = beam.elixir_1_20;
           # A python3 that can import ffsubsync, so `python3 priv/ffsubsync_runner.py ...` runs the
-          # subtitle sync engine with no venv. nixpkgs packages ffsubsync as an application built
-          # with `python3.pkgs`, hence `toPythonModule`. Keep it on the Dockerfile's pin
-          # (`ffsubsync==0.5.1`); after a lock bump, check the version with
+          # subtitle sync engine without a venv. nixpkgs packages ffsubsync as an application,
+          # through `python3.pkgs.buildPythonApplication`, hence `toPythonModule`. Keep it on the
+          # Dockerfile's pin (`ffsubsync==0.5.1`); after a lock bump, check the version:
           # `nix eval --raw --inputs-from . nixpkgs#ffsubsync.version`.
           python = pkgs.python3.withPackages (ps: [ (ps.toPythonModule pkgs.ffsubsync) ]);
-          # Tailwind from a Nix fetch, so `mix assets.setup` never downloads it with Erlang's
+          # Tailwind from a Nix fetch, so `mix assets.setup` never downloads it through Erlang's
           # :httpc, which can fail on GitHub's release redirect (#889, docs/agents/ci.md
           # "Dependency rebuild"). shellHook points MIX_TAILWIND_PATH at it, which
           # `config :tailwind, path:` reads. The pin below must equal `config :tailwind, version:`
           # (test/code_health/tailwind_flake_pin_test.exs checks it, and fails on any other
-          # mention of the pin's name, in comments too): on a mismatch
+          # mention of the pin's name and on the word that opens a with-expression, in comments
+          # too, since such an expression can supply that name unseen): on a mismatch
           # `tailwind.install --if-missing` downloads the configured version and cannot write it
           # into the read-only store. It is pinned here, not left at nixpkgs' tailwindcss_4
-          # version, since following that would move `config :tailwind, version:`, and with it the
+          # version, since following that would move `config :tailwind, version:`, and so the
           # Tailwind the image ships, on every nixpkgs bump. The sums come from the release's
           # sha256sums.txt.
           tailwindVersion = "4.1.12";
@@ -100,7 +101,7 @@
         }
       );
 
-      # `nix fmt <file>` formats this flake with nixfmt (the RFC 166 style).
+      # `nix fmt <file>` formats this flake in nixfmt's style (RFC 166).
       formatter = forAllSystems (pkgs: pkgs.nixfmt);
     };
 }
