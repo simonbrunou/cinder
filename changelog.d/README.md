@@ -37,14 +37,19 @@ about 29 minutes from the first finding to the last fix.
 
 Each sentence about what Cinder does holds on every path the fragment covers: each fallback or
 other writer that still runs, and each case the code handles another way (a file with no
-moviehash, an entry written before the change). Prove each one, wording taken from a code comment
-or the issue's brief included, with a run that goes red when it is false, such as a throwaway
-test, or cut it. On #1072 the first fragment held three such sentences, each false on some path:
-three findings over two review rounds, about 22 minutes. On #871, "duplicates of one result that
-disagree on whether they carry the series' id count as carrying none" came from a #699 code
-comment and the triage brief. It was false for one copy with the series' id and one with none,
-which settle on the series' id, and the code comment held the same clause: two re-check rounds,
-about 14 minutes.
+moviehash, an entry written before the change). Prove each one, wording you did not write included
+(a code comment, the issue's brief, a review report), with a run that goes red when it is false,
+such as a throwaway test, or cut it. On #1072 the first fragment held three such
+sentences, each false on some path: three findings over two review rounds, about 22 minutes.
+On #871, "duplicates of one result that disagree on whether they carry the series' id count as
+carrying none" came from a #699 code comment and the triage brief. It was false for one copy with
+the series' id and one with none, which settle on the series' id, and the code comment held the
+same clause: two re-check rounds, about 14 minutes. On #987 a re-check suggested a clause saying
+that a release found under another season's numbering now goes to the episode a hand-made mapping
+names, where Cinder had refused it as ambiguous before. The fragment took it, and both halves were
+false on some input: the refusal when a season offset gives that episode the release's own code,
+the new reading when scene codes name that episode and none is the release's. Two fix commits and
+one more review round, about 5 minutes.
 
 A path includes each value an install can configure for a list or setting that the code on the
 path reads, such as `Cinder.Download.ContentPolicy`'s blocked and media extension lists. A
