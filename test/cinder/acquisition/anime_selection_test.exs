@@ -1181,6 +1181,109 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
              Anime.select_episodes([release], context, [5], [])
   end
 
+  # #987: the operator's season offset gives native S03E01 (id 301) the curated scene code S04E01,
+  # so "S03E01" no longer names native S03E01, while "S04E01" does. A per-episode `:manual`
+  # correction keeps the native reading, and so does a curated code in the episode's own season.
+  for {label, value, precedence, s03e01_ids} <- [
+        {"a curated scene code in another season", "S04E01", :curated, nil},
+        {"a manual scene code in another season", "S04E01", :manual, [301]},
+        {"a curated scene code in the episode's own season", "S03E02", :curated, [301]}
+      ] do
+    test "under #{label}, the release naming the native code reads as native S03E01: #{inspect(s03e01_ids)}" do
+      context = %{
+        kind: :series,
+        title: "Monogatari",
+        year: 2013,
+        tvdb_id: 99,
+        aliases: [],
+        episodes: [episode(301, 3, 1)],
+        mappings: [
+          mapping("cinder", "standard", "canonical", "S03E01", [301]),
+          mapping("offset", "scene", "offset", unquote(value), [301], unquote(precedence))
+        ]
+      }
+
+      native = Release.new(raw("[smol] Monogatari Series Second Season S03E01 [1080p]", "native"))
+
+      case unquote(s03e01_ids) do
+        nil ->
+          assert :no_match = Anime.select_episodes([native], context, [301], [])
+
+        ids ->
+          assert {:ok, %{assignments: [%{episode_ids: ^ids}]}} =
+                   Anime.select_episodes([native], context, [301], [])
+      end
+
+      shifted =
+        Release.new(
+          raw("[smol] Monogatari Series Second Season #{unquote(value)} [1080p]", "shifted")
+        )
+
+      assert {:ok, %{assignments: [%{episode_ids: [301]}]}} =
+               Anime.select_episodes([shifted], context, [301], [])
+    end
+  end
+
+  # #987: a fold of a file named "S03E01" into native S03E01 keeps that code under the offset, as
+  # the standard search keeps it, whatever the fold's scheme.
+  for scheme <- ["scene", "aired"] do
+    test "a manual #{scheme} mapping naming S03E01 for native S03E01 keeps the native reading" do
+      context = %{
+        kind: :series,
+        title: "Monogatari",
+        year: 2013,
+        tvdb_id: 99,
+        aliases: [],
+        episodes: [episode(301, 3, 1)],
+        mappings: [
+          mapping("cinder", "standard", "canonical", "S03E01", [301]),
+          mapping("offset", "scene", "offset", "S04E01", [301], :curated),
+          mapping("tvdb", unquote(scheme), "99", "S03E01", [301], :manual)
+        ]
+      }
+
+      native = Release.new(raw("[smol] Monogatari Series Second Season S03E01 [1080p]", "native"))
+
+      assert {:ok, %{assignments: [%{episode_ids: [301]}]}} =
+               Anime.select_episodes([native], context, [301], [])
+    end
+  end
+
+  # #987: once the offset retires "S03E01", the code resolves only through a vetted mapping that
+  # names it, never through an inferred one (a TMDB group sync naming native S02E01, id 201).
+  for {label, precedence, ids} <- [
+        {"an inferred", :inferred, nil},
+        {"a curated", :curated, [201]}
+      ] do
+    test "a retired code names S02E01 through #{label} scene mapping: #{inspect(ids)}" do
+      context = %{
+        kind: :series,
+        title: "Monogatari",
+        year: 2013,
+        tvdb_id: 99,
+        aliases: [],
+        episodes: [episode(201, 2, 1), episode(301, 3, 1)],
+        mappings: [
+          mapping("cinder", "standard", "canonical", "S02E01", [201]),
+          mapping("cinder", "standard", "canonical", "S03E01", [301]),
+          mapping("offset", "scene", "offset", "S04E01", [301], :curated),
+          mapping("tmdb", "scene", "group", "S03E01", [201], unquote(precedence))
+        ]
+      }
+
+      native = Release.new(raw("[smol] Monogatari Series Second Season S03E01 [1080p]", "native"))
+
+      case unquote(ids) do
+        nil ->
+          assert :no_match = Anime.select_episodes([native], context, [201, 301], [])
+
+        ids ->
+          assert {:ok, %{assignments: [%{episode_ids: ^ids}]}} =
+                   Anime.select_episodes([native], context, [201, 301], [])
+      end
+    end
+  end
+
   test "automatic episode selection freezes the exact hard policy used to select" do
     release = Release.new(raw("[SubsPlease] Show - 1 [1080p]", "anime-policy-episode"))
 

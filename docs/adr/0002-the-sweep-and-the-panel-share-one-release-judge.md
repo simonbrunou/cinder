@@ -74,6 +74,22 @@ reading. This extends the anime rule (`AnimeResolver.strip_shadowed_canonical/1`
 covers vetted scene mappings only, to aired ones. The import can't catch this case instead: it
 matches a grab's files only against that grab's own episodes.
 
+Since #987 a saved season offset also retires the native code of every episode it shifts. When a
+`:curated` scene mapping gives an episode a code in another season, and no vetted mapping names
+the native code for that same episode, the season's release naming that episode's native code, or
+its whole-season pack, gets the same mark. On the anime path and
+in the standard bridge, the retired code resolves only through a vetted mapping that names it, or
+to no episode, never through an `:inferred` one (`AnimeResolver.strip_retired_canonical/2`). The
+panel tells the operator to save an offset when releases number the show's seasons with a fixed
+shift from TMDB, so a release carrying a shifted episode's native code more likely names another
+episode, and a missed grab costs less than a wrong file. A `:manual` mapping retires nothing: a
+fold records one file's name and says nothing about what the native code names. The cost: a
+release that does name a shifted season by TMDB numbering is refused. On a standard series, while
+the season holding the episode's new code wants an episode of its own, the bridge never searches
+it (#837) and that season's own search drops the release naming the new code (#924), so no release
+reaches the shifted episode. The import and the reservation still read the native code (#987's
+out-of-scope list).
+
 An anime row the judge keeps carries the anime selection's own verdict: the anime policy, then the
 quality rules, then the group wait. The group wait stays a verdict rather than a stage that drops
 rows, because the episode cover needs the delayed releases, in indexer order, to know which

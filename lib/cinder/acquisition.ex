@@ -90,8 +90,9 @@ defmodule Cinder.Acquisition do
   @doc """
   The releases the upgrade sweep grabs for one TV `season` of `series`. It builds the season's
   release list as `judge_season/3` does, without the numbering bridge: one query for the native
-  season, its duplicate results dropped, a release a vetted mapping assigns to another episode
-  marked, then judged, and takes the judge's pick (`Cinder.Acquisition.ReleaseJudge.pick/1`, the
+  season, its duplicate results dropped, a release a vetted mapping assigns to another episode, or
+  one naming a native code a saved season offset retires, marked, then judged, and takes the
+  judge's pick (`Cinder.Acquisition.ReleaseJudge.pick/1`, the
   set-cover `Scorer.select_for/4` over what the judge keeps). `wanted_numbers` is the
   episode-number set the cover may claim, and `opts` the household policy plus the facts the
   set-cover reads, such as `opts[:pack_episode_count]`, which it passes as given.
@@ -232,6 +233,16 @@ defmodule Cinder.Acquisition do
   `AnimeResolver.strip_shadowed_canonical/1` lets a vetted scene mapping win the same way (#156);
   this rule also counts aired mappings. An `:inferred` mapping, or a vetted one naming only the
   code's native episode, keeps the native reading.
+
+  A saved season offset retires a native code too (#987): when a `:curated` scene mapping gives an
+  episode a code in another season and no vetted mapping names the native code for that episode
+  (`AnimeResolver.retired_canonical?/2`), the release naming that episode's native code, or a
+  whole-season pack of the season, gets the same mark. The bridge
+  reads a retired code of an alternate season only through a vetted mapping that names it, and
+  marks the release `:conflicting_standard_numbering` when none does
+  (`AnimeResolver.strip_retired_canonical/2`), as the anime selection reads it. A `:manual` or
+  `:inferred` code in another season, or a `:curated` one in the episode's own season, retires
+  nothing.
 
   Then it judges the releases (guard `{:series, series, season_number, wanted_numbers}`) under
   `opts`, the household policy, plus the bridge's canonical-number map as
@@ -498,6 +509,7 @@ defmodule Cinder.Acquisition do
             Map.get(&1.identity, :canonical_value) == value)
       )
       |> AnimeResolver.strip_shadowed_canonical()
+      |> AnimeResolver.strip_retired_canonical(mappings)
 
     resolver_mappings =
       Enum.map(matching, fn mapping ->
@@ -540,18 +552,27 @@ defmodule Cinder.Acquisition do
   # the same one (#986), looked up across every mapping of the series: the bridge's numbering
   # keeps only those touching the searched episodes. A code's native episode is the one whose
   # canonical mapping carries it, so an episode without a canonical mapping, or any episode of a
-  # code no episode carries, counts as elsewhere.
+  # code no episode carries, counts as elsewhere. Then the season's native codes a saved season
+  # offset retires (`AnimeResolver.retired_canonical?/2`, #987).
   defp vetted_elsewhere_values(mappings, season_number) do
     native_ids_by_value = native_ids_by_value(mappings)
 
-    for %{identity: %{canonical_value: value} = identity, episode_ids: episode_ids} = mapping <-
-          mappings,
-        identity.scheme in @standard_tv_bridged_schemes,
-        AnimeResolver.vetted?(mapping),
+    assigned_elsewhere =
+      for %{identity: %{canonical_value: value} = identity, episode_ids: episode_ids} = mapping <-
+            mappings,
+          identity.scheme in @standard_tv_bridged_schemes,
+          AnimeResolver.vetted?(mapping),
+          Episode.season_from_code(value) == season_number,
+          native_ids = Map.get(native_ids_by_value, value, MapSet.new()),
+          Enum.any?(episode_ids, &(not MapSet.member?(native_ids, &1))),
+          into: MapSet.new(),
+          do: value
+
+    for %{identity: %{canonical_value: value}} = mapping <- mappings,
+        AnimeResolver.canonical_native?(mapping),
         Episode.season_from_code(value) == season_number,
-        native_ids = Map.get(native_ids_by_value, value, MapSet.new()),
-        Enum.any?(episode_ids, &(not MapSet.member?(native_ids, &1))),
-        into: MapSet.new(),
+        AnimeResolver.retired_canonical?(mapping, mappings),
+        into: assigned_elsewhere,
         do: value
   end
 

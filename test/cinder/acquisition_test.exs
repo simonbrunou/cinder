@@ -1148,6 +1148,150 @@ defmodule Cinder.AcquisitionTest do
     end
   end
 
+  # #987: a saved season offset (`from: 2`, `delta: +1`) gives native S02E05 (id 205) the curated
+  # scene code S03E05, so "S02E05" no longer names native S02E05: season 2's search never reads a
+  # release naming it as that episode. A per-episode `:manual` mapping, or an `:inferred` one,
+  # keeps the native reading. Season 3 wants an episode unless a test says otherwise, so the
+  # bridge never searches it (#837).
+  describe "judge_season/3 and a season offset that gives an episode another season's code (#987)" do
+    defp offset_season_two(mappings, native_seasons \\ [1, 2, 3]) do
+      season_context(
+        season_number: 2,
+        episode_count: 10,
+        native_seasons: MapSet.new(native_seasons),
+        episodes: [%{id: 205, episode_number: 5, state: :wanted}],
+        mappings:
+          [canonical("S02E05", 205), canonical("S02E07", 207), canonical("S03E05", 305)] ++
+            mappings
+      )
+    end
+
+    test "a curated scene code in season 3 drops the release naming the native code" do
+      stub_seasons(%{2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")]})
+      context = offset_season_two([offset("S03E05", [205])])
+
+      assert {:ok, judged} = Acquisition.judge_season(context, [5], [])
+      assert_dropped(judged, "The.Office.S02E05.1080p.WEB-DL-GRP")
+      assert searched_seasons() == [2]
+    end
+
+    test "a curated scene code in season 3 drops the whole-season pack" do
+      stub_seasons(%{2 => [raw_tv("The.Office.S02.1080p.WEB-DL-GRP", size: 10 * @gb)]})
+      context = offset_season_two([offset("S03E05", [205])])
+
+      assert {:ok, judged} = Acquisition.judge_season(context, [5], [])
+      assert_dropped(judged, "The.Office.S02.1080p.WEB-DL-GRP")
+    end
+
+    # Season 3 wants nothing, so the bridge searches it: the release naming the curated code
+    # covers native S02E05, the one naming the native code is dropped.
+    test "the bridged release naming the curated code still covers native S02E05" do
+      stub_seasons(%{
+        2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")],
+        3 => [raw_tv("The.Office.S03E05.1080p.WEB-DL-GRP")]
+      })
+
+      context = offset_season_two([offset("S03E05", [205])], [1, 2])
+
+      assert {:ok, judged} = Acquisition.judge_season(context, [5], [])
+      assert searched_seasons() == [2, 3]
+      assert dropped_row?(judged, "The.Office.S02E05.1080p.WEB-DL-GRP")
+
+      assert {:ok, [{%Release{season: 3, episodes: [5], resolved_episode_ids: [205]}, [5]}]} =
+               ReleaseJudge.pick(judged)
+    end
+
+    for {label, scheme, precedence} <- [
+          {"a manual scene", "scene", :manual},
+          {"a manual aired", "aired", :manual},
+          {"an inferred scene", "scene", :inferred},
+          {"an inferred aired", "aired", :inferred}
+        ] do
+      test "#{label} code in season 3 keeps the native release" do
+        stub_seasons(%{2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")]})
+
+        context =
+          offset_season_two([vetted(unquote(scheme), "S03E05", [205], unquote(precedence))])
+
+        assert {:ok, judged} = Acquisition.judge_season(context, [5], [])
+        assert [%Release{resolution_evidence: nil}] = judged.kept
+        assert {:ok, [{%Release{season: 2, episodes: [5]}, [5]}]} = ReleaseJudge.pick(judged)
+      end
+    end
+
+    # As #924 keeps a vetted mapping naming only a code's native episode: a fold of a file named
+    # "S02E05" into native S02E05 keeps that code under the offset.
+    for scheme <- ["scene", "aired"] do
+      test "a manual #{scheme} mapping naming S02E05 for native S02E05 keeps the native release" do
+        stub_seasons(%{2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")]})
+
+        context =
+          offset_season_two([
+            offset("S03E05", [205]),
+            vetted(unquote(scheme), "S02E05", [205], :manual)
+          ])
+
+        assert {:ok, judged} = Acquisition.judge_season(context, [5], [])
+        assert [%Release{resolution_evidence: nil}] = judged.kept
+        assert {:ok, [{%Release{season: 2, episodes: [5]}, [5]}]} = ReleaseJudge.pick(judged)
+      end
+    end
+
+    # A curated code in the episode's own season retires nothing: it drops the release naming
+    # "S02E07" (#986), and "S02E05" still covers native S02E05.
+    test "a curated scene code in the episode's own season keeps the native release" do
+      stub_seasons(%{2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")]})
+      context = offset_season_two([offset("S02E07", [205])])
+
+      assert {:ok, judged} = Acquisition.judge_season(context, [5], [])
+      assert [%Release{resolution_evidence: nil}] = judged.kept
+      assert {:ok, [{%Release{season: 2, episodes: [5]}, [5]}]} = ReleaseJudge.pick(judged)
+    end
+
+    # The bridge reads a retired code through the vetted mappings left, or not at all: an offset
+    # (`from: 3`) gives native S03E05 (id 305) the curated code S04E05, so a fold's manual aired
+    # S03E05 for native S02E05 resolves to S02E05 instead of tying with S03E05's native code, while
+    # an inferred one names no episode and the release stays dropped as a conflict.
+    test "a bridged code whose native episode the offset moved resolves through a vetted mapping" do
+      stub_seasons(%{3 => [raw_tv("The.Office.S03E05.1080p.WEB-DL-GRP")]})
+
+      context =
+        offset_season_two(
+          [vetted("aired", "S03E05", [205], :manual), offset("S04E05", [305])],
+          [1, 2]
+        )
+
+      assert {:ok, judged} = Acquisition.judge_season(context, [5], [])
+      assert searched_seasons() == [2, 3]
+
+      assert {:ok, [{%Release{season: 3, episodes: [5], resolved_episode_ids: [205]}, [5]}]} =
+               ReleaseJudge.pick(judged)
+    end
+
+    test "a bridged code whose native episode the offset moved names no episode through an inferred mapping" do
+      stub_seasons(%{3 => [raw_tv("The.Office.S03E05.1080p.WEB-DL-GRP")]})
+
+      context =
+        offset_season_two(
+          [coordinate("aired", "S03E05", [205]), offset("S04E05", [305])],
+          [1, 2]
+        )
+
+      assert {:ok, judged} = Acquisition.judge_season(context, [5], [])
+      assert searched_seasons() == [2, 3]
+      assert_dropped(judged, "The.Office.S03E05.1080p.WEB-DL-GRP")
+    end
+  end
+
+  # A curated scene mapping as the season offset panel saves it
+  # (`Cinder.Catalog.SceneNumbering.save_scene_offset_coordinates/3`).
+  defp offset(code, episode_ids) do
+    %{
+      vetted("scene", code, episode_ids, :curated)
+      | identity: %{source: "offset", scheme: "scene", namespace: "offset", canonical_value: code}
+    }
+  end
+
   describe "judge_season/3's alternate seasons" do
     # Episode `id` is scene `S0<season>E01`.
     defp bridged(pairs) do
@@ -1254,6 +1398,15 @@ defmodule Cinder.AcquisitionTest do
 
       assert :no_match = Acquisition.best_releases(series(), 2, [5], mappings: mappings)
       assert {:ok, [{%Release{episodes: [5]}, [5]}]} = Acquisition.best_releases(series(), 2, [5])
+    end
+
+    # #987: a saved season offset gives native S02E05 the curated code S03E05, so the upgrade
+    # sweep no longer reads "S02E05" as native S02E05 either.
+    test "drops a native release whose episode a curated mapping in `mappings:` moves to season 3" do
+      stub_seasons(%{2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")]})
+      mappings = [canonical("S02E05", 205), offset("S03E05", [205])]
+
+      assert :no_match = Acquisition.best_releases(series(), 2, [5], mappings: mappings)
     end
 
     test "keeps the TV language gate strict about untagged releases" do

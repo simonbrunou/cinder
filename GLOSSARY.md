@@ -92,7 +92,12 @@ An episode coordinate mapping an operator reviewed: `:curated` (a saved season o
 code to any episode other than that code's native one, in another season or the same one, it
 wins over the native reading of that code: a TV season's search never reads a release naming the
 code as its own episode of that code. An `:inferred` mapping, derived by a provider sync or a
-migration, never wins over a native episode.
+migration, never wins over a native episode. A `:curated` scene mapping that gives an episode a
+code in another season also retires that episode's native code, unless a vetted mapping names
+that native code for the same episode. A TV season's search, standard or anime, never reads a
+release naming a retired code as its episode, and reads it as another episode only through a
+vetted mapping naming that code. A `:manual` mapping retires nothing, since a fold records one
+file's name and says nothing about what the native code names.
 _Avoid_: operator-reviewed mapping, operator-vetted mapping
 
 ### Downloads

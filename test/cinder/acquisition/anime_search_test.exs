@@ -848,6 +848,58 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     }
   end
 
+  # #987: a saved season offset gives native S01E01 (id 11) the curated scene code S02E01, so the
+  # panel (`judge_anime_episodes/3`) and the upgrade sweep (`best_anime_releases/3`) no longer read
+  # "S01E01" as that episode, while "S02E01" still covers it.
+  test "the panel and the upgrade sweep read a code a season offset retired as no episode (#987)" do
+    offset = %{
+      identity: %{
+        source: "offset",
+        scheme: "scene",
+        namespace: "offset",
+        canonical_value: "S02E01"
+      },
+      precedence: :curated,
+      episode_ids: [11],
+      evidence: %{"kind" => "persisted_coordinate"}
+    }
+
+    context = %{series_context(99) | mappings: [canonical("S01E01", 11), offset]}
+
+    stub(IndexerMock, :search_tv, fn 99, "Show", season ->
+      {:ok, [raw("[Group] Show S0#{season}E01 [1080p]", "S0#{season}E01")]}
+    end)
+
+    stub(IndexerMock, :search_tv_query, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(context, [11], [])
+
+    assert Map.new(judged.rows, &{&1.release.download_url, &1.verdict}) == %{
+             "S01E01" => {:rejected, :unsafe_anime_mapping},
+             "S02E01" => :ok
+           }
+
+    assert {:ok, %{assignments: [%{episode_ids: [11], release: release}]}} =
+             Acquisition.best_anime_releases(context, [11])
+
+    assert release.download_url == "S02E01"
+  end
+
+  # The canonical standard mapping `Cinder.Catalog.MediaProfiles.acquisition_mappings/1` lists.
+  defp canonical(code, episode_id) do
+    %{
+      identity: %{
+        source: "cinder",
+        scheme: "standard",
+        namespace: "canonical",
+        canonical_value: code
+      },
+      precedence: :manual,
+      episode_ids: [episode_id],
+      evidence: %{"kind" => "canonical_standard"}
+    }
+  end
+
   defp series_context(tvdb_id) do
     %{
       kind: :series,

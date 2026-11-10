@@ -465,6 +465,89 @@ defmodule Cinder.Download.TvPollerTest do
     end
   end
 
+  # #987: a saved season offset gives native S03E01 the curated scene code S04E01, so a release
+  # naming "S03E01" no longer reads as native S03E01, while one naming "S04E01" still grabs it. A
+  # per-episode manual mapping to S04E01 keeps the native reading. Each release comes from the
+  # season query its code names.
+  for {label, mapping, code, grabbed?} <- [
+        {"a saved season offset", :offset, "S03E01", false},
+        {"a saved season offset", :offset, "S04E01", true},
+        {"a manual scene mapping", :manual, "S03E01", true}
+      ] do
+    test "under #{label} to S04E01, the anime sweep grabs #{code} for native S03E01: #{grabbed?}" do
+      series =
+        series_fixture(%{
+          tvdb_id: 99,
+          monitor_strategy: :all,
+          media_profile: :anime,
+          title: "Monogatari"
+        })
+
+      s03e01 = series |> season_fixture(%{season_number: 3}) |> episode(1)
+
+      case unquote(mapping) do
+        :offset ->
+          {:ok, _} = Catalog.save_scene_offset_coordinates(series, 3, 1)
+
+        :manual ->
+          attrs = %{
+            source: "offset",
+            scheme: "scene",
+            namespace: "offset",
+            canonical_value: "S04E01"
+          }
+
+          assert {:ok, _} = Identity.bind_manual_coordinate(series, attrs, s03e01)
+      end
+
+      code = unquote(code)
+      season = Episode.season_from_code(code)
+      test_pid = self()
+
+      # The indexer reports the series' TVDB id, as in the #156 test above (#699).
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn
+        99, _title, ^season ->
+          send(test_pid, {:searched_season, season})
+
+          {:ok,
+           [
+             %{
+               title: "[smol] Monogatari Series Second Season #{code} [1080p]",
+               size: 2_000_000_000,
+               download_url: "smol-#{code}",
+               tvdb_id: 99
+             }
+           ]}
+
+        99, _title, _season ->
+          {:ok, []}
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+        {:ok, []}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+        send(test_pid, {:grab_attempted, release.download_url})
+        {:ok, "grab-#{release.download_url}"}
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+      assert :ok = TvPoller.poll()
+
+      assert_received {:searched_season, ^season}
+
+      if unquote(grabbed?) do
+        assert_received {:grab_attempted, "smol-" <> ^code}
+        assert Repo.get!(Episode, s03e01.id).grab_id
+      else
+        refute_received {:grab_attempted, _}
+        assert Repo.all(Grab) == []
+        assert Repo.get!(Episode, s03e01.id).grab_id == nil
+      end
+    end
+  end
+
   test "invalid Anime series preferences hold the group without search or attempt bumps" do
     set_anime_defaults!(embedded_subtitle_mode: :require)
     series = series_fixture(%{tvdb_id: 99, monitor_strategy: :all, media_profile: :anime})
@@ -2605,17 +2688,86 @@ defmodule Cinder.Download.TvPollerTest do
     end
   end
 
-  # Each mapping S02E05 -> `episode` as its writer stores it: the fold binds a manual one
+  # #987: the season offset panel gives native S02E05 the curated scene code S03E05, while season 3
+  # wants an episode, so the bridge never searches it (#837). Season 2's sweep then grabs neither
+  # "S02E05" nor the "S02" pack for native S02E05, and season 3's own sweep drops "S03E05" (#924),
+  # so no release reaches it; a per-episode manual mapping keeps the native reading.
+  for {label, scheme, precedence, title, grabbed?} <- [
+        {"a curated scene", "scene", :curated, "Moved.Episode.S02E05", false},
+        {"a curated scene", "scene", :curated, "Moved.Episode.S02", false},
+        {"a manual scene", "scene", :manual, "Moved.Episode.S02E05", true},
+        {"a manual aired", "aired", :manual, "Moved.Episode.S02E05", true}
+      ] do
+    test "#{label} mapping of S03E05 to S02E05: the sweep grabs #{title} #{grabbed?}" do
+      series = series_fixture(%{title: "Moved Episode", tvdb_id: 777, monitor_strategy: :all})
+      s02e05 = series |> season_fixture(%{season_number: 2}) |> episode(5)
+      s03e01 = series |> season_fixture(%{season_number: 3}) |> episode(1)
+      put_coordinate(series, s02e05, unquote(scheme), unquote(precedence), "S03E05")
+      test_pid = self()
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn
+        777, "Moved Episode", 2 ->
+          send(test_pid, {:searched_season, 2})
+
+          {:ok,
+           [
+             %{
+               title: unquote(title) <> ".1080p.WEB-DL-GRP",
+               size: 3_000_000_000,
+               download_url: unquote(title)
+             }
+           ]}
+
+        777, "Moved Episode", 3 ->
+          send(test_pid, {:searched_season, 3})
+
+          {:ok,
+           [
+             %{
+               title: "Moved.Episode.S03E05.1080p.WEB-DL-GRP",
+               size: 3_000_000_000,
+               download_url: "Moved.Episode.S03E05"
+             }
+           ]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+        send(test_pid, {:grab_attempted, release.download_url})
+        {:ok, "hash-moved-episode"}
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+      assert :ok = TvPoller.poll()
+
+      assert_received {:searched_season, 2}
+      assert_received {:searched_season, 3}
+      refute_received {:grab_attempted, "Moved.Episode.S03E05"}
+      assert Repo.get!(Episode, s03e01.id).grab_id == nil
+
+      if unquote(grabbed?) do
+        assert_received {:grab_attempted, unquote(title)}
+        assert Repo.get!(Episode, s02e05.id).grab_id
+      else
+        refute_received {:grab_attempted, _}
+        assert Repo.all(Grab) == []
+        assert Repo.get!(Episode, s02e05.id).grab_id == nil
+      end
+    end
+  end
+
+  # Each mapping `code` -> `episode` as its writer stores it: the fold binds a manual one
   # (`Identity.bind_manual_coordinate/3`, which today gets TVDB aired evidence; the manual scene
   # row is #924's acceptance case), the season offset panel saves curated scene ones under
   # "offset", a TMDB group sync writes inferred scene ones and a migration inferred aired ones.
-  defp put_coordinate(series, episode, scheme, :manual) do
+  defp put_coordinate(series, episode, scheme, precedence, code \\ "S02E05")
+
+  defp put_coordinate(series, episode, scheme, :manual, code) do
     {source, namespace} = provider_namespace(scheme)
-    attrs = %{source: source, scheme: scheme, namespace: namespace, canonical_value: "S02E05"}
+    attrs = %{source: source, scheme: scheme, namespace: namespace, canonical_value: code}
     assert {:ok, _} = Identity.bind_manual_coordinate(series, attrs, episode)
   end
 
-  defp put_coordinate(series, episode, scheme, precedence) do
+  defp put_coordinate(series, episode, scheme, precedence, code) do
     {source, namespace} =
       if precedence == :curated, do: {"offset", "offset"}, else: provider_namespace(scheme)
 
@@ -2623,7 +2775,7 @@ defmodule Cinder.Download.TvPollerTest do
              Identity.replace_provider_coordinates(series, source, namespace, scheme, [
                %{
                  scheme: scheme,
-                 canonical_value: "S02E05",
+                 canonical_value: code,
                  precedence: precedence,
                  episode_ids: [episode.id]
                }

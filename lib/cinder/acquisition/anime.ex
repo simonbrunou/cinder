@@ -595,7 +595,8 @@ defmodule Cinder.Acquisition.Anime do
   # `AnimeResolver.bridged_schemes/1`. `strip_shadowed_canonical/1` then lets a vetted
   # scene coordinate win over the coincidental native code of a *different* episode that shares the
   # same SxxEyy string (issue #156); an auto-derived `:inferred` scene coordinate leaves the native
-  # canonical in place, so ordinary resolution is unchanged.
+  # canonical in place, so ordinary resolution is unchanged. `strip_retired_canonical/2` drops the
+  # native code of an episode a saved season offset moved to another season (#987).
   defp mappings_for_value(mappings, scheme, value) do
     schemes = [scheme | AnimeResolver.bridged_schemes(scheme)]
 
@@ -605,6 +606,7 @@ defmodule Cinder.Acquisition.Anime do
           Map.get(&1.identity, :canonical_value) == value)
     )
     |> AnimeResolver.strip_shadowed_canonical()
+    |> AnimeResolver.strip_retired_canonical(mappings)
   end
 
   defp resolver_mapping(mapping) do

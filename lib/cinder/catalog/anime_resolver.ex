@@ -1,6 +1,8 @@
 defmodule Cinder.Catalog.AnimeResolver do
   @moduledoc "Pure precedence-aware resolution of anime coordinates to stable episode IDs."
 
+  alias Cinder.Catalog.Episode
+
   @precedence %{inferred: 0, curated: 1, manual: 2}
 
   @doc """
@@ -49,6 +51,67 @@ defmodule Cinder.Catalog.AnimeResolver do
       end)
     end
   end
+
+  @doc """
+  Drops from a value's matched set each canonical mapping (`canonical_native?/1`) that a saved
+  season offset retires (`retired_canonical?/2`), looked up across `mappings`, every mapping of
+  the series (#987). When it drops one, it drops every `:inferred` match too, so a retired code
+  resolves only through a vetted mapping (`vetted?/1`) that names it, or to no episode: an
+  auto-derived mapping never takes the native episode's place. With nothing retired, the matches
+  come back unchanged.
+
+  Anime selection (`Cinder.Acquisition.Anime`) and the standard numbering bridge
+  (`Cinder.Acquisition.judge_season/3`) run it after `strip_shadowed_canonical/1`.
+  """
+  def strip_retired_canonical(matches, mappings) do
+    {retired, kept} =
+      Enum.split_with(matches, &(canonical_native?(&1) and retired_canonical?(&1, mappings)))
+
+    if retired == [], do: matches, else: Enum.reject(kept, &(&1.precedence == :inferred))
+  end
+
+  @doc """
+  Whether a saved season offset retires `canonical`, a canonical mapping (`canonical_native?/1`),
+  so its native code no longer names its episode (#987): one of `mappings` is a `:curated` scene
+  mapping that gives the same episode a code in another season. Only the season offset panel
+  writes `:curated` rows (`Cinder.Catalog.SceneNumbering.save_scene_offset_coordinates/3`), and it
+  is saved when releases number the show's seasons with a fixed shift from TMDB, so a release
+  naming the shifted episode's native code more likely names another episode. A `:manual` mapping
+  records one file's name and says nothing about what the native code names, and an `:inferred`
+  one never overrides a native episode, so neither retires it. Neither does a `:curated` code in
+  the episode's own season. A vetted mapping (`vetted?/1`) naming the native code itself for the
+  same episode, such as a fold of a file named by that code, keeps the code, as #924 keeps a
+  vetted mapping naming only a code's native episode.
+  """
+  def retired_canonical?(%{identity: identity, episode_ids: episode_ids}, mappings) do
+    value = identity.canonical_value
+    native_season = Episode.season_from_code(value)
+    ids = MapSet.new(episode_ids)
+    names_episode? = fn mapping -> Enum.any?(mapping.episode_ids, &MapSet.member?(ids, &1)) end
+
+    moved? =
+      Enum.any?(mappings, fn %{identity: offset} = mapping ->
+        mapping.precedence == :curated and Map.get(offset, :scheme) == "scene" and
+          not canonical_native?(mapping) and
+          other_season?(Map.get(offset, :canonical_value), native_season) and
+          names_episode?.(mapping)
+      end)
+
+    moved? and
+      not Enum.any?(mappings, fn mapping ->
+        vetted?(mapping) and Map.get(mapping.identity, :canonical_value) == value and
+          names_episode?.(mapping)
+      end)
+  end
+
+  defp other_season?(value, native_season) when is_binary(value) do
+    case Episode.season_from_code(value) do
+      season when is_integer(season) -> season != native_season
+      nil -> false
+    end
+  end
+
+  defp other_season?(_value, _native_season), do: false
 
   @doc """
   Whether an operator vetted `mapping`: `:curated` (a saved season offset) or `:manual` (a file

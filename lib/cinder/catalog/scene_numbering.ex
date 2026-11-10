@@ -200,7 +200,9 @@ defmodule Cinder.Catalog.SceneNumbering do
   *native* code of a different episode in the series. Collisions are the case the operator must
   consciously vet: the operator's alt numbering will win over that native episode at resolution
   (`AnimeResolver.strip_shadowed_canonical/1`), so a native-numbered release of that episode would
-  be interpreted as the alt-numbered one. `series` must carry its preloaded season/episode tree
+  be interpreted as the alt-numbered one. Saving also retires the native code of every episode the
+  offset shifts (`AnimeResolver.retired_canonical?/2`, #987): a release naming that code no longer
+  reads as that episode. `series` must carry its preloaded season/episode tree
   (`get_series_with_tree/1`). Returns `[]` for an invalid offset (`from < 1`, `delta == 0`,
   non-integers).
   """

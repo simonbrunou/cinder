@@ -936,12 +936,58 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     end
   end
 
-  defp put_same_season_mapping(series, episode, :manual) do
-    attrs = %{source: "tvdb", scheme: "aired", namespace: "4343", canonical_value: "S02E05"}
+  # #987: the season offset panel gives native S02E05, which holds a 720p file, the curated scene
+  # code S03E05, so the upgrade sweep no longer reads "S02E05" as native S02E05. A per-episode
+  # manual mapping, or an inferred one, keeps the native reading, so the same offer is grabbed.
+  describe "a mapping that gives the native episode another season's code" do
+    for {label, precedence, grabbed?} <- [
+          {"curated scene", :curated, false},
+          {"manual aired", :manual, true},
+          {"inferred scene", :inferred, true}
+        ] do
+      test "under a #{label} mapping to S03E05 the native upgrade is grabbed: #{grabbed?}" do
+        series = series_fixture(%{tvdb_id: 4343, title: "Offset Show", monitor_strategy: :all})
+
+        s02e05 =
+          series
+          |> season_fixture(%{season_number: 2})
+          |> episode_fixture(%{
+            episode_number: 5,
+            file_path: "/lib/Offset Show/S02E05.mkv",
+            imported_resolution: "720p",
+            imported_size: 1_000_000_000
+          })
+
+        put_same_season_mapping(series, s02e05, unquote(precedence), "S03E05")
+
+        stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4343, "Offset Show", 2 ->
+          {:ok, [release("Offset.Show.S02E05.1080p.BluRay-GRP", %{size: 4_000_000_000})]}
+        end)
+
+        watch_grabs()
+        poll()
+
+        if unquote(grabbed?) do
+          assert_received :grab_attempted
+          assert Repo.get!(Episode, s02e05.id).grab_id
+        else
+          refute_grabbed()
+          assert Repo.get!(Episode, s02e05.id).grab_id == nil
+        end
+      end
+    end
+  end
+
+  # A mapping `code` -> `episode` as its writer stores it: the fold, the season offset panel, then
+  # a TMDB group sync.
+  defp put_same_season_mapping(series, episode, precedence, code \\ "S02E05")
+
+  defp put_same_season_mapping(series, episode, :manual, code) do
+    attrs = %{source: "tvdb", scheme: "aired", namespace: "4343", canonical_value: code}
     assert {:ok, _} = Identity.bind_manual_coordinate(series, attrs, episode)
   end
 
-  defp put_same_season_mapping(series, episode, precedence) do
+  defp put_same_season_mapping(series, episode, precedence, code) do
     {source, namespace} =
       if precedence == :curated, do: {"offset", "offset"}, else: {"tmdb", "group"}
 
@@ -949,7 +995,7 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
              Identity.replace_provider_coordinates(series, source, namespace, "scene", [
                %{
                  scheme: "scene",
-                 canonical_value: "S02E05",
+                 canonical_value: code,
                  precedence: precedence,
                  episode_ids: [episode.id]
                }

@@ -2184,6 +2184,70 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Repo.get!(Episode, s02e05.id).grab_id == nil
   end
 
+  # #987: the season offset panel gave native S02E05 the curated scene code S03E05, so season 2's
+  # panel rejects "Test.Show.S02E05" and its grab reserves nothing. Season 3 has no episode, so the
+  # panel's bridge searches it too.
+  test "a native result whose episode a season offset moved to another season refuses the manual grab",
+       %{conn: conn} do
+    series =
+      series_fixture(
+        title: "Test Show",
+        tvdb_id: 99,
+        media_profile: :standard,
+        monitor_strategy: :all
+      )
+
+    season2 = season_fixture(series, season_number: 2)
+    s02e05 = episode_fixture(season2, episode_number: 5)
+
+    assert {:ok, _} =
+             Identity.replace_provider_coordinates(series, "offset", "offset", "scene", [
+               %{
+                 scheme: "scene",
+                 canonical_value: Episode.code(3, 5),
+                 precedence: :curated,
+                 episode_ids: [s02e05.id]
+               }
+             ])
+
+    test_pid = self()
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn
+      99, "Test Show", 2 ->
+        {:ok,
+         [
+           %{
+             title: "Test.Show.S02E05.1080p.WEB-DL-GRP",
+             size: 2_000_000_000,
+             download_url: "moved-native"
+           }
+         ]}
+
+      99, "Test Show", season_number ->
+        send(test_pid, {:searched_season, season_number})
+        {:ok, []}
+    end)
+
+    expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+    {:ok, lv, _html} = live_series(conn, series)
+    lv |> element(~s(button[phx-value-season="2"]), "Find a better match") |> render_click()
+    render_async(lv)
+    assert_received {:searched_season, 3}
+    assert has_element?(lv, "#ms-season-#{season2.id}", "conflicting episode numbering")
+
+    lv |> element("#ms-season-#{season2.id} button", "Grab") |> render_click()
+
+    assert has_element?(
+             lv,
+             "#flash-error",
+             "This release's episode numbering is ambiguous. Nothing was grabbed."
+           )
+
+    refute Repo.exists?(Grab)
+    assert Repo.get!(Episode, s02e05.id).grab_id == nil
+  end
+
   # #986: a file named "S02E05" was matched to S02E07 by hand, and the fold stored a manual aired
   # mapping that reads "S02E05" as S02E07 while native S02E05 is wanted, so season 2's panel
   # rejects "Test.Show.S02E05" and its grab reserves nothing.
