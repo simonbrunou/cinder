@@ -197,16 +197,26 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   after the outage began; one successful download from your own machine proves nothing about the
   runner.
 - **New advisory.** `dependency-audit` and `container` go red on every PR once an advisory is
-  published after `main`'s last green run, whatever the diff touches. Read the CVE lines in the
-  job log: when they name dependencies or base-image packages the PR does not change, the
-  failure is baseline and blocks every merge until a fix PR lands. For a Hex package, look for a
-  fixed release first and bump to it: a red `deps.audit` prints `First patched versions:`
-  (`NONE` when no release fixes it yet). A red `hex.audit` names none, but the advisory URL it
-  prints does, and `mix hex.info <package>` lists the recent releases. The bump rebuilds every
-  dependency (**Dependency rebuild** below). `mix hex.audit` takes its
-  accepted advisories from `ignore_advisories` in `mix.exs` (`hex/0`), each with a rationale
-  comment. For Debian packages Trivy flags that a fresh `apt-get upgrade` fixes, set the
-  Dockerfile's `APT_REFRESH` to today's date so the cached layer rebuilds. When fix PRs block
+  published after `main`'s last green run, whatever the diff touches. `dependency-audit` goes
+  red the same way once a maintainer retires a Hex release that `mix.lock` holds. Read the CVE
+  lines, or the `Retired:` block of a retirement, in the job log: when they name dependencies
+  or base-image packages the PR does not change, the failure is baseline and blocks every merge
+  until a fix PR lands. For a Hex package, look for a fixed release first and bump to it: a red
+  `deps.audit` prints `First patched versions:` (`NONE` when no release fixes it yet). A red
+  `hex.audit` names none, but the advisory URL it prints does, and `mix hex.info <package>` lists
+  the recent releases. The bump rebuilds every dependency (**Dependency rebuild** below).
+  `mix hex.audit` takes its accepted advisories from `ignore_advisories` in `mix.exs` (`hex/0`),
+  each with a rationale comment. On a retirement, `hex.audit` lists the release under `Retired:`
+  as `<package> <version> - (<reason>)`, then the maintainer's message when there is one, and
+  prints `Found retired packages` among its last lines. Bump off the release, as for an advisory,
+  when a newer release without `(retired)` exists: `mix hex.info <package>` marks the retired
+  ones among its eight highest versions, and `mix hex.info <package> <version>` opens on
+  `This version has been retired:` for a retired one. Otherwise add an `ignore_retirements`
+  entry beside `ignore_advisories`, pinned to the locked version (`<package>: "<version>"`) and
+  with a rationale comment: a bare `:<package>` would also pass every later retired release of
+  that package unreviewed. The audit then lists the release under `Ignored retired:` and no
+  longer fails on it. For Debian packages Trivy flags that a fresh `apt-get upgrade` fixes, set
+  the Dockerfile's `APT_REFRESH` to today's date so the cached layer rebuilds. When fix PRs block
   each other, each red on an advisory another one fixes, carry them all on one branch: merge the
   others' branches into it, so it goes green alone. #885 carried #865 (`plug_crypto`, red on
   `container`) and #880 (`libbrotli1`, red on `dependency-audit`), and #865 also needed #885's
