@@ -18,6 +18,14 @@ defmodule Cinder.Subtitles.Manifest do
   @sidecar_extensions ~w(.srt .ass .ssa .sub .vtt)
   @sha256 ~r/\A[0-9a-f]{64}\z/
   @manifest_suffix ".cinder-subtitles.json"
+  # A track's fields that `Cinder.Subtitles.SidecarTransaction` owns, as `normalize_tracks/1` reads
+  # them: each record, or the flag that it did not decode.
+  @transaction_fields ~w(
+    sync sync_invalid?
+    replacement_cleanup_sync replacement_cleanup_sync_invalid?
+    reset_cleanup_sync reset_cleanup_sync_invalid?
+    backup_tombstone backup_tombstone_invalid?
+  )a
 
   @spec path(String.t()) :: String.t()
   def path(video_path) do
@@ -298,6 +306,46 @@ defmodule Cinder.Subtitles.Manifest do
 
   @spec sync(map(), String.t()) :: map() | nil
   def sync(state, language), do: get_in(state, [:tracks, language, :sync])
+
+  @doc """
+  Removes `language`'s track from the manifest of `video_path`, so its sidecar is no longer
+  managed. It removes only a track whose origin is `origin` and that holds no record of
+  `Cinder.Subtitles.SidecarTransaction` (a final or pending record, a cleanup journal or a backup
+  tombstone, valid or not): those fields are that module's to clear. The rest of the manifest stays
+  as it was. A refusal writes nothing:
+
+    * `{:error, :unknown_track}` when the manifest has no track for `language`;
+    * `{:error, {:origin, other}}` when the track's origin is another one;
+    * `{:error, {:transaction_records, fields}}` naming the fields the track holds.
+
+  A manifest `load/1` cannot read, and a failed write, return their error. A rename the
+  filesystem did not acknowledge, and whose result a read cannot confirm, returns its error even
+  when the manifest without the track is already in place.
+  """
+  @spec delete_track(String.t(), String.t(), String.t()) :: :ok | {:error, term()}
+  def delete_track(video_path, language, origin) do
+    with {:ok, state} <- load(video_path),
+         {:ok, track} <- fetch_track(state, language),
+         :ok <- deletable(track, origin) do
+      write(video_path, %{state | tracks: Map.delete(state.tracks, language)})
+    end
+  end
+
+  defp fetch_track(state, language) do
+    case Map.fetch(state.tracks, language) do
+      {:ok, track} -> {:ok, track}
+      :error -> {:error, :unknown_track}
+    end
+  end
+
+  defp deletable(%{origin: origin} = track, origin) do
+    case Enum.filter(@transaction_fields, &Map.has_key?(track, &1)) do
+      [] -> :ok
+      fields -> {:error, {:transaction_records, fields}}
+    end
+  end
+
+  defp deletable(%{origin: other}, _origin), do: {:error, {:origin, other}}
 
   defp write(video_path, state) do
     manifest_path = path(video_path)

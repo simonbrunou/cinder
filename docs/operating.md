@@ -555,6 +555,42 @@ doesn't shell out to Bazarr instead of building its own fetch: Bazarr has no sta
 mode, it reads its media list from Sonarr/Radarr's API — so running it against Cinder's library
 would mean also running Sonarr/Radarr, defeating the point of Cinder replacing them.
 
+### Handing a subtitle back
+
+A subtitle fetch replaces only the sidecars Cinder manages: the ones the hidden
+`.<video file name>.cinder-subtitles.json` next to the video records. A subtitle you put next to
+the video yourself is not one of them. An import by an earlier Cinder version could still record
+one as a sidecar that came with the release, and the media-info backfill
+(`mix cinder.media_info.backfill`) records one too. A later fetch can then replace it with an
+OpenSubtitles download or a track from the video. To give it back to you, run this with the
+video's full path as the container sees it and the language code from the subtitle's file name
+(`fr` for `Movie (2020) {tmdb-1}.fr.srt`, in the same case):
+
+```sh
+docker compose exec cinder bin/cinder rpc \
+  'IO.inspect(Cinder.Subtitles.hand_back("/media/movies/Movie (2020) {tmdb-1}/Movie (2020) {tmdb-1}.mkv", "fr"))'
+```
+
+`:ok` means Cinder no longer manages that subtitle, and the video's other languages stay as they
+were. No fetch writes to the file while it is there, until a media-info backfill run records it
+as the release's again: run the command after any backfill, not before. If you delete the file, a
+later fetch can write a new subtitle there, and Cinder manages that one.
+
+These three refusals change nothing:
+
+- `{:error, :unknown_track}`: Cinder manages no subtitle in that language for that path. Check the
+  path and the code. When both are right, no fetch replaces the subtitle already there.
+- `{:error, {:origin, origin}}`: Cinder wrote that subtitle itself (an OpenSubtitles download, a
+  track of the video, a translation or a copy of another subtitle next to it) and keeps managing
+  it.
+- `{:error, {:transaction_records, fields}}`: the entry also holds subtitle-sync state (a
+  correction record, a cleanup journal or a backup tombstone, named in `fields`), which the
+  hand-back does not drop, so the subtitle stays managed.
+
+Any other `{:error, reason}` means Cinder could not read or write the hidden file. A write can
+fail after the entry is already gone, so run the command again: `{:error, :unknown_track}` then
+means Cinder no longer manages the subtitle.
+
 ## TV: monitoring, season packs, and the calendar
 
 **TV requests work like movie requests.** Any authenticated user can search for a TV show on

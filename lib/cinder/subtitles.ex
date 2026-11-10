@@ -910,6 +910,28 @@ defmodule Cinder.Subtitles do
     end
   end
 
+  @doc """
+  Hands `video_path`'s managed sidecar in `language` back to the user: drops the language's
+  release-sidecar entry from the manifest, under the video's lock, so no fetch writes to that file
+  while it is there (#994), until the media-info backfill marks it again. An import before #918
+  could mark a subtitle the user put next to the video as a release sidecar, and the backfill
+  marks one too. An operator runs it over `bin/cinder rpc` (`docs/operating.md`, "Subtitles").
+  `language` is the code in the sidecar's name (`<video>.<language>.srt`), as the manifest
+  records it.
+
+  Returns `:ok`, or `Cinder.Subtitles.Manifest.delete_track/3`'s error. Its three refusals write
+  nothing: `{:error, :unknown_track}` for a language the manifest does not track,
+  `{:error, {:origin, _}}` for a sidecar Cinder wrote itself, and
+  `{:error, {:transaction_records, _}}` for one whose entry still holds a record of its
+  replacement transaction. A failed write's error can come after the entry is gone.
+  """
+  @spec hand_back(String.t(), String.t()) :: :ok | {:error, term()}
+  def hand_back(video_path, language) do
+    :global.trans(lock_id(video_path), fn ->
+      Manifest.delete_track(video_path, language, "release_sidecar")
+    end)
+  end
+
   defp current_moviehash(video_path) do
     case Moviehash.of_file(video_path) do
       {:ok, moviehash} -> moviehash
