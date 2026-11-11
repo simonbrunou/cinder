@@ -148,7 +148,12 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   missed the 1 s bound in each of them on the runner (#1024).
   `Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest` serves every helper spawn from a `/bin/sh`
   stub found on `PATH` as `python3`, because on the runner Python's start missed the 1 s bound in
-  its `hold` and before its `seal` stub's pid write (#1043). After a 6425 ms run on PR #1086
+  its `hold` and before its `seal` stub's pid write (#1043). After a 3260 ms run on `main`
+  (run 1040, #1274), its "seal/1 still times out when the helper emits data faster than any poll
+  tick" asserts the elapsed time under 5 s past its 1 s bound instead of 2 s, and so does the
+  `DiskBoundedTest` test it mirrors, "run_rooted still times out when the helper emits data
+  faster than any poll tick". Each test's emitter writes forever, so a deadline its output
+  starves still fails at the 15 s test timeout. After a 6425 ms run on PR #1086
   (run 676, #1091), `Cinder.BoundedCommandTest` "run/4 with :check a check that halts kills the
   OS process and returns its reason" asserts the elapsed time under 9 s instead of 3 s, since its
   window times the stub's start. The bound stays below the call's 10 s timeout, so a halt that

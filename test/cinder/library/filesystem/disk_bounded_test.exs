@@ -90,10 +90,12 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     assert {:error, {:effect_committed, "mkdir", _reason}} = Disk.mkdir_exclusive(path, 0o700)
     elapsed = System.monotonic_time(:millisecond) - t0
 
-    # Close to the configured bound (not merely "eventually finite") — proves the deadline fired
-    # on schedule rather than being starved indefinitely by the continuous stream of data.
+    # The deadline fires on schedule even under a continuous stream of data. A deadline the
+    # stream starved would never return, and the test would fail at its 15 s timeout. The
+    # ceiling sits 5 s past the bound, as in the `FfprobeTest` test this one mirrors and in
+    # `EngineWorkspaceBoundedTest`'s copy of it (docs/agents/ci.md "Wall-clock tests").
     assert elapsed >= @bound_ms
-    assert elapsed < @bound_ms + 2_000
+    assert elapsed < @bound_ms + 5_000
 
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)

@@ -88,10 +88,13 @@ defmodule Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest do
 
     elapsed = System.monotonic_time(:millisecond) - t0
 
-    # Close to the configured bound (not merely "eventually finite") — proves the deadline fired
-    # on schedule rather than being starved indefinitely by the continuous stream of data.
+    # The deadline fires on schedule even under a continuous stream of data. A deadline the
+    # stream starved would never return, and the test would fail at its 15 s timeout. The
+    # window also times the `hold` spawn before the seal, then the kill and reap of the seal stub
+    # and of `hold` after it. A loaded runner slows those but not the deadline, and run 1040
+    # measured 3260 ms (#1274), so the ceiling sits 5 s past the bound.
     assert elapsed >= @bound_ms
-    assert elapsed < @bound_ms + 2_000
+    assert elapsed < @bound_ms + 5_000
 
     pid = wait_for_pidfile(pidfile)
     assert process_gone?(pid)
