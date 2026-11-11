@@ -85,9 +85,14 @@ jobs:
       #
       # #396: a flake sighting's failure detail is otherwise lost — a local `mix test --failed`
       # rerun can pass and clear the manifest before anyone captures the diff. `tee` keeps the
-      # full output on disk regardless of exit status. We set `shell: bash` explicitly so GitHub
-      # Actions applies `-o pipefail`, ensuring this step fails/succeeds on mix test's own exit
-      # code, not tee's. The default shell (bash -e) lacks pipefail, which would mask failures.
+      # full output on disk regardless of exit status. forgejo-runner v13.2.1 runs a
+      # `shell: bash` step as `bash --noprofile --norc -e -o pipefail` (`shellCommand` in
+      # act/runner/step_run.go), so the step fails when mix test fails, whatever tee returns,
+      # and the explicit shell keeps pipefail whatever the default shell is. With no shell on
+      # the step and no `defaults: run: shell:`, `interpretShell` (same file) runs a
+      # `command -v bash` probe in the job container. When the probe answers `bash`, the step
+      # runs the same way. When it answers `sh`, as in a container that has sh but no bash,
+      # `shellCommand` runs the step as `sh -e`, without pipefail.
       # The upload below preserves it as a downloadable artifact past whatever the job log's own
       # retention does.
       - shell: bash
