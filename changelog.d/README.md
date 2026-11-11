@@ -27,6 +27,7 @@ before the fix, and the fragment's account of the bug took a review and two re-c
 about 29 minutes from the first finding to the last fix.
 
 - every sentence about what Cinder does;
+- the bold summary;
 - a sentence about a path whose code reads a list or setting an install can configure;
 - what such lists hold, or what a check over them decides;
 - that Cinder removes, cleans up or repairs something;
@@ -50,6 +51,16 @@ names, where Cinder had refused it as ambiguous before. The fragment took it, an
 false on some input: the refusal when a season offset gives that episode the release's own code,
 the new reading when scene codes name that episode and none is the release's. Two fix commits and
 one more review round, about 5 minutes.
+
+The bold summary is a sentence about what Cinder does too, and the shortest, so it is the first to
+drop a condition. It carries each condition the body's sentences put on the change, or it names a
+narrower case than the body. Read it alone, as a reader who skips the body would, on each path
+where one of those conditions fails. On #1190 the first summary said that a correction whose file
+fails to open keeps its record, where the body kept it only for a file Cinder reads back as the
+correction. Its fix, "yet reads back as the correction", dropped the body's "only that open
+fails", so it still read as true when the staged name's open fails too and Cinder reads nothing.
+Both review rounds flagged the summary, among fragment fixes that took about 16 minutes from the
+first finding to the last fix.
 
 A path includes each value an install can configure for a list or setting that the code on the
 path reads, such as `Cinder.Download.ContentPolicy`'s blocked and media extension lists. A
