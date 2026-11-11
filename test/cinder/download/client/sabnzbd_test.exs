@@ -480,9 +480,10 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end
   end
 
-  # The torrent clients read a download_url's scheme in any letter case (#1195). SABnzbd keeps
-  # answering each of these links as it did before that change.
-  test "add/1 answers upper-case magnet and http(s) links, ftp and a redirect to MAGNET: as before" do
+  # The torrent clients read a download_url's scheme in any letter case (#1195). SABnzbd fetches
+  # an upper-case http(s) link and refuses a redirect to a magnet, as before that change. A magnet
+  # or ftp download_url is refused as unsupported before any request (#1230).
+  test "add/1 refuses magnet and ftp links before any request, fetches upper-case http(s) links and refuses a redirect to MAGNET:" do
     test_pid = self()
     hash = "0123456789abcdef0123456789abcdef01234567"
     fetched = &[{"93.184.216.34", &1}]
@@ -502,16 +503,16 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end)
 
     for {url, expected, requests} <- [
-          {"MAGNET:?xt=urn:btih:#{hash}&dn=Movie", {:error, :unsupported_scheme}, []},
-          {"Magnet:?xt=urn:btih:#{hash}&dn=Movie", {:error, :unsupported_scheme}, []},
-          {"MAGNET:?xt=urn:btih:#{hash}&dn=a b", {:error, " "}, []},
-          {"MAGNET:?xt=urn:btih:#{hash}&dn=a>b", {:error, ">"}, []},
-          {"MAGNET:", {:error, :unsupported_scheme}, []},
+          {"MAGNET:?xt=urn:btih:#{hash}&dn=Movie", {:error, :unsupported_download_url}, []},
+          {"Magnet:?xt=urn:btih:#{hash}&dn=Movie", {:error, :unsupported_download_url}, []},
+          {"MAGNET:?xt=urn:btih:#{hash}&dn=a b", {:error, :unsupported_download_url}, []},
+          {"MAGNET:?xt=urn:btih:#{hash}&dn=a>b", {:error, :unsupported_download_url}, []},
+          {"MAGNET:", {:error, :unsupported_download_url}, []},
           {"HTTP://indexer.example/file.torrent", {:error, {:nzb_fetch_status, 500}},
            fetched.("/file.torrent")},
           {"HTTPS://indexer.example/file.torrent", {:error, {:nzb_fetch_status, 500}},
            fetched.("/file.torrent")},
-          {"ftp://indexer.example/file.torrent", {:error, :unsupported_scheme}, []},
+          {"ftp://indexer.example/file.torrent", {:error, :unsupported_download_url}, []},
           {"https://indexer.example/dl/MAGNET", {:error, :unsupported_download_url},
            fetched.("/dl/MAGNET")},
           {"https://indexer.example/dl/magnet", {:error, :unsupported_download_url},

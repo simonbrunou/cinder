@@ -38,6 +38,7 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   require Logger
 
+  alias Cinder.Download.Client.Fetch
   alias Cinder.Download.PathMapping
   alias Cinder.HTTPPolicy
 
@@ -72,7 +73,9 @@ defmodule Cinder.Download.Client.Sabnzbd do
   # Fetch the NZB ourselves (bounded, redirect-revalidated) instead of handing SABnzbd the raw
   # URL via `addurl` — mirrors `Cinder.Download.Client.QBittorrent`'s `.torrent`-URL fetch.
   defp fetch_nzb(url, source_origin, hops) do
-    with {:ok, target} <- validate_url(url, source_origin) do
+    resolver = Keyword.get(config(), :url_resolver)
+
+    with {:ok, target} <- Fetch.download_url_target(url, source_origin, resolver) do
       trust =
         if HTTPPolicy.same_origin?(target.uri, source_origin),
           do: {:source, source_origin},

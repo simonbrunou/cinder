@@ -10,8 +10,29 @@ defmodule Cinder.Download.Client.Fetch do
     fetch(url, source_origin, Keyword.put_new(opts, :redirects, @max_redirects))
   end
 
+  @doc """
+  Checks a release's own `download_url` before its first request, as
+  `Cinder.HTTPPolicy.source_request_target/2,3` does. `resolver` is a DNS resolver function, or
+  `nil` for the real lookup.
+
+  A refusal that `Cinder.HTTPPolicy.text_refusal?/1` names reads as `:unsupported_download_url`.
+  The stored link and its source origin never change between retries, so no retry could fix it,
+  and `Cinder.Download` drops the reservation instead (#1230). Every other answer is
+  `source_request_target`'s own: a refusal that depends on DNS stays retryable. A redirect's
+  Location never comes through here, since a remote server sends it and can change it.
+  """
+  def download_url_target(url, source_origin, resolver) do
+    case request_target(url, source_origin, resolver) do
+      {:error, reason} = error ->
+        if HTTPPolicy.text_refusal?(reason), do: {:error, :unsupported_download_url}, else: error
+
+      {:ok, target} ->
+        {:ok, target}
+    end
+  end
+
   defp fetch(url, source_origin, opts) do
-    with {:ok, target} <- target(url, source_origin, opts) do
+    with {:ok, target} <- download_url_target(url, source_origin, Keyword.get(opts, :resolver)) do
       trust =
         if HTTPPolicy.same_origin?(target.uri, source_origin),
           do: {:source, source_origin},
@@ -80,15 +101,14 @@ defmodule Cinder.Download.Client.Fetch do
     end
   end
 
-  defp target(url, source_origin, opts) do
-    case Keyword.get(opts, :resolver) do
-      resolver when is_function(resolver, 1) ->
-        HTTPPolicy.source_request_target(url, source_origin, resolver)
+  defp target(url, source_origin, opts),
+    do: request_target(url, source_origin, Keyword.get(opts, :resolver))
 
-      nil ->
-        HTTPPolicy.source_request_target(url, source_origin)
-    end
-  end
+  defp request_target(url, source_origin, resolver) when is_function(resolver, 1),
+    do: HTTPPolicy.source_request_target(url, source_origin, resolver)
+
+  defp request_target(url, source_origin, nil),
+    do: HTTPPolicy.source_request_target(url, source_origin)
 
   defp resolve_redirect(current, location, {:source, source_origin}, opts) do
     case HTTPPolicy.resolve_redirect(current, location, :same_origin) do

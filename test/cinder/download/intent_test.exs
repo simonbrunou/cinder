@@ -7,6 +7,7 @@ defmodule Cinder.Download.IntentTest do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Grab, Movie, MovieLifecycle}
   alias Cinder.Download
+  alias Cinder.Download.Client.Transmission
   alias Cinder.Download.Intent
   alias Cinder.Download.IntentEpisode
   alias Cinder.Repo
@@ -814,6 +815,28 @@ defmodule Cinder.Download.IntentTest do
 
     refute Repo.get(Intent, good.id)
     assert Repo.get!(Cinder.Catalog.Movie, good_movie.id).download_id == "remote-good"
+  end
+
+  # A real client refuses a link that does not parse as `:unsupported_download_url`, so the pass
+  # drops its intent instead of backing it off (#1230).
+  test "a download_url the client refuses from its text drops its intent instead of backing off" do
+    test_pid = self()
+    movie = movie_fixture(%{status: :searching})
+    bad = %{release("Bad") | download_url: "https://indexer.example/a b.torrent"}
+    {:ok, intent} = reserve_movie_intent(movie.id, bad)
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+    stub(Cinder.Download.ClientMock, :add, &Transmission.add/2)
+
+    Req.Test.stub(Cinder.TransmissionStub, fn conn ->
+      send(test_pid, {:request, conn.request_path})
+      Plug.Conn.send_resp(conn, 500, "")
+    end)
+
+    assert :ok = Download.reconcile_pending_intents([:movie])
+
+    refute Repo.get(Intent, intent.id)
+    refute_received {:request, _path}
   end
 
   test "a committed movie retry generation is charged once across crash replay" do

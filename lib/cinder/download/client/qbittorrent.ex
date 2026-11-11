@@ -24,6 +24,7 @@ defmodule Cinder.Download.Client.QBittorrent do
   """
   @behaviour Cinder.Download.Client
 
+  alias Cinder.Download.Client.Fetch
   alias Cinder.Download.{EndpointVetter, PathMapping, Torrent}
   alias Cinder.HTTPPolicy
 
@@ -188,7 +189,9 @@ defmodule Cinder.Download.Client.QBittorrent do
   # merges the Location URI without a scheme check, so a 3xx to a magnet: URI
   # makes Finch raise ArgumentError instead of returning {:error, _}.
   defp fetch_torrent(url, source_origin, hops) do
-    with {:ok, target} <- validate_url(url, source_origin) do
+    resolver = Keyword.get(config(), :url_resolver)
+
+    with {:ok, target} <- Fetch.download_url_target(url, source_origin, resolver) do
       trust =
         if HTTPPolicy.same_origin?(target.uri, source_origin),
           do: {:source, source_origin},

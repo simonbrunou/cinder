@@ -15,6 +15,14 @@ defmodule Cinder.HTTPPolicy do
 
   @max_log_bytes 500
   @default_request_timeout_ms 60_000
+  @text_refusals [
+    :invalid_url,
+    :unsupported_scheme,
+    :missing_host,
+    :invalid_port,
+    :userinfo_not_allowed,
+    :fragment_not_allowed
+  ]
 
   @type address :: :inet.ip_address()
   @type resolver :: (String.t() -> {:ok, [address()]} | {:error, term()})
@@ -37,7 +45,7 @@ defmodule Cinder.HTTPPolicy do
 
   @doc "Validates a remote-supplied HTTP(S) URL against all resolved addresses."
   @spec validate_untrusted_url(String.t() | URI.t(), resolver()) ::
-          {:ok, URI.t()} | {:error, atom()}
+          {:ok, URI.t()} | {:error, atom() | String.t()}
   def validate_untrusted_url(url, resolver \\ &resolve_host/1) when is_function(resolver, 1) do
     with {:ok, uri} <- validated_uri(url),
          {:ok, addresses} <- addresses(uri.host, resolver),
@@ -64,7 +72,7 @@ defmodule Cinder.HTTPPolicy do
 
   @doc "Validates a remote URL, allowing an exact recorded source origin to be private."
   @spec validate_source_url(String.t() | URI.t(), String.t() | nil, resolver()) ::
-          {:ok, URI.t()} | {:error, atom()}
+          {:ok, URI.t()} | {:error, atom() | String.t()}
   def validate_source_url(url, source_origin, resolver \\ &resolve_host/1)
 
   def validate_source_url(url, source_origin, resolver)
@@ -80,7 +88,7 @@ defmodule Cinder.HTTPPolicy do
 
   @doc "Builds a request target pinned to one address from the validated DNS answer set."
   @spec untrusted_request_target(String.t() | URI.t(), resolver()) ::
-          {:ok, request_target()} | {:error, atom()}
+          {:ok, request_target()} | {:error, atom() | String.t()}
   def untrusted_request_target(url, resolver \\ &resolve_host/1)
       when is_function(resolver, 1) do
     with {:ok, uri} <- validated_uri(url),
@@ -92,7 +100,7 @@ defmodule Cinder.HTTPPolicy do
 
   @doc "Builds a request target, allowing an exact configured source origin to stay unpinned."
   @spec source_request_target(String.t() | URI.t(), String.t() | nil, resolver()) ::
-          {:ok, request_target()} | {:error, atom()}
+          {:ok, request_target()} | {:error, atom() | String.t()}
   def source_request_target(url, source_origin, resolver \\ &resolve_host/1)
 
   def source_request_target(%URI{} = url, source_origin, resolver)
@@ -116,12 +124,23 @@ defmodule Cinder.HTTPPolicy do
   def source_request_target(url, _source_origin, resolver) when is_function(resolver, 1),
     do: untrusted_request_target(url, resolver)
 
+  @doc """
+  Whether `reason` is one the URL checks of this module give from a URL's text, before any DNS
+  lookup: the part `URI.new/1` rejected (a binary), `:invalid_url`, `:unsupported_scheme`,
+  `:missing_host`, `:invalid_port`, `:userinfo_not_allowed` or `:fragment_not_allowed`. It is
+  false for the reasons that depend on DNS (`:dns_resolution_failed`, `:forbidden_address`) and for
+  `:https_downgrade`.
+  """
+  @spec text_refusal?(term()) :: boolean()
+  def text_refusal?(reason) when is_binary(reason), do: true
+  def text_refusal?(reason), do: reason in @text_refusals
+
   @doc "Resolves a redirect and pins its validated destination address."
   @spec untrusted_redirect_target(
           String.t() | URI.t(),
           String.t(),
           resolver()
-        ) :: {:ok, request_target()} | {:error, atom()}
+        ) :: {:ok, request_target()} | {:error, atom() | String.t()}
   def untrusted_redirect_target(current, location, resolver \\ &resolve_host/1)
       when is_function(resolver, 1) do
     with {:ok, current_uri} <- validated_uri(current),
@@ -176,7 +195,7 @@ defmodule Cinder.HTTPPolicy do
           String.t(),
           :same_origin | :untrusted | resolver()
         ) ::
-          {:ok, URI.t()} | {:error, atom()}
+          {:ok, URI.t()} | {:error, atom() | String.t()}
   def resolve_redirect(current, location, policy)
 
   def resolve_redirect(current, location, :same_origin) do

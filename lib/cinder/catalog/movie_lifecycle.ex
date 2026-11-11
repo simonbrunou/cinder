@@ -409,7 +409,8 @@ defmodule Cinder.Catalog.MovieLifecycle do
   # --- failures ----------------------------------------------------------------------------------
 
   # Retrying cannot help these, so they park (or revert an upgrade) on first sight.
-  # :unsupported_download_url is an unknown URL scheme, :bad_torrent a malformed .torrent.
+  # :unsupported_download_url is a download link the client can never fetch (an unknown scheme,
+  # or one `Cinder.HTTPPolicy` refuses from its text), :bad_torrent a malformed .torrent.
   @permanent_search_errors [:unsupported_download_url, :bad_torrent]
 
   # The release itself is unusable. :wrong_audio_language is the MediaInfo check rejecting a
