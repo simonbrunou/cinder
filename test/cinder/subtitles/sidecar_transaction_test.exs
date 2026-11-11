@@ -337,6 +337,86 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert Manifest.sync(Manifest.read(video), "en") == previous_record
     end
 
+    # #1190: the check after the exchange cannot open the sidecar, which holds the corrected
+    # bytes, so the publication is committed and the pending record stays for the recovery.
+    test "a sidecar with no other name that fails to open right after the exchange is recovered",
+         %{video: video, path: path, original: original, backup: backup} do
+      assert {:error, {:publication_committed, :published_target_unverified}} =
+               fail_target_open_after_exchange(path, fn -> manual(video, 1_000) end)
+
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+      assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
+
+      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+      assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
+      assert File.read!(backup) == original
+      assert workspaces(path) == []
+      assert {:ok, :corrected, _} = manual(video, 2_000)
+    end
+
+    # #1190: whatever holds the sidecar's name after the exchange, bytes equal to the correction
+    # are what the pending record names.
+    test "a sidecar replaced right after the exchange by the corrected bytes keeps the pending record",
+         %{video: video, path: path, original: original, backup: backup, tmp_dir: tmp} do
+      {:ok, corrected} = Timing.retime(original, ".srt", 1_000, 1.0)
+
+      result =
+        after_exchange(fn -> manual(video, 1_000) end, fn ->
+          replacement = Path.join(tmp, "replacement.srt")
+          File.write!(replacement, corrected)
+          File.rename!(replacement, path)
+        end)
+
+      assert {:error, {:publication_committed, :published_target_unverified}} = result
+      assert_unacknowledged_correction(video, path, original, backup)
+      assert workspaces(path) == []
+    end
+
+    # #1190: bytes the write cannot read back count as unpublished, as `swap/3` counts them.
+    test "a sidecar that fails to open and to read right after the exchange restores the previous record",
+         %{video: video, path: path, original: original, backup: backup} do
+      read_failure = %{operation: :read, source_contains: path, reason: :eio}
+
+      assert {:error, :concurrent_change} =
+               fail_target_open_after_exchange(path, fn -> manual(video, 1_000) end, [
+                 read_failure
+               ])
+
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+      assert File.read!(backup) == original
+      assert Manifest.sync(Manifest.read(video), "en") == nil
+    end
+
+    # #1190: a sidecar that holds other bytes before the exchange is left alone with nothing
+    # exchanged, and nothing reads it to settle a result, even when it holds the corrected bytes.
+    test "a sidecar edited to the corrected bytes before the exchange restores the previous record",
+         %{video: video, path: path, original: original} do
+      {:ok, corrected} = Timing.retime(original, ".srt", 1_000, 1.0)
+      use_barrier(%{operation: :create_bound, contains: @staged})
+      task = Task.async(fn -> manual(video, 1_000) end)
+
+      assert_receive {:filesystem_barrier, pid, ref, :create_bound, _staged},
+                     DiskTask.timeout_ms()
+
+      File.write!(path, corrected)
+
+      # Stays armed: a read of the sidecar from here on would clear it.
+      Application.put_env(:cinder, :filesystem_failure, %{
+        operation: :read,
+        source_contains: path,
+        reason: :read_forbidden,
+        once: true
+      })
+
+      send(pid, {ref, :continue})
+
+      assert {:error, :concurrent_change} = DiskTask.await(task)
+      assert %{reason: :read_forbidden} = Application.get_env(:cinder, :filesystem_failure)
+      Application.delete_env(:cinder, :filesystem_failure)
+      assert File.read!(path) == corrected
+      assert Manifest.sync(Manifest.read(video), "en") == nil
+    end
+
     test "a post-effect exchange failure leaves the pending record for recovery", %{
       video: video,
       path: path,
@@ -1067,6 +1147,45 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
       assert File.ls!(workspace) == [@staged]
       assert File.read!(Path.join(workspace, @staged)) == "other"
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 1
+    end
+
+    # #1190: the check that the sidecar still names the published inode cannot open it, and the
+    # sidecar holds the corrected bytes. The displaced inode is disposed of as after a verified
+    # exchange, and the pending record stays for the recovery.
+    test "a sidecar that fails to open right after the correction's exchange keeps the pending record",
+         %{video: video, path: path, original: original, backup: backup, tmp_dir: tmp} do
+      download = hardlink_download!(path, tmp)
+
+      assert {:error, {:publication_committed, :published_target_unverified}} =
+               fail_target_open_after_exchange(path, fn -> manual(video, 1_000) end)
+
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 1
+      assert_unacknowledged_correction(video, path, original, backup)
+      assert workspaces(path) == []
+      assert File.stat!(download).links == 1
+    end
+
+    # #1190, with the disposal failing as in #1156: the workspace keeps the download's inode
+    # beside the fresh tombstone, and the recovery's final record retires both.
+    test "a sidecar that fails to open after the exchange, then a failed tombstone rename, leaves the pending record",
+         %{video: video, path: path, original: original, backup: backup, tmp_dir: tmp} do
+      download = hardlink_download!(path, tmp)
+      rename_failure = %{operation: :rename, source_contains: @tombstone, reason: :eio}
+
+      assert {:error,
+              {:publication_committed,
+               {:published_target_unverified, {:tombstone_replace_failed, :eio}}}} =
+               fail_target_open_after_exchange(path, fn -> manual(video, 1_000) end, [
+                 rename_failure
+               ])
+
+      assert_failed_rename_entries(path, original, download)
+
+      assert_unacknowledged_correction(video, path, original, backup)
+      assert workspaces(path) == []
       assert File.read!(download) == original
       assert File.stat!(download).links == 1
     end
@@ -3599,6 +3718,20 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert {:error, {:publication_committed, {:descriptor_close_failed, :eio}}} = result
       assert File.read!(path) == corrected
     end
+
+    test "a target that fails to open right after the exchange reports the bytes published", %{
+      path: path,
+      original: original
+    } do
+      corrected = shifted(original)
+
+      assert {:error, {:publication_committed, :published_target_unverified}} =
+               fail_target_open_after_exchange(path, fn ->
+                 SidecarTransaction.AtomicFile.write(path, corrected, original)
+               end)
+
+      assert File.read!(path) == corrected
+    end
   end
 
   test "only the transaction writes the manifest's record, journal and tombstone fields" do
@@ -3818,6 +3951,26 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     File.rename!(newer, path)
     resume.(pid, ref)
     DiskTask.await(task)
+  end
+
+  # Runs `fun` until its exchange committed, runs `paused` while it waits there, and returns
+  # `fun`'s result.
+  defp after_exchange(fun, paused) do
+    use_barrier(%{operation: :exchange, contains: @staged})
+    task = Task.async(fun)
+    assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
+    paused.()
+    send(pid, {ref, :continue})
+    DiskTask.await(task)
+  end
+
+  # Runs `fun` until its exchange onto `path` committed, then fails the next open of `path` with
+  # `:eio`: the check that `path` still names the published inode. Each of `more` fails in order
+  # after it. Armed any earlier, the failure would hit the opens before the exchange.
+  defp fail_target_open_after_exchange(path, fun, more \\ []) do
+    after_exchange(fun, fn ->
+      fail_in_order([%{operation: :open_bound, source_contains: path, reason: :eio} | more])
+    end)
   end
 
   # Resumes a disposal paused at its exchange until it created the fresh tombstone, then fails

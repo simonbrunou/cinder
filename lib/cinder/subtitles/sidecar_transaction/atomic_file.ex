@@ -821,7 +821,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
         dispose_displaced(staged_path, current, disposal, committed_warning)
 
       {:error, :published_target_changed} ->
-        preserve_published_external(staged_path, current, disposal)
+        published_external(target, staged_path, current, content, disposal, committed_warning)
 
       {:error, :displaced_target_changed} ->
         rollback_displaced_exchange(
@@ -956,25 +956,39 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   defp classify_exchanged_bytes(_published, _captured, _content, _expected),
     do: {:error, :concurrent_change}
 
-  # The target lost our inode after the exchange, or could not be opened to tell: `swap/3`
-  # settles which from the target's bytes.
-  defp preserve_published_external(staged_path, current, :unlink) do
+  # The target lost our inode after the exchange, or could not be opened to tell: every open
+  # error reads as a changed identity. Either way the operation tries to dispose of the displaced
+  # inode, and the target's bytes settle which. `swap/3` reads them once its workspace closed.
+  defp published_external(_target, staged_path, current, _content, :unlink, _warning) do
     remove_workspace_name(staged_path, current)
     {:moved_unverified, :concurrent_change}
   end
 
-  defp preserve_published_external(staged_path, current, :discard) do
-    case empty_displaced(staged_path, current) do
-      :ok ->
-        {:external_preserved, {:error, :concurrent_change}}
+  # `write/3,4` reads them here (#1190). A target that reads as `content` is a committed
+  # publication whose target went unverified: `publish/4` keeps its pending record for
+  # `recover/2`, and `Recovery.published/2` goes on as after `:ok`. Other bytes, or bytes that
+  # cannot be read, keep the preservation's result, as `swap/3` counts unreadable bytes as
+  # unpublished.
+  defp published_external(target, staged_path, current, content, :discard, warning) do
+    disposal = empty_displaced(staged_path, current)
 
-      {:error, {:discard, reason}} ->
-        {:preserved, {:error, {:external_preservation_discard_failed, reason}}}
-
-      {:error, {:replace, reason}} ->
-        {:preserved, {:error, {:external_preservation_replace_failed, reason}}}
-    end
+    if safe_read(target) == {:ok, content},
+      do: {:committed_unacknowledged, merge_committed_warnings(warning, unverified(disposal))},
+      else: preserved_external(disposal)
   end
+
+  defp unverified(:ok), do: :published_target_unverified
+
+  defp unverified({:error, failure}),
+    do: {:published_target_unverified, disposal_failure(failure)}
+
+  defp preserved_external(:ok), do: {:external_preserved, {:error, :concurrent_change}}
+
+  defp preserved_external({:error, {:discard, reason}}),
+    do: {:preserved, {:error, {:external_preservation_discard_failed, reason}}}
+
+  defp preserved_external({:error, {:replace, reason}}),
+    do: {:preserved, {:error, {:external_preservation_replace_failed, reason}}}
 
   defp rollback_displaced_exchange(target, staged_path, staged, _disposal, original_error) do
     with :ok <- verify_bound_path(target, staged),
