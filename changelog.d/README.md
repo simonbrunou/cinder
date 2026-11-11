@@ -20,6 +20,16 @@ only `test/`, `.forgejo/workflows/`, `scripts/`, `.gitignore`, `AGENTS.md`, `doc
 - **A short bold summary (#843).** What changed for the user, and what they should do about it.
 ```
 
+A sentence in `changelog.d/` must hold on `main` until a release folds it. So a PR that changes
+what Cinder does reads each unreleased sentence about the behaviour it changes, and fixes in its
+own diff each one it makes false. Search `changelog.d/` for the words a user reads there by their
+stem, since fragments word one case in several ways: `open` finds "fails to open", "could not
+open" and "could not be opened" for a file Cinder cannot open, and `.cinder-subtitle-sync-cas-`
+finds each subtitle workspace. #1196 made a recovery try to remove a folder that the #1131 and
+#1156 fragments said stays, and fixing them took #1198's triage and PR. While that PR was open,
+#1281 changed which corrections keep their record for the recovery and left #1156's fragment wrong
+again: about 17 minutes from finding it to the fix, and a second CI run.
+
 Each kind of sentence below has its own paragraph, in the order of this list. Read the first one
 always, and each other one whose kind the fragment holds; a new paragraph adds its kind here. On
 #964 the author read the first 60 lines, which then ended above the paragraph on what Cinder did

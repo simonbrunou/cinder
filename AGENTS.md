@@ -98,6 +98,15 @@ reports as `conflicts with origin/main`. On a conflict:
 Do the same for a PR whose diff touches `CHANGELOG.md` even without a conflict, since a stale
 entry under `[Unreleased]` merges cleanly and turns `main` red.
 
+A changelog fragment in the PR can go stale with no conflict too. Right before merging, after
+`git fetch origin`, run
+`git diff --name-only <pushed SHA>...origin/main -- . ':(exclude)test'`. When it lists a file a
+fragment of the PR describes, such as code under `lib/` or the `Dockerfile`, or lists
+`changelog.d/README.md`, check that fragment against that file and those rules as `origin/main`
+has them. When a sentence no longer holds, fix it, run `mix test`, push and wait for CI. Then
+check the three conditions and this one again before merging. While #1283 was open, #1281 and
+then #1285 merged and each made a fragment of #1283 stale: each took a fix commit and a CI run.
+
 A fence, a test that scans the sources ([testing.md](docs/agents/testing.md)), can turn `main`
 red with no conflict too. A PR merged after a fence PR's CI ran can add a line the fence fails,
 and a PR whose CI ran before a fence reached `main` never ran it (#1155, fixed by #1161). Right
@@ -108,8 +117,8 @@ fences to run are each one the PR adds or widens, plus each file that
 scanners elsewhere, as `rg -l '"lib/' test` lists them). When that list is not empty, run
 `git switch --detach <pushed SHA>`, merge `origin/main` and run those files. When they pass, push
 nothing and merge the pushed SHA. When one fails, fix the line it names, run `mix test`, push
-with `git push origin HEAD:<branch>` and wait for CI. Then check the three conditions and this
-one again before merging.
+with `git push origin HEAD:<branch>` and wait for CI. Then check the three conditions, the
+fragment check above and this one again before merging.
 
 The production deploy that the merge triggers is accepted. Ask first only when the PR drops or
 rewrites stored data (a destructive migration, a backfill that overwrites rows). After the merge,
