@@ -12,5 +12,4 @@
   video's interrupted resets and replacements have finished and the folder and its files have not
   changed for an hour, up to 50 such folders per analysis. A removal that fails leaves the folder
   in place and logs its path. The download's bytes stay as they are throughout. A folder whose
-  download file was deleted first stays, since it holds that file's last name. So does a folder
-  this rename left before this fix, which holds only the download file's second name.
+  download file was deleted first stays, since it holds that file's last name.

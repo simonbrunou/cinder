@@ -7,6 +7,7 @@
   corrections and resets left in that video's folder, once its interrupted resets and
   replacements have finished. It takes only folders unchanged for an hour that no subtitle record
   it can read there names, so a large backlog clears over several analyses. A folder that holds
-  subtitle bytes, a second name of a download's file or anything else stays. When an interrupted
+  subtitle bytes, a second name of a download's file or anything else stays, except the folders
+  that the entries for #1131, #1149, #1156 and #1187 say Cinder also removes. When an interrupted
   cleanup leaves such a folder empty, a later correction or reset of that subtitle goes ahead
   instead of failing.

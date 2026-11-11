@@ -902,6 +902,31 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.stat!(download).links == 1
     end
 
+    # #1187: the immutable original holds the staged bytes, but the pending record names the
+    # workspace, so the sweep leaves it to the recovery.
+    test "reconcile leaves a correction's workspace whose fresh tombstone could not be created to its recovery",
+         %{video: video, path: path, original: original, tmp_dir: tmp} do
+      download = hardlink_download!(path, tmp)
+      fail_once(%{operation: :create_bound, source_contains: @tombstone, reason: :enospc})
+
+      assert {:error, {:publication_committed, {:tombstone_replace_failed, :enospc}}} =
+               manual(video, 1_000)
+
+      assert [workspace] = workspaces(path)
+      age!(workspace)
+
+      assert :ok = reconcile(video)
+      assert File.ls!(workspace) == [@staged]
+      assert same_inode?(Path.join(workspace, @staged), download)
+      assert File.stat!(download).links == 2
+      assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
+
+      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+      refute File.exists?(workspace)
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 1
+    end
+
     test "reconcile leaves a killed correction's workspace to its pending record's recovery", %{
       video: video,
       path: path,
@@ -983,6 +1008,37 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(download) == original
       assert File.stat!(download).links == 1
       assert File.read!(path) == "newer"
+    end
+
+    # #1187: no fresh tombstone exists, so the staged name alone holds the download's inode, and
+    # the abort clears the record.
+    test "a fresh tombstone not created after the sidecar was replaced leaves a workspace a sweep retires",
+         %{video: video, path: path, original: original, backup: backup, tmp_dir: tmp} do
+      download = hardlink_download!(path, tmp)
+      fail_once(%{operation: :create_bound, source_contains: @tombstone, reason: :enospc})
+
+      assert {:error, {:external_preservation_replace_failed, :enospc}} =
+               replace_after_exchange(path, tmp, fn -> manual(video, 1_000) end)
+
+      assert_staged_download_swept(video, path, original, backup, download)
+    end
+
+    # #1187: the check before the rename cannot open the staged name, so the disposal removes its
+    # fresh tombstone and the staged name alone holds the download's inode. A failed open, not a
+    # mode 000 file: CI runs the suite as root, which opens that file anyway.
+    test "a staged name the check cannot open after the sidecar was replaced leaves a workspace a sweep retires",
+         %{video: video, path: path, original: original, backup: backup, tmp_dir: tmp} do
+      download = hardlink_download!(path, tmp)
+
+      assert {:error, {:external_preservation_replace_failed, :concurrent_change}} =
+               replace_after_exchange(
+                 path,
+                 tmp,
+                 fn -> manual(video, 1_000) end,
+                 &fail_staged_check/2
+               )
+
+      assert_staged_download_swept(video, path, original, backup, download)
     end
 
     # The check before the rename finds another file at the staged name: the disposal never
@@ -2230,6 +2286,45 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(other_path) == "the other video's sidecar"
     end
 
+    # #1187: dropping the workspace's name for a file with other names loses no bytes, and a
+    # candidate still holds them once those names go.
+    test "retires accounted bytes whose staged file has other names, which keep them", %{
+      video: video,
+      path: path,
+      original: original,
+      backup: backup,
+      tmp_dir: tmp
+    } do
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      corrected = File.read!(path)
+      kept_original = plant_workspace!(path, %{@staged => original})
+      File.ln!(Path.join(kept_original, @staged), Path.join(tmp, "outside-original"))
+      current = plant_workspace!(path, %{@staged => corrected})
+      File.ln!(Path.join(current, @staged), Path.join(tmp, "outside-current"))
+      three_names = plant_workspace!(path, %{@staged => original})
+      File.ln!(Path.join(three_names, @staged), Path.join(tmp, "outside-first"))
+      File.ln!(Path.join(three_names, @staged), Path.join(tmp, "outside-second"))
+      Enum.each([kept_original, current, three_names], &age!/1)
+
+      {result, log} = with_log(fn -> reconcile(video) end)
+      assert :ok = result
+      refute log =~ "subtitle workspace kept"
+      assert workspaces(path) == []
+
+      for {name, bytes, links} <- [
+            {"outside-original", original, 1},
+            {"outside-current", corrected, 1},
+            {"outside-first", original, 2},
+            {"outside-second", original, 2}
+          ] do
+        assert File.read!(Path.join(tmp, name)) == bytes
+        assert File.stat!(Path.join(tmp, name)).links == links
+      end
+
+      assert File.read!(path) == corrected
+      assert File.read!(backup) == original
+    end
+
     test "leaves workspaces holding bytes nothing in the folder holds, another name or another entry",
          %{video: video, path: path, original: original, tmp_dir: tmp} do
       # The same size as the sidecar, other bytes.
@@ -2237,8 +2332,10 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       other_size = plant_workspace!(path, %{@staged => "bytes nothing holds"})
       two_links = plant_workspace!(path, %{@staged => ""})
       File.ln!(Path.join(two_links, @staged), Path.join(tmp, "outside"))
-      accounted_two_links = plant_workspace!(path, %{@staged => original})
-      File.ln!(Path.join(accounted_two_links, @staged), Path.join(tmp, "outside-accounted"))
+      # #1187: another name drops no rule but the link count. The same size as the sidecar, so
+      # the sweep reads and compares the bytes.
+      same_size_two_links = plant_workspace!(path, %{@staged => shifted(original)})
+      File.ln!(Path.join(same_size_two_links, @staged), Path.join(tmp, "outside-same-size"))
       extra_entry = plant_workspace!(path, %{@staged => "", "other" => ""})
       accounted_extra_entry = plant_workspace!(path, %{@staged => original, "other" => ""})
       not_an_id = Path.join(Path.dirname(path), ".cinder-subtitle-sync-cas-short")
@@ -2248,7 +2345,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
         same_size,
         other_size,
         two_links,
-        accounted_two_links,
+        same_size_two_links,
         extra_entry,
         accounted_extra_entry,
         not_an_id
@@ -2262,9 +2359,9 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(Path.join(other_size, @staged)) == "bytes nothing holds"
       assert File.read!(Path.join(extra_entry, @staged)) == ""
       assert File.read!(Path.join(accounted_extra_entry, @staged)) == original
-      assert File.read!(Path.join(accounted_two_links, @staged)) == original
+      assert File.read!(Path.join(same_size_two_links, @staged)) == shifted(original)
       assert File.stat!(Path.join(tmp, "outside")).links == 2
-      assert File.stat!(Path.join(tmp, "outside-accounted")).links == 2
+      assert File.stat!(Path.join(tmp, "outside-same-size")).links == 2
     end
 
     test "leaves accounted bytes a pending record names or that changed within the hour", %{
@@ -2291,6 +2388,34 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(Path.join(young, @staged)) == corrected
       assert File.read!(Path.join(young_staged, @staged)) == original
       assert File.read!(Path.join(young_directory, @staged)) == original
+    end
+
+    # #1187: a staged file with another name goes only once it has not changed for the hour too.
+    test "leaves accounted bytes with another name that changed within the hour", %{
+      video: video,
+      path: path,
+      original: original,
+      tmp_dir: tmp
+    } do
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      young = plant_workspace!(path, %{@staged => original})
+      young_staged = plant_workspace!(path, %{@staged => original})
+      young_directory = plant_workspace!(path, %{@staged => original})
+
+      for workspace <- [young, young_staged, young_directory],
+          do: File.ln!(Path.join(workspace, @staged), Path.join(tmp, Path.basename(workspace)))
+
+      age!(young_staged)
+      File.touch!(Path.join(young_staged, @staged))
+      age!(young_directory)
+      File.touch!(young_directory)
+
+      assert :ok = reconcile(video)
+
+      for workspace <- [young, young_staged, young_directory] do
+        assert File.ls!(workspace) == [@staged]
+        assert File.stat!(Path.join(tmp, Path.basename(workspace))).links == 2
+      end
     end
 
     test "a sweep reads no candidate before it holds a workspace with bytes", %{
@@ -2379,12 +2504,42 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert log =~ "subtitle workspace kept at #{workspace}: :concurrent_change"
     end
 
-    test "a sweep leaves accounted bytes that gained a name before it held them", %{
+    # #1187: the removal re-checks the held file's age through its descriptor, so a file with
+    # another name that changed after the classification stays.
+    test "a sweep leaves accounted bytes with another name that changed before it held them", %{
       video: video,
       path: path,
       original: original,
       tmp_dir: tmp
     } do
+      workspace = plant_workspace!(path, %{@staged => original})
+      outside = Path.join(tmp, "outside")
+      File.ln!(Path.join(workspace, @staged), outside)
+      age!(workspace)
+      use_barrier(%{operation: :open_bound, phase: :before, contains: @staged})
+
+      log =
+        capture_log(fn ->
+          task = Task.async(fn -> reconcile(video) end)
+
+          assert_receive {:filesystem_barrier, pid, ref, :open_bound, staged},
+                         DiskTask.timeout_ms()
+
+          File.touch!(staged)
+          send(pid, {ref, :continue})
+          assert :ok = DiskTask.await(task)
+        end)
+
+      assert File.ls!(workspace) == [@staged]
+      assert File.read!(outside) == original
+      assert File.stat!(outside).links == 2
+      assert log =~ "subtitle workspace kept at #{workspace}: :recent"
+    end
+
+    # #1187: the removal re-checks no link count, so a name gained after the classification keeps
+    # the bytes.
+    test "a sweep retires accounted bytes that gained a name before it held them, and that name keeps them",
+         %{video: video, path: path, original: original, tmp_dir: tmp} do
       workspace = plant_workspace!(path, %{@staged => original})
       age!(workspace)
       use_barrier(%{operation: :open_bound, phase: :before, contains: @staged})
@@ -2401,9 +2556,10 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
           assert :ok = DiskTask.await(task)
         end)
 
-      assert File.read!(Path.join(workspace, @staged)) == original
-      assert File.stat!(Path.join(tmp, "second-name")).links == 2
-      assert log =~ "subtitle workspace kept at #{workspace}: :not_a_tombstone"
+      refute File.exists?(workspace)
+      assert File.read!(Path.join(tmp, "second-name")) == original
+      assert File.stat!(Path.join(tmp, "second-name")).links == 1
+      refute log =~ "subtitle workspace kept"
     end
 
     # #1149: a manifest in the folder that cannot be read in full may name any of its workspaces.
@@ -2429,6 +2585,35 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert [line] = warning_lines(log)
       assert line =~ "subtitle workspaces not swept in #{Path.dirname(path)}: "
       assert line =~ inspect({Manifest.path(other), :eacces})
+    end
+
+    # #1187: the fail-closed rule holds for a staged file with another name too.
+    for {name, breakage} <- [
+          {"it cannot read", :unreadable},
+          {"it cannot decode", :malformed},
+          {"holding an invalid sync record", :invalid_sync},
+          {"holding an invalid reset journal", :invalid_reset_journal},
+          {"holding an invalid replacement journal", :invalid_replacement_journal},
+          {"holding a record and no file", :without_file}
+        ] do
+      test "leaves accounted bytes with another name in a folder with a manifest #{name}", %{
+        video: video,
+        path: path,
+        tmp_dir: tmp
+      } do
+        {other, named} = other_video_pending_workspace!(video, path)
+        accounted = plant_workspace!(path, %{@staged => File.read!(path)})
+        File.ln!(Path.join(accounted, @staged), Path.join(tmp, "outside"))
+        Enum.each([named, accounted], &age!/1)
+        break_manifest!(other, unquote(breakage))
+
+        {result, log} = with_log(fn -> reconcile(video) end)
+        assert :ok = result
+        assert File.ls!(accounted) == [@staged]
+        assert File.stat!(Path.join(tmp, "outside")).links == 2
+        assert [line] = warning_lines(log)
+        assert line =~ "subtitle workspaces not swept in #{Path.dirname(path)}: "
+      end
     end
 
     test "removes nothing in a folder with malformed manifests, and says so once", %{
@@ -2786,6 +2971,41 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert [_left] = workspaces(path)
       assert 1 = SidecarTransaction.Workspace.sweep(directory, records, limit: 2)
       assert workspaces(path) == []
+    end
+
+    # #1187: the limit and the failure log hold for accounted bytes with another name too.
+    test "stops after its limit, and logs and keeps a removal that fails, for accounted bytes with another name",
+         %{path: path, tmp_dir: tmp} do
+      bytes = File.read!(path)
+
+      planted =
+        for index <- 1..3 do
+          workspace = plant_workspace!(path, %{@staged => bytes})
+          File.ln!(Path.join(workspace, @staged), Path.join(tmp, "outside-#{index}"))
+          age!(workspace)
+          workspace
+        end
+
+      directory = Path.dirname(path)
+      records = fn _names -> {:ok, [], [path]} end
+      assert 2 = SidecarTransaction.Workspace.sweep(directory, records, limit: 2)
+      assert [left] = workspaces(path)
+      assert left in planted
+      fail_once(%{operation: :rm, source_contains: @staged, reason: :eio})
+
+      {removed, log} =
+        with_log(fn -> SidecarTransaction.Workspace.sweep(directory, records, limit: 2) end)
+
+      assert removed == 0
+      assert File.ls!(left) == [@staged]
+      assert log =~ "subtitle workspace kept at #{left}: :eio"
+      assert 1 = SidecarTransaction.Workspace.sweep(directory, records, limit: 2)
+      assert workspaces(path) == []
+
+      for index <- 1..3 do
+        assert File.read!(Path.join(tmp, "outside-#{index}")) == bytes
+        assert File.stat!(Path.join(tmp, "outside-#{index}")).links == 1
+      end
     end
   end
 
@@ -3481,6 +3701,18 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     )
   end
 
+  # Makes the manifest of `video` one a sweep cannot read in full.
+  defp break_manifest!(video, :unreadable) do
+    fail_once(%{
+      operation: :read,
+      source_contains: Path.basename(Manifest.path(video)),
+      reason: :eacces
+    })
+  end
+
+  defp break_manifest!(video, :malformed), do: File.write!(Manifest.path(video), "{not json")
+  defp break_manifest!(video, track_change), do: edit_manifest_track!(video, "en", track_change)
+
   defp edit_track(:invalid_sync, track), do: put_in(track, ["sync", "status"], "unknown")
 
   defp edit_track(:invalid_reset_journal, track),
@@ -3576,16 +3808,56 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   end
 
   # Runs `fun` until its exchange onto `path` committed, renames "newer" over `path` there, and
-  # returns `fun`'s result.
-  defp replace_after_exchange(path, tmp, fun) do
+  # returns `fun`'s result. `resume.(pid, ref)` lets the paused task go on.
+  defp replace_after_exchange(path, tmp, fun, resume \\ &send(&1, {&2, :continue})) do
     use_barrier(%{operation: :exchange, contains: ".cinder-subtitle-sync-write-staged"})
     task = Task.async(fun)
     assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
     newer = Path.join(tmp, "newer.srt")
     File.write!(newer, "newer")
     File.rename!(newer, path)
-    send(pid, {ref, :continue})
+    resume.(pid, ref)
     DiskTask.await(task)
+  end
+
+  # Resumes a disposal paused at its exchange until it created the fresh tombstone, then fails
+  # the next open of the staged name: the check before the fresh tombstone's rename. The
+  # exchange's own checks open the staged name too, so the failure is armed only here.
+  defp fail_staged_check(pid, ref) do
+    use_barrier(%{operation: :create_bound, contains: @tombstone})
+    send(pid, {ref, :continue})
+
+    assert_receive {:filesystem_barrier, ^pid, ref, :create_bound, _fresh},
+                   DiskTask.timeout_ms()
+
+    fail_once(%{operation: :open_bound, source_contains: @staged, reason: :eacces})
+    send(pid, {ref, :continue})
+  end
+
+  # #1187: a disposal on the external-preservation branch failed before its fresh tombstone's
+  # rename, so the staged name alone holds the download's inode, and no record names the
+  # workspace. A reconcile keeps it for the hour, then retires it, since the immutable original
+  # holds its bytes. The download keeps them with one link, and the sidecar keeps "newer".
+  defp assert_staged_download_swept(video, path, original, backup, download) do
+    assert [workspace] = workspaces(path)
+    assert File.ls!(workspace) == [@staged]
+    assert same_inode?(Path.join(workspace, @staged), download)
+    assert File.stat!(download).links == 2
+    assert Manifest.sync(Manifest.read(video), "en") == nil
+    assert File.read!(path) == "newer"
+
+    assert :ok = reconcile(video)
+    assert File.ls!(workspace) == [@staged]
+    assert File.stat!(download).links == 2
+
+    age!(workspace)
+    assert :ok = reconcile(video)
+    refute File.exists?(workspace)
+    assert workspaces(path) == []
+    assert File.read!(download) == original
+    assert File.stat!(download).links == 1
+    assert File.read!(backup) == original
+    assert File.read!(path) == "newer"
   end
 
   # The workspace tombstone recovery and the reversal reuse read: empty, and no name but its own.

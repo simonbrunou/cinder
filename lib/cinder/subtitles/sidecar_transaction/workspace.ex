@@ -94,10 +94,11 @@ defmodule Cinder.Subtitles.SidecarTransaction.Workspace do
 
     * a bare tombstone or an interrupted disposal (killed, or whose rename failed), as
       `retire/2` says;
-    * the staged name alone, on a non-empty regular file with one link, whose bytes equal one of
-      `candidates`. Only a candidate of the same size is read. The removal holds the staged
-      inode, checks through its descriptor that it still has one link, the same age and those
-      bytes, and removes the name only while it still names that inode.
+    * the staged name alone, on a non-empty regular file with any link count, whose bytes equal
+      one of `candidates`. Only a candidate of the same size is read. The removal holds the
+      staged inode, checks through its descriptor the same age and those bytes, and removes the
+      name only while it still names that inode. It never opens that inode for writing, so its
+      other names, such as a download's, keep its bytes.
 
   A workspace that fails a step stays, and a warning names its path. One whose bytes no
   candidate holds stays without a warning.
@@ -287,9 +288,11 @@ defmodule Cinder.Subtitles.SidecarTransaction.Workspace do
 
   defp tombstone(_stat, _cutoff), do: {:kept, :not_a_tombstone}
 
-  # A staged file with bytes and no other name: the inode an exchange displaced, or bytes staged
-  # for a publication that never ran.
-  defp holds_bytes(%{type: :regular, size: size, links: 1} = stat, cutoff) when size > 0,
+  # A staged file with bytes, whatever its link count: the inode an exchange displaced, bytes
+  # staged for a publication that never ran, or a download's file a disposal that failed before
+  # its fresh tombstone's rename left at the staged name (#1187). Dropping the workspace's name
+  # for a file with other names leaves them its bytes.
+  defp holds_bytes(%{type: :regular, size: size} = stat, cutoff) when size > 0,
     do: if(settled?(stat, cutoff), do: :holds_bytes, else: {:kept, :recent})
 
   defp holds_bytes(_stat, _cutoff), do: {:kept, :not_a_tombstone}
