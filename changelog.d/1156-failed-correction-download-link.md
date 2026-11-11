@@ -1,15 +1,14 @@
 ### Fixed
-- **A failed rename while correcting a subtitle no longer keeps a hidden link to a download's
-  file (#1156).** A subtitle that came with a release may be a hardlink to the file in its
-  download folder. One step of correcting such a subtitle's timing renames an empty file over the
-  hidden `.cinder-subtitle-sync-cas-*` folder's name for the download's file. When that rename
-  failed, the folder beside the subtitle kept that second name, so deleting the download no
-  longer freed the file. Cinder now leaves that folder as a correction stopped just before the
-  rename leaves it (#1131), and tries to remove that name and the folder the same way while the
-  download still has its file. It tries when it finishes the correction. When the correction
-  stopped instead because the subtitle was replaced meanwhile, or because Cinder could not open
-  it right after writing it, it tries when it analyzes the subtitles of that video, once that
-  video's interrupted resets and replacements have finished and the folder and its files have not
-  changed for an hour, up to 50 such folders per analysis. A removal that fails leaves the folder
-  in place and logs its path. The download's bytes stay as they are throughout. A folder whose
-  download file was deleted first stays, since it holds that file's last name.
+- **A recovery that records a subtitle correction whose rename failed now tries to drop the hidden
+  link to a download's file that the rename left (#1156).** A subtitle that came with a release
+  may be a hardlink to the file in its download folder. One step of correcting such a subtitle's
+  timing renames an empty file over the hidden `.cinder-subtitle-sync-cas-*` folder's name for the
+  download's file. When that rename failed, the folder beside the subtitle kept that second name,
+  so deleting the download no longer freed the file. Cinder now leaves that folder as a correction
+  stopped just before the rename leaves it, with the empty file beside that name, and tries to
+  remove it as the entry for #1131 says, under the same conditions. A recovery that records the
+  correction tries to drop that name and remove the folder, also when the download's file was
+  deleted first. When the correction stopped instead, because right after writing the subtitle
+  Cinder found it replaced or could not open it, and then did not read the corrected subtitle back
+  from it, Cinder tries when it analyzes the subtitles of that video, under the conditions the
+  entry for #1131 gives for an analysis.
