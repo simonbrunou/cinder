@@ -9,6 +9,12 @@ defmodule Cinder.Library.Filesystem do
   @callback ls(path :: String.t()) :: {:ok, [String.t()]} | {:error, term()}
   @callback find_files(dir :: String.t()) ::
               {:ok, [{String.t(), non_neg_integer()}]} | {:error, term()}
+  @doc """
+  `find_files/1` with options. `:skip` lists paths below `dir` that the walk never stats or
+  lists, nor anything under them (`Cinder.Library.PathPolicy.walk/2`).
+  """
+  @callback find_files(dir :: String.t(), opts :: [skip: [String.t()]]) ::
+              {:ok, [{String.t(), non_neg_integer()}]} | {:error, term()}
   @callback mkdir_p(dir :: String.t()) :: :ok | {:error, term()}
   @callback mkdir_exclusive(dir :: String.t(), mode :: non_neg_integer()) ::
               :ok | {:error, term()}

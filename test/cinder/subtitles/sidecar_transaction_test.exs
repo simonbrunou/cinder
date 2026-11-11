@@ -28,6 +28,8 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     @impl true
     defdelegate find_files(path), to: Disk
     @impl true
+    defdelegate find_files(path, opts), to: Disk
+    @impl true
     defdelegate mkdir_p(path), to: Disk
     @impl true
     defdelegate mkdir_exclusive(path, mode), to: Disk

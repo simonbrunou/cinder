@@ -80,8 +80,8 @@ defmodule Cinder.Library.Filesystem.Disk do
   # the same bug one level down.) Unstat-able individual ENTRIES stay best-effort and are skipped:
   # one broken sidecar file shouldn't block importing the rest.
   @impl true
-  def find_files(dir),
-    do: PathPolicy.walk(dir, filesystem: __MODULE__)
+  def find_files(dir, opts \\ []),
+    do: PathPolicy.walk(dir, skip: Keyword.get(opts, :skip, []), filesystem: __MODULE__)
 
   @impl true
   def mkdir_p(dir), do: RawFile.mkdir_p(dir)

@@ -10,8 +10,8 @@ defmodule Cinder.Test.BarrierFilesystem do
   defdelegate ls(path), to: Disk
 
   @impl true
-  def find_files(path) do
-    result = Disk.find_files(path)
+  def find_files(path, opts \\ []) do
+    result = Disk.find_files(path, opts)
     pause(:find_files, path)
     result
   end

@@ -8,7 +8,7 @@ defmodule Cinder.Library.PathPolicyTest do
   alias Cinder.Library.Filesystem.Disk
   alias Cinder.Library.{PathPolicy, StagedImport}
   alias Cinder.Settings
-  alias Cinder.Test.{BarrierFilesystem, DiskTask}
+  alias Cinder.Test.{BarrierFilesystem, DiskTask, RecordingFilesystem}
 
   # A synthetic filesystem with one directory holding more entries than the 100k
   # traversal cap, so the entry limit trips without creating 100k real files.
@@ -92,6 +92,31 @@ defmodule Cinder.Library.PathPolicyTest do
 
     assert {:ok, files} = PathPolicy.walk(root)
     assert Enum.sort(files) == Enum.sort([{first, 3}, {second, 3}])
+  end
+
+  # #1185: a skipped path may sit on a wedged mount, so the walk leaves it out by name.
+  @tag :tmp_dir
+  test "walk neither stats nor lists a skipped path or anything under it, and walks a sibling " <>
+         "whose name only extends it",
+       %{tmp_dir: tmp} do
+    root = Path.join(tmp, "movies")
+    skipped = Path.join(root, "anime")
+    hidden = Path.join(skipped, "nested/hidden.mkv")
+    kept = Path.join(root, "anime2/kept.mkv")
+    Enum.each([hidden, kept], &File.mkdir_p!(Path.dirname(&1)))
+    File.write!(hidden, "hidden")
+    File.write!(kept, "kept")
+
+    assert {:ok, [{^kept, 4}]} =
+             PathPolicy.walk(root, filesystem: RecordingFilesystem, skip: [skipped <> "/"])
+
+    {:messages, messages} = Process.info(self(), :messages)
+    reads = for {:read, path} <- messages, do: path
+    assert kept in reads
+    refute Enum.any?(reads, &PathPolicy.contained?(&1, skipped)), inspect(reads)
+
+    assert {:ok, files} = PathPolicy.walk(root, filesystem: RecordingFilesystem)
+    assert Enum.sort(files) == Enum.sort([{hidden, 6}, {kept, 4}])
   end
 
   @tag :tmp_dir

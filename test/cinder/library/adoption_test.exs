@@ -169,10 +169,14 @@ defmodule Cinder.Library.AdoptionTest do
         else: Application.delete_env(:cinder, :movies_anime_library_path)
     end)
 
-    expect(Cinder.Library.FilesystemMock, :find_files, 3, fn
+    expect(Cinder.Library.FilesystemMock, :find_files, 2, fn
       ^anime_root -> {:ok, [{anime, 10}]}
-      "/tmp/cinder-test-library" -> {:ok, [{standard, 20}, {anime, 10}]}
       "/tmp/cinder-test-tv-library" -> {:ok, []}
+    end)
+
+    # The movies root's walk skips the Anime root inside it (#1185).
+    expect(Cinder.Library.FilesystemMock, :find_files, fn
+      "/tmp/cinder-test-library", [skip: [^anime_root]] -> {:ok, [{standard, 20}]}
     end)
 
     stub_file_stats([{standard, 20}, {anime, 10}])
@@ -433,10 +437,14 @@ defmodule Cinder.Library.AdoptionTest do
         else: Application.delete_env(:cinder, :tv_anime_library_path)
     end)
 
-    expect(Cinder.Library.FilesystemMock, :find_files, 3, fn
+    expect(Cinder.Library.FilesystemMock, :find_files, 2, fn
       "/tmp/cinder-test-library" -> {:ok, []}
       ^anime_root -> {:ok, [{path, 10}]}
-      "/tmp/cinder-test-tv-library" -> {:ok, [{path, 10}]}
+    end)
+
+    # The TV root's walk skips the Anime root inside it (#1185).
+    expect(Cinder.Library.FilesystemMock, :find_files, fn
+      "/tmp/cinder-test-tv-library", [skip: [^anime_root]] -> {:ok, []}
     end)
 
     stub_file_stats([{path, 10}])

@@ -18,6 +18,7 @@ defmodule Cinder.Test.WedgedFilesystem do
       else: Disk.ls(dir)
   end
 
-  # `Disk.find_files/1`'s walk, reading through this module so it reaches the hanging `ls/1`.
-  def find_files(dir), do: PathPolicy.walk(dir, filesystem: __MODULE__)
+  # `Disk.find_files/2`'s walk, reading through this module so it reaches the hanging `ls/1`.
+  def find_files(dir, opts \\ []),
+    do: PathPolicy.walk(dir, skip: Keyword.get(opts, :skip, []), filesystem: __MODULE__)
 end

@@ -24,7 +24,9 @@ defmodule Cinder.Library.Adoption do
   Returns adoption candidates for every unmanaged video in both library roots.
 
   A root whose read misses its `Cinder.Library.BoundedWalk` deadline, or that the guard refuses,
-  becomes that root's `{:scan_failed, :timeout}` candidate, and the other roots still scan.
+  becomes that root's `{:scan_failed, :timeout}` candidate, and the other roots still scan. A
+  root's walk leaves out every other configured destination inside it, of any kind, so only a
+  nested movies or TV destination's own walk lists its files (#1185).
   """
   def scan do
     managed = managed_paths()
@@ -198,53 +200,69 @@ defmodule Cinder.Library.Adoption do
     end)
   end
 
-  # Scan the most-specific roots first so a nested Anime destination is grouped relative to its
-  # own root, then discard paths already seen by a broader root.
+  # Each root's walk skips every destination strictly inside it, of any kind, so a nested
+  # destination's files are listed only by its own walk, grouped relative to it and with its
+  # profile. A nested root on a wedged mount then stalls its own walk alone, never the broader
+  # root's too, which would make two stuck walks and reach `BoundedWalk`'s cap (#1185). The most
+  # specific roots still scan first.
   defp scan_roots(kind, candidate_kind, managed, build_candidates) do
-    Settings.library_destinations()
+    destinations = Settings.library_destinations()
+
+    destinations
     |> Enum.filter(&(&1.kind == kind))
     |> Enum.sort_by(&byte_size(&1.path), :desc)
-    |> Enum.reduce({[], MapSet.new()}, fn destination, {candidates, seen} ->
-      %{path: root} = destination
-
-      case read_root(root, seen) do
-        {:ok, files, {fresh, identities}} ->
-          seen = Enum.reduce(files, seen, &MapSet.put(&2, normalize_path(elem(&1, 0))))
-
-          discovered =
-            fresh
-            |> build_candidates.(root, managed)
-            |> Enum.map(&put_destination(&1, destination))
-            |> Enum.map(&put_file_identities(&1, identities))
-
-          {candidates ++ discovered, seen}
+    |> Enum.flat_map(fn %{path: root} = destination ->
+      case read_root(root, nested_paths(root, destinations)) do
+        {:ok, {files, identities}} ->
+          files
+          |> build_candidates.(root, managed)
+          |> Enum.map(&put_destination(&1, destination))
+          |> Enum.map(&put_file_identities(&1, identities))
 
         {:error, reason} ->
-          {candidates ++ [scan_error(candidate_kind, root, reason)], seen}
+          [scan_error(candidate_kind, root, reason)]
       end
     end)
-    |> elem(0)
+  end
+
+  # The expanded paths of the destinations strictly inside `root`. A destination of another kind
+  # at `root`'s own path is not nested: its walk shares this one's `BoundedWalk` key.
+  defp nested_paths(root, destinations) do
+    root = Path.expand(root)
+
+    destinations
+    |> Enum.map(&Path.expand(&1.path))
+    |> Enum.filter(&String.starts_with?(&1, root <> "/"))
+    |> Enum.uniq()
   end
 
   # A library root's walk and its identity snapshot share one `BoundedWalk` deadline (#944).
   # `docs/agents/architecture.md` ("Background work is supervised and bounded") gives the basis
   # for its 5 minutes and the reason an off-tick scan is bounded at all.
-  defp read_root(root, seen) do
+  defp read_root(root, nested) do
     BoundedWalk.run(
       Path.expand(root),
       fn ->
-        with {:ok, files} <- filesystem().find_files(root) do
-          fresh = Enum.reject(files, &MapSet.member?(seen, normalize_path(elem(&1, 0))))
-          {:ok, files, snapshot_files(fresh)}
-        end
+        with {:ok, files} <- find_files(root, nested), do: {:ok, snapshot_files(files)}
       end,
-      timeout_ms: scan_timeout_ms()
+      timeout_ms: scan_timeout_ms(Path.expand(root))
     )
   end
 
-  # A test seam, like `BoundedWalk`'s `:walk_timeout_ms`: production never sets it.
-  defp scan_timeout_ms,
-    do: Application.get_env(:cinder, :adoption_scan_timeout_ms, @scan_timeout_ms)
+  # A root with no destination inside it walks through `find_files/1`, as every other walk does.
+  defp find_files(root, []), do: filesystem().find_files(root)
+  defp find_files(root, nested), do: filesystem().find_files(root, skip: nested)
+
+  # A test seam, like `BoundedWalk`'s `:walk_timeout_ms`: production never sets it. One integer is
+  # every root's deadline. A map from a root's expanded path to its deadline shrinks only the roots
+  # it names, so a test can time out a wedged root while a healthy one keeps the default, as
+  # `:health_probe_timeout_ms` does for a probe (`Cinder.Health`).
+  defp scan_timeout_ms(root) do
+    case Application.get_env(:cinder, :adoption_scan_timeout_ms, @scan_timeout_ms) do
+      deadlines when is_map(deadlines) -> Map.get(deadlines, root, @scan_timeout_ms)
+      deadline -> deadline
+    end
+  end
 
   defp snapshot_files(files) do
     Enum.reduce(files, {[], %{}}, fn {path, walked_size}, {verified, identities} ->

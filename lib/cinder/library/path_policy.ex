@@ -70,11 +70,19 @@ defmodule Cinder.Library.PathPolicy do
     end
   end
 
+  @doc """
+  Lists every regular file under `root` with its size, never following a symlink.
+
+  Options: `:filesystem`, the module that reads (`File` by default); `:roots`, the roots `root`
+  must sit in, else `{:error, :unsafe_source}` before any read; `:skip`, paths below `root` that
+  the walk leaves out by name, so it never stats or lists one of them or anything under it (#1185).
+  """
   @spec walk(String.t(), keyword()) ::
           {:ok, [{String.t(), non_neg_integer()}]} | {:error, term()}
   def walk(root, opts \\ []) do
     filesystem = Keyword.get(opts, :filesystem, File)
     roots = Keyword.get(opts, :roots)
+    skip = opts |> Keyword.get(:skip, []) |> MapSet.new(&Path.expand/1)
     root = Path.expand(root)
 
     with true <- is_nil(roots) or under_any_root?(root, roots),
@@ -83,7 +91,7 @@ defmodule Cinder.Library.PathPolicy do
          {:ok, {files, _visited, _count}} <-
            walk_dir(
              root,
-             {filesystem, @max_depth, @max_entries},
+             {filesystem, @max_depth, @max_entries, skip},
              0,
              {[], MapSet.new([identity(stat)]), 0}
            ) do
@@ -181,11 +189,11 @@ defmodule Cinder.Library.PathPolicy do
     end
   end
 
-  defp walk_dir(_dir, {_filesystem, max_depth, _max_entries}, depth, _state)
+  defp walk_dir(_dir, {_filesystem, max_depth, _max_entries, _skip}, depth, _state)
        when depth > max_depth,
        do: {:error, :traversal_limit}
 
-  defp walk_dir(dir, {filesystem, _max_depth, _max_entries} = config, depth, state) do
+  defp walk_dir(dir, {filesystem, _max_depth, _max_entries, _skip} = config, depth, state) do
     with {:ok, entries} <- filesystem.ls(dir) do
       Enum.reduce_while(entries, {:ok, state}, &walk_named_entry(&1, dir, config, depth, &2))
     end
@@ -194,7 +202,7 @@ defmodule Cinder.Library.PathPolicy do
   defp walk_named_entry(
          _entry,
          _dir,
-         {_filesystem, _max_depth, max_entries},
+         {_filesystem, _max_depth, max_entries, _skip},
          _depth,
          {:ok, {_files, _visited, count}}
        )
@@ -202,10 +210,17 @@ defmodule Cinder.Library.PathPolicy do
        do: {:halt, {:error, :traversal_limit}}
 
   defp walk_named_entry(entry, dir, config, depth, {:ok, {files, visited, count}}) do
-    walk_entry(Path.join(dir, entry), config, depth, {files, visited, count + 1})
+    {_filesystem, _max_depth, _max_entries, skip} = config
+    path = Path.join(dir, entry)
+    state = {files, visited, count + 1}
+
+    # By name, before the `lstat`: a skipped path may sit on a wedged mount.
+    if MapSet.member?(skip, path),
+      do: {:cont, {:ok, state}},
+      else: walk_entry(path, config, depth, state)
   end
 
-  defp walk_entry(path, {filesystem, _max_depth, _max_entries} = config, depth, state) do
+  defp walk_entry(path, {filesystem, _max_depth, _max_entries, _skip} = config, depth, state) do
     {files, visited, count} = state
 
     case filesystem.lstat(path) do

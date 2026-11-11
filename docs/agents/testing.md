@@ -231,8 +231,10 @@
   list sorted unless the code under test sorts it (#919).
 - A test that shrinks a deadline so a call waits it out (`:walk_timeout_ms`,
   `:adoption_scan_timeout_ms`, `:health_probe_timeout_ms`, a `timeout_ms:` option) runs only
-  that call under the shrunk value. A health sweep runs many probes in one call, so shrink only
-  the hung probe's budget with a map such as `%{"indexer" => 200}` (`Cinder.Health` moduledoc).
+  that call under the shrunk value. A health sweep runs many probes in one call, and an adoption
+  scan walks every library root in one, so shrink only the hung probe's or root's deadline with a
+  map: `%{"indexer" => 200}` (`Cinder.Health` moduledoc), or `%{wedged_root => 300}` keyed by the
+  root's expanded path (`scan_timeout_ms/1` in `Cinder.Library.Adoption`).
   Every call meant to finish gets a deadline a loaded CI runner cannot miss: 10 s, as
   `Cinder.Library.BoundedWalkTest` and `SafeWalkTest` set it. A refusal meant to come at once runs
   under that 10 s too, with an `elapsed` assert far below it, so the assert shows it did not wait
