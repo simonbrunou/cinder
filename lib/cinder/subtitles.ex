@@ -216,10 +216,11 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  # A track's content once it passed the timing check, which the own track and the embedded
-  # fallback both run on the same extracted bytes. A rejection is stored per moviehash and track,
-  # so neither extracts the track again for this file (`TrackRejection` `:timing`). It is also
-  # kept for the fetch, so a file without a moviehash is checked and logged once per fetch.
+  # A track's content once it passed the timing check, which the own track, the embedded fallback
+  # and the default track as a translation source (`default_srt/4`) all run on the same extracted
+  # bytes. A rejection is stored per moviehash and track, so none of them extracts the track again
+  # for this file (`TrackRejection` `:timing`). It is also kept for the fetch, so a file without a
+  # moviehash is checked and logged once per fetch.
   defp timed_content(_video_path, _moviehash, nil, cache), do: {:none, cache}
 
   defp timed_content(video_path, moviehash, track, cache) do
@@ -412,7 +413,7 @@ defmodule Cinder.Subtitles do
         {nil, cache}
 
       {nil, cache} ->
-        default = default_track(tracks, candidates, moviehash)
+        default = default_track(tracks, candidates, moviehash, cache)
         default_or_sidecar(video_path, language, moviehash, target, default, cache)
 
       {{index, content}, cache} ->
@@ -444,7 +445,7 @@ defmodule Cinder.Subtitles do
   # The default track is only a translation source, so it is not extracted when no translation
   # can come of it (#861). Every sweep used to extract it and drop the result. With no translator,
   # the sidecars are looked at as if there were no default track. So are they without a default
-  # track (`default_track/3`).
+  # track (`default_track/4`), and when its content does not parse or fails the timing check.
   defp default_or_sidecar(video_path, language, moviehash, target, track, cache) do
     if is_nil(track) or not translator().configured?() do
       sidecar_source(video_path, language, target, cache)
@@ -456,16 +457,20 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  # None when the default track did not parse for this moviehash, or when it is itself one of the
-  # candidates in the wanted language. The cascade passed such a track over because it did not
-  # extract or failed the timing check. A translation keeps the cue times of its source and is
-  # not timing-checked, so translating it would write the rejected times as the sidecar (#1072).
-  defp default_track(tracks, candidates, moviehash) do
+  # None when the default track did not parse for this moviehash, when the timing check rejected
+  # it, or when it is itself one of the candidates in the wanted language. The cascade passed such
+  # a candidate over because it did not extract or failed the timing check. A translation keeps
+  # the cue times of its source, so translating it would write the rejected times as the sidecar
+  # (#1072). The timing rejection may come from the own track, an embedded candidate or an
+  # earlier translation (#1109), stored for this moviehash or kept for this fetch.
+  defp default_track(tracks, candidates, moviehash, cache) do
     track = Enum.find(tracks, &(&1.default? and not &1.forced?))
 
     cond do
       is_nil(track) or track in candidates -> nil
       TrackRejection.rejected?(moviehash, track.index, :srt) -> nil
+      MapSet.member?(cache.timing_rejected, track.index) -> nil
+      TrackRejection.rejected?(moviehash, track.index, :timing) -> nil
       true -> track
     end
   end
@@ -496,7 +501,7 @@ defmodule Cinder.Subtitles do
     {result, cache} =
       case extract(video_path, track, cache) do
         {{:ok, content}, cache} ->
-          {translation_source(content, video_path, moviehash, track), cache}
+          translation_source(content, video_path, moviehash, track, cache)
 
         {:error, cache} ->
           {:none, cache}
@@ -508,39 +513,48 @@ defmodule Cinder.Subtitles do
   defp default_srt(_video_path, _moviehash, _track, %{default_srt: result} = cache),
     do: {result, cache}
 
-  defp translation_source(content, video_path, moviehash, track) do
-    case parse_srt(content, video_path) do
-      {:ok, srt} ->
-        {:ok, srt}
-
+  # The parse runs first, so content that fails both checks is stored as `:srt`, as before the
+  # timing check (#1109). Content that parses must pass the timing check too: the translation
+  # keeps its cue times.
+  defp translation_source(content, video_path, moviehash, track, cache) do
+    with {:ok, srt} <- parse_srt(content, video_path),
+         {{:ok, _content}, cache} <-
+           validated_content(content, video_path, moviehash, track, cache) do
+      {{:ok, srt}, cache}
+    else
       :error ->
         TrackRejection.reject(moviehash, track.index, :srt)
-        :none
+        {:none, cache}
+
+      {:none, cache} ->
+        {:none, cache}
     end
   end
 
   # A same-language sidecar with no flag wins over a hearing-impaired one, as in
-  # `Cinder.Subtitles.OwnTrack.select/2`.
+  # `Cinder.Subtitles.OwnTrack.select/2`. One that cannot be read or fails the timing check is
+  # passed over for the next one (#1109), as the embedded cascade passes over a track.
   defp sidecar_source(video_path, language, target, cache) do
     {sidecars, cache} = srt_sidecars(video_path, cache)
 
     candidates =
       Enum.reject(sidecars, fn {path, _language, _flags} -> same_path?(path, target) end)
 
-    same_language =
+    copy =
       candidates
       |> Enum.filter(fn {_path, source_language, _flags} -> source_language == language end)
       |> Enum.sort_by(fn {_path, _language, flags} -> flags != [] end)
-
-    case same_language do
-      [{path, _language, _flags} | _] ->
-        case read(path) do
-          {:ok, content} -> {{:direct, content, "translated"}, cache}
-          :error -> translation_sidecar(video_path, language, candidates, cache)
+      |> Enum.find_value(fn {path, _language, _flags} ->
+        case timed_sidecar(path) do
+          {:ok, content} -> content
+          :error -> nil
         end
+      end)
 
-      [] ->
-        translation_sidecar(video_path, language, candidates, cache)
+    if copy do
+      {{:direct, copy, "translated"}, cache}
+    else
+      translation_sidecar(video_path, language, candidates, cache)
     end
   end
 
@@ -550,7 +564,7 @@ defmodule Cinder.Subtitles do
     result =
       case sidecars do
         [{path, _language, _flags} | _] ->
-          with {:ok, content} <- read(path),
+          with {:ok, content} <- timed_sidecar(path),
                {:ok, srt} <- parse_srt(content, video_path) do
             {:ok, srt}
           else
@@ -619,6 +633,22 @@ defmodule Cinder.Subtitles do
     end
   end
 
+  # A sidecar's content once it passed the timing check that downloads and tracks pass (#1109).
+  # Nothing is stored for a sidecar: it is a small read, checked again on each sweep, and the
+  # operator can fix or replace it.
+  defp timed_sidecar(path) do
+    with {:ok, content} <- read(path) do
+      case Timing.validate(content, ".srt") do
+        :ok ->
+          {:ok, content}
+
+        {:error, reason} ->
+          Logger.info("subtitle sidecar #{path} failed the timing check: #{inspect(reason)}")
+          :error
+      end
+    end
+  end
+
   defp read(path) do
     with {:ok, path} <- safe_destination(path),
          result <- fs().read(path) do
@@ -642,7 +672,7 @@ defmodule Cinder.Subtitles do
       {:ok, translated} ->
         case Srt.render(srt, translated) do
           rendered when is_binary(rendered) ->
-            commit(video_path, kind, language, moviehash, "translated", target, rendered)
+            commit_translation(video_path, kind, language, moviehash, target, rendered)
 
           other ->
             Logger.warning("subtitle render failed for #{video_path}: #{inspect(other)}")
@@ -656,6 +686,22 @@ defmodule Cinder.Subtitles do
       other ->
         Logger.warning(
           "subtitle translation failed for #{video_path} (#{language}): #{inspect(other)}"
+        )
+    end
+  end
+
+  # The source passed the timing check, but the translator's output can still fail it, as a cue
+  # it returns empty does. That comes from the translator, not from the source track or sidecar,
+  # so nothing is stored (#1109).
+  defp commit_translation(video_path, kind, language, moviehash, target, rendered) do
+    case Timing.validate(rendered, ".srt") do
+      :ok ->
+        commit(video_path, kind, language, moviehash, "translated", target, rendered)
+
+      {:error, reason} ->
+        Logger.warning(
+          "subtitle translation for #{video_path} (#{language}) failed the timing check: " <>
+            inspect(reason)
         )
     end
   end

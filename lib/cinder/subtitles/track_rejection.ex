@@ -8,8 +8,9 @@ defmodule Cinder.Subtitles.TrackRejection do
   Each check is the use the content was extracted for:
 
     * `:timing`: `Cinder.Subtitles.Sync.Timing.validate/2` rejected the track as the video's own
-      track (`Cinder.Subtitles.OwnTrack`) or as an embedded track in a wanted language (#1072).
-      Both run the same check on the same bytes, so they share these rows.
+      track (`Cinder.Subtitles.OwnTrack`), as an embedded track in a wanted language (#1072), or
+      as the default track that a translation would keep the cue times of (#1109). All three run
+      the same check on the same bytes, so they share these rows.
     * `:srt`: `Cinder.Subtitles.Srt.parse/1` rejected the default track as a translation source.
 
   Only content that came out of the file is judged here. A failed extraction is not recorded: a
