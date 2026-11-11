@@ -135,7 +135,16 @@ and library-file reads skip the guard, and a restarted guard watches no earlier 
 four review rounds found a false sentence, about 20 minutes from the first finding to the last
 fix. The fragment that passed states the guard's rule ("A folder listing that is still waiting
 when its page closes now counts as stuck at once") and one page effect that both page tests show:
-a reload "no longer starts one more stuck listing of the same folder".
+a reload "no longer starts one more stuck listing of the same folder". `BoundedWalk`'s guard
+refuses a new walk on either of two conditions (`handle_call({:admit, root}, ...)`): a walk
+counted as stuck under the same root, or two walks counted as stuck under any roots. A sentence
+about what a caller still lists or shows while a walk is stuck holds under both conditions, or
+names each one under which it fails. This binds a PR that changes only the caller too. On #1185
+the fragment said the adoption scan still lists a broader library folder's own files while a
+folder nested in it is stuck. Narrowed to "unless two folder listings are stuck by then", it
+still missed the first condition: while one earlier walk counts as stuck under the broader
+folder itself, the guard refuses that folder's scan. The next fix cut the claim after two review
+rounds, about 23 minutes from the first finding.
 
 `mix test` parses every fragment (`test/code_health_test.exs`), so a malformed one fails on its
 own PR. A release runs `mix cinder.changelog.release`, which folds every fragment into the new
