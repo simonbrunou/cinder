@@ -586,7 +586,8 @@ defmodule Cinder.Subtitles do
 
   # A same-language sidecar with no flag wins over a hearing-impaired one, as in
   # `Cinder.Subtitles.OwnTrack.select/2`. One that cannot be read or fails the timing check is
-  # passed over for the next one (#1109), as the embedded cascade passes over a track.
+  # passed over for the next one (#1109), as the embedded cascade passes over a track. With none
+  # left, `translation_sidecar/4` looks for a translation source among the other languages.
   defp sidecar_source(video_path, language, target, cache) do
     {sidecars, cache} = srt_sidecars(video_path, cache)
 
@@ -595,7 +596,7 @@ defmodule Cinder.Subtitles do
 
     copy =
       candidates
-      |> Enum.filter(fn {_path, source_language, _flags} -> source_language == language end)
+      |> Enum.filter(&in_language?(&1, language))
       |> Enum.sort_by(fn {_path, _language, flags} -> flags != [] end)
       |> Enum.find_value(fn {path, _language, _flags} ->
         case timed_sidecar(path) do
@@ -613,29 +614,43 @@ defmodule Cinder.Subtitles do
 
   defp same_path?(a, b), do: Path.expand(a) == Path.expand(b)
 
-  defp translation_sidecar(video_path, _language, sidecars, %{sidecar_srt: :unknown} = cache) do
-    result =
-      case sidecars do
-        [{path, _language, _flags} | _] ->
-          with {:ok, content} <- timed_sidecar(path),
-               {:ok, srt} <- parse_srt(content, video_path) do
-            {:ok, srt}
-          else
-            _ -> :none
-          end
+  # The language match the copy uses. A sidecar whose name holds no language reads as `und`, which
+  # no wanted language equals.
+  defp in_language?({_path, source_language, _flags}, language), do: source_language == language
 
-        [] ->
-          :none
+  # The first sidecar in listing order that is in another language and reads, passes the timing
+  # check and parses (#1270). One in the wanted language is left out: the copy passed it over, and
+  # translating it would write it into its own language with origin `translated`. The pick is made
+  # for each wanted language, so the source picked for one is never taken for the language it is
+  # in.
+  defp translation_sidecar(video_path, language, candidates, cache) do
+    candidates
+    |> Enum.reject(&in_language?(&1, language))
+    |> Enum.reduce_while({nil, cache}, fn {path, _language, _flags}, {nil, cache} ->
+      case sidecar_srt(video_path, path, cache) do
+        {{:ok, srt}, cache} -> {:halt, {{:translate, srt}, cache}}
+        {:none, cache} -> {:cont, {nil, cache}}
       end
-
-    result_to_source(result, %{cache | sidecar_srt: result})
+    end)
   end
 
-  defp translation_sidecar(_video_path, _language, _sidecars, %{sidecar_srt: result} = cache),
-    do: result_to_source(result, cache)
+  # Each sidecar's result is kept for the fetch, a failure included, so the translation sources of
+  # all wanted languages read and check a sidecar once.
+  defp sidecar_srt(video_path, path, %{sidecar_srt: results} = cache) do
+    case Map.fetch(results, path) do
+      {:ok, result} ->
+        {result, cache}
 
-  defp result_to_source({:ok, srt}, cache), do: {{:translate, srt}, cache}
-  defp result_to_source(:none, cache), do: {nil, cache}
+      :error ->
+        result =
+          with {:ok, content} <- timed_sidecar(path),
+               {:ok, srt} <- parse_srt(content, video_path),
+               do: {:ok, srt},
+               else: (:error -> :none)
+
+        {result, %{cache | sidecar_srt: Map.put(results, path, result)}}
+    end
+  end
 
   # A forced sidecar is never a source (#1070): like a forced track, it holds only the lines the
   # audio does not carry.
@@ -1063,7 +1078,7 @@ defmodule Cinder.Subtitles do
       timing_rejected: MapSet.new(),
       default_srt: :unknown,
       sidecars: :unknown,
-      sidecar_srt: :unknown
+      sidecar_srt: %{}
     }
   end
 
