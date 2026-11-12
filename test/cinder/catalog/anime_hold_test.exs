@@ -32,6 +32,8 @@ defmodule Cinder.Catalog.AnimeHoldTest do
   defp standard_profile(kind),
     do: Enum.find(Catalog.list_profiles(kind), &(&1.handling == :standard))
 
+  defp anime_profile(kind), do: Enum.find(Catalog.list_profiles(kind), &(&1.handling == :anime))
+
   # Where a poller tick leaves an Anime-profile movie whose preferences fail: `Download.start/1`
   # moves it to searching first, and the held search keeps that status.
   defp held_searching_movie(reason) do
@@ -155,20 +157,6 @@ defmodule Cinder.Catalog.AnimeHoldTest do
       assert hold(series) == nil
     end
 
-    test "an approval-path profile write on a held title lifts its hold" do
-      require_subtitles!()
-      movie = held(movie_fixture(%{media_profile: :anime}), "subtitle_language_required")
-      series = held(series_fixture(%{media_profile: :anime}), "subtitle_language_required")
-      count = Attention.attention_count()
-
-      assert {:ok, %Movie{anime_hold_reason: nil}} = Catalog.set_media_profile(movie, :standard)
-      assert {:ok, %Series{anime_hold_reason: nil}} = Catalog.set_media_profile(series, :standard)
-
-      assert hold(movie) == nil
-      assert hold(series) == nil
-      assert Attention.attention_count() == count - 2
-    end
-
     # Auto searches through Anime only as a Japanese animation's fallback. No profile is Auto.
     test "Auto lifts the hold of a title with no anime fallback and keeps a fallback title's" do
       require_subtitles!()
@@ -236,7 +224,7 @@ defmodule Cinder.Catalog.AnimeHoldTest do
       series = series_fixture(%{media_profile: :auto})
 
       assert {:ok, movie} = Catalog.set_movie_language(movie, "french")
-      assert {:ok, series} = Catalog.set_media_profile(series, :anime)
+      assert {:ok, series} = Catalog.assign_profile(series, anime_profile(:tv))
       assert {:ok, series} = Catalog.set_series_language(series, "french")
 
       # Both fail to resolve, so a trigger that set holds would have set one here.

@@ -366,6 +366,34 @@ defmodule Cinder.Catalog.ProfilesTest do
     end
   end
 
+  # The operator's assignment, as both detail pages make it: published by default.
+  describe "a published assignment" do
+    test "broadcasts {:movie_updated, movie} on the movies topic" do
+      movie = movie_fixture()
+      Catalog.subscribe()
+
+      assert {:ok, updated} = Catalog.assign_profile(movie, profile!(:movies, :standard))
+      assert_receive {:movie_updated, ^updated}
+    end
+
+    test "broadcasts {:series_updated, id} on the series topic" do
+      series = series_fixture()
+      Catalog.subscribe_series()
+
+      assert {:ok, _updated} = Catalog.assign_profile(series, profile!(:tv, :anime))
+      series_id = series.id
+      assert_receive {:series_updated, ^series_id}
+    end
+
+    test "a movie deleted mid-action is rejected and returns :stale_entry" do
+      movie = movie_fixture()
+      Repo.delete!(movie)
+
+      assert Catalog.assign_profile(movie, profile!(:movies, :standard)) ==
+               {:error, :stale_entry}
+    end
+  end
+
   test "each kind retains one profile" do
     for profile <- Catalog.list_profiles(:tv) |> Enum.drop(1) do
       assert {:ok, _profile} = Catalog.delete_profile(profile)

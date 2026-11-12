@@ -215,69 +215,53 @@ defmodule Cinder.CatalogTest do
     end
   end
 
-  describe "apply_confirmed_media/3" do
-    test "an existing :auto movie approved as Anime with a non-default pick adopts it (fill-if-default)" do
+  describe "apply_confirmed_media/2,3" do
+    # What the movie approval's post-commit fill passes: the profile the movie held before the
+    # request, which the approval transaction may already have switched.
+    test "an existing :auto movie with the default pick adopts the requester's pick and stays :auto" do
       {:ok, movie} = Catalog.add_movie(@attrs)
       assert movie.media_profile == :auto
       assert movie.preferred_language == "original"
 
-      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :anime, "french")
-      assert updated.media_profile == :anime
+      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, "french", :auto)
+      assert updated.media_profile == :auto
       assert updated.preferred_language == "french"
+      assert %{media_profile: :auto, preferred_language: "french"} = Repo.reload!(movie)
+    end
+
+    test "a movie deleted before the fill returns :stale_entry" do
+      {:ok, movie} = Catalog.add_movie(@attrs)
+      Repo.delete!(movie)
+
+      assert Catalog.apply_confirmed_media(movie, "french", :auto) == {:error, :stale_entry}
     end
 
     test "an already-Anime movie's Audio pick is release policy — a later request pick never fills it" do
       {:ok, movie} = Catalog.add_movie(@attrs)
-      {:ok, movie} = Catalog.set_media_profile(movie, :anime)
+      {:ok, movie} = Catalog.assign_profile(movie, profile(:movies, :anime))
 
-      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :anime, "french")
+      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, "french")
       assert updated.preferred_language == "original"
       assert Repo.reload!(movie).preferred_language == "original"
     end
 
     test "an existing :standard movie with a default pick adopts the requester's language (fill-if-default)" do
       {:ok, movie} = Catalog.add_movie(@attrs)
-      {:ok, movie} = Catalog.set_media_profile(movie, :standard)
+      {:ok, movie} = Catalog.assign_profile(movie, profile(:movies, :standard))
       assert movie.preferred_language == "original"
 
-      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :standard, "french")
+      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, "french")
       assert updated.preferred_language == "french"
       assert Repo.reload!(movie).preferred_language == "french"
     end
 
     test "an existing standard movie already customized keeps its pick against a later request" do
       {:ok, movie} = Catalog.add_movie(@attrs)
-      {:ok, movie} = Catalog.set_media_profile(movie, :standard)
+      {:ok, movie} = Catalog.assign_profile(movie, profile(:movies, :standard))
       {:ok, movie} = Catalog.set_movie_language(movie, "any")
 
-      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :standard, "french")
+      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, "french")
       assert updated.preferred_language == "any"
-    end
-  end
-
-  describe "set_media_profile/2" do
-    test "broadcasts {:movie_updated, movie} on the movies topic" do
-      {:ok, movie} = Catalog.add_movie(@attrs)
-      Catalog.subscribe()
-
-      assert {:ok, updated} = Catalog.set_media_profile(movie, :standard)
-      assert_receive {:movie_updated, ^updated}
-    end
-
-    test "broadcasts {:series_updated, id} on the series topic" do
-      series = series_fixture()
-      Catalog.subscribe_series()
-
-      assert {:ok, _updated} = Catalog.set_media_profile(series, :anime)
-      series_id = series.id
-      assert_receive {:series_updated, ^series_id}
-    end
-
-    test "a movie deleted mid-action is rejected and returns :stale_entry" do
-      {:ok, movie} = Catalog.add_movie(@attrs)
-      Repo.delete!(movie)
-
-      assert Catalog.set_media_profile(movie, :standard) == {:error, :stale_entry}
     end
   end
 
@@ -868,4 +852,7 @@ defmodule Cinder.CatalogTest do
       assert part_path == "/lib/.Clean (2020) {tmdb-9}/x-cd2.mkv"
     end
   end
+
+  defp profile(kind, handling),
+    do: Enum.find(Catalog.list_profiles(kind), &(&1.handling == handling))
 end

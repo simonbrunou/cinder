@@ -105,7 +105,7 @@ defmodule Cinder.Requests.ApprovalTest do
       # Required subtitles with none set: an Anime title's hold stays until the profile changes.
       Cinder.ConfigCase.put_config(:anime_preferences, embedded_subtitle_mode: :require)
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 603, title: "Existing"})
-      {:ok, movie} = Catalog.set_media_profile(movie, :anime)
+      {:ok, movie} = Catalog.assign_profile(movie, anime(:movies))
       {:ok, _held} = Catalog.set_anime_hold(movie, "subtitle_language_required")
       movie_attrs = Map.put(attrs(:movie, ctx), :proposed_profile_id, ctx.profiles.movie.id)
 
@@ -117,7 +117,7 @@ defmodule Cinder.Requests.ApprovalTest do
       assert {:ok, %Request{status: :approved}} =
                approve(:auto_approval, attrs(:season, ctx), nil)
 
-      {:ok, series} = Catalog.set_media_profile(Catalog.get_series_by_tmdb_id(1399), :anime)
+      {:ok, series} = Catalog.assign_profile(Catalog.get_series_by_tmdb_id(1399), anime(:tv))
       {:ok, _held} = Catalog.set_anime_hold(series, "subtitle_language_required")
 
       season_attrs =
@@ -332,6 +332,7 @@ defmodule Cinder.Requests.ApprovalTest do
   defp target_exists?(:book, %{work: work}), do: Books.list_targets(work) != []
 
   defp standard(kind), do: Enum.find(Catalog.list_profiles(kind), &(&1.handling == :standard))
+  defp anime(kind), do: Enum.find(Catalog.list_profiles(kind), &(&1.handling == :anime))
 
   # A second request filed after this one's quota pre-check and before its transaction: during the
   # adapter's provider round-trip for a movie or season.

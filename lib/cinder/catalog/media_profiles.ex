@@ -25,52 +25,16 @@ defmodule Cinder.Catalog.MediaProfiles do
   alias Cinder.{Repo, Settings}
 
   @doc """
-  Sets the operator-owned handling profile for a movie or series and broadcasts the update, then
-  decides its anime hold again (`reresolve_anime_hold/1`).
-  Rescues a deleted-row race to `{:error, :stale_entry}` (mirrors write_movie_language/2) —
-  the approval path calls this post-commit, where a raise would escape an already-committed
-  approval.
+  Fills an existing title's still-default language pick from the requester's pick. Call outside a
+  surrounding transaction; request approval invokes it only after commit.
   """
-  def set_media_profile(%Movie{} = movie, profile) do
-    with {:ok, updated} <-
-           movie |> Movie.profile_changeset(%{media_profile: profile}) |> Repo.update() do
-      Events.movie_updated(updated)
-      reresolve_anime_hold(updated)
-    end
-  rescue
-    Ecto.StaleEntryError -> {:error, :stale_entry}
-  end
-
-  def set_media_profile(%Series{} = series, profile) do
-    with {:ok, updated} <-
-           series |> Series.profile_changeset(%{media_profile: profile}) |> Repo.update() do
-      Events.series_updated(updated.id)
-      reresolve_anime_hold(updated)
-    end
-  rescue
-    Ecto.StaleEntryError -> {:error, :stale_entry}
-  end
-
-  @doc """
-  Fills an existing title's still-default language pick, then confirms its legacy Auto handling.
-  Call outside a surrounding transaction; request approval invokes it only after commit.
-  """
-  def apply_confirmed_media(media, profile, preferred) do
-    apply_confirmed_media(media, profile, preferred, media.media_profile)
+  def apply_confirmed_media(media, preferred) do
+    apply_confirmed_media(media, preferred, media.media_profile)
   end
 
   @doc false
-  def apply_confirmed_media(media, profile, preferred, pre_request_profile) do
-    with {:ok, media} <- apply_requester_language(media, preferred, pre_request_profile) do
-      apply_confirmed_profile(media, profile)
-    end
-  end
-
-  defp apply_confirmed_profile(%{media_profile: :auto} = media, profile)
-       when profile in [:standard, :anime],
-       do: set_media_profile(media, profile)
-
-  defp apply_confirmed_profile(media, _profile), do: {:ok, media}
+  def apply_confirmed_media(media, preferred, pre_request_profile),
+    do: apply_requester_language(media, preferred, pre_request_profile)
 
   defguardp fillable_pick(preferred, pre_request_profile)
             when preferred not in [nil, "original"] and pre_request_profile != :anime
@@ -120,7 +84,7 @@ defmodule Cinder.Catalog.MediaProfiles do
   end
 
   # Status-neutral pick fill for request approval (apply_requester_language/3, via
-  # apply_confirmed_media/3): writes the field and broadcasts, WITHOUT set_movie_language/2's
+  # apply_confirmed_media/2,3): writes the field and broadcasts, WITHOUT set_movie_language/2's
   # retry branch — approving a request for an existing PARKED movie must not silently re-queue
   # it (round-3 finding 2).
   defp fill_movie_language(movie, language) do

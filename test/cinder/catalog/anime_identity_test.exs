@@ -19,7 +19,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       movie = movie_fixture(original_language: "ja")
       series = series_fixture(original_language: "ja", genres: ["Animation"])
 
-      assert {:ok, movie} = Catalog.set_media_profile(movie, :standard)
+      assert {:ok, movie} = Catalog.assign_profile(movie, profile(:movies, :standard))
 
       assert Catalog.media_profile_summary(movie) == %{
                selected: :standard,
@@ -35,7 +35,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
                evidence: [:japanese_animation]
              }
 
-      assert {:ok, series} = Catalog.set_media_profile(series, :anime)
+      assert {:ok, series} = Catalog.assign_profile(series, profile(:tv, :anime))
       assert Catalog.media_profile_summary(series).effective == :anime
     end
 
@@ -1081,4 +1081,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
         end
     }
   end
+
+  defp profile(kind, handling),
+    do: Enum.find(Catalog.list_profiles(kind), &(&1.handling == handling))
 end

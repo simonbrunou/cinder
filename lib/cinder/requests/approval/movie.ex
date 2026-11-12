@@ -41,13 +41,13 @@ defmodule Cinder.Requests.Approval.Movie do
     end
   end
 
-  # Runs AFTER the transaction commits. Catalog.apply_confirmed_media/4 must not run inside it: a
-  # fill/confirm failure must not roll back the already-committed movie/request write. Both fields
-  # stay detail-page-editable afterward, so a failure here only logs. Only an :existing movie is
-  # confirmed/filled; a :created one needs neither.
+  # Runs AFTER the transaction commits. Catalog.apply_confirmed_media/3 must not run inside it: a
+  # fill failure must not roll back the already-committed movie/request write. The pick stays
+  # detail-page-editable afterward, so a failure here only logs. Only an :existing movie is
+  # filled; a :created one needs no fill. The profile switch itself ran inside the transaction.
   #
   # :created — a fresh insert already carries the requester's profile and pick (Movie.changeset
-  # casts both from the create attrs), so there is nothing to confirm or fill: just announce.
+  # casts both from the create attrs), so there is nothing to fill: just announce.
   # Residual (accepted): the payload is the transaction's struct, so a delete landing in the
   # commit→broadcast gap would be announced after its own {:movie_deleted} and upserted back by
   # open views until remount — a sub-ms window that would cost a reload per fresh approval to close.
@@ -59,23 +59,23 @@ defmodule Cinder.Requests.Approval.Movie do
 
   # :existing — re-read post-commit: the transaction's struct is a stale snapshot the moment it
   # commits, and an edit (or delete) landing before this reload wins over the requester's
-  # confirm+fill. An edit in the reload→update window can still lose (no optimistic lock); accepted
+  # language fill. An edit in the reload→update window can still lose (no optimistic lock); accepted
   # at household scale. The approval may have switched the movie's profile, so its anime hold is
   # decided again (#791).
   def publish(%{outcome: :existing, movie: movie} = created, approved) do
     case Repo.reload(movie) do
       nil ->
-        Logger.warning("movie #{movie.id} (request #{approved.id}) deleted before confirm+fill")
+        Logger.warning("movie #{movie.id} (request #{approved.id}) deleted before language fill")
 
       fresh ->
-        confirm_and_fill(fresh, approved, created)
+        fill_language(fresh, approved, created)
         Catalog.reresolve_anime_hold(fresh)
     end
 
     :ok
   end
 
-  defp confirm_and_fill(movie, approved, %{
+  defp fill_language(movie, approved, %{
          preferred: preferred,
          pre_request_profile: pre_request_profile,
          profile_changed?: profile_changed?
@@ -86,7 +86,7 @@ defmodule Cinder.Requests.Approval.Movie do
 
     result =
       if fills_language? do
-        Catalog.apply_confirmed_media(movie, :auto, preferred, pre_request_profile)
+        Catalog.apply_confirmed_media(movie, preferred, pre_request_profile)
       else
         {:ok, movie}
       end

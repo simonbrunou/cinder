@@ -140,11 +140,8 @@ defmodule Cinder.Catalog do
 
   ## A title's preferences
 
-  defdelegate set_media_profile(title, profile), to: MediaProfiles
-  defdelegate apply_confirmed_media(media, profile, preferred), to: MediaProfiles
-
-  defdelegate apply_confirmed_media(media, profile, preferred, pre_request_profile),
-    to: MediaProfiles
+  defdelegate apply_confirmed_media(media, preferred), to: MediaProfiles
+  defdelegate apply_confirmed_media(media, preferred, pre_request_profile), to: MediaProfiles
 
   defdelegate set_movie_language(movie, language), to: MediaProfiles
   defdelegate set_series_language(series, language), to: MediaProfiles

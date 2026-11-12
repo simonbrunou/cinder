@@ -65,11 +65,11 @@ defmodule Cinder.Catalog.MovieCatalog do
   (`Cinder.Requests.Approval.Movie.publish/2` broadcasts `{:movie_created, movie}` once
   the approval transaction has committed, using the returned `:created` marker).
 
-  Confirm/fill (the requester's media-profile confirmation and language pick) is NOT applied
-  here — `Cinder.Requests.Approval.Movie` calls `Cinder.Catalog.apply_confirmed_media/4` itself,
-  after the approval transaction commits, so a fill/confirm failure can't roll back the atomic
-  movie-creation + request-approval write. A fresh insert already carries both fields straight
-  from `attrs` (`Movie.changeset/2` casts them), so nothing is lost for the create case.
+  The requester's language pick is NOT filled here — `Cinder.Requests.Approval.Movie` calls
+  `Cinder.Catalog.apply_confirmed_media/3` itself, after the approval transaction commits, so a
+  fill failure can't roll back the atomic movie-creation + request-approval write. A fresh insert
+  already carries the profile and the pick straight from `attrs` (`Movie.changeset/2` casts
+  them), so nothing is lost for the create case.
 
   A lost insert race (unique_constraint on `:tmdb_id`) is handled by re-fetching the
   winner and returning it as `:existing`, so callers always get `{:ok, movie, marker}`.
