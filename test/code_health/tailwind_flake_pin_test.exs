@@ -19,12 +19,24 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
   # no mention in flake.nix at all. So the fence also fails on every `with` in the raw
   # lines, in code, a comment or a string alike: each one with no ASCII letter, digit, _, ' or -
   # right before or after it. Those are the bytes a Nix name holds, so `withPackages` and `x-with`
-  # are names, not the keyword. Forms this check does not catch include: a ${tailwindVersion}
-  # read in another file, which the fence does not read; `builtins.scopedImport`, which can
-  # supply the name to the file it imports, and which `builtins.${"scoped" + /* c */ "Import"}`
-  # reaches without spelling its own name; a built name in the `__overrides` of a `rec` set or a
-  # `let { ... }` block that holds the pin line, which replaces the pin's value for the
-  # references in that set (#1261).
+  # are names, not the keyword.
+  #
+  # #1261: a `rec` set or a legacy `let { ... }` block that holds the pin line can also hold an
+  # `__overrides` attribute. Nix replaces the set's own bindings with the ones it holds, for the
+  # references inside the set too, and a built name there never shows in the letters. Nix applies
+  # `__overrides` only under a static name, and each static spelling (quoted, escaped,
+  # `${"__overrides"}`, `inherit`) leaves `overrides` in the letters. So the fence also fails on
+  # each `overrides` in the letters, case-sensitive, in code, a comment or a string alike. That
+  # fails prose whose joined letters spell it ("it override" before a word that starts with s,
+  # on the same line or the next), and code too: `.override { stdenv = ...; }` and an attribute
+  # named `overrides`. Put no name that starts with s right after `override`, for example with
+  # `.override (old: { ... })`, and move code that needs an `overrides` attribute out of
+  # flake.nix.
+  #
+  # Forms this check does not catch include: a ${tailwindVersion} read in another file, which the
+  # fence does not read; `builtins.scopedImport`, which can supply the name to the file it
+  # imports, and which `builtins.${"scoped" + /* c */ "Import"}` reaches without spelling its own
+  # name.
   use ExUnit.Case, async: true
 
   @version "4.1.12"
@@ -68,6 +80,15 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
   @with_problem "uses with, which can bring tailwindVersion into scope where this check " <>
                   "cannot see it: write the attribute path out in code, and reword prose"
 
+  @overrides_problem "spells overrides, which as __overrides can replace tailwindVersion's " <>
+                       "value where this check cannot see it: reword prose, and in code put " <>
+                       "no name that starts with s right after override, or move the code " <>
+                       "out of flake.nix"
+
+  # The issue's override: a rec set applies it to the references inside it, and the name it
+  # builds never shows in the letters.
+  @issue_override ~S|      __overrides = { ${"tailwind" + /* c */ "Version"} = "4.1.13"; };|
+
   @no_pin ~s(flake.nix has no line tailwindVersion = "<version>";)
 
   test "the flake pins the Tailwind version config.exs asks for" do
@@ -82,7 +103,8 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
              "read:\n  " <>
              Enum.join(problems, "\n  ") <>
              "\n\nSet the version on the one line tailwindVersion = \"<version>\";, read it " <>
-             "only as ${tailwindVersion}, and write no with, in code, comments and strings alike."
+             "only as ${tailwindVersion}, write no with, and let no letters spell overrides, " <>
+             "even across words and lines, in code, comments and strings alike."
   end
 
   test "the fixture passes, and a pin that differs from the config fails" do
@@ -212,6 +234,53 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
     end
   end
 
+  test "an __overrides in a rec set or a let { } block fails on its line, in every spelling" do
+    assert problems(in_set(:rec, @issue_override)) == [overrides(7)]
+    assert problems(in_set(:let, @issue_override)) == [overrides(7)]
+
+    # Each static spelling Nix applies.
+    for line <- [
+          ~S|      "__overrides" = { ${"tailwind" + /* c */ "Version"} = "4.1.13"; };|,
+          ~S|      "__\overrides" = { ${"tailwind" + /* c */ "Version"} = "4.1.13"; };|,
+          ~S|      "__\o\v\err\i\d\e\s" = { ${"tailwind" + /* c */ "Version"} = "4.1.13"; };|,
+          ~S|      ${"__overrides"} = { ${"tailwind" + /* c */ "Version"} = "4.1.13"; };|,
+          "      inherit (x) __overrides;",
+          "      inherit __overrides;"
+        ] do
+      assert {line, problems(in_set(:rec, line))} == {line, [overrides(7)]}
+    end
+
+    # Nix applies no __Overrides, and the fence reads the letters case-sensitive.
+    capital = String.replace(@issue_override, "__overrides", "__Overrides")
+    assert problems(in_set(:rec, capital)) == []
+  end
+
+  test "every overrides in the letters fails, in code, a comment or a string" do
+    for line <- [
+          "      # this overrides nothing",
+          "      /* this overrides nothing */",
+          ~s(      s = "this overrides nothing";),
+          "      x = pkgs.hello.override { stdenv = pkgs.clangStdenv; };",
+          "      h = pkgs.haskellPackages.override { overrides = self: super: { }; };",
+          # Prose whose letters spell it across two words, or across two lines.
+          "      # it override src",
+          "      # it override\n      # s nothing",
+          ~s(      "__over\nrides" = { };)
+        ] do
+      flake = String.replace(@flake, @pin_line, @pin_line <> line <> "\n")
+      assert {line, problems(flake)} == {line, [overrides(7)]}
+    end
+
+    for line <- [
+          "      # overridden by nothing",
+          "      x = pkgs.hello.overrideAttrs { };",
+          "      x = pkgs.hello.override (old: { stdenv = pkgs.clangStdenv; });"
+        ] do
+      flake = String.replace(@flake, @pin_line, @pin_line <> line <> "\n")
+      assert {line, problems(flake)} == {line, []}
+    end
+  end
+
   test "a flake with no pin line fails" do
     assert problems(String.replace(@flake, @pin_line, "")) == [@no_pin]
 
@@ -245,6 +314,21 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
 
   defp with_used(number), do: "flake.nix:#{number} " <> @with_problem
 
+  defp overrides(number), do: "flake.nix:#{number} " <> @overrides_problem
+
+  # The fixture with its let turned into a rec set that `.body` reads, or into a legacy
+  # `let { ... }` block, and `line` right after the pin line. Nix applies an __overrides in
+  # either to the references inside it.
+  defp in_set(kind, line) do
+    {open, close} = if kind == :rec, do: {"(rec {", "}).body;"}, else: {"let {", "};"}
+
+    @flake
+    |> String.replace("    let\n", "    #{open}\n")
+    |> String.replace(@pin_line, @pin_line <> line <> "\n")
+    |> String.replace("    in\n    { devShells", "      body = { devShells")
+    |> String.replace("; }; };\n}", "; }; };\n    #{close}\n}")
+  end
+
   defp second_pin(number),
     do: "flake.nix:#{number} is one of 2 pin lines, and this check reads only one"
 
@@ -260,9 +344,11 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
     lines = source |> String.split("\n") |> Enum.with_index(1)
     pins = Enum.filter(lines, fn {line, _number} -> line =~ @pin end)
     no_pin = if pins == [], do: [~s(#{path} has no line tailwindVersion = "<version>";)], else: []
+    letters = letters(lines, pins)
 
     (count_problems(pins) ++
-       mention_problems(lines, pins) ++
+       letter_problems(letters, "tailwindVersion", @mention_problem) ++
+       letter_problems(letters, "overrides", @overrides_problem) ++
        with_problems(lines) ++ mismatch_problems(pins, version))
     |> Enum.uniq()
     |> Enum.sort_by(&elem(&1, 0))
@@ -277,11 +363,11 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
         do: {number, "is one of #{length(pins)} pin lines, and this check reads only one"}
   end
 
-  # Each tailwindVersion left in the file's ASCII letters, joined across lines, once the pin lines
-  # are blanked and each ${tailwindVersion} is dropped. A Nix name holds only ASCII letters,
-  # digits, _, ' and -, so dropping every other byte only joins letters: any spelling of the name
-  # in the text still shows, and so do some other names, which fail too.
-  defp mention_problems(lines, pins) do
+  # The file's ASCII letters, joined across lines, once the pin lines are blanked and each
+  # ${tailwindVersion} is dropped, with the line number of each letter. A Nix name holds only
+  # ASCII letters, digits, _, ' and -, so dropping every other byte only joins letters: any
+  # spelling of a name in the text still shows, and so do some other names, which fail too.
+  defp letters(lines, pins) do
     letters =
       for {line, number} = entry <- lines,
           entry not in pins,
@@ -290,10 +376,12 @@ defmodule Cinder.CodeHealth.TailwindFlakePinTest do
           do: {byte, number}
 
     text = for {byte, _number} <- letters, into: "", do: <<byte>>
-    numbers = letters |> Enum.map(&elem(&1, 1)) |> List.to_tuple()
+    {text, letters |> Enum.map(&elem(&1, 1)) |> List.to_tuple()}
+  end
 
-    for {start, _length} <- :binary.matches(text, "tailwindVersion"),
-        do: {elem(numbers, start), @mention_problem}
+  # Each `word` in the letters, on the line where it starts.
+  defp letter_problems({text, numbers}, word, problem) do
+    for {start, _length} <- :binary.matches(text, word), do: {elem(numbers, start), problem}
   end
 
   # Each line holding a `with`, read on the raw line: the letters-only text joins words.

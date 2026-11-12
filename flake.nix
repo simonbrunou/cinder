@@ -40,8 +40,10 @@
           # "Dependency rebuild"). shellHook points MIX_TAILWIND_PATH at it, which
           # `config :tailwind, path:` reads. The pin below must equal `config :tailwind, version:`
           # (test/code_health/tailwind_flake_pin_test.exs checks it, and fails on any other
-          # mention of the pin's name and on the word that opens a with-expression, in comments
-          # too, since such an expression can supply that name unseen): on a mismatch
+          # mention of the pin's name, on the word that opens a with-expression, and on the
+          # letters of the attribute name that lets a rec set or a legacy let block replace its
+          # own bindings, even split across words or lines, in comments too, since each can
+          # supply that name or its value unseen): on a mismatch
           # `tailwind.install --if-missing` downloads the configured version and cannot write it
           # into the read-only store. It is pinned here, not left at nixpkgs' tailwindcss_4
           # version, since following that would move `config :tailwind, version:`, and so the
