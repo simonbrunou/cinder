@@ -65,15 +65,30 @@ A squash of several non-merge commits stops until you pass `--body-from=<sha>` o
 `--body-file=<file>`, since the first commit's message can describe a diff the PR no longer has.
 
 A branch behind `main` with no conflict merges as it is, with no sync and no CI re-run. The
-accepted risk is that two PRs that pass apart can break `main` together. The merging agent checks
-for that break after the merge. `scripts/merge-pr` prints the merge SHA as `MERGED: #<n> as <sha>`.
-Run `git fetch origin`, then `git rev-parse <merge SHA>^{tree} <pushed SHA>^{tree}`. The same hash
-twice means the merge commit holds the files that the PR's CI passed, since that run checks out
-the pushed SHA itself, and the `push` run of `ci.yml` repeats the same three jobs on those files.
-Skip the wait below then: on #1221 it held the thread about 50 minutes. Two different hashes mean
-the merge holds files CI has not tested together, so wait. A newer push to `main` cancels the
-`ci.yml` run in progress, so in a burst of merges only the newest `main` commit's run is sure to
-finish. Wait on the `CI / <job> (push)` statuses of `main`'s head with
+accepted risk is that two PRs that pass apart can break `main` together. After every merge, the
+merging agent checks whether to wait for `main`'s CI run, which shows that break:
+
+1. Run `git fetch origin`. `scripts/merge-pr` printed the merge SHA as `MERGED: #<n> as <sha>`.
+2. Run `git rev-parse <merge SHA>^{tree} <pushed SHA>^{tree}`.
+   - Two different hashes mean the merge holds files CI has not tested together. Wait as step 4
+     says.
+   - The same hash twice means the merge commit holds the files that the PR's CI passed, since
+     that run checks out the pushed SHA itself. Skip the wait only when step 3 exits 0: on #1221
+     the wait held the thread about 50 minutes.
+3. On the same hash, run
+   `MIX_ENV=test mix run --no-start scripts/check-push-repeats-pr.exs <pushed SHA>`. The skip
+   holds only while the `push` run on `main` repeats the PR run's jobs and steps. The check reads
+   the workflows, actions and other tracked files at that SHA for a difference between the two
+   runs. Exit 0 means skip the wait. Any other exit means wait as step 4 says, even though the
+   hashes match. The check exits 1 after lines that name each difference. It exits 2 when it
+   cannot check: wrong arguments, a git failure, an unknown SHA, a YAML reader that cannot start,
+   an error of its own, or a run without `MIX_ENV=test`. Mix exits 1 when the code does not
+   compile. The moduledoc of `Cinder.PushRepeatsPr`
+   (`test/support/push_repeats_pr.ex`) lists what it reads, the differences this repo keeps on
+   purpose, and what it cannot see.
+4. A newer push to `main` cancels the `ci.yml` run in progress, so in a burst of merges only the
+   newest `main` commit's run is sure to finish. Wait on the `CI / <job> (push)` statuses of
+   `main`'s head with
 `python3 -I ~/.agents/skills/forgejo-issues/scripts/forgejo.py ci cinder --follow main`
 ([ci.md](docs/agents/ci.md) "Reading a run" says how to run it and where every exit code is
 listed). It follows `main` on the forge and ends only on its head. That head is your merge commit
