@@ -40,6 +40,22 @@
 - A fix or a feature in client JS (`assets/js/`) gets its test as a case in a browser script
   under `.github/scripts/`, which `mix test` does not run: [ci.md](ci.md) "Browser scripts
   locally" says how to run one.
+- A LiveView test asserts on an element, never on the whole view's HTML
+  (`deps/phoenix/usage-rules/liveview.md`): `has_element?(view, selector, text)` or
+  `view |> element(selector, text) |> has_element?()`. An `assert render(view) =~ text` passes on
+  that text anywhere in the view, such as a flash or another season's panel, so it stays green
+  once the element under test is gone (#1248). The whole view's HTML is what `render/1` and
+  `render_async/1,2` return for a view, the `html` of `{:ok, view, html}` from `live`,
+  `live_isolated` or `follow_redirect`, and what every event render returns: `render_click/2`
+  and the others answer with the whole view even when given an element. Three forms stay
+  allowed. A `refute` on the whole view, since absence anywhere is the stronger claim, and the
+  settings tests use it to show a secret is never echoed. An assert on `render(element(...))` or
+  `render_async(element(...))`, which return only that element's HTML. An assert on a
+  function-component render (`render_component/2`, `rendered_to_string/1`) or a controller
+  response (`html_response/2`, `conn.resp_body`), which has no view for `has_element?/3` to
+  query. `test/code_health/live_view_raw_html_test.exs` fails a new whole-view assert, holds each
+  older file at its count, and names in its header the forms it misses, such as HTML a test
+  helper returns.
 - Run a red run, a mutation check or a throwaway test with `mix test.unchecked`, which takes the
   same arguments as `mix test` (`<file>:<line>`, `--failed`, `--only`, `--seed`). It creates and
   migrates the test database, then runs ExUnit without the `mix test` alias's gates: compile
