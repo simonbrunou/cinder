@@ -251,6 +251,37 @@ defmodule Cinder.HTTPPolicyTest do
     end
   end
 
+  describe "source_origin/1" do
+    test "keeps a URL with neither user info nor a fragment as the same text" do
+      for url <- ["http://prowlarr:80", "HTTP://Prowlarr:9696/p?q=1", "https://[::1]"] do
+        assert HTTPPolicy.source_origin(url) == url
+      end
+    end
+
+    test "removes user info and a fragment, and source_request_target/3 accepts the result" do
+      for {url, origin} <- [
+            {"http://user:pw@prowlarr:9696", "http://prowlarr:9696"},
+            {"http://@prowlarr:9696#", "http://prowlarr:9696"},
+            {"https://user@Prowlarr:443/p?q=1#frag", "https://Prowlarr/p?q=1"}
+          ] do
+        assert HTTPPolicy.source_origin(url) == origin
+        assert HTTPPolicy.same_origin?(url, origin)
+
+        assert {:ok, %{connect_options: []}} =
+                 HTTPPolicy.source_request_target(
+                   "#{origin}/1/download",
+                   origin,
+                   fn _host -> flunk("the source origin must not use DNS validation") end
+                 )
+      end
+    end
+
+    test "returns nil for text URI.new/1 rejects" do
+      assert HTTPPolicy.source_origin("http://prow larr:9696") == nil
+      assert HTTPPolicy.source_origin("http://user@prowlarr:9696/" <> <<0xFF>>) == nil
+    end
+  end
+
   describe "out-of-range ports on a source URL or an untrusted redirect" do
     test "validate_source_url/3 and source_request_target/3 refuse one on the source's own host" do
       resolver = &refuse_dns/1

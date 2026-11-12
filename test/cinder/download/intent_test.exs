@@ -4,8 +4,10 @@ defmodule Cinder.Download.IntentTest do
   import Mox
 
   alias Cinder.Acquisition.{Anime, Release}
+  alias Cinder.Acquisition.Indexer.Prowlarr
   alias Cinder.Catalog
   alias Cinder.Catalog.{Grab, Movie, MovieLifecycle}
+  alias Cinder.ConfigCase
   alias Cinder.Download
   alias Cinder.Download.Client.Transmission
   alias Cinder.Download.Intent
@@ -662,6 +664,46 @@ defmodule Cinder.Download.IntentTest do
     end)
 
     assert {:ok, %{download_id: "hash-provenance"}} = Download.reconcile_intent(intent)
+  end
+
+  # A Prowlarr base URL with user info records its origin without it, so the intent stores no
+  # user info and the real client fetches the link, unpinned (#1286).
+  test "an intent from a user-info Prowlarr base URL stores no user info and fetches its link" do
+    test_pid = self()
+    movie = movie_fixture(%{status: :searching})
+    link = "http://prowlarr:9696/1/download?apikey=k&link=abc"
+    ConfigCase.put_config(Prowlarr, base_url: "http://user:pw@prowlarr:9696")
+
+    ConfigCase.put_config(Transmission,
+      url_resolver: fn host ->
+        send(test_pid, {:dns, host})
+        {:ok, [{172, 18, 0, 5}]}
+      end
+    )
+
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      Req.Test.json(conn, [
+        %{"title" => "Movie.2010.1080p-GRP", "downloadUrl" => link, "protocol" => "torrent"}
+      ])
+    end)
+
+    assert {:ok, [found]} = Prowlarr.search("tt1375666")
+    assert {:ok, intent} = reserve_movie_intent(movie.id, Release.new(found))
+    assert intent.release["download_url_origin"] == "http://prowlarr:9696"
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+    stub(Cinder.Download.ClientMock, :add, &Transmission.add/2)
+
+    Req.Test.stub(Cinder.TransmissionStub, fn conn ->
+      send(test_pid, {:request, conn.host, conn.request_path})
+      Plug.Conn.send_resp(conn, 500, "")
+    end)
+
+    assert :ok = Download.reconcile_pending_intents([:movie])
+
+    assert_received {:request, "prowlarr", "/1/download"}
+    refute_received {:dns, _host}
+    assert Repo.get(Intent, intent.id)
   end
 
   test "concurrent reservations allow only one intent for the same movie" do

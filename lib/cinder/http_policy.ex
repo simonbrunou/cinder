@@ -125,6 +125,21 @@ defmodule Cinder.HTTPPolicy do
     do: untrusted_request_target(url, resolver)
 
   @doc """
+  Returns a configured service URL as a source origin that `source_request_target/3` accepts from
+  its text. A URL with neither user info nor a fragment comes back as the same text. Otherwise
+  both parts are removed, which leaves its origin as `same_origin?/2` reads it unchanged. Returns
+  `nil` for text `URI.new/1` rejects.
+  """
+  @spec source_origin(String.t()) :: String.t() | nil
+  def source_origin(url) when is_binary(url) do
+    case new_uri(url) do
+      {:ok, %URI{userinfo: nil, fragment: nil}} -> url
+      {:ok, uri} -> URI.to_string(%{uri | userinfo: nil, fragment: nil})
+      {:error, _reason} -> nil
+    end
+  end
+
+  @doc """
   Whether `reason` is one the URL checks of this module give from a URL's text, before any DNS
   lookup: the part `URI.new/1` rejected (a binary), `:invalid_url`, `:unsupported_scheme`,
   `:missing_host`, `:invalid_port`, `:userinfo_not_allowed` or `:fragment_not_allowed`. It is

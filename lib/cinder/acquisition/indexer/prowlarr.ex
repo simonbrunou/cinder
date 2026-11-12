@@ -320,9 +320,11 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
 
   defp published_at(_value), do: nil
 
+  # The download clients refuse an origin with user info or a fragment, which `same_origin?/2`
+  # ignores, so the recorded origin drops both (#1286). The searches keep the base URL as set.
   defp download_url_origin(download_url) when is_binary(download_url) do
-    origin = Keyword.get(config(), :base_url, @default_base_url)
-    if HTTPPolicy.same_origin?(download_url, origin), do: origin
+    base_url = Keyword.get(config(), :base_url, @default_base_url)
+    if HTTPPolicy.same_origin?(download_url, base_url), do: HTTPPolicy.source_origin(base_url)
   end
 
   # Prowlarr's unified search tags each result "torrent" or "usenet"; anything
