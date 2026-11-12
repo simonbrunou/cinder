@@ -90,6 +90,8 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   # A workspace's entries: persisted names, so spelled out here.
   @staged ".cinder-subtitle-sync-write-staged"
   @tombstone ".cinder-subtitle-sync-write-tombstone"
+  # The detail of a correction whose two names went unverified after its exchange (#1284).
+  @names_unverified {:exchanged_names_unverified, :displaced_kept}
 
   setup %{tmp_dir: tmp} do
     keys = [
@@ -385,6 +387,91 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
       assert File.read!(backup) == original
       assert Manifest.sync(Manifest.read(video), "en") == nil
+    end
+
+    # #1284: neither name the exchange swapped opens right after it, but the sidecar reads as the
+    # corrected bytes, so the publication is committed. The write empties nothing it could not
+    # verify, and the recovery's workspace cleanup disposes of the displaced inode.
+    test "a sidecar with no other name whose two names fail to open right after the exchange is recovered",
+         %{video: video, path: path, original: original, backup: backup} do
+      assert {:error, {:publication_committed, @names_unverified}} =
+               fail_names_open_after_exchange(path, fn -> manual(video, 1_000) end)
+
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+      assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
+      assert [staged] = workspace_staged_files(path)
+      assert File.read!(staged) == original
+
+      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+      assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
+      assert File.read!(backup) == original
+      assert workspaces(path) == []
+      assert {:ok, :corrected, _} = manual(video, 2_000)
+    end
+
+    # #1284: a warning the exchange itself committed is kept beside the unverified names.
+    test "a post-effect exchange failure, then two names that fail to open, keeps the pending record",
+         %{video: video, path: path, original: original, backup: backup} do
+      fail_once(%{
+        operation: :exchange,
+        source_contains: @staged,
+        phase: :post_effect,
+        reason: :eio
+      })
+
+      use_barrier(%{operation: :exchange, phase: :before, contains: @staged})
+      task = Task.async(fn -> manual(video, 1_000) end)
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
+      fail_in_order(names_open_failures(path))
+      send(pid, {ref, :continue})
+
+      assert {:error,
+              {:publication_committed, {{:effect_committed, "exchange", :eio}, @names_unverified}}} =
+               DiskTask.await(task)
+
+      assert_unacknowledged_correction(video, path, original, backup)
+      assert workspaces(path) == []
+    end
+
+    # #1284: bytes the write cannot read back count as unpublished, so nothing settles the
+    # result and the staged name keeps the displaced bytes.
+    test "two names that fail to open and a sidecar that fails to read right after the exchange restore the previous record",
+         %{video: video, path: path} do
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      previous = File.read!(path)
+      previous_record = Manifest.sync(Manifest.read(video), "en")
+      read_failure = %{operation: :read, source_contains: path, reason: :eio}
+
+      assert {:error, :concurrent_change} =
+               fail_names_open_after_exchange(path, fn -> manual(video, 2_000) end, [read_failure])
+
+      assert File.read!(path) =~ "00:00:03,000 --> 00:00:04,000"
+      assert Manifest.sync(Manifest.read(video), "en") == previous_record
+      assert [staged] = workspace_staged_files(path)
+      assert File.read!(staged) == previous
+    end
+
+    # #1284: other bytes at the sidecar's name are not the correction's, so the result stays a
+    # concurrent change and nothing is disposed of.
+    test "a sidecar replaced right after the exchange by other bytes, with a staged name that fails to open, restores the previous record",
+         %{video: video, path: path, tmp_dir: tmp} do
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      previous = File.read!(path)
+      previous_record = Manifest.sync(Manifest.read(video), "en")
+
+      result =
+        after_exchange(fn -> manual(video, 2_000) end, fn ->
+          replacement = Path.join(tmp, "replacement.srt")
+          File.write!(replacement, "newer")
+          File.rename!(replacement, path)
+          fail_once(%{operation: :open_bound, source_contains: @staged, reason: :eio})
+        end)
+
+      assert {:error, :concurrent_change} = result
+      assert File.read!(path) == "newer"
+      assert Manifest.sync(Manifest.read(video), "en") == previous_record
+      assert [staged] = workspace_staged_files(path)
+      assert File.read!(staged) == previous
     end
 
     # #1190: a sidecar that holds other bytes before the exchange is left alone with nothing
@@ -831,6 +918,25 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
                replace_after_exchange(path, tmp, fn -> manual(video, 1_000) end)
 
       assert File.read!(path) == "newer"
+    end
+
+    # #1284: the write empties nothing it could not verify, so the download keeps its second
+    # name until the recovery's workspace cleanup drops it.
+    test "a correction whose two names fail to open right after the exchange keeps the download's bytes",
+         %{video: video, path: path, original: original, tmp_dir: tmp} do
+      download = hardlink_download!(path, tmp)
+
+      assert {:error, {:publication_committed, @names_unverified}} =
+               fail_names_open_after_exchange(path, fn -> manual(video, 1_000) end)
+
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 2
+
+      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+      assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
+      assert workspaces(path) == []
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 1
     end
 
     # #1131: the kill leaves the download's inode at the staged name beside the empty fresh
@@ -3732,6 +3838,62 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
       assert File.read!(path) == corrected
     end
+
+    # #1284: `write/3`'s callers keep a journal or record naming the reversal workspace while they
+    # report the error, and their next pass settles by the bytes.
+    test "a target and staged name that fail to open right after the exchange report a concurrent change",
+         %{path: path, original: original} do
+      corrected = shifted(original)
+
+      assert {:error, :concurrent_change} =
+               fail_names_open_after_exchange(path, fn ->
+                 SidecarTransaction.AtomicFile.write(path, corrected, original)
+               end)
+
+      assert File.read!(path) == corrected
+    end
+  end
+
+  describe "AtomicFile.write/4" do
+    # #1284: `recover/4`'s staged resume reaches `write/4` through the workspace it reuses.
+    test "a resumed write whose two names fail to open right after the exchange reports the bytes published",
+         %{path: path, original: original} do
+      corrected = shifted(original)
+      id = operation_id()
+      plant_workspace!(path, %{@staged => corrected}, id)
+
+      assert {:error, {:publication_committed, @names_unverified}} =
+               fail_names_open_after_exchange(path, fn ->
+                 SidecarTransaction.AtomicFile.recover(
+                   path,
+                   id,
+                   digest(original),
+                   digest(corrected)
+                 )
+               end)
+
+      assert File.read!(path) == corrected
+      assert [staged] = workspace_staged_files(path)
+      assert File.read!(staged) == original
+    end
+
+    # #1284: a workspace with no staged name, such as a crash between its mkdir and its create
+    # leaves, is replaced with a fresh one before the write goes on.
+    test "a write into an entryless workspace whose two names fail to open right after the exchange reports the bytes published",
+         %{path: path, original: original} do
+      corrected = shifted(original)
+      id = operation_id()
+      plant_workspace!(path, %{}, id)
+
+      assert {:error, {:publication_committed, @names_unverified}} =
+               fail_names_open_after_exchange(path, fn ->
+                 SidecarTransaction.AtomicFile.write(path, corrected, original, id)
+               end)
+
+      assert File.read!(path) == corrected
+      assert [staged] = workspace_staged_files(path)
+      assert File.read!(staged) == original
+    end
   end
 
   test "only the transaction writes the manifest's record, journal and tombstone fields" do
@@ -4041,6 +4203,19 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     after_exchange(fun, fn ->
       fail_in_order([%{operation: :open_bound, source_contains: path, reason: :eio} | more])
     end)
+  end
+
+  # Runs `fun` until its exchange onto `path` committed, then fails the next open of `path` and
+  # then the next open of the staged name with `:eio`: the two checks that the exchange swapped
+  # the two inodes. Each of `more` fails in order after them.
+  defp fail_names_open_after_exchange(path, fun, more \\ []),
+    do: after_exchange(fun, fn -> fail_in_order(names_open_failures(path) ++ more) end)
+
+  defp names_open_failures(path) do
+    [
+      %{operation: :open_bound, source_contains: path, reason: :eio},
+      %{operation: :open_bound, source_contains: @staged, reason: :eio}
+    ]
   end
 
   # Resumes a disposal paused at its exchange until it created the fresh tombstone, then fails

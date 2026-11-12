@@ -25,43 +25,59 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
       with_created_bound: 3
     ]
 
+  # The disposal mode (see `dispose_displaced/4`): a reversal's `write/3` uses `:discard`, and
+  # `write/4`, whose every caller holds a pending record naming the workspace, uses
+  # `:recorded_discard`. They differ only when neither exchanged name verifies
+  # (`settle_unverified_names/4`).
+  @discarding [:discard, :recorded_discard]
+
   @spec write(String.t(), binary(), binary()) :: :ok | {:error, term()}
   def write(target, content, expected_current) do
     operation_id = reversal_id(target, sha256(expected_current), sha256(content))
-    do_write(target, content, expected_current, operation_id)
+    do_write(target, content, expected_current, operation_id, :discard)
   end
 
   @spec write(String.t(), binary(), binary(), String.t()) :: :ok | {:error, term()}
   def write(target, content, expected_current, operation_id) when is_binary(operation_id) do
     if Workspace.valid_id?(operation_id),
-      do: do_write(target, content, expected_current, operation_id),
+      do: do_write(target, content, expected_current, operation_id, :recorded_discard),
       else: {:error, :invalid_operation_id}
   end
 
-  defp do_write(target, content, expected_current, operation_id) do
+  defp do_write(target, content, expected_current, operation_id, disposal) do
     directory = Workspace.path(target, operation_id)
     staged_path = Workspace.staged_path(directory)
 
     with {:ok, target} <- safe_destination(target),
          {:ok, directory} <- safe_destination(directory),
          {:ok, staged_path} <- safe_destination(staged_path) do
-      authorized_write(target, directory, staged_path, content, expected_current, operation_id)
+      create_authorized_workspace(
+        target,
+        directory,
+        staged_path,
+        content,
+        expected_current,
+        disposal
+      )
     end
   end
 
-  defp authorized_write(target, directory, staged_path, content, expected_current, _operation_id) do
-    create_authorized_workspace(target, directory, staged_path, content, expected_current)
-  end
-
-  defp create_authorized_workspace(target, directory, staged_path, content, expected_current) do
+  defp create_authorized_workspace(
+         target,
+         directory,
+         staged_path,
+         content,
+         expected_current,
+         disposal
+       ) do
     case mkdir_workspace(directory, target) do
       :ok ->
-        fresh_workspace(target, directory, staged_path, content, expected_current)
+        fresh_workspace(target, directory, staged_path, content, expected_current, disposal)
 
       {:error, :eexist} ->
         target
-        |> reuse_authorized_workspace(directory, staged_path, content, expected_current)
-        |> replace_entryless(target, directory, staged_path, content, expected_current)
+        |> reuse_authorized_workspace(directory, staged_path, content, expected_current, disposal)
+        |> replace_entryless(target, directory, staged_path, content, expected_current, disposal)
 
       {:error, {:effect_committed, _operation, _detail}} = error ->
         error
@@ -71,9 +87,9 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     end
   end
 
-  defp fresh_workspace(target, directory, staged_path, content, expected_current) do
+  defp fresh_workspace(target, directory, staged_path, content, expected_current, disposal) do
     in_workspace(directory, fn ->
-      atomic_operation(target, staged_path, content, expected_current, :discard)
+      atomic_operation(target, staged_path, content, expected_current, disposal)
     end)
   end
 
@@ -86,18 +102,19 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
          directory,
          staged_path,
          content,
-         expected_current
+         expected_current,
+         disposal
        ) do
     with :removed <- Workspace.remove_directory(directory),
          :ok <- mkdir_workspace(directory, target) do
-      fresh_workspace(target, directory, staged_path, content, expected_current)
+      fresh_workspace(target, directory, staged_path, content, expected_current, disposal)
     else
       {:kept, _reason} -> {:error, :pending_workspace_mismatch}
       {:error, _reason} = error -> error
     end
   end
 
-  defp replace_entryless(result, _target, _directory, _staged_path, _content, _expected),
+  defp replace_entryless(result, _target, _directory, _staged_path, _content, _expected, _),
     do: result
 
   # Runs `operation` with the workspace directory held open. A publication's committed marker
@@ -561,7 +578,14 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     end)
   end
 
-  defp reuse_authorized_workspace(target, directory, staged_path, content, expected_current) do
+  defp reuse_authorized_workspace(
+         target,
+         directory,
+         staged_path,
+         content,
+         expected_current,
+         disposal
+       ) do
     in_workspace(directory, fn ->
       with_bound(target, [:read, :raw, :binary], fn current ->
         reuse_bound_workspace(
@@ -570,7 +594,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
           current,
           content,
           expected_current,
-          :discard
+          disposal
         )
       end)
     end)
@@ -835,19 +859,44 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
       {:error, :captured_target_changed} = error ->
         rollback_exchange(target, staged_path, current, staged, disposal, error)
 
+      {:error, :exchanged_names_unverified} ->
+        settle_unverified_names(target, content, disposal, committed_warning)
+
       {:error, _reason} = error ->
         {:preserved, error}
     end
   end
 
-  # `:discard` leaves an empty workspace tombstone that pending records and deterministic
-  # reversals read: it empties a displaced inode that only the workspace names, and otherwise puts
-  # a fresh empty file in its place (`replace_shared_tombstone/2`). A correction's final record
-  # retires it (`Workspace.retire/2`); `Workspace.sweep/3` retires one no record names. `:unlink`
-  # (`swap/3`) only removes the displaced inode's workspace name. Either way a release sidecar, a
-  # hardlink into a download that may still be seeding, keeps its bytes under that other name
-  # (#860).
-  defp dispose_displaced(staged_path, current, :discard, committed_warning) do
+  # Neither exchanged name verified (#1284), so nothing proves the staged name still holds the
+  # displaced inode: emptying it through the held descriptor could empty bytes that now sit under
+  # another name (#860), and nothing is disposed of here. A `write/4` whose target reads as
+  # `content` is a committed publication. Its pending record stays, and `recover/2`'s
+  # `cleanup_pending/4` opens the staged name afresh and disposes of the inode only when it holds
+  # the displaced bytes. Other bytes, or bytes that cannot be read, keep the preservation's
+  # result. `write/3` keeps it too: its callers keep a journal or record naming the workspace while
+  # they report the error, and a committed publication would close that journal with the
+  # displaced bytes in a workspace no record names. `swap/3` keeps the preservation's result as
+  # well.
+  defp settle_unverified_names(target, content, :recorded_discard, warning) do
+    if safe_read(target) == {:ok, content},
+      do:
+        {:committed_unacknowledged,
+         merge_committed_warnings(warning, {:exchanged_names_unverified, :displaced_kept})},
+      else: {:preserved, {:error, :concurrent_change}}
+  end
+
+  defp settle_unverified_names(_target, _content, _disposal, _warning),
+    do: {:preserved, {:error, :concurrent_change}}
+
+  # `:discard` and `:recorded_discard` leave an empty workspace tombstone that pending records and
+  # deterministic reversals read: they empty a displaced inode that only the workspace names, and
+  # otherwise put a fresh empty file in its place (`replace_shared_tombstone/2`). A correction's
+  # final record retires it (`Workspace.retire/2`); `Workspace.sweep/3` retires one no record
+  # names. `:unlink` (`swap/3`) only removes the displaced inode's workspace name. Either way a
+  # release sidecar, a hardlink into a download that may still be seeding, keeps its bytes under
+  # that other name (#860).
+  defp dispose_displaced(staged_path, current, disposal, committed_warning)
+       when disposal in @discarding do
     case empty_displaced(staged_path, current) do
       :ok ->
         committed_result(committed_warning)
@@ -933,8 +982,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
       {{:error, :concurrent_change}, :ok} ->
         {:error, :published_target_changed}
 
-      _ ->
-        {:error, :concurrent_change}
+      {{:error, :concurrent_change}, {:error, :concurrent_change}} ->
+        {:error, :exchanged_names_unverified}
     end
   end
 
@@ -969,7 +1018,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   # `recover/2`, and `Recovery.published/2` goes on as after `:ok`. Other bytes, or bytes that
   # cannot be read, keep the preservation's result, as `swap/3` counts unreadable bytes as
   # unpublished.
-  defp published_external(target, staged_path, current, content, :discard, warning) do
+  defp published_external(target, staged_path, current, content, mode, warning)
+       when mode in @discarding do
     disposal = empty_displaced(staged_path, current)
 
     if safe_read(target) == {:ok, content},

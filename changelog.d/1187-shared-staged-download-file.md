@@ -2,8 +2,9 @@
 - **Cinder now tries to remove a hidden folder left holding a second name for a download's
   subtitle file (#1187).** A subtitle that came with a release may be a hardlink to the file in
   its download folder. When such a subtitle was replaced, or could not be opened, right after
-  Cinder wrote a corrected timing over it, Cinder drops the hidden `.cinder-subtitle-sync-cas-*`
-  folder's name for the download's file by renaming an empty file over that name. When it could
+  Cinder wrote a corrected timing over it, and Cinder could still open the hidden
+  `.cinder-subtitle-sync-cas-*` folder's name for the download's file and found there the file it
+  moved, Cinder drops that name by renaming an empty file over it. When it could
   not create that empty file, or could not open the folder's name to check it first, the folder
   could keep that second name for as long as the download kept its file, and deleting the
   download did not free the file's space while the folder kept it. Now, when Cinder analyzes the
