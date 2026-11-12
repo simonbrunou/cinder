@@ -1011,9 +1011,11 @@ defmodule CinderWeb.CoreComponents do
   attr :id, :string,
     default: nil,
     doc:
-      "set when :for-iterated with no keyed wrapper (e.g. DiscoverComponents.media_grid/1) " <>
-        "so morphdom recognizes a genuinely new card as an insertion, not a positional morph " <>
-        "of the previous occupant (#597)"
+      "set when :for-iterated with no keyed wrapper (e.g. DiscoverComponents.media_grid/1). " <>
+        "Measured only on /library's rows, keyed by an id on a wrapper (#1234): under " <>
+        "prefers-reduced-motion, a live insert can leave a keyless card whose new poster is " <>
+        "still loading on the previous title's poster for one frame in Chromium, where a " <>
+        "keyed one shows the placeholder"
 
   attr :poster_path, :string, default: nil
   attr :title, :string, required: true

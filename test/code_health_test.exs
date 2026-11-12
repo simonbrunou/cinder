@@ -448,9 +448,12 @@ defmodule Cinder.CodeHealthTest do
 
     assert offenders == [],
            "the following `:for` row(s) render a `data-poster` element — directly or via " <>
-             "#{poster_callees} — without an `id`. morphdom treats a keyless `:for` row as " <>
-             "a positional patch (it reuses the previous occupant's element instead of " <>
-             "inserting a new one) — see #597. Key the row with a stable `id`, the way " <>
+             "#{poster_callees} — without an `id`. Under prefers-reduced-motion, on a live " <>
+             "insert above a keyless row, a card whose new poster is still loading stays at " <>
+             "opacity 1 for one frame, which in Chromium still shows the previous title's " <>
+             "poster, before its placeholder or its own poster shows. A keyed row shows the " <>
+             "placeholder at once (measured on /library in #1234: keyless 8 of 8 inserts, " <>
+             "keyed 0 of 16). Key the row with a stable `id`, the way " <>
              "media_card/detail_poster/thumb_poster and the cast_strip cast list already " <>
              "are:\n" <>
              Enum.map_join(offenders, "\n", fn {file, line, el} -> "  #{file}:#{line} #{el}" end)
