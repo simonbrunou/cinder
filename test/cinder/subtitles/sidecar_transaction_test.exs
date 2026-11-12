@@ -794,6 +794,9 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
     end
 
+    # Its five operations start about 165 rooted Python helpers through Disk. On a loaded CI
+    # runner that passed ExUnit's 60 s default, with no single Disk call near its bound (#1276).
+    @tag timeout: 300_000
     test "identical correct and reset cycles never collide with a retired workspace", %{
       video: video,
       path: path,

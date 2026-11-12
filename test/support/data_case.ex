@@ -85,13 +85,45 @@ defmodule Cinder.DataCase do
     on_exit(fn -> drain_subtitle_fetcher!(tags) end)
   end
 
-  defp checkout_sandbox(%{unboxed: true}) do
-    :ok = Sandbox.checkout(Cinder.Repo, sandbox: false)
+  defp checkout_sandbox(%{unboxed: true} = tags) do
+    :ok = Sandbox.checkout(Cinder.Repo, checkout_opts(tags))
   end
 
   defp checkout_sandbox(tags) do
-    pid = Sandbox.start_owner!(Cinder.Repo, shared: not tags[:async])
+    pid = Sandbox.start_owner!(Cinder.Repo, checkout_opts(tags))
     on_exit(fn -> Sandbox.stop_owner(pid) end)
+  end
+
+  @doc """
+  Returns the options `setup_sandbox/1` checks the connection out with: `sandbox: false` for a
+  test tagged `:unboxed`, and `shared:` (true unless the test is async) for every other test.
+
+  Both carry an `:ownership_timeout` no shorter than the test's `timeout` tag. DBConnection takes
+  the connection back from a test that owns it for longer, 120 s by default, so a sync test
+  tagged `timeout: 300_000` failed at 120 s with `DBConnection.OwnershipError` (#1276). A test
+  with no tag, or a tag at or under that default, keeps the default. `timeout: :infinity` gives
+  `:infinity`, for which DBConnection starts no timer.
+  """
+  def checkout_opts(%{unboxed: true} = tags),
+    do: [sandbox: false, ownership_timeout: ownership_timeout(tags)]
+
+  def checkout_opts(tags),
+    do: [shared: not tags[:async], ownership_timeout: ownership_timeout(tags)]
+
+  # DBConnection's own default when the repo config sets none.
+  @default_ownership_timeout 120_000
+
+  defp ownership_timeout(tags) do
+    floor =
+      :cinder
+      |> Application.fetch_env!(Cinder.Repo)
+      |> Keyword.get(:ownership_timeout, @default_ownership_timeout)
+
+    case tags[:timeout] do
+      :infinity -> :infinity
+      timeout when is_integer(timeout) and timeout > floor -> timeout
+      _no_tag_or_shorter -> floor
+    end
   end
 
   @doc """
@@ -101,7 +133,8 @@ defmodule Cinder.DataCase do
   An async test's checkout queues for the test pool's one connection, and DBConnection drops a
   request that has queued past 2 x `queue_target`. A longer `timeout` tag would let ExUnit run
   the test past that drop, so its checkout could still fail on `queue_timeout` (#947, #1021).
-  Sync modules run after the async phase and never queue, so their tags pass.
+  Sync modules run after the async phase and never queue, so their tags pass. A sync test's tag
+  also sets how long it may own the connection (`checkout_opts/1`).
   """
   def check_timeout_tag!(%{async: true, timeout: timeout}) do
     queue_target = Keyword.fetch!(Application.fetch_env!(:cinder, Cinder.Repo), :queue_target)
