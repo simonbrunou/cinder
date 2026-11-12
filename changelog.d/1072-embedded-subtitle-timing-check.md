@@ -4,5 +4,5 @@
   next to the video. That copy now passes the same timing check as a download or the video's own
   track. A track that fails it is skipped for the next track in that language. With no track left,
   Cinder falls back to a translation or a sidecar, or writes no sidecar, and players can
-  still show the track inside the video. This change does not remove a sidecar written earlier
-  from a track that fails the check.
+  still show the track inside the video. For a sidecar written earlier from a track that fails
+  the check, see #1110.

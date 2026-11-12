@@ -9,4 +9,4 @@
   an embedded track, and so does the translated result. A default track that fails it is skipped
   like an embedded track, a subtitle file in the wanted language that fails it is skipped for the
   next one, and a file in another language that fails it is not translated. This change does not
-  remove a subtitle written earlier that fails the check.
+  remove a translation, or a copy of a subtitle file, written earlier that fails the check.

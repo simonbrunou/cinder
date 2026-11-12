@@ -6,4 +6,5 @@
   source that did not parse, or whose translation could not be used. Cinder now records each of
   these per file and skips them until the file changes. Each track is also extracted at most once
   per fetch, and a track listing is no longer broken by an ffprobe warning on stderr. The first
-  pass after the upgrade still reads each such file once.
+  pass after the upgrade still reads each such file once. For an embedded sidecar that fails the
+  timing check, see #1110.

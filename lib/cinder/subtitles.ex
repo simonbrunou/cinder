@@ -353,6 +353,7 @@ defmodule Cinder.Subtitles do
     exists? = sidecar_exists?(target)
 
     if writable?(state, language, exists?) do
+      exists? = exists? and kept?(video_path, kind, language, state, target)
       held = if exists?, do: Manifest.embedded_track(state, moviehash, language)
 
       {source, cache} =
@@ -378,6 +379,58 @@ defmodule Cinder.Subtitles do
     else
       {:ok, cache}
     end
+  end
+
+  @sync_records [:sync, :sync_invalid?, :reset_cleanup_sync, :reset_cleanup_sync_invalid?]
+
+  # Whether the fetch goes on with the target held, as before this check: it then gives way only to
+  # an embedded track `ranked_ahead/2` lets through, whatever bytes it holds. An embedded sidecar
+  # is checked on its own bytes, whether or not its entry records the file and track it came from:
+  # one committed before the timing check (#1072) could otherwise stay until an OpenSubtitles match
+  # replaced it, since a sweep tries only the candidates ranked ahead of its track (#1110). One
+  # that fails is removed, and the fetch goes on as for a missing target: no sidecar beats one a
+  # player may mis-render, and the track stays in the video. Only the bytes Cinder wrote are
+  # removed: a sidecar edited since, one that cannot be read and one that changed before the
+  # removal stay held. So does one with a record that only `Cinder.Subtitles.Sync` writes
+  # (`@sync_records`). A manual one is the operator's retime, which the own-track path keeps too,
+  # and Sync never handles an embedded sidecar, so any such record there is unexplained and may
+  # name a backup. A backup tombstone and a replacement's cleanup journal come with a fetched
+  # replacement, so `SidecarTransaction.remove/3` keeps them.
+  defp kept?(video_path, kind, language, state, target) do
+    with %{origin: "embedded"} = track <- state.tracks[language],
+         false <- Enum.any?(@sync_records, &Map.has_key?(track, &1)),
+         {:ok, content} <- read(target),
+         true <- sha256(content) == track[:managed_sha256],
+         {:error, reason} <- Timing.validate(content, Path.extname(target)) do
+      remove_embedded(video_path, kind, language, target, content, reason)
+    else
+      _kept -> true
+    end
+  end
+
+  # An error can come after the sidecar is gone, so the disk tells whether it stays.
+  defp remove_embedded(video_path, kind, language, target, content, reason) do
+    sidecar = %{video_path: video_path, sidecar_path: target, language: language}
+
+    case SidecarTransaction.remove(sidecar, content, "embedded") do
+      :ok ->
+        removed(video_path, kind, language, target, reason)
+
+      {:error, error} ->
+        Logger.warning("subtitle removal failed for #{target}: #{inspect(error)}")
+        sidecar_exists?(target) or removed(video_path, kind, language, target, reason)
+    end
+  end
+
+  defp removed(video_path, kind, language, target, reason) do
+    Cinder.Library.refresh(kind, video_path)
+
+    Logger.info(
+      "removed the embedded subtitle #{target} (#{language}): it failed the timing check: " <>
+        inspect(reason)
+    )
+
+    false
   end
 
   # `held` is the track the target was extracted from, when it came out of this very file.

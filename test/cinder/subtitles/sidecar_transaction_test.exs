@@ -3773,6 +3773,74 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     arities
   end
 
+  describe "remove/3" do
+    test "removes the sidecar and its track", %{video: video, path: path} do
+      content = "1\n00:00:01,000 --> 00:00:02,000\nEmbedded\n\n"
+      assert :ok = replace_as(video, content, "embedded")
+      assert :ok = Manifest.put(video, moviehash!(video), "de", "translated")
+
+      assert :ok = SidecarTransaction.remove(sidecar(video), content, "embedded")
+      refute File.exists?(path)
+      assert %{tracks: %{"de" => %{origin: "translated"}} = tracks} = Manifest.read(video)
+      refute Map.has_key?(tracks, "en")
+    end
+
+    test "removes nothing for a track of another origin or none", %{
+      video: video,
+      path: path,
+      original: original
+    } do
+      entry = Manifest.read(video).tracks["en"]
+
+      assert {:error, {:origin, "opensubtitles_hash"}} =
+               SidecarTransaction.remove(sidecar(video), original, "embedded")
+
+      assert {:error, :unknown_track} =
+               SidecarTransaction.remove(%{sidecar(video) | language: "fr"}, original, "embedded")
+
+      assert File.read!(path) == original
+      assert Manifest.read(video).tracks["en"] == entry
+    end
+
+    test "removes nothing when the sidecar changed", %{video: video, path: path} do
+      content = "1\n00:00:01,000 --> 00:00:02,000\nEmbedded\n\n"
+      assert :ok = replace_as(video, content, "embedded")
+      entry = Manifest.read(video).tracks["en"]
+      File.write!(path, "1\n00:00:01,000 --> 00:00:02,000\nEdited\n\n")
+
+      assert {:error, :concurrent_change} =
+               SidecarTransaction.remove(sidecar(video), content, "embedded")
+
+      assert File.read!(path) == "1\n00:00:01,000 --> 00:00:02,000\nEdited\n\n"
+      assert Manifest.read(video).tracks["en"] == entry
+    end
+
+    # An embedded sidecar that replaced a corrected one carries the backup tombstone forward. Its
+    # track stays once the sidecar is gone, so the next sidecar in the language carries the
+    # tombstone again and its own correction reactivates the container.
+    test "keeps a backup tombstone a later correction reactivates", %{
+      video: video,
+      path: path,
+      backup: backup
+    } do
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      content = "1\n00:00:01,000 --> 00:00:02,000\nEmbedded\n\n"
+      assert :ok = replace_as(video, content, "embedded")
+      assert File.read!(backup) == ""
+      assert %{backup_tombstone: tombstone} = entry = Manifest.read(video).tracks["en"]
+
+      assert :ok = SidecarTransaction.remove(sidecar(video), content, "embedded")
+      refute File.exists?(path)
+      assert Manifest.read(video).tracks["en"] == entry
+
+      replacement = "1\n00:00:10,000 --> 00:00:11,000\nReplacement\n\n"
+      assert :ok = replace(video, replacement)
+      assert %{backup_tombstone: ^tombstone} = Manifest.read(video).tracks["en"]
+      assert {:ok, :corrected, _} = manual(video, 500)
+      assert File.read!(backup) == replacement
+    end
+  end
+
   # A manual correction by `offset_ms`, driven through the transaction the way
   # `Cinder.Subtitles.Sync.manual/4` drives it: recover, start from the original, publish.
   defp manual(video, offset_ms) do
@@ -3909,9 +3977,11 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     File.touch!(workspace, old)
   end
 
-  defp replace(video, content) do
+  defp replace(video, content), do: replace_as(video, content, "opensubtitles_id")
+
+  defp replace_as(video, content, origin) do
     sidecar = %{video_path: video, sidecar_path: sidecar(video).sidecar_path, language: "en"}
-    SidecarTransaction.replace(sidecar, content, "opensubtitles_id", moviehash!(video))
+    SidecarTransaction.replace(sidecar, content, origin, moviehash!(video))
   end
 
   # A fetch of a French sidecar the setup never created.

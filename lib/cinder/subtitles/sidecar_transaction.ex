@@ -1,7 +1,8 @@
 defmodule Cinder.Subtitles.SidecarTransaction do
   @moduledoc """
   The sidecar replacement transaction: every change to a managed sidecar's bytes goes through
-  here, whether it is an automatic or manual correction, a reset, or a newly fetched subtitle.
+  here, whether it is an automatic or manual correction, a reset, a newly fetched subtitle, or a
+  removal.
 
   A `sidecar` is the map `Cinder.Subtitles.Sync.discover/1` returns: `video_path`,
   `sidecar_path`, `language`, `sync` (the final record the caller saw, which a rollback puts
@@ -375,6 +376,43 @@ defmodule Cinder.Subtitles.SidecarTransaction do
       :ok -> :ok
       {:error, {:publication_committed, _detail}} -> :ok
       error -> Logger.warning("subtitle rollback failed for #{target}: #{inspect(error)}")
+    end
+  end
+
+  @doc """
+  Removes a sidecar of origin `origin` that still holds `content`, then its language's manifest
+  track.
+
+  Nothing is removed when the manifest cannot be read (`Manifest.load/1`'s error), when it has no
+  track for the language (`{:error, :unknown_track}`) or one of another origin
+  (`{:error, {:origin, other}}`), or when the sidecar changed or vanished since the caller read
+  `content` (`AtomicFile.swap/3`'s error). The bytes go before the track, so a failure in between
+  never leaves a sidecar that no track claims. A track that holds a record of this module stays:
+  a later sidecar in the language needs the backup tombstone it records and the cleanup journal
+  it replays (`Manifest.delete_track/3` refuses to drop one). Any other error from
+  `Manifest.delete_track/3` comes after the sidecar is gone.
+  """
+  @spec remove(sidecar(), binary(), String.t()) :: :ok | {:error, term()}
+  def remove(%{video_path: video_path, sidecar_path: target, language: language}, content, origin) do
+    with {:ok, state} <- Manifest.load(video_path),
+         :ok <- owned(state, language, origin),
+         :ok <- AtomicFile.swap(target, content, :absent) do
+      forget(video_path, language, origin)
+    end
+  end
+
+  defp owned(state, language, origin) do
+    case state.tracks[language] do
+      %{origin: ^origin} -> :ok
+      %{origin: other} -> {:error, {:origin, other}}
+      nil -> {:error, :unknown_track}
+    end
+  end
+
+  defp forget(video_path, language, origin) do
+    case Manifest.delete_track(video_path, language, origin) do
+      {:error, {:transaction_records, _fields}} -> :ok
+      result -> result
     end
   end
 end

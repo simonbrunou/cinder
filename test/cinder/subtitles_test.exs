@@ -1468,6 +1468,351 @@ defmodule Cinder.SubtitlesTest do
     end
   end
 
+  # #1110: before #1072 the embedded fallback wrote a track without the timing check. A sweep
+  # tries only the candidates ranked ahead of the track an entry records (#1071), so such a sidecar
+  # stayed until an OpenSubtitles match replaced it (Monogatari and Frieren on prod). The fetch now
+  # checks a held embedded sidecar's own bytes, removes one that fails and carries on as for a
+  # missing target.
+  describe "a held embedded sidecar that fails the timing check" do
+    setup %{video: video} do
+      ConfigCase.put_env(:media_info, Cinder.Library.MediaInfoMock)
+      put_moviehash!(131_072)
+      test = self()
+
+      stub(Cinder.Library.MediaServerMock, :scan, fn kind ->
+        send(test, {:scan, kind})
+        :ok
+      end)
+
+      {:ok, target: target(video)}
+    end
+
+    # The issue's case: the entry records the only candidate, so no candidate ranks ahead of it.
+    test "is removed when it records the only candidate", %{video: video, target: target} do
+      put_embedded!(video, @broken, source_moviehash: moviehash(), source_track: 2)
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{2 => {:ok, @broken}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) == [{:scan, :movies}, :probe, {:extract, 2}]
+      refute File.exists?(target)
+      refute Map.has_key?(Manifest.read(video).tracks, "fr")
+      assert TrackRejection.rejected?(moviehash(), 2, :timing)
+      assert effects(%{imdb_id: "tt1"}, video) == []
+    end
+
+    # Written before #1068: nothing ties the entry to this file or to a track.
+    test "is removed when it records neither a moviehash nor a track", %{
+      video: video,
+      target: target
+    } do
+      put_embedded!(video, @broken, [])
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{2 => {:ok, @broken}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) == [{:scan, :movies}, :probe, {:extract, 2}]
+      refute File.exists?(target)
+      refute Map.has_key?(Manifest.read(video).tracks, "fr")
+      assert effects(%{imdb_id: "tt1"}, video) == []
+    end
+
+    # The import saw the stream, so the own-track path extracts the track and rejects it first.
+    test "is removed once the own-track path rejected the track it came from", %{
+      video: video,
+      target: target
+    } do
+      put_embedded!(video, @broken, source_moviehash: moviehash(), source_track: 2)
+      stub_reads(video, {:ok, [own_track(2, "fre")]}, %{2 => {:ok, @broken}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      criteria = %{imdb_id: "tt1", embedded_subtitles: ["fre"]}
+
+      assert effects(criteria, video) == [:probe, {:extract, 2}, {:scan, :movies}]
+      refute File.exists?(target)
+      refute Map.has_key?(Manifest.read(video).tracks, "fr")
+      assert effects(criteria, video) == []
+    end
+
+    # Prod's 64 entries that record a track: an earlier sweep stored its rejection and the probe.
+    test "is removed with no read of the video once its track's rejection is stored", %{
+      video: video,
+      target: target
+    } do
+      put_embedded!(video, @broken, source_moviehash: moviehash(), source_track: 2)
+      assert {:ok, _tracks} = TrackProbe.tracks(moviehash(), fn -> {:ok, [track(2, "fre")]} end)
+      TrackRejection.reject(moviehash(), 2, :timing)
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{2 => {:ok, @broken}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) == [{:scan, :movies}]
+      refute File.exists?(target)
+      refute Map.has_key?(Manifest.read(video).tracks, "fr")
+      assert effects(%{imdb_id: "tt1"}, video) == []
+    end
+
+    # The removal and the commit each ask the media server to scan.
+    test "is replaced in the same fetch by a later candidate that passes", %{
+      video: video,
+      target: target
+    } do
+      put_embedded!(video, @broken, source_moviehash: moviehash(), source_track: 2)
+
+      stub_reads(video, {:ok, [track(2, "fre"), track(3, "fre")]}, %{
+        2 => {:ok, @broken},
+        3 => {:ok, @srt}
+      })
+
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) ==
+               [{:scan, :movies}, :probe, {:extract, 2}, {:extract, 3}, {:scan, :movies}]
+
+      assert File.read!(target) == @srt
+      assert %{tracks: %{"fr" => %{origin: "embedded", source_track: 3}}} = Manifest.read(video)
+      assert effects(%{imdb_id: "tt1"}, video) == []
+    end
+
+    test "is replaced in the same fetch by a translation of the default track", %{
+      video: video,
+      target: target
+    } do
+      put_embedded!(video, @broken, source_moviehash: moviehash(), source_track: 2)
+
+      stub_reads(video, {:ok, [track(2, "fre"), track(3, "eng", default?: true)]}, %{
+        2 => {:ok, @broken},
+        3 => {:ok, @srt}
+      })
+
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) ==
+               [{:scan, :movies}, :probe, {:extract, 2}, {:extract, 3}, {:scan, :movies}]
+
+      assert_received {:translate, "fr"}
+      assert File.read!(target) =~ "Hello"
+      assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(video)
+    end
+
+    test "is replaced in the same fetch by a sidecar in its language", %{
+      video: video,
+      target: target
+    } do
+      put_embedded!(video, @broken, source_moviehash: moviehash(), source_track: 2)
+      put!(Path.join(Path.dirname(video), "M.fre.srt"), @other)
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{2 => {:ok, @broken}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) ==
+               [{:scan, :movies}, :probe, {:extract, 2}, {:scan, :movies}]
+
+      assert File.read!(target) == @other
+      assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(video)
+    end
+
+    test "logs one line naming its path, its language and the reason", %{
+      video: video,
+      target: target
+    } do
+      put_embedded!(video, @broken, source_moviehash: moviehash(), source_track: 2)
+      TrackRejection.reject(moviehash(), 2, :timing)
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      log =
+        info_log(fn ->
+          assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+        end)
+
+      assert [line] = Regex.scan(~r/^.*failed the timing check.*$/m, log)
+      assert line |> hd() |> String.contains?([target])
+      assert line |> hd() =~ "(fr)"
+      assert line |> hd() =~ "invalid_subtitle"
+      refute log =~ "subtitle sidecar #{target}"
+
+      log =
+        info_log(fn ->
+          assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+        end)
+
+      refute log =~ "failed the timing check"
+    end
+
+    test "is removed beside a TV episode and the TV library is scanned", %{tmp_dir: tmp} do
+      episode = Path.join(tmp, "tv/S/Season 01/S - S01E01.mkv")
+      put!(episode, "video")
+      target = target(episode)
+      put_embedded!(episode, @broken, source_moviehash: moviehash(), source_track: 2)
+      TrackRejection.reject(moviehash(), 2, :timing)
+      stub_reads(episode, {:ok, [track(2, "fre")]}, %{})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      capture_log(fn ->
+        assert :ok = Subtitles.fetch_missing(%{tmdb_id: 1, season: 1, episode: 1}, episode, :tv)
+      end)
+
+      assert drain_effects([]) == [{:scan, :tv}, :probe]
+      refute File.exists?(target)
+      refute Map.has_key?(Manifest.read(episode).tracks, "fr")
+    end
+
+    # A manual record is the operator's retime. Sync never handles an embedded sidecar, so any
+    # other record it alone writes is unexplained and may name a backup.
+    for {label, field, sync} <- [
+          {"a manual retime", :sync, :manual},
+          {"an alignment record", :sync, :audio},
+          {"a sync record that does not decode", :sync, :invalid},
+          {"a reset journal", :reset_cleanup_sync, :audio},
+          {"a reset journal that does not decode", :reset_cleanup_sync, :invalid}
+        ] do
+      test "is kept with #{label}", %{video: video, target: target} do
+        record = {unquote(field), sync_record(unquote(sync))}
+        put_embedded!(video, @broken, [record, source_moviehash: moviehash(), source_track: 2])
+        entry = Manifest.read(video).tracks["fr"]
+        stub_reads(video, {:ok, [track(2, "fre")]}, %{2 => {:ok, @broken}})
+        stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+        assert effects(%{imdb_id: "tt1"}, video) == [:probe]
+        refute_received {:read, ^target}
+        assert File.read!(target) == @broken
+        assert Manifest.read(video).tracks["fr"] == entry
+      end
+    end
+
+    # Bytes other than the ones Cinder wrote are someone's edit.
+    test "is kept when its bytes are not the ones Cinder wrote", %{video: video, target: target} do
+      put_embedded!(video, @other, source_moviehash: moviehash(), source_track: 2)
+      File.write!(target, @broken)
+      entry = Manifest.read(video).tracks["fr"]
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{2 => {:ok, @broken}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe]
+      assert File.read!(target) == @broken
+      assert Manifest.read(video).tracks["fr"] == entry
+    end
+
+    # A backup tombstone records the zero-byte container a later correction in the language
+    # reactivates, so its entry stays with the sidecar gone.
+    test "keeps the entry of a backup tombstone it removes", %{video: video, target: target} do
+      tombstone = put_tombstoned_embedded!(video)
+      entry = Manifest.read(video).tracks["fr"]
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      log = removal_log(video)
+
+      refute log =~ "subtitle removal failed"
+      assert drain_effects([]) == [{:scan, :movies}, :probe]
+      assert File.read!(Path.join(Path.dirname(target), tombstone.name)) == ""
+      refute File.exists?(target)
+      assert Manifest.read(video).tracks["fr"] == entry
+    end
+
+    test "carries a backup tombstone it removes to the sidecar that replaces it", %{
+      video: video,
+      target: target
+    } do
+      tombstone = put_tombstoned_embedded!(video)
+      stub_reads(video, {:ok, [track(2, "fre"), track(3, "fre")]}, %{3 => {:ok, @srt}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      identity = tombstone.identity
+
+      log = removal_log(video)
+
+      refute log =~ "subtitle removal failed"
+
+      assert drain_effects([]) ==
+               [{:scan, :movies}, :probe, {:extract, 3}, {:scan, :movies}]
+
+      assert File.read!(target) == @srt
+
+      assert %{origin: "embedded", source_track: 3, backup_tombstone: %{identity: ^identity}} =
+               Manifest.read(video).tracks["fr"]
+    end
+
+    # Only an embedded sidecar is checked: a sidecar of another origin is kept as before, failing
+    # bytes included, and is not read for the check.
+    for origin <- ~w(opensubtitles_hash opensubtitles_id own_track translated release_sidecar) do
+      test "keeps a #{origin} target that fails the timing check", %{
+        video: video,
+        target: target
+      } do
+        put!(target, @broken)
+
+        put_manifest!(video, %{
+          video_moviehash: nil,
+          tracks: %{"fr" => %{origin: unquote(origin), file: "M.fr.srt"}}
+        })
+
+        entry = Manifest.read(video).tracks["fr"]
+        stub_reads(video, {:ok, []}, %{})
+        stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+        assert effects(%{imdb_id: "tt1"}, video) == [:probe]
+        refute_received {:read, ^target}
+        assert File.read!(target) == @broken
+        assert Manifest.read(video).tracks["fr"] == entry
+      end
+    end
+
+    # The sidecar changed between the check's read and the removal: nothing is removed, and the
+    # fetch goes on as for a sidecar it holds.
+    test "is kept when its bytes change before the removal", %{video: video, target: target} do
+      put_embedded!(video, @broken, source_moviehash: moviehash(), source_track: 2)
+      entry = Manifest.read(video).tracks["fr"]
+      TrackRejection.reject(moviehash(), 2, :timing)
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      stub(Cinder.Library.FilesystemMock, :read, fn path ->
+        result = Disk.read(path)
+        if path == target, do: File.write!(target, @srt)
+        result
+      end)
+
+      assert removal_log(video) =~ "subtitle removal failed for #{target}"
+      assert drain_effects([]) == [:probe]
+      assert File.read!(target) == @srt
+      assert Manifest.read(video).tracks["fr"] == entry
+    end
+
+    test "is kept when it cannot be read", %{video: video, target: target} do
+      put_embedded!(video, @broken, source_moviehash: moviehash(), source_track: 2)
+      entry = Manifest.read(video).tracks["fr"]
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+      stub(Cinder.Library.FilesystemMock, :read, fn path ->
+        if path == target, do: {:error, :eio}, else: Disk.read(path)
+      end)
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe]
+      assert File.read!(target) == @broken
+      assert Manifest.read(video).tracks["fr"] == entry
+    end
+
+    # The sidecar goes first, so it is gone and the media server scans; its entry stays until a
+    # commit in the language replaces it, and a fetch treats the language as missing meanwhile.
+    test "is removed when its entry cannot be dropped", %{video: video, target: target} do
+      put_embedded!(video, @broken, source_moviehash: moviehash(), source_track: 2)
+      entry = Manifest.read(video).tracks["fr"]
+      TrackRejection.reject(moviehash(), 2, :timing)
+      stub_reads(video, {:ok, [track(2, "fre")]}, %{})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      fail_manifest_writes()
+
+      log =
+        capture_log(fn ->
+          assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+        end)
+
+      assert log =~ "subtitle removal failed for #{target}"
+      assert drain_effects([]) == [{:scan, :movies}, :probe]
+      refute File.exists?(target)
+      assert Manifest.read(video).tracks["fr"] == entry
+      assert effects(%{imdb_id: "tt1"}, video) == []
+    end
+  end
+
   test "a cn (Cantonese) target selects a generically-tagged chi embedded track, not a fallback translation (#573)",
        %{video: video} do
     Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "cn")
@@ -1978,6 +2323,78 @@ defmodule Cinder.SubtitlesTest do
     })
 
     File.read!(Manifest.path(video))
+  end
+
+  defp target(video), do: Subtitles.sidecar_path(video, "fr")
+
+  # The moviehash `put_moviehash!(131_072)` gives the video.
+  defp moviehash, do: Moviehash.compute(131_072, @zeros, @zeros)
+
+  # A French embedded sidecar as a commit before #1072 left it. `recorded` holds what its entry
+  # records besides its origin, file and hash: `source_moviehash`, `source_track`, a sync record.
+  defp put_embedded!(video, content, recorded) do
+    put!(target(video), content)
+
+    entry =
+      Map.merge(
+        %{
+          origin: "embedded",
+          file: Path.basename(target(video)),
+          managed_sha256: digest(content)
+        },
+        Map.new(recorded)
+      )
+
+    put_manifest!(video, %{
+      video_moviehash: recorded[:source_moviehash],
+      tracks: %{"fr" => entry}
+    })
+  end
+
+  # A failing embedded sidecar from track 2, whose entry records the zero-byte backup container a
+  # correction of an earlier sidecar in the language left, as `Manifest.put/8` carries it forward.
+  # Track 2's rejection is stored. Returns the container's name and identity.
+  defp put_tombstoned_embedded!(video) do
+    name = ".M.fr.srt.cinder-sync-original"
+    backup = Path.join(Path.dirname(video), name)
+    put!(backup, "")
+    %File.Stat{major_device: major, minor_device: minor, inode: inode} = File.stat!(backup)
+    identity = [major, minor, inode]
+
+    put_embedded!(video, @broken,
+      source_moviehash: moviehash(),
+      source_track: 2,
+      backup_tombstone: %{identity: identity}
+    )
+
+    TrackRejection.reject(moviehash(), 2, :timing)
+    %{name: name, identity: identity}
+  end
+
+  defp removal_log(video) do
+    log =
+      capture_log(fn ->
+        assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+      end)
+
+    refute log =~ "crashed"
+    log
+  end
+
+  # A final sync record with `method`; `:invalid` is one `Manifest` does not decode.
+  defp sync_record(:invalid), do: %{status: "aligned", method: "manual"}
+
+  defp sync_record(method) do
+    %{
+      version: 6,
+      status: "aligned",
+      method: Atom.to_string(method),
+      moviehash: nil,
+      source_sha256: String.duplicate("a", 64),
+      applied_sha256: String.duplicate("b", 64),
+      offset_ms: 500,
+      rate: 1.0
+    }
   end
 
   defp put_moviehash!(size) do
