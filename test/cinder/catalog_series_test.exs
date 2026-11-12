@@ -883,6 +883,69 @@ defmodule Cinder.CatalogSeriesTest do
       end
     end
 
+    # #1256: the season offset panel says that saving retires a shifted episode's TMDB code and that
+    # only a downloaded file matched to an episode by hand can keep it. The offset from season 3 by
+    # +1 gives TMDB S03E01 the scene code S04E01. A file named "S04E01" matched by hand to S03E01,
+    # or to S04E01, binds that row to the episode as `:manual`, so S03E01 has no `:curated` row
+    # left and its TMDB code reads as S03E01 again.
+    for {label, matched_to, grabbed?} <- [
+          {"no hand match", nil, false},
+          {"its offset code matched by hand to that episode", :shifted, true},
+          {"its offset code matched by hand to another episode", :other, true}
+        ] do
+      test "Anime manual grab of a native-code row after a saved season offset and #{label}: #{grabbed?}" do
+        series =
+          series_fixture(%{
+            media_profile: :anime,
+            monitor_strategy: :all,
+            tvdb_id: 99,
+            title: "Monogatari"
+          })
+
+        shifted =
+          episode_fixture(season_fixture(series, %{season_number: 3}), %{episode_number: 1})
+
+        other =
+          episode_fixture(season_fixture(series, %{season_number: 4}), %{episode_number: 1})
+
+        candidate =
+          Release.new(%{
+            title: "[smol] Monogatari Series Second Season S03E01 [1080p]",
+            download_url: "native-code"
+          })
+
+        context = Catalog.anime_series_acquisition_context(series)
+
+        assert {:ok, %{assignments: [%{release: release}]}} =
+                 Anime.select_episodes([candidate], context, [shifted.id], [])
+
+        assert {:ok, _} = Catalog.save_scene_offset_coordinates(series, 3, 1)
+
+        attrs = %{
+          source: "offset",
+          scheme: "scene",
+          namespace: "offset",
+          canonical_value: "S04E01"
+        }
+
+        case unquote(matched_to) do
+          nil -> :ok
+          :shifted -> assert {:ok, _} = Identity.bind_manual_coordinate(series, attrs, shifted)
+          :other -> assert {:ok, _} = Identity.bind_manual_coordinate(series, attrs, other)
+        end
+
+        if unquote(grabbed?) do
+          expect(Cinder.Download.ClientMock, :add, fn _, _opts -> {:ok, "native-code"} end)
+          assert {:ok, _grab} = Catalog.manual_grab_tv(series, 3, release)
+          assert Repo.get!(Episode, shifted.id).grab_id
+        else
+          expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+          assert {:error, :unsafe_anime_mapping} = Catalog.manual_grab_tv(series, 3, release)
+          assert Repo.get!(Episode, shifted.id).grab_id == nil
+        end
+      end
+    end
+
     test "Anime manual grab reloads a changed media profile instead of trusting the stale series" do
       series = series_fixture(%{media_profile: :anime, monitor_strategy: :all})
       season = season_fixture(series, %{season_number: 0})

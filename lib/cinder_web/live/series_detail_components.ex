@@ -383,6 +383,9 @@ defmodule CinderWeb.SeriesDetailComponents do
           {gettext(
             "When releases number this show's seasons with a fixed shift from TMDB (e.g. an inserted season pushes later seasons up by one), generate the matching scene coordinates. Review any native collisions before saving — the alternate numbering wins over that native episode at search time."
           )}
+          {gettext(
+            "Saving also stops releases named by a shifted episode's TMDB code from matching that episode. Only matching a downloaded file to an episode by hand can keep that code."
+          )}
         </p>
         <.form
           for={@offset_form}

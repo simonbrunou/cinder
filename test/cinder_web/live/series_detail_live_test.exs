@@ -260,6 +260,23 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert values == ["S04E01", "S04E02", "S04E03"]
   end
 
+  # #1256: a saved offset retires each shifted episode's TMDB code (#987), and the help paragraph
+  # says so beside its collision warning.
+  test "the season-offset help says saving retires the shifted episodes' TMDB codes", %{
+    conn: conn
+  } do
+    series = series_fixture(media_profile: :anime, tvdb_id: 99)
+    {:ok, view, _} = live_series(conn, series)
+
+    for text <- [
+          "Review any native collisions before saving — the alternate numbering wins over that native episode at search time.",
+          "Saving also stops releases named by a shifted episode's TMDB code from matching that episode.",
+          "Only matching a downloaded file to an episode by hand can keep that code."
+        ] do
+      assert has_element?(view, "#series-season-offset-panel > p", text)
+    end
+  end
+
   test "the season-offset form is hidden for a non-anime series", %{conn: conn} do
     series = series_fixture(media_profile: :standard, tvdb_id: 99)
     {:ok, view, _} = live_series(conn, series)

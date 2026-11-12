@@ -7408,3 +7408,8 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "The profile can't change while a download is in progress."
 msgstr ""
+
+#: lib/cinder_web/live/series_detail_components.ex
+#, elixir-autogen, elixir-format
+msgid "Saving also stops releases named by a shifted episode's TMDB code from matching that episode. Only matching a downloaded file to an episode by hand can keep that code."
+msgstr ""

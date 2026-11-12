@@ -7762,3 +7762,11 @@ msgstr "Tous les épisodes diffusés sont disponibles"
 #, elixir-autogen, elixir-format
 msgid "The profile can't change while a download is in progress."
 msgstr "Le profil ne peut pas changer pendant un téléchargement en cours."
+
+#: lib/cinder_web/live/series_detail_components.ex
+#, elixir-autogen, elixir-format
+msgid "Saving also stops releases named by a shifted episode's TMDB code from matching that episode. Only matching a downloaded file to an episode by hand can keep that code."
+msgstr ""
+"L'enregistrement empêche aussi les releases nommées par le code TMDB d'un "
+"épisode décalé de correspondre à cet épisode. Seule l'association manuelle "
+"d'un fichier téléchargé à un épisode peut conserver ce code."
