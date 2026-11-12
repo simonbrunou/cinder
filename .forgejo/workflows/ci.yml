@@ -1,7 +1,7 @@
 # Runs on the self-hosted Forgejo (git.sbrn.eu), the source of truth; the GitHub
 # repository is a push mirror and runs no CI (release.yml still runs there, on
 # mirrored tags). Differences from the GitHub-hosted version:
-# - BEAM jobs say `runs-on: ubuntu-24.04`: for `ubuntu-latest` the runner sets
+# - BEAM jobs say `runs-on: ubuntu-26.04`: for `ubuntu-latest` the runner sets
 #   ImageOS=ubuntu20, and setup-beam finds no OTP 29 build for Ubuntu 20.04;
 # - artifacts use Forgejo's upload-artifact fork (actions/upload-artifact v4+
 #   refuses to run off github.com);
@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     env:
       MIX_ENV: test
     steps:
@@ -107,7 +107,7 @@ jobs:
           retention-days: 14
 
   dependency-audit:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
