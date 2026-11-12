@@ -7770,3 +7770,23 @@ msgstr ""
 "L'enregistrement empêche aussi les releases nommées par le code TMDB d'un "
 "épisode décalé de correspondre à cet épisode. Seule l'association manuelle "
 "d'un fichier téléchargé à un épisode peut conserver ce code."
+
+#: lib/cinder_web/settings_labels.ex
+#, elixir-autogen, elixir-format
+msgid "Checks that plex.tv lists the household server for the owner's Plex token. It does not try a sign-in or show what a shared user sees."
+msgstr "Vérifie que plex.tv liste le serveur du foyer pour le jeton Plex du propriétaire. Ne tente aucune connexion et ne montre pas ce que voit un utilisateur partagé."
+
+#: lib/cinder_web/settings_labels.ex
+#, elixir-autogen, elixir-format
+msgid "Plex sign-in (owner account)"
+msgstr "Connexion Plex (compte propriétaire)"
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "plex.tv does not list the household server for this Plex token"
+msgstr "plex.tv ne liste pas le serveur du foyer pour ce jeton Plex"
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "plex.tv rejected the Plex token"
+msgstr "plex.tv a refusé le jeton Plex"

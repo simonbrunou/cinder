@@ -53,13 +53,13 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
   defp expect_pin(token \\ @token),
     do: expect(PlexAuthMock, :check_pin, fn 1 -> {:ok, token} end)
 
-  defp expect_account(result), do: expect(PlexAuthMock, :account, fn @token -> result end)
+  defp expect_account(result), do: expect(PlexAuthMock, :account, fn @token, [] -> result end)
 
   defp expect_server(result \\ {:ok, "machine-1"}),
-    do: expect(PlexAuthMock, :server_machine_id, fn -> result end)
+    do: expect(PlexAuthMock, :server_machine_id, fn [] -> result end)
 
   defp expect_resources(result),
-    do: expect(PlexAuthMock, :resource_ids, fn @token -> result end)
+    do: expect(PlexAuthMock, :resource_ids, fn @token, [] -> result end)
 
   defp login_callback(conn) do
     with_log(fn ->

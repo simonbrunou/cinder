@@ -130,7 +130,7 @@ defmodule CinderWeb.PlexAuthController do
   end
 
   defp resolve_account(conn, token, :login) do
-    case SignInRefusal.at(:account, PlexAuth.impl().account(token)) do
+    case SignInRefusal.at(:account, PlexAuth.impl().account(token, [])) do
       {:ok, account} ->
         log_in_account(conn, token, account)
 
@@ -190,7 +190,7 @@ defmodule CinderWeb.PlexAuthController do
   # Every refusal here comes after plex.tv returned a token for the signed-in user's own link, so
   # each one tells the admins, naming that user.
   defp link_account(conn, token, user) do
-    with {:ok, account} <- SignInRefusal.at(:account, PlexAuth.impl().account(token)),
+    with {:ok, account} <- SignInRefusal.at(:account, PlexAuth.impl().account(token, [])),
          :ok <- authorize_server_access(token, account),
          {:ok, linked} <-
            SignInRefusal.at(:account_write, Accounts.link_plex_to_user(user, account)) do
@@ -222,20 +222,22 @@ defmodule CinderWeb.PlexAuthController do
 
   defp login_failure(_reason), do: gettext("Plex sign-in failed. Please try again.")
 
-  # Allow iff the household's configured Plex server's machine id is among the resource
-  # ids plex.tv lists for this Plex account (owner or shared user); anyone else is rejected.
-  # A refusal logs the account's plex.tv id and how many ids the list held, never the list.
+  # The gate is `PlexAuth.server_access/2`, which the `plex_signin` health check calls too. Its
+  # refusal keeps the step's name; a `:server_access` one also logs the account's plex.tv id and
+  # how many ids the list held, never the list.
   defp authorize_server_access(token, account) do
-    with {:ok, server_id} <-
-           SignInRefusal.at(:server_machine_id, PlexAuth.impl().server_machine_id()),
-         {:ok, ids} <- SignInRefusal.at(:server_ids, PlexAuth.impl().resource_ids(token)) do
-      if server_id in ids,
-        do: :ok,
-        else:
-          SignInRefusal.refusal(:server_access, :forbidden,
-            plex_id: plex_id(account),
-            resources: length(ids)
-          )
+    case PlexAuth.server_access(token) do
+      :ok ->
+        :ok
+
+      {:error, {:server_access, {:forbidden, count}}} ->
+        SignInRefusal.refusal(:server_access, :forbidden,
+          plex_id: plex_id(account),
+          resources: count
+        )
+
+      {:error, {step, reason}} ->
+        SignInRefusal.refusal(step, reason)
     end
   end
 

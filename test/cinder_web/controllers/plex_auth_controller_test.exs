@@ -80,12 +80,15 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 99 -> {:ok, "plex-auth-token"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :account, fn "plex-auth-token" ->
+      expect(Cinder.Accounts.PlexAuthMock, :account, fn "plex-auth-token", [] ->
         {:ok, %{id: 555, email: "newplex@example.com", username: "newplex"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token -> {:ok, ["machine-1"]} end)
+      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
+        {:ok, ["machine-1"]}
+      end)
 
       conn =
         conn
@@ -112,12 +115,15 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 98 -> {:ok, "admin-plex-token"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :account, fn "admin-plex-token" ->
+      expect(Cinder.Accounts.PlexAuthMock, :account, fn "admin-plex-token", [] ->
         {:ok, %{id: 777, email: "admin-plex@example.com", username: "the-admin"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token -> {:ok, ["machine-1"]} end)
+      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
+        {:ok, ["machine-1"]}
+      end)
 
       conn =
         conn
@@ -136,12 +142,15 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 97 -> {:ok, "member-plex-token"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :account, fn "member-plex-token" ->
+      expect(Cinder.Accounts.PlexAuthMock, :account, fn "member-plex-token", [] ->
         {:ok, %{id: 778, email: "member@example.com", username: "member"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token -> {:ok, ["machine-1"]} end)
+      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
+        {:ok, ["machine-1"]}
+      end)
 
       conn =
         conn
@@ -178,13 +187,13 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 99 -> {:ok, "plex-auth-token"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :account, fn "plex-auth-token" ->
+      expect(Cinder.Accounts.PlexAuthMock, :account, fn "plex-auth-token", [] ->
         {:ok, %{id: 666, email: "outsider@example.com", username: "outsider"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
+      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token ->
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
         {:ok, ["some-other-machine"]}
       end)
 
@@ -210,13 +219,13 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 104 -> {:ok, "near-miss-token"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :account, fn "near-miss-token" ->
+      expect(Cinder.Accounts.PlexAuthMock, :account, fn "near-miss-token", [] ->
         {:ok, %{id: 667, email: "near-miss@example.com", username: "near-miss"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
+      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token ->
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
         {:ok, ["MACHINE-1", "machine-10", "machine-1 ", "xmachine-1"]}
       end)
 
@@ -249,12 +258,15 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 101 -> {:ok, "link-token"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :account, fn "link-token" ->
+      expect(Cinder.Accounts.PlexAuthMock, :account, fn "link-token", [] ->
         {:ok, %{id: 9001, email: "linkee@example.com", username: "linkee"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token -> {:ok, ["machine-1"]} end)
+      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
+        {:ok, ["machine-1"]}
+      end)
 
       conn =
         conn
@@ -279,12 +291,15 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 96 -> {:ok, "admin-link-token"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :account, fn "admin-link-token" ->
+      expect(Cinder.Accounts.PlexAuthMock, :account, fn "admin-link-token", [] ->
         {:ok, %{id: 9100, email: "admin-link@example.com", username: "the-admin"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token -> {:ok, ["machine-1"]} end)
+      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
+        {:ok, ["machine-1"]}
+      end)
 
       conn =
         conn
@@ -329,13 +344,13 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 102 -> {:ok, "link-token-2"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :account, fn "link-token-2" ->
+      expect(Cinder.Accounts.PlexAuthMock, :account, fn "link-token-2", [] ->
         {:ok, %{id: 9002, email: "outsider2@example.com", username: "outsider2"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
+      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token ->
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
         {:ok, ["some-other-machine"]}
       end)
 
@@ -362,12 +377,15 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 103 -> {:ok, "collision-token"} end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :account, fn "collision-token" ->
+      expect(Cinder.Accounts.PlexAuthMock, :account, fn "collision-token", [] ->
         {:ok, %{id: 5555, email: "admin-collision@example.com", username: "attacker"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn -> {:ok, "machine-1"} end)
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token -> {:ok, ["machine-1"]} end)
+      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
+
+      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
+        {:ok, ["machine-1"]}
+      end)
 
       conn =
         conn

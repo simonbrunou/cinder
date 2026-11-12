@@ -146,6 +146,7 @@ defmodule Cinder.Application do
         Cinder.Library.MediaServer.Reconciler,
         Cinder.Requests.WatchlistSync,
         Cinder.Accounts.Janitor,
+        Cinder.Accounts.PlexSignInWatch,
         Cinder.DatabaseBackup
       ]
     else

@@ -581,6 +581,36 @@ defmodule Cinder.Notifier.DiscordTest do
     end
   end
 
+  describe "health check events" do
+    test "a failing Plex sign-in check posts a red embed with the reason in words" do
+      expect_post()
+
+      for {reason, words} <- [
+            {:server_not_listed,
+             "plex.tv no longer lists the household Plex server for the owner's token, so " <>
+               "Plex sign-in is refused"},
+            {:token_rejected, "plex.tv rejected the configured Plex token"},
+            {:timeout, ":timeout"},
+            {{:server_ids, {:plex_tv_status, 503}}, "{:server\\_ids, {:plex\\_tv\\_status, 503}}"}
+          ] do
+        assert :ok = Discord.notify({:health_check_failed, :plex_signin, reason})
+        assert_receive {:posted, %{"embeds" => [embed]}}
+        assert embed["title"] == "🔴 Health check failing"
+        assert embed["description"] == "Plex sign-in (owner account) — #{words}"
+        assert embed["color"] == 0xE74C3C
+      end
+    end
+
+    test "a recovered Plex sign-in check posts a green embed" do
+      expect_post()
+      assert :ok = Discord.notify({:health_check_recovered, :plex_signin})
+      assert_receive {:posted, %{"embeds" => [embed]}}
+      assert embed["title"] == "Health check passes again"
+      assert embed["description"] == "Plex sign-in (owner account)"
+      assert embed["color"] == 0x2ECC71
+    end
+  end
+
   test "health/0 rejects an oversized JSON response" do
     Req.Test.stub(Cinder.DiscordStub, fn conn ->
       conn

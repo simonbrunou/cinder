@@ -405,6 +405,35 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#settings-group-tmdb .badge-success", "OK")
   end
 
+  test "the media server group tests Plex sign-in with its own button", %{conn: conn} do
+    expect(Cinder.Accounts.PlexAuthMock, :account, 2, fn "test-key", [timeouts: :probe] ->
+      {:ok, %{id: 1}}
+    end)
+
+    expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, 2, fn [timeouts: :probe] ->
+      {:ok, "machine-1"}
+    end)
+
+    expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn "test-key", _opts -> {:ok, []} end)
+
+    expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn "test-key", _opts ->
+      {:ok, ["machine-1"]}
+    end)
+
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+    button = "#settings-group-media_server button#test-target-plex_signin"
+
+    lv |> element(button, "Test Plex sign-in (owner account)") |> render_click()
+
+    assert has_element?(
+             lv,
+             ~s|#settings-group-media_server .badge-error[title="plex.tv does not list the household server for this Plex token"]|
+           )
+
+    lv |> element(button) |> render_click()
+    assert has_element?(lv, "#settings-group-media_server .badge-success", "OK")
+  end
+
   test "a Test event for an id no probe target has changes nothing", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/settings")
     before = render(lv)

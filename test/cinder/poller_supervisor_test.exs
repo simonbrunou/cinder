@@ -30,7 +30,7 @@ defmodule Cinder.PollerSupervisorTest do
   # `config :cinder, Cinder.Download.Poller, interval: -1`, showed `Cinder.Supervisor`, `Repo`,
   # and `Endpoint` all `nil` (dead) after 3s. Nesting the 16 pollers under their own
   # Cinder.PollerSupervisor alone is NOT enough for a *permanently* crash-looping worker (as
-  # opposed to a transient burst): the nested supervisor's own 16-restarts-in-5s budget exhausts
+  # opposed to a transient burst): the nested supervisor's own 17-restarts-in-5s budget exhausts
   # near-instantly, it terminates, its DEFAULT (:permanent) restart type has Cinder.Supervisor try
   # again, the same static child crashes again immediately post-restart, and three of those
   # near-instant exhaustion cycles fit comfortably inside Cinder.Supervisor's own default
@@ -70,7 +70,7 @@ defmodule Cinder.PollerSupervisorTest do
 
     capture_log(fn ->
       {:ok, _pid} = Supervisor.start_child(Cinder.PollerSupervisor, PermanentCrashLooper)
-      # PollerSupervisor's own budget (16 restarts / 5s) runs out on the 17th crash, and it
+      # PollerSupervisor's own budget (17 restarts / 5s) runs out on the 18th crash, and it
       # terminates. A fixed sleep here was too short for those crashes on a loaded runner (#1062).
       assert_receive {:DOWN, ^poller_supervisor, :process, _object, _reason}
     end)

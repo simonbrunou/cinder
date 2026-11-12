@@ -83,6 +83,31 @@ defmodule Cinder.Notifier.WebhookTest do
     assert body == %{"event" => "sign_in_refused", "id" => 7, "reason" => "server_access"}
   end
 
+  test "the health check events name the target, and a failure its reason" do
+    configure(url: @url)
+    expect_post()
+
+    assert :ok = Webhook.notify({:health_check_failed, :plex_signin, :server_not_listed})
+    assert_receive {:posted, body, _headers}
+
+    assert body == %{
+             "event" => "health_check_failed",
+             "name" => "plex_signin",
+             "reason" => "server_not_listed"
+           }
+
+    assert :ok =
+             Webhook.notify(
+               {:health_check_failed, :plex_signin, {:account, {:plex_tv_status, 503}}}
+             )
+
+    assert_receive {:posted, %{"reason" => "{:account, {:plex_tv_status, 503}}"}, _headers}
+
+    assert :ok = Webhook.notify({:health_check_recovered, :plex_signin})
+    assert_receive {:posted, body, _headers}
+    assert body == %{"event" => "health_check_recovered", "name" => "plex_signin"}
+  end
+
   test "the maintenance events name the operation, and exhausted searches list the episodes" do
     configure(url: @url)
     expect_post()

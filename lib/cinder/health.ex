@@ -82,6 +82,18 @@ defmodule Cinder.Health do
       setup: :required,
       names_adapter: true
     },
+    # The media-server row asks the local Plex server, which kept answering while plex.tv stopped
+    # listing it for every account (#1204). Sign-in reads plex.tv's list, so it gets its own row.
+    %Target{
+      id: "plex_signin",
+      group: :media_server,
+      label: "Plex sign-in (owner account)",
+      help:
+        "Checks that plex.tv lists the household server for the owner's Plex token. It does not " <>
+          "try a sign-in or show what a shared user sees.",
+      probe: {:module, Cinder.Accounts.PlexAuth.SignInProbe},
+      dashboard: :configured
+    },
     %Target{
       id: "audiobook_server",
       group: :audiobook_server,
@@ -221,7 +233,9 @@ defmodule Cinder.Health do
   def msgids,
     do:
       Enum.uniq(
-        Enum.map(@targets, & &1.label) ++ [@stored_credentials.label, @sidecar_files.label]
+        Enum.map(@targets, & &1.label) ++
+          for(%Target{help: help} <- @targets, help, do: help) ++
+          [@stored_credentials.label, @sidecar_files.label]
       )
 
   # Runs each `{key, fun}` probe in its own task, all started at once, and returns
@@ -282,15 +296,17 @@ defmodule Cinder.Health do
     for(
       %Target{dashboard: policy} = target <- @targets,
       policy != :never,
-      do: {row(target.id, target.label, adapter_name(target)), fn -> dashboard_status(target) end}
+      do:
+        {row(target.id, target.label, adapter_name(target), target.help),
+         fn -> dashboard_status(target) end}
     ) ++
       [
-        {row(@stored_credentials.id, @stored_credentials.label, nil), &stored_credentials/0},
-        {row(@sidecar_files.id, @sidecar_files.label, nil), &sidecar_files/0}
+        {row(@stored_credentials.id, @stored_credentials.label, nil, nil), &stored_credentials/0},
+        {row(@sidecar_files.id, @sidecar_files.label, nil, nil), &sidecar_files/0}
       ]
   end
 
-  defp row(id, label, adapter), do: %{id: id, label: label, adapter: adapter}
+  defp row(id, label, adapter, help), do: %{id: id, label: label, adapter: adapter, help: help}
 
   defp dashboard_status(%Target{dashboard: policy} = target) do
     case run_target(target) do

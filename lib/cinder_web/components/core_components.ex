@@ -866,6 +866,16 @@ defmodule CinderWeb.CoreComponents do
   def health_reason(:econnrefused), do: gettext("Connection refused")
   def health_reason(:closed), do: gettext("Connection closed")
 
+  def health_reason(:server_not_listed),
+    do: gettext("plex.tv does not list the household server for this Plex token")
+
+  def health_reason(:token_rejected), do: gettext("plex.tv rejected the Plex token")
+
+  # `Cinder.Accounts.PlexAuth.SignInProbe` names the step that failed; the reason reads the same
+  # without it.
+  def health_reason({step, reason}) when step in [:account, :server_machine_id, :server_ids],
+    do: health_reason(reason)
+
   def health_reason({:sabnzbd_config, warnings}),
     do: Enum.map_join(warnings, " ", &sabnzbd_warning/1)
 

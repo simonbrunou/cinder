@@ -208,6 +208,22 @@ defmodule Cinder.Notifier.Discord do
       color: @red
     }
 
+  # A scheduled check (`Cinder.Accounts.PlexSignInWatch`) started failing, or passes again after a
+  # failure it reported.
+  defp embed({:health_check_failed, target, reason}),
+    do: %{
+      title: "🔴 Health check failing",
+      description: "#{health_check_name(target)} — #{health_failure(reason)}",
+      color: @red
+    }
+
+  defp embed({:health_check_recovered, target}),
+    do: %{
+      title: "Health check passes again",
+      description: health_check_name(target),
+      color: @green
+    }
+
   # `:account_activated` is deliberately absent: it's a per-user "you're in now" message (Email's
   # job), not a household-channel signal — the admin already saw `:user_registered` and did the
   # activating. Keeping it out of Discord also keeps requester PII off this admin channel (#184).
@@ -230,6 +246,17 @@ defmodule Cinder.Notifier.Discord do
 
   defp refusal_step(:account_write), do: "Cinder could not save their account"
   defp refusal_step(_step), do: "a sign-in step refused them"
+
+  defp health_check_name(:plex_signin), do: "Plex sign-in (owner account)"
+  defp health_check_name(target), do: detail(target)
+
+  defp health_failure(:server_not_listed),
+    do:
+      "plex.tv no longer lists the household Plex server for the owner's token, so Plex " <>
+        "sign-in is refused"
+
+  defp health_failure(:token_rejected), do: "plex.tv rejected the configured Plex token"
+  defp health_failure(reason), do: detail(reason)
 
   defp hold_summary(:needs_mapping), do: "needs episode mapping"
   defp hold_summary(:verification_blocked), do: "failed release verification"

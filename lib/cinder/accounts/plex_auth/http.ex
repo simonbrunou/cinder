@@ -5,9 +5,10 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
   account (`/api/v2/user`), and list the `clientIdentifier` of every resource plex.tv
   lists for it, whatever its labels say, skipping an id that is not a non-empty string
   (`/api/v2/resources`).
-  `server_machine_id/0` instead hits the configured local Plex server's
+  `server_machine_id/1` instead hits the configured local Plex server's
   unauthenticated `/identity`, and `watchlist/1` hits the account-level discover
-  host (`https://discover.provider.plex.tv`).
+  host (`https://discover.provider.plex.tv`). `account/2`, `resource_ids/2` and
+  `server_machine_id/1` take `timeouts: :probe` for the `plex_signin` health check.
 
   Reads `req_options` from `config :cinder, #{inspect(__MODULE__)}`; the local
   server's `url` comes from `config :cinder, Cinder.Library.MediaServer.Plex` (the
@@ -25,6 +26,10 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
   @discover_base_url "https://discover.provider.plex.tv"
   # One page is the whole watchlist for a household; plex.tv caps the page size anyway.
   @watchlist_page_size 500
+  # `timeouts: :probe` (`PlexAuth.call_opts/0`): 3 s to connect, to get a pooled connection and to
+  # receive, the bounds `Cinder.Health` asks of every `health/0`. Three calls that each wait out
+  # both bounds take 18 s; `Cinder.Health`'s 15-second budget still ends the check.
+  @probe_timeouts [receive_timeout: 3_000, pool_timeout: 3_000, connect_options: [timeout: 3_000]]
 
   @impl true
   def create_pin do
@@ -49,8 +54,8 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
   end
 
   @impl true
-  def account(token) do
-    request(:get, "/api/v2/user", headers: [{"x-plex-token", token}])
+  def account(token, opts) do
+    request(:get, "/api/v2/user", [headers: [{"x-plex-token", token}]] ++ timeouts(opts))
     |> result()
     |> case do
       {:ok, %{} = body} ->
@@ -65,10 +70,11 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
   end
 
   @impl true
-  def resource_ids(token) do
-    request(:get, "/api/v2/resources",
-      headers: [{"x-plex-token", token}],
-      params: [includeHttps: 1]
+  def resource_ids(token, opts) do
+    request(
+      :get,
+      "/api/v2/resources",
+      [headers: [{"x-plex-token", token}], params: [includeHttps: 1]] ++ timeouts(opts)
     )
     |> result()
     |> case do
@@ -79,14 +85,22 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
   end
 
   @impl true
-  def server_machine_id do
+  def server_machine_id(opts) do
     config = Application.get_env(:cinder, Cinder.Library.MediaServer.Plex, [])
 
     # A nil/blank base_url makes Req raise rather than return {:error, _} — guard it
     # (mirrors Cinder.Library.MediaServer.Plex.health/0).
     case Keyword.get(config, :url) do
       url when url in [nil, ""] -> {:error, :not_configured}
-      url -> fetch_identity(url)
+      url -> fetch_identity(url, opts)
+    end
+  end
+
+  # The `plex_signin` health check's bounds (`PlexAuth.call_opts/0`); `[]` keeps each call's own.
+  defp timeouts(opts) do
+    case Keyword.get(opts, :timeouts) do
+      :probe -> @probe_timeouts
+      nil -> []
     end
   end
 
@@ -159,7 +173,7 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
     for %{"clientIdentifier" => id} when is_binary(id) and id != "" <- resources, do: id
   end
 
-  defp fetch_identity(url) do
+  defp fetch_identity(url, opts) do
     config = Application.get_env(:cinder, __MODULE__, [])
 
     [
@@ -172,7 +186,7 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
     |> Keyword.merge(Keyword.get(config, :req_options, []))
     |> Keyword.put(:redirect, false)
     |> Req.new()
-    |> Req.merge(method: :get, url: "/identity")
+    |> Req.merge([method: :get, url: "/identity"] ++ timeouts(opts))
     |> HTTPPolicy.bounded_request(@max_response_bytes)
     |> result()
     |> case do

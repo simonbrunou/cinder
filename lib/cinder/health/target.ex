@@ -18,6 +18,8 @@ defmodule Cinder.Health.Target do
   - `names_adapter`: `true` where the operator picks the adapter in `/settings` (the download
     clients, the media server), so the dashboard row names the wired one. Every other target has
     one adapter, which its label already names.
+  - `help`: `nil`, or an English msgid saying what the check covers when the label alone would
+    promise more. The dashboard row shows it under the label.
   """
 
   @enforce_keys [:id, :group, :label, :probe]
@@ -26,6 +28,7 @@ defmodule Cinder.Health.Target do
     :group,
     :label,
     :probe,
+    help: nil,
     setup: :optional,
     dashboard: :always,
     names_adapter: false
@@ -45,6 +48,7 @@ defmodule Cinder.Health.Target do
           group: atom(),
           label: String.t(),
           probe: probe(),
+          help: String.t() | nil,
           setup: :required | :any | :optional,
           dashboard: :always | :configured | :never,
           names_adapter: boolean()

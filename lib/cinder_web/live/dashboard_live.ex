@@ -94,6 +94,7 @@ defmodule CinderWeb.DashboardLive do
       id: "health_check",
       label: gettext_noop("Health check"),
       adapter: nil,
+      help: nil,
       status: {:error, reason}
     }
 
@@ -593,6 +594,13 @@ defmodule CinderWeb.DashboardLive do
                 <div class="min-w-0">
                   <span>{SettingsLabels.t(h.label)}</span>
                   <span :if={h.adapter} class="text-sm text-base-content/70">({h.adapter})</span>
+                  <p
+                    :if={h.help}
+                    id={"dash-health-help-#{h.id}"}
+                    class="text-xs text-base-content/70 break-words"
+                  >
+                    {SettingsLabels.t(h.help)}
+                  </p>
                   <p :if={match?({:error, _}, h.status)} class="text-xs text-error break-words">
                     {health_reason(elem(h.status, 1))}
                   </p>

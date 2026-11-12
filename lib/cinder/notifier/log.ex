@@ -68,6 +68,14 @@ defmodule Cinder.Notifier.Log do
   def notify({:sign_in_refused, %{id: id}, step}),
     do: log("sign-in refused: user ##{id} at step #{step}")
 
+  # `Cinder.Accounts.PlexSignInWatch` names the target with an atom and hands a reason it has
+  # already cut down to atoms, steps and status codes.
+  def notify({:health_check_failed, target, reason}),
+    do: log("health check failed: #{target} (#{inspect(reason)})")
+
+  def notify({:health_check_recovered, target}),
+    do: log("health check recovered: #{target}")
+
   def notify({:maintenance_completed, key}),
     do: log("maintenance completed: #{key}")
 

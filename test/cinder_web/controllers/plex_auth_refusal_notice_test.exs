@@ -45,21 +45,24 @@ defmodule CinderWeb.PlexAuthRefusalNoticeTest do
 
     case step do
       :account ->
-        expect(PlexAuthMock, :account, times, fn "token" -> {:error, {:plex_tv_status, 503}} end)
+        expect(PlexAuthMock, :account, times, fn "token", [] ->
+          {:error, {:plex_tv_status, 503}}
+        end)
 
       _later ->
-        expect(PlexAuthMock, :account, times, fn "token" -> {:ok, plex_account} end)
+        expect(PlexAuthMock, :account, times, fn "token", [] -> {:ok, plex_account} end)
         expect_server_steps(step, times)
     end
   end
 
   defp expect_server_steps(:server_machine_id, times),
-    do: expect(PlexAuthMock, :server_machine_id, times, fn -> {:error, :unexpected_response} end)
+    do:
+      expect(PlexAuthMock, :server_machine_id, times, fn [] -> {:error, :unexpected_response} end)
 
   defp expect_server_steps(step, times) do
-    expect(PlexAuthMock, :server_machine_id, times, fn -> {:ok, "machine-1"} end)
+    expect(PlexAuthMock, :server_machine_id, times, fn [] -> {:ok, "machine-1"} end)
 
-    expect(PlexAuthMock, :resource_ids, times, fn "token" ->
+    expect(PlexAuthMock, :resource_ids, times, fn "token", [] ->
       case step do
         :server_ids -> {:error, {:plex_tv_status, 500}}
         :server_access -> {:ok, ["another-server"]}

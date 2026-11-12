@@ -7414,3 +7414,23 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "Saving also stops releases named by a shifted episode's TMDB code from matching that episode. Only matching a downloaded file to an episode by hand can keep that code."
 msgstr ""
+
+#: lib/cinder_web/settings_labels.ex
+#, elixir-autogen, elixir-format
+msgid "Checks that plex.tv lists the household server for the owner's Plex token. It does not try a sign-in or show what a shared user sees."
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex
+#, elixir-autogen, elixir-format
+msgid "Plex sign-in (owner account)"
+msgstr ""
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "plex.tv does not list the household server for this Plex token"
+msgstr ""
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "plex.tv rejected the Plex token"
+msgstr ""

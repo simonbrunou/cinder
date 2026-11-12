@@ -55,7 +55,7 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
     assert {:ok, "plex-token-123"} = HTTP.check_pin(42)
   end
 
-  test "account/1 sends the token and parses id/email/username" do
+  test "account/2 sends the token and parses id/email/username" do
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
       assert conn.request_path == "/api/v2/user"
       assert Plug.Conn.get_req_header(conn, "x-plex-token") == ["user-token"]
@@ -66,20 +66,20 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
     end)
 
     assert {:ok, %{id: 7, email: "person@example.com", username: "person"}} =
-             HTTP.account("user-token")
+             HTTP.account("user-token", [])
   end
 
-  test "account/1 tolerates a managed account with no email" do
+  test "account/2 tolerates a managed account with no email" do
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
       |> Req.Test.json(%{"id" => 8, "email" => nil, "username" => "managed"})
     end)
 
-    assert {:ok, %{id: 8, email: nil, username: "managed"}} = HTTP.account("user-token")
+    assert {:ok, %{id: 8, email: nil, username: "managed"}} = HTTP.account("user-token", [])
   end
 
-  test "resource_ids/1 sends the token and keeps every resource, players included" do
+  test "resource_ids/2 sends the token and keeps every resource, players included" do
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
       assert conn.request_path == "/api/v2/resources"
       assert Plug.Conn.get_req_header(conn, "x-plex-token") == ["user-token"]
@@ -93,12 +93,12 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
       ])
     end)
 
-    assert {:ok, ["server-1", "player-1", "server-2"]} = HTTP.resource_ids("user-token")
+    assert {:ok, ["server-1", "player-1", "server-2"]} = HTTP.resource_ids("user-token", [])
   end
 
   # On 2026-11-05 plex.tv listed Plex Media Server as `provides: "controller"` for the owner
   # and every shared user alike, which locked every account out of Plex sign-in.
-  test "resource_ids/1 keeps a Plex Media Server whatever its provides says" do
+  test "resource_ids/2 keeps a Plex Media Server whatever its provides says" do
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
@@ -115,12 +115,12 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
     end)
 
     assert {:ok, ["server-1", "player-1", "roku-1", "server-2"]} =
-             HTTP.resource_ids("user-token")
+             HTTP.resource_ids("user-token", [])
   end
 
   # plex.tv documents none of these labels, and `provides` changed twice on 2026-11-05: the
   # caller's match on the server's machine id is the whole gate, so no label filters an id out.
-  test "resource_ids/1 returns every id in list order, whatever product, provides or owned say" do
+  test "resource_ids/2 returns every id in list order, whatever product, provides or owned say" do
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
@@ -146,10 +146,10 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
               "shared-1",
               "owned-1"
             ]} =
-             HTTP.resource_ids("user-token")
+             HTTP.resource_ids("user-token", [])
   end
 
-  test "resource_ids/1 drops a resource whose clientIdentifier is not a non-empty string" do
+  test "resource_ids/2 drops a resource whose clientIdentifier is not a non-empty string" do
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
@@ -163,20 +163,20 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
       ])
     end)
 
-    assert {:ok, ["server-1"]} = HTTP.resource_ids("user-token")
+    assert {:ok, ["server-1"]} = HTTP.resource_ids("user-token", [])
   end
 
-  test "resource_ids/1 returns {:error, :unexpected_response} for a body that is not a list" do
+  test "resource_ids/2 returns {:error, :unexpected_response} for a body that is not a list" do
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
       |> Req.Test.json(%{"clientIdentifier" => "server-1"})
     end)
 
-    assert {:error, :unexpected_response} = HTTP.resource_ids("user-token")
+    assert {:error, :unexpected_response} = HTTP.resource_ids("user-token", [])
   end
 
-  test "server_machine_id/0 hits the configured local server's /identity" do
+  test "server_machine_id/1 hits the configured local server's /identity" do
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
       assert conn.host == "localhost"
       assert conn.request_path == "/identity"
@@ -186,10 +186,10 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
       |> Req.Test.json(%{"MediaContainer" => %{"machineIdentifier" => "abc-123"}})
     end)
 
-    assert {:ok, "abc-123"} = HTTP.server_machine_id()
+    assert {:ok, "abc-123"} = HTTP.server_machine_id([])
   end
 
-  test "server_machine_id/0 returns {:error, :unexpected_response} for a machineIdentifier that is not a non-empty string" do
+  test "server_machine_id/1 returns {:error, :unexpected_response} for a machineIdentifier that is not a non-empty string" do
     for machine_id <- [nil, "", 42] do
       Req.Test.stub(Cinder.PlexTvStub, fn conn ->
         conn
@@ -197,15 +197,67 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
         |> Req.Test.json(%{"MediaContainer" => %{"machineIdentifier" => machine_id}})
       end)
 
-      assert HTTP.server_machine_id() == {:error, :unexpected_response},
+      assert HTTP.server_machine_id([]) == {:error, :unexpected_response},
              "machineIdentifier #{inspect(machine_id)} passed"
     end
   end
 
-  test "server_machine_id/0 returns {:error, :not_configured} when the local server url is blank" do
+  describe "timeouts" do
+    # An adapter in place of the Req.Test plug sees the options each request goes out with, and
+    # answers with a refused connection so nothing reaches a network.
+    setup do
+      pid = self()
+
+      adapter = fn request ->
+        send(
+          pid,
+          {:request, request.url.path,
+           Map.take(request.options, [:receive_timeout, :pool_timeout, :connect_options])}
+        )
+
+        {request, %Req.TransportError{reason: :econnrefused}}
+      end
+
+      put_config(HTTP, req_options: [adapter: adapter, retry: false])
+      :ok
+    end
+
+    test "sign-in keeps 15 s on plex.tv and 5 s on /identity" do
+      HTTP.account("user-token", [])
+      assert_receive {:request, "/api/v2/user", options}
+
+      assert options == %{
+               receive_timeout: 15_000,
+               pool_timeout: 5_000,
+               connect_options: [timeout: 5_000]
+             }
+
+      HTTP.resource_ids("user-token", [])
+      assert_receive {:request, "/api/v2/resources", ^options}
+
+      HTTP.server_machine_id([])
+      assert_receive {:request, "/identity", options}
+      assert options == %{receive_timeout: 5_000, connect_options: [timeout: 5_000]}
+    end
+
+    test "timeouts: :probe bounds each of the three calls with 3 s" do
+      probe = %{receive_timeout: 3_000, pool_timeout: 3_000, connect_options: [timeout: 3_000]}
+
+      HTTP.account("user-token", timeouts: :probe)
+      assert_receive {:request, "/api/v2/user", ^probe}
+
+      HTTP.resource_ids("user-token", timeouts: :probe)
+      assert_receive {:request, "/api/v2/resources", ^probe}
+
+      HTTP.server_machine_id(timeouts: :probe)
+      assert_receive {:request, "/identity", ^probe}
+    end
+  end
+
+  test "server_machine_id/1 returns {:error, :not_configured} when the local server url is blank" do
     put_config(Cinder.Library.MediaServer.Plex, url: "")
 
-    assert {:error, :not_configured} = HTTP.server_machine_id()
+    assert {:error, :not_configured} = HTTP.server_machine_id([])
   end
 
   test "watchlist/1 hits the discover host with the token and maps entries to TMDB ids" do

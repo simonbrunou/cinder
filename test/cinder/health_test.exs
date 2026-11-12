@@ -48,10 +48,19 @@ defmodule Cinder.HealthTest do
     stub(Cinder.Download.ClientMock, :health, fn -> {:error, :econnrefused} end)
     stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)
     stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)
+    stub_plex_signin()
     stub(Cinder.Library.AudiobookServerMock, :health, fn -> :ok end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
+  end
+
+  # config/test.exs configures Plex, so the `plex_signin` row runs its probe.
+  defp stub_plex_signin do
+    stub(Cinder.Accounts.PlexAuthMock, :account, fn _token, _opts -> {:ok, %{id: 1}} end)
+    stub(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn _opts -> {:ok, "machine-1"} end)
+
+    stub(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, _opts -> {:ok, ["machine-1"]} end)
   end
 
   defp row(rows, id), do: Enum.find(rows, &(&1.id == id))
@@ -136,7 +145,7 @@ defmodule Cinder.HealthTest do
       assert ids.(:indexer) == ["indexer"]
       assert ids.(:migration) == ["radarr", "sonarr", "readarr"]
       assert ids.(:download) == ["torrent", "usenet"]
-      assert ids.(:media_server) == ["media_server"]
+      assert ids.(:media_server) == ["media_server", "plex_signin"]
       assert ids.(:audiobook_server) == ["audiobook_server"]
 
       assert ids.(:library) ==
@@ -526,8 +535,16 @@ defmodule Cinder.HealthTest do
   describe "check_all/0" do
     test "returns one row per dashboard target, in settings-group order" do
       stub_check_all_services()
+      rows = Health.check_all()
 
-      assert Health.check_all() == [
+      # Only the Plex sign-in row carries help text.
+      assert for(%{help: help} = row <- rows, help, do: {row.id, help}) == [
+               {"plex_signin",
+                "Checks that plex.tv lists the household server for the owner's Plex token. " <>
+                  "It does not try a sign-in or show what a shared user sees."}
+             ]
+
+      assert Enum.map(rows, &Map.delete(&1, :help)) == [
                %{id: "tmdb", label: "TMDB", adapter: nil, status: :ok},
                %{id: "indexer", label: "Prowlarr", adapter: nil, status: :ok},
                %{
@@ -546,6 +563,12 @@ defmodule Cinder.HealthTest do
                  id: "media_server",
                  label: "Media server",
                  adapter: "MediaServerMock",
+                 status: :ok
+               },
+               %{
+                 id: "plex_signin",
+                 label: "Plex sign-in (owner account)",
+                 adapter: nil,
                  status: :ok
                },
                %{id: "audiobook_server", label: "Audiobookshelf", adapter: nil, status: :ok},
@@ -589,6 +612,19 @@ defmodule Cinder.HealthTest do
 
       refute row(rows, "torrent")
       assert row(rows, "usenet").status == :ok
+    end
+
+    test "the Plex sign-in row shows the probe's result, and only while Plex is configured" do
+      stub_check_all_services()
+      stub(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, _opts -> {:ok, []} end)
+
+      assert row(Health.check_all(), "plex_signin").status == {:error, :server_not_listed}
+
+      for blank <- [[token: ""], [token: "test-key", url: ""]] do
+        Cinder.ConfigCase.put_config(Cinder.Library.MediaServer.Plex, blank)
+        refute row(Health.check_all(), "plex_signin"), inspect(blank)
+        assert Health.check("plex_signin") == {:error, :not_configured}
+      end
     end
 
     test "migration sources and Discord have Test buttons but no dashboard row" do
@@ -658,8 +694,8 @@ defmodule Cinder.HealthTest do
       assert row(rows, "tmdb").status == :ok
       # The indexer's deadline comes first, and its row still keeps its settings-group place.
       assert Enum.map(rows, & &1.id) ==
-               ~w(tmdb indexer torrent usenet media_server audiobook_server movies_library
-                  tv_library openlibrary hardcover)
+               ~w(tmdb indexer torrent usenet media_server plex_signin audiobook_server
+                  movies_library tv_library openlibrary hardcover)
     end
 
     test "a map budget names a finding row by its id" do

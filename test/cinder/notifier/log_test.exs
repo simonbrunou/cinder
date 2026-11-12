@@ -40,6 +40,18 @@ defmodule Cinder.Notifier.LogTest do
     refute log =~ ~r/kim/i
   end
 
+  test "the health check events name the target and the reason" do
+    log =
+      capture_log(fn ->
+        assert :ok = Log.notify({:health_check_failed, :plex_signin, :server_not_listed})
+        assert :ok = Log.notify({:health_check_recovered, :plex_signin})
+      end)
+
+    assert log =~ "[notifier] health check failed: plex_signin (:server_not_listed)"
+    assert log =~ "[notifier] health check recovered: plex_signin"
+    refute log =~ "[notifier] event:"
+  end
+
   test "book_target_held logs the title and the sanitized hold reason" do
     target = %{work: %{title: "The Dispossessed"}, hold_reason: "download_failed"}
 
