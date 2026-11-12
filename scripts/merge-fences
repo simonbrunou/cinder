@@ -18,18 +18,20 @@
 #      merged tree. Of those it runs the ones ending in _test.exs, and prints the others as not run,
 #      since mix test runs only test files. With none to run, it prints `fences: none` and exits 0.
 #   3. It writes the merged tree (`git merge-tree --write-tree <base> <head>`) as a commit with both
-#      parents, adds a detached worktree on it under ${TMPDIR:-/var/tmp}, seeds it with that tree's
-#      scripts/seed-worktree, and runs `mix test <files>` there: the alias, with the compile,
-#      format and Credo gates CI's run has. Both run through `nix develop <repo root> -c`, unless
-#      the caller is already in the flake's dev shell (IN_NIX_SHELL and the MIX_TAILWIND_PATH its
+#      parents and adds a detached worktree on it under $MERGE_FENCES_TMPDIR (/var/tmp when unset
+#      or empty). It never uses $TMPDIR, which the dev shell points at a /tmp/nix-shell.* directory
+#      on the tmpfs the host's sessions share. It seeds the worktree with that tree's
+#      scripts/seed-worktree and runs `mix test <files>` there: the alias, with the compile, format
+#      and Credo gates CI's run has. Both run through `nix develop <repo root> -c`, unless the
+#      caller is already in the flake's dev shell (IN_NIX_SHELL and the MIX_TAILWIND_PATH its
 #      shellHook exports are both set). MIX_ENV and the MIX_BUILD_*/MIX_DEPS_PATH overrides are
 #      cleared first. Each runs as its own process group, and SIGINT or SIGTERM stops that group
 #      and exits 130 or 143. The worktree and its directory go on every exit path but SIGKILL; when
 #      git cannot remove the worktree, a WARNING names it and the command that removes it.
 # A pass prints `fences: passed` with the files. A failing mix run prints its output from ExUnit's
 # first numbered failure (200 lines at most; the last 80 lines when there is none), keeps the whole
-# log under ${TMPDIR:-/var/tmp}, ends on a FAIL: line that names the failing test files and
-# setup_all modules (or says no test failed by name, as when a gate failed) and the fix, and exits
+# log in that same directory, ends on a FAIL: line that names the failing test files and setup_all
+# modules (or says no test failed by name, as when a gate failed) and the fix, and exits
 # with 1. A step it cannot run (a failed git call, a merge-tree conflict, no nix, a failed worktree
 # or seed) is a FAIL: with exit 1 too. Wrong arguments exit 2.
 #
@@ -107,7 +109,8 @@ else
   shell=(nix develop "$root" -c)
 fi
 
-tmp=$(mktemp -d "${TMPDIR:-/var/tmp}/cinder-merge-fences.XXXXXX") || fail "mktemp failed"
+tmp_root=${MERGE_FENCES_TMPDIR:-/var/tmp}
+tmp=$(mktemp -d "$tmp_root/cinder-merge-fences.XXXXXX") || fail "mktemp in $tmp_root failed"
 wt=$tmp/merge
 cleanup() {
   if [[ -e $wt ]] && ! git -C "$root" worktree remove --force "$wt"; then
@@ -157,7 +160,7 @@ if ! run_step scripts/seed-worktree; then
 fi
 
 if ! run_step mix test "${selected[@]}"; then
-  kept=${TMPDIR:-/var/tmp}/cinder-merge-fences-$short_head-$short_base.log
+  kept=$tmp_root/cinder-merge-fences-$short_head-$short_base.log
   cp "$log" "$kept" || kept="(not kept: cp failed)"
   # ExUnit numbers each failure as `  1) `, ` 10) ` or `100) ` (ExUnit.Formatter's
   # with_counter/2); the lines before the first one are mostly the run's logs.

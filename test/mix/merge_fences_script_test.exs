@@ -98,7 +98,17 @@ defmodule Cinder.MergeFencesScriptTest do
 
     temp = Path.join(dir, "var")
     File.mkdir_p!(temp)
-    %{dir: dir, bin: bin, repo: repo, temp: temp, log: Path.join(dir, "fence.log")}
+    shell_tmp = Path.join(dir, "nix-shell")
+    File.mkdir_p!(shell_tmp)
+
+    %{
+      dir: dir,
+      bin: bin,
+      repo: repo,
+      temp: temp,
+      shell_tmp: shell_tmp,
+      log: Path.join(dir, "fence.log")
+    }
   end
 
   defp stub!(bin, name, body) do
@@ -143,7 +153,9 @@ defmodule Cinder.MergeFencesScriptTest do
       {"PATH", ctx.bin},
       {"FENCE_LOG", ctx.log},
       {"FENCE_STARTED", Path.join(ctx.dir, "started")},
-      {"TMPDIR", ctx.temp},
+      {"MERGE_FENCES_TMPDIR", ctx.temp},
+      # The dev shell's TMPDIR, on the shared /tmp tmpfs: the script never writes there.
+      {"TMPDIR", ctx.shell_tmp},
       {"HOME", ctx.dir},
       {"IN_NIX_SHELL", nil},
       {"MIX_TAILWIND_PATH", nil},
@@ -158,9 +170,13 @@ defmodule Cinder.MergeFencesScriptTest do
     head = git!(ctx.repo, ["rev-parse", "pr"])
     base = git!(ctx.repo, ["rev-parse", "main"])
 
-    System.cmd("bash", [@script, head, base],
+    # An Erlang port unsets a variable given as "", so an empty one goes through env(1).
+    {empty, set} = Enum.split_with(extra, &match?({_, ""}, &1))
+    assigns = for {name, ""} <- empty, do: name <> "="
+
+    System.cmd("env", assigns ++ ["bash", @script, head, base],
       cd: ctx.repo,
-      env: env(ctx, extra),
+      env: env(ctx, set),
       stderr_to_stdout: true
     )
   end
@@ -177,6 +193,7 @@ defmodule Cinder.MergeFencesScriptTest do
   defp assert_no_worktree(ctx) do
     assert git!(ctx.repo, ["worktree", "list"]) |> String.split("\n") |> length() == 1
     assert File.ls!(ctx.temp) |> Enum.reject(&String.ends_with?(&1, ".log")) == []
+    assert File.ls!(ctx.shell_tmp) == []
   end
 
   test "selects a fence file the PR side adds and runs it on the merge, through nix", ctx do
@@ -388,6 +405,29 @@ defmodule Cinder.MergeFencesScriptTest do
 
     assert code == 0, out
     assert ["seed merge", "mix test test/code_health/new_test.exs " <> _] = log(ctx)
+  end
+
+  for {state, value} <- [unset: nil, empty: ""] do
+    test "puts its worktree under /var/tmp when MERGE_FENCES_TMPDIR is #{state}, never TMPDIR",
+         ctx do
+      side!(ctx.repo, "pr", %{"test/code_health/new_test.exs" => "# new\n"})
+      side!(ctx.repo, "main", %{"app/a.ex" => "b\n"})
+      # Logs the template the script asks for, and makes the directory in the test's temp dir.
+      File.rm!(Path.join(ctx.bin, "mktemp"))
+
+      stub!(ctx.bin, "mktemp", """
+      #!/usr/bin/env bash
+      echo "mktemp $*" >> "$FENCE_LOG"
+      exec #{System.find_executable("mktemp")} -d "$FENCE_TEMP/cinder-merge-fences.XXXXXX"
+      """)
+
+      {out, code} =
+        run(ctx, [{"MERGE_FENCES_TMPDIR", unquote(value)}, {"FENCE_TEMP", ctx.temp}])
+
+      assert code == 0, out
+      assert ["mktemp -d /var/tmp/cinder-merge-fences.XXXXXX" | _] = log(ctx)
+      assert_no_worktree(ctx)
+    end
   end
 
   test "stops with FAIL: on a merge with a conflict", ctx do
