@@ -1,0 +1,157 @@
+#!/usr/bin/env python3
+"""Run one-edit mutants of a file against `mix test.unchecked`, then restore the file.
+
+    scripts/mutation-check <file> <mutants.json> <test path>...
+
+<mutants.json> holds a non-empty list of {"label": ..., "old": ..., "new": ...}, each value a
+string. The script first checks that each `old` occurs exactly once in <file>, counting
+overlapping matches; when one does not, it names each such label with its count, runs nothing
+and exits 2. It then runs `mix test.unchecked <test path>...` (docs/agents/testing.md) on the
+unchanged file as a control, which must pass at least one test. Then, for each mutant, it writes
+<file> as the original text with `old` replaced by `new` and runs the same command. It restores
+<file> after the last mutant, or when a SIGINT or SIGTERM stops the run. It prints one line per
+mutant with its verdict, then each line the edit removed (`-`) and added (`+`): an edit that
+matches the wrong text proves nothing, so read them.
+
+  killed     the run ends on a `Result:` line that ExUnit prints when a test failed
+             (`N/M passed`) or a module's `setup_all` failed (`, N invalid`);
+  SURVIVED   the run exits 0 on a `Result: N passed` line: no test covers the edit, or the
+             mutant changes nothing;
+  NO RESULT  any other run, such as a compile error before ExUnit or `Result: 0 tests`:
+             rewrite the mutant or the test arguments.
+
+Exit 0: every mutant killed. 1: a mutant survived or had no result. 2: wrong arguments, a file
+or mutant list it cannot read, an `old` that does not occur exactly once, no `mix` on PATH (run
+it through `nix develop`), a control run that does not pass, a <file> it cannot write or
+restore, or a stdout closed early (as by `| head`). 130: a signal stopped the run.
+"""
+import difflib
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+# ExUnit prints `N/M passed` only when a test failed, `N passed` when every test passed, and
+# `0 tests` when none ran; it appends `, N invalid` when a `setup_all` failed.
+KILLED = re.compile(r"^Result: (\d+/\d+ passed|.*, \d+ invalid)")
+PASSED = re.compile(r"^Result: \d+ passed")
+
+
+def occurrences(text, old):
+    count, start = 0, text.find(old)
+    while start != -1:
+        count += 1
+        start = text.find(old, start + 1)
+    return count
+
+
+def load(argv):
+    path, tests = Path(argv[0]), argv[2:]
+    mutants = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
+    keys = ("label", "old", "new")
+    if not isinstance(mutants, list) or not mutants or not all(
+        isinstance(m, dict) and all(isinstance(m.get(k), str) for k in keys) for m in mutants
+    ):
+        raise ValueError(
+            'the mutant list is not a non-empty list of {"label", "old", "new"} strings'
+        )
+    return path, mutants, tests, path.read_bytes()
+
+
+def run_tests(tests):
+    run = subprocess.run(["mix", "test.unchecked", *tests], capture_output=True, text=True)
+    output = (run.stdout + run.stderr).splitlines()
+    results = [line for line in output if line.startswith("Result:")]
+    return run.returncode, (results[-1] if results else None)
+
+
+def restore(path, original):
+    try:
+        path.write_bytes(original)
+        return True
+    except OSError as error:
+        print(f"cannot restore {path}: {error}", file=sys.stderr)
+        return False
+
+
+def verdict(code, result):
+    if KILLED.match(result or ""):
+        return "killed"
+    if code == 0 and PASSED.match(result or ""):
+        return "SURVIVED"
+    return "NO RESULT"
+
+
+def main(argv):
+    if len(argv) < 3:
+        print(__doc__, file=sys.stderr)
+        return 2
+    try:
+        path, mutants, tests, original = load(argv)
+        text = original.decode("utf-8")
+    except (OSError, ValueError) as error:
+        print(f"cannot read the arguments: {error}", file=sys.stderr)
+        return 2
+    counts = [(m["label"], occurrences(text, m["old"])) for m in mutants]
+    bad = [f"{label} ({count})" for label, count in counts if count != 1]
+    if bad:
+        print(f"`old` does not occur exactly once in {path}: {', '.join(bad)}", file=sys.stderr)
+        return 2
+
+    def stop(signum, _frame):
+        print(f"stopped by signal {signum}", file=sys.stderr)
+        sys.exit(130)  # raises SystemExit here, so the `finally` below restores the file
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, stop)
+
+    try:
+        code, result = run_tests(tests)
+    except OSError as error:
+        print(f"cannot run mix: {error}", file=sys.stderr)
+        return 2
+    if code != 0 or not PASSED.match(result or ""):
+        print(f"control run on the unchanged file did not pass: {result or f'exit {code}'}",
+              file=sys.stderr)
+        return 2
+
+    missed, failure = 0, None
+    try:
+        print(f"control: {result}", flush=True)
+        for m in mutants:
+            mutated = text.replace(m["old"], m["new"])
+            path.write_bytes(mutated.encode("utf-8"))
+            code, result = run_tests(tests)
+            outcome = verdict(code, result)
+            missed += outcome != "killed"
+            diff = difflib.unified_diff(text.splitlines(), mutated.splitlines(), lineterm="", n=0)
+            changed = [line for line in list(diff)[2:] if not line.startswith("@@")]
+            print(f"{m['label']}: {outcome}, {result or f'exit {code}'}", flush=True)
+            for line in changed:
+                print(f"    {line}", flush=True)
+        print(f"{len(mutants) - missed} of {len(mutants)} killed", flush=True)
+    except BrokenPipeError:
+        # Whatever read stdout (`| head`) has closed it. Point stdout at /dev/null so the exit
+        # flush cannot fail too.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        failure = "stdout closed early"
+    except OSError as error:
+        failure = f"cannot run mix or write {path}: {error}"
+    finally:
+        restored = restore(path, original)
+
+    if failure:
+        try:
+            print(failure, file=sys.stderr, flush=True)
+        except BrokenPipeError:  # stderr went to the same closed pipe (`2>&1 | head`)
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stderr.fileno())
+    if failure or not restored:
+        return 2
+    return 1 if missed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

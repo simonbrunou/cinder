@@ -65,6 +65,11 @@
   The format check and Credo do not run at all, so `mix test` stays the only "done" gate. On
   #1149 those gates stopped 6 of 14 mutants before ExUnit, about 13 minutes of rewrites, and
   #851 records 22 more threads that lost runs to them.
+- Run a list of one-edit mutants with `scripts/mutation-check <file> <mutants.json> <test>...`.
+  Its header gives the JSON shape, the checks it makes before the first mutant runs, the
+  verdicts and the exit codes. Read the lines it prints under each verdict: they are the lines
+  the edit removed and added. On #702 a hand-written loop chained `diff && run_suite` and ran no
+  mutant, and #1230, #1250 and #1254 each wrote a loop by hand.
 - A throwaway test, one that only reports what the code does, runs with `mix test.unchecked`.
   Before you edit an existing test file, copy it outside `test/` and restore it after the run;
   delete a new file. Report from the test body with
@@ -151,8 +156,10 @@
   character where Docker applies none (`` ` `` with no `# escape=` directive, or the end of a
   heredoc body line). Three review rounds, about 50 minutes from the first finding to the last
   fix, found them.
-- Before review, list in the PR body each form the sources use to reach a fence's pattern (`rg`
-  for the call, its wrappers and its aliases). Give each form the fence catches a fixture. Name
+- Before review, list each form the sources use to reach a fence's pattern (`rg` for the call,
+  its wrappers and its aliases) in the PR body, and paste the same list into each reviewer's
+  brief: a review that runs before the PR opens has no body to read, and on #1261 the Standards
+  review reported the list unchecked. Give each form the fence catches a fixture. Name
   each form it misses in its header, after an "include" lead-in such as
   `test/code_health/req_stub_sleep_test.exs`'s "Forms the walk does not follow include:", and
   show each one with a fixture or a throwaway probe. On #1219 the Standards review found that

@@ -38,9 +38,11 @@ about 29 minutes from the first finding to the last fix.
 
 - every sentence about what Cinder does;
 - the bold summary;
-- a sentence about a path whose code reads a list or setting an install can configure;
+- a sentence about a path whose code reads a list or setting an install can configure, or stored
+  rows of several kinds;
 - what such lists hold, or what a check over them decides;
 - that Cinder removes, cleans up or repairs something;
+- that Cinder keeps something, or never removes or changes it;
 - that Cinder no longer hangs or waits forever, or what a later call does after a timeout;
 - what Cinder did before the fix, which must hold on the merge base;
 - which release or file names a parser reads;
@@ -70,15 +72,26 @@ fails to open keeps its record, where the body kept it only for a file Cinder re
 correction. Its fix, "yet reads back as the correction", dropped the body's "only that open
 fails", so it still read as true when the staged name's open fails too and Cinder reads nothing.
 Both review rounds flagged the summary, among fragment fixes that took about 16 minutes from the
-first finding to the last fix.
+first finding to the last fix. A "tries to" in the summary covers a step that fails, not a path
+where a body condition stops the step before it runs. On #1289 the #1149 summary "Cinder now
+tries to remove the old subtitle an interrupted correction or reset left" was false for a
+correction whose subtitle was edited since, which no recovery records. Its first fix named two
+of the body's three conditions and dropped the one that the subtitle record still names that
+folder: two review rounds, about 21 minutes from the first finding to the last fix.
 
 A path includes each value an install can configure for a list or setting that the code on the
-path reads, such as `Cinder.Download.ContentPolicy`'s blocked and media extension lists. A
-sentence holds under any configured value, or it names the values it assumes ("With the default
-blocked and media lists"). On #903 the fragment said which names beside a book archive count as
-filler and which still hold the book. Review found its last sentence false for an install whose
-blocked list adds `.flac`, then a re-check found its first sentences false for one that leaves
-out `.exe`: about 17 minutes from the first finding to the last fix.
+path reads, such as `Cinder.Download.ContentPolicy`'s blocked and media extension lists, and each
+kind of stored row it reads, such as a series' hand-made, synced and season offset mappings. A
+sentence holds under any configured value and any mix of such rows, or it names the ones it
+assumes ("With the default blocked and media lists", "whose episodes carry only their TMDB codes
+and the codes of an offset"). On #903 the fragment said which names beside a book archive count
+as filler and which still hold the book. Review found its last sentence false for an install
+whose blocked list adds `.flac`, then a re-check found its first sentences false for one that
+leaves out `.exe`: about 17 minutes from the first finding to the last fix. On #1257 the fragment
+said which codes the anime search sends under a season offset. The Spec review found three
+sentences false once a hand-made mapping or a TMDB episode group's scene code named the episode,
+and a re-check found the bold summary false under the hand-made one: about 16 minutes from the
+first finding to the last fix.
 
 A sentence that says what such lists hold, or what a check over them decides ("an installer with
 no video beside it"), names the class alone ("a fake download"). Otherwise, besides the run that
@@ -104,6 +117,14 @@ passed. A list of four such checks had missed three, among them a subtitle edite
 correction and a workspace that cannot be opened. The outcome "a reset that finishes" then held
 only once it read "a reset that finishes on the same video", since a reset on a replaced video
 finishes without the step: three re-check rounds, about 16 minutes.
+
+A sentence that says Cinder keeps something, or never removes or changes it, holds through each
+later step of the same call that can still replace or remove it. Name the step that keeps it
+("the check never removes"), or the later step that can still replace it. On #1110 the fragment
+said a subtitle copy edited since Cinder wrote it "is kept". The new timing check skips such a
+copy, but a better embedded track found later in the same fetch still overwrites it. A re-check
+probe found it after the first review missed it, and the fix commit and its CI run held the
+merge about 22 minutes.
 
 A sentence that says Cinder no longer hangs or waits forever names the call the change bounds and
 the reads it bounds there, such as "the scan" and "a download folder's file listing", never only
