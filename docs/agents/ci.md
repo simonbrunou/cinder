@@ -160,10 +160,14 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   waits for that timeout before it kills the stub still fails it. After a 5336 ms run on PR #1214
   (run 900, #1216), "run/4 with :check a check interval longer than the timeout does not extend
   the deadline" asserts the elapsed time under 9 s instead of 3 s. The bound stays below its
-  10 s check interval, which a deadline extended by that interval waits for. After a 3496 ms run
-  on `main` (run 904, #1216), "run/4 with :check continuous output cannot starve the check"
-  asserts the elapsed time under 9 s instead of 3 s. The bound stays below the call's 10 s
-  timeout, so a third check that comes late but before that timeout still fails it. The test
+  10 s check interval, which a deadline extended by that interval waits for. After a 12863 ms
+  run on PR #1259 (run 1005, #1260) that still returned the check's halt, "run/4 with :check
+  continuous output cannot starve the check" times only the check's own window against its 9 s
+  bound, from the start of the check's first call to the return of its third. The stub's start
+  and the kill fall outside that window. ExUnit's test timeout still counts them, so the test has
+  no tag timeout and runs under the 60 s default. The bound stays below the call's 10 s timeout,
+  so a second or third check that comes late, with the third starting 9 s or more after the
+  first but before that timeout, still fails it. The test
   environment widens `Cinder.Library.Filesystem.Disk`'s `:disk_subprocess_timeout_ms` to 20 s
   (#945), four times the production bound, to give a slow start on a loaded runner headroom. In a
   test that does not set its own bound, a Disk timeout such as `{:error, :rooted_helper_timeout}`

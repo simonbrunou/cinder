@@ -56,29 +56,52 @@ defmodule Cinder.BoundedCommandTest do
 
     # #506: a check that only ran when `receive` sat idle would never run against a process that
     # writes without pause. The deadline is far off, so only the check can end this call.
-    @tag timeout: 15_000
     test "continuous output cannot starve the check", %{tmp_dir: tmp} do
       bin = stub!(tmp, "while :; do printf spam; done")
 
       calls = :counters.new(1, [])
 
+      # `run/4` calls the check in this process, so the check sends its timestamps to the test.
       check = fn ->
+        entered_at = System.monotonic_time(:millisecond)
         :counters.add(calls, 1, 1)
-        if :counters.get(calls, 1) == 3, do: {:halt, :third_check}, else: :ok
-      end
 
-      t0 = System.monotonic_time(:millisecond)
+        case :counters.get(calls, 1) do
+          1 ->
+            send(self(), {:first_check_entered, entered_at})
+            :ok
+
+          2 ->
+            :ok
+
+          3 ->
+            send(self(), {:third_check_returns, System.monotonic_time(:millisecond)})
+            {:halt, :third_check}
+        end
+      end
 
       assert BoundedCommand.run(bin, [], 10_000, check: {50, check}) ==
                {:error, {:halted, :third_check}}
 
-      # The window times the stub's start, three 50 ms check intervals, the kill's `/bin/sh` fork
-      # and the reap of up to 200 ms, which consumes the output the stub wrote meanwhile. A loaded
-      # runner took 3496 ms (run 904, #1216), so the ceiling is 9 s. The result pattern alone
-      # fails the #506 regression, a check that never runs, since the call then times out. Only
-      # this ceiling fails a third check that comes late but before the call's 10 s timeout,
-      # which caps the ceiling: a third check due after that timeout fails the result pattern.
-      assert System.monotonic_time(:millisecond) - t0 < 9_000
+      assert_received {:first_check_entered, first_entered_at}
+      assert_received {:third_check_returns, third_returned_at}
+
+      # The window runs from the first statement of the check's first call to the return of its
+      # third: three check calls and the two 50 ms intervals between them. It leaves out
+      # `find_executable/1` and `Port.open/2` before it, and the kill's `/bin/sh` fork, the reap
+      # and the drain after it. Timed from before the call to its return, a loaded runner took
+      # 12863 ms with the result pattern passing (run 1005, #1260). The loop starts no check at
+      # or after the call's 10 s timeout, so more than 2.8 s fell before the port opened, in the
+      # third check's own run or after the halt. Which of them is not known, and the window
+      # counts only the third check's run.
+      #
+      # The result pattern alone fails the #506 regression, a check that never runs, since the
+      # call then times out. Only this ceiling fails a second or third check that comes late, so
+      # that the third starts 9 s or more after the first starts but before the call's 10 s
+      # timeout. That timeout caps the ceiling: a third check due after it fails the result
+      # pattern. A late first check with the other two on time fails only the result pattern,
+      # once it pushes the third check past that timeout.
+      assert third_returned_at - first_entered_at < 9_000
     end
 
     test "a check interval longer than the timeout does not extend the deadline", %{
