@@ -11,7 +11,7 @@
   `mix-test-output` artifact, kept 14 days.
 - `container` builds the image, boots it, runs the Playwright browser smoke
   (`.github/scripts/browser_smoke.py`, `browser_lifecycle.py`), then scans the image with Trivy
-  (HIGH and CRITICAL, unfixed CVEs ignored).
+  (HIGH and CRITICAL, unfixed CVEs and the CVEs listed in `.trivyignore` ignored).
 - `dependency-audit` runs `mix hex.audit` and `mix deps.audit`.
 - The runner is shared with other repositories, so a PR's jobs can queue behind their runs.
 
@@ -225,7 +225,8 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   with a rationale comment: a bare `:<package>` would also pass every later retired release of
   that package unreviewed. The audit then lists the release under `Ignored retired:` and no
   longer fails on it. For Debian packages Trivy flags that a fresh `apt-get upgrade` fixes, set
-  the Dockerfile's `APT_REFRESH` to today's date so the cached layer rebuilds. When fix PRs block
+  the Dockerfile's `APT_REFRESH` to today's date so the cached layer rebuilds. A Trivy row whose
+  target sits under `opt/ffsubsync` is a Python package: **Venv advisory** below. When fix PRs block
   each other, each red on an advisory another one fixes, carry them all on one branch: merge the
   others' branches into it, so it goes green alone. #885 carried #865 (`plug_crypto`, red on
   `container`) and #880 (`libbrotli1`, red on `dependency-audit`), and #865 also needed #885's
@@ -233,6 +234,36 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   fragment keeps its number. A carrier holds several commits, so `scripts/merge-pr --dry-run`
   stops and lists them: pass `--body-from=<sha of the carrier's own fix commit>`. Once the fix
   is on `main`, clear your own PR's red as "Re-running CI" says.
+- **Venv advisory.** The Dockerfile's final stage builds the `/opt/ffsubsync` venv in the `RUN`
+  that echoes `APT_REFRESH`, and Trivy lists each of its packages as a `python-pkg` target. The
+  fix depends on what pins the flagged package to one version. The Dockerfile pins ffsubsync, and
+  `docker run --rm --entrypoint sh <image> -c 'grep -H "^Requires-Dist:.*==" /opt/ffsubsync/lib/python3*/site-packages/*.dist-info/METADATA | grep -v "extra =="'`
+  lists the pins the venv's packages set: ffsubsync's `auditok==0.1.5` alone today. A line whose
+  `==` comes after its `;` is a platform marker, not a pin.
+  - A package nothing pins: set `APT_REFRESH` to today's date, as for a Debian package. The `RUN`
+    then installs the newest release the requirements allow. When the rebuilt image's scan still
+    shows the row, take the ignore route.
+  - ffsubsync itself: move the Dockerfile's `ffsubsync==<version>` and the dev shell's ffsubsync
+    (flake.nix, from nixpkgs) to the fixed release in one PR.
+    `nix develop . -c python3 -c 'import ffsubsync; print(ffsubsync.__version__)'` prints the dev
+    shell's version. Check that every ffsubsync name `priv/ffsubsync_runner.py` reads or replaces
+    still exists in the release, then measure the change as [subtitle-sync.md](subtitle-sync.md)
+    says. When either pin cannot move yet or a check fails, take the ignore route with that
+    reason.
+  - A package another venv package pins (auditok, which every ffsubsync release from 0.4.12 pins
+    to 0.1.5): find a newer release of the pinning package whose requirements allow the fixed
+    version. For ffsubsync, take the ffsubsync path with that release; for a pinning package that
+    nothing pins in turn, an `APT_REFRESH` bump installs it. With none, take the ignore route.
+    Install only versions the pinning package allows, never a `--no-deps` override: no CI job runs
+    ffsubsync from the image's venv, so nothing would catch the break.
+  - pip: the `RUN` uninstalls pip from the venv, so Trivy finds none there. Debian's
+    `python3-pip-whl`, the wheel the venv copies pip from, takes the Debian path.
+  - The ignore route: add one entry per CVE to `.trivyignore` at the repo root, which the Trivy
+    step reads through trivy-action's `trivyignores` input and prints under `Found ignorefile`
+    in the job log. Above each ID, comment lines name the package and version, say whether
+    Cinder's use reaches the vulnerable code (checked against the flags
+    `Cinder.Subtitles.Sync.Ffsubsync` builds), and name the condition that removes the entry, as
+    the comments above `ignore_advisories` in `mix.exs` do.
 - **Dependency rebuild.** A `mix.lock`, OTP or Elixir change misses the compiled-deps caches,
   so `test` and `dependency-audit` rebuild every dependency and download precompiled NIFs from
   GitHub releases. The `container` job's image build redoes that work from its `mix deps.get`

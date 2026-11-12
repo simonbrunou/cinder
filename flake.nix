@@ -33,7 +33,7 @@
           # subtitle sync engine without a venv. nixpkgs packages ffsubsync as an application,
           # through `python3.pkgs.buildPythonApplication`, hence `toPythonModule`. Keep it on the
           # Dockerfile's pin (`ffsubsync==0.5.1`); after a lock bump, check the version:
-          # `nix eval --raw --inputs-from . nixpkgs#ffsubsync.version`.
+          # `nix develop . -c python3 -c 'import ffsubsync; print(ffsubsync.__version__)'`.
           python = pkgs.python3.withPackages (ps: [ (ps.toPythonModule pkgs.ffsubsync) ]);
           # Tailwind from a Nix fetch, so `mix assets.setup` never downloads it through Erlang's
           # :httpc, which can fail on GitHub's release redirect (#889, docs/agents/ci.md

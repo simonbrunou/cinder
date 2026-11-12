@@ -103,7 +103,10 @@ FROM ${RUNNER_IMAGE} AS final
 # cached from before an advisory keeps the vulnerable packages even though the RUN below runs
 # `apt-get upgrade` (Trivy then fails `container` on curl, librsvg2... that are already fixed).
 # The RUN echoes APT_REFRESH, so changing it rebuilds the layer: set it to today's date when
-# `container` flags OS packages that a fresh `apt-get upgrade` fixes.
+# `container` flags OS packages that a fresh `apt-get upgrade` fixes, or a venv package that
+# nothing pins to one version (docs/agents/ci.md "Venv advisory").
+# Nothing runs pip after the install, so the RUN uninstalls it: Trivy then finds no pip in the
+# venv, whose copy comes from Debian's python3-pip-whl and moves only with a Debian update.
 ARG APT_REFRESH=2026-11-08
 RUN echo "Debian packages refreshed ${APT_REFRESH}" \
   && apt-get update \
@@ -111,6 +114,7 @@ RUN echo "Debian packages refreshed ${APT_REFRESH}" \
   && apt-get install -y --no-install-recommends libstdc++6 openssl libncurses6 locales ca-certificates ffmpeg curl coreutils python3 python3-venv gcc python3-dev \
   && python3 -m venv /opt/ffsubsync \
   && /opt/ffsubsync/bin/pip install --no-cache-dir ffsubsync==0.5.1 \
+  && /opt/ffsubsync/bin/python -m pip uninstall --yes pip \
   && apt-get purge -y --auto-remove gcc python3-dev \
   && rm -rf /var/lib/apt/lists/*
 

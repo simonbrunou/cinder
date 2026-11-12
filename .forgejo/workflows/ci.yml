@@ -319,6 +319,8 @@ jobs:
           image-ref: ${{ env.CINDER_IMAGE }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          # The action fails when this file is missing and prints it under "Found ignorefile".
+          trivyignores: .trivyignore
           exit-code: 1
 
       - name: Remove the CI image
