@@ -150,28 +150,47 @@
   `assert {:error, :unexpected_response} = HTTP.server_machine_id(), message`, which
   `test/code_health/assert_match_message_test.exs` rejects: 8 minutes for what the fence run
   reports in 16 s.
-- Once a full `mix test` passed on the branch, a review fix commit that changes only Markdown
-  under `docs/agents/`, in `AGENTS.md`, in `GLOSSARY.md` or in a `changelog.d/` fragment
-  (`code_health_test.exs` checks each fragment), ordinary `#` comments in `.ex` and `.exs` files,
-  or `@doc` and `@moduledoc` text in `.ex` files of modules no `doctest` names, needs no second
-  full suite before its push. Do the fence run. When a comment or doc text under `lib/` changed,
-  add every file that `rg -l '"lib/' test` lists (about 2 minutes): some of them scan `lib/` with
-  patterns that a comment or doc text can match. A review fix commit whose changes are
-  `_test.exs` files, alone or with the kinds above, does the fence run with more files added:
-  each changed test file that still exists, and every file that
-  `rg -l <path> test -g '*_test.exs'` lists for each changed path and for a renamed file's old
-  path (`git diff --name-status -M HEAD^` shows both once the fix is committed).
-  `books_b0_contract_test.exs` reads test names out of the files it names, and apart from it
-  only the fences read the test sources. A test file can still break another one through shared
-  state, such as an `async:` flag or a config key it no longer restores. On #1123, four full
-  runs after test-only fixes took 21 minutes, and one on #1127 took 7 minutes. CI runs the full
-  suite on the push, which runs every file these short runs skip. Everything else runs
-  the full `mix test`: the doc text of a module that a `doctest` names, other Markdown
-  (`books_b0_contract_test.exs` reads `docs/audits/` and `specs/`), a gettext catalog, a merge of
-  `origin/main` (AGENTS.md "Merge authority") and a release. On #905, #945 and #873, another
-  full run on such a fix took 4 to 5.5 minutes of the CPU the host's agent threads share. On
-  #903, three full runs after fixes to `@moduledoc` text, `GLOSSARY.md` and tests took about
-  20 minutes.
+- Once a full `mix test` passed on the branch, a review fix commit needs no second full suite
+  before its push when each file it changes fits one of the three cases below. Do the fence run
+  with the test files each case adds. CI runs the full suite on the push, which runs every file
+  these short runs skip. On #905, #945 and #873, another full run on such a fix took 4 to
+  5.5 minutes of the CPU the host's agent threads share, and on #903 three took about
+  20 minutes. On #942, #986 and #1193, full runs after a fix to `.agents/skills/` Markdown, a
+  `docs/adr/` file or `ci.yml` cost each thread about 7 minutes, though no test outside the
+  fence run reads those files.
+  - A file that the suite neither compiles nor loads: one outside `lib/`, `test/`, `config/`,
+    `priv/` and `deps/` that is not `mix.exs` or `mix.lock`, and not under `docs/audits/` or
+    `specs/` (full suite, below). Add each test file that reads it. A test can read a file via a
+    directory above it, as `ci_browser_wait_test.exs` globs `.github/scripts/**/*.py`, so
+    search for the file's path and for each directory above it:
+    `rg -l -F -e docs/adr/0001-x.md -e docs/adr -e docs test`. A listed file that the fence run
+    runs (`test/code_health_test.exs`, `test/code_health/`) needs no reading. Read the hits of
+    each other listed file with `rg -n`, and add that file when a hit hands the changed file's
+    path, or a directory or glob that holds it, to code that reads, lists, stats or runs files:
+    `bounded_command_lookup_test.exs` looks up `scripts/seed-worktree` as an executable. A hit
+    in prose (a comment, doc text, a message, a test name, a URL), a path to another file, a
+    path under a temporary root or a map key adds nothing. When you cannot tell, add the file.
+    A hit in a `test/support/` file that reads the changed file runs the full suite (below),
+    since any test that uses that file can read it. The search misses a root glob (`"*.exs"` in
+    `comment_line_length_test.exs`), a glob that splits a directory name
+    (`.{forgejo,github}/workflows/*.{yml,yaml}` in `beam_version_pins_test.exs`) and a read
+    through `lib/` (`Cinder.Changelog.check(".")` in `code_health_test.exs`). Only fences read
+    that way today, and the fence run runs them.
+  - Ordinary `#` comments in `.ex` and `.exs` files, and `@doc` and `@moduledoc` text in `.ex`
+    files of modules no `doctest` names. When a comment or doc text under `lib/` changed, add
+    every file that `rg -l '"lib/' test` lists (about 2 minutes): some of them scan `lib/` with
+    patterns that a comment or doc text can match.
+  - `_test.exs` files. Add each changed test file that still exists, and every file that
+    `rg -l <path> test -g '*_test.exs'` lists for each changed path and for a renamed file's old
+    path (`git diff --name-status -M HEAD^` shows both once the fix is committed).
+    `books_b0_contract_test.exs` reads test names out of the files it names, and apart from it
+    only the fences read the test sources. A test file can still break another one through
+    shared state, such as an `async:` flag or a config key it no longer restores. On #1123, four
+    full runs after test-only fixes took 21 minutes, and one on #1127 took 7 minutes.
+- A review fix commit runs the full `mix test` when it changes any other file, or one of these:
+  a file under `docs/audits/` or `specs/` (`books_b0_contract_test.exs` reads them), a file
+  that a `test/support/` file reads, the doc text of a module that a `doctest` names, a gettext
+  catalog. A merge of `origin/main` (AGENTS.md "Merge authority") and a release run it too.
 - A new UI string fails `translations_complete_test` until you run
   `MIX_ENV=test mix gettext.extract --merge` and write its French msgstr in
   `priv/gettext/fr/LC_MESSAGES/default.po`. When an existing msgid is close enough, the merge
