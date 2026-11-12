@@ -778,11 +778,17 @@ defmodule Cinder.Download.IntentTest do
     end)
 
     before_retry = DateTime.utc_now(:second)
-
     assert {:error, {:http_error, _secret}} = Download.reconcile_intent(due)
+    after_retry = DateTime.utc_now(:second)
+
     capped = Repo.get!(Intent, intent.id)
     assert capped.attempt_count == 101
-    assert DateTime.diff(capped.next_attempt_at, before_retry, :second) in 299..300
+    # `schedule_retry/2` reads its own whole-second clock between these two reads and adds the
+    # 300 s cap. So `next_attempt_at` is exactly 300 s past `before_retry` when both reads fall in
+    # one second, and later only by the seconds the call crossed (#1251).
+    call_seconds = DateTime.diff(after_retry, before_retry, :second)
+    retry_seconds = DateTime.diff(capped.next_attempt_at, before_retry, :second)
+    assert retry_seconds in 300..(300 + call_seconds)
     assert capped.last_error == ":http_error"
     refute capped.last_error =~ "secret"
   end
