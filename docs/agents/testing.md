@@ -56,6 +56,15 @@
   query. `test/code_health/live_view_raw_html_test.exs` fails a new whole-view assert, holds each
   older file at its count, and names in its header the forms it misses, such as HTML a test
   helper returns.
+- Each file Mix compiles (`elixirc_paths`: `lib/`, plus `test/support/` in the test env) defines
+  one module, as `deps/phoenix/usage-rules/elixir.md` asks: "**Never** nest multiple modules in
+  the same file as it can cause cyclic dependencies and compilation errors". An `.exs` test file
+  is outside the rule: `mix test` loads it in memory, so its modules leave no `.beam` and no
+  entry in `mix xref graph`. A review drops the finding on a module that only its own test file
+  uses, nested or top-level. A module that two test files use goes under `test/support/`: two
+  test files that define the same module name stop the load with `cannot define module ...
+  because it is currently being defined`. `test/code_health/single_module_files_test.exs` fails
+  a compiled file with a second module and names in its header the forms it misses.
 - Run a red run, a mutation check or a throwaway test with `mix test.unchecked`, which takes the
   same arguments as `mix test` (`<file>:<line>`, `--failed`, `--only`, `--seed`). It creates and
   migrates the test database, then runs ExUnit without the `mix test` alias's gates: compile

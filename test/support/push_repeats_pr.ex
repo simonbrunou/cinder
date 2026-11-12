@@ -78,12 +78,7 @@ defmodule Cinder.PushRepeatsPr do
   one case per difference.
   """
 
-  defmodule Context do
-    @moduledoc false
-    # Where the walk stands in one YAML file: its path, whether a workflow's allowances apply
-    # there, and the job and the step it is inside.
-    defstruct [:path, :workflow?, :job, :step]
-  end
+  alias __MODULE__.Context
 
   @runner_names Enum.map(~w(GITHUB FORGEJO FORGE), &(&1 <> "_"))
   # Built from parts, like @runner_names, so this file does not match itself.

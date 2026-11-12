@@ -287,6 +287,7 @@ defmodule Cinder.PushRepeatsPrTest do
         Map.new(
           [
             "test/support/push_repeats_pr.ex",
+            "test/support/push_repeats_pr/context.ex",
             "scripts/check-push-repeats-pr.exs",
             "test/cinder/push_repeats_pr_test.exs"
           ],
