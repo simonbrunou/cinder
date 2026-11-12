@@ -490,6 +490,14 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   end
 
   @tag :tmp_dir
+  test "subtitle_tracks/1 returns the decode error when ffprobe exits 0 with output that is not JSON",
+       %{tmp_dir: tmp} do
+    use_ffprobe_bin(tmp, "printf 'not json'")
+
+    assert {:error, %Jason.DecodeError{}} = Ffprobe.subtitle_tracks("/media/movie.mkv")
+  end
+
+  @tag :tmp_dir
   test "probe/1 kills a hung ffprobe process and returns {:error, :timeout} within its bound", %{
     tmp_dir: tmp
   } do
@@ -755,6 +763,20 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
         [pid | argv] = recorded(tmp, "reader")
         assert recorded(tmp, "ionice") == [pid, "-c3", "-t", reader(tmp) | argv]
         assert priority(tmp) == {"idle", tools.niceness}
+      end
+
+      # Neither `ionice` nor `nice` checks its command, so a missing reader spawned through them
+      # would come back as their exit 127. The read resolves the reader first and returns it as
+      # the `:enoent` error a bare missing binary gives, without starting either tool (#955).
+      test "#{read.fun} returns a missing reader as :enoent, not as an exit of ionice or nice", %{
+        tmp_dir: tmp,
+        tools: tools
+      } do
+        put_shims(tmp, tools, [:ionice, :nice])
+        ConfigCase.put_env(@read.bin, "definitely-not-a-real-binary")
+
+        assert {:error, %ErlangError{original: :enoent}} = apply(Ffprobe, @read.fun, @read.args)
+        refute File.exists?(Path.join(tmp, "ionice.log"))
       end
 
       # `ionice` and `nice` exec their command, so the pid the bound kills is the reader's own.

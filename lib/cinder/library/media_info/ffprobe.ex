@@ -184,19 +184,13 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   # so stderr stays out of the JSON it prints on stdout (#861).
   @impl true
   def subtitle_tracks(path) do
-    {executable, args} = low_priority!(bin(), subtitle_track_args(path))
-
-    case run_stderr_apart(executable, args, subtitle_tracks_timeout_ms()) do
-      {:ok, out} ->
-        with {:ok, metadata} <- Jason.decode(out) do
-          {:ok, parse_subtitle_tracks(metadata)}
-        end
-
-      {:exit, code, stderr} ->
-        {:error, {:ffprobe_exit, code, stderr}}
-
-      {:error, _reason} = error ->
-        error
+    with {:ok, {executable, args}} <- low_priority(bin(), subtitle_track_args(path)),
+         {:ok, out} <- run_stderr_apart(executable, args, subtitle_tracks_timeout_ms()),
+         {:ok, metadata} <- Jason.decode(out) do
+      {:ok, parse_subtitle_tracks(metadata)}
+    else
+      {:exit, code, stderr} -> {:error, {:ffprobe_exit, code, stderr}}
+      {:error, _reason} = error -> error
     end
   rescue
     e -> {:error, e}
@@ -204,12 +198,12 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   @impl true
   def extract_subtitle(path, index) do
-    {executable, args} = low_priority!(ffmpeg_bin(), ffmpeg_args(path, index))
-
-    case run_stderr_apart(executable, args, extract_timeout_ms()) do
-      {:ok, out} -> {:ok, out}
-      {:exit, code, stderr} -> {:error, {:ffmpeg_exit, code, stderr}}
-      {:error, _reason} = error -> error
+    with {:ok, {executable, args}} <- low_priority(ffmpeg_bin(), ffmpeg_args(path, index)) do
+      case run_stderr_apart(executable, args, extract_timeout_ms()) do
+        {:ok, out} -> {:ok, out}
+        {:exit, code, stderr} -> {:error, {:ffmpeg_exit, code, stderr}}
+        {:error, _reason} = error -> error
+      end
     end
   rescue
     e -> {:error, e}
@@ -269,12 +263,12 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   @impl true
   def shot_changes(path) do
-    {executable, args} = low_priority!(ffmpeg_bin(), shot_change_args(path))
-
-    case run_bounded(executable, args, shot_changes_timeout_ms(), stderr_to_stdout: true) do
-      {:ok, out, 0} -> {:ok, parse_shot_changes(out)}
-      {:ok, out, code} -> {:error, {:ffmpeg_exit, code, tail(out)}}
-      {:error, _reason} = error -> error
+    with {:ok, {executable, args}} <- low_priority(ffmpeg_bin(), shot_change_args(path)) do
+      case run_bounded(executable, args, shot_changes_timeout_ms(), stderr_to_stdout: true) do
+        {:ok, out, 0} -> {:ok, parse_shot_changes(out)}
+        {:ok, out, code} -> {:error, {:ffmpeg_exit, code, tail(out)}}
+        {:error, _reason} = error -> error
+      end
     end
   rescue
     e -> {:error, e}
@@ -305,10 +299,13 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   # reader's own.
   #
   # The reader is resolved first: spawned through `ionice` or `nice`, a missing one would come
-  # back as a non-zero exit instead of the `:enoent` each caller's `rescue` returns.
-  defp low_priority!(bin, args) do
-    executable = System.find_executable(bin) || raise ErlangError, original: :enoent
-    LowPriority.command(executable, args)
+  # back as a non-zero exit (127) instead of the `{:error, %ErlangError{original: :enoent}}` that
+  # `Cinder.BoundedCommand.run/4` returns for a bare binary, and that each caller returns here.
+  defp low_priority(bin, args) do
+    case System.find_executable(bin) do
+      nil -> {:error, %ErlangError{original: :enoent}}
+      executable -> {:ok, LowPriority.command(executable, args)}
+    end
   end
 
   defp tail(out) do
