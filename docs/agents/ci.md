@@ -9,7 +9,9 @@
   tag ([workflow.md](workflow.md) "Releasing").
 - `test` runs the `mix test` alias with `MIX_ENV=test` and uploads its full output as the
   `mix-test-output` artifact, kept 14 days.
-- `container` builds the image, boots it, runs the Playwright browser smoke
+- `container` builds the image, boots it, runs `Disk.exchange/2`'s `mv --exchange` fallback in
+  the running node (`.github/scripts/mv_exchange_check.exs`, the only CI run of a real
+  `mv --exchange`: the `test` job's coreutils lacks it), runs the Playwright browser smoke
   (`.github/scripts/browser_smoke.py`, `browser_lifecycle.py`), then scans the image with Trivy
   (HIGH and CRITICAL, unfixed CVEs and the CVEs listed in `.trivyignore` ignored).
 - `dependency-audit` runs `mix hex.audit` and `mix deps.audit`.

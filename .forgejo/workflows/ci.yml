@@ -248,6 +248,30 @@ jobs:
           # Playwright's own Chromium (cdn.playwright.dev), not Google Chrome from dl.google.com (#842).
           "$RUNNER_TEMP/cinder-browser-smoke/bin/playwright" install chromium
 
+      # #1201: `Disk.exchange/2` swaps two paths outside the library roots with
+      # `mv --exchange`, which the `test` job's coreutils 9.4 lacks. This step runs
+      # .github/scripts/mv_exchange_check.exs in the booted node as the image's user, through
+      # `rpc` because the call needs the started application. It passes only when the rpc exits
+      # 0 and prints the line `MV_EXCHANGE_CHECK:ok`, and prints the rpc's output either way.
+      # The here-string keeps grep off a pipe, which `-o pipefail` would fail on an early exit.
+      # test/code_health/ci_mv_exchange_check_test.exs runs this text against a stub docker.
+      - name: mv --exchange in the release image (#1201)
+        shell: bash
+        run: |
+          check=$(cat .github/scripts/mv_exchange_check.exs)
+          status=0
+          output=$(docker exec "$CINDER_SMOKE_CONTAINER" /app/bin/cinder rpc "$check" 2>&1) || status=$?
+          printf '%s\n' "$output"
+          if [ "$status" != 0 ]; then
+            echo "::error::bin/cinder rpc exited $status, so the mv --exchange check did not finish"
+            exit 1
+          fi
+          if ! grep -qx 'MV_EXCHANGE_CHECK:ok' <<<"$output"; then
+            echo "::error::the mv --exchange check printed no MV_EXCHANGE_CHECK:ok line"
+            exit 1
+          fi
+          echo "Disk.exchange/2 ran mv --exchange in the release image and swapped two files"
+
       - name: Browser smoke
         env:
           CINDER_SMOKE_BASE_URL: http://127.0.0.1:4000
