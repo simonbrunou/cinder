@@ -12,6 +12,7 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
   @behaviour Cinder.Library.MediaServer
 
   alias Cinder.HTTPPolicy
+  alias Cinder.Library.MediaServer
 
   @max_response_bytes 4 * 1024 * 1024
   @inventory_limit 5_000
@@ -215,10 +216,9 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
   defp item(_item), do: []
 
   defp web_url do
-    case Keyword.get(config(), :web_url) do
-      "http://" <> rest = url when rest != "" -> String.trim_trailing(url, "/")
-      "https://" <> rest = url when rest != "" -> String.trim_trailing(url, "/")
-      _ -> nil
+    case MediaServer.absolute_http_url(Keyword.get(config(), :web_url)) do
+      nil -> nil
+      url -> String.trim_trailing(url, "/")
     end
   end
 

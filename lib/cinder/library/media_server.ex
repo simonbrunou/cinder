@@ -63,4 +63,35 @@ defmodule Cinder.Library.MediaServer do
 
   @doc "Resolves the configured impl at runtime (never `compile_env!` — see catalog.ex)."
   def impl, do: Application.fetch_env!(:cinder, :media_server)
+
+  @doc """
+  Reads a configured web URL for an href: an `http://` or `https://` URL with something after
+  the scheme, or `nil`.
+
+  The scheme matches in any ASCII letter case (RFC 3986 section 3.1) and comes back lower-case,
+  with the rest of the value unchanged. Phoenix's `<.link>` raises on an upper-case scheme such
+  as `HTTP://`, as it does on `javascript:`, so the lower-casing is required. A scheme-less value
+  is refused, since an href would resolve it against the current page. A refused value is an
+  operator typo, so it gives no link rather than a crashed page or a broken link.
+  """
+  @spec absolute_http_url(term()) :: String.t() | nil
+  def absolute_http_url(url) when is_binary(url),
+    do: with_lower_scheme(url, "http://") || with_lower_scheme(url, "https://")
+
+  def absolute_http_url(_url), do: nil
+
+  # A scheme's letters are ASCII. `String.downcase/2` in `:ascii` mode lower-cases only `A-Z` and
+  # passes every other byte through, so a value whose first bytes are not valid UTF-8 compares
+  # unequal.
+  defp with_lower_scheme(url, scheme) do
+    size = byte_size(scheme)
+
+    case url do
+      <<head::binary-size(^size), rest::binary>> when rest != "" ->
+        if String.downcase(head, :ascii) == scheme, do: scheme <> rest
+
+      _ ->
+        nil
+    end
+  end
 end

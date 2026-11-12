@@ -16,6 +16,7 @@ defmodule Cinder.Settings do
 
   alias Cinder.Acquisition.{AnimePreferences, Parser, Scorer}
   alias Cinder.Catalog.Profile
+  alias Cinder.Library.MediaServer
   alias Cinder.LibraryKind
   alias Cinder.Repo
   alias Cinder.Settings.{Crypto, Definition, Overlay, Registry, Setting, Shape}
@@ -218,7 +219,7 @@ defmodule Cinder.Settings do
       |> Application.get_env(module, [])
       |> Keyword.get(:web_url)
       |> Util.blank_to_nil()
-      |> absolute_http_url()
+      |> MediaServer.absolute_http_url()
 
     url && {server, url}
   end
@@ -229,14 +230,6 @@ defmodule Cinder.Settings do
       _ -> nil
     end
   end
-
-  # Rendering this straight into an href has two failure modes worth closing here rather than at
-  # the call site: a scheme-less "plex.example.com" is a *relative* link (it would resolve against
-  # the current page), and a "javascript:" value makes Phoenix's <.link> raise, taking the whole
-  # page down. Both are operator typos, so degrade to "no link" instead.
-  defp absolute_http_url("http://" <> rest) when rest != "", do: "http://" <> rest
-  defp absolute_http_url("https://" <> rest) when rest != "", do: "https://" <> rest
-  defp absolute_http_url(_), do: nil
 
   @doc "Expanded download roots permitted as import sources."
   @spec import_roots() :: [String.t()]

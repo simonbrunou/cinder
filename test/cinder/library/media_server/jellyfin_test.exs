@@ -265,4 +265,43 @@ defmodule Cinder.Library.MediaServer.JellyfinTest do
 
     assert {:error, :response_too_large} = Jellyfin.health()
   end
+
+  # RFC 3986 section 3.1: a scheme is case-insensitive. Phoenix's <.link> raises on an upper-case
+  # one, so the link carries it lower-case. The rest of the URL stays as typed, its trailing
+  # slash trimmed.
+  test "deep_link/1 reads the web URL's scheme in any letter case and writes it lower-case" do
+    for {web_url, root} <- [
+          {"http://jellyfin.example", "http://jellyfin.example/web"},
+          {"HTTP://jellyfin.example", "http://jellyfin.example/web"},
+          {"Http://jellyfin.example", "http://jellyfin.example/web"},
+          {"HTTPS://jellyfin.example", "https://jellyfin.example/web"},
+          {"Https://jellyfin.example", "https://jellyfin.example/web"},
+          {"HTTP://Jellyfin.Example:8096/", "http://Jellyfin.Example:8096/web"},
+          {"HTTPS://jellyfin.example/web/", "https://jellyfin.example/web"}
+        ] do
+      put_config(web_url: web_url)
+
+      assert Jellyfin.deep_link("jellyfin:abc") == root <> "/#/details?id=abc",
+             "for #{inspect(web_url)}"
+    end
+  end
+
+  test "deep_link/1 gives no link for a web URL that is not an absolute http(s) URL, in any case" do
+    for bad <- [
+          "http://",
+          "HTTP://",
+          "HTTPS://",
+          "Https://",
+          "jellyfin.example",
+          "JAVASCRIPT:alert(1)",
+          "FTP://x.test",
+          <<0xFF, 0xFE, "TTP://x.test">>,
+          "https:/é.test",
+          ""
+        ] do
+      put_config(web_url: bad)
+
+      assert Jellyfin.deep_link("jellyfin:abc") == nil, "for #{inspect(bad)}"
+    end
+  end
 end

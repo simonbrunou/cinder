@@ -1960,6 +1960,62 @@ defmodule Cinder.SettingsTest do
       end
     end
 
+    # RFC 3986 section 3.1: a scheme is case-insensitive, and Phoenix's <.link> raises on an
+    # upper-case one. So the front door, its fallback and the title deep link all carry the
+    # scheme lower-case, and they match what the lower-case URL gives (#1231).
+    test "reads a web URL's http(s) scheme in any letter case and links with it lower-case" do
+      for %{value: value, server: server, module: module} <- @media_servers,
+          {web_url, lower} <- [
+            {"HTTP://#{value}.test", "http://#{value}.test"},
+            {"Http://#{value}.test", "http://#{value}.test"},
+            {"HTTPS://#{value}.test", "https://#{value}.test"},
+            {"Https://#{value}.test", "https://#{value}.test"},
+            {"HTTP://#{value}.test/", "http://#{value}.test/"},
+            {"HTTPS://Media.Example:8443/Some/Path/?x=Y",
+             "https://Media.Example:8443/Some/Path/?x=Y"}
+          ] do
+        Repo.delete_all(Setting)
+        store_media_server_type(value)
+        item_id = "#{server}:machine-1:42"
+
+        set_web_url(server, lower)
+        lower_deep_link = module.deep_link(item_id)
+        assert lower_deep_link =~ ~r{\Ahttps?://}
+
+        set_web_url(server, web_url)
+
+        assert Settings.media_server_web_link() == {server, lower}, "for #{inspect(web_url)}"
+        assert Settings.media_server_web_link("not-an-item-id") == {server, lower}
+        assert Settings.media_server_web_link(item_id) == {server, lower_deep_link}
+        assert module.deep_link(item_id) == lower_deep_link
+      end
+    end
+
+    # The front door and each server's deep link read the web URL alike, so a value one refuses
+    # gives no link anywhere and raises nothing.
+    test "every reader refuses a value that is not an absolute http(s) URL, in any letter case" do
+      for %{value: value, server: server, module: module} <- @media_servers,
+          bad <- [
+            "HTTP://",
+            "HTTPS://",
+            "Https://",
+            "Plex.Example.com",
+            "JAVASCRIPT:alert(1)",
+            "FTP://x.test",
+            <<0xFF, 0xFE, "TTP://x.test">>,
+            "https:/é.test"
+          ] do
+        Repo.delete_all(Setting)
+        store_media_server_type(value)
+        set_web_url(server, bad)
+        item_id = "#{server}:machine-1:42"
+
+        refute Settings.media_server_web_link(), "expected #{inspect(bad)} to be rejected"
+        refute Settings.media_server_web_link(item_id)
+        refute module.deep_link(item_id)
+      end
+    end
+
     # media_server_type is submitted with the form (plan/1 force-writes it, falling back to the
     # default when absent), so a realistic save carries both fields.
     test "a saved plex_web_url setting overlays onto Application env" do

@@ -321,4 +321,45 @@ defmodule Cinder.Library.MediaServer.PlexTest do
 
     assert {:error, :response_too_large} = Plex.health()
   end
+
+  # RFC 3986 section 3.1: a scheme is case-insensitive. Phoenix's <.link> raises on an upper-case
+  # one, so the link carries it lower-case. The rest of the URL stays as typed, its trailing
+  # slash trimmed.
+  test "deep_link/1 reads the web URL's scheme in any letter case and writes it lower-case" do
+    for {web_url, root} <- [
+          {"https://plex.example.com", "https://plex.example.com/web/index.html"},
+          {"HTTPS://plex.example.com", "https://plex.example.com/web/index.html"},
+          {"Https://plex.example.com", "https://plex.example.com/web/index.html"},
+          {"HTTP://plex.example.com", "http://plex.example.com/web/index.html"},
+          {"Http://plex.example.com", "http://plex.example.com/web/index.html"},
+          {"HTTPS://Plex.Example.com:32400/", "https://Plex.Example.com:32400/web/index.html"},
+          {"HTTP://plex.example.com/web/index.html", "http://plex.example.com/web/index.html"},
+          {"HTTPS://app.plex.tv/", "https://app.plex.tv/desktop/"}
+        ] do
+      put_config(web_url: web_url)
+
+      assert Plex.deep_link("plex:machine-1:42") ==
+               root <> "#!/server/machine-1/details?key=%2Flibrary%2Fmetadata%2F42",
+             "for #{inspect(web_url)}"
+    end
+  end
+
+  test "deep_link/1 gives no link for a web URL that is not an absolute http(s) URL, in any case" do
+    for bad <- [
+          "http://",
+          "HTTP://",
+          "HTTPS://",
+          "Https://",
+          "plex.example.com",
+          "JAVASCRIPT:alert(1)",
+          "FTP://x.test",
+          <<0xFF, 0xFE, "TTP://x.test">>,
+          "https:/é.test",
+          ""
+        ] do
+      put_config(web_url: bad)
+
+      assert Plex.deep_link("plex:machine-1:42") == nil, "for #{inspect(bad)}"
+    end
+  end
 end
