@@ -58,8 +58,8 @@ The pushed SHA is the PR's head on Forgejo, which `git ls-remote origin refs/pul
 prints. It is the API's `head.sha` that `scripts/merge-pr` reads. A local checkout can hold
 commits that were never pushed, or sit on `main` when you merge another thread's PR. Merge with
 `scripts/merge-pr <n>`. It checks the last two conditions on the pushed SHA, the `CHANGELOG.md`
-rule below and the `code_health_test` line cap on the merged tree, then merges pinned to that
-SHA. It cannot check the review. A squash appends `(#<n>)` to the PR title, so it refuses a title
+rule below, and the `code_health_test` line cap and the fences below on the merged tree, then
+merges pinned to that SHA. It cannot check the review. A squash appends `(#<n>)` to the PR title, so it refuses a title
 that already ends in another `(#N)`: name the issue in the squash body's `Closes #<issue>` instead.
 A squash of several non-merge commits stops until you pass `--body-from=<sha>` or
 `--body-file=<file>`, since the first commit's message can describe a diff the PR no longer has.
@@ -124,16 +124,13 @@ then #1285 merged and each made a fragment of #1283 stale: each took a fix commi
 
 A fence, a test that scans the sources ([testing.md](docs/agents/testing.md)), can turn `main`
 red with no conflict too. A PR merged after a fence PR's CI ran can add a line the fence fails,
-and a PR whose CI ran before a fence reached `main` never ran it (#1155, fixed by #1161). Right
-before merging, run `git fetch origin`. When `origin/main` has commits the pushed SHA lacks, the
-fences to run are each one the PR adds or widens, plus each file that
-`git diff --name-only --diff-filter=d <pushed SHA>...origin/main -- test` prints and that is
-`test/code_health_test.exs`, sits under `test/code_health/` or names `"lib/` (the source
-scanners elsewhere, as `rg -l '"lib/' test` lists them). When that list is not empty, run
-`git switch --detach <pushed SHA>`, merge `origin/main` and run those files. When they pass, push
-nothing and merge the pushed SHA. When one fails, fix the line it names, run `mix test`, push
-with `git push origin HEAD:<branch>` and wait for CI. Then check the three conditions, the
-fragment check above and this one again before merging.
+and a PR whose CI ran before a fence reached `main` never ran it (#1155, fixed by #1161).
+`scripts/merge-pr` runs the fences either side changed on the merge of the pushed SHA with
+`origin/main`, through `scripts/merge-fences`, whose header says which files it selects. That
+takes up to about 5 minutes, `--dry-run` included, so give each foreground call a 600 s timeout.
+When it stops on a fence, run `git switch --detach <pushed SHA>`, merge `origin/main`, fix the
+line the output names, run `mix test`, push with `git push origin HEAD:<branch>` and wait for CI.
+Then check the three conditions, the fragment check above and this one again before merging.
 
 The production deploy that the merge triggers is accepted. Ask first only when the PR drops or
 rewrites stored data (a destructive migration, a backfill that overwrites rows). After the merge,

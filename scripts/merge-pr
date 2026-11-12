@@ -26,10 +26,16 @@
 #   5. every lib/**/*.ex file the PR touches stays within test/code_health_test.exs's @max_lines
 #      on the merged tree. This one is a pre-check beyond AGENTS.md: two PRs that each grow a
 #      near-cap file pass apart and break main together;
-#   6. a squash of several non-merge commits got --body-from or --body-file.
+#   6. a squash of several non-merge commits got --body-from or --body-file;
+#   7. scripts/merge-fences passes on the head and that origin/main SHA: it runs the fences
+#      (tests that scan the sources) either side changed since the merge-base, with `mix test`
+#      on the merged tree in a temporary worktree, unless the head already contains origin/main.
+#      Its header says what it selects and how it runs them. It takes 1 to 5 minutes when it runs
+#      any, so give a foreground call a 600 s timeout.
 # Then it POSTs the merge with head_commit_id (Forgejo answers 409 when the branch moved after
-# CI) and delete_branch_after_merge, retries a 405 every 20 s for up to 5 minutes, re-running
-# checks 3 to 5 before each attempt, and asserts the PR reports merged.
+# CI) and delete_branch_after_merge, retries a 405 every 20 s, 15 times at most, re-running
+# checks 3 to 5 before each attempt and check 7 when the merged tree changed since its last pass,
+# and asserts the PR reports merged.
 #
 # It cannot check the first Merge authority condition. Run it only once a code review ran on the
 # diff (the `code-review` skill or the `pr-review-toolkit:code-reviewer` agent) and its real
@@ -150,21 +156,24 @@ done <<<"$contexts"
 combined=$(jq -r .state <<<"$http_body")
 [[ $combined == success ]] || fail "the combined status of $sha is $combined"
 
-# 3 to 5. The merged tree, against a freshly fetched origin/main.
+# 3 to 5. The merged tree, against a freshly fetched origin/main. origin/main is read once per
+# round: T3 worktrees share origin/* refs, so another thread's fetch can move it mid-check.
+# Sets main_sha and tree, which check 7 reads.
 check_against_main() {
-  local tree code=0
-  tree=$(git merge-tree --write-tree origin/main "$sha" | sed -n 1p) || code=$?
+  local code=0
+  main_sha=$(git rev-parse --verify 'origin/main^{commit}') || fail "no origin/main after the fetch"
+  tree=$(git merge-tree --write-tree "$main_sha" "$sha" | sed -n 1p) || code=$?
   case $code in
     0) ;;
     1) fail "$sha conflicts with origin/main: merge origin/main into the branch, run mix test, push, wait for CI" ;;
     *) fail "git merge-tree exited $code (a git error, not a conflict): fetch again and re-run" ;;
   esac
-  echo "merge-tree against origin/main $(git rev-parse --short origin/main): clean"
+  echo "merge-tree against origin/main $(git rev-parse --short "$main_sha"): clean"
 
   local changed
-  changed=$(git diff --name-only "origin/main...$sha")
+  changed=$(git diff --name-only "$main_sha...$sha")
   if grep -qx CHANGELOG.md <<<"$changed"; then
-    git merge-base --is-ancestor origin/main "$sha" ||
+    git merge-base --is-ancestor "$main_sha" "$sha" ||
       fail "the diff touches CHANGELOG.md and the branch lacks origin/main: merge it in, run mix test, push, wait for CI"
     echo "CHANGELOG.md: touched, branch contains origin/main"
   else
@@ -174,7 +183,7 @@ check_against_main() {
   local max touched file lines
   max=$(git show "$tree:test/code_health_test.exs" | sed -n 's/^ *@max_lines \([0-9][0-9]*\)$/\1/p')
   [[ -n $max ]] || fail "no @max_lines in test/code_health_test.exs"
-  touched=$(git diff --name-only --diff-filter=AMR "origin/main...$sha" -- 'lib/*.ex')
+  touched=$(git diff --name-only --diff-filter=AMR "$main_sha...$sha" -- 'lib/*.ex')
   while IFS= read -r file; do
     [[ -n $file ]] || continue
     git cat-file -e "$tree:$file" 2>/dev/null || continue
@@ -187,13 +196,25 @@ check_against_main() {
 
 check_against_main
 
+# 7. The fences on the merged tree. fences_tree is the merged tree they last passed on, so a 405
+# retry re-runs them only when origin/main moved to a different merged tree.
+fences_tree=
+check_fences() {
+  if [[ $tree == "$fences_tree" ]]; then
+    echo "fences: the merged tree is unchanged since they passed"
+    return
+  fi
+  scripts/merge-fences "$sha" "$main_sha" || exit 1
+  fences_tree=$tree
+}
+
 payload=$(jq -nc --arg style "$style" --arg sha "$sha" \
   '{Do: $style, head_commit_id: $sha, delete_branch_after_merge: true}')
 if [[ $style == squash ]]; then
   # main's convention: the PR title with (#n), then the body of the PR's fix commit: the
   # branch's only commit, --body-from's, or --body-file's text.
   [[ $title == *"(#$pr)" ]] || title="$title (#$pr)"
-  commits=$(git rev-list --reverse --no-merges "origin/main..$sha")
+  commits=$(git rev-list --reverse --no-merges "$main_sha..$sha")
   [[ -n $commits ]] || fail "#$pr has no commit that origin/main lacks"
   if [[ -n $body_file ]]; then
     echo "squash body from: --body-file $body_file"
@@ -224,6 +245,8 @@ if [[ $style == squash ]]; then
     '. + {MergeTitleField: $t, MergeMessageField: $m}' <<<"$payload")
 fi
 
+check_fences
+
 if $dry_run; then
   echo "would POST /pulls/$pr/merge with:"
   jq . <<<"$payload"
@@ -231,18 +254,22 @@ if $dry_run; then
   exit 0
 fi
 
-deadline=$((SECONDS + 300))
+# 15 retries 20 s apart wait 5 minutes; counting retries rather than seconds keeps check 7's
+# minutes out of that wait.
+retries=0
 while :; do
   api POST "/pulls/$pr/merge" "$payload"
   case $http_status in
     200) break ;;
     405)
       reason=$(jq -r '.message // empty' <<<"$http_body" 2>/dev/null || true)
-      ((SECONDS < deadline)) || fail "Forgejo still answers 405 after 5 minutes: ${reason:-$http_body}"
-      echo "405 (${reason:-no message}); retrying in 20 s"
+      ((retries < 15)) || fail "Forgejo still answers 405 after 15 retries 20 s apart: ${reason:-$http_body}"
+      retries=$((retries + 1))
+      echo "405 (${reason:-no message}); retry $retries of 15 in 20 s"
       sleep 20
       fetch_head
       check_against_main
+      check_fences
       ;;
     409) fail "409: the branch moved after CI ran on $sha" ;;
     *) fail "POST /pulls/$pr/merge answered $http_status: $http_body" ;;

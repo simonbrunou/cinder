@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+# Run the fences that one side of a merge changed on the merge of a PR head with main (#1153).
+#
+#   scripts/merge-fences <head-sha> <base-sha>
+#
+# scripts/merge-pr runs it as its check 7, with the PR's pushed head and the origin/main SHA it
+# just fetched. It runs on its own too, in the repo of the current directory, and reads nothing
+# but those two commits, so a replay needs no API.
+#
+# A fence is a test that scans the sources (docs/agents/testing.md). One side can add or change a
+# fence that the other side's lines fail, with no conflict, so main turns red after the merge
+# (#1145 caught by hand, #1155 red on main). AGENTS.md "Merge authority" points here. The steps:
+#   1. When <base> is an ancestor of <head>, the merge is the tree CI ran on. It prints
+#      `fences: skipped` and exits 0.
+#   2. It selects each path under test/ that either side changed since the merge-base without
+#      deleting it (`<base>...<head>` and `<head>...<base>`, --diff-filter=d) and that is
+#      test/code_health_test.exs, sits under test/code_health/, or holds the text "lib/ on the
+#      merged tree. Of those it runs the ones ending in _test.exs, and prints the others as not run,
+#      since mix test runs only test files. With none to run, it prints `fences: none` and exits 0.
+#   3. It writes the merged tree (`git merge-tree --write-tree <base> <head>`) as a commit with both
+#      parents, adds a detached worktree on it under ${TMPDIR:-/var/tmp}, seeds it with that tree's
+#      scripts/seed-worktree, and runs `mix test <files>` there: the alias, with the compile,
+#      format and Credo gates CI's run has. Both run through `nix develop <repo root> -c`, unless
+#      the caller is already in the flake's dev shell (IN_NIX_SHELL and the MIX_TAILWIND_PATH its
+#      shellHook exports are both set). MIX_ENV and the MIX_BUILD_*/MIX_DEPS_PATH overrides are
+#      cleared first. Each runs as its own process group, and SIGINT or SIGTERM stops that group
+#      and exits 130 or 143. The worktree and its directory go on every exit path but SIGKILL; when
+#      git cannot remove the worktree, a WARNING names it and the command that removes it.
+# A pass prints `fences: passed` with the files. A failing mix run prints its output from ExUnit's
+# first numbered failure (200 lines at most; the last 80 lines when there is none), keeps the whole
+# log under ${TMPDIR:-/var/tmp}, ends on a FAIL: line that names the failing test files and
+# setup_all modules (or says no test failed by name, as when a gate failed) and the fix, and exits
+# with 1. A step it cannot run (a failed git call, a merge-tree conflict, no nix, a failed worktree
+# or seed) is a FAIL: with exit 1 too. Wrong arguments exit 2.
+#
+# On the Linux host it takes about 1 minute for one small fence (a 29 s seed, then 19 to 44 s of
+# mix test, as measured on #1153), and 4 to 5 minutes when it selects
+# test/cinder/subtitles/sidecar_transaction_test.exs, whose two lib scanners make it a fence.
+set -euo pipefail
+
+usage() {
+  sed -n '4p' "$0" | sed 's/^#   //' >&2
+  exit 2
+}
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+[[ $# -eq 2 ]] || usage
+root=$(git rev-parse --show-toplevel) || fail "not inside a git repository"
+cd "$root"
+head=$(git rev-parse --verify -q "$1^{commit}") || fail "$1 is not a commit"
+base=$(git rev-parse --verify -q "$2^{commit}") || fail "$2 is not a commit"
+short_head=$(git rev-parse --short "$head")
+short_base=$(git rev-parse --short "$base")
+
+if git merge-base --is-ancestor "$base" "$head"; then
+  echo "fences: skipped, $short_head already contains $short_base (CI ran on the merged tree)"
+  exit 0
+fi
+git merge-base "$base" "$head" >/dev/null || fail "$short_head and $short_base have no merge-base"
+
+code=0
+tree=$(git merge-tree --write-tree "$base" "$head" | sed -n 1p) || code=$?
+((code == 0)) || fail "git merge-tree $short_base $short_head exited $code (1 is a conflict)"
+
+# Each git call is checked on its own: a failure read as "no fence changed" would pass the merge.
+head_side=$(git diff --name-only --diff-filter=d "$base...$head" -- test) ||
+  fail "git diff $short_base...$short_head failed"
+base_side=$(git diff --name-only --diff-filter=d "$head...$base" -- test) ||
+  fail "git diff $short_head...$short_base failed"
+
+names_lib() {
+  local code=0
+  git grep -q -F '"lib/' "$tree" -- "$1" || code=$?
+  case $code in
+    0 | 1) return "$code" ;;
+    *) fail "git grep on $1 in the merged tree exited $code" ;;
+  esac
+}
+
+selected=()
+skipped=()
+while IFS= read -r path; do
+  [[ -n $path ]] || continue
+  # Without a conflict, a path one side changed and kept is on the merged tree.
+  if [[ $path == test/code_health_test.exs || $path == test/code_health/* ]] || names_lib "$path"; then
+    if [[ $path == *_test.exs ]]; then selected+=("$path"); else skipped+=("$path"); fi
+  fi
+done < <(printf '%s\n' "$head_side" "$base_side" | sort -u)
+
+if ((${#skipped[@]})); then
+  echo "fences: not run, not test files: ${skipped[*]}"
+fi
+if ((${#selected[@]} == 0)); then
+  echo "fences: none changed on either side of the merge of $short_head with $short_base"
+  exit 0
+fi
+echo "fences: running ${selected[*]} on the merge of $short_head with $short_base"
+
+if [[ -n ${IN_NIX_SHELL:-} && -n ${MIX_TAILWIND_PATH:-} ]]; then
+  shell=()
+else
+  command -v nix >/dev/null || fail "no nix on PATH to enter the flake's dev shell (or run this inside it)"
+  shell=(nix develop "$root" -c)
+fi
+
+tmp=$(mktemp -d "${TMPDIR:-/var/tmp}/cinder-merge-fences.XXXXXX") || fail "mktemp failed"
+wt=$tmp/merge
+cleanup() {
+  if [[ -e $wt ]] && ! git -C "$root" worktree remove --force "$wt"; then
+    echo "WARNING: could not remove the worktree $wt; remove it with: git worktree remove --force $wt" >&2
+    return
+  fi
+  rm -rf "$tmp"
+}
+# Each step runs in the background as its own process group, so a signal reaches the script in
+# `wait` at once. The BEAM keeps running on SIGINT, so the handler sends the step's whole group
+# SIGTERM, waits for it, and exits; the EXIT trap then removes the worktree.
+step=
+stop() {
+  if [[ -n $step ]]; then
+    kill -TERM -- "-$step" 2>/dev/null || true
+    wait "$step" 2>/dev/null || true
+  fi
+  exit "$1"
+}
+trap cleanup EXIT
+trap 'stop 130' INT
+trap 'stop 143' TERM
+
+commit=$(GIT_AUTHOR_NAME=merge-fences GIT_AUTHOR_EMAIL=merge-fences@localhost \
+  GIT_COMMITTER_NAME=merge-fences GIT_COMMITTER_EMAIL=merge-fences@localhost \
+  git commit-tree "$tree" -p "$base" -p "$head" -m "merge-fences: $short_head with $short_base") ||
+  fail "git commit-tree failed on the merged tree $tree"
+git worktree add -q --detach "$wt" "$commit" || fail "git worktree add $wt failed"
+
+run_env=(env -u MIX_ENV -u MIX_BUILD_ROOT -u MIX_BUILD_PATH -u MIX_DEPS_PATH)
+log=$tmp/out.log
+# run_step <command>...: runs it in the worktree, its output in $log.
+run_step() {
+  local code=0
+  set -m
+  (cd "$wt" && exec "${run_env[@]}" ${shell[@]+"${shell[@]}"} "$@") </dev/null >"$log" 2>&1 &
+  step=$!
+  set +m
+  wait "$step" || code=$?
+  step=
+  return "$code"
+}
+
+if ! run_step scripts/seed-worktree; then
+  tail -n 40 "$log" >&2
+  fail "seeding the merge worktree failed (output above); this says nothing about the fences"
+fi
+
+if ! run_step mix test "${selected[@]}"; then
+  kept=${TMPDIR:-/var/tmp}/cinder-merge-fences-$short_head-$short_base.log
+  cp "$log" "$kept" || kept="(not kept: cp failed)"
+  # ExUnit numbers each failure as `  1) `, ` 10) ` or `100) ` (ExUnit.Formatter's
+  # with_counter/2); the lines before the first one are mostly the run's logs.
+  numbered='^ {0,2}[0-9]+\) '
+  first=$(grep -n -m1 -E "$numbered" "$log" | cut -d: -f1 || true)
+  if [[ -n $first ]]; then
+    # One reader, no pipe: `tail | head` dies of SIGPIPE under pipefail before the FAIL: line.
+    sed -n "${first},$((first + 199))p" "$log" >&2
+  else
+    tail -n 80 "$log" >&2
+  fi
+  # The line under a failed test is its `<file>:<line>`; a failed setup_all names its module.
+  failing=$(grep -A1 -E "$numbered" "$log" | sed -n -E 's#^     (test/[^:]+\.exs):[0-9]+$#\1#p' |
+    sort -u | tr '\n' ' ' || true)
+  # ExUnit prints one setup_all failure per module, an atom name such as :"A B" quoted.
+  setup=$(sed -n -E "s/${numbered}(:\"[^\"]*\"|[^ ]+): failure on setup_all callback.*/\\1/p" "$log" |
+    tr '\n' ' ' || true)
+  named=${failing% }
+  [[ -z $setup ]] || named="${named:+$named; }setup_all in ${setup% }"
+  if [[ -n $named ]]; then
+    what="the fences fail on the merge of $short_head with $short_base: $named"
+    fix="fix what each failure names"
+  else
+    what="mix test ${selected[*]} fails on the merge of $short_head with $short_base before any test fails by name: the alias's compile, format or Credo gate, or a setup failure"
+    fix="fix what the output names"
+  fi
+  fail "$what (output above, full log in $kept). Merge origin/main into the branch, $fix, run" \
+    "mix test, push with git push origin HEAD:<branch>, and wait for CI."
+fi
+echo "fences: passed on the merge of $short_head with $short_base: ${selected[*]}"
