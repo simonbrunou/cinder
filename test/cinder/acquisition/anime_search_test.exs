@@ -931,6 +931,103 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert release.download_url == "S02E01"
   end
 
+  # #1257: a saved season offset by +1 retires the native code of each episode it moves (#987), so
+  # neither the panel nor the upgrade sweep names it in the season's free-text coordinate query,
+  # while the season's absolute and scene queries still go out, even from the `:inferred` codes a
+  # TMDB sync writes. A manual mapping naming an episode's own native code keeps that code
+  # (`AnimeResolver.retired_canonical?/2`). Each case lists its episodes as `{id, season, episode}`,
+  # its mappings, the wanted ids, the free-text queries after the title query and the season
+  # queries.
+  for {label, episodes, mappings, wanted, queries, seasons} <- [
+        {"an offset from season 3", [{31, 3, 1}],
+         [{:canonical, "S03E01", 31}, {:absolute, "25", 31}, {:offset, "S04E01", 31}], [31],
+         ["25", "S04E01"], [3, 4]},
+        {"an offset from season 3 and a TMDB group's scene code", [{31, 3, 1}],
+         [{:canonical, "S03E01", 31}, {:group, "S01E25", 31}, {:offset, "S04E01", 31}], [31],
+         ["S01E25"], [3, 1, 4]},
+        {"an offset from season 3 and S03E05 named by hand", [{31, 3, 1}, {35, 3, 5}],
+         [
+           {:canonical, "S03E01", 31},
+           {:canonical, "S03E05", 35},
+           {:offset, "S04E01", 31},
+           {:offset, "S04E05", 35},
+           {:manual, "S03E05", 35}
+         ], [31, 35], ["S03E05", "S04E01"], [3, 4]},
+        {"an offset from season 2", [{21, 2, 1}, {31, 3, 1}],
+         [
+           {:canonical, "S02E01", 21},
+           {:canonical, "S03E01", 31},
+           {:offset, "S03E01", 21},
+           {:offset, "S04E01", 31}
+         ], [21, 31], ["S03E01", "S04E01"], [2, 3, 4]}
+      ] do
+    test "under #{label}, the panel and the upgrade sweep send #{inspect(queries)} (#1257)" do
+      episodes =
+        for {id, season, number} <- unquote(Macro.escape(episodes)),
+            do: %{id: id, season_number: season, episode_number: number}
+
+      context = %{
+        series_context(99)
+        | episodes: episodes,
+          mappings: Enum.map(unquote(Macro.escape(mappings)), &fixture_mapping/1)
+      }
+
+      test_pid = self()
+
+      stub(IndexerMock, :search_tv, fn 99, "Show", season ->
+        send(test_pid, {:retired_season, season})
+        {:ok, []}
+      end)
+
+      stub(IndexerMock, :search_tv_query, fn query, categories: [5070] ->
+        send(test_pid, {:retired_query, query})
+        {:ok, []}
+      end)
+
+      expected = ["Show" | Enum.map(unquote(queries), &"Show #{&1}")]
+      wanted = unquote(wanted)
+
+      assert {:ok, _judged, false} = Acquisition.judge_anime_episodes(context, wanted, [])
+      assert receive_queries(:retired_query, length(expected)) == expected
+      refute_received {:retired_query, _query}
+      assert receive_queries(:retired_season, length(unquote(seasons))) == unquote(seasons)
+      refute_received {:retired_season, _season}
+
+      assert :no_match = Acquisition.best_anime_releases(context, wanted)
+      assert receive_queries(:retired_query, length(expected)) == expected
+      refute_received {:retired_query, _query}
+      assert receive_queries(:retired_season, length(unquote(seasons))) == unquote(seasons)
+      refute_received {:retired_season, _season}
+    end
+  end
+
+  defp fixture_mapping({:canonical, code, id}), do: canonical(code, id)
+  defp fixture_mapping({:manual, code, id}), do: mapping("aired", code, [id])
+
+  # `:inferred` rows, as a TMDB sync writes them: an absolute number, or a TMDB episode group's
+  # scene code.
+  defp fixture_mapping({:absolute, value, id}),
+    do: %{mapping("absolute", value, [id]) | precedence: :inferred}
+
+  defp fixture_mapping({:group, code, id}) do
+    %{
+      identity: %{source: "tmdb", scheme: "scene", namespace: "grp", canonical_value: code},
+      precedence: :inferred,
+      episode_ids: [id],
+      evidence: %{"kind" => "persisted_coordinate"}
+    }
+  end
+
+  # A saved season offset's row (`Cinder.Catalog.SceneNumbering.save_scene_offset_coordinates/3`).
+  defp fixture_mapping({:offset, code, id}) do
+    %{
+      identity: %{source: "offset", scheme: "scene", namespace: "offset", canonical_value: code},
+      precedence: :curated,
+      episode_ids: [id],
+      evidence: %{"kind" => "persisted_coordinate"}
+    }
+  end
+
   # The canonical standard mapping `Cinder.Catalog.MediaProfiles.acquisition_mappings/1` lists.
   defp canonical(code, episode_id) do
     %{

@@ -924,6 +924,9 @@ defmodule Cinder.Acquisition.Anime do
     end
   end
 
+  # The code of the season's earliest wanted episode under `scheme`. A native code that a saved
+  # season offset retired (`AnimeResolver.retired_canonical?/2`) names no episode (#987), so the
+  # "standard" slot skips it, judged against every mapping of the series (#1257).
   defp earliest_coordinate(context, wanted_ids, season_number, scheme) do
     episode_positions =
       context.episodes
@@ -937,7 +940,8 @@ defmodule Cinder.Acquisition.Anime do
           mapping.identity.canonical_value,
           @max_coordinate_codepoints
         ) and
-        Enum.any?(mapping.episode_ids, &Map.has_key?(episode_positions, &1))
+        Enum.any?(mapping.episode_ids, &Map.has_key?(episode_positions, &1)) and
+        not retired_canonical?(mapping, context.mappings)
     end)
     |> Enum.min_by(
       fn mapping ->
@@ -957,6 +961,11 @@ defmodule Cinder.Acquisition.Anime do
       nil -> nil
       mapping -> mapping.identity.canonical_value
     end
+  end
+
+  defp retired_canonical?(mapping, mappings) do
+    AnimeResolver.canonical_native?(mapping) and
+      AnimeResolver.retired_canonical?(mapping, mappings)
   end
 
   defp wanted_seasons(context, wanted_ids) do

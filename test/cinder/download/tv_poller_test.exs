@@ -548,6 +548,115 @@ defmodule Cinder.Download.TvPollerTest do
     end
   end
 
+  # #1257: a saved season offset by +1 retires the TMDB code of each episode it moves (#987), so a
+  # season's free-text coordinate query names the earliest wanted episode whose TMDB code is still
+  # in use, or no TMDB code, while the season's scene code still goes out. Each case lists its
+  # offsets' first seasons, its episodes as `{season, episode, monitored?}`, the episodes a
+  # hand-made aired mapping names by their own code (which keeps that code in use), the free-text
+  # queries after the title query, the season queries, `{season, code}` for a season query that
+  # answers a release named by `code`, and the episodes that release grabs.
+  for {label, offsets, episodes, folds, queries, seasons, answers, grabs} <- [
+        {"A: an offset from season 3, S03E01 wanted", [3], [{3, 1, true}], [], ["S04E01"], [3, 4],
+         [], []},
+        {"B: no offset, S03E01 wanted", [], [{3, 1, true}], [], ["S03E01"], [3], [], []},
+        {"C: an offset from season 2, S02E01 and S03E01 wanted", [2],
+         [{2, 1, true}, {3, 1, true}], [], ["S03E01", "S04E01"], [2, 3, 4], [], []},
+        {"D: an offset from season 2, S02E01 unmonitored, S03E01 wanted", [2],
+         [{2, 1, false}, {3, 1, true}], [], ["S04E01"], [3, 4], [], []},
+        {"F: an offset from season 2, S02E01, S02E05 and S03E05 wanted", [2],
+         [{2, 1, true}, {2, 5, true}, {3, 5, true}], [], ["S03E01", "S04E05"], [2, 3, 4],
+         [{3, "S03E05"}], [{2, 5}]},
+        {"an offset from season 3, S03E01 and S03E05 wanted, S03E05 named by hand", [3],
+         [{3, 1, true}, {3, 5, true}], [{3, 5}], ["S03E05", "S04E01"], [3, 4], [], []}
+      ] do
+    test "under #{label}, the anime sweep sends #{inspect(queries)} (#1257)" do
+      series =
+        series_fixture(%{
+          tvdb_id: 99,
+          monitor_strategy: :all,
+          media_profile: :anime,
+          title: "Monogatari"
+        })
+
+      created =
+        unquote(Macro.escape(episodes))
+        |> Enum.group_by(&elem(&1, 0))
+        |> Enum.flat_map(fn {season_number, numbers} ->
+          season = season_fixture(series, %{season_number: season_number})
+
+          for {_season, n, monitored} <- numbers,
+              do: {{season_number, n}, episode(season, n, %{monitored: monitored})}
+        end)
+        |> Map.new()
+
+      for from <- unquote(offsets),
+          do: assert({:ok, _} = Catalog.save_scene_offset_coordinates(series, from, 1))
+
+      for {season_number, n} = key <- unquote(Macro.escape(folds)) do
+        attrs = %{
+          source: "tvdb",
+          scheme: "aired",
+          namespace: "99",
+          canonical_value: Episode.code(season_number, n)
+        }
+
+        assert {:ok, _} = Identity.bind_manual_coordinate(series, attrs, created[key])
+      end
+
+      test_pid = self()
+      answers = Map.new(unquote(Macro.escape(answers)))
+
+      # The indexer reports the series' TVDB id, as in the #156 test above (#699).
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, _title, season ->
+        send(test_pid, {:season_query, season})
+
+        case Map.fetch(answers, season) do
+          {:ok, code} ->
+            {:ok,
+             [
+               %{
+                 title: "[smol] Monogatari #{code} [1080p]",
+                 size: 2_000_000_000,
+                 download_url: "smol-#{code}",
+                 tvdb_id: 99
+               }
+             ]}
+
+          :error ->
+            {:ok, []}
+        end
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn query, categories: [5070] ->
+        send(test_pid, {:free_text_query, query})
+        {:ok, []}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+        {:ok, "grab-#{release.download_url}"}
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+      assert :ok = TvPoller.poll()
+
+      assert received_values(:free_text_query) ==
+               ["Monogatari" | Enum.map(unquote(queries), &"Monogatari #{&1}")]
+
+      assert Enum.sort(received_values(:season_query)) == unquote(seasons)
+
+      grabbed = for {key, ep} <- created, Repo.get!(Episode, ep.id).grab_id, do: key
+      assert Enum.sort(grabbed) == unquote(Macro.escape(grabs))
+    end
+  end
+
+  defp received_values(tag, values \\ []) do
+    receive do
+      {^tag, value} -> received_values(tag, [value | values])
+    after
+      0 -> Enum.reverse(values)
+    end
+  end
+
   test "invalid Anime series preferences hold the group without search or attempt bumps" do
     set_anime_defaults!(embedded_subtitle_mode: :require)
     series = series_fixture(%{tvdb_id: 99, monitor_strategy: :all, media_profile: :anime})
