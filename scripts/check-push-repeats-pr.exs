@@ -10,6 +10,10 @@
 if Code.ensure_loaded?(Cinder.PushRepeatsPr) do
   System.halt(Cinder.PushRepeatsPr.main(System.argv()))
 else
-  IO.puts(:stderr, "check-push-repeats-pr: Cinder.PushRepeatsPr is not compiled; run with MIX_ENV=test")
+  IO.puts(
+    :stderr,
+    "check-push-repeats-pr: Cinder.PushRepeatsPr is not compiled; run with MIX_ENV=test"
+  )
+
   System.halt(2)
 end

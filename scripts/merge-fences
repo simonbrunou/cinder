@@ -110,7 +110,8 @@ else
 fi
 
 tmp_root=${MERGE_FENCES_TMPDIR:-/var/tmp}
-tmp=$(mktemp -d "$tmp_root/cinder-merge-fences.XXXXXX") || fail "mktemp in $tmp_root failed"
+tmp=$(mktemp -d "$tmp_root/cinder-merge-fences.XXXXXX") ||
+  fail "could not make a temp directory in $tmp_root"
 wt=$tmp/merge
 cleanup() {
   if [[ -e $wt ]] && ! git -C "$root" worktree remove --force "$wt"; then

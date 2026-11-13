@@ -19,6 +19,11 @@
   put a year after a blocked title. The new year reading then let a name with another alias's
   words before any year read as the series' own episode, where only the series' own year did
   before. The release-parser review found it, and the fix took about 20 minutes.
+  Write that done-when down before the first full `mix test`, one line per requirement or clause
+  with the test that covers it. Put the list in the PR body and paste it into the Spec reviewer's
+  brief. On #986 and #950 such a clause reached the Spec review untested (about 1.5 and
+  10 minutes to fix), and #1207 lost 8 minutes to an untested "as today" clause and a false
+  changelog sentence.
 - A fix that keeps a behaviour across an Elixir or OTP upgrade answers like the old version on
   every input class, not only on the cases the issue names. Before review, run one table of
   inputs through the changed module's public functions, a row per input class that the changed
@@ -311,3 +316,10 @@
   The cases in this bullet and the one above took a review and two re-check rounds, about
   47 minutes from the first finding to the last fix. `test/code_health/req_stub_sleep_test.exs`
   fails a sleep in a `Req.Test` stub's `fn`; its header names forms it skips.
+- A test that polls until a timer fires (a shrunk `ownership_timeout`, a lease, a TTL) runs
+  `mix test.unchecked --repeat-until-failure 1000 <file>:<line>` before review. Each repeat runs
+  the whole selection, so name the test's line. A poll that lands as the timer fires fails in a
+  shape the first runs never show. On #1276 `Cinder.DataCaseOwnershipTest` passed 3 runs, then
+  failed run 978 of 1000: its query reached the ownership proxy just after the proxy stopped,
+  and exited `:noproc`. Its `assert_ownership_lapses/0` now counts each shape the lapse gives. From
+  the re-check's report to the pushed fix took 28 minutes.

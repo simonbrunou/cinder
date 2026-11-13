@@ -44,6 +44,16 @@ JS needs, follow the `container` job on the host with these changes:
    `CINDER_SMOKE_SCREENSHOT_DIR` set, the lifecycle script saves a full-page screenshot of each
    failed case; `docker logs <name>` shows the server's side.
 
+A one-off script built on `browser_lifecycle.py` that measures what a viewer sees after a live
+patch, such as a poster that moves to another card or one already in the browser's cache,
+leaves out the `page.route` that `main()` sets on `**/image.tmdb.org/**`. Playwright turns off
+the browser's HTTP cache while a route is set (`Page.route`'s docs: "Enabling routing disables
+http cache"), so each moved poster is fetched again and the measurement counts those fetches.
+Seed posters the browser can cache instead, such as real TMDB poster paths, which answer
+`cache-control: public, max-age=31919000`. On #1234 every moved poster on the keyed grid dipped
+below opacity 1 in 8 of 8 routed trials and in none once the route was gone: about 35 minutes
+from the first routed run to the rerun without it.
+
 ## Changing a workflow
 
 - A `run:` step with logic of its own (a guard, a loop, a branch on a value) that you add, or
@@ -266,6 +276,9 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
     Cinder's use reaches the vulnerable code (checked against the flags
     `Cinder.Subtitles.Sync.Ffsubsync` builds), and name the condition that removes the entry, as
     the comments above `ignore_advisories` in `mix.exs` do.
+    `test/code_health/trivyignore_entries_test.exs` fails an entry that is not a bare CVE or GHSA
+    ID, has no comment line right above it, or has comment lines that run on from the file's
+    header with no blank line between.
 - **Dependency rebuild.** A `mix.lock`, OTP or Elixir change misses the compiled-deps caches,
   so `test` and `dependency-audit` rebuild every dependency and download precompiled NIFs from
   GitHub releases. The `container` job's image build redoes that work from its `mix deps.get`

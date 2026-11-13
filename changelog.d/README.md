@@ -41,7 +41,7 @@ about 29 minutes from the first finding to the last fix.
 - a sentence about a path whose code reads a list or setting an install can configure, or stored
   rows of several kinds;
 - what such lists hold, or what a check over them decides;
-- that Cinder removes, cleans up or repairs something;
+- that Cinder removes, drops, cleans up or repairs something;
 - that Cinder keeps something, or never removes or changes it;
 - that Cinder no longer hangs or waits forever, or what a later call does after a timeout;
 - what Cinder did before the fix, which must hold on the merge base;
@@ -102,8 +102,8 @@ the fragment described a fake in a parenthetical. It left out archives and scrip
 default lists and counted a book in any format: four fix commits over about 39 minutes, and the
 merged text still left out `.zipx`.
 
-A sentence that says Cinder removes, cleans up or repairs something covers the paths where that
-step fails or never runs. Say "tries to" or name what Cinder logs when it fails, and name what
+A sentence that says Cinder removes, drops, cleans up or repairs something covers the paths where
+that step fails or never runs. Say "tries to" or name what Cinder logs when it fails, and name what
 must hold first: each condition the code checks, and each earlier step in the same call that can
 stop it. On #1131 the fragment said a recovery "removes" a hidden folder and an analysis removes
 the rest. Review found it false when the download's file was deleted first, when the removal
@@ -116,7 +116,9 @@ that file, or to drop the folder's name for a download's file" covers every chec
 passed. A list of four such checks had missed three, among them a subtitle edited since the
 correction and a workspace that cannot be opened. The outcome "a reset that finishes" then held
 only once it read "a reset that finishes on the same video", since a reset on a replaced video
-finishes without the step: three re-check rounds, about 16 minutes.
+finishes without the step: three re-check rounds, about 16 minutes. On #1286 the fragment said
+Cinder drops a reservation stored before the update "on its next pass", but a pass whose lookup
+at the download client fails backs off and keeps it: two re-check rounds, about 10 minutes.
 
 A sentence that says Cinder keeps something, or never removes or changes it, holds through each
 later step of the same call that can still replace or remove it. Name the step that keeps it
