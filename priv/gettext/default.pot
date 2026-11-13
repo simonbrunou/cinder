@@ -7433,3 +7433,33 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "plex.tv rejected the Plex token"
 msgstr ""
+
+#: lib/cinder_web/live/dashboard_live.ex
+#, elixir-autogen, elixir-format
+msgid "Folder reads"
+msgstr ""
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "A folder read that was running when Cinder's folder-read guard restarted has not returned. Its folder is unknown."
+msgstr ""
+
+#: lib/cinder_web/live/dashboard_live.ex
+#, elixir-autogen, elixir-format
+msgid "Folder read still running"
+msgstr ""
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "A read under %{path} has not returned. Its mount may be wedged or slow, or the page that started the read may have closed. Until it returns, Cinder can refuse new reads of this folder, imports from it included."
+msgstr ""
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "A read under %{path} has not returned. Its mount may be wedged or slow, or the page that started the read may have closed. Until it returns, Cinder can refuse new reads of this folder."
+msgstr ""
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "Two or more folder reads have not returned, so until fewer than two remain, Cinder can refuse any new folder read, imports from every download folder included."
+msgstr ""

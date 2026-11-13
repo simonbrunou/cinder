@@ -5,6 +5,9 @@ defmodule CinderWeb.DashboardLive do
   Read-mostly; approve/deny route through `Cinder.Requests` exactly as `/requests` does — no
   new gate. Live via the `movies` + `series` + `requests` topics; health and disk each run in
   their own `start_async` task so a slow service (or a hung `df`) can't block render.
+
+  The health panel also has a row for each directory walk `Cinder.Library.BoundedWalk` counts as
+  stuck, and one more while those reach its cap, read in the health task (#948).
   """
   use CinderWeb, :live_view
 
@@ -13,9 +16,10 @@ defmodule CinderWeb.DashboardLive do
   import CinderWeb.RequestHelpers,
     only: [default_profile_id: 2, normalize_profile: 2, profile_kind: 1, profiles_for: 2]
 
-  alias Cinder.{Accounts, Catalog, Disk, Health, Library, Notifier, Requests}
+  alias Cinder.{Accounts, Catalog, Disk, Health, Library, Notifier, Requests, Settings}
   alias Cinder.Catalog.{Attention, Refresher}
   alias Cinder.Download.{Poller, TvPoller}
+  alias Cinder.Library.BoundedWalk
   alias Cinder.Subtitles.Sweeper
   alias CinderWeb.SettingsLabels
 
@@ -214,9 +218,54 @@ defmodule CinderWeb.DashboardLive do
 
   defp check_health(socket) do
     if connected?(socket),
-      do: start_async(socket, :health, &Health.check_all/0),
+      do: start_async(socket, :health, &health_rows/0),
       else: socket
   end
+
+  # `BoundedWalk.stuck_roots/1` never raises or waits past its own short timeout, so a guard that
+  # does not answer leaves the probe rows and adds none, and never reaches the `{:exit, _}` clause.
+  # It reads the guard after the probes, so the rows show the walks stuck once the probes finish.
+  defp health_rows do
+    rows = Health.check_all()
+    rows ++ stuck_walk_rows(BoundedWalk.stuck_roots())
+  end
+
+  # Same row shape as `Health.check_all/0`, one row per stuck walk. A root that is a download folder
+  # now also says Cinder can refuse imports from it; any other root, such as a library folder
+  # `Cinder.Library.Adoption` scans, says only that Cinder can refuse new reads of it.
+  defp stuck_walk_rows(%{roots: roots, cap_reached?: cap_reached?}) do
+    download_folders = Enum.map(Settings.import_roots(), &Path.expand/1)
+
+    walk_rows =
+      roots
+      |> Enum.with_index(1)
+      |> Enum.map(fn {root, n} ->
+        stuck_row(
+          "stuck_walk_#{n}",
+          gettext_noop("Folder read still running"),
+          stuck_walk(root, download_folders)
+        )
+      end)
+
+    cap_row =
+      if cap_reached?,
+        do: [stuck_row("stuck_walk_cap", gettext_noop("Folder reads"), :stuck_walk_cap)],
+        else: []
+
+    walk_rows ++ cap_row
+  end
+
+  defp stuck_walk(root, download_folders) when is_binary(root) do
+    if root in download_folders,
+      do: {:stuck_walk, :download_folder, root},
+      else: {:stuck_walk, :folder, root}
+  end
+
+  # `:unknown_root`, a walk a restarted guard took over, and any root that is not a path.
+  defp stuck_walk(_root, _download_folders), do: {:stuck_walk, :unknown_root}
+
+  defp stuck_row(id, label, reason),
+    do: %{id: id, label: label, adapter: nil, help: nil, status: {:warning, reason}}
 
   defp check_disk(socket) do
     if connected?(socket),

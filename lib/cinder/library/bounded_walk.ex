@@ -28,7 +28,10 @@ defmodule Cinder.Library.BoundedWalk do
   crosses its deadline can still end up stuck, at most one more per caller walking at that moment.
   Walks running inside their deadline under a living caller never refuse one another. A restarted
   guard has lost its count, so it takes every walk still running under its task supervisor as
-  stuck until it returns. Those count towards the total cap only, since their roots are unknown.
+  stuck until it returns. Those count towards the total cap only, since their roots are unknown,
+  until a caller still alive reports one past its deadline: from then on, it refuses its root too.
+
+  `stuck_roots/1` reads the walks the guard counts as stuck, so a page can show them (#948).
 
   The deadline alone would not be enough, because the reads behind
   `Cinder.Library.PathPolicy.walk/2` used to go through the VM's one file server: a read stuck
@@ -43,6 +46,7 @@ defmodule Cinder.Library.BoundedWalk do
 
   @timeout_ms 30_000
   @max_stuck 2
+  @read_timeout_ms 1_000
 
   @doc false
   def start_link(opts) do
@@ -83,6 +87,28 @@ defmodule Cinder.Library.BoundedWalk do
         nil -> mark_stuck(server, root, task.pid, timeout_ms)
       end
     end
+  end
+
+  @doc """
+  The walks the guard counts as stuck, read from its state (#948). `roots` holds the root of each
+  one, sorted, with `:unknown_root` for a walk a restarted guard took over, until a caller still
+  alive reports it past its deadline: one entry per walk, so a root can appear twice.
+  `cap_reached?` is true while the guard refuses every new walk.
+
+  A guard that is not running, or does not answer within `:timeout_ms` (1 s by default), reads as
+  no stuck walk, with a warning in the log, so a page that shows this never waits longer or
+  crashes.
+
+  Options: `:timeout_ms`; and, for tests, `:server`, the guard.
+  """
+  @spec stuck_roots(keyword()) :: %{roots: [term()], cap_reached?: boolean()}
+  def stuck_roots(opts \\ []) do
+    server = Keyword.get(opts, :server, __MODULE__)
+    GenServer.call(server, :stuck_roots, Keyword.get(opts, :timeout_ms, @read_timeout_ms))
+  catch
+    :exit, reason ->
+      Logger.warning("could not read the stuck directory walks: #{inspect(reason)}")
+      %{roots: [], cap_reached?: false}
   end
 
   # The walk's task, not its caller, tells the guard that the walk started and that it returned,
@@ -148,9 +174,14 @@ defmodule Cinder.Library.BoundedWalk do
 
   @impl true
   def handle_call({:admit, root}, _from, state) do
-    if root in Map.values(state.stuck) or map_size(state.stuck) >= @max_stuck,
+    if root in Map.values(state.stuck) or capped?(state),
       do: {:reply, {:error, :timeout}, state},
       else: {:reply, {:ok, state.task_supervisor}, state}
+  end
+
+  def handle_call(:stuck_roots, _from, state) do
+    stuck = %{roots: state.stuck |> Map.values() |> Enum.sort(), cap_reached?: capped?(state)}
+    {:reply, stuck, state}
   end
 
   # A walk its caller already reported stuck, before the task got here, is monitored and counted
@@ -206,6 +237,9 @@ defmodule Cinder.Library.BoundedWalk do
       state
     end
   end
+
+  # Every new walk is refused while this holds, under any root.
+  defp capped?(state), do: map_size(state.stuck) >= @max_stuck
 
   defp forget(state, task) do
     {walk, walks} = Map.pop(state.walks, task)

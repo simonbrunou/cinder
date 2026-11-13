@@ -7790,3 +7790,33 @@ msgstr "plex.tv ne liste pas le serveur du foyer pour ce jeton Plex"
 #, elixir-autogen, elixir-format
 msgid "plex.tv rejected the Plex token"
 msgstr "plex.tv a refusé le jeton Plex"
+
+#: lib/cinder_web/live/dashboard_live.ex
+#, elixir-autogen, elixir-format
+msgid "Folder reads"
+msgstr "Lectures de dossiers"
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "A folder read that was running when Cinder's folder-read guard restarted has not returned. Its folder is unknown."
+msgstr "Une lecture de dossier en cours au redémarrage du gardien des lectures de dossiers de Cinder n'est pas revenue. Son dossier est inconnu."
+
+#: lib/cinder_web/live/dashboard_live.ex
+#, elixir-autogen, elixir-format
+msgid "Folder read still running"
+msgstr "Lecture de dossier toujours en cours"
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "A read under %{path} has not returned. Its mount may be wedged or slow, or the page that started the read may have closed. Until it returns, Cinder can refuse new reads of this folder, imports from it included."
+msgstr "Une lecture sous %{path} n'est pas revenue. Son point de montage est peut-être bloqué ou lent, ou la page qui a lancé la lecture a peut-être été fermée. Tant qu'elle n'est pas revenue, Cinder peut refuser de nouvelles lectures de ce dossier, y compris les imports depuis ce dossier."
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "A read under %{path} has not returned. Its mount may be wedged or slow, or the page that started the read may have closed. Until it returns, Cinder can refuse new reads of this folder."
+msgstr "Une lecture sous %{path} n'est pas revenue. Son point de montage est peut-être bloqué ou lent, ou la page qui a lancé la lecture a peut-être été fermée. Tant qu'elle n'est pas revenue, Cinder peut refuser de nouvelles lectures de ce dossier."
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "Two or more folder reads have not returned, so until fewer than two remain, Cinder can refuse any new folder read, imports from every download folder included."
+msgstr "Au moins deux lectures de dossiers ne sont pas revenues : tant qu'il en reste deux ou plus, Cinder peut refuser toute nouvelle lecture de dossier, y compris les imports depuis chaque dossier de téléchargement."

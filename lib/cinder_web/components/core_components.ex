@@ -902,6 +902,40 @@ defmodule CinderWeb.CoreComponents do
     intro <> " " <> preview_paths(paths)
   end
 
+  # A walk `Cinder.Library.BoundedWalk` counts as stuck (#948). It may be a healthy walk whose
+  # page closed mid-walk (#1168), so the text never says the folder missed a deadline. The guard
+  # refuses only a new walk keyed to the same folder, and some reads of a folder skip the guard
+  # (`Sidecars.sweep_temps/2`), so Cinder "can" refuse them: an import from a download folder
+  # nested inside this one is keyed to that one.
+  def health_reason({:stuck_walk, :download_folder, path}),
+    do:
+      gettext(
+        "A read under %{path} has not returned. Its mount may be wedged or slow, or the page that started the read may have closed. Until it returns, Cinder can refuse new reads of this folder, imports from it included.",
+        path: path
+      )
+
+  def health_reason({:stuck_walk, :folder, path}),
+    do:
+      gettext(
+        "A read under %{path} has not returned. Its mount may be wedged or slow, or the page that started the read may have closed. Until it returns, Cinder can refuse new reads of this folder.",
+        path: path
+      )
+
+  def health_reason({:stuck_walk, :unknown_root}),
+    do:
+      gettext(
+        "A folder read that was running when Cinder's folder-read guard restarted has not returned. Its folder is unknown."
+      )
+
+  # More walks than the cap can be stuck at once, so the refusal lasts until fewer than two remain,
+  # not until one returns. The guard then refuses every walk under any folder, but some folder
+  # reads skip it, so Cinder "can" refuse them.
+  def health_reason(:stuck_walk_cap),
+    do:
+      gettext(
+        "Two or more folder reads have not returned, so until fewer than two remain, Cinder can refuse any new folder read, imports from every download folder included."
+      )
+
   def health_reason({:path_mapping_local_prefix_unreadable, path}),
     do: gettext("Local path prefix is not an existing readable directory: %{path}", path: path)
 

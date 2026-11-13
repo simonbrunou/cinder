@@ -1,13 +1,16 @@
 defmodule CinderWeb.DashboardLiveTest do
   use CinderWeb.ConnCase, async: false
 
+  import Cinder.BoundedWalkHelpers
+  import Cinder.ConfigCase, only: [put_env: 2]
   import ExUnit.CaptureLog
   import Phoenix.LiveViewTest
   import Mox
 
-  alias Cinder.{Accounts, Catalog, Requests}
+  alias Cinder.{Accounts, Catalog, Health, Requests}
   alias Cinder.Accounts.Scope
   alias Cinder.Catalog.MovieLifecycle
+  alias Cinder.Library.BoundedWalk
 
   import Cinder.CatalogFixtures
 
@@ -79,6 +82,12 @@ defmodule CinderWeb.DashboardLiveTest do
       )
 
     req
+  end
+
+  defp kill(pid) do
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
   end
 
   describe "as an admin" do
@@ -629,6 +638,214 @@ defmodule CinderWeb.DashboardLiveTest do
 
       assert html =~ "Audio: French + original"
       refute html =~ "Audio: Original"
+    end
+  end
+
+  # The app's guard is global, so these tests wedge walks in it from this `async: false` module.
+  describe "stuck folder reads (#948)" do
+    setup :register_and_log_in_admin
+
+    setup do
+      downloads = "/tmp/cinder-948-downloads-#{System.unique_integer([:positive])}"
+      # A trailing slash: the guard keys a walk by the expanded path, which has none.
+      put_env(:import_roots, [downloads <> "/"])
+      %{downloads: downloads}
+    end
+
+    test "a download folder with a stuck walk has a row naming it until the walk returns and " <>
+           "Recheck runs",
+         %{conn: conn, downloads: downloads} do
+      walk = wedge_walks_under(downloads)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      render_async(lv)
+
+      row = "#dashboard-health li:has(#dash-health-status-stuck_walk_1)"
+      assert has_element?(lv, row, "Folder read still running")
+      assert has_element?(lv, "#{row} p.text-warning", downloads)
+
+      assert has_element?(
+               lv,
+               "#{row} p.text-warning",
+               "Cinder can refuse new reads of this folder, imports from it included."
+             )
+
+      assert has_element?(lv, "#{row} .badge-warning", "Warning")
+      assert has_element?(lv, "#dash-health-status-tmdb")
+      refute has_element?(lv, "#dash-health-status-stuck_walk_2")
+      refute has_element?(lv, "#dash-health-status-stuck_walk_cap")
+
+      release_walk(walk)
+      lv |> element("button[phx-click=recheck_health]") |> render_click()
+      render_async(lv)
+
+      assert has_element?(lv, "#dash-health-status-tmdb")
+      refute has_element?(lv, "#dash-health-status-stuck_walk_1")
+      refute has_element?(lv, "#dashboard-health li", downloads)
+    end
+
+    test "Recheck reads a walk that got stuck after the panel loaded", %{
+      conn: conn,
+      downloads: downloads
+    } do
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      render_async(lv)
+      refute has_element?(lv, "#dash-health-status-stuck_walk_1")
+
+      wedge_walks_under(downloads)
+      lv |> element("button[phx-click=recheck_health]") |> render_click()
+      render_async(lv)
+
+      assert has_element?(
+               lv,
+               "#dashboard-health li:has(#dash-health-status-stuck_walk_1) p.text-warning",
+               downloads
+             )
+    end
+
+    test "a stuck walk under a folder that is not a download folder names it, and says Cinder " <>
+           "can refuse new reads of it, not imports",
+         %{conn: conn} do
+      library = "/tmp/cinder-948-library-#{System.unique_integer([:positive])}"
+      wedge_walks_under(library)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      render_async(lv)
+
+      row = "#dashboard-health li:has(#dash-health-status-stuck_walk_1)"
+      assert has_element?(lv, "#{row} p.text-warning", library)
+
+      assert has_element?(
+               lv,
+               "#{row} p.text-warning",
+               "Cinder can refuse new reads of this folder."
+             )
+
+      refute has_element?(lv, row, "imports")
+    end
+
+    test "two walks stuck under one folder have a row each, and reach the cap", %{
+      conn: conn,
+      downloads: downloads
+    } do
+      test = self()
+
+      # Both walks start before either counts as stuck; each counts once its caller dies (#1168).
+      callers =
+        for _caller <- 1..2 do
+          start_supervised!(
+            {Task,
+             fn -> BoundedWalk.run(downloads, fn -> hang_walk(test) end, timeout_ms: 10_000) end},
+            id: make_ref()
+          )
+        end
+
+      for _walk <- 1..2 do
+        assert_receive {:walking, walk}
+        release_walk_on_exit(walk)
+      end
+
+      capture_log(fn ->
+        Enum.each(callers, &kill/1)
+        :sys.get_state(BoundedWalk)
+      end)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      render_async(lv)
+
+      for n <- 1..2 do
+        assert has_element?(
+                 lv,
+                 "#dashboard-health li:has(#dash-health-status-stuck_walk_#{n}) p.text-warning",
+                 downloads
+               )
+      end
+
+      refute has_element?(lv, "#dash-health-status-stuck_walk_3")
+      assert has_element?(lv, "#dash-health-status-stuck_walk_cap")
+    end
+
+    test "with two walks stuck, the panel also says Cinder can refuse any new folder read", %{
+      conn: conn,
+      downloads: downloads
+    } do
+      library = "/tmp/cinder-948-library-#{System.unique_integer([:positive])}"
+      wedge_walks_under(downloads)
+      wedge_walks_under(library)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      render_async(lv)
+
+      assert has_element?(lv, "#dashboard-health li", downloads)
+      assert has_element?(lv, "#dashboard-health li", library)
+      assert has_element?(lv, "#dash-health-status-stuck_walk_2")
+
+      assert has_element?(
+               lv,
+               "#dashboard-health li:has(#dash-health-status-stuck_walk_cap) p.text-warning",
+               "until fewer than two remain, Cinder can refuse any new folder read, imports from " <>
+                 "every download folder included"
+             )
+    end
+
+    test "a walk a restarted guard took over has a row with no path until it returns", %{
+      conn: conn,
+      downloads: downloads
+    } do
+      walk = wedge_walks_under(downloads)
+      # Registered after the walk's release, so it runs first: the release waits on the guard.
+      on_exit(fn -> Supervisor.restart_child(Cinder.Supervisor, BoundedWalk) end)
+      :ok = Supervisor.terminate_child(Cinder.Supervisor, BoundedWalk)
+      {:ok, _guard} = Supervisor.restart_child(Cinder.Supervisor, BoundedWalk)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      render_async(lv)
+
+      row = "#dashboard-health li:has(#dash-health-status-stuck_walk_1)"
+
+      assert has_element?(
+               lv,
+               "#{row} p.text-warning",
+               "running when Cinder's folder-read guard restarted"
+             )
+
+      refute has_element?(lv, "#dashboard-health li", downloads)
+
+      release_walk(walk)
+      lv |> element("button[phx-click=recheck_health]") |> render_click()
+      render_async(lv)
+
+      refute has_element?(lv, "#dash-health-status-stuck_walk_1")
+    end
+
+    test "a guard that does not answer leaves the other health rows and adds no stuck-walk row",
+         %{conn: conn, downloads: downloads} do
+      wedge_walks_under(downloads)
+      guard = Process.whereis(BoundedWalk)
+      # Registered after the walk's release, so it runs first: the release waits on the guard.
+      on_exit(fn -> :sys.resume(guard) end)
+      :sys.suspend(guard)
+
+      log =
+        capture_log(fn ->
+          {:ok, lv, _html} = live(conn, ~p"/dashboard")
+          render_async(lv, 5_000)
+
+          assert has_element?(lv, "#dash-health-status-tmdb")
+          refute has_element?(lv, "#dash-health-status-health_check")
+          refute has_element?(lv, "#dash-health-status-stuck_walk_1")
+        end)
+
+      assert log =~ "could not read the stuck directory walks"
+    end
+
+    test "a stuck walk adds no probe target, so no /settings Test button and no /setup gate", %{
+      downloads: downloads
+    } do
+      wedge_walks_under(downloads)
+
+      refute Enum.any?(Health.targets(), &String.starts_with?(&1.id, "stuck_walk"))
+      refute Enum.any?(Health.check_all(), &String.starts_with?(&1.id, "stuck_walk"))
     end
   end
 
