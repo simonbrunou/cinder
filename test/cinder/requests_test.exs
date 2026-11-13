@@ -515,14 +515,31 @@ defmodule Cinder.RequestsTest do
     assert Repo.reload!(approved).status == :approved
   end
 
-  test "reopen_request returns {:error, changeset} when a pending request already holds the slot" do
+  test "reopen_request returns {:error, :already_active} when a pending request already holds the slot" do
     user = user_fixture()
     admin = admin_fixture()
     {:ok, req} = Requests.create_request(user, @attrs)
     {:ok, denied} = Requests.deny_request(req, admin, "no")
     # a fresh pending request now occupies that target's partial-unique pending slot
     {:ok, _pending} = Requests.create_request(user, @attrs)
-    assert {:error, %Ecto.Changeset{}} = Requests.reopen_request(denied, admin)
+    assert {:error, :already_active} = Requests.reopen_request(denied, admin)
+  end
+
+  # The partial unique index covers approved rows too. The refused write leaves the row as the
+  # deny left it, and nothing is announced.
+  test "reopen_request onto a slot an approved request holds is :already_active and stays denied" do
+    user = user_fixture()
+    admin = admin_fixture()
+    {:ok, req} = Requests.create_request(user, @attrs)
+    {:ok, denied} = Requests.deny_request(req, admin, "no")
+    {:ok, pending} = Requests.create_request(user, @attrs)
+    {:ok, approved} = Requests.approve_request(pending, admin, :standard)
+    assert approved.status == :approved
+    Requests.subscribe()
+
+    assert Requests.reopen_request(denied, admin) == {:error, :already_active}
+    assert %{status: :denied, denial_reason: "no"} = Repo.reload!(denied)
+    refute_received {:request_created, _}
   end
 
   test "auto_approve_all on → a non-admin add creates the movie" do

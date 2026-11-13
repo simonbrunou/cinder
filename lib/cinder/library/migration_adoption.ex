@@ -929,12 +929,15 @@ defmodule Cinder.Library.MigrationAdoption do
              %{episodes: coordinate_episodes},
              episode_ids
            ),
-         {:ok, _applied} <-
+         {:ok, applied} <-
            CatalogAdoption.adopt_episode_files(
              actions,
              Enum.map(batches, &Map.put(&1, :series, series))
            ) do
-      if not existing?, do: Events.series_updated(series.id)
+      # A new series has no episode files yet, so each applied action wrote its episode and the
+      # adoption frame announced the series. Only a new series with nothing adopted is announced
+      # here.
+      if not existing? and applied == [], do: Events.series_updated(series.id)
 
       summary
       |> Map.update!(:adopted, &(&1 + length(items)))

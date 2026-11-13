@@ -1,35 +1,32 @@
 defmodule Cinder.Catalog.Adoption do
   @moduledoc false
 
-  alias Cinder.Catalog.{Episode, Episodes, Identity, MediaProfiles, Profiles, Series}
+  alias Cinder.Catalog.{Episode, Episodes, Events, Identity, MediaProfiles, Profiles, Series}
 
-  alias Cinder.Repo
+  alias Cinder.{GuardedWrite, Repo}
 
   @doc """
   Atomically adopts a list of episode primary/part files. Every action succeeds or every episode
   write rolls back; failures retain their file and episode labels for the adoption UI.
 
-  Broadcasts and transition telemetry fire only after commit.
+  Each episode write is a guarded write (`Episodes.transition/3`), so broadcasts and transition
+  telemetry fire only after commit, one `{:series_updated, id}` per series.
   """
   def adopt_episode_files(actions) when is_list(actions),
     do: adopt_episode_files(actions, [])
 
   def adopt_episode_files(actions, coordinate_batches)
       when is_list(actions) and is_list(coordinate_batches) do
-    case Repo.transaction(
+    case GuardedWrite.transaction(
            fn ->
-             {applied, updated} = reduce_adoptions(actions)
+             {applied, _updated} = reduce_adoptions(actions)
              persist_coordinates(coordinate_batches)
-             {applied, updated}
+             applied
            end,
            mode: :immediate
          ) do
-      {:ok, {applied, updated}} ->
-        publish(updated)
-        {:ok, Enum.reverse(applied)}
-
-      {:error, failure} ->
-        {:error, [failure]}
+      {:ok, applied} -> {:ok, Enum.reverse(applied)}
+      {:error, failure} -> {:error, [failure]}
     end
   end
 
@@ -61,7 +58,7 @@ defmodule Cinder.Catalog.Adoption do
 
   defp do_adopt_series_files(series_id, actions, profile_id, legacy_handling) do
     result =
-      Repo.transaction(
+      GuardedWrite.transaction(
         fn ->
           with {:ok, profile, handling} <-
                  Profiles.resolve_assignment(profile_id, :tv, legacy_handling),
@@ -78,9 +75,11 @@ defmodule Cinder.Catalog.Adoption do
       )
 
     # The adoption may have switched the series' profile, so its anime hold is decided again (#791).
+    # The frame announced the series with the episodes it wrote; a profile switch that wrote none
+    # is announced here.
     case result do
       {:ok, {series, applied, updated}} ->
-        publish(updated, [series.id])
+        if updated == [], do: Events.series_updated(series.id)
         MediaProfiles.reresolve_anime_hold(series)
         {:ok, Enum.reverse(applied)}
 
@@ -171,16 +170,20 @@ defmodule Cinder.Catalog.Adoption do
   def adopt_episode_part(%Episode{} = episode, path),
     do: adopt_file(%{episode: episode, type: :part, path: path}, true)
 
+  # A guarded write on the fields `adopt_file/2` just checked on its re-read. A row another writer
+  # changed since is `:episode_not_found`, which the adoption UI renders as "The episode changed
+  # while adoption was running."
   defp update_episode(episode, attrs) do
-    episode
-    |> Episode.transition_changeset(attrs)
-    |> Repo.update(stale_error_field: :id)
+    expect = Map.take(episode, [:file_path, :part_file_paths, :grab_id])
+
+    case Episodes.transition(episode, attrs, expect: expect) do
+      {:error, :stale_status} -> {:error, :episode_not_found}
+      result -> result
+    end
   end
 
   defp failure(action, reason) when is_map(action),
     do: action |> Map.take([:episode_code, :path]) |> Map.put(:reason, reason)
 
   defp failure(_action, reason), do: %{reason: reason}
-
-  defp publish(updated, extra_series_ids \\ []), do: Episodes.announce(updated, extra_series_ids)
 end

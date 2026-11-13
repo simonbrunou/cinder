@@ -1,7 +1,7 @@
 defmodule Cinder.Requests.RequestTransition do
   @moduledoc false
-  # The `requests` adapter of `Cinder.GuardedWrite`: an admin's decision on a pending request.
-  # Only `Cinder.Requests` names it.
+  # The `requests` adapter of `Cinder.GuardedWrite`: an admin's decision on a pending request, and
+  # the reopen of a denied one. Only `Cinder.Requests` names it.
   @behaviour Cinder.GuardedWrite
 
   alias Cinder.Accounts.User
@@ -21,10 +21,16 @@ defmodule Cinder.Requests.RequestTransition do
   # column, so this narrows by checking the approver row is gone. That is a strong hint, not proof
   # of causation: `requests` also FKs `proposed_profile_id`, but the profile trigger fires first
   # for that race. Any other FK failure re-raises.
+  #
+  # The reopen moves a denied row back to `:pending`, which can collide with another pending or
+  # approved row for the same target on the partial `requests_pending_unique` index. That index
+  # holds expressions, so SQLite names it in the message: "UNIQUE constraint failed: index
+  # 'requests_pending_unique'".
   @impl true
   def refusal(message, attrs) do
     cond do
       message =~ "requests_profile_integrity" -> :invalid_media_profile
+      message =~ "requests_pending_unique" -> :already_active
       message == "FOREIGN KEY constraint failed" and approver_gone?(attrs) -> :approver_deleted
       true -> nil
     end
@@ -33,8 +39,8 @@ defmodule Cinder.Requests.RequestTransition do
   defp approver_gone?(%{approved_by_id: id}) when not is_nil(id), do: is_nil(Repo.get(User, id))
   defp approver_gone?(_attrs), do: false
 
-  # Approval and denial are announced by `Cinder.Requests` itself after commit: an auto-approval
-  # inserts its row rather than flipping one, so no write could announce it.
+  # Approval, denial and reopen are announced by `Cinder.Requests` itself after commit: an
+  # auto-approval inserts its row rather than flipping one, so no write could announce it.
   @impl true
   def publish(_requests), do: :ok
 end

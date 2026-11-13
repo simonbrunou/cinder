@@ -28,6 +28,7 @@ defmodule Cinder.Catalog.TitleDeletion do
   }
 
   alias Cinder.Download
+  alias Cinder.GuardedWrite
   alias Cinder.Library
   alias Cinder.Library.ImportedQuality
   alias Cinder.Repo
@@ -210,8 +211,9 @@ defmodule Cinder.Catalog.TitleDeletion do
   When every path is gone, imported metadata is cleared and `opts[:unmonitor]` also flips
   `monitored` off, which lifts the series' anime hold when no episode stays monitored
   (`SeriesCatalog.lift_unmonitored_anime_hold/1`). A partial or total unlink failure is logged and
-  returned as `{:error, reason}` after the truthful DB/audit write. Broadcasts
-  `{:series_updated, series_id}` after a DB change.
+  returned as `{:error, reason}` after the truthful DB/audit write. Each episode row it changes is
+  a guarded write (`Episodes.transition/3`), so a change announces `{:series_updated, series_id}`
+  once, after commit.
   """
   def delete_episode_file(episode, actor, opts \\ [])
 
@@ -227,24 +229,21 @@ defmodule Cinder.Catalog.TitleDeletion do
     results = unlink_paths(paths)
     unmonitor? = Keyword.get(opts, :unmonitor, false)
 
-    with {:ok, {updated, changed?}} <-
-           do_delete_episode_file_txn(episode, actor, unmonitor?, results) do
-      series_id = Episodes.series_id(updated)
-      if changed?, do: Events.series_updated(series_id)
-      if unmonitor?, do: SeriesCatalog.lift_unmonitored_anime_hold(series_id)
+    # The frame announced every episode row it changed; one that changed none announces nothing.
+    with {:ok, updated} <- do_delete_episode_file_txn(episode, actor, unmonitor?, results) do
+      if unmonitor?, do: SeriesCatalog.lift_unmonitored_anime_hold(Episodes.series_id(updated))
       episode_delete_result(updated, results)
     end
   end
 
   defp do_delete_episode_file_txn(episode, actor, unmonitor?, results) do
-    Repo.transaction(fn ->
+    GuardedWrite.transaction(fn ->
       fresh = Repo.get(Episode, episode.id) || Repo.rollback(:stale_entry)
       successful = successful_paths(results)
 
-      outcomes =
-        Repo.all(from e in Episode, where: e.season_id == ^fresh.season_id)
-        |> Enum.filter(&shares_path?(&1, results))
-        |> Enum.map(&reconcile_deleted_paths(&1, successful, unmonitor?))
+      Repo.all(from e in Episode, where: e.season_id == ^fresh.season_id)
+      |> Enum.filter(&shares_path?(&1, results))
+      |> Enum.each(&reconcile_deleted_paths(&1, successful, unmonitor?))
 
       updated = Repo.get!(Episode, fresh.id)
 
@@ -257,10 +256,8 @@ defmodule Cinder.Catalog.TitleDeletion do
         })
       )
 
-      {updated, Enum.any?(outcomes, &(elem(&1, 1) != :unchanged))}
+      updated
     end)
-  rescue
-    Ecto.StaleEntryError -> {:error, :stale_entry}
   end
 
   defp episode_delete_result(updated, results) do
@@ -290,33 +287,52 @@ defmodule Cinder.Catalog.TitleDeletion do
     Enum.any?(Episode.file_paths(episode), &MapSet.member?(attempted, &1))
   end
 
+  # Returns `:unchanged`, `:cleared` or `:partial`. Each change is a guarded write on the paths this
+  # frame read; a row another writer changed since rolls the frame back as `:stale_entry`.
   defp reconcile_deleted_paths(episode, successful, unmonitor?) do
     primary = if MapSet.member?(successful, episode.file_path), do: nil, else: episode.file_path
     parts = Enum.reject(episode.part_file_paths || [], &MapSet.member?(successful, &1))
 
     cond do
       primary == episode.file_path and parts == (episode.part_file_paths || []) ->
-        {episode, :unchanged}
+        :unchanged
 
       primary in [nil, ""] and parts == [] ->
-        attrs =
-          Map.merge(
-            %{file_path: nil, part_file_paths: [], search_attempts: 0},
-            ImportedQuality.columns(nil, Episode)
-          )
-
-        episode
-        |> Episode.transition_changeset(attrs)
-        |> maybe_unmonitor(unmonitor?)
-        |> Repo.update!()
-        |> then(&{&1, :cleared})
+        clear_deleted_paths!(episode, unmonitor?)
 
       true ->
-        episode
-        |> Episode.transition_changeset(%{file_path: primary, part_file_paths: parts})
-        |> Repo.update!()
-        |> then(&{&1, :partial})
+        transition_deleted_paths!(episode, %{file_path: primary, part_file_paths: parts})
+        :partial
     end
+  end
+
+  defp clear_deleted_paths!(episode, unmonitor?) do
+    attrs =
+      Map.merge(
+        %{file_path: nil, part_file_paths: [], search_attempts: 0},
+        ImportedQuality.columns(nil, Episode)
+      )
+
+    transition_deleted_paths!(episode, attrs)
+    if unmonitor?, do: unmonitor!(episode)
+    :cleared
+  end
+
+  defp transition_deleted_paths!(episode, attrs) do
+    expect = %{file_path: episode.file_path, part_file_paths: episode.part_file_paths}
+
+    case Episodes.transition(episode, attrs, expect: expect) do
+      {:ok, _updated} -> :ok
+      {:error, _reason} -> Repo.rollback(:stale_entry)
+    end
+  end
+
+  # `monitored` is not a pipeline field (`Episode.transition_changeset/2` does not cast it), so the
+  # unmonitor is its own direct write in the same frame.
+  defp unmonitor!(episode) do
+    Repo.update_all(from(e in Episode, where: e.id == ^episode.id),
+      set: [monitored: false, updated_at: DateTime.utc_now(:second)]
+    )
   end
 
   defp unlink_audit_detail(results, detail) do
@@ -333,11 +349,6 @@ defmodule Cinder.Catalog.TitleDeletion do
 
     if failed == [], do: detail, else: Map.put(detail, :failed_unlinks, failed)
   end
-
-  defp maybe_unmonitor(changeset, true),
-    do: Ecto.Changeset.put_change(changeset, :monitored, false)
-
-  defp maybe_unmonitor(changeset, false), do: changeset
 
   @doc """
   Deletes every library file in a season (Sonarr per-season "delete episode files"): every unique
@@ -358,9 +369,11 @@ defmodule Cinder.Catalog.TitleDeletion do
     results = episodes |> Enum.flat_map(&Episode.file_paths/1) |> unlink_paths()
     failed_count = Enum.count(episodes, &episode_unlink_failed?(&1, results))
 
-    with {:ok, cleared_count} <-
+    with {:ok, {cleared_count, changed?}} <-
            do_delete_season_files_txn(season, actor, results, unmonitor?) do
-      Events.series_updated(season.series_id)
+      # The frame announced the series with the episode rows it changed; when every unlink failed
+      # it changed none, and the series is announced once here.
+      unless changed?, do: Events.series_updated(season.series_id)
       if unmonitor?, do: SeriesCatalog.lift_unmonitored_anime_hold(season.series_id)
       {:ok, cleared_count, failed_count}
     end
@@ -372,7 +385,7 @@ defmodule Cinder.Catalog.TitleDeletion do
   end
 
   defp do_delete_season_files_txn(season, actor, results, unmonitor?) do
-    Repo.transaction(fn ->
+    GuardedWrite.transaction(fn ->
       successful = successful_paths(results)
 
       outcomes =
@@ -380,7 +393,7 @@ defmodule Cinder.Catalog.TitleDeletion do
         |> Enum.filter(&shares_path?(&1, results))
         |> Enum.map(&reconcile_deleted_paths(&1, successful, unmonitor?))
 
-      cleared_count = Enum.count(outcomes, &(elem(&1, 1) == :cleared))
+      cleared_count = Enum.count(outcomes, &(&1 == :cleared))
 
       Audit.log_or_rollback(
         actor,
@@ -392,7 +405,7 @@ defmodule Cinder.Catalog.TitleDeletion do
         })
       )
 
-      cleared_count
+      {cleared_count, Enum.any?(outcomes, &(&1 != :unchanged))}
     end)
   end
 

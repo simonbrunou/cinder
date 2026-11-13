@@ -475,7 +475,7 @@ defmodule Cinder.Download.TvPoller do
 
   # Shared by all three `#415` fence sites above. `nil` (no fence) when nothing survived to fence
   # — an empty `episode_ids` would crash `Download.fence_episode_cleanup/2`'s carrier insert on
-  # `hd([])` (mirroring `Catalog.Grabs.fence_client_intent_ids/1`'s own empty-list guard); it
+  # `hd([])` (mirroring `Catalog.Grabs.fence_client_intent_ids/2`'s own empty-list guard); it
   # degrades to `remove_after_import/4`'s legacy one-shot removal instead, exactly like a genuine
   # fence-vs-unrelated-intent mismatch.
   defp episode_cleanup_fence(_grab, []), do: nil
@@ -781,7 +781,7 @@ defmodule Cinder.Download.TvPoller do
     code = Watch.reason_code(reason)
 
     # Block BEFORE park_grab deletes the grab: block_grab_release resolves the series from the
-    # grab's still-linked episodes (the grab_id FK nilifies them on delete). It is non-raising,
+    # grab's still-linked episodes (park_grab clears their grab_id). It is non-raising,
     # so it cannot abort the park (a raise here would re-park the grab every tick). :no_files_matched
     # is the deterministic empty-import; :blocked_content is the deterministic fake-content check
     # (both park on first sighting); a download failure (`Watch.failure?/1`) only reaches park

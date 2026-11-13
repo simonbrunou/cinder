@@ -207,6 +207,24 @@ defmodule Cinder.Library.MigrationAdoptionTest do
     end
   end
 
+  # The series is new, so the adoption frame that writes its episode is the one announcement.
+  test "a Sonarr adoption that creates its series announces it once" do
+    snapshot = fixture_snapshot("n_to_one")
+    stub(SonarrMigrationSourceMock, :snapshot, fn -> {:ok, snapshot} end)
+    stub_n_to_one_tmdb()
+
+    assert {:ok, preview} = Adoption.preview_migration(:sonarr)
+    assert [%{key: key} = candidate] = preview.candidates
+    Catalog.subscribe_series()
+
+    assert %{adopted: 1, failures: []} =
+             Adoption.adopt_migration(:sonarr, [%{key: key, choice: :fold, candidate: candidate}])
+
+    series_id = Catalog.get_series_by_tmdb_id(1100).id
+    assert_received {:series_updated, ^series_id}
+    refute_received {:series_updated, ^series_id}
+  end
+
   test "a Sonarr TVDB split with a book-only choice (preferred/all_formats) is skipped, not adopted" do
     snapshot = fixture_snapshot("n_to_one")
     stub(SonarrMigrationSourceMock, :snapshot, fn -> {:ok, snapshot} end)

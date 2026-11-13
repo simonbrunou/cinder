@@ -99,8 +99,5 @@ defmodule Cinder.Requests.Request do
     ])
     |> validate_required([:status])
     |> foreign_key_constraint(:proposed_profile_id)
-    # reopen_request/2 moves a denied row back to :pending, which can collide on the partial
-    # requests_pending_unique index; map that to {:error, changeset} rather than raising.
-    |> unique_constraint([:user_id, :target_type, :target_id], name: :requests_pending_unique)
   end
 end

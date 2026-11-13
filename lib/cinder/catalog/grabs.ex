@@ -69,8 +69,10 @@ defmodule Cinder.Catalog.Grabs do
 
   @doc """
   Creates a grab for `episode_ids` (a non-empty list of episodes in one series — a single
-  episode or a season pack) and links them in one transaction, then broadcasts
-  `{:series_updated, series_id}`. `release_title` (optional) records the chosen release's name so
+  episode or a season pack) and links them in one transaction, each with a guarded write
+  (`Episodes.transition/3`), which announce `{:series_updated, series_id}` once after commit.
+  That announcement is best-effort (`Episodes.announce/2`): a committed grab is `{:ok, grab}`
+  even when it fails. `release_title` (optional) records the chosen release's name so
   the blocklist can skip it if this download later parks. A changeset failure (e.g. a missing
   `download_id`) rolls back as `{:error, changeset}` rather than raising, mirroring
   `set_season_monitored/2`.
@@ -82,68 +84,46 @@ defmodule Cinder.Catalog.Grabs do
   swap — the unattended upgrade sweep sets it; the manual path leaves it off and forces (#250).
   """
   def create_grab(download_id, protocol, episode_ids, release_title \\ nil, opts \\ []) do
-    result =
-      Repo.transaction(fn ->
-        insert_and_link_grab(download_id, protocol, episode_ids, release_title, opts)
-      end)
-
-    with {:ok, grab} <- result do
-      broadcast_grab_series(grab)
-      {:ok, grab}
-    end
+    GuardedWrite.transaction(fn ->
+      insert_and_link_grab(download_id, protocol, episode_ids, release_title, opts)
+    end)
   end
 
-  @doc "Atomically transfers an anime intent's frozen mapping snapshot and episode ownership."
+  @doc """
+  Atomically transfers an anime intent's frozen mapping snapshot and episode ownership. The
+  episode links announce like `create_grab/5`'s.
+  """
   def create_grab_from_intent(%Cinder.Download.Intent{} = intent) do
-    result =
-      Repo.transaction(fn ->
-        fresh = Repo.get(Cinder.Download.Intent, intent.id)
-        if is_nil(fresh), do: Repo.rollback(:stale_intent)
+    GuardedWrite.transaction(fn ->
+      fresh = Repo.get(Cinder.Download.Intent, intent.id)
+      if is_nil(fresh), do: Repo.rollback(:stale_intent)
 
-        attrs = %{
-          download_id: fresh.remote_id,
-          download_protocol: fresh.protocol,
-          release_title: fresh.release["title"],
-          mapping_snapshot: fresh.mapping_snapshot,
-          release_policy_snapshot: fresh.release_policy_snapshot,
-          mapping_status: :resolved
-        }
+      attrs = %{
+        download_id: fresh.remote_id,
+        download_protocol: fresh.protocol,
+        release_title: fresh.release["title"],
+        mapping_snapshot: fresh.mapping_snapshot,
+        release_policy_snapshot: fresh.release_policy_snapshot,
+        mapping_status: :resolved
+      }
 
-        grab =
-          %Grab{arbitrate_at_import: fresh.release["arbitrate_at_import"] == true}
-          |> Grab.reservation_changeset(attrs)
-          |> Repo.insert()
-          |> case do
-            {:ok, grab} -> grab
-            {:error, changeset} -> Repo.rollback(changeset)
-          end
+      grab =
+        %Grab{arbitrate_at_import: fresh.release["arbitrate_at_import"] == true}
+        |> Grab.reservation_changeset(attrs)
+        |> Repo.insert()
+        |> case do
+          {:ok, grab} -> grab
+          {:error, changeset} -> Repo.rollback(changeset)
+        end
 
-        {linked, _rows} = link_intent_episodes(fresh, grab)
+      allow_available? = fresh.release["operator_initiated"] == true
+      linked = link_episodes(grab, fresh.episode_ids, allow_available?, %{})
 
-        if linked != length(fresh.episode_ids), do: Repo.rollback(:episode_ownership_changed)
+      if linked != length(fresh.episode_ids), do: Repo.rollback(:episode_ownership_changed)
 
-        Repo.delete!(fresh)
-        grab
-      end)
-
-    with {:ok, grab} <- result do
-      broadcast_grab_series(grab)
-      {:ok, grab}
-    end
-  end
-
-  defp link_intent_episodes(intent, grab) do
-    allow_available? = intent.release["operator_initiated"] == true
-
-    Repo.update_all(
-      from(e in Episode,
-        where:
-          e.id in ^intent.episode_ids and is_nil(e.grab_id) and
-            ((e.monitored == true and is_nil(e.file_path)) or
-               (^allow_available? and not is_nil(e.file_path)))
-      ),
-      set: [grab_id: grab.id, updated_at: DateTime.utc_now(:second)]
-    )
+      Repo.delete!(fresh)
+      grab
+    end)
   end
 
   @doc "Persists an anime mapping preflight outcome (resolved, or held with its reason) and broadcasts."
@@ -226,21 +206,9 @@ defmodule Cinder.Catalog.Grabs do
     # reset_attempts: the manual-grab path zeroes search_attempts (mirroring manual_grab_movie),
     # giving the user-chosen release a fresh budget — and keeping the counter from ever exceeding
     # the cap, which `EpisodeSearch.announce_search_exhausted/1`'s crossing check relies on.
-    reset = if Keyword.get(opts, :reset_attempts, false), do: [search_attempts: 0], else: []
+    reset = if Keyword.get(opts, :reset_attempts, false), do: %{search_attempts: 0}, else: %{}
     allow_available? = Keyword.get(opts, :allow_available, false)
-    # Guard `is_nil(grab_id)`: never re-link an episode another grab already owns (defends against
-    # a same-tick double-link silently overwriting an earlier grab). Missing episodes must remain
-    # monitored; an available episode may be manually upgraded even when monitoring is off.
-    {linked, _} =
-      Repo.update_all(
-        from(e in Episode,
-          where:
-            e.id in ^episode_ids and is_nil(e.grab_id) and
-              ((e.monitored == true and is_nil(e.file_path)) or
-                 (^allow_available? and not is_nil(e.file_path)))
-        ),
-        set: [grab_id: grab.id, updated_at: DateTime.utc_now(:second)] ++ reset
-      )
+    linked = link_episodes(grab, episode_ids, allow_available?, reset)
 
     # All or nothing, as `create_grab_from_intent/1` already does for the anime path. A partial link
     # used to be tolerated, and it silently manufactured operator work: the release still downloads
@@ -254,6 +222,34 @@ defmodule Cinder.Catalog.Grabs do
 
   defp link_failure(0), do: :no_episodes_linked
   defp link_failure(_partial), do: :episode_ownership_changed
+
+  # Links each free episode among `episode_ids` to `grab`, writing `attrs` with it, and returns how
+  # many it linked; each caller turns a shortfall into its own refusal. Never re-links an episode
+  # another grab already owns (a same-tick double-link would silently overwrite an earlier grab).
+  # A missing episode must still be monitored; an available one may be manually upgraded even when
+  # monitoring is off. Each link is a guarded write that expects what this read checked.
+  defp link_episodes(grab, episode_ids, allow_available?, attrs) do
+    from(e in Episode,
+      where:
+        e.id in ^episode_ids and is_nil(e.grab_id) and
+          ((e.monitored == true and is_nil(e.file_path)) or
+             (^allow_available? and not is_nil(e.file_path)))
+    )
+    |> Repo.all()
+    |> Enum.count(fn episode ->
+      linked =
+        Episodes.transition(episode, Map.put(attrs, :grab_id, grab.id),
+          expect: link_expectation(episode)
+        )
+
+      match?({:ok, _linked}, linked)
+    end)
+  end
+
+  defp link_expectation(%Episode{file_path: nil}),
+    do: %{grab_id: nil, monitored: true, file_path: nil}
+
+  defp link_expectation(%Episode{}), do: %{grab_id: nil, file_path: {:not, nil}}
 
   @doc """
   Marks a grab downloaded (records `content_path`, the at-rest path to import) and broadcasts.
@@ -547,8 +543,7 @@ defmodule Cinder.Catalog.Grabs do
 
   @doc """
   Records `grab`'s `release_title` as blocked for its series. Resolves the series from the grab's
-  still-linked episodes, so call it **before** `park_grab/1` deletes the grab (the FK nilifies the
-  links on delete). A nil `release_title` is a no-op. **Non-raising**
+  still-linked episodes, so call it **before** `park_grab/1` releases them and deletes the grab. A nil `release_title` is a no-op. **Non-raising**
   (`Cinder.Catalog.BlockedReleases.block_series_release/3`): the series lookup runs inside its
   guard, so the TV park path's series resolution can't raise out and abort `park_grab`.
   """
@@ -955,7 +950,7 @@ defmodule Cinder.Catalog.Grabs do
           preload: [season: :series]
       ) || Repo.rollback(:episode_not_in_grab)
 
-    updated_episode =
+    written_episode =
       case decision do
         :fold ->
           bind_grab_file_coordinate!(file, episode)
@@ -967,7 +962,7 @@ defmodule Cinder.Catalog.Grabs do
           adopt_grab_file_part!(episode, dest)
       end
 
-    {:decided, file, updated_episode, episode.season.series_id}
+    {:decided, file, written_episode, episode.season.series_id}
   end
 
   defp bind_grab_file_coordinate!(file, episode) do
@@ -1005,19 +1000,17 @@ defmodule Cinder.Catalog.Grabs do
 
   defp adopt_grab_file_part!(episode, destination) do
     case Adoption.adopt_episode_part(episode, destination) do
-      {:ok, %Episode{} = updated} -> updated
-      {:ok, nil} -> episode
+      {:ok, written} -> written
       {:error, reason} -> Repo.rollback(reason)
     end
   end
 
   defp publish_grab_file_decision({:ok, {:noop, file, nil}}), do: {:ok, :noop, file}
 
-  defp publish_grab_file_decision({:ok, {:decided, file, updated_episode, series_id}}) do
-    if updated_episode,
-      do: Episodes.announce([updated_episode]),
-      else: Events.series_updated(series_id)
-
+  # A written episode published as its frame committed; a decision that wrote none (a fold, or a
+  # part the episode already holds) announces the grab's series here.
+  defp publish_grab_file_decision({:ok, {:decided, file, written_episode, series_id}}) do
+    if is_nil(written_episode), do: Events.series_updated(series_id)
     {:ok, :decided, file}
   end
 
@@ -1065,12 +1058,15 @@ defmodule Cinder.Catalog.Grabs do
 
   @doc """
   Finalizes a grab after import, in **one transaction**: sets `file_path`, clears
-  `part_file_paths` and `grab_id` on each imported episode, bumps `search_attempts` on the
-  non-imported ones (backoff toward search-park instead of re-grabbing forever) — **before** the
-  delete, since the `grab_id` FK nilifies on delete and the bump's predicate would then match
-  nothing — then deletes the grab. `imported` is `[{episode_id, dest_path}]`; each is written
-  individually since a single `update_all set:` can't give each its own dest (cheap: `n` is one
-  season pack). Broadcasts `{:series_updated, _}` and announces any completed season.
+  `part_file_paths` and `grab_id` on each imported episode, releases the non-imported ones
+  (`grab_id` cleared) with a `search_attempts` bump (backoff toward search-park instead of
+  re-grabbing forever), then deletes the grab. `imported` is `[{episode_id, dest_path, quality}]`.
+
+  Each episode write is a guarded write (`Episodes.transition/3`) that expects the row the caller
+  read: `grab.episodes` when the caller loaded it (the TV poller's import pass), else read before
+  the transaction. A row another writer changed since rolls everything back as
+  `{:error, :stale_grab}`, and so does a grab already gone. The episode writes announce
+  `{:series_updated, _}` once after commit; any completed season is announced after it.
 
   `opts[:fence_client]` additionally fences a durable cleanup intent for the grab's
   `download_id`/`download_protocol` in the same transaction as the delete, removed from the
@@ -1081,78 +1077,60 @@ defmodule Cinder.Catalog.Grabs do
 
   def finish_grab(%Grab{} = grab, imported, stage_ids, opts \\ []) do
     imported_ids = imported |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
+    %Grab{episodes: snapshot} = Repo.preload(grab, :episodes)
+    episodes = Map.new(snapshot, &{&1.id, &1})
     series_id = series_id_for_grab(grab.id)
 
     result =
-      Repo.transaction(fn ->
-        ts = DateTime.utc_now(:second)
-
-        for {episode_id, dest, q} <- imported do
-          update_imported_episode!(grab.id, episode_id, dest, q, ts)
+      GuardedWrite.transaction(fn ->
+        case claim(grab, []) do
+          {:ok, _claimed} -> :ok
+          {:error, :stale_status} -> Repo.rollback(:stale_grab)
         end
 
-        # select: in the update_all (RETURNING) hands the bumped ids to the post-commit
-        # exhaustion announce without a leading SELECT — a read-then-write transaction is
-        # the SQLITE_BUSY class busy_timeout can't rescue (see config/test.exs), and the
-        # delete below nilifies grab_id so the ids can't be re-derived afterwards.
-        {_count, bumped_ids} =
-          Repo.update_all(
-            missing_episodes_query(grab.id, imported_ids) |> select([e], e.id),
-            inc: [search_attempts: 1],
-            set: [updated_at: ts]
-          )
+        # Before the episode writes below, which release the `grab_id` this reads.
+        intent_ids =
+          if opts[:fence_client], do: fence_client_intent_ids(grab, imported_ids), else: []
+
+        imported_episodes =
+          for {episode_id, dest, q} <- imported do
+            episode = Map.get(episodes, episode_id) || Repo.rollback(:stale_grab)
+            transition_imported_episode!(grab.id, episode, dest, q, false, true)
+          end
+
+        bumped =
+          snapshot
+          |> Enum.reject(&(&1.id in imported_ids))
+          |> Enum.map(&transition_missing_episode!(grab.id, &1))
 
         completed_seasons = completed_seasons_for_imported_episodes(imported_ids)
 
         ImportStage.mark_committed!(stage_ids)
-        intent_ids = if opts[:fence_client], do: fence_client_intent_ids(grab), else: []
         Repo.delete!(grab)
-        {bumped_ids, completed_seasons, intent_ids}
+        {imported_episodes ++ bumped, Enum.map(bumped, & &1.id), completed_seasons, intent_ids}
       end)
 
-    with {:ok, {bumped_ids, completed_seasons, intent_ids}} <- result do
-      Events.series_updated(series_id)
+    with {:ok, {written, bumped_ids, completed_seasons, intent_ids}} <- result do
+      # The episode writes published as their frame committed; a grab that owned none still
+      # announces its own change.
+      if written == [], do: Events.series_updated(series_id)
       EpisodeSearch.announce_search_exhausted(bumped_ids)
       Enum.each(completed_seasons, &Notifier.notify({:season_available, &1}))
       Download.cleanup_intents(intent_ids)
       {:ok, grab}
     end
-  rescue
-    Ecto.StaleEntryError -> {:error, :stale_grab}
   end
 
-  # A live grab can't reach zero episodes (every grab-delete here unlinks episodes in the SAME
-  # transaction) — empty means a concurrent Discard/cancel won; roll back to :stale_grab.
-  defp fence_client_intent_ids(grab) do
-    case episode_ids_for_grab(grab.id) do
+  # The grab's episodes that did not import, read before this frame releases them. Only
+  # `park_grab_and_remove/1` fences, and it imports nothing, so these are every episode the grab
+  # still links. A grab a concurrent Discard or cancel deleted already missed the claim above; the
+  # empty case rolls back as :stale_grab so `Download.fence_episode_cleanup/2` never gets `[]`.
+  defp fence_client_intent_ids(grab, imported_ids) do
+    case episode_ids_for_grab(grab.id) -- imported_ids do
       [] -> Repo.rollback(:stale_grab)
       ids -> Download.fence_episode_cleanup(ids, [grab_cleanup_spec(grab, ids)])
     end
   end
-
-  defp update_imported_episode!(grab_id, episode_id, dest, quality, timestamp) do
-    query =
-      from e in Episode,
-        where:
-          e.id == ^episode_id and e.grab_id == ^grab_id and
-            (e.monitored == true or not is_nil(e.file_path))
-
-    updates =
-      [file_path: dest, part_file_paths: [], grab_id: nil, updated_at: timestamp] ++
-        Map.to_list(ImportedQuality.columns(quality, Episode))
-
-    case Repo.update_all(query, set: updates) do
-      {1, _} -> :ok
-      {0, _} -> Repo.rollback(:stale_grab)
-    end
-  end
-
-  # The grab's episodes that did not import. Branch on the empty case so we never interpolate
-  # an empty list into `not in` (and so a park — empty `imported` — bumps every linked episode).
-  defp missing_episodes_query(grab_id, []), do: from(e in Episode, where: e.grab_id == ^grab_id)
-
-  defp missing_episodes_query(grab_id, imported_ids),
-    do: from(e in Episode, where: e.grab_id == ^grab_id and e.id not in ^imported_ids)
 
   defp completed_seasons_for_imported_episodes([]), do: []
 
@@ -1178,8 +1156,9 @@ defmodule Cinder.Catalog.Grabs do
   end
 
   @doc """
-  Parks a grab: deletes it and bumps every linked episode's `search_attempts` (so they re-search,
-  bounded, then search-park). The terminal-failure case of `finish_grab/2` (nothing imported).
+  Parks a grab: deletes it and releases every linked episode with a `search_attempts` bump (so
+  they re-search, bounded, then search-park). The terminal-failure case of `finish_grab/2`
+  (nothing imported).
   """
   def park_grab(%Grab{} = grab), do: finish_grab(grab, [])
 
@@ -1191,19 +1170,18 @@ defmodule Cinder.Catalog.Grabs do
 
   @doc """
   Reaps a stalled downloading grab (the stall reaper): one transaction blocklists its release
-  `:stalled`, bumps every linked episode's `search_attempts` (backoff), fences the client download
-  for removal, then deletes the grab; after commit the remote job + reserved intent are torn down
-  and the series is announced, so the episodes re-search a *different* release next tick.
+  `:stalled`, releases every linked episode with a `search_attempts` bump (backoff), fences the
+  client download for removal, then deletes the grab; after commit the episode writes announce
+  the series and the remote job + reserved intent are torn down, so the episodes re-search a
+  *different* release next tick.
 
   Claims the grab **first** (a guarded write with no attrs, like `cancel_grab/2`'s): the poller
   reaps off a tick-start snapshot, so a concurrent user Discard/cancel can delete the same grab in
   the `client.status/1` window. A missed claim means it is already gone: `{:error, :stale_grab}`,
-  a no-op. After the claim the grab still exists, so the block and bump read its still-linked
-  episodes before the `Repo.delete` (which nilifies `grab_id`) runs last.
+  a no-op. After the claim the grab still exists, so the block reads its still-linked episodes
+  before the episode writes release them.
   """
   def reap_stalled_grab(%Grab{} = grab) do
-    series_id = series_id_for_grab(grab.id)
-
     result =
       GuardedWrite.transaction(fn ->
         case claim(grab, []) do
@@ -1211,13 +1189,10 @@ defmodule Cinder.Catalog.Grabs do
             Repo.rollback(:stale_grab)
 
           {:ok, _claimed} ->
-            episode_ids = episode_ids_for_grab(grab.id)
+            episodes = Repo.all(from e in Episode, where: e.grab_id == ^grab.id)
+            episode_ids = Enum.map(episodes, & &1.id)
             block_grab_release(grab, :stalled)
-
-            Repo.update_all(missing_episodes_query(grab.id, []),
-              inc: [search_attempts: 1],
-              set: [updated_at: DateTime.utc_now(:second)]
-            )
+            Enum.each(episodes, &transition_missing_episode!(grab.id, &1))
 
             intent_ids =
               Download.fence_episode_cleanup(episode_ids, [grab_cleanup_spec(grab, episode_ids)])
@@ -1230,7 +1205,6 @@ defmodule Cinder.Catalog.Grabs do
     case result do
       {:ok, {:reaped, intent_ids}} ->
         Download.cleanup_intents(intent_ids)
-        Events.series_updated(series_id)
         Notifier.notify({:grab_failed, grab, :stalled})
         {:ok, grab}
 

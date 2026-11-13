@@ -13,7 +13,9 @@ defmodule Cinder.Catalog.EpisodeTransition do
   @impl true
   def refusal(_message, _attrs), do: nil
 
-  # One `{:series_updated, id}` per series, then `[:cinder, :transition]` per episode.
+  # One `{:series_updated, id}` per series, then `[:cinder, :transition]` per episode. Best-effort:
+  # `Episodes.announce/2` logs a failure and never raises, so a write or frame that committed
+  # never reports an error because its announcement failed.
   @impl true
   def publish(episodes), do: Episodes.announce(episodes)
 end

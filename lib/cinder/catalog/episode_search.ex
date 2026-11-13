@@ -353,7 +353,7 @@ defmodule Cinder.Catalog.EpisodeSearch do
   """
   def announce_search_exhausted([]), do: :ok
 
-  # Best-effort like `Grabs.create_grab/5`'s post-commit broadcast (and guarded the same way): it
+  # Best-effort like `Episodes.announce/2` (and guarded the same way): it
   # runs AFTER the bump/finalize committed, so a re-select raise here (pool-checkout timeout,
   # SQLITE_BUSY) must not escape — in finish_grab's caller that would skip the client-download
   # removal and the availability notification for a grab row that is already gone.

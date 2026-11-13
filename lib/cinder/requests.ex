@@ -577,9 +577,10 @@ defmodule Cinder.Requests do
 
   @doc """
   Reopens a denied request back to `:pending` (clearing the denial reason and approver) so an
-  admin can recover from a mistaken deny — the undo path for the approval queue. Re-occupies the
-  partial `requests_pending_unique` slot, so it returns `{:error, changeset}` if a competing
-  pending row for the same target was created in the meantime.
+  admin can recover from a mistaken deny — the undo path for the approval queue. A guarded write
+  on `status == :denied`: a row no longer denied is `{:error, :not_denied}`. It re-occupies the
+  partial `requests_pending_unique` slot, so it returns `{:error, :already_active}` if a pending
+  or approved row for the same target was created in the meantime.
 
   A target type no approval can create is refused with `{:error, :unsupported_target}` and no
   write: reopened, a legacy row filed before #770 would sit pending with no admin able to approve
@@ -587,31 +588,22 @@ defmodule Cinder.Requests do
   """
   def reopen_request(%Request{status: :denied} = request, %User{} = _admin) do
     with {:ok, _adapter} <- Approval.adapter(request) do
-      Repo.transaction(
-        fn -> reopen_denied_request(Repo.get(Request, request.id)) end,
-        mode: :immediate
-      )
+      GuardedWrite.transaction(fn -> reopen_denied_request(request) end, mode: :immediate)
       |> Util.tap_ok(&broadcast({:request_created, &1}))
     end
   end
 
   def reopen_request(%Request{}, _admin), do: {:error, :not_denied}
 
-  defp reopen_denied_request(%Request{status: :denied} = current) do
-    current
-    |> Request.status_changeset(%{
-      status: :pending,
-      denial_reason: nil,
-      approved_by_id: nil
-    })
-    |> Repo.update()
-    |> case do
+  defp reopen_denied_request(request) do
+    attrs = %{status: :pending, denial_reason: nil, approved_by_id: nil}
+
+    case GuardedWrite.write(RequestTransition, request, attrs, status: :denied) do
       {:ok, reopened} -> reopened
-      {:error, changeset} -> Repo.rollback(changeset)
+      {:error, :stale_status} -> Repo.rollback(:not_denied)
+      {:error, reason} -> Repo.rollback(reason)
     end
   end
-
-  defp reopen_denied_request(_request), do: Repo.rollback(:not_denied)
 
   @doc """
   Deletes a request as an admin and records an `admin_audit` row in the same

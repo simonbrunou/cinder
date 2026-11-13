@@ -329,15 +329,33 @@ defmodule Cinder.GuardedWriteTest do
       assert %Request{status: :pending} = Repo.reload!(request)
     end
 
-    test "a constraint the adapter does not name re-raises" do
+    # The reopen's collision on the partial `requests_pending_unique` index. SQLite names that
+    # expression index in its message, which is what the refusal matches.
+    test "a collision on the active-request index is refused as :already_active" do
       user = user_fixture()
       work = work_fixture()
       {:ok, denied} = Requests.create_request(user, book_request(work))
       {:ok, denied} = Requests.deny_request(denied, admin_fixture(), "not now")
       {:ok, _pending} = Requests.create_request(user, book_request(work))
 
-      assert_raise Exqlite.Error, ~r/UNIQUE constraint failed/, fn ->
-        GuardedWrite.write(RequestTransition, denied, %{status: :pending}, status: :denied)
+      assert {:error, :already_active} =
+               GuardedWrite.write(RequestTransition, denied, %{status: :pending}, status: :denied)
+
+      assert %Request{status: :denied} = Repo.reload!(denied)
+    end
+
+    # A trigger the adapter does not know, standing in for a constraint added later. The sandbox's
+    # transaction takes the trigger back with the test.
+    test "a constraint the adapter does not name re-raises" do
+      {:ok, pending} = Requests.create_request(user_fixture(), book_request(work_fixture()))
+
+      Repo.query!("""
+      CREATE TEMP TRIGGER requests_unnamed_guard BEFORE UPDATE ON requests
+      BEGIN SELECT RAISE(ABORT, 'CHECK constraint failed: requests_unnamed_guard'); END
+      """)
+
+      assert_raise Exqlite.Error, ~r/requests_unnamed_guard/, fn ->
+        GuardedWrite.write(RequestTransition, pending, %{status: :denied}, status: :pending)
       end
     end
   end

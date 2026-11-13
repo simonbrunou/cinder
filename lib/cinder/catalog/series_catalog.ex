@@ -83,7 +83,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
 
   Deduplicates by the complete primary-plus-parts path bundle. `Cinder.Library.stage_episodes/3`
   gives one multi-episode source **one** destination that every covered episode references, and
-  `update_imported_episode!/5` writes the full imported size to each of those rows — so a bare
+  `Grabs.finish_grab/3` writes the full imported size to each of those rows — so a bare
   `sum(imported_size)` double-counts a double-episode file. A part-only bundle left by a partial
   unlink still counts until its final path is removed.
 

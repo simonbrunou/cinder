@@ -53,10 +53,28 @@ The compare-and-swap status write on movies, episodes, book targets, requests an
 `Cinder.GuardedWrite.write/4`. Each table has one adapter, named only by its owner (the
 `MovieLifecycle` verbs, `Episodes.transition/3`, `transition_target/3`, `Cinder.Requests` and
 `Cinder.Catalog.Grabs`; `test/code_health/guarded_write_adapters_test.exs` fences it). The
-audited siblings above still write episodes their own way (`Grabs.finish_grab`, episode
-adoption, deletion), as does `Requests.reopen_request/2`; moving them is #788. The residual-file
-decision claim in `Grabs.decide_grab_file/4` and `discard_grab_file/1` writes the `grab_files`
-table, which has no adapter, so it stays a hand-rolled `update_all`.
+audited siblings above write an episode's pipeline fields through `Episodes.transition/3` too,
+and every request status change, a reopen included, goes through the request adapter. Two
+kinds of write of an episode's pipeline fields (`file_path`, `part_file_paths`, `grab_id`,
+`search_attempts`) stay outside `transition/3`, and so do the `monitored` writes. The
+`Cinder.Catalog.Episodes` moduledoc lists all three too. A new write of those fields goes through
+`transition/3` or joins this list with its reason:
+
+- The bulk `search_attempts` writes: `EpisodeSearch.increment_search_attempts/1`,
+  `rehunt_parked_episodes/1` and the reset in `MediaProfiles.set_series_language_in_transaction/2`.
+  Each is one `update_all` over a set a query chose, outside any grab. The two resets leave
+  `updated_at` alone so the sweep's own bump restarts the backoff clock, and a guarded write
+  always stamps it.
+- The `grab_id` the `episodes.grab_id` foreign key clears (`ON DELETE SET NULL`) when
+  `Grabs.cancel_grab/1`, `cancel_mapping_grab/1`, `reject_grab_release/2`,
+  `TitleDeletion.cancel_series/2` or `delete_series/3` deletes a grab. Those paths write no other
+  pipeline field of those rows. A finish, park or reap writes those rows anyway, so it releases
+  them with a guarded write.
+- `monitored`, which is not a pipeline field: `Episode.transition_changeset/2` does not cast it,
+  so a `monitored` key in `transition/3`'s attrs writes the caller's struct value back.
+
+The residual-file decision claim in `Grabs.decide_grab_file/4` and `discard_grab_file/1` writes
+the `grab_files` table, which has no adapter, so it stays a hand-rolled `update_all`.
 
 - A miss is `{:error, :stale_status}`. An owner may rename it at its public boundary
   (`:not_pending` for `/api/v1`, `:not_cancellable`, ...).
