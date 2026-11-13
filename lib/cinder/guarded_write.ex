@@ -1,17 +1,22 @@
 defmodule Cinder.GuardedWrite do
   @moduledoc """
   The guarded status write: a compare-and-swap on one row of a lifecycle table (movies, episodes,
-  book targets, requests), with one contract for every caller. Each table has one adapter that
-  implements this behaviour, and one owner that calls `write/4` with it.
+  book targets, requests, TV grabs), with one contract for every caller. Each table has one
+  adapter that implements this behaviour, and one owner that calls `write/4` with it.
 
   `write/4` runs one `update_all ... where id == ^row.id and <expect>` with `RETURNING`. Each
   `expect` entry is `field` (the row's own value) or `{field, value}`, both nil-safe, or
-  `{field, {:in, values}}`, which never matches nil. It writes every attr the caller names, even
-  one the row already holds (the row may be stale everywhere it is not guarded), plus
-  `updated_at`, and returns the fresh row.
+  `{field, {:in, values}}` or `{field, {:not, value}}`, which never match nil;
+  `{field, {:not, nil}}` matches any set value. It writes every attr the caller names, even one
+  the row already holds (the row may be stale everywhere it is not guarded), plus `updated_at`,
+  and returns the fresh row.
 
     * **One stale shape.** A miss is `{:error, :stale_status}`. An owner may rename it at its own
       public boundary.
+    * **A claim publishes nothing.** A write with no attrs writes only `updated_at`, which no
+      subscriber reads: it guards the row for the frame's other writes and dooms the frame on a
+      miss like any write, but nothing publishes it: the frame's other guarded writes, or the
+      owner after commit, announce what the frame changed.
     * **Constraint translation.** `update_all` skips Ecto's `to_constraints`, so a trigger's
       `RAISE(ABORT, ...)` arrives as a raw `Exqlite.Error`, the same class as a transient busy.
       The adapter's `refusal/2` names the messages it knows; any other error re-raises.
@@ -43,7 +48,8 @@ defmodule Cinder.GuardedWrite do
   @doc "Announces committed rows: the latest row per id, after commit, never inside a transaction."
   @callback publish(rows :: [struct()]) :: :ok
 
-  @type expectation :: atom() | {atom(), term()} | {atom(), {:in, [term()]}}
+  @type expectation ::
+          atom() | {atom(), term()} | {atom(), {:in, [term()]}} | {atom(), {:not, term()}}
 
   @frame {__MODULE__, :frame}
 
@@ -68,7 +74,7 @@ defmodule Cinder.GuardedWrite do
         do: compare_and_swap(adapter, row, write_set(schema, changeset, attrs), expect, attrs),
         else: {:error, changeset}
 
-    settle(framed?, adapter, result)
+    settle(framed?, if(attrs == %{}, do: :claim, else: adapter), result)
   end
 
   @doc """
@@ -114,6 +120,9 @@ defmodule Cinder.GuardedWrite do
       true -> false
     end
   end
+
+  # A claim's miss dooms its frame below; its hit is never published.
+  defp settle(_framed?, :claim, {:ok, _claimed} = ok), do: ok
 
   defp settle(false, adapter, {:ok, written} = ok) do
     adapter.publish([written])
@@ -187,6 +196,13 @@ defmodule Cinder.GuardedWrite do
 
   defp expect(query, _row, {field, {:in, values}}) when is_list(values),
     do: where(query, [r], field(r, ^field) in ^values)
+
+  defp expect(query, _row, {field, {:not, nil}}),
+    do: where(query, [r], not is_nil(field(r, ^field)))
+
+  # SQL's `!=` is never true on NULL, so this never matches a nil field either.
+  defp expect(query, _row, {field, {:not, value}}),
+    do: where(query, [r], field(r, ^field) != ^value)
 
   defp expect(query, _row, {field, nil}), do: where(query, [r], is_nil(field(r, ^field)))
   defp expect(query, _row, {field, value}), do: where(query, [r], field(r, ^field) == ^value)

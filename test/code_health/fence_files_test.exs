@@ -6,7 +6,7 @@ defmodule Cinder.CodeHealth.FenceFilesTest do
   use ExUnit.Case, async: true
 
   @path "test/code_health_test.exs"
-  @tests 17
+  @tests 16
 
   test "test/code_health_test.exs gains no new test" do
     count = @path |> File.read!() |> test_count()

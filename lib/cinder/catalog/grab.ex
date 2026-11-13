@@ -93,4 +93,12 @@ defmodule Cinder.Catalog.Grab do
   def mapping_changeset(grab, attrs) do
     cast(grab, attrs, [:mapping_status, :mapping_issue])
   end
+
+  @doc """
+  The guarded grab write's changeset (`Cinder.Catalog.Grabs`): a verification hold, its release
+  and the operator's waiver. It casts every field those writes name, and none of the download
+  metrics `changeset/2` casts.
+  """
+  def transition_changeset(grab, attrs),
+    do: cast(grab, attrs, [:mapping_status, :verification_waived, :download_attempts])
 end

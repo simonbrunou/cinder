@@ -49,15 +49,21 @@ audited siblings: `hold_target/5`, `pause_target/1`, `monitor_target/3`, `import
 
 ## Guarded writes have one contract
 
-The compare-and-swap status write on movies, episodes, book targets and requests is
+The compare-and-swap status write on movies, episodes, book targets, requests and TV grabs is
 `Cinder.GuardedWrite.write/4`. Each table has one adapter, named only by its owner (the
-`MovieLifecycle` verbs, `Episodes.transition/3`, `transition_target/3` and `Cinder.Requests`;
-`test/code_health_test.exs` fences it). The audited siblings above still write episodes their own
-way (`Grabs.finish_grab`, episode adoption, deletion), as does `Requests.reopen_request/2`;
-moving them is #788.
+`MovieLifecycle` verbs, `Episodes.transition/3`, `transition_target/3`, `Cinder.Requests` and
+`Cinder.Catalog.Grabs`; `test/code_health/guarded_write_adapters_test.exs` fences it). The
+audited siblings above still write episodes their own way (`Grabs.finish_grab`, episode
+adoption, deletion), as does `Requests.reopen_request/2`; moving them is #788. The residual-file
+decision claim in `Grabs.decide_grab_file/4` and `discard_grab_file/1` writes the `grab_files`
+table, which has no adapter, so it stays a hand-rolled `update_all`.
 
 - A miss is `{:error, :stale_status}`. An owner may rename it at its public boundary
   (`:not_pending` for `/api/v1`, `:not_cancellable`, ...).
+- A write with no attrs is a claim: it bumps only `updated_at`, so the frame's other writes act
+  on the row the caller read, and it dooms the frame on a miss like any write. It publishes
+  nothing: the frame's other guarded writes, or the owner after commit, announce what the frame
+  changed.
 - `update_all` skips Ecto's `to_constraints`, so a trigger abort arrives as a raw
   `Exqlite.Error`. The adapter's `refusal/2` names it by the constraint's message; anything else
   re-raises, a transient busy included.

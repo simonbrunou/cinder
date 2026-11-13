@@ -50,6 +50,23 @@ defmodule Cinder.Download.GrabResolutionTest do
     assert File.read!(part) == "extra-1"
   end
 
+  # The Part frame claims the grab and adopts the part onto its episode; the grab stays open on the
+  # second residual. One committed change, one announcement (#789).
+  @tag :tmp_dir
+  test "a Part decision that leaves the grab open announces its series once", %{tmp_dir: tmp} do
+    %{grab: grab, episode: episode, files: [first, _second]} =
+      mixed_grab(tmp, ["Show.S01E98.mkv", "Show.S01E99.mkv"])
+
+    series_id = episode.season.series_id
+    Catalog.subscribe_series()
+
+    assert {:ok, :decided, _file} = TvPoller.resolve_grab_file(first.id, episode.id, :part)
+    assert Repo.get(Grab, grab.id)
+    assert %Episode{part_file_paths: [_part]} = Repo.reload!(episode)
+    assert_receive {:series_updated, ^series_id}
+    refute_received {:series_updated, ^series_id}
+  end
+
   @tag :tmp_dir
   test "Discard decides a residual belonging to no episode of the grab and binds nothing", %{
     tmp_dir: tmp

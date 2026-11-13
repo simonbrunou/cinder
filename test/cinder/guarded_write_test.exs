@@ -74,6 +74,111 @@ defmodule Cinder.GuardedWriteTest do
     end
   end
 
+  describe "the {:not, value} expectation" do
+    test "misses the value and a nil field, and matches any other value" do
+      target = target_fixture()
+
+      assert {:error, :stale_status} =
+               write(target, %{status: :monitored}, status: {:not, :unmonitored})
+
+      # `hold_reason` is nil on an unheld target: a differing value still never matches it.
+      assert {:error, :stale_status} =
+               write(target, %{status: :monitored}, hold_reason: {:not, "conflict"})
+
+      assert Repo.get!(BookTarget, target.id) == target
+
+      assert {:ok, %BookTarget{status: :monitored}} =
+               write(target, %{status: :monitored}, status: {:not, :held})
+    end
+
+    test "{:not, nil} matches only a set field" do
+      target = target_fixture()
+
+      assert {:error, :stale_status} =
+               write(target, %{status: :monitored}, hold_reason: {:not, nil})
+
+      {:ok, held} = write(target, %{status: :held, hold_reason: "conflict"})
+
+      assert {:ok, %BookTarget{status: :monitored}} =
+               write(held, %{status: :monitored, hold_reason: nil}, hold_reason: {:not, nil})
+    end
+  end
+
+  describe "a claim (a write with no attrs)" do
+    test "bumps only updated_at and publishes nothing outside a transaction" do
+      target = target_fixture()
+      target_id = target.id
+
+      Repo.update_all(from(t in BookTarget, where: t.id == ^target_id),
+        set: [updated_at: ~U[2000-01-01 00:00:00Z]]
+      )
+
+      target = Repo.get!(BookTarget, target_id)
+      Books.subscribe_targets()
+
+      assert {:ok, claimed} = write(target, %{}, status: :unmonitored)
+      assert DateTime.after?(claimed.updated_at, target.updated_at)
+      assert %{claimed | updated_at: target.updated_at} == target
+      refute_receive {:book_target_updated, %BookTarget{id: ^target_id}}
+    end
+
+    test "publishes nothing in a frame whose other writes publish" do
+      claimed = target_fixture()
+      written = target_fixture()
+      {claimed_id, written_id} = {claimed.id, written.id}
+      Books.subscribe_targets()
+
+      assert {:ok, :done} =
+               GuardedWrite.transaction(fn ->
+                 {:ok, _claimed} = write(claimed, %{}, status: :unmonitored)
+                 {:ok, _written} = write(written, %{status: :monitored})
+                 :done
+               end)
+
+      assert_received {:book_target_updated, %BookTarget{id: ^written_id}}
+      refute_received {:book_target_updated, %BookTarget{id: ^claimed_id}}
+    end
+
+    test "a write on the same row in the frame still publishes once, before or after the claim" do
+      claimed_first = target_fixture()
+      written_first = target_fixture()
+      {claimed_first_id, written_first_id} = {claimed_first.id, written_first.id}
+      Books.subscribe_targets()
+
+      assert {:ok, :done} =
+               GuardedWrite.transaction(fn ->
+                 {:ok, claimed} = write(claimed_first, %{}, status: :unmonitored)
+                 {:ok, _written} = write(claimed, %{status: :monitored})
+                 {:ok, written} = write(written_first, %{status: :monitored})
+                 {:ok, _claimed} = write(written, %{}, status: :monitored)
+                 :done
+               end)
+
+      assert_received {:book_target_updated,
+                       %BookTarget{id: ^claimed_first_id, status: :monitored}}
+
+      assert_received {:book_target_updated,
+                       %BookTarget{id: ^written_first_id, status: :monitored}}
+
+      refute_received {:book_target_updated, %BookTarget{id: ^claimed_first_id}}
+      refute_received {:book_target_updated, %BookTarget{id: ^written_first_id}}
+    end
+
+    test "a miss rolls the frame back even when the caller carries on" do
+      armed = target_fixture()
+      moved_on = target_fixture()
+
+      assert {:error, :stale_status} =
+               GuardedWrite.transaction(fn ->
+                 {:ok, _armed} = write(armed, %{status: :monitored})
+                 {:error, :stale_status} = write(moved_on, %{}, status: :held)
+                 :carried_on
+               end)
+
+      assert Repo.get!(BookTarget, armed.id) == armed
+    end
+  end
+
   describe "transaction/2" do
     test "publishes after commit, once per row, with the row's latest write" do
       target = target_fixture()

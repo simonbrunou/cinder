@@ -19,6 +19,7 @@ defmodule Cinder.Catalog.Grabs do
     Events,
     Grab,
     GrabFile,
+    GrabTransition,
     Identity,
     Season
   }
@@ -174,18 +175,34 @@ defmodule Cinder.Catalog.Grabs do
     end
   end
 
-  defp broadcast_grab_series(grab) do
-    # Post-commit side effect, best-effort: once the txn committed the grab is
-    # real, and a blip here (a pool-checkout timeout on the series lookup) must
-    # not surface as {:error, _} — the TvPoller's cleanup branch would then
-    # remove the client download out from under a live grab and eventually
-    # blocklist a good release.
-    Events.series_updated(series_id_for_grab(grab.id))
+  defp broadcast_grab_series(grab), do: announce([grab])
+
+  @doc """
+  Announces committed grab writes: one `{:series_updated, id}` per series that owns one of
+  `grabs`' episodes, so a deleted grab announces nothing. `GrabTransition` publishes through it.
+
+  Best-effort, after commit: once the transaction committed, the grab is real, and a blip here (a
+  pool-checkout timeout on the series lookup) must not surface as `{:error, _}`. The TvPoller's
+  cleanup branch would then remove the client download out from under a live grab and eventually
+  blocklist a good release, and a verification hold would lose its one notification.
+  """
+  def announce(grabs), do: grabs |> Enum.map(& &1.id) |> announce_series()
+
+  defp announce_series(ids) do
+    from(e in Episode,
+      join: s in Season,
+      on: s.id == e.season_id,
+      where: e.grab_id in ^ids,
+      select: s.series_id,
+      distinct: true
+    )
+    |> Repo.all()
+    |> Enum.each(&Events.series_updated/1)
   rescue
-    e -> Logger.warning("post-commit broadcast for grab #{grab.id} failed: #{inspect(e)}")
+    e -> Logger.warning("post-commit broadcast for grabs #{inspect(ids)} failed: #{inspect(e)}")
   catch
     kind, value ->
-      Logger.warning("post-commit broadcast for grab #{grab.id} #{kind}: #{inspect(value)}")
+      Logger.warning("post-commit broadcast for grabs #{inspect(ids)} #{kind}: #{inspect(value)}")
   end
 
   defp insert_and_link_grab(download_id, protocol, episode_ids, release_title, opts) do
@@ -287,26 +304,22 @@ defmodule Cinder.Catalog.Grabs do
   def hold_grab_verification(%Grab{} = grab) do
     observed_attempts = grab.download_attempts || 0
 
-    case Repo.update_all(
-           from(g in Grab,
-             where:
-               g.id == ^grab.id and g.mapping_status == :resolved and
-                 g.download_attempts == ^observed_attempts and not is_nil(g.content_path),
-             select: g
-           ),
-           set: [
-             mapping_status: :verification_blocked,
-             download_attempts: observed_attempts + 1,
-             updated_at: DateTime.utc_now(:second)
-           ]
-         ) do
-      {1, [held]} ->
+    attrs = %{mapping_status: :verification_blocked, download_attempts: observed_attempts + 1}
+
+    expect = [
+      mapping_status: :resolved,
+      download_attempts: observed_attempts,
+      content_path: {:not, nil}
+    ]
+
+    case GuardedWrite.write(GrabTransition, grab, attrs, expect) do
+      {:ok, held} ->
         # Guarded on `mapping_status == :resolved`, so this fires once per hold (resolved →
         # verification_blocked), never on a re-observation of an already-held grab.
         Notifier.notify({:operator_hold, held, :verification_blocked})
-        broadcast_grab_and_ok(held)
+        {:ok, held}
 
-      {0, _} ->
+      {:error, :stale_status} ->
         {:error, :stale_grab}
     end
   end
@@ -336,19 +349,11 @@ defmodule Cinder.Catalog.Grabs do
   end
 
   defp claim_retry(grab, from_status, error_atom) do
-    case Repo.update_all(
-           from(g in Grab,
-             where: g.id == ^grab.id and g.mapping_status == ^from_status,
-             select: g
-           ),
-           set: [
-             mapping_status: :resolved,
-             download_attempts: 0,
-             updated_at: DateTime.utc_now(:second)
-           ]
-         ) do
-      {1, [retried]} -> broadcast_grab_and_ok(retried)
-      {0, _} -> {:error, error_atom}
+    attrs = %{mapping_status: :resolved, download_attempts: 0}
+
+    case GuardedWrite.write(GrabTransition, grab, attrs, mapping_status: from_status) do
+      {:ok, retried} -> {:ok, retried}
+      {:error, :stale_status} -> {:error, error_atom}
     end
   end
 
@@ -367,34 +372,22 @@ defmodule Cinder.Catalog.Grabs do
   end
 
   defp waive_verification(grab, actor) do
-    result =
-      Repo.transaction(fn ->
-        case Repo.update_all(
-               from(g in Grab,
-                 where: g.id == ^grab.id and g.mapping_status == :verification_blocked,
-                 select: g
-               ),
-               set: [
-                 mapping_status: :resolved,
-                 verification_waived: true,
-                 download_attempts: 0,
-                 updated_at: DateTime.utc_now(:second)
-               ]
-             ) do
-          {1, [released]} ->
-            Audit.log_or_rollback(actor, :import_grab_anyway, released, %{
-              release_title: released.release_title,
-              from: :verification_blocked
-            })
+    attrs = %{mapping_status: :resolved, verification_waived: true, download_attempts: 0}
 
-            released
+    GuardedWrite.transaction(fn ->
+      case GuardedWrite.write(GrabTransition, grab, attrs, mapping_status: :verification_blocked) do
+        {:ok, released} ->
+          Audit.log_or_rollback(actor, :import_grab_anyway, released, %{
+            release_title: released.release_title,
+            from: :verification_blocked
+          })
 
-          {0, _} ->
-            Repo.rollback(:verification_not_held)
-        end
-      end)
+          released
 
-    with {:ok, released} <- result, do: broadcast_grab_and_ok(released)
+        {:error, :stale_status} ->
+          Repo.rollback(:verification_not_held)
+      end
+    end)
   end
 
   # Called by `cancel_grab/2` inside its transaction, after the cancel claim, before the delete
@@ -409,28 +402,22 @@ defmodule Cinder.Catalog.Grabs do
     end
   end
 
-  defp broadcast_grab_and_ok(grab) do
-    Events.series_updated(series_id_for_grab(grab.id))
-    {:ok, grab}
-  end
-
   @doc """
   Atomically rejects one confirmed episodic release, guarding the resolved grab and its exact
   episode ownership before blocklisting, fencing cleanup, and deleting it.
   """
   def reject_grab_release(%Grab{} = expected, evidence) do
     expected_episode_ids = expected_grab_episode_ids(expected)
+    expect = [mapping_status: :resolved] ++ still_set([:release_title, :release_policy_snapshot])
 
     result =
-      Repo.transaction(fn ->
-        {claimed, _} =
-          Repo.update_all(
-            reject_grab_query(expected),
-            set: [updated_at: DateTime.utc_now(:second)]
-          )
+      GuardedWrite.transaction(fn ->
+        fresh =
+          case claim(expected, expect) do
+            {:ok, fresh} -> fresh
+            {:error, :stale_status} -> Repo.rollback(:stale_release)
+          end
 
-        if claimed != 1, do: Repo.rollback(:stale_release)
-        fresh = Repo.get!(Grab, expected.id)
         episode_ids = episode_ids_for_grab(fresh.id) |> Enum.sort()
         series_ids = Episodes.series_ids(episode_ids)
 
@@ -462,13 +449,14 @@ defmodule Cinder.Catalog.Grabs do
     end
   end
 
-  defp reject_grab_query(expected) do
-    from g in Grab,
-      where:
-        g.id == ^expected.id and g.mapping_status == :resolved and
-          g.release_title == ^expected.release_title and
-          g.release_policy_snapshot == ^expected.release_policy_snapshot
-  end
+  # A claim (`Cinder.GuardedWrite`): bumps only `updated_at` while the row still holds every
+  # `expect`ed value, so the frame's other writes act on the grab the caller read. It publishes
+  # nothing; the verb announces what its frame changed after commit.
+  defp claim(grab, expect), do: GuardedWrite.write(GrabTransition, grab, %{}, expect)
+
+  # The row still holds the caller's value of each field, and that value is set: what SQL's
+  # `field = value` means, where a bare field (nil-safe) would claim a row whose field is nil.
+  defp still_set(fields), do: Enum.flat_map(fields, &[{&1, {:not, nil}}, &1])
 
   defp stale_grab_ownership?(episode_ids, expected_episode_ids, series_ids),
     do: episode_ids == [] or episode_ids != expected_episode_ids or length(series_ids) != 1
@@ -510,17 +498,15 @@ defmodule Cinder.Catalog.Grabs do
 
   defp cancel_grab(grab, required_state) do
     result =
-      Repo.transaction(fn ->
-        case Repo.update_all(cancel_grab_query(grab.id, required_state),
-               set: [updated_at: DateTime.utc_now(:second)]
-             ) do
-          {0, _} when required_state == :needs_mapping ->
+      GuardedWrite.transaction(fn ->
+        case claim(grab, mapping_status: cancel_expectation(required_state)) do
+          {:error, :stale_status} when required_state == :needs_mapping ->
             Repo.rollback(:mapping_not_held)
 
-          {0, _} ->
+          {:error, :stale_status} ->
             missed_cancel(grab)
 
-          {1, _} ->
+          {:ok, _claimed} ->
             episode_ids = episode_ids_for_grab(grab.id)
             series_id = series_id_for_grab(grab.id)
             block_cancelled_hold(grab)
@@ -533,28 +519,31 @@ defmodule Cinder.Catalog.Grabs do
         end
       end)
 
-    with {:ok, {deleted, intent_ids, series_id}} <- result do
-      Download.cleanup_intents(intent_ids)
-      Events.series_updated(series_id)
-      {:ok, deleted}
+    case result do
+      {:ok, {deleted, intent_ids, series_id}} ->
+        Download.cleanup_intents(intent_ids)
+        Events.series_updated(series_id)
+        {:ok, deleted}
+
+      {:error, :grab_gone} ->
+        {:ok, grab}
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
-  # A cancel claim that matched no row: the grab is gone (idempotent success) or now held for
-  # mapping, which `cancel_grab/1` does not offer.
+  # A cancel claim that matched no row: the grab is gone (idempotent success, mapped above: the
+  # miss dooms the frame, so it rolls back with nothing to commit) or now held for mapping, which
+  # `cancel_grab/1` does not offer.
   defp missed_cancel(grab) do
     if Repo.exists?(from g in Grab, where: g.id == ^grab.id),
       do: Repo.rollback(:not_cancellable),
-      else: {grab, [], nil}
+      else: Repo.rollback(:grab_gone)
   end
 
-  defp cancel_grab_query(id, :any_state), do: from(g in Grab, where: g.id == ^id)
-
-  defp cancel_grab_query(id, :not_mapping),
-    do: from(g in Grab, where: g.id == ^id and g.mapping_status != :needs_mapping)
-
-  defp cancel_grab_query(id, :needs_mapping),
-    do: from(g in Grab, where: g.id == ^id and g.mapping_status == :needs_mapping)
+  defp cancel_expectation(:not_mapping), do: {:not, :needs_mapping}
+  defp cancel_expectation(:needs_mapping), do: :needs_mapping
 
   @doc """
   Records `grab`'s `release_title` as blocked for its series. Resolves the series from the grab's
@@ -796,15 +785,9 @@ defmodule Cinder.Catalog.Grabs do
   defp bound_unplaced_release(_grab, _series_id, _imported), do: :ok
 
   defp claim_import_grab!(grab) do
-    query =
-      from g in Grab,
-        where:
-          g.id == ^grab.id and g.mapping_status == :resolved and
-            g.content_path == ^grab.content_path
-
-    case Repo.update_all(query, set: [updated_at: DateTime.utc_now(:second)]) do
-      {1, _} -> :ok
-      {0, _} -> Repo.rollback(:stale_grab)
+    case claim(grab, [mapping_status: :resolved] ++ still_set([:content_path])) do
+      {:ok, _claimed} -> :ok
+      {:error, :stale_status} -> Repo.rollback(:stale_grab)
     end
   end
 
@@ -883,7 +866,7 @@ defmodule Cinder.Catalog.Grabs do
   def decide_grab_file(%GrabFile{} = file, %Episode{} = episode, decision, part)
       when decision in [:fold, :part] do
     result =
-      Repo.transaction(fn ->
+      GuardedWrite.transaction(fn ->
         attrs = decision_attrs(decision, episode.id, part)
 
         case Repo.update_all(
@@ -918,7 +901,7 @@ defmodule Cinder.Catalog.Grabs do
   """
   def discard_grab_file(%GrabFile{} = file) do
     result =
-      Repo.transaction(fn ->
+      GuardedWrite.transaction(fn ->
         case Repo.update_all(
                from(f in GrabFile,
                  where: f.id == ^file.id and is_nil(f.decision),
@@ -1212,24 +1195,22 @@ defmodule Cinder.Catalog.Grabs do
   for removal, then deletes the grab; after commit the remote job + reserved intent are torn down
   and the series is announced, so the episodes re-search a *different* release next tick.
 
-  Claims the grab with a compare-and-swap `update_all` **first** (like `cancel_grab/2`): the
-  poller reaps off a tick-start snapshot, so a concurrent user Discard/cancel can delete the same
-  grab in the `client.status/1` window — `{0, _}` ⇒ already gone ⇒ `{:error, :stale_grab}` no-op.
-  After a `{1, _}` claim the grab still exists, so the block and bump read its still-linked
+  Claims the grab **first** (a guarded write with no attrs, like `cancel_grab/2`'s): the poller
+  reaps off a tick-start snapshot, so a concurrent user Discard/cancel can delete the same grab in
+  the `client.status/1` window. A missed claim means it is already gone: `{:error, :stale_grab}`,
+  a no-op. After the claim the grab still exists, so the block and bump read its still-linked
   episodes before the `Repo.delete` (which nilifies `grab_id`) runs last.
   """
   def reap_stalled_grab(%Grab{} = grab) do
     series_id = series_id_for_grab(grab.id)
 
     result =
-      Repo.transaction(fn ->
-        case Repo.update_all(cancel_grab_query(grab.id, :any_state),
-               set: [updated_at: DateTime.utc_now(:second)]
-             ) do
-          {0, _} ->
-            :already_gone
+      GuardedWrite.transaction(fn ->
+        case claim(grab, []) do
+          {:error, :stale_status} ->
+            Repo.rollback(:stale_grab)
 
-          {1, _} ->
+          {:ok, _claimed} ->
             episode_ids = episode_ids_for_grab(grab.id)
             block_grab_release(grab, :stalled)
 
@@ -1252,9 +1233,6 @@ defmodule Cinder.Catalog.Grabs do
         Events.series_updated(series_id)
         Notifier.notify({:grab_failed, grab, :stalled})
         {:ok, grab}
-
-      {:ok, :already_gone} ->
-        {:error, :stale_grab}
 
       {:error, reason} ->
         {:error, reason}

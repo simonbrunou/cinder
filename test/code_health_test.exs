@@ -363,34 +363,6 @@ defmodule Cinder.CodeHealthTest do
     found?
   end
 
-  # #743: a guarded-write adapter is reachable only through its owner, so no caller can write a
-  # movie status around a `MovieLifecycle` verb, or a request around the approval gate.
-  test "only its owner names each guarded-write adapter" do
-    # adapter => {its own file, its owner}
-    adapters = %{
-      "MovieTransition" =>
-        {"lib/cinder/catalog/movie_transition.ex", "lib/cinder/catalog/movie_lifecycle.ex"},
-      "EpisodeTransition" =>
-        {"lib/cinder/catalog/episode_transition.ex", "lib/cinder/catalog/episodes.ex"},
-      "BookTargetTransition" =>
-        {"lib/cinder/books/book_target_transition.ex", "lib/cinder/books.ex"},
-      "RequestTransition" =>
-        {"lib/cinder/requests/request_transition.ex", "lib/cinder/requests.ex"}
-    }
-
-    offenders =
-      for path <- Path.wildcard("lib/**/*.ex"),
-          source = File.read!(path),
-          {adapter, {own, owner}} <- adapters,
-          String.contains?(source, adapter),
-          path not in [own, owner],
-          do: "#{path} names #{adapter} (owner: #{owner})"
-
-    assert offenders == [],
-           "call the owner's guarded write instead of naming its adapter:\n  " <>
-             Enum.join(offenders, "\n  ")
-  end
-
   # #757: `Book*` names the book family, e-books and audiobooks together. A `Book*` module beside
   # an `Audiobook*` sibling is the e-book half of a pair, so it is named `Ebook*` instead.
   test "no Book* module has an Audiobook* sibling" do
