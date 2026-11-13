@@ -54,6 +54,11 @@ Agents may merge their own PR without asking once all three hold:
 - the pushed SHA has no conflict with `origin/main`. Right before merging, run `git fetch origin`,
   then check that `git merge-tree --write-tree origin/main <pushed SHA>` exits 0.
 
+A Renovate security PR, whose title ends in `[security]` and which updates `mix.lock` only, merges
+on the same three conditions and every step below, without asking: the agent that meets it
+reviews it, adds its changelog fragment and merges it ([ci.md](docs/agents/ci.md) "New
+advisory").
+
 The pushed SHA is the PR's head on Forgejo, which `git ls-remote origin refs/pull/<n>/head`
 prints. It is the API's `head.sha` that `scripts/merge-pr` reads. A local checkout can hold
 commits that were never pushed, or sit on `main` when you merge another thread's PR. Merge with

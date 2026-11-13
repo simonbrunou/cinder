@@ -1,6 +1,25 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "description": "Same scope as the former .github/dependabot.yml: GitHub Actions pins only, weekly, no automerge. Runs on the self-hosted Forgejo (renovate/renovate-config); covers .forgejo/workflows and .github/workflows.",
+  "description": "GitHub Actions pins: weekly, no automerge. Hex packages: security only (#1002). Runs on the self-hosted Forgejo (renovate/renovate-config); covers .forgejo/workflows and .github/workflows.",
   "extends": ["config:recommended", "schedule:weekly"],
-  "enabledManagers": ["github-actions"]
+  "enabledManagers": ["github-actions", "mix"],
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "rangeStrategy": "in-range-only"
+  },
+  "constraints": {
+    "erlang": "29.1.2.0",
+    "elixir": "1.20.5"
+  },
+  "packageRules": [
+    {
+      "description": [
+        "mix is security-only: no version update and no lock-file maintenance. When osv.dev lists an advisory against the mix.lock version of a dependency that mix.exs lists, and a release within its mix.exs requirement, as Renovate reads it, fixes it, the alert re-enables that dependency and Renovate opens one security PR that runs `mix deps.update <package>` and leaves mix.exs as it is. A fix outside that reading (in-range-only), a transitive package or an advisory with no fix gets no PR. Renovate reads `~> 0.N` as below 0.(N+1).0, where Mix reads below 1.0.0: a 0.x fix in a later minor is outside that reading, and so is every fix for req or tailwind, locked past it.",
+        "constraints pins that run's toolchain to the CI workflow's erlef/setup-beam steps. containerbase names an OTP build with four numbers, so OTP 29.1.2 is 29.1.2.0 (test/code_health/beam_version_pins_test.exs)."
+      ],
+      "matchManagers": ["mix"],
+      "enabled": false
+    }
+  ]
 }

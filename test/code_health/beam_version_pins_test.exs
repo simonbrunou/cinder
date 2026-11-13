@@ -3,12 +3,29 @@ defmodule Cinder.CodeHealth.BeamVersionPinsTest do
   # `elixir-version`, the Dockerfile's `ARG OTP_VERSION` and `ARG ELIXIR_VERSION` defaults form
   # the hexpm/elixir builder tag, and flake.lock's nixpkgs builds the dev shell. Renovate bumps
   # only the workflow, so on #729 the suite would have tested OTP 29.1.2 while the release built
-  # on 29.1.1, with every CI job green. This fence fails when a setup-beam step and the Dockerfile
-  # disagree, and fails rather than skips a pin it cannot read. It cannot see the flake, so its
-  # failure message says how to check the dev shell.
+  # on 29.1.1, with every CI job green. #1002 added a fourth: renovate.json's `constraints` set the
+  # OTP and Elixir that Renovate installs before it runs `mix deps.update` for a security PR.
+  # This fence fails when a setup-beam step, renovate.json and the Dockerfile disagree, and fails
+  # rather than skips a pin it cannot read. It cannot see the flake, so its failure message says
+  # how to check the dev shell.
   use ExUnit.Case, async: true
 
   @inputs %{"otp-version" => "OTP_VERSION", "elixir-version" => "ELIXIR_VERSION"}
+
+  # The renovate.json `constraints` key that pins each setup-beam input's tool.
+  @constraints %{"erlang" => "otp-version", "elixir" => "elixir-version"}
+
+  # The presets renovate.json extends today. No preset built into Renovate 44.132.2 sets
+  # `constraints`, so renovate.json's own key is the only one. A preset outside this list fails
+  # until someone checks that it sets no `constraints` and adds it here. Forms the renovate.json
+  # read does not follow include: a `constraints` key that a later Renovate release adds to one
+  # of these presets.
+  @presets ["config:recommended", "schedule:weekly"]
+
+  # containerbase, which installs the tools for Renovate, names an OTP build with four numbers:
+  # OTP 29.1.2 is 29.1.2.0, OTP 26.2.5.3 is 26.2.5.3. `install-tool erlang 29.1.2` fails with
+  # "tool version not supported".
+  @containerbase_otp ~r/\A\d+\.\d+\.\d+(?:\.\d+)?\z/
 
   # A full URL (https://data.forgejo.org/erlef/setup-beam@...) names the action too.
   @setup_beam ~r{(?:\A|/)setup-beam@}i
@@ -42,19 +59,34 @@ defmodule Cinder.CodeHealth.BeamVersionPinsTest do
             elixir-version: "1.20.4"
   '''
 
-  test "every setup-beam step pins the OTP and Elixir the Dockerfile builds with" do
+  @renovate ~S'''
+  {
+    "extends": ["config:recommended", "schedule:weekly"],
+    "constraints": {"erlang": "29.1.2.0", "elixir": "1.20.4"},
+    "packageRules": [{"matchManagers": ["mix"], "enabled": false}]
+  }
+  '''
+
+  test "every setup-beam step and renovate.json pin the Dockerfile's OTP and Elixir" do
     workflows =
       for path <- Path.wildcard(".{forgejo,github}/workflows/*.{yml,yaml}", match_dot: true),
           do: {path, File.read!(path)}
 
-    problems = pin_problems(workflows, {"Dockerfile", File.read!("Dockerfile")})
+    problems =
+      pin_problems(
+        workflows,
+        {"Dockerfile", File.read!("Dockerfile")},
+        {"renovate.json", File.read!("renovate.json")}
+      )
 
     assert problems == [],
            "The BEAM version pins disagree or cannot be read:\n  " <>
              Enum.join(problems, "\n  ") <>
              "\n\nMove these together: otp-version and elixir-version in every " <>
              "erlef/setup-beam step, the Dockerfile's ARG OTP_VERSION and ARG ELIXIR_VERSION " <>
-             "defaults, and flake.lock's nixpkgs. Check the dev shell with `nix develop . -c " <>
+             "defaults, renovate.json's constraints (erlang takes containerbase's " <>
+             "four-number name, 29.1.2.0 for OTP 29.1.2), and flake.lock's nixpkgs. Check " <>
+             "the dev shell with `nix develop . -c " <>
              "elixir -e 'IO.puts(:code.root_dir()); IO.puts(System.version())'`: the first " <>
              "line's erlang-<version> is its OTP. When hexpm/elixir has no tag for the new pair " <>
              "yet, the PR waits, since the release must run the OTP that CI tested (the " <>
@@ -81,7 +113,105 @@ defmodule Cinder.CodeHealth.BeamVersionPinsTest do
              ~s(ci.yml jobs.audit.steps[0]: elixir-version "1.20.4", but Dockerfile's ) <>
                ~s(ARG ELIXIR_VERSION is "1.20.3"),
              ~s(ci.yml jobs.test.steps[1]: elixir-version "1.20.4", but Dockerfile's ) <>
+               ~s(ARG ELIXIR_VERSION is "1.20.3"),
+             ~s(renovate.json constraints.elixir "1.20.4", but Dockerfile's ) <>
                ~s(ARG ELIXIR_VERSION is "1.20.3")
+           ]
+  end
+
+  test "a renovate.json constraint that differs from the Dockerfile names both values" do
+    renovate =
+      @renovate
+      |> String.replace(~s("29.1.2.0"), ~s("29.1.2"))
+      |> String.replace(~s("1.20.4"), ~s("1.20.3"))
+
+    assert renovate_problems(renovate) == [
+             ~s(renovate.json constraints.elixir "1.20.3", but Dockerfile's ) <>
+               ~s(ARG ELIXIR_VERSION is "1.20.4"),
+             ~s(renovate.json constraints.erlang "29.1.2", but Dockerfile's ) <>
+               ~s(ARG OTP_VERSION is "29.1.2", whose containerbase build is "29.1.2.0")
+           ]
+
+    assert renovate_problems(String.replace(@renovate, ~s("29.1.2.0"), "29.1")) == [
+             ~s(renovate.json constraints.erlang 29.1, but Dockerfile's ) <>
+               ~s(ARG OTP_VERSION is "29.1.2", whose containerbase build is "29.1.2.0")
+           ]
+  end
+
+  test "an OTP pin with four numbers keeps them in renovate.json" do
+    patch = &String.replace(&1, "29.1.2", "26.2.5.3")
+    renovate = String.replace(@renovate, "29.1.2.0", "26.2.5.3")
+
+    assert problems(patch.(@workflow), patch.(@dockerfile), renovate) == []
+
+    assert problems(patch.(@workflow), patch.(@dockerfile), patch.(@renovate)) == [
+             ~s(renovate.json constraints.erlang "26.2.5.3.0", but Dockerfile's ) <>
+               ~s(ARG OTP_VERSION is "26.2.5.3")
+           ]
+  end
+
+  test "an OTP pin with no containerbase name fails" do
+    rc = &String.replace(&1, "29.1.2", "29.1.2-rc.1")
+
+    assert problems(rc.(@workflow), rc.(@dockerfile), rc.(@renovate)) == [
+             ~s(renovate.json constraints.erlang: Dockerfile's ARG OTP_VERSION "29.1.2-rc.1" ) <>
+               "has no containerbase build name this check can derive"
+           ]
+
+    five = &String.replace(&1, "29.1.2", "26.2.5.3.1")
+    renovate = String.replace(@renovate, "29.1.2.0", "26.2.5.3.1")
+
+    assert problems(five.(@workflow), five.(@dockerfile), renovate) == [
+             ~s(renovate.json constraints.erlang: Dockerfile's ARG OTP_VERSION "26.2.5.3.1" ) <>
+               "has no containerbase build name this check can derive"
+           ]
+  end
+
+  test "renovate.json without both constraints fails" do
+    assert renovate_problems(~s({"extends": ["config:recommended"]})) == [
+             "renovate.json sets no constraints"
+           ]
+
+    assert renovate_problems(~s({"constraints": ["29.1.2.0", "1.20.4"]})) == [
+             ~s(renovate.json constraints is ["29.1.2.0", "1.20.4"], not an object)
+           ]
+
+    assert renovate_problems(~s({"constraints": {"erlang": "29.1.2.0"}})) == [
+             "renovate.json constraints sets no elixir"
+           ]
+  end
+
+  test "a renovate.json that is not a JSON object fails" do
+    assert [unparsed] = renovate_problems(~s({"constraints": {"elixir": "1.20.4",}}))
+    assert unparsed =~ ~r/\Arenovate\.json does not parse as JSON: /
+
+    assert renovate_problems(~s(["config:recommended"])) == [
+             "renovate.json is not a JSON object"
+           ]
+  end
+
+  test "constraints below the top level or a preset outside the known ones fails" do
+    renovate = ~S'''
+    {
+      "extends": ["config:recommended", "local>simonbrunou/renovate-config"],
+      "constraints": {"erlang": "29.1.2.0", "elixir": "1.20.4"},
+      "mix": {"constraints": {"erlang": "28.0.0.0"}},
+      "packageRules": [
+        {"matchManagers": ["mix"], "extends": "helpers:pinGitHubActionDigests"},
+        {"matchPackageNames": ["bandit"], "constraints": {"elixir": "1.19.0"}}
+      ]
+    }
+    '''
+
+    assert renovate_problems(renovate) == [
+             ~s(renovate.json extends: names "local>simonbrunou/renovate-config", ) <>
+               "whose constraints this check cannot read",
+             "renovate.json mix.constraints: sets constraints below the top level, " <>
+               "which this check cannot read",
+             ~s(renovate.json packageRules[0].extends: is "helpers:pinGitHubActionDigests", ) <>
+               "not a list",
+             "renovate.json packageRules[1].constraints: sets constraints below the top level, " <>
+               "which this check cannot read"
            ]
   end
 
@@ -149,7 +279,7 @@ defmodule Cinder.CodeHealth.BeamVersionPinsTest do
 
     assert problems(workflow) == [~s(found no erlef/setup-beam step in ["ci.yml"])]
 
-    assert pin_problems([], {"Dockerfile", @dockerfile}) == [
+    assert pin_problems([], {"Dockerfile", @dockerfile}, {"renovate.json", @renovate}) == [
              "found no erlef/setup-beam step in []"
            ]
   end
@@ -336,8 +466,15 @@ defmodule Cinder.CodeHealth.BeamVersionPinsTest do
     assert problems(@workflow, spaced) == []
   end
 
-  defp problems(workflow, dockerfile \\ @dockerfile),
-    do: pin_problems([{"ci.yml", workflow}], {"Dockerfile", dockerfile})
+  defp problems(workflow, dockerfile \\ @dockerfile, renovate \\ @renovate),
+    do:
+      pin_problems(
+        [{"ci.yml", workflow}],
+        {"Dockerfile", dockerfile},
+        {"renovate.json", renovate}
+      )
+
+  defp renovate_problems(renovate), do: problems(@workflow, @dockerfile, renovate)
 
   defp step_problems(inputs) do
     indented = inputs |> String.split("\n", trim: true) |> Enum.map_join(&"          #{&1}\n")
@@ -347,9 +484,10 @@ defmodule Cinder.CodeHealth.BeamVersionPinsTest do
     )
   end
 
-  # Every problem in a set of workflows, `[{path, source}]`, and a Dockerfile, `{path, source}`,
-  # each naming its file and step or line. The real files and the fixtures both go through here.
-  defp pin_problems(workflows, {dockerfile, source}) do
+  # Every problem in a set of workflows, `[{path, source}]`, a Dockerfile and a renovate.json, each
+  # `{path, source}`, each naming its file and step, line or key. The real files and the fixtures
+  # both go through here.
+  defp pin_problems(workflows, {dockerfile, source}, renovate) do
     {pins, dockerfile_problems} = dockerfile_pins(dockerfile, source)
     read = Enum.map(workflows, fn {path, source} -> workflow_steps(path, source) end)
     steps = Enum.flat_map(read, &elem(&1, 0))
@@ -367,8 +505,115 @@ defmodule Cinder.CodeHealth.BeamVersionPinsTest do
           do:
             ~s(#{where}: #{input} "#{value}", but #{dockerfile}'s ARG #{@inputs[input]} is "#{pin}")
 
-    dockerfile_problems ++ Enum.flat_map(read, &elem(&1, 1)) ++ none ++ mismatches
+    dockerfile_problems ++
+      Enum.flat_map(read, &elem(&1, 1)) ++
+      none ++ mismatches ++ renovate_pin_problems(renovate, {dockerfile, pins})
   end
+
+  # Every problem in renovate.json against the Dockerfile's pins. Only the top-level `constraints`
+  # is read, so the same key anywhere else (a packageRules entry, a manager block) fails, and so
+  # does a preset outside @presets, since either could set the version Renovate installs.
+  defp renovate_pin_problems({path, source}, dockerfile_pins) do
+    case Jason.decode(source) do
+      {:ok, %{} = config} ->
+        unread_renovate(path, config, "") ++ constraint_problems(path, config, dockerfile_pins)
+
+      {:ok, _other} ->
+        ["#{path} is not a JSON object"]
+
+      {:error, error} ->
+        ["#{path} does not parse as JSON: #{Exception.message(error)}"]
+    end
+  end
+
+  defp unread_renovate(path, %{} = map, location) do
+    Enum.flat_map(map, fn {key, value} ->
+      here = if location == "", do: key, else: "#{location}.#{key}"
+
+      own =
+        cond do
+          key == "constraints" and location != "" ->
+            [
+              "#{path} #{here}: sets constraints below the top level, which this check cannot read"
+            ]
+
+          key == "extends" ->
+            preset_problems(path, here, value)
+
+          true ->
+            []
+        end
+
+      own ++ unread_renovate(path, value, here)
+    end)
+  end
+
+  defp unread_renovate(path, list, location) when is_list(list) do
+    list
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {value, index} ->
+      unread_renovate(path, value, "#{location}[#{index}]")
+    end)
+  end
+
+  defp unread_renovate(_path, _scalar, _location), do: []
+
+  defp preset_problems(path, here, presets) when is_list(presets) do
+    for preset <- presets,
+        preset not in @presets,
+        do: "#{path} #{here}: names #{inspect(preset)}, whose constraints this check cannot read"
+  end
+
+  defp preset_problems(path, here, other),
+    do: ["#{path} #{here}: is #{inspect(other)}, not a list"]
+
+  defp constraint_problems(path, config, {dockerfile, pins}) do
+    case Map.fetch(config, "constraints") do
+      {:ok, %{} = constraints} ->
+        for {tool, input} <- @constraints,
+            {:ok, pin} <- [Map.fetch(pins, input)],
+            problem <- constraint_problem(path, constraints, tool, pin, {dockerfile, input}),
+            do: problem
+
+      {:ok, other} ->
+        ["#{path} constraints is #{inspect(other)}, not an object"]
+
+      :error ->
+        ["#{path} sets no constraints"]
+    end
+  end
+
+  defp constraint_problem(path, constraints, tool, pin, {dockerfile, input}) do
+    arg = "#{dockerfile}'s ARG #{@inputs[input]}"
+
+    case {containerbase_name(tool, pin), Map.fetch(constraints, tool)} do
+      {:error, _value} ->
+        [
+          ~s(#{path} constraints.#{tool}: #{arg} "#{pin}" has no containerbase build name ) <>
+            "this check can derive"
+        ]
+
+      {{:ok, _name}, :error} ->
+        ["#{path} constraints sets no #{tool}"]
+
+      {{:ok, name}, {:ok, name}} ->
+        []
+
+      {{:ok, name}, {:ok, value}} ->
+        build = if name == pin, do: "", else: ~s(, whose containerbase build is "#{name}")
+        [~s(#{path} constraints.#{tool} #{inspect(value)}, but #{arg} is "#{pin}"#{build})]
+    end
+  end
+
+  defp containerbase_name("erlang", otp) do
+    cond do
+      not Regex.match?(@containerbase_otp, otp) -> :error
+      length(String.split(otp, ".")) == 3 -> {:ok, otp <> ".0"}
+      true -> {:ok, otp}
+    end
+  end
+
+  defp containerbase_name("elixir", elixir), do: {:ok, elixir}
 
   # The setup-beam steps of one workflow as `{where, %{input => version}}`, with a problem for each
   # input it cannot read.

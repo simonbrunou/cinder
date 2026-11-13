@@ -222,13 +222,33 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   red the same way once a maintainer retires a Hex release that `mix.lock` holds. Read the CVE
   lines, or the `Retired:` block of a retirement, in the job log: when they name dependencies
   or base-image packages the PR does not change, the failure is baseline and blocks every merge
-  until a fix PR lands. For a Hex package, look for a fixed release first and bump to it: a red
-  `deps.audit` prints `First patched versions:` (`NONE` when no release fixes it yet). A red
-  `hex.audit` names none, but the advisory URL it prints does, and `mix hex.info <package>` lists
-  the recent releases. The bump rebuilds every dependency (**Dependency rebuild** below).
-  `mix hex.audit` takes its accepted advisories from `ignore_advisories` in `mix.exs` (`hex/0`),
-  each with a rationale comment. On a retirement, `hex.audit` lists the release under `Retired:`
-  as `<package> <version> - (<reason>)`, then the maintainer's message when there is one, and
+  until a fix PR lands. For a Hex package that `mix.exs` lists, Renovate writes that PR when a
+  release within the package's `mix.exs` requirement, as Renovate reads it, fixes the advisory:
+  its hourly run checks `mix.lock` against osv.dev and opens one PR per package, titled
+  `... [security]`, which runs `mix deps.update <package>` and leaves `mix.exs` as it is
+  (`renovate.json`). Renovate reads a `~> 0.N` requirement as below `0.(N+1).0`, where Mix reads
+  below `1.0.0`. Look for the PR first with `curl ... "$API/pulls?state=open&poster=renovate"`,
+  then read its `mix.lock` diff, whatever its title names: `mix deps.update <package>` unlocks
+  the package and every package it depends on, and takes the newest release each requirement
+  allows (`mix help deps.update`). On today's lock, `mix deps.update tidewave` moved 15
+  packages, `tidewave` 0.6.0 to 0.9.2 and `req` 0.6.2 to 0.7.5 among them, where
+  `mix deps.unlock tidewave` then `mix deps.get` moved `tidewave` alone. When the diff moves
+  packages the fix does not need, close the PR and bump by hand that way. Otherwise review it as
+  an upgrade of each package it moves, push a commit to its branch that adds the `### Security`
+  fragment every advisory bump carries, named after the Renovate PR's number
+  (`changelog.d/999-bandit-1_14_1.md` is one), and merge it under AGENTS.md "Merge authority"
+  with `scripts/merge-pr --body-from=<sha of Renovate's commit> <n>`. These get the bump by hand
+  too: a transitive package, a fix outside the requirement as Renovate reads it (any fix for
+  `req` or `tailwind` today, locked past that reading), and a direct one before Renovate's PR
+  opens. Look for a fixed release first and bump to it: a red `deps.audit` prints
+  `First patched versions:` (`NONE` when no release fixes it yet). A red `hex.audit` names none,
+  but the advisory URL it prints does, and `mix hex.info <package>` lists the recent releases.
+  The bump rebuilds every dependency (**Dependency rebuild** below). `mix hex.audit` takes its
+  accepted advisories from `ignore_advisories` in `mix.exs` (`hex/0`), each with a rationale
+  comment. Renovate reads no such list, so an accepted advisory gets its PR once a release within
+  the requirement, as Renovate reads it, fixes it; none does for `usage_rules` or Cloak today. On
+  a retirement, `hex.audit` lists the release under `Retired:` as
+  `<package> <version> - (<reason>)`, then the maintainer's message when there is one, and
   prints `Found retired packages` among its last lines. Bump off the release, as for an advisory,
   when a newer release without `(retired)` exists: `mix hex.info <package>` marks the retired
   ones among its eight highest versions, and `mix hex.info <package> <version>` opens on
