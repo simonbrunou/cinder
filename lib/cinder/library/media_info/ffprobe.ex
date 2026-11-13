@@ -18,7 +18,7 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   companion `ffmpeg` binary (used by `extract_subtitle/2` and `shot_changes/1`) defaults to
   `ffmpeg` on `PATH`; override with `config :cinder, :ffmpeg_bin`. Those two calls and
   `subtitle_tracks/1` read the whole file, so they run at the idle I/O class when `ionice` is on
-  `PATH` and at nice 10 when `nice` is (#862).
+  `PATH` and under `nice -n 10` when `nice` is (#862).
 
   ## Bounded subprocess execution (issue #447)
 
@@ -294,9 +294,9 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     |> Enum.dedup()
   end
 
-  # A whole-file read or decode runs at the idle I/O class and nice 10 (#862), through
-  # `Cinder.LowPriority`. Both tools exec their command, so the pid the bound kills stays the
-  # reader's own.
+  # A whole-file read or decode runs at the idle I/O class and under `nice -n 10` (#862), through
+  # `Cinder.LowPriority`, whose moduledoc says when that class reaches the disk (#953). Both tools
+  # exec their command, so the pid the bound kills stays the reader's own.
   #
   # The reader is resolved first: spawned through `ionice` or `nice`, a missing one would come
   # back as a non-zero exit (127) instead of the `{:error, %ErlangError{original: :enoent}}` that

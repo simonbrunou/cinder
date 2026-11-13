@@ -59,8 +59,8 @@ defmodule Cinder.Subtitles.Sync.Ffsubsync do
 
   # Against an audio reference, the runner and the `ffmpeg` it starts read and decode the whole
   # video, so every run goes under `Cinder.LowPriority` (#954). A text-reference run reads only
-  # small subtitle files, but its alignment is CPU work too: under contention nice 10 slows it
-  # down, a cost #954 accepts within the same 900 s bound. `timeout` stays the outer process: it
+  # small subtitle files, but its alignment is CPU work too: under contention `nice -n 10` slows
+  # it down, a cost #954 accepts within the same 900 s bound. `timeout` stays the outer process: it
   # leads a process group of its own that the command joins, and its kill signals that whole
   # group, so it reaches the runner and every `ffmpeg` it forked. A missing interpreter still
   # exits 127, now from the innermost prefix tool.

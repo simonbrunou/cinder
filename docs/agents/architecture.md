@@ -342,9 +342,9 @@ The reason: one unbounded call in a single-tick poller freezes every target shar
 not just the file or request in flight.
 
 A subprocess that reads or decodes a whole video, in a poller or not, takes its command line from
-`Cinder.LowPriority.command/2`. It runs at nice 10 and the idle I/O class, so playback and
-imports get the disk and the CPU first (#862, #954). Its moduledoc lists where the idle class has
-no effect.
+`Cinder.LowPriority.command/2`. It runs under `nice -n 10` and at the idle I/O class, so
+playback and imports get the disk and the CPU first (#862, #954). Its moduledoc lists where the
+idle class has no effect.
 
 An import failure in a download poller takes one of three paths, and each poller picks it:
 

@@ -465,16 +465,20 @@ exactly this cut, so a scene the release trimmed has no leftover lines. A full t
 exact language, not forced, and at least 200 lines; one not marked for the hearing impaired
 (SDH/CC) is preferred. It replaces a downloaded sidecar Cinder manages, except one retimed by hand
 in `/subtitle-sync`. Once written, it is kept for that file and not extracted again. Listing a
-file's tracks reads the whole file, and so does extracting one. Both run at nice 10 when `nice`
-is on `PATH`, and at the idle disk I/O class when `ionice` is; the image has both. The idle class
-lets playback and imports on the same disk read first only under a disk scheduler that honours
-I/O priority (BFQ, or mq-deadline from Linux 5.14; `none` and kyber ignore it), and only when
-Cinder's reader issues the disk reads itself: behind a FUSE mount such as mergerfs without
-passthrough, the mount's own process reads at its own priority. Cinder lists tracks at import,
-and in the 12h sweep only when the import probe saw a stream in that language; the answer is kept
-per file. A sweep spends at most 6 hours on new own-track work. Own tracks get the timing rules
-below without an alignment (method `native` in `/subtitle-sync`). Those a sweep finds for files
-already in the library are queued behind other subtitle work and use cached shot changes only.
+file's tracks reads the whole file, and so does extracting one. Both run under `nice -n 10` when
+`nice` is on `PATH`, and at the idle disk I/O class when `ionice` is; the image has both. The
+idle class lets playback and imports on the same disk read first only under a disk scheduler
+that honours I/O priority (BFQ, or mq-deadline from Linux 5.14; `none` and kyber ignore it), and
+only when the disk sees Cinder's reads at that class. Behind a FUSE mount, by default the
+mount's own process does those reads, at its own priority. A mount can pass reads through to the
+backing file instead, so that Cinder's reader issues them. mergerfs 2.41 and later do that with
+[`passthrough.io`](https://trapexit.github.io/mergerfs/latest/config/passthrough/) set to `ro` or
+`rw`, under the conditions that page lists, such as Linux 6.9 or later and mergerfs running as
+root. Cinder lists tracks at import, and in the 12h sweep only when the import probe saw a stream
+in that language; the answer is kept per file. A sweep spends at most 6 hours on new own-track
+work. Own tracks get the timing rules below without an alignment (method `native` in
+`/subtitle-sync`). Those a sweep finds for files already in the library are queued behind other
+subtitle work and use cached shot changes only.
 
 Cinder also aligns its managed sidecars without exposing half-written files. Alignment is
 **piecewise**: it corrects a constant delay, a framerate mismatch (including NTSC-timed subtitles
