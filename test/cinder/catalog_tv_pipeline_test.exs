@@ -796,4 +796,85 @@ defmodule Cinder.CatalogTvPipelineTest do
              ]
     end
   end
+
+  describe "season_acquisition_contexts/2 (#923)" do
+    # Seasons 1 and 2 want an episode, season 3 holds only an imported one, and a scene
+    # coordinate puts season 1's wanted episode in season 4.
+    defp series_with_three_seasons do
+      series = series_fixture(%{monitor_strategy: :all})
+      first = season_fixture(series, %{season_number: 1})
+      episode(first, %{episode_number: 1, file_path: "/lib/Show/S01E01.mkv"})
+      wanted = episode(first, %{episode_number: 2})
+      episode(season_fixture(series, %{season_number: 2}), %{episode_number: 1})
+
+      episode(season_fixture(series, %{season_number: 3}), %{
+        episode_number: 1,
+        file_path: "/lib/Show/S03E01.mkv"
+      })
+
+      episode_coordinate_fixture(
+        series,
+        %{
+          source: "tmdb",
+          scheme: "scene",
+          namespace: "operator-group",
+          canonical_value: "S04E01",
+          precedence: :inferred
+        },
+        [wanted.id]
+      )
+
+      series
+    end
+
+    test "builds each season as season_acquisition_context/2 does" do
+      series = series_with_three_seasons()
+
+      contexts = Catalog.season_acquisition_contexts(series, [1, 2, 3])
+
+      assert Map.keys(contexts) == [1, 2, 3]
+
+      for season_number <- [1, 2, 3] do
+        assert contexts[season_number] ==
+                 Catalog.season_acquisition_context(series, season_number)
+      end
+
+      assert contexts[3].native_seasons == MapSet.new([1, 2, 3])
+      assert Enum.map(contexts[2].episodes, & &1.episode_number) == [1]
+      assert contexts[1].episode_count == 2
+    end
+
+    test "reads every season's context in one transaction" do
+      series = series_with_three_seasons()
+      parent = self()
+      ref = make_ref()
+
+      :telemetry.attach(
+        ref,
+        [:cinder, :repo, :query],
+        fn _event, _measurements, metadata, _config ->
+          if String.starts_with?(String.upcase(metadata.query || ""), "SELECT") do
+            send(parent, {:context_query, ref, Repo.in_transaction?()})
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(ref) end)
+      _contexts = Catalog.season_acquisition_contexts(series, [1, 2, 3])
+      :telemetry.detach(ref)
+
+      states = collect_query_states(ref, [])
+      assert states != []
+      assert Enum.all?(states)
+    end
+  end
+
+  defp collect_query_states(ref, states) do
+    receive do
+      {:context_query, ^ref, state} -> collect_query_states(ref, [state | states])
+    after
+      0 -> Enum.reverse(states)
+    end
+  end
 end

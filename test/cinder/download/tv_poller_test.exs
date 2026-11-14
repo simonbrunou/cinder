@@ -2894,6 +2894,140 @@ defmodule Cinder.Download.TvPollerTest do
   defp provider_namespace("aired"), do: {"tvdb", "777"}
   defp provider_namespace("scene"), do: {"tmdb", "group"}
 
+  # A Standard series with one wanted episode in each of `season_numbers`.
+  defp standard_series_wanting(season_numbers) do
+    series = series_fixture(%{tvdb_id: 99, monitor_strategy: :all, media_profile: :standard})
+
+    episodes =
+      for season_number <- season_numbers do
+        episode(season_fixture(series, %{season_number: season_number}), 1)
+      end
+
+    {series, episodes}
+  end
+
+  # Every `IndexerMock.search_tv/3` call reports its season to the test, which sees each season
+  # the sweep searched even where `isolate` swallows a raise in the stub.
+  defp report_searched_seasons(results_by_season \\ %{}) do
+    test_pid = self()
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", season_number ->
+      send(test_pid, {:searched_season, season_number})
+      {:ok, Map.get(results_by_season, season_number, [])}
+    end)
+  end
+
+  # The coordinate list `MediaProfiles.acquisition_mappings/1` reads, and the wanted-season set.
+  # `SELECT 1 FROM "episode_coordinates"` is the media-profile check
+  # (`MediaProfiles.media_profile_summary/1`), which each season's searched-episode read runs.
+  defp numbering_input_query(sql) do
+    cond do
+      sql =~ ~s(FROM "episode_coordinates") and not String.starts_with?(sql, "SELECT 1 ") ->
+        :coordinates
+
+      sql =~ ~r/^SELECT DISTINCT \S+\."season_number"/ ->
+        :wanted_seasons
+
+      true ->
+        nil
+    end
+  end
+
+  test "one tick reads a standard series' numbering inputs once, however many seasons it searches (#923)" do
+    standard_series_wanting([1, 2, 3])
+    report_searched_seasons()
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    {:ok, queries} =
+      Cinder.TelemetryHelpers.capture([:cinder, :repo, :query], fn -> TvPoller.poll() end)
+
+    for season_number <- [1, 2, 3], do: assert_receive({:searched_season, ^season_number})
+
+    reads =
+      queries
+      |> Enum.map(fn {_measurements, metadata} -> numbering_input_query(metadata.query || "") end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.frequencies()
+
+    assert reads == %{coordinates: 1, wanted_seasons: 1}
+  end
+
+  test "the sweep hands each season the context season_acquisition_context/2 read before the tick (#923)" do
+    {fixture, [first, _second, bridged]} = standard_series_wanting([1, 2, 3])
+    # Season 3's episode lands in season 5 under TVDB's aired order: the bridge searches season 5
+    # as an alternate season for it.
+    put_coordinate(fixture, bridged, "aired", :inferred, "S05E01")
+
+    # The sweep's own series struct, as `wanted_episodes/0` preloads it.
+    series = hd(Catalog.wanted_episodes()).season.series
+    expected = Map.new([1, 2, 3], &{&1, Catalog.season_acquisition_context(series, &1)})
+    assert MapSet.new([1, 2, 3]) == expected[3].native_seasons
+
+    # Season 1 is grabbed first, so seasons 2 and 3 are searched after its episode left the
+    # wanted set: their contexts still name it a native season.
+    report_searched_seasons(%{
+      1 => [%{title: "Show.S01E01.1080p.WEB-DL-GRP", size: 2_000_000_000, download_url: "u"}]
+    })
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-s1"} end)
+    poller = start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    trace_judge_season(poller)
+
+    assert :ok = TvPoller.poll()
+
+    assert Repo.get!(Episode, first.id).grab_id
+    for season_number <- [1, 2, 3, 5], do: assert_receive({:searched_season, ^season_number})
+
+    judged =
+      for _season <- 1..3, into: %{} do
+        assert_receive {:trace, ^poller, :call,
+                        {Cinder.Acquisition, :judge_season, [context, _numbers, _opts]}}
+
+        {context.season_number, context}
+      end
+
+    refute_receive {:trace, ^poller, :call, _call}
+    assert judged == expected
+  end
+
+  test "a failed read of a series' numbering inputs skips the whole series without a bump (#923)" do
+    {series, episodes} = standard_series_wanting([1, 2])
+    now = DateTime.utc_now(:second)
+
+    # A stored precedence `Ecto.Enum` can't load makes the series' coordinate read raise.
+    Repo.query!(
+      """
+      INSERT INTO episode_coordinates
+        (series_id, source, scheme, namespace, canonical_value, precedence, inserted_at, updated_at)
+      VALUES (?1, 'tvdb', 'aired', '777', 'S05E01', 'unknown', ?2, ?2)
+      """,
+      [series.id, now]
+    )
+
+    report_searched_seasons()
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+    assert log =~ "tv poller skipped series #{series.id}:"
+    refute log =~ "skipped series #{series.id} s"
+    refute_received {:searched_season, _season_number}
+
+    for episode <- episodes do
+      assert %Episode{search_attempts: 0} = Repo.get!(Episode, episode.id)
+    end
+  end
+
+  # Sends the test a `{:trace, poller, :call, {Acquisition, :judge_season, args}}` message for
+  # each `judge_season/3` call the poller makes.
+  defp trace_judge_season(poller) do
+    mfa = {Cinder.Acquisition, :judge_season, 3}
+    Code.ensure_loaded!(Cinder.Acquisition)
+    assert 1 == :erlang.trace_pattern(mfa, true, [])
+    on_exit(fn -> :erlang.trace_pattern(mfa, false, []) end)
+    assert 1 == :erlang.trace(poller, true, [:call])
+  end
+
   test "Standard alternate-season file without scene coordinates is parked and blocklisted" do
     {series, season} = series_tree()
     episode = episode(season, 29)

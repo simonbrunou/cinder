@@ -130,6 +130,7 @@ defmodule Cinder.Catalog do
   defdelegate count_wanted_episodes(series_id, season_number), to: EpisodeSearch
   defdelegate manual_search_episodes(series_id, season_number), to: EpisodeSearch
   defdelegate season_acquisition_context(series, season_number), to: EpisodeSearch
+  defdelegate season_acquisition_contexts(series, season_numbers), to: EpisodeSearch
   defdelegate season_manual_searchable?(season, profile), to: EpisodeSearch
   defdelegate episode_searchable?(episode, profile), to: EpisodeSearch
   defdelegate episode_kind_wanted?(episode, season, profile), to: EpisodeSearch

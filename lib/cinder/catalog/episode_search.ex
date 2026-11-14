@@ -42,7 +42,7 @@ defmodule Cinder.Catalog.EpisodeSearch do
   @doc """
   Episodes a season-level manual search may replace or fill: ungrabbed available episodes
   (monitored or not) plus the normal wanted set. Unlike `wanted_episodes/0`, it is never the set
-  the automatic sweep grabs for. The sweep reads it only through `season_acquisition_context/2`,
+  the automatic sweep grabs for. The sweep reads it only through `season_acquisition_contexts/2`,
   to build the season's numbering bridge from the same episodes the panel does.
 
   Deliberately does NOT apply the Anime Season-0 story-special/recap classification restriction
@@ -88,31 +88,53 @@ defmodule Cinder.Catalog.EpisodeSearch do
     native season, on this tick or a later one, so the numbering bridge never reads one as an
     alternate season;
   - `mappings`: the series' episode coordinate mappings (`MediaProfiles.acquisition_mappings/1`).
+
+  The one-season case of `season_acquisition_contexts/2`.
   """
-  def season_acquisition_context(%Series{id: series_id} = series, season_number) do
-    {:ok, context} =
+  def season_acquisition_context(%Series{} = series, season_number) do
+    series
+    |> season_acquisition_contexts([season_number])
+    |> Map.fetch!(season_number)
+  end
+
+  @doc """
+  `season_acquisition_context/2` for each of `season_numbers` of one series, as a map from season
+  number to context, read in one transaction. It reads the series' coordinate mappings and its
+  wanted seasons once, however many seasons it builds, so the TV sweep reads them once per series
+  it visits, not once per season it searches (#923).
+  """
+  def season_acquisition_contexts(%Series{id: series_id} = series, season_numbers) do
+    {:ok, contexts} =
       Repo.transaction(fn ->
         today = Settings.household_date()
+        wanted_seasons = wanted_season_numbers(series_id)
+        mappings = MediaProfiles.acquisition_mappings(series)
 
-        %{
-          series: series,
-          season_number: season_number,
-          episode_count: SeriesCatalog.count_episodes(series_id, season_number),
-          # One `today` for the filter and the state, so no row reads as `:upcoming`.
-          episodes:
-            for episode <- manual_search_episodes(series_id, season_number, today) do
-              %{
-                id: episode.id,
-                episode_number: episode.episode_number,
-                state: Episodes.state(episode, today)
-              }
-            end,
-          native_seasons: MapSet.put(wanted_season_numbers(series_id), season_number),
-          mappings: MediaProfiles.acquisition_mappings(series)
-        }
+        Map.new(season_numbers, fn season_number ->
+          {season_number,
+           %{
+             series: series,
+             season_number: season_number,
+             episode_count: SeriesCatalog.count_episodes(series_id, season_number),
+             episodes: searched_episodes(series_id, season_number, today),
+             native_seasons: MapSet.put(wanted_seasons, season_number),
+             mappings: mappings
+           }}
+        end)
       end)
 
-    context
+    contexts
+  end
+
+  # One `today` for the filter and the state, so no row reads as `:upcoming`.
+  defp searched_episodes(series_id, season_number, today) do
+    for episode <- manual_search_episodes(series_id, season_number, today) do
+      %{
+        id: episode.id,
+        episode_number: episode.episode_number,
+        state: Episodes.state(episode, today)
+      }
+    end
   end
 
   defp wanted_season_numbers(series_id) do

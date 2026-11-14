@@ -572,12 +572,15 @@ defmodule Cinder.Download.TvPoller do
 
   defp search_standard_series(series, episodes, summary) do
     groups = Enum.group_by(episodes, & &1.season.season_number)
+    # One read of the series' numbering inputs per visit (#923). A season grabbed earlier in the
+    # visit stays a native season for the later ones, and a raise here skips the whole series.
+    contexts = Catalog.season_acquisition_contexts(series, Map.keys(groups))
 
     outcomes =
       Enum.map(groups, fn {season_number, group} ->
         result =
           isolate("series #{series.id} s#{season_number}", fn ->
-            search_standard_group(group)
+            search_standard_group(group, Map.fetch!(contexts, season_number))
           end)
 
         {group, result}
@@ -611,11 +614,8 @@ defmodule Cinder.Download.TvPoller do
 
   # The season's release list is the manual panel's (`Acquisition.judge_season/3`); the sweep
   # claims only the episodes due this tick.
-  defp search_standard_group(episodes) do
-    series = hd(episodes).season.series
-    season_number = hd(episodes).season.season_number
+  defp search_standard_group(episodes, %{series: series, season_number: season_number} = context) do
     numbers = Enum.map(episodes, & &1.episode_number)
-    context = Catalog.season_acquisition_context(series, season_number)
 
     with {:ok, judged} <-
            Acquisition.judge_season(context, numbers, HouseholdPolicy.for_target(series)),

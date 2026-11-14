@@ -212,8 +212,10 @@ defmodule Cinder.Acquisition do
   @doc """
   The one function that builds a standard TV season's release list, for the TV sweep (which takes
   `Cinder.Acquisition.ReleaseJudge.pick/1`, the set-cover over `kept`) and the manual-search panel
-  (which renders `rows`). `context` is `Cinder.Catalog.season_acquisition_context/2`'s, so both
-  read the same episodes, native seasons and coordinate mappings.
+  (which renders `rows`). `context` is `Cinder.Catalog.season_acquisition_context/2`'s (the
+  sweep reads every season it searches in a series at once, through
+  `Cinder.Catalog.season_acquisition_contexts/2`), so both read the same episodes, native seasons
+  and coordinate mappings.
 
   From those it derives the numbering bridge: the scene and TVDB-aired coordinates of the searched
   episodes that land in another season. It searches the native season plus at most

@@ -17,7 +17,8 @@ once, so the group-wait verdicts and the pick agree. For anime episodes the judg
 each release and freezes its stable-id mapping, because its role and mapping stages read them.
 For a standard season the sweep and the panel also share the search (#837): one function,
 `Cinder.Acquisition.judge_season/3`, builds the release list for both from one Catalog read
-(`Cinder.Catalog.season_acquisition_context/2`). It derives the numbering bridge from the same
+(`Cinder.Catalog.season_acquisition_context/2`; since #923 the sweep reads the seasons it searches
+in a series in one such read, `season_acquisition_contexts/2`). It derives the numbering bridge from the same
 episodes and native seasons, searches the same alternate seasons, drops duplicate results and
 freezes bridged episode ids, and the judge's mapping stage drops a bridged release whose numbering
 resolves two ways, which the panel refuses and the sweep used to grab. One input still differs,
