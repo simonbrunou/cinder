@@ -44,7 +44,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.Bound do
 
   @doc """
   Runs `callback` with `bound`, closes `bound`, and merges a failed close into the result: a
-  committed publication marker stays committed, anything else becomes
+  committed publication marker stays committed, `{:workspace_kept, directory}` becomes
+  `{:workspace_kept, directory, {:descriptor_close_failed, reason}}`, anything else becomes
   `{:error, {:descriptor_close_failed, reason}}`. A raise is re-raised after the close.
   """
   @spec finish_bound(map(), (map() -> term())) :: term()
@@ -116,6 +117,11 @@ defmodule Cinder.Subtitles.SidecarTransaction.Bound do
     {:committed_unacknowledged,
      merge_committed_warnings(committed_warning, {:descriptor_close_failed, reason})}
   end
+
+  # A disposal that kept its workspace already logged the folder's path (`AtomicFile`'s
+  # `finish_displaced/2`), so the caller still learns which folder it kept (#1290).
+  defp finish_bound_operation({:returned, {:workspace_kept, directory}}, {:error, reason}),
+    do: {:workspace_kept, directory, {:descriptor_close_failed, reason}}
 
   defp finish_bound_operation({:returned, _result}, {:error, reason}),
     do: {:error, {:descriptor_close_failed, reason}}

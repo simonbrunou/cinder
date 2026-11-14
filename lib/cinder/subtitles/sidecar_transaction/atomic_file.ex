@@ -357,8 +357,10 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     end
   end
 
+  # `{:kept, directory}` passes like `:ok`, after a warning that names `directory`: a disposal
+  # step failed and left the workspace (`finish_displaced/2`).
   @spec cleanup_pending(String.t(), String.t(), String.t(), String.t()) ::
-          :ok | {:error, term()}
+          :ok | {:kept, String.t()} | {:error, term()}
   def cleanup_pending(target, operation_id, expected_sha256, applied_sha256) do
     if Workspace.valid_id?(operation_id) do
       cleanup_pending_workspace(target, operation_id, expected_sha256, applied_sha256)
@@ -370,7 +372,11 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   @spec cleanup_reversal(String.t(), String.t(), String.t()) :: :ok | {:error, term()}
   def cleanup_reversal(target, expected_sha256, content_sha256) do
     operation_id = reversal_id(target, expected_sha256, content_sha256)
-    cleanup_pending(target, operation_id, expected_sha256, content_sha256)
+
+    case cleanup_pending(target, operation_id, expected_sha256, content_sha256) do
+      {:kept, _directory} -> :ok
+      result -> result
+    end
   end
 
   @spec recover(String.t(), String.t(), String.t(), String.t()) :: :ok | {:error, term()}
@@ -478,6 +484,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
 
   # A target that holds the applied bytes is a finished publication whatever its workspace holds:
   # the staged file is read only to finish its disposal, so nothing found there fails the cleanup.
+  # A disposal that kept the workspace still says so, also when the staged file's close failed.
   defp cleanup_target_content(target_hash, staged_path, expected, applied) do
     result =
       with_bound(staged_path, [:read, :raw, :binary], fn staged ->
@@ -485,11 +492,19 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
       end)
 
     cond do
-      target_hash == applied -> :ok
+      target_hash == applied -> kept_or_ok(result)
       result == {:error, :enoent} -> cleanup_empty_workspace(target_hash, expected, applied)
-      true -> result
+      true -> kept_or_result(result)
     end
   end
+
+  defp kept_or_ok({:workspace_kept, directory}), do: {:kept, directory}
+  defp kept_or_ok({:workspace_kept, directory, _close_failure}), do: {:kept, directory}
+  defp kept_or_ok(_result), do: :ok
+
+  defp kept_or_result({:workspace_kept, directory}), do: {:kept, directory}
+  defp kept_or_result({:workspace_kept, _directory, close_failure}), do: {:error, close_failure}
+  defp kept_or_result(result), do: result
 
   defp cleanup_bound_workspace(target_hash, staged_path, staged, expected, applied) do
     with {:ok, staged_content} <- File.read(staged.path, [:raw]) do
@@ -509,8 +524,10 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   # the exchange does it (`empty_displaced/2`), or by renaming over the staged name the fresh
   # tombstone an interrupted `replace_shared_tombstone/2` left beside it, whatever the staged
   # inode's link count. Either way the workspace ends a bare tombstone. A step that fails leaves
-  # the workspace, with a warning naming it, and the cleanup still passes: the target's bytes are
-  # all a record or a reset reads.
+  # the workspace, with a warning naming it, and returns `{:workspace_kept, directory}`.
+  # `cleanup_target_content/4` passes that as `{:kept, directory}`, since the target's bytes are
+  # all a record or a reset reads, unless the staged file then fails to close beside a target that
+  # holds the expected bytes: that fails it, as any failed close there does.
   defp finish_displaced(staged_path, staged) do
     directory = Path.dirname(staged_path)
     fresh_path = Workspace.tombstone_path(directory)
@@ -522,13 +539,17 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
         {:error, _reason} = error -> error
       end
 
-    with {_kept_or_error, reason} <- result do
-      Logger.warning(
-        "subtitle workspace kept at #{directory}: #{inspect(disposal_failure(reason))}"
-      )
-    end
+    case result do
+      :ok ->
+        :ok
 
-    :ok
+      {_kept_or_error, reason} ->
+        Logger.warning(
+          "subtitle workspace kept at #{directory}: #{inspect(disposal_failure(reason))}"
+        )
+
+        {:workspace_kept, directory}
+    end
   end
 
   defp disposal_failure({:discard, reason}), do: {:discard_failed, reason}

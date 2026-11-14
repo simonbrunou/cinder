@@ -168,7 +168,7 @@ defmodule Cinder.Subtitles.SidecarTransaction do
   defp commit(sidecar, current, content, record, backup_created?, operation_id) do
     with :ok <- Moviehash.verify(sidecar.video_path, record.moviehash),
          :ok <- put_record(sidecar, record) do
-      :ok = Workspace.retire(sidecar.sidecar_path, operation_id)
+      _removed_or_kept = Workspace.retire(sidecar.sidecar_path, operation_id)
       {:ok, :corrected, %{sidecar | sync: record}}
     else
       {:error, reason} -> rollback(sidecar, current, content, backup_created?, reason)

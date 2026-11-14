@@ -55,8 +55,10 @@ defmodule Cinder.Subtitles.SidecarTransaction.Workspace do
   for the shared file and never writes it.
 
   Anything else stays, and a warning names its path, as does a step that fails.
+
+  Returns `:removed` when the workspace is gone, `:kept` when it stays.
   """
-  @spec retire(String.t(), String.t()) :: :ok
+  @spec retire(String.t(), String.t()) :: :removed | :kept
   def retire(target, operation_id) do
     directory = path(target, operation_id)
 
@@ -65,8 +67,14 @@ defmodule Cinder.Subtitles.SidecarTransaction.Workspace do
         do: directory |> classify_workspace(nil) |> retire_classified(nil),
         else: {:error, :invalid_operation_id}
 
-    with {_kept_or_error, reason} <- result, do: log_kept_workspace(directory, reason)
-    :ok
+    case result do
+      {_kept_or_error, reason} ->
+        log_kept_workspace(directory, reason)
+        :kept
+
+      _removed_or_absent ->
+        :removed
+    end
   end
 
   @doc """

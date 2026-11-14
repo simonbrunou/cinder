@@ -315,20 +315,37 @@ defmodule Cinder.Subtitles.SidecarTransaction.Recovery do
       |> Map.put(:status, "aligned")
 
     with :ok <- Backup.verify_present(item.sidecar_path, sync),
-         :ok <-
-           AtomicFile.cleanup_pending(
-             item.sidecar_path,
-             sync.operation_id,
-             sync.expected_sha256,
-             sync.applied_sha256
+         {:ok, kept_directory} <-
+           workspace_cleanup(
+             AtomicFile.cleanup_pending(
+               item.sidecar_path,
+               sync.operation_id,
+               sync.expected_sha256,
+               sync.applied_sha256
+             )
            ),
          :ok <- Manifest.put_sync(item.video_path, item.language, record) do
-      :ok = Workspace.retire(item.sidecar_path, sync.operation_id)
+      item.sidecar_path
+      |> Workspace.retire(sync.operation_id)
+      |> log_removed(kept_directory)
+
       {:ok, %{item | sync: record}}
     else
       {:error, _reason} -> {:review, :apply_recovery_failed, item}
     end
   end
+
+  # The directory the cleanup logged as kept, or nil.
+  defp workspace_cleanup(:ok), do: {:ok, nil}
+  defp workspace_cleanup({:kept, directory}), do: {:ok, directory}
+  defp workspace_cleanup({:error, _reason} = error), do: error
+
+  # The cleanup's warning said the workspace stays, so its removal gets a line too (#1290). A
+  # retirement that keeps it logs its own warning.
+  defp log_removed(:removed, directory) when is_binary(directory),
+    do: Logger.warning("subtitle workspace removed at #{directory}")
+
+  defp log_removed(_removed_or_kept, _kept_directory), do: :ok
 
   defp clean_replacement(item, current_hash) do
     with :ok <- restore_applied_original(item, current_hash),
