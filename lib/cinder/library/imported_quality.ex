@@ -211,6 +211,26 @@ defmodule Cinder.Library.ImportedQuality do
 
   def declined(%__MODULE__{}, :kept, record), do: of(record)
 
+  @doc """
+  The quality a movie stacked in CD/part files records, from each part's `for_outcome/4` quality,
+  primary first: the primary part's quality with the sidecar languages of every part, in part
+  order, each once. A nil list (a row never scanned for sidecars, see `of/1`) adds no languages,
+  and the result keeps nil only when every part's list is nil. One part returns its quality
+  unchanged.
+  """
+  @spec merge_parts([t(), ...]) :: t()
+  def merge_parts([%__MODULE__{} = primary]), do: primary
+
+  def merge_parts([%__MODULE__{} = primary | _parts] = parts) do
+    sidecars =
+      case parts |> Enum.map(& &1.sidecar_subtitles) |> Enum.reject(&is_nil/1) do
+        [] -> nil
+        lists -> lists |> Enum.concat() |> Enum.uniq()
+      end
+
+    %{primary | sidecar_subtitles: sidecars}
+  end
+
   # An unrecorded row adopts the incoming quality, with the sidecars next to each of `videos`.
   defp existing(record, incoming, videos) do
     recorded = of(record)

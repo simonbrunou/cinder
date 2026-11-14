@@ -286,6 +286,149 @@ defmodule Cinder.Library.ImportedQualityTest do
     end
   end
 
+  # Issue #921: a stacked movie's record merges its parts here, not in the stager.
+  describe "merge_parts/1" do
+    @cd1 %ImportedQuality{
+      resolution: "1080p",
+      size: 7,
+      language: "FRENCH",
+      source: "bluray",
+      audio_languages: ["fr"],
+      default_audio_language: "fr",
+      embedded_subtitles: ["fr"],
+      sidecar_subtitles: ["fr", "en"]
+    }
+
+    @cd2 %ImportedQuality{
+      resolution: "720p",
+      size: 3,
+      language: nil,
+      source: "web",
+      audio_languages: ["en"],
+      default_audio_language: "en",
+      embedded_subtitles: ["en"],
+      sidecar_subtitles: ["de", "en"]
+    }
+
+    test "takes every part's sidecar languages in part order, each once, the rest from the primary" do
+      cd3 = %{@cd2 | sidecar_subtitles: ["fr", "es"]}
+
+      assert ImportedQuality.merge_parts([@cd1, @cd2, cd3]) ==
+               %{@cd1 | sidecar_subtitles: ["fr", "en", "de", "es"]}
+
+      assert ImportedQuality.merge_parts([@cd2, @cd1]) ==
+               %{@cd2 | sidecar_subtitles: ["de", "en", "fr"]}
+    end
+
+    test "returns one part's quality unchanged" do
+      for sidecars <- [nil, [], ["fr", "fr"]] do
+        part = %{@cd1 | sidecar_subtitles: sidecars}
+        assert ImportedQuality.merge_parts([part]) == part
+      end
+    end
+
+    # A nil list means "never scanned" (`of/1`), and `[]` would record "scanned, none".
+    test "keeps nil only when every part's list is nil" do
+      nil1 = %{@cd1 | sidecar_subtitles: nil}
+      nil2 = %{@cd2 | sidecar_subtitles: nil}
+
+      assert ImportedQuality.merge_parts([nil1, nil2]) == nil1
+
+      assert ImportedQuality.merge_parts([nil1, @cd2]) == %{
+               @cd1
+               | sidecar_subtitles: ["de", "en"]
+             }
+
+      assert ImportedQuality.merge_parts([@cd1, nil2]) == @cd1
+
+      assert ImportedQuality.merge_parts([nil1, %{@cd2 | sidecar_subtitles: []}]) == %{
+               @cd1
+               | sidecar_subtitles: []
+             }
+    end
+  end
+
+  # Issue #921: a row recorded before the media-info columns can hold a nil sidecar list, and a
+  # part whose library file stays gets that nil list from `for_outcome/4`.
+  describe "a stacked movie through Library.stage_movie/2" do
+    @describetag :tmp_dir
+    setup [:real_disk, :stacked_movie]
+
+    test "a row with no sidecar list keeps none when every part is the download's file", ctx do
+      assert {:ok, staged} = Library.stage_movie(ctx.row)
+      assert StagedImport.record(staged).quality == ImportedQuality.of(ctx.row)
+      StagedImport.rollback(staged)
+    end
+
+    @tag :capture_log
+    test "a row with no sidecar list keeps none when every part's file is kept", ctx do
+      for path <- ctx.library, do: replace_file!(path)
+      assert {:ok, staged} = Library.stage_movie(ctx.row)
+      assert StagedImport.record(staged).quality == ImportedQuality.of(ctx.row)
+      assert_imports(ctx.row, staged, nil)
+    end
+
+    @tag :capture_log
+    test "a row with no sidecar list takes the list of a part placed beside a kept one", ctx do
+      [primary, part] = ctx.library
+      replace_file!(primary)
+      File.rm!(part)
+
+      assert {:ok, staged} = Library.stage_movie(ctx.row)
+
+      assert StagedImport.record(staged).quality ==
+               %{ImportedQuality.of(ctx.row) | sidecar_subtitles: ["fr"]}
+
+      assert_imports(ctx.row, staged, ["fr"])
+    end
+  end
+
+  # The import commits and the row stores `sidecars`.
+  defp assert_imports(row, staged, sidecars) do
+    assert {:ok, _available} = MovieLifecycle.import_staged(row, staged)
+    LibraryStubs.await_subtitle_tasks()
+    stored = Repo.get!(Movie, row.id)
+    assert {stored.status, stored.imported_sidecar_subtitles} == {:available, sidecars}
+  end
+
+  # A two-part release imported once, and its row as a row recorded before the media-info columns
+  # holds it: a recorded quality and a nil sidecar list. Only the second part has a sidecar.
+  defp stacked_movie(%{downloads: downloads}) do
+    stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+    release = "Epic.1960.1080p.BluRay-GRP"
+    folder = Path.join(downloads, release)
+    File.mkdir_p!(folder)
+    for part <- ["CD1", "CD2"], do: File.write!(Path.join(folder, "Epic.#{part}.mkv"), part)
+    File.write!(Path.join(folder, "Epic.CD2.fr.srt"), "1")
+
+    movie =
+      movie_fixture(%{
+        title: "Epic",
+        year: 1960,
+        status: :downloaded,
+        content_path: folder,
+        release_title: release
+      })
+
+    {:ok, staged} = Library.stage_movie(movie)
+    :ok = LibraryStubs.commit_staged(staged)
+    LibraryStubs.await_subtitle_tasks()
+    record = StagedImport.record(staged)
+
+    row =
+      struct!(
+        %{movie | file_path: record.file_path, part_file_paths: record.part_file_paths},
+        ImportedQuality.columns(%{record.quality | sidecar_subtitles: nil}, Movie)
+      )
+
+    %{row: row, library: [record.file_path | record.part_file_paths]}
+  end
+
+  defp replace_file!(path) do
+    File.rm!(path)
+    File.write!(path, "another file")
+  end
+
   describe "recapture/1" do
     @describetag :tmp_dir
     setup :real_disk

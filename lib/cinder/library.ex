@@ -59,7 +59,8 @@ defmodule Cinder.Library do
   `Cinder.Catalog.MovieLifecycle.import_staged/2`.
 
   The record is `%{file_path:, part_file_paths:, quality:}`: the primary file, the further parts
-  of a strict CD/part stack, and the quality to record (sidecar languages merged across parts).
+  of a strict CD/part stack, and the quality to record (`ImportedQuality.merge_parts/1` of the
+  parts' qualities).
   `replace: true` (a forced upgrade) swaps whatever sits at the movie's destination; otherwise a
   file already there is swapped only when the download ranks better than the recorded quality.
   """
@@ -167,19 +168,11 @@ defmodule Cinder.Library do
     end
   end
 
-  defp movie_record([primary]),
-    do: %{file_path: primary.dest, part_file_paths: [], quality: primary.quality}
-
   defp movie_record([primary | parts] = stages) do
-    sidecars =
-      stages
-      |> Enum.flat_map(& &1.quality.sidecar_subtitles)
-      |> Enum.uniq()
-
     %{
       file_path: primary.dest,
       part_file_paths: Enum.map(parts, & &1.dest),
-      quality: %{primary.quality | sidecar_subtitles: sidecars}
+      quality: ImportedQuality.merge_parts(Enum.map(stages, & &1.quality))
     }
   end
 
