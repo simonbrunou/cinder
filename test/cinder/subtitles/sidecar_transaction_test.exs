@@ -92,6 +92,10 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   @tombstone ".cinder-subtitle-sync-write-tombstone"
   # The detail of a correction whose two names went unverified after its exchange (#1284).
   @names_unverified {:exchanged_names_unverified, :displaced_kept}
+  # The detail of a correction whose rollback failed after the staged name's check (#1322), and
+  # the result the rollback's failure keeps when the bytes do not settle it.
+  @rollback_kept {:displaced_rollback_failed, :eio, :displaced_kept}
+  @rollback_failed {:exchange_rollback_failed, {:error, :concurrent_change}, :eio}
 
   setup %{tmp_dir: tmp} do
     keys = [
@@ -472,6 +476,183 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert Manifest.sync(Manifest.read(video), "en") == previous_record
       assert [staged] = workspace_staged_files(path)
       assert File.read!(staged) == previous
+    end
+
+    # #1322: the exchange's check and then the rollback's identity read fail to open the staged
+    # name, but the sidecar reads as the corrected bytes, so the publication is committed. The
+    # write disposes of nothing, and the recovery's workspace cleanup disposes of the displaced
+    # inode.
+    test "a sidecar with no other name whose staged name fails to open twice right after the exchange is recovered",
+         %{video: video, path: path, original: original, backup: backup} do
+      assert {:error, {:publication_committed, @rollback_kept}} =
+               fail_staged_open_after_exchange(fn -> manual(video, 1_000) end, [
+                 staged_open_failure()
+               ])
+
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+      assert %{status: "applying"} = Manifest.sync(Manifest.read(video), "en")
+      assert [staged] = workspace_staged_files(path)
+      assert File.read!(staged) == original
+
+      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+      assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
+      assert workspaces(path) == []
+      assert File.read!(backup) == original
+      assert {:ok, :corrected, _} = manual(video, 2_000)
+    end
+
+    # #1322: the rollback fails at its first step, its check of the sidecar before its own
+    # exchange, so the sidecar still holds the corrected bytes.
+    test "a staged name that fails to open, then a rollback whose check of the sidecar fails, keeps the pending record",
+         %{video: video, path: path, original: original, backup: backup} do
+      target_failure = %{operation: :open_bound, source_contains: path, reason: :eio}
+
+      assert {:error,
+              {:publication_committed,
+               {:displaced_rollback_failed, :concurrent_change, :displaced_kept}}} =
+               fail_staged_open_after_exchange(fn -> manual(video, 1_000) end, [target_failure])
+
+      assert_unacknowledged_correction(video, path, original, backup)
+      assert workspaces(path) == []
+    end
+
+    # #1322: the rollback read the displaced inode at the staged name, but its own exchange failed
+    # with no effect, so the sidecar still holds the corrected bytes.
+    test "a staged name that fails to open, then a rollback whose exchange fails, keeps the pending record",
+         %{video: video, path: path, original: original, backup: backup} do
+      exchange_failure = %{operation: :exchange, source_contains: @staged, reason: :eio}
+
+      assert {:error, {:publication_committed, @rollback_kept}} =
+               fail_staged_open_after_exchange(fn -> manual(video, 1_000) end, [exchange_failure])
+
+      assert_unacknowledged_correction(video, path, original, backup)
+      assert workspaces(path) == []
+    end
+
+    # #1322: a warning the correction's exchange committed goes in front of the failed rollback.
+    test "a post-effect exchange failure, then a staged name that fails to open twice, keeps the pending record",
+         %{video: video, path: path, original: original, backup: backup} do
+      fail_once(%{
+        operation: :exchange,
+        source_contains: @staged,
+        phase: :post_effect,
+        reason: :eio
+      })
+
+      use_barrier(%{operation: :exchange, phase: :before, contains: @staged})
+      task = Task.async(fn -> manual(video, 1_000) end)
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
+      fail_in_order([staged_open_failure(), staged_open_failure()])
+      send(pid, {ref, :continue})
+
+      assert {:error,
+              {:publication_committed, {{:effect_committed, "exchange", :eio}, @rollback_kept}}} =
+               DiskTask.await(task)
+
+      assert_unacknowledged_correction(video, path, original, backup)
+      assert workspaces(path) == []
+    end
+
+    # #1322: the rollback read another writer's file at the staged name, so its failed exchange
+    # keeps the result a failed rollback, whatever the sidecar holds.
+    test "a sidecar atomically replaced just before the exchange, then a failed rollback exchange, restores the previous record",
+         %{video: video, path: path, original: original, backup: backup} do
+      external = String.replace(original, "One", "Atomic replacement")
+      replacement = path <> ".replacement"
+      File.write!(replacement, external)
+
+      use_barrier(%{operation: :exchange, phase: :before, contains: @staged})
+      task = Task.async(fn -> manual(video, 1_000) end)
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
+      File.rename!(replacement, path)
+      use_barrier(%{operation: :exchange, contains: @staged})
+      send(pid, {ref, :continue})
+      assert_receive {:filesystem_barrier, ^pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
+      fail_once(%{operation: :exchange, source_contains: @staged, reason: :eio})
+      send(pid, {ref, :continue})
+
+      assert {:error, @rollback_failed} = DiskTask.await(task)
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+      assert File.read!(backup) == original
+      assert Manifest.sync(Manifest.read(video), "en") == nil
+      assert [staged] = workspace_staged_files(path)
+      assert File.read!(staged) == external
+    end
+
+    # #1322: the rollback opened the staged name and read another writer's file there, and only
+    # the close after that read failed, so the result stays a failed rollback.
+    test "a sidecar atomically replaced just before the exchange, then a staged name that fails to close after the rollback reads it, restores the previous record",
+         %{video: video, path: path, original: original, backup: backup} do
+      external = String.replace(original, "One", "Atomic replacement")
+      replacement = path <> ".replacement"
+      File.write!(replacement, external)
+      close_failure = %{operation: :close_bound, source_contains: @staged, reason: :eio}
+
+      use_barrier(%{operation: :exchange, phase: :before, contains: @staged})
+      task = Task.async(fn -> manual(video, 1_000) end)
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
+      File.rename!(replacement, path)
+      use_barrier(%{operation: :exchange, contains: @staged})
+      send(pid, {ref, :continue})
+      assert_receive {:filesystem_barrier, ^pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
+      # The exchange's check of the staged name closes first, then the rollback's identity read.
+      fail_in_order([close_failure, close_failure])
+      send(pid, {ref, :continue})
+
+      assert {:error,
+              {:exchange_rollback_failed, {:error, :concurrent_change},
+               {:descriptor_close_failed, :eio}}} = DiskTask.await(task)
+
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+      assert File.read!(backup) == original
+      assert Manifest.sync(Manifest.read(video), "en") == nil
+      assert [staged] = workspace_staged_files(path)
+      assert File.read!(staged) == external
+    end
+
+    # #1322: bytes the write cannot read back count as unpublished, so the failed rollback stays
+    # the result and the staged name keeps the displaced bytes.
+    test "a staged name that fails to open twice and a sidecar that fails to read right after the exchange restore the previous record",
+         %{video: video, path: path, original: original} do
+      read_failure = %{operation: :read, source_contains: path, reason: :eio}
+
+      assert {:error, @rollback_failed} =
+               fail_staged_open_after_exchange(fn -> manual(video, 1_000) end, [
+                 staged_open_failure(),
+                 read_failure
+               ])
+
+      assert File.read!(path) =~ "00:00:02,000 --> 00:00:03,000"
+      assert Manifest.sync(Manifest.read(video), "en") == nil
+      assert [staged] = workspace_staged_files(path)
+      assert File.read!(staged) == original
+    end
+
+    # #1322: the rollback's own exchange ran before its check of the sidecar failed, so the
+    # sidecar holds the first correction's bytes, which the previous record names.
+    test "a rollback whose exchange ran before its check of the sidecar failed restores the previous record",
+         %{video: video, path: path} do
+      assert {:ok, :corrected, _} = manual(video, 1_000)
+      previous = File.read!(path)
+      previous_record = Manifest.sync(Manifest.read(video), "en")
+
+      use_barrier(%{operation: :exchange, contains: @staged})
+      task = Task.async(fn -> manual(video, 2_000) end)
+      assert_receive {:filesystem_barrier, pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
+      fail_once(staged_open_failure())
+      use_barrier(%{operation: :exchange, contains: @staged})
+      send(pid, {ref, :continue})
+      assert_receive {:filesystem_barrier, ^pid, ref, :exchange, _staged}, DiskTask.timeout_ms()
+      fail_once(%{operation: :open_bound, source_contains: path, reason: :eio})
+      send(pid, {ref, :continue})
+
+      assert {:error,
+              {:exchange_rollback_failed, {:error, :concurrent_change}, :concurrent_change}} =
+               DiskTask.await(task)
+
+      assert File.read!(path) == previous
+      assert Manifest.sync(Manifest.read(video), "en") == previous_record
+      assert {:ok, _} = recover(video)
     end
 
     # #1190: a sidecar that holds other bytes before the exchange is left alone with nothing
@@ -931,6 +1112,27 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
       assert {:error, {:publication_committed, @names_unverified}} =
                fail_names_open_after_exchange(path, fn -> manual(video, 1_000) end)
+
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 2
+
+      assert {:ok, %{sync: %{status: "aligned"}}} = recover(video)
+      assert %{status: "aligned"} = Manifest.sync(Manifest.read(video), "en")
+      assert workspaces(path) == []
+      assert File.read!(download) == original
+      assert File.stat!(download).links == 1
+    end
+
+    # #1322: the write empties nothing after its failed rollback, so the download keeps its second
+    # name until the recovery's workspace cleanup drops it.
+    test "a correction whose staged name fails to open twice right after the exchange keeps the download's bytes",
+         %{video: video, path: path, original: original, tmp_dir: tmp} do
+      download = hardlink_download!(path, tmp)
+
+      assert {:error, {:publication_committed, @rollback_kept}} =
+               fail_staged_open_after_exchange(fn -> manual(video, 1_000) end, [
+                 staged_open_failure()
+               ])
 
       assert File.read!(download) == original
       assert File.stat!(download).links == 2
@@ -3418,6 +3620,20 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert workspaces(path) == []
     end
 
+    # #1322: `swap/3` keeps the failed rollback as its result.
+    test "a staged name that fails to open twice right after the fetch's exchange reports a failed rollback",
+         %{video: video, path: path} do
+      {result, _log} =
+        with_log(fn ->
+          fail_staged_open_after_exchange(fn -> replace(video, @replacement) end, [
+            staged_open_failure()
+          ])
+        end)
+
+      assert {:error, {:write, {:error, @rollback_failed}}} = result
+      assert File.read!(path) == @replacement
+    end
+
     test "identical bytes another writer created first are not recorded as the fetch's", %{
       video: video
     } do
@@ -3855,9 +4071,48 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
       assert File.read!(path) == corrected
     end
+
+    # #1322: `write/3` keeps the failed rollback as its result, as it does after #1284.
+    test "a staged name that fails to open twice right after the exchange reports a failed rollback",
+         %{path: path, original: original} do
+      corrected = shifted(original)
+
+      assert {:error, @rollback_failed} =
+               fail_staged_open_after_exchange(
+                 fn -> SidecarTransaction.AtomicFile.write(path, corrected, original) end,
+                 [staged_open_failure()]
+               )
+
+      assert File.read!(path) == corrected
+    end
   end
 
   describe "AtomicFile.write/4" do
+    # #1322: `recover/4`'s staged resume settles a failed rollback by the target's bytes too.
+    test "a resumed write whose staged name fails to open twice right after the exchange reports the bytes published",
+         %{path: path, original: original} do
+      corrected = shifted(original)
+      id = operation_id()
+      plant_workspace!(path, %{@staged => corrected}, id)
+
+      assert {:error, {:publication_committed, @rollback_kept}} =
+               fail_staged_open_after_exchange(
+                 fn ->
+                   SidecarTransaction.AtomicFile.recover(
+                     path,
+                     id,
+                     digest(original),
+                     digest(corrected)
+                   )
+                 end,
+                 [staged_open_failure()]
+               )
+
+      assert File.read!(path) == corrected
+      assert [staged] = workspace_staged_files(path)
+      assert File.read!(staged) == original
+    end
+
     # #1284: `recover/4`'s staged resume reaches `write/4` through the workspace it reuses.
     test "a resumed write whose two names fail to open right after the exchange reports the bytes published",
          %{path: path, original: original} do
@@ -4213,6 +4468,14 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   # the two inodes. Each of `more` fails in order after them.
   defp fail_names_open_after_exchange(path, fun, more \\ []),
     do: after_exchange(fun, fn -> fail_in_order(names_open_failures(path) ++ more) end)
+
+  # Runs `fun` until its exchange committed, then fails the next open of the staged name with
+  # `:eio`: the exchange's check that it names the displaced inode, which sends the write to its
+  # rollback. Each of `more` fails in order after it.
+  defp fail_staged_open_after_exchange(fun, more),
+    do: after_exchange(fun, fn -> fail_in_order([staged_open_failure() | more]) end)
+
+  defp staged_open_failure, do: %{operation: :open_bound, source_contains: @staged, reason: :eio}
 
   defp names_open_failures(path) do
     [

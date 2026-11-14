@@ -18,7 +18,6 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
     only: [
       finish_bound: 2,
       merge_committed_warnings: 2,
-      path_identity: 1,
       verify_bound_path: 2,
       verify_path_identity: 2,
       with_bound: 3,
@@ -28,7 +27,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   # The disposal mode (see `dispose_displaced/4`): a reversal's `write/3` uses `:discard`, and
   # `write/4`, whose every caller holds a pending record naming the workspace, uses
   # `:recorded_discard`. They differ only when neither exchanged name verifies
-  # (`settle_unverified_names/4`).
+  # (`settle_unverified_names/4`) and when a rollback after the staged name's check fails
+  # (`settle_displaced_rollback/6`).
   @discarding [:discard, :recorded_discard]
 
   @spec write(String.t(), binary(), binary()) :: :ok | {:error, term()}
@@ -848,13 +848,9 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
         published_external(target, staged_path, current, content, disposal, committed_warning)
 
       {:error, :displaced_target_changed} ->
-        rollback_displaced_exchange(
-          target,
-          staged_path,
-          staged,
-          disposal,
-          {:error, :concurrent_change}
-        )
+        target
+        |> rollback_displaced_exchange(staged_path, staged, {:error, :concurrent_change})
+        |> settle_displaced_rollback(target, current, content, disposal, committed_warning)
 
       {:error, :captured_target_changed} = error ->
         rollback_exchange(target, staged_path, current, staged, disposal, error)
@@ -1040,18 +1036,71 @@ defmodule Cinder.Subtitles.SidecarTransaction.AtomicFile do
   defp preserved_external({:error, {:replace, reason}}),
     do: {:preserved, {:error, {:external_preservation_replace_failed, reason}}}
 
-  defp rollback_displaced_exchange(target, staged_path, staged, _disposal, original_error) do
+  # A failed step returns `{:rollback_failed, staged_identity, original_error, reason}`, where
+  # `staged_identity` is `{:read, identity}` for the identity the rollback read at the staged
+  # name, or `:unread` when it failed before that read.
+  defp rollback_displaced_exchange(target, staged_path, staged, original_error) do
     with :ok <- verify_bound_path(target, staged),
-         {:ok, displaced_identity} <- path_identity(staged_path),
-         :ok <- fs().exchange(staged_path, target),
+         {:ok, displaced_identity} <- read_staged_identity(staged_path) do
+      exchange_back(target, staged_path, staged, displaced_identity, original_error)
+    else
+      {:read_unclosed, identity, reason} ->
+        {:rollback_failed, {:read, identity}, original_error, reason}
+
+      {:error, reason} ->
+        {:rollback_failed, :unread, original_error, reason}
+    end
+  end
+
+  # Reads the identity at the staged name as `Bound.path_identity/1` does, but a close that fails
+  # after the open keeps the identity the open read: `{:read_unclosed, identity, close_failure}`.
+  # The rollback then settles by that identity, as after a clean read.
+  defp read_staged_identity(staged_path) do
+    with {:ok, bound} <- fs().open_bound(staged_path, [:read, :raw, :binary]) do
+      case fs().close_bound(bound) do
+        :ok -> {:ok, bound.identity}
+        {:error, reason} -> {:read_unclosed, bound.identity, {:descriptor_close_failed, reason}}
+      end
+    end
+  end
+
+  defp exchange_back(target, staged_path, staged, displaced_identity, original_error) do
+    with :ok <- fs().exchange(staged_path, target),
          :ok <- verify_path_identity(target, displaced_identity),
          :ok <- verify_bound_path(staged_path, staged),
          :ok <- fs().discard_bound(staged) do
       {:rolled_back, original_error}
     else
-      {:error, reason} ->
-        {:preserved, {:error, {:exchange_rollback_failed, original_error, reason}}}
+      {:error, reason} -> {:rollback_failed, {:read, displaced_identity}, original_error, reason}
     end
+  end
+
+  # A failed rollback (#1322). In `write/4`, unless the rollback read an identity other than the
+  # displaced inode's at the staged name, a target that reads as `content` is a committed
+  # publication. A rollback whose own exchange ran put the staged name's inode at the target, so
+  # that target reads as other bytes. As in `settle_unverified_names/4`, nothing is disposed of
+  # here: the pending record stays, and `recover/2`'s `cleanup_pending/4` opens the staged name
+  # afresh and disposes of the inode only when it holds the displaced bytes. When the rollback
+  # failed before it read an identity, a staged name holding another writer's file reads like
+  # one holding the displaced inode, and the bytes alone settle the result. Other bytes, bytes
+  # that cannot be read, `write/3` and `swap/3` keep the failed rollback's result.
+  defp settle_displaced_rollback({:rolled_back, _error} = result, _target, _, _, _, _),
+    do: result
+
+  defp settle_displaced_rollback(
+         {:rollback_failed, staged_identity, original_error, reason},
+         target,
+         current,
+         content,
+         disposal,
+         warning
+       ) do
+    if disposal == :recorded_discard and staged_identity in [:unread, {:read, current.identity}] and
+         safe_read(target) == {:ok, content},
+       do:
+         {:committed_unacknowledged,
+          merge_committed_warnings(warning, {:displaced_rollback_failed, reason, :displaced_kept})},
+       else: {:preserved, {:error, {:exchange_rollback_failed, original_error, reason}}}
   end
 
   defp rollback_exchange(target, staged_path, current, staged, _disposal, original_error) do
