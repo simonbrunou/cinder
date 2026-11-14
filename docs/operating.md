@@ -342,11 +342,33 @@ poller re-queues it on the next tick. (The old `/status` and `/grabs` URLs redir
 ### Liveness probe (`/healthz`)
 
 `GET /healthz` is an unauthenticated, dependency-free liveness endpoint (no DB call — it reads each
-poller's last-tick timestamp from memory, so it stays fast and truthful even under load). It returns
-**200 `ok`** when polling is disabled or every enabled background poller has ticked recently, and
-**503** with a short plain-text body naming the stale poller when one's last *successful* tick is
-older than **3× its interval** — i.e. a wedged or crash-looping pipeline the rest of the app can
-still look healthy around. A just-booted poller that hasn't ticked yet is not counted stale (200).
+poller's tick timestamps from memory, so it stays fast and truthful even under load). It returns
+**503** with a short plain-text body in two cases, and **200 `ok`** otherwise:
+
+- Polling is enabled and a background pipeline poller (movies, TV, books) is unhealthy: a wedged
+  or crash-looping pipeline the rest of the app can still look healthy around. The body names the
+  first unhealthy poller, in the order movies, TV, books.
+- Cinder reads less than 100 MiB free on the volume holding the database, whether or not polling
+  is enabled (`database volume low: … bytes free …`, unless a poller's reason above comes first).
+  When it cannot read the free space, this check passes.
+
+Each poller is judged by one of two rules:
+
+- **Between ticks**, it is stale once its last tick ended more than **3× its interval** ago
+  (`<poller> stale: last tick …`). A poller that has not finished a tick since it started is
+  stale once it started more than 3× its interval ago (`<poller> stale: no tick since start …`),
+  so a just-booted poller reads 200 only for that long unless its first tick is under way.
+- **During a tick**, it is healthy as long as the tick keeps making progress: a title, download or
+  import it works on starting or finishing, or one of its requests to an indexer, download client
+  or other service starting or ending. Each such request ends within 60 seconds. A tick that
+  searches many titles one after another can run for minutes, as after a rehunt re-queues parked
+  titles, and still reads 200. The poller is stuck once its tick goes **10 minutes** with no
+  progress (`<poller> stuck: tick in flight with no progress …`). One step with no time limit,
+  such as copying a large file to a library on another filesystem, reads stuck when it runs past
+  10 minutes.
+
+A restarted poller drops the state of a tick its crashed process left in flight, so a
+crash-looping poller is judged by the between-ticks rule.
 
 The compose file wires this as the container `healthcheck`. **Caveat:** `docker compose` only *marks*
 the container `unhealthy` on repeated failures — it does **not** restart it (`restart:` reacts to the

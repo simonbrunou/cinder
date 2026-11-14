@@ -3,6 +3,7 @@ defmodule Cinder.HTTPPolicyTest do
 
   import ExUnit.CaptureLog
 
+  alias Cinder.Download.PollerProgress
   alias Cinder.HTTPPolicy
 
   @request_task_event [:cinder, :http, :request_task]
@@ -648,6 +649,55 @@ defmodule Cinder.HTTPPolicyTest do
   end
 
   describe "bounded_request/2" do
+    # A poller tick's units can make many requests in series (#1294): each request's start and end
+    # counts as progress for /healthz (`Cinder.Download.PollerProgress`).
+    test "stamps progress for the tick its process runs, at the request's start and its end" do
+      module = __MODULE__.BeatTick
+      on_exit(fn -> :persistent_term.erase({module, :progress}) end)
+      old = PollerProgress.now_ms() - :timer.minutes(11)
+      PollerProgress.tick_started(module, old)
+      test = self()
+
+      Req.Test.stub(Cinder.HTTPPolicyBeatStub, fn conn ->
+        send(test, {:stamp_in_request, PollerProgress.read(module).progress_at})
+        PollerProgress.mark(module, old)
+        Req.Test.json(conn, %{ok: true})
+      end)
+
+      assert {:ok, %{status: 200}} =
+               HTTPPolicy.bounded_request(
+                 [
+                   url: "https://public.example/data",
+                   plug: {Req.Test, Cinder.HTTPPolicyBeatStub}
+                 ],
+                 64
+               )
+
+      assert_received {:stamp_in_request, at_start}
+      assert at_start > old
+      assert PollerProgress.read(module).progress_at > old
+    end
+
+    test "stamps no progress from a process that runs no tick" do
+      module = __MODULE__.IdleBeatTick
+      on_exit(fn -> :persistent_term.erase({module, :progress}) end)
+      old = PollerProgress.now_ms() - :timer.minutes(11)
+      Task.await(Task.async(fn -> PollerProgress.tick_started(module, old) end))
+
+      Req.Test.stub(Cinder.HTTPPolicyIdleBeatStub, fn conn -> Req.Test.json(conn, %{ok: true}) end)
+
+      assert {:ok, %{status: 200}} =
+               HTTPPolicy.bounded_request(
+                 [
+                   url: "https://public.example/data",
+                   plug: {Req.Test, Cinder.HTTPPolicyIdleBeatStub}
+                 ],
+                 64
+               )
+
+      assert PollerProgress.read(module) == %{in_flight?: true, progress_at: old}
+    end
+
     test "decodes application/json only after bounded collection" do
       Req.Test.stub(Cinder.HTTPPolicyStub, fn conn -> Req.Test.json(conn, %{ok: true}) end)
 

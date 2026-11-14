@@ -11,6 +11,7 @@ defmodule Cinder.HTTPPolicy do
   validated address while preserving the original hostname for Host, SNI, and certificate checks.
   """
 
+  alias Cinder.Download.PollerProgress
   alias Cinder.HTTPPolicy.PinnedAdapter
 
   @max_log_bytes 500
@@ -270,6 +271,9 @@ defmodule Cinder.HTTPPolicy do
         ) :: {:ok, Req.Response.t()} | {:error, term()}
   def bounded_request(request, max_bytes, timeout_ms)
       when is_integer(max_bytes) and max_bytes > 0 and is_integer(timeout_ms) and timeout_ms > 0 do
+    # A poller tick in this process counts each request's start and end as progress, so a unit
+    # that runs many requests in series reads healthy on /healthz while each one ends in time.
+    PollerProgress.beat()
     request = request_struct(request)
     started_at = System.monotonic_time()
     gate = make_ref()
@@ -296,6 +300,7 @@ defmodule Cinder.HTTPPolicy do
       end
 
     emit_http_telemetry(request, result, started_at)
+    PollerProgress.beat()
     result
   end
 

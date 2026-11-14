@@ -33,16 +33,30 @@ defmodule Cinder.Download.PollerSkeleton do
   DB-derived (VM-global, so it survives a crash but is *not* per-test isolated; a test
   that runs `poll/1` should erase `{module, :last_run}`). The stateless flavour's
   `status/0` feeds the `/activity` sweeps view (`Cinder.Jobs`); the stateful flavour's
-  feeds `/healthz` (`CinderWeb.HealthController`), which treats a poller whose last tick
-  is more than ~3 intervals old as unhealthy.
+  feeds `/healthz` (`CinderWeb.HealthController`). The stateful flavour also records its
+  tick in flight in `Cinder.Download.PollerProgress`: `run/1` flags the tick from its start to
+  its end, and `isolate/2` stamps progress as each unit starts and finishes, nested and raising
+  units included. `/healthz` judges a tick in flight by that progress (unhealthy after
+  10 minutes with none), and an idle poller by its last tick (unhealthy once it ended more than
+  3 intervals ago). `init/1` clears the in-flight state on every (re)start, so a poller killed
+  mid-tick falls back to the idle rule. A test that erases `{module, :last_run}` and
+  `{module, :started_at}` for `/healthz` also calls `PollerProgress.reset/1`.
 
   The interval is module config (`config :cinder, <module>, interval: <ms>`), not a
   `/settings` field — there's no string→int coercion seam there.
   """
+  alias Cinder.Download.PollerProgress
+
   defmacro __using__(opts) do
     prefix = Keyword.fetch!(opts, :log_prefix)
     stateful = Keyword.get(opts, :stateful, true)
     first_interval = Keyword.get(opts, :first_interval)
+
+    # Only a stateful poller's tick is judged by /healthz, so only its units record progress.
+    mark_progress =
+      if stateful,
+        do: quote(do: PollerProgress.mark(__MODULE__)),
+        else: :ok
 
     lifecycle =
       if stateful do
@@ -56,16 +70,25 @@ defmodule Cinder.Download.PollerSkeleton do
 
           @doc """
           Non-blocking health snapshot for `CinderWeb.HealthController`. Reads `:persistent_term`
-          (never the busy worker process), so it returns instantly even mid-tick. `last_run_at` is
-          `nil` until the first tick completes; `started_at` is stamped in `init/1`, so a worker
-          that wedges or crash-loops before ever completing a tick still has a start time the
-          controller can bound against (rather than reporting healthy forever).
+          and `Cinder.Download.PollerProgress` (never the busy worker process), so it returns
+          instantly even mid-tick. `last_run_at` is `nil` until the first tick completes;
+          `started_at` is stamped in `init/1`, so a worker that wedges or crash-loops before ever
+          completing a tick still has a start time the controller can bound against (rather than
+          reporting healthy forever). `tick_in_flight?` is true from a tick's start to its end, and
+          `last_progress_at` is then the `PollerProgress.now_ms/0` stamp of its last progress
+          (`nil` while idle).
           """
           def status do
+            # The in-flight state first: a tick writes `:last_run` before it clears the flag, so a
+            # reader that sees the tick idle reads that tick's `:last_run` below.
+            progress = PollerProgress.read(__MODULE__)
+
             %{
               module: __MODULE__,
               last_run_at: :persistent_term.get({__MODULE__, :last_run}, nil),
               started_at: :persistent_term.get({__MODULE__, :started_at}, nil),
+              tick_in_flight?: progress.in_flight?,
+              last_progress_at: progress.progress_at,
               interval: config_interval()
             }
           end
@@ -78,6 +101,9 @@ defmodule Cinder.Download.PollerSkeleton do
             # supervisor restart re-runs init and re-stamps, giving each fresh worker its own
             # first-tick grace window.
             :persistent_term.put({__MODULE__, :started_at}, DateTime.utc_now())
+            # A process killed mid-tick never cleared its in-flight flag: drop it, so /healthz
+            # judges this fresh worker by the idle rule until its own first tick starts.
+            PollerProgress.reset(__MODULE__)
             {:ok, %{interval: interval, search_retry_after: retry_after}, {:continue, :schedule}}
           end
 
@@ -109,13 +135,16 @@ defmodule Cinder.Download.PollerSkeleton do
             {:reply, :ok, state}
           end
 
-          # Stamp completion so `status/0` (and /healthz) can see a fresh tick without
-          # calling the busy process. A raise here would still crash-loop the GenServer —
-          # do_poll/1 is expected to isolate its own units (and preamble) so this only ever
-          # sees a genuinely successful tick.
+          # Flag the tick in flight, then stamp completion, so `status/0` (and /healthz) can see
+          # both without calling the busy process. `:last_run` goes before the flag clears (see
+          # `status/0`). A raise here would still crash-loop the GenServer — do_poll/1 is
+          # expected to isolate its own units (and preamble) so this only ever sees a genuinely
+          # successful tick; the restart's `init/1` clears the flag the crash left.
           defp run(state) do
+            PollerProgress.tick_started(__MODULE__)
             result = emit_tick(fn -> do_poll(state) end)
             :persistent_term.put({__MODULE__, :last_run}, DateTime.utc_now())
+            PollerProgress.tick_finished(__MODULE__)
             result
           end
 
@@ -195,7 +224,10 @@ defmodule Cinder.Download.PollerSkeleton do
       # retry) instead of crashing the whole tick.
       # Full Exception.format (message + stacktrace) so an intermittent failure names its
       # call site from a single occurrence (issue #139).
+      # The stateful flavour stamps progress as each unit starts and finishes, raise or not, so
+      # /healthz reads a long tick that keeps moving as healthy (Cinder.Download.PollerProgress).
       defp isolate(label, fun) do
+        unquote(mark_progress)
         fun.()
       rescue
         e ->
@@ -207,6 +239,8 @@ defmodule Cinder.Download.PollerSkeleton do
           Logger.error(
             "#{unquote(prefix)} skipped #{label}: #{Exception.format(kind, value, __STACKTRACE__)}"
           )
+      after
+        unquote(mark_progress)
       end
 
       # `[:cinder, :poller, :tick]` fires once per tick (scheduled or the synchronous `poll/1`

@@ -22,11 +22,12 @@ services:
     image: ghcr.io/simonbrunou/cinder:latest
     build: .
     restart: unless-stopped
-    # Liveness probe. /healthz returns 503 when a background poller has wedged (its last successful
-    # tick is older than 3× its interval), else 200 — details in docs/operating.md. NOTE: `docker
-    # compose` only *marks* the container unhealthy on failure; it does NOT restart it (`restart:`
-    # reacts to the process exiting, not to health). To get a restart-on-unhealthy, add an autoheal
-    # sidecar (e.g. willfarrell/autoheal) or run under an orchestrator that acts on health.
+    # Liveness probe. /healthz returns 503 when a background poller has wedged or Cinder reads
+    # under 100 MiB free on the database volume, else 200 — the rules are in docs/operating.md.
+    # NOTE: `docker compose` only *marks* the container unhealthy on failure; it does NOT restart
+    # it (`restart:` reacts to the process exiting, not to health). To get a restart-on-unhealthy,
+    # add an autoheal sidecar (e.g. willfarrell/autoheal) or run under an orchestrator that acts on
+    # health.
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:4000/healthz"]
       interval: 30s
