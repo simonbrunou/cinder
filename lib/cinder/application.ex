@@ -9,11 +9,34 @@ defmodule Cinder.Application do
 
   @impl true
   def start(_type, _args) do
-    children =
+    # See https://hexdocs.pm/elixir/Supervisor.html
+    # for other strategies and supported options
+    opts = [strategy: :one_for_one, name: Cinder.Supervisor]
+    result = Supervisor.start_link(children(), opts)
+
+    # ponytail: best-effort log, wrapped so a DB hiccup at boot can't crash start/2. The test env
+    # turns it off (config/test.exs).
+    if Application.get_env(:cinder, :warn_unprotected_at_boot, true) do
+      try do
+        warn_if_unprotected()
+      rescue
+        _ -> :ok
+      end
+    end
+
+    result
+  end
+
+  @doc false
+  # Cinder.Supervisor's children in start order. Public only so a test can read the order.
+  def children do
+    [
+      # Serializes bounded `df` ports and holds the circuit open if SIGKILL cannot reap one.
+      Cinder.Disk.CommandProbe,
+      CinderWeb.Telemetry
+    ] ++
+      repo_watch_children() ++
       [
-        # Serializes bounded `df` ports and holds the circuit open if SIGKILL cannot reap one.
-        Cinder.Disk.CommandProbe,
-        CinderWeb.Telemetry,
         Cinder.Repo,
         {Ecto.Migrator,
          repos: Application.fetch_env!(:cinder, :ecto_repos),
@@ -42,31 +65,14 @@ defmodule Cinder.Application do
         Cinder.Accounts.IpRateLimiter,
         CinderWeb.Endpoint
       ] ++
-        [
-          # :temporary: a permanently crash-looping poller must exhaust only this supervisor's
-          # own restart budget, never Cinder.Supervisor's — see Cinder.PollerSupervisor's
-          # moduledoc (#456). Cinder.Supervisor would otherwise retry restarting it and,
-          # empirically, itself go down a few seconds later, taking Repo/Endpoint with it.
-          Supervisor.child_spec({Cinder.PollerSupervisor, poller_child()}, restart: :temporary),
-          Cinder.PollerSupervisor.Watchdog
-        ]
-
-    # See https://hexdocs.pm/elixir/Supervisor.html
-    # for other strategies and supported options
-    opts = [strategy: :one_for_one, name: Cinder.Supervisor]
-    result = Supervisor.start_link(children, opts)
-
-    # ponytail: best-effort log, wrapped so a DB hiccup at boot can't crash start/2. The test env
-    # turns it off (config/test.exs).
-    if Application.get_env(:cinder, :warn_unprotected_at_boot, true) do
-      try do
-        warn_if_unprotected()
-      rescue
-        _ -> :ok
-      end
-    end
-
-    result
+      [
+        # :temporary: a permanently crash-looping poller must exhaust only this supervisor's
+        # own restart budget, never Cinder.Supervisor's — see Cinder.PollerSupervisor's
+        # moduledoc (#456). Cinder.Supervisor would otherwise retry restarting it and,
+        # empirically, itself go down a few seconds later, taking Repo/Endpoint with it.
+        Supervisor.child_spec({Cinder.PollerSupervisor, poller_child()}, restart: :temporary),
+        Cinder.PollerSupervisor.Watchdog
+      ]
   end
 
   def unprotected_fresh_instance? do
@@ -124,6 +130,17 @@ defmodule Cinder.Application do
       )
 
       reraise error, __STACKTRACE__
+  end
+
+  @doc false
+  # Public only so the `:start_repo_watch` gate is assertable in a test. Placed before
+  # Cinder.Repo, so the lock and stall lines cover the boot (#1310); see Cinder.RepoWatch.
+  def repo_watch_children do
+    if Application.get_env(:cinder, :start_repo_watch, true) do
+      [Cinder.RepoWatch, Cinder.RepoWatch.Stall]
+    else
+      []
+    end
   end
 
   @doc false

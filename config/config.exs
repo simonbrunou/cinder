@@ -34,12 +34,17 @@ config :cinder,
 #     is needed.
 # Pinned (not left to ecto_sqlite3 defaults) so a dep-default change can't silently alter the
 # contract the locked "SQLite stays" decision rests on.
+#   - stacktrace: true → Ecto puts the caller's stack in the telemetry metadata of each query a
+#     `Cinder.Repo` function such as `all/2` or `transaction/2` runs, which `Cinder.RepoWatch`
+#     reads to name the code holding the write lock (#1310). Raw SQL through `Repo.query/3` gets
+#     none. Diagnostics only; it changes no transaction or lock behaviour.
 config :cinder, Cinder.Repo,
   journal_mode: :wal,
   busy_timeout: 5_000,
   foreign_keys: :on,
   default_transaction_mode: :immediate,
-  journal_size_limit: 64 * 1024 * 1024
+  journal_size_limit: 64 * 1024 * 1024,
+  stacktrace: true
 
 # External services resolve through behaviours; the concrete impl is config-selected.
 # Tests override these with Mox mocks (see config/test.exs).

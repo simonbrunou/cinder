@@ -245,6 +245,11 @@ config :cinder, start_poller: false
 # warning it never printed, then 60 to 90 s once queue_target went to 30_000 (#1018).
 config :cinder, warn_unprotected_at_boot: false
 
+# Attach no `db watch:` handler and start no stall ticker (Cinder.RepoWatch): a transaction held
+# over a second on a loaded runner would log a warning, and a non-async test fails on any warning
+# its subtitle-fetcher drain sees (#1047). Watch tests attach their own handler.
+config :cinder, start_repo_watch: false
+
 # Neutralize the (now on-by-default) stall reaper for the suite: reap tests enable it explicitly
 # with 0-window thresholds; every other poller test relies on it staying off.
 config :cinder, Cinder.Download.StallReaper, enabled: false
