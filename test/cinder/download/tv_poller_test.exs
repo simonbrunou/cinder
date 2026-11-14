@@ -23,6 +23,7 @@ defmodule Cinder.Download.TvPollerTest do
   import Cinder.ConfigCase, only: [put_env: 2]
   import Cinder.LibraryStubs
   import Cinder.PollerHelpers
+  import Cinder.Test.BarrierFilesystem, only: [fail_in_order: 1]
 
   # The poller runs in its own process (and a fresh pid after a crash), so the mock must be
   # global. Shared Sandbox (async: false) lets those processes use the test-owned DB connection.
@@ -1939,7 +1940,7 @@ defmodule Cinder.Download.TvPollerTest do
     {:ok, _grab} = Catalog.mark_grab_downloaded(grab, release_dir)
     owner = self()
 
-    Application.put_env(:cinder, :filesystem_failures, [
+    fail_in_order([
       %{operation: :ln, source_contains: first_source, reason: :eperm},
       %{
         operation: :ln,
@@ -1956,7 +1957,6 @@ defmodule Cinder.Download.TvPollerTest do
       }
     ])
 
-    on_exit(fn -> Application.delete_env(:cinder, :filesystem_failures) end)
     stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
     stub(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)
 

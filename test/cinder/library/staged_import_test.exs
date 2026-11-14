@@ -11,6 +11,7 @@ defmodule Cinder.Library.StagedImportTest do
   """
   use Cinder.DataCase, async: false
 
+  import Cinder.Test.BarrierFilesystem, only: [fail_once: 1]
   import ExUnit.CaptureLog
   import Mox
 
@@ -515,11 +516,10 @@ defmodule Cinder.Library.StagedImportTest do
       {:ok, staged, :replaced} = place(source, dest, library, on_collision: :replace)
       staged = StagedImport.after_commit(staged, dest, {:movie, movie(), []})
 
-      Application.put_env(:cinder, :filesystem_failure, %{
+      fail_once(%{
         operation: :rm,
         source_contains: ".cinder-rollback-",
-        reason: :eacces,
-        once: true
+        reason: :eacces
       })
 
       log = capture_log(fn -> assert {:ok, :ok} = StagedImport.commit(staged, &record_all/2) end)
@@ -613,11 +613,10 @@ defmodule Cinder.Library.StagedImportTest do
     } do
       {source, dest} = files(downloads, library, "Racer")
 
-      Application.put_env(:cinder, :filesystem_failure, %{
+      fail_once(%{
         operation: :ln,
         source_contains: source,
-        reason: :exdev,
-        once: true
+        reason: :exdev
       })
 
       Application.put_env(:cinder, :filesystem_barrier, %{
@@ -644,11 +643,10 @@ defmodule Cinder.Library.StagedImportTest do
       {early_source, early_dest} = files(downloads, library, "Early")
       {late_source, late_dest} = files(downloads, library, "Late")
 
-      Application.put_env(:cinder, :filesystem_failure, %{
+      fail_once(%{
         operation: :ln,
         source_contains: late_source,
-        reason: :exdev,
-        once: true
+        reason: :exdev
       })
 
       Application.put_env(:cinder, :filesystem_barrier, %{
@@ -687,11 +685,10 @@ defmodule Cinder.Library.StagedImportTest do
     } do
       {source, dest} = files(downloads, library, "Lease")
 
-      Application.put_env(:cinder, :filesystem_failure, %{
+      fail_once(%{
         operation: :ln,
         source_contains: source,
-        reason: :exdev,
-        once: true
+        reason: :exdev
       })
 
       Application.put_env(:cinder, :filesystem_barrier, %{
@@ -1264,11 +1261,10 @@ defmodule Cinder.Library.StagedImportTest do
       {source, dest} = replacement_files(downloads, library, "Converge")
       {:ok, staged, :replaced} = place(source, dest, library, on_collision: :replace)
 
-      Application.put_env(:cinder, :filesystem_failure, %{
+      fail_once(%{
         operation: :rename,
         source_contains: ".cinder-rollback",
-        reason: :eacces,
-        once: true
+        reason: :eacces
       })
 
       assert {:error, :stale_status} = StagedImport.commit(staged, &refuse/2)

@@ -1,5 +1,6 @@
 defmodule Cinder.Library.SidecarsTest do
   use Cinder.DataCase, async: false
+  import Cinder.Test.BarrierFilesystem, only: [fail_in_order: 1]
   import ExUnit.CaptureLog
   import Mox
   setup :verify_on_exit!
@@ -552,7 +553,7 @@ defmodule Cinder.Library.SidecarsTest do
       # A single transient failure on the quarantine leaf's own lstat (part of safe_destination's
       # component walk) — a genuine :enoent there is expected and harmless (the name doesn't
       # exist yet); :eio is not, and is exactly what a transient I/O hiccup mid-walk looks like.
-      Application.put_env(:cinder, :filesystem_failures, [
+      fail_in_order([
         %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :eio}
       ])
 
@@ -591,14 +592,13 @@ defmodule Cinder.Library.SidecarsTest do
 
       # A single `:filesystem_failure` slot already holds fail_all_links/1's own `:ln` rejection
       # above — sequenced `:filesystem_failures` is the mechanism that composes with it instead
-      # of clobbering it. One entry per bounded attempt, so every quarantine-name validation the
-      # retry makes fails the same persistent way.
-      Application.put_env(
-        :cinder,
-        :filesystem_failures,
+      # of clobbering it. One entry per bounded attempt (`@quarantine_setup_attempts` in
+      # `Cinder.Library.Sidecars`), so every quarantine-name validation the retry makes fails the
+      # same persistent way, and fail_in_order/1 fails the test unless all of them fire.
+      fail_in_order(
         List.duplicate(
           %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :eio},
-          5
+          3
         )
       )
 
@@ -632,7 +632,7 @@ defmodule Cinder.Library.SidecarsTest do
       # The first lstat on the quarantine path is path_policy's own pre-existence check (the
       # quarantine name genuinely doesn't exist yet at that point, so :enoent there changes
       # nothing); the second is the reclaim's own identity check, the one this test targets.
-      Application.put_env(:cinder, :filesystem_failures, [
+      fail_in_order([
         %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :enoent},
         %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :eio}
       ])
@@ -670,7 +670,7 @@ defmodule Cinder.Library.SidecarsTest do
       Application.put_env(:cinder, :exclusive_copy_file_module, TruncatingWriteFile)
       on_exit(fn -> Application.delete_env(:cinder, :exclusive_copy_file_module) end)
 
-      Application.put_env(:cinder, :filesystem_failures, [
+      fail_in_order([
         %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :enoent},
         %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :eio}
       ])
