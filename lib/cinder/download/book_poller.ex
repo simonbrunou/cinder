@@ -91,6 +91,58 @@ defmodule Cinder.Download.BookPoller do
   @spec permanent_import_errors() :: [atom()]
   def permanent_import_errors, do: @permanent_import_errors
 
+  # The import errors known to reach a hold through `retry_or_hold/3` once the attempt budget is
+  # spent. This list only documents them: which errors retry and which hold at once is decided
+  # by `@permanent_import_errors` and `handle_import_result/3`, never here.
+  #
+  # The posix codes are the ones an operator can act on (a missing path, a permission, a full,
+  # read-only or failing disk). The `import_stage_*` codes are `Cinder.Library.StageEngine`'s.
+  # Staging returns `busy`, `destination_changed`, `journal_missing` and `file_changed`; the
+  # other three come from its restore and reconcile paths, which an import's result does not
+  # carry today. `:stale_import_stage` is the catalog write's refusal of a journal row a
+  # reconcile settled first (`ImportStage.mark_committed!/1`), and `:unsafe_delete` the
+  # engine's refusal to remove its own staged copy (`PathPolicy.deletable_file/3`). The rooted
+  # helper's tuples (`{:rooted_error, _}`, `{:effect_committed, ...}`,
+  # `{:mergerfs_subdirectory_bind, root}`) carry a variable payload and are left out: their
+  # stored text is shown as stored.
+  @retried_import_errors [
+    :format_mismatch,
+    :unsafe_destination,
+    :unsafe_delete,
+    :library_not_configured,
+    :download_roots_not_configured,
+    :traversal_limit,
+    :import_stage_busy,
+    :import_stage_destination_changed,
+    :import_stage_journal_missing,
+    :import_stage_file_changed,
+    :import_stage_backup_changed,
+    :import_stage_restore_changed,
+    :import_stage_quarantined,
+    :stale_import_stage,
+    {:unexpected_destination_type, :directory},
+    {:unexpected_destination_type, :symlink},
+    {:unexpected_destination_type, :device},
+    {:unexpected_destination_type, :other},
+    :enoent,
+    :eacces,
+    :eperm,
+    :enospc,
+    :erofs,
+    :eio
+  ]
+
+  @doc """
+  The import errors that hold a target once the attempt budget is spent, with the staging
+  engine's other `import_stage_*` codes, as the reason terms the importers return: an atom, or a
+  `{:unexpected_destination_type, type}` refusal for each type an lstat reports other than
+  `:regular`. `Cinder.Books.hold_target/5` stores an atom as its name and a tuple through
+  `inspect/1`; `CinderWeb.LiveHelpers.book_hold_reason/1` words each stored form. The list does
+  not decide which errors retry.
+  """
+  @spec retried_import_errors() :: [atom() | {:unexpected_destination_type, atom()}]
+  def retried_import_errors, do: @retried_import_errors
+
   defp do_poll(_state) do
     isolate("stage reconciliation", fn -> StagedImport.reconcile() end)
 

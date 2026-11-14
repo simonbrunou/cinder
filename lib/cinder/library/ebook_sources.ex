@@ -205,8 +205,8 @@ defmodule Cinder.Library.EbookSources do
   # inside the prefix already being read for MOBI.
   #
   # The cost is that a non-conforming EPUB (a repacker that compressed `mimetype`) is refused. That
-  # is a visible `:format_mismatch` hold naming the file, not a silent wrong answer, and it is the
-  # trade this module's own "never pick, refuse" rule asks for.
+  # is, once the retry budget is spent, a visible `:format_mismatch` hold, not a silent wrong
+  # answer, and it is the trade this module's own "never pick, refuse" rule asks for.
   defp verify_magic(path, format) do
     case fs().read_prefix(path, 68) do
       {:ok, prefix} -> if magic?(prefix, format), do: :ok, else: {:error, :format_mismatch}

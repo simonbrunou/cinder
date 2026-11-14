@@ -175,6 +175,30 @@ defmodule CinderWeb.BookDetailLiveTest do
       refute render(lv) =~ "download_error"
     end
 
+    test "a target held once the retry budget ran out shows the import error's sentence", %{
+      conn: conn
+    } do
+      {target, _work} = ebook_target()
+
+      {:ok, held} =
+        Books.hold_target(
+          target,
+          {:unexpected_destination_type, :directory},
+          "The Dispossessed (epub)",
+          true
+        )
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{held.work_id}")
+
+      assert has_element?(
+               lv,
+               "#book-target-hold-reason-ebook",
+               "Something other than a file, such as a folder, sits at this book"
+             )
+
+      refute render(lv) =~ "unexpected_destination_type"
+    end
+
     test "a held audiobook target shows its hold reason, a Retry button, and no search panel", %{
       conn: conn
     } do

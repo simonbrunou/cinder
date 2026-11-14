@@ -225,6 +225,21 @@ defmodule Cinder.Notifier.WebhookTest do
     assert body["hold_reason"] == "no_match"
   end
 
+  # #912 words the retried import errors for people; the webhook is a machine contract (#819) and
+  # keeps the stored text, the inspected destination refusal included.
+  test "book_target_held keeps a retried import error's stored text, not its sentence" do
+    configure(url: @url)
+
+    for stored <- ["format_mismatch", "{:unexpected_destination_type, :directory}"] do
+      expect_post()
+      target = book_target(media_kind: :ebook, hold_reason: stored)
+      assert :ok = Webhook.notify({:book_target_held, target})
+
+      assert_receive {:posted, body, _headers}
+      assert body["hold_reason"] == stored
+    end
+  end
+
   test "never sends a requester email or a user's free text" do
     configure(url: @url)
     expect_post()

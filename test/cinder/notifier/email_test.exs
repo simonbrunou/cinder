@@ -549,6 +549,25 @@ defmodule Cinder.Notifier.EmailTest do
       refute email.text_body =~ "track_order_unknown"
     end
 
+    test "words an import error the retry budget held on" do
+      configure_smtp!()
+      user = confirmed_user()
+      insert_approved_request!(user, "book", 84, media_kind: :ebook)
+
+      target = %{
+        work_id: 84,
+        media_kind: :ebook,
+        work: %{title: "The Dispossessed"},
+        hold_reason: "format_mismatch"
+      }
+
+      assert :ok = Email.notify({:book_target_held, target})
+
+      assert_receive {:email, email}
+      assert email.text_body =~ "Reason: A file in the download is not in the format its name"
+      refute email.text_body =~ "format_mismatch"
+    end
+
     test "does not notify the requester of the other media kind of the same work" do
       configure_smtp!()
       user = confirmed_user()

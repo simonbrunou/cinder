@@ -105,6 +105,25 @@ defmodule Cinder.Notifier.DiscordTest do
     Gettext.put_locale(CinderWeb.Gettext, "en")
   end
 
+  test "book_target_held words a retried import error, the inspected destination refusal too" do
+    expect_post()
+
+    target = %{
+      work: %{title: "The Dispossessed"},
+      media_kind: :ebook,
+      hold_reason: "{:unexpected_destination_type, :directory}"
+    }
+
+    assert :ok = Discord.notify({:book_target_held, target})
+
+    assert_receive {:posted, %{"embeds" => [embed]}}
+
+    assert embed["description"] =~
+             "Something other than a file, such as a folder, sits at this book"
+
+    refute embed["description"] =~ "unexpected"
+  end
+
   test "externally sourced titles and hold reasons cannot render masked links or autolinks" do
     expect_post()
 

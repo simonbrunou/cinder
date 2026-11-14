@@ -63,6 +63,17 @@ defmodule Cinder.Notifier.LogTest do
     assert log =~ "[notifier] book target held: The Dispossessed (download_failed)"
   end
 
+  test "book_target_held logs a retried import error's stored text, not its sentence" do
+    target = %{work: %{title: "The Dispossessed"}, hold_reason: "format_mismatch"}
+
+    log =
+      capture_log(fn ->
+        assert :ok = Log.notify({:book_target_held, target})
+      end)
+
+    assert log =~ "[notifier] book target held: The Dispossessed (format_mismatch)"
+  end
+
   test "request_denied logs the title and user id, never the free-text reason" do
     request = %{title: "The Matrix", user_id: 7}
 

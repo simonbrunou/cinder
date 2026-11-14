@@ -7825,3 +7825,63 @@ msgstr "Au moins deux lectures de dossiers ne sont pas revenues : tant qu'il en 
 #, elixir-autogen, elixir-format
 msgid "covers no wanted episode"
 msgstr "ne couvre aucun épisode souhaité"
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "A disk reported a read or write error during the import."
+msgstr "Un disque a signalé une erreur de lecture ou d’écriture pendant l’import."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "A disk the import writes to is full."
+msgstr "Un disque sur lequel l’import écrit est plein."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "A disk the import writes to is read-only."
+msgstr "Un disque sur lequel l’import écrit est en lecture seule."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "A file in the download is not in the format its name claims, or Cinder can't read its first bytes."
+msgstr "Un fichier du téléchargement n’est pas au format qu’annonce son nom, ou Cinder ne peut pas lire ses premiers octets."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "A file or folder the import needs is missing, such as the download at the path the download client reported."
+msgstr "Un fichier ou un dossier dont l’import a besoin est introuvable, par exemple le téléchargement à l’emplacement indiqué par le client de téléchargement."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder isn't allowed to read or change a file or folder the import uses, in the download or in the library. Check their permissions."
+msgstr "Cinder n’a pas le droit de lire ou de modifier un fichier ou un dossier dont l’import se sert, dans le téléchargement ou dans la bibliothèque. Vérifiez leurs permissions."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder won't change files at this book's library path: it is outside the library folder, it or a folder on the way is a link, or Cinder can't check it."
+msgstr "Cinder refuse de modifier les fichiers à l’emplacement de ce livre dans la bibliothèque : il se trouve hors du dossier de la bibliothèque, lui-même ou un dossier sur le chemin est un lien, ou Cinder ne peut pas le vérifier."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "No download folders are set, so Cinder can't read the download. Set them in Settings."
+msgstr "Aucun dossier de téléchargement n’est défini, donc Cinder ne peut pas lire le téléchargement. Définissez-les dans les Paramètres."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "No library folder is set for this kind of book. Set one in Settings."
+msgstr "Aucun dossier de bibliothèque n’est défini pour ce type de livre. Définissez-en un dans les Paramètres."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Something other than a file, such as a folder, sits at this book's library path."
+msgstr "Autre chose qu’un fichier, par exemple un dossier, se trouve à l’emplacement de ce livre dans la bibliothèque."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download's folders nest too deep or hold too many files for Cinder to read."
+msgstr "Les dossiers du téléchargement sont trop profondément imbriqués ou contiennent trop de fichiers pour que Cinder les lise."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The file at this book's library path changed, or another import was using that path, while Cinder was importing it."
+msgstr "Le fichier à l’emplacement de ce livre dans la bibliothèque a changé, ou un autre import utilisait cet emplacement, pendant que Cinder l’importait."

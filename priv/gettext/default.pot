@@ -7468,3 +7468,63 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "covers no wanted episode"
 msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "A disk reported a read or write error during the import."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "A disk the import writes to is full."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "A disk the import writes to is read-only."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "A file in the download is not in the format its name claims, or Cinder can't read its first bytes."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "A file or folder the import needs is missing, such as the download at the path the download client reported."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder isn't allowed to read or change a file or folder the import uses, in the download or in the library. Check their permissions."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder won't change files at this book's library path: it is outside the library folder, it or a folder on the way is a link, or Cinder can't check it."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "No download folders are set, so Cinder can't read the download. Set them in Settings."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "No library folder is set for this kind of book. Set one in Settings."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Something other than a file, such as a folder, sits at this book's library path."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download's folders nest too deep or hold too many files for Cinder to read."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The file at this book's library path changed, or another import was using that path, while Cinder was importing it."
+msgstr ""

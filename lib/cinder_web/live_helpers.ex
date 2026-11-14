@@ -225,9 +225,14 @@ defmodule CinderWeb.LiveHelpers do
   @doc """
   A held book target's stored `hold_reason` in words. `Cinder.Books.hold_target/5` stores a
   reason code (`download_not_found`) or a code and a detail (`download_error: Paused on
-  duplicate`). A known code reads as its sentence, followed by the detail when there is one;
-  anything else (a row from before #733 reading `download_failed`, a bare client message, an
-  inspected tuple) is shown as stored, and `nil` reads as an empty string.
+  duplicate`). A known code reads as its sentence, followed by the detail when there is one. The
+  known codes are the producers' lists (`Cinder.Download.Watch.failure_codes/0`,
+  `Cinder.Download.BookPoller.permanent_import_errors/0` and `retried_import_errors/0`,
+  `Cinder.Download.permanent_submission_errors/0`) and the watch's `stalled` and
+  `blocked_content`, in the form `hold_target/5` stores: an atom's name, or the inspected
+  `{:unexpected_destination_type, type}` refusal. Anything else (a row from before #733 reading
+  `download_failed`, a bare client message, another inspected term) is shown as stored, and `nil`
+  reads as an empty string.
 
   Shared by `/books/:id` and the Discord and email notifications for a held book. The generic
   webhook keeps the stored code, which automations match on.
@@ -244,6 +249,16 @@ defmodule CinderWeb.LiveHelpers do
       {sentence, [detail]} -> with_detail(sentence, String.trim(detail))
     end
   end
+
+  # The import journal's codes share one sentence. A tuple reason is stored inspected
+  # (`Cinder.Books.hold_target/5`), so the refusal is matched in that form.
+  @import_stage_codes ~w(import_stage_busy import_stage_destination_changed
+                         import_stage_journal_missing import_stage_file_changed
+                         import_stage_backup_changed import_stage_restore_changed
+                         import_stage_quarantined stale_import_stage)
+
+  @unexpected_destination_types for type <- [:directory, :symlink, :device, :other],
+                                    do: inspect({:unexpected_destination_type, type})
 
   defp with_detail(sentence, ""), do: sentence
 
@@ -337,6 +352,59 @@ defmodule CinderWeb.LiveHelpers do
     do: gettext("Cinder can no longer read the download link it saved for this release.")
 
   defp hold_sentence("add_rejected"), do: gettext("The download client refused this release.")
+
+  # `Cinder.Download.BookPoller.retried_import_errors/0`
+  defp hold_sentence("format_mismatch"),
+    do:
+      gettext(
+        "A file in the download is not in the format its name claims, or Cinder can't read its first bytes."
+      )
+
+  defp hold_sentence(code) when code in ["unsafe_destination", "unsafe_delete"],
+    do:
+      gettext(
+        "Cinder won't change files at this book's library path: it is outside the library folder, it or a folder on the way is a link, or Cinder can't check it."
+      )
+
+  defp hold_sentence("library_not_configured"),
+    do: gettext("No library folder is set for this kind of book. Set one in Settings.")
+
+  defp hold_sentence("download_roots_not_configured"),
+    do:
+      gettext(
+        "No download folders are set, so Cinder can't read the download. Set them in Settings."
+      )
+
+  defp hold_sentence("traversal_limit"),
+    do: gettext("The download's folders nest too deep or hold too many files for Cinder to read.")
+
+  defp hold_sentence(code) when code in @import_stage_codes,
+    do:
+      gettext(
+        "The file at this book's library path changed, or another import was using that path, while Cinder was importing it."
+      )
+
+  defp hold_sentence(code) when code in @unexpected_destination_types,
+    do:
+      gettext("Something other than a file, such as a folder, sits at this book's library path.")
+
+  defp hold_sentence("enoent"),
+    do:
+      gettext(
+        "A file or folder the import needs is missing, such as the download at the path the download client reported."
+      )
+
+  defp hold_sentence(code) when code in ["eacces", "eperm"],
+    do:
+      gettext(
+        "Cinder isn't allowed to read or change a file or folder the import uses, in the download or in the library. Check their permissions."
+      )
+
+  defp hold_sentence("enospc"), do: gettext("A disk the import writes to is full.")
+  defp hold_sentence("erofs"), do: gettext("A disk the import writes to is read-only.")
+
+  defp hold_sentence("eio"),
+    do: gettext("A disk reported a read or write error during the import.")
 
   defp hold_sentence(_reason), do: nil
 

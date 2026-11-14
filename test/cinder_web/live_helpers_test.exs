@@ -109,13 +109,19 @@ defmodule CinderWeb.LiveHelpersTest do
   describe "book_hold_reason/1" do
     # The lists come from their producers, so a code added to one fails here until it has a
     # sentence. The watch's `:stalled` and `{:blocked_content, _}` verdicts have no list to read.
+    # `stored/1` is `Cinder.Books.hold_target/5`'s encoding; `BookPollerTest` holds a target on
+    # every retried import error through the real one.
     defp known_hold_codes do
       (Watch.failure_codes() ++
          [:stalled, :blocked_content] ++
          BookPoller.permanent_import_errors() ++
+         BookPoller.retried_import_errors() ++
          Download.permanent_submission_errors())
-      |> Enum.map(&Atom.to_string/1)
+      |> Enum.map(&stored/1)
     end
+
+    defp stored(reason) when is_atom(reason), do: Atom.to_string(reason)
+    defp stored(reason), do: inspect(reason)
 
     test "every known reason code reads as a sentence, not as the code" do
       for code <- known_hold_codes() do
@@ -156,13 +162,19 @@ defmodule CinderWeb.LiveHelpersTest do
     end
 
     # Rows from before #733 read `download_failed` or a bare client message; a reason that was
-    # neither an atom nor a `{code, detail}` pair was stored inspected.
+    # neither an atom nor a `{code, detail}` pair was stored inspected. Only the listed codes and
+    # refusals are worded: an unlisted `import_stage_*` code, posix code or destination type, or
+    # another inspected tuple, keeps its stored text.
     test "unknown or legacy text is shown as stored, and nil does not raise" do
       for stored <- [
             "download_failed",
             "Paused on duplicate",
             "Error: disk full",
-            "{:unexpected_destination_type, :directory}"
+            "ebadf",
+            "import_stage_not_committed",
+            "{:unexpected_destination_type, :fifo}",
+            "{:unexpected_destination_type, :directory, :extra}",
+            "{:rooted_error, \"ESPIPE\"}"
           ],
           do: assert(book_hold_reason(stored) == stored)
 
