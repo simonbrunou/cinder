@@ -190,6 +190,18 @@ still missed the first condition: while one earlier walk counts as stuck under t
 folder itself, the guard refuses that folder's scan. The next fix cut the claim after two review
 rounds, about 23 minutes from the first finding.
 
+A sentence about what the guard refuses, in a fragment or in the UI text it describes, holds on
+four more paths. The same-root condition compares keys exactly, so a walk stuck on `/downloads`
+refuses no import keyed to an import root nested in it, such as `/downloads/movies`. Some folder
+reads skip the guard, such as `Sidecars.sweep_temps/2` and the listing in
+`Cinder.Subtitles.SidecarTransaction.Workspace.sweep/3`, so "every folder read" is false. A
+restarted guard counts each walk still running as stuck under no root: such a walk counts towards
+the cap but refuses no folder of its own, until its living caller reports it past its deadline.
+From then on it counts under its root. More walks than the cap can be stuck at once, so the
+cap's refusal lasts until fewer than two remain, not until one returns. On #948 the dashboard's
+stuck-read text and its fragment broke the first three of these: three review rounds, about 33
+minutes from the first finding to the last fix.
+
 `mix test` parses every fragment (`test/code_health_test.exs`), so a malformed one fails on its
 own PR. A release runs `mix cinder.changelog.release`, which folds every fragment into the new
 dated section of `CHANGELOG.md` and deletes it; see "Releasing" in `CONTRIBUTING.md`.

@@ -74,13 +74,25 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
   body covers any doc an agent reads. On #1011 (for #992) the first draft of `ci.md` restated
   one rule in three sections and ended a wait on a condition no status shows, against the
   skill's "Pruning" and "Steps and completion criteria". Three review fix rounds followed.
-- A doc sentence about what a tool prints or does (an abort line, a flag's effect, a retry) holds
-  on every path in the tool's source that reaches it, not only on the case its help text or your
+
+## Tool claims
+
+These bind a sentence in any doc, moduledoc, comment or changelog fragment.
+
+- A sentence about what a tool prints or does (an abort line, a flag's effect, a retry) holds on
+  every path in the tool's source that reaches it, not only on the case its help text or your
   first run shows. Read that source first (`elixir -e 'IO.puts(:code.lib_dir(:mix))'` prints
   Mix's directory, its tasks under `lib/mix/tasks/`; an Elixir dependency's source is in
   `deps/<name>/lib`), then prove each path with a run. On #1170 the first draft of `ci.md`
   "Test-file warning" repeated `mix help test` and missed two paths of Mix's `tasks/test.ex`.
   Two re-check rounds found them, 15 minutes from the first fix commit to the last.
+- For a tool outside the repo, such as mergerfs or coreutils `nice`, read its manual for every
+  option and input that changes the claim, such as the niceness `nice -n` starts from, and link
+  the manual for the conditions a feature needs instead of copying them. On #1336 (for #953) the
+  first reviews found that mergerfs passthrough needs mergerfs running as root and that its
+  `proxy-ioprio` option gives its threads the reader's I/O priority. The third re-check found
+  that `nice -n 10` adds 10 to the caller's niceness: 31 minutes from the first finding to the
+  last fix.
 
 ## Worktrees
 
