@@ -282,6 +282,31 @@ defmodule Cinder.HTTPPolicyTest do
     end
   end
 
+  describe "without_fragment/1" do
+    test "keeps a URL with no `#` as the same text" do
+      for url <- ["http://prowlarr:80", "HTTP://user:pw@Prowlarr:9696/p?q=1", "", "http://a b"] do
+        assert HTTPPolicy.without_fragment(url) == url
+      end
+    end
+
+    test "cuts the text at its first `#`, and returns a string for text URI.new/1 rejects" do
+      for {url, base} <- [
+            {"http://prowlarr:9696#frag", "http://prowlarr:9696"},
+            {"http://prowlarr:9696#", "http://prowlarr:9696"},
+            {"http://prowlarr:9696/#frag", "http://prowlarr:9696/"},
+            {"HTTP://Prowlarr:80/prowlarr?x=1#a#b", "HTTP://Prowlarr:80/prowlarr?x=1"},
+            {"#frag", ""},
+            {"http://a b#frag", "http://a b"}
+          ] do
+        assert HTTPPolicy.without_fragment(url) == base, url
+      end
+    end
+
+    test "returns an empty string for a URL that is not set" do
+      assert HTTPPolicy.without_fragment(nil) == ""
+    end
+  end
+
   describe "out-of-range ports on a source URL or an untrusted redirect" do
     test "validate_source_url/3 and source_request_target/3 refuse one on the source's own host" do
       resolver = &refuse_dns/1

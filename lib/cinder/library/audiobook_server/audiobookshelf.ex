@@ -73,7 +73,7 @@ defmodule Cinder.Library.AudiobookServer.Audiobookshelf do
 
   defp req(config) do
     [
-      base_url: Keyword.get(config, :url),
+      base_url: HTTPPolicy.without_fragment(Keyword.get(config, :url)),
       receive_timeout: 15_000,
       pool_timeout: 5_000,
       connect_options: [timeout: 5_000],

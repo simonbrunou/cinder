@@ -97,10 +97,10 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrBaseUrlTest do
     end
   end
 
-  # The searches keep the configured base URL. Req joins the API path into a fragment, so that
-  # search sends no path, which a real server reads as `/` (out of scope for #1286: update this
-  # row once that is fixed).
-  test "the search requests keep the configured base URL" do
+  # The searches reach the API path under a base URL with user info or a fragment. Prowlarr cuts
+  # the fragment before Req joins the API path onto the base URL, which would take the path into
+  # the fragment (#1323).
+  test "the search requests reach the API path" do
     paths =
       for base_url <- ["http://user:pw@prowlarr:9696", "http://prowlarr:9696#frag"] do
         assert {:ok, _releases} = search_with_base_url(base_url, [])
@@ -108,7 +108,7 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrBaseUrlTest do
         path
       end
 
-    assert paths == ["/api/v1/search", nil]
+    assert paths == ["/api/v1/search", "/api/v1/search"]
   end
 
   describe "a release from a search with a user-info base URL" do

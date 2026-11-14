@@ -478,7 +478,7 @@ defmodule Cinder.Download.Client.QBittorrent do
       config
       |> base()
       |> Keyword.merge(overrides)
-      |> Keyword.put(:headers, [{"referer", Keyword.get(config, :base_url, @default_base_url)}])
+      |> Keyword.put(:headers, [{"referer", base_url(config)}])
       |> Req.new()
       |> Req.merge(
         method: :post,
@@ -634,7 +634,7 @@ defmodule Cinder.Download.Client.QBittorrent do
     # retry: false — the pollers carry their own bounded-retry budget; Req's default
     # 3-retry backoff on top of it only stretches a tick against a failing server.
     [
-      base_url: Keyword.get(config, :base_url, @default_base_url),
+      base_url: base_url(config),
       receive_timeout: 15_000,
       pool_timeout: 5_000,
       connect_options: [timeout: 5_000],
@@ -644,6 +644,10 @@ defmodule Cinder.Download.Client.QBittorrent do
     |> Keyword.merge(Keyword.get(config, :req_options, []))
     |> Keyword.put(:redirect, false)
   end
+
+  # The requests and the login's `referer` use one text: the configured URL without its fragment.
+  defp base_url(config),
+    do: HTTPPolicy.without_fragment(Keyword.get(config, :base_url, @default_base_url))
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
 

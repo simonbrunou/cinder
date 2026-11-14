@@ -140,6 +140,26 @@ defmodule Cinder.HTTPPolicy do
   end
 
   @doc """
+  Returns a configured service base URL without its fragment, for a client to hand Req as
+  `base_url` or to append a path to. Req joins a request's path onto the base URL as text, so a
+  fragment would take the path in. Req never sends a fragment, so the cut URL names the same
+  server, path and query. The text is cut at its first `#`, which is where `URI.new/1` starts the
+  fragment too. A URL with no `#` comes back as the same text, and any string, even one
+  `URI.new/1` rejects, comes back as a string. `nil`, for a URL that is not set, comes back as
+  `""`, which fails the request inside `bounded_request/2,3` as `nil` did, so the caller gets
+  `{:error, _}` either way.
+  """
+  @spec without_fragment(String.t() | nil) :: String.t()
+  def without_fragment(nil), do: ""
+
+  def without_fragment(url) when is_binary(url) do
+    case :binary.split(url, "#") do
+      [base, _fragment] -> base
+      [^url] -> url
+    end
+  end
+
+  @doc """
   Whether `reason` is one the URL checks of this module give from a URL's text, before any DNS
   lookup: the part `URI.new/1` rejected (a binary), `:invalid_url`, `:unsupported_scheme`,
   `:missing_host`, `:invalid_port`, `:userinfo_not_allowed` or `:fragment_not_allowed`. It is

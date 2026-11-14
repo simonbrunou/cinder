@@ -139,7 +139,7 @@ defmodule Cinder.Library.MigrationSource.Radarr do
 
   defp request(config, opts) do
     [
-      base_url: config[:base_url],
+      base_url: HTTPPolicy.without_fragment(config[:base_url]),
       headers: [{"x-api-key", config[:api_key]}],
       receive_timeout: 15_000,
       pool_timeout: 5_000,

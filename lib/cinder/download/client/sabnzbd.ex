@@ -184,7 +184,7 @@ defmodule Cinder.Download.Client.Sabnzbd do
     config = config()
 
     [
-      base_url: Keyword.get(config, :base_url, @default_base_url),
+      base_url: HTTPPolicy.without_fragment(Keyword.get(config, :base_url, @default_base_url)),
       receive_timeout: 15_000,
       pool_timeout: 5_000,
       connect_options: [timeout: 5_000],
@@ -760,7 +760,7 @@ defmodule Cinder.Download.Client.Sabnzbd do
     config = config()
 
     [
-      base_url: Keyword.get(config, :base_url, @default_base_url),
+      base_url: HTTPPolicy.without_fragment(Keyword.get(config, :base_url, @default_base_url)),
       receive_timeout: 15_000,
       pool_timeout: 5_000,
       connect_options: [timeout: 5_000]

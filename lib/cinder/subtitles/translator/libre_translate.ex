@@ -20,7 +20,11 @@ defmodule Cinder.Subtitles.Translator.LibreTranslate do
   @impl true
   def translate(cues, target) when is_list(cues) do
     if configured?() do
-      translate_all(String.trim_trailing(cfg(:base_url), "/") <> "/translate", cues, target)
+      translate_all(
+        String.trim_trailing(HTTPPolicy.without_fragment(cfg(:base_url)), "/") <> "/translate",
+        cues,
+        target
+      )
     else
       {:error, :not_configured}
     end

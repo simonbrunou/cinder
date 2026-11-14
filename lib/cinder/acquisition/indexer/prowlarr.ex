@@ -222,7 +222,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
     # takes 20-60s (a Cloudflare solve alone budgets 60s), and 15s silently starved the
     # title-query half of search_tv/3's union down to usenet-only results.
     [
-      base_url: Keyword.get(config, :base_url, @default_base_url),
+      base_url: HTTPPolicy.without_fragment(Keyword.get(config, :base_url, @default_base_url)),
       receive_timeout: 90_000,
       pool_timeout: 5_000,
       connect_options: [timeout: 5_000],
