@@ -12,6 +12,6 @@
   when it cannot, for example when the file changed after the read. The check never removes a
   copy you edited since Cinder wrote it, or one Cinder cannot read. Once the copy is gone, Cinder
   asks the media server to rescan, then looks for a subtitle as it does for a missing one: another
-  embedded track in that language that passes the check, then a translation or a subtitle file in
-  that language under another name. When it finds none, no subtitle file is left for that
-  language, and players can still show the track inside the video.
+  embedded track in that language that passes the check, then a subtitle file in that language
+  under another name, then a translation (#1308). When it finds none, no subtitle file is left
+  for that language, and players can still show the track inside the video.

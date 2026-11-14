@@ -495,17 +495,34 @@ defmodule Cinder.Subtitles do
     end)
   end
 
+  # A sidecar in the language is copied first (`sidecar_source/4`): a subtitle written in the
+  # language beats a machine translation (#523, #1308). Only when the copy takes nothing is the
+  # default track the translation source, then a sidecar in another language
+  # (`translation_sidecar/4`). So a copy leaves the default track unextracted and the translator
+  # uncalled for this language.
+  #
   # The default track is only a translation source, so it is not extracted when no translation
   # can come of it (#861). Every sweep used to extract it and drop the result. With no translator,
-  # the sidecars are looked at as if there were no default track. So are they without a default
-  # track (`default_track/4`), and when its content does not parse or fails the timing check.
+  # the sidecars in other languages are looked at as if there were no default track. So are they
+  # without a default track (`default_track/4`), and when its content does not parse or fails the
+  # timing check.
   defp default_or_sidecar(video_path, language, moviehash, target, track, cache) do
+    case sidecar_source(video_path, language, target, cache) do
+      {{:copy, copy}, cache} ->
+        {{:direct, copy, "translated"}, cache}
+
+      {{:none, candidates}, cache} ->
+        default_or_translation_sidecar(video_path, language, moviehash, track, candidates, cache)
+    end
+  end
+
+  defp default_or_translation_sidecar(video_path, language, moviehash, track, candidates, cache) do
     if is_nil(track) or not translator().configured?() do
-      sidecar_source(video_path, language, target, cache)
+      translation_sidecar(video_path, language, candidates, cache)
     else
       case default_srt(video_path, moviehash, track, cache) do
         {{:ok, srt}, cache} -> {{:translate, srt}, cache}
-        {:none, cache} -> sidecar_source(video_path, language, target, cache)
+        {:none, cache} -> translation_sidecar(video_path, language, candidates, cache)
       end
     end
   end
@@ -587,7 +604,8 @@ defmodule Cinder.Subtitles do
   # A same-language sidecar with no flag wins over a hearing-impaired one, as in
   # `Cinder.Subtitles.OwnTrack.select/2`. One that cannot be read or fails the timing check is
   # passed over for the next one (#1109), as the embedded cascade passes over a track. With none
-  # left, `translation_sidecar/4` looks for a translation source among the other languages.
+  # left, it answers the sidecars other than the target, where `translation_sidecar/4` looks for a
+  # translation source among the other languages.
   defp sidecar_source(video_path, language, target, cache) do
     {sidecars, cache} = srt_sidecars(video_path, cache)
 
@@ -605,11 +623,7 @@ defmodule Cinder.Subtitles do
         end
       end)
 
-    if copy do
-      {{:direct, copy, "translated"}, cache}
-    else
-      translation_sidecar(video_path, language, candidates, cache)
-    end
+    if copy, do: {{:copy, copy}, cache}, else: {{:none, candidates}, cache}
   end
 
   defp same_path?(a, b), do: Path.expand(a) == Path.expand(b)

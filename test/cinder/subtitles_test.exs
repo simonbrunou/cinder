@@ -750,6 +750,7 @@ defmodule Cinder.SubtitlesTest do
               "2\n00:00:03,000 --> 00:00:04,000\nTwo\n\n"
     @srt "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n"
     @other "1\n00:00:01,000 --> 00:00:02,000\n[Door creaks]\n\n"
+    @bonjour "1\n00:00:01,000 --> 00:00:02,000\nBonjour\n\n"
     # A cue that ends before it starts: the SRT parser accepts it, the timing check does not.
     @reversed "1\n00:00:02,000 --> 00:00:01,000\nHello\n\n"
     # A cue with no number: the timing check accepts it, the SRT parser does not.
@@ -1323,7 +1324,9 @@ defmodule Cinder.SubtitlesTest do
       refute File.exists?(Subtitles.sidecar_path(video, "en"))
     end
 
-    test "copies a sidecar in the language once the timing check rejects the default track", %{
+    # #1308: the copy comes first, so a default track the timing check would reject is not even
+    # extracted.
+    test "copies a sidecar in the language without checking a default track it would reject", %{
       video: video
     } do
       stub_reads(video, {:ok, [track(3, "eng", default?: true)]}, %{3 => {:ok, @reversed}})
@@ -1331,7 +1334,8 @@ defmodule Cinder.SubtitlesTest do
       stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
       stub_translate()
 
-      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:extract, 3}, {:scan, :movies}]
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:scan, :movies}]
+      refute TrackRejection.rejected?(Moviehash.compute(131_072, @zeros, @zeros), 3, :timing)
       refute_received {:translate, _language}
       assert File.read!(Subtitles.sidecar_path(video, "fr")) == @other
       assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(video)
@@ -1728,6 +1732,173 @@ defmodule Cinder.SubtitlesTest do
       assert_received {:translate, "fra"}
       assert File.read!(Subtitles.sidecar_path(video, "fra")) == @srt
     end
+
+    # #1308: a subtitle written in the language beats a machine translation (#523), so a sidecar in
+    # the language is copied before the default track is looked at. The default track is then
+    # neither extracted nor sent to the translator, whether the translator answers or not.
+    for {label, result} <- [{"answers", :ok}, {"is down", {:error, :down}}] do
+      test "copies M.fre.srt before the default track when the translator #{label}", %{
+        video: video
+      } do
+        stub_reads(video, {:ok, [track(3, "eng", default?: true)]}, %{3 => {:ok, @srt}})
+        put!(Path.join(Path.dirname(video), "M.fre.srt"), @other)
+        stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+        stub_translate(unquote(Macro.escape(result)))
+
+        assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:scan, :movies}]
+        refute_received {:translate, _language}
+        assert File.read!(Subtitles.sidecar_path(video, "fr")) == @other
+        assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(video)
+        assert effects(%{imdb_id: "tt1"}, video) == []
+      end
+    end
+
+    # The copy keeps its rules (#1070, #1109) beside a default track the translator could take.
+    test "copies a lone M.fr.sdh.srt before the default track", %{video: video} do
+      stub_reads(video, {:ok, [track(3, "eng", default?: true)]}, %{3 => {:ok, @srt}})
+      put!(Path.join(Path.dirname(video), "M.fr.sdh.srt"), @other)
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:scan, :movies}]
+      refute_received {:translate, _language}
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) == @other
+    end
+
+    test "prefers M.fre.srt over M.fr.sdh.srt before the default track", %{video: video} do
+      flagged = Path.join(Path.dirname(video), "M.fr.sdh.srt")
+      put!(Path.join(Path.dirname(video), "M.fre.srt"), @bonjour)
+      put!(flagged, @other)
+      list_first(flagged)
+      stub_reads(video, {:ok, [track(3, "eng", default?: true)]}, %{3 => {:ok, @srt}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:scan, :movies}]
+      refute_received {:translate, _language}
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) == @bonjour
+    end
+
+    for {label, failure} <- [
+          {"cannot be read", :unreadable},
+          {"fails the timing check", :timing}
+        ] do
+      test "copies M.fr.sdh.srt before the default track when M.fre.srt #{label}", %{
+        video: video
+      } do
+        unflagged = Path.join(Path.dirname(video), "M.fre.srt")
+        put!(Path.join(Path.dirname(video), "M.fr.sdh.srt"), @other)
+        list_first(unflagged)
+        stub_reads(video, {:ok, [track(3, "eng", default?: true)]}, %{3 => {:ok, @srt}})
+        stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+        stub_translate()
+
+        case unquote(failure) do
+          :timing ->
+            put!(unflagged, @reversed)
+
+          :unreadable ->
+            put!(unflagged, @bonjour)
+
+            stub(Cinder.Library.FilesystemMock, :read, fn
+              ^unflagged -> {:error, :eacces}
+              path -> Disk.read(path)
+            end)
+        end
+
+        assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:scan, :movies}]
+        refute_received {:translate, _language}
+        assert File.read!(Subtitles.sidecar_path(video, "fr")) == @other
+      end
+    end
+
+    # A forced sidecar is never copied, so the default track is translated as before.
+    test "translates the default track beside a lone M.fr.forced.srt", %{video: video} do
+      forced = Path.join(Path.dirname(video), "M.fr.forced.srt")
+      put!(forced, @other)
+      stub_reads(video, {:ok, [track(3, "eng", default?: true)]}, %{3 => {:ok, @srt}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:extract, 3}, {:scan, :movies}]
+      refute_received {:read, ^forced}
+      assert_received {:translate, "fr"}
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) =~ "Hello"
+    end
+
+    # The copy took nothing, so the default track comes next, before any sidecar in another
+    # language.
+    test "translates the default track when M.fre.srt fails the timing check", %{video: video} do
+      fre = Path.join(Path.dirname(video), "M.fre.srt")
+      put!(fre, @reversed)
+      put!(Path.join(Path.dirname(video), "M.spa.srt"), @other)
+      stub_reads(video, {:ok, [track(3, "eng", default?: true)]}, %{3 => {:ok, @srt}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:extract, 3}, {:scan, :movies}]
+      assert_received {:read, ^fre}
+      assert_received {:translate, "fr"}
+      refute_received {:translate, _language}
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) =~ "Hello"
+      assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(video)
+    end
+
+    # #1109: with no sidecar in the language and a default track the timing check rejects, a
+    # sidecar in another language is the translation source.
+    test "translates M.spa.srt when the timing check rejects the default track", %{video: video} do
+      put!(Path.join(Path.dirname(video), "M.spa.srt"), @other)
+      stub_reads(video, {:ok, [track(3, "eng", default?: true)]}, %{3 => {:ok, @reversed}})
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:extract, 3}, {:scan, :movies}]
+      assert_received {:translate, "fr"}
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) =~ "[Door creaks]"
+      assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(video)
+    end
+
+    # Each wanted language goes through the order on its own: French copies its sidecar while
+    # English takes the track in its language, extracted once.
+    test "copies M.fre.srt for French and extracts the eng track once for English", %{
+      video: video
+    } do
+      ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "fr,en")
+      stub_reads(video, {:ok, [track(3, "eng", default?: true)]}, %{3 => {:ok, @srt}})
+      put!(Path.join(Path.dirname(video), "M.fre.srt"), @other)
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) ==
+               [:probe, {:scan, :movies}, {:extract, 3}, {:scan, :movies}]
+
+      refute_received {:translate, _language}
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) == @other
+      assert File.read!(Subtitles.sidecar_path(video, "en")) == @srt
+
+      assert %{tracks: %{"fr" => %{origin: "translated"}, "en" => %{origin: "embedded"}}} =
+               Manifest.read(video)
+    end
+
+    # French copies its sidecar while German translates the default track, in either order.
+    for wanted <- ~w(fr,de de,fr) do
+      test "copies M.fre.srt for French and translates the default track into German (#{wanted})",
+           %{video: video} do
+        ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: unquote(wanted))
+        stub_reads(video, {:ok, [track(3, "eng", default?: true)]}, %{3 => {:ok, @srt}})
+        put!(Path.join(Path.dirname(video), "M.fre.srt"), @other)
+        stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+        stub_translate()
+
+        effects = effects(%{imdb_id: "tt1"}, video)
+        assert Enum.count(effects, &(&1 == {:extract, 3})) == 1
+        assert Enum.count(effects, &(&1 == {:scan, :movies})) == 2
+        assert_received {:translate, "de"}
+        refute_received {:translate, _language}
+        assert File.read!(Subtitles.sidecar_path(video, "fr")) == @other
+        assert File.read!(Subtitles.sidecar_path(video, "de")) =~ "Hello"
+      end
+    end
   end
 
   # #1110: before #1072 the embedded fallback wrote a track without the timing check. A sweep
@@ -1851,6 +2022,31 @@ defmodule Cinder.SubtitlesTest do
 
       assert_received {:translate, "fr"}
       assert File.read!(target) =~ "Hello"
+      assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(video)
+    end
+
+    # #1308: the copy comes before the default track, which is then neither extracted nor
+    # translated.
+    test "is replaced in the same fetch by a sidecar in its language before the default track", %{
+      video: video,
+      target: target
+    } do
+      put_embedded!(video, @broken, source_moviehash: moviehash(), source_track: 2)
+      put!(Path.join(Path.dirname(video), "M.fre.srt"), @other)
+
+      stub_reads(video, {:ok, [track(2, "fre"), track(3, "eng", default?: true)]}, %{
+        2 => {:ok, @broken},
+        3 => {:ok, @srt}
+      })
+
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) ==
+               [{:scan, :movies}, :probe, {:extract, 2}, {:scan, :movies}]
+
+      refute_received {:translate, _language}
+      assert File.read!(target) == @other
       assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(video)
     end
 
@@ -2751,12 +2947,13 @@ defmodule Cinder.SubtitlesTest do
   end
 
   # A translation is reported, not denied: a mock that raises lands in fetch_one/6's rescue.
-  defp stub_translate do
+  # `result` is what the translator answers, `:ok` its input lines back.
+  defp stub_translate(result \\ :ok) do
     test = self()
 
     stub(Cinder.Subtitles.TranslatorMock, :translate, fn lines, language ->
       send(test, {:translate, language})
-      {:ok, lines}
+      if result == :ok, do: {:ok, lines}, else: result
     end)
   end
 
