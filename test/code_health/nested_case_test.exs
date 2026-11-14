@@ -42,7 +42,6 @@ defmodule Cinder.CodeHealth.NestedCaseTest do
     "lib/cinder/library/filesystem/disk.ex" => 5,
     "lib/cinder/library/media_server/reconciler.ex" => 1,
     "lib/cinder/library/migration_adoption.ex" => 3,
-    "lib/cinder/library/migration_source/sonarr.ex" => 1,
     "lib/cinder/library/sidecars.ex" => 1,
     "lib/cinder/requests.ex" => 1,
     "lib/cinder/settings.ex" => 1,

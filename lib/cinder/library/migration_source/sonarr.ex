@@ -56,16 +56,14 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
 
   defp normalize_series(series, config) do
     indexed = Enum.with_index(series, 1)
-    owner = self()
 
+    # Each fetch runs in `HTTPPolicy.bounded_request/2`'s request task, whose `$callers` run
+    # through this stream task to the snapshot's caller and that caller's own `$callers`.
+    # `Req.Test` finds a stub's owner along that chain, so the stream task needs no grant.
     results =
       Task.async_stream(
         indexed,
-        fn {raw, _index} ->
-          with :ok <- allow_req_test(config, owner) do
-            normalize_one_series(raw, config)
-          end
-        end,
+        fn {raw, _index} -> normalize_one_series(raw, config) end,
         max_concurrency: @series_concurrency,
         timeout: @series_timeout,
         on_timeout: :kill_task,
@@ -84,20 +82,6 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
        files: normalized.files |> Enum.reverse() |> Enum.uniq_by(& &1.provider_id),
        diagnostics: Enum.reverse(normalized.diagnostics)
      }}
-  end
-
-  defp allow_req_test(config, owner) do
-    case get_in(config, [:req_options, :plug]) do
-      {Req.Test, name} ->
-        case Req.Test.allow(name, owner, self()) do
-          :ok -> :ok
-          {:error, %{reason: :cant_allow_in_shared_mode}} -> :ok
-          {:error, reason} -> {:error, reason}
-        end
-
-      _plug ->
-        :ok
-    end
   end
 
   defp collect_series({_source, {:ok, {:ok, item}}}, acc) do
