@@ -809,10 +809,14 @@ defmodule Cinder.HTTPPolicyTest do
         acc
       end
 
-      # 500ms, not 50: the assertion is "completes *within* the deadline", and a 5ms sleep plus
-      # scheduling overhead on a loaded runner blew a 50ms budget about 1 run in 15 (#246).
+      # The deadline must not fire here, so the call runs the 10 s deadline testing.md gives every
+      # call meant to finish. A loaded runner timed out a 50 ms deadline (#246), then the 500 ms
+      # one that replaced it (run 1082, #1301; ci.md "Wall-clock tests"). A deadline that fires
+      # before the trickle ends still fails the test: a halt in the `into` callback breaks the
+      # adapter's `{:cont, acc} =` matches, and a caller that stops waiting gets
+      # `{:error, :request_timeout}`.
       assert {:ok, %{body: "firstsecond"}} =
-               HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 500)
+               HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 10_000)
     end
 
     test "cancels a request blocked before headers at the wall-clock deadline" do

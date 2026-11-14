@@ -145,11 +145,15 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   accepts a missing `{:request_started, _}` from the stub. A runner slower than the deadline to
   bring the task to its stub therefore passes the test. Before this, a 100 ms deadline (#960) and then
   a 500 ms one (#1092) each failed on such a runner, since a wider deadline only moves the start
-  time that fails. After loaded runners returned 336 ms (#908), then 875 ms (#1038) past the
-  deadline, the test asserts the elapsed time under 5 s past it instead of 1 s, and its stub's
-  safety valve sits at 10 s, above that bound. "cancels a request whose task reaches the stub only
-  after the deadline" holds its task 10 s in a Req request step and asserts the same bound. After
-  a 3458 ms run on `main` (#984),
+  time that fails. After run 1082 (#1301) timed out a 500 ms deadline, "collects a trickling
+  response that completes within the total deadline" runs a 10 s one. Widening holds there: its
+  deadline must not fire and the call ends in about 6 ms, so only a 10 s stall on the runner times
+  it out, where a wider cancel deadline still fails at a later start. After loaded runners
+  returned 336 ms (#908), then 875 ms (#1038) past the deadline, the first cancel test asserts
+  the elapsed time under 5 s past it instead of 1 s, and its stub's safety valve sits at 10 s,
+  above that bound. "cancels a request whose task reaches the stub only after the deadline" holds
+  its task 10 s in a Req request step and asserts the same bound. After a 3458 ms run on `main`
+  (#984),
   `Cinder.Library.MediaInfo.FfprobeTest` "extract_subtitle/2 still times out when the process
   emits data faster than any poll tick" asserts the elapsed time under 5 s past its 1 s deadline
   instead of 2 s. After a 3060 ms run on `main` (#1022),
