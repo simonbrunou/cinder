@@ -23,8 +23,12 @@ defmodule CinderWeb.ManualSearchComponent do
 
   Required assigns: `id`, `mode` (`:movie | :tv`), `target` (the `%Movie{}` or `%Series{}`), plus
   `season_number` for `:tv`. A `results:` assign (a list of rows, each a map with `release`,
-  `verdict` and `audio`, as `ReleaseJudge` builds them) is consumed directly and skips the async
-  fetch — useful for tests.
+  `verdict` and `audio`, and optionally `covers_wanted`, as `ReleaseJudge` builds them) is
+  consumed directly and skips the async fetch — useful for tests.
+
+  A standard season row whose release covers no still-wanted episode (`covers_wanted: false`)
+  says "covers no wanted episode" in neutral text, beside any rejection reason. The note changes neither the
+  row's place nor whether it has a Grab button.
   """
   use CinderWeb, :live_component
 
@@ -252,6 +256,10 @@ defmodule CinderWeb.ManualSearchComponent do
           <span class="badge badge-xs">{release.resolution || gettext("?")}</span>
           <.language_badge language={release.language} state={row.audio} />
           <span :if={verdict != :ok} class="text-xs text-warning">{verdict_reason(verdict)}</span>
+          <%!-- The judge's coverage fact, not a rejection: the row keeps its verdict and Grab. --%>
+          <span :if={Map.get(row, :covers_wanted) == false} class="text-xs text-base-content/70">
+            {gettext("covers no wanted episode")}
+          </span>
           <.button
             :if={grabbable?(verdict)}
             type="button"

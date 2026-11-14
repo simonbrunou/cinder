@@ -395,4 +395,92 @@ defmodule Cinder.Acquisition.ReleaseJudgeTest do
       end
     end
   end
+
+  # #900: a season row says whether its release covers a still-wanted episode, from the coverage
+  # the season cover assigns it (`Scorer.season_coverage/4`), so the panel never re-derives it.
+  describe "covers_wanted" do
+    defp covers_wanted(%ReleaseJudge{rows: rows}),
+      do: Map.new(rows, &{&1.release.title, &1.covers_wanted})
+
+    # E03 is imported and E05 wanted; scene S02E01 is native E05.
+    @season {:series, %Series{title: "Show"}, 1, [5]}
+    @numbering [alternate_numbering: %{2 => %{1 => [5]}}]
+
+    test "a season row records whether its release covers a still-wanted episode" do
+      judged =
+        ReleaseJudge.judge(
+          [
+            release("Show.S01E03", season: 1, episodes: [3]),
+            release("Show.S01E05", season: 1, episodes: [5]),
+            release("Show.S01", season: 1),
+            release("Show.S02E01", season: 2, episodes: [1]),
+            release("Show.S03E05", season: 3, episodes: [5])
+          ],
+          @season,
+          @numbering
+        )
+
+      assert covers_wanted(judged) == %{
+               "Show.S01E03" => false,
+               "Show.S01E05" => true,
+               "Show.S01" => true,
+               "Show.S02E01" => true,
+               "Show.S03E05" => false
+             }
+    end
+
+    test "a row a stage drops still carries the fact" do
+      judged =
+        ReleaseJudge.judge(
+          [
+            release("Show.S01E03", season: 1, episodes: [3], protocol: :usenet),
+            release("Show.S01E05", season: 1, episodes: [5], protocol: :usenet)
+          ],
+          @season,
+          protocols: [:torrent]
+        )
+
+      assert Enum.map(judged.rows, &{&1.release.title, &1.dropped_at, &1.covers_wanted})
+             |> Enum.sort() ==
+               [{"Show.S01E03", :protocol, false}, {"Show.S01E05", :protocol, true}]
+    end
+
+    test "in a fully imported season no row covers a still-wanted episode" do
+      judged =
+        ReleaseJudge.judge(
+          [release("Show.S01", season: 1), release("Show.S01E05", season: 1, episodes: [5])],
+          {:series, %Series{title: "Show"}, 1, []},
+          pack_episode_count: 10
+        )
+
+      assert covers_wanted(judged) == %{"Show.S01" => false, "Show.S01E05" => false}
+    end
+
+    # The fact is not a verdict: the row keeps its band verdict, its place and its place in
+    # `kept`, and the pick is the cover's.
+    test "a row covering nothing keeps its verdict, its order and its place in kept" do
+      releases = [
+        release("Show.S01E05.Huge", season: 1, episodes: [5], size: 9 * @gb),
+        release("Show.S01E03", season: 1, episodes: [3], size: 1 * @gb)
+      ]
+
+      judged = ReleaseJudge.judge(releases, @season, max_size: 2 * @gb)
+
+      assert Enum.map(judged.rows, &{&1.release.title, &1.verdict, &1.covers_wanted}) == [
+               {"Show.S01E03", :ok, false},
+               {"Show.S01E05.Huge", {:rejected, :out_of_band}, true}
+             ]
+
+      assert judged.kept == releases
+      assert ReleaseJudge.pick(judged) == :no_match
+    end
+
+    test "rows of every other guard leave it unset" do
+      for guard <- [imdb("Film"), {:title_year, "Film", 2021}] do
+        judged = ReleaseJudge.judge([release("Film.2021", season: 1, episodes: [5])], guard, [])
+
+        assert [%{covers_wanted: nil}] = judged.rows
+      end
+    end
+  end
 end

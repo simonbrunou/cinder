@@ -234,8 +234,20 @@ defmodule Cinder.Acquisition.Scorer do
     end
   end
 
-  # The still-wanted episodes `select_for/4` would assign `release` if it were the only candidate.
-  defp season_coverage(release, season, wanted_episodes, opts) do
+  @doc """
+  The still-wanted episodes `select_for/4` would assign `release` if it were the only candidate
+  and passed every rule, as a `MapSet` of native episode numbers, alternate numbering included.
+  A release outside the size band, or failing a title, resolution or source rule, still has this
+  coverage, though `select_for/4` takes it for none of it. `season`,
+  `wanted_episodes` and `opts` are what `select_for/4` takes. Of the opts, only
+  `:alternate_numbering`, `:full_claim_only` and `:pack_episode_count` (which `:full_claim_only`
+  reads) enter it: the size band and the title, resolution and source rules don't.
+
+  `verdict_for_season/4` bands by this coverage, and the release judge records whether it is
+  empty on a season row (`Cinder.Acquisition.ReleaseJudge`), so the panel and the cover can't
+  disagree on which rows cover a still-wanted episode.
+  """
+  def season_coverage(%Release{} = release, season, wanted_episodes, opts \\ []) do
     numbering = Keyword.get(opts, :alternate_numbering, %{})
 
     if coverable_season?(release, season, numbering),

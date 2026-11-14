@@ -15,7 +15,9 @@ the two can't disagree, and it also names the stage that dropped a release befor
 download client for its protocol, a name that isn't the target's, the audio pick, for anime
 episodes a release that isn't a story episode or doesn't map to the wanted episodes, or for a TV
 season an alternate-numbered release that could name two different sets of episodes, or a native
-one a **vetted mapping** assigns to another episode. Books have no automatic selection.
+one a **vetted mapping** assigns to another episode. For a TV season it also says when a release
+covers no still-wanted episode: the **set-cover** never takes such a release, though it can be
+acceptable as an operator's upgrade (#900). Books have no automatic selection.
 _Avoid_: filter, matcher, release decision
 
 **Set-cover**:

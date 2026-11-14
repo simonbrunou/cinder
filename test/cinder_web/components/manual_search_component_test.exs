@@ -112,6 +112,45 @@ defmodule CinderWeb.ManualSearchComponentTest do
     assert html =~ "outside size band"
   end
 
+  # #900: the panel states the judge's coverage fact and never re-derives it from the release.
+  test "a row the judge marks as covering no wanted episode says so, beside its verdict" do
+    release = %Release{
+      title: "Show S01 1080p",
+      resolution: "1080p",
+      protocol: :torrent,
+      season: 1
+    }
+
+    render_row = fn covers_wanted, verdict ->
+      render_panel(%{
+        mode: :tv,
+        target: %Series{id: 1, title: "Show", media_profile: :standard},
+        season_number: 1,
+        results: [Map.put(row(release, verdict), :covers_wanted, covers_wanted)]
+      })
+    end
+
+    html = render_row.(false, :ok)
+    assert html =~ "covers no wanted episode"
+    assert html =~ "Grab"
+    refute html =~ "text-warning"
+
+    html = render_row.(false, {:rejected, :out_of_band})
+    assert html =~ "covers no wanted episode"
+    assert html =~ "outside size band"
+    assert html =~ "Grab"
+
+    refute render_row.(true, :ok) =~ "covers no wanted episode"
+    refute render_row.(nil, :ok) =~ "covers no wanted episode"
+
+    refute render_panel(%{
+             mode: :tv,
+             target: %Series{id: 1, title: "Show"},
+             season_number: 1,
+             results: [row(release)]
+           }) =~ "covers no wanted episode"
+  end
+
   test "every row badges its language against the title's audio pick, untagged included" do
     html =
       render_panel(%{

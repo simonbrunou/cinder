@@ -7463,3 +7463,8 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "Two or more folder reads have not returned, so until fewer than two remain, Cinder can refuse any new folder read, imports from every download folder included."
 msgstr ""
+
+#: lib/cinder_web/components/manual_search_component.ex
+#, elixir-autogen, elixir-format
+msgid "covers no wanted episode"
+msgstr ""

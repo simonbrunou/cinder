@@ -7820,3 +7820,8 @@ msgstr "Une lecture sous %{path} n'est pas revenue. Son point de montage est peu
 #, elixir-autogen, elixir-format
 msgid "Two or more folder reads have not returned, so until fewer than two remain, Cinder can refuse any new folder read, imports from every download folder included."
 msgstr "Au moins deux lectures de dossiers ne sont pas revenues : tant qu'il en reste deux ou plus, Cinder peut refuser toute nouvelle lecture de dossier, y compris les imports depuis chaque dossier de téléchargement."
+
+#: lib/cinder_web/components/manual_search_component.ex
+#, elixir-autogen, elixir-format
+msgid "covers no wanted episode"
+msgstr "ne couvre aucun épisode souhaité"

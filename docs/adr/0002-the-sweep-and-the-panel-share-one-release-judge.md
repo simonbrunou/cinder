@@ -53,7 +53,11 @@ Since #836, a TV row's verdict is the set-cover's for that release alone
 carries the still-wanted episodes, and `judge_season/3` passes the season's episode count for
 both. A row covering no still-wanted episode, which the cover never takes, is banded by what it
 carries (the episodes it names or resolves to, else the season's count for a pack), so an operator
-upgrade still reads whether it fits.
+upgrade still reads whether it fits. Since #900 that row also carries the fact that it covers no
+still-wanted episode (`covers_wanted`, from `Scorer.season_coverage/4`, the coverage the verdict
+bands by), and the panel says "covers no wanted episode" on the row. The note leaves the
+verdict, the order and the Grab button alone, and it says what the row covers rather than what a
+sweep will do, since the upgrade sweep can still take such a release under its own rules (#839).
 
 Since #837 both paths take the numbering bridge's costs alike. A native season whose only wanted
 episodes are parked stays native, so its scene twin isn't searched as an alternate season until

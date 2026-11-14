@@ -294,6 +294,22 @@ defmodule Cinder.Acquisition.ReleaseJudgeAnimeTest do
       assert judged.language == :off
     end
 
+    # The season coverage fact is the standard season guard's alone (#900).
+    test "no anime row carries the season coverage fact" do
+      episodes =
+        judge_episodes([episode_release("[Group] Show S01E01 [1080p]")], anime_policy: policy())
+
+      movie =
+        ReleaseJudge.judge(
+          [movie_release("[Group] Your Name (2016) [1080p]")],
+          {:anime_movie, @movie},
+          anime_policy: policy()
+        )
+
+      assert [%{covers_wanted: nil}] = episodes.rows
+      assert [%{covers_wanted: nil}] = movie.rows
+    end
+
     # The sweep never takes a typed special, but its frozen mapping makes it a safe manual grab.
     test "a row the panel can't grab says so first; a frozen typed special is manual-only" do
       judged =

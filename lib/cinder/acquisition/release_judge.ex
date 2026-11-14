@@ -2,8 +2,11 @@ defmodule Cinder.Acquisition.ReleaseJudge do
   @moduledoc """
   The release judge for a movie, a TV season or an anime title: every parsed release an indexer
   search returned, each kept or dropped by a named stage, with the verdict and language fact the
-  manual-search panel shows for it. The sweep takes its pick from the same record, so the panel
-  can't list a release as acceptable that the sweep would never pick, or the other way round.
+  manual-search panel shows for it. The sweep takes its pick from the same record, and a row's
+  verdict is the selection's own rule for that release alone. A season row covering no
+  still-wanted episode is one the season cover never takes, though its verdict can read
+  acceptable (an operator upgrade in an imported season), so that row says it covers none
+  (`covers_wanted` below).
 
   The guard names the target and how its search was scoped:
 
@@ -71,6 +74,10 @@ defmodule Cinder.Acquisition.ReleaseJudge do
     at any stage. `:assumed` for an untagged release a movie pool kept. `:mismatch` for a release
     the language stage dropped. nil for a release dropped before that stage, when the pick fell
     back, and on every row when no pick is in force (`language: :off`).
+  - `covers_wanted`: for the `{:series, ...}` guard, whether the release covers any still-wanted
+    episode, alternate numbering included: `Scorer.season_coverage/4`, the coverage
+    `Scorer.verdict_for_season/4` bands by. Every row of that guard carries it, dropped ones
+    included, and it leaves the verdict, the order and `kept` alone. nil for every other guard.
 
   `rows` lists acceptable releases first, each group in rank order (`Scorer.rank_key/2`).
 
@@ -97,7 +104,8 @@ defmodule Cinder.Acquisition.ReleaseJudge do
           release: struct(),
           dropped_at: nil | stage(),
           verdict: :ok | {:rejected, atom()},
-          audio: nil | :match | :assumed | :mismatch
+          audio: nil | :match | :assumed | :mismatch,
+          covers_wanted: nil | boolean()
         }
   @type t :: %__MODULE__{
           guard: guard(),
@@ -240,9 +248,15 @@ defmodule Cinder.Acquisition.ReleaseJudge do
       release: release,
       dropped_at: dropped_at,
       verdict: verdict(release, dropped_at, guard, opts),
-      audio: audio(release, dropped_at, language, target)
+      audio: audio(release, dropped_at, language, target),
+      covers_wanted: covers_wanted(release, guard, opts)
     }
   end
+
+  defp covers_wanted(release, {:series, _series, season_number, wanted_numbers}, opts),
+    do: MapSet.size(Scorer.season_coverage(release, season_number, wanted_numbers, opts)) > 0
+
+  defp covers_wanted(_release, _guard, _opts), do: nil
 
   defp verdict(_release, :protocol, _guard, _opts), do: {:rejected, :wrong_protocol}
 

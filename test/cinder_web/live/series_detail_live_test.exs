@@ -1893,7 +1893,75 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       assert html =~ "Test Show S02E01E02 1080p WEB-DL GRP"
       assert has_element?(lv, verdict_reason(season), "outside size band")
     end
+
+    # #900: E03 is imported and E09 wanted. The E03 single covers no still-wanted episode, so the
+    # row says so beside its band verdict, as a fact rather than a rejection reason.
+    test "a single naming only an imported episode says it covers no wanted episode",
+         %{conn: conn, series: series, season: season} do
+      imported = %{title: "Test Show S01E03 1080p WEB-DL GRP", size: @gb, download_url: "e3"}
+      wanted = %{title: "Test Show S01E09 1080p WEB-DL GRP", size: @gb, download_url: "e9"}
+      {lv, _html} = open_season_panel(conn, series, season, %{1 => [imported, wanted]})
+
+      assert season_row(lv, season, "S01E03") =~ "covers no wanted episode"
+      refute season_row(lv, season, "S01E09") =~ "covers no wanted episode"
+      refute has_element?(lv, verdict_reason(season))
+      refute has_element?(lv, verdict_reason(season), "covers no wanted episode")
+    end
   end
+
+  # #900: in a fully imported 10-episode season under a 0.5 to 2 GB band, the cover takes nothing.
+  # A pack reads its band at the season's count, 5 to 20 GB, and says it covers no wanted episode,
+  # with its Grab button kept for an operator upgrade.
+  describe "a fully imported season's panel" do
+    setup do
+      put_env(:tv_min_size, div(@gb, 2))
+      put_env(:tv_max_size, 2 * @gb)
+
+      series =
+        Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 9003, tvdb_id: 99, title: "Test Show"})
+
+      season =
+        Repo.insert!(%Cinder.Catalog.Season{
+          series_id: series.id,
+          season_number: 1,
+          monitored: true
+        })
+
+      today = Cinder.Settings.household_date()
+
+      for number <- 1..10 do
+        wanted_ep(season, number,
+          air_date: Date.add(today, -30 + number),
+          file_path: "/tv/Test Show/S01E#{String.pad_leading("#{number}", 2, "0")}.mkv"
+        )
+      end
+
+      %{series: Repo.reload!(series), season: season}
+    end
+
+    test "a 15 GB pack in band says it covers no wanted episode and keeps Grab",
+         %{conn: conn, series: series, season: season} do
+      {lv, _html} = open_season_panel(conn, series, season, %{1 => [season_pack(15 * @gb)]})
+
+      assert has_element?(lv, "#ms-season-#{season.id} li span", "covers no wanted episode")
+      refute has_element?(lv, verdict_reason(season))
+      assert has_element?(lv, "#ms-season-#{season.id} li button", "Grab")
+    end
+
+    test "a 25 GB pack says both outside size band and that it covers no wanted episode",
+         %{conn: conn, series: series, season: season} do
+      {lv, _html} = open_season_panel(conn, series, season, %{1 => [season_pack(25 * @gb)]})
+
+      assert has_element?(lv, verdict_reason(season), "outside size band")
+      assert has_element?(lv, "#ms-season-#{season.id} li span", "covers no wanted episode")
+      refute has_element?(lv, verdict_reason(season), "covers no wanted episode")
+      assert has_element?(lv, "#ms-season-#{season.id} li button", "Grab")
+    end
+  end
+
+  # The HTML of the one row of `season`'s panel whose text contains `text`.
+  defp season_row(lv, season, text),
+    do: lv |> element("#ms-season-#{season.id} li", text) |> render()
 
   defp season_pack(size),
     do: %{title: "Test Show S01 1080p WEB-DL GRP", size: size, download_url: "pack"}

@@ -858,6 +858,63 @@ defmodule Cinder.Acquisition.ScorerTest do
     end
   end
 
+  # The release judge records whether a season row covers a still-wanted episode from this one
+  # function, so the panel's note and the cover can't disagree (#900).
+  describe "season_coverage/4" do
+    setup do
+      # Scene S02E01 is native E03; scene S02E02 is native E01.
+      %{opts: [pack_episode_count: 10, alternate_numbering: %{2 => %{1 => [3], 2 => [1]}}]}
+    end
+
+    test "a whole-season pack in a fully imported season covers nothing", %{opts: opts} do
+      pack = release(season: 1, episodes: nil, size: 15 * @gb)
+      assert Scorer.season_coverage(pack, 1, [], opts) == MapSet.new()
+    end
+
+    test "a single naming only an imported episode covers nothing", %{opts: opts} do
+      single = release(season: 1, episodes: [3])
+      assert Scorer.season_coverage(single, 1, [5], opts) == MapSet.new()
+    end
+
+    test "another season's release covers nothing", %{opts: opts} do
+      other_season = release(season: 3, episodes: [5])
+      assert Scorer.season_coverage(other_season, 1, [5], opts) == MapSet.new()
+    end
+
+    test "an alternate-numbered release covers the wanted episode it maps to", %{opts: opts} do
+      scene = release(season: 2, episodes: [1, 2])
+      assert Scorer.season_coverage(scene, 1, [3, 5], opts) == MapSet.new([3])
+      assert Scorer.season_coverage(scene, 1, [5], opts) == MapSet.new()
+    end
+
+    test "a release covering a wanted episode covers the wanted ones it names", %{opts: opts} do
+      double = release(season: 1, episodes: [4, 5])
+      assert Scorer.season_coverage(double, 1, [5, 6], opts) == MapSet.new([5])
+
+      pack = release(season: 1, episodes: nil)
+      assert Scorer.season_coverage(pack, 1, [5, 6], opts) == MapSet.new([5, 6])
+    end
+
+    test "is what the cover assigns the release alone under no rules", %{opts: opts} do
+      no_rules = Keyword.put(opts, :preferred_resolutions, [])
+
+      for season <- [1, 2, 3],
+          episodes <- [nil, [1], [3], [1, 2], [3, 4, 5]],
+          wanted <- [[], [1], [3], [3, 5], Enum.to_list(1..10)] do
+        release = release(season: season, episodes: episodes)
+
+        expected =
+          case Scorer.select_for([release], 1, wanted, no_rules) do
+            {:ok, [{^release, covered}]} -> MapSet.new(covered)
+            :no_match -> MapSet.new()
+          end
+
+        assert Scorer.season_coverage(release, 1, wanted, opts) == expected,
+               inspect({release, wanted})
+      end
+    end
+  end
+
   describe "source_rank/2 (public for Library.Upgrade)" do
     test "index in the preference list; nil/unlisted sorts last" do
       assert Scorer.source_rank("bluray", ["bluray", "webdl"]) == 0
