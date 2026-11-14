@@ -10,6 +10,7 @@ defmodule Cinder.SubtitlesTest do
 
   alias Cinder.ConfigCase
   alias Cinder.Library.Filesystem.Disk
+  alias Cinder.Library.Sidecars
   alias Cinder.Subtitles
   alias Cinder.Subtitles.Manifest
   alias Cinder.Subtitles.Moviehash
@@ -1617,11 +1618,13 @@ defmodule Cinder.SubtitlesTest do
       assert File.read!(Subtitles.sidecar_path(video, "fr")) == @srt
     end
 
-    # `M.pt-br.srt` reads as `und`, so only the target's own exclusion keeps it out. It is listed
-    # here because it appeared after the fetch found the target missing.
+    # `M.eo.srt` reads as `und`, since Esperanto is no language `Sidecars.language/1` knows, so
+    # only the target's own exclusion keeps it out. It is listed here because it appeared after the
+    # fetch found the target missing.
     test "never translates the target that appeared after it was found missing", %{video: video} do
-      ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "pt-br")
-      target = Subtitles.sidecar_path(video, "pt-br")
+      ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "eo")
+      target = Subtitles.sidecar_path(video, "eo")
+      assert Sidecars.language(target) == "und"
       appear_on_listing(target, @srt)
       stub_default_track(video, :none)
       stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
@@ -1631,6 +1634,99 @@ defmodule Cinder.SubtitlesTest do
       refute_received {:read, ^target}
       refute_received {:translate, _language}
       assert File.read!(target) == @srt
+    end
+
+    # #1309: the copy matched the wanted code to the code read from the file's name character for
+    # character, so a file in the wanted language whose name holds a regional tag, or a wanted code
+    # in another form than the one read, was translated into its own language. The copy keeps the
+    # wanted code as typed in the target's name.
+    for {wanted, name} <- [
+          {"fr", "M.fr-FR.srt"},
+          {"fr", "M.fr_FR.srt"},
+          {"fra", "M.fre.srt"},
+          {"fra", "M.fr.srt"},
+          {"fre", "M.fr-CA.srt"},
+          {"french", "M.fre.srt"},
+          {"pt-br", "M.pt-br.sdh.srt"},
+          {"pt-br", "M.pt.srt"},
+          {"pt-br", "M.pt-PT.srt"},
+          {"pt-br", "M.pt-BR.srt"},
+          {"pt_BR", "M.pt-BR.srt"},
+          {"zh-hant", "M.zh.srt"}
+        ] do
+      test "copies a lone #{name} for wanted #{wanted} without translating it", %{video: video} do
+        ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: unquote(wanted))
+        language = String.downcase(unquote(wanted))
+        put!(Path.join(Path.dirname(video), unquote(name)), @srt)
+        stub_default_track(video, :none)
+        stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+        stub_translate()
+
+        assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:scan, :movies}]
+        refute_received {:translate, _language}
+        assert File.read!(Subtitles.sidecar_path(video, language)) == @srt
+        assert %{tracks: %{^language => %{origin: "translated"}}} = Manifest.read(video)
+      end
+    end
+
+    # The file read as French is copied to French and is still a translation source for German.
+    test "copies a lone M.fr-FR.srt to French and translates it into German", %{video: video} do
+      ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "fr,de")
+      put!(Path.join(Path.dirname(video), "M.fr-FR.srt"), @srt)
+      stub_default_track(video, :none)
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:scan, :movies}, {:scan, :movies}]
+      assert_received {:translate, "de"}
+      refute_received {:translate, _language}
+      assert File.read!(Subtitles.sidecar_path(video, "fr")) == @srt
+      assert File.read!(Subtitles.sidecar_path(video, "de")) == @srt
+    end
+
+    # The translation source for `fra` leaves out the file the copy for `fra` passed over.
+    test "translates M.eng.srt into fra when M.fre.srt listed first fails the timing check", %{
+      video: video
+    } do
+      ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "fra")
+      fre = Path.join(Path.dirname(video), "M.fre.srt")
+      source = Path.join(Path.dirname(video), "M.eng.srt")
+      put!(fre, @reversed)
+      put!(source, @srt)
+      list_first(fre)
+      stub_default_track(video, :none)
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      log =
+        info_log(fn ->
+          assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+        end)
+
+      refute log =~ "crashed"
+      assert occurrences(log, "subtitle sidecar #{fre} failed the timing check") == 1
+      assert_received {:read, ^fre}
+      refute_received {:read, ^fre}
+      assert_received {:read, ^source}
+      assert_received {:translate, "fra"}
+      refute_received {:translate, _language}
+      assert File.read!(Subtitles.sidecar_path(video, "fra")) == @srt
+      assert %{tracks: %{"fra" => %{origin: "translated"}}} = Manifest.read(video)
+    end
+
+    # A name that holds no language still reads as `und`, a translation source for any wanted code.
+    test "translates a lone sidecar whose name holds no language into fra", %{video: video} do
+      ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "fra")
+      source = Path.join(Path.dirname(video), "M.srt")
+      put!(source, @srt)
+      stub_default_track(video, :none)
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:scan, :movies}]
+      assert_received {:read, ^source}
+      assert_received {:translate, "fra"}
+      assert File.read!(Subtitles.sidecar_path(video, "fra")) == @srt
     end
   end
 

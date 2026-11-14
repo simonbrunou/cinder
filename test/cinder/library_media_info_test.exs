@@ -259,87 +259,90 @@ defmodule Cinder.LibraryMediaInfoTest do
 
   @gb 1_000_000_000
 
-  test "stage_movie captures audio + embedded + sidecar languages into the returned quality" do
-    # A *folder* download so the sidecar scan runs (sidecars ship inside a release folder).
-    parent = self()
-    folder = "/dl/M (2020)"
-    source = "#{folder}/M.2020.1080p.mkv"
-    srt = "#{folder}/M.2020.1080p.fr.srt"
-    dest = "#{@lib}/M (2020) {tmdb-99}/M (2020) {tmdb-99}.mkv"
-    sidecar_dest = "#{@lib}/M (2020) {tmdb-99}/M (2020) {tmdb-99}.fr.srt"
-    Mox.set_mox_global()
+  # #1309: a regional name such as `fr-FR` was recorded and placed as `und`.
+  for tail <- ["fr", "fr-FR"] do
+    test "stage_movie captures audio + embedded + sidecar languages into the returned quality (#{tail})" do
+      # A *folder* download so the sidecar scan runs (sidecars ship inside a release folder).
+      parent = self()
+      folder = "/dl/M (2020)"
+      source = "#{folder}/M.2020.1080p.mkv"
+      srt = "#{folder}/M.2020.1080p.#{unquote(tail)}.srt"
+      dest = "#{@lib}/M (2020) {tmdb-99}/M (2020) {tmdb-99}.mkv"
+      sidecar_dest = "#{@lib}/M (2020) {tmdb-99}/M (2020) {tmdb-99}.fr.srt"
+      Mox.set_mox_global()
 
-    # "any" pick → no wanted language → verify_audio adds no probe; capture_media does the one probe.
-    movie = %Movie{
-      title: "M",
-      year: 2020,
-      tmdb_id: 99,
-      file_path: folder,
-      preferred_language: "any"
-    }
+      # "any" pick → no wanted language → verify_audio adds no probe; capture_media does the one probe.
+      movie = %Movie{
+        title: "M",
+        year: 2020,
+        tmdb_id: 99,
+        file_path: folder,
+        preferred_language: "any"
+      }
 
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
 
-    stub(Cinder.Library.FilesystemMock, :find_files, fn ^folder ->
-      {:ok, [{source, 5 * @gb}, {srt, 40_000}]}
-    end)
-
-    stub(Cinder.Library.MediaInfoMock, :probe, fn ^source ->
-      {:ok, %{audio: ["eng", "fre"], subtitles: ["eng"], default_audio: "fre"}}
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :lstat, fn
-      ^source ->
-        {:ok, %File.Stat{size: 5 * @gb, inode: 1}}
-
-      ^sidecar_dest ->
-        {:error, :enoent}
-
-      ^dest ->
-        {:error, :enoent}
-
-      path ->
-        if Cinder.LibraryStubs.candidate_path?(path),
-          do: {:ok, %File.Stat{size: 5 * @gb, inode: 2, major_device: 1}},
-          else: {:error, :enoent}
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn ^dest -> :too_small end)
-
-    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
-
-    # Both the video and the sidecar hardlink go through ln; capture them to prove the sidecar linked.
-    stub(Cinder.Library.FilesystemMock, :ln, fn s, d ->
-      send(parent, {:ln, s, d})
-      :ok
-    end)
-
-    stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
-    # The commit's subtitle fetch marks the recorded sidecar language, which reads the manifest.
-    stub(Cinder.Library.FilesystemMock, :read, fn _ -> {:error, :enoent} end)
-
-    assert {:ok, stage} = Library.stage_movie(movie)
-    assert %{file_path: ^dest, quality: q} = StagedImport.record(stage)
-
-    # The Fetcher's task logs a crash, so the drain runs inside the capture.
-    log =
-      capture_log(fn ->
-        assert :ok = commit!(stage)
-        Cinder.LibraryStubs.await_subtitle_tasks()
+      stub(Cinder.Library.FilesystemMock, :find_files, fn ^folder ->
+        {:ok, [{source, 5 * @gb}, {srt, 40_000}]}
       end)
 
-    refute log =~ "subtitle fetch crashed"
+      stub(Cinder.Library.MediaInfoMock, :probe, fn ^source ->
+        {:ok, %{audio: ["eng", "fre"], subtitles: ["eng"], default_audio: "fre"}}
+      end)
 
-    assert q.audio_languages == ["eng", "fre"]
-    assert q.embedded_subtitles == ["eng"]
-    assert q.sidecar_subtitles == ["fr"]
+      stub(Cinder.Library.FilesystemMock, :lstat, fn
+        ^source ->
+          {:ok, %File.Stat{size: 5 * @gb, inode: 1}}
 
-    # Issue #197: the probe -> quality -> column chain. nil renders identically to "no default
-    # established", so a value dropped anywhere along here would never fail a UI test.
-    assert q.default_audio_language == "fre"
+        ^sidecar_dest ->
+          {:error, :enoent}
 
-    assert_received {:ln, ^srt, ^sidecar_dest}
+        ^dest ->
+          {:error, :enoent}
+
+        path ->
+          if Cinder.LibraryStubs.candidate_path?(path),
+            do: {:ok, %File.Stat{size: 5 * @gb, inode: 2, major_device: 1}},
+            else: {:error, :enoent}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :moviehash_data, fn ^dest -> :too_small end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
+
+      # Both the video and the sidecar hardlink go through ln; capture them to prove the sidecar linked.
+      stub(Cinder.Library.FilesystemMock, :ln, fn s, d ->
+        send(parent, {:ln, s, d})
+        :ok
+      end)
+
+      stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+      # The commit's subtitle fetch marks the recorded sidecar language, which reads the manifest.
+      stub(Cinder.Library.FilesystemMock, :read, fn _ -> {:error, :enoent} end)
+
+      assert {:ok, stage} = Library.stage_movie(movie)
+      assert %{file_path: ^dest, quality: q} = StagedImport.record(stage)
+
+      # The Fetcher's task logs a crash, so the drain runs inside the capture.
+      log =
+        capture_log(fn ->
+          assert :ok = commit!(stage)
+          Cinder.LibraryStubs.await_subtitle_tasks()
+        end)
+
+      refute log =~ "subtitle fetch crashed"
+
+      assert q.audio_languages == ["eng", "fre"]
+      assert q.embedded_subtitles == ["eng"]
+      assert q.sidecar_subtitles == ["fr"]
+
+      # Issue #197: the probe -> quality -> column chain. nil renders identically to "no default
+      # established", so a value dropped anywhere along here would never fail a UI test.
+      assert q.default_audio_language == "fre"
+
+      assert_received {:ln, ^srt, ^sidecar_dest}
+    end
   end
 
   # A French series ('original') episode with its season/series preloaded (what the TvPoller passes).

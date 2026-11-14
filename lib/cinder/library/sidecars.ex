@@ -32,7 +32,10 @@ defmodule Cinder.Library.Sidecars do
   @aliases for {iso1, codes} <- Parser.audio_codes(), code <- codes, into: %{}, do: {code, iso1}
   @names for {iso1, tag} <- Parser.language_tags(), into: %{}, do: {String.downcase(tag), iso1}
 
-  @doc "ISO code from a sidecar filename; flags stripped; unknown/absent -> \"und\"."
+  @doc """
+  ISO code from a sidecar filename; flags stripped; unknown/absent -> "und". A language with a
+  region or script subtag reads as its base language: `fr-FR` reads as `fr`.
+  """
   def language(filename), do: filename |> classify() |> elem(0)
 
   @doc """
@@ -90,7 +93,19 @@ defmodule Cinder.Library.Sidecars do
     end
   end
 
-  defp language_code(token), do: @aliases[token] || @names[token]
+  defp language_code(token), do: base_language(token) || regional_language(token)
+
+  defp base_language(token), do: @aliases[token] || @names[token]
+
+  # A language with one region or script subtag, joined by `-` or `_` (`fr-FR`, `pt_BR`,
+  # `es-419`, `zh-Hant`), reads as its base language (#1309). The subtag is 2 letters, 3 digits
+  # or 4 letters, so a release tag such as `x264-GRP` or `WEB-DL` stays no language.
+  defp regional_language(token) do
+    case Regex.run(~r/\A([^-_]+)[-_](?:[a-z]{2}|[0-9]{3}|[a-z]{4})\z/, token) do
+      [_token, base] -> base_language(base)
+      nil -> nil
+    end
+  end
 
   @doc """
   Sidecar files belonging to `source_video` (stem match, or any sub when the folder holds one

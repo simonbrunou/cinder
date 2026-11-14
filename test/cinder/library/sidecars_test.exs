@@ -138,6 +138,67 @@ defmodule Cinder.Library.SidecarsTest do
     assert mismatches == []
   end
 
+  # #1309: a language with a region or script subtag reads as the base language's ISO 639-1 code,
+  # so the fetch's copy takes it and the import names it as any other sidecar of that language.
+  test "language/1 reads a language with a region or script subtag as the base language" do
+    for {name, language} <- [
+          {"M.fr-FR.srt", "fr"},
+          {"M.fr_FR.srt", "fr"},
+          {"M.fr-CA.srt", "fr"},
+          {"M.pt-BR.srt", "pt"},
+          {"M.pt-br.srt", "pt"},
+          {"M.en-US.srt", "en"},
+          {"M.es-419.srt", "es"},
+          {"M.zh-Hant.srt", "zh"},
+          # The base reads as a lone token does: a 639-2 code or a registry language name.
+          {"M.fre-CA.srt", "fr"},
+          {"M.French-CA.srt", "fr"},
+          {"M.hi-IN.srt", "hi"}
+        ] do
+      assert {name, Sidecars.language(name)} == {name, language}
+    end
+  end
+
+  test "language/1 reads a token that is no language with a subtag as und" do
+    for name <- [
+          "M.x264-GRP.srt",
+          "M.WEB-DL.srt",
+          "M.francais.srt",
+          "M.VF.srt",
+          # A base that reads as no language.
+          "M.eo-FR.srt",
+          "M.vf-FR.srt",
+          # A subtag that is not 2 letters, 3 digits or 4 letters.
+          "M.fr-F.srt",
+          "M.fr-FRA.srt",
+          "M.fr-Hants.srt",
+          "M.fr-12.srt",
+          "M.fr-1234.srt",
+          "M.fr-F1.srt",
+          "M.fr-.srt",
+          "M.-FR.srt",
+          # More than one subtag, or another separator.
+          "M.zh-Hant-TW.srt",
+          "M.fr--FR.srt",
+          "M.fr-_FR.srt",
+          "M.fr FR.srt"
+        ] do
+      assert {name, Sidecars.language(name)} == {name, "und"}
+    end
+  end
+
+  for {name, reading} <- [
+        {"M.pt-BR.sdh.srt", {"pt", ["sdh"]}},
+        {"M.en-US.forced.srt", {"en", ["forced"]}},
+        {"Forced.Entry.1983.1080p.BluRay.x264-GRP.fr-FR.forced.srt", {"fr", ["forced"]}},
+        {"Hi.Mom.2021.1080p.WEB-DL.hi.fr-CA.srt", {"fr", ["hi"]}},
+        {"M.hi-IN.srt", {"hi", []}}
+      ] do
+    test "language/1 and flags/1 read the regional #{name} as #{inspect(reading)}" do
+      assert reading(unquote(name)) == unquote(Macro.escape(reading))
+    end
+  end
+
   test "files/1 returns stem-matching sidecars with languages" do
     dir = "/dl/Movie (2020)"
     src = "#{dir}/Movie (2020).mkv"
@@ -197,6 +258,28 @@ defmodule Cinder.Library.SidecarsTest do
     assert Sidecars.link(src, dest) == [sub_dest]
     # #918 compares the placed paths with the canonical sidecar textually.
     assert sub_dest == Cinder.Subtitles.sidecar_path(dest, "en")
+  end
+
+  # #1309: a regional name was placed as `<dest stem>.und.srt`.
+  test "link/2 places a regional sidecar under its base language" do
+    dir = "/dl/Movie (2020)"
+    src = "#{dir}/Movie (2020).mkv"
+    dest = "/lib/Movie (2020)/Movie (2020).mkv"
+    french_src = "#{dir}/Movie (2020).fr-FR.srt"
+    french_dest = "/lib/Movie (2020)/Movie (2020).fr.srt"
+    portuguese_src = "#{dir}/Movie (2020).pt-BR.sdh.srt"
+    portuguese_dest = "/lib/Movie (2020)/Movie (2020).pt.sdh.srt"
+
+    expect(FilesystemMock, :dir?, fn ^dir -> true end)
+
+    expect(FilesystemMock, :find_files, fn ^dir ->
+      {:ok, [{src, 900}, {french_src, 10}, {portuguese_src, 10}]}
+    end)
+
+    expect(FilesystemMock, :ln, fn ^french_src, ^french_dest -> :ok end)
+    expect(FilesystemMock, :ln, fn ^portuguese_src, ^portuguese_dest -> :ok end)
+
+    assert Sidecars.link(src, dest) == [french_dest, portuguese_dest]
   end
 
   test "files/1 requires a separator boundary so an unpadded E10 sidecar isn't matched to E1" do

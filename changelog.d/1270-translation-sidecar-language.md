@@ -1,9 +1,10 @@
 ### Fixed
 - **With French set as `fr`, a subtitle file whose name Cinder reads as French, such as
   `Movie.fre.srt`, is no longer translated into French, and a subtitle file that fails is passed
-  over for the next one as a translation source (#1270).** This entry assumes each subtitle
-  language is set as the code Cinder reads from a subtitle file's name for that language, such as
-  `fr`, which it reads from `Movie.fre.srt`. With a LibreTranslate URL set, Cinder can fill a
+  over for the next one as a translation source (#1270).** A file's name counts as a wanted
+  language when Cinder reads the same language from the name and from the code set for it, as
+  #1309 describes: with French set as `fr`, `fra` or `french`, `Movie.fre.srt` counts as French.
+  With a LibreTranslate URL set, Cinder can fill a
   missing subtitle by translating a subtitle file beside the video. It does so only when it has
   found none whose name it reads as that language that it can copy. The translation took the first
   `.srt` file listed beside the video that was neither forced nor the subtitle being filled,

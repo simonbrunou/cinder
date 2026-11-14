@@ -614,9 +614,15 @@ defmodule Cinder.Subtitles do
 
   defp same_path?(a, b), do: Path.expand(a) == Path.expand(b)
 
-  # The language match the copy uses. A sidecar whose name holds no language reads as `und`, which
-  # no wanted language equals.
-  defp in_language?({_path, source_language, _flags}, language), do: source_language == language
+  # The language match the copy and the translation source share (#1309). The wanted code is free
+  # text, so its part before the first `-` or `_` is normalized to the ISO 639-1 code that
+  # `Sidecars.language/1` reads, which ignores a subtag too: wanted `fra` or `pt-br` takes
+  # `M.fre.srt` or `M.pt-PT.srt`. A sidecar whose name holds no language reads as `und`, which no
+  # wanted language normalizes to unless it is `und` itself.
+  defp in_language?({_path, source_language, _flags}, language) do
+    [base | _subtag] = String.split(language, ["-", "_"], parts: 2)
+    Language.normalize(base) == source_language
+  end
 
   # The first sidecar in listing order that is in another language and reads, passes the timing
   # check and parses (#1270). One in the wanted language is left out: the copy passed it over, and
