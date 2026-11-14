@@ -88,14 +88,17 @@ defmodule Cinder.Download.Poller do
 
         :ok
 
-      # Nothing to retry — skip; the next tick re-derives. :stale_status means the movie was
-      # cancelled/re-decided while this unit was in flight (the guarded transition skipped the
-      # write); the rest are in-flight intent states.
+      # Not a failed search: skip with no write, and the next tick re-derives. Without the skip,
+      # each can reach the write-back while the row is still in the search pass and count a
+      # strike (`PollerSearchSkipTest`, and `PollerTest` for :intent_backoff):
+      #   :stale_status         the row's status changed under this unit's guarded write
+      #   :intent_backoff       the movie's download intent is waiting out a retry delay
+      #   :download_intent_busy another intent for the movie appeared after start/1 looked
+      #   :intent_completed     the intent start/1 picked up was gone when it acted on it
       {:error, reason}
       when reason in [
              :stale_status,
              :intent_backoff,
-             :cleanup_pending,
              :download_intent_busy,
              :intent_completed
            ] ->
