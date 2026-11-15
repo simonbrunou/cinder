@@ -199,7 +199,11 @@ _Avoid_: upgrade rollback, upgrade cancel
 
 **Failure budget**:
 How many failures of one kind a movie may take in its current phase before Cinder parks,
-re-queues or reverts it.
+re-queues or reverts it. An episode has one too, its search budget: how many fruitless searches
+it may take before the TV sweep parks it (`Episodes.search_budget/0`), such as a sweep search
+that grabs nothing for it, or a grab that finishes, parks or stalls without importing it (an
+operator's cancel spends none). It keeps its own number, apart from a movie's, so changing it
+never changes how many failures a movie may take in any phase.
 _Avoid_: retry limit, max attempts
 
 ### Operator attention

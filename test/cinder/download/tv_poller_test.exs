@@ -3519,7 +3519,7 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.all(Intent) == []
   end
 
-  test "a wanted episode that never finds a release search-parks after max attempts" do
+  test "a wanted episode that never finds a release search-parks once it spends its search budget" do
     {_series, season} = series_tree()
     e1 = episode(season, 1)
     start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
@@ -3553,7 +3553,7 @@ defmodule Cinder.Download.TvPollerTest do
       episode(specials, 0, %{
         classification: :story_special,
         monitored: true,
-        search_attempts: Catalog.max_search_attempts()
+        search_attempts: Catalog.search_budget()
       })
 
     assert special.id in Enum.map(Catalog.wanted_episodes(), & &1.id)
@@ -3561,7 +3561,7 @@ defmodule Cinder.Download.TvPollerTest do
     start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
     assert :ok = TvPoller.poll()
 
-    assert Repo.reload!(special).search_attempts == Catalog.max_search_attempts()
+    assert Repo.reload!(special).search_attempts == Catalog.search_budget()
     assert Repo.all(Intent) == []
     assert Repo.all(Grab) == []
   end

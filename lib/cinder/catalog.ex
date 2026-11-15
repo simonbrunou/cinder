@@ -122,7 +122,7 @@ defmodule Cinder.Catalog do
   defdelegate transition_episode(episode, attrs, opts \\ []), to: Episodes, as: :transition
   defdelegate episode_state(episode), to: Episodes, as: :state
   defdelegate episode_state(episode, today), to: Episodes, as: :state
-  defdelegate max_search_attempts(), to: Episodes
+  defdelegate search_budget(), to: Episodes
 
   ## Episode search
 

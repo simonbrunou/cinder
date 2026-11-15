@@ -32,14 +32,14 @@ defmodule Cinder.Catalog.Episodes do
   alias Cinder.{GuardedWrite, Repo, Settings}
 
   # How many fruitless searches an episode takes before the TV sweep parks it (`:search_parked`).
-  @max_search_attempts 10
+  @search_budget 10
 
-  @doc "Past this many search attempts the TV sweep skips an episode (see `state/2`)."
-  def max_search_attempts, do: @max_search_attempts
+  @doc "At this many search attempts the TV sweep skips an episode (see `state/2`)."
+  def search_budget, do: @search_budget
 
   @doc """
   Derived pipeline state for an episode: a file ⇒ `:available`, an active grab ⇒ `:downloading`,
-  unaired or undated ⇒ `:upcoming`, the sweep gave up (`search_attempts >= max_search_attempts/0`)
+  unaired or undated ⇒ `:upcoming`, the sweep gave up (`search_attempts >= search_budget/0`)
   ⇒ `:search_parked` (a manual Search re-queues it), else `:wanted`.
   """
   def state(%Episode{} = episode, today \\ Settings.household_date()) do
@@ -47,7 +47,7 @@ defmodule Cinder.Catalog.Episodes do
       episode.file_path -> :available
       episode.grab_id -> :downloading
       is_nil(episode.air_date) or Date.compare(episode.air_date, today) == :gt -> :upcoming
-      episode.search_attempts >= @max_search_attempts -> :search_parked
+      episode.search_attempts >= @search_budget -> :search_parked
       true -> :wanted
     end
   end

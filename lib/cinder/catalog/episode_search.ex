@@ -4,7 +4,7 @@ defmodule Cinder.Catalog.EpisodeSearch do
   the wanted set (`wanted_episodes/0`) and its eligibility rules, the operator's manual set, the
   re-queues (`search_episode_now/1`, `search_season_now/1`, the Rehunter's
   `rehunt_parked_episodes/1`), and the `search_attempts` bump with its exhaustion notice. The
-  budget itself is `Cinder.Catalog.Episodes.max_search_attempts/0`.
+  budget itself is `Cinder.Catalog.Episodes.search_budget/0`.
   """
   import Ecto.Query
   require Logger
@@ -195,7 +195,7 @@ defmodule Cinder.Catalog.EpisodeSearch do
     parked =
       Repo.all(
         from([e, s] in wanted_episodes_query(),
-          where: e.search_attempts >= ^Episodes.max_search_attempts() and e.updated_at < ^cutoff,
+          where: e.search_attempts >= ^Episodes.search_budget() and e.updated_at < ^cutoff,
           select: {e.id, s.series_id}
         )
       )
@@ -389,7 +389,7 @@ defmodule Cinder.Catalog.EpisodeSearch do
       Repo.all(
         from e in Episode,
           where:
-            e.id in ^episode_ids and e.search_attempts >= ^Episodes.max_search_attempts() and
+            e.id in ^episode_ids and e.search_attempts >= ^Episodes.search_budget() and
               is_nil(e.file_path) and is_nil(e.grab_id) and e.monitored == true,
           preload: [season: :series]
       )

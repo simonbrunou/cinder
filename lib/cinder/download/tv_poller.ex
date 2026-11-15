@@ -23,7 +23,7 @@ defmodule Cinder.Download.TvPoller do
   budget (a download's blips don't starve its import). An unavailable policy probe preserves the
   content in a durable verification hold at that bound. The search phase backs off per
   `episode.search_attempts`/`updated_at` exactly like the movie poller, and an episode parks
-  (derived `:search_parked`) at `Catalog.max_search_attempts/0` — the crossing is warned +
+  (derived `:search_parked`) at `Catalog.search_budget/0` — the crossing is warned +
   announced by Catalog at the counter's write site, covering every bump path.
   """
   require Logger
@@ -556,7 +556,7 @@ defmodule Cinder.Download.TvPoller do
       Catalog.wanted_episodes()
       |> Enum.reject(
         &(MapSet.member?(pending, &1.id) or
-            &1.search_attempts >= Catalog.max_search_attempts())
+            &1.search_attempts >= Catalog.search_budget())
       )
       |> Enum.filter(&search_due?(&1, retry_after))
       |> Enum.group_by(& &1.season.series.id)

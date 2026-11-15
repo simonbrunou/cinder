@@ -78,7 +78,7 @@ defmodule Cinder.Catalog.RehunterTest do
     end
 
     test "zeroes attempts on a search-parked episode so it re-enters the sweep", %{season: season} do
-      episode = episode_fixture(season, %{search_attempts: Catalog.max_search_attempts()})
+      episode = episode_fixture(season, %{search_attempts: Catalog.search_budget()})
       backdate(Episode, episode.id, @rehunt_after + 1000)
 
       assert Catalog.episode_state(episode) == :search_parked
@@ -90,7 +90,7 @@ defmodule Cinder.Catalog.RehunterTest do
     end
 
     test "leaves a parked episode inside the cooldown alone", %{season: season} do
-      attempts = Catalog.max_search_attempts()
+      attempts = Catalog.search_budget()
       episode = episode_fixture(season, %{search_attempts: attempts})
       backdate(Episode, episode.id, div(@rehunt_after, 2))
 
@@ -100,7 +100,7 @@ defmodule Cinder.Catalog.RehunterTest do
     end
 
     test "leaves an imported or grabbed episode alone", %{season: season} do
-      attempts = Catalog.max_search_attempts()
+      attempts = Catalog.search_budget()
 
       imported =
         episode_fixture(season, %{
@@ -117,7 +117,7 @@ defmodule Cinder.Catalog.RehunterTest do
     end
 
     test "broadcasts the series so open views re-render", %{series: series, season: season} do
-      episode = episode_fixture(season, %{search_attempts: Catalog.max_search_attempts()})
+      episode = episode_fixture(season, %{search_attempts: Catalog.search_budget()})
       backdate(Episode, episode.id, @rehunt_after + 1000)
 
       series_id = series.id

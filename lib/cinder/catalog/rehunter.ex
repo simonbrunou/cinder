@@ -3,10 +3,11 @@ defmodule Cinder.Catalog.Rehunter do
   Periodically re-queues titles the pipeline gave up on, so a request that had no release the week
   it was made isn't dead forever — the household's standing "keep looking" loop.
 
-  Both pollers bound their search retries (`Cinder.Catalog.Episodes.max_search_attempts/0`) and park what never
-  resolves. Parking is the right call *per tick* — hammering an indexer for a release that does not
-  exist yet is pointless — but nothing ever un-parked, so until now the only way back was a human
-  clicking Retry. This sweep is that click, on a timer:
+  Both pollers bound their search retries, a movie by `Cinder.Catalog.MovieLifecycle`'s failure
+  budget and an episode by its search budget (`Cinder.Catalog.Episodes.search_budget/0`), and park
+  what never resolves. Parking is the right call *per tick* — hammering an indexer for a release
+  that does not exist yet is pointless — but nothing ever un-parked, so until now the only way back
+  was a human clicking Retry. This sweep is that click, on a timer:
 
   - **movies** in `:no_match` / `:search_failed` untouched since the cooldown go back to
     `:requested` via `MovieLifecycle.retry/1` (which also clears their `:stalled` blocklist rows).

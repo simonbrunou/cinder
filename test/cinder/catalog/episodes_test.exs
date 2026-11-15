@@ -75,7 +75,7 @@ defmodule Cinder.Catalog.EpisodesTest do
   describe "state/2" do
     test "a monitored aired episode past the search budget is search-parked" do
       season = series_fixture() |> season_fixture()
-      budget = Episodes.max_search_attempts()
+      budget = Episodes.search_budget()
 
       assert Episodes.state(episode_fixture(season, %{search_attempts: budget - 1})) == :wanted
 
