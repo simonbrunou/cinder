@@ -507,7 +507,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
     # "name" is the subgroup's own label ("Season 2", "Specials", …) — absent on the fixture
     # payloads that only need absolute ordering, so it's read loosely (nil, not required) and
     # only consumed by the scene-numbering derivation
-    # (`Cinder.Catalog.SceneNumbering.sync_scene_coordinates_if_current/3`).
+    # (`Cinder.Catalog.SeriesIdentitySync`'s scene coordinates and preview).
     group_name = Map.get(subgroup, "name")
     normalize_items(episodes, &normalize_group_entry(&1, group_name, group_order))
   end

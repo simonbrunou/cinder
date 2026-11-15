@@ -1109,28 +1109,8 @@ defmodule Cinder.Catalog.Grabs do
     end
   end
 
-  defp completed_seasons_for_imported_episodes([]), do: []
-
-  defp completed_seasons_for_imported_episodes(imported_ids) do
-    today = Cinder.Settings.household_date()
-
-    imported_season_ids =
-      from e in Episode,
-        where: e.id in ^imported_ids and not is_nil(e.air_date) and e.air_date <= ^today,
-        select: e.season_id,
-        distinct: true
-
-    from([_episode, season, series] in SeriesCatalog.available_seasons_query(today),
-      where: season.id in subquery(imported_season_ids),
-      select: %{
-        tmdb_id: series.tmdb_id,
-        title: series.title,
-        season_number: season.season_number,
-        poster_path: series.poster_path
-      }
-    )
-    |> Repo.all()
-  end
+  defp completed_seasons_for_imported_episodes(imported_ids),
+    do: SeriesCatalog.available_seasons_among(imported_ids)
 
   @doc """
   Parks a grab: deletes it and releases every linked episode with a `search_attempts` bump (so

@@ -31,6 +31,7 @@ defmodule Cinder.Catalog do
     Profiles,
     SceneNumbering,
     SeriesCatalog,
+    SeriesIdentitySync,
     TitleDeletion
   }
 
@@ -171,7 +172,7 @@ defmodule Cinder.Catalog do
   defdelegate list_episode_coordinates(series), to: Identity, as: :list_coordinates
   defdelegate list_episode_groups(series), to: SceneNumbering
   defdelegate get_episode_group(group_id), to: SceneNumbering
-  defdelegate preview_scene_mapping(group_detail, series), to: SceneNumbering
+  defdelegate preview_scene_mapping(group_detail, series), to: SeriesIdentitySync
   defdelegate set_scene_numbering_group(series, group_id), to: SceneNumbering
   defdelegate set_scene_numbering_group(series, group_id, opts), to: SceneNumbering
   defdelegate preview_scene_offset(series, from, delta), to: SceneNumbering

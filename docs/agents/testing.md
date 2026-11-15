@@ -160,9 +160,12 @@
   `mix test` and a second CI run. `Cinder.CodeHealth.FenceFilesTest` fails when
   `code_health_test.exs` gains a test.
 - A fence matches the scanned language's syntax, not its lines or substrings. An Elixir fence
-  walks the AST from `Code.string_to_quoted/1` (`code_health_test.exs`), a workflow fence parses
-  the YAML with `yaml_elixir`, and `test/code_health/ci_browser_wait_test.exs` tokenizes the
-  Python CI scripts. For a file whose grammar has no parser in the deps and is too large to
+  walks the AST from `Code.string_to_quoted/1` (`code_health_test.exs`). A fence on which modules
+  a module calls walks instead the Erlang abstract code in the module's `.beam` debug info, where
+  the compiler has expanded every alias and import
+  (`test/code_health/series_identity_sync_calls_test.exs`). A workflow fence parses the YAML
+  with `yaml_elixir`, and `test/code_health/ci_browser_wait_test.exs` tokenizes the Python CI
+  scripts. For a file whose grammar has no parser in the deps and is too large to
   copy, such as a Dockerfile, read only the part of the file that holds what the fence checks
   and where each line is one whole statement, and fail on every form there that the reader
   cannot read. `test/code_health/beam_version_pins_test.exs` reads only the lines before the

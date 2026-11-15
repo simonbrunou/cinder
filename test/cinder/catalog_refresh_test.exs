@@ -79,7 +79,7 @@ defmodule Cinder.CatalogRefreshTest do
     {:ok, %{season_number: number, episodes: localized}}
   end
 
-  # Counts calls to sync_series_identity/3's shared episode_identity_lookup/1 query — its SQL
+  # Counts calls to SeriesIdentitySync.sync/2's shared episode_identity_lookup/1 query — its SQL
   # (`SELECT e0."tmdb_episode_id", e0."id" FROM "episodes" ...`) is unique in the codebase, so
   # matching on it distinguishes it from reconcile_tree's own (differently-shaped) episode
   # queries, which always run regardless. Same `:telemetry.attach` idiom as
@@ -306,7 +306,7 @@ defmodule Cinder.CatalogRefreshTest do
   end
 
   # R2 finding 7: when the operator's chosen scene group is also a type-2 Absolute group,
-  # fetch_series_identity must reuse the detail fetch_absolute_groups already made rather than
+  # SeriesIdentitySync.fetch/3 must reuse the detail fetch_absolute_groups already made rather than
   # fetching the identical group a second time — only one `get_episode_group` expectation is set
   # up below, so a regression back to fetching it twice raises here.
   test "refresh_series fetches a scene group that's also a type-2 absolute group only once" do

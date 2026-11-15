@@ -149,7 +149,11 @@ a `defdelegate` in the facade only when a caller outside the catalog needs it.
   - `TitleDeletion`: deleting and cancelling titles, and their audit.
   - `MetadataRefresh`: TMDB metadata and probed media info.
   - `Discovery`: TMDB reads.
-  - `Identity`, `SceneNumbering`: aliases and episode coordinates.
+  - `Identity`: aliases and episode coordinates, for any provider.
+  - `SeriesIdentitySync`: a series' TMDB identity, fetched before the caller's transaction and
+    written inside it. Series creation, `MetadataRefresh` and `SceneNumbering` call it, and it
+    calls none of them (`test/code_health/series_identity_sync_calls_test.exs`).
+  - `SceneNumbering`: the operator's alternate-season pickers.
 
 ## Imports go through the staged import
 

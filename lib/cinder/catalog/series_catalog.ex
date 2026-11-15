@@ -1,13 +1,12 @@
 defmodule Cinder.Catalog.SeriesCatalog do
   @moduledoc """
   Series rows: TMDB-backed creation (`add_series/2`, find-or-create for a requested season),
-  the season/episode tree and its monitoring toggles, season availability, and the
-  identity-sync machinery (TMDB aliases + absolute/scene episode-group coordinates) shared by
-  creation and refresh. What the TV sweep searches for is `Cinder.Catalog.EpisodeSearch`.
-  Changes are announced through `Cinder.Catalog.Events`.
+  the season/episode tree and its monitoring toggles, and season availability. Creation fetches
+  and writes the series' TMDB identity (aliases, absolute and scene episode coordinates) through
+  `Cinder.Catalog.SeriesIdentitySync`. What the TV sweep searches for is
+  `Cinder.Catalog.EpisodeSearch`. Changes are announced through `Cinder.Catalog.Events`.
   """
   import Ecto.Query
-  require Logger
 
   alias Cinder.Catalog.{
     Episode,
@@ -15,12 +14,11 @@ defmodule Cinder.Catalog.SeriesCatalog do
     Events,
     Identity,
     MediaProfiles,
-    SceneNumbering,
     Season,
-    Series
+    Series,
+    SeriesIdentitySync
   }
 
-  alias Cinder.Locales
   alias Cinder.{Repo, Settings}
 
   @doc "Returns the one series owning every supplied episode ID."
@@ -239,13 +237,13 @@ defmodule Cinder.Catalog.SeriesCatalog do
     end
   end
 
-  defp ensure_prepared_series({:new, tmdb_id, attrs, seasons, identity}) do
+  defp ensure_prepared_series({:new, tmdb_id, attrs, fetched}) do
     case get_series_by_tmdb_id(tmdb_id) do
       %Series{} = series ->
         {:ok, series}
 
       nil ->
-        with {:ok, series} <- write_new_series(attrs, seasons, identity) do
+        with {:ok, series} <- write_new_series(attrs, fetched) do
           {:ok, get_series_by_tmdb_id(tmdb_id) || series}
         end
     end
@@ -284,34 +282,32 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   defp create_series(tmdb_id, strategy, preferred, media_profile, profile_id, before_write) do
-    with {:ok, {:new, ^tmdb_id, attrs, seasons, identity}} <-
+    with {:ok, {:new, ^tmdb_id, attrs, fetched}} <-
            prepare_series(tmdb_id, strategy, preferred, media_profile, profile_id) do
-      insert_series(tmdb_id, attrs, seasons, identity, before_write)
+      insert_series(tmdb_id, attrs, fetched, before_write)
     end
   end
 
   defp prepare_series(tmdb_id, strategy, preferred, media_profile, profile_id \\ nil) do
     with {:ok, info} <- tmdb().get_series(tmdb_id),
-         {:ok, seasons} <- fetch_seasons(tmdb_id, info.seasons),
-         seasons = put_episode_localizations(tmdb_id, seasons),
          # A brand-new series has no scene_numbering_group_id yet (create_changeset doesn't
-         # cast it), so there's nothing to pre-fetch here.
-         {:ok, identity} <- fetch_series_identity(tmdb_id, nil) do
+         # cast it), so there's no scene group to pre-fetch here.
+         {:ok, fetched} <- SeriesIdentitySync.fetch(tmdb_id, info.seasons, nil) do
       attrs =
         info
-        |> series_attrs(seasons, strategy, preferred, media_profile)
+        |> series_attrs(fetched.seasons, strategy, preferred, media_profile)
         |> Map.put(:profile_id, profile_id)
 
-      {:ok, {:new, tmdb_id, attrs, seasons, identity}}
+      {:ok, {:new, tmdb_id, attrs, fetched}}
     end
   end
 
-  defp insert_series(tmdb_id, attrs, seasons, identity, before_write) do
+  defp insert_series(tmdb_id, attrs, fetched, before_write) do
     result =
       Repo.transaction(
         fn ->
           with :ok <- before_write.(),
-               {:ok, series} <- write_new_series(attrs, seasons, identity) do
+               {:ok, series} <- write_new_series(attrs, fetched) do
             series
           else
             {:error, reason} -> Repo.rollback(reason)
@@ -340,260 +336,11 @@ defmodule Cinder.Catalog.SeriesCatalog do
     end
   end
 
-  defp write_new_series(attrs, seasons, identity) do
+  defp write_new_series(attrs, fetched) do
     with {:ok, series} <- attrs |> Series.create_changeset() |> Repo.insert(),
-         :ok <- sync_series_identity(series, seasons, identity) do
+         :ok <- SeriesIdentitySync.sync(series, fetched) do
       {:ok, series}
     end
-  end
-
-  # Fetch each season's episodes, short-circuiting on the first TMDB error so a
-  # partial tree is never persisted. Public (not private) — also called from
-  # `Cinder.Catalog.MetadataRefresh.refresh_series/1`.
-  @doc false
-  def fetch_seasons(tmdb_id, season_stubs, locale \\ Locales.canonical()) do
-    result =
-      Enum.reduce_while(season_stubs, {:ok, []}, fn %{season_number: n}, {:ok, acc} ->
-        case tmdb().get_season(tmdb_id, n, locale) do
-          {:ok, season} -> {:cont, {:ok, [season | acc]}}
-          {:error, _} = err -> {:halt, err}
-        end
-      end)
-
-    with {:ok, seasons} <- result, do: {:ok, Enum.reverse(seasons)}
-  end
-
-  @doc false
-  def put_episode_localizations(tmdb_id, seasons) do
-    titles =
-      Enum.reduce(Locales.noncanonical(), %{}, fn locale, acc ->
-        case fetch_seasons(tmdb_id, seasons, locale) do
-          {:ok, localized} ->
-            Map.put(acc, locale, episode_titles(localized))
-
-          {:error, reason} ->
-            Logger.warning(
-              "episode localizations: series #{tmdb_id} locale #{locale} failed: " <>
-                inspect(reason)
-            )
-
-            acc
-        end
-      end)
-
-    Enum.map(seasons, &put_season_localizations(&1, titles))
-  end
-
-  defp put_season_localizations(season, titles) do
-    episodes =
-      Enum.map(season.episodes, fn episode ->
-        Map.put(
-          episode,
-          :localizations,
-          episode_localizations(episode.tmdb_episode_id, titles)
-        )
-      end)
-
-    Map.put(season, :episodes, episodes)
-  end
-
-  defp episode_titles(seasons) do
-    for season <- seasons,
-        episode <- season.episodes,
-        is_binary(episode.title),
-        title = String.trim(episode.title),
-        title != "",
-        into: %{},
-        do: {episode.tmdb_episode_id, title}
-  end
-
-  defp episode_localizations(tmdb_episode_id, titles) do
-    for {locale, by_episode} <- titles,
-        title = Map.get(by_episode, tmdb_episode_id),
-        is_binary(title),
-        into: %{},
-        do: {locale, %{"title" => title}}
-  end
-
-  # `scene_numbering_group_id` is the series' operator-chosen scene group, or `nil` (a
-  # brand-new series, or one with no alternate numbering configured). Its detail is fetched
-  # here — alongside the rest of the identity data — so every TMDB call this function makes
-  # happens before the caller's transaction opens (see
-  # `Cinder.Catalog.SceneNumbering.set_scene_numbering_group/3`'s own pre-transaction fetch for
-  # the interactive-save path). `scene_group_fetched_for` records which group id the detail
-  # belongs to, so the refresh transaction can tell whether a racing save changed the group in
-  # between (`Cinder.Catalog.SceneNumbering.sync_scene_coordinates_if_current/3`). Public (not
-  # private) — also called from `Cinder.Catalog.MetadataRefresh.refresh_series/1`.
-  @doc false
-  def fetch_series_identity(tmdb_id, scene_numbering_group_id) do
-    with {:ok, aliases} <- tmdb().get_series_alternative_titles(tmdb_id),
-         {:ok, groups} <- tmdb().get_episode_groups(tmdb_id),
-         {:ok, absolute_groups} <- fetch_absolute_groups(groups) do
-      {:ok,
-       %{
-         aliases: aliases,
-         absolute_groups: absolute_groups,
-         scene_group_detail: scene_group_detail(absolute_groups, scene_numbering_group_id),
-         scene_group_fetched_for: scene_numbering_group_id
-       }}
-    end
-  end
-
-  # The chosen scene group is sometimes also a type-2 Absolute group `fetch_absolute_groups/1`
-  # just fetched in full above — both call sites hit the identical `get_episode_group` endpoint
-  # for the same id, so the shape matches; reuse it instead of a second, redundant fetch.
-  defp scene_group_detail(absolute_groups, group_id) do
-    case Enum.find(absolute_groups, &(&1.id == group_id)) do
-      nil -> SceneNumbering.fetch_scene_group_detail(group_id)
-      detail -> detail
-    end
-  end
-
-  defp fetch_absolute_groups(groups) do
-    groups
-    |> Enum.filter(&(&1.type == 2))
-    |> Enum.reduce_while({:ok, []}, fn group, {:ok, details} ->
-      case tmdb().get_episode_group(group.id) do
-        {:ok, %{id: id, type: 2} = detail} when id == group.id ->
-          {:cont, {:ok, [detail | details]}}
-
-        {:ok, _mismatched_detail} ->
-          {:halt, {:error, :group_fetch_failed}}
-
-        {:error, _} = error ->
-          {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, details} -> {:ok, Enum.reverse(details)}
-      error -> error
-    end
-  end
-
-  # Public (not private) — also called from `Cinder.Catalog.MetadataRefresh.refresh_series/1`.
-  @doc false
-  def sync_series_identity(series, seasons, identity) do
-    episode_lookup =
-      if needs_episode_lookup?(seasons, identity) do
-        episode_identity_lookup(series.id)
-      else
-        %{}
-      end
-
-    with {:ok, _} <-
-           Identity.replace_provider_aliases(
-             series,
-             "tmdb",
-             "alternative_titles",
-             :inferred,
-             identity.aliases
-           ),
-         :ok <- sync_absolute_coordinates(series, identity.absolute_groups, episode_lookup),
-         :ok <- SceneNumbering.sync_scene_coordinates_if_current(series, identity, episode_lookup),
-         {:ok, _} <- sync_tmdb_classifications(seasons, episode_lookup) do
-      :ok
-    end
-  end
-
-  # The "this series' episodes with a non-nil tmdb_episode_id" lookup shared by
-  # sync_absolute_coordinates/3, `Cinder.Catalog.SceneNumbering`'s scene sync, and
-  # sync_tmdb_classifications/2 — all run back-to-back inside sync_series_identity/3's one
-  # transaction, and nothing between them changes an episode's tmdb_episode_id, so loading it
-  # once (only when needs_episode_lookup?/2 says at least one of them needs it) and threading it
-  # down is simpler than each hand-writing the same query, and one less round trip too. Returns
-  # `%{tmdb_episode_id => episode_id}` directly — none of the readers ever needs more than the
-  # Cinder episode id off it, unlike the preview path's
-  # `Cinder.Catalog.SceneNumbering.episode_lookup_from_tree/1`, which stays a
-  # `%{tmdb_episode_id => %{episode_number:}}` shape instead (that preview only needs the episode
-  # number). Public (not private) — also called from
-  # `Cinder.Catalog.SceneNumbering.set_scene_numbering_group/3`'s interactive save path.
-  @doc false
-  def episode_identity_lookup(series_id) do
-    Repo.all(
-      from e in Episode,
-        join: season in assoc(e, :season),
-        where: season.series_id == ^series_id and not is_nil(e.tmdb_episode_id),
-        select: {e.tmdb_episode_id, e.id}
-    )
-    |> Map.new()
-  end
-
-  # Decides whether sync_series_identity/3's shared episode_identity_lookup/1 query is worth
-  # running at all: an absolute-numbering group to resolve, a scene group whose detail was
-  # fetched, or a season/episode tree with any TMDB-sourced episode to classify. A series with
-  # none of the three needs zero episode-lookup queries.
-  defp needs_episode_lookup?(seasons, identity) do
-    identity.absolute_groups != [] or
-      not is_nil(identity.scene_group_detail) or
-      Enum.any?(seasons, fn season -> Enum.any?(season.episodes, & &1.tmdb_episode_id) end)
-  end
-
-  defp sync_absolute_coordinates(series, absolute_groups, episode_lookup) do
-    details_by_namespace = Map.new(absolute_groups, &{&1.id, &1})
-
-    existing_namespaces =
-      Repo.all(
-        from c in Cinder.Catalog.EpisodeCoordinate,
-          where: c.series_id == ^series.id and c.source == "tmdb" and c.scheme == "absolute",
-          select: c.namespace,
-          distinct: true
-      )
-
-    (existing_namespaces ++ Map.keys(details_by_namespace))
-    |> Enum.uniq()
-    |> Enum.reduce_while(:ok, fn namespace, :ok ->
-      coordinates =
-        details_by_namespace
-        |> Map.get(namespace)
-        |> absolute_coordinate_attrs(episode_lookup)
-
-      case Identity.replace_provider_coordinates(
-             series,
-             "tmdb",
-             namespace,
-             "absolute",
-             coordinates
-           ) do
-        {:ok, _} -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, reason}}
-      end
-    end)
-  end
-
-  defp absolute_coordinate_attrs(nil, _episode_ids), do: []
-
-  defp absolute_coordinate_attrs(group, episode_ids) do
-    entries = Enum.sort_by(group.entries, &{&1.group_order, &1.order})
-
-    if Enum.all?(entries, &Map.has_key?(episode_ids, &1.tmdb_episode_id)) do
-      entries
-      |> Enum.with_index(1)
-      |> Enum.map(fn {entry, absolute_number} ->
-        %{
-          scheme: "absolute",
-          canonical_value: Integer.to_string(absolute_number),
-          precedence: :inferred,
-          episode_ids: [Map.fetch!(episode_ids, entry.tmdb_episode_id)]
-        }
-      end)
-    else
-      []
-    end
-  end
-
-  defp sync_tmdb_classifications(seasons, episode_lookup) do
-    classifications =
-      for season <- seasons,
-          episode <- season.episodes,
-          episode_id = episode_lookup[episode.tmdb_episode_id],
-          not is_nil(episode_id) do
-        {classification, label} =
-          Identity.classify_tmdb_episode(season.season_number, episode.title)
-
-        {episode_id, classification, label}
-      end
-
-    Identity.put_provider_classifications("tmdb", classifications)
   end
 
   defp series_attrs(info, seasons, strategy, preferred, media_profile) do
@@ -877,10 +624,37 @@ defmodule Cinder.Catalog.SeriesCatalog do
     |> MapSet.new()
   end
 
-  # Public (not private) — also called from `Cinder.Catalog.Grabs.finish_grab/3`'s season
-  # availability announce.
-  @doc false
-  def available_seasons_query(today) do
+  @doc """
+  The seasons that hold an aired one of `episode_ids` and are available now, by
+  `available_season_keys/1`'s rule, as `%{tmdb_id:, title:, season_number:, poster_path:}` maps.
+  "Aired" and "available" read one household date. `Cinder.Catalog.Grabs` announces these
+  seasons after an import commits `episode_ids`. It reports each season as it stands now, not
+  whether these episodes are what made it available. Runs no query for `[]`.
+  """
+  def available_seasons_among([]), do: []
+
+  def available_seasons_among(episode_ids) when is_list(episode_ids) do
+    today = Settings.household_date()
+
+    aired_season_ids =
+      from e in Episode,
+        where: e.id in ^episode_ids and not is_nil(e.air_date) and e.air_date <= ^today,
+        select: e.season_id,
+        distinct: true
+
+    from([_episode, season, series] in available_seasons_query(today),
+      where: season.id in subquery(aired_season_ids),
+      select: %{
+        tmdb_id: series.tmdb_id,
+        title: series.title,
+        season_number: season.season_number,
+        poster_path: series.poster_path
+      }
+    )
+    |> Repo.all()
+  end
+
+  defp available_seasons_query(today) do
     from e in Episode,
       join: s in assoc(e, :season),
       join: sr in assoc(s, :series),
@@ -900,7 +674,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   active `grab_id`). Drives the requester-facing "X of Y episodes" indicator on `/my-requests`
   while a season is still filling in — the partial-progress complement to the terminal
   `available_season_keys/0`, which only reports fully-landed seasons. Season 0 (specials) is
-  excluded, matching `available_seasons_query/1`. Pass a `tmdb_id`, or a list of them, to scope
+  excluded, matching `available_season_keys/1`. Pass a `tmdb_id`, or a list of them, to scope
   the read.
   """
   def season_progress_keys(tmdb_id \\ nil) do

@@ -24,7 +24,7 @@ defmodule Cinder.Catalog.MetadataRefresh do
     Movie,
     Season,
     Series,
-    SeriesCatalog
+    SeriesIdentitySync
   }
 
   alias Cinder.Download.IntentEpisode
@@ -43,23 +43,25 @@ defmodule Cinder.Catalog.MetadataRefresh do
   only when they carry no file, grab, import, or operator-owned identity state.
 
   Returns `{:ok, series}`, or `{:error, reason}` if a TMDB fetch fails (short-circuits before any
-  write, mirroring `Cinder.Catalog.SeriesCatalog.create_series/4`).
+  write, mirroring series creation in `Cinder.Catalog.SeriesCatalog.add_series/2`).
   """
   def refresh_series(%Series{} = series) do
     with {:ok, info} <- tmdb().get_series(series.tmdb_id),
-         {:ok, seasons} <- SeriesCatalog.fetch_seasons(series.tmdb_id, info.seasons),
-         seasons = SeriesCatalog.put_episode_localizations(series.tmdb_id, seasons),
-         {:ok, identity} <-
-           SeriesCatalog.fetch_series_identity(series.tmdb_id, series.scene_numbering_group_id) do
-      Repo.transaction(fn -> refresh_current_series(series.id, info, seasons, identity) end)
+         {:ok, fetched} <-
+           SeriesIdentitySync.fetch(
+             series.tmdb_id,
+             info.seasons,
+             series.scene_numbering_group_id
+           ) do
+      Repo.transaction(fn -> refresh_current_series(series.id, info, fetched) end)
       |> finish_series_write()
     end
   end
 
-  # Shared by refresh_series/1 and Cinder.Catalog.SceneNumbering.set_scene_numbering_group/3: a
-  # `Repo.transaction` result whose ok value is the updated `%Series{}` broadcasts once on the
-  # "series" topic and passes through; an error passes through untouched. Small enough to
-  # duplicate rather than share (see the module notes).
+  # A `Repo.transaction` result whose ok value is the updated `%Series{}` broadcasts once on the
+  # "series" topic and passes through; an error passes through untouched.
+  # `Cinder.Catalog.SceneNumbering.set_scene_numbering_group/3` keeps its own copy, small enough
+  # to duplicate rather than share.
   defp finish_series_write({:ok, updated}) do
     Events.series_updated(updated.id)
     {:ok, updated}
@@ -67,13 +69,13 @@ defmodule Cinder.Catalog.MetadataRefresh do
 
   defp finish_series_write({:error, reason}), do: {:error, reason}
 
-  defp refresh_current_series(series_id, info, seasons, identity) do
+  defp refresh_current_series(series_id, info, fetched) do
     case Repo.get(Series, series_id) do
       %Series{} = current ->
         updated = update_series_row(current, info)
-        reconcile_tree(updated, seasons)
+        reconcile_tree(updated, fetched.seasons)
 
-        case SeriesCatalog.sync_series_identity(updated, seasons, identity) do
+        case SeriesIdentitySync.sync(updated, fetched) do
           :ok -> updated
           {:error, reason} -> Repo.rollback(reason)
         end
