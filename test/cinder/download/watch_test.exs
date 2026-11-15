@@ -15,14 +15,27 @@ defmodule Cinder.Download.WatchTest do
   import Cinder.BoundedWalkHelpers
   import Cinder.ConfigCase
 
+  alias Cinder.Books.BookGrab
+  alias Cinder.Catalog.{Grab, Movie}
   alias Cinder.Download.{StallReaper, Watch}
 
   setup :verify_on_exit!
 
   @updated_at ~U[2026-01-01 00:00:00Z]
 
-  defp download(attrs \\ %{}) do
-    Map.merge(%{download_id: "dl-1", download_protocol: :torrent, updated_at: @updated_at}, attrs)
+  # A movie row unless the test names another; the row type picks the content check's kind.
+  defp download(row \\ Movie, attrs \\ %{})
+
+  defp download(%{} = attrs, %{}), do: download(Movie, attrs)
+
+  defp download(row, attrs) do
+    struct!(
+      row,
+      Map.merge(
+        %{download_id: "dl-1", download_protocol: :torrent, updated_at: @updated_at},
+        attrs
+      )
+    )
   end
 
   # Stands in for the kind's metrics writer: reports each write to the test and answers with the
@@ -273,6 +286,89 @@ defmodule Cinder.Download.WatchTest do
 
       log = capture_log(fn -> assert Watch.check(download(), rejected) == :downloading end)
       assert log =~ "dl-1 progress not recorded: :stale_grab"
+    end
+  end
+
+  # #780: the content check counts only the requested kind's media, so the other kind's media no
+  # longer shields an executable. Each row type is judged by its own kind on each of the three
+  # lists the check reads: the client's in flight, the disk walk and a single-file content path.
+  describe "the kind the content check judges a download as" do
+    test "a movie whose only media is an .mp3 is blocked content while downloading" do
+      status({:ok, %{state: :downloading, progress: 0.5, speed: 1_000}})
+      files(["x.mp3", "setup.exe"])
+
+      assert Watch.check(download(Movie), track()) ==
+               {:blocked_content, "download contains setup.exe"}
+
+      refute_received {:tracked, _id, _attrs}
+    end
+
+    test "a TV grab whose only media is an .epub is blocked content while downloading" do
+      status({:ok, %{state: :downloading, progress: 0.5, speed: 1_000}})
+      files(["x.epub", "setup.exe"])
+
+      assert Watch.check(download(Grab), track()) ==
+               {:blocked_content, "download contains setup.exe"}
+    end
+
+    test "a book grab whose only media is an .mkv is blocked content while downloading" do
+      status({:ok, %{state: :downloading, progress: 0.5, speed: 1_000}})
+      files(["x.mkv", "setup.exe"])
+
+      assert Watch.check(download(BookGrab), track()) ==
+               {:blocked_content, "download contains setup.exe"}
+    end
+
+    test "a book grab keeps downloading with a filler .exe beside its book" do
+      for name <- ["x.epub", "x.m4b"] do
+        status({:ok, %{state: :downloading, progress: 0.5, speed: 1_000}})
+        files([name, "RARBG_DO_NOT_MIRROR.exe"])
+
+        assert Watch.check(download(BookGrab), track()) == :downloading, name
+      end
+    end
+
+    test "a video row keeps downloading with a filler .exe beside its video" do
+      for row <- [Movie, Grab] do
+        status({:ok, %{state: :downloading, progress: 0.5, speed: 1_000}})
+        files(["x.mkv", "RARBG_DO_NOT_MIRROR.exe"])
+
+        assert Watch.check(download(row), track()) == :downloading, inspect(row)
+      end
+    end
+
+    # Usenet has no file list in history, so the disk is the only list the kind is read against.
+    test "a finished usenet download is judged on disk by its row's kind" do
+      for {row, verdict} <- [
+            {Movie, {:blocked_content, "download contains setup.exe"}},
+            {Grab, {:blocked_content, "download contains setup.exe"}},
+            {BookGrab, {:completed, "/dl/Release"}}
+          ] do
+        status({:ok, %{state: :completed, progress: 1.0, content_path: "/dl/Release"}}, @usenet)
+        files([], @usenet)
+        disk("/dl/Release", [{"/dl/Release/x.mp3", 40_000_000}, {"/dl/Release/setup.exe", 1}])
+
+        assert Watch.check(download(row, %{download_protocol: :usenet}), track()) == verdict,
+               inspect(row)
+      end
+    end
+
+    # A single-file content path is vetted by its own name; a name read both before and after a
+    # colon carries an executable and one kind's media at once.
+    test "a finished single-file download is judged by its row's kind" do
+      path = "/dl/x.mkv:setup.exe"
+
+      for {row, verdict} <- [
+            {Movie, {:completed, path}},
+            {BookGrab, {:blocked_content, "download contains x.mkv:setup.exe"}}
+          ] do
+        status({:ok, %{state: :completed, progress: 1.0, content_path: path}}, @usenet)
+        files([], @usenet)
+        stub(Cinder.Library.FilesystemMock, :dir?, fn ^path -> false end)
+
+        assert Watch.check(download(row, %{download_protocol: :usenet}), track()) == verdict,
+               inspect(row)
+      end
     end
   end
 

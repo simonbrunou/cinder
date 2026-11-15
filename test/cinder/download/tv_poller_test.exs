@@ -4131,7 +4131,7 @@ defmodule Cinder.Download.TvPollerTest do
       # poller's tick-start read and Download.Watch's blocked-content verdict — the grab (and, via
       # the FK's ON DELETE SET NULL, its episode link) is already gone by the time
       # park_grab_and_remove/1's fence would run. Simulated by deleting the grab from inside the
-      # files/1 stub, the exact point ContentPolicy.vet/2's client I/O sits.
+      # files/1 stub, the exact point ContentPolicy.vet/3's client I/O sits.
       expect(Cinder.Download.ClientMock, :files, fn "hash-tv-fake" ->
         Repo.delete!(ctx.grab)
         {:ok, ["Show.S01E04/Show.S01E04.mkv.lnk"]}

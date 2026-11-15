@@ -10,13 +10,14 @@ defmodule Cinder.Download.Watch do
 
   1. Look up the protocol's client (`Cinder.Download.client_for/1`).
   2. Ask it for the download's status.
-  3. Vet the file list on `:downloading` (`Cinder.Download.ContentPolicy.vet/2`) AND on
-     `:completed` with a path (`ContentPolicy.vet_completed/3`, which also reads the files on disk
-     under that path). Blocked content is small enough to finish between two ticks, so the first
-     status a poller ever sees for it is often `:completed`; vetting only in flight misses exactly
-     that download. A usenet client has no file list for a job already in history, so for usenet
-     the disk is the only list left at that point. When that disk walk times out on a wedged
-     mount, the verdict is `:content_check_timeout` and the download waits for the check.
+  3. Vet the file list on `:downloading` (`Cinder.Download.ContentPolicy.vet/3`) AND on
+     `:completed` with a path (`ContentPolicy.vet_completed/4`, which also reads the files on disk
+     under that path), as video for a movie or a TV grab and as a book for a book grab. Blocked
+     content is small enough to finish between two ticks, so the first status a poller ever sees
+     for it is often `:completed`; vetting only in flight misses exactly that download. A usenet
+     client has no file list for a job already in history, so for usenet the disk is the only
+     list left at that point. When that disk walk times out on a wedged mount, the verdict is
+     `:content_check_timeout` and the download waits for the check.
   4. While `:downloading`, record progress, speed and ETA through the writer, THEN ask the stall
      reaper, on the progress clock that write returned. After an outage longer than the reaper's
      absolute cap, the clock the row carried at tick start is stale by definition, so reading it
@@ -55,17 +56,17 @@ defmodule Cinder.Download.Watch do
 
   require Logger
 
+  alias Cinder.Books.BookGrab
+  alias Cinder.Catalog.{Grab, Movie}
   alias Cinder.Download
   alias Cinder.Download.{ContentPolicy, StallReaper}
   alias Cinder.HTTPPolicy
 
-  @typedoc "An in-flight download row: a movie, a TV grab or a book grab."
-  @type download :: %{
-          required(:download_id) => String.t(),
-          required(:download_protocol) => atom() | nil,
-          required(:updated_at) => DateTime.t(),
-          optional(atom()) => term()
-        }
+  @typedoc """
+  An in-flight download row: a movie, a TV grab or a book grab. The row type picks the kind the
+  content check judges it as (`t:Cinder.Download.ContentPolicy.kind/0`).
+  """
+  @type download :: %Movie{} | %Grab{} | %BookGrab{}
 
   @typedoc "The kind's metrics writer; see the moduledoc."
   @type track :: (download(), map() ->
@@ -90,7 +91,7 @@ defmodule Cinder.Download.Watch do
     Live speed and ETA were cleared through the writer; progress is kept.
   - `:content_check_timeout`: the client reports `:completed` with a path and its file list is
     clean, but the walk of the files on disk timed out on a wedged mount
-    (`ContentPolicy.vet_completed/3`). Live speed and ETA were cleared through the writer;
+    (`ContentPolicy.vet_completed/4`). Live speed and ETA were cleared through the writer;
     progress is kept. A poller holds the download in transit without spending any budget, and the
     next tick checks it again: a download recorded as downloaded is never watched again, so it
     would import without its disk check (#946).
@@ -158,7 +159,7 @@ defmodule Cinder.Download.Watch do
 
       {:ok, %{state: :downloading} = status} ->
         client
-        |> ContentPolicy.vet(download.download_id)
+        |> ContentPolicy.vet(download.download_id, content_kind(download))
         |> vetted(fn -> track_and_reap(download, status, track) end)
 
       {:ok, status} ->
@@ -175,7 +176,7 @@ defmodule Cinder.Download.Watch do
   defp download_error(_status), do: :download_error
 
   defp vet_completed(client, download, path, track) do
-    case ContentPolicy.vet_completed(client, download.download_id, path) do
+    case ContentPolicy.vet_completed(client, download.download_id, path, content_kind(download)) do
       {:error, :timeout} ->
         clear_estimates(download, track)
         :content_check_timeout
@@ -184,6 +185,13 @@ defmodule Cinder.Download.Watch do
         vetted(vetted, fn -> {:completed, path} end)
     end
   end
+
+  # The media set the content check reads is the requested kind's (#780). One clause per row
+  # type and no catch-all: a new row type must choose its kind here rather than be judged as
+  # video.
+  defp content_kind(%Movie{}), do: :video
+  defp content_kind(%Grab{}), do: :video
+  defp content_kind(%BookGrab{}), do: :book
 
   defp vetted({:blocked, detail}, _continue), do: {:blocked_content, detail}
   defp vetted(:ok, continue), do: continue.()

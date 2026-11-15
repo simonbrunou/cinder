@@ -9,11 +9,11 @@ defmodule Cinder.Download.ContentPolicy do
   Checking the file list catches it in the first tick instead, and the release is blocklisted so
   the next-best candidate is grabbed.
 
-  `check/1` is pure: no DB, no HTTP. `vet/2` and `vet_completed/3` are the impure edges — they
+  `check/2` is pure: no DB, no HTTP. `vet/3` and `vet_completed/4` are the impure edges — they
   fetch the list via `Cinder.Download.Client.files/1`, and on completion also from disk, and hand
-  it to `check/1`. A client or a disk that cannot answer yields `:ok`: a check that could not run
+  it to `check/2`. A client or a disk that cannot answer yields `:ok`: a check that could not run
   must never be the thing that kills a download. The one exception is a disk walk that times out
-  on a wedged mount: `vet_completed/3` reports it, and the download waits until the walk runs
+  on a wedged mount: `vet_completed/4` reports it, and the download waits until the walk runs
   (#946).
 
   ## Why the payload must be the *whole* download
@@ -29,25 +29,34 @@ defmodule Cinder.Download.ContentPolicy do
   as `.rar`/`.par2` sets and only become video after unpacking). A fake carries a `.lnk` and a
   `readme.txt` and nothing else, which is exactly what this catches.
 
-  ## Books are media too
+  ## Media depends on the download's kind
 
-  A book format counts as media the way a video does: every format a book importer publishes
-  (`Cinder.Acquisition.BookKind.accepted_formats/1`, so `.epub`, `.azw3`, `.mobi`, `.m4b` and
-  `.mp3` today). The same filler ships next to e-books and audiobooks, and the executable is no
-  more dangerous there: an importer publishes only its accepted formats, so the book reaches the
-  library and the `.exe` stays in the download folder, exactly as it does beside a video (#750).
+  By default, what counts as media is the media of the kind that was requested (`t:kind/0`),
+  plus the archive and parity set (`.rar`, `.par2`, `.zip`, ...) for every kind, since a release
+  of any kind can arrive packed. A configured `media_extensions` replaces all of it (below). The
+  default media of each kind:
 
-  A book format no importer publishes (`.pdf`, `.flac`) does not count. That download can never
-  become an available book, so its executable is the payload.
+  - `:video`, a movie or a TV grab (anime included): the video containers, `.iso`/`.img` and a
+    DVD rip's `.vob`/`.ifo`/`.bup`.
+  - `:book`, an e-book or an audiobook grab: every format a book importer publishes
+    (`Cinder.Acquisition.BookKind.accepted_formats/1`, so `.epub`, `.azw3`, `.mobi`, `.m4b` and
+    `.mp3` today). The two book kinds share one set, so an e-book download whose only media is
+    an `.mp3` still passes here, and its import holds it as `:no_book_file`.
 
-  The check is kind-blind: it sees file names, not what was requested. A movie download whose only
-  "media" is an `.mp3` therefore passes here and downloads whole. The import then refuses it as
-  `:no_video_file`, which parks the movie until an operator retries, where a blocked-content verdict
-  would have removed the job and re-queued the movie on the first tick. No known fake has that
-  shape, and nothing is published either way.
+  The same filler ships next to e-books and audiobooks as next to videos, and the executable is
+  no more dangerous there: an importer publishes only its accepted formats, so the book reaches
+  the library and the `.exe` stays in the download folder, exactly as it does beside a video
+  (#750).
+
+  By default, the other kind's media does not count. A movie download whose only "media" is an
+  `.mp3`, or a book download whose only "media" is an `.mkv`, can never import, so its executable
+  is the payload and the download is blocked on the first file list that names it, the client's
+  or the disk's, instead of reaching import and failing there (#780). A book format no importer
+  publishes (`.pdf`, `.flac`) does not count either, for the same reason.
 
   Override either list per install with
   `config :cinder, #{inspect(__MODULE__)}, blocked_extensions: ~w(.lnk ...), media_extensions: ~w(.mkv ...)`.
+  A configured `media_extensions` is one flat list that replaces the default of every kind.
 
   **On by default** — the shipped `config/config.exs` sets `enabled: true`. (`enabled?/0`'s own
   fallback is `false`, so an install with no config block at all stays off — fail-safe, mirroring
@@ -61,22 +70,34 @@ defmodule Cinder.Download.ContentPolicy do
   # (.rar/.zip/.7z/.par2) — `.zipx` is here because no media release ships one.
   @default_blocked_extensions ~w(.lnk .exe .bat .cmd .com .scr .pif .msi .vbs .js .ps1 .zipx)
 
+  # Anything that could plausibly BE the media of each kind: one of these present means the
+  # download has real content and the blocked file is a companion, not the payload.
+  # .vob/.ifo/.bup are a VIDEO_TS DVD rip's ONLY content type — and the trackers still carrying
+  # DVD rips are exactly the ones that ship `.com`/`.exe` filler, so omitting them blocklists a
+  # whole class of legitimate release.
+  @video_extensions ~w(
+    .mkv .mp4 .avi .m4v .mov .wmv .ts .m2ts .mpg .mpeg .webm .flv .ogm .iso .img .vob .ifo .bup
+  )
+
   # Every format a book importer publishes, read from `BookKind` rather than listed here so it
   # cannot drift from what `EbookSources` and `AudiobookSources` accept.
   @book_extensions for kind <- BookKind.all(),
                        format <- BookKind.accepted_formats(kind),
                        do: ".#{format}"
 
-  # Anything that could plausibly BE the media: playable containers, the archive/parity set a
-  # release arrives in before unpacking, and the book formats. One of these present means the
-  # download has real content and the blocked file is a companion, not the payload.
-  # .vob/.ifo/.bup are a VIDEO_TS DVD rip's ONLY content type — and the trackers still carrying
-  # DVD rips are exactly the ones that ship `.com`/`.exe` filler, so omitting them blocklists a
-  # whole class of legitimate release.
-  @default_media_extensions ~w(
-    .mkv .mp4 .avi .m4v .mov .wmv .ts .m2ts .mpg .mpeg .webm .flv .ogm .iso .img
-    .vob .ifo .bup .rar .zip .7z .par2 .tar .gz .001
-  ) ++ @book_extensions
+  # The archive/parity set a release of any kind arrives in before unpacking.
+  @archive_extensions ~w(.rar .zip .7z .par2 .tar .gz .001)
+
+  @default_media_extensions %{
+    video: @video_extensions ++ @archive_extensions,
+    book: @book_extensions ++ @archive_extensions
+  }
+
+  @typedoc """
+  What a download is for: `:video` for a movie or a TV grab, `:book` for an e-book or an
+  audiobook grab. It picks the media set `check/2` reads.
+  """
+  @type kind :: :video | :book
 
   @doc "Whether the content check runs (`config :cinder, #{inspect(__MODULE__)}, enabled: true`)."
   def enabled?, do: Keyword.get(config(), :enabled, false)
@@ -89,22 +110,29 @@ defmodule Cinder.Download.ContentPolicy do
     do: config() |> Keyword.get(:blocked_extensions, @default_blocked_extensions) |> downcase()
 
   @doc """
-  The extensions that mean a download carries real content, dot-prefixed. A configured list
-  replaces the default whole, book formats included.
+  The extensions that mean a download of `kind` carries real content, dot-prefixed. A configured
+  list replaces the default of every kind whole.
   """
-  def media_extensions,
-    do: config() |> Keyword.get(:media_extensions, @default_media_extensions) |> downcase()
+  @spec media_extensions(kind()) :: [String.t()]
+  def media_extensions(kind) when is_map_key(@default_media_extensions, kind) do
+    config()
+    |> Keyword.get_lazy(:media_extensions, fn -> Map.fetch!(@default_media_extensions, kind) end)
+    |> downcase()
+  end
 
   @doc """
   `{:blocked, detail}` when `filenames` carries a blocked extension **and** nothing that could be
-  the actual media, else `:ok`. `detail` names the offending file for the operator-facing
-  park/re-queue reason. An empty list (a torrent that has not fetched metadata yet) is `:ok`.
+  the actual media of `kind` (`media_extensions/1`), else `:ok`. `detail` names the offending
+  file for the operator-facing park/re-queue reason. An empty list (a torrent that has not
+  fetched metadata yet) is `:ok`.
   """
-  def check(filenames) when is_list(filenames) do
+  @spec check([String.t()], kind()) :: :ok | {:blocked, String.t()}
+  def check(filenames, kind) when is_list(filenames) do
+    media = media_extensions(kind)
     entries = for name <- filenames, is_binary(name), do: {name, extensions(name)}
 
     with {name, _exts} <- Enum.find(entries, &tagged?(&1, blocked_extensions())),
-         false <- Enum.any?(entries, &tagged?(&1, media_extensions())) do
+         false <- Enum.any?(entries, &tagged?(&1, media)) do
       {:blocked, detail(name)}
     else
       _has_real_content_or_nothing_blocked -> :ok
@@ -112,10 +140,10 @@ defmodule Cinder.Download.ContentPolicy do
   end
 
   @doc """
-  Whether `check/1` reads `name` as carrying a blocked extension. `check/1` reads the extension
+  Whether `check/2` reads `name` as carrying a blocked extension. `check/2` reads the extension
   of the file name and of the part before its first colon, each with trailing dots and spaces
   stripped, so `x.exe`, `x.exe.`, `x.exe ` and `x.exe:$DATA` are all blocked names. It answers
-  for the one name only: `check/1` still passes a blocked name that sits beside real media.
+  for the one name only: `check/2` still passes a blocked name that sits beside real media.
   `Cinder.Library.BookArchive` calls it to tell a filler beside a book archive (#903).
   """
   @spec blocked_name?(String.t()) :: boolean()
@@ -151,29 +179,30 @@ defmodule Cinder.Download.ContentPolicy do
   defp downcase(extensions), do: Enum.map(extensions, &String.downcase/1)
 
   @doc """
-  `check/1` over the file list `client` reports for `download_id` — what
-  `Cinder.Download.Watch.check/2` calls on every download still `:downloading`. `:ok` when
-  disabled, when the client has no opinion, and when the client call fails outright.
+  `check/2` over the file list `client` reports for `download_id`, judged as a download of
+  `kind` — what `Cinder.Download.Watch.check/2` calls on every download still `:downloading`.
+  `:ok` when disabled, when the client has no opinion, and when the client call fails outright.
 
   ## ponytail: one client call per in-flight download per tick
 
   Only while enabled, and at household scale that is a handful of local calls (plus one disk walk
-  per completion, through `vet_completed/3`). If a big queue ever makes it measurable, cache the
+  per completion, through `vet_completed/4`). If a big queue ever makes it measurable, cache the
   verdict on the row rather than sampling ticks — a fake has to be caught on the first look, not
   the tenth.
   """
-  def vet(client, download_id) do
-    if enabled?(), do: vet_files(client, download_id), else: :ok
+  @spec vet(module(), String.t(), kind()) :: :ok | {:blocked, String.t()}
+  def vet(client, download_id, kind) do
+    if enabled?(), do: vet_files(client, download_id, kind), else: :ok
   end
 
   @doc """
-  `vet/2` for a download the client reports `:completed`, then `check/1` over the files on disk
-  under `content_path`; the first `{:blocked, detail}` wins. `:ok` when disabled, and when neither
-  list blocks.
+  `vet/3` for a download the client reports `:completed`, then `check/2` over the files on disk
+  under `content_path`, each judged as a download of `kind`; the first `{:blocked, detail}` wins.
+  `:ok` when disabled, and when neither list blocks.
 
   The disk is what the importer is about to read, and for usenet it is the only list left:
   SABnzbd has no file list for a job already in history, so a fake that finishes between two
-  ticks answers `{:ok, []}` to `vet/2`. The client goes first because a client may misreport
+  ticks answers `{:ok, []}` to `vet/3`. The client goes first because a client may misreport
   `content_path` as the whole downloads folder, whose walk finds other downloads' media.
 
   The walk is `Cinder.Library.safe_walk/1`, bounded and confined to the import roots. A walk that
@@ -186,28 +215,28 @@ defmodule Cinder.Download.ContentPolicy do
   watching a download once it is recorded as downloaded, so it would import without its disk
   check (#946).
   """
-  @spec vet_completed(module(), String.t(), String.t()) ::
+  @spec vet_completed(module(), String.t(), String.t(), kind()) ::
           :ok | {:blocked, String.t()} | {:error, :timeout}
-  def vet_completed(client, download_id, content_path) do
+  def vet_completed(client, download_id, content_path, kind) do
     if enabled?() do
-      with :ok <- vet_files(client, download_id), do: vet_disk(content_path)
+      with :ok <- vet_files(client, download_id, kind), do: vet_disk(content_path, kind)
     else
       :ok
     end
   end
 
-  defp vet_disk(content_path) do
+  defp vet_disk(content_path, kind) do
     case Library.safe_walk(content_path) do
-      {:ok, entries} -> entries |> Enum.map(fn {path, _size} -> path end) |> check()
-      {:error, :enotdir} -> check([content_path])
+      {:ok, entries} -> entries |> Enum.map(fn {path, _size} -> path end) |> check(kind)
+      {:error, :enotdir} -> check([content_path], kind)
       {:error, :timeout} -> {:error, :timeout}
       {:error, _reason} -> :ok
     end
   end
 
-  defp vet_files(client, download_id) do
+  defp vet_files(client, download_id, kind) do
     case client.files(download_id) do
-      {:ok, files} -> check(files)
+      {:ok, files} -> check(files, kind)
       {:error, _reason} -> :ok
     end
   end

@@ -369,7 +369,7 @@ The choice sits in `Poller.import_one/1` and `record_import/2` (then
 `BookPoller.import_one/1` and `handle_import_result/3`. Read them before giving a new error its
 path.
 
-The completion content check (`ContentPolicy.vet_completed/3`) holds on a walk timeout too. The
+The completion content check (`ContentPolicy.vet_completed/4`) holds on a walk timeout too. The
 watch answers `:content_check_timeout`, and each poller's `advance/1` keeps the download in
 transit without spending any budget, so the next tick checks it again. `:enotdir`, a single-file
 download, is checked by its own name, and every other walk error has no opinion. The reason: the

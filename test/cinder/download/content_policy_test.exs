@@ -3,58 +3,102 @@ defmodule Cinder.Download.ContentPolicyTest do
   # in-flight poller tick reads.
   use ExUnit.Case, async: false
 
+  import Cinder.ConfigCase, only: [put_config: 2]
+
   alias Cinder.Acquisition.BookKind
   alias Cinder.Download.ContentPolicy
 
-  describe "check/1" do
+  @kinds [:video, :book]
+
+  # The default video containers, listed here rather than read from the module so a container
+  # dropped from the default fails a test.
+  @video_containers ~w(
+    .mkv .mp4 .avi .m4v .mov .wmv .ts .m2ts .mpg .mpeg .webm .flv .ogm .iso .img .vob .ifo .bup
+  )
+
+  describe "check/2" do
     test "blocks a shortcut payload and names the offending file" do
       assert {:blocked, detail} =
-               ContentPolicy.check(["Movie.2024.1080p/Movie.2024.1080p.mkv.lnk"])
+               ContentPolicy.check(["Movie.2024.1080p/Movie.2024.1080p.mkv.lnk"], :video)
 
       assert detail =~ "Movie.2024.1080p.mkv.lnk"
     end
 
-    test "blocks every default extension, case-insensitively" do
-      for ext <- ContentPolicy.blocked_extensions() do
-        assert {:blocked, _} = ContentPolicy.check(["Payload" <> String.upcase(ext)])
+    test "blocks every default extension, case-insensitively, for every kind" do
+      for kind <- @kinds, ext <- ContentPolicy.blocked_extensions() do
+        assert match?(
+                 {:blocked, _},
+                 ContentPolicy.check(["Payload" <> String.upcase(ext)], kind)
+               ),
+               "#{kind} #{ext}"
       end
     end
 
     test "passes an ordinary release" do
       assert :ok =
-               ContentPolicy.check([
-                 "Movie.2024.1080p.BluRay/Movie.2024.1080p.BluRay.mkv",
-                 "Movie.2024.1080p.BluRay/Movie.2024.1080p.BluRay.srt",
-                 "Movie.2024.1080p.BluRay/RARBG.txt"
-               ])
+               ContentPolicy.check(
+                 [
+                   "Movie.2024.1080p.BluRay/Movie.2024.1080p.BluRay.mkv",
+                   "Movie.2024.1080p.BluRay/Movie.2024.1080p.BluRay.srt",
+                   "Movie.2024.1080p.BluRay/RARBG.txt"
+                 ],
+                 :video
+               )
     end
 
     # The false positive that would have cost a household its library: RARBG-lineage releases ship
     # a 0-byte .exe next to the video, and they are a large share of public-tracker content.
     # Blocking on presence alone would re-queue and blocklist every candidate until :no_match.
-    test "passes a real release that merely carries a blocked file alongside the video" do
-      assert :ok =
-               ContentPolicy.check([
-                 "Movie.2024.1080p/Movie.2024.1080p.mkv",
-                 "Movie.2024.1080p/RARBG_DO_NOT_MIRROR.exe",
-                 "Movie.2024.1080p/RARBG.com"
-               ])
+    test "passes a video release that carries a blocked file beside each video container" do
+      for container <- @video_containers do
+        assert ContentPolicy.check(
+                 [
+                   "Movie.2024.1080p/Movie.2024.1080p#{container}",
+                   "Movie.2024.1080p/RARBG_DO_NOT_MIRROR.exe",
+                   "Movie.2024.1080p/RARBG.com"
+                 ],
+                 :video
+               ) == :ok,
+               container
+      end
     end
 
     # #750: the same filler ships next to e-books and audiobooks, and a book format is the media
     # there. Every format a book importer publishes counts, so a new accepted format cannot
     # quietly reopen this false positive.
-    test "passes an e-book or audiobook release that carries a blocked file alongside the book" do
-      for kind <- BookKind.all(), format <- BookKind.accepted_formats(kind) do
-        assert match?(
-                 :ok,
-                 ContentPolicy.check([
+    test "passes an e-book or audiobook release that carries a blocked file beside the book" do
+      for format <- accepted_book_formats() do
+        assert ContentPolicy.check(
+                 [
                    "The Dispossessed/The Dispossessed.#{format}",
                    "The Dispossessed/RARBG_DO_NOT_MIRROR.exe"
-                 ])
-               ),
-               "#{kind} .#{format} release was blocked"
+                 ],
+                 :book
+               ) == :ok,
+               ".#{format} book release was blocked"
       end
+    end
+
+    # #780: the other kind's media never imports, so it does not shield an executable. Before,
+    # one media set served every kind, and these downloaded whole only to fail at import.
+    test "a book format does not shield an executable in a video download" do
+      for format <- accepted_book_formats() do
+        assert match?({:blocked, _}, ContentPolicy.check(["x.#{format}", "setup.exe"], :video)),
+               ".#{format} shielded the executable in a video download"
+      end
+    end
+
+    test "a video container does not shield an executable in a book download" do
+      for container <- @video_containers do
+        assert match?({:blocked, _}, ContentPolicy.check(["x#{container}", "setup.exe"], :book)),
+               "#{container} shielded the executable in a book download"
+      end
+    end
+
+    # The two book kinds share one set (moduledoc, "Media depends on the download's kind").
+    test "a book download counts every book kind's formats as media" do
+      assert :ok = ContentPolicy.check(["x.mp3", "setup.exe"], :book)
+      assert :ok = ContentPolicy.check(["x.epub", "setup.exe"], :book)
     end
 
     # A format no importer publishes is not media: the download could never become an available
@@ -64,67 +108,94 @@ defmodule Cinder.Download.ContentPolicyTest do
           format <- BookKind.fetch!(kind).known_formats -- accepted_book_formats() do
         assert match?(
                  {:blocked, _},
-                 ContentPolicy.check(["The Dispossessed.#{format}", "setup.exe"])
+                 ContentPolicy.check(["The Dispossessed.#{format}", "setup.exe"], :book)
                ),
                "#{kind} .#{format} shielded the executable"
       end
     end
 
     test "still blocks a lone or book-disguised payload" do
-      assert {:blocked, _} = ContentPolicy.check(["The Dispossessed.epub.exe", "readme.txt"])
-      assert {:blocked, _} = ContentPolicy.check(["The Dispossessed (Audiobook).m4b.lnk"])
-      assert {:blocked, _} = ContentPolicy.check(["The Dispossessed/setup.exe"])
+      assert {:blocked, _} =
+               ContentPolicy.check(["The Dispossessed.epub.exe", "readme.txt"], :book)
+
+      assert {:blocked, _} = ContentPolicy.check(["The Dispossessed (Audiobook).m4b.lnk"], :book)
+      assert {:blocked, _} = ContentPolicy.check(["The Dispossessed/setup.exe"], :book)
     end
 
     # Seeing through an ADS suffix must not cost colon-titled releases their extension — reading
     # "Re:Zero ....mkv" as extension-less would stop it counting as media and blocklist it.
     test "a colon in the title neither hides a payload nor disqualifies the media" do
       assert :ok =
-               ContentPolicy.check([
-                 "[SubsPlease] Re:Zero S02E01 (1080p).mkv",
-                 "RARBG_DO_NOT_MIRROR.exe"
-               ])
+               ContentPolicy.check(
+                 ["[SubsPlease] Re:Zero S02E01 (1080p).mkv", "RARBG_DO_NOT_MIRROR.exe"],
+                 :video
+               )
 
-      assert :ok = ContentPolicy.check(["Movie: The Sequel (2024) 1080p BluRay.mkv", "RARBG.com"])
+      assert :ok =
+               ContentPolicy.check(
+                 ["Movie: The Sequel (2024) 1080p BluRay.mkv", "RARBG.com"],
+                 :video
+               )
 
       assert {:blocked, _} =
-               ContentPolicy.check(["Watch full movie in HD: click here.lnk", "readme.txt"])
+               ContentPolicy.check(
+                 ["Watch full movie in HD: click here.lnk", "readme.txt"],
+                 :video
+               )
 
-      assert {:blocked, _} = ContentPolicy.check(["free movie: setup.exe", "info.nfo"])
+      assert {:blocked, _} = ContentPolicy.check(["free movie: setup.exe", "info.nfo"], :video)
+    end
+
+    # The media reading before the colon is the kind's too: `setup.exe:x.mp3` is media in a book
+    # download and the payload in a video one.
+    test "the reading before a colon counts as media only for its kind" do
+      assert :ok = ContentPolicy.check(["x.mp3:setup.exe"], :book)
+      assert {:blocked, _} = ContentPolicy.check(["x.mp3:setup.exe"], :video)
+      assert :ok = ContentPolicy.check(["x.mkv:setup.exe"], :video)
+      assert {:blocked, _} = ContentPolicy.check(["x.mkv:setup.exe"], :book)
     end
 
     test "passes a VIDEO_TS DVD rip, whose only content type is .vob/.ifo" do
       assert :ok =
-               ContentPolicy.check([
-                 "VIDEO_TS/VTS_01_1.VOB",
-                 "VIDEO_TS/VIDEO_TS.IFO",
-                 "VIDEO_TS/VIDEO_TS.BUP",
-                 "RARBG.com"
-               ])
+               ContentPolicy.check(
+                 [
+                   "VIDEO_TS/VTS_01_1.VOB",
+                   "VIDEO_TS/VIDEO_TS.IFO",
+                   "VIDEO_TS/VIDEO_TS.BUP",
+                   "RARBG.com"
+                 ],
+                 :video
+               )
     end
 
-    test "passes an archive-packed release carrying a blocked companion" do
-      assert :ok =
-               ContentPolicy.check([
-                 "Show.S01E01/show.s01e01.rar",
-                 "Show.S01E01/show.s01e01.par2",
-                 "Show.S01E01/Downloaded.from.somewhere.exe"
-               ])
+    test "passes an archive-packed release carrying a blocked companion, for every kind" do
+      for kind <- @kinds, archive <- ~w(.rar .zip .7z .par2 .tar .gz .001) do
+        assert ContentPolicy.check(
+                 ["Release/release#{archive}", "Release/Downloaded.from.somewhere.exe"],
+                 kind
+               ) == :ok,
+               "#{kind} #{archive}"
+      end
     end
 
     # The reason there is no "contains no video file" rule: these are legitimate mid-download
     # states, and a false positive here deletes a good download.
-    test "passes an archive-packed release that has not been unpacked yet" do
-      assert :ok =
-               ContentPolicy.check([
-                 "Show.S01E01/show.s01e01.rar",
-                 "Show.S01E01/show.s01e01.r00",
-                 "Show.S01E01/show.s01e01.par2"
-               ])
+    test "passes an archive-packed release that has not been unpacked yet, for every kind" do
+      for kind <- @kinds do
+        assert ContentPolicy.check(
+                 [
+                   "Show.S01E01/show.s01e01.rar",
+                   "Show.S01E01/show.s01e01.r00",
+                   "Show.S01E01/show.s01e01.par2"
+                 ],
+                 kind
+               ) == :ok,
+               "#{kind}"
+      end
     end
 
     test "passes an empty list — a torrent with no metadata yet has no opinion to give" do
-      assert :ok = ContentPolicy.check([])
+      for kind <- @kinds, do: assert(ContentPolicy.check([], kind) == :ok)
     end
 
     # A bare Path.extname/1 match is defeated by one appended byte, and all three of these still
@@ -138,41 +209,78 @@ defmodule Cinder.Download.ContentPolicyTest do
             "evil.exe:$DATA",
             "evil.lnk:Zone.Identifier"
           ] do
-        assert match?({:blocked, _}, ContentPolicy.check([name])), "#{name} slipped through"
+        assert match?({:blocked, _}, ContentPolicy.check([name], :video)),
+               "#{name} slipped through"
       end
     end
 
     test "an operator's upper-case configured extension still matches" do
-      original = Application.get_env(:cinder, ContentPolicy, [])
-      Application.put_env(:cinder, ContentPolicy, enabled: true, blocked_extensions: [".EXE"])
-      on_exit(fn -> Application.put_env(:cinder, ContentPolicy, original) end)
+      put_config(ContentPolicy, blocked_extensions: [".EXE"])
 
-      assert {:blocked, _} = ContentPolicy.check(["payload.exe"])
+      assert {:blocked, _} = ContentPolicy.check(["payload.exe"], :video)
+    end
+
+    # The flat override replaces the default of every kind, so no existing config changes
+    # meaning: what it lists shields an executable for every kind, and nothing else does.
+    test "a configured media list decides the check for every kind" do
+      put_config(ContentPolicy, media_extensions: [".MP3"])
+
+      for kind <- @kinds do
+        assert ContentPolicy.media_extensions(kind) == [".mp3"]
+        assert ContentPolicy.check(["x.mp3", "setup.exe"], kind) == :ok, "#{kind}"
+        assert match?({:blocked, _}, ContentPolicy.check(["x.mkv", "setup.exe"], kind)), "#{kind}"
+
+        assert match?({:blocked, _}, ContentPolicy.check(["x.epub", "setup.exe"], kind)),
+               "#{kind}"
+      end
+    end
+
+    test "rejects a kind it has no media set for" do
+      assert_raise FunctionClauseError, fn -> ContentPolicy.check(["x.mkv"], :music) end
     end
 
     test "the detail is sanitized — the filename is remote and gets logged and persisted" do
       assert {:blocked, detail} =
-               ContentPolicy.check(["ok.mkv\n2026-08-01 [error] forged log line.exe"])
+               ContentPolicy.check(["ok.mkv\n2026-08-01 [error] forged log line.exe"], :video)
 
       refute detail =~ "\n"
       assert byte_size(detail) < 600
     end
 
     test "ignores a non-binary entry rather than raising" do
-      assert :ok = ContentPolicy.check([nil, 42])
-      assert {:blocked, _} = ContentPolicy.check([nil, "bad.exe"])
+      assert :ok = ContentPolicy.check([nil, 42], :video)
+      assert {:blocked, _} = ContentPolicy.check([nil, "bad.exe"], :video)
     end
 
     # `Cinder.Library.BookArchive`'s companion rule leans on this (#903).
     test "passes a normalised filler beside a .rar set or a .zip" do
-      for name <- ["RARBG_DO_NOT_MIRROR.exe.", "filler.exe ", "filler.exe:$DATA"] do
-        assert ContentPolicy.check(["r.rar", "r.r00", name]) == :ok, name
-        assert ContentPolicy.check(["r.zip", name]) == :ok, name
+      for kind <- @kinds,
+          name <- ["RARBG_DO_NOT_MIRROR.exe.", "filler.exe ", "filler.exe:$DATA"] do
+        assert ContentPolicy.check(["r.rar", "r.r00", name], kind) == :ok, "#{kind} #{name}"
+        assert ContentPolicy.check(["r.zip", name], kind) == :ok, "#{kind} #{name}"
       end
     end
   end
 
-  # #903: the one name's half of `check/1`, which `Cinder.Library.BookArchive` reads.
+  describe "media_extensions/1" do
+    test "holds the video containers and the archives for :video" do
+      media = ContentPolicy.media_extensions(:video)
+
+      assert Enum.all?(@video_containers, &(&1 in media))
+      assert ".rar" in media
+      refute Enum.any?(accepted_book_formats(), &(".#{&1}" in media))
+    end
+
+    test "holds every accepted book format and the archives for :book" do
+      media = ContentPolicy.media_extensions(:book)
+
+      assert Enum.all?(accepted_book_formats(), &(".#{&1}" in media))
+      assert ".rar" in media
+      refute Enum.any?(@video_containers, &(&1 in media))
+    end
+  end
+
+  # #903: the one name's half of `check/2`, which `Cinder.Library.BookArchive` reads.
   describe "blocked_name?/1" do
     test "is true for a blocked extension, plain or normalised" do
       for name <- [
@@ -194,9 +302,10 @@ defmodule Cinder.Download.ContentPolicyTest do
     end
 
     # Both answers come from the one reading, so a lone name with no media reading is blocked
-    # by `check/1` exactly when the predicate says so.
-    test "agrees with check/1 on a lone name" do
-      for name <- [
+    # by `check/2` exactly when the predicate says so.
+    test "agrees with check/2 on a lone name" do
+      for kind <- @kinds,
+          name <- [
             "evil.exe.",
             "evil.exe..",
             "evil.exe ",
@@ -210,20 +319,20 @@ defmodule Cinder.Download.ContentPolicyTest do
             "x.txt:$DATA"
           ] do
         assert ContentPolicy.blocked_name?(name) ==
-                 match?({:blocked, _}, ContentPolicy.check([name])),
-               name
+                 match?({:blocked, _}, ContentPolicy.check([name], kind)),
+               "#{kind} #{name}"
       end
     end
 
     test "reads the configured blocked list" do
-      Cinder.ConfigCase.put_config(ContentPolicy, blocked_extensions: [".APK"])
+      put_config(ContentPolicy, blocked_extensions: [".APK"])
 
       assert ContentPolicy.blocked_name?("x.apk.")
       refute ContentPolicy.blocked_name?("x.exe.")
     end
   end
 
-  describe "vet/2 and vet_completed/3" do
+  describe "vet/3 and vet_completed/4" do
     defmodule CleanClient do
       @moduledoc false
       def files(_id), do: {:ok, ["Movie.mkv"]}
@@ -232,6 +341,11 @@ defmodule Cinder.Download.ContentPolicyTest do
     defmodule FakeClient do
       @moduledoc false
       def files(_id), do: {:ok, ["Movie.mkv.lnk"]}
+    end
+
+    defmodule AudioClient do
+      @moduledoc false
+      def files(_id), do: {:ok, ["x.mp3", "setup.exe"]}
     end
 
     defmodule BrokenClient do
@@ -245,22 +359,25 @@ defmodule Cinder.Download.ContentPolicyTest do
     end
 
     test "reports the verdict for the client's file list" do
-      assert :ok = ContentPolicy.vet(CleanClient, "id")
-      assert {:blocked, _} = ContentPolicy.vet(FakeClient, "id")
+      assert :ok = ContentPolicy.vet(CleanClient, "id", :video)
+      assert {:blocked, _} = ContentPolicy.vet(FakeClient, "id", :video)
+    end
+
+    test "judges the client's file list as the given kind" do
+      assert {:blocked, _} = ContentPolicy.vet(AudioClient, "id", :video)
+      assert :ok = ContentPolicy.vet(AudioClient, "id", :book)
     end
 
     test "a client failure is :ok — a check that could not run must not kill a download" do
-      assert :ok = ContentPolicy.vet(BrokenClient, "id")
+      assert :ok = ContentPolicy.vet(BrokenClient, "id", :video)
     end
 
     test "does not even ask the client, or walk the disk, when disabled" do
-      original = Application.get_env(:cinder, ContentPolicy, [])
-      Application.put_env(:cinder, ContentPolicy, enabled: false)
-      on_exit(fn -> Application.put_env(:cinder, ContentPolicy, original) end)
+      put_config(ContentPolicy, enabled: false)
 
-      assert :ok = ContentPolicy.vet(ExplodingClient, "id")
+      assert :ok = ContentPolicy.vet(ExplodingClient, "id", :video)
       # No filesystem stub: a walk would raise Mox.UnexpectedCallError.
-      assert :ok = ContentPolicy.vet_completed(ExplodingClient, "id", "/dl/Movie")
+      assert :ok = ContentPolicy.vet_completed(ExplodingClient, "id", "/dl/Movie", :video)
     end
   end
 

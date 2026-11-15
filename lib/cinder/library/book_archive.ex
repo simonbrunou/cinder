@@ -34,9 +34,9 @@ defmodule Cinder.Library.BookArchive do
   Rule 2 follows the download content check. It reads the extension of the file name and of the
   part before the first colon, each with trailing dots and spaces stripped, so
   `RARBG_DO_NOT_MIRROR.exe.`, `x.exe ` and `x.exe:$DATA` (an alternate data stream) are a filler
-  `.exe` to it, and `ContentPolicy.check/1` passes them beside a `.rar` set or a `.zip`, which
-  its default `media_extensions/0` counts as media. Their plain extensions (`.`, `.exe `,
-  `.exe:$data`) are ones neither resolver publishes. The guard keeps a name such as
+  `.exe` to it, and `ContentPolicy.check/2` passes them beside a `.rar` set or a `.zip`, which
+  its default `media_extensions/1` counts as media for every kind. Their plain extensions (`.`,
+  `.exe `, `.exe:$data`) are ones neither resolver publishes. The guard keeps a name such as
   `x.exe:y.epub` or `x.exe:y.flac` refused: its plain extension is one a resolver acts on, and an
   other-audio file must never be silently dropped (#504). The guard narrows rule 2 only: an
   install that blocks `.flac` itself makes `x.exe:y.flac` a companion under rule 1, as it makes
