@@ -108,6 +108,7 @@ defmodule Cinder.Catalog do
   defdelegate get_single_series_for_episode_ids(episode_ids), to: SeriesCatalog
   defdelegate set_episode_monitored(episode, monitored?), to: SeriesCatalog
   defdelegate set_season_monitored(season, monitored?), to: SeriesCatalog
+  defdelegate clear_library_check(season), to: SeriesCatalog
   defdelegate set_series_monitor_strategy(series, strategy), to: SeriesCatalog
   defdelegate list_episodes_with_file(), to: SeriesCatalog
   defdelegate list_episodes_with_file(series_id), to: SeriesCatalog

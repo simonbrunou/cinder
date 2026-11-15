@@ -221,6 +221,11 @@ defmodule Cinder.Requests.WatchlistSync do
       {:ok, _request} ->
         mark_synced(user, entry_key(entry))
 
+      # The media server already holds the whole season (#720). Marked like a filed request, so
+      # the sync does not ask again on every tick.
+      {:error, :season_available} ->
+        mark_synced(user, entry_key(entry))
+
       # Quota reached, a racing manual request, a TMDB hiccup: nothing is marked, so the entry
       # stays on the watchlist and the next tick retries it once the cause clears.
       {:error, reason} ->

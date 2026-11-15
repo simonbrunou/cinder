@@ -211,6 +211,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
          {:ok, series} <- apply_requested_media(series, media_profile, preferred),
          %Season{} = season <- season_in(series, season_number),
          {:ok, _season} <- write_season_monitored(season, true),
+         :ok <- arm_library_check(season),
          {:ok, updated} <- mark_series_monitored(series) do
       {:ok, updated}
     else
@@ -731,6 +732,34 @@ defmodule Cinder.Catalog.SeriesCatalog do
       unless monitored?, do: lift_unmonitored_anime_hold(season.series_id)
       {:ok, season}
     end
+  end
+
+  # A request approval arms the season's library check (#720): the TV sweep first adopts the
+  # season's files already under the TV roots (`Cinder.Library.SeasonAdoption`), so it does not
+  # download them again. A direct write, like the monitor flags: the approval's struct may be
+  # stale, and `change/2` would skip a value equal to it.
+  defp arm_library_check(%Season{id: id}) do
+    Repo.update_all(from(s in Season, where: s.id == ^id),
+      set: [library_check_armed_at: DateTime.utc_now(:second)]
+    )
+
+    :ok
+  end
+
+  @doc """
+  Clears the library check `season` was armed with (#720). A compare-and-swap on the arming time
+  the caller read, so an approval that armed the season again meanwhile keeps its own check.
+  Returns `:ok` either way.
+  """
+  def clear_library_check(%Season{library_check_armed_at: nil}), do: :ok
+
+  def clear_library_check(%Season{id: id, library_check_armed_at: armed_at}) do
+    Repo.update_all(
+      from(s in Season, where: s.id == ^id and s.library_check_armed_at == ^armed_at),
+      set: [library_check_armed_at: nil]
+    )
+
+    :ok
   end
 
   defp write_season_monitored(season, monitored?) do

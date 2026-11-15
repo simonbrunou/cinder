@@ -1,7 +1,9 @@
 defmodule Cinder.Library.Adoption do
   @moduledoc """
   Discovers unmanaged files under the configured library roots and adopts
-  operator-confirmed matches into the catalog.
+  operator-confirmed matches into the catalog. The TV sweep adopts a requested season's
+  unambiguous files without an operator through `Cinder.Library.SeasonAdoption`, which reuses
+  this module's name parsing and title-and-year rule (#720).
 
   `scan/0` only reads the filesystem, TMDB, and catalog. All persisted movie and
   episode paths are written through the Catalog transition choke-points.
@@ -482,7 +484,10 @@ defmodule Cinder.Library.Adoption do
     end
   end
 
-  defp exact_match(results, title, year) do
+  # The one search result with the folder's title and year, else `:ambiguous`. Also the
+  # title-and-year rule of `Cinder.Library.SeasonAdoption` (#720).
+  @doc false
+  def exact_match(results, title, year) do
     case Enum.filter(results, &(same_title?(&1.title, title) and &1.year == year)) do
       [match] -> {:ok, match}
       _zero_or_many -> :ambiguous
@@ -491,7 +496,8 @@ defmodule Cinder.Library.Adoption do
 
   defp same_title?(left, right), do: normalize_title(left) == normalize_title(right)
 
-  defp normalize_title(title) do
+  @doc false
+  def normalize_title(title) do
     title
     |> String.normalize(:nfd)
     |> String.downcase()
@@ -500,7 +506,8 @@ defmodule Cinder.Library.Adoption do
 
   defp top_candidates(results), do: Enum.take(results, @candidate_limit)
 
-  defp parse_directory(name) do
+  @doc false
+  def parse_directory(name) do
     {base, provider_tag} = parse_provider_tag(name)
 
     case Regex.run(@title_year, base, capture: :all_but_first) do
@@ -540,7 +547,8 @@ defmodule Cinder.Library.Adoption do
   defp tagged_tmdb_id({:tmdb_id, id}), do: id
   defp tagged_tmdb_id(_tag), do: nil
 
-  defp parse_episode_file(path) do
+  @doc false
+  def parse_episode_file(path) do
     parsed = Parser.parse(Path.basename(path))
 
     if is_integer(parsed.season) and is_list(parsed.episodes) and parsed.episodes != [] do
@@ -1022,7 +1030,9 @@ defmodule Cinder.Library.Adoption do
 
   defp adoption_profile(_candidate_or_destination_profile), do: :auto
 
-  defp managed_paths do
+  # Every file a movie or episode already holds, expanded.
+  @doc false
+  def managed_paths do
     movie_paths = Catalog.list_movies() |> Enum.flat_map(&Movie.file_paths/1)
     episode_paths = Catalog.list_episodes_with_file() |> Enum.flat_map(&Episode.file_paths/1)
 

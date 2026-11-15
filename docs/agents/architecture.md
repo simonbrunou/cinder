@@ -316,11 +316,14 @@ Every call a poller makes has a bound:
   runs under coreutils `timeout --kill-after`, with `ionice` and `nice` between `timeout` and the
   interpreter (#954).
 - Archive extraction carries entry-count and expanded-size ceilings.
-- Five directory walks go through `Cinder.Library.BoundedWalk.run/3`, a supervised task with a
+- Seven directory walks go through `Cinder.Library.BoundedWalk.run/3`, a supervised task with a
   deadline that answers `{:error, :timeout}`: `Cinder.Library.safe_walk/1`, which every importer
   and the completion content check run (30 s); `Sidecars.files/1` (30 s); each library root's
   walk and identity snapshot in `Adoption.scan/0` (5 min: the walk's 100,000-entry cap at two
-  reads of about 1 ms per entry); and, in `Download.OrphanFolders`, each import root's listing
+  reads of about 1 ms per entry); in `SeasonAdoption.check/2`, which the TV sweep runs before it
+  first searches a requested season, each TV root's top-level listing and the walk of the show's
+  folders under it, with each file's `source_file/4` check (30 s each, keyed by the TV root);
+  and, in `Download.OrphanFolders`, each import root's listing
   (30 s: at most one read per entry with no entry cap, so some 30,000 entries) and each job
   folder's survey, which `clear/3` shares with its `lstat` of the folder (5 min: the survey's
   100,000-entry cap at two reads per entry). The adoption and orphan-folder scans run off the

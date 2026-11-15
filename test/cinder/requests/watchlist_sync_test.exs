@@ -301,6 +301,40 @@ defmodule Cinder.Requests.WatchlistSyncTest do
     assert [%Request{target_type: "season", season_number: 1}] = Requests.list_for_user(user)
   end
 
+  # #720: a season the media server holds in full is refused at filing. The sync marks it like a
+  # filed request, so the next tick does not ask for it again.
+  test "a watchlisted season the server holds in full files nothing and is marked synced" do
+    user = opted_in_user(user_fixture())
+
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+      {:ok,
+       %{
+         tmdb_id: 1399,
+         title: "Game of Thrones",
+         year: 2011,
+         seasons: [%{season_number: 1, episode_count: 10}, %{season_number: 2, episode_count: 10}]
+       }}
+    end)
+
+    Repo.insert!(%Cinder.Catalog.MediaServerSeason{
+      tmdb_id: 1399,
+      season_number: 1,
+      episode_count: 10,
+      item_id: "plex:77"
+    })
+
+    expect(PlexAuthMock, :watchlist, fn _token -> {:ok, [entry(1399, type: "show")]} end)
+
+    sync!()
+
+    assert [%Request{season_number: 2}] = Requests.list_for_user(user)
+
+    assert Repo.exists?(
+             from e in SyncedWatchlistEntry,
+               where: e.user_id == ^user.id and e.tmdb_id == 1399 and e.season_number == 1
+           )
+  end
+
   test "an undecryptable stored token disables that user's sync instead of looping on it" do
     user = opted_in_user(user_fixture())
 

@@ -405,6 +405,41 @@ defmodule CinderWeb.ApiControllerTest do
       assert Repo.aggregate(Request, :count) == 0
     end
 
+    # #720: a season the media server holds in full is refused with a named conflict.
+    test "POST /requests refuses a season the media server holds in full", %{
+      conn: conn,
+      key: key
+    } do
+      _admin = admin_fixture()
+
+      stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+        {:ok,
+         %{
+           tmdb_id: 1399,
+           title: "GoT",
+           year: 2011,
+           seasons: [%{season_number: 1, episode_count: 10}]
+         }}
+      end)
+
+      Repo.insert!(%Cinder.Catalog.MediaServerSeason{
+        tmdb_id: 1399,
+        season_number: 1,
+        episode_count: 10,
+        item_id: "plex:77"
+      })
+
+      assert conn
+             |> post_json(key, ~p"/api/v1/requests", %{
+               target_type: "season",
+               target_id: 1399,
+               season_number: 1
+             })
+             |> json_response(409) == %{"error" => "season_available"}
+
+      assert Repo.aggregate(Request, :count) == 0
+    end
+
     test "rejects unknown and wrong-kind profile ids without writes", %{conn: conn, key: key} do
       _admin = admin_fixture()
       tv_profile = hd(Catalog.list_profiles(:tv))

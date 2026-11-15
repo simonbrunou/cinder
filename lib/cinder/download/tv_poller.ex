@@ -9,7 +9,9 @@ defmodule Cinder.Download.TvPoller do
      A clean grab closes normally; transient FS errors are bounded-retried, and content with no
      usable video is parked so its episodes re-search.
   3. **search** — sweeps `wanted_episodes`, skipping search-parked and backed-off episodes, then
-     searches Standard series by season and Anime series by stable episode IDs.
+     searches Standard series by season and Anime series by stable episode IDs. A season a
+     request approval armed is first checked against the TV library roots
+     (`Cinder.Library.SeasonAdoption`), so the episodes already there are adopted, not searched.
 
   Holds no in-flight state: every tick re-derives its work from the DB, so it recovers cleanly
   after a crash/restart — the same OTP payoff the movie poller proves. State and the download
@@ -38,6 +40,8 @@ defmodule Cinder.Download.TvPoller do
   @default_interval 5_000
   @search_retry_after 60
   @max_attempts 10
+  @library_checks_per_tick 2
+  @library_check_give_up_s 3_600
 
   use Cinder.Download.PollerSkeleton, log_prefix: "tv poller"
 
@@ -548,16 +552,102 @@ defmodule Cinder.Download.TvPoller do
   defp search_wanted(retry_after) do
     pending = Download.pending_episode_ids()
 
-    Catalog.wanted_episodes()
-    |> Enum.reject(
-      &(MapSet.member?(pending, &1.id) or
-          &1.search_attempts >= Catalog.max_search_attempts())
-    )
-    |> Enum.filter(&search_due?(&1, retry_after))
-    |> Enum.group_by(& &1.season.series.id)
-    |> Enum.each(fn {series_id, episodes} ->
-      isolate("series #{series_id}", fn -> search_series(episodes) end)
+    _checks =
+      Catalog.wanted_episodes()
+      |> Enum.reject(
+        &(MapSet.member?(pending, &1.id) or
+            &1.search_attempts >= Catalog.max_search_attempts())
+      )
+      |> Enum.filter(&search_due?(&1, retry_after))
+      |> Enum.group_by(& &1.season.series.id)
+      |> Enum.reduce(0, &search_series_after_check/2)
+
+    :ok
+  end
+
+  defp search_series_after_check({series_id, episodes}, checks) do
+    {episodes, checks} = check_library_first(series_id, episodes, checks)
+
+    if episodes != [],
+      do: isolate("series #{series_id}", fn -> search_series(episodes) end)
+
+    checks
+  end
+
+  # A season a request approval armed is checked against the TV library roots before its first
+  # search, so the episodes already there are adopted, not downloaded again (#720). One check per
+  # series covers all its armed seasons, and at most `@library_checks_per_tick` series run one per
+  # tick: each check reads the mount, up to 30 s per read. A season left over waits, unsearched, for
+  # a later tick. A check that holds keeps its seasons unsearched until it finishes, or until
+  # `@library_check_give_up_s` after the approval, when they are searched without it.
+  defp check_library_first(series_id, episodes, checks) do
+    armed =
+      episodes
+      |> Enum.map(& &1.season)
+      |> Enum.uniq_by(& &1.id)
+      |> Enum.filter(& &1.library_check_armed_at)
+
+    cond do
+      armed == [] ->
+        {episodes, checks}
+
+      checks >= @library_checks_per_tick ->
+        {without_seasons(episodes, armed), checks}
+
+      true ->
+        series = hd(episodes).season.series
+        numbers = Enum.map(armed, & &1.season_number)
+
+        result =
+          isolate("library check for series #{series_id}", fn ->
+            Library.SeasonAdoption.check(series, numbers)
+          end)
+
+        {settle_library_check(result, series_id, episodes, armed), checks + 1}
+    end
+  end
+
+  defp settle_library_check({:done, adopted}, _series_id, episodes, armed) do
+    Enum.each(armed, &Catalog.clear_library_check/1)
+    Enum.reject(episodes, &(&1.id in adopted))
+  end
+
+  defp settle_library_check(held, series_id, episodes, armed) do
+    # `isolate/2` logs a raise and returns `:ok`, which holds like any other unfinished check.
+    reason =
+      case held do
+        {:hold, reason} -> reason
+        _raised -> :check_raised
+      end
+
+    {expired, waiting} = Enum.split_with(armed, &library_check_expired?/1)
+
+    Enum.each(expired, fn season ->
+      Logger.warning(
+        "tv library check for series #{series_id} season #{season.season_number} gave up: " <>
+          "#{HTTPPolicy.sanitize_log(reason)}; searching it without the check"
+      )
+
+      Catalog.clear_library_check(season)
     end)
+
+    if waiting != [] do
+      warn_throttled(
+        {:library_check, series_id},
+        "tv library check for series #{series_id} held: #{HTTPPolicy.sanitize_log(reason)}"
+      )
+    end
+
+    without_seasons(episodes, waiting)
+  end
+
+  defp library_check_expired?(season),
+    do:
+      DateTime.diff(DateTime.utc_now(), season.library_check_armed_at) >= @library_check_give_up_s
+
+  defp without_seasons(episodes, seasons) do
+    ids = MapSet.new(seasons, & &1.id)
+    Enum.reject(episodes, &MapSet.member?(ids, &1.season.id))
   end
 
   defp search_series(episodes) do

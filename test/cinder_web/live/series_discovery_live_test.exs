@@ -803,6 +803,22 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     assert Cinder.Requests.list_for_user(user) == []
   end
 
+  # #720: the page hides Request on a season the server holds in full; a forged event still
+  # reaches `Requests.create_request/2`, which refuses it.
+  test "a forged request for a season the server holds in full is refused", %{conn: conn} do
+    stub_season_episode_counts()
+    {:ok, :replaced} = MediaServerSeasons.replace([server_season(1, 10)])
+    user = Cinder.AccountsFixtures.user_fixture()
+    {:ok, lv, _} = live(log_in_user(conn, user), ~p"/series/tmdb/1399")
+    refute has_element?(lv, ~s(button[phx-value-season="1"]))
+
+    render_click(lv, "request_season", %{"season" => "1"})
+    render_async(lv)
+
+    assert has_element?(lv, "#flash-info", "Season 1 is already on the media server.")
+    assert Cinder.Requests.list_for_user(user) == []
+  end
+
   test "renders a More like this rail of recommended series linking to their season pickers", %{
     conn: conn
   } do

@@ -283,6 +283,10 @@ defmodule CinderWeb.ApiController do
   defp api_error(conn, :quota_exceeded), do: json_error(conn, :conflict, "quota_exceeded")
   defp api_error(conn, :not_pending), do: json_error(conn, :conflict, "not_pending")
 
+  # The media server already holds the whole season (#720): a conflict with the library's state,
+  # which the same call cannot get past.
+  defp api_error(conn, :season_available), do: json_error(conn, :conflict, "season_available")
+
   # A conflict, not a bad request: the payload is fine and will be accepted once an operator
   # clears the hold. 422 would tell an automation to fix its request and retry forever.
   defp api_error(conn, :target_held), do: json_error(conn, :conflict, "target_held")

@@ -7,7 +7,7 @@ defmodule Cinder.Requests do
   alias Cinder.Books
   alias Cinder.Books.Work
   alias Cinder.Catalog
-  alias Cinder.Catalog.Profile
+  alias Cinder.Catalog.{MediaServerSeasons, Profile}
   alias Cinder.GuardedWrite
   alias Cinder.LibraryKind
   alias Cinder.Notifier
@@ -219,6 +219,10 @@ defmodule Cinder.Requests do
   A target type no approval can create is refused with `{:error, :unsupported_target}` before any
   other check, so no requester path writes a row that would sit pending with no admin able to
   approve it (#770).
+
+  A season the media server's inventory holds in full (`MediaServerSeasons.coverage/3` reads
+  `:complete`) is refused with `{:error, :season_available}` and writes no row (#720). The check
+  needs TMDB's series answer, so a season request goes through when TMDB does not answer.
   """
   def create_request(%User{} = user, attrs) do
     with {:ok, adapter} <- Approval.adapter(attrs),
@@ -300,15 +304,41 @@ defmodule Cinder.Requests do
 
     case result do
       {:ok, info} ->
-        {:ok,
-         attrs
-         |> Map.put(:title, info.title)
-         |> Map.put(:localizations, Map.get(info, :localizations, %{}))}
+        with :ok <- refuse_available_season(attrs, info) do
+          {:ok,
+           attrs
+           |> Map.put(:title, info.title)
+           |> Map.put(:localizations, Map.get(info, :localizations, %{}))}
+        end
 
+      # With no TMDB answer there is no total to judge the server's count against, so a season
+      # request goes through: the refusal below is a backstop for the page's hidden Request
+      # button, not the only guard against a duplicate (#720).
       {:error, _} ->
         {:ok, Map.put(attrs, :localizations, %{})}
     end
   end
+
+  # A season the media server holds in full against TMDB's `episode_count` is refused (#720). An
+  # airing season holding every aired episode reads `:up_to_date`, not `:complete`, and stays
+  # requestable so Cinder can monitor the episodes still to come.
+  defp refuse_available_season(
+         %{target_type: "season", target_id: tmdb_id, season_number: number},
+         info
+       )
+       when is_integer(number) do
+    case Enum.find(MediaServerSeasons.for_series(tmdb_id), &(&1.season_number == number)) do
+      %{episode_count: count} when is_integer(count) ->
+        if MediaServerSeasons.coverage(info, number, count) == :complete,
+          do: {:error, :season_available},
+          else: :ok
+
+      _not_on_server ->
+        :ok
+    end
+  end
+
+  defp refuse_available_season(_attrs, _info), do: :ok
 
   defp year_of(%Date{year: year}), do: year
   defp year_of(nil), do: nil

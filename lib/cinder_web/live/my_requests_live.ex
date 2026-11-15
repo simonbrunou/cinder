@@ -208,6 +208,14 @@ defmodule CinderWeb.MyRequestsLive do
         gettext("You've reached your request limit. Wait for an earlier request to finish.")
       )
 
+  defp request_again_result(socket, title, {:error, :season_available}),
+    do:
+      put_flash(
+        socket,
+        :info,
+        gettext("%{title} is already on the media server.", title: title)
+      )
+
   defp request_again_result(socket, title, {:error, _reason}),
     do: put_flash(socket, :error, gettext("Couldn't request %{title}. Try again.", title: title))
 

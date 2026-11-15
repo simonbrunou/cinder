@@ -7529,3 +7529,13 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "The file at this book's library path changed, or another import was using that path, while Cinder was importing it."
 msgstr ""
+
+#: lib/cinder_web/live/my_requests_live.ex
+#, elixir-autogen, elixir-format
+msgid "%{title} is already on the media server."
+msgstr ""
+
+#: lib/cinder_web/live/series_discovery_live.ex
+#, elixir-autogen, elixir-format
+msgid "Season %{number} is already on the media server."
+msgstr ""

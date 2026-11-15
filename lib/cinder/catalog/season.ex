@@ -9,6 +9,9 @@ defmodule Cinder.Catalog.Season do
   schema "seasons" do
     field :season_number, :integer
     field :monitored, :boolean, default: true
+    # Set when a request approval monitors the season; the TV sweep checks the TV library roots
+    # for the season's files before its first search, then clears it (#720).
+    field :library_check_armed_at, :utc_datetime
     belongs_to :series, Series
     has_many :episodes, Episode
 

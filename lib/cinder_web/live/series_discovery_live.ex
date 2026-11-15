@@ -180,6 +180,14 @@ defmodule CinderWeb.SeriesDiscoveryLive do
            gettext("You've reached your request limit. Wait for an earlier request to finish.")
          )}
 
+      {:error, :season_available} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :info,
+           gettext("Season %{number} is already on the media server.", number: season_number)
+         )}
+
       # Only the duplicate-pending unique constraint means "already requested"; any
       # other changeset failure is a real error, not a reassuring info toast.
       {:error, %Ecto.Changeset{} = cs} ->

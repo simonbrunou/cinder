@@ -237,6 +237,49 @@ defmodule CinderWeb.MyRequestsLiveTest do
     assert Enum.any?(requests, &(&1.id == req.id and &1.status == :denied))
   end
 
+  # #720: a season the server came to hold in full since its denial is refused on Request again.
+  test "Request again on a season the server now holds in full says so and files nothing", %{
+    conn: conn
+  } do
+    user = Cinder.AccountsFixtures.user_fixture()
+    admin = Cinder.AccountsFixtures.admin_fixture()
+
+    {:ok, req} =
+      Requests.create_request(user, %{
+        target_type: "season",
+        target_id: 1399,
+        season_number: 1,
+        title: "GoT"
+      })
+
+    {:ok, _} = Requests.deny_request(req, admin, "not now")
+
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+      {:ok,
+       %{
+         tmdb_id: 1399,
+         title: "GoT",
+         year: 2011,
+         seasons: [%{season_number: 1, episode_count: 10}]
+       }}
+    end)
+
+    Cinder.Repo.insert!(%Cinder.Catalog.MediaServerSeason{
+      tmdb_id: 1399,
+      season_number: 1,
+      episode_count: 10,
+      item_id: "plex:77"
+    })
+
+    {:ok, lv, _html} = live(log_in_user(conn, user), ~p"/my-requests")
+    lv |> element("#request-again-#{req.id}") |> render_click()
+    render_async(lv)
+
+    assert has_element?(lv, "#flash-info", "is already on the media server.")
+    assert [%{id: id, status: :denied}] = Requests.list_for_user(user)
+    assert id == req.id
+  end
+
   describe "a book row is not a movie row" do
     setup do
       id = Integer.to_string(System.unique_integer([:positive]))
