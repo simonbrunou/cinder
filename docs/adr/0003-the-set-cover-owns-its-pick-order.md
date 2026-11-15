@@ -49,18 +49,32 @@ does in the first pass, and bands a whole-season pack by the season's count only
   `season_episode_count` to arm the retry while the upgrade sweep passed `pack_episode_count` to
   its first pass: two names, two effects, for one fact.
 - Leaving the language rank out of the cover until a season keeps untagged releases. Every pool
-  the release judge hands the cover today is language-uniform (`:applied` keeps only matches,
-  `:fell_back` keeps no match, and `:off` and an anime policy rank every release 0), so the rank
-  changes no pick yet. Without it the judge's movie-only gate would still exist because of the
-  cover's order.
+  the release judge handed the cover before #882 was language-uniform (`:applied` kept only
+  matches, `:fell_back` kept no match, and `:off` and an anime policy rank every release 0), so
+  the rank changed no pick yet. Without it the judge's movie-only gate would still have existed
+  because of the cover's order.
 
 ## Consequences
 
-The judge still keeps untagged releases for movies only, now as a product choice. Keeping them for
-a season would let an untagged pack fill the episodes the tagged releases leave, and would move a
-pool of untagged and wrong-tagged releases from `:fell_back` to `:applied`, dropping the
-wrong-tagged ones. #882 decides it; opening the gate is one guard in
-`ReleaseJudge.language_stage/3`.
+With the cover owning the language rank, #882 opened the gate: under a soft "original" pick the
+judge keeps untagged releases for a TV season as it does for a movie
+(`ReleaseJudge.language_stage/3`). An untagged pack now fills the episodes the matching releases
+leave, including an episode no matching release in the pool can cover, which used to wait as
+long as any matching release of the season was listed. A pool of untagged and wrong-tagged releases
+moves from `:fell_back` to `:applied` and drops the wrong-tagged ones, where a wrong-tagged pack
+used to win a tie against an untagged one by input order. The relaxation still doesn't apply to
+the strict picks (french, dual) or to the anime episode guard.
+
+The upgrade sweep judges its season list with the same guard (`Acquisition.best_releases/4`), so
+it now can grab an untagged release for a held episode whose file carries no tag matching the
+pick, when `Upgrade.candidate?/4` ranks the release better, even when the pool also holds a
+match. For a non-English target and a held file whose tag matches it, `candidate?/4` ranks an
+untagged release a language downgrade, so the sweep skips an untagged single for it. (For an
+English target an untagged release already matched, before #882 too, and quality decides.) A
+release covering several episodes is grabbed when `candidate?/4` accepts any one of them; the
+import's arbitration then decides each held file. Under the sweep's `full_claim_only` an
+untagged whole-season pack still can't fill one episode a matching single leaves, since it must
+claim every episode it carries.
 
 `pack_episode_count` still means two things: the season's episode count, which the cover and the
 panel's season verdict read (`Scorer.verdict_for_season/4`, #836), and the count a pack must claim

@@ -215,9 +215,58 @@ defmodule Cinder.Acquisition.ReleaseJudgeTest do
       assert [_kept] = judged.kept
     end
 
-    # The #191 relaxation is movie-only (ADR 0003, #882): the TV pool never keeps untagged
-    # releases.
-    test "a TV season drops the untagged release a movie would keep" do
+    # #882: a season keeps untagged releases under a soft "original" pick as a movie does, and
+    # the set-cover ranks them below a tagged match (ADR 0003), so the untagged pack fills only
+    # the episode no FRENCH release covers.
+    test "a TV season keeps the untagged release a movie would keep, for what tags leave" do
+      single = release("Serie.S01E01.FRENCH", language: "FRENCH", season: 1, episodes: [1])
+      pack = release("Serie.S01.1080p", season: 1)
+
+      judged =
+        ReleaseJudge.judge([single, pack], {:series, %Series{title: "Série"}, 1, [1, 2]},
+          preferred_language: "original",
+          original_language: "fr"
+        )
+
+      assert judged.language == :applied
+      assert judged.kept == [single, pack]
+      assert audio(judged) == %{"Serie.S01E01.FRENCH" => :match, "Serie.S01.1080p" => :assumed}
+      assert ReleaseJudge.pick(judged) == {:ok, [{single, [1]}, {pack, [2]}]}
+    end
+
+    # The next tick wants only E02: the FRENCH single can't cover it, so it no longer starves E02
+    # of the untagged pack.
+    test "a TV season grabs the untagged pack for an episode no tagged release covers" do
+      single = release("Serie.S01E01.FRENCH", language: "FRENCH", season: 1, episodes: [1])
+      pack = release("Serie.S01.1080p", season: 1)
+
+      judged =
+        ReleaseJudge.judge([single, pack], {:series, %Series{title: "Série"}, 1, [2]},
+          preferred_language: "original",
+          original_language: "fr"
+        )
+
+      assert ReleaseJudge.pick(judged) == {:ok, [{pack, [2]}]}
+    end
+
+    # Before #882 this pool fell back and the ITALIAN pack won the tie by input order.
+    test "a TV season drops a wrong-tagged pack for an untagged one under a soft pick" do
+      italian = release("Serie.S01.ITALIAN", language: "ITALIAN", season: 1)
+      pack = release("Serie.S01.1080p", season: 1)
+
+      judged =
+        ReleaseJudge.judge([italian, pack], {:series, %Series{title: "Série"}, 1, [1, 2]},
+          preferred_language: "original",
+          original_language: "fr"
+        )
+
+      assert judged.language == :applied
+      assert judged.kept == [pack]
+      assert audio(judged) == %{"Serie.S01.ITALIAN" => :mismatch, "Serie.S01.1080p" => :assumed}
+      assert ReleaseJudge.pick(judged) == {:ok, [{pack, [1, 2]}]}
+    end
+
+    test "a strict french pick still drops an untagged season release" do
       judged =
         ReleaseJudge.judge(
           [
@@ -225,10 +274,11 @@ defmodule Cinder.Acquisition.ReleaseJudgeTest do
             release("Serie.S01.1080p", season: 1)
           ],
           {:series, %Series{title: "Série"}, 1, [1]},
-          preferred_language: "original",
+          preferred_language: "french",
           original_language: "fr"
         )
 
+      assert judged.language == :applied
       assert audio(judged) == %{"Serie.S01.FRENCH" => :match, "Serie.S01.1080p" => :mismatch}
     end
 

@@ -193,23 +193,30 @@ defmodule CinderWeb.ManualSearchComponentTest do
     assert html =~ "sr-only"
   end
 
-  # `:assumed` is the release judge's word for an untagged release a movie pool kept under a soft
-  # pick (#191): not a match, but not a rejection either. Which rows carry which fact is the
-  # judge's to decide (`Cinder.Acquisition.ReleaseJudgeTest`); the panel only says it.
+  # `:assumed` is the release judge's word for an untagged release a movie or season pool kept
+  # under a soft pick (#191, #882): not a match, but not a rejection either. Which rows carry which
+  # fact is the judge's to decide (`Cinder.Acquisition.ReleaseJudgeTest`); the panel only says it.
   test "an assumed release says why it is kept without a warning" do
-    html =
-      render_panel(%{
-        mode: :movie,
-        target: %Movie{id: 1, status: :requested, imdb_id: "tt1", title: "Guru"},
-        results: [
-          row(%Release{title: "Guru.2025.1080p.WEB.H264-FW", protocol: :torrent}, :ok, :assumed)
-        ]
-      })
+    targets = [
+      {:movie, %Movie{id: 1, status: :requested, imdb_id: "tt1", title: "Guru"}},
+      {:tv, %Series{id: 1, title: "Guru", media_profile: :standard}}
+    ]
 
-    assert html =~ "untagged"
-    refute html =~ "badge-warning"
-    refute html =~ "Doesn&#39;t match"
-    assert html =~ "assumed to be the original audio"
+    for {mode, target} <- targets do
+      html =
+        render_panel(%{
+          mode: mode,
+          target: target,
+          results: [
+            row(%Release{title: "Guru.S01.1080p.WEB.H264-FW", protocol: :torrent}, :ok, :assumed)
+          ]
+        })
+
+      assert html =~ "untagged", inspect(mode)
+      refute html =~ "badge-warning", inspect(mode)
+      refute html =~ "Doesn&#39;t match", inspect(mode)
+      assert html =~ "assumed to be the original audio", inspect(mode)
+    end
   end
 
   test "the audio-pick badge stays neutral when no pick is in force" do

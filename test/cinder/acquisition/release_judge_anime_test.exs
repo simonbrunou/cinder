@@ -383,6 +383,22 @@ defmodule Cinder.Acquisition.ReleaseJudgeAnimeTest do
       assert row(judged, untagged.title).dropped_at == :language
       assert row(judged, untagged.title).audio == :mismatch
     end
+
+    # #882 opened the soft-pick relaxation for the movie guards and the series guard only.
+    test "with no anime policy a soft original pick still drops an untagged episode release" do
+      french = episode_release("[Group] Show S01E01 [1080p] FRENCH")
+      untagged = episode_release("[Group] Show S01E02 [1080p]")
+
+      judged =
+        judge_episodes([french, untagged],
+          preferred_language: "original",
+          original_language: "fr"
+        )
+
+      assert judged.language == :applied
+      assert Enum.map(judged.kept, & &1.title) == [french.title]
+      assert row(judged, untagged.title).audio == :mismatch
+    end
   end
 
   describe "anime episode verdicts" do

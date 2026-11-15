@@ -32,12 +32,14 @@ defmodule Cinder.Acquisition.ReleaseJudge do
      keeps nothing, so the movie parks visibly. A soft one (original, any) falls back to the
      survivors and drops none: the parser reads the language from the whole name, and a title
      word ("The Italian Job" → ITALIAN) must not strand a title under the default pick. The
-     movie guards keep an untagged release under a soft pick, ranked below a tagged match
-     (`Scorer.rank_key/2` is `Scorer.select/2`'s whole sort key, so it wins only when nothing
-     tagged survives the band). A season doesn't. The set-cover would rank it the same way
-     (`Scorer.select_for/4`), but keeping it changes which releases a season grabs, a product
-     decision (ADR 0003, #882). Under an anime policy the stage is off: the policy judges audio
-     from release evidence, not the name's tag.
+     movie guards and the series guard keep an untagged release under a soft pick whose target
+     isn't English (for English it already matches), ranked below a tagged match:
+     `Scorer.rank_key/2` is `Scorer.select/2`'s whole sort key, so it wins only
+     when nothing tagged survives the band, and the set-cover's greedy step ranks the language
+     term ahead of coverage (`Scorer.select_for/4`), so within one of its passes an untagged
+     release covers only the episodes no tagged match in that pass's band covers (ADR 0003,
+     #882). That relaxation doesn't apply to the anime episode guard. Under an anime policy the
+     stage is off: the policy judges audio from release evidence, not the name's tag.
   4. **Mapping**, anime episodes and standard seasons. An anime release that doesn't resolve to
      wanted stable episode ids, or whose mapping snapshot can't be frozen, is dropped: a grab
      could link no episode. A season release with an alternate-numbered coordinate that resolves
@@ -71,7 +73,7 @@ defmodule Cinder.Acquisition.ReleaseJudge do
     `Cinder.Acquisition.Anime.movie_verdict/2` and `episode_verdict/2` (policy, quality, group
     wait).
   - `audio`: what the language stage decided. `:match` when the release's tag satisfies the pick,
-    at any stage. `:assumed` for an untagged release a movie pool kept. `:mismatch` for a release
+    at any stage. `:assumed` for an untagged release a movie or season pool kept. `:mismatch` for a release
     the language stage dropped. nil for a release dropped before that stage, when the pick fell
     back, and on every row when no pick is in force (`language: :off`).
   - `covers_wanted`: for the `{:series, ...}` guard, whether the release covers any still-wanted
@@ -219,8 +221,11 @@ defmodule Cinder.Acquisition.ReleaseJudge do
     if anime_policy?(guard, opts) or is_nil(Language.target(preferred, original)) do
       {:off, candidates}
     else
-      # Movie-only by product choice (see the Language stage above).
-      filtered = Language.filter(candidates, preferred, original, keep_untagged: movie?(guard))
+      # The movie guards and the series guard keep untagged releases (see the Language stage
+      # above); the anime episode guard doesn't.
+      filtered =
+        Language.filter(candidates, preferred, original, keep_untagged: keeps_untagged?(guard))
+
       language_outcome(candidates, filtered, Language.strict?(preferred))
     end
   end
@@ -235,7 +240,7 @@ defmodule Cinder.Acquisition.ReleaseJudge do
   defp client?(_release, nil), do: true
   defp client?(release, protocols), do: release.protocol in protocols
 
-  defp movie?(guard), do: elem(guard, 0) in @movie_guards
+  defp keeps_untagged?(guard), do: elem(guard, 0) in [:series | @movie_guards]
 
   defp dropped_at(release, survivors_by_stage) do
     Enum.find_value(survivors_by_stage, fn {stage, survivors} ->

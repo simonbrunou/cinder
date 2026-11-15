@@ -1043,6 +1043,92 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     end
   end
 
+  # #882: under a soft "original" pick a season's release list keeps untagged releases, so the
+  # upgrade sweep's cover can hand an untagged release the episode a matching one leaves.
+  # `Upgrade.candidate?/4` then decides on the held file's language. (A whole-season pack can't
+  # fill that gap here: under `full_claim_only` it must claim every episode it carries.)
+  describe "an untagged release under a soft original pick" do
+    setup do
+      series =
+        series_fixture(%{
+          tvdb_id: 882,
+          title: "Brigade",
+          monitor_strategy: :all,
+          original_language: "fr",
+          preferred_language: "original"
+        })
+
+      %{season: season_fixture(series)}
+    end
+
+    defp held_episodes(season, language) do
+      for n <- 1..2 do
+        episode_fixture(season, %{
+          episode_number: n,
+          file_path: "/lib/Brigade/S01E0#{n}.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000,
+          imported_language: language
+        })
+      end
+    end
+
+    defp offer_french_and_untagged do
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 882, "Brigade", 1 ->
+        {:ok,
+         [
+           release("Brigade.S01E01.FRENCH.1080p.WEB-DL-GRP", %{size: 2_000_000_000}),
+           release("Brigade.S01E02.1080p.WEB-DL-GRP", %{size: 2_000_000_000})
+         ]}
+      end)
+
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+        send(test_pid, {:grabbed, release.title})
+        {:ok, "brigade-#{System.unique_integer([:positive])}"}
+      end)
+    end
+
+    defp grabbed_titles(acc \\ []) do
+      receive do
+        {:grabbed, title} -> grabbed_titles([title | acc])
+      after
+        0 -> Enum.sort(acc)
+      end
+    end
+
+    test "skips an untagged single for a held FRENCH episode", ctx do
+      [e1, e2] = held_episodes(ctx.season, "FRENCH")
+      offer_french_and_untagged()
+
+      poll()
+
+      assert grabbed_titles() == ["Brigade.S01E01.FRENCH.1080p.WEB-DL-GRP"]
+      assert Repo.get!(Episode, e1.id).grab_id
+      assert Repo.get!(Episode, e2.id).grab_id == nil
+    end
+
+    # A held file with no tag, or another language's, ties the untagged release on language, so
+    # quality decides.
+    for held <- [nil, "ITALIAN"] do
+      test "takes an untagged single it out-ranks for a held #{inspect(held)} episode", ctx do
+        [e1, e2] = held_episodes(ctx.season, unquote(held))
+        offer_french_and_untagged()
+
+        poll()
+
+        assert grabbed_titles() == [
+                 "Brigade.S01E01.FRENCH.1080p.WEB-DL-GRP",
+                 "Brigade.S01E02.1080p.WEB-DL-GRP"
+               ]
+
+        assert Repo.get!(Episode, e1.id).grab_id
+        assert Repo.get!(Episode, e2.id).grab_id
+      end
+    end
+  end
+
   # #520: adoption (filesystem/Radarr/Sonarr scan, or migration) leaves `imported_resolution`,
   # `imported_size`, `imported_source` and `imported_language` all nil even though the row holds a
   # real file. `Upgrade.candidate?/4`'s nil-baseline shortcut used to treat that as "no established

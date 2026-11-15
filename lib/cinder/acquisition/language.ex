@@ -16,10 +16,9 @@ defmodule Cinder.Acquisition.Language do
   target and nothing else. That is the fix for the "untagged assumed to be the
   original" bug — a foreign dub the parser couldn't tag no longer *matches* a
   non-English title's "original". The one relaxation (see `keep?/3`, opt-in via
-  `filter/4`'s `:keep_untagged`): a soft `"original"` pick on a movie still *keeps*
-  untagged releases in the pool, ranked below every tagged
-  match, because non-English scene groups routinely publish untagged
-  original-audio releases. `"any"` / an unknown original disables the filter. The
+  `filter/4`'s `:keep_untagged`): a soft `"original"` pick on a movie or a TV season still
+  *keeps* untagged releases in the pool, ranked below every tagged match, because non-English
+  scene groups routinely publish untagged original-audio releases. `"any"` / an unknown original disables the filter. The
   code↔tag table is derived from `Cinder.Acquisition.Parser` so the two can never drift.
   """
   alias Cinder.Acquisition.Parser
@@ -103,7 +102,8 @@ defmodule Cinder.Acquisition.Language do
   # survived the band (and the import-time MediaInfo check parks a provably wrong-language grab
   # when ffprobe is configured). The set-covers rank it the same way, ahead of coverage
   # (`Scorer.select_for/4`). It stays opt-in because the relaxation changes what a caller grabs;
-  # the release judge decides which pools take it (`ReleaseJudge.language_stage/3`).
+  # the release judge decides which pools take it: a movie's and a TV season's, not an anime
+  # episode search's (`ReleaseJudge.language_stage/3`).
   defp keep?(%Release{language: language}, _target, true) when language in [nil, ""], do: true
   defp keep?(release, target, _keep_untagged), do: satisfies?(release, target)
 

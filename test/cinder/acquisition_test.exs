@@ -1409,10 +1409,9 @@ defmodule Cinder.AcquisitionTest do
       assert :no_match = Acquisition.best_releases(series(), 2, [5], mappings: mappings)
     end
 
-    test "keeps the TV language gate strict about untagged releases" do
-      # The #191 relaxation is movie-only (ADR 0003, #882). Here the language stage and the
-      # cover's language rank both keep the confirmed-FRENCH singles; the next test isolates the
-      # language stage.
+    test "the cover takes confirmed-FRENCH singles over an untagged pack the season keeps" do
+      # Since #882 the season's language stage keeps the untagged pack under a soft "original"
+      # pick, so the cover's language rank alone takes the FRENCH singles (ADR 0003).
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
         {:ok,
          [
@@ -1431,9 +1430,9 @@ defmodule Cinder.AcquisitionTest do
       assert chosen |> Enum.map(fn {r, _cov} -> r.language end) == ["FRENCH", "FRENCH"]
     end
 
-    # The cover would take the untagged pack for the episode the FRENCH single leaves, so only the
-    # language stage dropping it keeps E02 waiting for a FRENCH release.
-    test "a season's language stage drops the untagged pack the cover would fill a gap with" do
+    # #882: the season keeps the untagged pack, and the cover fills the episode the FRENCH single
+    # leaves with it instead of leaving E02 waiting for a FRENCH release.
+    test "a season's cover fills the episode the FRENCH single leaves with the untagged pack" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
         {:ok,
          [
@@ -1442,7 +1441,7 @@ defmodule Cinder.AcquisitionTest do
          ]}
       end)
 
-      assert {:ok, [{%Release{language: "FRENCH"}, [1]}]} =
+      assert {:ok, [{%Release{language: "FRENCH"}, [1]}, {%Release{language: nil}, [2]}]} =
                Acquisition.best_releases(series(), 1, [1, 2],
                  preferred_language: "original",
                  original_language: "fr"
