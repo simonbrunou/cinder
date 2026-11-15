@@ -10,6 +10,8 @@ defmodule Cinder.Settings.Setting do
 
   import Ecto.Changeset
 
+  @type t :: %__MODULE__{}
+
   schema "settings" do
     field :key, :string
     field :value, :string

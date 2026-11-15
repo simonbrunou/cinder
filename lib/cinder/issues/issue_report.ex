@@ -15,6 +15,8 @@ defmodule Cinder.Issues.IssueReport do
 
   def categories, do: @categories
 
+  @type t :: %__MODULE__{}
+
   schema "issue_reports" do
     field :target_type, :string
     field :target_id, :integer

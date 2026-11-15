@@ -14,6 +14,8 @@ defmodule Cinder.Requests.Request do
   @target_types ["movie", "series", "season", "episode", "book"]
   @book_media_kinds LibraryKind.books()
 
+  @type t :: %__MODULE__{}
+
   schema "requests" do
     field :target_type, :string
     field :target_id, :integer

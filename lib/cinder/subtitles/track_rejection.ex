@@ -29,6 +29,8 @@ defmodule Cinder.Subtitles.TrackRejection do
 
   @type check :: :timing | :srt
 
+  @type t :: %__MODULE__{}
+
   schema "subtitle_track_rejections" do
     field :moviehash, :string
     field :track_index, :integer

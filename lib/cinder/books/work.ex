@@ -5,6 +5,8 @@ defmodule Cinder.Books.Work do
 
   alias Cinder.Books.{BookTarget, Credit, Edition, Identifier, SeriesMembership}
 
+  @type t :: %__MODULE__{}
+
   schema "book_works" do
     field :title, :string
     field :original_title, :string

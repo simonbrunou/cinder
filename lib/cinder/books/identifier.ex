@@ -5,6 +5,8 @@ defmodule Cinder.Books.Identifier do
 
   alias Cinder.Books.{Author, Edition, Work}
 
+  @type t :: %__MODULE__{}
+
   schema "book_identifiers" do
     belongs_to :author, Author
     belongs_to :work, Work

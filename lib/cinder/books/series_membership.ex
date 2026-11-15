@@ -5,6 +5,8 @@ defmodule Cinder.Books.SeriesMembership do
 
   alias Cinder.Books.Work
 
+  @type t :: %__MODULE__{}
+
   schema "book_series_memberships" do
     belongs_to :work, Work
     field :name, :string

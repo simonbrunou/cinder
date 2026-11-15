@@ -7,6 +7,8 @@ defmodule Cinder.Catalog.Profile do
   alias Cinder.LibraryKind
   alias Cinder.Requests.Request
 
+  @type t :: %__MODULE__{}
+
   schema "media_profiles" do
     field :name, :string
     field :kind, Ecto.Enum, values: LibraryKind.all()

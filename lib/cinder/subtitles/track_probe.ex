@@ -18,6 +18,8 @@ defmodule Cinder.Subtitles.TrackProbe do
 
   alias Cinder.Repo
 
+  @type t :: %__MODULE__{}
+
   schema "subtitle_track_probes" do
     field :moviehash, :string
     field :tracks, {:array, :map}

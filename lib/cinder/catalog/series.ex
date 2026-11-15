@@ -17,6 +17,8 @@ defmodule Cinder.Catalog.Series do
 
   @monitor_strategies [:all, :future, :none]
 
+  @type t :: %__MODULE__{}
+
   schema "series" do
     field :tmdb_id, :integer
     field :tvdb_id, :integer

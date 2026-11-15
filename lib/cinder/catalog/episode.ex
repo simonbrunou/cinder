@@ -14,6 +14,8 @@ defmodule Cinder.Catalog.Episode do
   alias Cinder.Catalog.{EpisodeCoordinateMembership, Grab, Season}
   alias Cinder.Library.ImportedQuality
 
+  @type t :: %__MODULE__{}
+
   schema "episodes" do
     field :tmdb_episode_id, :integer
     field :episode_number, :integer

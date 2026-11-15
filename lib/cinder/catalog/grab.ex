@@ -12,6 +12,8 @@ defmodule Cinder.Catalog.Grab do
   alias Cinder.Catalog.{Episode, GrabFile}
   alias Cinder.Download.Progress
 
+  @type t :: %__MODULE__{}
+
   schema "grabs" do
     field :download_id, :string
     field :download_protocol, Ecto.Enum, values: [:torrent, :usenet]

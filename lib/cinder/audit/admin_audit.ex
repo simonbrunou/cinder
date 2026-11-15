@@ -10,6 +10,8 @@ defmodule Cinder.Audit.AdminAudit do
 
   alias Cinder.Accounts.User
 
+  @type t :: %__MODULE__{}
+
   schema "admin_audit" do
     field :action, :string
     field :entity_type, :string

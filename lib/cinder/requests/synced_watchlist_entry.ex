@@ -15,6 +15,8 @@ defmodule Cinder.Requests.SyncedWatchlistEntry do
   use Ecto.Schema
   import Ecto.Changeset
 
+  @type t :: %__MODULE__{}
+
   schema "synced_watchlist_entries" do
     field :target_type, :string, default: "movie"
     field :tmdb_id, :integer

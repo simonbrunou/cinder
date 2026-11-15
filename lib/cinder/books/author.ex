@@ -5,6 +5,8 @@ defmodule Cinder.Books.Author do
 
   alias Cinder.Books.{Credit, Identifier}
 
+  @type t :: %__MODULE__{}
+
   schema "book_authors" do
     field :name, :string
     field :sort_name, :string

@@ -8,6 +8,8 @@ defmodule Cinder.Library.ImportStage do
 
   alias Cinder.Repo
 
+  @type t :: %__MODULE__{}
+
   schema "import_stages" do
     field :operation_key, :string
 

@@ -8,6 +8,8 @@ defmodule Cinder.Catalog.TitleAlias do
   @kinds [:alternative, :native, :romaji, :licensed, :scene]
   @precedences [:inferred, :curated, :manual]
 
+  @type t :: %__MODULE__{}
+
   schema "title_aliases" do
     field :title, :string
     field :normalized_title, :string

@@ -5,6 +5,8 @@ defmodule Cinder.Catalog.EpisodeCoordinateMembership do
 
   alias Cinder.Catalog.{Episode, EpisodeCoordinate}
 
+  @type t :: %__MODULE__{}
+
   schema "episode_coordinate_memberships" do
     field :position, :integer
     belongs_to :episode_coordinate, EpisodeCoordinate

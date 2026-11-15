@@ -9,6 +9,8 @@ defmodule Cinder.Catalog.MediaServerSeason do
   """
   use Ecto.Schema
 
+  @type t :: %__MODULE__{}
+
   schema "media_server_seasons" do
     field :tmdb_id, :integer
     field :season_number, :integer

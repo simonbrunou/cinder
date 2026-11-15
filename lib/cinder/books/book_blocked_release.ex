@@ -13,6 +13,8 @@ defmodule Cinder.Books.BookBlockedRelease do
 
   alias Cinder.Books.BookTarget
 
+  @type t :: %__MODULE__{}
+
   schema "book_blocked_releases" do
     field :release_title, :string
     field :reason, :string

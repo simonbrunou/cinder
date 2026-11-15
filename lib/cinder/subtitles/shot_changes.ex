@@ -17,6 +17,8 @@ defmodule Cinder.Subtitles.ShotChanges do
 
   alias Cinder.Repo
 
+  @type t :: %__MODULE__{}
+
   schema "subtitle_shot_changes" do
     field :moviehash, :string
     field :times_ms, {:array, :integer}

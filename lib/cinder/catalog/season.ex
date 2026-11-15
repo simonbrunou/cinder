@@ -6,6 +6,8 @@ defmodule Cinder.Catalog.Season do
 
   alias Cinder.Catalog.{Episode, Series}
 
+  @type t :: %__MODULE__{}
+
   schema "seasons" do
     field :season_number, :integer
     field :monitored, :boolean, default: true

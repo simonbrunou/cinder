@@ -8,6 +8,8 @@ defmodule Cinder.Books.Edition do
 
   @book_media_kinds LibraryKind.books()
 
+  @type t :: %__MODULE__{}
+
   schema "book_editions" do
     belongs_to :work, Work
     field :media_kind, Ecto.Enum, values: @book_media_kinds

@@ -15,6 +15,8 @@ defmodule Cinder.Books.BookAuthorPolicy do
 
   @policies [:future, :all]
 
+  @type t :: %__MODULE__{}
+
   schema "book_author_policies" do
     belongs_to :author, Author
     field :policy, Ecto.Enum, values: @policies

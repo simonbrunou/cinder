@@ -28,6 +28,8 @@ defmodule Cinder.Books.BookFile do
   alias Cinder.Acquisition.BookKind
   alias Cinder.Books.{BookTarget, Edition}
 
+  @type t :: %__MODULE__{}
+
   schema "book_files" do
     belongs_to :book_target, BookTarget
     belongs_to :edition, Edition

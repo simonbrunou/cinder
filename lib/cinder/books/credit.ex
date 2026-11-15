@@ -5,6 +5,8 @@ defmodule Cinder.Books.Credit do
 
   alias Cinder.Books.{Author, Edition, Work}
 
+  @type t :: %__MODULE__{}
+
   schema "book_credits" do
     belongs_to :author, Author
     belongs_to :work, Work

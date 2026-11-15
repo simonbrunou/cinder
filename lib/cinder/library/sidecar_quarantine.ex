@@ -16,6 +16,8 @@ defmodule Cinder.Library.SidecarQuarantine do
 
   alias Cinder.Repo
 
+  @type t :: %__MODULE__{}
+
   schema "sidecar_quarantines" do
     field :path, :string
     field :destination, :string

@@ -19,6 +19,8 @@ defmodule Cinder.Books.BookGrab do
   alias Cinder.Books.BookTarget
   alias Cinder.Download.Progress
 
+  @type t :: %__MODULE__{}
+
   schema "book_grabs" do
     belongs_to :book_target, BookTarget
     field :download_id, :string

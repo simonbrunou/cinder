@@ -23,6 +23,8 @@ defmodule Cinder.Books.BookOpsLog do
 
   @categories ~w(duplicate_grab_refused metadata_drift scan_failure scan_recovered)
 
+  @type t :: %__MODULE__{}
+
   schema "book_ops_log" do
     belongs_to :book_target, BookTarget
     field :category, :string

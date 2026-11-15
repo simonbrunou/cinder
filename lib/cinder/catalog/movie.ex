@@ -70,6 +70,8 @@ defmodule Cinder.Catalog.Movie do
     :failure_reason
   ]
 
+  @type t :: %__MODULE__{}
+
   schema "movies" do
     field :tmdb_id, :integer
     field :imdb_id, :string

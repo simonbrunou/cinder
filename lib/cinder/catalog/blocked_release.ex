@@ -16,6 +16,8 @@ defmodule Cinder.Catalog.BlockedRelease do
 
   alias Cinder.Catalog.{Movie, Series}
 
+  @type t :: %__MODULE__{}
+
   schema "blocked_releases" do
     field :release_title, :string
     field :reason, :string

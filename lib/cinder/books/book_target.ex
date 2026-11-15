@@ -12,6 +12,8 @@ defmodule Cinder.Books.BookTarget do
   @statuses [:unmonitored, :monitored, :available, :held]
   @known_languages Map.keys(Parser.language_tags())
 
+  @type t :: %__MODULE__{}
+
   schema "book_targets" do
     belongs_to :work, Work
     field :media_kind, Ecto.Enum, values: @book_media_kinds

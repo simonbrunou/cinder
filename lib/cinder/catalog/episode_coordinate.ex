@@ -7,6 +7,8 @@ defmodule Cinder.Catalog.EpisodeCoordinate do
 
   @precedences [:inferred, :curated, :manual]
 
+  @type t :: %__MODULE__{}
+
   schema "episode_coordinates" do
     field :source, :string
     field :scheme, :string

@@ -13,6 +13,8 @@ defmodule Cinder.Download.Intent do
   @max_blocked_titles 8
   @max_title_codepoints 200
 
+  @type t :: %__MODULE__{}
+
   schema "download_intents" do
     field :operation_key, :string
     field :kind, Ecto.Enum, values: [:movie, :episode, :season_pack, :book_target]

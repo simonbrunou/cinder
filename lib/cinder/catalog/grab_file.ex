@@ -12,6 +12,8 @@ defmodule Cinder.Catalog.GrabFile do
   alias Cinder.Catalog.{Episode, Grab}
   alias Cinder.Library.ImportStage
 
+  @type t :: %__MODULE__{}
+
   schema "grab_files" do
     field :relative_path, :string
     field :size, :integer

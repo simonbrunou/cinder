@@ -5,6 +5,8 @@ defmodule Cinder.Download.IntentEpisode do
 
   import Ecto.Changeset
 
+  @type t :: %__MODULE__{}
+
   schema "download_intent_episodes" do
     field :episode_id, :integer
     belongs_to :intent, Cinder.Download.Intent
