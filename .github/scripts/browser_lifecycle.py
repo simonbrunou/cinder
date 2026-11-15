@@ -47,7 +47,9 @@ SCREENSHOT_DIR = os.environ.get("CINDER_SMOKE_SCREENSHOT_DIR")
 # Unset in CI, which runs Playwright's bundled Chromium (#842); set it (e.g. "chrome") locally.
 BROWSER_CHANNEL = os.environ.get("CINDER_SMOKE_BROWSER_CHANNEL")
 
-RPC_TIMEOUT = 15
+# Every rpc() call gets this many seconds. 15 s failed a case whose call still landed on a
+# loaded runner (#1334).
+RPC_TIMEOUT = 60
 # The kindle flare's own lifetime (app.js Kindle.kindle(): classList.add then a 1400ms
 # setTimeout removing it). Any "prove no flare happened" wait must comfortably outlast this, or
 # a real flare landing just after our check would read as a false pass.
@@ -68,20 +70,47 @@ class CaseFailure(AssertionError):
     """Raised with a full diagnostic — case name, expected, actual — never a bare assert."""
 
 
+def _captured(output):
+    # On a timeout, subprocess.run hands back the partial output as bytes, or None when the
+    # stream stayed empty, even with text=True.
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        output = output.decode(errors="replace")
+    return output.strip()
+
+
 def rpc(expr, timeout=RPC_TIMEOUT):
     """Evaluates `expr` on the running server node. `expr` must end by printing
     `RPCRESULT:<value>` — Logger/telemetry output can interleave with plain stdout across the
-    docker-exec boundary, so we grep for the sentinel line instead of trusting output order."""
-    proc = subprocess.run(
-        ["docker", "exec", CONTAINER, "/app/bin/cinder", "rpc", expr],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
+    docker-exec boundary, so we grep for the sentinel line instead of trusting output order.
+
+    No caller repeats a call after a timeout (#1334). The timeout kills only the `docker`
+    client: the command inside the container can still run to its end, so a repeat would run
+    against state the first call may already have changed. The bound is wide instead, so a slow
+    call on a loaded runner still lands."""
+    started = time.monotonic()
+    try:
+        proc = subprocess.run(
+            ["docker", "exec", CONTAINER, "/app/bin/cinder", "rpc", expr],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise CaseFailure(
+            f"rpc call timed out after {time.monotonic() - started:.1f}s (bound {timeout}s); "
+            "only the docker client was killed, so the command may still be running in the "
+            "container\n"
+            f"  expr: {expr}\n"
+            f"  stdout: {_captured(e.stdout)}\n"
+            f"  stderr: {_captured(e.stderr)}"
+        ) from None
+    elapsed = time.monotonic() - started
     match = RESULT_RE.findall(proc.stdout)
     if proc.returncode != 0 or not match:
         raise CaseFailure(
-            f"rpc call failed (exit {proc.returncode})\n"
+            f"rpc call failed (exit {proc.returncode}) after {elapsed:.1f}s\n"
             f"  expr: {expr}\n"
             f"  stdout: {proc.stdout.strip()}\n"
             f"  stderr: {proc.stderr.strip()}"
@@ -750,10 +779,10 @@ def main():
             try:
                 case_fn(page)
                 results.append((name, True, None))
-                print(f"PASS: {name}")
+                print(f"PASS: {name}", flush=True)
             except Exception as e:  # noqa: BLE001 — every case's own exception is diagnostic
                 results.append((name, False, str(e)))
-                print(f"FAIL: {name}\n{e}")
+                print(f"FAIL: {name}\n{e}", flush=True)
                 if SCREENSHOT_DIR:
                     output = Path(SCREENSHOT_DIR)
                     output.mkdir(parents=True, exist_ok=True)
