@@ -239,9 +239,9 @@ Stagers record what `capture/3` and `for_outcome/4` return, a movie stacked in C
 `merge_parts/1` returns for its parts, and an arbitrated TV decline what `declined/3` returns.
 Writers set the columns only through
 `columns/2`, the schemas cast `column_names/2`, and the import and upgrade decisions read a row
-through `of/1`; only display code and queries read a single column directly. Episodes have no
-default-audio column, and the module records that. A new column is one field in that module, plus
-the migration and the schema `field`; `test/cinder/library/imported_quality_test.exs` fences the
+through `of/1`; only display code and queries read a single column directly. Movies and episodes
+have the same columns. A new column is one field in that module, plus a migration and a `field`
+in each schema; `test/cinder/library/imported_quality_test.exs` fences the
 list against both schemas and runs probe → quality → row → quality through each import writer.
 
 ## Operator attention has one owner

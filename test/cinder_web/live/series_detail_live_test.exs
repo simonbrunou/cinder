@@ -1207,6 +1207,98 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     refute html =~ ~s(>l30</span>)
   end
 
+  # Issue #786: the movie page's default-audio hint (#197), on an episode row.
+  describe "the default-audio hint" do
+    defp episode_with_audio(tmdb_id, attrs) do
+      series =
+        Repo.insert!(%Cinder.Catalog.Series{
+          tmdb_id: tmdb_id,
+          title: "S",
+          year: 2010,
+          preferred_language: "original",
+          original_language: "en"
+        })
+
+      season =
+        Repo.insert!(%Cinder.Catalog.Season{
+          series_id: series.id,
+          season_number: 1,
+          monitored: true
+        })
+
+      episode =
+        Repo.insert!(
+          struct!(
+            %Cinder.Catalog.Episode{
+              season_id: season.id,
+              tmdb_episode_id: tmdb_id + 1,
+              episode_number: 1,
+              title: "Ep1",
+              monitored: true,
+              file_path: "/tmp/cinder-test-tv-library/S (2010)/Season 01/S (2010) - S01E01.mkv"
+            },
+            attrs
+          )
+        )
+
+      {series, episode}
+    end
+
+    test "warns when the wanted audio is in the file but isn't the default track",
+         %{conn: conn} do
+      {series, episode} =
+        episode_with_audio(8220,
+          imported_audio_languages: ["tur", "eng"],
+          imported_default_audio_language: "tur"
+        )
+
+      {:ok, lv, _html} = live_series(conn, series)
+
+      assert has_element?(
+               lv,
+               "#episode-#{episode.id} #episode-#{episode.id}-default-audio",
+               "Plays as tur by default"
+             )
+    end
+
+    test "stays quiet when the default audio track already is the wanted one", %{conn: conn} do
+      {series, episode} =
+        episode_with_audio(8222,
+          imported_audio_languages: ["eng", "tur"],
+          imported_default_audio_language: "eng"
+        )
+
+      {:ok, lv, html} = live_series(conn, series)
+      assert has_element?(lv, "#episode-#{episode.id} [aria-label='audio eng']")
+      refute html =~ "by default"
+    end
+
+    test "stays quiet when the default track's language was never established", %{conn: conn} do
+      {series, episode} =
+        episode_with_audio(8224,
+          imported_audio_languages: ["fre", "eng"],
+          imported_default_audio_language: nil
+        )
+
+      {:ok, lv, html} = live_series(conn, series)
+      assert has_element?(lv, "#episode-#{episode.id} [aria-label='audio fre']")
+      refute html =~ "by default"
+    end
+
+    test "stays quiet on an episode with no file", %{conn: conn} do
+      {series, episode} =
+        episode_with_audio(8226,
+          file_path: nil,
+          imported_audio_languages: ["tur", "eng"],
+          imported_default_audio_language: "tur"
+        )
+
+      {:ok, lv, html} = live_series(conn, series)
+      assert has_element?(lv, "#episode-#{episode.id}", "Ep1")
+      refute html =~ "by default"
+    end
+  end
+
   test "shows an Available badge on a filed episode, no Wanted badge on an unmonitored one",
        %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8210, title: "S", year: 2010})

@@ -13,6 +13,7 @@ defmodule CinderWeb.SeriesDetailComponents do
   import CinderWeb.LiveHelpers,
     only: [format_date_year: 1, humanize_bytes: 1, rating: 1, media_title: 2, media_overview: 2]
 
+  alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Catalog.Episode
 
@@ -706,6 +707,16 @@ defmodule CinderWeb.SeriesDetailComponents do
             >
               {classification_label(ep.classification)}
             </span>
+            <p
+              :if={default_audio_mismatch?(ep, @series)}
+              id={"episode-#{ep.id}-default-audio"}
+              class="pl-11 text-xs text-warning sm:pl-[5.75rem] 2xl:col-start-3 2xl:col-end-[-1] 2xl:pl-0"
+            >
+              {gettext(
+                "Plays as %{language} by default: the language you asked for is in the file, but it isn't the default audio track.",
+                language: ep.imported_default_audio_language
+              )}
+            </p>
             <.confirm_action
               :if={@confirming == {:episode_file, to_string(ep.id)}}
               id={"confirm-delete-episode-file-#{ep.id}"}
@@ -906,6 +917,17 @@ defmodule CinderWeb.SeriesDetailComponents do
 
   defp subtitle_languages(ep),
     do: (ep.imported_embedded_subtitles || []) ++ (ep.imported_sidecar_subtitles || [])
+
+  # The movie page's default-audio hint, for an episode against its series' wanted language
+  # (issue #786). Silent for an episode with no file, and when the default track's language was
+  # not established at import: see `Language.default_audio_mismatch?/3`.
+  defp default_audio_mismatch?(ep, series) do
+    Language.default_audio_mismatch?(
+      Language.target(series.preferred_language, series.original_language),
+      ep.imported_default_audio_language,
+      audio_languages(ep)
+    )
+  end
 
   defp audio_badges(ep), do: ep |> audio_languages() |> Enum.take(@audio_badge_limit)
 

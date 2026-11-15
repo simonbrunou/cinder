@@ -62,7 +62,7 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
 
     expect(Cinder.Library.MediaInfoMock, :probe, 2, fn
       ^primary -> {:ok, %{audio: ["ja"], subtitles: ["en"]}}
-      ^part -> {:ok, %{audio: ["en"], subtitles: ["fr"]}}
+      ^part -> {:ok, %{audio: ["en"], subtitles: ["fr"], default_audio: "en"}}
     end)
 
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
@@ -85,6 +85,7 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
 
     e = Repo.get!(Episode, episode.id)
     assert e.imported_audio_languages == ["ja", "en"]
+    assert e.imported_default_audio_language == "en"
     assert e.imported_embedded_subtitles == ["en", "fr"]
     assert e.imported_sidecar_subtitles == ["fr", "de"]
   end

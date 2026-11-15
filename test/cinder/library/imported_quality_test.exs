@@ -61,31 +61,27 @@ defmodule Cinder.Library.ImportedQualityTest do
       changes = Movie.transition_changeset(%Movie{status: :available}, set).changes
       assert Map.take(changes, Map.keys(set)) == set
 
-      set = %{imported_resolution: "720p", imported_sidecar_subtitles: ["fr"]}
+      set = %{
+        imported_resolution: "720p",
+        imported_default_audio_language: "fr",
+        imported_sidecar_subtitles: ["fr"]
+      }
+
       assert Episode.transition_changeset(%Episode{}, set).changes == set
 
       assert Episode.media_info_changeset(%Episode{}, set).changes ==
                Map.delete(set, :imported_resolution)
     end
 
-    test "an episode has no default-audio column" do
-      assert :imported_default_audio_language in ImportedQuality.column_names(Movie)
-      refute :imported_default_audio_language in ImportedQuality.column_names(Episode)
-    end
-
     test "the media-info columns are the probed and scanned ones" do
-      assert ImportedQuality.column_names(Movie, :media) == [
-               :imported_audio_languages,
-               :imported_default_audio_language,
-               :imported_embedded_subtitles,
-               :imported_sidecar_subtitles
-             ]
-
-      assert ImportedQuality.column_names(Episode, :media) == [
-               :imported_audio_languages,
-               :imported_embedded_subtitles,
-               :imported_sidecar_subtitles
-             ]
+      for schema <- [Movie, Episode] do
+        assert ImportedQuality.column_names(schema, :media) == [
+                 :imported_audio_languages,
+                 :imported_default_audio_language,
+                 :imported_embedded_subtitles,
+                 :imported_sidecar_subtitles
+               ]
+      end
     end
   end
 
@@ -516,10 +512,7 @@ defmodule Cinder.Library.ImportedQualityTest do
 
         assert :ok = staged |> StagedImport.commit(writer(unquote(writer), grab)) |> elem(0)
         LibraryStubs.await_subtitle_tasks()
-
-        # An episode row has no default-audio column.
-        assert ImportedQuality.of(Repo.get!(Episode, episode.id)) ==
-                 %{quality | default_audio_language: nil}
+        assert ImportedQuality.of(Repo.get!(Episode, episode.id)) == quality
       end
     end
 
@@ -552,42 +545,36 @@ defmodule Cinder.Library.ImportedQualityTest do
   end
 
   describe "of/1 and columns/2" do
-    test "a stored row reads back raw and writes back unchanged" do
-      movie = %Movie{
-        imported_resolution: "1080p",
-        imported_size: 7,
-        imported_language: nil,
-        imported_source: "bluray",
-        imported_audio_languages: nil,
-        imported_default_audio_language: "en",
-        imported_embedded_subtitles: [],
-        imported_sidecar_subtitles: ["fr"]
-      }
+    for schema <- [Movie, Episode] do
+      test "a stored #{inspect(schema)} row reads back raw and writes back unchanged" do
+        schema = unquote(schema)
 
-      assert %ImportedQuality{
-               resolution: "1080p",
-               size: 7,
-               language: nil,
-               source: "bluray",
-               audio_languages: nil,
-               default_audio_language: "en",
-               embedded_subtitles: [],
-               sidecar_subtitles: ["fr"]
-             } = quality = ImportedQuality.of(movie)
+        row =
+          struct!(schema,
+            imported_resolution: "1080p",
+            imported_size: 7,
+            imported_language: nil,
+            imported_source: "bluray",
+            imported_audio_languages: nil,
+            imported_default_audio_language: "en",
+            imported_embedded_subtitles: [],
+            imported_sidecar_subtitles: ["fr"]
+          )
 
-      assert ImportedQuality.columns(quality, Movie) ==
-               Map.take(Map.from_struct(movie), ImportedQuality.column_names(Movie))
-    end
+        assert %ImportedQuality{
+                 resolution: "1080p",
+                 size: 7,
+                 language: nil,
+                 source: "bluray",
+                 audio_languages: nil,
+                 default_audio_language: "en",
+                 embedded_subtitles: [],
+                 sidecar_subtitles: ["fr"]
+               } = quality = ImportedQuality.of(row)
 
-    test "an episode reads no default audio language and writes none" do
-      episode = %Episode{imported_resolution: "720p", imported_audio_languages: ["ja"]}
-
-      quality = ImportedQuality.of(episode)
-      assert %ImportedQuality{resolution: "720p", audio_languages: ["ja"]} = quality
-      assert quality.default_audio_language == nil
-
-      columns = ImportedQuality.columns(%{quality | default_audio_language: "ja"}, Episode)
-      assert Map.keys(columns) |> Enum.sort() == Enum.sort(ImportedQuality.column_names(Episode))
+        assert ImportedQuality.columns(quality, schema) ==
+                 Map.take(Map.from_struct(row), ImportedQuality.column_names(schema))
+      end
     end
 
     test "nil clears every column the schema has" do

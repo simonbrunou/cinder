@@ -3,8 +3,8 @@ defmodule Cinder.Library.ImportedQuality do
   The imported quality: what Cinder recorded about the file a movie or episode holds, and the one
   list of the `imported_*` columns that store it. Field `f` is column `imported_f`.
 
-  `column_names/2` is what the schemas cast and what a writer may set, so a new column is one field
-  here plus the migration and the schema `field`.
+  Movies and episodes have the same columns. `column_names/2` is what the schemas cast and what a
+  writer may set, so a new column is one field here plus a migration and a `field` in each schema.
   """
 
   require Logger
@@ -17,8 +17,7 @@ defmodule Cinder.Library.ImportedQuality do
   @ranked [:resolution, :size, :language, :source]
   # The fields found in the file by the media-info probe, and next to it by the sidecar scan.
   @media [:audio_languages, :default_audio_language, :embedded_subtitles, :sidecar_subtitles]
-  # Episode rows carry no default-audio column.
-  @absent %{Movie => [], Episode => [:default_audio_language]}
+  @schemas [Movie, Episode]
   @columns Map.new(@ranked ++ @media, &{&1, :"imported_#{&1}"})
 
   defstruct @ranked ++ @media
@@ -42,8 +41,8 @@ defmodule Cinder.Library.ImportedQuality do
   scanned languages, which `Cinder.Catalog.set_media_info/2` writes).
   """
   @spec column_names(schema(), :all | :media) :: [atom()]
-  def column_names(schema, group \\ :all) when is_map_key(@absent, schema),
-    do: Enum.map(fields(schema, group), &Map.fetch!(@columns, &1))
+  def column_names(schema, group \\ :all) when schema in @schemas,
+    do: Enum.map(fields(group), &Map.fetch!(@columns, &1))
 
   @doc """
   The quality of a download's `files` (`[{path, size}]`, a movie's parts in order) as an import
@@ -250,7 +249,7 @@ defmodule Cinder.Library.ImportedQuality do
   fields stay as recorded. For the media-info backfill.
   """
   @spec recapture(row()) :: t()
-  def recapture(%schema{} = record) when is_map_key(@absent, schema) do
+  def recapture(%schema{} = record) when schema in @schemas do
     paths = schema.file_paths(record)
     sidecars = sidecar_languages(paths)
     struct!(of(record), Map.put(probe_all(paths, %{}), :sidecar_subtitles, sidecars))
@@ -269,10 +268,10 @@ defmodule Cinder.Library.ImportedQuality do
   row never probed has nil lists, not `[]`), so `columns/2` writes it back unchanged.
   """
   @spec of(row()) :: t()
-  def of(%schema{} = record) when is_map_key(@absent, schema) do
+  def of(%schema{} = record) when schema in @schemas do
     struct!(
       __MODULE__,
-      Enum.map(fields(schema, :all), &{&1, Map.fetch!(record, Map.fetch!(@columns, &1))})
+      Enum.map(fields(:all), &{&1, Map.fetch!(record, Map.fetch!(@columns, &1))})
     )
   end
 
@@ -284,9 +283,9 @@ defmodule Cinder.Library.ImportedQuality do
   @spec columns(t() | nil, schema()) :: %{atom() => term()}
   def columns(nil, schema), do: Map.new(column_names(schema), &{&1, nil})
 
-  def columns(%__MODULE__{} = quality, schema) when is_map_key(@absent, schema),
-    do: Map.new(fields(schema, :all), &{Map.fetch!(@columns, &1), Map.fetch!(quality, &1)})
+  def columns(%__MODULE__{} = quality, schema) when schema in @schemas,
+    do: Map.new(fields(:all), &{Map.fetch!(@columns, &1), Map.fetch!(quality, &1)})
 
-  defp fields(schema, :all), do: (@ranked ++ @media) -- Map.fetch!(@absent, schema)
-  defp fields(schema, :media), do: @media -- Map.fetch!(@absent, schema)
+  defp fields(:all), do: @ranked ++ @media
+  defp fields(:media), do: @media
 end

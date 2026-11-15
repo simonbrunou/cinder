@@ -29,6 +29,7 @@ defmodule Cinder.Catalog.Episode do
     field :imported_language, :string
     field :imported_source, :string
     field :imported_audio_languages, {:array, :string}
+    field :imported_default_audio_language, :string
     field :imported_embedded_subtitles, {:array, :string}
     field :imported_sidecar_subtitles, {:array, :string}
 
