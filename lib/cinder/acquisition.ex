@@ -8,7 +8,7 @@ defmodule Cinder.Acquisition do
   """
   require Logger
 
-  alias Cinder.Acquisition.{Anime, AnimeParser}
+  alias Cinder.Acquisition.{Anime, AnimeParser, Scorer}
   alias Cinder.Acquisition.Release
   alias Cinder.Acquisition.ReleaseJudge
   alias Cinder.Catalog.{AnimeResolver, Episode}
@@ -88,26 +88,49 @@ defmodule Cinder.Acquisition do
     do: Anime.judge_movie(indexer(), imdb_id, context, opts)
 
   @doc """
-  The releases the upgrade sweep grabs for one TV `season` of `series`. It builds the season's
-  release list as `judge_season/3` does, without the numbering bridge: one query for the native
-  season, its duplicate results dropped, a release a vetted mapping assigns to another episode, or
-  one naming a native code a saved season offset retires, marked, then judged, and takes the
-  judge's pick (`Cinder.Acquisition.ReleaseJudge.pick/1`, the
-  set-cover `Scorer.select_for/4` over what the judge keeps). `wanted_numbers` is the
-  episode-number set the cover may claim, and `opts` the household policy plus the facts the
-  set-cover reads, such as `opts[:pack_episode_count]`, which it passes as given.
-  `opts[:mappings]` is the series' coordinate mappings
+  The judge's pick (`Cinder.Acquisition.ReleaseJudge.pick/1`, the shared set-cover
+  `Scorer.select_for/4` over what the judge keeps) from the season list the upgrade sweep judges
+  (`best_upgrade_releases/4`). It builds that list as `judge_season/3` does, without the numbering
+  bridge: one query for the native season, its duplicate results dropped, a release a vetted
+  mapping assigns to another episode, or one naming a native code a saved season offset retires,
+  marked, then judged. `wanted_numbers` is the episode-number set the cover may claim, and `opts`
+  the household policy plus the facts the set-cover reads, such as `opts[:pack_episode_count]`,
+  which it passes as given. `opts[:mappings]` is the series' coordinate mappings
   (`Cinder.Catalog.MediaProfiles.acquisition_mappings/1`), which only the mark reads.
+
+  No sweep takes this pick: the upgrade sweep takes `best_upgrade_releases/4`'s, and the TV sweep
+  judges its season through `judge_season/3`.
 
   Returns `{:ok, [{%Release{}, [number]}]}`, `:no_match`, or `{:error, term}`.
   """
   def best_releases(series, season_number, wanted_numbers, opts \\ []) do
+    with {:ok, judged} <- judge_upgrade_season(series, season_number, wanted_numbers, opts),
+         do: ReleaseJudge.pick(judged)
+  end
+
+  @doc """
+  The releases the upgrade sweep grabs for one TV `season` of `series`: the upgrade cover
+  (`Scorer.select_upgrades_for/4`) over what the judge keeps of the season list `best_releases/4`
+  builds, with the same arguments. Each release it takes claims every episode it carries from
+  `wanted_numbers`.
+
+  The series guard's `ReleaseJudge.pick/1` is the shared cover alone, so this differs from
+  `best_releases/4` only in the cover's coverage rule. A strict audio pick that leaves nothing kept
+  gives `:no_match` in both. A step added to the series clause of `ReleaseJudge.pick/1` has to be
+  added here too.
+
+  Returns `{:ok, [{%Release{}, [number]}]}`, `:no_match`, or `{:error, term}`.
+  """
+  def best_upgrade_releases(series, season_number, wanted_numbers, opts \\ []) do
+    with {:ok, judged} <- judge_upgrade_season(series, season_number, wanted_numbers, opts) do
+      Scorer.select_upgrades_for(judged.kept, season_number, wanted_numbers, judged.opts)
+    end
+  end
+
+  defp judge_upgrade_season(series, season_number, wanted_numbers, opts) do
     {mappings, opts} = Keyword.pop(opts, :mappings, [])
     vetted_elsewhere = vetted_elsewhere_values(mappings, season_number)
-
-    with {:ok, judged} <-
-           judge_releases(series, season_number, wanted_numbers, nil, vetted_elsewhere, opts),
-         do: ReleaseJudge.pick(judged)
+    judge_releases(series, season_number, wanted_numbers, nil, vetted_elsewhere, opts)
   end
 
   defp search_tv_seasons(indexer, series, [season_number]) do
@@ -133,6 +156,15 @@ defmodule Cinder.Acquisition do
   """
   def best_anime_releases(context, wanted_episode_ids, opts \\ []) do
     Anime.best_episodes(indexer(), context, wanted_episode_ids, opts)
+  end
+
+  @doc """
+  The releases the anime upgrade sweep grabs for `wanted_episode_ids`: `best_anime_releases/3`'s
+  pick over only the kept releases `upgrade?` accepts
+  (`Cinder.Acquisition.Anime.best_episode_upgrades/5`).
+  """
+  def best_anime_upgrades(context, wanted_episode_ids, upgrade?, opts \\ []) do
+    Anime.best_episode_upgrades(indexer(), context, wanted_episode_ids, upgrade?, opts)
   end
 
   @doc """

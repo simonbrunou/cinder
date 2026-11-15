@@ -28,11 +28,11 @@ So the cover decides its order in one place, the `select_for/4` doc, and callers
 
 The TV sweep (through `Cinder.Acquisition.judge_season/3`, since #837) and the upgrade sweep both
 pass `pack_episode_count`, the season's episode count, under the same name. For the upgrade sweep
-the first pass equals its old single pass: under `full_claim_only` a native whole-season pack is
-claimable only when the whole season is wanted, so the episodes it covers are the season's count,
-and that sweep passes no alternate numbering. `select_for_ids/3` keeps one pass, banding a pack by
-`max(k, pack_episode_count)` at once, because `Scorer.verdict_for_ids/2` has to agree with it for
-a release taken alone.
+the first pass equals its old single pass: in its cover (`Scorer.select_upgrades_for/4`, which
+runs both passes) a native whole-season pack is claimable only when the whole season is wanted,
+so the episodes it covers are the season's count, and that sweep passes no alternate numbering.
+`select_for_ids/3` keeps one pass, banding a pack by `max(k, pack_episode_count)` at once, because
+`Scorer.verdict_for_ids/2` has to agree with it for a release taken alone.
 
 This refines ADR 0002's Consequences, which say the set-cover bands by the still-wanted count: it
 does in the first pass, and bands a whole-season pack by the season's count only in the second.
@@ -65,17 +65,17 @@ moves from `:fell_back` to `:applied` and drops the wrong-tagged ones, where a w
 used to win a tie against an untagged one by input order. The relaxation still doesn't apply to
 the strict picks (french, dual) or to the anime episode guard.
 
-The upgrade sweep judges its season list with the same guard (`Acquisition.best_releases/4`), so
-it now can grab an untagged release for a held episode whose file carries no tag matching the
-pick, when `Upgrade.candidate?/4` ranks the release better, even when the pool also holds a
-match. For a non-English target and a held file whose tag matches it, `candidate?/4` ranks an
-untagged release a language downgrade, so the sweep skips an untagged single for it. (For an
-English target an untagged release already matched, before #882 too, and quality decides.) A
-release covering several episodes is grabbed when `candidate?/4` accepts any one of them; the
-import's arbitration then decides each held file. Under the sweep's `full_claim_only` an
-untagged whole-season pack still can't fill one episode a matching single leaves, since it must
-claim every episode it carries.
+The upgrade sweep judges its season list with the same guard
+(`Acquisition.best_upgrade_releases/4`), so it now can grab an untagged release for a held
+episode whose file carries no tag matching the pick, when `Upgrade.candidate?/4` ranks the
+release better, even when the pool also holds a match. For a non-English target and a held file
+whose tag matches it, `candidate?/4` ranks an untagged release a language downgrade, so the sweep
+skips an untagged single for it. (For an English target an untagged release already matched,
+before #882 too, and quality decides.) A release covering several episodes is grabbed when
+`candidate?/4` accepts any one of them; the import's arbitration then decides each held file. In
+the upgrade sweep's cover an untagged whole-season pack still can't fill one episode a matching
+single leaves, since it must claim every episode it carries.
 
 `pack_episode_count` still means two things: the season's episode count, which the cover and the
 panel's season verdict read (`Scorer.verdict_for_season/4`, #836), and the count a pack must claim
-under `full_claim_only` (#839).
+in the upgrade sweep's cover, `Scorer.select_upgrades_for/4` (#839).

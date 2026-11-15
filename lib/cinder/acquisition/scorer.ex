@@ -85,8 +85,7 @@ defmodule Cinder.Acquisition.Scorer do
   Partial coverage is fine: the rest stay wanted for the next search tick. `verdict_for_season/4`
   is this rule for one release, which the manual-search panel shows.
 
-  `opts[:pack_episode_count]` is the season's real episode count. Under `full_claim_only` it is
-  also what a whole-season pack must claim, in both passes.
+  `opts[:pack_episode_count]` is the season's real episode count.
 
   Rules come from per-call `opts`, exactly like `select/2`.
   `opts[:alternate_numbering]` may map alternate season/episode coordinates onto
@@ -96,6 +95,48 @@ defmodule Cinder.Acquisition.Scorer do
   household release-list sizes; upgrade only if release sets get pathological.
   """
   def select_for(releases, season, wanted_episodes, opts \\ []) do
+    numbering = Keyword.get(opts, :alternate_numbering, %{})
+    coverage_fun = &alternate_coverage(&1, &2, season, numbering)
+
+    select_for(releases, season, wanted_episodes, opts, coverage_fun)
+  end
+
+  @doc """
+  The upgrade sweep's cover (`Cinder.Catalog.UpgradeHunter`): `select_for/4`, both passes, where
+  a release covers nothing in a greedy step unless it can claim EVERY episode it carries from the
+  episodes still needed at that step. A whole-season pack carries `opts[:pack_episode_count]`
+  episodes; any other release carries the episodes it names. This is the non-truncating rule
+  `select_for_ids/3` applies to stable ids.
+
+  A delivered file the sweep can't link to an episode it holds arrives at import as an operator
+  residual decision (#247), whereas the wanted sweep is happy to take a pack for a subset of a
+  season and let the extras be residuals.
+
+  The rule runs inside each greedy step, for two reasons. Rejecting the winner after the fact is
+  useless: the cover is greedy and destructive, so an unclaimable season pack takes the whole
+  wanted set and the singles behind it are never scored, and declining it afterwards discards
+  that season's upgrades every pass. Filtering candidates once against the initial want is not
+  enough either: the still-needed set shrinks with each pick, so a release that overlaps an
+  earlier pick (or that only fits the band at the smaller count) would still be handed a
+  truncated assignment, and its unclaimed files land back in an operator hold. Zero coverage
+  drops it from the step without consuming anything.
+
+  It reads episode numbers as native: the upgrade sweep passes no `opts[:alternate_numbering]`.
+  """
+  def select_upgrades_for(releases, season, wanted_episodes, opts \\ []) do
+    numbering = Keyword.get(opts, :alternate_numbering, %{})
+    pack_episode_count = Keyword.get(opts, :pack_episode_count)
+
+    coverage_fun = fn release, needed ->
+      if claims_all?(release, needed, pack_episode_count),
+        do: alternate_coverage(release, needed, season, numbering),
+        else: MapSet.new()
+    end
+
+    select_for(releases, season, wanted_episodes, opts, coverage_fun)
+  end
+
+  defp select_for(releases, season, wanted_episodes, opts, coverage_fun) do
     {min_size, max_size, preferred, sources, release_blocklist, _preferred_terms, blocked_terms} =
       rules(opts)
 
@@ -106,8 +147,6 @@ defmodule Cinder.Acquisition.Scorer do
       |> Enum.filter(&coverable_season?(&1, season, alternate_numbering))
       |> Enum.reject(&excluded_title?(&1, release_blocklist, blocked_terms))
       |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
-
-    coverage_fun = &claimable_coverage(&1, &2, season, alternate_numbering, opts)
 
     Enum.find_value(pack_episodes_per_pass(season, opts), :no_match, fn pack_episodes_of ->
       band = {min_size, max_size, pack_episodes_of}
@@ -240,8 +279,8 @@ defmodule Cinder.Acquisition.Scorer do
   A release outside the size band, or failing a title, resolution or source rule, still has this
   coverage, though `select_for/4` takes it for none of it. `season`,
   `wanted_episodes` and `opts` are what `select_for/4` takes. Of the opts, only
-  `:alternate_numbering`, `:full_claim_only` and `:pack_episode_count` (which `:full_claim_only`
-  reads) enter it: the size band and the title, resolution and source rules don't.
+  `:alternate_numbering` enters it: the size band and the title, resolution and source rules
+  don't.
 
   `verdict_for_season/4` bands by this coverage, and the release judge records whether it is
   empty on a season row (`Cinder.Acquisition.ReleaseJudge`), so the panel and the cover can't
@@ -251,7 +290,7 @@ defmodule Cinder.Acquisition.Scorer do
     numbering = Keyword.get(opts, :alternate_numbering, %{})
 
     if coverable_season?(release, season, numbering),
-      do: claimable_coverage(release, MapSet.new(wanted_episodes), season, numbering, opts),
+      do: alternate_coverage(release, MapSet.new(wanted_episodes), season, numbering),
       else: MapSet.new()
   end
 
@@ -296,38 +335,15 @@ defmodule Cinder.Acquisition.Scorer do
     end
   end
 
-  # `full_claim_only: true` scores a release only while it can claim EVERY episode it carries — the
-  # same non-truncating rule `id_coverage/2` applies to stable ids. Only
-  # `Cinder.Catalog.UpgradeHunter` passes it: a delivered file it can't link to an episode it holds
-  # arrives at import as an operator residual decision (#247), whereas the normal sweep is happy to
-  # take a pack for a subset of a season and let the extras be residuals.
-  #
-  # It belongs HERE, inside the coverage function, for two separate reasons. Rejecting the winner
-  # after the fact is useless: `cover/6` is greedy and destructive, so an unclaimable season pack
-  # takes the whole wanted set and the singles behind it are never scored — declining it afterwards
-  # discards that season's upgrades every pass. And filtering candidates once against the INITIAL
-  # want is not enough either: `needed` shrinks with each pick, so a release that overlaps an
-  # earlier pick (or that only fits the band at the smaller k) would still be handed a truncated
-  # assignment, and its unclaimed files land back in an operator hold. Zero coverage drops it from
-  # the round without consuming anything.
-  #
-  # A whole-season pack carries the season (`pack_episode_count`, the same opt `verdict/2` bands
-  # packs with); anything else carries the episodes it names.
-  defp claimable_coverage(release, needed, season, alternate_numbering, opts) do
-    if unclaimable?(release, needed, opts),
-      do: MapSet.new(),
-      else: alternate_coverage(release, needed, season, alternate_numbering)
-  end
+  # `select_upgrades_for/4`'s rule: whether the still-needed episodes hold every episode `release`
+  # carries. A whole-season pack carries the season (`pack_episode_count`, the same count
+  # `verdict/2` bands packs with); anything else carries the episodes it names.
+  defp claims_all?(%Release{episodes: eps}, needed, _pack_episode_count)
+       when is_list(eps) and eps != [],
+       do: MapSet.subset?(MapSet.new(eps), needed)
 
-  defp unclaimable?(release, wanted, opts) do
-    Keyword.get(opts, :full_claim_only, false) and not claims_all?(release, wanted, opts)
-  end
-
-  defp claims_all?(%Release{episodes: eps}, wanted, _opts) when is_list(eps) and eps != [],
-    do: MapSet.subset?(MapSet.new(eps), wanted)
-
-  defp claims_all?(%Release{}, wanted, opts),
-    do: MapSet.size(wanted) == Keyword.get(opts, :pack_episode_count)
+  defp claims_all?(%Release{}, needed, pack_episode_count),
+    do: MapSet.size(needed) == pack_episode_count
 
   defp episodes_multiplier(%Release{episodes: eps}, _opts) when is_list(eps) and eps != [],
     do: length(eps)

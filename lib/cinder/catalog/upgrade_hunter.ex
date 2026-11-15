@@ -271,14 +271,13 @@ defmodule Cinder.Catalog.UpgradeHunter do
     opts =
       upgrade_policy(series) ++
         [
-          # Every file we can't link to an episode we hold becomes an operator residual decision
-          # at import (#247), so filter such releases before the set cover picks them.
-          full_claim_only: true,
           pack_episode_count: season_size,
           mappings: MediaProfiles.acquisition_mappings(series)
         ]
 
-    case Acquisition.best_releases(
+    # Every file we can't link to an episode we hold becomes an operator residual decision at
+    # import (#247), so the upgrade cover takes only releases that claim every episode they carry.
+    case Acquisition.best_upgrade_releases(
            series,
            season_number,
            Enum.map(episodes, & &1.episode_number),
@@ -301,15 +300,12 @@ defmodule Cinder.Catalog.UpgradeHunter do
       {:ok, policy} ->
         MediaProfiles.set_anime_hold(series, nil)
 
-        case Acquisition.best_anime_releases(
+        case Acquisition.best_anime_upgrades(
                context,
                episode_ids,
+               &anime_upgrade_candidate?(&1, episodes_by_id, eligible_ids),
                upgrade_policy(series) ++
-                 [
-                   anime_policy: policy,
-                   required_episode_ids: MapSet.to_list(eligible_ids),
-                   candidate_filter: &anime_upgrade_candidate?(&1, episodes_by_id, eligible_ids)
-                 ]
+                 [anime_policy: policy, required_episode_ids: MapSet.to_list(eligible_ids)]
              ) do
           {:ok, %{assignments: assignments}} ->
             Enum.each(assignments, &maybe_grab_anime_episodes(&1, episodes, eligible_ids))
@@ -330,7 +326,8 @@ defmodule Cinder.Catalog.UpgradeHunter do
     do: HouseholdPolicy.for_target(series, include_reasons: [:no_upgrade])
 
   # An assignment covers a set of episode NUMBERS — every one of them ours to claim, since
-  # `full_claim_only` already dropped the releases carrying anything else. Take it if it improves
+  # the upgrade cover (`Scorer.select_upgrades_for/4`) already dropped the releases carrying
+  # anything else. Take it if it improves
   # ANY covered episode: the import arbitrates per source-file group (`Library.stage_group/7`), so
   # the groups this release doesn't beat keep their files and the ones it does get the new one.
   # `Enum.all?` cost the whole pack whenever one episode of the season was already good enough —

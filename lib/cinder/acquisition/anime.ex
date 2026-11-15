@@ -76,9 +76,23 @@ defmodule Cinder.Acquisition.Anime do
   `opts[:required_episode_ids]` (default `wanted_ids`), `{:error, :incomplete_search}`: the
   release it needed may be behind the failure.
   """
-  def best_episodes(indexer, context, wanted_ids, opts \\ []) do
+  def best_episodes(indexer, context, wanted_ids, opts \\ []),
+    do: best_episodes(indexer, context, wanted_ids, opts, fn _release -> true end)
+
+  @doc """
+  The releases the anime upgrade sweep (`Cinder.Catalog.UpgradeHunter`) grabs for `wanted_ids`:
+  `best_episodes/4`, with one upgrade-only step between the judge and its pick. Of the releases
+  the judge keeps, only those `upgrade?` accepts reach the stable-id cover and its preferred-group
+  wait (`cover_episodes/3`), so a release that improves no episode can't take an episode from one
+  that does.
+  """
+  def best_episode_upgrades(indexer, context, wanted_ids, upgrade?, opts \\ [])
+      when is_function(upgrade?, 1),
+      do: best_episodes(indexer, context, wanted_ids, opts, upgrade?)
+
+  defp best_episodes(indexer, context, wanted_ids, opts, keep?) do
     with {:ok, judged, incomplete?} <- judge_episodes(indexer, context, wanted_ids, opts) do
-      result = ReleaseJudge.pick(judged)
+      result = ReleaseJudge.pick(%{judged | kept: Enum.filter(judged.kept, keep?)})
       required_ids = Keyword.get(opts, :required_episode_ids, wanted_ids)
 
       if incomplete? and not complete_result?(result, required_ids),
@@ -99,7 +113,7 @@ defmodule Cinder.Acquisition.Anime do
 
   @doc """
   The stable-ID cover the anime sweep runs over the release judge's `kept`: the releases
-  `episode_verdict/2` accepts (and `opts[:candidate_filter]`, the upgrade sweep's, keeps) cover
+  `episode_verdict/2` accepts cover
   `wanted_ids` (`Cinder.Acquisition.Scorer.select_for_ids/3`), each assignment frozen with its
   mapping snapshot and the policy it was taken under. Under preferred groups, wanted ids only a
   release still in its group wait could cover are waited for (`waiting`) rather than covered by
@@ -109,10 +123,7 @@ defmodule Cinder.Acquisition.Anime do
   `{:waiting_for_preferred_group, waiting}` or `:no_match`.
   """
   def cover_episodes(kept, wanted_ids, opts) do
-    entries =
-      kept
-      |> filter_candidates(opts)
-      |> Enum.flat_map(&timed_entry(&1, episode_status(&1, opts)))
+    entries = Enum.flat_map(kept, &timed_entry(&1, episode_status(&1, opts)))
 
     if waits_for_preferred_group?(opts),
       do: select_with_waiting(entries, wanted_ids, opts),
@@ -470,13 +481,6 @@ defmodule Cinder.Acquisition.Anime do
   end
 
   defp fill_movie_group(release), do: release
-
-  defp filter_candidates(candidates, opts) do
-    case Keyword.get(opts, :candidate_filter) do
-      nil -> candidates
-      filter when is_function(filter, 1) -> Enum.filter(candidates, filter)
-    end
-  end
 
   defp resolve_release(%Release{coordinates: coordinates} = release, context, wanted_ids)
        when coordinates != [] do

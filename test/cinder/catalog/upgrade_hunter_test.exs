@@ -491,7 +491,7 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
     # Declining the unclaimable pack must not take the season's other offers down with it: the
     # greedy cover hands the whole wanted set to the pack and never scores the singles behind it,
-    # so the claim rule has to filter candidates BEFORE selection (`full_claim_only`). Judging the
+    # so the claim rule has to run inside the cover (`Scorer.select_upgrades_for/4`). Judging the
     # winner afterwards left the season permanently unupgradable — same pool, same decline, every
     # pass.
     test "still takes the per-episode release the unclaimable pack was hiding", ctx do
@@ -729,6 +729,49 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       first = Repo.get!(Episode, first.id)
       assert Repo.get!(Grab, first.grab_id).mapping_snapshot["reserved_episode_ids"] == [first.id]
       assert Repo.get!(Episode, second.id).grab_id == nil
+    end
+
+    # #839: the sweep drops non-upgrading releases before the cover ranks preferred groups first,
+    # so a preferred group's release that improves nothing can't take the episode from another
+    # group's upgrade.
+    test "a preferred group's non-upgrading release leaves the episode to another group's upgrade",
+         ctx do
+      put_env(:tv_preferred_resolutions, ["1080p", "720p"])
+      put_env(:tv_upgrade_cutoff, "1080p")
+
+      Cinder.ConfigCase.put_config(:anime_preferences,
+        preferred_groups: ["trusted"],
+        group_fallback_delay: 3600
+      )
+
+      Repo.update_all(from(s in Cinder.Catalog.Series, where: s.id == ^ctx.series.id),
+        set: [media_profile: :anime]
+      )
+
+      published_at = DateTime.add(DateTime.utc_now(), -2, :day)
+      same = release("[Trusted] Show S01E01 [720p]", %{published_at: published_at})
+      upgrade = release("[Other] Show S01E01 [1080p]", %{published_at: published_at})
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
+        {:ok, [same, upgrade]}
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+        {:ok, []}
+      end)
+
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+        send(test_pid, {:grabbed, release.title})
+        {:ok, "anime-preferred-upgrade"}
+      end)
+
+      poll()
+
+      assert_received {:grabbed, "[Other] Show S01E01 [1080p]"}
+      refute_received {:grabbed, "[Trusted] Show S01E01 [720p]"}
+      assert Repo.get!(Episode, ctx.episode.id).grab_id
     end
 
     test "accepts complete eligible anime coverage after a partial query failure", ctx do
@@ -1046,7 +1089,7 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
   # #882: under a soft "original" pick a season's release list keeps untagged releases, so the
   # upgrade sweep's cover can hand an untagged release the episode a matching one leaves.
   # `Upgrade.candidate?/4` then decides on the held file's language. (A whole-season pack can't
-  # fill that gap here: under `full_claim_only` it must claim every episode it carries.)
+  # fill that gap here: in the upgrade cover it must claim every episode it carries.)
   describe "an untagged release under a soft original pick" do
     setup do
       series =

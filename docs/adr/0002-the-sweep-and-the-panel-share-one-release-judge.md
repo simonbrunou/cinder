@@ -72,7 +72,7 @@ mapping to any episode other than the code's native one, in another season or th
 a `:curated` or `:manual` scene or TVDB-aired mapping assigns a code of the season to such an
 episode, the season's release naming that code, or its whole-season pack, is marked
 `:conflicting_standard_numbering`: the panel refuses it, and neither the sweep nor the upgrade
-sweep (`Cinder.Acquisition.best_releases/4`) grabs it. The cost: while the mapping stands,
+sweep (`Cinder.Acquisition.best_upgrade_releases/4`) grabs it. The cost: while the mapping stands,
 neither a release naming that code nor the season's whole-season pack is grabbed for the season.
 An `:inferred` mapping, or a vetted one naming only the code's native episode, keeps the native
 reading. This extends the anime rule (`AnimeResolver.strip_shadowed_canonical/1`, #156), which
