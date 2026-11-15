@@ -549,6 +549,37 @@ defmodule Cinder.Notifier.EmailTest do
       refute email.text_body =~ "track_order_unknown"
     end
 
+    # #913: the blocked file's name goes into the French sentence, with no English detail.
+    test "names a blocked file in the recipient's French sentence" do
+      configure_smtp!()
+      user = confirmed_user(locale: "fr")
+      insert_approved_request!(user, "book", 86, media_kind: :ebook)
+
+      target = %{
+        work_id: 86,
+        media_kind: :ebook,
+        work: %{title: "The Dispossessed"},
+        hold_reason: "blocked_content: download contains setup.exe"
+      }
+
+      assert :ok = Email.notify({:book_target_held, target})
+
+      assert_receive {:email, email}
+
+      Gettext.with_locale(CinderWeb.Gettext, "fr", fn ->
+        assert String.ends_with?(
+                 email.text_body,
+                 CinderWeb.LiveHelpers.book_hold_reason(target.hold_reason)
+               )
+      end)
+
+      assert email.text_body =~ "(setup.exe)"
+
+      for english <- ["download contains", "Details", "Détails", "blocked file"] do
+        refute email.text_body =~ english
+      end
+    end
+
     test "words an import error the retry budget held on" do
       configure_smtp!()
       user = confirmed_user()

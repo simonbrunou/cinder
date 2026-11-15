@@ -7564,3 +7564,8 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "Retry: %{title}"
 msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download holds a blocked file (%{file}) and no book."
+msgstr ""

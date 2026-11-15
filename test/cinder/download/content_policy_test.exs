@@ -332,6 +332,29 @@ defmodule Cinder.Download.ContentPolicyTest do
     end
   end
 
+  # #913: the reader of `check/2`'s detail, which a held book's reason names the file from.
+  describe "blocked_file/1" do
+    test "reads back the file name check/2 put in its detail, sanitized" do
+      for {list, kind, file} <- [
+            {["Book/setup.exe"], :book, "setup.exe"},
+            {["Movie.mkv.lnk", "readme.txt"], :video, "Movie.mkv.lnk"},
+            {["a\r\nb.exe"], :book, "ab.exe"}
+          ] do
+        assert {:blocked, detail} = ContentPolicy.check(list, kind)
+        assert ContentPolicy.blocked_file(detail) == {:ok, file}, inspect(list)
+      end
+    end
+
+    test "reads a blank file name as empty, and any other shape as :error" do
+      assert ContentPolicy.blocked_file("download contains ") == {:ok, ""}
+      assert ContentPolicy.blocked_file("download contains  \t") == {:ok, ""}
+
+      for detail <- ["", "download contains", "download containssetup.exe", "something else"] do
+        assert ContentPolicy.blocked_file(detail) == :error, inspect(detail)
+      end
+    end
+  end
+
   describe "vet/3 and vet_completed/4" do
     defmodule CleanClient do
       @moduledoc false

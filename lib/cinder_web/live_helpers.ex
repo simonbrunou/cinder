@@ -9,6 +9,7 @@ defmodule CinderWeb.LiveHelpers do
   import CinderWeb.CoreComponents, only: [language_label: 1]
 
   alias Cinder.Catalog
+  alias Cinder.Download.ContentPolicy
 
   @doc """
   Render-time localized title for a movie/series/episode (or any map/struct carrying
@@ -225,7 +226,9 @@ defmodule CinderWeb.LiveHelpers do
   @doc """
   A held book target's stored `hold_reason` in words. `Cinder.Books.hold_target/5` stores a
   reason code (`download_not_found`) or a code and a detail (`download_error: Paused on
-  duplicate`). A known code reads as its sentence, followed by the detail when there is one. The
+  duplicate`). A known code reads as its sentence, followed by the detail when there is one. A
+  `blocked_content` detail that `Cinder.Download.ContentPolicy.blocked_file/1` reads instead names
+  the blocked file inside one sentence, with no detail after it. The
   known codes are the producers' lists (`Cinder.Download.Watch.failure_codes/0`,
   `Cinder.Download.BookPoller.permanent_import_errors/0` and `retried_import_errors/0`,
   `Cinder.Download.permanent_submission_errors/0`) and the watch's `stalled` and
@@ -234,8 +237,9 @@ defmodule CinderWeb.LiveHelpers do
   `download_failed`, a bare client message, another inspected term) is shown as stored, and `nil`
   reads as an empty string.
 
-  Shared by `/books/:id` and the Discord and email notifications for a held book. The generic
-  webhook keeps the stored code, which automations match on.
+  Shared by `/books/:id`, the "Held books" rows on `/activity`, and the Discord and email
+  notifications for a held book. The generic webhook keeps the stored code, which automations
+  match on.
   """
   @spec book_hold_reason(String.t() | nil) :: String.t()
   def book_hold_reason(nil), do: ""
@@ -246,7 +250,24 @@ defmodule CinderWeb.LiveHelpers do
     case {hold_sentence(code), detail} do
       {nil, _detail} -> reason
       {sentence, []} -> sentence
+      {sentence, [detail]} when code == "blocked_content" -> blocked_content(sentence, detail)
       {sentence, [detail]} -> with_detail(sentence, String.trim(detail))
+    end
+  end
+
+  # The content check's detail names the blocked file in Cinder's own English
+  # (`Cinder.Download.ContentPolicy.check/2`), so the file goes into one translated sentence
+  # instead of an English `Details:` tail (#913). A detail in another shape keeps the tail.
+  defp blocked_content(sentence, detail) do
+    case ContentPolicy.blocked_file(detail) do
+      {:ok, ""} ->
+        sentence
+
+      {:ok, file} ->
+        gettext("The download holds a blocked file (%{file}) and no book.", file: file)
+
+      :error ->
+        with_detail(sentence, String.trim(detail))
     end
   end
 

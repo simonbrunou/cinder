@@ -7921,3 +7921,8 @@ msgstr "Livres en attente"
 #, elixir-autogen, elixir-format
 msgid "Retry: %{title}"
 msgstr "Réessayer : %{title}"
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The download holds a blocked file (%{file}) and no book."
+msgstr "Le téléchargement contient un fichier bloqué (%{file}) et aucun livre."

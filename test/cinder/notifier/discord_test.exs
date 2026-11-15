@@ -147,6 +147,27 @@ defmodule Cinder.Notifier.DiscordTest do
     assert embed["description"] =~ ~S(\<https:)
   end
 
+  # #913: a blocked file's name now sits inside the sentence, so it goes through the same escape.
+  test "a blocked file's name in a book hold cannot render a masked link" do
+    expect_post()
+
+    target = %{
+      work: %{title: "Book"},
+      media_kind: :ebook,
+      hold_reason: "blocked_content: download contains [x](https://evil.example).exe"
+    }
+
+    assert :ok = Discord.notify({:book_target_held, target})
+    assert_receive {:posted, %{"embeds" => [embed]}}
+
+    assert embed["description"] =~
+             ~S"The download holds a blocked file \(\[x\]\(https:"
+
+    assert embed["description"] =~ ~S"evil.example\).exe\) and no book."
+    refute embed["description"] =~ "https://"
+    refute embed["description"] =~ "download contains"
+  end
+
   test "maintenance_completed posts a green embed with the operation name" do
     expect_post()
     assert :ok = Discord.notify({:maintenance_completed, :movie_pipeline})

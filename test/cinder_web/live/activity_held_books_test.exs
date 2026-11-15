@@ -78,6 +78,21 @@ defmodule CinderWeb.ActivityHeldBooksTest do
       refute has_element?(view, "#held-book-#{held.id}-reason", "download_error")
     end
 
+    # #913: a blocked-content hold names its file in one sentence, here as on /books/:id.
+    test "shows a blocked-content hold as the one sentence that names the file", %{conn: conn} do
+      target = monitored_book_target(:ebook)
+      {:ok, held} = Books.hold_target(target, {:blocked_content, "download contains setup.exe"})
+
+      {:ok, view, _html} = live(conn, ~p"/activity")
+      {:ok, detail, _html} = live(conn, ~p"/books/#{held.work_id}")
+
+      words = "The download holds a blocked file (setup.exe) and no book."
+
+      assert has_element?(detail, "#book-target-hold-reason-ebook", words)
+      assert has_element?(view, "#held-book-#{held.id}-reason", words)
+      refute has_element?(view, "#held-book-#{held.id}-reason", "Details")
+    end
+
     test "offers no Clear blocklist for a held target with no blocked release", %{conn: conn} do
       {:ok, held} = Books.hold_target(monitored_book_target(), "identity conflict")
 

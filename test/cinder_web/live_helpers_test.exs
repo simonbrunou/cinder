@@ -4,7 +4,7 @@ defmodule CinderWeb.LiveHelpersTest do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Download
-  alias Cinder.Download.{BookPoller, Watch}
+  alias Cinder.Download.{BookPoller, ContentPolicy, Watch}
 
   # The date format strings AND month names are gettext-translated, so a bad .po
   # msgstr would be executed as strftime syntax at render time — this pins every
@@ -152,8 +152,52 @@ defmodule CinderWeb.LiveHelpersTest do
                "The download client reported that the download failed. Details: Paused on duplicate"
 
       assert book_hold_reason("blocked_content: download contains setup.exe") ==
+               "The download holds a blocked file (setup.exe) and no book."
+    end
+
+    # #913: the content check's detail is Cinder's own English, so the file goes into the
+    # sentence. The detail comes from the real writer, so a change to its wording fails here.
+    test "a blocked-content detail reads as one sentence that names the file, in French too" do
+      {:blocked, detail} = ContentPolicy.check(["Book/setup.exe"], :book)
+      stored = "blocked_content: #{detail}"
+
+      english = book_hold_reason(stored)
+      assert english == "The download holds a blocked file (setup.exe) and no book."
+
+      Gettext.put_locale(CinderWeb.Gettext, "fr")
+      french = book_hold_reason(stored)
+
+      assert french =~ ~r/^\p{Lu}.*\(setup\.exe\).*\.$/u
+      assert french != english
+
+      for text <- [english, french], banned <- ["Details", "Détails", "download contains"] do
+        refute text =~ banned, "#{inspect(text)} holds #{inspect(banned)}"
+      end
+    after
+      Gettext.put_locale(CinderWeb.Gettext, "en")
+    end
+
+    test "a blocked-content detail with no file name reads as the bare sentence" do
+      bare = "The download holds a blocked file, such as a program, and no book."
+
+      for stored <- [
+            "blocked_content",
+            "blocked_content: ",
+            "blocked_content: download contains ",
+            "blocked_content: download contains   "
+          ] do
+        assert book_hold_reason(stored) == bare, inspect(stored)
+      end
+    end
+
+    test "a blocked-content detail in another shape keeps the sentence and its detail" do
+      assert book_hold_reason("blocked_content: something else") ==
                "The download holds a blocked file, such as a program, and no book. " <>
-                 "Details: download contains setup.exe"
+                 "Details: something else"
+
+      assert book_hold_reason("blocked_content: download containssetup.exe") ==
+               "The download holds a blocked file, such as a program, and no book. " <>
+                 "Details: download containssetup.exe"
     end
 
     test "a blank detail reads as the code's sentence alone" do

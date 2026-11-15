@@ -171,10 +171,24 @@ defmodule Cinder.Download.ContentPolicy do
     value |> String.replace(~r/[\s.]+$/u, "") |> Path.extname() |> String.downcase()
   end
 
+  @blocked_detail_prefix "download contains "
+
   # The name is remote, attacker-chosen and unbounded, and this string is both logged and
   # persisted as the park reason — so it goes through the same sanitizer (CRLF stripped,
   # truncated) that every other remote string in the pollers already uses.
-  defp detail(name), do: "download contains #{HTTPPolicy.sanitize_log(Path.basename(name))}"
+  defp detail(name),
+    do: @blocked_detail_prefix <> HTTPPolicy.sanitize_log(Path.basename(name))
+
+  @doc """
+  The blocked file's name in a `detail` that `check/2` wrote (`download contains setup.exe`),
+  trimmed: `{:ok, "setup.exe"}`. A detail that ends after that prefix, or holds only whitespace
+  after it, reads as `{:ok, ""}`. `:error` for a detail in any other shape.
+  `CinderWeb.LiveHelpers.book_hold_reason/1` reads a held book's stored `blocked_content` detail
+  with it.
+  """
+  @spec blocked_file(String.t()) :: {:ok, String.t()} | :error
+  def blocked_file(@blocked_detail_prefix <> file), do: {:ok, String.trim(file)}
+  def blocked_file(detail) when is_binary(detail), do: :error
 
   defp downcase(extensions), do: Enum.map(extensions, &String.downcase/1)
 
