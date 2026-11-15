@@ -269,8 +269,9 @@ defmodule Cinder.Catalog.Grabs do
 
   # Verification and mapping holds: the post-download, pre-import safety net
   # `Cinder.Library.PolicyVerifier` writes into, and the operator's way out of each. The movie half
-  # lives in `Cinder.Catalog.MovieLifecycle` (`record_failure/2` holds, `retry/1`, `cancel/2` and
-  # `abort_upgrade/2` release, `reject/2` rejects).
+  # lives in `Cinder.Catalog.MovieLifecycle`: `MovieLifecycle.record_failure/2` holds,
+  # `MovieLifecycle.retry/1`, `MovieLifecycle.cancel/2` and `MovieLifecycle.abort_upgrade/2`
+  # release, and `MovieLifecycle.reject/2` rejects.
 
   @doc "Atomically holds a downloaded resolved grab after its final verification attempt."
   def hold_grab_verification(%Grab{} = grab) do
@@ -765,7 +766,7 @@ defmodule Cinder.Catalog.Grabs do
   # `placed?` false is the arbitrated keep (#250): nothing was written, the episode is committed
   # only to release its grab_id. Parts belong to the primary they were folded onto, so a NEW
   # primary drops them — but here the primary is unchanged, and clearing them would orphan the
-  # row's parts and hand them to `remove_superseded_episode_files/1` to delete off disk.
+  # row's parts and hand them to `TvPoller.remove_superseded_episode_files/1` to delete off disk.
   defp transition_imported_episode!(grab_id, episode, dest, quality, retain_grab?, placed?) do
     if episode.monitored or not is_nil(episode.file_path) do
       attrs =

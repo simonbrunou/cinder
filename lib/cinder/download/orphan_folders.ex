@@ -24,8 +24,9 @@ defmodule Cinder.Download.OrphanFolders do
   ## What counts as a reference
 
   A folder is left out of the report when, by its `<key>`: a configured download client lists a
-  Cinder job with that key (`list_managed/0`), a `download_intents` row carries it as its
-  operation key, or any grab / movie / book-grab `content_path` or library file path mentions it.
+  Cinder job with that key (`Cinder.Download.Client.list_managed/0`), a `download_intents` row
+  carries it as its operation key, or any grab / movie / book-grab `content_path` or library file
+  path mentions it.
   Matching on the key rather than the path keeps the check independent of mount-prefix
   differences. If any configured client cannot list its jobs the whole operation fails closed
   with `{:error, {:client_list_failed, protocol, reason}}`: with a client blind, "unreferenced"
@@ -332,8 +333,9 @@ defmodule Cinder.Download.OrphanFolders do
 
   defp put_operation_key(_entry, keys), do: keys
 
-  # `health/0` first: SABnzbd answers a bad API key with HTTP 200, which `list_managed/0` reads as
-  # an empty list. A client that is not healthy cannot vouch for what it does not list.
+  # `Cinder.Download.Client.health/0` first: SABnzbd answers a bad API key with HTTP 200, which
+  # `Client.list_managed/0` reads as an empty list. A client that is not healthy cannot vouch for
+  # what it does not list.
   defp list_managed(protocol) do
     case Download.client_for(protocol) do
       {:ok, client} ->

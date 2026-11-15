@@ -110,7 +110,7 @@ defmodule Cinder.Requests.WatchlistSync do
   # The marker set alone decides what is skipped, so every entry ends a tick marked — including
   # one this user had already requested by hand, which the sweep adopts rather than re-requesting.
   # Marking only what the sweep itself created would leave manually-requested titles with no
-  # durable record, and `delete_movie/3`'s reap of the request row would resurrect them.
+  # durable record, and `Catalog.delete_movie/3`'s reap of the request row would resurrect them.
   defp request_new(user, entries) do
     marked = synced_keys(user)
     requested = requested_keys(user)

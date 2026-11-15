@@ -118,8 +118,8 @@ defmodule Cinder.Subtitles.SidecarTransaction.Bound do
      merge_committed_warnings(committed_warning, {:descriptor_close_failed, reason})}
   end
 
-  # A disposal that kept its workspace already logged the folder's path (`AtomicFile`'s
-  # `finish_displaced/2`), so the caller still learns which folder it kept (#1290).
+  # A disposal that kept its workspace already logged the folder's path (
+  # `AtomicFile.finish_displaced/2`), so the caller still learns which folder it kept (#1290).
   defp finish_bound_operation({:returned, {:workspace_kept, directory}}, {:error, reason}),
     do: {:workspace_kept, directory, {:descriptor_close_failed, reason}}
 

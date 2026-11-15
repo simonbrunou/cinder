@@ -503,7 +503,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   # down is simpler than each hand-writing the same query, and one less round trip too. Returns
   # `%{tmdb_episode_id => episode_id}` directly — none of the readers ever needs more than the
   # Cinder episode id off it, unlike the preview path's
-  # `Cinder.Catalog.SceneNumbering`-local `episode_lookup_from_tree/1`, which stays a
+  # `Cinder.Catalog.SceneNumbering.episode_lookup_from_tree/1`, which stays a
   # `%{tmdb_episode_id => %{episode_number:}}` shape instead (that preview only needs the episode
   # number). Public (not private) — also called from
   # `Cinder.Catalog.SceneNumbering.set_scene_numbering_group/3`'s interactive save path.
@@ -737,7 +737,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   # A request approval arms the season's library check (#720): the TV sweep first adopts the
   # season's files already under the TV roots (`Cinder.Library.SeasonAdoption`), so it does not
   # download them again. A direct write, like the monitor flags: the approval's struct may be
-  # stale, and `change/2` would skip a value equal to it.
+  # stale, and `Ecto.Changeset.change/2` would skip a value equal to it.
   defp arm_library_check(%Season{id: id}) do
     Repo.update_all(from(s in Season, where: s.id == ^id),
       set: [library_check_armed_at: DateTime.utc_now(:second)]

@@ -213,16 +213,17 @@ defmodule Cinder.Library.BookArchive do
     end
   end
 
-  # The one containment/symlink/extension check every other candidate this module hands to
-  # `resolve/1` already gets — a resolver's `resolve_folder/2` already validated it via
-  # `Library.safe_walk/1`, but its `resolve_file/2` hands a bare archive path here with no
-  # containment check of its own. Closing that gap here means extraction never even opens a path
-  # this module has not itself confirmed is safe to read.
+  # The one containment/symlink/extension check every other candidate this module hands to a
+  # resolver (`EbookSources.resolve/1`, `AudiobookSources.resolve/1`) already gets —
+  # `EbookSources.resolve_folder/2` and its audiobook twin already validated it via
+  # `Library.safe_walk/1`, but `EbookSources.resolve_file/2` and its twin hand a bare archive path
+  # here with no containment check of their own. Closing that gap here means extraction never even
+  # opens a path this module has not itself confirmed is safe to read.
   defp safe_archive_source(archive_path),
     do: Library.safe_source_file(archive_path, @extractable_extensions)
 
-  # `rm_rf/1` reports a failure as `{:error, posix, path}`; the attempt ends with the two-tuple
-  # the `with` above and the poller's import-result handling match (#973).
+  # `Filesystem.rm_rf/1` reports a failure as `{:error, posix, path}`; the attempt ends with the
+  # two-tuple the `with` above and the poller's import-result handling match (#973).
   defp reset_scratch_dir(scratch_dir) do
     case fs().rm_rf(scratch_dir) do
       {:ok, _removed} -> RawFile.mkdir_p(scratch_dir)
@@ -246,10 +247,10 @@ defmodule Cinder.Library.BookArchive do
   # (see `extract_and_resolve/3`'s spec) — `EbookSources.resolve/1`'s resolve_fun returns a
   # 3-tuple (`{:ok, source, format}`), `Cinder.Library.AudiobookSources.resolve/1`'s returns a
   # 2-tuple (`{:ok, tracks}`). A clause that only matched the 3-tuple shape left every SUCCESSFUL
-  # audiobook extraction raising `FunctionClauseError` here (caught only by the poller's
-  # `isolate/2` rescue, so it surfaced as an opaque logged failure, never a working import) — the
-  # `:error` clause is the only shape this function needs to special-case; anything else a
-  # `resolve_fun` returns is success, unconditionally.
+  # audiobook extraction raising `FunctionClauseError` here (caught only by the
+  # `BookPoller.isolate/2` rescue, so it surfaced as an opaque logged failure, never a working
+  # import) — the `:error` clause is the only shape this function needs to special-case; anything
+  # else a `resolve_fun` returns is success, unconditionally.
   defp finish({:error, _reason} = error, scratch_dir) do
     _ = RawFile.rm_rf(scratch_dir)
     error

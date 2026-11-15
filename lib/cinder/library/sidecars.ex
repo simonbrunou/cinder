@@ -319,8 +319,8 @@ defmodule Cinder.Library.Sidecars do
       # effect operation cannot be parsed at all (a decoded post-effect error for a rename is
       # `:ok` and reaches the branch above). If it did land, the partial now sits at the
       # quarantine name, so record it (issue #585) rather than lose it to a log line. A row for
-      # a rename that did NOT land is self-correcting: `list_present/0` prunes a row whose path
-      # does not exist.
+      # a rename that did NOT land is self-correcting: `SidecarQuarantine.list_present/0` prunes a
+      # row whose path does not exist.
       {:error, {:effect_committed, _operation, _detail} = reason} ->
         retain(
           dest,

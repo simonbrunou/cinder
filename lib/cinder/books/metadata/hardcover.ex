@@ -165,8 +165,9 @@ defmodule Cinder.Books.Metadata.Hardcover do
   defp normalize_work(_body), do: {:error, :unexpected_response}
 
   # A provider id is a string or a number; anything else identifies nothing and is dropped rather
-  # than coerced. `to_string/1` raises on a map or a list, and everything here runs inside the
-  # refresher's `isolate/2`, which only logs what it rescues — a raise there recurs every tick.
+  # than coerced. `Kernel.to_string/1` raises on a map, or on a list that is not chardata, and
+  # everything here runs inside `Cinder.Books.Refresher.isolate/2`, which only logs what it
+  # rescues — a raise there recurs every tick.
   defp id(value) when is_binary(value), do: presence(value)
   defp id(value) when is_integer(value), do: Integer.to_string(value)
   defp id(_value), do: nil
@@ -234,8 +235,9 @@ defmodule Cinder.Books.Metadata.Hardcover do
     end
   end
 
-  # A format that is not a string tells us nothing, and `to_string/1` raises on a map or a list —
-  # on the refresher's tick path, where `isolate/2` rescues without parking.
+  # A format that is not a string tells us nothing, and `Kernel.to_string/1` raises on a map, or on
+  # a list that is not chardata — on the refresher's tick path, where
+  # `Cinder.Books.Refresher.isolate/2` rescues without parking.
   defp format_key(format) when is_binary(format), do: String.downcase(format)
   defp format_key(_format), do: ""
 

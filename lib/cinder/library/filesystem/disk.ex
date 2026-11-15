@@ -426,8 +426,8 @@ defmodule Cinder.Library.Filesystem.Disk do
   end
 
   # Supervised `Port` (#590) via `Cinder.BoundedCommand.run/4` — see that module's moduledoc
-  # for how it kills. `executable` is resolved from `PATH` inside `run/4` itself, exactly
-  # like `System.cmd/3` did, so a missing `mv` still raises the equivalent
+  # for how it kills. `executable` is resolved from `PATH` inside `BoundedCommand.run/4` itself,
+  # exactly like `System.cmd/3` did, so a missing `mv` still raises the equivalent
   # `%ErlangError{original: :enoent}` shape the `rescue` below already wraps.
   defp run_command(executable, args) do
     case BoundedCommand.run(executable, args, subprocess_timeout_ms(), stderr_to_stdout: true) do
@@ -706,8 +706,8 @@ defmodule Cinder.Library.Filesystem.Disk do
   # terminate a child stuck in a blocking syscall against a wedged mount (the
   # `python3 priv/rooted_fs_main.py hold ...` process this closes was never proven to have reached
   # its own graceful `sys.stdin.buffer.read()` shutdown wait, especially on the timeout path
-  # above). Delegates to `Cinder.BoundedCommand.kill_and_close/1`, the same kill every `run/4`
-  # caller gets; its doc says how it kills.
+  # above). Delegates to `Cinder.BoundedCommand.kill_and_close/1`, the same kill every
+  # `BoundedCommand.run/4` caller gets; its doc says how it kills.
   defp close_rooted_port(port), do: BoundedCommand.kill_and_close(port)
 
   defp with_rooted_bound(root, relative, source_path, mode, callback) do
@@ -770,8 +770,8 @@ defmodule Cinder.Library.Filesystem.Disk do
   end
 
   # Supervised `Port` (#590) via `Cinder.BoundedCommand.run/4` — see that module's moduledoc
-  # for how it kills. `executable` is resolved from `PATH` inside `run/4` itself, exactly
-  # like `System.cmd/3` did, so a missing `sync` still raises the equivalent
+  # for how it kills. `executable` is resolved from `PATH` inside `BoundedCommand.run/4` itself,
+  # exactly like `System.cmd/3` did, so a missing `sync` still raises the equivalent
   # `%ErlangError{original: :enoent}` shape the `rescue` below already wraps.
   defp sync_directory(path) do
     case BoundedCommand.run("sync", ["-d", "--", path], subprocess_timeout_ms(),

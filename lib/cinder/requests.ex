@@ -258,12 +258,12 @@ defmodule Cinder.Requests do
   end
 
   # A discovery surface holds a provider resolution, not a work id, so it hands the resolution
-  # over and this folds it into the catalog here — *after* `create_for_current_user/2`'s quota
+  # over and this folds it into the catalog here — *after* `create_for_current_user/3`'s quota
   # check, and nowhere else. Importing on the caller's side instead would let a user who is over
   # quota grow `book_works` and its editions without bound on every refused press, which is
   # exactly why the movie path creates its row inside this module too.
   #
-  # `import_resolution/1` is idempotent, so a re-request of a known work updates in place.
+  # `Books.import_resolution/1` is idempotent, so a re-request of a known work updates in place.
   defp snapshot_request(%{target_type: "book", resolution: resolution} = attrs) do
     case Books.import_resolution(resolution) do
       {:ok, %Work{} = work} ->
@@ -539,10 +539,10 @@ defmodule Cinder.Requests do
   # The insert reaches Ecto's `to_constraints`, but ecto_sqlite3 translates every FK violation to
   # `[foreign_key: nil]` (no column name from SQLite), and Ecto requires the registered constraint
   # name to match — a nil name never matches, so `Repo.insert/1` raises `Ecto.ConstraintError`
-  # regardless of a declared `foreign_key_constraint/2`. The insert's counterpart of the flip's
-  # `RequestTransition.refusal/2`: a concurrent deletion of the requester or (for an admin
-  # auto-approval) the approver — the same row for an admin request — is refused, not raised, and
-  # `approve_in_transaction/4` rolls back on it.
+  # regardless of a declared `Ecto.Changeset.foreign_key_constraint/2`. The insert's counterpart of
+  # the flip's `RequestTransition.refusal/2`: a concurrent deletion of the requester or (for an
+  # admin auto-approval) the approver — the same row for an admin request — is refused, not raised,
+  # and `approve_in_transaction/4` rolls back on it.
   defp write_request({:insert, user, attrs, approver_id}, profile) do
     %Request{}
     |> Request.create_changeset(

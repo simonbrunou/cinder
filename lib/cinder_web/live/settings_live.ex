@@ -42,11 +42,11 @@ defmodule CinderWeb.SettingsLive do
      )}
   end
 
-  # A map container is not enough: `save_form/1` raises on a non-binary VALUE too. Drop the frame
-  # whole rather than filter it — `plan/1` reads an absent key as an unchecked box
-  # (`params[key] || "false"`), so discarding one bad value would turn a crash into a stealth
-  # write. This form is submit-only; a `phx-change` here would ship `_target` as a LIST and every
-  # change frame would be silently dropped.
+  # A map container is not enough: `Cinder.Settings.save_form/1` raises on a non-binary VALUE too.
+  # Drop the frame whole rather than filter it — `Cinder.Settings.Shape.plan/3` reads an absent key
+  # as an unchecked box (`params[key] || "false"`), so discarding one bad value would turn a crash
+  # into a stealth write. This form is submit-only; a `phx-change` here would ship `_target` as a
+  # LIST and every change frame would be silently dropped.
   @impl true
   def handle_event("save", params, socket) do
     if settings_params?(params), do: save_settings(params, socket), else: {:noreply, socket}

@@ -24,12 +24,12 @@ defmodule CinderWeb.DiscoverLive do
   @picks Language.preferences()
   @book_kinds LibraryKind.books()
 
-  # `cancel_async/3` unlinks and kills, but it neither demonitors nor drops the private entry, so
-  # the task's DOWN still arrives as an `{:exit, reason}` result. A follow-on `start_async` under
-  # the same name replaces the stored ref and LiveView prunes the stale message — but the branch
-  # that only cancels (query fell below the floor) has nothing to replace it, so the DOWN lands on
-  # `handle_async/3` and would report a books outage the user never had. One attribute for both
-  # the reason and the clause that swallows it, so the two cannot drift apart.
+  # `Phoenix.LiveView.cancel_async/3` unlinks and kills, but it neither demonitors nor drops the
+  # private entry, so the task's DOWN still arrives as an `{:exit, reason}` result. A follow-on
+  # `start_async` under the same name replaces the stored ref and LiveView prunes the stale message
+  # — but the branch that only cancels (query fell below the floor) has nothing to replace it, so
+  # the DOWN lands on `handle_async/3` and would report a books outage the user never had. One
+  # attribute for both the reason and the clause that swallows it, so the two cannot drift apart.
   @superseded {:shutdown, :superseded}
 
   @impl true

@@ -30,12 +30,12 @@ defmodule Cinder.Catalog.Adoption do
     end
   end
 
-  # #455: `validator` (`revalidate_candidate/3`) lstat-walks every path component of each candidate,
-  # filesystem I/O that can stall on a network-mounted library root. Run inside the `:immediate`
-  # transaction it would hold SQLite's database-wide write lock for the whole stall, queuing every
-  # other writer. So the profile is resolved and `validator` runs before any transaction, and
-  # `do_adopt_series_files/4` re-resolves both the profile and the series fresh (indexed
-  # `Repo.get`s, not filesystem I/O) inside a transaction scoped to only the DB writes.
+  # #455: `validator` (`Cinder.Library.Adoption.revalidate_candidate/3`) lstat-walks every path
+  # component of each candidate, filesystem I/O that can stall on a network-mounted library root.
+  # Run inside the `:immediate` transaction it would hold SQLite's database-wide write lock for the
+  # whole stall, queuing every other writer. So the profile is resolved and `validator` runs before
+  # any transaction, and `do_adopt_series_files/4` re-resolves both the profile and the series fresh
+  # (indexed `Repo.get`s, not filesystem I/O) inside a transaction scoped to only the DB writes.
   @doc false
   def adopt_series_files(
         %Series{id: series_id},

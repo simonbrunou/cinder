@@ -251,7 +251,8 @@ defmodule Cinder.Library.Adoption do
     )
   end
 
-  # A root with no destination inside it walks through `find_files/1`, as every other walk does.
+  # A root with no destination inside it walks through `Filesystem.find_files/1`, as every other
+  # walk does.
   defp find_files(root, []), do: filesystem().find_files(root)
   defp find_files(root, nested), do: filesystem().find_files(root, skip: nested)
 

@@ -13,7 +13,7 @@ defmodule Cinder.Subtitles.SidecarTransaction.Workspace do
   @operation_id ~r/\A[A-Za-z0-9_-]{22}\z/
   @workspace_prefix ".cinder-subtitle-sync-cas-"
   @staged_name ".cinder-subtitle-sync-write-staged"
-  # Only `AtomicFile`'s `replace_shared_tombstone/2` creates this name, after its exchange
+  # Only `AtomicFile.replace_shared_tombstone/2` creates this name, after its exchange
   # committed.
   @tombstone_name ".cinder-subtitle-sync-write-tombstone"
   # A sweep leaves a workspace that changed within this long: an operation still at work in it,

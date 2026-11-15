@@ -15,7 +15,8 @@ defmodule Cinder.Requests.RequestTransition do
   # `Cinder.Requests` re-reads the profile inside its `:immediate` transaction just before the
   # write, and the `requests_profile_integrity` trigger is the fence behind that. The literal is
   # also spelled out in the migrations that create the trigger and in `Request`'s
-  # `check_constraint/3` calls; `test/cinder/guarded_write_test.exs` is what catches a drift.
+  # `Ecto.Changeset.check_constraint/3` calls; `test/cinder/guarded_write_test.exs` is what catches
+  # a drift.
   #
   # The same write can race deletion of its `approved_by_id` user. SQLite's FK message names no
   # column, so this narrows by checking the approver row is gone. That is a strong hint, not proof

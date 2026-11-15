@@ -88,9 +88,9 @@ defmodule Cinder.Library.AudiobookImport do
   end
 
   # `changed?` carries this track's actual staging outcome through to
-  # `Files.record_import_set/3` — see that call's own `insert_all_or_existing/3` comment for why a
-  # same-inode replay (nothing placed) must never refresh a row's metadata even when `replace?` is
-  # true, regardless of what this tick's own probe attempt returned.
+  # `Files.record_import_set/3` — see that call's own `Files.insert_all_or_existing/3` comment for
+  # why a same-inode replay (nothing placed) must never refresh a row's metadata even when
+  # `replace?` is true, regardless of what this tick's own probe attempt returned.
   #
   # A failure returns the handle as it stands, including this track when it was already placed,
   # so the caller's rollback covers it too.
@@ -144,8 +144,8 @@ defmodule Cinder.Library.AudiobookImport do
 
   # --- record phase ---
 
-  # `record_import_set/3` marks every track's stage committed in the one transaction that records
-  # them, so a losing write commits none of them and the whole set rolls back.
+  # `Files.record_import_set/3` marks every track's stage committed in the one transaction that
+  # records them, so a losing write commits none of them and the whole set rolls back.
   defp record(staged, grab, target, replace?) do
     write = &Books.Files.record_import_set(target, &1, import_stage_ids: &2, replace: replace?)
 

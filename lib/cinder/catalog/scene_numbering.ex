@@ -340,8 +340,9 @@ defmodule Cinder.Catalog.SceneNumbering do
   # or "the fetch failed" — a failed fetch (already logged by the caller) keeps whatever scene
   # rows are already synced, never strips them. `episode_lookup_fun` is a zero-arg thunk, not the
   # lookup itself — the two nil short-circuits above mean the group is unconfigured or the fetch
-  # already failed, so the (join-backed) `episode_identity_lookup/1` query must never run in
-  # either case; it's only forced in the one clause that actually persists coordinates.
+  # already failed, so the (join-backed) `SeriesCatalog.episode_identity_lookup/1` query must
+  # never run in either case; it's only forced in the one clause that actually persists
+  # coordinates.
   defp sync_scene_coordinates(
          %Series{scene_numbering_group_id: nil},
          _detail,
@@ -428,7 +429,7 @@ defmodule Cinder.Catalog.SceneNumbering do
   # preview_scene_mapping/2 (display-only), so the picker's preview can never drift from what
   # Save actually writes. `matched` is opaque here — this function never reads its internals,
   # only its truthiness and identity — so each caller's `episode_lookup` can (and does) carry a
-  # different shape for it: the write path's `episode_identity_lookup/1` maps
+  # different shape for it: the write path's `SeriesCatalog.episode_identity_lookup/1` maps
   # tmdb_episode_id => episode_id directly (a bare id — see its own doc for why), while the
   # preview path's `episode_lookup_from_tree/1` maps tmdb_episode_id => %{episode_number:}
   # (`preview_scene_mapping/2`'s `canonical_range` is the only reader of `matched`, and it only

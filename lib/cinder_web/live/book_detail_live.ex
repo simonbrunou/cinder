@@ -325,10 +325,11 @@ defmodule CinderWeb.BookDetailLive do
 
   # Every other error atom (`:unsupported_media_kind`, `:bad_torrent` and the rest of
   # `Cinder.Download`'s permanent-submission-error set, a raw `%Ecto.Changeset{}`) is read back
-  # from the target's own post-grab state rather than pattern-matched by atom: `grab_book_target/2`
-  # already parks a permanently rejected submission `:held` with an exact reason before returning,
-  # so re-reading the fresh `hold_reason` off the just-reloaded work renders the real reason, in
-  # words (`book_hold_reason/1`), without this module matching on `Cinder.Download`'s error atoms.
+  # from the target's own post-grab state rather than pattern-matched by atom:
+  # `Download.grab_book_target/2` already parks a permanently rejected submission `:held` with an
+  # exact reason before returning, so re-reading the fresh `hold_reason` off the just-reloaded work
+  # renders the real reason, in words (`LiveHelpers.book_hold_reason/1`), without this module
+  # matching on `Cinder.Download`'s error atoms.
   defp book_grab_flash({:error, _reason}, socket, target_id) do
     case Enum.find(socket.assigns.work.targets, &(&1.id == target_id)) do
       %BookTarget{status: :held, hold_reason: reason} when is_binary(reason) ->

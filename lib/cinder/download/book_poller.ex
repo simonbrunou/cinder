@@ -277,11 +277,11 @@ defmodule Cinder.Download.BookPoller do
   # `:monitored` target with no grab and no intent, and since this slice has no search pass,
   # nothing would ever look at it again.
   #
-  # `:held`, not back to `:monitored`: this slice has no automatic selection (there is no
-  # `best_book_release/2`), so every grab exists because an operator chose a release. Returning
-  # the target to `:monitored` would make a failed download indistinguishable from one nobody has
-  # picked a release for yet. The contract's `held` is "operator-visible … conflict; never
-  # auto-grab", and it carries the reason.
+  # `:held`, not back to `:monitored`: this slice has no automatic selection (the moduledoc of
+  # `Cinder.Acquisition.BookSearch` says why), so every grab exists because an operator chose a
+  # release. Returning the target to `:monitored` would make a failed download indistinguishable
+  # from one nobody has picked a release for yet. The contract's `held` is "operator-visible …
+  # conflict; never auto-grab", and it carries the reason.
   #
   # #398: the client removal used to be a bare best-effort call with the grab (its only durable
   # record of `download_id`/`download_protocol`) already deleted — a transient removal failure

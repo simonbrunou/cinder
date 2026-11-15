@@ -78,8 +78,8 @@ defmodule Cinder.Subtitles.Translator.LibreTranslate do
   defp request(url, cues, target) do
     with {:ok, body} <- Jason.encode(request_body(cues, target)),
          true <- byte_size(body) <= @max_batch_bytes do
-      # The setting is the batch's total deadline too: `bounded_request/2` would stop every
-      # batch at its 60 s default, whatever the setting says (#1200).
+      # The setting is the batch's total deadline too: `HTTPPolicy.bounded_request/2` would stop
+      # every batch at its 60 s default, whatever the setting says (#1200).
       timeout = receive_timeout()
 
       [

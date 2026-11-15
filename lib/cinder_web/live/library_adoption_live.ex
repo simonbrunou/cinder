@@ -154,8 +154,8 @@ defmodule CinderWeb.LibraryAdoptionLive do
   # per-candidate choice set before or after survives untouched. Kind-aware for the same reason
   # `set_decision` is: a forged `apply_all` naming the wrong choice family for the candidates
   # currently on screen (fold/part against book candidates, or preferred/all_formats against
-  # episode candidates) fills nothing rather than writing a decision `selected_candidates/2`
-  # would only reject later.
+  # episode candidates) fills nothing rather than writing a decision
+  # `MigrationAdoption.selected_candidates/2` would only reject later.
   def handle_event("apply_all", %{"choice" => choice}, socket)
       when choice in ["fold", "part", "preferred", "all_formats"] do
     decisions =
@@ -230,7 +230,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
 
   # `:readarr` auto-advances through `Readarr.plan/2`'s bounded batches (B6c) — each batch's
   # candidates are merged into `@readarr_candidates`, and `@readarr_seen` (the excluded set fed
-  # back into the next `preview_migration/2` call) grows so the next batch never re-pays or
+  # back into the next `Adoption.preview_migration/2` call) grows so the next batch never re-pays or
   # re-emits a work this session already classified. Stops on `preview.remaining == 0` or an
   # operator Cancel (`@cancelling?`), renumbering the merged candidates' ids (batch-local ids
   # collide across batches) before handing off to `put_migration_preview/2`.
@@ -639,9 +639,10 @@ defmodule CinderWeb.LibraryAdoptionLive do
   defp adoption_failure_text(%{reason: :episode_not_found}),
     do: gettext("The episode changed while adoption was running.")
 
-  # `Cinder.Books.Adoption.adopt_work/3`'s `do_import/1` — Bookshelf reported no `foreignBookId`
-  # for this work, so the durable "readarr" identifier stamp is impossible; nothing was written
-  # (the whole transaction rolled back). B6b's own `work/0` type permits a `nil` `foreign_id`.
+  # `Cinder.Books.Adoption.do_import/1` (inside `Cinder.Books.Adoption.adopt_work/3`) — Bookshelf
+  # reported no `foreignBookId` for this work, so the durable "readarr" identifier stamp is
+  # impossible; nothing was written (the whole transaction rolled back). B6b's own
+  # `MigrationSource.work()` type permits a `nil` `foreign_id`.
   defp adoption_failure_text(%{reason: %Ecto.Changeset{errors: errors}}) do
     if Keyword.has_key?(errors, :foreign_id) do
       gettext(

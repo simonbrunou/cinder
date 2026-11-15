@@ -52,8 +52,8 @@ defmodule Cinder.Books.Refresher do
   # authors becoming a different two authors at equal cardinality is exactly the drift this
   # exists to catch, and a count comparison would miss it) drift is watched, per the plan's own
   # scope. Both `before` and `refreshed` can be `nil` (the work vanished mid-refresh, or never
-  # existed — `work_identity_snapshot/1` returns `nil` rather than raising); either case skips
-  # the comparison instead of crashing this best-effort tail.
+  # existed — `Books.work_identity_snapshot/1` returns `nil` rather than raising); either case
+  # skips the comparison instead of crashing this best-effort tail.
   defp record_drift(nil, _refreshed), do: :ok
   defp record_drift(_before, nil), do: :ok
 

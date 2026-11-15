@@ -584,7 +584,8 @@ defmodule Cinder.Library do
   # and every one of their files stays an operator hold: a qualifier TMDB lacks
   # ("Shameless.US.S01E05.mkv"), a site/group prefix, and a title-less inner file (#265). The
   # grab's own release title is what supplies the title those files omit or qualify —
-  # `names_release?/3` — and the two are ORed: either name confirming the file is enough.
+  # `Acquisition.names_release?/3` — and the two are ORed: either name confirming the file is
+  # enough.
   defp names_series?(path, series, release_title) do
     base = Path.basename(path)
 
@@ -790,7 +791,7 @@ defmodule Cinder.Library do
   # for the WHOLE group, before anything is staged. Deciding per stage would be wrong twice over:
   # the gate would consult only the group's first episode, and a decline would re-point every row
   # in the group at that one episode's file — leaving the others' files unreferenced for
-  # `remove_superseded_episode_files/1` to delete.
+  # `TvPoller.remove_superseded_episode_files/1` to delete.
   defp stage_group(acc, episodes, source, root, target, download, :arbitrate) do
     case arbitration_quality(source, download.release_title) do
       {:ok, new_q} ->
@@ -829,13 +830,13 @@ defmodule Cinder.Library do
 
   # The declined group: every episode that holds a file gets a noop stage pinned to THAT file, so
   # it keeps its own path and recorded quality and still counts as imported — otherwise
-  # `commit_grab_imports/4` would bump it as missing. An episode in the group holding nothing gets
-  # nothing: the file is one unit and we just declined it, so that episode stays wanted and
+  # `Grabs.commit_grab_imports/4` would bump it as missing. An episode in the group holding nothing
+  # gets nothing: the file is one unit and we just declined it, so that episode stays wanted and
   # re-searches. One stage per distinct HELD PATH across the whole import, never one per episode:
-  # `import_stages.dest` is globally unique and two episodes legitimately share a `file_path` —
-  # that is exactly what a previously imported double-episode file leaves behind. A stage each
-  # would collide on the second insert, fail the whole grab, and leave the first one's `:prepared`
-  # row holding that dest until its handoff deadline, so retries inside that window would fail
+  # `import_stages.dest` is globally unique and two episodes legitimately share a `file_path` — that
+  # is exactly what a previously imported double-episode file leaves behind. A stage each would
+  # collide on the second insert, fail the whole grab, and leave the first one's `:prepared` row
+  # holding that dest until its handoff deadline, so retries inside that window would fail
   # identically. The stage fans back out to every episode on that path, as `stage_group/7` already
   # does for placements.
   defp keep_held_files(acc, episodes, source, download) do
@@ -863,13 +864,13 @@ defmodule Cinder.Library do
 
   # The row's `placed?` is pinned false — a decline is never a placement, even when the held file
   # has vanished and staging lands the DECLINED file at that path. Calling that a placement clears
-  # `part_file_paths` (which `remove_superseded_episode_files/1` then DELETES off disk) and skips
-  # #274's `no_upgrade` row, which the record's own backfill cannot substitute for — the sweep's
-  # `Enum.any?` gate is driven by a sibling episode (#289). Quality stays the record's own unless
-  # we truly placed, or `ImportedQuality.for_outcome/4`'s unrecorded arm would stamp the declined
-  # file's parse — title backfill and probed track languages — onto a kept file (#128, #275). The
-  # one exception is a `:same_file` keep's sidecar list, which follows the subtitles its commit
-  # links (#822). `ImportedQuality.declined/3` holds both rules.
+  # `part_file_paths` (which `TvPoller.remove_superseded_episode_files/1` then DELETES off disk) and
+  # skips #274's `no_upgrade` row, which the record's own backfill cannot substitute for — the
+  # sweep's `Enum.any?` gate is driven by a sibling episode (#289). Quality stays the record's own
+  # unless we truly placed, or `ImportedQuality.for_outcome/4`'s unrecorded arm would stamp the
+  # declined file's parse — title backfill and probed track languages — onto a kept file (#128,
+  # #275). The one exception is a `:same_file` keep's sidecar list, which follows the subtitles its
+  # commit links (#822). `ImportedQuality.declined/3` holds both rules.
   defp keep_stage(staged, ep, source, download, keeps) do
     case Map.fetch(keeps, ep.file_path) do
       {:ok, kept} -> {:ok, staged, kept}

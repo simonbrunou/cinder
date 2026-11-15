@@ -125,10 +125,10 @@ defmodule Cinder.Download.Cleaner do
   # of "ours".
   #
   # `book_grabs` matters here for the same reason `grabs` does, and more sharply: a book intent is
-  # completed at SUBMISSION time (`reconcile_book_target/1` hands ownership to the grab as soon as
-  # the remote id exists), so from that moment the only thing claiming a live book download is its
-  # `book_grabs` row. Omitting it made every in-flight book download an orphan the next tick, and
-  # `reapable?/1` removes a `:downloading` orphan with `delete_files: true`.
+  # completed at SUBMISSION time (`Download.reconcile_book_target/1` hands ownership to the grab as
+  # soon as the remote id exists), so from that moment the only thing claiming a live book download
+  # is its `book_grabs` row. Omitting it made every in-flight book download an orphan the next tick,
+  # and `reapable?/2` removes a `:downloading` orphan with `delete_files: true`.
   #
   # Download ids are client-local (a qBittorrent infohash, a SABnzbd `nzo_id`, an NZBGet integer)
   # with no cross-client uniqueness guarantee, so a bare `download_id in ^ids` match without the

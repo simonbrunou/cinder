@@ -388,16 +388,16 @@ defmodule Cinder.Books do
 
   defp notify_held({:ok, %BookTarget{} = held} = ok) do
     # `held` came from the guarded write's `RETURNING` (`transition_target/3`) — no `:work`
-    # preload, so notifying with it directly
-    # would leave `book_title/1` on every transport falling back to "book target #<id>",
+    # preload, so notifying with it directly would leave every transport's book title
+    # (`Cinder.Notifier.Email.book_title/1` and its siblings) falling back to "book target #<id>",
     # dropping the one fact the notification exists to carry. Reload through the same
     # `get_target/1` every other reader of a held target uses.
     Notifier.notify({:book_target_held, get_target(held.id)})
     ok
   end
 
-  # Inside a caller's own frame, `transaction/2` returns the refusal as the value; that frame
-  # rolls back with it.
+  # Inside a caller's own frame, `GuardedWrite.transaction/2` returns the refusal as the value;
+  # that frame rolls back with it.
   defp notify_held({:ok, {:error, _reason} = error}), do: error
   defp notify_held(error), do: error
 
@@ -600,15 +600,16 @@ defmodule Cinder.Books do
   defp grab_in_progress?(target_id),
     do: Repo.exists?(from g in BookGrab, where: g.book_target_id == ^target_id)
 
-  # `inspect/1`, never `to_string/1`: a reason may be a tuple (`{:unexpected_destination_type,
-  # :directory}`), and `String.Chars` is undefined for tuples — `to_string/1` raised inside the
-  # hold, the poller's `isolate/2` swallowed it, and the grab neither held nor cleared.
+  # `Kernel.inspect/1`, never `Kernel.to_string/1`: a reason may be a tuple
+  # (`{:unexpected_destination_type, :directory}`), and `String.Chars` is undefined for tuples —
+  # `Kernel.to_string/1` raised inside the hold, `Cinder.Download.BookPoller.isolate/2` swallowed
+  # it, and the grab neither held nor cleared.
   #
   # Remote strings get sanitized rather than inspected. A download client's own error text and a
   # blocked filename are attacker-influenced and unbounded, and `hold_reason` is both persisted
-  # and read by a household member: `inspect/1` would show them quoted and full-length, while
-  # `sanitize_log/1` strips CRLF and truncates — the same treatment every other remote string in
-  # the pollers already gets.
+  # and read by a household member: `Kernel.inspect/1` would show them quoted and full-length,
+  # while `HTTPPolicy.sanitize_log/1` strips CRLF and truncates — the same treatment every other
+  # remote string in the pollers already gets.
   defp hold_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp hold_reason(reason) when is_binary(reason), do: HTTPPolicy.sanitize_log(reason)
 
@@ -1002,9 +1003,9 @@ defmodule Cinder.Books do
 
   # A cheap, local, no-network REORDER, run BEFORE the cap and specific to :future — it never
   # discards a candidate, only moves one whose OWN bibliography-listing `first_published_year`
-  # (from the SAME bulk `bibliography/1` call, at no extra network cost) is a definite past year
-  # to the END of the list. `Enum.sort_by/2` is stable, so within each group (definite-past vs.
-  # everything else) the provider's own relative order is unchanged.
+  # (from the SAME bulk `Metadata.bibliography/1` call, at no extra network cost) is a definite
+  # past year to the END of the list. `Enum.sort_by/2` is stable, so within each group
+  # (definite-past vs. everything else) the provider's own relative order is unchanged.
   #
   # Without this, a long run of already-published leading works (the common case: a prolific
   # author's back catalog sorts ahead of their next unreleased book in most providers' own
@@ -1014,8 +1015,8 @@ defmodule Cinder.Books do
   # re-rejected on every preview or refresher tick — future-author monitoring never reaches the
   # work actually worth watching for (#511).
   #
-  # Deliberately a reorder, not an outright reject: `bibliography/1`'s own year is a coarser,
-  # SEPARATELY-fetched snapshot than the network-resolved `first_published_on`
+  # Deliberately a reorder, not an outright reject: `Metadata.bibliography/1`'s own year is a
+  # coarser, SEPARATELY-fetched snapshot than the network-resolved `first_published_on`
   # `accept_if_wanted/2` actually checks — the behaviour gives no guarantee the two stay
   # consistent (Open Library, notably, obtains them via different requests), so discarding on the
   # summary alone could permanently hide a work whose corrected, authoritative date turns out to

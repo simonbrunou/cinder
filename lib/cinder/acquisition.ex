@@ -938,8 +938,8 @@ defmodule Cinder.Acquisition do
   # Tag-prefixed names ("[TGx] Dune.2021...") are common and would otherwise fail the start anchor.
   defp untagged_tokens(release_title), do: release_title |> untag() |> tokens()
 
-  # `sanitize/1` first, here and in `tokens/1`: these `/u` regexes raise on malformed UTF-8, and one
-  # garbled indexer title must not stall a whole search pass (#451).
+  # `AnimeParser.sanitize/1` first, here and in `tokens/1`: these `/u` regexes raise on malformed
+  # UTF-8, and one garbled indexer title must not stall a whole search pass (#451).
   defp untag(nil), do: nil
 
   defp untag(release_title),
@@ -1043,7 +1043,7 @@ defmodule Cinder.Acquisition do
   # always confirmable here: `S01`, `S01E05`, the GLUED multi-episode `S01E05E06` (its hyphenated
   # twin `S01E05-E06` already splits into two tokens), a bare `E05`, and the `1x05` cross form.
   # Anything narrower re-opens the operator hold #251 removed for exactly the combined-episode
-  # files `fully_held?/3` exists to count.
+  # files `Cinder.Library.fully_held?/4` exists to count.
   @episode_marker ~r/^(?:s\d{1,3}(?:e\d+)*|(?:e\d+)+|\d{1,2}x\d{1,2})$/
   @year_marker ~r/^(?:19|20)\d{2}$/
 

@@ -34,8 +34,8 @@ defmodule Cinder.Download.Client.Transmission do
 
   def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
 
-  # `sanitize_magnet/2` rebuilds the link with a lower-case `magnet:` scheme, so Transmission
-  # never sees an indexer's `MAGNET:` spelling.
+  # `Torrent.sanitize_magnet/2` rebuilds the link with a lower-case `magnet:` scheme, so
+  # Transmission never sees an indexer's `MAGNET:` spelling.
   defp add_magnet(magnet, opts) do
     case Torrent.sanitize_magnet(magnet, &vet_hosts/1) do
       {:ok, clean} -> add_arguments(%{"filename" => clean}, opts)

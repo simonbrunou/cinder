@@ -57,11 +57,11 @@ defmodule Cinder.Library.Filesystem.RenameIdentity do
       {:error, :eexist} ->
         :unknown
 
-      # `write_exclusive/2` creates the file with `O_EXCL` before it can fail, and a later write,
-      # fsync or parent-sync error only closes the handle — `Disk.close_bound_error/2` and
-      # `rooted_create_bound/4` both leave the file behind. Discard it, or a probe on a mount
-      # that fails mid-write litters the very folder it was asked about: nothing sweeps this
-      # prefix (`Sidecars.sweep_temps/2` matches `.cinder-tmp-` only).
+      # `Disk.write_exclusive/2` creates the file with `O_EXCL` before it can fail, and a later
+      # write, fsync or parent-sync error only closes the handle — `Disk.close_bound_error/2` and
+      # `Disk.rooted_create_bound/4` both leave the file behind. Discard it, or a probe on a mount
+      # that fails mid-write litters the very folder it was asked about: nothing sweeps this prefix
+      # (`Sidecars.sweep_temps/2` matches `.cinder-tmp-` only).
       {:error, _reason} ->
         discard(source, root)
         :unknown
@@ -81,8 +81,8 @@ defmodule Cinder.Library.Filesystem.RenameIdentity do
   end
 
   # 96 random bits, the same unguessable-name convention the sidecar quarantine and
-  # `AtomicFile.temporary/3` use: a probe must never collide with a real file, and a name a
-  # concurrent import could predict would make the probe itself racy.
+  # `Cinder.DatabaseBackup.temporary_snapshot/0` use: a probe must never collide with a real file,
+  # and a name a concurrent import could predict would make the probe itself racy.
   defp probe_path(dir) do
     token = Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
     Path.join(dir, "#{@probe_prefix}#{token}")

@@ -251,7 +251,7 @@ defmodule CinderWeb.ActivityLive do
     {:noreply, refresh_held_books(socket)}
   end
 
-  # `clear_blocklist/1` broadcasts nothing, so this view re-reads the list itself.
+  # `Books.clear_blocklist/1` broadcasts nothing, so this view re-reads the list itself.
   def handle_event("clear_book_blocklist", %{"target_id" => raw_id}, socket)
       when is_binary(raw_id) do
     with {id, ""} <- Integer.parse(raw_id),

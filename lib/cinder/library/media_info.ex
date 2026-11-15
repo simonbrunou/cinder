@@ -24,7 +24,8 @@ defmodule Cinder.Library.MediaInfo do
           # `Language.normalize/1` — normalizing away "chi"/"zho" (accepted by both "zh" and "cn")
           # into one value would make an ambiguous generic-Chinese track indistinguishable from an
           # explicitly Mandarin "cmn" one to a "cn" (Cantonese) selector (#573). Compare it with
-          # `Language.raw_track_satisfies?/2` / `Language.exact_track?/2`, never `==`/`normalize/1`.
+          # `Language.raw_track_satisfies?/2` / `Language.exact_track?/2`, never
+          # `==`/`Language.normalize/1`.
           required(:language) => String.t(),
           required(:default?) => boolean(),
           required(:forced?) => boolean(),

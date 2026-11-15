@@ -233,8 +233,8 @@ defmodule Cinder.Books.Identity do
   # resolve to a different work called "Reader", and "The Omnibus of Crime" to "Of Crime". The
   # corpus needs only the trailing form (`lord-of-the-rings`).
   #
-  # One word, not a run, exactly as `drop_article/1` drops at most one article — recursing ate
-  # into the title itself for the same reason.
+  # One word, not a run, exactly as `TitleFold.drop_article/1` drops at most one article —
+  # recursing ate into the title itself for the same reason.
   #
   # Never trims to nothing, and never consults the candidate: an earlier rule stripped a word
   # whenever *that* candidate's title lacked it, so every candidate reshaped the query in its own

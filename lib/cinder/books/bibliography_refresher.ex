@@ -17,7 +17,7 @@ defmodule Cinder.Books.BibliographyRefresher do
   a tick therefore leaves every existing target byte-identical.
 
   **Bounded, same as a preview.** `preview_author_policy/2`'s own cap
-  (`@max_bibliography_candidates`, 50) bounds this module too, since `refresh_author/3` reuses it
+  (`@max_bibliography_candidates`, 50) bounds this module too, since `refresh_author/1` reuses it
   unchanged: one tick costs at most 1 + 50 provider requests per policied author, not one per
   candidate in the whole bibliography. A bibliography larger than the cap is worked through
   gradually — each tick's `eligible` set already excludes anything a prior tick monitored, so the
@@ -69,11 +69,11 @@ defmodule Cinder.Books.BibliographyRefresher do
 
   defp apply_eligible(_author, _policy, _profile, []), do: :ok
 
-  # `apply_bibliography_refresh/4` re-validates the stored policy fresh before EVERY candidate's
-  # own write, so `created_count` already reflects any admin change mid-tick — 0 means either
-  # nothing new to monitor or the whole batch went stale (the admin changed the policy, changed
-  # its profile, or reverted to :specific before this batch started); either way the current
-  # policy stands untouched and there is nothing more to log (#512).
+  # `Books.apply_bibliography_refresh/4` re-validates the stored policy fresh before EVERY
+  # candidate's own write, so `created_count` already reflects any admin change mid-tick — 0
+  # means either nothing new to monitor or the whole batch went stale (the admin changed the
+  # policy, changed its profile, or reverted to :specific before this batch started); either way
+  # the current policy stands untouched and there is nothing more to log (#512).
   defp apply_eligible(author, policy, profile, eligible) do
     case Books.apply_bibliography_refresh(author, policy, profile, eligible) do
       {:ok, 0} ->

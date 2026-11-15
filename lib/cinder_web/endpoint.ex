@@ -21,7 +21,7 @@ defmodule CinderWeb.Endpoint do
   end
 
   # :peer_data lets a LiveView (e.g. the registration throttle) read the raw
-  # connection peer via `get_connect_info/2` — see CinderWeb.Plugs.RemoteIp for why
+  # connection peer via `Phoenix.LiveView.get_connect_info/2` — see CinderWeb.Plugs.RemoteIp for why
   # that's the transport peer, not the cloudflared-resolved client IP.
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [:peer_data, session: {__MODULE__, :session_options, []}]],

@@ -30,7 +30,7 @@ defmodule Cinder.Books.Files do
 
   Replay-safe by construction: when the incoming `path` is already one of the target's own rows
   (a crash/replay re-running an already-committed replace), nothing is deleted — the row stays,
-  and `insert_or_existing/2` hits the same unique-path conflict `insert_conflict/3` already treats
+  and `insert_or_existing/2` hits the same unique-path conflict `insert_conflict/5` already treats
   as a no-op success. Only a GENUINELY different existing row is ever removed.
   """
   @spec record_import(BookTarget.t(), map(), keyword()) ::
@@ -45,9 +45,9 @@ defmodule Cinder.Books.Files do
       with {:ok, superseded} <- maybe_supersede(target, attrs, replace?),
            {:ok, file} <- insert_or_existing(target, attrs, replace?),
            {:ok, _armed} <- arm_target(target) do
-        # Inside the transaction, and last: `mark_committed!/1` rolls back on a stage that is no
-        # longer `:prepared`, so a journal another process already reconciled aborts the catalog
-        # write instead of leaving a file row pointing at bytes that got rolled back.
+        # Inside the transaction, and last: `ImportStage.mark_committed!/1` rolls back on a stage
+        # that is no longer `:prepared`, so a journal another process already reconciled aborts
+        # the catalog write instead of leaving a file row pointing at bytes that got rolled back.
         ImportStage.mark_committed!(stage_ids)
         {file, superseded}
       else
@@ -182,7 +182,7 @@ defmodule Cinder.Books.Files do
   # Shared with `Cinder.Books.Adoption.adopt_work/3` (B6c) — a duplicate `book_files.path` is
   # only a conflict when the row belongs to a DIFFERENT target; when it is the SAME target's own
   # row (a retried adopt, or a crash/replay), the write already succeeded and this call is
-  # replaying it. See `insert_conflict/4` below for exactly which case is which. Public and
+  # replaying it. See `insert_conflict/5` below for exactly which case is which. Public and
   # `@doc false` (not private) so B6c's own transaction can reuse this unchanged rather than
   # duplicating it — the plan's own explicit instruction. B6c never confirms a replacement, so it
   # relies on the `replace?` default (`false`) and gets today's unchanged "return the existing
@@ -246,7 +246,7 @@ defmodule Cinder.Books.Files do
 
   # The guarded target write. Inside `record_import/3`'s frame it publishes once, after commit.
   #
-  # `:available` is accepted alongside `:monitored` so an import REPLAY (see `insert_conflict/3`)
+  # `:available` is accepted alongside `:monitored` so an import REPLAY (see `insert_conflict/5`)
   # converges: the target is already in the state this write wants, and demanding `:monitored`
   # there is what turned a replay into a `:held` demotion. An unmonitored or held target still
   # refuses — those are an operator's more recent decision.

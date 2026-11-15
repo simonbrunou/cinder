@@ -77,7 +77,7 @@ defmodule CinderWeb.LibraryAdoptionComponents do
   # Whether the Needs-decision bucket contains at least one candidate of `kind` — gates which
   # bulk "Apply ... to all undecided" button/copy renders, since Fold/Part only ever mean
   # anything for an episode candidate and Preferred format/All formats only for a book one
-  # (`decision_choice_matches_kind?/2`, still in the LiveView, already refuses the mismatched
+  # (`LibraryAdoptionLive.decision_choice_matches_kind?/2` already refuses the mismatched
   # write; this just keeps the UI from offering a control that would silently do nothing).
   defp needs_decision_kind?(candidates, kind), do: Enum.any?(candidates, &(&1.kind == kind))
 

@@ -296,7 +296,7 @@ defmodule Cinder.Acquisition.BookScorer do
   # Exact, case-insensitive title exclusion — a release just proven bad for THIS target
   # (Retry or "Find a better match" parking it) must never be re-offered by the very next
   # search. Checked first, before `check_blocked/2`'s substring scan, mirroring
-  # `Cinder.Acquisition.Scorer.excluded_title?/2`'s ordering for movies/TV: the most specific,
+  # `Cinder.Acquisition.Scorer.excluded_title?/3`'s ordering for movies/TV: the most specific,
   # per-target evidence outranks the household-wide substring block.
   defp check_not_blocklisted(_release, []), do: :ok
 
@@ -481,7 +481,7 @@ defmodule Cinder.Acquisition.BookScorer do
   #
   # The head check alone was not enough: a colon is also how a SEQUEL is written. "Dune: Messiah"
   # passed it, which is the same wrong-work accept the remainder test exists to stop. So the tail
-  # must also LOOK like a subtitle — see `descriptive_subtitle?/1`.
+  # must also LOOK like a subtitle — see `descriptive_subtitle?/2`.
   defp subtitle_only?(release_title, wanted, leftovers, work, rules) do
     case String.split(strip_noise(release_title, work, rules), ~r/:/, parts: 2) do
       [head, subtitle] ->
@@ -635,7 +635,8 @@ defmodule Cinder.Acquisition.BookScorer do
   # The graceful-degradation guard `Cinder.Acquisition` applies on every video path: a release whose
   # protocol has no configured download client can never be grabbed, so offering it as a candidate
   # would strand the operator at the moment they picked it. `nil` protocols ⇒ no gate, matching
-  # `Cinder.Acquisition.release_verdict/3`, which also skips the check for an untagged release.
+  # `Cinder.Acquisition.ReleaseJudge.client?/2`. A release with no protocol passes here too,
+  # where that video stage drops it.
   defp check_protocol(_release, nil), do: :ok
   defp check_protocol(%{protocol: nil}, _protocols), do: :ok
 

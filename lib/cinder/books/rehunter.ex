@@ -65,8 +65,8 @@ defmodule Cinder.Books.Rehunter do
         do: isolate("book target #{target.id}", fn -> rehunt_target(target) end)
   end
 
-  # `retry_target/1` is guarded (`expect: :held`), so a target that left `:held` concurrently
-  # simply misses rather than being yanked out from under an operator's own decision.
+  # `Books.retry_target/1` is guarded (`expect: :held`), so a target that left `:held`
+  # concurrently simply misses rather than being yanked out from under an operator's own decision.
   defp rehunt_target(target) do
     case Books.retry_target(target) do
       {:ok, _requeued} ->

@@ -505,20 +505,21 @@ defmodule Cinder.Download do
   end
 
   # `opts[:expect_remote_id]` (issue #415) is a generation guard for the post-commit fence path
-  # only: every EXISTING caller (`MovieLifecycle.cancel/2`, `abort_upgrade/2`, `delete_movie/3`,
-  # the TV grab verification holds) fences BEFORE the target becomes grabbable again, inside the same
-  # transaction as the write that makes it so — nothing can race a new reservation in, so "the"
-  # intent for this `target_id` is unambiguously the one being torn down. `Download`'s post-commit
-  # sites (movie/TV `remove_after_import/4` fences) invert that ordering on purpose (removing
-  # files mid-import is worse — see `remove_after_import/4`'s moduledoc), which opens a real
-  # window: a concurrent `UpgradeHunter` tick or a "Find a better match" click can reserve a NEW
-  # release for this same target between the commit and the fence. Fencing "whatever intent
-  # exists" there would silently hijack that NEW intent — flipping it to `:cleanup_pending` and
-  # discarding its own `remote_id` in favor of the OLD download's. `expect_remote_id`, passed only
-  # by those post-commit callers, refuses to touch an existing intent whose `remote_id` doesn't
-  # already match the download being fenced — returning `:mismatch` instead so the caller can fall
-  # back to a one-shot, undurable removal (today's pre-#415 behavior) rather than corrupt state.
-  # Omitted (the default, every existing caller), this check never runs — zero behavior change.
+  # only: every EXISTING caller (`MovieLifecycle.cancel/2`, `MovieLifecycle.abort_upgrade/2`,
+  # `Catalog.TitleDeletion.delete_movie/3`, the TV grab verification holds) fences BEFORE the
+  # target becomes grabbable again, inside the same transaction as the write that makes it so —
+  # nothing can race a new reservation in, so "the" intent for this `target_id` is unambiguously
+  # the one being torn down. `Download`'s post-commit sites (movie/TV `remove_after_import/4`
+  # fences) invert that ordering on purpose (removing files mid-import is worse — see
+  # `remove_after_import/4`'s moduledoc), which opens a real window: a concurrent `UpgradeHunter`
+  # tick or a "Find a better match" click can reserve a NEW release for this same target between the
+  # commit and the fence. Fencing "whatever intent exists" there would silently hijack that NEW
+  # intent — flipping it to `:cleanup_pending` and discarding its own `remote_id` in favor of the
+  # OLD download's. `expect_remote_id`, passed only by those post-commit callers, refuses to touch
+  # an existing intent whose `remote_id` doesn't already match the download being fenced — returning
+  # `:mismatch` instead so the caller can fall back to a one-shot, undurable removal (today's
+  # pre-#415 behavior) rather than corrupt state. Omitted (the default, every existing caller), this
+  # check never runs — zero behavior change.
   @doc false
   def fence_movie_cleanup(%Movie{} = movie, opts \\ []) do
     intent = Repo.get_by(Intent, kind: :movie, target_id: movie.id)
@@ -577,11 +578,11 @@ defmodule Cinder.Download do
   end
 
   # Unlike `fence_movie_cleanup/2` and `fence_episode_cleanup/2` — which only fence, leaving the
-  # delete to a caller that already has its own open transaction (`Catalog`, `Catalog.Grabs`) —
-  # this one also deletes the grab. `Cinder.Download.BookPoller` (where the one caller,
-  # `fail_download/2`, lives) is a poller under `lib/cinder/download/`: it holds no `Repo`
-  # mutations of its own (AGENTS.md), so there is no caller-owned transaction to fence inside of.
-  # This opens its own, mirroring `Cinder.Catalog.Grabs.cancel_grab/2`'s fence-then-delete shape
+  # delete to a caller that already has its own open transaction (`Catalog`, `Catalog.Grabs`) — this
+  # one also deletes the grab. `Cinder.Download.BookPoller` (where the one caller,
+  # `BookPoller.fail_download/2`, lives) is a poller under `lib/cinder/download/`: it holds no
+  # `Repo` mutations of its own (AGENTS.md), so there is no caller-owned transaction to fence inside
+  # of. This opens its own, mirroring `Cinder.Catalog.Grabs.cancel_grab/2`'s fence-then-delete shape
   # but with both writes made here instead of split across two contexts.
   #
   # #398: a failed `client.remove/2` at the end of `BookPoller.fail_download/2` used to discard
@@ -593,11 +594,12 @@ defmodule Cinder.Download do
   # immediate best-effort attempt, and any failure there leaves the `:cleanup_pending` row for
   # `reconcile_pending_intents/1`'s bounded retry (every `BookPoller` tick) to keep trying.
   #
-  # #445: `Books.Grabs.delete_only/1` (not `delete/1`) — `delete/1`'s own bundled broadcast fired
-  # from INSIDE this transaction, before it commits, violating "one transition, one broadcast,
-  # emitted after commit." A rolled-back fence (or, under WAL, a `/books/:id` reload racing the
-  # still-open write) would have announced a deletion that never happened, or hadn't happened
-  # yet. `Books.broadcast/1` now runs after `Repo.transaction/1` returns `{:ok, _}`.
+  # #445: `Books.Grabs.delete_only/1` (not `Books.Grabs.delete/1`) — `Books.Grabs.delete/1`'s own
+  # bundled broadcast fired from INSIDE this transaction, before it commits, violating "one
+  # transition, one broadcast, emitted after commit." A rolled-back fence (or, under WAL, a
+  # `/books/:id` reload racing the still-open write) would have announced a deletion that never
+  # happened, or hadn't happened yet. `Books.broadcast/1` now runs after `Repo.transaction/1`
+  # returns `{:ok, _}`.
   # #536: unlike `fence_movie_cleanup/2`/`fence_episode_cleanup/3`, every caller of this function
   # runs post-commit with no caller-owned transaction to fence inside of (see above) — there is
   # no safe "before" caller the way movie/episode have, so the `expect_remote_id` generation

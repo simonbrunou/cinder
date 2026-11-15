@@ -68,7 +68,8 @@ defmodule Cinder.Download.PollerSkeleton do
         else: :ok
 
     # Chosen here, at expansion, so a poller without the backoff never reads
-    # `@search_retry_after` and never defines `search_due?/2`.
+    # `@search_retry_after` and never defines `search_due?/2` (skip-name-check: the quote below
+    # defines it in each poller with the backoff).
     {search_state, search_backoff_defs} =
       if search_backoff do
         {quote do
@@ -165,11 +166,12 @@ defmodule Cinder.Download.PollerSkeleton do
             {:reply, :ok, state}
           end
 
-          # Flag the tick in flight, then stamp completion, so `status/0` (and /healthz) can see
+          # Flag the tick in flight, then stamp completion, so the status (and /healthz) can see
           # both without calling the busy process. `:last_run` goes before the flag clears (see
-          # `status/0`). A raise here would still crash-loop the GenServer — do_poll/1 is
-          # expected to isolate its own units (and preamble) so this only ever sees a genuinely
-          # successful tick; the restart's `init/1` clears the flag the crash left.
+          # `status/0` above; skip-name-check: this quote defines it in each poller). A raise
+          # here would still crash-loop the GenServer — do_poll/1 is expected to isolate its own
+          # units (and preamble) so this only ever sees a genuinely successful tick; the
+          # restart's init clears the flag the crash left.
           defp run(state) do
             PollerProgress.tick_started(__MODULE__)
             result = emit_tick(fn -> do_poll(state) end)
@@ -217,7 +219,7 @@ defmodule Cinder.Download.PollerSkeleton do
             {:reply, :ok, state}
           end
 
-          # Stamp completion so `status/0` can show "last run" without calling the busy process.
+          # Stamp completion so the status can show "last run" without calling the busy process.
           defp run do
             result = emit_tick(fn -> do_poll() end)
             :persistent_term.put({__MODULE__, :last_run}, DateTime.utc_now())
@@ -267,9 +269,10 @@ defmodule Cinder.Download.PollerSkeleton do
         unquote(mark_progress)
       end
 
-      # `[:cinder, :poller, :tick]` fires once per tick (scheduled or the synchronous `poll/1`
-      # test path alike), timing the whole do_poll pass — never inside it, so instrumentation
-      # can't drift as either flavor's pass grows.
+      # `[:cinder, :poller, :tick]` fires once per tick, scheduled or through the synchronous
+      # `poll/1` test path (skip-name-check: the quote above defines it in each poller), timing
+      # the whole do_poll pass — never inside it, so instrumentation can't drift as either
+      # flavor's pass grows.
       defp emit_tick(fun) do
         started_at = System.monotonic_time()
         result = fun.()

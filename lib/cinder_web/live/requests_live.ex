@@ -298,8 +298,8 @@ defmodule CinderWeb.RequestsLive do
   # where a `book_targets` row is guaranteed to exist (`Books.monitor_target/3` runs inside
   # `Requests.approve_request/3`), so anything before approval has nowhere at `/books/:id` to go.
   # Movie/series rows get no equivalent link — there was none to mirror for any target type before
-  # this (`request_title/2` has always rendered as plain text here), and adding one for them is a
-  # separate, unrequested change.
+  # this (`LiveHelpers.request_title/2` has always rendered as plain text here), and adding one for
+  # them is a separate, unrequested change.
   defp book_request_link?(%{target_type: "book", status: :approved}), do: true
   defp book_request_link?(_request), do: false
 

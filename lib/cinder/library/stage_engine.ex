@@ -124,8 +124,9 @@ defmodule Cinder.Library.StageEngine do
   # #583's fallback does not carry over: it re-reads an identity mismatch as "the mount renamed
   # my own file", which works because the path it falls back to is operation-keyed and only one
   # journal row ever names it. `source` and `dest` are both public names, so this question needs
-  # an identity that is not derived from a path at all — `backing_identity/1`, which goes to the
-  # backing store (mergerfs's branch descriptor) rather than to the union's synthesized inode.
+  # an identity that is not derived from a path at all — `Filesystem.backing_identity/1`, which goes
+  # to the backing store (mergerfs's branch descriptor) rather than to the union's synthesized
+  # inode.
   #
   # Consulted only where the alternative is overwriting the destination, and only past the one
   # free necessary condition: a destination with a single link cannot be a second name for

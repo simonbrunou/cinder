@@ -242,7 +242,8 @@ defmodule Cinder.Catalog.UpgradeHunter do
         # or a pure `:extra` that somehow holds a file (adoption, manual import) could still be
         # re-searched and upgraded through a path the Anime profile policy excludes (#356).
         # Note this applies the predicate whole, not just its Season-0 clause: a season > 0 row
-        # numbered <= 0 is dropped here too, exactly as `wanted_episodes/0` already drops it.
+        # numbered <= 0 is dropped here too, exactly as `EpisodeSearch.wanted_episodes/0` already
+        # drops it.
         profile = MediaProfiles.media_profile_summary(series)
 
         searchable =
@@ -341,13 +342,13 @@ defmodule Cinder.Catalog.UpgradeHunter do
   #     file it produced on a nil that sorts last;
   #   * size — #278/#283: `Upgrade.candidate?/4` weighs no size at all, so a multi-file container
   #     can't out-weigh the one file `lstat`ed out of it;
-  #   * a worse-token file — still live, and deliberately: `capture/3` backfills only NIL
-  #     fields, because a genuinely mixed pack must keep a member's worse token. So an episode
-  #     holding `720p` inside a `1080p`-titled pack reads as improvable by that title forever while
-  #     the import re-parses the file and declines. #274 BOUNDS it rather than removing it — a grab
-  #     that commits having placed nothing writes a `no_upgrade` `BlockedRelease` row, which only
-  #     this sweep's `release_blocklist` reads. One pack is downloaded and discarded, once; the
-  #     rotation after that passes on it.
+  #   * a worse-token file — still live, and deliberately: `ImportedQuality.capture/3` backfills
+  #     only NIL fields, because a genuinely mixed pack must keep a member's worse token. So an
+  #     episode holding `720p` inside a `1080p`-titled pack reads as improvable by that title
+  #     forever while the import re-parses the file and declines. #274 BOUNDS it rather than
+  #     removing it — a grab that commits having placed nothing writes a `no_upgrade`
+  #     `BlockedRelease` row, which only this sweep's `release_blocklist` reads. One pack is
+  #     downloaded and discarded, once; the rotation after that passes on it.
   defp maybe_grab_episodes({release, covered_numbers}, episodes, target) do
     covered = Enum.filter(episodes, &(&1.episode_number in covered_numbers))
 

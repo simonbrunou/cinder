@@ -147,9 +147,9 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
 
   Both fields are cheap, local-DB-only reads — nothing here issues a metadata-provider HTTP
   request. This redoes `plan/2`'s local identifier-cache lookup once more (one extra indexed
-  `book_identifiers` read per `MigrationAdoption.preview/2` call) rather than threading a second
-  return value through `plan/4`'s list-returning contract every other migration source relies on
-  unchanged — see `MigrationAdoption.extra_fields/3`.
+  `book_identifiers` read per `MigrationAdoption.preview/2` call) rather than adding a second
+  return value to the list `MigrationAdoption.plan_source/3` returns for every migration source —
+  see `MigrationAdoption.extra_fields/3`.
   """
   @spec summary(MigrationSource.snapshot(), MapSet.t()) :: %{
           remaining: non_neg_integer(),
@@ -229,7 +229,7 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
 
   # Bulk-resolves every successfully-identified work's provider reference to an existing Cinder
   # `Books.Work` id (one batched query, `Books.work_ids_by_reference/1` — the same function
-  # `drop_locally_monitored/1` uses) and folds resolve failures into the visible `:blocked`
+  # `Books.drop_locally_monitored/1` uses) and folds resolve failures into the visible `:blocked`
   # candidate the plan requires instead of a silent drop.
   defp resolved_identity_map(resolutions) do
     refs =
@@ -317,7 +317,7 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
   end
 
-  # A bulk query mirroring `MigrationAdoption.managed_state/1`, adapted to `BookFile`/
+  # A bulk query mirroring `MigrationAdoption.managed_state/2`, adapted to `BookFile`/
   # `BookTarget`: every existing owner (any work, any media kind) of any path this batch's
   # winning files might claim, in one round trip rather than one query per candidate.
   defp path_owners([]), do: %{}
@@ -411,7 +411,7 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
       source: :readarr,
       title: work.title,
       monitored: work.monitored,
-      # Bookshelf's own foreign id for this work (`Cinder.Library.MigrationSource.work/0`'s
+      # Bookshelf's own foreign id for this work (the `Cinder.Library.MigrationSource.work()` type's
       # `foreign_id`) — namespace-distinct from `identity.foreign_id` above, which (for a
       # `:resolved` identity) is the METADATA provider's own id. B6c's `adopt/2` needs Bookshelf's
       # id specifically to stamp `book_identifiers{provider: "readarr", ...}`
@@ -443,7 +443,8 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
   end
 
   # Exactly one accepted-format file: classify it through the same cond chain
-  # `movie_candidate/4`/`episode_file_status/3` use, in the order the plan's §3 bullets give.
+  # `MigrationAdoption.movie_candidate/5`/`MigrationAdoption.episode_file_status/3` use, in the
+  # order the plan's §3 bullets give.
   defp classify_files([file], work_id, media_kind, target, target_paths, path_owners) do
     {status, reason} = winner_status(file, work_id, media_kind, target, target_paths, path_owners)
 
@@ -476,10 +477,10 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
   # forever (`classify_files/6` never re-evaluated the sibling). Only once every file clears
   # (`{:ready, nil}`) does the candidate actually reach `:needs_decision, :multi_format`.
   # `primary_file`/`extra_files` mirror Sonarr's n-to-one candidate shape exactly
-  # (`n_to_one_candidate/5`) — B6c's adopt step reads `primary_file` alone for the **preferred**
-  # choice (most-preferred-first within the candidate's own resolved kind — EPUB else AZW3 else
-  # MOBI for `:ebook`, M4B else MP3 for `:audiobook`, `@accepted_formats`' own combined order) or
-  # `primary_file` + `extra_files` for **all**.
+  # (`MigrationAdoption.n_to_one_candidate/5`) — B6c's adopt step reads `primary_file` alone for the
+  # **preferred** choice (most-preferred-first within the candidate's own resolved kind — EPUB else
+  # AZW3 else MOBI for `:ebook`, M4B else MP3 for `:audiobook`, `@accepted_formats`' own combined
+  # order) or `primary_file` + `extra_files` for **all**.
   #
   # Multiple audiobook files sharing ONE format are sequential tracks of a single audiobook
   # (Bookshelf/Readarr split MP3 by chapter; M4B is one file per book), never alternative
@@ -739,10 +740,10 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
   end
 
   # A `:resolved` candidate already carries the metadata provider's own reference — one direct
-  # `get_work/1` fetch, never a search (`Identity.reference_for/2`'s whole point). A `:cached`
-  # candidate's `identity.provider` is the sentinel `:readarr` (Bookshelf's own namespace, not a
-  # real `Cinder.Books.Metadata` provider) — its work is already imported, so this looks up that
-  # SAME Cinder work's own best non-"readarr" identifier instead of guessing one.
+  # `Metadata.get_work/1` fetch, never a search (`Identity.reference_for/2`'s whole point). A
+  # `:cached` candidate's `identity.provider` is the sentinel `:readarr` (Bookshelf's own namespace,
+  # not a real `Cinder.Books.Metadata` provider) — its work is already imported, so this looks up
+  # that SAME Cinder work's own best non-"readarr" identifier instead of guessing one.
   defp resolution_for(%{identity: %{provider: :readarr}, work_id: work_id})
        when not is_nil(work_id) do
     case non_readarr_reference(work_id) do
@@ -820,7 +821,7 @@ defmodule Cinder.Library.MigrationAdoption.Readarr do
     do: %{path: path, size: size, format: format, edition_id: edition_id}
 
   # Mirrors `Cinder.Books`'s own private `normalize_identifier/1` (the same rule
-  # `put_normalized_identifier/4` stores every ISBN/ASIN `book_identifiers` row under) —
+  # `Books.put_normalized_identifier/4` stores every ISBN/ASIN `book_identifiers` row under) —
   # duplicated rather than exposed publicly for this one call site, since it is a stable,
   # two-line rule with nothing else to share.
   defp normalize_identifier(value) when is_binary(value) do

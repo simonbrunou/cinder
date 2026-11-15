@@ -11,7 +11,7 @@ defmodule CinderWeb.LibraryLive do
   `String.to_atom/1` on a client-supplied param. The tab links are `navigate`, not `patch`, so
   switching scrolls back to the top and drops the filter with the remount instead of needing
   reset code. A title filter narrows the visible grid; `@movies`/`@series`/`@books` stay canonical
-  (the PubSub handlers, `find_movie/2` and `run_series_op/3` all resolve against them) and
+  (the PubSub handlers, `find_movie/2` and `run_series_op/5` all resolve against them) and
   filtering *and sorting* happen at render.
 
   Sorting is deliberately not a query `order_by`: `upsert_by_id/2` mutates `@movies` in place on
@@ -268,7 +268,7 @@ defmodule CinderWeb.LibraryLive do
   def handle_info({:book_target_updated, _target}, socket), do: {:noreply, assign_books(socket)}
 
   # `Books.log_duplicate_grab_refused/2`/`Books.log_metadata_drift/1`'s own broadcast (see
-  # `books.ex`), on the same `book_targets` topic `subscribe_targets/0` already joins when
+  # `books.ex`), on the same `book_targets` topic `Books.subscribe_targets/0` already joins when
   # `@tab == :books` — no second subscription needed. Re-queries the capped last-20 list rather
   # than prepending in place: cheap at 20 rows, and avoids a second source of truth for
   # ordering/limit.
@@ -277,10 +277,10 @@ defmodule CinderWeb.LibraryLive do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
-  # `id` straight through, like `run_series_op/5` — `find_by_id/2` already does the `to_string/1`
-  # on its own side. A `to_string/1` here would be applied to the CLIENT value, and a forged
-  # `phx-value-id` carrying a map raises Protocol.UndefinedError. Its callers are guarded
-  # `is_binary(id)` besides, so the conversion had nothing left to do.
+  # `id` straight through, like `run_series_op/5` — `LiveHelpers.find_by_id/2` already does the
+  # `Kernel.to_string/1` on its own side. A `Kernel.to_string/1` here would be applied to the CLIENT
+  # value, and a forged `phx-value-id` carrying a map raises Protocol.UndefinedError. Its callers
+  # are guarded `is_binary(id)` besides, so the conversion had nothing left to do.
   defp find_movie(socket, id), do: find_by_id(socket.assigns.movies, id)
 
   # Same guard/lookup discipline as `find_movie/2` — the canonical `@books` list, not the
@@ -360,8 +360,8 @@ defmodule CinderWeb.LibraryLive do
 
   # Books' own filter/sort/size, additive alongside the movie/series functions above rather than
   # extended clauses on them: a `%BookTarget{}` has no `.title`/`.localizations` (its work does)
-  # and no `.year` (its work's `first_published_on` does), so `media_title/2`/`&1.year` would
-  # simply fail against it — the two families never share a struct shape to genuinely unify.
+  # and no `.year` (its work's `first_published_on` does), so `LiveHelpers.media_title/2`/`&1.year`
+  # would simply fail against it — the two families never share a struct shape to genuinely unify.
   defp book_visible(targets, ""), do: targets
 
   defp book_visible(targets, filter) do
@@ -391,7 +391,7 @@ defmodule CinderWeb.LibraryLive do
 
   # Bytes on disk, shown and sorted only once a target has something to show: `:available` is the
   # target-level analogue of a movie's `file_path` guard above — a `:monitored`/`:held` target has
-  # no file yet, and `target_sizes/0`'s map simply has no key for it either way.
+  # no file yet, and `Books.target_sizes/0`'s map simply has no key for it either way.
   defp book_item_size(%BookTarget{status: :available, id: id}, sizes), do: sizes[id]
   defp book_item_size(%BookTarget{}, _sizes), do: nil
 

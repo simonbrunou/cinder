@@ -26,9 +26,10 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
   @discover_base_url "https://discover.provider.plex.tv"
   # One page is the whole watchlist for a household; plex.tv caps the page size anyway.
   @watchlist_page_size 500
-  # `timeouts: :probe` (`PlexAuth.call_opts/0`): 3 s to connect, to get a pooled connection and to
-  # receive, the bounds `Cinder.Health` asks of every `health/0`. Three calls that each wait out
-  # both bounds take 18 s; `Cinder.Health`'s 15-second budget still ends the check.
+  # `timeouts: :probe` (the `PlexAuth.call_opts()` type): 3 s to connect, to get a pooled
+  # connection and to receive, the bounds `Cinder.Health` asks of every health probe. Three calls
+  # that each wait out both bounds take 18 s; `Cinder.Health`'s 15-second budget still ends the
+  # check.
   @probe_timeouts [receive_timeout: 3_000, pool_timeout: 3_000, connect_options: [timeout: 3_000]]
 
   @impl true
@@ -96,7 +97,8 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
     end
   end
 
-  # The `plex_signin` health check's bounds (`PlexAuth.call_opts/0`); `[]` keeps each call's own.
+  # The `plex_signin` health check's bounds (the `PlexAuth.call_opts()` type); `[]` keeps each
+  # call's own.
   defp timeouts(opts) do
     case Keyword.get(opts, :timeouts) do
       :probe -> @probe_timeouts

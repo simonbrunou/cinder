@@ -82,7 +82,7 @@ defmodule Cinder.Application do
     no_basic_auth? and Cinder.Repo.aggregate(Cinder.Accounts.User, :count) == 0
   end
 
-  # Matches the router's `present/1`: a nil or blank/whitespace value counts as unset.
+  # Matches `CinderWeb.Router.present/1`: a nil or blank/whitespace value counts as unset.
   defp blank_env?(key) do
     case System.get_env(key) do
       nil -> true

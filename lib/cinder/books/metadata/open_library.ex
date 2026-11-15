@@ -133,8 +133,9 @@ defmodule Cinder.Books.Metadata.OpenLibrary do
 
   defp normalize_candidate(_doc), do: []
 
-  # The resolver negates this to sort. A non-integer would raise there, inside the refresher's
-  # `isolate/2`, which only logs what it rescues — so a bad payload would recur every tick.
+  # The resolver negates this to sort. A non-integer would raise there, inside
+  # `Cinder.Books.Refresher.isolate/2`, which only logs what it rescues — so a bad payload would
+  # recur every tick.
   defp edition_count(value) when is_integer(value) and value >= 0, do: value
   defp edition_count(_value), do: 0
 
@@ -191,8 +192,9 @@ defmodule Cinder.Books.Metadata.OpenLibrary do
     end
   end
 
-  # A format that is not a string tells us nothing, and `to_string/1` raises on a map or a list —
-  # on the refresher's tick path, where `isolate/2` rescues without parking.
+  # A format that is not a string tells us nothing, and `Kernel.to_string/1` raises on a map, or on
+  # a list that is not chardata — on the refresher's tick path, where
+  # `Cinder.Books.Refresher.isolate/2` rescues without parking.
   defp format_key(format) when is_binary(format), do: String.downcase(format)
   defp format_key(_format), do: ""
 

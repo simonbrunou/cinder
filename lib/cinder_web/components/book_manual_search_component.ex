@@ -86,10 +86,10 @@ defmodule CinderWeb.BookManualSearchComponent do
 
   defp preseeded?(assigns), do: Map.has_key?(assigns, :results) and not is_nil(assigns[:results])
 
-  # The only two `candidates/2` inputs that can change while one panel instance stays
-  # mounted: the target never swaps under a fixed `/books/:id` panel, but `preferred_language`
-  # does, from the page's own language picker (`BookDetailLive.handle_event("change_language",
-  # ...)`, which broadcasts and reloads `@target`).
+  # The only two `Ebooks.candidates/2` (or `Audiobooks.candidates/2`) inputs that can change while
+  # one panel instance stays mounted: the target never swaps under a fixed `/books/:id` panel, but
+  # `preferred_language` does, from the page's own language picker
+  # (`BookDetailLive.handle_event("change_language", ...)`, which broadcasts and reloads `@target`).
   defp search_context(assigns), do: {assigns.target.id, assigns.target.preferred_language}
 
   defp search_context_changed?(socket, current) do
@@ -266,7 +266,7 @@ defmodule CinderWeb.BookManualSearchComponent do
 
   # Fail-safe, not fail-silent-to-a-user: a reason the scorer added and this dictionary never
   # learned about is logged for whoever ships the next scorer change, and rendered as generic
-  # copy — never the atom's own name (`to_string/1`/`inspect/1`) reaching an operator.
+  # copy — never the atom's own name (`Kernel.to_string/1`/`Kernel.inspect/1`) reaching an operator.
   defp reject_reason_text(reason) do
     Logger.warning("book manual search: unrecognized rejection reason #{inspect(reason)}")
     gettext("rejected")

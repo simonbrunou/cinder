@@ -194,8 +194,8 @@ defmodule Cinder.Library.SeasonAdoption do
     end
   end
 
-  # Runs inside the root's bounded walk: the folder walks and each file's `source_file/4` check
-  # read the same mount.
+  # Runs inside the root's bounded walk: the folder walks and each file's `PathPolicy.source_file/4`
+  # check read the same mount.
   defp read_folders(root, folders) do
     Enum.reduce_while(folders, {:ok, []}, fn folder, {:ok, acc} ->
       case filesystem().find_files(folder) do

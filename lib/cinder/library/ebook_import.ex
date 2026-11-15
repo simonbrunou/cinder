@@ -123,7 +123,7 @@ defmodule Cinder.Library.EbookImport do
     end
   end
 
-  # `record_import/3` marks the stage committed inside its own transaction, exactly as
+  # `Files.record_import/3` marks the stage committed inside its own transaction, exactly as
   # `MovieLifecycle.import_staged/2` does for a movie: that ordering is what makes a crash between
   # the two recoverable in the right direction. A losing write (the target was unmonitored or
   # held mid-import, or this exact path is already claimed by another file row) commits nothing,

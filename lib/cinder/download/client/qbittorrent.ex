@@ -63,7 +63,7 @@ defmodule Cinder.Download.Client.QBittorrent do
     end
   end
 
-  # `sanitize_magnet/2` rebuilds the link with a lower-case `magnet:` scheme, so qBittorrent
+  # `Torrent.sanitize_magnet/2` rebuilds the link with a lower-case `magnet:` scheme, so qBittorrent
   # never sees an indexer's `MAGNET:` spelling.
   defp add_magnet(magnet, hash, opts) do
     case Torrent.sanitize_magnet(magnet, &vet_hosts/1) do

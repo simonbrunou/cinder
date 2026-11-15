@@ -116,18 +116,19 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   # here only delays the next queued subtitle fetch or the rest of one sweep pass, never an
   # import/grab/park cycle. Nothing can turn that delay into a crash: `Fetcher` defines no
   # `handle_call` (nothing ever blocks waiting on it), and `Cinder.Subtitles.Sync.Worker` never
-  # blocks on the probe either — `start_next/1` spawns it `Task.Supervisor.async_nolink` and
-  # returns immediately, and every `handle_call` the Worker answers (e.g. `managed_video_paths/1`)
-  # replies straight from `state`, never from the in-flight task — so no LiveView or HTTP request
-  # can hang or crash behind a long probe. Worst realistic case for this deployment: a 60-80GB 4K
-  # UHD remux (Cinder's own target deployment serves media over a household NAS) read over a
-  # gigabit link — at the assumed ~80MB/s above, ~1024s (~17 minutes) of I/O plus ~2s of CPU. 30
-  # minutes leaves comfortable headroom over that projected worst case while still turning a
-  # genuinely hung/corrupt probe into a finite failure instead of parking `Fetcher`'s queue (or
-  # one `Sweeper` pass) forever. The asymmetry favors staying generous: a bound below a legitimate
-  # scan gets the call killed and `Reference.resolver/2` silently falls back to `&audio/1`
-  # (reference.ex:11) — degraded sync quality with no visible error — while a bound above one only
-  # delays background work by the time that work would legitimately have taken anyway.
+  # blocks on the probe either — `Worker.start_next/1` spawns it `Task.Supervisor.async_nolink` and
+  # returns immediately, and every `handle_call` the Worker answers (e.g.
+  # `Worker.managed_video_paths/1`) replies straight from `state`, never from the in-flight task —
+  # so no LiveView or HTTP request can hang or crash behind a long probe. Worst realistic case for
+  # this deployment: a 60-80GB 4K UHD remux (Cinder's own target deployment serves media over a
+  # household NAS) read over a gigabit link — at the assumed ~80MB/s above, ~1024s (~17 minutes) of
+  # I/O plus ~2s of CPU. 30 minutes leaves comfortable headroom over that projected worst case while
+  # still turning a genuinely hung/corrupt probe into a finite failure instead of parking
+  # `Fetcher`'s queue (or one `Sweeper` pass) forever. The asymmetry favors staying generous: a
+  # bound below a legitimate scan gets the call killed and `Reference.resolver/2` silently falls
+  # back to `&Reference.audio/1` (reference.ex:11) — degraded sync quality with no visible error —
+  # while a bound above one only delays background work by the time that work would legitimately
+  # have taken anyway.
   #
   # `extract_subtitle/2` shares this exact bound and reasoning, not `probe/1`/`probe_policy/1`'s
   # 10s: `ffmpeg_args/2` (`-i <path> -map 0:<index> -c:s srt -f srt pipe:1`) has to demux the

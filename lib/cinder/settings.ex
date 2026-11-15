@@ -540,7 +540,7 @@ defmodule Cinder.Settings do
     # deletes `import_roots` and finishes its overlay, then a slower, already-committed earlier
     # save's overlay lands afterwards and resurrects the deleted value in the env, even though
     # the DB agrees with the newer state. `:global.trans/2` (the same lock primitive
-    # `Download.with_intent_lock/2` and `Library.with_lock/2` use) makes the whole
+    # `Download.with_intent_lock/2` and `ImportStage.with_lock/2` use) makes the whole
     # commit-then-overlay sequence one atomic unit per writer, so an older snapshot can never
     # apply after a newer commit.
     anime_changed? =

@@ -625,9 +625,10 @@ defmodule Cinder.Subtitles.Sync do
     end
   end
 
-  # `function_exported?/3` answers for *loaded* modules only, and code loading is lazy: probing
-  # before the engine module has ever been called reports no `sync/5` and silently drops the
-  # format arguments the extension-less descriptor paths cannot carry.
+  # `Kernel.function_exported?/3` answers for *loaded* modules only, and code loading is lazy:
+  # probing before the engine module has ever been called reports no five-argument sync (as
+  # `Ffsubsync.sync/5` defines) and silently drops the format arguments the extension-less
+  # descriptor paths cannot carry.
   defp engine_sync(reference, input, output, reference_extension, input_extension) do
     module = engine()
 

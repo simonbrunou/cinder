@@ -87,8 +87,8 @@ defmodule Cinder.Download.TvPoller do
       # which fences a `:cleanup_pending` intent and deletes the grab in the SAME transaction (no
       # crash window between them), then makes the immediate best-effort removal attempt after
       # commit; a crash or failure there just leaves the fenced row for the next tick's
-      # `reconcile_pending_intents/1` to retry. The delete still lands before the removal attempt,
-      # so the payload still stops arriving as soon as this tick's cleanup runs.
+      # `Download.reconcile_pending_intents/1` to retry. The delete still lands before the removal
+      # attempt, so the payload still stops arriving as soon as this tick's cleanup runs.
       {:blocked_content, _detail} = reason ->
         park(grab, reason)
 
@@ -305,9 +305,9 @@ defmodule Cinder.Download.TvPoller do
   # record of `download_id`/`download_protocol` (episodes carry no such column) — inside its own
   # already-committed transaction, before `remove_after_import` ever runs. `imported` (already
   # computed below) names exactly the episodes that got a file THIS round — the same set
-  # `commit_grab_imports/4` itself derives internally to decide which episodes are "missing" and
-  # bumps back into the wanted pool. Fencing only those (not every episode the grab ever linked)
-  # matters: `commit_grab_imports/4` releases the missing ones with `grab_id: nil` for
+  # `Grabs.commit_grab_imports/4` itself derives internally to decide which episodes are "missing"
+  # and bumps back into the wanted pool. Fencing only those (not every episode the grab ever linked)
+  # matters: `Grabs.commit_grab_imports/4` releases the missing ones with `grab_id: nil` for
   # `search_wanted/1` to re-pick up, and `Download.pending_episode_ids/0` excludes anything the
   # cleanup carrier still reserves — over-reserving a missed episode would silently stop
   # re-searching it for as long as the (unrelated) remote-cleanup intent lives.
@@ -415,10 +415,10 @@ defmodule Cinder.Download.TvPoller do
   # before `remove_after_import` ever runs. Unlike `finalize_standard_grab/3`/
   # `finalize_staged_grab/2`, no local `imported` list is available here (residual decisions are
   # applied one file at a time, elsewhere) — `imported_episode_ids/1` reads which of `grab`'s
-  # episodes already carry a file BEFORE `close_grab` runs. `close_grab/1` never adds a file to an
-  # episode that doesn't already have one at this point (fold/part/discard decisions already ran
-  # against it); it only finalizes bookkeeping and bumps whatever's left bare back to the wanted
-  # pool — so this snapshot exactly matches what `close_grab/1` itself will keep as "imported"
+  # episodes already carry a file BEFORE `close_grab` runs. `Grabs.close_grab/1` never adds a file
+  # to an episode that doesn't already have one at this point (fold/part/discard decisions already
+  # ran against it); it only finalizes bookkeeping and bumps whatever's left bare back to the wanted
+  # pool — so this snapshot exactly matches what `Grabs.close_grab/1` itself will keep as "imported"
   # once it returns.
   @doc false
   def finalize_residual_grab(%Grab{} = grab) do
@@ -452,8 +452,8 @@ defmodule Cinder.Download.TvPoller do
   defp finalize_staged_grab(grab, staged) do
     imported_ids = staged |> StagedImport.record() |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
 
-    # `finish_grab/3` takes `{episode_id, dest, quality}`: an anime grab that is not arbitrated
-    # never declines, so every row's `placed?` is true.
+    # `Grabs.finish_grab/3` takes `{episode_id, dest, quality}`: an anime grab that is not
+    # arbitrated never declines, so every row's `placed?` is true.
     finish = fn rows, stage_ids ->
       imported =
         Enum.map(rows, fn {episode_id, dest, quality, _placed?} -> {episode_id, dest, quality} end)
@@ -480,8 +480,8 @@ defmodule Cinder.Download.TvPoller do
   # Shared by all three `#415` fence sites above. `nil` (no fence) when nothing survived to fence
   # — an empty `episode_ids` would crash `Download.fence_episode_cleanup/2`'s carrier insert on
   # `hd([])` (mirroring `Catalog.Grabs.fence_client_intent_ids/2`'s own empty-list guard); it
-  # degrades to `remove_after_import/4`'s legacy one-shot removal instead, exactly like a genuine
-  # fence-vs-unrelated-intent mismatch.
+  # degrades to `Download.remove_after_import/4`'s legacy one-shot removal instead, exactly like a
+  # genuine fence-vs-unrelated-intent mismatch.
   defp episode_cleanup_fence(_grab, []), do: nil
 
   defp episode_cleanup_fence(grab, episode_ids),
@@ -884,11 +884,11 @@ defmodule Cinder.Download.TvPoller do
     # the grab stays visible in /activity and the warning names why it won't finalize.
     #
     # A blocklisted release is never re-picked, so its download is dead weight: the grab's client
-    # job is fenced+removed in the same transaction as the grab delete (`park_grab_and_remove/1`),
-    # and its payload deleted afterwards — under the same `move_on_import` / usenet-only rule as
-    # `Download.remove_after_import/4`, so a torrent keeps seeding (#684). `:blocked_content` is
-    # the exception that already removed its job (and files) from any client. The other, non-
-    # blocklisted reasons only ever delete the grab.
+    # job is fenced+removed in the same transaction as the grab delete
+    # (`Grabs.park_grab_and_remove/1`), and its payload deleted afterwards — under the same
+    # `move_on_import` / usenet-only rule as `Download.remove_after_import/4`, so a torrent keeps
+    # seeding (#684). `:blocked_content` is the exception that already removed its job (and files)
+    # from any client. The other, non-blocklisted reasons only ever delete the grab.
     remove_payload? = blocked? and Download.move_on_import_removal?(grab.download_protocol)
 
     park_result =
@@ -899,8 +899,8 @@ defmodule Cinder.Download.TvPoller do
     case park_result do
       {:ok, _} ->
         # The client job is already fenced and removed above; only the payload is left, and
-        # `remove_after_import/4` with no download id deletes exactly that. A non-blocklisted
-        # park may be re-picked, so its payload stays.
+        # `Download.remove_after_import/4` with no download id deletes exactly that. A
+        # non-blocklisted park may be re-picked, so its payload stays.
         if remove_payload?,
           do: Download.remove_after_import(grab.download_protocol, nil, grab.content_path)
 

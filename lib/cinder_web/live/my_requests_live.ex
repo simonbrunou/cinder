@@ -219,8 +219,8 @@ defmodule CinderWeb.MyRequestsLive do
   defp request_again_result(socket, title, {:error, _reason}),
     do: put_flash(socket, :error, gettext("Couldn't request %{title}. Try again.", title: title))
 
-  # `requests` stays for the event handlers' `find_by_id/2`; `rows` pairs each request with its
-  # target, which the template reads instead of indexing catalog maps by a raw `target_id`.
+  # `requests` stays for the event handlers' `LiveHelpers.find_by_id/2`; `rows` pairs each request
+  # with its target, which the template reads instead of indexing catalog maps by a raw `target_id`.
   defp load(socket) do
     user = socket.assigns.current_scope.user
     requests = Requests.list_for_user(user)
@@ -237,14 +237,15 @@ defmodule CinderWeb.MyRequestsLive do
   # The `kind={:request}` badge state for one of MY requests, computed once per row. It drives the
   # badge, "Request again" and the denial-reason line.
   #
-  # A book row's `:denied` is short-circuited HERE, not in the shared `book_badge_state/2` (Codex
-  # review on PR #557): this is the one surface answering "what happened to each of MY own past
-  # requests," a history question, so a denied row keeps reading Denied even once a DIFFERENT
-  # request folds the shared target to :available/:held/:monitored — it still renders its own
-  # denial reason and "Request again" action. Every other book-badge surface (Discover, book
-  # detail, library) answers a different, current-state question — "is this book available right
-  # now" — where the household-shared target correctly outranks any one user's denied request, so
-  # that behavior stays in the shared function, not here.
+  # A book row's `:denied` is short-circuited HERE, not in the shared
+  # `LiveHelpers.book_badge_state/2` (Codex review on PR #557): this is the one surface answering
+  # "what happened to each of MY own past requests," a history question, so a denied row keeps
+  # reading Denied even once a DIFFERENT request folds the shared target to
+  # :available/:held/:monitored — it still renders its own denial reason and "Request again" action.
+  # Every other book-badge surface (Discover, book detail, library) answers a different,
+  # current-state question — "is this book available right now" — where the household-shared target
+  # correctly outranks any one user's denied request, so that behavior stays in the shared function,
+  # not here.
   #
   # A landed season outranks a stale request status (mirrors the movie title_state precedence): a
   # fully imported season must not keep reading "Denied" — one badge, not contradictory stacked
@@ -279,7 +280,8 @@ defmodule CinderWeb.MyRequestsLive do
   end
 
   # Only a watchable target links out. The gate matters for books: they have no media-server
-  # item, and `media_server_web_link/2` answers a nil item id with the server's front door.
+  # item, and `Cinder.Settings.media_server_web_link/2` answers a nil item id with the server's
+  # front door.
   defp title_web_link(%Target{watchable?: true} = target, media_server_link) do
     case Settings.media_server_web_link(media_server_link, target.media_server_item_id) do
       {_server, url} -> url

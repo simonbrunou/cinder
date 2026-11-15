@@ -327,7 +327,7 @@ defmodule Cinder.Health do
   end
 
   # Resolution runs inside `safely/1` too: it calls into config and, for the books providers,
-  # into each adapter's `provider/0`.
+  # into each adapter's `Cinder.Books.Metadata.provider/0`.
   defp run_target(%Target{probe: probe}) do
     case safely(fn -> resolve(probe) end) do
       {:ok, mod} -> run(mod)
@@ -455,7 +455,7 @@ defmodule Cinder.Health do
       {:error, :eexist} = error ->
         error
 
-      # `write_exclusive/2` can fail after its `O_EXCL` create: a later write, fsync or
+      # `Disk.write_exclusive/2` can fail after its `O_EXCL` create: a later write, fsync or
       # parent-sync error, or a mergerfs `:effect_committed` hold, keeps the file. Remove the
       # name, or each failing check leaves another probe in the library root (#995). After an
       # error before the create, the removal finds nothing. The check reports the create's

@@ -596,11 +596,12 @@ defmodule Cinder.Acquisition.Anime do
   defp put_coordinate_scope(value, _coordinate), do: value
 
   # The scheme-bridging rule (which persisted schemes a parsed value also matches) lives once in
-  # `AnimeResolver.bridged_schemes/1`. `strip_shadowed_canonical/1` then lets a vetted
-  # scene coordinate win over the coincidental native code of a *different* episode that shares the
-  # same SxxEyy string (issue #156); an auto-derived `:inferred` scene coordinate leaves the native
-  # canonical in place, so ordinary resolution is unchanged. `strip_retired_canonical/2` drops the
-  # native code of an episode a saved season offset moved to another season (#987).
+  # `AnimeResolver.bridged_schemes/1`. `AnimeResolver.strip_shadowed_canonical/1` then lets a
+  # vetted scene coordinate win over the coincidental native code of a *different* episode that
+  # shares the same SxxEyy string (issue #156); an auto-derived `:inferred` scene coordinate leaves
+  # the native canonical in place, so ordinary resolution is unchanged.
+  # `AnimeResolver.strip_retired_canonical/2` drops the native code of an episode a saved season
+  # offset moved to another season (#987).
   defp mappings_for_value(mappings, scheme, value) do
     schemes = [scheme | AnimeResolver.bridged_schemes(scheme)]
 
@@ -1099,7 +1100,7 @@ defmodule Cinder.Acquisition.Anime do
   # against the release title. Sanitize where every free-text release enters those checks
   # (`free_text_kept?/2`, and `names_series?/2` for an episode): `AnimeParser.sanitize/1` scrubs
   # to valid UTF-8 (a no-op on already-valid input), reusing the parser's scrub instead of a
-  # third copy. The episode year check sanitizes on its own (`Cinder.Acquisition`'s `tokens/1`).
+  # third copy. The episode year check sanitizes on its own (`Cinder.Acquisition.tokens/1`).
   # Only the guard's local view is sanitized; `release.title` itself is never mutated, so it stays
   # intact for display, `mapping_snapshot`, and downstream parsing (which already sanitizes
   # independently via `AnimeParser.parse/2`).

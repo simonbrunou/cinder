@@ -96,10 +96,11 @@ defmodule Cinder.Subtitles.Sync.Scope do
   end
 
   # A combined double-episode file (e.g. a season-pack "S01E05E06.mkv") is a supported case in
-  # the import pipeline: `file_path` names the same file for two separate episode rows. `all/2`
-  # (not `one/2`/`get_by/2`, which raise on more than one match) collects every owner so the unit
-  # carries every episode's scope, matching what `units(:library)`'s merge_units/1 already does
-  # for this exact case — a single-owner lookup would otherwise drop or crash on the second one.
+  # the import pipeline: `file_path` names the same file for two separate episode rows. `Repo.all/2`
+  # (not `Repo.one/2`/`Repo.get_by/2`, which raise on more than one match) collects every owner so
+  # the unit carries every episode's scope, matching what `units(:library)`'s merge_units/1 already
+  # does for this exact case — a single-owner lookup would otherwise drop or crash on the second
+  # one.
   defp find_episodes(video_path) do
     case Repo.all(from(e in Episode, where: e.file_path == ^video_path, preload: :season)) do
       [] -> find_episodes_by_part(video_path)

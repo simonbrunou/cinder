@@ -33,8 +33,9 @@ You have no memory between runs. Orient first, every run.
      protocol → role → title guard → language → mapping),
      `kept` (the selection pool, in indexer order), the private language stage and `pick/1`.
      `lib/cinder/acquisition/household_policy.ex` — `for_target/2` and `band/1`.
-   - `lib/cinder/catalog/episode_search.ex` — `season_acquisition_context/2`, the inputs a standard
-     season's list is built from; its callers `TvPoller.search_standard_group/1` and
+   - `lib/cinder/catalog/episode_search.ex` — `season_acquisition_context/2` and its batch form
+     `season_acquisition_contexts/2`, the inputs a standard season's list is built from; their
+     callers `TvPoller.search_standard_series/3` (one batch read per series) and
      `ManualSearchComponent`.
    - `lib/cinder/acquisition/anime.ex` — the anime searches, `movie_verdict/2`/`select_movie/2`
      and `episode_verdict/2`/`cover_episodes/3` (the anime selection the judge's `kept` rows are
