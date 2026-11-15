@@ -135,17 +135,25 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
      green re-run of the identical tree (the same SHA, or an empty commit on it) makes the
      failure a flake, even when `CI / test (push)` on `origin/main`'s head failed the same test.
      A re-run that fails again on the same test goes to **Broken `main`**, which says when that
-     cause fits. A local `mix test` of that tree is not this green run (#916). It misses
-     failures that happen only on CI (**CI runs the suite as root**). Its timing also says
-     nothing about a wall-clock bound on the loaded runner.
+     cause fits. When `CI / test (push)` on `origin/main`'s head passes the test, search the
+     open issues for the test module again, since a session on another PR may have filed it
+     while your re-run ran. Comment your sighting there, or file the issue. When your branch
+     lacks that head, merge `origin/main` into it, run `mix test` and push: the new SHA gets a
+     new run. When it already holds that head, the PR's diff is the only difference from the
+     green tree, so look for its part in the failure before anything else. On #1346 both
+     attempts timed out in `GuardedWriteAdaptersTest` while `main` was green, and #1351, filed
+     from #1347 meanwhile, held the same failure: 16 minutes from the second red to the new
+     push. A local `mix test` of that tree is not this green run (#916). It misses failures that
+     happen only on CI (**CI runs the suite as root**). Its timing also says nothing about a
+     wall-clock bound on the loaded runner.
 - **Wall-clock tests.** #637 (for #636) widened the subprocess bounds that raced process startup
   on the runner to 1 s. `Cinder.HTTPPolicyTest` "cancels a request blocked before headers at the
   wall-clock deadline" runs a 500 ms deadline. The test takes the request task's pid from
   `bounded_request/3`'s `[:cinder, :http, :request_task]` event. It asserts that task dead and
   accepts a missing `{:request_started, _}` from the stub. A runner slower than the deadline to
-  bring the task to its stub therefore passes the test. Before this, a 100 ms deadline (#960) and then
-  a 500 ms one (#1092) each failed on such a runner, since a wider deadline only moves the start
-  time that fails. After run 1082 (#1301) timed out a 500 ms deadline, "collects a trickling
+  bring the task to its stub therefore passes the test. Before this, a 100 ms deadline (#960) and
+  then a 500 ms one (#1092) each failed on such a runner, since a wider deadline only moves the
+  start time that fails. After run 1082 (#1301) timed out a 500 ms deadline, "collects a trickling
   response that completes within the total deadline" runs a 10 s one. Widening holds there: its
   deadline must not fire and the call ends in about 6 ms, so only a 10 s stall on the runner times
   it out, where a wider cancel deadline still fails at a later start. After loaded runners
@@ -314,12 +322,13 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   can print `does not exist or cannot download: :enoent`. elixir_make then builds the NIF from
   source, lazy_html with the `cmake` that `test` installs on a miss, so that line alone is not the
   failure. The image build fetches Tailwind with `curl` for the same reason. To prove the NIF
-  source-build fallback while the downloads work, put `config :elixir_make, :force_build,
-  lazy_html: true, exqlite: true` in `config/test.exs` on a run whose compiled-deps cache
-  misses, then revert it before the merge (#885's run 347). The `test` log shows the miss: the
-  cmake install step runs only then. A green `test` job saves the cache under its exact key, so a
-  later run with the same `mix.lock`, OTP and Elixir restores the NIFs and rebuilds nothing,
-  flag or not. To prove the fallback locally, put the same line in `config/test.exs`, run
+  source-build fallback while the downloads work, put
+  `config :elixir_make, :force_build, lazy_html: true, exqlite: true` in `config/test.exs` on a
+  run whose compiled-deps cache misses, then revert it before the merge (#885's run 347). The
+  `test` log shows the miss: the cmake install step runs only then. A green `test` job saves the
+  cache under its exact key, so a later run with the same `mix.lock`, OTP and Elixir restores the
+  NIFs and rebuilds nothing, flag or not. To prove the fallback locally, put the same line in
+  `config/test.exs`, run
   `MIX_BUILD_ROOT=$(mktemp -d) MIX_ENV=test mix deps.compile lazy_html exqlite --include-children`
   inside `nix develop`, which supplies `cmake`, then revert the line. A source build prints
   lazy_html's `-o .../priv/liblazy_html.so` link line and exqlite's `CC sqlite3_nif.o`, and a
@@ -331,8 +340,9 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   `elixir-version`, the Dockerfile's `OTP_VERSION` and `ELIXIR_VERSION`, and `flake.lock`'s
   nixpkgs. `test/code_health/beam_version_pins_test.exs` fails `mix test` when the first two
   differ, and its message says what to do when an upstream lags. No test reads the flake, so
-  check the dev shell with `nix develop . -c elixir -e 'IO.puts(:code.root_dir());
-  IO.puts(System.version())'`: the first line ends in `erlang-<OTP version>/lib/erlang`. When
+  check the dev shell with
+  `nix develop . -c elixir -e 'IO.puts(:code.root_dir()); IO.puts(System.version())'`: the
+  first line ends in `erlang-<OTP version>/lib/erlang`. When
   either version lags, run `nix flake update`. `nix eval --inputs-from . nixpkgs#...` reads the
   registry's nixpkgs, not the lock, so its answer says nothing about the dev shell (#1040).
 

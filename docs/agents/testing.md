@@ -24,6 +24,11 @@
   brief. On #986 and #950 such a clause reached the Spec review untested (about 1.5 and
   10 minutes to fix), and #1207 lost 8 minutes to an untested "as today" clause and a false
   changelog sentence.
+  When a run, a throwaway one included, shows a path on which a Desired-behavior requirement still
+  fails, that path gets its own done-when line and its fix in the same PR. On #1290 a failed close
+  of the staged file still dropped the new removal line. The fragment named that path as an
+  exception, the Spec review flagged the requirement as partial, and the fix took a second full
+  suite and a re-check: 29 minutes from the run that proved it to the fix commit.
 - A fix that keeps a behaviour across an Elixir or OTP upgrade answers like the old version on
   every input class, not only on the cases the issue names. Before review, run one table of
   inputs through the changed module's public functions, a row per input class that the changed
@@ -67,8 +72,9 @@
   is outside the rule: `mix test` loads it in memory, so its modules leave no `.beam` and no
   entry in `mix xref graph`. A review drops the finding on a module that only its own test file
   uses, nested or top-level. A module that two test files use goes under `test/support/`: two
-  test files that define the same module name stop the load with `cannot define module ...
-  because it is currently being defined`. `test/code_health/single_module_files_test.exs` fails
+  test files that define the same module name stop the load with
+  `cannot define module ... because it is currently being defined`.
+  `test/code_health/single_module_files_test.exs` fails
   a compiled file with a second module and names in its header the forms it misses.
 - Run a red run, a mutation check or a throwaway test with `mix test.unchecked`, which takes the
   same arguments as `mix test` (`<file>:<line>`, `--failed`, `--only`, `--seed`). It creates and
@@ -84,6 +90,12 @@
   verdicts and the exit codes. Read the lines it prints under each verdict: they are the lines
   the edit removed and added. On #702 a hand-written loop chained `diff && run_suite` and ran no
   mutant, and #1230, #1250 and #1254 each wrote a loop by hand.
+- Run the branch's new tests, or a throwaway test, against the merge base's code with
+  `scripts/test-at-base <merge base> <changed lib file>... -- <mix test.unchecked argument>...`:
+  the red run before a fix, and the runs that prove a changelog sentence about what Cinder did
+  before it. It puts each named file back as the merge base holds it and restores it afterwards,
+  also on a signal. Its header gives the exit codes. On #788 and #1322 the swap and the restore
+  were done by hand: about 6 minutes on #788, and three hand swaps on #1322.
 - A throwaway test, one that only reports what the code does, runs with `mix test.unchecked`.
   Before you edit an existing test file, copy it outside `test/` and restore it after the run;
   delete a new file. Report from the test body with
@@ -236,12 +248,18 @@
   was filled with "URL Jellyfin", the translation of "Jellyfin URL". For more than a few new
   msgids, write each with its French msgstr into a scratch `.po` and fill the catalog from it with
   `scripts/gettext-fill.exs` ([workflow.md](workflow.md) "Merge conflicts" has the command),
-  which also clears the `#, fuzzy` flag on the entries it fills.
+  which also clears the `#, fuzzy` flag on the entries it fills. The merge also flags `#, fuzzy`
+  a reworded msgid close to an old one in `priv/gettext/en/LC_MESSAGES/default.po`. Leave that
+  flag: every English msgstr is empty, and Gettext compiles no clause for an empty msgstr
+  (`deps/gettext/lib/gettext/compiler.ex`), so the page shows the msgid. On #912 a re-check
+  flagged three of them and clearing them forced a full `mix test` for a catalog change, about
+  10 minutes; #948 regenerated four.
 - A test sets a `:cinder` env key with `Cinder.ConfigCase.put_env/2`, which restores the old value
-  on exit; `put_env/1` takes a keyword list of keys. For a keyword-list key, `Cinder.ConfigCase.put_config/2` merges the overrides and
-  restores the same way. The household size band (`:tv_min_size`, `:tv_max_size`, read by
-  `Cinder.Acquisition.HouseholdPolicy.band/1`) is one such key. When other test modules also read
-  the key, as several read the band, set it from an `async: false` module.
+  on exit; `put_env/1` takes a keyword list of keys. For a keyword-list key,
+  `Cinder.ConfigCase.put_config/2` merges the overrides and restores the same way. The household
+  size band (`:tv_min_size`, `:tv_max_size`, read by `Cinder.Acquisition.HouseholdPolicy.band/1`)
+  is one such key. When other test modules also read the key, as several read the band, set it
+  from an `async: false` module.
 - A test that saves settings (`Cinder.Settings.save/2`, or `put/2`, `delete/1` and `save_form/1`,
   which go through it) runs in an `async: false` module that restores every
   `Cinder.Settings.env_keys/0` key, as `Cinder.SettingsTest` does. Each save rebuilds those keys

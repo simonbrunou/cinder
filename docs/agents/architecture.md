@@ -199,12 +199,13 @@ So it collides there instead of on another branch. A `mkdir_near` that loses the
 its private `.<name>.cinder-create-<hex>` directory onto the name, removes that directory, and
 still reports the post-effect `EEXIST` (#996). It removes the directory after any failed rename,
 but only while the private name still holds the one it created and the directory is empty.
-`Disk.write/2` on a missing file creates the same way; nothing in `lib/` calls it today. A caller that creates a name another writer may also
-create (a sidecar's own name, an NFO) publishes through `rename_exclusive/2`, or first adds an
-undo that clears its container from the name, as `move_back_shadowed` does for
-`rename_exclusive`. A second Cinder instance on the pool is also such a writer: its
-`System.unique_integer/1` values and its per-video lock are its own (#905). The other operations
-act on the union path, and the mergerfs opens never cross into a nested mount.
+`Disk.write/2` on a missing file creates the same way; nothing in `lib/` calls it today. A
+caller that creates a name another writer may also create (a sidecar's own name, an NFO)
+publishes through `rename_exclusive/2`, or first adds an undo that clears its container from the
+name, as `move_back_shadowed` does for `rename_exclusive`. A second Cinder instance on the pool is
+also such a writer: its `System.unique_integer/1` values and its per-video lock are its own
+(#905). The other operations act on the union path, and the mergerfs opens never cross into a
+nested mount.
 
 A library root may sit below the mount, as in prod, where the pool is at `/media` and each root is
 a folder in it. Take a path's place on a branch from the backing path of its directory or of the
@@ -240,8 +241,8 @@ Writers set the columns only through
 `columns/2`, the schemas cast `column_names/2`, and the import and upgrade decisions read a row
 through `of/1`; only display code and queries read a single column directly. Episodes have no
 default-audio column, and the module records that. A new column is one field in that module, plus
-the migration and the schema `field`; `test/cinder/library/imported_quality_test.exs` fences the list
-against both schemas and runs probe → quality → row → quality through each import writer.
+the migration and the schema `field`; `test/cinder/library/imported_quality_test.exs` fences the
+list against both schemas and runs probe → quality → row → quality through each import writer.
 
 ## Operator attention has one owner
 
@@ -334,10 +335,10 @@ Every call a poller makes has a bound:
   every `File` call in the app.
 - The exception is a single-path read or write, such as `PathPolicy.source_file/4`,
   `destination/3` or a `Cinder.RawFile` call. It skips the file server too (#1114, #1146) but has
-  no deadline, so one hung on a wedged mount still holds the poller tick it runs in (#779). `Sidecars.sweep_temps/2`, the walk on the import's sidecar copy
-  fallback, stays unbounded because of them: `destination/3` reads the same folder with no
-  deadline just before the sweep and just after it, so a deadline on the sweep alone frees
-  nothing.
+  no deadline, so one hung on a wedged mount still holds the poller tick it runs in (#779).
+  `Sidecars.sweep_temps/2`, the walk on the import's sidecar copy fallback, stays unbounded
+  because of them: `destination/3` reads the same folder with no deadline just before the sweep
+  and just after it, so a deadline on the sweep alone frees nothing.
 
 The reason: one unbounded call in a single-tick poller freezes every target sharing that tick,
 not just the file or request in flight.

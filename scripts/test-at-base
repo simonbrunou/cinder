@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Run `mix test.unchecked` with some files put back as they were at another commit, then restore.
+
+    scripts/test-at-base <base> <file>... -- <mix test.unchecked argument>...
+
+Use it for a fix's "before" evidence (docs/agents/testing.md): the branch's new tests, or a
+throwaway test, against the merge base's code. For each <file>, the script writes its content at
+<base> (`git show <base>:<file>`) over the working copy, or removes the working copy when <base>
+has no such file. It then runs `mix test.unchecked` with the arguments after `--`, prints the
+run's output, and restores every <file> to its bytes from before the run, also when a SIGINT or
+SIGTERM stops it. Name only the files the fix changed, never a test file you still need: the
+tests run as the working copy holds them.
+
+Exit codes: otherwise the `mix test.unchecked` exit code: 0 when every test passed, 2 when a
+test failed, 1 when the code did not compile. Read its `Result:` line. 3: wrong arguments, a
+<file> outside the repo or not a regular file, a <base> git cannot read, no `mix` on PATH (run it
+through `nix develop`), or a <file> it cannot write or restore. 130: a signal stopped the run.
+"""
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+
+def fail(message):
+    print(f"test-at-base: {message}", file=sys.stderr)
+    sys.exit(3)
+
+
+def parse(argv):
+    if "--" not in argv:
+        fail("usage: scripts/test-at-base <base> <file>... -- <mix test.unchecked argument>...")
+    split = argv.index("--")
+    head, tests = argv[:split], argv[split + 1 :]
+    if len(head) < 2 or not tests:
+        fail("usage: scripts/test-at-base <base> <file>... -- <mix test.unchecked argument>...")
+    return head[0], head[1:], tests
+
+
+def base_content(base, path):
+    show = subprocess.run(["git", "show", f"{base}:{path}"], capture_output=True)
+    if show.returncode == 0:
+        return show.stdout
+    listed = subprocess.run(["git", "cat-file", "-e", f"{base}^{{commit}}"], capture_output=True)
+    if listed.returncode != 0:
+        fail(f"git cannot read the commit {base}")
+    return None
+
+
+def main(argv):
+    base, files, tests = parse(argv)
+    root = Path(
+        subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
+        ).stdout.strip()
+        or "."
+    ).resolve()
+    saved = {}
+    for name in files:
+        path = Path(name).resolve()
+        if root not in path.parents:
+            fail(f"{name} is outside the repo")
+        if path.exists() and not path.is_file():
+            fail(f"{name} is not a regular file")
+        relative = str(path.relative_to(root))
+        saved[path] = (path.read_bytes() if path.exists() else None, base_content(base, relative))
+
+    def restore():
+        ok = True
+        for path, (original, _base) in saved.items():
+            try:
+                if original is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.write_bytes(original)
+            except OSError as error:
+                print(f"test-at-base: cannot restore {path}: {error}", file=sys.stderr)
+                ok = False
+        return ok
+
+    child = None
+    stopped = False
+
+    # The main thread's `child.wait()` holds the Popen's wait lock, so the handler only kills the
+    # child (a BEAM given SIGTERM can stay up for minutes) and the main thread's wait returns.
+    def stop(_signum, _frame):
+        nonlocal stopped
+        stopped = True
+        if child is None:
+            raise SystemExit(130)
+        child.kill()
+
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGTERM, stop)
+
+    try:
+        for path, (_original, content) in saved.items():
+            if content is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(content)
+            print(f"at {base}: {path.relative_to(root)}", flush=True)
+        try:
+            child = subprocess.Popen(["mix", "test.unchecked", *tests])
+        except FileNotFoundError:
+            print("test-at-base: no mix on PATH; run it through nix develop", file=sys.stderr)
+            return 3
+        code = child.wait()
+        return 130 if stopped else code
+    except OSError as error:
+        print(f"test-at-base: cannot write a file: {error}", file=sys.stderr)
+        return 3
+    finally:
+        if not restore():
+            sys.exit(3)
+        print("restored: " + " ".join(str(p.relative_to(root)) for p in saved), flush=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

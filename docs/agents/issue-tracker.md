@@ -34,8 +34,8 @@ the API with `jq`.
 
 - **Create an issue**: `forgejo.py create cinder "<title>" <file> --labels <a,b>`. Write
   multi-line bodies to a temp file with a heredoc.
-- **Read an issue**: `fj issue view -R origin <n>` for the body, `fj issue view -R origin <n>
-  comments` for the comments. For JSON with labels:
+- **Read an issue**: `fj issue view -R origin <n>` for the body,
+  `fj issue view -R origin <n> comments` for the comments. For JSON with labels:
   `curl ... "$API/issues/<n>" | jq '{number, title, body, state, labels: [.labels[].name]}'`.
 - **List issues**: `fj issue search -R origin --state open --labels <label>`. For JSON:
   `curl ... "$API/issues?state=open&type=issues&labels=<label>&limit=50" | jq '[.[] | {number, title, labels: [.labels[].name]}]'`.

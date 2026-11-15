@@ -111,7 +111,7 @@ These bind a sentence in any doc, moduledoc, comment or changelog fragment.
 
 - In `GLOSSARY.md`, keep every section from both sides.
 - In a `.po` file, take either side, run `MIX_ENV=test mix gettext.extract --merge`, then refill
-  the French msgstrs the other side had and clear any `#, fuzzy` flag the merge added.
+  the French msgstrs the other side had and clear any `#, fuzzy` flag the merge added to them.
   `scripts/gettext-fill.exs` does both from the other side's copy of each catalog
   (`default.po`, `errors.po`):
   `git show <other side>:priv/gettext/fr/LC_MESSAGES/default.po > /tmp/other-default.po`, then

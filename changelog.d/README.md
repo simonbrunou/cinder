@@ -78,6 +78,11 @@ tries to remove the old subtitle an interrupted correction or reset left" was fa
 correction whose subtitle was edited since, which no recovery records. Its first fix named two
 of the body's three conditions and dropped the one that the subtitle record still names that
 folder: two review rounds, about 21 minutes from the first finding to the last fix.
+Before review, read the summary alone against each test in the PR where the change does not
+happen, such as a forced file the copy skips or a target that already exists: each is a case the
+summary must leave out. On #1308 the first summary said a missing subtitle "is now filled from" a
+file in its language, while the PR's own test of a lone forced file showed a translation. Its fix
+then dropped "missing", which the body kept: two review rounds, about 5 minutes.
 
 A path includes each value an install can configure for a list or setting that the code on the
 path reads, such as `Cinder.Download.ContentPolicy`'s blocked and media extension lists, and each
@@ -153,6 +158,12 @@ not valid UTF-8 raised an error before. On the merge base, a tracker holding `@`
 percent-encoded `%FF` was dropped by the `@` check before `URI.new/1` parsed the tracker, and
 `dn=a b\xff` returned `{:error, :bad_magnet}`, since `URI.new/1` rejects the space before it
 reaches the byte. The Spec review found both, and the fragment fix took about 6 minutes.
+When the issue's brief lists entry points under **Key interfaces**, each one is an input the
+sentence covers too: run the sentence's case through each, or name the ones it speaks for. On
+#1322 "the correction dropped its record" was false for `recover/2`'s replay, which the brief
+listed and which held the correction for review instead, and false for a sidecar another writer
+replaced first: the Spec review and a re-check found them, about 16 minutes from the first
+finding to the last fix.
 
 When a PR changes which release or file names a parser reads, show the change with example names
 and leave the full rule to the code. A sentence that restates the rule in general words is a
