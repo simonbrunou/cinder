@@ -16,7 +16,7 @@ defmodule Cinder.Books.Grabs do
 
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget}
-  alias Cinder.Download.Progress
+  alias Cinder.Catalog.GrabMetrics
   alias Cinder.Repo
 
   @doc """
@@ -161,53 +161,14 @@ defmodule Cinder.Books.Grabs do
   Stores the transfer metrics reported by the download client, and broadcasts `{:book_grab_updated,
   grab}` when they actually changed.
 
-  Guarded the same way `Cinder.Catalog.Grabs.update_grab_download_metrics/2` guards its own write
-  and broadcast:
-
-    * the write only lands while `content_path` is still unset — a metrics report for a grab the
-      import phase already claimed (`mark_downloaded/2` beat this tick to it) is stale and
-      refused with `{:error, :stale_grab}`, never landed on a completed download;
-    * a regressed `download_progress` is dropped from the write, not recorded — a client that
-      briefly under-reports must never walk the operator-visible bar backwards;
-    * `download_progress_at` advances only on real forward motion, so a poller tick that
-      re-reports an identical snapshot writes and broadcasts nothing, and an open `/books/:id` is
-      not re-rendered on a no-op. (The completion edge — `content_path` going from unset to
-      set — is `mark_downloaded/2`'s to advance, not this function's: `track/2`'s own
-      `is_nil(content_path)` guard above means it never runs again once a grab is downloaded.)
+  Guarded as `Cinder.Catalog.GrabMetrics.write/3` says, the write TV grabs share: a report for a
+  grab `mark_downloaded/2` already claimed is refused with `{:error, :stale_grab}`, and a report
+  that changes nothing writes and broadcasts nothing, so an open `/books/:id` is not re-rendered
+  on a no-op.
   """
   @spec track(BookGrab.t(), map()) :: {:ok, BookGrab.t()} | {:error, :stale_grab}
   def track(%BookGrab{} = grab, attrs) do
-    changes = Progress.changes(grab, attrs)
-
-    if changes == %{} do
-      if Repo.exists?(from(g in BookGrab, where: g.id == ^grab.id and is_nil(g.content_path))) do
-        {:ok, grab}
-      else
-        {:error, :stale_grab}
-      end
-    else
-      now = DateTime.utc_now(:second)
-
-      changes =
-        if Progress.advanced?(grab.download_progress, Map.get(changes, :download_progress)),
-          do: Map.put(changes, :download_progress_at, now),
-          else: changes
-
-      case Repo.update_all(
-             from(g in BookGrab,
-               where: g.id == ^grab.id and is_nil(g.content_path),
-               select: g
-             ),
-             set: Map.to_list(changes) ++ [updated_at: now]
-           ) do
-        {1, [updated]} ->
-          Books.broadcast({:book_grab_updated, updated})
-          {:ok, updated}
-
-        {0, _none} ->
-          {:error, :stale_grab}
-      end
-    end
+    GrabMetrics.write(grab, attrs, &Books.broadcast({:book_grab_updated, &1}))
   end
 
   @doc "Bumps the shared download-phase failure budget."

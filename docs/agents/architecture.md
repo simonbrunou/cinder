@@ -44,8 +44,9 @@ are written only by the catalog's concept modules under `lib/cinder/catalog/`:
 Books and audiobooks follow the same rule through `Cinder.Books.transition_target/3`, plus their
 audited siblings: `hold_target/5`, `pause_target/1`, `monitor_target/3`, `import_resolution/1`,
 `Files.record_import/3` and `record_import_set/3`. Every `book_grabs` mutation lives in
-`Cinder.Books.Grabs`. A request's status (an admin's approval or denial) is written only by
-`Cinder.Requests`.
+`Cinder.Books.Grabs`, except the download-metrics write: `Books.Grabs.track/2` calls
+`Cinder.Catalog.GrabMetrics.write/3`, which TV grabs share. A request's status (an admin's
+approval or denial) is written only by `Cinder.Requests`.
 
 ## Guarded writes have one contract
 
@@ -134,6 +135,7 @@ a `defdelegate` in the facade only when a caller outside the catalog needs it.
   - `MovieCatalog`, `SeriesCatalog`: movie and series rows, the series tree and monitoring.
   - `EpisodeSearch`: what the TV sweep and the manual season panel search for.
   - `Grabs`: the TV grab lifecycle, verification holds included.
+  - `GrabMetrics`: the guarded download-metrics write of a TV grab and a book grab.
   - `ManualGrab`: a release the operator picked.
   - `BlockedReleases`: the release blocklist.
   - `Profiles`: named profiles and the profile a title points at. Three paths switch a title's

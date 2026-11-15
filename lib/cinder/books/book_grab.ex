@@ -52,7 +52,7 @@ defmodule Cinder.Books.BookGrab do
       :download_eta,
       :replace
     ])
-    |> advance_download_progress_at(grab)
+    |> Progress.advance_clock(grab)
     |> validate_required([:book_target_id, :download_id, :download_protocol])
     |> check_constraint(:download_protocol, name: :book_grabs_download_protocol_valid)
     |> foreign_key_constraint(:book_target_id)
@@ -61,20 +61,5 @@ defmodule Cinder.Books.BookGrab do
       name: :book_grabs_download_id_download_protocol_index,
       error_key: :download_id
     )
-  end
-
-  # Mirrors `Cinder.Catalog.Grab`: the progress clock advances on real forward motion or on the
-  # completion edge, never on a speed/ETA-only write, so a stall reaper reading it cannot be
-  # fooled by a client that reports churn without progress.
-  defp advance_download_progress_at(changeset, %__MODULE__{} = grab) do
-    progress = get_field(changeset, :download_progress)
-    content_path = get_field(changeset, :content_path)
-
-    if is_nil(grab.id) or is_nil(content_path) != is_nil(grab.content_path) or
-         Progress.advanced?(grab.download_progress, progress) do
-      force_change(changeset, :download_progress_at, DateTime.utc_now(:second))
-    else
-      changeset
-    end
   end
 end

@@ -19,6 +19,7 @@ defmodule Cinder.Catalog.Grabs do
     Events,
     Grab,
     GrabFile,
+    GrabMetrics,
     GrabTransition,
     Identity,
     Season
@@ -26,45 +27,20 @@ defmodule Cinder.Catalog.Grabs do
 
   alias Cinder.Catalog.SeriesCatalog
   alias Cinder.Download
-  alias Cinder.Download.Progress
   alias Cinder.GuardedWrite
   alias Cinder.Library.{ImportedQuality, ImportStage}
   alias Cinder.Notifier
   alias Cinder.Repo
 
-  @doc "Updates an in-flight grab's progress snapshot and broadcasts its owning series."
+  @doc """
+  Updates an in-flight grab's progress snapshot and broadcasts its owning series, guarded as
+  `Cinder.Catalog.GrabMetrics.write/3` says.
+  """
+  @spec update_grab_download_metrics(Grab.t(), map()) :: {:ok, Grab.t()} | {:error, :stale_grab}
   def update_grab_download_metrics(%Grab{} = grab, attrs) do
-    changes = Progress.changes(grab, attrs)
-
-    if changes == %{} do
-      if Repo.exists?(from(g in Grab, where: g.id == ^grab.id and is_nil(g.content_path))) do
-        {:ok, grab}
-      else
-        {:error, :stale_grab}
-      end
-    else
-      now = DateTime.utc_now(:second)
-
-      changes =
-        if Progress.advanced?(grab.download_progress, Map.get(changes, :download_progress)),
-          do: Map.put(changes, :download_progress_at, now),
-          else: changes
-
-      case Repo.update_all(
-             from(g in Grab,
-               where: g.id == ^grab.id and is_nil(g.content_path),
-               select: g
-             ),
-             set: Map.to_list(changes) ++ [updated_at: now]
-           ) do
-        {1, [updated]} ->
-          Events.series_updated(series_id_for_grab(grab.id))
-          {:ok, updated}
-
-        {0, _} ->
-          {:error, :stale_grab}
-      end
-    end
+    GrabMetrics.write(grab, attrs, fn updated ->
+      Events.series_updated(series_id_for_grab(updated.id))
+    end)
   end
 
   @doc """

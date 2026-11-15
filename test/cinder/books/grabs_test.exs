@@ -109,6 +109,19 @@ defmodule Cinder.Books.GrabsTest do
     refute_receive {:book_grab_updated, _grab}, 50
   end
 
+  # The no-change path writes nothing, so only its own read of `content_path` can tell a stale
+  # struct from a live one.
+  test "an identical snapshot on a grab already marked downloaded is refused", %{grab: grab} do
+    {:ok, first} = Grabs.track(grab, %{download_progress: 0.2, download_speed: 500})
+    {:ok, _downloaded} = Grabs.mark_downloaded(first, "/tmp/book-#{grab.id}.epub")
+    Books.subscribe_targets()
+
+    assert {:error, :stale_grab} =
+             Grabs.track(first, %{download_progress: 0.2, download_speed: 500})
+
+    refute_receive {:book_grab_updated, _grab}, 50
+  end
+
   test "a regressed download_progress is dropped, not recorded — the bar never walks backwards",
        %{grab: grab} do
     {:ok, first} = Grabs.track(grab, %{download_progress: 0.7, download_speed: 100})
