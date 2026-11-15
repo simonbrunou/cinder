@@ -4,13 +4,14 @@ defmodule Cinder.TestAtBaseScriptTest do
   # `mix test` run. The stub writes what it saw of a.ex, b.ex and c.ex, and its arguments, to
   # $TAB_SEEN, then exits with $TAB_EXIT, sleeps when $TAB_SLEEP is set, or first puts a folder
   # where a.ex was when $TAB_SWAPDIR is set. PATH holds only the stub and links to the tools the
-  # script and the stub call, so the real `mix` is never found. The one path left out is a write
-  # that fails during the swap: CI runs the suite as root, so no file mode makes it fail.
+  # script, the stub and the signal tests' shell call, so the real `mix` is never found. The one
+  # path left out is a write that fails during the swap: CI runs the suite as root, so no file
+  # mode makes it fail.
   use ExUnit.Case, async: true
 
   @moduletag :tmp_dir
 
-  @tools ~w(bash cat sleep seq git python3 rm mkdir)
+  @tools ~w(bash cat sleep seq git grep python3 rm mkdir)
 
   @script Path.expand("scripts/test-at-base")
 
@@ -138,10 +139,12 @@ defmodule Cinder.TestAtBaseScriptTest do
   for signal <- ["TERM", "INT"] do
     test "restores the files and exits 130 on SIG#{signal} during the run", ctx do
       # A background job in a non-interactive bash starts with SIGINT ignored, so the SIGINT
-      # case passes only while the script installs its own handler for it.
+      # case passes only while the script installs its own handler for it. The signal waits for
+      # the stub's last line, `args:`: the stub writes $TAB_SEEN a line at a time, and on a
+      # loaded runner a signal sent after the first line killed it before the c.ex line (#1362).
       shell = """
       python3 -I "$0" HEAD a.ex b.ex c.ex -- t.exs > /dev/null 2>&1 & p=$!
-      for i in $(seq 1 200); do [ -s "$TAB_SEEN" ] && break; sleep 0.1; done
+      for i in $(seq 1 200); do grep -qs '^args: ' "$TAB_SEEN" && break; sleep 0.1; done
       kill -#{unquote(signal)} $p; wait $p; echo "exit=$?"
       """
 
