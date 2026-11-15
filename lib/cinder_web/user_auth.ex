@@ -383,16 +383,19 @@ defmodule CinderWeb.UserAuth do
 
   # Feeds the admin Activity nav badge (`Layouts.app`'s `holds_count` attr): the count of items
   # that need attention (`Cinder.Catalog.Attention.attention_count/0`).
-  # Assigns the count on every mount; for a connected admin it also subscribes to the `"movies"`
-  # and `"series"` topics those hold states broadcast on and re-reads the count on each event, so
-  # the badge updates live. Non-admins get `nil` (no badge). Returns `{:cont, _}` so pages that
-  # also handle these events still get them (they carry their own catch-all handle_info).
+  # Assigns the count on every mount; for a connected admin it also subscribes to the `"movies"`,
+  # `"series"` and `"book_targets"` topics those hold states broadcast on and re-reads the count
+  # on each status event, so the badge updates live. A page that subscribes to one of these
+  # topics itself receives its messages twice; each such handler re-reads, so twice is harmless.
+  # Non-admins get `nil` (no badge). Returns `{:cont, _}` so pages that also handle these events
+  # still get them (they carry their own catch-all handle_info).
   def on_mount(:operator_holds_badge, _params, _session, socket) do
     socket =
       if admin?(socket.assigns[:current_scope]) do
         if Phoenix.LiveView.connected?(socket) do
           Cinder.Catalog.subscribe()
           Cinder.Catalog.subscribe_series()
+          Cinder.Books.subscribe_targets()
 
           Phoenix.LiveView.attach_hook(
             socket,
@@ -505,15 +508,17 @@ defmodule CinderWeb.UserAuth do
 
   defp pending_requests_badge_hook(_message, socket), do: {:cont, socket}
 
-  # A movie or series/grab event may have changed the attention count: re-read it into the
-  # assign the Activity nav badge renders from. Any other message passes through untouched.
+  # A movie, series/grab or book target event may have changed the attention count: re-read it
+  # into the assign the Activity nav badge renders from. Any other message, such as a book grab's
+  # progress tick, passes through untouched.
   defp operator_holds_badge_hook({event, _payload}, socket)
        when event in [
               :movie_updated,
               :movie_created,
               :movie_deleted,
               :series_updated,
-              :series_deleted
+              :series_deleted,
+              :book_target_updated
             ] do
     {:cont, Phoenix.Component.assign(socket, :holds_count, Attention.attention_count())}
   end

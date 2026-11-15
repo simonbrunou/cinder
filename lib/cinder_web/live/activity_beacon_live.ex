@@ -1,19 +1,23 @@
 defmodule CinderWeb.ActivityBeaconLive do
   @moduledoc """
   The always-mounted pipeline beacon: a floating pill (live "N active, N need attention" counts,
-  links to `/activity`) plus transient toasts when a movie goes available, a movie or series
-  starts needing attention, or a download needs attention. Rendered once in `root.html.heex` as a
+  links to `/activity`) plus transient toasts when a movie goes available, a movie, series or
+  book target starts needing attention, or a download needs attention. Rendered once in `root.html.heex` as a
   sticky nested LiveView (admin-gated there), so it survives live navigation and shows on every
   page.
 
-  Its own process owns its own `"movies"`/`"series"` subscriptions — the page LiveViews
+  Its own process owns its own `"movies"`/`"series"`/`"book_targets"` subscriptions — the page LiveViews
   subscribe independently, so there is no double delivery. Toasts fire only on a *change* into a
   noteworthy state (diffed against the last-seen status per id), so a metadata re-broadcast on an
   already-available movie doesn't re-toast. Both counts are phases of `Catalog.Attention.classify/1`
   per item: "active" counts `:active`, "need attention" counts `:attention`, the same rule as the
   Activity nav badge (`Catalog.Attention.attention_count/0`), so the two never disagree on one page.
+  A book target counts only toward "need attention" (`Books.list_attention_targets/0`): a
+  monitored target classifies `:active` while it merely waits for a release, so "active" stays
+  movies, grabs and series.
 
-  ponytail: re-derives grab and held-series counts by re-querying on each `series` broadcast — the
+  ponytail: re-derives grab and held-series counts by re-querying on each `series` broadcast, and
+  held book targets on each `{:book_target_updated, _}` — the
   coarse `{:series_updated, _}` carries no grab or series. Household scale (a handful of rows); if
   grab churn ever gets heavy, carry the changed grab in the broadcast instead.
   """
@@ -30,19 +34,22 @@ defmodule CinderWeb.ActivityBeaconLive do
 
   import CinderWeb.LiveHelpers
 
+  alias Cinder.Books
   alias Cinder.Catalog
   alias Cinder.Catalog.Attention
 
   @toast_ttl :timer.seconds(6)
 
   # Each id maps to `{badge, phase}` from `Attention.classify/1`. A series is tracked only while it
-  # is on an anime hold: that is the only state it classifies on.
+  # is on an anime hold: that is the only state it classifies on. A book target is tracked only
+  # while it needs attention.
 
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
       Catalog.subscribe()
       Catalog.subscribe_series()
+      Books.subscribe_targets()
     end
 
     {:ok,
@@ -51,6 +58,7 @@ defmodule CinderWeb.ActivityBeaconLive do
        movies: movie_map(),
        grabs: grab_map(),
        series: series_map(Catalog.list_anime_held_series()),
+       books: book_map(Books.list_attention_targets()),
        toasts: [],
        next_toast: 0
      )
@@ -92,6 +100,19 @@ defmodule CinderWeb.ActivityBeaconLive do
      |> recount()}
   end
 
+  # A target status change may move a book into or out of attention. Grab progress ticks on the
+  # same topic fall through to the catch-all.
+  def handle_info({:book_target_updated, _target}, socket) do
+    held = Books.list_attention_targets()
+    books = book_map(held)
+
+    {:noreply,
+     socket
+     |> toast_new_book_attention(held)
+     |> assign(books: books)
+     |> recount()}
+  end
+
   def handle_info({:clear_toast, ref}, socket),
     do: {:noreply, update(socket, :toasts, &Enum.reject(&1, fn t -> t.id == ref end))}
 
@@ -100,6 +121,9 @@ defmodule CinderWeb.ActivityBeaconLive do
   defp movie_map, do: Map.new(Catalog.list_movies(), &{&1.id, movie_entry(&1)})
   defp grab_map, do: Map.new(Catalog.list_grabs(), &{&1.id, grab_entry(&1)})
   defp series_map(held), do: Map.new(held, &{&1.id, entry(Attention.classify(&1))})
+
+  defp book_map(held),
+    do: Map.new(held, fn {target, attention} -> {target.id, entry(attention)} end)
 
   defp movie_entry(movie), do: entry(Attention.classify(movie))
   defp grab_entry(grab), do: entry(Attention.classify(grab))
@@ -110,7 +134,7 @@ defmodule CinderWeb.ActivityBeaconLive do
 
     assign(socket,
       active: Enum.sum_by(maps, &count_phase(&1, :active)),
-      attention: Enum.sum_by(maps, &count_phase(&1, :attention))
+      attention: Enum.sum_by([socket.assigns.books | maps], &count_phase(&1, :attention))
     )
   end
 
@@ -153,6 +177,17 @@ defmodule CinderWeb.ActivityBeaconLive do
     |> Enum.reduce(socket, fn s, acc ->
       title = media_title(s, acc.assigns.locale)
       toast(acc, :warning, gettext("“%{title}” needs attention.", title: title))
+    end)
+  end
+
+  # A book target that just started needing attention (a hold): one titled toast per target.
+  defp toast_new_book_attention(socket, held) do
+    old = socket.assigns.books
+
+    held
+    |> Enum.reject(fn {target, _attention} -> needs_attention?(Map.get(old, target.id)) end)
+    |> Enum.reduce(socket, fn {target, _attention}, acc ->
+      toast(acc, :warning, gettext("“%{title}” needs attention.", title: target.work.title))
     end)
   end
 

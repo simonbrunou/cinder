@@ -15,15 +15,22 @@ defmodule CinderWeb.ActivityLive do
   the reason — movies in the pipeline list, series in their own section (a held series has no
   movie row or grab to hang the badge on). Only the operator clears such a hold, so each row
   links to its fix (`Attention`'s `fix`): the title's Audio row on its detail page, or the
-  Subtitles group in Settings; saving that fix lifts the hold at once. Live via the `movies` +
-  `series` topics. The "Background sweeps"
+  Subtitles group in Settings; saving that fix lifts the hold at once. Book targets that need
+  attention (`Books.list_attention_targets/0`: held e-books and audiobooks) get their own section
+  with their hold reason in words, a link to `/books/:id`, and the Retry
+  (`Books.retry_target/1`) and Clear blocklist (`Books.clear_blocklist/1`) buttons their
+  classification offers; Clear blocklist shows only while the target has a blocked release, as on
+  `/books/:id`. Live via the `movies`, `series` and `book_targets` topics. The "Background sweeps"
   section is the exception — a point-in-time snapshot read once at mount (its `last_run`/`next_run`
   values go stale until the page is reloaded), since a 12h sweep is rarely caught mid-run.
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.BookComponents, only: [book_state_badge: 1]
   import CinderWeb.LiveHelpers
 
+  alias Cinder.Books
+  alias Cinder.Books.BookTarget
   alias Cinder.Catalog
   alias Cinder.Catalog.{Attention, Episode, Movie, MovieLifecycle, Series}
   alias Cinder.Catalog.UpgradeHunter
@@ -35,13 +42,15 @@ defmodule CinderWeb.ActivityLive do
     if connected?(socket) do
       Catalog.subscribe()
       Catalog.subscribe_series()
+      Books.subscribe_targets()
       Worker.subscribe()
     end
 
     grabs = Catalog.list_grabs()
 
     {:ok,
-     assign(socket,
+     socket
+     |> assign(
        movies: Enum.filter(Catalog.list_movies(), &listed?/1),
        grabs: grabs,
        grab_file_forms: grab_file_forms(grabs),
@@ -50,7 +59,9 @@ defmodule CinderWeb.ActivityLive do
        jobs: Cinder.Jobs.statuses(),
        subtitle_sync: Worker.status(),
        confirming: nil
-     )}
+     )
+     |> stream_configure(:held_books, dom_id: &"held-book-#{&1.id}")
+     |> refresh_held_books()}
   end
 
   @impl true
@@ -87,6 +98,11 @@ defmodule CinderWeb.ActivityLive do
        held_series: sort_held_series(Catalog.list_anime_held_series(), socket.assigns.locale)
      )}
   end
+
+  # Every book target status change (a hold, a retry, an import) re-reads the held list. The
+  # topic's grab progress ticks change no target's phase and fall through to the catch-all.
+  def handle_info({:book_target_updated, _target}, socket),
+    do: {:noreply, refresh_held_books(socket)}
 
   def handle_info({:subtitle_sync_status, status}, socket),
     do: {:noreply, assign(socket, subtitle_sync: status)}
@@ -216,6 +232,43 @@ defmodule CinderWeb.ActivityLive do
       end
 
     {:noreply, socket}
+  end
+
+  # A held book's Retry and Clear blocklist re-read the target, so each guard sees its current
+  # status, and answer a refusal with the flash `/books/:id` shows for it.
+  def handle_event("retry_book_target", %{"target_id" => raw_id}, socket)
+      when is_binary(raw_id) do
+    socket =
+      with {id, ""} <- Integer.parse(raw_id),
+           %BookTarget{} = target <- Books.get_target(id),
+           {:ok, _retried} <- Books.retry_target(target) do
+        socket
+      else
+        _refused ->
+          put_flash(socket, :error, gettext("Couldn't retry this target. Try again."))
+      end
+
+    {:noreply, refresh_held_books(socket)}
+  end
+
+  # `clear_blocklist/1` broadcasts nothing, so this view re-reads the list itself.
+  def handle_event("clear_book_blocklist", %{"target_id" => raw_id}, socket)
+      when is_binary(raw_id) do
+    with {id, ""} <- Integer.parse(raw_id),
+         %BookTarget{} = target <- Books.get_target(id) do
+      case Books.clear_blocklist(target) do
+        :ok ->
+          {:noreply, refresh_held_books(socket)}
+
+        {:error, :not_held} ->
+          {:noreply,
+           socket
+           |> refresh_held_books()
+           |> put_flash(:error, gettext("This target is no longer held, so its blocklist stays."))}
+      end
+    else
+      _invalid -> {:noreply, socket}
+    end
   end
 
   def handle_event("resolve_grab_file", %{"resolution" => params}, socket)
@@ -442,6 +495,42 @@ defmodule CinderWeb.ActivityLive do
   defp fix_aria_label(:subtitle_settings, title),
     do: gettext("Fix in Settings: %{title}", title: title)
 
+  # A stream, reset on every re-read. Sorted by folded work title, then kind, so a work's e-book
+  # and audiobook sit together. Each row carries whether its target has a blocked release, which
+  # decides whether its Clear blocklist button shows.
+  defp refresh_held_books(socket) do
+    held =
+      Enum.sort_by(Books.list_attention_targets(), fn {target, _attention} ->
+        {fold_title(target.work.title), target.media_kind}
+      end)
+
+    blocklists =
+      held
+      |> Enum.map(fn {target, _} -> target.id end)
+      |> Books.blocked_release_titles_by_target_ids()
+
+    rows =
+      for {target, attention} <- held do
+        %{
+          id: target.id,
+          target: target,
+          attention: attention,
+          blocked?: Map.get(blocklists, target.id, []) != []
+        }
+      end
+
+    socket
+    |> assign(held_books_count: length(rows))
+    |> stream(:held_books, rows, reset: true)
+  end
+
+  # The work title and its kind: a work's two targets share a title.
+  defp book_label(%BookTarget{media_kind: :ebook, work: work}),
+    do: gettext("%{title} (eBook)", title: work.title)
+
+  defp book_label(%BookTarget{media_kind: :audiobook, work: work}),
+    do: gettext("%{title} (audiobook)", title: work.title)
+
   # SQL-ordered by canonical title (`Catalog.list_anime_held_series/0`); re-sort here by the
   # folded LOCALIZED title so FR display order is alphabetical in that locale too.
   defp sort_held_series(series, locale),
@@ -595,6 +684,64 @@ defmodule CinderWeb.ActivityLive do
               aria-label={fix_aria_label(attention.fix, media_title(s, @locale))}
             >
               {fix_label(attention.fix)}
+            </.button>
+          </li>
+        </ul>
+      </section>
+
+      <section :if={@held_books_count > 0} class="mt-10">
+        <h2 class="pb-3 text-lg font-semibold">{gettext("Held books")}</h2>
+        <p class="pb-3 text-sm text-base-content/70">
+          {gettext(
+            "Cinder stopped on these books until you act. Retry makes a book wanted again and keeps its failed releases blocked; Clear blocklist lets a later search offer them again."
+          )}
+        </p>
+        <ul id="activity-held-books" phx-update="stream" class="space-y-2">
+          <li
+            :for={{dom_id, %{target: t, attention: attention} = row} <- @streams.held_books}
+            id={dom_id}
+            class="card bg-base-200 p-3 flex flex-row flex-wrap items-center gap-3"
+          >
+            <.link
+              navigate={~p"/books/#{t.work_id}"}
+              aria-label={book_label(t)}
+              class="link link-hover w-full truncate sm:w-auto sm:min-w-0 sm:flex-1"
+            >
+              {t.work.title}
+            </.link>
+            <.book_state_badge
+              id={"held-book-#{t.id}-state"}
+              kind={t.media_kind}
+              state={book_badge_state(nil, t.status)}
+            />
+            <p
+              :if={attention.reason == :held and t.hold_reason}
+              id={"held-book-#{t.id}-reason"}
+              class="w-full text-sm text-base-content/70"
+            >
+              {book_hold_reason(t.hold_reason)}
+            </p>
+            <.button
+              :if={:retry in attention.actions}
+              id={"retry-book-#{t.id}"}
+              size="sm"
+              phx-click="retry_book_target"
+              phx-value-target_id={t.id}
+              phx-disable-with={gettext("Retrying…")}
+              aria-label={gettext("Retry: %{title}", title: book_label(t))}
+            >
+              {gettext("Retry")}
+            </.button>
+            <.button
+              :if={:clear_blocklist in attention.actions and row.blocked?}
+              id={"clear-book-blocklist-#{t.id}"}
+              variant="ghost"
+              size="sm"
+              phx-click="clear_book_blocklist"
+              phx-value-target_id={t.id}
+              aria-label={gettext("Clear blocklist: %{title}", title: book_label(t))}
+            >
+              {gettext("Clear blocklist")}
             </.button>
           </li>
         </ul>

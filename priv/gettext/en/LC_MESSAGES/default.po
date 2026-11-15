@@ -6148,12 +6148,14 @@ msgid "Optional. Open Library identifies books and is used by default; a Hardcov
 msgstr ""
 
 #: lib/cinder/notifier/email.ex
+#: lib/cinder_web/live/activity_live.ex
 #: lib/cinder_web/live_helpers.ex
 #, elixir-autogen, elixir-format
 msgid "%{title} (audiobook)"
 msgstr ""
 
 #: lib/cinder/notifier/email.ex
+#: lib/cinder_web/live/activity_live.ex
 #: lib/cinder_web/live_helpers.ex
 #, elixir-autogen, elixir-format
 msgid "%{title} (eBook)"
@@ -6489,11 +6491,13 @@ msgstr ""
 msgid "None found."
 msgstr ""
 
+#: lib/cinder_web/live/activity_live.ex
 #: lib/cinder_web/live/book_detail_live.ex
 #, elixir-autogen, elixir-format
 msgid "Clear blocklist"
 msgstr ""
 
+#: lib/cinder_web/live/activity_live.ex
 #: lib/cinder_web/live/book_detail_live.ex
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Couldn't retry this target. Try again."
@@ -7200,6 +7204,7 @@ msgstr ""
 msgid "Stored credentials"
 msgstr ""
 
+#: lib/cinder_web/live/activity_live.ex
 #: lib/cinder_web/live/book_detail_live.ex
 #, elixir-autogen, elixir-format
 msgid "This target is no longer held, so its blocklist stays."
@@ -7539,4 +7544,24 @@ msgstr ""
 #: lib/cinder_web/live/series_discovery_live.ex
 #, elixir-autogen, elixir-format
 msgid "Season %{number} is already on the media server."
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder stopped on these books until you act. Retry makes a book wanted again and keeps its failed releases blocked; Clear blocklist lets a later search offer them again."
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Clear blocklist: %{title}"
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex
+#, elixir-autogen, elixir-format
+msgid "Held books"
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex
+#, elixir-autogen, elixir-format
+msgid "Retry: %{title}"
 msgstr ""

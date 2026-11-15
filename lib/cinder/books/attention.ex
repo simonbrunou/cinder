@@ -14,8 +14,9 @@ defmodule Cinder.Books.Attention do
   | `:replace` | `Download.grab_book_target/3` with `replace: true` |
 
   `badge` is `nil`: a book's badge folds in its request (`CinderWeb.LiveHelpers.book_badge_state/2`).
-  A held target needs attention on `/books/:id`; `/activity` does not list book targets, so the
-  Activity nav badge does not count them.
+  A held target needs attention: `/activity` lists it with its Retry and Clear blocklist actions
+  (`Cinder.Books.list_attention_targets/0`), and `Cinder.Catalog.Attention.counts/0` counts it,
+  so the Activity nav badge and the beacon pill do too.
   """
 
   alias Cinder.Books.BookTarget

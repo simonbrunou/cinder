@@ -274,7 +274,8 @@ defmodule Cinder.Catalog.OfferedActionsTest do
       assert Attention.counts() == %{
                movie: %{active: 5, attention: 7, waiting: 0, idle: 2},
                grab: %{active: 2, attention: 3, waiting: 0, idle: 0},
-               series: %{active: 0, attention: 2, waiting: 0, idle: 7}
+               series: %{active: 0, attention: 2, waiting: 0, idle: 7},
+               book: %{active: 0, attention: 0, waiting: 0, idle: 0}
              }
 
       assert Attention.attention_count() == 12
@@ -294,13 +295,14 @@ defmodule Cinder.Catalog.OfferedActionsTest do
       assert Attention.counts() == %{
                movie: tally.(Catalog.list_movies()),
                grab: tally.(Catalog.list_grabs()),
-               series: tally.(Catalog.list_series())
+               series: tally.(Catalog.list_series()),
+               book: %{active: 0, attention: 0, waiting: 0, idle: 0}
              }
     end
 
     test "is all zeroes with nothing in the catalog" do
       zero = %{active: 0, attention: 0, waiting: 0, idle: 0}
-      assert Attention.counts() == %{movie: zero, grab: zero, series: zero}
+      assert Attention.counts() == %{movie: zero, grab: zero, series: zero, book: zero}
       assert Attention.attention_count() == 0
     end
   end

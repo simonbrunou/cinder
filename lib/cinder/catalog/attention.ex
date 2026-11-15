@@ -33,11 +33,13 @@ defmodule Cinder.Catalog.Attention do
   | grab `:cancel` | `Grabs.cancel_grab/1` |
 
   A residual-files grab's per-file decisions stay with `Cinder.Download.TvPoller`. Book targets
-  classify through `Cinder.Books.Attention` into the same struct.
+  classify through `Cinder.Books.Attention` into the same struct, and `counts/0` tallies them too.
   """
 
   import Ecto.Query
 
+  alias Cinder.Books.Attention, as: BookAttention
+  alias Cinder.Books.{BookGrab, BookTarget}
   alias Cinder.Catalog.{Grab, GrabFile, Grabs, Movie, MovieLifecycle, Series}
   alias Cinder.Repo
 
@@ -132,16 +134,18 @@ defmodule Cinder.Catalog.Attention do
   def offers?(item, action), do: action in classify(item).actions
 
   @doc """
-  Movies, grabs and series per phase, every phase present. SQL groups the rows by the fields
-  `classify/1` reads (a movie's status, hold origin and anime hold reason; a grab's mapping
-  status and whether it has an undecided file; a series' anime hold reason), then one
+  Movies, grabs, series and book targets per phase, every phase present. SQL groups the rows by
+  the fields `classify/1` and `Cinder.Books.Attention.classify/2` read (a movie's status, hold
+  origin and anime hold reason; a grab's mapping status and whether it has an undecided file; a
+  series' anime hold reason; a book target's status and whether a grab for it exists), then one
   representative per group is classified here, so the counts never re-encode the rule. Read by
   the dashboard and, through `attention_count/0`, the Activity nav badge.
   """
   @spec counts() :: %{
           movie: %{phase() => non_neg_integer()},
           grab: %{phase() => non_neg_integer()},
-          series: %{phase() => non_neg_integer()}
+          series: %{phase() => non_neg_integer()},
+          book: %{phase() => non_neg_integer()}
         }
   def counts do
     movies =
@@ -182,24 +186,55 @@ defmodule Cinder.Catalog.Attention do
       |> Repo.all()
       |> Enum.map(fn {reason, n} -> {%Series{anime_hold_reason: reason}, n} end)
 
-    %{movie: tally(movies), grab: tally(grabs), series: tally(series)}
+    grabbed =
+      from(g in BookGrab, distinct: true, select: %{book_target_id: g.book_target_id})
+
+    books =
+      from(t in BookTarget,
+        left_join: g in subquery(grabbed),
+        on: g.book_target_id == t.id,
+        group_by: [t.status, fragment("? IS NOT NULL", g.book_target_id)],
+        select: {t.status, fragment("? IS NOT NULL", g.book_target_id), count(t.id)}
+      )
+      |> Repo.all()
+      |> Enum.map(fn {status, grab, n} ->
+        {BookAttention.classify(%BookTarget{status: status}, sql_true?(grab)), n}
+      end)
+
+    %{
+      movie: tally(movies),
+      grab: tally(grabs),
+      series: tally(series),
+      book: tally_phases(books)
+    }
   end
 
-  @doc "How many movies, grabs and series need attention: the Activity nav badge (`0` hides it)."
+  @doc """
+  How many movies, grabs, series and book targets need attention: the Activity nav badge (`0`
+  hides it).
+  """
   @spec attention_count() :: non_neg_integer()
   def attention_count do
-    %{movie: %{attention: movies}, grab: %{attention: grabs}, series: %{attention: series}} =
-      counts()
+    %{
+      movie: %{attention: movies},
+      grab: %{attention: grabs},
+      series: %{attention: series},
+      book: %{attention: books}
+    } = counts()
 
-    movies + grabs + series
+    movies + grabs + series + books
   end
 
   # SQLite returns a boolean expression as 0/1.
   defp sql_true?(value), do: value in [true, 1]
 
-  defp tally(groups) do
-    Enum.reduce(groups, %{active: 0, attention: 0, waiting: 0, idle: 0}, fn {item, n}, acc ->
-      Map.update!(acc, classify(item).phase, &(&1 + n))
+  defp tally(groups),
+    do: groups |> Enum.map(fn {item, n} -> {classify(item), n} end) |> tally_phases()
+
+  defp tally_phases(classified) do
+    Enum.reduce(classified, %{active: 0, attention: 0, waiting: 0, idle: 0}, fn {attention, n},
+                                                                                acc ->
+      Map.update!(acc, attention.phase, &(&1 + n))
     end)
   end
 

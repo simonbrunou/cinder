@@ -265,6 +265,27 @@ defmodule Cinder.Books do
     :ok
   end
 
+  @doc """
+  Every book target that needs attention (`Cinder.Books.Attention.classify/2` puts it in the
+  `:attention` phase), each with its classification and its work preloaded: `/activity`'s held
+  books and the beacon's tally. Classified here from its status and whether a grab for it
+  exists, so a caller never re-derives the rule from `status`. Unordered.
+  """
+  @spec list_attention_targets() :: [{BookTarget.t(), Cinder.Catalog.Attention.t()}]
+  def list_attention_targets do
+    grabbed = from(g in BookGrab, distinct: true, select: %{book_target_id: g.book_target_id})
+
+    from(t in BookTarget,
+      left_join: g in subquery(grabbed),
+      on: g.book_target_id == t.id,
+      preload: :work,
+      select: {t, type(fragment("? IS NOT NULL", g.book_target_id), :boolean)}
+    )
+    |> Repo.all()
+    |> Enum.map(fn {target, grab?} -> {target, Attention.classify(target, grab?)} end)
+    |> Enum.filter(fn {_target, attention} -> attention.phase == :attention end)
+  end
+
   @doc "One target by id, with its work and author credits preloaded, or nil."
   @spec get_target(integer()) :: BookTarget.t() | nil
   def get_target(id),
@@ -330,9 +351,12 @@ defmodule Cinder.Books do
 
   `release_title` (default `nil`) is the release that caused the hold, if one exists (a
   submission rejection or a download/import failure always has one; an orphaned-target hold does
-  not). Only on `{:ok, held}`, and only when present, a best-effort `BookBlockedRelease` row
-  follows the commit — non-transactional, after commit, log-and-swallow on failure — so the next
-  manual search or "Find a better match" does not re-offer the same dead release.
+  not). Only when the hold lands, and only when present, a best-effort `BookBlockedRelease` row
+  joins it in the same `Cinder.GuardedWrite.transaction/2` — log-and-swallow when the insert is
+  invalid or its statement is refused, which leaves the hold to commit — so the next manual search or "Find a better match" does not re-offer
+  the same dead release. The hold's one `{:book_target_updated, held}` broadcast follows that
+  commit, so a view that re-reads the blocklist on it finds the row (#773: when the row followed
+  the broadcast, a live `/activity` or `/books/:id` could miss it and hide Clear blocklist).
 
   `transient` (default `false`) records whether this hold is worth an unattended retry later
   (`Cinder.Books.Rehunter`) — a fact the caller states explicitly, since `hold_reason` is free
@@ -350,16 +374,19 @@ defmodule Cinder.Books do
     expected =
       if Keyword.get(opts, :replace, false), do: [:monitored, :available], else: :monitored
 
-    target
-    |> transition_target(
-      %{status: :held, hold_reason: hold_reason(reason), hold_transient: transient},
-      expect: expected
-    )
-    |> tap_block_release(release_title, reason)
+    attrs = %{status: :held, hold_reason: hold_reason(reason), hold_transient: transient}
+
+    # A refused transition dooms the frame, which rolls back with its refusal.
+    GuardedWrite.transaction(fn ->
+      with {:ok, held} <- transition_target(target, attrs, expect: expected) do
+        maybe_block_release(held, release_title, reason)
+        held
+      end
+    end)
+    |> notify_held()
   end
 
-  defp tap_block_release({:ok, held} = ok, release_title, reason) do
-    maybe_block_release(held, release_title, reason)
+  defp notify_held({:ok, %BookTarget{} = held} = ok) do
     # `held` came from the guarded write's `RETURNING` (`transition_target/3`) — no `:work`
     # preload, so notifying with it directly
     # would leave `book_title/1` on every transport falling back to "book target #<id>",
@@ -369,7 +396,10 @@ defmodule Cinder.Books do
     ok
   end
 
-  defp tap_block_release(error, _release_title, _reason), do: error
+  # Inside a caller's own frame, `transaction/2` returns the refusal as the value; that frame
+  # rolls back with it.
+  defp notify_held({:ok, {:error, _reason} = error}), do: error
+  defp notify_held(error), do: error
 
   defp maybe_block_release(_held, nil, _reason), do: :ok
 

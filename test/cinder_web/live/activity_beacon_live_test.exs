@@ -2,9 +2,11 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
   use CinderWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import Cinder.BooksFixtures
   import Cinder.CatalogFixtures
 
   alias Cinder.Accounts
+  alias Cinder.Books
   alias Cinder.Catalog
   alias Cinder.Catalog.{Events, Grab, GrabFile}
   alias Cinder.Repo
@@ -89,6 +91,8 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
     {:ok, held} = Catalog.set_anime_hold(series_fixture(), "original_language_required")
     {:ok, _} = Catalog.cancel_series(held, Cinder.AccountsFixtures.admin_fixture())
   end
+
+  defp seed({:book, state, kind}), do: book_target_in(state, kind)
 
   test "counts an in-flight movie as active", %{user: admin} do
     {:ok, _movie} = Catalog.add_movie(%{tmdb_id: 1, title: "Dune"})
@@ -181,7 +185,14 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
           {:in_flight_movie, 0},
           {:anime_held_movie, 1},
           {:anime_held_series, 1},
-          {:anime_held_cancelled_series, 0}
+          {:anime_held_cancelled_series, 0},
+          {{:book, :held, :ebook}, 1},
+          {{:book, :held, :audiobook}, 1},
+          {{:book, :wanted, :ebook}, 0},
+          {{:book, :grabbing, :audiobook}, 0},
+          {{:book, :available, :ebook}, 0},
+          {{:book, :replacing, :audiobook}, 0},
+          {{:book, :paused, :ebook}, 0}
         ] do
       test "#{inspect(item)} counts #{expected}", %{conn: conn, user: admin} do
         seed(unquote(Macro.escape(item)))
@@ -190,6 +201,51 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
         assert_attention(conn, admin, unquote(expected))
       end
     end
+  end
+
+  # #773: a book target counts only toward "need attention". A monitored one classifies `:active`
+  # while it waits for a release, but the pill's "active" stays movies, grabs and series.
+  test "a monitored or downloading book target leaves the pill hidden", %{user: admin} do
+    for state <- [:wanted, :grabbing, :replacing], do: book_target_in(state, :ebook)
+
+    {:ok, view, _html} = mount_beacon(admin)
+
+    refute has_element?(view, "#activity-beacon a")
+  end
+
+  test "toasts once when a book target is held, and drops the count once it is retried", %{
+    user: admin
+  } do
+    work = book_work_fixture(title: "The Lathe of Heaven")
+    target = monitored_book_target(:audiobook, work)
+    _already_held = book_target_in(:held, :ebook)
+
+    {:ok, view, _html} = mount_beacon(admin)
+    assert has_element?(view, ~s(a[aria-label="Pipeline: 1 need attention"]))
+    # A target already held at mount does not toast.
+    refute has_element?(view, "#activity-beacon-toasts .alert")
+
+    {:ok, held} = Books.hold_target(target, "identity conflict")
+
+    assert has_element?(
+             view,
+             "#activity-beacon-toasts .alert",
+             "“The Lathe of Heaven” needs attention."
+           )
+
+    assert has_element?(view, ~s(a[aria-label="Pipeline: 2 need attention"]))
+
+    # A later broadcast for the still-held target (a language change) does not toast again.
+    {:ok, held} = Books.set_target_language(held, nil)
+
+    assert view
+           |> element("#activity-beacon-toasts")
+           |> render()
+           |> String.split("Lathe")
+           |> length() == 2
+
+    {:ok, _retried} = Books.retry_target(held)
+    assert has_element?(view, ~s(a[aria-label="Pipeline: 1 need attention"]))
   end
 
   test "does not re-toast on a repeat broadcast of the same status", %{user: admin} do

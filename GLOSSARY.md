@@ -213,7 +213,8 @@ _Avoid_: available action, allowed action
 **Needs attention**:
 An item stopped until the operator acts: `/activity` offers an action for it or links to its fix.
 A parked movie, a verification hold, a TV grab on a mapping, verification or residual-files hold,
-or an anime hold. The Activity nav badge and the beacon pill count exactly these.
+an anime hold, or a held book target. The Activity nav badge and the beacon pill count exactly
+these.
 _Avoid_: held, stuck, failed
 
 **Anime hold**:

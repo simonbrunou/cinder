@@ -6435,12 +6435,14 @@ msgid "Optional. Open Library identifies books and is used by default; a Hardcov
 msgstr "Facultatif. Open Library identifie les livres et sert par défaut ; un proxy compatible Hardcover comble les lacunes qu’il laisse, si vous en exécutez un."
 
 #: lib/cinder/notifier/email.ex
+#: lib/cinder_web/live/activity_live.ex
 #: lib/cinder_web/live_helpers.ex
 #, elixir-autogen, elixir-format
 msgid "%{title} (audiobook)"
 msgstr "%{title} (livre audio)"
 
 #: lib/cinder/notifier/email.ex
+#: lib/cinder_web/live/activity_live.ex
 #: lib/cinder_web/live_helpers.ex
 #, elixir-autogen, elixir-format
 msgid "%{title} (eBook)"
@@ -6784,11 +6786,13 @@ msgstr "Visibilité de la bibliothèque"
 msgid "None found."
 msgstr "Aucun trouvé."
 
+#: lib/cinder_web/live/activity_live.ex
 #: lib/cinder_web/live/book_detail_live.ex
 #, elixir-autogen, elixir-format
 msgid "Clear blocklist"
 msgstr "Effacer la liste des versions bloquées"
 
+#: lib/cinder_web/live/activity_live.ex
 #: lib/cinder_web/live/book_detail_live.ex
 #, elixir-autogen, elixir-format
 msgid "Couldn't retry this target. Try again."
@@ -7550,6 +7554,7 @@ msgstr "Fichiers de sous-titres"
 msgid "Stored credentials"
 msgstr "Identifiants enregistrés"
 
+#: lib/cinder_web/live/activity_live.ex
 #: lib/cinder_web/live/book_detail_live.ex
 #, elixir-autogen, elixir-format
 msgid "This target is no longer held, so its blocklist stays."
@@ -7896,3 +7901,23 @@ msgstr "%{title} est déjà sur le serveur multimédia."
 #, elixir-autogen, elixir-format
 msgid "Season %{number} is already on the media server."
 msgstr "La saison %{number} est déjà sur le serveur multimédia."
+
+#: lib/cinder_web/live/activity_live.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder stopped on these books until you act. Retry makes a book wanted again and keeps its failed releases blocked; Clear blocklist lets a later search offer them again."
+msgstr "Cinder s’est arrêté sur ces livres jusqu’à votre intervention. Réessayer remet un livre en recherche et garde ses versions en échec bloquées ; Effacer la liste des versions bloquées permet à une recherche ultérieure de les proposer à nouveau."
+
+#: lib/cinder_web/live/activity_live.ex
+#, elixir-autogen, elixir-format
+msgid "Clear blocklist: %{title}"
+msgstr "Effacer la liste des versions bloquées : %{title}"
+
+#: lib/cinder_web/live/activity_live.ex
+#, elixir-autogen, elixir-format
+msgid "Held books"
+msgstr "Livres en attente"
+
+#: lib/cinder_web/live/activity_live.ex
+#, elixir-autogen, elixir-format
+msgid "Retry: %{title}"
+msgstr "Réessayer : %{title}"
