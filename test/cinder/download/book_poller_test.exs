@@ -1080,6 +1080,14 @@ defmodule Cinder.Download.BookPollerTest do
     end
   end
 
+  # #845: BookPoller has no search pass, so it takes no search backoff from the skeleton. A
+  # `search_retry_after:` start option is ignored rather than stored.
+  test "the poller's state holds no search backoff, even when started with one" do
+    pid = start_supervised!({BookPoller, interval: 60_000, search_retry_after: 0})
+
+    assert :sys.get_state(pid) == %{interval: 60_000}
+  end
+
   describe "restart recovery" do
     test "the poller recovers from a crash and still advances the in-flight grab (OTP payoff)",
          ctx do

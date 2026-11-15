@@ -38,10 +38,9 @@ defmodule Cinder.Download.BookPoller do
   alias Cinder.Notifier
 
   @default_interval 5_000
-  @search_retry_after 60
   @max_attempts 10
 
-  use Cinder.Download.PollerSkeleton, log_prefix: "book poller"
+  use Cinder.Download.PollerSkeleton, log_prefix: "book poller", search_backoff: false
 
   # An import failure that retrying cannot fix, because it is a fact about the PAYLOAD: the
   # bytes are not an importable book, or the destination is already someone else's. Park the

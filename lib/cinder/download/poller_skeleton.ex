@@ -10,15 +10,23 @@ defmodule Cinder.Download.PollerSkeleton do
 
   - The pipeline pollers (`Cinder.Download.Poller`, `Cinder.Download.TvPoller`,
     `Cinder.Download.BookPoller`) use `stateful: true` (the default): a `do_poll/1` pass
-    receiving the state, `warn_throttled/2`, and the search backoff `search_due?/2` fed by
-    `@search_retry_after` (the movie and TV pollers; `BookPoller` has no search pass). The
-    failure budget and what a failure does stay with each pipeline: `TvPoller` and
-    `BookPoller` each define their own `@max_attempts`, and the movie poller hands both to
-    `Cinder.Catalog.MovieLifecycle`.
+    receiving the state, and `warn_throttled/2`. The failure budget and what a failure does
+    stay with each pipeline: `TvPoller` and `BookPoller` each define their own `@max_attempts`,
+    and the movie poller hands both to `Cinder.Catalog.MovieLifecycle`.
+
+    A stateful poller also gets the search backoff unless it passes `search_backoff: false`:
+    `search_due?/2`, and a `search_retry_after` state key that `init/1` takes from the
+    `search_retry_after:` start option, else from the module's `@search_retry_after`. The
+    movie and TV pollers have it. `BookPoller` passes `search_backoff: false`, since it has no
+    search pass, and so declares no `@search_retry_after` and gets neither. The stateless
+    flavour never has the backoff and ignores the option.
 
         @default_interval 5_000
         @search_retry_after 60
         use Cinder.Download.PollerSkeleton, log_prefix: "tv poller"
+
+        @default_interval 5_000
+        use Cinder.Download.PollerSkeleton, log_prefix: "book poller", search_backoff: false
 
   - The slow sweeps (`Cinder.Catalog.Refresher`, `Cinder.Subtitles.Sweeper`) use
     `stateful: false`: a no-arg `do_poll/0` pass, no backoff, and an `:infinity`
@@ -51,12 +59,34 @@ defmodule Cinder.Download.PollerSkeleton do
     prefix = Keyword.fetch!(opts, :log_prefix)
     stateful = Keyword.get(opts, :stateful, true)
     first_interval = Keyword.get(opts, :first_interval)
+    search_backoff = Keyword.get(opts, :search_backoff, true)
 
     # Only a stateful poller's tick is judged by /healthz, so only its units record progress.
     mark_progress =
       if stateful,
         do: quote(do: PollerProgress.mark(__MODULE__)),
         else: :ok
+
+    # Chosen here, at expansion, so a poller without the backoff never reads
+    # `@search_retry_after` and never defines `search_due?/2`.
+    {search_state, search_backoff_defs} =
+      if search_backoff do
+        {quote do
+           %{search_retry_after: Keyword.get(opts, :search_retry_after, @search_retry_after)}
+         end,
+         quote do
+           # Fresh units (search_attempts == 0) attempt immediately; failed ones back off to once
+           # per `retry_after` seconds (external services — don't hammer). retry_after 0 (test) =
+           # all due.
+           defp search_due?(_unit, 0), do: true
+           defp search_due?(%{search_attempts: 0}, _retry_after), do: true
+
+           defp search_due?(unit, retry_after),
+             do: DateTime.diff(DateTime.utc_now(), unit.updated_at) >= retry_after
+         end}
+      else
+        {quote(do: %{}), nil}
+      end
 
     lifecycle =
       if stateful do
@@ -96,7 +126,7 @@ defmodule Cinder.Download.PollerSkeleton do
           @impl true
           def init(opts) do
             interval = Keyword.get(opts, :interval, config_interval())
-            retry_after = Keyword.get(opts, :search_retry_after, @search_retry_after)
+            search = unquote(search_state)
             # Stamp the (re)start time so /healthz can catch a first tick that never completes. A
             # supervisor restart re-runs init and re-stamps, giving each fresh worker its own
             # first-tick grace window.
@@ -104,7 +134,7 @@ defmodule Cinder.Download.PollerSkeleton do
             # A process killed mid-tick never cleared its in-flight flag: drop it, so /healthz
             # judges this fresh worker by the idle rule until its own first tick starts.
             PollerProgress.reset(__MODULE__)
-            {:ok, %{interval: interval, search_retry_after: retry_after}, {:continue, :schedule}}
+            {:ok, Map.put(search, :interval, interval), {:continue, :schedule}}
           end
 
           # Time-throttled Logger.warning keyed by an arbitrary term, deduped in the (long-lived)
@@ -148,13 +178,7 @@ defmodule Cinder.Download.PollerSkeleton do
             result
           end
 
-          # Fresh units (search_attempts == 0) attempt immediately; failed ones back off to once per
-          # `retry_after` seconds (external services — don't hammer). retry_after 0 (test) = all due.
-          defp search_due?(_unit, 0), do: true
-          defp search_due?(%{search_attempts: 0}, _retry_after), do: true
-
-          defp search_due?(unit, retry_after),
-            do: DateTime.diff(DateTime.utc_now(), unit.updated_at) >= retry_after
+          unquote(search_backoff_defs)
         end
       else
         quote do

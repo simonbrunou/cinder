@@ -40,8 +40,9 @@ defmodule Cinder.Download.PollerSkeletonTest do
     assert log =~ "poller_skeleton_test.exs"
   end
 
-  # A `stateful: true` poller (`Cinder.Download.Poller`, `TvPoller`, `BookPoller`) — models the
-  # do_poll/1 shape the real pollers use: a preamble wrapped in isolate/2, then further work.
+  # A `stateful: true` poller with the search backoff (`Cinder.Download.Poller`, `TvPoller`) —
+  # models the do_poll/1 shape the real pollers use: a preamble wrapped in isolate/2, then
+  # further work.
   defmodule StatefulPreambleTestPoller do
     @default_interval :timer.hours(1)
     @search_retry_after 60
@@ -102,6 +103,10 @@ defmodule Cinder.Download.PollerSkeletonTest do
     @default_interval :timer.hours(1)
     @search_retry_after 60
     use Cinder.Download.PollerSkeleton, log_prefix: "stepped test poller"
+
+    # Read at compile time, after the skeleton injected its functions.
+    @search_due_defined Module.defines?(__MODULE__, {:search_due?, 2}, :defp)
+    def search_due_defined?, do: @search_due_defined
 
     # A unit nested in another, called from a step that runs in the poller's process.
     def nested(label, fun), do: isolate(label, fun)
@@ -189,6 +194,55 @@ defmodule Cinder.Download.PollerSkeletonTest do
     start_supervised!({SteppedTestPoller, interval: :timer.hours(1)})
 
     assert %{tick_in_flight?: false, last_progress_at: nil} = SteppedTestPoller.status()
+  end
+
+  # #845: a stateful poller with no search pass, as `Cinder.Download.BookPoller` is. It declares
+  # no `@search_retry_after`, so the skeleton must not read one.
+  defmodule NoBackoffTestPoller do
+    @default_interval :timer.hours(1)
+    use Cinder.Download.PollerSkeleton,
+      log_prefix: "no backoff test poller",
+      search_backoff: false
+
+    @search_due_defined Module.defines?(__MODULE__, {:search_due?, 2}, :defp)
+    def search_due_defined?, do: @search_due_defined
+
+    defp do_poll(_state), do: :ok
+  end
+
+  describe "search backoff" do
+    setup do
+      on_exit(fn ->
+        for poller <- [SteppedTestPoller, NoBackoffTestPoller] do
+          :persistent_term.erase({poller, :last_run})
+          :persistent_term.erase({poller, :started_at})
+          PollerProgress.reset(poller)
+        end
+      end)
+    end
+
+    test "a stateful poller gets search_due?/2 and takes search_retry_after from its start option or attribute" do
+      assert SteppedTestPoller.search_due_defined?()
+
+      default = start_supervised!({SteppedTestPoller, interval: :timer.hours(1)}, id: :default)
+      assert :sys.get_state(default) == %{interval: :timer.hours(1), search_retry_after: 60}
+
+      given =
+        start_supervised!(
+          {SteppedTestPoller, interval: :timer.hours(1), search_retry_after: 0, name: nil},
+          id: :given
+        )
+
+      assert :sys.get_state(given) == %{interval: :timer.hours(1), search_retry_after: 0}
+    end
+
+    test "search_backoff: false leaves out search_due?/2 and the state key, and ignores the start option" do
+      refute NoBackoffTestPoller.search_due_defined?()
+
+      pid = start_supervised!({NoBackoffTestPoller, interval: 5_000, search_retry_after: 0})
+      assert :sys.get_state(pid) == %{interval: 5_000}
+      assert :ok = NoBackoffTestPoller.poll(pid)
+    end
   end
 
   test "poll/1 emits [:cinder, :poller, :tick] with the poller module and a duration" do
