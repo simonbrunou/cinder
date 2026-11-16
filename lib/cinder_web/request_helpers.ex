@@ -73,6 +73,35 @@ defmodule CinderWeb.RequestHelpers do
     |> Enum.min_by(& &1.id, fn -> nil end)
   end
 
+  @doc """
+  The error flash for one admin approval that did not succeed: the `handle_async/3` result of a
+  `Requests.approve_request/3` task, either `{:ok, {:error, reason}}` or `{:exit, reason}`.
+  `/requests` and the dashboard approval queue both call it, so a new refusal reads the same on
+  both pages (#810). A reason with no clause of its own gets the generic "try again" message.
+  """
+  # A stale double-click: the first approval already committed (flip_pending is DB-guarded), so
+  # "try again" would be a lie. Say what actually happened.
+  def approval_error_message({:ok, {:error, :not_pending}}),
+    do: gettext("That request was already decided.")
+
+  # A hold is an operator-visible conflict only an operator clears, so "try again" would be a
+  # lie: retrying cannot succeed until someone acts on the hold.
+  def approval_error_message({:ok, {:error, :target_held}}),
+    do: gettext("That title is on hold. Clear the hold before approving it.")
+
+  # The approver's account was deleted mid-approval, so "try again" would be a lie: the same FK
+  # failure reproduces until someone signs in as a live admin.
+  def approval_error_message({:ok, {:error, :approver_deleted}}),
+    do: gettext("Your admin account was deleted. Sign in again to approve requests.")
+
+  # A pending row filed before #770 whose target type no approval can create: no retry approves
+  # it, so "try again" would be a lie. Denying it stays the admin's call.
+  def approval_error_message({:ok, {:error, :unsupported_target}}),
+    do: gettext("This kind of request isn't supported yet.")
+
+  def approval_error_message(_error_or_exit),
+    do: gettext("Couldn't approve that request. Please try again.")
+
   @doc "Starts the off-process `Requests.create_request/2` call behind a movie's Add form."
   def add(socket, movie, preferred, profile) do
     user = socket.assigns.current_scope.user

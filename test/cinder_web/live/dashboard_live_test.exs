@@ -448,6 +448,62 @@ defmodule CinderWeb.DashboardLiveTest do
       assert Cinder.Repo.get(Cinder.Requests.Request, req.id).status == :pending
     end
 
+    # The dashboard used to fall through to its generic message here (#810): retrying cannot
+    # succeed until someone signs in as a live admin, so it says so, as `/requests` does.
+    test "approving after the admin's account was deleted says to sign in again", %{
+      conn: conn,
+      user: admin
+    } do
+      req = pending_movie_request(Cinder.AccountsFixtures.user_fixture())
+      standard = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :standard))
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      other_admin = Cinder.AccountsFixtures.admin_fixture()
+      assert {:ok, _, _} = Accounts.delete_user(other_admin, admin)
+
+      lv
+      |> form("#dashboard-approval-form-#{req.id}", %{
+        "_id" => to_string(req.id),
+        "profile_id" => to_string(standard.id)
+      })
+      |> render_submit()
+
+      render_async(lv)
+
+      assert has_element?(
+               lv,
+               "#flash-error",
+               "Your admin account was deleted. Sign in again to approve requests."
+             )
+
+      assert Cinder.Repo.get(Cinder.Requests.Request, req.id).status == :pending
+    end
+
+    # Any other refusal reads as `/requests` reads it, "try again" included (#810).
+    test "an approval that fails for another reason asks to try again", %{conn: conn} do
+      req = pending_movie_request(Cinder.AccountsFixtures.user_fixture())
+      standard = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :standard))
+      stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _ -> {:error, :timeout} end)
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      lv
+      |> form("#dashboard-approval-form-#{req.id}", %{
+        "_id" => to_string(req.id),
+        "profile_id" => to_string(standard.id)
+      })
+      |> render_submit()
+
+      render_async(lv)
+
+      assert has_element?(
+               lv,
+               "#flash-error",
+               "Couldn't approve that request. Please try again."
+             )
+
+      assert Cinder.Repo.get(Cinder.Requests.Request, req.id).status == :pending
+    end
+
     # A row from before #770 that no approval can create still lists so the admin can deny it,
     # but offers no approve form that only fails (#883).
     for type <- ["series", "episode"] do
@@ -486,6 +542,7 @@ defmodule CinderWeb.DashboardLiveTest do
 
       render_async(lv)
 
+      refute has_element?(lv, "#flash-error")
       assert Cinder.Repo.get(Cinder.Requests.Request, req.id).status == :approved
       movie = Catalog.get_movie_by_tmdb_id(req.target_id)
       assert movie.status == :requested

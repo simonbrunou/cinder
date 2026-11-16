@@ -14,7 +14,13 @@ defmodule CinderWeb.DashboardLive do
   import CinderWeb.LiveHelpers
 
   import CinderWeb.RequestHelpers,
-    only: [default_profile_id: 2, normalize_profile: 2, profile_kind: 1, profiles_for: 2]
+    only: [
+      approval_error_message: 1,
+      default_profile_id: 2,
+      normalize_profile: 2,
+      profile_kind: 1,
+      profiles_for: 2
+    ]
 
   alias Cinder.{Accounts, Catalog, Disk, Health, Library, Notifier, Requests, Settings}
   alias Cinder.Catalog.{Attention, Refresher}
@@ -69,28 +75,8 @@ defmodule CinderWeb.DashboardLive do
 
   def handle_async({:approve, _id}, {:ok, {:ok, _req}}, socket), do: {:noreply, socket}
 
-  # A stale double-click: the first approval already committed — don't say "try again".
-  def handle_async({:approve, _id}, {:ok, {:error, :not_pending}}, socket),
-    do: {:noreply, put_flash(socket, :error, gettext("That request was already decided."))}
-
-  # A hold is an operator-visible conflict only an operator clears, so "try again" would be a
-  # lie — retrying cannot succeed until someone acts on the hold.
-  def handle_async({:approve, _id}, {:ok, {:error, :target_held}}, socket),
-    do:
-      {:noreply,
-       put_flash(
-         socket,
-         :error,
-         gettext("That title is on hold. Clear the hold before approving it.")
-       )}
-
-  # A pending row filed before #770 whose target type no approval can create (as on `/requests`).
-  def handle_async({:approve, _id}, {:ok, {:error, :unsupported_target}}, socket),
-    do:
-      {:noreply, put_flash(socket, :error, gettext("This kind of request isn't supported yet."))}
-
-  def handle_async({:approve, _id}, _error_or_exit, socket),
-    do: {:noreply, put_flash(socket, :error, gettext("Couldn't approve that request."))}
+  def handle_async({:approve, _id}, error_or_exit, socket),
+    do: {:noreply, put_flash(socket, :error, approval_error_message(error_or_exit))}
 
   # Same row shape as `Health.check_all/0`: `label` is an English msgid the template translates.
   def handle_async(:health, {:exit, reason}, socket) do

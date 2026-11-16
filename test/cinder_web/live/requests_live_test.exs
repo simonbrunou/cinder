@@ -66,8 +66,37 @@ defmodule CinderWeb.RequestsLiveTest do
     assert html =~ "The Matrix"
     lv |> element("button", "Approve") |> render_click()
     render_async(lv)
+    refute has_element?(lv, "#flash-error")
     assert [%Cinder.Catalog.Movie{status: :requested}] = Cinder.Catalog.list_by_status(:requested)
     assert {:ok, %{status: :approved}} = {:ok, Cinder.Repo.reload(req)}
+  end
+
+  # Retrying cannot succeed until someone signs in as a live admin, so the copy says so; the
+  # dashboard queue reads the same message (#810).
+  test "approving after the admin's account was deleted says to sign in again", %{
+    conn: conn,
+    user: admin
+  } do
+    {:ok, req} =
+      Cinder.Requests.create_request(user_fixture(), %{
+        target_type: "movie",
+        target_id: 603,
+        title: "The Matrix"
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+    assert {:ok, _, _} = Cinder.Accounts.delete_user(admin_fixture(), admin)
+
+    lv |> element("button", "Approve") |> render_click()
+    render_async(lv)
+
+    assert has_element?(
+             lv,
+             "#flash-error",
+             "Your admin account was deleted. Sign in again to approve requests."
+           )
+
+    assert %{status: :pending} = Cinder.Repo.reload(req)
   end
 
   test "approval defaults to the proposed named profile and permits a named override", %{

@@ -258,11 +258,6 @@ msgstr "Confirmer le nouveau mot de passe"
 msgid "Confirm password"
 msgstr "Confirmer le mot de passe"
 
-#: lib/cinder_web/live/dashboard_live.ex
-#, elixir-autogen
-msgid "Couldn't approve that request."
-msgstr "Impossible d'approuver cette demande."
-
 #: lib/cinder_web/live/library_live.ex
 #: lib/cinder_web/live/movie_detail_live.ex
 #, elixir-autogen
@@ -1448,7 +1443,7 @@ msgstr "Connexion fermée"
 msgid "Connection refused"
 msgstr "Connexion refusée"
 
-#: lib/cinder_web/live/requests_live.ex
+#: lib/cinder_web/request_helpers.ex
 #, elixir-autogen
 msgid "Couldn't approve that request. Please try again."
 msgstr "Impossible d'approuver cette demande. Veuillez réessayer."
@@ -2048,8 +2043,8 @@ msgstr ""
 "Cette série ne contient que des épisodes spéciaux, qui ne peuvent pas encore "
 "être demandés."
 
-#: lib/cinder_web/live/dashboard_live.ex
 #: lib/cinder_web/live/requests_live.ex
+#: lib/cinder_web/request_helpers.ex
 #, elixir-autogen
 msgid "That request was already decided."
 msgstr "Cette demande a déjà été traitée."
@@ -6463,8 +6458,7 @@ msgstr ""
 "Bonne nouvelle — votre demande pour %{title} a été approuvée. Cinder "
 "recherchera un exemplaire."
 
-#: lib/cinder_web/live/dashboard_live.ex
-#: lib/cinder_web/live/requests_live.ex
+#: lib/cinder_web/request_helpers.ex
 #, elixir-autogen, elixir-format
 msgid "That title is on hold. Clear the hold before approving it."
 msgstr ""
@@ -6616,7 +6610,7 @@ msgstr "eBook"
 msgid "eBook requests aren't available yet."
 msgstr "Les demandes d’eBook ne sont pas encore disponibles."
 
-#: lib/cinder_web/live/requests_live.ex
+#: lib/cinder_web/request_helpers.ex
 #, elixir-autogen, elixir-format
 msgid "Your admin account was deleted. Sign in again to approve requests."
 msgstr ""
@@ -7587,8 +7581,8 @@ msgid_plural "%{count} movies need attention"
 msgstr[0] "%{count} film à traiter"
 msgstr[1] "%{count} films à traiter"
 
-#: lib/cinder_web/live/dashboard_live.ex
 #: lib/cinder_web/live/requests_live.ex
+#: lib/cinder_web/request_helpers.ex
 #, elixir-autogen, elixir-format
 msgid "This kind of request isn't supported yet."
 msgstr "Ce type de demande n'est pas encore pris en charge."

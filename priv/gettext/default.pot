@@ -255,11 +255,6 @@ msgstr ""
 msgid "Confirm password"
 msgstr ""
 
-#: lib/cinder_web/live/dashboard_live.ex
-#, elixir-autogen
-msgid "Couldn't approve that request."
-msgstr ""
-
 #: lib/cinder_web/live/library_live.ex
 #: lib/cinder_web/live/movie_detail_live.ex
 #, elixir-autogen
@@ -1436,7 +1431,7 @@ msgstr ""
 msgid "Connection refused"
 msgstr ""
 
-#: lib/cinder_web/live/requests_live.ex
+#: lib/cinder_web/request_helpers.ex
 #, elixir-autogen
 msgid "Couldn't approve that request. Please try again."
 msgstr ""
@@ -2023,8 +2018,8 @@ msgstr ""
 msgid "This series only has specials, which can't be requested yet."
 msgstr ""
 
-#: lib/cinder_web/live/dashboard_live.ex
 #: lib/cinder_web/live/requests_live.ex
+#: lib/cinder_web/request_helpers.ex
 #, elixir-autogen
 msgid "That request was already decided."
 msgstr ""
@@ -6170,8 +6165,7 @@ msgstr ""
 msgid "Good news — your request for %{title} was approved. Cinder will watch for a copy."
 msgstr ""
 
-#: lib/cinder_web/live/dashboard_live.ex
-#: lib/cinder_web/live/requests_live.ex
+#: lib/cinder_web/request_helpers.ex
 #, elixir-autogen, elixir-format
 msgid "That title is on hold. Clear the hold before approving it."
 msgstr ""
@@ -6322,7 +6316,7 @@ msgstr ""
 msgid "eBook requests aren't available yet."
 msgstr ""
 
-#: lib/cinder_web/live/requests_live.ex
+#: lib/cinder_web/request_helpers.ex
 #, elixir-autogen, elixir-format
 msgid "Your admin account was deleted. Sign in again to approve requests."
 msgstr ""
@@ -7236,8 +7230,8 @@ msgid_plural "%{count} movies need attention"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/dashboard_live.ex
 #: lib/cinder_web/live/requests_live.ex
+#: lib/cinder_web/request_helpers.ex
 #, elixir-autogen, elixir-format
 msgid "This kind of request isn't supported yet."
 msgstr ""

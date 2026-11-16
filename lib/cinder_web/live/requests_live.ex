@@ -14,7 +14,13 @@ defmodule CinderWeb.RequestsLive do
   import CinderWeb.LiveHelpers
 
   import CinderWeb.RequestHelpers,
-    only: [default_profile_id: 2, normalize_profile: 2, profile_kind: 1, profiles_for: 2]
+    only: [
+      approval_error_message: 1,
+      default_profile_id: 2,
+      normalize_profile: 2,
+      profile_kind: 1,
+      profiles_for: 2
+    ]
 
   alias Cinder.Catalog
   alias Cinder.Requests
@@ -225,43 +231,8 @@ defmodule CinderWeb.RequestsLive do
   @impl true
   def handle_async({:approve, _id}, {:ok, {:ok, _req}}, socket), do: {:noreply, socket}
 
-  # A stale double-click: the first approval already committed (flip_pending is DB-guarded),
-  # so "try again" would be a lie — say what actually happened.
-  def handle_async({:approve, _id}, {:ok, {:error, :not_pending}}, socket),
-    do: {:noreply, put_flash(socket, :error, gettext("That request was already decided."))}
-
-  # A hold is an operator-visible conflict only an operator clears, so "try again" would be a
-  # lie — retrying cannot succeed until someone acts on the hold.
-  def handle_async({:approve, _id}, {:ok, {:error, :target_held}}, socket),
-    do:
-      {:noreply,
-       put_flash(
-         socket,
-         :error,
-         gettext("That title is on hold. Clear the hold before approving it.")
-       )}
-
-  # The approver's account was deleted mid-approval, so "try again" would be a lie — the same FK
-  # failure reproduces until someone signs in as a live admin.
-  def handle_async({:approve, _id}, {:ok, {:error, :approver_deleted}}, socket),
-    do:
-      {:noreply,
-       put_flash(
-         socket,
-         :error,
-         gettext("Your admin account was deleted. Sign in again to approve requests.")
-       )}
-
-  # A pending row filed before #770 whose target type no approval can create: no retry approves
-  # it, so "try again" would be a lie. Denying it stays the admin's call.
-  def handle_async({:approve, _id}, {:ok, {:error, :unsupported_target}}, socket),
-    do:
-      {:noreply, put_flash(socket, :error, gettext("This kind of request isn't supported yet."))}
-
-  def handle_async({:approve, _id}, _error_or_exit, socket),
-    do:
-      {:noreply,
-       put_flash(socket, :error, gettext("Couldn't approve that request. Please try again."))}
+  def handle_async({:approve, _id}, error_or_exit, socket),
+    do: {:noreply, put_flash(socket, :error, approval_error_message(error_or_exit))}
 
   def handle_async(:approve_selected, {:ok, {ok, failed}}, socket) do
     msg = ngettext("Approved %{count} request.", "Approved %{count} requests.", ok)
