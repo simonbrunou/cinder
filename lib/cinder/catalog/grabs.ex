@@ -904,14 +904,13 @@ defmodule Cinder.Catalog.Grabs do
   defp decision_attrs(:fold, episode_id, nil),
     do: %{decision: :fold, episode_id: episode_id, destination: nil, import_stage_id: nil}
 
+  # The claim leaves `import_stage_id` unset: `apply_grab_file_decision!/4` writes it once
+  # `ImportStage.mark_committed!/1` has found the stage still `:prepared`. A stage that a
+  # reconcile rolled back and deleted would otherwise fail the claim on the foreign key, raising
+  # instead of returning `:stale_import_stage` (#783).
   defp decision_attrs(:part, episode_id, {dest, [stage_id]})
        when is_binary(dest) and is_integer(stage_id),
-       do: %{
-         decision: :part,
-         episode_id: episode_id,
-         destination: dest,
-         import_stage_id: stage_id
-       }
+       do: %{decision: :part, episode_id: episode_id, destination: dest}
 
   defp decision_attrs(_decision, _episode_id, _part), do: Repo.rollback(:invalid_import_stage)
 
@@ -927,19 +926,28 @@ defmodule Cinder.Catalog.Grabs do
           preload: [season: :series]
       ) || Repo.rollback(:episode_not_in_grab)
 
-    written_episode =
+    {file, written_episode} =
       case decision do
         :fold ->
           bind_grab_file_coordinate!(file, episode)
-          nil
+          {file, nil}
 
         :part ->
-          {dest, stage_ids} = part
+          {dest, [stage_id] = stage_ids} = part
           ImportStage.mark_committed!(stage_ids)
-          adopt_grab_file_part!(episode, dest)
+          {set_grab_file_import_stage!(file, stage_id), adopt_grab_file_part!(episode, dest)}
       end
 
     {:decided, file, written_episode, episode.season.series_id}
+  end
+
+  defp set_grab_file_import_stage!(file, stage_id) do
+    {1, [file]} =
+      Repo.update_all(from(f in GrabFile, where: f.id == ^file.id, select: f),
+        set: [import_stage_id: stage_id]
+      )
+
+    file
   end
 
   defp bind_grab_file_coordinate!(file, episode) do

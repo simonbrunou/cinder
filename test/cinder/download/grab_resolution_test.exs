@@ -1,13 +1,14 @@
 defmodule Cinder.Download.GrabResolutionTest do
   use Cinder.DataCase, async: false
 
+  import Cinder.Test.BarrierFilesystem, only: [fail_once: 1]
   import Mox
 
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, GrabFile, Grabs, Identity}
   alias Cinder.Download.TvPoller
   alias Cinder.Library
-  alias Cinder.Library.StagedImport
+  alias Cinder.Library.{ImportStage, StagedImport}
   alias Cinder.Repo
   alias Cinder.Test.DiskTask
 
@@ -65,6 +66,134 @@ defmodule Cinder.Download.GrabResolutionTest do
     assert %Episode{part_file_paths: [_part]} = Repo.reload!(episode)
     assert_receive {:series_updated, ^series_id}
     refute_received {:series_updated, ^series_id}
+  end
+
+  # #783: the Part decision takes no household import lock. Its one stage copies under the
+  # stage's destination and operation locks, which `StagedImport.reconcile/0` takes too, and the
+  # row gets its handoff deadline only once the copy lands. A reconcile that arrives mid-copy
+  # waits for the copy instead of rolling the stage back.
+  @tag :tmp_dir
+  test "a reconcile during a Part decision's cross-filesystem copy waits and rolls nothing back",
+       %{tmp_dir: tmp} do
+    %{grab: grab, episode: episode, files: [file], release_dir: release_dir} =
+      mixed_grab(tmp, ["Show.S01E99.mkv"])
+
+    fail_once(%{
+      operation: :ln,
+      source_contains: Path.join(release_dir, "Show.S01E99.mkv"),
+      reason: :exdev
+    })
+
+    Cinder.ConfigCase.put_env(:filesystem_barrier, %{
+      owner: self(),
+      operation: :cp,
+      contains: Cinder.LibraryStubs.candidate_marker(),
+      once: true
+    })
+
+    decision = Task.async(fn -> TvPoller.resolve_grab_file(file.id, episode.id, :part) end)
+    assert_receive {:filesystem_barrier, pid, ref, :cp, _candidate}, DiskTask.timeout_ms()
+
+    # No deadline yet, so a reconcile would claim this row at once; only the locks hold it off.
+    assert %ImportStage{state: :preparing, next_attempt_at: nil} = Repo.one!(ImportStage)
+
+    observer = Task.async(&StagedImport.reconcile/0)
+    refute Task.yield(observer, 100)
+    send(pid, {ref, :continue})
+
+    assert {:ok, :decided, _file} = DiskTask.await(decision)
+    assert :ok = DiskTask.await(observer)
+    refute Repo.get(Grab, grab.id)
+    assert %Episode{part_file_paths: [part]} = Repo.reload!(episode)
+    assert File.read!(part) == "extra-1"
+  end
+
+  # #783: what the missing household lock still leaves. A stall past the handoff deadline between
+  # the landing and the catalog write lets a reconcile roll the part back. The write then refuses
+  # the stale stage, whether the rollback deleted its row or still holds it, and records nothing.
+  describe "a Part decision whose stage went stale before its write" do
+    @describetag :tmp_dir
+
+    test "returns :stale_import_stage once a reconcile rolled the stage back and deleted it", %{
+      tmp_dir: tmp
+    } do
+      %{staged: staged, part: part} = staged_part = stage_part(tmp)
+
+      ImportStage.update!(Repo.one!(ImportStage), %{
+        next_attempt_at: DateTime.add(DateTime.utc_now(), -1)
+      })
+
+      assert :ok = StagedImport.reconcile()
+      refute Repo.exists?(ImportStage)
+      refute File.exists?(part)
+
+      assert {:error, :stale_import_stage} = commit_part(staged_part, staged)
+      assert_nothing_recorded(staged_part)
+      refute File.exists?(part)
+
+      # The file stays undecided, so the operator can decide it again.
+      %{file: file, episode: episode} = staged_part
+      assert {:ok, :decided, _file} = TvPoller.resolve_grab_file(file.id, episode.id, :part)
+      assert %Episode{part_file_paths: [^part]} = Repo.reload!(episode)
+      assert File.read!(part) == "extra-1"
+    end
+
+    # The rollback that holds the row finishes it, so the file stays until that rollback runs.
+    test "returns :stale_import_stage while a rollback still holds the stage", %{tmp_dir: tmp} do
+      %{staged: staged} = staged_part = stage_part(tmp)
+      ImportStage.update!(Repo.one!(ImportStage), %{state: :rolling_back})
+
+      assert {:error, :stale_import_stage} = commit_part(staged_part, staged)
+      assert_nothing_recorded(staged_part)
+      assert %ImportStage{state: :rolling_back} = Repo.one!(ImportStage)
+    end
+
+    test "a fresh stage is recorded on the file inside the write", %{tmp_dir: tmp} do
+      %{staged: staged, file: file} = staged_part = stage_part(tmp)
+      %ImportStage{id: stage_id} = Repo.one!(ImportStage)
+
+      writer = fn dest, ids ->
+        result =
+          Catalog.decide_grab_file(staged_part.pending, staged_part.selected, :part, {dest, ids})
+
+        assert {:ok, :decided, %GrabFile{import_stage_id: ^stage_id}} = result
+        assert %GrabFile{import_stage_id: ^stage_id} = Repo.get!(GrabFile, file.id)
+        result
+      end
+
+      assert {:ok, :decided, _file} = StagedImport.commit(staged, writer)
+      assert %GrabFile{decision: :part} = Repo.get!(GrabFile, file.id)
+    end
+  end
+
+  defp stage_part(tmp) do
+    %{grab: grab, episode: episode, files: [file]} = mixed_grab(tmp, ["Show.S01E99.mkv"])
+
+    assert {:ok, :pending, pending, selected} =
+             Grabs.get_grab_file_resolution(file.id, episode.id)
+
+    assert {:ok, staged} = Library.stage_grab_file_part(pending.grab, pending, selected)
+    part = StagedImport.record(staged)
+    assert File.exists?(part)
+
+    %{
+      grab: grab,
+      episode: episode,
+      file: file,
+      pending: pending,
+      selected: selected,
+      staged: staged,
+      part: part
+    }
+  end
+
+  defp commit_part(%{pending: pending, selected: selected}, staged),
+    do: StagedImport.commit(staged, &Catalog.decide_grab_file(pending, selected, :part, {&1, &2}))
+
+  defp assert_nothing_recorded(%{grab: grab, episode: episode, file: file}) do
+    assert %GrabFile{decision: nil, import_stage_id: nil} = Repo.get!(GrabFile, file.id)
+    assert Repo.reload!(episode).part_file_paths == []
+    assert Repo.get(Grab, grab.id)
   end
 
   @tag :tmp_dir

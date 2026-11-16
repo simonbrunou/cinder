@@ -30,8 +30,10 @@ defmodule Cinder.Library.StagedImport do
   same lock `reconcile/0` takes. Without it, crash recovery could roll back a `:prepared` stage
   whose handoff deadline expired while a long multi-file copy was still building the next one.
   `Cinder.Download.Cleaner` takes it too, so it never reaps a download whose import has released
-  its owner but is still settling. The residual-file Part decision from `/activity` does not take
-  it yet (#783).
+  its owner but is still settling. The residual-file Part decision from `/activity` needs no
+  household lock, since it places one stage (#783): `Cinder.Library.StageEngine.stage/5` copies it
+  under the stage's own destination and operation locks, which `reconcile/0` also takes, and its
+  handoff deadline starts only once the copy lands.
   """
   require Logger
 

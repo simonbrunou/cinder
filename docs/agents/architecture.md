@@ -168,7 +168,12 @@ The pollers hold the household import lock (`StagedImport.run/1`) from an import
 until it settles, and `StagedImport.reconcile/0` takes the same lock. `Cinder.Download.Cleaner`
 takes it for its ownership check and removals, because an import releases its owner before it
 settles. The lock is not re-entrant through `:global` itself, so take it only through `run/1`.
-The residual-file Part decision from `/activity` does not take it yet (#783).
+The residual-file Part decision from `/activity` runs without it, since it places one stage
+(#783). `StageEngine.stage/5` copies that stage under the stage's destination and operation
+locks, which `reconcile/0` takes too, so a reconcile that arrives mid-copy waits for the copy.
+The stage's handoff deadline starts only once the copy lands. A stall past that deadline before
+the catalog write still lets a reconcile roll the part back, and the write then returns
+`{:error, :stale_import_stage}` and records nothing.
 
 ## Most library writes go through the rooted helper
 

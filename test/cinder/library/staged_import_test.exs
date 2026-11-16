@@ -582,6 +582,56 @@ defmodule Cinder.Library.StagedImportTest do
   end
 
   describe "crash recovery" do
+    # #783: a stage being built holds both locks, and a reconcile waits on each one alone. A
+    # `:preparing` row has no deadline, so these locks are all that keep a reconcile off a stage
+    # that is still copying.
+    for lock <- [:destination, :operation] do
+      test "a reconcile waits while another process holds the stage's #{lock} lock", %{
+        library: library
+      } do
+        operation_key = Ecto.UUID.generate()
+        dest = Path.join([library, "Held (2020)", "Held (2020).mkv"])
+        candidate = Path.join(Path.dirname(dest), ".cinder-stage-#{operation_key}")
+        File.mkdir_p!(Path.dirname(dest))
+        File.write!(candidate, "partial")
+
+        ImportStage.create!(%{
+          operation_key: operation_key,
+          state: :preparing,
+          root: library,
+          dest: dest,
+          candidate: candidate
+        })
+
+        hold =
+          case unquote(lock) do
+            :destination -> &ImportStage.with_destination_lock(dest, &1)
+            :operation -> &ImportStage.with_lock(operation_key, &1)
+          end
+
+        test_pid = self()
+
+        holder =
+          Task.async(fn ->
+            hold.(fn ->
+              send(test_pid, :held)
+              receive do: (:release -> :ok)
+            end)
+          end)
+
+        assert_receive :held
+        observer = Task.async(&StagedImport.reconcile/0)
+        refute Task.yield(observer, 100)
+        assert File.exists?(candidate)
+        send(holder.pid, :release)
+
+        assert :ok = DiskTask.await(holder)
+        assert :ok = DiskTask.await(observer)
+        refute File.exists?(candidate)
+        refute Repo.exists?(ImportStage)
+      end
+    end
+
     test "a reconcile removes a candidate left by process death before placement", %{
       downloads: downloads,
       library: library
