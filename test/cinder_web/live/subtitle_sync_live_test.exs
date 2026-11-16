@@ -322,6 +322,56 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     refute render(view) =~ sidecar
   end
 
+  # A fetch for wanted `fra` writes `Movie.fra.srt`, whose name reads as `fr` (#1344).
+  test "lists and applies to a subtitle recorded under a wanted code its name does not read as",
+       %{conn: conn, movies: movies} do
+    video = Path.join(movies, "Movie/Movie.mkv")
+    sidecar = Path.rootname(video) <> ".fra.srt"
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, String.duplicate("v", 131_072))
+    File.write!(sidecar, "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n")
+    {:ok, hash} = Subtitles.Moviehash.of_file(video)
+
+    assert :ok =
+             Manifest.put(
+               video,
+               hash,
+               "fra",
+               "opensubtitles_hash",
+               sidecar,
+               digest(File.read!(sidecar))
+             )
+
+    movie =
+      %{title: "Movie", status: :available}
+      |> movie_fixture()
+      |> Ecto.Changeset.change(file_path: video)
+      |> Repo.update!()
+
+    [item] = Sync.items({:movie, movie.id})
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
+    assert has_element?(view, "#subtitle-sync-item-#{item.id}", "Movie.mkv · fra SRT")
+
+    view |> element("#subtitle-sync-item-#{item.id} button", "Adjust") |> render_click()
+
+    view
+    |> form("#subtitle-sync-form", %{
+      "adjustment" => %{"mode" => "direct", "delay_ms" => "1000", "rate" => "1.0"}
+    })
+    |> render_change()
+
+    view
+    |> form("#subtitle-sync-form", %{
+      "adjustment" => %{"mode" => "direct", "delay_ms" => "1000", "rate" => "1.0"}
+    })
+    |> render_submit()
+
+    assert File.read!(sidecar) =~ "00:00:02,000"
+    assert Map.keys(Manifest.read(video).tracks) == ["fra"]
+    assert %{sync: %{method: "manual"}} = Manifest.read(video).tracks["fra"]
+  end
+
   test "apply requires a matching preview and unchanged sidecar bytes", %{
     conn: conn,
     movies: movies

@@ -18,24 +18,37 @@ defmodule Cinder.Subtitles.Sync do
   # 6: the Netflix timing rules (2-frame gaps, chaining, 20-frame minimum) on every result.
   @sync_version 6
   @type item :: map()
-  @doc "Manifest-managed OpenSubtitles sidecars belonging to one video."
+  @doc """
+  Manifest-managed OpenSubtitles sidecars belonging to one video.
+
+  A listed sidecar pairs with the one manifest entry whose recorded `file` is its base name, and
+  the item's `language` is that entry's key: the wanted code a fetch wrote it under, which the
+  name reading need not return (`fra` reads as `fr`, #1344). A sidecar that two entries record
+  pairs with neither.
+  """
   @spec discover(String.t()) :: [item()]
   def discover(video_path) do
     state = Manifest.read(video_path)
 
     sidecars = if state.tracks == %{}, do: [], else: Sidecars.files(video_path)
+    entries = Enum.group_by(state.tracks, fn {_language, track} -> Map.get(track, :file) end)
 
     sidecars
-    |> Enum.flat_map(fn {sidecar_path, language} ->
-      track = get_in(state, [:tracks, language])
-
-      if track && track.origin in @managed_origins && syncable_track?(track) &&
-           tracked_sidecar?(track, video_path, sidecar_path, language),
-         do: [item(video_path, sidecar_path, language, track)],
-         else: []
+    |> Enum.flat_map(fn {sidecar_path, _read_language} ->
+      entries
+      |> Map.get(Path.basename(sidecar_path), [])
+      |> managed_item(video_path, sidecar_path)
     end)
     |> Enum.sort_by(&{&1.language, &1.sidecar_path})
   end
+
+  defp managed_item([{language, track}], video_path, sidecar_path) do
+    if track.origin in @managed_origins && syncable_track?(track),
+      do: [item(video_path, sidecar_path, language, track)],
+      else: []
+  end
+
+  defp managed_item(_none_or_several, _video_path, _sidecar_path), do: []
 
   @doc "Returns discoverable sidecars for a server-side catalog scope."
   @spec items(:library | {:movie | :series | :season | :episode, pos_integer()}) :: [item()]
@@ -547,11 +560,6 @@ defmodule Cinder.Subtitles.Sync do
       not Map.get(track, :reset_cleanup_sync_invalid?, false) and
       not Map.get(track, :backup_tombstone_invalid?, false)
   end
-
-  defp tracked_sidecar?(%{file: file}, _video_path, sidecar_path, _language),
-    do: Path.basename(sidecar_path) == file
-
-  defp tracked_sidecar?(_track, _video_path, _sidecar_path, _language), do: false
 
   defp verify_expected(_item, nil), do: :ok
 

@@ -133,6 +133,121 @@ defmodule Cinder.Subtitles.SyncTest do
     assert Sync.discover(video) == []
   end
 
+  # A fetch names the file and keys its manifest entry by the wanted code as typed in the
+  # subtitle languages setting, which the name reading does not always return (#1344).
+  test "discovers a managed sidecar by its recorded file whatever language its name reads as",
+       %{video: video} do
+    for language <- ~w(en fra pt-br chi fre french fr-fr zz) do
+      path = sidecar(video, language, ".srt")
+      File.write!(path, subtitle(".srt"))
+
+      assert :ok =
+               Manifest.put(
+                 video,
+                 "hash",
+                 language,
+                 "opensubtitles_hash",
+                 path,
+                 digest(subtitle(".srt"))
+               )
+    end
+
+    assert Sync.discover(video) |> Enum.map(&{&1.language, Path.basename(&1.sidecar_path)}) == [
+             {"chi", "Movie.chi.srt"},
+             {"en", "Movie.en.srt"},
+             {"fr-fr", "Movie.fr-fr.srt"},
+             {"fra", "Movie.fra.srt"},
+             {"fre", "Movie.fre.srt"},
+             {"french", "Movie.french.srt"},
+             {"pt-br", "Movie.pt-br.srt"},
+             {"zz", "Movie.zz.srt"}
+           ]
+  end
+
+  test "a sidecar found by its recorded file still needs a managed, syncable, listed entry", %{
+    video: video
+  } do
+    content = subtitle(".srt")
+
+    for language <- ~w(fra pt-br french),
+        do: File.write!(sidecar(video, language, ".srt"), content)
+
+    File.write!(
+      Manifest.path(video),
+      Jason.encode!(%{
+        video_moviehash: moviehash!(video),
+        tracks: %{
+          "fra" => %{
+            origin: "release_sidecar",
+            file: "Movie.fra.srt",
+            managed_sha256: digest(content)
+          },
+          "pt-br" => %{
+            origin: "opensubtitles_hash",
+            file: "Movie.pt-br.srt",
+            managed_sha256: digest(content),
+            sync: %{status: "invalid"}
+          },
+          "french" => %{origin: "opensubtitles_hash", file: "Movie.french.srt"},
+          "zz" => %{
+            origin: "opensubtitles_hash",
+            file: "Movie.zz.srt",
+            managed_sha256: digest(content)
+          }
+        }
+      })
+    )
+
+    assert Sync.discover(video) == []
+  end
+
+  test "a sidecar two manifest entries record is listed for neither", %{video: video} do
+    content = subtitle(".srt")
+    path = sidecar(video, "fra", ".srt")
+    File.write!(path, content)
+    other = sidecar(video, "en", ".srt")
+    File.write!(other, content)
+
+    track = %{
+      origin: "opensubtitles_hash",
+      file: "Movie.fra.srt",
+      managed_sha256: digest(content)
+    }
+
+    File.write!(
+      Manifest.path(video),
+      Jason.encode!(%{
+        video_moviehash: moviehash!(video),
+        tracks: %{
+          "fra" => track,
+          "fr" => track,
+          "en" => %{track | file: "Movie.en.srt"}
+        }
+      })
+    )
+
+    assert Sync.discover(video) |> Enum.map(&{&1.language, Path.basename(&1.sidecar_path)}) == [
+             {"en", "Movie.en.srt"}
+           ]
+  end
+
+  test "a sidecar fetched for a wanted code other than its name reading is analysed", %{
+    video: video
+  } do
+    managed_srt!(video, "fra")
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, input, output ->
+      File.write!(output, File.read!(input) <> "\n")
+      {:ok, %{score: 30.0, offset_ms: -70, rate: 1.0}}
+    end)
+
+    assert [%{label: "Movie.mkv · fra SRT", status: :aligned}] = Sync.analyze_video(video)
+    state = Manifest.read(video)
+    assert Map.keys(state.tracks) == ["fra"]
+    assert %{sync: %{status: "aligned"}} = state.tracks["fra"]
+  end
+
   test "a small high-confidence automatic correction is recorded without rewriting", %{
     video: video
   } do
