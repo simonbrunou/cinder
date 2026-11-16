@@ -855,10 +855,11 @@ retries the scan itself on every subsequent poller tick until Audiobookshelf con
 re-download involved either way. Booklore, by contrast, needs no push at all: point its own
 library scan at the `books` root and it will find new e-books on its normal schedule.
 
-**Author monitoring policies** (`/books/:id` → "Set author policy") let you opt an author into
-future-only, full-back-catalogue, or specific-work monitoring in one bounded batch, instead of
-monitoring each work by hand — capped per refresh so a large bibliography can't fan out into an
-unbounded burst of provider requests.
+**Author monitoring policies** (the "<author>'s monitoring" select on `/books/:id`, shown on a
+work that has an e-book target) let you opt an author's e-books into future-only or
+full-back-catalogue monitoring in one bounded batch, instead of monitoring each work by hand —
+capped per refresh so a large bibliography can't fan out into an unbounded burst of provider
+requests. A policy never monitors audiobooks: request each audiobook instead.
 
 **Migrating an existing Readarr-protocol Bookshelf library** (Booklore/Audiobookshelf households
 coming from `pennydreadful/bookshelf` or a compatible fork) is a one-time, in-place, no-rewrite

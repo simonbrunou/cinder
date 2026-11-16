@@ -9,7 +9,7 @@ style deployment reachable over its Readarr v3-compatible `/api/v1`, and Cinder'
 
 **Read before running:** adoption is **in place**. Cinder never moves, renames, hardlinks, copies,
 or deletes a Bookshelf-managed file — it only inserts a `book_files` row pointing at the
-unchanged, existing path. The entire rollback plan (step 6 below) depends on this: the source
+unchanged, existing path. The entire rollback plan ("Rollback" below) depends on this: the source
 library is byte-identical before and after every adopt.
 
 ## Precondition: the books root
@@ -122,23 +122,23 @@ Verify afterward:
 ### 6. Enable Cinder monitoring
 
 Nothing is automatic here on purpose. Every newly-adopted target lands `:available` with no active
-search. From here, Cinder's normal per-work and per-author controls apply exactly as they do for
-anything else already in the catalog:
+search. From here, Cinder's per-author control applies exactly as it does for anything else
+already in the catalog:
 
-- Monitor an individual work's e-book or audiobook target (whichever kind this runbook just
-  adopted) from its `/books/:id` page for upgrades.
-- Use B5b's per-author monitoring policy (`Set author policy` on `/books/:id`, for any author
-  credited to an already-adopted work) to opt into future or full back-catalogue monitoring — this
-  is also how the operator handles the migration's own `deferred_bibliography_count`: works that
-  were monitored in Bookshelf but had no file, and were therefore never imported as adoption
-  candidates (see below).
+- Use B5b's per-author monitoring policy (the `<author>'s monitoring` select on `/books/:id`,
+  shown on a work that has an e-book target) to opt into future or full back-catalogue
+  monitoring — this is also how the operator handles the migration's own
+  `deferred_bibliography_count`: works that were monitored in Bookshelf but had no file, and were
+  therefore never imported as adoption candidates (see below). The policy monitors e-books only,
+  so it never monitors the audiobook of a fileless work from the audiobook instance: request that
+  audiobook instead.
 
 **Monitoring flags are evidence, not automation.** The Preview banner reports how many additional
 monitored-but-fileless works exist in Bookshelf (661 in the reference deployment, split across two
 authors) that were **not** imported — importing every Bookshelf-monitored row as an active
 acquisition request would be exactly the back-catalogue flood the parity contract warns against.
-Those flags are preserved as evidence only; opt into them deliberately, per author, via the policy
-control above.
+Those flags are preserved as evidence only; opt into them deliberately: e-books per author, via the
+policy control above, and audiobooks one request at a time.
 
 ## Rollback
 

@@ -33,7 +33,7 @@ defmodule Cinder.Books.BibliographyRefresher do
   require Logger
 
   alias Cinder.Books
-  alias Cinder.Books.BookAuthorPolicy
+  alias Cinder.Books.EbookAuthorPolicy
   alias Cinder.Repo
 
   @default_interval :timer.hours(12)
@@ -44,7 +44,7 @@ defmodule Cinder.Books.BibliographyRefresher do
     first_interval: :timer.minutes(1)
 
   defp do_poll do
-    for policy <- Repo.all(from p in BookAuthorPolicy, preload: [:author, :profile]) do
+    for policy <- Repo.all(from p in EbookAuthorPolicy, preload: [:author, :profile]) do
       isolate("author policy #{policy.author_id}", fn -> refresh_author(policy) end)
     end
 
@@ -53,7 +53,7 @@ defmodule Cinder.Books.BibliographyRefresher do
 
   @doc false
   # Public for the tests: one policy's refresh, without the tick around it.
-  def refresh_author(%BookAuthorPolicy{author: author, policy: policy, profile: profile}) do
+  def refresh_author(%EbookAuthorPolicy{author: author, policy: policy, profile: profile}) do
     case Books.preview_author_policy(author, policy) do
       {:ok, %{eligible: eligible}} ->
         apply_eligible(author, policy, profile, eligible)

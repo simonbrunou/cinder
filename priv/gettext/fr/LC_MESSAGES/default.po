@@ -6930,13 +6930,6 @@ msgstr "Documentation de Bookshelf"
 msgid "Readarr"
 msgstr "Readarr"
 
-#: lib/cinder_web/live/library_adoption_live.ex
-#, elixir-autogen, elixir-format
-msgid "%{count} additional monitored work was not imported; use per-author monitoring policy after cutover."
-msgid_plural "%{count} additional monitored works were not imported; use per-author monitoring policy after cutover."
-msgstr[0] "%{count} œuvre suivie supplémentaire n'a pas été importée ; utilisez la politique de suivi par auteur après la bascule."
-msgstr[1] "%{count} œuvres suivies supplémentaires n'ont pas été importées ; utilisez la politique de suivi par auteur après la bascule."
-
 #: lib/cinder_web/components/library_adoption_components.ex
 #, elixir-autogen, elixir-format
 msgid "Adopt every accepted-format file for this work."
@@ -7920,3 +7913,10 @@ msgstr "Réessayer : %{title}"
 #, elixir-autogen, elixir-format
 msgid "The download holds a blocked file (%{file}) and no book."
 msgstr "Le téléchargement contient un fichier bloqué (%{file}) et aucun livre."
+
+#: lib/cinder_web/live/library_adoption_live.ex
+#, elixir-autogen, elixir-format
+msgid "%{count} additional monitored work was not imported; after cutover, monitor its eBook per author or request its audiobook."
+msgid_plural "%{count} additional monitored works were not imported; after cutover, monitor their eBooks per author or request their audiobooks."
+msgstr[0] "%{count} œuvre suivie supplémentaire n'a pas été importée ; après la bascule, suivez son eBook par auteur ou demandez son livre audio."
+msgstr[1] "%{count} œuvres suivies supplémentaires n'ont pas été importées ; après la bascule, suivez leurs eBooks par auteur ou demandez leurs livres audio."

@@ -6629,13 +6629,6 @@ msgstr ""
 msgid "Readarr"
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex
-#, elixir-autogen, elixir-format
-msgid "%{count} additional monitored work was not imported; use per-author monitoring policy after cutover."
-msgid_plural "%{count} additional monitored works were not imported; use per-author monitoring policy after cutover."
-msgstr[0] ""
-msgstr[1] ""
-
 #: lib/cinder_web/components/library_adoption_components.ex
 #, elixir-autogen, elixir-format
 msgid "Adopt every accepted-format file for this work."
@@ -7564,3 +7557,10 @@ msgstr ""
 #, elixir-autogen, elixir-format, fuzzy
 msgid "The download holds a blocked file (%{file}) and no book."
 msgstr ""
+
+#: lib/cinder_web/live/library_adoption_live.ex
+#, elixir-autogen, elixir-format
+msgid "%{count} additional monitored work was not imported; after cutover, monitor its eBook per author or request its audiobook."
+msgid_plural "%{count} additional monitored works were not imported; after cutover, monitor their eBooks per author or request their audiobooks."
+msgstr[0] ""
+msgstr[1] ""

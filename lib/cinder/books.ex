@@ -13,7 +13,6 @@ defmodule Cinder.Books do
   alias Cinder.Books.{
     Attention,
     Author,
-    BookAuthorPolicy,
     BookBlockedRelease,
     BookFile,
     BookGrab,
@@ -21,6 +20,7 @@ defmodule Cinder.Books do
     BookTarget,
     BookTargetTransition,
     Credit,
+    EbookAuthorPolicy,
     Edition,
     Identifier,
     Identity,
@@ -715,9 +715,9 @@ defmodule Cinder.Books do
   credited author) picks up the new stored policy without a full remount.
   """
   @spec set_author_policy(Author.t(), :specific | :future | :all, Profile.t() | nil) ::
-          {:ok, BookAuthorPolicy.t() | nil} | {:error, Ecto.Changeset.t()}
+          {:ok, EbookAuthorPolicy.t() | nil} | {:error, Ecto.Changeset.t()}
   def set_author_policy(%Author{id: author_id}, :specific, _profile) do
-    Repo.delete_all(from p in BookAuthorPolicy, where: p.author_id == ^author_id)
+    Repo.delete_all(from p in EbookAuthorPolicy, where: p.author_id == ^author_id)
     broadcast({:book_author_policy_updated, author_id})
     {:ok, nil}
   end
@@ -727,11 +727,11 @@ defmodule Cinder.Books do
     attrs = %{author_id: author_id, policy: policy, profile_id: profile_id}
 
     result =
-      case Repo.get_by(BookAuthorPolicy, author_id: author_id) do
-        nil -> %BookAuthorPolicy{}
+      case Repo.get_by(EbookAuthorPolicy, author_id: author_id) do
+        nil -> %EbookAuthorPolicy{}
         existing -> existing
       end
-      |> BookAuthorPolicy.changeset(attrs)
+      |> EbookAuthorPolicy.changeset(attrs)
       |> Repo.insert_or_update()
 
     case result do
@@ -747,9 +747,9 @@ defmodule Cinder.Books do
   @doc "The stored policy for `author_id`, or `:specific` (no row) if none was ever set."
   @spec author_policy(integer()) :: :specific | :future | :all
   def author_policy(author_id) do
-    case Repo.get_by(BookAuthorPolicy, author_id: author_id) do
+    case Repo.get_by(EbookAuthorPolicy, author_id: author_id) do
       nil -> :specific
-      %BookAuthorPolicy{policy: policy} -> policy
+      %EbookAuthorPolicy{policy: policy} -> policy
     end
   end
 
@@ -762,7 +762,7 @@ defmodule Cinder.Books do
   def author_policies_by_author_ids(author_ids) do
     stored =
       Repo.all(
-        from p in BookAuthorPolicy,
+        from p in EbookAuthorPolicy,
           where: p.author_id in ^author_ids,
           select: {p.author_id, p.policy}
       )
@@ -897,8 +897,8 @@ defmodule Cinder.Books do
 
   defp current_policy_matches?(author_id, policy, profile_id) do
     match?(
-      %BookAuthorPolicy{policy: ^policy, profile_id: ^profile_id},
-      Repo.get_by(BookAuthorPolicy, author_id: author_id)
+      %EbookAuthorPolicy{policy: ^policy, profile_id: ^profile_id},
+      Repo.get_by(EbookAuthorPolicy, author_id: author_id)
     )
   end
 

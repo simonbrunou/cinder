@@ -422,8 +422,9 @@ defmodule CinderWeb.LibraryAdoptionLive do
   # `links` resolves each deferred author id to a Cinder work id (and that author's own display
   # name, for an accessible per-link label — see the template) worth linking to — one already
   # classified in THIS same preview, credited to that exact author, with a known catalog
-  # `work_id` — so `/books/:id` (where B5b's "Set author policy" control lives) is only ever
-  # offered when it genuinely resolves to that author's own page. An author with no such
+  # `work_id` — so `/books/:id` (where B5b's author monitoring select lives, on a work with an
+  # e-book target) is only ever offered when it genuinely resolves to that author's own page.
+  # An author with no such
   # candidate in this preview (nothing of theirs was ever imported before, or not yet resolved
   # this session) gets no link — never a guessed one.
   defp migration_deferred(preview) do
@@ -826,8 +827,8 @@ defmodule CinderWeb.LibraryAdoptionLive do
         <div>
           <p>
             {ngettext(
-              "%{count} additional monitored work was not imported; use per-author monitoring policy after cutover.",
-              "%{count} additional monitored works were not imported; use per-author monitoring policy after cutover.",
+              "%{count} additional monitored work was not imported; after cutover, monitor its eBook per author or request its audiobook.",
+              "%{count} additional monitored works were not imported; after cutover, monitor their eBooks per author or request their audiobooks.",
               @migration_deferred.count,
               count: @migration_deferred.count
             )}

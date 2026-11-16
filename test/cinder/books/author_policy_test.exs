@@ -9,7 +9,7 @@ defmodule Cinder.Books.AuthorPolicyTest do
   import Mox
 
   alias Cinder.Books
-  alias Cinder.Books.{BookAuthorPolicy, BookTarget, Identifier, PrimaryMetadataMock, Work}
+  alias Cinder.Books.{BookTarget, EbookAuthorPolicy, Identifier, PrimaryMetadataMock, Work}
   alias Cinder.Catalog
 
   setup :verify_on_exit!
@@ -28,19 +28,19 @@ defmodule Cinder.Books.AuthorPolicyTest do
 
   describe "set_author_policy/3" do
     test "future/all upserts a row but creates zero targets", %{author: author, profile: profile} do
-      assert {:ok, %BookAuthorPolicy{policy: :future}} =
+      assert {:ok, %EbookAuthorPolicy{policy: :future}} =
                Books.set_author_policy(author, :future, profile)
 
       assert Books.author_policy(author.id) == :future
       assert Repo.aggregate(BookTarget, :count) == 0
 
-      assert {:ok, %BookAuthorPolicy{policy: :all}} =
+      assert {:ok, %EbookAuthorPolicy{policy: :all}} =
                Books.set_author_policy(author, :all, profile)
 
       assert Books.author_policy(author.id) == :all
       assert Repo.aggregate(BookTarget, :count) == 0
       # Upsert, not a second row.
-      assert Repo.aggregate(BookAuthorPolicy, :count) == 1
+      assert Repo.aggregate(EbookAuthorPolicy, :count) == 1
     end
 
     test "reverting to specific deletes the stored row", %{author: author, profile: profile} do
@@ -48,7 +48,7 @@ defmodule Cinder.Books.AuthorPolicyTest do
 
       assert {:ok, nil} = Books.set_author_policy(author, :specific, nil)
       assert Books.author_policy(author.id) == :specific
-      assert Repo.aggregate(BookAuthorPolicy, :count) == 0
+      assert Repo.aggregate(EbookAuthorPolicy, :count) == 0
     end
 
     test "no stored row reads back as :specific", %{author: author} do
@@ -240,6 +240,17 @@ defmodule Cinder.Books.AuthorPolicyTest do
       assert Books.author_policy(author.id) == :all
     end
 
+    # #813: the policy is e-book-only by decision (`Cinder.Books.EbookAuthorPolicy`'s moduledoc).
+    test "an audiobook profile arms no target of either kind", %{author: author} do
+      {:ok, audiobook_profile} =
+        Catalog.create_profile(%{name: "Audiobooks 813", kind: :audiobook, handling: :standard})
+
+      resolution = %{provider: :openlibrary, work: provider_work("OLAUDIO813W")}
+
+      assert {:ok, 0} = Books.apply_author_policy(author, :all, audiobook_profile, [resolution])
+      assert Repo.aggregate(BookTarget, :count) == 0
+    end
+
     test "a candidate independently monitored between preview and confirm keeps its own profile
           and status, and is not counted as created",
          %{author: author, profile: profile} do
@@ -321,7 +332,7 @@ defmodule Cinder.Books.AuthorPolicyTest do
       assert {:ok, 0} = Books.apply_bibliography_refresh(author, :all, profile, [resolution])
 
       assert Repo.aggregate(BookTarget, :count) == 0
-      assert Repo.get_by!(BookAuthorPolicy, author_id: author.id).profile_id == other_profile.id
+      assert Repo.get_by!(EbookAuthorPolicy, author_id: author.id).profile_id == other_profile.id
     end
 
     # Codex review on PR #563: the original single up-front check still let a candidate queued

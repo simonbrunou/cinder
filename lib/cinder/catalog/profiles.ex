@@ -3,7 +3,7 @@ defmodule Cinder.Catalog.Profiles do
 
   import Ecto.Query
 
-  alias Cinder.Books.{BookAuthorPolicy, BookTarget}
+  alias Cinder.Books.{BookTarget, EbookAuthorPolicy}
   alias Cinder.Catalog.{Episode, Events, MediaProfiles, Movie, Profile, Season, Series}
   alias Cinder.Download
   alias Cinder.Library.PathPolicy
@@ -264,6 +264,6 @@ defmodule Cinder.Catalog.Profiles do
       Repo.exists?(from s in Series, where: s.profile_id == ^profile.id) or
       Repo.exists?(from r in Request, where: r.proposed_profile_id == ^profile.id) or
       Repo.exists?(from t in BookTarget, where: t.profile_id == ^profile.id) or
-      Repo.exists?(from p in BookAuthorPolicy, where: p.profile_id == ^profile.id)
+      Repo.exists?(from p in EbookAuthorPolicy, where: p.profile_id == ^profile.id)
   end
 end
