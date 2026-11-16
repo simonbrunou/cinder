@@ -272,7 +272,10 @@
   flagged three of them and clearing them forced a full `mix test` for a catalog change, about
   10 minutes; #948 regenerated four.
 - A test sets a `:cinder` env key with `Cinder.ConfigCase.put_env/2`, which restores the old value
-  on exit; `put_env/1` takes a keyword list of keys. For a keyword-list key,
+  on exit; `put_env/1` takes a keyword list of keys. For keys the test changes another way (a
+  settings save, `Application.delete_env/2`, a raw write such as a filesystem barrier),
+  `Cinder.ConfigCase.restore_env_on_exit/1` restores them by the same rule: a key unset before
+  is unset after, and a set key, `nil` included, gets its old value back. For a keyword-list key,
   `Cinder.ConfigCase.put_config/2` merges the overrides and restores the same way. The household
   size band (`:tv_min_size`, `:tv_max_size`, read by `Cinder.Acquisition.HouseholdPolicy.band/1`)
   is one such key. When other test modules also read the key, as several read the band, set it

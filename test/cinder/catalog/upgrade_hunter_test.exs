@@ -5,6 +5,7 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
   use Cinder.DataCase, async: false
 
   import Mox
+  import Cinder.ConfigCase, only: [put_env: 2]
 
   @moduletag :capture_log
 
@@ -22,17 +23,6 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     put_env(UpgradeHunter, enabled: true)
     start_supervised!({UpgradeHunter, interval: 60_000})
     :ok
-  end
-
-  defp put_env(key, value) do
-    saved = Application.get_env(:cinder, key)
-    Application.put_env(:cinder, key, value)
-
-    on_exit(fn ->
-      if is_nil(saved),
-        do: Application.delete_env(:cinder, key),
-        else: Application.put_env(:cinder, key, saved)
-    end)
   end
 
   defp poll, do: assert(:ok = UpgradeHunter.poll())

@@ -2,6 +2,7 @@ defmodule Cinder.HealthTest do
   use Cinder.DataCase, async: false
 
   import Mox
+  import Cinder.ConfigCase, only: [put_env: 2, restore_env_on_exit: 1]
 
   alias Cinder.Health
   alias Cinder.Library.SidecarQuarantine
@@ -13,25 +14,8 @@ defmodule Cinder.HealthTest do
 
   setup do
     roots = [:books_library_path, :audiobooks_library_path]
-    saved = Map.new(roots, &{&1, Application.get_env(:cinder, &1)})
+    restore_env_on_exit(roots)
     Enum.each(roots, &Application.delete_env(:cinder, &1))
-
-    on_exit(fn -> restore_env(saved) end)
-
-    :ok
-  end
-
-  defp restore_env(saved) do
-    Enum.each(saved, fn
-      {key, nil} -> Application.delete_env(:cinder, key)
-      {key, value} -> Application.put_env(:cinder, key, value)
-    end)
-  end
-
-  defp with_env(key, value) do
-    saved = %{key => Application.get_env(:cinder, key)}
-    Application.put_env(:cinder, key, value)
-    on_exit(fn -> restore_env(saved) end)
   end
 
   defp stub_books_providers do
@@ -215,8 +199,8 @@ defmodule Cinder.HealthTest do
     end
 
     test "a service with no adapter configured is not configured" do
-      with_env(:audiobook_server, nil)
-      with_env(:download_clients, %{usenet: Cinder.Download.SabnzbdClientMock})
+      put_env(:audiobook_server, nil)
+      put_env(:download_clients, %{usenet: Cinder.Download.SabnzbdClientMock})
 
       assert Health.check("audiobook_server") == {:error, :not_configured}
       assert Health.check("torrent") == {:error, :not_configured}
@@ -240,7 +224,7 @@ defmodule Cinder.HealthTest do
     end
 
     test "a probe exceeding the timeout budget reports :timeout once the budget expires" do
-      with_env(:health_probe_timeout_ms, 200)
+      put_env(:health_probe_timeout_ms, 200)
       stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(10_000) end)
 
       started = System.monotonic_time(:millisecond)
@@ -258,7 +242,7 @@ defmodule Cinder.HealthTest do
     end
 
     test "a map budget applies the entry for the checked target's id, and the default elsewhere" do
-      with_env(:health_probe_timeout_ms, %{"indexer" => 200})
+      put_env(:health_probe_timeout_ms, %{"indexer" => 200})
       stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(10_000) end)
       # Past the indexer's 200 ms, so only a budget of its own lets it answer.
       stub(Cinder.Catalog.TMDBMock, :health, fn -> sleep_ok(300) end)
@@ -284,7 +268,7 @@ defmodule Cinder.HealthTest do
     end
 
     test "a migration source outside the configured map is not configured" do
-      with_env(:migration_sources, %{})
+      put_env(:migration_sources, %{})
 
       assert Health.check("radarr") == {:error, :not_configured}
     end
@@ -351,12 +335,12 @@ defmodule Cinder.HealthTest do
             {"ebook_library", :books_library_path},
             {"audiobook_library", :audiobooks_library_path}
           ] do
-        with_env(key, "/srv/probe/#{key}")
+        put_env(key, "/srv/probe/#{key}")
         assert Health.check(id) == :ok
         assert_received {:mkdir_p, path}
         assert path == "/srv/probe/#{key}"
 
-        with_env(key, "  ")
+        put_env(key, "  ")
         assert Health.check(id) == {:error, :not_configured}
       end
     end
@@ -400,9 +384,9 @@ defmodule Cinder.HealthTest do
     test "a library root check removes a probe whose create committed before the error", %{
       tmp_dir: root
     } do
-      with_env(:movies_library_path, root)
+      put_env(:movies_library_path, root)
       # The create can start the rooted Disk helper, which has the test-env subprocess bound.
-      with_env(:health_probe_timeout_ms, DiskTask.timeout_ms())
+      put_env(:health_probe_timeout_ms, DiskTask.timeout_ms())
 
       BarrierFilesystem.fail_once(%{
         operation: :write_exclusive,
@@ -463,7 +447,7 @@ defmodule Cinder.HealthTest do
     end
 
     test "a probe exceeding the timeout budget reports :timeout without holding up the others" do
-      with_env(:health_probe_timeout_ms, %{"indexer" => 200})
+      put_env(:health_probe_timeout_ms, %{"indexer" => 200})
       stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
       stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(10_000) end)
 
@@ -474,7 +458,7 @@ defmodule Cinder.HealthTest do
     end
 
     test "a map budget kills only the probe it names, and a probe it omits outlasts that budget" do
-      with_env(:health_probe_timeout_ms, %{"indexer" => 200})
+      put_env(:health_probe_timeout_ms, %{"indexer" => 200})
       parent = self()
 
       stub(Cinder.Acquisition.IndexerMock, :health, fn ->
@@ -500,7 +484,7 @@ defmodule Cinder.HealthTest do
 
     test "a probe that answers past its budget times out even behind a slower probe" do
       # tmdb's budget outlasts every wait of the conductor's.
-      with_env(:health_probe_timeout_ms, %{"indexer" => 200, "tmdb" => 30_000})
+      put_env(:health_probe_timeout_ms, %{"indexer" => 200, "tmdb" => 30_000})
       conductor = start_supervised!({Task, &answer_indexer_late/0})
 
       # Each probe answers only when the conductor says so, so no answer races a deadline.
@@ -517,7 +501,7 @@ defmodule Cinder.HealthTest do
     end
 
     test "an integer budget applies to every probe of the sweep" do
-      with_env(:health_probe_timeout_ms, 200)
+      put_env(:health_probe_timeout_ms, 200)
       stub(Cinder.Catalog.TMDBMock, :health, fn -> sleep_ok(10_000) end)
       stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(10_000) end)
 
@@ -597,7 +581,7 @@ defmodule Cinder.HealthTest do
       refute row(without_books, "ebook_library")
       refute row(without_books, "audiobook_library")
 
-      with_env(:books_library_path, "/media/books")
+      put_env(:books_library_path, "/media/books")
       with_books = Health.check_all()
 
       assert %{label: "Ebooks library", status: :ok} = ebook = row(with_books, "ebook_library")
@@ -606,7 +590,7 @@ defmodule Cinder.HealthTest do
 
     test "a download protocol with no client has no row" do
       stub_check_all_services()
-      with_env(:download_clients, %{usenet: Cinder.Download.SabnzbdClientMock})
+      put_env(:download_clients, %{usenet: Cinder.Download.SabnzbdClientMock})
 
       rows = Health.check_all()
 
@@ -672,7 +656,7 @@ defmodule Cinder.HealthTest do
 
     test "a probe exceeding the timeout budget reports :timeout without blocking other rows" do
       stub_check_all_services()
-      with_env(:health_probe_timeout_ms, %{"indexer" => 200})
+      put_env(:health_probe_timeout_ms, %{"indexer" => 200})
       stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(10_000) end)
 
       rows = timed_at_budget(&Health.check_all/0)
@@ -684,7 +668,7 @@ defmodule Cinder.HealthTest do
 
     test "a map budget names a row by its id, and a row it omits outlasts that budget, in order" do
       stub_check_all_services()
-      with_env(:health_probe_timeout_ms, %{"indexer" => 200})
+      put_env(:health_probe_timeout_ms, %{"indexer" => 200})
       stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(10_000) end)
       stub(Cinder.Catalog.TMDBMock, :health, fn -> sleep_ok(300) end)
 
@@ -700,7 +684,7 @@ defmodule Cinder.HealthTest do
 
     test "a map budget names a finding row by its id" do
       stub_check_all_services()
-      with_env(:health_probe_timeout_ms, %{"sidecar_files" => 200})
+      put_env(:health_probe_timeout_ms, %{"sidecar_files" => 200})
       path = "/library/movies/Movie (2020)/.cinder-sidecar-quarantine-slow"
 
       :ok =
@@ -719,7 +703,7 @@ defmodule Cinder.HealthTest do
 
     test "a timed-out row still names the adapter the operator picked" do
       stub_check_all_services()
-      with_env(:health_probe_timeout_ms, %{"torrent" => 200})
+      put_env(:health_probe_timeout_ms, %{"torrent" => 200})
       stub(Cinder.Download.ClientMock, :health, fn -> sleep_ok(10_000) end)
 
       assert %{status: {:error, :timeout}, adapter: "ClientMock"} =

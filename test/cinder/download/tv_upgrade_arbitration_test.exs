@@ -14,7 +14,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.Acquisition.{Language, Release}
-  alias Cinder.{Catalog, LibraryStubs}
+  alias Cinder.{Catalog, ConfigCase, LibraryStubs}
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, GrabFile, UpgradeHunter}
   alias Cinder.Download.TvPoller
   alias Cinder.Library.Upgrade
@@ -819,16 +819,8 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
   end
 
   defp start_upgrade_sweep do
-    saved = Application.get_env(:cinder, UpgradeHunter)
-    Application.put_env(:cinder, UpgradeHunter, enabled: true)
-
-    on_exit(fn ->
-      :persistent_term.erase({UpgradeHunter, :last_run})
-
-      if is_nil(saved),
-        do: Application.delete_env(:cinder, UpgradeHunter),
-        else: Application.put_env(:cinder, UpgradeHunter, saved)
-    end)
+    on_exit(fn -> :persistent_term.erase({UpgradeHunter, :last_run}) end)
+    ConfigCase.put_env(UpgradeHunter, enabled: true)
 
     start_supervised!({UpgradeHunter, interval: 60_000})
   end
@@ -991,30 +983,14 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     File.mkdir_p!(downloads)
     File.mkdir_p!(tv)
 
-    keys = [
-      :filesystem,
-      :path_policy,
-      :import_roots,
-      :explicit_import_roots,
-      :tv_library_path,
-      :move_on_import
-    ]
-
-    saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
-
-    Application.put_env(:cinder, :filesystem, Cinder.Library.Filesystem.Disk)
-    Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
-    Application.put_env(:cinder, :import_roots, [downloads])
-    Application.put_env(:cinder, :explicit_import_roots, [downloads])
-    Application.put_env(:cinder, :tv_library_path, tv)
-    Application.put_env(:cinder, :move_on_import, false)
-
-    on_exit(fn ->
-      Enum.each(saved, fn
-        {key, nil} -> Application.delete_env(:cinder, key)
-        {key, value} -> Application.put_env(:cinder, key, value)
-      end)
-    end)
+    ConfigCase.put_env(
+      filesystem: Cinder.Library.Filesystem.Disk,
+      path_policy: Cinder.Library.PathPolicy,
+      import_roots: [downloads],
+      explicit_import_roots: [downloads],
+      tv_library_path: tv,
+      move_on_import: false
+    )
 
     stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
     stub(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)

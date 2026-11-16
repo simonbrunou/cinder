@@ -49,21 +49,31 @@ defmodule Cinder.ConfigCase do
   when it was unset. For a value that is not a keyword list to merge into.
   """
   def put_env(key, value) do
-    original = Application.fetch_env(:cinder, key)
-
-    ExUnit.Callbacks.on_exit(fn ->
-      case original do
-        {:ok, original} -> Application.put_env(:cinder, key, original)
-        :error -> Application.delete_env(:cinder, key)
-      end
-    end)
-
+    restore_env_on_exit([key])
     Application.put_env(:cinder, key, value)
   end
 
   @doc "Runs `put_env/2` for each key and value in the keyword list `pairs`."
   def put_env(pairs) when is_list(pairs),
     do: Enum.each(pairs, fn {key, value} -> put_env(key, value) end)
+
+  @doc """
+  Reads each `:cinder` key in `keys` now and, when the test exits, gives it back that value,
+  `nil` included, or deletes it when it was unset. For keys the test changes some other way: a
+  settings save, `Application.delete_env/2`, a raw write inside the test.
+  """
+  def restore_env_on_exit(keys) when is_list(keys) do
+    saved = Enum.map(keys, &{&1, Application.fetch_env(:cinder, &1)})
+
+    ExUnit.Callbacks.on_exit(fn ->
+      Enum.each(saved, fn
+        {key, {:ok, value}} -> Application.put_env(:cinder, key, value)
+        {key, :error} -> Application.delete_env(:cinder, key)
+      end)
+    end)
+
+    :ok
+  end
 
   @doc """
   Stores `type` as the `media_server_type` row and returns it, for the readers of the stored type

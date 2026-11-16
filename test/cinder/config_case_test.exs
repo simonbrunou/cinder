@@ -46,6 +46,82 @@ defmodule Cinder.ConfigCaseTest do
              Keyword.merge(original, preferred_groups: ["Trusted"])
   end
 
+  # #823: the private copies these replaced read with `get_env`, so they either put `nil` back
+  # for a key that was unset or deleted a key that was set to `nil`.
+  describe "restoring :cinder env keys on exit" do
+    @unset :config_case_test_unset
+    @set :config_case_test_set
+    @set_nil :config_case_test_set_nil
+
+    # Registered first, so it runs after the test's own callbacks (ExUnit runs them last first).
+    setup do
+      Application.delete_env(:cinder, @unset)
+      Application.put_env(:cinder, @set, :before)
+      Application.put_env(:cinder, @set_nil, nil)
+      on_exit(fn -> Enum.each([@unset, @set, @set_nil], &Application.delete_env(:cinder, &1)) end)
+    end
+
+    test "put_env/2 deletes an unset key and gives a set key back its value, nil included" do
+      assert_restored_on_exit([@unset, @set, @set_nil])
+      Enum.each([@unset, @set, @set_nil], &ConfigCase.put_env(&1, :during))
+
+      assert Application.fetch_env(:cinder, @unset) == {:ok, :during}
+    end
+
+    test "put_env/1 restores each key on its own" do
+      assert_restored_on_exit([@unset, @set, @set_nil])
+      ConfigCase.put_env([{@unset, :during}, {@set, :during}, {@set_nil, :during}])
+
+      assert Application.fetch_env(:cinder, @set_nil) == {:ok, :during}
+    end
+
+    test "put_env/2 twice on one key restores the value from before the first" do
+      assert_restored_on_exit([@unset, @set])
+
+      for key <- [@unset, @set], value <- [:first, :second], do: ConfigCase.put_env(key, value)
+    end
+
+    test "restore_env_on_exit/1 restores keys the test put or deleted itself" do
+      assert_restored_on_exit([@unset, @set, @set_nil])
+      ConfigCase.restore_env_on_exit([@unset, @set, @set_nil])
+
+      Application.put_env(:cinder, @unset, :during)
+      Application.put_env(:cinder, @set, :during)
+      Application.delete_env(:cinder, @set_nil)
+    end
+
+    test "CinderWeb.ConnCase.reset_cinder_env/1 restores by the same rule" do
+      # Three of its keys in the three states, each put back by the outer restore after the test.
+      [unset, set, set_nil] = [:disk_stats_stub, :health_probe_timeout_ms, :disk_df_bin]
+      ConfigCase.restore_env_on_exit([unset, set, set_nil])
+      Application.delete_env(:cinder, unset)
+      Application.put_env(:cinder, set, :before)
+      Application.put_env(:cinder, set_nil, nil)
+
+      on_exit(fn -> assert_restored(unset, set, set_nil) end)
+      assert :ok = CinderWeb.ConnCase.reset_cinder_env(%{})
+
+      Enum.each([unset, set, set_nil], &Application.put_env(:cinder, &1, :during))
+    end
+  end
+
+  # Registers, before the helper under test does, a callback that runs after the helper's restore.
+  defp assert_restored_on_exit(keys) do
+    on_exit(fn ->
+      for key <- keys, do: assert(Application.fetch_env(:cinder, key) == expected(key))
+    end)
+  end
+
+  defp expected(:config_case_test_unset), do: :error
+  defp expected(:config_case_test_set), do: {:ok, :before}
+  defp expected(:config_case_test_set_nil), do: {:ok, nil}
+
+  defp assert_restored(unset, set, set_nil) do
+    assert Application.fetch_env(:cinder, unset) == :error
+    assert Application.fetch_env(:cinder, set) == {:ok, :before}
+    assert Application.fetch_env(:cinder, set_nil) == {:ok, nil}
+  end
+
   test "neutral_anime_policy/1 refuses groups as put_config/2 does" do
     assert_raise ArgumentError, ~r/^neutral_anime_policy\/1: preferred_groups: /, fn ->
       neutral_anime_policy(preferred_groups: ["Trusted"])

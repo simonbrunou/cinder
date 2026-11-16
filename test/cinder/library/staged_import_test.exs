@@ -16,8 +16,8 @@ defmodule Cinder.Library.StagedImportTest do
   import Mox
 
   alias Cinder.Catalog.Movie
+  alias Cinder.{ConfigCase, Repo}
   alias Cinder.Library.{ImportStage, StagedImport}
-  alias Cinder.Repo
   alias Cinder.Test.{BarrierFilesystem, DiskTask, ForeignFile}
 
   @moduletag :tmp_dir
@@ -64,37 +64,22 @@ defmodule Cinder.Library.StagedImportTest do
     File.mkdir_p!(downloads)
     File.mkdir_p!(library)
 
-    keys = [
-      :filesystem,
-      :path_policy,
-      :import_roots,
-      :explicit_import_roots,
-      :movies_library_path
-    ]
+    ConfigCase.put_env(
+      filesystem: BarrierFilesystem,
+      path_policy: Cinder.Library.PathPolicy,
+      import_roots: [downloads],
+      explicit_import_roots: [downloads],
+      # A configured library root, so `backing_identity/1` answers for destinations (#584).
+      movies_library_path: library
+    )
 
-    saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
-
-    Application.put_env(:cinder, :filesystem, BarrierFilesystem)
-    Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
-    Application.put_env(:cinder, :import_roots, [downloads])
-    Application.put_env(:cinder, :explicit_import_roots, [downloads])
-    # A configured library root, so `backing_identity/1` answers for destinations (#584).
-    Application.put_env(:cinder, :movies_library_path, library)
-
-    on_exit(fn ->
-      Enum.each(saved, fn
-        {key, nil} -> Application.delete_env(:cinder, key)
-        {key, value} -> Application.put_env(:cinder, key, value)
-      end)
-
-      for key <- [
-            :filesystem_barrier,
-            :filesystem_failure,
-            :exclusive_copy_file_module,
-            :import_stage_claim_barrier
-          ],
-          do: Application.delete_env(:cinder, key)
-    end)
+    # The tests below arm these with raw writes.
+    ConfigCase.restore_env_on_exit([
+      :filesystem_barrier,
+      :filesystem_failure,
+      :exclusive_copy_file_module,
+      :import_stage_claim_barrier
+    ])
 
     {:ok, downloads: downloads, library: library}
   end

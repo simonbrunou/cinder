@@ -97,20 +97,10 @@ defmodule CinderWeb.ConnCase do
 
   @doc """
   Setup helper that snapshots the service-config `:cinder` env keys and restores
-  them on exit — for tests that save settings (mutating global Application env).
+  them on exit through `Cinder.ConfigCase.restore_env_on_exit/1`, for tests that save settings
+  (mutating global Application env).
 
       setup :reset_cinder_env
   """
-  def reset_cinder_env(_context) do
-    saved = Map.new(@reset_env_keys, fn k -> {k, Application.get_env(:cinder, k)} end)
-
-    ExUnit.Callbacks.on_exit(fn ->
-      Enum.each(saved, fn
-        {k, nil} -> Application.delete_env(:cinder, k)
-        {k, v} -> Application.put_env(:cinder, k, v)
-      end)
-    end)
-
-    :ok
-  end
+  def reset_cinder_env(_context), do: Cinder.ConfigCase.restore_env_on_exit(@reset_env_keys)
 end
