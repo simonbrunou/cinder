@@ -14,7 +14,7 @@ defmodule CinderWeb.SetupLive do
   import CinderWeb.SettingsComponents
 
   alias Cinder.{Health, Settings}
-  alias CinderWeb.SettingsLabels
+  alias CinderWeb.DomainLabels
 
   # Every probe target the gate reads, checked on "Save & validate".
   defp setup_targets, do: Health.targets(setup: :required) ++ Health.targets(setup: :any)
@@ -119,7 +119,7 @@ defmodule CinderWeb.SetupLive do
       for target <- Health.targets(setup: :required) do
         %{
           id: "setup-check-#{target.id}",
-          label: SettingsLabels.t(target.label),
+          label: DomainLabels.t(target.label),
           status: health[target.id],
           hint: nil
         }
@@ -129,7 +129,7 @@ defmodule CinderWeb.SetupLive do
       for [%{group: group} | _] = targets <- any_groups() do
         %{
           id: "setup-check-group-#{group}",
-          label: SettingsLabels.t(Keyword.fetch!(Settings.groups(), group)),
+          label: DomainLabels.t(Keyword.fetch!(Settings.groups(), group)),
           status: any_status(targets, health),
           hint: gettext("connect at least one")
         }
@@ -140,7 +140,7 @@ defmodule CinderWeb.SetupLive do
 
   defp setup_steps do
     for {{group, label}, number} <- Enum.with_index(setup_groups(), 1),
-        do: %{number: number, label: SettingsLabels.t(label), detail: step_detail(group)}
+        do: %{number: number, label: DomainLabels.t(label), detail: step_detail(group)}
   end
 
   defp step_detail(:tmdb), do: gettext("Add your metadata token.")

@@ -294,7 +294,7 @@ row with no further auth check. Once the row exists, the pipeline grabs it.
 ## Translation stays in the web layer
 
 The domain (`lib/cinder/`) emits a code or an English msgid, and `CinderWeb` translates it at
-render time: `CinderWeb.SettingsLabels` for settings and health labels, `CinderWeb.LiveHelpers`
+render time: `CinderWeb.DomainLabels` for settings and health labels, `CinderWeb.LiveHelpers`
 for reasons such as `book_hold_reason/1`. Beyond translation, a domain module references no
 `CinderWeb` module at all. `@allowed_refs` in `test/code_health_test.exs` lists each exception
 with its reason; the test fails on a reference it does not list, and on an entry nothing uses.

@@ -11,7 +11,7 @@ defmodule Cinder.Notifier.Email do
   testable), when the user opted out (`notify_email: false`), or when the address isn't
   confirmed. `Cinder.Notifier.notify/1` catches on top of this too, matching Log/Discord.
 
-  Deliberate exception to "the domain stays gettext-free" (`CinderWeb.SettingsLabels`):
+  Deliberate exception to "the domain stays gettext-free" (`CinderWeb.DomainLabels`):
   composing the email body IS the only render step there is for it, so this module calls
   gettext directly — always in the RECIPIENT's stored `locale`
   (`Gettext.with_locale/3`, scoped to just the composition), never the calling process'

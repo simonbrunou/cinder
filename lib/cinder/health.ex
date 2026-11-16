@@ -228,7 +228,7 @@ defmodule Cinder.Health do
 
   @doc """
   Every English string `targets/0` and `check_all/0` can hand the view.
-  `CinderWeb.SettingsLabels.known/0` registers them for translation.
+  `CinderWeb.DomainLabels.known/0` registers them for translation.
   """
   def msgids,
     do:

@@ -5,7 +5,7 @@ defmodule Cinder.Settings.Registry do
   `Cinder.LibraryKind`.
 
   A plain new setting is one entry here plus its French msgstr. `msgids/0` hands every English
-  string the definitions can emit to `CinderWeb.SettingsLabels`, which registers them for
+  string the definitions can emit to `CinderWeb.DomainLabels`, which registers them for
   extraction, so nothing else needs editing.
   """
 
@@ -664,7 +664,7 @@ defmodule Cinder.Settings.Registry do
 
   @doc """
   Every English string the definitions, groups, client options and library kinds can hand the
-  view. `CinderWeb.SettingsLabels.known/0` expands one `gettext_noop/1` per entry.
+  view. `CinderWeb.DomainLabels.known/0` expands one `gettext_noop/1` per entry.
   """
   def msgids, do: @msgids
 

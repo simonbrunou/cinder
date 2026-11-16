@@ -41,12 +41,12 @@ defmodule CinderWeb.NoHardcodedStringsTest do
              Enum.join(offenders, "\n")
   end
 
-  # The Cinder.Settings strings render via dynamic {SettingsLabels.t(...)}, so the HEEx scan can't
-  # see into them; CinderWeb.SettingsLabels.t/1 translates them at render and known/0 expands one
+  # The Cinder.Settings strings render via dynamic {DomainLabels.t(...)}, so the HEEx scan can't
+  # see into them; CinderWeb.DomainLabels.t/1 translates them at render and known/0 expands one
   # gettext_noop/1 per string for extraction. A string the domain emits but known/0 omits renders
   # untranslated, so assert every one a setting definition, group, client option, library kind or
   # Cinder.Health probe target / dashboard row can hand the view is covered.
-  test "every Cinder.Settings and Cinder.Health label is registered for translation in SettingsLabels" do
+  test "every Cinder.Settings and Cinder.Health label is registered in DomainLabels" do
     alias Cinder.Settings
     alias Cinder.Settings.Definition
 
@@ -67,11 +67,11 @@ defmodule CinderWeb.NoHardcodedStringsTest do
          Cinder.Health.msgids())
       |> MapSet.new()
 
-    missing = MapSet.difference(emitted, MapSet.new(CinderWeb.SettingsLabels.known()))
+    missing = MapSet.difference(emitted, MapSet.new(CinderWeb.DomainLabels.known()))
 
     assert MapSet.to_list(missing) == [],
-           "Settings labels not registered in CinderWeb.SettingsLabels.known/0 (they would render " <>
-             "untranslated):\n" <> Enum.join(MapSet.to_list(missing), "\n")
+           "Settings and Health labels not registered in CinderWeb.DomainLabels.known/0 (they " <>
+             "would render untranslated):\n" <> Enum.join(MapSet.to_list(missing), "\n")
   end
 
   defp expand(nil), do: []

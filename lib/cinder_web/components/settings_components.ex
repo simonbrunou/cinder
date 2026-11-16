@@ -13,7 +13,7 @@ defmodule CinderWeb.SettingsComponents do
 
   alias Cinder.{Health, LibraryKind, Settings}
   alias Cinder.Settings.Definition
-  alias CinderWeb.SettingsLabels
+  alias CinderWeb.DomainLabels
 
   @doc """
   The flash message for a rejected size-band save (`Settings.save_form/1` returning
@@ -21,7 +21,7 @@ defmodule CinderWeb.SettingsComponents do
   """
   def invalid_band_message(invalid_keys) do
     gettext("Not saved. Check: %{fields}.",
-      fields: Enum.map_join(invalid_keys, ", ", &SettingsLabels.t(Settings.describe(&1).label))
+      fields: Enum.map_join(invalid_keys, ", ", &DomainLabels.t(Settings.describe(&1).label))
     )
   end
 
@@ -64,7 +64,7 @@ defmodule CinderWeb.SettingsComponents do
         >
           {@setup_steps[group]}
         </span>
-        <span>{SettingsLabels.t(label)}</span>
+        <span>{DomainLabels.t(label)}</span>
         <span
           :if={@show_setup_guidance && is_nil(@setup_steps[group])}
           class="badge badge-ghost badge-sm font-normal"
@@ -94,7 +94,7 @@ defmodule CinderWeb.SettingsComponents do
         <div :if={group == :download} class="mb-3 grid gap-3 sm:grid-cols-2">
           <div :for={choice <- Settings.download_client_choices()} class="form-control">
             <label class="label" for={choice.key}>
-              <span class="label-text">{SettingsLabels.t(choice.label)}</span>
+              <span class="label-text">{DomainLabels.t(choice.label)}</span>
             </label>
             <select
               id={choice.key}
@@ -108,7 +108,7 @@ defmodule CinderWeb.SettingsComponents do
                 value={option.value}
                 selected={@form.values[choice.key] == option.value}
               >
-                {SettingsLabels.t(option.label)}
+                {DomainLabels.t(option.label)}
               </option>
             </select>
             <.field_error :if={invalid?(@form, choice.key)} field={choice.key} />
@@ -154,7 +154,7 @@ defmodule CinderWeb.SettingsComponents do
             <div class="form-control">
               <label class="label" for={Settings.kind_key(kind, :library_path)}>
                 <span class="label-text">{gettext("%{kind} library folder",
-                  kind: SettingsLabels.t(kind_label)
+                  kind: DomainLabels.t(kind_label)
                 )}</span>
               </label>
               <input
@@ -188,7 +188,7 @@ defmodule CinderWeb.SettingsComponents do
               <label class="label" for={Settings.kind_key(kind, :anime_library_path)}>
                 <span class="label-text">
                   {gettext("Anime %{kind} library folder (optional)",
-                    kind: SettingsLabels.t(kind_label)
+                    kind: DomainLabels.t(kind_label)
                   )}
                 </span>
               </label>
@@ -198,7 +198,7 @@ defmodule CinderWeb.SettingsComponents do
                 name={Settings.kind_key(kind, :anime_library_path)}
                 value={@form.values[Settings.kind_key(kind, :anime_library_path)]}
                 placeholder={
-                  gettext("Uses the standard %{kind} folder", kind: SettingsLabels.t(kind_label))
+                  gettext("Uses the standard %{kind} folder", kind: DomainLabels.t(kind_label))
                 }
                 autocomplete="off"
                 aria-invalid={invalid?(@form, Settings.kind_key(kind, :anime_library_path)) && "true"}
@@ -280,7 +280,7 @@ defmodule CinderWeb.SettingsComponents do
             :for={%{kind: kind, label: kind_label, video?: true} <- Settings.library_kinds()}
             class="space-y-2"
           >
-            <p class="text-sm font-medium">{SettingsLabels.t(kind_label)}</p>
+            <p class="text-sm font-medium">{DomainLabels.t(kind_label)}</p>
             <div class="form-control">
               <label class="label" for={Settings.kind_key(kind, :min_size)}>
                 <span class="label-text">{gettext("Min size (GB)")}</span>
@@ -484,7 +484,7 @@ defmodule CinderWeb.SettingsComponents do
               phx-value-target={target.id}
               phx-disable-with={gettext("Testing…")}
             >
-              {gettext("Test %{service}", service: SettingsLabels.t(target.label))}
+              {gettext("Test %{service}", service: DomainLabels.t(target.label))}
             </.button>
             <.test_badge :if={@health[target.id]} result={@health[target.id]} />
           </div>
@@ -721,7 +721,7 @@ defmodule CinderWeb.SettingsComponents do
     ~H"""
     <div class="form-control mb-2">
       <label class="label" for={@field.key}>
-        <span class="label-text">{SettingsLabels.t(@field.label)}</span>
+        <span class="label-text">{DomainLabels.t(@field.label)}</span>
       </label>
 
       <input
@@ -762,7 +762,7 @@ defmodule CinderWeb.SettingsComponents do
         id={"#{@field.key}-help"}
         class="mt-1 text-xs opacity-70"
       >
-        {SettingsLabels.t(@field.help)}
+        {DomainLabels.t(@field.help)}
       </p>
 
       <div :if={@secret}>
@@ -815,7 +815,7 @@ defmodule CinderWeb.SettingsComponents do
   end
 
   # The rejection message comes from the key's setting definition, never from its name.
-  defp invalid_field_message(key), do: SettingsLabels.t(Settings.describe(key).message)
+  defp invalid_field_message(key), do: DomainLabels.t(Settings.describe(key).message)
 
   defp secret_placeholder(field, form) do
     cond do

@@ -56,7 +56,7 @@ defmodule Cinder.Settings do
 
   @doc """
   How `key` reads to the operator: the group its disclosure is, its self-describing label (an
-  English msgid or `{template, bindings}`, translated by `CinderWeb.SettingsLabels.t/1`) and the
+  English msgid or `{template, bindings}`, translated by `CinderWeb.DomainLabels.t/1`) and the
   message a rejected value shows. An unregistered key describes as itself, with no group.
   """
   @spec describe(String.t()) :: %{

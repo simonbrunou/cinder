@@ -18,7 +18,7 @@ defmodule CinderWeb.SettingsLive do
 
   alias Cinder.{ApiKey, Catalog, DatabaseBackup, Health, Settings}
   alias Cinder.Catalog.UpgradeHunter
-  alias CinderWeb.SettingsLabels
+  alias CinderWeb.DomainLabels
 
   @impl true
   def mount(params, _session, socket) do
@@ -192,7 +192,7 @@ defmodule CinderWeb.SettingsLive do
                 Enum.map_join(
                   @undecryptable_secrets,
                   ", ",
-                  &SettingsLabels.t(Settings.describe(&1).label)
+                  &DomainLabels.t(Settings.describe(&1).label)
                 )
             )}
           </p>

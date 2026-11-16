@@ -21,7 +21,7 @@ defmodule CinderWeb.DashboardLive do
   alias Cinder.Download.{Poller, TvPoller}
   alias Cinder.Library.BoundedWalk
   alias Cinder.Subtitles.Sweeper
-  alias CinderWeb.SettingsLabels
+  alias CinderWeb.DomainLabels
 
   require Logger
 
@@ -641,14 +641,14 @@ defmodule CinderWeb.DashboardLive do
             >
               <li :for={h <- @health} class="flex items-center justify-between gap-3 px-4 py-2.5">
                 <div class="min-w-0">
-                  <span>{SettingsLabels.t(h.label)}</span>
+                  <span>{DomainLabels.t(h.label)}</span>
                   <span :if={h.adapter} class="text-sm text-base-content/70">({h.adapter})</span>
                   <p
                     :if={h.help}
                     id={"dash-health-help-#{h.id}"}
                     class="text-xs text-base-content/70 break-words"
                   >
-                    {SettingsLabels.t(h.help)}
+                    {DomainLabels.t(h.help)}
                   </p>
                   <p :if={match?({:error, _}, h.status)} class="text-xs text-error break-words">
                     {health_reason(elem(h.status, 1))}

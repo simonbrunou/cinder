@@ -1,10 +1,10 @@
-defmodule CinderWeb.SettingsLabels do
+defmodule CinderWeb.DomainLabels do
   @moduledoc """
-  Translates the user-facing strings that originate in the `Cinder.Settings` domain module
+  Translates the user-facing strings that two gettext-free domain modules emit: `Cinder.Settings`
   (setting labels, rejection messages, help text, group headers, download-client options and
-  library-kind names) and in `Cinder.Health` (probe-target and finding labels). The domain stays
-  gettext-free: it emits stable English strings that double as the gettext msgids, and this
-  web-layer helper translates them at render time via `t/1`.
+  library-kind names) and `Cinder.Health` (probe-target and finding labels). The domain emits
+  stable English strings that double as the gettext msgids, and this web-layer helper translates
+  them at render time via `t/1`.
 
   `known/0` registers every string `Cinder.Settings.Registry.msgids/0` and
   `Cinder.Health.msgids/0` list. The calls are dynamic, so the extractor can't see the msgids on
@@ -15,8 +15,9 @@ defmodule CinderWeb.SettingsLabels do
   use Gettext, backend: CinderWeb.Gettext
 
   @doc """
-  Translate a `Cinder.Settings` English label to the active locale (passthrough if unknown). A
-  `{template, bindings}` label translates the template and every binding value.
+  Translate a `Cinder.Settings` or `Cinder.Health` English label to the active locale
+  (passthrough if unknown). A `{template, bindings}` label translates the template and every
+  binding value.
   """
   def t({template, bindings}) when is_binary(template) do
     Gettext.gettext(CinderWeb.Gettext, template, Map.new(bindings, fn {k, v} -> {k, t(v)} end))
@@ -29,6 +30,6 @@ defmodule CinderWeb.SettingsLabels do
         do: quote(do: gettext_noop(unquote(msgid)))
   end
 
-  @doc "Every string the settings domain can emit, registered for extraction."
+  @doc "Every string the settings and health domains can emit, registered for extraction."
   def known, do: registered()
 end

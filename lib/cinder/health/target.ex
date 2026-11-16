@@ -7,7 +7,7 @@ defmodule Cinder.Health.Target do
   - `id`: the stable identity. It is the Test button's `phx-value-target`, the key of a
     LiveView's health map and the dashboard row's DOM id.
   - `group`: the `Cinder.Settings.Registry.groups/0` group whose Test button checks it.
-  - `label`: an English msgid, the same on every surface; `CinderWeb.SettingsLabels.t/1`
+  - `label`: an English msgid, the same on every surface; `CinderWeb.DomainLabels.t/1`
     translates it.
   - `probe`: plain data naming what `Cinder.Health.check/1` calls, resolved at check time.
   - `setup`: `:required` (must be reachable to finish setup), `:any` (at least one target of
