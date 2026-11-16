@@ -7,7 +7,7 @@ defmodule Cinder.Library.Sidecars do
   """
   require Logger
 
-  alias Cinder.Acquisition.Parser
+  alias Cinder.Acquisition.Language
   alias Cinder.Library.BoundedWalk
   alias Cinder.Library.Filesystem
   alias Cinder.Library.Filesystem.RenameIdentity
@@ -28,13 +28,11 @@ defmodule Cinder.Library.Sidecars do
   # in the conflict loses nothing.
   @ambiguous_flags ~w(hi)
 
-  # iso-alias -> iso1 (e.g. "fra"/"fre"/"fr" -> "fr"), plus full-word names.
-  @aliases for {iso1, codes} <- Parser.audio_codes(), code <- codes, into: %{}, do: {code, iso1}
-  @names for {iso1, tag} <- Parser.language_tags(), into: %{}, do: {String.downcase(tag), iso1}
-
   @doc """
   ISO code from a sidecar filename; flags stripped; unknown/absent -> "und". A language with a
-  region or script subtag reads as its base language: `fr-FR` reads as `fr`.
+  region or script subtag reads as its base language: `fr-FR` reads as `fr`. A code or tag name
+  reads as `Cinder.Acquisition.Language.normalize/1` gives it, so the generic Chinese `chi` and
+  `zho` read as `zh` (#1343).
   """
   def language(filename), do: filename |> classify() |> elem(0)
 
@@ -43,6 +41,15 @@ defmodule Cinder.Library.Sidecars do
   sidecar filename, in name order; a `hi` that `language/1` reads as Hindi is not one.
   """
   def flags(filename), do: filename |> classify() |> elem(1)
+
+  @doc """
+  The language code as the filename writes it, downcased and without its region or script
+  subtag, or `nil` when `language/1` reads `und`: `M.chi-TW.srt` gives `"chi"`. A fetch matches
+  it against a wanted code with `Cinder.Acquisition.Language.raw_track_satisfies?/2`, which lets
+  a wanted Cantonese `cn` take a generic Chinese `chi` or `zho` file that `language/1` reads as
+  `zh` (#1343).
+  """
+  def written_language(filename), do: filename |> classify() |> elem(2)
 
   # One decision for both readings, so a `hi` consumed as the language can't ALSO be re-emitted as
   # a flag by link/2 — which would name a Hindi sidecar `<stem>.hi.hi.srt`.
@@ -58,7 +65,7 @@ defmodule Cinder.Library.Sidecars do
 
     case resolve(tokens, @flags) do
       nil -> ambiguous_reading(tokens, flags)
-      language -> {language, flags}
+      {language, code} -> {language, flags, code}
     end
   end
 
@@ -70,7 +77,7 @@ defmodule Cinder.Library.Sidecars do
   defp trailing_flags(tokens) do
     tokens
     |> Enum.reverse()
-    |> Enum.take_while(&(&1 in @flags or language_code(&1) != nil))
+    |> Enum.take_while(&(&1 in @flags or read_token(&1) != nil))
     |> Enum.filter(&(&1 in @flags))
     |> Enum.reverse()
   end
@@ -81,28 +88,34 @@ defmodule Cinder.Library.Sidecars do
   # trailing run and `flags` holds it.
   defp ambiguous_reading(tokens, flags) do
     case resolve(tokens, @flags -- @ambiguous_flags) do
-      nil -> {"und", flags}
-      language -> {language, flags -- @ambiguous_flags}
+      nil -> {"und", flags, nil}
+      {language, code} -> {language, flags -- @ambiguous_flags, code}
     end
   end
 
   defp resolve(tokens, strip) do
     case tokens |> Enum.reject(&(&1 in strip)) |> List.last() do
       nil -> nil
-      token -> language_code(token)
+      token -> read_token(token)
     end
   end
 
-  defp language_code(token), do: base_language(token) || regional_language(token)
+  # `{language, code}`: the language the token reads as, and the code it writes for it.
+  defp read_token(token), do: code_reading(token) || regional_language(token)
 
-  defp base_language(token), do: @aliases[token] || @names[token]
+  defp code_reading(code) do
+    case Language.lookup(code) do
+      nil -> nil
+      language -> {language, code}
+    end
+  end
 
   # A language with one region or script subtag, joined by `-` or `_` (`fr-FR`, `pt_BR`,
   # `es-419`, `zh-Hant`), reads as its base language (#1309). The subtag is 2 letters, 3 digits
   # or 4 letters, so a release tag such as `x264-GRP` or `WEB-DL` stays no language.
   defp regional_language(token) do
     case Regex.run(~r/\A([^-_]+)[-_](?:[a-z]{2}|[0-9]{3}|[a-z]{4})\z/, token) do
-      [_token, base] -> base_language(base)
+      [_token, base] -> code_reading(base)
       nil -> nil
     end
   end

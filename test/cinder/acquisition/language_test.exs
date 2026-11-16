@@ -1,7 +1,7 @@
 defmodule Cinder.Acquisition.LanguageTest do
   use ExUnit.Case, async: true
 
-  alias Cinder.Acquisition.{Language, Release}
+  alias Cinder.Acquisition.{Language, Parser, Release}
 
   defp rel(language), do: struct(%Release{title: "fixture"}, language: language)
 
@@ -130,6 +130,38 @@ defmodule Cinder.Acquisition.LanguageTest do
 
     test "a full-name fallback still cannot let a Mandarin tag satisfy a cn (Cantonese) target" do
       refute Language.raw_track_satisfies?("cn", "Chinese")
+    end
+
+    # #1343: a wanted `cn` takes a generic Chinese sidecar through this tolerance, so it must
+    # accept a code of another language only for `cn` with `chi` or `zho`.
+    test "a code satisfies a target it does not normalize to only for cn with chi or zho" do
+      codes =
+        Enum.uniq(
+          Enum.flat_map(Parser.audio_codes(), fn {code, aliases} -> [code | aliases] end) ++
+            Enum.map(Parser.language_tags(), fn {_code, tag} -> String.downcase(tag) end)
+        )
+
+      tolerated =
+        for target <- Map.keys(Parser.audio_codes()),
+            code <- codes,
+            Language.normalize(code) != target,
+            Language.raw_track_satisfies?(target, code),
+            do: {target, code}
+
+      assert Enum.sort(tolerated) == [{"cn", "chi"}, {"cn", "zho"}]
+    end
+  end
+
+  describe "lookup/1" do
+    test "reads a registry code or tag name as normalize/1 does, and nil otherwise" do
+      assert Language.lookup("fre") == "fr"
+      assert Language.lookup("FRENCH") == "fr"
+      assert Language.lookup("chi") == "zh"
+      assert Language.lookup("zho") == "zh"
+      assert Language.lookup("yue") == "cn"
+      assert Language.lookup("cantonese") == "cn"
+      assert Language.lookup("eo") == nil
+      assert Language.lookup(" fr") == nil
     end
   end
 

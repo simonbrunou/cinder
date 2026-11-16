@@ -176,6 +176,17 @@ defmodule Cinder.Library.ImportedQualityTest do
       imported_sidecar_subtitles: ["fr"]
     }
 
+    # #1343: a generic Chinese sidecar was recorded as Cantonese `cn`.
+    test "a placed file records a download's generic Chinese sidecar as zh", ctx do
+      File.rm!(Path.rootname(ctx.source) <> ".fr.srt")
+      File.write!(Path.rootname(ctx.source) <> ".chi.srt", "1")
+
+      assert ImportedQuality.for_outcome(@incoming, :placed, @recorded,
+               dest: ctx.dest,
+               sidecars_from: ctx.source
+             ) == %{@incoming | sidecar_subtitles: ["zh"]}
+    end
+
     test "a placed file records the incoming quality and its download's sidecars", ctx do
       for outcome <- [:placed, :replaced] do
         assert ImportedQuality.for_outcome(@incoming, outcome, @recorded,

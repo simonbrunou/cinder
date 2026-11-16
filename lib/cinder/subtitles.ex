@@ -632,11 +632,18 @@ defmodule Cinder.Subtitles do
   # text, so its part before the first `-` or `_` is normalized to the ISO 639-1 code that
   # `Sidecars.language/1` reads, which ignores a subtag too: wanted `fra` or `pt-br` takes
   # `M.fre.srt` or `M.pt-PT.srt`. A sidecar whose name holds no language reads as `und`, which no
-  # wanted language normalizes to unless it is `und` itself.
-  defp in_language?({_path, source_language, _flags}, language) do
+  # wanted language normalizes to unless it is `und` itself. A generic Chinese `chi` or `zho` file
+  # reads as `zh`, yet a wanted Cantonese `cn` takes it too, as it takes such an embedded track
+  # (`Language.raw_track_satisfies?/2`), while it still refuses an explicit `zh` file (#1343).
+  defp in_language?({path, source_language, _flags}, language) do
     [base | _subtag] = String.split(language, ["-", "_"], parts: 2)
-    Language.normalize(base) == source_language
+
+    Language.normalize(base) == source_language or
+      tolerated?(base, Sidecars.written_language(path))
   end
+
+  defp tolerated?(_base, nil), do: false
+  defp tolerated?(base, code), do: Language.raw_track_satisfies?(base, code)
 
   # The first sidecar in listing order that is in another language and reads, passes the timing
   # check and parses (#1270). One in the wanted language is left out: the copy passed it over, and

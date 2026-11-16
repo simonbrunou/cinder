@@ -5,6 +5,8 @@ defmodule Cinder.Library.SidecarsTest do
   import Mox
   setup :verify_on_exit!
 
+  alias Cinder.Acquisition.Language
+  alias Cinder.Acquisition.Parser
   alias Cinder.Library.FilesystemMock
   alias Cinder.Library.SidecarQuarantine
   alias Cinder.Library.Sidecars
@@ -188,6 +190,62 @@ defmodule Cinder.Library.SidecarsTest do
     end
   end
 
+  # #1343: `Parser.audio_codes/0` lists the generic Chinese `chi` and `zho` under both `zh` and
+  # Cantonese `cn`, and the module's own map kept `cn`, unlike `Language.normalize/1`.
+  test "language/1 reads a generic Chinese code as zh, and Cantonese's own codes as cn" do
+    for {name, language} <- [
+          {"M.chi.srt", "zh"},
+          {"M.zho.srt", "zh"},
+          {"M.CHI.srt", "zh"},
+          {"M.chi-TW.srt", "zh"},
+          {"M.zho_HK.srt", "zh"},
+          {"M.chi.forced.srt", "zh"},
+          {"M.zh.srt", "zh"},
+          {"M.cmn.srt", "zh"},
+          {"M.chinese.srt", "zh"},
+          {"M.yue.srt", "cn"},
+          {"M.cn.srt", "cn"},
+          {"M.cantonese.srt", "cn"}
+        ] do
+      assert {name, Sidecars.language(name)} == {name, language}
+    end
+  end
+
+  test "language/1 reads every registry code and tag name as Language.normalize/1 does" do
+    codes =
+      Enum.uniq(
+        Enum.flat_map(Parser.audio_codes(), fn {code, aliases} -> [code | aliases] end) ++
+          Enum.map(Parser.language_tags(), fn {_code, tag} -> String.downcase(tag) end)
+      )
+
+    mismatches =
+      for code <- codes,
+          reading = Sidecars.language("M.#{code}.srt"),
+          reading != Language.normalize(code),
+          do: {code, reading, Language.normalize(code)}
+
+    assert mismatches == []
+  end
+
+  test "written_language/1 gives the code as written, without its subtag, or nil for und" do
+    for {name, code} <- [
+          {"M.chi.srt", "chi"},
+          {"M.ZHO.srt", "zho"},
+          {"M.chi-TW.srt", "chi"},
+          {"M.zho_HK.forced.srt", "zho"},
+          {"M.fr-FR.srt", "fr"},
+          {"M.French.srt", "french"},
+          {"M.hi.srt", "hi"},
+          {"M.fr.hi.srt", "fr"},
+          {"M.srt", nil},
+          {"M.eo.srt", nil},
+          {"M.forced.srt", nil},
+          {"M.x264-GRP.srt", nil}
+        ] do
+      assert {name, Sidecars.written_language(name)} == {name, code}
+    end
+  end
+
   for {name, reading} <- [
         {"M.pt-BR.sdh.srt", {"pt", ["sdh"]}},
         {"M.en-US.forced.srt", {"en", ["forced"]}},
@@ -281,6 +339,21 @@ defmodule Cinder.Library.SidecarsTest do
     expect(FilesystemMock, :ln, fn ^portuguese_src, ^portuguese_dest -> :ok end)
 
     assert Sidecars.link(src, dest) == [french_dest, portuguese_dest]
+  end
+
+  # #1343: a generic Chinese sidecar was placed as Cantonese `<dest stem>.cn.srt`.
+  test "link/2 places a generic Chinese sidecar as zh" do
+    dir = "/dl/Movie (2020)"
+    src = "#{dir}/Movie (2020).mkv"
+    dest = "/lib/Movie (2020)/Movie (2020).mkv"
+    chinese_src = "#{dir}/Movie (2020).chi.srt"
+    chinese_dest = "/lib/Movie (2020)/Movie (2020).zh.srt"
+
+    expect(FilesystemMock, :dir?, fn ^dir -> true end)
+    expect(FilesystemMock, :find_files, fn ^dir -> {:ok, [{src, 900}, {chinese_src, 10}]} end)
+    expect(FilesystemMock, :ln, fn ^chinese_src, ^chinese_dest -> :ok end)
+
+    assert Sidecars.link(src, dest) == [chinese_dest]
   end
 
   test "files/1 requires a separator boundary so an unpadded E10 sidecar isn't matched to E1" do
@@ -394,6 +467,26 @@ defmodule Cinder.Library.SidecarsTest do
       end)
 
       :ok
+    end
+
+    # #1343: a generic Chinese file now takes the name a file named as Chinese takes, so a
+    # download holding both places only one of them; the other's link finds the name taken.
+    @tag :tmp_dir
+    test "link/2 places one of a generic Chinese and a zh sidecar as zh", %{tmp_dir: tmp} do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      video = Path.join(release, "Movie.mkv")
+      dest = Path.join(movies, "Movie/Movie.mkv")
+      zh_dest = Path.rootname(dest) <> ".zh.srt"
+      File.write!(video, "video")
+      File.write!(Path.join(release, "Movie.zh.srt"), "zh")
+      File.write!(Path.join(release, "Movie.chi.srt"), "chi")
+      File.mkdir_p!(Path.dirname(dest))
+
+      log = capture_log(fn -> assert Sidecars.link(video, dest) == [zh_dest] end)
+
+      assert File.read!(zh_dest) in ["zh", "chi"]
+      assert File.ls!(Path.dirname(dest)) |> Enum.sort() == ["Movie.zh.srt"]
+      assert log =~ "sidecar link rejected: :eexist"
     end
 
     @tag :tmp_dir

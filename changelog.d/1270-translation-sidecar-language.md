@@ -4,9 +4,11 @@
   over for the next one as a translation source (#1270).** A file's name counts as a wanted
   language when Cinder reads the same language from the name and from the code set for it, as
   #1309 describes: with French set as `fr`, `fra` or `french`, `Movie.fre.srt` counts as French.
+  With Cantonese set as `cn`, `yue` or `cantonese`, a name with a generic Chinese code, such as
+  `Movie.chi.srt`, counts as Cantonese too, though Cinder reads it as Chinese (#1343).
   With a LibreTranslate URL set, Cinder can fill a
   missing subtitle by translating a subtitle file beside the video. It does so only when it has
-  found none whose name it reads as that language that it can copy. The translation took the first
+  found none whose name counts as that language that it can copy. The translation took the first
   `.srt` file listed beside the video that was neither forced nor the subtitle being filled,
   whatever its language. That could be the very file the copy had just skipped: when the copy
   could not read it but the translation could, Cinder wrote it as a translation into its own
@@ -15,8 +17,8 @@
   that first file for every wanted language, so a file named as German, such as `Movie.deu.srt`,
   translated into French could then be translated into German. When it looks for a file to
   translate, Cinder now picks, for each wanted language, the first `.srt` file listed that is
-  neither forced nor the subtitle being filled, whose name Cinder does not read as that language,
-  and that it can read, that passes the timing check and that parses. A file whose name holds no
+  neither forced nor the subtitle being filled, whose name does not count as that language, and
+  that it can read, that passes the timing check and that parses. A file whose name holds no
   language Cinder recognizes, such as `Movie.srt`, can still be translated into any wanted
   language, whatever language it holds. Cinder does not rewrite a subtitle it translated earlier
   from a file in its own language.

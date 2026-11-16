@@ -1656,7 +1656,18 @@ defmodule Cinder.SubtitlesTest do
           {"pt-br", "M.pt-PT.srt"},
           {"pt-br", "M.pt-BR.srt"},
           {"pt_BR", "M.pt-BR.srt"},
-          {"zh-hant", "M.zh.srt"}
+          {"zh-hant", "M.zh.srt"},
+          # #1343: a generic Chinese file reads as `zh`, and a wanted Cantonese `cn` takes it too.
+          {"zh", "M.chi.srt"},
+          {"zh", "M.zho.srt"},
+          {"cn", "M.chi.srt"},
+          {"cn", "M.zho.srt"},
+          {"cn", "M.chi-TW.srt"},
+          {"cn", "M.zho_HK.srt"},
+          {"yue", "M.chi.srt"},
+          {"cantonese", "M.zho.srt"},
+          # A library copy named `.cn.srt` still counts as Cantonese.
+          {"yue", "M.cn.srt"}
         ] do
       test "copies a lone #{name} for wanted #{wanted} without translating it", %{video: video} do
         ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: unquote(wanted))
@@ -1671,6 +1682,46 @@ defmodule Cinder.SubtitlesTest do
         assert File.read!(Subtitles.sidecar_path(video, language)) == @srt
         assert %{tracks: %{^language => %{origin: "translated"}}} = Manifest.read(video)
       end
+    end
+
+    # #1343: the `cn` tolerance covers only the generic codes, so a file that names Mandarin or
+    # Chinese stays a translation source for Cantonese, and a Cantonese file one for Chinese.
+    for {wanted, name} <- [
+          {"cn", "M.zh.srt"},
+          {"cn", "M.cmn.srt"},
+          {"cn", "M.chinese.srt"},
+          {"yue", "M.zh.srt"},
+          {"zh", "M.yue.srt"},
+          {"zh", "M.cn.srt"}
+        ] do
+      test "translates a lone #{name} into wanted #{wanted}", %{video: video} do
+        ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: unquote(wanted))
+        source = Path.join(Path.dirname(video), unquote(name))
+        put!(source, @srt)
+        stub_default_track(video, :none)
+        stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+        stub_translate()
+
+        assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:scan, :movies}]
+        assert_received {:read, ^source}
+        assert_received {:translate, unquote(wanted)}
+        assert File.read!(Subtitles.sidecar_path(video, unquote(wanted))) == @srt
+      end
+    end
+
+    # A generic Chinese file copied to Cantonese is still a translation source for German.
+    test "copies a lone M.chi.srt to Cantonese and translates it into German", %{video: video} do
+      ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "cn,de")
+      put!(Path.join(Path.dirname(video), "M.chi.srt"), @srt)
+      stub_default_track(video, :none)
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe, {:scan, :movies}, {:scan, :movies}]
+      assert_received {:translate, "de"}
+      refute_received {:translate, _language}
+      assert File.read!(Subtitles.sidecar_path(video, "cn")) == @srt
+      assert File.read!(Subtitles.sidecar_path(video, "de")) == @srt
     end
 
     # The file read as French is copied to French and is still a translation source for German.
