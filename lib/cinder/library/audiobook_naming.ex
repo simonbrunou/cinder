@@ -1,15 +1,15 @@
 defmodule Cinder.Library.AudiobookNaming do
   @moduledoc """
-  Where an imported audiobook's tracks land — the `Cinder.Library.EbookNaming` sibling for
-  multi-file audio.
+  Where an imported audiobook's tracks land: the multi-file audio half of the book family's
+  naming, beside the e-book import's single file.
 
-  `author_folder/1` and `title_folder/1` are reused **unchanged** (`defdelegate`, not copied):
+  The `Author/Title` folders come from `Cinder.Library.BookFolders`, which e-books share:
   folder-naming from a work's credits/title has nothing audiobook-specific about it.
 
   ## `track_dest/4` is deliberately named from (Author, Title, disc, track order) only
 
-  **Never from the incoming release's own filenames** — the direct opposite of `EbookNaming`'s own
-  rule ("Preserve release filenames", locked by the parity contract for e-books). The roadmap
+  **Never from the incoming release's own filenames** — the direct opposite of the e-book rule
+  ("Preserve release filenames", locked by the parity contract for e-books). The roadmap
   requires "deterministic audiobook folders," and a scheme that varied with the release's own
   filenames would make two correct imports of the SAME book (from two different uploaders) land
   at two different paths. This determinism is exactly why `Cinder.Library.StageEngine`'s new
@@ -25,24 +25,17 @@ defmodule Cinder.Library.AudiobookNaming do
   for ≤99 tracks) and the `Disc M/` segment present only when the resolved set spans more than
   one disc.
 
-  Every path component reaches the same `sanitize/1`/`reject_dot_only/1`/`visible/1` hardening
-  `EbookNaming` already has TRANSITIVELY, through `author_folder/1` and `title_folder/1` — the
-  only two functions this module calls that ever handle release/work-controlled text at all. A
-  track's own filename is never one of those inputs (see above): it is built from
-  `title_folder(work)`, a zero-padded integer, and a format atom drawn from a closed two-value
-  set, none of which needs a second pass of sanitization this module would have to apply itself.
-  Closing the same hostile-input class (`../../etc/passwd` work titles, dot-leading folders) for
-  audio the same way it is already closed for text, without re-exporting `EbookNaming`'s internal
-  hardening helpers as a second public surface this module never actually calls.
+  Every path component reaches the sanitizing and dot-leading-name hardening of `BookFolders`
+  through `author_folder/1` and `title_folder/1` — the only two functions this module calls that
+  ever handle release/work-controlled text at all. A track's own filename is never one of those
+  inputs (see above): it is built from `title_folder(work)`, a zero-padded integer, and a format
+  atom drawn from a closed two-value set, none of which needs a second pass of sanitization this
+  module would have to apply itself. That closes the same hostile-input class
+  (`../../etc/passwd` work titles, dot-leading folders) for audio the same way it is closed for
+  e-books, without this module calling the sanitizing helper of `BookFolders` itself.
   """
   alias Cinder.Books.Work
-  alias Cinder.Library.EbookNaming
-
-  @doc "The folder name a work's author credits produce — reused unchanged from `EbookNaming`."
-  defdelegate author_folder(work), to: EbookNaming
-
-  @doc "The folder name a work's title produces — reused unchanged from `EbookNaming`."
-  defdelegate title_folder(work), to: EbookNaming
+  import Cinder.Library.BookFolders, only: [author_folder: 1, title_folder: 1]
 
   @type track_meta :: %{
           required(:index) => pos_integer(),

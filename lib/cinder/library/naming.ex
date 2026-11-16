@@ -89,10 +89,11 @@ defmodule Cinder.Library.Naming do
   # Jellyfin/Plex skip dot-directories while scanning, so an unguarded title imports successfully,
   # the catalog records the path, and the file is invisible with nothing reporting why.
   #
-  # Shared with `Cinder.Library.EbookNaming.visible/1` (`defdelegate`, same hazard, same fix) — its
-  # own moduledoc already treats this module's rules as canonical for the video/book split.
-  # Prefixed rather than replaced: unlike a filename, a folder name is the only place the title
-  # is recorded on disk, so it is worth keeping legible.
+  # Shared with `Cinder.Library.BookFolders`, which calls it for a book's author and title folders
+  # (same hazard, same fix): its sanitizing comment treats this module's rules as canonical for
+  # the video/book split.
+  # Prefixed rather than replaced: the folder and file names are where the title is recorded on
+  # disk, so they are worth keeping legible.
   @doc false
   def visible("." <> _rest = name), do: "_" <> name
   def visible(name), do: name
