@@ -4,7 +4,10 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
   import Mox
   import ExUnit.CaptureLog, only: [capture_log: 1]
   import Cinder.CatalogFixtures
-  import Cinder.ConfigCase, only: [put_media_server_web_url: 1, store_media_server_type: 1]
+
+  import Cinder.ConfigCase,
+    only: [put_media_server_web_url: 1, put_media_server_web_url: 2, store_media_server_type: 1]
+
   import Cinder.PollerHelpers, only: [poll_media_server_seasons: 2]
 
   alias Cinder.Catalog.MediaServerSeasons
@@ -94,6 +97,26 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
 
     assert has_element?(lv, ~s(a[href="https://plex.example.com"]), "Open in Plex")
     assert html =~ "opens in a new tab"
+  end
+
+  # One test per option, so a server the options list renders here or fails by name.
+  for %{value: value, name: name} <- Cinder.Settings.Registry.media_servers() do
+    test "names the #{value} server by its option's product name", %{conn: conn} do
+      put_media_server_web_url(unquote(value), "https://#{unquote(value)}.example.com")
+
+      series = series_fixture(%{tmdb_id: 1399})
+      season = season_fixture(series, %{season_number: 1})
+      _episode = episode_fixture(season, %{file_path: "/tv/got-s01e01.mkv"})
+
+      conn = log_in_user(conn, Cinder.AccountsFixtures.admin_fixture())
+      {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+
+      assert has_element?(
+               lv,
+               ~s(a[href="https://#{unquote(value)}.example.com"]),
+               "Open in #{unquote(name)}"
+             )
+    end
   end
 
   test "uses the reconciled series deep link instead of the server front door", %{conn: conn} do

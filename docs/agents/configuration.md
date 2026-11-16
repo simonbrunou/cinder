@@ -23,9 +23,11 @@ assembles one env value from several keys finds each definition with `Registry.o
 and slot, never by key. Code that reads a kind's library root calls
 `Cinder.Settings.configured_library_path/2` and never builds the env key itself. Code that picks
 a media server reads the `media_server_type` options (outside `Cinder.Settings.Shape`, through
-`Cinder.Settings.Registry.media_servers/0`): each one has a `value`, a `server` atom, a `module`
-and an `os_env`. It finds the server that runs with `Shape.running_media_server/2` (the stored
-type, else the option whose `os_env` is set), never with `Shape.option/2` alone. Code that reads
+`Cinder.Settings.Registry.media_servers/0`): each one has a `value`, a `server` atom, a `name`,
+a `module` and an `os_env`. A page shows the product name through
+`Cinder.Settings.media_server_name/1`, never a literal of its own. It finds the server that runs
+with `Shape.running_media_server/2` (the stored type, else the option whose `os_env` is set),
+never with `Shape.option/2` alone. Code that reads
 data a media server wrote, such as the season inventory, asks
 `Cinder.Settings.media_server_type/0`, and code that links at the server asks
 `Cinder.Settings.media_server_web_link/0`. Both pick through one private step that also names the

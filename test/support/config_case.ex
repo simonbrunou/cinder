@@ -83,12 +83,18 @@ defmodule Cinder.ConfigCase do
   Stores the Plex type row and sets `url` as the Plex web URL, restored on exit:
   `Cinder.Settings.media_server_web_link/0` reads both.
   """
-  def put_media_server_web_url(url) do
-    module = Cinder.Library.MediaServer.Plex
+  def put_media_server_web_url(url), do: put_media_server_web_url("plex", url)
+
+  @doc """
+  Stores `type` as the `media_server_type` row and sets `url` as that option's web URL, restored
+  on exit. `type` is an option's `value` in `Cinder.Settings.Registry.media_servers/0`.
+  """
+  def put_media_server_web_url(type, url) do
+    %{module: module} = Enum.find(Cinder.Settings.Registry.media_servers(), &(&1.value == type))
     previous = Application.get_env(:cinder, module, [])
     ExUnit.Callbacks.on_exit(fn -> Application.put_env(:cinder, module, previous) end)
 
-    store_media_server_type("plex")
+    store_media_server_type(type)
     Application.put_env(:cinder, module, Keyword.put(previous, :web_url, url))
   end
 

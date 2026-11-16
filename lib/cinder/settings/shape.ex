@@ -6,7 +6,7 @@ defmodule Cinder.Settings.Shape do
   # here and no engine edit.
   #
   # Shapes: :text | :secret | :boolean | :legacy_toggle
-  # | {:media_server, [%{value, server, module, os_env}]}
+  # | {:media_server, [%{value, server, name, module, os_env}]}
   # | {:download_client, choice} | {:choice, options} | :resolution | :positive_integer
   # | :lenient_integer | :positive_number | :size_band | :path_root | :root_list
   # | {:list, :downcase | :groups} | :timezone | :hours

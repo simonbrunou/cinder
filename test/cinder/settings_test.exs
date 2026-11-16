@@ -1741,6 +1741,46 @@ defmodule Cinder.SettingsTest do
     end
   end
 
+  describe "media_server_name/1" do
+    test "names each server as the pages spelled it before the options carried the name" do
+      assert Map.new(@media_servers, &{&1.server, Settings.media_server_name(&1.server)}) == %{
+               jellyfin: "Jellyfin",
+               plex: "Plex"
+             }
+    end
+
+    test "answers every option's server with that option's name" do
+      for %{server: server, name: name} <- @media_servers do
+        assert Settings.media_server_name(server) == name
+      end
+    end
+
+    # A product name reads the same in every language, so the pages show it untranslated.
+    test "keeps every name out of gettext" do
+      pot = File.read!("priv/gettext/default.pot")
+
+      for %{name: name} <- @media_servers do
+        refute name in Settings.Registry.msgids(), "#{name} is registered for translation"
+        refute pot =~ ~s(\nmsgid "#{name}"\n), "#{name} is a gettext msgid"
+      end
+    end
+
+    test "the media_server type lists exactly the options' server atoms" do
+      {:ok, types} = Code.Typespec.fetch_types(Settings)
+
+      [union] =
+        for {:type, {:media_server, _, []} = type} <- types do
+          {:"::", _, [_name, union]} = Code.Typespec.type_to_quoted(type)
+          union
+        end
+
+      assert Enum.sort(union_atoms(union)) == Enum.sort(Enum.map(@media_servers, & &1.server))
+    end
+
+    defp union_atoms({:|, _, [left, right]}), do: union_atoms(left) ++ union_atoms(right)
+    defp union_atoms(atom) when is_atom(atom), do: [atom]
+  end
+
   # The type row is stored directly (`store_media_server_type/1`): both functions read the row,
   # not the impl, and Settings.put/2 would flip the global impl off the Mox mock.
   describe "media_server_web_link/0,1 and media_server_type/0" do

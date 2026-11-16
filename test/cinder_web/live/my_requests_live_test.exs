@@ -4,7 +4,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
   import Mox
   import Phoenix.LiveViewTest
   import Cinder.CatalogFixtures, only: [seed_movie_state: 2]
-  import Cinder.ConfigCase, only: [put_media_server_web_url: 1]
+  import Cinder.ConfigCase, only: [put_media_server_web_url: 1, put_media_server_web_url: 2]
 
   alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Books
@@ -635,6 +635,30 @@ defmodule CinderWeb.MyRequestsLiveTest do
       assert has_element?(lv, ~s(a[href="https://plex.example.com"]), "Open in Plex")
       assert html =~ "opens in a new tab"
       assert html =~ ~s(rel="noopener")
+    end
+
+    # One test per option, so a server the options list renders here or fails by name.
+    for %{value: value, name: name} <- Cinder.Settings.Registry.media_servers() do
+      test "names the #{value} server by its option's product name", %{conn: conn} do
+        put_media_server_web_url(unquote(value), "https://#{unquote(value)}.example.com")
+        user = Cinder.AccountsFixtures.user_fixture()
+        tmdb_id = System.unique_integer([:positive])
+
+        {:ok, _} =
+          Requests.create_request(user, %{target_type: "movie", target_id: tmdb_id, title: "T"})
+
+        {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "T"})
+        {:ok, _} = seed_movie_state(movie, %{status: :available})
+
+        conn = log_in_user(conn, user)
+        {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+        assert has_element?(
+                 lv,
+                 ~s(a[href="https://#{unquote(value)}.example.com"]),
+                 "Open in #{unquote(name)}"
+               )
+      end
     end
 
     test "an available movie row uses its reconciled title deep link", %{conn: conn} do

@@ -272,7 +272,10 @@ defmodule CinderWeb.MyRequestsLive do
   defp assign_media_server(socket) do
     case Settings.media_server_web_link() do
       {server, _url} = link ->
-        assign(socket, media_server_link: link, media_server_name: server_name(server))
+        assign(socket,
+          media_server_link: link,
+          media_server_name: Settings.media_server_name(server)
+        )
 
       nil ->
         assign(socket, media_server_link: nil, media_server_name: nil)
@@ -290,10 +293,6 @@ defmodule CinderWeb.MyRequestsLive do
   end
 
   defp title_web_link(_target, _media_server_link), do: nil
-
-  # Product names, deliberately not gettext'd.
-  defp server_name(:plex), do: "Plex"
-  defp server_name(:jellyfin), do: "Jellyfin"
 
   # These read `Target`'s `season_progress`, which is nil for a movie or book row and for a season
   # with no episodes yet (still pending an admin's approval).

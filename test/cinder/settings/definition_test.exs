@@ -137,9 +137,9 @@ defmodule Cinder.Settings.DefinitionTest do
 
     assert Settings.Registry.media_servers() == options
 
-    assert Map.new(options, &{&1.value, {&1.server, &1.module, &1.os_env}}) == %{
-             "jellyfin" => {:jellyfin, Cinder.Library.MediaServer.Jellyfin, nil},
-             "plex" => {:plex, Cinder.Library.MediaServer.Plex, "PLEX_URL"}
+    assert Map.new(options, &{&1.value, {&1.server, &1.name, &1.module, &1.os_env}}) == %{
+             "jellyfin" => {:jellyfin, "Jellyfin", Cinder.Library.MediaServer.Jellyfin, nil},
+             "plex" => {:plex, "Plex", Cinder.Library.MediaServer.Plex, "PLEX_URL"}
            }
 
     # The first option is the form's choice when no type is stored and no os_env is set.
@@ -152,6 +152,15 @@ defmodule Cinder.Settings.DefinitionTest do
 
       assert Cinder.Library.MediaServer in behaviours
       assert Settings.Registry.one!(target: {:module, module, :web_url})
+    end
+  end
+
+  # The pages show each option's product name beside its link
+  # (`Cinder.Settings.media_server_name/1`).
+  test "every media server option has a product name" do
+    for option <- Settings.Registry.media_servers() do
+      assert is_binary(option[:name]) and String.trim(option[:name]) != "",
+             "the #{inspect(option.value)} option has no product name"
     end
   end
 

@@ -27,6 +27,15 @@ defmodule Cinder.Settings do
   @media_server Registry.one!(target: {:writer, :media_server})
   @media_servers Registry.media_servers()
 
+  @typedoc "The `server` atom of a `media_server_type` option, one per option."
+  @type media_server ::
+          unquote(
+            @media_servers
+            |> Enum.map(& &1.server)
+            |> Enum.reverse()
+            |> Enum.reduce(&{:|, [], [&1, &2]})
+          )
+
   # --- boot loader: one-shot supervised child, runs synchronously before the poller ---
 
   @doc false
@@ -155,7 +164,7 @@ defmodule Cinder.Settings do
   `media_server_web_link/1` for a title deep link. A missing or stale id retains this front-door
   fallback.
   """
-  @spec media_server_web_link() :: {:plex | :jellyfin, String.t()} | nil
+  @spec media_server_web_link() :: {media_server(), String.t()} | nil
   def media_server_web_link do
     case media_server_option() do
       %{} = option -> web_link_for(option)
@@ -174,12 +183,23 @@ defmodule Cinder.Settings do
   snapshot, never the running impl (`Cinder.Library.MediaServer.impl/0`), which tests point at
   the same Mox mock for both types. `media_server_web_link/0` links at the server this names.
   """
-  @spec media_server_type() :: :plex | :jellyfin | nil
+  @spec media_server_type() :: media_server() | nil
   def media_server_type do
     case media_server_option() do
       %{server: server} -> server
       nil -> nil
     end
+  end
+
+  @doc """
+  The product name of `server`, as a page shows it beside the `media_server_web_link/0` URL
+  ("Open in Plex"). It is the option's `name`, never translated: a product name reads the same
+  in every language.
+  """
+  @spec media_server_name(media_server()) :: String.t()
+  # One clause per option, read as `option.name` so an option without a name fails the compile.
+  for option <- @media_servers do
+    def media_server_name(unquote(option.server)), do: unquote(option.name)
   end
 
   # The option the overlay runs, or nil when the bootstrap is no listed server. The type and the
@@ -198,7 +218,7 @@ defmodule Cinder.Settings do
   with the server that wrote it (`"plex:"`, `"jellyfin:"`), so the other server's id gets the
   front door.
   """
-  @spec media_server_web_link(String.t() | nil) :: {:plex | :jellyfin, String.t()} | nil
+  @spec media_server_web_link(String.t() | nil) :: {media_server(), String.t()} | nil
   def media_server_web_link(item_id), do: media_server_web_link(media_server_web_link(), item_id)
 
   @doc false

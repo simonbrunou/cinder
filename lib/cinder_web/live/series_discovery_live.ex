@@ -420,14 +420,16 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       end
 
     case Settings.media_server_web_link(item_id) do
-      {server, url} -> assign(socket, media_server_url: url, media_server_name: name(server))
-      nil -> assign(socket, media_server_url: nil, media_server_name: nil)
+      {server, url} ->
+        assign(socket,
+          media_server_url: url,
+          media_server_name: Settings.media_server_name(server)
+        )
+
+      nil ->
+        assign(socket, media_server_url: nil, media_server_name: nil)
     end
   end
-
-  # Product names, deliberately not gettext'd.
-  defp name(:plex), do: "Plex"
-  defp name(:jellyfin), do: "Jellyfin"
 
   # The "More like this" rail is fetched off-process on the connected mount (one call, not two)
   # so a slow TMDB can't hold up render; a failure leaves the page rail-less (see handle_async).

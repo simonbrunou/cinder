@@ -4,7 +4,7 @@ defmodule CinderWeb.MovieDiscoveryLiveTest do
   import Phoenix.LiveViewTest
   import Mox
   import Cinder.CatalogFixtures, only: [seed_movie_state: 2]
-  import Cinder.ConfigCase, only: [put_media_server_web_url: 1]
+  import Cinder.ConfigCase, only: [put_media_server_web_url: 1, put_media_server_web_url: 2]
 
   alias Cinder.Catalog
   alias Cinder.Requests
@@ -263,6 +263,22 @@ defmodule CinderWeb.MovieDiscoveryLiveTest do
       # It leaves the app, so say so for anyone who can't see the new tab open.
       assert html =~ "opens in a new tab"
       assert html =~ ~s(rel="noopener")
+    end
+
+    # One test per option, so a server the options list renders here or fails by name.
+    for %{value: value, name: name} <- Cinder.Settings.Registry.media_servers() do
+      test "names the #{value} server by its option's product name", %{conn: conn} do
+        put_media_server_web_url(unquote(value), "https://#{unquote(value)}.example.com")
+        make_available(27_205)
+
+        {:ok, lv, _html} = live(conn, ~p"/movie/tmdb/27205")
+
+        assert has_element?(
+                 lv,
+                 ~s(a[href="https://#{unquote(value)}.example.com"]),
+                 "Open in #{unquote(name)}"
+               )
+      end
     end
 
     # Phoenix's <.link> raises on an upper-case scheme, so this also proves the page renders

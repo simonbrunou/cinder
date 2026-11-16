@@ -224,8 +224,14 @@ defmodule CinderWeb.MovieDiscoveryLive do
 
   defp assign_media_server(socket, item_id) do
     case Settings.media_server_web_link(item_id) do
-      {server, url} -> assign(socket, media_server_url: url, media_server_name: name(server))
-      nil -> assign(socket, media_server_url: nil, media_server_name: nil)
+      {server, url} ->
+        assign(socket,
+          media_server_url: url,
+          media_server_name: Settings.media_server_name(server)
+        )
+
+      nil ->
+        assign(socket, media_server_url: nil, media_server_name: nil)
     end
   end
 
@@ -236,10 +242,6 @@ defmodule CinderWeb.MovieDiscoveryLive do
       do: assign_media_server(socket, movie.media_server_item_id),
       else: socket
   end
-
-  # Product names, deliberately not gettext'd.
-  defp name(:plex), do: "Plex"
-  defp name(:jellyfin), do: "Jellyfin"
 
   # ponytail: only four valid values; default "original" on anything else (client-controlled).
   defp normalize_language(lang) when lang in @picks, do: lang

@@ -210,7 +210,9 @@ defmodule Cinder.Settings.Registry do
   #
   # Each option's `server` is the atom `Cinder.Settings.media_server_web_link/0` names it by, and
   # the prefix its module writes on every item id ("plex:..."): the season inventory keeps only
-  # the configured server's rows by it (`Cinder.Catalog.MediaServerSeasons`). With
+  # the configured server's rows by it (`Cinder.Catalog.MediaServerSeasons`). Its `name` is the
+  # product name the pages show, read through `Cinder.Settings.media_server_name/1` and kept out
+  # of gettext, since a product name is the same in every language. With
   # no listed type stored, the option whose `os_env` variable is set is the bootstrap choice for
   # the overlay, the form and the web link; with none set, the form shows the first option, the
   # overlay keeps the captured impl, and the type and the web link name the option whose module
@@ -221,8 +223,20 @@ defmodule Cinder.Settings.Registry do
                     "media_server_type",
                     {:media_server,
                      [
-                       %{value: "jellyfin", server: :jellyfin, module: Jellyfin, os_env: nil},
-                       %{value: "plex", server: :plex, module: Plex, os_env: "PLEX_URL"}
+                       %{
+                         value: "jellyfin",
+                         server: :jellyfin,
+                         name: "Jellyfin",
+                         module: Jellyfin,
+                         os_env: nil
+                       },
+                       %{
+                         value: "plex",
+                         server: :plex,
+                         name: "Plex",
+                         module: Plex,
+                         os_env: "PLEX_URL"
+                       }
                      ]},
                     group: :media_server,
                     label: "Media server type",
@@ -678,8 +692,8 @@ defmodule Cinder.Settings.Registry do
   def library_kinds, do: @library_kinds
 
   @doc """
-  The media server choices, in form order: each one's stored `value`, `server` atom, `module` and
-  the `os_env` variable that makes it the bootstrap choice (or nil).
+  The media server choices, in form order: each one's stored `value`, `server` atom, product
+  `name`, `module` and the `os_env` variable that makes it the bootstrap choice (or nil).
   """
   def media_servers, do: @media_servers
 
