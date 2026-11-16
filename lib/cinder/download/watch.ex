@@ -125,8 +125,7 @@ defmodule Cinder.Download.Watch do
   not one.
   """
   @spec failure?(failure() | atom() | {atom(), term()}) :: boolean()
-  def failure?({code, _detail}), do: failure?(code)
-  def failure?(code), do: code in @failure_codes
+  def failure?(reason), do: reason_code(reason) in @failure_codes
 
   @doc "The bare codes `failure?/1` accepts. `CinderWeb.LiveHelpers.book_hold_reason/1` words each one."
   @spec failure_codes() :: [atom()]

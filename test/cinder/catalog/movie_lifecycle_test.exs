@@ -933,6 +933,17 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
       end
     end
 
+    # The client-failure tolerance covers a download in flight only: once the movie is
+    # downloaded, a client's error is one more import strike, so its third one re-queues nothing.
+    test "counts a client failure as an import strike, not against the client tolerance" do
+      {:ok, movie} = seed_movie_state(downloaded(), %{import_attempts: 2})
+
+      assert {:ok, %Movie{status: :downloaded, import_attempts: 3}} =
+               MovieLifecycle.record_failure(movie, {:failed, {:download_error, "paused"}})
+
+      assert Repo.all(BlockedRelease) == []
+    end
+
     test "counts a transient import error, then parks without blocklisting" do
       movie = downloaded()
 

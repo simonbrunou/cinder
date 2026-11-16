@@ -429,6 +429,10 @@ defmodule Cinder.Catalog.MovieLifecycle do
   # strikes the download has failed and re-queues.
   @client_failure_tolerance 3
 
+  # The download failures the client reports outright: a subset of `Watch.failure_codes/0` on
+  # purpose, because a completion with no path (`:no_content_path`) takes the import budget instead.
+  @client_failures [:download_error, :download_not_found]
+
   @doc """
   Records a failure a poller observed for a movie in flight, and decides what it means. `reason`
   is what the caller saw, unclassified: a download watch verdict (`{:failed, reason}`,
@@ -479,32 +483,20 @@ defmodule Cinder.Catalog.MovieLifecycle do
   def record_failure(%Movie{status: :downloading} = movie, {:blocked_content, _detail} = reason),
     do: requeue_blocklisted(movie, reason)
 
-  # The download failures the client reports outright: a subset of `Watch.failure?/1` on purpose,
-  # because a completion with no path (`:no_content_path`) takes the import budget below instead.
-  def record_failure(%Movie{status: :downloading} = movie, reason)
-      when reason in [:download_error, :download_not_found] or
-             (is_tuple(reason) and elem(reason, 0) == :download_error) do
-    attempts = (movie.import_attempts || 0) + 1
-
-    if attempts < @client_failure_tolerance do
-      Logger.info(
-        "movie #{movie.id} download error #{attempts}/#{@client_failure_tolerance} " <>
-          "(#{inspect(reason)}); will re-check"
-      )
-
-      strike(movie, :import_attempts, attempts)
-    else
-      requeue_blocklisted(movie, reason)
-    end
-  end
-
   def record_failure(%Movie{status: status} = movie, reason)
       when status in [:downloading, :downloaded] do
-    if Watch.reason_code(reason) in @permanent_import_errors do
-      Logger.warning("import permanently failed for movie #{movie.id}: #{inspect(reason)}")
-      park(movie, :import_failed, reason)
-    else
-      count(movie, reason, :import_attempts, &park(movie, :import_failed, &1))
+    code = Watch.reason_code(reason)
+
+    cond do
+      status == :downloading and code in @client_failures ->
+        client_failure(movie, reason)
+
+      code in @permanent_import_errors ->
+        Logger.warning("import permanently failed for movie #{movie.id}: #{inspect(reason)}")
+        park(movie, :import_failed, reason)
+
+      true ->
+        count(movie, reason, :import_attempts, &park(movie, :import_failed, &1))
     end
   end
 
@@ -525,6 +517,23 @@ defmodule Cinder.Catalog.MovieLifecycle do
   end
 
   def record_failure(%Movie{}, _reason), do: {:error, :not_in_flight}
+
+  # A client failure while the download is in flight: a strike until `@client_failure_tolerance`,
+  # then the release is blocklisted and the movie re-queued.
+  defp client_failure(movie, reason) do
+    attempts = (movie.import_attempts || 0) + 1
+
+    if attempts < @client_failure_tolerance do
+      Logger.info(
+        "movie #{movie.id} download error #{attempts}/#{@client_failure_tolerance} " <>
+          "(#{inspect(reason)}); will re-check"
+      )
+
+      strike(movie, :import_attempts, attempts)
+    else
+      requeue_blocklisted(movie, reason)
+    end
+  end
 
   # One more strike against `field`'s budget, or, on the strike that spends it, `exhausted.(reason)`.
   # A release-policy probe that stayed unavailable all along is held for verification instead.
