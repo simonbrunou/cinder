@@ -29,7 +29,8 @@ defmodule Cinder.Acquisition.BookSearch do
       `Cinder.Acquisition.BookScorer` reads the kind back from. Those map one to one onto the
       kind, so they are not plan fields.
     * `identifier_providers` — the identifier providers to probe, in priority order.
-    * `identifiers_key` — the key a plain-map work carries its identifiers under.
+    * `identifiers_key` — the key a plain-map work carries its identifiers under. A
+      `Cinder.Acquisition.BookSearch.NormalizedWork` always carries them under `identifiers`.
 
   ## Query order is evidence order
 
@@ -59,6 +60,7 @@ defmodule Cinder.Acquisition.BookSearch do
   require Logger
 
   alias Cinder.Acquisition.{AudiobookRelease, BookKind, BookScorer, EbookRelease}
+  alias Cinder.Acquisition.BookSearch.NormalizedWork
   alias Cinder.Books.{Edition, Identifier, Work}
 
   @max_identifier_queries 3
@@ -88,45 +90,21 @@ defmodule Cinder.Acquisition.BookSearch do
   Searches the configured indexer for releases of `work` in the plan's book kind.
 
   `work` is a `Cinder.Books.Work` with `:editions` (and their `:identifiers`) and `:credits`
-  (with `:author`) preloaded, or a plain map with `:title`, `:authors`, and optionally `:series`
-  and the identifiers under the plan's `identifiers_key`.
+  (with `:author`) preloaded, a plain map with `:title`, `:authors`, and optionally `:series`
+  and the identifiers under the plan's `identifiers_key`, or a
+  `Cinder.Acquisition.BookSearch.NormalizedWork`, which is searched as it is.
 
   Returns `{:ok, releases, complete?}`, every release the plan's kind of struct, or
   `{:error, :indexer_unavailable}` when every query failed. Releases are deduped by
   `download_url`, with `query_origins` merged so a release found by both an identifier probe and a
   free-text query keeps both provenances.
   """
-  @spec search(Work.t() | map(), plan()) ::
+  @spec search(Work.t() | NormalizedWork.t() | map(), plan()) ::
           {:ok, [release()], boolean()} | {:error, :indexer_unavailable}
-  def search(work, plan), do: work |> normalize(plan) |> search_normalized(plan)
+  def search(work, %{media_kind: kind} = plan) do
+    %NormalizedWork{title: title, authors: authors, identifiers: identifiers} =
+      normalize(work, plan)
 
-  @doc """
-  Searches, then evaluates every candidate against `work`.
-
-  Returns `{:ok, %{accepted: [...], rejected: [...], complete?: boolean}}` — see
-  `Cinder.Acquisition.BookScorer.evaluate_all/3` for the two lists, and `search/2` for
-  `complete?`. `opts` are the scorer's (`:language`, `:blocked_terms`, ...).
-  """
-  @spec candidates(Work.t() | map(), plan(), keyword()) ::
-          {:ok, map()} | {:error, :indexer_unavailable}
-  def candidates(work, plan, opts) do
-    # Normalized once: going back through `search/2` would read the normalized map's
-    # `:identifiers` under the plan's `identifiers_key` and drop every probe of a plan whose key
-    # differs (the e-book plan's `:isbns`).
-    normalized = normalize(work, plan)
-
-    with {:ok, releases, complete?} <- search_normalized(normalized, plan) do
-      result = BookScorer.evaluate_all(releases, normalized, opts)
-      {:ok, Map.put(result, :complete?, complete?)}
-    end
-  end
-
-  # --- running the queries ---
-
-  defp search_normalized(
-         %{title: title, authors: authors, identifiers: identifiers},
-         %{media_kind: kind}
-       ) do
     author = List.first(authors)
 
     identifier_queries =
@@ -139,6 +117,26 @@ defmodule Cinder.Acquisition.BookSearch do
 
     run(identifier_queries ++ structured ++ free_text, kind)
   end
+
+  @doc """
+  Searches, then evaluates every candidate against `work`.
+
+  Returns `{:ok, %{accepted: [...], rejected: [...], complete?: boolean}}` — see
+  `Cinder.Acquisition.BookScorer.evaluate_all/3` for the two lists, and `search/2` for
+  `complete?`. `opts` are the scorer's (`:language`, `:blocked_terms`, ...).
+  """
+  @spec candidates(Work.t() | NormalizedWork.t() | map(), plan(), keyword()) ::
+          {:ok, map()} | {:error, :indexer_unavailable}
+  def candidates(work, plan, opts) do
+    work = normalize(work, plan)
+
+    with {:ok, releases, complete?} <- search(work, plan) do
+      result = BookScorer.evaluate_all(releases, work, opts)
+      {:ok, Map.put(result, :complete?, complete?)}
+    end
+  end
+
+  # --- running the queries ---
 
   defp free_text_query(title, nil), do: title
   defp free_text_query(title, author), do: "#{title} #{author}"
@@ -209,9 +207,10 @@ defmodule Cinder.Acquisition.BookSearch do
   # --- work normalization ---
 
   # Accepts a loaded Work or a plain map, so a caller with metadata in hand does not have to
-  # persist it first.
+  # persist it first. A NormalizedWork comes back as it is: it must not reach the plain-map
+  # clause, which reads its identifiers under the plan's `identifiers_key`.
   defp normalize(%Work{} = work, plan) do
-    %{
+    %NormalizedWork{
       title: work.title,
       authors: author_names(work),
       identifiers: identifiers(work, plan),
@@ -219,8 +218,10 @@ defmodule Cinder.Acquisition.BookSearch do
     }
   end
 
+  defp normalize(%NormalizedWork{} = work, _plan), do: work
+
   defp normalize(%{title: title} = work, %{identifiers_key: key}) do
-    %{
+    %NormalizedWork{
       title: title,
       authors: Map.get(work, :authors) || [],
       identifiers: Map.get(work, key) || [],

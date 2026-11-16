@@ -82,6 +82,7 @@ defmodule Cinder.Acquisition.BookScorer do
 
   alias Cinder.Acquisition.AudiobookRelease
   alias Cinder.Acquisition.BookKind
+  alias Cinder.Acquisition.BookSearch.NormalizedWork
   alias Cinder.Acquisition.EbookRelease
   alias Cinder.Acquisition.Parser
   alias Cinder.Acquisition.TitleNoise
@@ -120,6 +121,21 @@ defmodule Cinder.Acquisition.BookScorer do
   @narrator_group ~r/^\s*(?:narrated|read)\s+by\s+.+$/i
 
   @type release :: EbookRelease.t() | AudiobookRelease.t()
+
+  @typedoc """
+  The work a release is judged against: the `NormalizedWork` that `Cinder.Acquisition.BookSearch`
+  builds, or a plain map with the same keys and an optional `:abridged`, as the scorer tests
+  build by hand.
+  """
+  @type work ::
+          NormalizedWork.t()
+          | %{
+              required(:title) => String.t(),
+              optional(:authors) => [String.t()] | nil,
+              optional(:series) => [String.t() | map()] | nil,
+              optional(:abridged) => boolean(),
+              optional(atom()) => term()
+            }
 
   # `narrator` is present only for an audiobook release.
   @type evidence :: %{
@@ -170,8 +186,9 @@ defmodule Cinder.Acquisition.BookScorer do
   @doc """
   Judges `release` against `work`, under the rules of the release's book kind.
 
-  `work` is a map with `:title` and `:authors` (a list of display names — normally the work's
-  credited authors). `opts`:
+  `work` is a `Cinder.Acquisition.BookSearch.NormalizedWork` or a plain map with `:title` and
+  `:authors` (a list of display names — normally the work's credited authors); see `t:work/0`.
+  `opts`:
 
     * `:language` — an ISO code or release tag the release must match. A release with no parsed
       language passes: an untagged book release is overwhelmingly English-language, and the same
@@ -187,7 +204,7 @@ defmodule Cinder.Acquisition.BookScorer do
   Rules are checked cheapest-and-most-decisive first, so the reason a caller renders is the most
   informative one available rather than whichever check happened to run first.
   """
-  @spec evaluate(release(), map(), keyword()) :: {:accept, evidence()} | {:reject, reason()}
+  @spec evaluate(release(), work(), keyword()) :: {:accept, evidence()} | {:reject, reason()}
   def evaluate(release, work, opts \\ []) do
     rules = rules_for(release)
 
@@ -233,7 +250,7 @@ defmodule Cinder.Acquisition.BookScorer do
   answer, not debugging residue — it is what the operator reads when the release they expected is
   not in the accepted list.
   """
-  @spec evaluate_all([release()], map(), keyword()) :: %{
+  @spec evaluate_all([release()], work(), keyword()) :: %{
           accepted: [{release(), evidence()}],
           rejected: [{release(), reason()}]
         }

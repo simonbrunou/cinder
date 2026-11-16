@@ -7,6 +7,7 @@ defmodule Cinder.Acquisition.BookScorerTest do
     parameterize: [%{kind: :ebook}, %{kind: :audiobook}]
 
   alias Cinder.Acquisition.{AudiobookRelease, BookKind, BookScorer, EbookRelease}
+  alias Cinder.Acquisition.BookSearch.NormalizedWork
 
   # Works drawn from the B0 frozen corpus so the scorer and the identity resolver are exercised on
   # one vocabulary (see test/support/fixtures/books/corpus-v1.json).
@@ -337,6 +338,26 @@ defmodule Cinder.Acquisition.BookScorerTest do
                  ),
                  work
                )
+    end
+
+    # `BookSearch` passes a NormalizedWork, not a plain map: its series must count the same way.
+    test "a NormalizedWork judges like the plain map with the same keys", ctx do
+      map = %{
+        title: "The Way of Kings",
+        authors: ["Brandon Sanderson"],
+        series: ["The Stormlight Archive"]
+      }
+
+      struct = struct!(NormalizedWork, map)
+
+      for {title, expected} <- [
+            {"Brandon Sanderson - The Stormlight Archive 01 - The Way of Kings ({fmt})", :accept},
+            {"Brandon Sanderson - The Stormlight Archive 02 - Words of Radiance ({fmt})", :reject}
+          ] do
+        release = release(ctx, title)
+        assert {^expected, _} = BookScorer.evaluate(release, struct)
+        assert BookScorer.evaluate(release, struct) == BookScorer.evaluate(release, map)
+      end
     end
 
     test "a loaded series does not admit a different book in the same series", ctx do
