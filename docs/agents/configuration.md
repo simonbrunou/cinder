@@ -21,7 +21,10 @@ setting needs custom rendering (`render: :custom`; the `/settings` page test fai
 is named after its key), and `Cinder.Settings.Shape` only for a new shape. An overlay writer that
 assembles one env value from several keys finds each definition with `Registry.one!/1`, by target
 and slot, never by key. Code that reads a kind's library root calls
-`Cinder.Settings.configured_library_path/2` and never builds the env key itself. Code that picks
+`Cinder.Settings.configured_library_path/2` and never builds the env key itself. Code that reads
+a video kind's release rule (a size band, a preferred list, the upgrade cutoff) takes its env key
+from `Cinder.Settings.Registry.release_env_key!/2` in a module attribute, so a renamed slot fails
+the build. Code that picks
 a media server reads the `media_server_type` options (outside `Cinder.Settings.Shape`, through
 `Cinder.Settings.Registry.media_servers/0`): each one has a `value`, a `server` atom, a `name`,
 a `module` and an `os_env`. A page shows the product name through

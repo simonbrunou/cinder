@@ -8,6 +8,15 @@ defmodule Cinder.Library.Upgrade do
   """
   alias Cinder.Acquisition.{Language, Release, Scorer}
   alias Cinder.Library.ImportedQuality
+  alias Cinder.LibraryKind
+  alias Cinder.Settings.Registry
+
+  # Each video kind's env key for the rules read here, from the release-rule definitions' targets:
+  # a slot with no definition fails the build.
+  @rule_env_keys for kind <- LibraryKind.video(),
+                     slot <- [:preferred_resolutions, :preferred_sources, :upgrade_cutoff],
+                     into: %{},
+                     do: {{kind, slot}, Registry.release_env_key!(kind, slot)}
 
   @doc """
   Whether `release` *promises* a better file than `record` (a `Movie` or an `Episode`) already
@@ -57,17 +66,15 @@ defmodule Cinder.Library.Upgrade do
   end
 
   @doc "The household's preferred resolutions for library `kind`, best first (`nil` when unset)."
-  def preferred_resolutions(kind),
-    do: Application.get_env(:cinder, :"#{kind}_preferred_resolutions")
+  def preferred_resolutions(kind), do: release_rule(kind, :preferred_resolutions)
 
   @doc "The household's preferred sources for library `kind`, best first (`nil` when unset)."
-  def preferred_sources(kind),
-    do: Application.get_env(:cinder, :"#{kind}_preferred_sources")
+  def preferred_sources(kind), do: release_rule(kind, :preferred_sources)
 
   @doc "Whether a library record has reached the configured automatic-upgrade cutoff."
   def cutoff_met?(record, kind) do
     preferred = preferred_resolutions(kind) || Scorer.default_preferred()
-    cutoff = Application.get_env(:cinder, :"#{kind}_upgrade_cutoff")
+    cutoff = release_rule(kind, :upgrade_cutoff)
 
     case Enum.find_index(preferred, &(&1 == cutoff)) do
       nil ->
@@ -164,4 +171,7 @@ defmodule Cinder.Library.Upgrade do
     {Scorer.resolution_rank(q.resolution, preferred), Scorer.source_rank(q.source, sources),
      if(weigh_size?, do: -(q.size || 0), else: 0)}
   end
+
+  defp release_rule(kind, slot),
+    do: Application.get_env(:cinder, Map.fetch!(@rule_env_keys, {kind, slot}))
 end

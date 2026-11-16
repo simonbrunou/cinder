@@ -1,6 +1,7 @@
 defmodule Cinder.Settings.DefinitionTest do
   use ExUnit.Case, async: true
 
+  alias Cinder.LibraryKind
   alias Cinder.Settings
   alias Cinder.Settings.Definition
 
@@ -128,6 +129,56 @@ defmodule Cinder.Settings.DefinitionTest do
 
     assert_raise ArgumentError, ~r/2 setting definitions/, fn ->
       Settings.Registry.one!(target: {:writer, :download_clients}, save: :read_only)
+    end
+  end
+
+  # The release-rule slots each video kind has, written out independently of the registry.
+  @release_slots [
+    :min_size,
+    :max_size,
+    :preferred_resolutions,
+    :preferred_sources,
+    :preferred_terms,
+    :blocked_terms,
+    :upgrade_cutoff
+  ]
+
+  test "release_env_key!/2 returns each release rule's own env target, for every video kind" do
+    pairs = for kind <- LibraryKind.video(), slot <- @release_slots, do: {kind, slot}
+    assert length(pairs) == length(Settings.Registry.definitions(group: :releases))
+
+    for {kind, slot} <- pairs do
+      assert %Definition{target: {:env, env_key}} =
+               Settings.Registry.one!(group: :releases, kind: kind, slot: slot)
+
+      assert Settings.Registry.release_env_key!(kind, slot) == env_key
+    end
+  end
+
+  # A library root and a Plex section are per-kind definitions too, but no release rule.
+  test "release_env_key!/2 refuses a kind and slot no release-rule definition names" do
+    for {kind, slot} <- [
+          {:movies, :no_such_slot},
+          {:ebook, :min_size},
+          {:audiobook, :preferred_terms},
+          {:movies, :library_path},
+          {:tv, :plex_section}
+        ] do
+      assert_raise ArgumentError, ~r/no release-rule setting definition/, fn ->
+        Settings.Registry.release_env_key!(kind, slot)
+      end
+    end
+  end
+
+  # config/runtime.exs writes `:"<kind>_library_path"` from `<KIND>_LIBRARY_PATH` for each
+  # `Cinder.Library.kinds/0` entry. That key is the root definition's target only for a kind whose
+  # root role is the kind itself, which holds for the video kinds alone.
+  test "the runtime library bootstrap's keys are the root definitions' targets" do
+    for kind <- Cinder.Library.kinds() do
+      assert %Definition{target: {:env, env_key}} =
+               Settings.Registry.one!(kind: kind, slot: :library_path)
+
+      assert env_key == :"#{kind}_library_path"
     end
   end
 

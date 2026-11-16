@@ -127,6 +127,10 @@ end
 # Cinder.Library.kinds/0: MOVIES_LIBRARY_PATH, TV_LIBRARY_PATH, … → `:movies_library_path` etc.
 # Separate roots so Jellyfin/Plex can point distinct libraries at each. Bootstrap default only —
 # the in-app /settings value overrides it.
+# Video kinds only: Cinder.Library.kinds/0 is Cinder.LibraryKind.video/0, and a video kind's root
+# role is the kind itself, so `:"#{kind}_library_path"` is the key its root definition targets.
+# A book kind's root key comes from its root role (`:ebook` → `books_library_path`), so this loop
+# would write a key nothing reads; e-book and audiobook roots come from /settings alone.
 for kind <- Cinder.Library.kinds() do
   if path = System.get_env("#{String.upcase(to_string(kind))}_LIBRARY_PATH") do
     config :cinder, :"#{kind}_library_path", path

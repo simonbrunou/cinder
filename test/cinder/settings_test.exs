@@ -1447,6 +1447,34 @@ defmodule Cinder.SettingsTest do
       end
     end
 
+    # With no preferred list in the form, the check reads the kind's env list, found by its
+    # definition's target. 720p is in `Scorer.default_preferred/0` and in every other kind's list,
+    # so a check that read an unset key or another kind's key would accept it.
+    test "an upgrade cutoff outside the kind's env preferred list saves nothing" do
+      kinds = Cinder.LibraryKind.video()
+
+      for kind <- kinds do
+        for other <- kinds do
+          %{target: {:env, env_key}} =
+            Settings.Registry.one!(group: :releases, kind: other, slot: :preferred_resolutions)
+
+          Application.put_env(
+            :cinder,
+            env_key,
+            if(other == kind, do: ["2160p", "1080p"], else: ["720p"])
+          )
+        end
+
+        %{key: cutoff_key} =
+          Settings.Registry.one!(group: :releases, kind: kind, slot: :upgrade_cutoff)
+
+        assert {:error, [^cutoff_key]} =
+                 Settings.save_form(%{cutoff_key => "720p", "media_server_type" => "jellyfin"})
+
+        assert Settings.get(cutoff_key) == nil
+      end
+    end
+
     test "invalid anime enums, delay, and required subtitles save nothing" do
       for params <- [
             valid_anime_params(%{"anime_embedded_subtitle_mode" => "surround"}),

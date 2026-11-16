@@ -615,6 +615,12 @@ defmodule Cinder.Settings.Registry do
 
   @by_key Map.new(@definitions, &{&1.key, &1})
 
+  # Each release rule's env key by `{kind, slot}`, from its definition's `{:env, key}` target, so
+  # a reader never spells the `"<kind>_<slot>"` template itself.
+  @release_env_keys Map.new(@releases, fn %{kind: kind, slot: slot, target: {:env, env_key}} ->
+                      {{kind, slot}, env_key}
+                    end)
+
   [media_servers] = for %{shape: {:media_server, options}} <- @definitions, do: options
   @media_servers media_servers
 
@@ -666,6 +672,25 @@ defmodule Cinder.Settings.Registry do
       matches ->
         raise ArgumentError,
               "#{length(matches)} setting definitions match #{inspect(filter)}, expected one"
+    end
+  end
+
+  @doc """
+  The flat `:cinder` env key a video kind's release rule overlays (`release_env_key!(:tv,
+  :min_size)`): the `{:env, key}` target of the `:releases` definition for that `kind` and
+  `slot`. Raises `ArgumentError` for a pair no release-rule definition names, such as a book kind,
+  a library root or a renamed slot. A reader calls it in a module attribute, so that pair fails
+  its build.
+  """
+  @spec release_env_key!(atom(), atom()) :: atom()
+  def release_env_key!(kind, slot) do
+    case Map.fetch(@release_env_keys, {kind, slot}) do
+      {:ok, env_key} ->
+        env_key
+
+      :error ->
+        raise ArgumentError,
+              "no release-rule setting definition for kind #{inspect(kind)}, slot #{inspect(slot)}"
     end
   end
 

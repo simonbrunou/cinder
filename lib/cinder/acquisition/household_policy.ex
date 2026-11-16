@@ -17,6 +17,23 @@ defmodule Cinder.Acquisition.HouseholdPolicy do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Movie, Series}
   alias Cinder.Download
+  alias Cinder.LibraryKind
+  alias Cinder.Settings.Registry
+
+  @band_slots [
+    :min_size,
+    :max_size,
+    :preferred_resolutions,
+    :preferred_sources,
+    :preferred_terms,
+    :blocked_terms
+  ]
+
+  # Each video kind's band env keys, in `@band_slots` order, from the release-rule definitions'
+  # targets: a slot with no definition fails the build.
+  @band_env_keys Map.new(LibraryKind.video(), fn kind ->
+                   {kind, Enum.map(@band_slots, &{&1, Registry.release_env_key!(kind, &1)})}
+                 end)
 
   @doc """
   The household policy for `target`.
@@ -54,14 +71,9 @@ defmodule Cinder.Acquisition.HouseholdPolicy do
   """
   @spec band(:movies | :tv) :: keyword()
   def band(kind) do
-    [
-      min_size: Application.get_env(:cinder, :"#{kind}_min_size"),
-      max_size: Application.get_env(:cinder, :"#{kind}_max_size"),
-      preferred_resolutions: Application.get_env(:cinder, :"#{kind}_preferred_resolutions"),
-      preferred_sources: Application.get_env(:cinder, :"#{kind}_preferred_sources"),
-      preferred_terms: Application.get_env(:cinder, :"#{kind}_preferred_terms"),
-      blocked_terms: Application.get_env(:cinder, :"#{kind}_blocked_terms")
-    ]
-    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    @band_env_keys
+    |> Map.fetch!(kind)
+    |> Enum.map(fn {slot, env_key} -> {slot, Application.get_env(:cinder, env_key)} end)
+    |> Enum.reject(fn {_slot, value} -> is_nil(value) end)
   end
 end

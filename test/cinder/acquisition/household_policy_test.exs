@@ -6,6 +6,9 @@ defmodule Cinder.Acquisition.HouseholdPolicyTest do
 
   alias Cinder.Acquisition.HouseholdPolicy
   alias Cinder.Catalog.BlockedRelease
+  alias Cinder.ConfigCase
+  alias Cinder.LibraryKind
+  alias Cinder.Settings.Registry
 
   @band_keys [:movies_max_size, :movies_preferred_resolutions, :tv_min_size, :tv_blocked_terms]
 
@@ -54,6 +57,28 @@ defmodule Cinder.Acquisition.HouseholdPolicyTest do
     assert policy[:blocked_terms] == ["cam"]
     refute Keyword.has_key?(policy, :max_size)
     assert policy[:preferred_language] == "original"
+  end
+
+  # The env key comes from each definition's target, never from a template, so a renamed slot or
+  # key fails here instead of leaving band/1 reading a key nothing writes.
+  test "band/1 reads every rule from its definition's env target, in order, for each video kind" do
+    for {kind, n} <- Enum.with_index(LibraryKind.video(), 1) do
+      expected = [
+        min_size: 10 * n + 1,
+        max_size: 10 * n + 2,
+        preferred_resolutions: ["#{kind}-res"],
+        preferred_sources: ["#{kind}-src"],
+        preferred_terms: ["#{kind}-term"],
+        blocked_terms: ["#{kind}-blocked"]
+      ]
+
+      for {slot, value} <- expected do
+        %{target: {:env, env_key}} = Registry.one!(group: :releases, kind: kind, slot: slot)
+        ConfigCase.put_env(env_key, value)
+      end
+
+      assert HouseholdPolicy.band(kind) == expected
+    end
   end
 
   # A season pack the import arbitrated down to nothing placed is blocked for the upgrade sweep

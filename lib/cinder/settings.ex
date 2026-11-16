@@ -27,6 +27,12 @@ defmodule Cinder.Settings do
   @media_server Registry.one!(target: {:writer, :media_server})
   @media_servers Registry.media_servers()
 
+  # Each video kind's preferred-resolutions env key, which the upgrade cutoff check falls back to.
+  @preferred_resolutions_env_keys Map.new(
+                                    LibraryKind.video(),
+                                    &{&1, Registry.release_env_key!(&1, :preferred_resolutions)}
+                                  )
+
   @typedoc "The `server` atom of a `media_server_type` option, one per option."
   @type media_server ::
           unquote(
@@ -649,7 +655,7 @@ defmodule Cinder.Settings do
         Shape.parse_csv_list(value) || Scorer.default_preferred()
 
       :error ->
-        Application.get_env(:cinder, :"#{kind}_preferred_resolutions") ||
+        Application.get_env(:cinder, Map.fetch!(@preferred_resolutions_env_keys, kind)) ||
           Scorer.default_preferred()
     end
   end
