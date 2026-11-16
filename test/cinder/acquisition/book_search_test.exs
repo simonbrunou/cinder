@@ -19,8 +19,8 @@ defmodule Cinder.Acquisition.BookSearchTest do
   @kinds %{
     ebook: %{
       search: Ebooks,
-      structured: :search_book,
-      text: :search_book_query,
+      structured: :search_ebook,
+      text: :search_ebook_query,
       identifiers_key: :isbns,
       identifier: "9780060512750",
       formats: "epub",

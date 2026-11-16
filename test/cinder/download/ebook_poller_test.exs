@@ -1,6 +1,6 @@
-defmodule Cinder.Download.BookPollerTest do
+defmodule Cinder.Download.EbookPollerTest do
   @moduledoc """
-  The B4b vertical slice: an approved book target with an in-flight grab is tracked to completion,
+  The B4b vertical slice: an approved e-book target with an in-flight grab is tracked to completion,
   validated, published, and shown as available — and the races that could double-grab or
   double-import it are fenced.
 

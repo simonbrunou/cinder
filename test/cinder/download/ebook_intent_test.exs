@@ -1,8 +1,8 @@
-defmodule Cinder.Download.BookIntentTest do
+defmodule Cinder.Download.EbookIntentTest do
   @moduledoc """
-  The durable reservation for a book grab: `Download.grab_book_target/2` must be safe to call
-  twice, must not let two targets adopt one remote download, and must refuse to submit for a
-  target that is no longer eligible.
+  The durable reservation for an e-book grab: the `:ebook` clause of `Download.grab_book_target/2`
+  must be safe to call twice, must not let two targets adopt one remote download, and must refuse
+  to submit for a target that is no longer eligible.
 
   These are the `:book_target` clauses of the shared intent machinery, so what is asserted here is
   that a book intent takes the book branch at every dispatch point rather than falling into the

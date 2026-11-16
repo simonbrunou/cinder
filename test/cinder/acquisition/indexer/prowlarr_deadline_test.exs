@@ -98,8 +98,8 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrDeadlineTest do
       {"search_tv/3 without a TVDB id", fn -> Prowlarr.search_tv(nil, "Show", 1) end, 1},
       {"search_movie_query/2", fn -> Prowlarr.search_movie_query("Film", []) end, 1},
       {"search_tv_query/2", fn -> Prowlarr.search_tv_query("Show", []) end, 1},
-      {"search_book/3", fn -> Prowlarr.search_book("Author", "Title", []) end, 1},
-      {"search_book_query/2", fn -> Prowlarr.search_book_query("Title", []) end, 1},
+      {"search_ebook/3", fn -> Prowlarr.search_ebook("Author", "Title", []) end, 1},
+      {"search_ebook_query/2", fn -> Prowlarr.search_ebook_query("Title", []) end, 1},
       {"search_audiobook/3", fn -> Prowlarr.search_audiobook("Author", "Title", []) end, 1},
       {"search_audiobook_query/2", fn -> Prowlarr.search_audiobook_query("Title", []) end, 1}
     ]

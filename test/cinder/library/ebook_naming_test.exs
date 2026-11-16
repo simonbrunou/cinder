@@ -14,11 +14,11 @@ defmodule Cinder.Library.EbookNamingTest do
 
   @root "/library/books"
 
-  describe "book_dest/3" do
+  describe "ebook_dest/3" do
     test "is root/Author/Title/<preserved filename>" do
       work = work("The Dispossessed", ["Ursula K. Le Guin"])
 
-      assert EbookNaming.book_dest(work, "/downloads/x/dispossessed.epub", @root) ==
+      assert EbookNaming.ebook_dest(work, "/downloads/x/dispossessed.epub", @root) ==
                "/library/books/Ursula K. Le Guin/The Dispossessed/dispossessed.epub"
     end
 
@@ -27,7 +27,7 @@ defmodule Cinder.Library.EbookNamingTest do
       source = "/downloads/Le.Guin.The.Dispossessed.1974.Retail.EPUB-GRP.epub"
 
       # Automatic renaming is off for migration parity: the filename is evidence of its origin.
-      assert EbookNaming.book_dest(work, source, @root) ==
+      assert EbookNaming.ebook_dest(work, source, @root) ==
                "/library/books/Ursula K. Le Guin/The Dispossessed/" <>
                  "Le.Guin.The.Dispossessed.1974.Retail.EPUB-GRP.epub"
     end
@@ -36,7 +36,7 @@ defmodule Cinder.Library.EbookNamingTest do
       work = work("Good Omens", ["Terry Pratchett", "Neil Gaiman"])
 
       # A co-authored work lives in one place, not two, and not in a combinatorial folder name.
-      assert EbookNaming.book_dest(work, "/d/omens.epub", @root) ==
+      assert EbookNaming.ebook_dest(work, "/d/omens.epub", @root) ==
                "/library/books/Terry Pratchett/Good Omens/omens.epub"
     end
 
@@ -49,7 +49,7 @@ defmodule Cinder.Library.EbookNamingTest do
         ]
       }
 
-      assert EbookNaming.book_dest(work, "/d/omens.epub", @root) ==
+      assert EbookNaming.ebook_dest(work, "/d/omens.epub", @root) ==
                "/library/books/Terry Pratchett/Good Omens/omens.epub"
     end
 
@@ -63,21 +63,21 @@ defmodule Cinder.Library.EbookNamingTest do
       }
 
       # A translator's name appears on many unrelated works; only an author credit is identity.
-      assert EbookNaming.book_dest(work, "/d/beowulf.epub", @root) ==
+      assert EbookNaming.ebook_dest(work, "/d/beowulf.epub", @root) ==
                "/library/books/Unknown/Beowulf/beowulf.epub"
     end
 
     test "a work with no author credit lands under Unknown Author" do
       work = %Work{title: "Beowulf", credits: []}
 
-      assert EbookNaming.book_dest(work, "/d/beowulf.epub", @root) ==
+      assert EbookNaming.ebook_dest(work, "/d/beowulf.epub", @root) ==
                "/library/books/Unknown Author/Beowulf/beowulf.epub"
     end
 
     test "unloaded credits degrade rather than raise" do
       work = %Work{title: "Beowulf", credits: %Ecto.Association.NotLoaded{}}
 
-      assert EbookNaming.book_dest(work, "/d/beowulf.epub", @root) ==
+      assert EbookNaming.ebook_dest(work, "/d/beowulf.epub", @root) ==
                "/library/books/Unknown Author/Beowulf/beowulf.epub"
     end
   end
@@ -86,7 +86,7 @@ defmodule Cinder.Library.EbookNamingTest do
     test "separators in a provider title cannot create directories" do
       work = work("Anna Karenina: Part 1/2", ["Leo Tolstoy"])
 
-      dest = EbookNaming.book_dest(work, "/d/anna.epub", @root)
+      dest = EbookNaming.ebook_dest(work, "/d/anna.epub", @root)
 
       assert dest == "/library/books/Leo Tolstoy/Anna Karenina Part 12/anna.epub"
       assert Path.dirname(dest) |> Path.split() |> length() == 5
@@ -95,7 +95,7 @@ defmodule Cinder.Library.EbookNamingTest do
     test "a traversal title cannot climb out of the root" do
       work = work("..", [".."])
 
-      dest = EbookNaming.book_dest(work, "/d/book.epub", @root)
+      dest = EbookNaming.ebook_dest(work, "/d/book.epub", @root)
 
       # Dots-only components collapse to the neutral fallbacks rather than becoming `..` segments.
       assert dest == "/library/books/Unknown Author/Untitled/book.epub"
@@ -105,7 +105,7 @@ defmodule Cinder.Library.EbookNamingTest do
     test "a traversal filename cannot climb out of the destination folder" do
       work = work("The Dispossessed", ["Ursula K. Le Guin"])
 
-      dest = EbookNaming.book_dest(work, "/downloads/../../etc/passwd.epub", @root)
+      dest = EbookNaming.ebook_dest(work, "/downloads/../../etc/passwd.epub", @root)
 
       # `Path.basename/1` drops the directory part before it is ever joined.
       assert dest == "/library/books/Ursula K. Le Guin/The Dispossessed/passwd.epub"
@@ -114,7 +114,7 @@ defmodule Cinder.Library.EbookNamingTest do
     test "a dots-only filename does not become a climbing segment" do
       work = work("The Dispossessed", ["Ursula K. Le Guin"])
 
-      dest = EbookNaming.book_dest(work, "/downloads/..", @root)
+      dest = EbookNaming.ebook_dest(work, "/downloads/..", @root)
 
       assert dest == "/library/books/Ursula K. Le Guin/The Dispossessed/book"
       assert String.starts_with?(dest, @root <> "/")
@@ -127,14 +127,14 @@ defmodule Cinder.Library.EbookNamingTest do
       # goes :available with a library file the consumer cannot see.
       work = work("The Dispossessed", ["Ursula K. Le Guin"])
 
-      assert EbookNaming.book_dest(work, "/d/???.epub", @root) ==
+      assert EbookNaming.ebook_dest(work, "/d/???.epub", @root) ==
                "/library/books/Ursula K. Le Guin/The Dispossessed/book.epub"
     end
 
     test "an all-illegal title falls back rather than collapsing the path" do
       work = work("///", ["Ursula K. Le Guin"])
 
-      assert EbookNaming.book_dest(work, "/d/book.epub", @root) ==
+      assert EbookNaming.ebook_dest(work, "/d/book.epub", @root) ==
                "/library/books/Ursula K. Le Guin/Untitled/book.epub"
     end
 
@@ -145,14 +145,14 @@ defmodule Cinder.Library.EbookNamingTest do
       # reporting why. `file_name/1` already refuses this for the basename.
       work = work(".hack//Legend of the Twilight", ["Tatsuya Hamazaki"])
 
-      assert EbookNaming.book_dest(work, "/d/twilight.epub", @root) ==
+      assert EbookNaming.ebook_dest(work, "/d/twilight.epub", @root) ==
                "/library/books/Tatsuya Hamazaki/_.hackLegend of the Twilight/twilight.epub"
     end
 
     test "an author that sanitizes to a leading dot does not become a hidden folder" do
       work = work("Beowulf", [".hack Collective"])
 
-      assert EbookNaming.book_dest(work, "/d/beowulf.epub", @root) ==
+      assert EbookNaming.ebook_dest(work, "/d/beowulf.epub", @root) ==
                "/library/books/_.hack Collective/Beowulf/beowulf.epub"
     end
   end

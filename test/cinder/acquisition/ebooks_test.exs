@@ -39,12 +39,12 @@ defmodule Cinder.Acquisition.EbooksTest do
     test "searches structured author+title, then bounded free text" do
       test_pid = self()
 
-      expect(IndexerMock, :search_book, fn author, title, _opts ->
+      expect(IndexerMock, :search_ebook, fn author, title, _opts ->
         send(test_pid, {:structured, author, title})
         {:ok, []}
       end)
 
-      expect(IndexerMock, :search_book_query, fn query, _opts ->
+      expect(IndexerMock, :search_ebook_query, fn query, _opts ->
         send(test_pid, {:free_text, query})
         {:ok, []}
       end)
@@ -59,12 +59,12 @@ defmodule Cinder.Acquisition.EbooksTest do
       test_pid = self()
       work = Map.put(@work, :isbns, ["9780060512750", "0060512750"])
 
-      expect(IndexerMock, :search_book_query, 3, fn query, _opts ->
+      expect(IndexerMock, :search_ebook_query, 3, fn query, _opts ->
         send(test_pid, {:query, query})
         {:ok, []}
       end)
 
-      expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:ok, []} end)
+      expect(IndexerMock, :search_ebook, fn _author, _title, _opts -> {:ok, []} end)
 
       assert {:ok, [], true} = Ebooks.search(work)
 
@@ -82,13 +82,13 @@ defmodule Cinder.Acquisition.EbooksTest do
       test_pid = self()
       work = Map.put(@work, :isbns, Enum.map(1..40, &"978000000#{&1}"))
 
-      # 3 ISBN probes + 1 free text = 4 search_book_query calls, plus 1 structured — never 40.
-      expect(IndexerMock, :search_book_query, 4, fn query, _opts ->
+      # 3 ISBN probes + 1 free text = 4 search_ebook_query calls, plus 1 structured — never 40.
+      expect(IndexerMock, :search_ebook_query, 4, fn query, _opts ->
         send(test_pid, {:query, query})
         {:ok, []}
       end)
 
-      expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:ok, []} end)
+      expect(IndexerMock, :search_ebook, fn _author, _title, _opts -> {:ok, []} end)
 
       assert {:ok, [], true} = Ebooks.search(work)
 
@@ -99,12 +99,12 @@ defmodule Cinder.Acquisition.EbooksTest do
     test "a work with no author still searches by title" do
       test_pid = self()
 
-      expect(IndexerMock, :search_book, fn author, title, _opts ->
+      expect(IndexerMock, :search_ebook, fn author, title, _opts ->
         send(test_pid, {:structured, author, title})
         {:ok, []}
       end)
 
-      expect(IndexerMock, :search_book_query, fn query, _opts ->
+      expect(IndexerMock, :search_ebook_query, fn query, _opts ->
         send(test_pid, {:free_text, query})
         {:ok, []}
       end)
@@ -120,11 +120,11 @@ defmodule Cinder.Acquisition.EbooksTest do
     test "dedupes by download_url and merges query provenance" do
       shared = indexer_result("Ursula K. Le Guin - The Dispossessed (epub)")
 
-      expect(IndexerMock, :search_book, fn _author, _title, _opts ->
+      expect(IndexerMock, :search_ebook, fn _author, _title, _opts ->
         {:ok, [%{shared | query_origins: [:id_scoped]}]}
       end)
 
-      expect(IndexerMock, :search_book_query, fn _query, _opts ->
+      expect(IndexerMock, :search_ebook_query, fn _query, _opts ->
         {:ok, [%{shared | query_origins: [:free_text]}]}
       end)
 
@@ -133,11 +133,11 @@ defmodule Cinder.Acquisition.EbooksTest do
     end
 
     test "parses each result into an EbookRelease" do
-      expect(IndexerMock, :search_book, fn _author, _title, _opts ->
+      expect(IndexerMock, :search_ebook, fn _author, _title, _opts ->
         {:ok, [indexer_result("Ursula K. Le Guin - The Dispossessed (epub) [retail]")]}
       end)
 
-      expect(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
+      expect(IndexerMock, :search_ebook_query, fn _query, _opts -> {:ok, []} end)
 
       assert {:ok, [release], true} = Ebooks.search(@work)
       assert release.formats == [:epub]
@@ -147,11 +147,11 @@ defmodule Cinder.Acquisition.EbooksTest do
 
   describe "partial failure" do
     test "one failing query yields complete? false, not an error" do
-      expect(IndexerMock, :search_book, fn _author, _title, _opts ->
+      expect(IndexerMock, :search_ebook, fn _author, _title, _opts ->
         {:error, :timeout}
       end)
 
-      expect(IndexerMock, :search_book_query, fn _query, _opts ->
+      expect(IndexerMock, :search_ebook_query, fn _query, _opts ->
         {:ok, [indexer_result("Ursula K. Le Guin - The Dispossessed (epub)")]}
       end)
 
@@ -159,8 +159,8 @@ defmodule Cinder.Acquisition.EbooksTest do
     end
 
     test "every query failing is an error, so an outage is never read as an absence" do
-      expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:error, :timeout} end)
-      expect(IndexerMock, :search_book_query, fn _query, _opts -> {:error, :timeout} end)
+      expect(IndexerMock, :search_ebook, fn _author, _title, _opts -> {:error, :timeout} end)
+      expect(IndexerMock, :search_ebook_query, fn _query, _opts -> {:error, :timeout} end)
 
       assert {:error, :indexer_unavailable} = Ebooks.search(@work)
     end
@@ -168,7 +168,7 @@ defmodule Cinder.Acquisition.EbooksTest do
 
   describe "candidates/2" do
     test "returns ranked acceptances and explained rejections" do
-      expect(IndexerMock, :search_book, fn _author, _title, _opts ->
+      expect(IndexerMock, :search_ebook, fn _author, _title, _opts ->
         {:ok,
          [
            indexer_result("Ursula K. Le Guin - The Dispossessed (epub)"),
@@ -177,7 +177,7 @@ defmodule Cinder.Acquisition.EbooksTest do
          ]}
       end)
 
-      expect(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
+      expect(IndexerMock, :search_ebook_query, fn _query, _opts -> {:ok, []} end)
 
       assert {:ok, %{accepted: accepted, rejected: rejected, complete?: true}} =
                Ebooks.candidates(@work)
@@ -190,8 +190,8 @@ defmodule Cinder.Acquisition.EbooksTest do
     end
 
     test "propagates an indexer outage" do
-      expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:error, :timeout} end)
-      expect(IndexerMock, :search_book_query, fn _query, _opts -> {:error, :timeout} end)
+      expect(IndexerMock, :search_ebook, fn _author, _title, _opts -> {:error, :timeout} end)
+      expect(IndexerMock, :search_ebook_query, fn _query, _opts -> {:error, :timeout} end)
 
       assert {:error, :indexer_unavailable} = Ebooks.candidates(@work)
     end
@@ -233,12 +233,12 @@ defmodule Cinder.Acquisition.EbooksTest do
 
       loaded = Cinder.Books.get_work(work.id)
 
-      expect(IndexerMock, :search_book, fn author, title, _opts ->
+      expect(IndexerMock, :search_ebook, fn author, title, _opts ->
         send(test_pid, {:structured, author, title})
         {:ok, []}
       end)
 
-      expect(IndexerMock, :search_book_query, 2, fn query, _opts ->
+      expect(IndexerMock, :search_ebook_query, 2, fn query, _opts ->
         send(test_pid, {:query, query})
         {:ok, []}
       end)
@@ -276,9 +276,9 @@ defmodule Cinder.Acquisition.EbooksTest do
 
       loaded = Cinder.Books.get_work(work.id)
 
-      expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:ok, []} end)
+      expect(IndexerMock, :search_ebook, fn _author, _title, _opts -> {:ok, []} end)
 
-      expect(IndexerMock, :search_book_query, fn query, _opts ->
+      expect(IndexerMock, :search_ebook_query, fn query, _opts ->
         send(test_pid, {:query, query})
         {:ok, []}
       end)
@@ -316,11 +316,11 @@ defmodule Cinder.Acquisition.EbooksTest do
         protocol: :torrent
       }
 
-      expect(IndexerMock, :search_book, fn _author, _title, _opts ->
+      expect(IndexerMock, :search_ebook, fn _author, _title, _opts ->
         {:ok, [translator_named]}
       end)
 
-      expect(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
+      expect(IndexerMock, :search_ebook_query, fn _query, _opts -> {:ok, []} end)
 
       assert {:ok, %{accepted: [], rejected: [{_release, :author_mismatch}]}} =
                Ebooks.candidates(loaded)
@@ -364,9 +364,9 @@ defmodule Cinder.Acquisition.EbooksTest do
 
       loaded = Cinder.Books.get_work(work.id)
 
-      expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:ok, []} end)
+      expect(IndexerMock, :search_ebook, fn _author, _title, _opts -> {:ok, []} end)
 
-      expect(IndexerMock, :search_book_query, 4, fn query, _opts ->
+      expect(IndexerMock, :search_ebook_query, 4, fn query, _opts ->
         send(test_pid, {:query, query})
         {:ok, []}
       end)
@@ -414,8 +414,8 @@ defmodule Cinder.Acquisition.EbooksTest do
         protocol: :torrent
       }
 
-      expect(IndexerMock, :search_book, fn _author, _title, _opts -> {:ok, [series_named]} end)
-      expect(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
+      expect(IndexerMock, :search_ebook, fn _author, _title, _opts -> {:ok, [series_named]} end)
+      expect(IndexerMock, :search_ebook_query, fn _query, _opts -> {:ok, []} end)
 
       assert {:ok, %{accepted: [{accepted, _evidence}], rejected: []}} = Ebooks.candidates(loaded)
       assert accepted.title == series_named.title

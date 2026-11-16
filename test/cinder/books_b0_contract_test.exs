@@ -83,7 +83,7 @@ defmodule Cinder.BooksB0ContractTest do
        "targets are unique per work and media kind while both kinds remain independent"}
     ],
     "hardlink/copy publication" => [
-      {"test/cinder/download/book_poller_test.exs",
+      {"test/cinder/download/ebook_poller_test.exs",
        "a completed download is published and the target goes available"}
     ],
     "import naming" => [
@@ -91,7 +91,7 @@ defmodule Cinder.BooksB0ContractTest do
        "preserves the release filename verbatim, including scene noise"}
     ],
     "Booklore filesystem handoff" => [
-      {"test/cinder/download/book_poller_test.exs",
+      {"test/cinder/download/ebook_poller_test.exs",
        "a zipped release is extracted and published, end to end"}
     ],
     "Audiobookshelf filesystem and scan handoff" => [

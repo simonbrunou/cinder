@@ -42,7 +42,7 @@ defmodule Cinder.DatabaseBackupTest do
 
   # `@tag :unboxed` because `VACUUM INTO` cannot run inside the Sandbox transaction every other
   # test in this file (implicitly) uses — see the `:unboxed` invariant comment in
-  # `book_poller_test.exs` (real, committed rows; safe here because this module is `async:
+  # `ebook_poller_test.exs` (real, committed rows; safe here because this module is `async:
   # false`, so no `async: true` test can ever observe them mid-flight; `try/after` cleanup runs
   # in this test's own process, not `on_exit/1`, which would silently no-op against a connection
   # its owner process has already exited).

@@ -24,7 +24,7 @@ defmodule Cinder.Acquisition.BookSearch do
   A plan is three constants:
 
     * `media_kind` — the book kind. Only that kind's editions supply identifiers. It also picks
-      the indexer callbacks (`search_book/3` and `search_book_query/2`, or the `search_audiobook`
+      the indexer callbacks (`search_ebook/3` and `search_ebook_query/2`, or the `search_audiobook`
       pair) and the release struct (`EbookRelease` or `AudiobookRelease`), which
       `Cinder.Acquisition.BookScorer` reads the kind back from. Those map one to one onto the
       kind, so they are not plan fields.
@@ -166,12 +166,12 @@ defmodule Cinder.Acquisition.BookSearch do
   end
 
   # The indexer callbacks, release struct and log label of each book kind.
-  defp structured_query(:ebook, author, title), do: indexer().search_book(author, title, [])
+  defp structured_query(:ebook, author, title), do: indexer().search_ebook(author, title, [])
 
   defp structured_query(:audiobook, author, title),
     do: indexer().search_audiobook(author, title, [])
 
-  defp text_query(:ebook, query), do: indexer().search_book_query(query, [])
+  defp text_query(:ebook, query), do: indexer().search_ebook_query(query, [])
   defp text_query(:audiobook, query), do: indexer().search_audiobook_query(query, [])
 
   defp release(:ebook, raw), do: EbookRelease.new(raw)

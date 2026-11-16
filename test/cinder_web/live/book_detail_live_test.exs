@@ -447,7 +447,7 @@ defmodule CinderWeb.BookDetailLiveTest do
     # #495: changing the language while the panel stays open must restart the search under the
     # new preference, and a search that was already in flight under the OLD preference must
     # never land afterward — even when it completes later than the fresh, post-change search.
-    # `search_book` is called once per `Books.candidates/2` invocation (the search's structured
+    # `search_ebook` is called once per `Books.candidates/2` invocation (the search's structured
     # query, run by `Acquisition.BookSearch`), so blocking the FIRST call and racing a language
     # change against it exercises the real `start_async`/`cancel_async` ref machinery, not just
     # `update/2`.
@@ -456,7 +456,7 @@ defmodule CinderWeb.BookDetailLiveTest do
       {target, _work} = ebook_target(title: "The Dispossessed")
       test_pid = self()
 
-      Mox.expect(IndexerMock, :search_book, fn _author, _title, _opts ->
+      Mox.expect(IndexerMock, :search_ebook, fn _author, _title, _opts ->
         send(test_pid, {:old_search_started, self()})
 
         receive do
@@ -466,11 +466,11 @@ defmodule CinderWeb.BookDetailLiveTest do
         {:ok, [indexer_result("Ursula K. Le Guin - The Dispossessed (Stale English) (EPUB)")]}
       end)
 
-      Mox.expect(IndexerMock, :search_book, fn _author, _title, _opts ->
+      Mox.expect(IndexerMock, :search_ebook, fn _author, _title, _opts ->
         {:ok, [indexer_result("Ursula K. Le Guin - The Dispossessed (French) (EPUB)")]}
       end)
 
-      stub(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
+      stub(IndexerMock, :search_ebook_query, fn _query, _opts -> {:ok, []} end)
 
       {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
 
@@ -897,8 +897,8 @@ defmodule CinderWeb.BookDetailLiveTest do
   end
 
   defp stub_indexer(releases) do
-    stub(IndexerMock, :search_book, fn _author, _title, _opts -> {:ok, releases} end)
-    stub(IndexerMock, :search_book_query, fn _query, _opts -> {:ok, []} end)
+    stub(IndexerMock, :search_ebook, fn _author, _title, _opts -> {:ok, releases} end)
+    stub(IndexerMock, :search_ebook_query, fn _query, _opts -> {:ok, []} end)
   end
 
   defp stub_audiobook_indexer(releases) do

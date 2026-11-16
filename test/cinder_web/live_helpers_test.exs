@@ -109,8 +109,8 @@ defmodule CinderWeb.LiveHelpersTest do
   describe "book_hold_reason/1" do
     # The lists come from their producers, so a code added to one fails here until it has a
     # sentence. The watch's `:stalled` and `{:blocked_content, _}` verdicts have no list to read.
-    # `stored/1` is `Cinder.Books.hold_target/5`'s encoding; `BookPollerTest` holds a target on
-    # every retried import error through the real one.
+    # `stored/1` is `Cinder.Books.hold_target/5`'s encoding; `BookPollerRetriedImportErrorsTest`
+    # holds a target on every retried import error through the real one.
     defp known_hold_codes do
       (Watch.failure_codes() ++
          [:stalled, :blocked_content] ++

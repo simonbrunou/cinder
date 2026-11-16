@@ -2,7 +2,7 @@ defmodule Cinder.Download.AudiobookPollerTest do
   @moduledoc """
   The B7b vertical slice: an approved audiobook target with an in-flight grab is tracked to
   completion, its multi-track payload is validated, resolved, and published ATOMICALLY as one
-  target, and the target is shown available — mirroring `Cinder.Download.BookPollerTest`'s own
+  target, and the target is shown available — mirroring `Cinder.Download.EbookPollerTest`'s own
   reasoning for why this runs against a real filesystem and real `PathPolicy`.
   """
   use Cinder.DataCase, async: false

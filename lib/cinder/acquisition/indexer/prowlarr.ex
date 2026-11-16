@@ -14,9 +14,10 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   token query with a free-text title + `{Season:...}` query (see `search_tv/3` for why
   the id query alone is not enough), reusing the same normalization.
 
-  `search_book/3` and `search_book_query/2` are the books siblings (`type=book` / `type=search`),
-  scoped to the e-book category by default. `search_audiobook/3` and `search_audiobook_query/2`
-  are their audiobook siblings, scoped to the audiobook category instead.
+  `search_ebook/3` and `search_ebook_query/2` are the e-book siblings (`type=book` /
+  `type=search`), scoped to the e-book category by default. `search_audiobook/3` and
+  `search_audiobook_query/2` are their audiobook siblings, scoped to the audiobook category
+  instead.
   """
   @behaviour Cinder.Acquisition.Indexer
 
@@ -135,7 +136,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   rather than free text.
   """
   @impl true
-  def search_book(author, title, opts) do
+  def search_ebook(author, title, opts) do
     case search_query(book_query(author, title), "book", categories(opts)) do
       {:ok, releases} -> {:ok, tag_query_origin(releases, :id_scoped)}
       {:error, _reason} = error -> error
@@ -150,7 +151,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   match it against release names as a title string. Results are tagged `:free_text`.
   """
   @impl true
-  def search_book_query(query, opts) do
+  def search_ebook_query(query, opts) do
     case search_query(query, "search", categories(opts)) do
       {:ok, releases} -> {:ok, tag_query_origin(releases, :free_text)}
       {:error, _reason} = error -> error
@@ -158,7 +159,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   end
 
   @doc """
-  Structured audiobook search (`type=book`) — the audiobook sibling of `search_book/3`. Reuses
+  Structured audiobook search (`type=book`) — the audiobook sibling of `search_ebook/3`. Reuses
   `book_query/2`'s brace-token construction unchanged: Newznab's structured book-search type
   still carries `author`/`title` fields regardless of the category filtering the results to
   audio. Results are tagged `:id_scoped`.
@@ -172,7 +173,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   end
 
   @doc """
-  Free-text audiobook search (`type=search`) — the audiobook sibling of `search_book_query/2`.
+  Free-text audiobook search (`type=search`) — the audiobook sibling of `search_ebook_query/2`.
   Used for the ASIN/ISBN probe and the `"Title Author"` fallback. Results are tagged `:free_text`.
   """
   @impl true

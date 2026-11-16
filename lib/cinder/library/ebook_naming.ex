@@ -39,8 +39,8 @@ defmodule Cinder.Library.EbookNaming do
   The basename is `source`'s, unchanged apart from the same illegal-character sanitizing every
   other component gets: only the directories are Cinder's.
   """
-  @spec book_dest(Work.t(), String.t(), String.t()) :: String.t()
-  def book_dest(%Work{} = work, source, root),
+  @spec ebook_dest(Work.t(), String.t(), String.t()) :: String.t()
+  def ebook_dest(%Work{} = work, source, root),
     do: Path.join([root, author_folder(work), title_folder(work), file_name(source)])
 
   # `Path.basename/1` already drops any directory part, so a release-supplied `../../etc/passwd`

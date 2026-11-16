@@ -76,7 +76,7 @@ defmodule Cinder.Library.EbookImport do
   # parks automatic upgrades and format conversion for the first release, so an operator's copy
   # is never overwritten on the strength of a release name.
   defp place(grab, target, source, format, size, root, replace?) do
-    dest = EbookNaming.book_dest(target.work, source, root)
+    dest = EbookNaming.ebook_dest(target.work, source, root)
 
     # The author/title folders are Cinder's to create, and staging assumes the destination
     # directory exists (the movie and episode paths `mkdir_p` before staging for the same reason).

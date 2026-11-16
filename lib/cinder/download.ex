@@ -232,13 +232,13 @@ defmodule Cinder.Download do
   def grab_book_target(%BookTarget{media_kind: :ebook} = target, %EbookRelease{} = release, opts) do
     case Repo.get_by(Intent, kind: :book_target, target_id: target.id) do
       nil ->
-        reserve_and_reconcile(:book_target, target.id, [], book_release(release), opts)
+        reserve_and_reconcile(:book_target, target.id, [], ebook_release(release), opts)
 
       %Intent{status: :cleanup_pending} ->
         {:error, :download_intent_busy}
 
       intent ->
-        reconcile_matching_intent(intent, book_release(release), [], opts)
+        reconcile_matching_intent(intent, ebook_release(release), [], opts)
     end
   end
 
@@ -265,7 +265,7 @@ defmodule Cinder.Download do
   # A book release carries no mapping or policy snapshot: both are video-pipeline evidence (an
   # episode-numbering decision and an Anime language policy). Left nil, `Intent`'s validators
   # accept them and the reservation's equality checks pass unchanged.
-  defp book_release(%EbookRelease{} = release) do
+  defp ebook_release(%EbookRelease{} = release) do
     %Release{
       title: release.title,
       download_url: release.download_url,
@@ -274,7 +274,7 @@ defmodule Cinder.Download do
     }
   end
 
-  # Mirrors `book_release/1` exactly — same nil mapping/policy snapshot reasoning, different
+  # Mirrors `ebook_release/1` exactly — same nil mapping/policy snapshot reasoning, different
   # source struct.
   defp audiobook_release(%AudiobookRelease{} = release) do
     %Release{

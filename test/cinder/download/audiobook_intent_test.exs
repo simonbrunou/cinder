@@ -1,6 +1,6 @@
 defmodule Cinder.Download.AudiobookIntentTest do
   @moduledoc """
-  The `:audiobook` clause of `Download.grab_book_target/3` — the `Cinder.Download.BookIntentTest`
+  The `:audiobook` clause of `Download.grab_book_target/3` — the `Cinder.Download.EbookIntentTest`
   sibling. What is asserted here is that an audiobook intent takes the SAME durable
   reserve/reconcile scaffolding the e-book clause already has, and that the type-matched dispatch
   guard genuinely refuses a release struct built for the wrong media kind in both directions.
