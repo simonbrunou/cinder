@@ -30,8 +30,9 @@ JS needs, follow the `container` job on the host with these changes:
 3. `docker rm --force <name>`, since the job boots a fresh container for each run. Then run the
    "Boot a fresh instance" step's `docker run` with `--name <name>`, image `cinder:<tag>`, and
    `-p 127.0.0.1:<port>:4000` in place of `--network "container:$(hostname)"`, which joins the
-   job container's network. Wait for `curl -fs http://127.0.0.1:<port>/healthz` as the step does
-   (30 tries, 1 s apart), then run its `mark_setup_complete` eval through `docker exec <name>`.
+   job container's network. Wait for `curl -fs --max-time 2 http://127.0.0.1:<port>/healthz` as
+   the step does (120 tries, 1 s apart). Then run the `mark_setup_complete` eval of the next
+   step, "Mark setup complete and install Playwright", through `docker exec <name>`.
 4. Build the venv on `/usr/bin/python3` and install the Playwright version the job pins; skip the
    job's `playwright install-deps`, which installs apt packages. A venv on the nix `python3`
    fails to import Playwright's `greenlet` with `libstdc++.so.6: cannot open shared object file`
