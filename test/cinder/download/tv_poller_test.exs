@@ -20,7 +20,7 @@ defmodule Cinder.Download.TvPollerTest do
 
   import Cinder.BoundedWalkHelpers
   import Cinder.CatalogFixtures
-  import Cinder.ConfigCase, only: [put_env: 2]
+  import Cinder.ConfigCase, only: [put_config: 2, put_env: 2]
   import Cinder.LibraryStubs
   import Cinder.PollerHelpers
   import Cinder.Test.BarrierFilesystem, only: [fail_in_order: 1]
@@ -56,11 +56,8 @@ defmodule Cinder.Download.TvPollerTest do
 
   # Anime preferences are global-only (no per-title override) — a test needing a non-default
   # policy overrides the global settings env for its duration and restores it on exit.
-  defp set_anime_defaults!(overrides) do
-    saved = Application.fetch_env!(:cinder, :anime_preferences)
-    Application.put_env(:cinder, :anime_preferences, Keyword.merge(saved, overrides))
-    on_exit(fn -> Application.put_env(:cinder, :anime_preferences, saved) end)
-  end
+  # `put_config/2` also refuses groups given otherwise than `Cinder.Settings` stores them.
+  defp set_anime_defaults!(overrides), do: put_config(:anime_preferences, overrides)
 
   # Drives the free-disk prober (Cinder.Test.StubDisk) for a test's duration; restored on exit.
   defp set_disk_stub!(result) do

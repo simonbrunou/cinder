@@ -21,11 +21,8 @@ defmodule Cinder.Download.IntentTest do
 
   # Anime preferences are global-only (no per-title override) — a test needing a non-default
   # policy overrides the global settings env for its duration and restores it on exit.
-  defp set_anime_defaults!(overrides) do
-    saved = Application.fetch_env!(:cinder, :anime_preferences)
-    Application.put_env(:cinder, :anime_preferences, Keyword.merge(saved, overrides))
-    on_exit(fn -> Application.put_env(:cinder, :anime_preferences, saved) end)
-  end
+  # `put_config/2` also refuses groups given otherwise than `Cinder.Settings` stores them.
+  defp set_anime_defaults!(overrides), do: ConfigCase.put_config(:anime_preferences, overrides)
 
   defp set_anime_subtitle_languages!(csv) do
     saved = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])

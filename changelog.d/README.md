@@ -14,6 +14,9 @@ only `test/`, `.forgejo/workflows/`, `scripts/`, `.gitignore`, `AGENTS.md`, `doc
   `### Internal`, each followed by its entries. Nothing goes above the first heading, and no other
   line starting with a Markdown heading (`#` to `######` then a space) or with `##` sits at
   column 0.
+- Wrap its prose at 100 columns, an entry's later lines indented two spaces under its `- `.
+  `test/code_health/agent_doc_line_length_test.exs` fails a longer prose line; its header names
+  the lines it skips, such as a line holding a URL.
 
 ```markdown
 ### Fixed

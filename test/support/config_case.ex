@@ -9,14 +9,39 @@ defmodule Cinder.ConfigCase do
   race another test.
   """
 
+  alias Cinder.Acquisition.AnimePreferences
+
   @doc """
   Merges `overrides` onto the current `Application.get_env(:cinder, key)` and
-  restores the original value when the test exits.
+  restores the original value when the test exits. For `:anime_preferences` it raises on groups
+  given otherwise than `Cinder.Settings` stores them (`stored_anime_groups!/2`).
   """
   def put_config(key, overrides) do
+    if key == :anime_preferences,
+      do: stored_anime_groups!(overrides, "put_config(:anime_preferences, ...)")
+
     original = Application.get_env(:cinder, key)
     ExUnit.Callbacks.on_exit(fn -> Application.put_env(:cinder, key, original) end)
     Application.put_env(:cinder, key, Keyword.merge(original, overrides))
+  end
+
+  @doc """
+  Raises unless the `:preferred_groups` and `:blocked_groups` in `overrides` (a keyword list or
+  a map) are as `Cinder.Settings` stores them: trimmed, downcased, no blank and no repeat
+  (`AnimePreferences.normalize_groups/1`). The policy compares a release's normalized group
+  with the groups as stored, so a test that sets "Trusted" matches no release and passes
+  without testing the group rule (#839). `caller` names the helper in the message.
+  """
+  def stored_anime_groups!(overrides, caller) do
+    for slot <- [:preferred_groups, :blocked_groups],
+        {:ok, groups} <- [Access.fetch(overrides, slot)],
+        groups != AnimePreferences.normalize_groups(groups) do
+      raise ArgumentError,
+            "#{caller}: #{slot}: #{inspect(groups)} is not as Cinder.Settings stores it; " <>
+              "pass #{inspect(AnimePreferences.normalize_groups(groups))}"
+    end
+
+    :ok
   end
 
   @doc """

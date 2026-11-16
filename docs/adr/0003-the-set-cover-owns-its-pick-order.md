@@ -39,12 +39,12 @@ does in the first pass, and bands a whole-season pack by the season's count only
 
 ## Considered options
 
-- One greedy pass with the band in the key, `{language_rank, season_band?, -coverage,
-  rank_key}`. It changes what the sweep grabs. With 4 GB per episode, E19 to E22 wanted, 1 GB
-  singles for E19 and E20 only, and a 19.7 GB pack that fits only the season band, one pass takes
-  both singles and the pack in the same search. The two passes take the singles, and the pack
-  only on a later search where nothing in band covers the rest, so singles released meanwhile
-  still win.
+- One greedy pass with the band in the key,
+  `{language_rank, season_band?, -coverage, rank_key}`. It changes what the sweep grabs. With
+  4 GB per episode, E19 to E22 wanted, 1 GB singles for E19 and E20 only, and a 19.7 GB pack that
+  fits only the season band, one pass takes both singles and the pack in the same search. The two
+  passes take the singles, and the pack only on a later search where nothing in band covers the
+  rest, so singles released meanwhile still win.
 - Keeping the retry in `best_releases/4` and recording why. The sweep passed
   `season_episode_count` to arm the retry while the upgrade sweep passed `pack_episode_count` to
   its first pass: two names, two effects, for one fact.

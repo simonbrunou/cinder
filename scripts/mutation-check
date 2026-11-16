@@ -11,7 +11,10 @@ unchanged file as a control, which must pass at least one test. Then, for each m
 <file> as the original text with `old` replaced by `new` and runs the same command. It restores
 <file> after the last mutant, or when a SIGINT or SIGTERM stops the run. It prints one line per
 mutant with its verdict, then each line the edit removed (`-`) and added (`+`): an edit that
-matches the wrong text proves nothing, so read them.
+matches the wrong text proves nothing, so read them. Under a killed mutant it then prints each
+failure's numbered header line from ExUnit (`failed: 1) test ...`). Under NO RESULT it prints
+the run's first 5 error lines, those that start with `error:` or `** (` after any blanks, or,
+when it has none, its last 5 non-blank lines (`output: ...`).
 
   killed     the run ends on a `Result:` line that ExUnit prints when a test failed
              (`N/M passed`) or a module's `setup_all` failed (`, N invalid`);
@@ -38,6 +41,9 @@ from pathlib import Path
 # `0 tests` when none ran; it appends `, N invalid` when a `setup_all` failed.
 KILLED = re.compile(r"^Result: (\d+/\d+ passed|.*, \d+ invalid)")
 PASSED = re.compile(r"^Result: \d+ passed")
+# ExUnit numbers each failure, a failed test or a failed `setup_all`: `  1) test name (Module)`.
+FAILURE = re.compile(r"^\s+\d+\) ")
+ERROR = re.compile(r"^\s*(error:|\*\* \()")
 
 
 def occurrences(text, old):
@@ -65,7 +71,18 @@ def run_tests(tests):
     run = subprocess.run(["mix", "test.unchecked", *tests], capture_output=True, text=True)
     output = (run.stdout + run.stderr).splitlines()
     results = [line for line in output if line.startswith("Result:")]
-    return run.returncode, (results[-1] if results else None)
+    return run.returncode, (results[-1] if results else None), output
+
+
+def reasons(outcome, output):
+    """The lines that say why: each failure's header for a kill, the errors for no result."""
+    if outcome == "killed":
+        return [f"failed: {line.strip()}" for line in output if FAILURE.match(line)]
+    if outcome == "NO RESULT":
+        errors = [line.strip() for line in output if ERROR.match(line)]
+        lines = errors[:5] or [line for line in output if line.strip()][-5:]
+        return [f"output: {line}" for line in lines]
+    return []
 
 
 def restore(path, original):
@@ -109,7 +126,7 @@ def main(argv):
         signal.signal(sig, stop)
 
     try:
-        code, result = run_tests(tests)
+        code, result, _output = run_tests(tests)
     except OSError as error:
         print(f"cannot run mix: {error}", file=sys.stderr)
         return 2
@@ -124,13 +141,13 @@ def main(argv):
         for m in mutants:
             mutated = text.replace(m["old"], m["new"])
             path.write_bytes(mutated.encode("utf-8"))
-            code, result = run_tests(tests)
+            code, result, output = run_tests(tests)
             outcome = verdict(code, result)
             missed += outcome != "killed"
             diff = difflib.unified_diff(text.splitlines(), mutated.splitlines(), lineterm="", n=0)
             changed = [line for line in list(diff)[2:] if not line.startswith("@@")]
             print(f"{m['label']}: {outcome}, {result or f'exit {code}'}", flush=True)
-            for line in changed:
+            for line in changed + reasons(outcome, output):
                 print(f"    {line}", flush=True)
         print(f"{len(mutants) - missed} of {len(mutants)} killed", flush=True)
     except BrokenPipeError:

@@ -84,12 +84,16 @@
   the `Result:` line. Compiler warnings still print, and a failing test still exits non-zero.
   The format check and Credo do not run at all, so `mix test` stays the only "done" gate. On
   #1149 those gates stopped 6 of 14 mutants before ExUnit, about 13 minutes of rewrites, and
-  #851 records 22 more threads that lost runs to them.
+  #851 records 22 more threads that lost runs to them. Both aliases stop before ExUnit with
+  `mix test: no such test path: <path>` when a path under `test/` names no file or directory.
+  Mix itself fails only when none of the given paths matches: on #786 a fence run with one
+  mistyped file exited 0 without running it.
 - Run a list of one-edit mutants with `scripts/mutation-check <file> <mutants.json> <test>...`.
   Its header gives the JSON shape, the checks it makes before the first mutant runs, the
-  verdicts and the exit codes. Read the lines it prints under each verdict: they are the lines
-  the edit removed and added. On #702 a hand-written loop chained `diff && run_suite` and ran no
-  mutant, and #1230, #1250 and #1254 each wrote a loop by hand.
+  verdicts and the exit codes. Read the lines it prints under each verdict: the lines the edit
+  removed and added, then the failed tests of a kill or the errors of a run with no result. On
+  #702 a hand-written loop chained `diff && run_suite` and ran no mutant, and #1230, #1250 and
+  #1254 each wrote a loop by hand.
 - Run the branch's new tests, or a throwaway test, against the merge base's code with
   `scripts/test-at-base <merge base> <changed lib file>... -- <mix test.unchecked argument>...`:
   the red run before a fix, and the runs that prove a changelog sentence about what Cinder did
@@ -195,10 +199,20 @@
   fence's header promised less than its walk enforced, the Spec review found a `defp stub(fun)`
   wrapper that hid 50 SABnzbd stubs from it, and three re-check rounds found its header's list of
   missed forms false or incomplete: about 33 minutes from the first finding to the last fix.
+- Give each rule a fence's own parser applies a fixture at its edges and a mutant in
+  `scripts/mutation-check` that the fixture kills: a list or range syntax gets an empty, a
+  reversed and a mixed entry (`fun/4..1`, `fun/1..4,3..1`); a joiner of wrapped lines gets each
+  separator at the end of one line and at the start of the next; a marker that skips one item
+  gets a line with two items, in one span and in two. On #1373 (`doc_names_test.exs`) a Spec
+  review and two re-check rounds found these one at a time: about 24 minutes from the first
+  finding to the last fix.
 - The fence run is the alias's compile, format and Credo gates with the repo-wide fences:
   `mix test test/code_health_test.exs test/code_health` (under 30 s). Before a branch's first
   full `mix test`, do the fence run with each test file the branch added or changed appended.
-  Once its gates pass, a full run takes about 7 minutes. On #1205 it ended red on a new test's
+  Once its gates pass, a full run takes 9 to 12 minutes on the dev host, often past the 600 s
+  cap of one foreground Bash call, so start it in Claude Code with `run_in_background` and
+  `timeout: 1800000`. A background call stops at its `timeout`: on #913 a run cut off at 600000
+  cost about 20 minutes to the green rerun. On #1205 it ended red on a new test's
   `assert {:error, :unexpected_response} = HTTP.server_machine_id(), message`, which
   `test/code_health/assert_match_message_test.exs` rejects: 8 minutes for what the fence run
   reports in 16 s.

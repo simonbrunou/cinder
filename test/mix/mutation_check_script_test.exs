@@ -16,14 +16,21 @@ defmodule Cinder.MutationCheckScriptTest do
   body=$(cat "$MUT_TARGET")
   case "$body" in
     *SLEEP*) cp "$MUT_TARGET" "$MUT_SEEN"; exec sleep 30 ;;
-    *SYNTAX*) echo "** (SyntaxError) invalid syntax"; exit 1 ;;
+    *SYNTAX*) printf 'noise\\n** (SyntaxError) invalid syntax\\n'; exit 1 ;;
     *ZERO*) printf '\\nResult: 0 tests, 4 excluded\\n'; exit 1 ;;
     *NONE*) printf '\\nResult: 0 tests\\n' ;;
     *PASSEXIT1*) printf '\\nResult: 2 passed\\n'; exit 1 ;;
     *VANISH*) rm "$0"; printf '\\nResult: 2 passed\\n' ;;
     *SWAPDIR*) rm "$MUT_TARGET"; mkdir "$MUT_TARGET"; printf '\\nResult: 2 passed\\n' ;;
     *CTRLSWAP*) rm "$MUT_TARGET"; mkdir "$MUT_TARGET"; printf '\\nResult: 1/2 passed\\n'; exit 2 ;;
-    *INVALID*) printf '\\nResult: 1 passed, 2 invalid\\n'; exit 2 ;;
+    *INVALID*)
+      printf '\\n  1) Cinder.XTest: failure on setup_all callback\\nResult: 1 passed, 2 invalid\\n'
+      exit 2 ;;
+    *COMPILE*)
+      printf 'noise\\n'
+      for i in $(seq 6); do printf '    error: e%s\\n' "$i"; done
+      printf '** (CompileError) x\\n'; exit 1 ;;
+    *TAIL*) for i in $(seq 7); do printf 'l%s\\n\\n' "$i"; done; exit 1 ;;
     *BROKEN*) printf '\\n  1) test x\\nResult: 1/2 passed\\nFailed: 1 test\\n'; exit 2 ;;
     *) printf '\\nResult: 2 passed\\n' ;;
   esac
@@ -107,6 +114,54 @@ defmodule Cinder.MutationCheckScriptTest do
     assert out =~ "2 of 7 killed"
     assert calls(ctx) == 8
     assert File.read!(ctx.target) == @base
+  end
+
+  @tag :tmp_dir
+  test "prints each failure's header under a kill and the run's errors under no result", ctx do
+    list =
+      mutants(ctx, [
+        {"k", "x + 1", "x + 1 # BROKEN"},
+        {"i", "def other,", "def other, # INVALID"},
+        {"n", "def other", "def SYNTAX other"},
+        {"c", "rule(x)", "rule(x) # COMPILE"},
+        {"t", "def rule", "def TAIL rule"},
+        {"s", ":ok", ":ok "}
+      ])
+
+    {out, code} = run(ctx, [ctx.target, list, "t.exs"])
+
+    assert code == 1, out
+
+    assert out =~
+             "k: killed, Result: 1/2 passed\n    -def rule(x), do: x + 1\n" <>
+               "    +def rule(x), do: x + 1 # BROKEN\n    failed: 1) test x\ni: "
+
+    assert out =~
+             "i: killed, Result: 1 passed, 2 invalid\n    -def other, do: :ok\n" <>
+               "    +def other, # INVALID do: :ok\n" <>
+               "    failed: 1) Cinder.XTest: failure on setup_all callback\nn: "
+
+    assert out =~
+             "n: NO RESULT, exit 1\n    -def other, do: :ok\n    +def SYNTAX other, do: :ok\n" <>
+               "    output: ** (SyntaxError) invalid syntax\nc: "
+
+    # Only the error lines, and at most 5 of them.
+    errors = Enum.map_join(1..5, &"    output: error: e#{&1}\n")
+
+    assert out =~
+             "c: NO RESULT, exit 1\n    -def rule(x), do: x + 1\n" <>
+               "    +def rule(x) # COMPILE, do: x + 1\n" <> errors <> "t: "
+
+    # No error line: the last 5 non-blank lines.
+    tail = Enum.map_join(3..7, &"    output: l#{&1}\n")
+
+    assert out =~
+             "t: NO RESULT, exit 1\n    -def rule(x), do: x + 1\n" <>
+               "    +def TAIL rule(x), do: x + 1\n" <> tail <> "s: "
+
+    assert out =~
+             "s: SURVIVED, Result: 2 passed\n    -def other, do: :ok\n" <>
+               "    +def other, do: :ok \n2 of 6 killed\n"
   end
 
   @tag :tmp_dir

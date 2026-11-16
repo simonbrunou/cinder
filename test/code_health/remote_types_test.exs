@@ -12,7 +12,11 @@ defmodule Cinder.CodeHealth.RemoteTypesTest do
   # literal atom. A `:cinder` module whose typespecs cannot be read fails too. Forms the check
   # does not see include: typespecs in `.exs` files (tests, `scripts/`, `mix.exs`, `config/`),
   # which leave no `.beam` in the app; and type names written in docs or comments (#850).
-  use ExUnit.Case, async: true
+  #
+  # Not async: `compile/1` sets global compiler options, and an async module that restored them
+  # while another compiled a fixture left that fixture without debug info (#830,
+  # `test/code_health/compiler_options_test.exs`).
+  use ExUnit.Case, async: false
 
   test "every remote type in the app's typespecs is a public type of its module" do
     modules = Application.spec(:cinder, :modules)
@@ -262,8 +266,9 @@ defmodule Cinder.CodeHealth.RemoteTypesTest do
   # this repo does not set, override them; `iex -S mix test -b` also turns `debug_info` on. Mix
   # sets them as global compiler options for the run. Without debug info a fixture has no
   # typespecs to read, and without docs the doc fixture holds no doc for the check to skip, so
-  # the compile turns both on and restores them. A module that another async test compiles
-  # meanwhile only gains those chunks.
+  # the compile turns both on and restores them. The options are global to the VM, so this
+  # module is not async: a restore that lands while another module compiles takes the chunks
+  # from that module's fixture.
   defp compile(source) do
     previous = Code.compiler_options(debug_info: true, docs: true)
 

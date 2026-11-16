@@ -154,12 +154,12 @@ defmodule Cinder.MixProject do
         "ecto.create --quiet",
         "ecto.migrate --quiet",
         # Fails the run on a compiler warning from a test file too (#855).
-        "test --warnings-as-errors"
+        &run_test_paths(["--warnings-as-errors" | &1])
       ],
       # For red runs and mutation checks (docs/agents/testing.md): `test` without its compile,
       # format and Credo gates. It calls the ExUnit task itself, since a "test" entry here
       # resolves to the gated alias above.
-      "test.unchecked": ["ecto.create --quiet", "ecto.migrate --quiet", &Mix.Tasks.Test.run/1],
+      "test.unchecked": ["ecto.create --quiet", "ecto.migrate --quiet", &run_test_paths/1],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
       "assets.build": ["compile", "tailwind cinder", "esbuild cinder"],
       "assets.deploy": [
@@ -168,5 +168,27 @@ defmodule Cinder.MixProject do
         "phx.digest"
       ]
     ]
+  end
+
+  # Both test aliases end here. Mix's test task fails on given paths only when none of them
+  # matches a file or directory, so a mistyped test file among real ones runs nothing for it
+  # and the run still exits 0 (#786).
+  defp run_test_paths(args) do
+    case missing_test_paths(args) do
+      [] -> Mix.Tasks.Test.run(args)
+      missing -> Mix.raise("mix test: no such test path: " <> Enum.join(missing, ", "))
+    end
+  end
+
+  @doc false
+  # Each argument naming a path under test/ (relative, `./`-prefixed or absolute, with or
+  # without `:line` suffixes) that no file or directory matches. A path outside test/ is not
+  # checked, and neither is a switch or its value, since none of them names a path under test/.
+  def missing_test_paths(args) do
+    for arg <- args,
+        path = String.replace(arg, ~r/(:\d+)+$/, ""),
+        String.starts_with?(Path.relative_to_cwd(path), "test/"),
+        not File.exists?(path),
+        do: arg
   end
 end

@@ -22,7 +22,11 @@ defmodule Cinder.CodeHealth.SeriesIdentitySyncCallsTest do
   #
   # The doc check reads each module's `Docs` chunk and fails on a public function with
   # `@doc false` or no doc, and on a module whose docs cannot be read.
-  use ExUnit.Case, async: true
+  #
+  # Not async: `compile/1` sets global compiler options, and its restore, run while
+  # `RemoteTypesTest` compiled a fixture, left that fixture without debug info (#830,
+  # `test/code_health/compiler_options_test.exs`).
+  use ExUnit.Case, async: false
 
   alias Cinder.Catalog.{MetadataRefresh, SceneNumbering, SeriesCatalog, SeriesIdentitySync}
 
@@ -178,7 +182,7 @@ defmodule Cinder.CodeHealth.SeriesIdentitySyncCallsTest do
     end
 
     # `:beam_lib.strip/1` drops the debug info chunk. Compiling with `debug_info: false` instead
-    # would flip a global compiler option that the async `RemoteTypesTest` fixtures read.
+    # would flip a global compiler option that every concurrent compile reads.
     test "fails a .beam without debug info" do
       {:ok, {_, stripped}} = :no_debug_info |> compile_one("def f, do: :ok") |> :beam_lib.strip()
 
@@ -280,7 +284,8 @@ defmodule Cinder.CodeHealth.SeriesIdentitySyncCallsTest do
     binary
   end
 
-  # The same options `RemoteTypesTest` sets, so the two async files never flip each other's.
+  # The same options `RemoteTypesTest` sets. Both modules are not async, so no other compile
+  # runs while they are set.
   defp compile(source) do
     previous = Code.compiler_options(debug_info: true, docs: true)
 

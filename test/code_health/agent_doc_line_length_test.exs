@@ -2,22 +2,32 @@ defmodule Cinder.CodeHealth.AgentDocLineLengthTest do
   # The agent docs under docs/agents/ wrap their prose at 100 columns, and no formatter rewraps
   # Markdown. On #1347 (for #1301) an edit that inserted two sentences into ci.md's "Wall-clock
   # tests" bullet left a 109-character line, which only the Spec reviewer saw, and the next edit
-  # joined two lines into one of 143. This fence fails a prose line over 100 characters. It
-  # skips a line inside a ``` block, a table row, a line holding a URL, and a line holding a
-  # code span that, at the line's indent and with one character after it, does not fit in 100
-  # columns, such as a whole `curl` command: no rewrap brings that line under 100. It reads the
-  # Markdown line by line, since each prose line is one unit of the wrap. It pairs each run of
-  # backticks with the next run of the same length on the line. It fails on the forms it does
-  # not read: a ~~~ fence and a backtick run with no partner on its line, such as a code span
-  # split across two lines. It reads an indented code block as prose, so a long line there fails
-  # too; the docs use none today.
+  # joined two lines into one of 143. The ADRs under docs/adr/ and the changelog.d/ fragments
+  # wrap at 100 too: on #839 an edit joined two ADR lines into ones of 148 and 137, which only the
+  # Spec reviewer saw, and on #1308 and #1368 (for #913) a fragment's width took hand rewraps.
+  # This fence fails a prose line over 100 characters. It skips a line inside a ``` block, a
+  # table row, a line holding a URL, and a line holding a code span that, at the line's indent
+  # and with one character after it, does not fit in 100 columns, such as a whole `curl` command:
+  # no rewrap brings that line under 100. It reads the Markdown line by line, since each prose
+  # line is one unit of the wrap. It pairs each run of backticks with the next run of the same
+  # length on the line. It fails on the forms it does not read: a ~~~ fence and a backtick run
+  # with no partner on its line, such as a code span split across two lines. It reads an
+  # indented code block as prose, so a long line there fails too; the docs use none today.
   use ExUnit.Case, async: true
 
   @max 100
 
-  test "no prose line in docs/agents runs past #{@max} characters" do
+  test "no prose line in docs/agents, docs/adr or changelog.d runs past #{@max} characters" do
+    dirs = ["docs/agents", "docs/adr", "changelog.d"]
+    paths = Enum.flat_map(dirs, &Path.wildcard("#{&1}/*.md"))
+
+    # A wrong glob would pass the check below on nothing.
+    for dir <- dirs do
+      assert Enum.any?(paths, &String.starts_with?(&1, dir <> "/")), "no Markdown file in #{dir}"
+    end
+
     found =
-      for path <- Path.wildcard("docs/agents/*.md"),
+      for path <- paths,
           {line, what} <- path |> File.read!() |> long_lines(),
           do: "#{path}:#{line}: #{describe(what)}"
 

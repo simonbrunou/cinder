@@ -1,2 +1,10 @@
 ### Fixed
-- **A finished download waits for its fake-download check when reading its files times out (#946).** The fake-download check, on by default, reads the download's files on disk once the client reports it finished, unless the client's own file list already marks it as a fake. That read times out when it misses its deadline, as on a stuck mount, and at once while an earlier read under the same download root, or two earlier reads under any roots, still count as stuck. Cinder then treated the download as finished without the check. It now keeps the download in progress, logs a warning, and tries the read again on each poll until one answers. A fake found then is handled like any other blocked download. Nothing limits the wait, as for the import that follows. While it waits, a download client that drops the finished job counts against the download's retry budget.
+- **A finished download waits for its fake-download check when reading its files times out (#946).**
+  The fake-download check, on by default, reads the download's files on disk once the client reports
+  it finished, unless the client's own file list already marks it as a fake. That read times out
+  when it misses its deadline, as on a stuck mount, and at once while an earlier read under the same
+  download root, or two earlier reads under any roots, still count as stuck. Cinder then treated the
+  download as finished without the check. It now keeps the download in progress, logs a warning, and
+  tries the read again on each poll until one answers. A fake found then is handled like any other
+  blocked download. Nothing limits the wait, as for the import that follows. While it waits, a
+  download client that drops the finished job counts against the download's retry budget.

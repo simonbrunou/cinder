@@ -18,15 +18,15 @@ each release and freezes its stable-id mapping, because its role and mapping sta
 For a standard season the sweep and the panel also share the search (#837): one function,
 `Cinder.Acquisition.judge_season/3`, builds the release list for both from one Catalog read
 (`Cinder.Catalog.season_acquisition_context/2`; since #923 the sweep reads the seasons it searches
-in a series in one such read, `season_acquisition_contexts/2`). It derives the numbering bridge from the same
-episodes and native seasons, searches the same alternate seasons, drops duplicate results and
-freezes bridged episode ids, and the judge's mapping stage drops a bridged release whose numbering
-resolves two ways, which the panel refuses and the sweep used to grab. One input still differs,
-and `judge_season/3`'s doc names it: the still-wanted episodes. The sweep passes those it searches
-this tick, because it grabs on its own and must not spend a release on an episode it is resting.
-The panel passes every searchable one, backing off or parked included, because the operator may
-search what the sweep is resting. That changes the verdicts and the set-cover's band, never the
-releases judged.
+in a series in one such read, `season_acquisition_contexts/2`). It derives the numbering bridge
+from the same episodes and native seasons, searches the same alternate seasons, drops duplicate
+results and freezes bridged episode ids, and the judge's mapping stage drops a bridged release
+whose numbering resolves two ways, which the panel refuses and the sweep used to grab. One input
+still differs, and `judge_season/3`'s doc names it: the still-wanted episodes. The sweep passes
+those it searches this tick, because it grabs on its own and must not spend a release on an
+episode it is resting. The panel passes every searchable one, backing off or parked included,
+because the operator may search what the sweep is resting. That changes the verdicts and the
+set-cover's band, never the releases judged.
 
 ## Considered options
 
