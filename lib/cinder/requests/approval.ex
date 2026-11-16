@@ -19,6 +19,7 @@ defmodule Cinder.Requests.Approval do
 
   alias Cinder.Catalog
   alias Cinder.Catalog.Profile
+  alias Cinder.LibraryKind
   alias Cinder.Requests.{Request, Target}
 
   @typedoc "What `c:prepare/2` read, handed to `c:create/2` unchanged."
@@ -46,6 +47,16 @@ defmodule Cinder.Requests.Approval do
   """
   @callback publish(created(), approved :: Request.t()) :: :ok
 
+  # The one list of target types an approval can create, each with its adapter. Adding a type
+  # here (plus its adapter module) is the only edit `adapter/1`, `approvable_types/0` and the
+  # API's payload check need. Not `Request`'s `@target_types`, which keeps `"series"` and
+  # `"episode"` so legacy rows still load and validate.
+  @adapters %{
+    "movie" => __MODULE__.Movie,
+    "season" => __MODULE__.Season,
+    "book" => __MODULE__.Book
+  }
+
   @doc """
   The adapter for a request's target kind. A target type with no adapter (`"series"`, `"episode"`)
   cannot be approved: it names no row Cinder knows how to create. `Cinder.Requests` refuses to
@@ -53,10 +64,39 @@ defmodule Cinder.Requests.Approval do
   """
   # Reads only the target type: `Cinder.Requests` asks before a book request's `target_id` exists.
   @spec adapter(%{optional(atom()) => term()}) :: {:ok, module()} | {:error, :unsupported_target}
-  def adapter(%{target_type: "movie"}), do: {:ok, __MODULE__.Movie}
-  def adapter(%{target_type: "season"}), do: {:ok, __MODULE__.Season}
-  def adapter(%{target_type: "book"}), do: {:ok, __MODULE__.Book}
+  def adapter(%{target_type: type}) when is_map_key(@adapters, type),
+    do: {:ok, Map.fetch!(@adapters, type)}
+
   def adapter(_target), do: {:error, :unsupported_target}
+
+  @doc """
+  The target types an approval can create, sorted: the types `adapter/1` answers `{:ok, _}` for.
+  The API accepts exactly these on create.
+  """
+  @spec approvable_types() :: [String.t()]
+  def approvable_types, do: @adapters |> Map.keys() |> Enum.sort()
+
+  @doc """
+  The profile kind a request target uses, for any `Cinder.Requests.Request` target type, legacy
+  ones included: `:movies` for a movie; `:tv` for a season, series or episode; a book's own
+  `media_kind` when it is a book kind; `nil` for anything else.
+
+  Takes the request or attrs map, not the target type alone: `"book"` names no profile kind by
+  itself, the (work, media_kind) axis does. A book's `media_kind` is validated, not merely
+  fetched: the answer feeds `Cinder.Catalog.list_profiles/1`, whose head guards on the kind atoms,
+  so a string from a form or a hand-built attrs map would raise there instead of yielding the
+  `{:error, :invalid_media_profile}` every other bad-profile input gets.
+  """
+  @spec profile_kind(%{optional(atom()) => term()}) :: atom() | nil
+  def profile_kind(%{target_type: "movie"}), do: :movies
+  def profile_kind(%{target_type: type}) when type in ["series", "season", "episode"], do: :tv
+
+  def profile_kind(%{target_type: "book"} = target) do
+    kind = Map.get(target, :media_kind)
+    if kind in LibraryKind.books(), do: kind
+  end
+
+  def profile_kind(_target), do: nil
 
   @doc false
   # The movie and season adapters' handling for provider preparation and creation. No profile

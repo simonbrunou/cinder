@@ -50,9 +50,8 @@ defmodule CinderWeb.RequestHelpers do
 
   def normalize_profile(_raw, _kind), do: {:error, :invalid_media_profile}
 
-  def profile_kind(%{target_type: "movie"}), do: :movies
-  def profile_kind(%{target_type: "book"} = request), do: Map.get(request, :media_kind)
-  def profile_kind(_request), do: :tv
+  @doc "The request's profile kind, or `nil`: `Cinder.Requests.profile_kind/1`."
+  defdelegate profile_kind(request), to: Requests
 
   def profiles_for(profiles, request) do
     kind = profile_kind(request)

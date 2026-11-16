@@ -150,8 +150,13 @@ defmodule CinderWeb.ApiController do
       else: {:error, :invalid_payload}
   end
 
-  defp target_type(type) when type in ["movie", "season", "book"], do: {:ok, type}
-  defp target_type(_type), do: {:error, :invalid_payload}
+  # The types an approval can create, read from their one owner: a type that gains an approval
+  # adapter is accepted here with no edit to this module.
+  defp target_type(type) do
+    if type in Requests.approvable_types(),
+      do: {:ok, type},
+      else: {:error, :invalid_payload}
+  end
 
   defp body_id(id) when is_integer(id) and id > 0 and id <= @max_id, do: {:ok, id}
   defp body_id(_id), do: {:error, :invalid_payload}
@@ -168,16 +173,19 @@ defmodule CinderWeb.ApiController do
 
   defp route_id(_id), do: {:error, :invalid_id}
 
-  defp season_number(type, nil) when type in ["movie", "book"], do: {:ok, nil}
-
+  # Only a season names a season number; every other type sends none. Keyed on `"season"` alone,
+  # so a type added to `Requests.approvable_types/0` needs no clause here.
   defp season_number("season", number)
        when is_integer(number) and number >= 0 and number <= 10_000,
        do: {:ok, number}
 
+  defp season_number("season", _number), do: {:error, :invalid_payload}
+  defp season_number(_target_type, nil), do: {:ok, nil}
   defp season_number(_target_type, _number), do: {:error, :invalid_payload}
 
   # A book request is `target_id = book_works.id` plus the media kind it wants; the two book
-  # kinds are independently monitored, so the payload has to say which one.
+  # kinds are independently monitored, so the payload has to say which one. Every other type
+  # sends none, keyed on `"book"` alone like `season_number/2`.
   defp media_kind("book", kind) when is_binary(kind) do
     case Enum.find(LibraryKind.books(), &(Atom.to_string(&1) == kind)) do
       nil -> {:error, :invalid_payload}
@@ -185,7 +193,8 @@ defmodule CinderWeb.ApiController do
     end
   end
 
-  defp media_kind(type, nil) when type in ["movie", "season"], do: {:ok, nil}
+  defp media_kind("book", _kind), do: {:error, :invalid_payload}
+  defp media_kind(_target_type, nil), do: {:ok, nil}
   defp media_kind(_target_type, _kind), do: {:error, :invalid_payload}
 
   defp preferred_language(nil), do: {:ok, nil}
@@ -245,7 +254,7 @@ defmodule CinderWeb.ApiController do
   # `target` is the request row or the create attrs — either way it carries the target type and,
   # for a book, the media kind that names the profile kind.
   defp named_profile(id, target) do
-    with kind when not is_nil(kind) <- profile_kind(target),
+    with kind when not is_nil(kind) <- Requests.profile_kind(target),
          {:ok, id} <- body_id(id),
          %{kind: ^kind} = profile <- Catalog.get_profile(id) do
       {:ok, profile}
@@ -253,10 +262,6 @@ defmodule CinderWeb.ApiController do
       _ -> {:error, :invalid_media_profile}
     end
   end
-
-  defp profile_kind(%{target_type: "movie"}), do: :movies
-  defp profile_kind(%{target_type: "book"} = target), do: Map.get(target, :media_kind)
-  defp profile_kind(_target), do: :tv
 
   defp denial_reason(reason) when is_binary(reason) do
     case String.trim(reason) do

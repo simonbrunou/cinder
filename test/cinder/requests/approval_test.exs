@@ -14,7 +14,7 @@ defmodule Cinder.Requests.ApprovalTest do
   alias Cinder.Catalog.{Movie, Series}
   alias Cinder.CatalogFixtures
   alias Cinder.Requests
-  alias Cinder.Requests.Request
+  alias Cinder.Requests.{Approval, Request}
   alias Cinder.Settings
 
   @kinds [:movie, :season, :book]
@@ -286,6 +286,22 @@ defmodule Cinder.Requests.ApprovalTest do
         assert Requests.approvable_target?(attrs(unquote(kind), ctx))
       end
     end
+
+    # #811: every crossed test above runs for each approvable type, so a type that gains an
+    # adapter gains a kind here, with its own `attrs/2`.
+    test "the kinds crossed here are every approvable type" do
+      assert @kinds |> Enum.map(&Atom.to_string/1) |> Enum.sort() == Approval.approvable_types()
+    end
+
+    # #811: the request takes its title from the catalog or TMDB, never from the caller. An
+    # approvable type that `Requests` has no title lookup for is refused, not filed title-less.
+    for kind <- @kinds do
+      test "a #{kind} request is filed with the target's own title", ctx do
+        attrs = Map.delete(attrs(unquote(kind), ctx), :title)
+        title = own_title(unquote(kind))
+        assert {:ok, %Request{title: ^title}} = Requests.create_request(user_fixture(), attrs)
+      end
+    end
   end
 
   defp requester(:admin), do: admin_fixture()
@@ -326,6 +342,11 @@ defmodule Cinder.Requests.ApprovalTest do
 
   defp attrs(:book, %{work: work}),
     do: %{target_type: "book", target_id: work.id, media_kind: :ebook}
+
+  # The title the setup's stubs and work give each kind's target.
+  defp own_title(:movie), do: "Movie 603"
+  defp own_title(:season), do: "Series 1399"
+  defp own_title(:book), do: "A Work"
 
   defp target_exists?(:movie, _ctx), do: Catalog.get_movie_by_tmdb_id(603) != nil
   defp target_exists?(:season, _ctx), do: Catalog.get_series_by_tmdb_id(1399) != nil

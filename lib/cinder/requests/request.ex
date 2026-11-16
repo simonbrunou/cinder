@@ -16,6 +16,13 @@ defmodule Cinder.Requests.Request do
 
   @type t :: %__MODULE__{}
 
+  @doc """
+  Every target type a stored request can carry, legacy `"series"` and `"episode"` included. The
+  types an approval can create are a subset: `Cinder.Requests.Approval.approvable_types/0`.
+  """
+  @spec target_types() :: [String.t()]
+  def target_types, do: @target_types
+
   schema "requests" do
     field :target_type, :string
     field :target_id, :integer

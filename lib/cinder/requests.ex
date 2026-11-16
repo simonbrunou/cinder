@@ -9,7 +9,6 @@ defmodule Cinder.Requests do
   alias Cinder.Catalog
   alias Cinder.Catalog.{MediaServerSeasons, Profile}
   alias Cinder.GuardedWrite
-  alias Cinder.LibraryKind
   alias Cinder.Notifier
   alias Cinder.Repo
   alias Cinder.Requests.{Approval, Request, RequestTransition, Target}
@@ -28,7 +27,7 @@ defmodule Cinder.Requests do
   end
 
   def assign_profile(%Request{} = request, %Profile{id: id}) do
-    expected_kind = request_kind(request)
+    expected_kind = profile_kind(request)
 
     case Catalog.get_profile(id) do
       %Profile{kind: ^expected_kind} = profile ->
@@ -245,6 +244,18 @@ defmodule Cinder.Requests do
   @spec approvable_target?(Target.ref()) :: boolean()
   def approvable_target?(ref), do: match?({:ok, _adapter}, Approval.adapter(ref))
 
+  @doc "The target types an approval can create: `Cinder.Requests.Approval.approvable_types/0`."
+  @spec approvable_types() :: [String.t()]
+  defdelegate approvable_types, to: Approval
+
+  @doc """
+  The profile kind a request or request attrs map uses, or `nil`:
+  `Cinder.Requests.Approval.profile_kind/1`, the one mapping every view, the API and this module
+  read.
+  """
+  @spec profile_kind(%{optional(atom()) => term()}) :: atom() | nil
+  defdelegate profile_kind(target), to: Approval
+
   defp create_for_current_user(current, attrs, adapter) do
     auto_approve? = current.role == :admin or Settings.auto_approve_all?()
 
@@ -294,12 +305,12 @@ defmodule Cinder.Requests do
     end
   end
 
-  defp snapshot_request(%{target_type: type, target_id: tmdb_id} = attrs) do
+  defp snapshot_request(%{target_type: type, target_id: tmdb_id} = attrs)
+       when type in ["movie", "series", "season"] do
     result =
       case type do
         "movie" -> Catalog.get_movie(tmdb_id)
-        type when type in ["series", "season"] -> Catalog.tmdb_series(tmdb_id)
-        _ -> {:error, :unsupported_target}
+        _series_or_season -> Catalog.tmdb_series(tmdb_id)
       end
 
     case result do
@@ -318,6 +329,11 @@ defmodule Cinder.Requests do
         {:ok, Map.put(attrs, :localizations, %{})}
     end
   end
+
+  # A type that gains an approval adapter (`Approval.approvable_types/0`) with no snapshot clause
+  # above is refused here. Left to the clause above, the TMDB-miss fallback would file it with no
+  # title (#811).
+  defp snapshot_request(%{target_type: _type, target_id: _id}), do: {:error, :unsupported_target}
 
   # A season the media server holds in full against TMDB's `episode_count` is refused (#720). An
   # airing season holding every aired episode reads `:up_to_date`, not `:complete`, and stays
@@ -461,7 +477,7 @@ defmodule Cinder.Requests do
   # inside the approval transaction.
   def approve_request(%Request{status: :pending} = request, %User{} = admin, %Profile{} = profile) do
     with {:ok, adapter} <- Approval.adapter(request),
-         {:ok, profile} <- current_profile(profile, request_kind(request)) do
+         {:ok, profile} <- current_profile(profile, profile_kind(request)) do
       approve_target({:flip, request, admin}, adapter, profile)
     end
   end
@@ -527,7 +543,7 @@ defmodule Cinder.Requests do
   defp reread_profile(nil, _source), do: {:ok, nil}
 
   defp reread_profile(%Profile{} = profile, source),
-    do: current_profile(profile, request_kind(source))
+    do: current_profile(profile, profile_kind(source))
 
   defp write_request({:flip, request, admin}, profile) do
     flip_pending(
@@ -786,7 +802,7 @@ defmodule Cinder.Requests do
     cond do
       is_integer(profile_id) and profile_id > 0 ->
         with %Profile{} = profile <- Catalog.get_profile(profile_id),
-             true <- profile.kind == request_kind(attrs),
+             true <- profile.kind == profile_kind(attrs),
              true <- handling in [nil, profile.handling] do
           {:ok,
            attrs
@@ -810,7 +826,7 @@ defmodule Cinder.Requests do
   end
 
   defp profile_for_handling(target, handling) do
-    case request_kind(target) do
+    case profile_kind(target) do
       nil ->
         {:error, :invalid_media_profile}
 
@@ -827,20 +843,6 @@ defmodule Cinder.Requests do
     |> Enum.filter(&(&1.handling == handling))
     |> Enum.min_by(& &1.id, fn -> nil end)
   end
-
-  # Takes the request/attrs map, not the target type alone: `"book"` names no profile kind by
-  # itself — the (work, media_kind) axis does.
-  defp request_kind(%{target_type: "movie"}), do: :movies
-  defp request_kind(%{target_type: type}) when type in ["series", "season", "episode"], do: :tv
-  # Validated, not merely fetched: this feeds `Catalog.list_profiles/1`, whose head guards on
-  # the kind atoms, so a string from a form or a hand-built attrs map would raise instead of
-  # yielding the `{:error, :invalid_media_profile}` every other bad-profile input gets.
-  defp request_kind(%{target_type: "book"} = target) do
-    kind = Map.get(target, :media_kind)
-    if kind in LibraryKind.books(), do: kind
-  end
-
-  defp request_kind(_target), do: nil
 
   defp current_profile(%Profile{id: id}, expected_kind) do
     case Catalog.get_profile(id) do

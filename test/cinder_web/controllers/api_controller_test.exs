@@ -405,6 +405,63 @@ defmodule CinderWeb.ApiControllerTest do
       assert Repo.aggregate(Request, :count) == 0
     end
 
+    # #811: the API reads its accepted target types from `Requests.approvable_types/0`, so a type
+    # that gains an approval adapter needs no API edit. Each payload has its type's shape and an
+    # unknown `profile_id`: a type past the payload check stops at the profile lookup with
+    # `invalid_media_profile`, before any provider call or write; a refused type stops at
+    # `invalid_payload`.
+    test "POST /requests accepts exactly the approvable target types", %{conn: conn, key: key} do
+      _admin = admin_fixture()
+      approvable = Cinder.Requests.approvable_types()
+
+      for type <- Request.target_types() ++ ["podcast"] do
+        payload =
+          %{target_type: type, target_id: 603, profile_id: 999_999}
+          |> Map.merge(
+            case type do
+              "season" -> %{season_number: 1}
+              "book" -> %{media_kind: "ebook"}
+              _other -> %{}
+            end
+          )
+
+        expected =
+          if type in approvable, do: "invalid_media_profile", else: "invalid_payload"
+
+        response = conn |> post_json(key, ~p"/api/v1/requests", payload) |> json_response(422)
+        assert response == %{"error" => expected}, "target_type #{type}"
+      end
+
+      for type <- ["series", "episode"] do
+        response =
+          conn
+          |> post_json(key, ~p"/api/v1/requests", %{target_type: type, target_id: 603})
+          |> json_response(422)
+
+        assert response == %{"error" => "invalid_payload"}, "target_type #{type}"
+      end
+
+      assert Repo.aggregate(Request, :count) == 0
+    end
+
+    test "POST /requests keeps each type's season and media-kind shape", %{conn: conn, key: key} do
+      _admin = admin_fixture()
+
+      for payload <- [
+            %{target_type: "season", target_id: 1399, season_number: "1"},
+            %{target_type: "season", target_id: 1399, season_number: 1, media_kind: "ebook"},
+            %{target_type: "book", target_id: 1},
+            %{target_type: "book", target_id: 1, media_kind: "movies"},
+            %{target_type: "book", target_id: 1, media_kind: "ebook", season_number: 1},
+            %{target_type: "movie", target_id: 603, media_kind: "ebook"}
+          ] do
+        response = conn |> post_json(key, ~p"/api/v1/requests", payload) |> json_response(422)
+        assert response == %{"error" => "invalid_payload"}, inspect(payload)
+      end
+
+      assert Repo.aggregate(Request, :count) == 0
+    end
+
     # #720: a season the media server holds in full is refused with a named conflict.
     test "POST /requests refuses a season the media server holds in full", %{
       conn: conn,
