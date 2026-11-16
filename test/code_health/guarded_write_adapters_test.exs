@@ -31,16 +31,24 @@ defmodule Cinder.CodeHealth.GuardedWriteAdaptersTest do
   end
 
   # A wrong path in @adapters fails the scan above, since the file that defines or owns the
-  # adapter names it; a module missing from @adapters fails here.
+  # adapter names it; a module missing from @adapters fails here. The test reads each module's
+  # behaviours from its `.beam` file in the app's `ebin` directory, so it loads no module:
+  # calling `module_info/1` loads each module not yet loaded through the code server, and on a
+  # loaded CI runner that wait outlasted ExUnit's 60 s test timeout (#1351). A `.beam` file the
+  # test cannot read fails it, naming the module.
   test "@adapters lists every Cinder.GuardedWrite adapter" do
     adapters =
-      for module <- Application.spec(:cinder, :modules),
-          behaviours = module.module_info(:attributes) |> Keyword.get_values(:behaviour),
-          Cinder.GuardedWrite in List.flatten(behaviours),
+      for {module, behaviours} <- read_behaviours(Application.spec(:cinder, :modules)),
+          Cinder.GuardedWrite in behaviours,
           into: MapSet.new(),
           do: module |> Module.split() |> List.last()
 
     assert adapters == @adapters |> Map.keys() |> MapSet.new()
+  end
+
+  test "a module whose .beam file cannot be read fails the behaviour read" do
+    error = assert_raise ExUnit.AssertionError, fn -> read_behaviours([Cinder.NoSuchModule]) end
+    assert error.message =~ "\n  Cinder.NoSuchModule: "
   end
 
   test "the scan fails each static spelling of an adapter's name, in code, a comment or a string" do
@@ -81,6 +89,32 @@ defmodule Cinder.CodeHealth.GuardedWriteAdaptersTest do
   test "a name built at runtime passes the scan" do
     source = ~S|Module.concat([Cinder.Catalog, "Grab" <> "Transition"]).publish([])|
     assert offenders([{"lib/cinder/other.ex", source}]) == []
+  end
+
+  defp read_behaviours(modules) do
+    ebin = Application.app_dir(:cinder, "ebin")
+    reads = for module <- modules, do: {module, beam_behaviours(ebin, module)}
+
+    unreadable =
+      for {module, {:error, error}} <- reads, do: "#{inspect(module)}: #{inspect(error)}"
+
+    assert unreadable == [],
+           "cannot read the behaviours from these modules' .beam files:\n  " <>
+             Enum.join(unreadable, "\n  ")
+
+    for {module, {:ok, behaviours}} <- reads, do: {module, behaviours}
+  end
+
+  defp beam_behaviours(ebin, module) do
+    path = ebin |> Path.join("#{module}.beam") |> String.to_charlist()
+
+    case :beam_lib.chunks(path, [:attributes]) do
+      {:ok, {^module, [attributes: attributes]}} ->
+        {:ok, attributes |> Keyword.get_values(:behaviour) |> List.flatten()}
+
+      other ->
+        {:error, other}
+    end
   end
 
   defp offenders(sources) do
