@@ -94,6 +94,21 @@
   removed and added, then the failed tests of a kill or the errors of a run with no result. On
   #702 a hand-written loop chained `diff && run_suite` and ran no mutant, and #1230, #1250 and
   #1254 each wrote a loop by hand.
+- A negative test of code that rescues every raise, such as `Subtitles.fetch_missing/3` (its
+  `fetch_one/6`) or a poller's `poll/1` (`isolate/2` in `Cinder.Download.PollerSkeleton`), stubs
+  the action to succeed and to send the test process a message, then runs `refute_received` on
+  that message once the synchronous call returns. A `deny/3`, an unstubbed mock or a stub that
+  calls `flunk` raises inside that rescue, so the test stays green when the code acted. A poller
+  runs its units in its own process, where `self()` is the poller. Make the stub reach that
+  process, bind `test_pid = self()` in the test body and `send(test_pid, ...)` from the stub, as
+  `Cinder.Download.TvUpgradeArbitrationTest` does with `setup :set_mox_global` and
+  `watch_grabs/0`. `poll/1` is a `GenServer.call` that replies after the units run, so the
+  message is in the test's mailbox when it returns, unless a unit hands the work to another
+  process without waiting for it. An entry point that only enqueues, such as
+  `Subtitles.fetch_after_import/4`, returns before the work runs. On #1412 (PR #1423), a `deny/3`
+  on the subtitle download survived the mutant that let the download run, and the reporting stub
+  killed it (`Cinder.SubtitlesTest`, "an ID result leaves an ID-matched sidecar already in
+  place").
 - When the code computes a value that a message or a return reports, such as an elapsed time or
   a count, the mutant list holds mutants that report a wrong value, such as a constant and `0`,
   besides one that drops the value. The test pins the value, or bounds it on both sides where it
