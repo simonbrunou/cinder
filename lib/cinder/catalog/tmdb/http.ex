@@ -346,7 +346,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
     # retry: false — Req's default 3-retry backoff turns one hung/500ing TMDB call
     # into ~a minute; callers (search UI, poller, refresher) all prefer failing fast.
     [
-      base_url: Keyword.get(config, :base_url, @default_base_url),
+      base_url: HTTPPolicy.without_fragment(Keyword.get(config, :base_url, @default_base_url)),
       receive_timeout: 15_000,
       pool_timeout: 5_000,
       connect_options: [timeout: 5_000],

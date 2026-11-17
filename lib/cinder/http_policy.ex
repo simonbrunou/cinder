@@ -16,6 +16,7 @@ defmodule Cinder.HTTPPolicy do
 
   @max_log_bytes 500
   @default_request_timeout_ms 60_000
+  @max_deadline_ms 4_294_967_295
   @text_refusals [
     :invalid_url,
     :unsupported_scheme,
@@ -257,13 +258,38 @@ defmodule Cinder.HTTPPolicy do
     end
   end
 
-  @doc "Runs a Req request with total-time and retained-response-body limits."
+  @doc """
+  Runs a Req request with total-time and retained-response-body limits.
+
+  A request has two time budgets. Req's `receive_timeout` bounds each wait for the server's next
+  chunk, and Finch applies it per chunk. The total deadline bounds the whole request and ends it
+  with `{:error, :request_timeout}`. The deadline here is the longer of 60 s and the request's own
+  integer `receive_timeout`:
+
+  - A receive_timeout past 60 s is the deadline, up to 4,294,967,295 ms, the largest timeout
+    Erlang accepts. So a client sets one value and gets both. A
+    shorter deadline would end the request during a wait that the receive_timeout still allows.
+    The deadline starts before Req connects, so a server that accepts the connection and then
+    sends nothing ends on it.
+    A poller request still running at `/healthz`'s stuck bound (`@stuck_after_ms` in
+    `CinderWeb.HealthController`, 10 minutes) reads as a stuck tick, so a poller client keeps its
+    receive_timeout under that bound.
+  - A shorter receive_timeout leaves the deadline at 60 s, so a server that keeps sending can
+    finish, and the receive_timeout alone ends a server that stops sending.
+  - Any other receive_timeout, `:infinity` or none, leaves the deadline at 60 s, so no request
+    runs without one.
+  """
   @spec bounded_request(Req.Request.t() | String.t() | keyword(), pos_integer()) ::
           {:ok, Req.Response.t()} | {:error, term()}
-  def bounded_request(request, max_bytes),
-    do: bounded_request(request, max_bytes, @default_request_timeout_ms)
+  def bounded_request(request, max_bytes) do
+    request = request_struct(request)
+    bounded_request(request, max_bytes, default_deadline_ms(request))
+  end
 
-  @doc "Like `bounded_request/2`, with an explicit total request deadline in milliseconds."
+  @doc """
+  Like `bounded_request/2`, with an explicit total request deadline in milliseconds. The caller's
+  deadline wins over the request's `receive_timeout`, even when the receive_timeout is longer.
+  """
   @spec bounded_request(
           Req.Request.t() | String.t() | keyword(),
           pos_integer(),
@@ -286,7 +312,7 @@ defmodule Cinder.HTTPPolicy do
         end
       end)
 
-    emit_request_task_telemetry(request, task)
+    emit_request_task_telemetry(request, task, timeout_ms)
 
     result =
       case allow_req_test(request, owner, task.pid) do
@@ -308,14 +334,29 @@ defmodule Cinder.HTTPPolicy do
   # as soon as the request task exists. The task still waits for its gate message and the deadline
   # has not started, so a slow handler cannot eat into the deadline. The metadata carries the
   # task's pid and the caller's: a test finds its own call's task through it, even when the
-  # deadline kills that task before the request reaches its stub (#1092).
-  defp emit_request_task_telemetry(request, task) do
+  # deadline kills that task before the request reaches its stub (#1092). It also carries the URL's
+  # path and the total deadline the task and its await run under, so a test reads the deadline a
+  # client's request got (#1414).
+  defp emit_request_task_telemetry(request, task, deadline_ms) do
     :telemetry.execute(
       [:cinder, :http, :request_task],
       %{system_time: System.system_time()},
-      %{host: request_host(request), caller: self(), task_pid: task.pid}
+      %{
+        host: request_host(request),
+        path: request_path(request),
+        caller: self(),
+        task_pid: task.pid,
+        deadline_ms: deadline_ms
+      }
     )
   end
+
+  # Capped at the largest timeout `Task.yield/2` accepts.
+  defp default_deadline_ms(%Req.Request{options: %{receive_timeout: receive_timeout}})
+       when is_integer(receive_timeout) and receive_timeout > @default_request_timeout_ms,
+       do: min(receive_timeout, @max_deadline_ms)
+
+  defp default_deadline_ms(_request), do: @default_request_timeout_ms
 
   # `[:cinder, :http, :request]` fires once per `bounded_request/2,3` call, timing the whole
   # gated Task round-trip — never at a caller, so every outbound service call (TMDB, Prowlarr,
@@ -330,6 +371,9 @@ defmodule Cinder.HTTPPolicy do
 
   defp request_host(%Req.Request{url: %URI{host: host}}), do: host
   defp request_host(_request), do: nil
+
+  defp request_path(%Req.Request{url: %URI{path: path}}), do: path
+  defp request_path(_request), do: nil
 
   defp request_status({:ok, _response}), do: :ok
   defp request_status({:error, _reason}), do: :error

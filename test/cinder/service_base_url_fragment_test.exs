@@ -10,11 +10,14 @@ defmodule Cinder.ServiceBaseUrlFragmentTest do
 
   alias Cinder.Acquisition.Indexer.Prowlarr
   alias Cinder.Books.Metadata.{Hardcover, OpenLibrary}
+  alias Cinder.Catalog.TMDB
   alias Cinder.ConfigCase
   alias Cinder.Download.Client.{QBittorrent, Sabnzbd}
   alias Cinder.Library.AudiobookServer.Audiobookshelf
   alias Cinder.Library.MediaServer.{Jellyfin, Plex}
   alias Cinder.Library.MigrationSource.{Radarr, Readarr, Sonarr}
+  alias Cinder.Notifier.{Discord, Webhook}
+  alias Cinder.Subtitles.Provider.OpenSubtitles
   alias Cinder.Subtitles.Translator.LibreTranslate
 
   defp json(conn), do: Req.Test.json(conn, %{})
@@ -105,6 +108,31 @@ defmodule Cinder.ServiceBaseUrlFragmentTest do
 
   test "a base URL with a fragment sends the same requests as the URL without it" do
     for {name, client, key, url, stub, answer, call, expected} <- rows() do
+      plain = requests(client, key, url, stub, answer, call)
+      assert Enum.map(plain, &method_and_path/1) == expected, name
+
+      assert requests(client, key, url <> "#frag", stub, answer, call) == plain, name
+    end
+  end
+
+  # TMDB and OpenSubtitles join a path onto their URL, so each cuts the fragment first (#1414).
+  # Discord and the webhook send the configured URL whole, with nothing joined, and Req sends no
+  # fragment, so each needs no cut.
+  test "TMDB, OpenSubtitles, Discord and the webhook send the same requests under a fragment" do
+    for {name, client, key, url, stub, answer, call, expected} <- [
+          {"TMDB search/2", TMDB.HTTP, :base_url, "https://api.themoviedb.org", Cinder.TMDBStub,
+           &Req.Test.json(&1, %{"results" => []}), fn -> TMDB.HTTP.search("Film", "en") end,
+           [{"GET", "/3/search/movie"}]},
+          {"OpenSubtitles health/0", OpenSubtitles, :base_url,
+           "https://api.opensubtitles.test/api/v1", Cinder.OpenSubtitlesStub,
+           &Req.Test.json(&1, %{"token" => "t"}), &OpenSubtitles.health/0,
+           [{"POST", "/api/v1/login"}]},
+          {"Discord health/0", Discord, :webhook_url, "https://discord.test/api/webhooks/1/x",
+           Cinder.DiscordStub, &json/1, &Discord.health/0, [{"GET", "/api/webhooks/1/x"}]},
+          {"webhook notify/1", Webhook, :url, "https://hooks.test/cinder", Cinder.WebhookStub,
+           &json/1, fn -> Webhook.notify({:grab_failed, %{id: 7}, {:http_status, 500}}) end,
+           [{"POST", "/cinder"}]}
+        ] do
       plain = requests(client, key, url, stub, answer, call)
       assert Enum.map(plain, &method_and_path/1) == expected, name
 

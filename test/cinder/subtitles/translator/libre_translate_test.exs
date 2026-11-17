@@ -2,28 +2,12 @@ defmodule Cinder.Subtitles.Translator.LibreTranslateTest do
   use ExUnit.Case, async: true
 
   alias Cinder.Subtitles.Translator.LibreTranslate
+  alias Cinder.Test.{RequestDeadlines, SilentServer}
 
   defp put_batch_size(size) do
     saved = Application.get_env(:cinder, LibreTranslate)
     Application.put_env(:cinder, LibreTranslate, Keyword.put(saved, :batch_size, size))
     on_exit(fn -> Application.put_env(:cinder, LibreTranslate, saved) end)
-  end
-
-  # Lets the stub answer 10 s after it reports, unless its request task dies first. A task that
-  # the deadline kills before it reaches the stub never reports, so the conductor ends at 10 s.
-  defp answer_unless_killed do
-    receive do
-      {:stub, stub} ->
-        ref = Process.monitor(stub)
-
-        receive do
-          {:DOWN, ^ref, :process, _pid, _reason} -> :ok
-        after
-          10_000 -> send(stub, :answer)
-        end
-    after
-      10_000 -> :ok
-    end
   end
 
   test "translate/2 posts ordered cue bodies with autodetection and HTML preservation" do
@@ -130,25 +114,35 @@ defmodule Cinder.Subtitles.Translator.LibreTranslateTest do
     assert {:error, {:http, 429}} = LibreTranslate.translate(["Hello"], "fr")
   end
 
-  # The Req.Test plug ignores Req's own `receive_timeout`, so only the total deadline that
-  # `HTTPPolicy.bounded_request/3` enforces can stop this batch before the stub answers. Before
-  # #1200 that deadline stayed at 60 s whatever the setting said, and the stub answered at 10 s.
-  test "translate/2 stops a batch once the configured timeout passes" do
-    Cinder.ConfigCase.put_config(LibreTranslate, receive_timeout: 200)
-    conductor = start_supervised!({Task, &answer_unless_killed/0})
+  # Before #1200 a batch's total deadline stayed at 60 s whatever the setting said.
+  # `HTTPPolicy.bounded_request/2` now takes a receive_timeout past 60 s as the deadline (#1414).
+  test "translate/2 gives a batch a timeout past 60 s as its total deadline" do
+    Cinder.ConfigCase.put_config(LibreTranslate, receive_timeout: 61_000)
 
-    # The stub answers only on the conductor's signal, so no answer races the deadline.
     Req.Test.stub(Cinder.LibreTranslateStub, fn conn ->
-      send(conductor, {:stub, self()})
-
-      receive do
-        :answer -> Req.Test.json(conn, %{"translatedText" => ["Bonjour"]})
-      end
+      Req.Test.json(conn, %{"translatedText" => ["Bonjour"]})
     end)
 
+    assert {{:ok, ["Bonjour"]}, [{"/translate", 61_000}]} =
+             RequestDeadlines.capture(fn -> LibreTranslate.translate(["Hello"], "fr") end)
+  end
+
+  # A setting under 60 s leaves the total deadline at `bounded_request/2`'s 60 s default, and Req's
+  # receive_timeout ends a batch the server never answers. Only a socket shows that receive
+  # timeout (#1414).
+  test "translate/2 stops a batch the server never answers once a timeout under 60 s passes" do
+    Cinder.ConfigCase.put_config(LibreTranslate,
+      base_url: SilentServer.start!(),
+      receive_timeout: 200,
+      req_options: [retry: false]
+    )
+
     started = System.monotonic_time(:millisecond)
-    assert {:error, :request_timeout} = LibreTranslate.translate(["Hello"], "fr")
-    # A loaded runner can wake the caller well past the deadline (ci.md "Wall-clock tests").
+
+    assert {:error, %Req.TransportError{reason: :timeout}} =
+             LibreTranslate.translate(["Hello"], "fr")
+
+    # A loaded runner can wake the caller well past the timeout (ci.md "Wall-clock tests").
     assert System.monotonic_time(:millisecond) - started < 5_200
   end
 

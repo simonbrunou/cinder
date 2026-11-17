@@ -5,6 +5,7 @@ defmodule Cinder.HTTPPolicyTest do
 
   alias Cinder.Download.PollerProgress
   alias Cinder.HTTPPolicy
+  alias Cinder.Test.RequestDeadlines
 
   @request_task_event [:cinder, :http, :request_task]
 
@@ -676,6 +677,55 @@ defmodule Cinder.HTTPPolicyTest do
       assert_received {:stamp_in_request, at_start}
       assert at_start > old
       assert PollerProgress.read(module).progress_at > old
+    end
+
+    # Req's `receive_timeout` bounds each wait for the server's next chunk, and the deadline bounds
+    # the whole request (#1414). `/2` takes the longer of its 60 s default and the request's own
+    # receive_timeout, so no client passes one value twice.
+    test "takes the request's receive_timeout as the deadline only when it is past 60 s" do
+      Req.Test.stub(Cinder.HTTPPolicyDeadlineStub, &Req.Test.json(&1, %{ok: true}))
+
+      for {receive_timeout, deadline_ms} <- [
+            {4_294_967_296, 4_294_967_295},
+            {90_000, 90_000},
+            {60_001, 60_001},
+            {60_000, 60_000},
+            {15_000, 60_000},
+            {1, 60_000},
+            {:infinity, 60_000},
+            {nil, 60_000}
+          ] do
+        options =
+          [url: "https://public.example/data", plug: {Req.Test, Cinder.HTTPPolicyDeadlineStub}]
+          |> then(&if receive_timeout, do: [{:receive_timeout, receive_timeout} | &1], else: &1)
+
+        {result, requests} =
+          RequestDeadlines.capture(fn -> HTTPPolicy.bounded_request(options, 64) end)
+
+        assert match?({:ok, %{status: 200}}, result), inspect(receive_timeout)
+        assert requests == [{"/data", deadline_ms}], inspect(receive_timeout)
+      end
+    end
+
+    test "with an explicit deadline, keeps it whatever the receive_timeout" do
+      Req.Test.stub(Cinder.HTTPPolicyExplicitDeadlineStub, &Req.Test.json(&1, %{ok: true}))
+
+      for receive_timeout <- [90_000, 15_000, 1] do
+        request =
+          Req.new(
+            url: "https://public.example/data",
+            receive_timeout: receive_timeout,
+            plug: {Req.Test, Cinder.HTTPPolicyExplicitDeadlineStub}
+          )
+
+        {result, requests} =
+          RequestDeadlines.capture(fn -> HTTPPolicy.bounded_request(request, 64, 20_000) end)
+
+        assert match?({:ok, %{status: 200}}, result), inspect(receive_timeout)
+
+        assert requests == [{"/data", 20_000}],
+               inspect(receive_timeout)
+      end
     end
 
     test "stamps no progress from a process that runs no tick" do

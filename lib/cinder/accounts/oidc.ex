@@ -7,6 +7,7 @@ defmodule Cinder.Accounts.OIDC do
   client secret. Cinder requests only `openid email profile`; it stores no provider tokens.
   """
 
+  alias Cinder.HTTPPolicy
   alias Cinder.Util
 
   @callback authorize_url(keyword()) ::
@@ -27,7 +28,9 @@ defmodule Cinder.Accounts.OIDC do
     config = Application.get_env(:cinder, __MODULE__, [])
 
     [
-      base_url: issuer(),
+      # `configured?/0` refuses an issuer URL with a fragment; the cut keeps Assent's path joins
+      # safe for any other caller (#1414).
+      base_url: HTTPPolicy.without_fragment(issuer()),
       client_id: config[:client_id],
       client_secret: config[:client_secret],
       redirect_uri: redirect_uri,

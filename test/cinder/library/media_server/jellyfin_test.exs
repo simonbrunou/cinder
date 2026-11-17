@@ -7,6 +7,22 @@ defmodule Cinder.Library.MediaServer.JellyfinTest do
 
   defp put_config(overrides), do: put_config(Jellyfin, overrides)
 
+  # The test config's `req_options` set `retry: false`, so this test sets only the plug: Req would
+  # otherwise retry a GET that answers 503 three times, 1, 2 and 4 s apart (#1414).
+  test "list_users/0 sends one request to a server that answers 503" do
+    test_pid = self()
+    put_config(req_options: [plug: {Req.Test, Cinder.JellyfinStub}])
+
+    Req.Test.stub(Cinder.JellyfinStub, fn conn ->
+      send(test_pid, {:request, conn.request_path})
+      Plug.Conn.send_resp(conn, 503, "")
+    end)
+
+    assert {:error, {:jellyfin_status, 503}} = Jellyfin.list_users()
+    assert_received {:request, "/Users"}
+    refute_received {:request, _path}
+  end
+
   test "scan/1 posts to /Library/Refresh with the api token and returns :ok on 204" do
     Req.Test.stub(Cinder.JellyfinStub, fn conn ->
       assert conn.method == "POST"

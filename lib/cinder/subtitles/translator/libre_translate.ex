@@ -78,23 +78,22 @@ defmodule Cinder.Subtitles.Translator.LibreTranslate do
   defp request(url, cues, target) do
     with {:ok, body} <- Jason.encode(request_body(cues, target)),
          true <- byte_size(body) <= @max_batch_bytes do
-      # The setting is the batch's total deadline too: `HTTPPolicy.bounded_request/2` would stop
-      # every batch at its 60 s default, whatever the setting says (#1200).
-      timeout = receive_timeout()
-
+      # `HTTPPolicy.bounded_request/2` makes a setting past 60 s the batch's total deadline too
+      # (#1200, #1414). A shorter one is the longest wait for LibreTranslate's answer, within a
+      # 60 s deadline.
       [
         method: :post,
         url: url,
         body: body,
         headers: [{"content-type", "application/json"}],
-        receive_timeout: timeout,
+        receive_timeout: receive_timeout(),
         pool_timeout: 5_000,
         connect_options: [timeout: 5_000]
       ]
       |> Keyword.merge(req_options())
       |> Keyword.put(:redirect, false)
       |> Req.new()
-      |> HTTPPolicy.bounded_request(@max_batch_bytes, timeout)
+      |> HTTPPolicy.bounded_request(@max_batch_bytes)
     else
       false -> {:error, :request_too_large}
       {:error, _reason} -> {:error, :invalid_request}

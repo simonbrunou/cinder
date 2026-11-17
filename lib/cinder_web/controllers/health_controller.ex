@@ -35,9 +35,10 @@ defmodule CinderWeb.HealthController do
   @stale_multiplier 3
 
   # A tick in flight is "stuck" once no unit or HTTP request of it has started or finished for this
-  # long. Each HTTP request of a tick ends by its deadline: 60 s by default
-  # (`Cinder.HTTPPolicy.bounded_request/2`), 90 s for a Prowlarr search or a torrent fetch. So only
-  # a call with no deadline, such as a cross-filesystem staging copy, gets this far.
+  # long. Each HTTP request of a tick ends by its deadline: 60 s, or the request's longer
+  # receive_timeout (`Cinder.HTTPPolicy.bounded_request/2`), 90 s for a Prowlarr search or a
+  # torrent fetch. So only a call with no deadline, such as a cross-filesystem staging copy, gets
+  # this far.
   @stuck_after_ms :timer.minutes(10)
 
   # Hard floor of free space on the database volume. Below it, SQLite writes are about to start

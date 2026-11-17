@@ -243,12 +243,15 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
 
+  # retry: false: Req's default retries a failed GET three more times, 1, 2 and 4 s apart, inside
+  # one request's deadline (#1414).
   defp req(config) do
     [
       base_url: HTTPPolicy.without_fragment(Keyword.get(config, :url)),
       receive_timeout: 15_000,
       pool_timeout: 5_000,
       connect_options: [timeout: 5_000],
+      retry: false,
       headers: [{"x-emby-token", Keyword.get(config, :api_key)}]
     ]
     |> Keyword.merge(Keyword.get(config, :req_options, []))

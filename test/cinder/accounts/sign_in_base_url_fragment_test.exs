@@ -10,6 +10,7 @@ defmodule Cinder.Accounts.SignInBaseUrlFragmentTest do
   import ExUnit.CaptureLog
 
   alias Cinder.Accounts.JellyfinAuth
+  alias Cinder.Accounts.OIDC
   alias Cinder.Accounts.PlexAuth
   alias Cinder.ConfigCase
   alias Cinder.Library.MediaServer.{Jellyfin, Plex}
@@ -95,5 +96,28 @@ defmodule Cinder.Accounts.SignInBaseUrlFragmentTest do
       assert match?({:error, _reason}, result), name
       refute_received {:EXIT, _pid, _reason}, name
     end
+  end
+
+  # OIDC sign-in sends no request under a URL with a fragment (#1414): `configured?/0` refuses
+  # such an issuer URL, and the HTTP adapter refuses such an endpoint URL before any request. The
+  # cut in `OIDC.config/1` is a second guard, which the base URL fence asks for.
+  test "OIDC refuses an issuer URL or an endpoint URL with a fragment" do
+    saved = Application.get_env(:cinder, OIDC)
+    on_exit(fn -> Application.put_env(:cinder, OIDC, saved) end)
+    config = [issuer_url: "https://id.example.test", client_id: "cinder", client_secret: "s3cret"]
+
+    Application.put_env(:cinder, OIDC, config)
+    assert OIDC.configured?()
+
+    Application.put_env(
+      :cinder,
+      OIDC,
+      Keyword.put(config, :issuer_url, config[:issuer_url] <> "#frag")
+    )
+
+    refute OIDC.configured?()
+
+    assert {:error, :fragment_not_allowed} =
+             OIDC.HTTPAdapter.request(:get, "https://id.example.test/keys#frag", nil, [])
   end
 end

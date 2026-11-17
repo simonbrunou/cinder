@@ -34,8 +34,9 @@ defmodule Cinder.CodeHealth.ReqStubSleepTest do
            "These Req.Test stubs sleep before they answer, so a caller that wakes late can " <>
              "read an answer that came after its deadline:\n" <>
              Enum.join(sleeps, "\n") <>
-             "\nHold the answer until the test sends a signal, as answer_unless_killed/0 in " <>
-             "Cinder.Subtitles.Translator.LibreTranslateTest does (docs/agents/testing.md)."
+             "\nHold the answer until the test sends a signal, as the stub in " <>
+             "Cinder.HTTPPolicyTest \"gives each of two concurrent calls its own request " <>
+             "task event\" does (docs/agents/testing.md)."
   end
 
   test "the walk finds each sleep form in a stub and skips one outside it, in a comment or a string" do

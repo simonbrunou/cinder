@@ -55,7 +55,10 @@ defmodule Cinder.Download.Client.Fetch do
       )
       |> Req.new()
 
-    case bounded_request(request, opts) do
+    # `HTTPPolicy.bounded_request/2` makes a caller's `:receive_timeout` past 60 s each hop's
+    # total deadline too: Transmission's torrent fetch sets 90 s (#1410). NZBGet's fetch sets none
+    # and keeps 15 s per wait within a 60 s deadline.
+    case HTTPPolicy.bounded_request(request, Keyword.fetch!(opts, :max_bytes)) do
       {:ok, %{status: 200, body: bytes}} when is_binary(bytes) ->
         {:ok, bytes}
 
@@ -67,18 +70,6 @@ defmodule Cinder.Download.Client.Fetch do
 
       {:error, reason} ->
         {:error, reason}
-    end
-  end
-
-  # A caller's own `:receive_timeout` is each hop's total deadline too: Transmission's torrent fetch
-  # sets 90 s, which `HTTPPolicy.bounded_request/2`'s 60 s default ended first (#1410). Without
-  # one, as NZBGet's fetch, a hop keeps the 15 s receive_timeout and that 60 s default.
-  defp bounded_request(request, opts) do
-    max_bytes = Keyword.fetch!(opts, :max_bytes)
-
-    case Keyword.fetch(opts, :receive_timeout) do
-      {:ok, timeout_ms} -> HTTPPolicy.bounded_request(request, max_bytes, timeout_ms)
-      :error -> HTTPPolicy.bounded_request(request, max_bytes)
     end
   end
 

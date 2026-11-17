@@ -23,6 +23,22 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitlesTest do
     :ok
   end
 
+  # The test config's `req_options` set `retry: false`, so this test sets only the plug: Req would
+  # otherwise retry a GET that answers 503 three times, 1, 2 and 4 s apart (#1414).
+  test "search/1 sends one request to a server that answers 503" do
+    test_pid = self()
+    put_config(OpenSubtitles, req_options: [plug: {Req.Test, Cinder.OpenSubtitlesStub}])
+
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      send(test_pid, {:request, conn.request_path})
+      Plug.Conn.send_resp(conn, 503, "")
+    end)
+
+    assert {:error, _reason} = OpenSubtitles.search(%{imdb_id: "tt0111161", languages: ["en"]})
+    assert_received {:request, "/api/v1/subtitles"}
+    refute_received {:request, _path}
+  end
+
   test "search/1 sends Api-Key + query params and normalizes results" do
     Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
       assert Plug.Conn.get_req_header(conn, "api-key") == ["test-key"]

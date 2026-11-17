@@ -212,8 +212,11 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
     base =
       [method: method, url: base_url() <> path, headers: headers(auth)] ++ timeout
 
+    # retry: false: Req's default retries a failed GET three more times, 1, 2 and 4 s apart, inside
+    # one request's deadline (#1414).
     request =
-      req_options()
+      [retry: false]
+      |> Keyword.merge(req_options())
       |> Req.new()
       |> Req.merge(base ++ opts)
       |> Req.merge(auth: nil, redirect: false)
@@ -301,7 +304,8 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
 
   defp user_agent, do: "Cinder/#{Application.spec(:cinder, :vsn) || "dev"}"
 
-  defp base_url, do: cfg(:base_url) || @default_base
+  # A request's path is joined onto this text, so a `#` part would take the path in (#1414).
+  defp base_url, do: HTTPPolicy.without_fragment(cfg(:base_url) || @default_base)
   defp req_options, do: cfg(:req_options) || []
   defp untrusted_req_options, do: Keyword.take(req_options(), @untrusted_req_option_keys)
 

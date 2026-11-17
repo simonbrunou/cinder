@@ -1,48 +1,22 @@
 defmodule Cinder.Acquisition.Indexer.ProwlarrDeadlineTest do
-  # Not async: one test changes the shared Prowlarr config, and one sets a global trace pattern on
-  # `HTTPPolicy.bounded_request/2,3`.
+  # Not async: one test changes the shared Prowlarr config.
   use ExUnit.Case, async: false
 
   alias Cinder.Acquisition.Indexer.Prowlarr
-  alias Cinder.Test.BoundedRequestTrace
+  alias Cinder.Test.{RequestDeadlines, SilentServer}
 
-  # Sends `:answer` to the stub 10 s after it reports in, unless the stub died first.
-  defp answer_unless_killed do
-    receive do
-      {:stub, stub} ->
-        ref = Process.monitor(stub)
-
-        receive do
-          {:DOWN, ^ref, :process, _pid, _reason} -> :ok
-        after
-          10_000 -> send(stub, :answer)
-        end
-    after
-      10_000 -> :ok
-    end
-  end
-
+  # A receive_timeout under `HTTPPolicy.bounded_request/2`'s 60 s default leaves the total deadline
+  # at 60 s, and the receive timeout itself ends a server that never answers (#1414).
   test "a search ends at the receive_timeout the configured req_options set" do
-    req_options = Application.get_env(:cinder, Prowlarr)[:req_options]
-
     Cinder.ConfigCase.put_config(Prowlarr,
-      req_options: Keyword.put(req_options, :receive_timeout, 200)
+      base_url: SilentServer.start!(),
+      req_options: [receive_timeout: 200, retry: false]
     )
 
-    conductor = start_supervised!({Task, &answer_unless_killed/0})
-
-    # The stub answers only on the conductor's signal, so no answer races the deadline.
-    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
-      send(conductor, {:stub, self()})
-
-      receive do
-        :answer -> Req.Test.json(conn, [])
-      end
-    end)
-
     started = System.monotonic_time(:millisecond)
-    assert {:error, :request_timeout} = Prowlarr.search("tt0000001")
-    # A loaded runner can wake the caller well past the deadline (ci.md "Wall-clock tests").
+
+    assert {:error, %Req.TransportError{reason: :timeout}} = Prowlarr.search("tt0000001")
+    # A loaded runner can wake the caller well past the timeout (ci.md "Wall-clock tests").
     assert System.monotonic_time(:millisecond) - started < 5_200
   end
 
@@ -53,8 +27,6 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrDeadlineTest do
         "/api/v1/search" -> Req.Test.json(conn, [])
       end
     end)
-
-    tracer = BoundedRequestTrace.start()
 
     searches = [
       {"search/1", fn -> Prowlarr.search("tt0000001") end, 1},
@@ -69,26 +41,12 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrDeadlineTest do
     ]
 
     for {name, search, requests} <- searches do
-      assert search.() == {:ok, []}, name
-      BoundedRequestTrace.deliver(tracer)
-
-      for _request <- 1..requests do
-        assert_received {:trace, _pid, :call,
-                         {Cinder.HTTPPolicy, :bounded_request, [request, _max_bytes, 90_000]}},
-                        name
-
-        assert Req.Request.get_option(request, :receive_timeout) == 90_000, name
-      end
-
-      refute_received {:trace, _pid, :call, _call}, name
+      {result, deadlines} = RequestDeadlines.capture(search)
+      assert result == {:ok, []}, name
+      assert deadlines == List.duplicate({"/api/v1/search", 90_000}, requests), name
     end
 
-    assert :ok = Prowlarr.health()
-    BoundedRequestTrace.deliver(tracer)
-
-    assert_received {:trace, _pid, :call,
-                     {Cinder.HTTPPolicy, :bounded_request, [_request, _max_bytes]}}
-
-    refute_received {:trace, _pid, :call, _call}
+    # health/0 sets a 3 s receive_timeout, so the deadline stays at the 60 s default.
+    assert {:ok, [{"/api/v1/health", 60_000}]} = RequestDeadlines.capture(&Prowlarr.health/0)
   end
 end

@@ -204,8 +204,8 @@ defmodule Cinder.Download.Client.QBittorrent do
   defp request_torrent(target, trust, hops) do
     # 90s, not the 15s the API calls use: this fetch rides Prowlarr proxying a scraper
     # site, and a FlareSolverr Cloudflare solve alone budgets 60s (its maxTimeout). The figure is
-    # each hop's receive_timeout and its total deadline: `HTTPPolicy.bounded_request/2`'s 60s
-    # default ended the fetch first (#1410).
+    # each hop's receive_timeout, and `HTTPPolicy.bounded_request/2` makes it the hop's total
+    # deadline too (#1410, #1414).
     request =
       target
       |> HTTPPolicy.request_options(
@@ -218,9 +218,7 @@ defmodule Cinder.Download.Client.QBittorrent do
       )
       |> Req.new()
 
-    timeout_ms = Req.Request.get_option(request, :receive_timeout)
-
-    case HTTPPolicy.bounded_request(request, @max_torrent_bytes, timeout_ms) do
+    case HTTPPolicy.bounded_request(request, @max_torrent_bytes) do
       {:ok, %{status: 200, body: bytes}} when is_binary(bytes) ->
         {:ok, bytes}
 

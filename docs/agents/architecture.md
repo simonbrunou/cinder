@@ -323,7 +323,10 @@ the request path. Crash recovery is a feature: prove it with a test.
 Every call a poller makes has a bound:
 
 - Provider HTTP goes through `Cinder.HTTPPolicy.bounded_request/2`, which enforces a size ceiling
-  and receive and hard-deadline timeouts.
+  and a total deadline: 60 s, or the request's own `receive_timeout` when that is longer. A client
+  sets one `receive_timeout` and passes no deadline; the function's doc says which budget wins.
+  A configured service URL reaches a request through `HTTPPolicy.without_fragment/1`
+  (`test/code_health/service_base_url_fragment_test.exs`).
 - A subprocess goes through `Cinder.BoundedCommand.run/4`: a supervised `Port` whose process
   group gets `SIGKILL` on timeout, so a child the command forked stops with it (#876). A
   descendant that leaves the group (`setsid`, `setpgid`) is not reached.

@@ -33,8 +33,8 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
 
   # A search fanning out to a scraper indexer behind FlareSolverr takes 20-60s (a Cloudflare solve
   # alone budgets 60s), and 15s silently starved the title-query half of search_tv/3's union down
-  # to usenet-only results. The figure is each search's receive_timeout and its total deadline:
-  # `HTTPPolicy.bounded_request/2`'s 60s default ended every search first (#1348).
+  # to usenet-only results. The figure is each search's receive_timeout, and
+  # `HTTPPolicy.bounded_request/2` makes it the search's total deadline too (#1348, #1414).
   @search_timeout_ms 90_000
 
   # Newznab/Torznab standard category for Books/EBook. Deliberately NOT the 7000 Books parent,
@@ -211,19 +211,19 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
     # Short receive AND connect bounds — a blackholed host would otherwise sit on
     # Mint's default 30s connect timeout despite the 3s receive_timeout.
     case request(
-           [url: "/api/v1/health", receive_timeout: 3_000, connect_options: [timeout: 3_000]],
-           :default_deadline
+           url: "/api/v1/health",
+           receive_timeout: 3_000,
+           connect_options: [timeout: 3_000]
          ) do
       {:ok, %{status: status}} when status in 200..299 -> :ok
       other -> error(other)
     end
   end
 
-  # `deadline` picks the request's total deadline. `:receive_timeout` ends it at the receive_timeout
-  # left after the caller's opts and the configured `req_options` merge: 90s for every search
-  # unless `req_options` sets its own, so the 90s figure is the total deadline too (#1348).
-  # `:default_deadline` keeps `HTTPPolicy.bounded_request/2`'s default, for `health/0`.
-  defp request(opts, deadline) do
+  # `HTTPPolicy.bounded_request/2` takes the receive_timeout left after the caller's opts and the
+  # configured `req_options` merge as the total deadline when it is past 60s: 90s for every search
+  # unless `req_options` sets its own (#1348). `health/0`'s 3s keeps the 60s default.
+  defp request(opts) do
     config = config()
 
     # retry: false — the pollers carry their own bounded-retry budget; Req's default
@@ -240,15 +240,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
     |> Keyword.merge(Keyword.get(config, :req_options, []))
     |> Keyword.put(:redirect, false)
     |> Req.new()
-    |> send_bounded(deadline)
-  end
-
-  defp send_bounded(request, :default_deadline),
-    do: HTTPPolicy.bounded_request(request, @max_response_bytes)
-
-  defp send_bounded(request, :receive_timeout) do
-    timeout_ms = Req.Request.get_option(request, :receive_timeout)
-    HTTPPolicy.bounded_request(request, @max_response_bytes, timeout_ms)
+    |> HTTPPolicy.bounded_request(@max_response_bytes)
   end
 
   defp auth(opts, nil), do: opts
@@ -264,7 +256,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
       [query: query, type: type]
       |> add_categories(Keyword.get(opts, :categories, []))
 
-    case request([url: "/api/v1/search", params: params], :receive_timeout) do
+    case request(url: "/api/v1/search", params: params) do
       {:ok, %{status: 200, body: results}} when is_list(results) ->
         {:ok, Enum.flat_map(results, &normalize/1)}
 
