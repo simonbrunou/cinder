@@ -48,7 +48,7 @@ defmodule CinderWeb.DashboardLiveTest do
     stub(Cinder.Accounts.PlexAuthMock, :account, fn _token, _opts -> {:ok, %{id: 1}} end)
     stub(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn _opts -> {:ok, "machine-1"} end)
 
-    stub(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, _opts -> {:ok, ["machine-1"]} end)
+    stub(Cinder.Accounts.PlexAuthMock, :server_share_ids, fn _token, _id, _opts -> {:ok, []} end)
 
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
       {:ok,
@@ -334,7 +334,9 @@ defmodule CinderWeb.DashboardLiveTest do
     end
 
     test "the Plex sign-in row says what it checks, and why it fails", %{conn: conn} do
-      stub(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, _opts -> {:ok, []} end)
+      stub(Cinder.Accounts.PlexAuthMock, :server_share_ids, fn _token, _id, _opts ->
+        {:error, {:plex_tv_status, 401}}
+      end)
 
       {:ok, lv, _html} = live(conn, ~p"/dashboard")
       render_async(lv)
@@ -345,13 +347,14 @@ defmodule CinderWeb.DashboardLiveTest do
       assert has_element?(
                lv,
                "#dash-health-help-plex_signin",
-               "Checks that plex.tv lists the household server for the owner's Plex token."
+               "Checks that plex.tv returns the owner's account and who the household server " <>
+                 "is shared with, for the owner's Plex token."
              )
 
       assert has_element?(
                lv,
                row <> " .text-error",
-               "plex.tv does not list the household server for this Plex token"
+               "plex.tv rejected the Plex token"
              )
 
       refute has_element?(lv, "#dash-health-help-media_server")

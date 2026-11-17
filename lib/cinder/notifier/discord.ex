@@ -239,7 +239,11 @@ defmodule Cinder.Notifier.Discord do
   defp refusal_step(:server_machine_id),
     do: "Cinder could not read the household Plex server's id"
 
-  defp refusal_step(:server_ids), do: "plex.tv did not list the servers their account can reach"
+  defp refusal_step(:owner_account),
+    do: "Cinder could not read the Plex account that owns the household server"
+
+  defp refusal_step(:server_shares),
+    do: "Cinder could not read who the household Plex server is shared with"
 
   defp refusal_step(:server_access),
     do: "their Plex account has no access to the household Plex server"
@@ -249,11 +253,6 @@ defmodule Cinder.Notifier.Discord do
 
   defp health_check_name(:plex_signin), do: "Plex sign-in (owner account)"
   defp health_check_name(target), do: detail(target)
-
-  defp health_failure(:server_not_listed),
-    do:
-      "plex.tv no longer lists the household Plex server for the owner's token, so Plex " <>
-        "sign-in is refused"
 
   defp health_failure(:token_rejected), do: "plex.tv rejected the configured Plex token"
   defp health_failure(reason), do: detail(reason)

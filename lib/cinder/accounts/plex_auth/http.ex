@@ -2,12 +2,12 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
   @moduledoc """
   Real `Cinder.Accounts.PlexAuth` impl, backed by `Req`, against plex.tv's
   PIN-based OAuth API: create/check a PIN (`/api/v2/pins`), fetch the signed-in
-  account (`/api/v2/user`), and list the `clientIdentifier` of every resource plex.tv
-  lists for it, whatever its labels say, skipping an id that is not a non-empty string
-  (`/api/v2/resources`).
+  account (`/api/v2/user`), and read the account ids on the household server's share list
+  (`/api/servers/<machine id>/shared_servers`, which plex.tv answered in XML even to
+  `accept: application/json` on 2026-11-17, so the request asks for XML).
   `server_machine_id/1` instead hits the configured local Plex server's
   unauthenticated `/identity`, and `watchlist/1` hits the account-level discover
-  host (`https://discover.provider.plex.tv`). `account/2`, `resource_ids/2` and
+  host (`https://discover.provider.plex.tv`). `account/2`, `server_share_ids/3` and
   `server_machine_id/1` take `timeouts: :probe` for the `plex_signin` health check.
 
   Reads `req_options` from `config :cinder, #{inspect(__MODULE__)}`; the local
@@ -27,9 +27,9 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
   # One page is the whole watchlist for a household; plex.tv caps the page size anyway.
   @watchlist_page_size 500
   # `timeouts: :probe` (the `PlexAuth.call_opts()` type): 3 s to connect, to get a pooled
-  # connection and to receive, the bounds `Cinder.Health` asks of every health probe. Three calls
-  # that each wait out both bounds take 18 s; `Cinder.Health`'s 15-second budget still ends the
-  # check.
+  # connection and to receive, the bounds `Cinder.Health` asks of every health probe. The probe
+  # makes three calls (the owner's account, `/identity`, the share list); three that each wait out
+  # both bounds take 18 s, and `Cinder.Health`'s 15-second budget still ends the check.
   @probe_timeouts [receive_timeout: 3_000, pool_timeout: 3_000, connect_options: [timeout: 3_000]]
 
   @impl true
@@ -71,15 +71,15 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
   end
 
   @impl true
-  def resource_ids(token, opts) do
+  def server_share_ids(token, machine_id, opts) do
     request(
       :get,
-      "/api/v2/resources",
-      [headers: [{"x-plex-token", token}], params: [includeHttps: 1]] ++ timeouts(opts)
+      "/api/servers/#{URI.encode(machine_id, &URI.char_unreserved?/1)}/shared_servers",
+      [headers: [{"x-plex-token", token}, {"accept", "application/xml"}]] ++ timeouts(opts)
     )
     |> result()
     |> case do
-      {:ok, resources} when is_list(resources) -> {:ok, client_ids(resources)}
+      {:ok, body} when is_binary(body) -> share_user_ids(body)
       {:ok, _other} -> {:error, :unexpected_response}
       {:error, reason} -> {:error, reason}
     end
@@ -167,13 +167,97 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
     end
   end
 
-  # No label filters an id out. plex.tv documents neither `product` nor `provides`, and on
-  # 2026-11-05 it listed the household server as `provides: "controller"`, then as "server"
-  # again a few hours later. The caller's exact match on the server's machine id is the gate,
-  # and every label is reported to plex.tv by the device itself, as the id is.
-  defp client_ids(resources) do
-    for %{"clientIdentifier" => id} when is_binary(id) and id != "" <- resources, do: id
+  # The share list is XML: a `MediaContainer` root holding one `SharedServer` element per account
+  # the server is shared with, its plex.tv account id in `userID`, and the root's `size` saying how
+  # many there are. The body also holds each shared account's `accessToken`, email and username,
+  # so a body that does not read as that shape is `:unexpected_response` and nothing of it is
+  # returned: a root other than `MediaContainer`, a `SharedServer` directly under it whose `userID`
+  # is missing or not a positive integer, a root `size` that is missing, not a count or not the
+  # number of `SharedServer` elements directly under the root, or anything but whitespace after
+  # the root. So a renamed element or attribute refuses at the share-list step and fails the
+  # health check, rather than reading as a list shared with nobody. An element deeper in the body
+  # is neither read nor counted. A `SharedServer` with a valid `userID` counts whatever its other
+  # attributes (`acceptedAt` included) say. The parser refuses a body that declares an entity,
+  # and runs with `external_entities: :none`.
+  defp share_user_ids(body) do
+    options = [
+      :disallow_entities,
+      external_entities: :none,
+      event_fun: &share_event/3,
+      event_state: {[], [], nil}
+    ]
+
+    case :xmerl_sax_parser.stream(body, options) do
+      # The parser stops after the root element and returns what follows it: only whitespace may.
+      {:ok, {[], ids, size}, rest} when is_list(ids) and is_binary(rest) ->
+        if String.trim(rest) == "" and size == length(ids),
+          do: {:ok, Enum.reverse(ids)},
+          else: {:error, :unexpected_response}
+
+      _other ->
+        {:error, :unexpected_response}
+    end
+  catch
+    _kind, _reason -> {:error, :unexpected_response}
   end
+
+  # The state is `{open element names, ids so far, the root's size}` (`nil` before the root), or
+  # `:unexpected` once the body leaves the shape above.
+  defp share_event(_event, _location, :unexpected), do: :unexpected
+
+  defp share_event({:startElement, _uri, name, _qname, attributes}, _location, {[], [], nil}) do
+    with ~c"MediaContainer" <- name,
+         {:ok, size} <- count(attribute(attributes, ~c"size")) do
+      {[name], [], size}
+    else
+      _other -> :unexpected
+    end
+  end
+
+  defp share_event(
+         {:startElement, _uri, ~c"SharedServer" = name, _qname, attributes},
+         _location,
+         {[~c"MediaContainer"] = open, ids, size}
+       ) do
+    case attribute(attributes, ~c"userID") |> positive_id() do
+      {:ok, id} -> {[name | open], [id | ids], size}
+      :error -> :unexpected
+    end
+  end
+
+  defp share_event(
+         {:startElement, _uri, name, _qname, _attributes},
+         _location,
+         {open, ids, size}
+       ),
+       do: {[name | open], ids, size}
+
+  defp share_event({:endElement, _uri, name, _qname}, _location, {[name | open], ids, size}),
+    do: {open, ids, size}
+
+  defp share_event(_event, _location, state), do: state
+
+  defp attribute(attributes, name) do
+    Enum.find_value(attributes, fn
+      {_uri, _prefix, ^name, value} -> List.to_string(value)
+      _attribute -> nil
+    end)
+  end
+
+  defp positive_id(value) do
+    case count(value) do
+      {:ok, id} when id > 0 -> {:ok, id}
+      _other -> :error
+    end
+  end
+
+  defp count(value) when is_binary(value) do
+    if String.match?(value, ~r/\A[0-9]{1,18}\z/),
+      do: {:ok, String.to_integer(value)},
+      else: :error
+  end
+
+  defp count(nil), do: :error
 
   defp fetch_identity(url, opts) do
     config = Application.get_env(:cinder, __MODULE__, [])

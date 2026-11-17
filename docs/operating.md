@@ -75,8 +75,9 @@ terminate at a reverse proxy):
   whole app — a stopgap while the instance has no admin yet (the boot log warns exactly then), or a
   second layer when you can't front Cinder with a proxy/VPN. Unset ⇒ no gate.
 - **Sign in with Plex:** once a Plex media server is configured (`PLEX_URL`/`PLEX_TOKEN` or the
-  `/settings` equivalents), the log-in page shows a "Sign in with Plex" button. Only Plex accounts
-  with access to that server (owner or a shared user) may sign in — anyone else is rejected. The
+  `/settings` equivalents), the log-in page shows a "Sign in with Plex" button. Only the Plex
+  account that owns `PLEX_TOKEN` and the accounts on plex.tv's share list for that server, read
+  with that token, may sign in — anyone else is rejected, so use the server owner's token. The
   first successful Plex login always creates a new regular-user account — Plex's reported email is
   never used to look up or log into an existing account, since email isn't proof of inbox
   ownership and that would let anyone with mere watch access log in as whoever happens to share it.

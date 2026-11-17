@@ -58,8 +58,9 @@ normal user. A fresh instance without a bootstrap token fails closed: it cannot 
 account.
 
 Once a media server is configured with `PLEX_URL`/`PLEX_TOKEN` (or the equivalent `/settings`
-fields), a **"Sign in with Plex"** button appears on the log-in page. Only Plex accounts with
-access to that server (owner or shared user) may sign in; a Plex account Cinder has never seen
+fields), a **"Sign in with Plex"** button appears on the log-in page. Only the Plex account that
+owns `PLEX_TOKEN` and the accounts on plex.tv's share list for that server may sign in, so use the
+server owner's token there; a Plex account Cinder has never seen
 gets a new regular-user account, provided it carries an email address no Cinder user already
 holds. A managed Plex Home account with no email, or one whose email collides with an existing
 user, is refused rather than logged in — Cinder never logs into an existing account by email, only

@@ -20,15 +20,24 @@ defmodule Cinder.Accounts.PlexAuth.SignInProbeTest do
   defp expect_machine_id(result),
     do: expect(PlexAuthMock, :server_machine_id, fn @probe -> result end)
 
-  defp expect_resource_ids(result),
-    do: expect(PlexAuthMock, :resource_ids, fn @token, @probe -> result end)
+  defp expect_share_ids(result),
+    do: expect(PlexAuthMock, :server_share_ids, fn @token, "machine-1", @probe -> result end)
 
   defp owner, do: {:ok, %{id: 1, email: "owner@example.com", username: "owner"}}
 
-  test "passes when plex.tv lists the server for the owner's token, every call bounded" do
+  test "passes when plex.tv returns the owner's account and the share list, every call bounded" do
     expect_account(owner())
     expect_machine_id({:ok, "machine-1"})
-    expect_resource_ids({:ok, ["player-1", "machine-1"]})
+    expect_share_ids({:ok, [7, 9]})
+
+    assert SignInProbe.health() == :ok
+  end
+
+  # The gate admits the owner without the list, so the check reads it on its own.
+  test "reads the share list though the owner's own sign-in would not, and an empty list passes" do
+    expect_account(owner())
+    expect_machine_id({:ok, "machine-1"})
+    expect_share_ids({:ok, []})
 
     assert SignInProbe.health() == :ok
   end
@@ -46,18 +55,18 @@ defmodule Cinder.Accounts.PlexAuth.SignInProbeTest do
     end
   end
 
-  test "an account without an integer id is an unexpected response at :account" do
-    for id <- [nil, "1"] do
+  test "an account without a positive integer id is an unexpected response at :owner_account" do
+    for id <- [nil, "1", 0] do
       expect_account({:ok, %{id: id, email: nil, username: "owner"}})
 
-      assert SignInProbe.health() == {:error, {:account, :unexpected_response}},
+      assert SignInProbe.health() == {:error, {:owner_account, :unexpected_response}},
              "id #{inspect(id)}"
     end
   end
 
-  test "any other account failure names the :account step" do
+  test "any other account failure names the :owner_account step" do
     expect_account({:error, {:plex_tv_status, 503}})
-    assert SignInProbe.health() == {:error, {:account, {:plex_tv_status, 503}}}
+    assert SignInProbe.health() == {:error, {:owner_account, {:plex_tv_status, 503}}}
   end
 
   test "a server_machine_id failure names its step, a 401 from /identity included" do
@@ -71,29 +80,23 @@ defmodule Cinder.Accounts.PlexAuth.SignInProbeTest do
     assert SignInProbe.health() == {:error, {:server_machine_id, {:plex_tv_status, 401}}}
   end
 
-  test "a list without the server's machine id reads :server_not_listed" do
+  test "a share-list failure names :server_shares, and its 401 or 403 reads :token_rejected" do
     expect_account(owner())
     expect_machine_id({:ok, "machine-1"})
-    expect_resource_ids({:ok, ["MACHINE-1", "machine-10"]})
-
-    assert SignInProbe.health() == {:error, :server_not_listed}
-  end
-
-  test "a resource-list failure names :server_ids, and its 401 reads :token_rejected" do
-    expect_account(owner())
-    expect_machine_id({:ok, "machine-1"})
-    expect_resource_ids({:error, {:plex_tv_status, 503}})
-    assert SignInProbe.health() == {:error, {:server_ids, {:plex_tv_status, 503}}}
+    expect_share_ids({:error, {:plex_tv_status, 503}})
+    assert SignInProbe.health() == {:error, {:server_shares, {:plex_tv_status, 503}}}
 
     expect_account(owner())
     expect_machine_id({:ok, "machine-1"})
-    expect_resource_ids({:error, :unexpected_response})
-    assert SignInProbe.health() == {:error, {:server_ids, :unexpected_response}}
+    expect_share_ids({:error, :unexpected_response})
+    assert SignInProbe.health() == {:error, {:server_shares, :unexpected_response}}
 
-    expect_account(owner())
-    expect_machine_id({:ok, "machine-1"})
-    expect_resource_ids({:error, {:plex_tv_status, 401}})
-    assert SignInProbe.health() == {:error, :token_rejected}
+    for status <- [401, 403] do
+      expect_account(owner())
+      expect_machine_id({:ok, "machine-1"})
+      expect_share_ids({:error, {:plex_tv_status, status}})
+      assert SignInProbe.health() == {:error, :token_rejected}, "status #{status}"
+    end
   end
 
   test "an error term that could hold the request keeps only its step" do
@@ -101,9 +104,9 @@ defmodule Cinder.Accounts.PlexAuth.SignInProbeTest do
 
     expect_account(owner())
     expect_machine_id({:ok, "machine-1"})
-    expect_resource_ids({:error, {:closed, request}})
+    expect_share_ids({:error, {:closed, request}})
 
-    assert SignInProbe.health() == {:error, {:server_ids, :error}}
+    assert SignInProbe.health() == {:error, {:server_shares, :error}}
   end
 
   describe "reason/1" do
@@ -111,18 +114,19 @@ defmodule Cinder.Accounts.PlexAuth.SignInProbeTest do
       for {input, expected} <- [
             {:timeout, :timeout},
             {:not_configured, :not_configured},
-            {:server_not_listed, :server_not_listed},
             {:token_rejected, :token_rejected},
-            {{:server_access, {:forbidden, 3}}, :server_not_listed},
-            {{:account, {:plex_tv_status, 401}}, :token_rejected},
-            {{:server_ids, {:plex_tv_status, 403}}, :token_rejected},
+            {{:owner_account, {:plex_tv_status, 401}}, :token_rejected},
+            {{:server_shares, {:plex_tv_status, 403}}, :token_rejected},
             {{:server_machine_id, {:plex_tv_status, 403}},
              {:server_machine_id, {:plex_tv_status, 403}}},
-            {{:account, {:plex_tv_status, 502}}, {:account, {:plex_tv_status, 502}}},
-            {{:account, :unexpected_response}, {:account, :unexpected_response}},
-            {{:server_ids, %Req.TransportError{reason: :timeout}}, {:server_ids, :timeout}},
-            {{:server_ids, %{token: @token}}, {:server_ids, :error}},
-            {{:account, "x-plex-token: #{@token}"}, {:account, :error}},
+            {{:owner_account, {:plex_tv_status, 502}}, {:owner_account, {:plex_tv_status, 502}}},
+            {{:owner_account, :unexpected_response}, {:owner_account, :unexpected_response}},
+            {{:server_shares, %Req.TransportError{reason: :timeout}}, {:server_shares, :timeout}},
+            {{:server_shares, %{token: @token}}, {:server_shares, :error}},
+            {{:owner_account, "x-plex-token: #{@token}"}, {:owner_account, :error}},
+            # A step the probe no longer has, or the gate's refusal, names no step of its own.
+            {{:server_ids, :unexpected_response}, :error},
+            {{:server_access, {:forbidden, 3}}, :error},
             {%RuntimeError{message: @token}, {:exception, RuntimeError}},
             {{:exit, {:noproc, @token}}, :error},
             {@token, :error}

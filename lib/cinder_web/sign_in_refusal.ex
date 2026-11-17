@@ -3,7 +3,7 @@ defmodule CinderWeb.SignInRefusal do
   The one warning line a refused Plex, Jellyfin or OIDC sign-in or link writes, so the next
   sign-in outage takes one log search to diagnose (#1206):
 
-      plex_signin refused intent=login step=server_access plex_id=42 resources=3 reason=forbidden
+      plex_signin refused intent=login step=server_access plex_id=42 shares=3 reason=forbidden
 
   A controller wraps each step of its `with` chain in `at/2`, so a failure keeps the name of the
   step that refused it, builds the other refusals with `refusal/3`, and hands each one to

@@ -46,12 +46,16 @@ defmodule Cinder.Accounts.PlexSignInWatchTest do
 
   defp answer(:pass) do
     owner()
-    expect(PlexAuthMock, :resource_ids, fn @token, @probe -> {:ok, ["machine-1"]} end)
+    expect(PlexAuthMock, :server_share_ids, fn @token, "machine-1", @probe -> {:ok, [7]} end)
   end
 
-  defp answer(:server_not_listed) do
+  # plex.tv refuses the owner's token the share list, after returning the owner's account.
+  defp answer(:shares_rejected) do
     owner()
-    expect(PlexAuthMock, :resource_ids, fn @token, @probe -> {:ok, ["another-server"]} end)
+
+    expect(PlexAuthMock, :server_share_ids, fn @token, "machine-1", @probe ->
+      {:error, {:plex_tv_status, 403}}
+    end)
   end
 
   defp answer(:token_rejected),
@@ -69,7 +73,7 @@ defmodule Cinder.Accounts.PlexSignInWatchTest do
   defp answer(:server_error) do
     owner()
 
-    expect(PlexAuthMock, :resource_ids, fn @token, @probe ->
+    expect(PlexAuthMock, :server_share_ids, fn @token, "machine-1", @probe ->
       {:error, {:plex_tv_status, 503}}
     end)
   end
@@ -99,9 +103,9 @@ defmodule Cinder.Accounts.PlexSignInWatchTest do
     end
   end
 
-  @failed {:health_check_failed, :plex_signin, :server_not_listed}
+  @failed {:health_check_failed, :plex_signin, :token_rejected}
   @recovered {:health_check_recovered, :plex_signin}
-  @timed_out {:health_check_failed, :plex_signin, {:account, :timeout}}
+  @timed_out {:health_check_failed, :plex_signin, {:owner_account, :timeout}}
 
   test "a passing check sends nothing" do
     pid = start_watch()
@@ -109,13 +113,13 @@ defmodule Cinder.Accounts.PlexSignInWatchTest do
     assert tick(pid, :pass) == []
   end
 
-  test "a server plex.tv stops listing is reported at once, once, then its recovery" do
+  test "a share list plex.tv refuses the owner's token is reported at once, once, then its recovery" do
     pid = start_watch()
 
     assert tick(pid, :pass) == []
-    assert tick(pid, :server_not_listed) == [@failed]
-    assert tick(pid, :server_not_listed) == []
-    assert tick(pid, :server_not_listed) == []
+    assert tick(pid, :shares_rejected) == [@failed]
+    assert tick(pid, :shares_rejected) == []
+    assert tick(pid, :shares_rejected) == []
     assert tick(pid, :pass) == [@recovered]
     assert tick(pid, :pass) == []
   end
@@ -126,7 +130,7 @@ defmodule Cinder.Accounts.PlexSignInWatchTest do
     assert tick(pid, :pass) == [@recovered]
 
     assert tick(pid, :unexpected_response) ==
-             [{:health_check_failed, :plex_signin, {:account, :unexpected_response}}]
+             [{:health_check_failed, :plex_signin, {:owner_account, :unexpected_response}}]
   end
 
   test "a timeout is reported only on its second tick in a row, and a third sends nothing" do
@@ -144,7 +148,7 @@ defmodule Cinder.Accounts.PlexSignInWatchTest do
     assert tick(pid, :timeout) == []
 
     assert tick(pid, :server_error) ==
-             [{:health_check_failed, :plex_signin, {:server_ids, {:plex_tv_status, 503}}}]
+             [{:health_check_failed, :plex_signin, {:server_shares, {:plex_tv_status, 503}}}]
   end
 
   test "a lone failure between passes sends nothing, not even a recovery" do
@@ -159,7 +163,7 @@ defmodule Cinder.Accounts.PlexSignInWatchTest do
   test "not configured sends nothing and forgets the failure: the next one counts from zero" do
     pid = start_watch()
 
-    assert tick(pid, :server_not_listed) == [@failed]
+    assert tick(pid, :shares_rejected) == [@failed]
     assert tick(pid, :not_configured) == []
 
     answer(:configured)
@@ -176,14 +180,14 @@ defmodule Cinder.Accounts.PlexSignInWatchTest do
 
   test "a fresh worker facing an ongoing failure reports it once" do
     first = start_watch()
-    assert tick(first, :server_not_listed) == [@failed]
+    assert tick(first, :shares_rejected) == [@failed]
     # A restart: the state lived in the process that stopped.
     {:registered_name, id} = Process.info(first, :registered_name)
     stop_supervised!(id)
 
     second = start_watch()
-    assert tick(second, :server_not_listed) == [@failed]
-    assert tick(second, :server_not_listed) == []
+    assert tick(second, :shares_rejected) == [@failed]
+    assert tick(second, :shares_rejected) == []
   end
 
   test "an exception's text never reaches the event, only its module" do
@@ -203,7 +207,7 @@ defmodule Cinder.Accounts.PlexSignInWatchTest do
     put_env(PlexSignInWatch, first_interval: 0, interval: 50)
     name = :"plex_sign_in_watch_#{System.unique_integer([:positive])}"
     allow(PlexAuthMock, self(), fn -> Process.whereis(name) end)
-    answer(:server_not_listed)
+    answer(:shares_rejected)
     answer(:pass)
 
     start_supervised!(Supervisor.child_spec({PlexSignInWatch, name: name}, id: name))

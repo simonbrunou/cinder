@@ -78,7 +78,7 @@ defmodule Cinder.Notifier.EmailTest do
       configure_smtp!()
       _admin = admin_fixture()
 
-      assert :ok = Email.notify({:health_check_failed, :plex_signin, :server_not_listed})
+      assert :ok = Email.notify({:health_check_failed, :plex_signin, :token_rejected})
       assert :ok = Email.notify({:health_check_recovered, :plex_signin})
       refute_email_sent()
     end

@@ -2,8 +2,8 @@ defmodule Cinder.Accounts.PlexSignInWatch do
   @moduledoc """
   Runs the `plex_signin` health check (`Cinder.Accounts.PlexAuth.SignInProbe`) on a schedule and
   tells the admins when it starts failing and when it passes again. On 2026-11-05 plex.tv stopped
-  listing the household server for every account Cinder holds a token for, and the admin heard
-  of it from a household member (#1204).
+  listing the household server for every account Cinder holds a token for, which the sign-in gate
+  read then, and the admin heard of it from a household member (#1204).
 
   The first check runs about 5 minutes after boot, then one per interval, an hour by default:
   `config :cinder, #{inspect(__MODULE__)}, interval: <ms>, first_interval: <ms>`. Each tick calls
@@ -11,8 +11,7 @@ defmodule Cinder.Accounts.PlexSignInWatch do
 
   What each result sends through `Cinder.Notifier`:
 
-    * a failure whose reason is `:server_not_listed`, `:token_rejected` or a step's
-      `:unexpected_response` sends `{:health_check_failed, :plex_signin, reason}` at once;
+    * a failure whose reason is `:token_rejected` or a step's `:unexpected_response` sends `{:health_check_failed, :plex_signin, reason}` at once;
     * any other failure (a timeout, a 5xx, a refused connection) sends it on the second failing
       tick in a row;
     * nothing more is sent while the check keeps failing;
@@ -97,7 +96,6 @@ defmodule Cinder.Accounts.PlexSignInWatch do
   defp advance(failure, {:warning, _warning}), do: advance(failure, :ok)
 
   # A refusal plex.tv or the server gave on purpose: waiting one more hour would not change it.
-  defp at_once?(:server_not_listed), do: true
   defp at_once?(:token_rejected), do: true
   defp at_once?({_step, :unexpected_response}), do: true
   defp at_once?(_reason), do: false

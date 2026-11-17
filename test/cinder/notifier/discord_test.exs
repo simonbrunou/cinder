@@ -609,7 +609,9 @@ defmodule Cinder.Notifier.DiscordTest do
       for {step, words} <- [
             account: "plex.tv did not return their Plex account",
             server_machine_id: "Cinder could not read the household Plex server's id",
-            server_ids: "plex.tv did not list the servers their account can reach",
+            owner_account:
+              "Cinder could not read the Plex account that owns the household server",
+            server_shares: "Cinder could not read who the household Plex server is shared with",
             server_access: "their Plex account has no access to the household Plex server",
             account_write: "Cinder could not save their account",
             later_step: "a sign-in step refused them"
@@ -626,12 +628,10 @@ defmodule Cinder.Notifier.DiscordTest do
       expect_post()
 
       for {reason, words} <- [
-            {:server_not_listed,
-             "plex.tv no longer lists the household Plex server for the owner's token, so " <>
-               "Plex sign-in is refused"},
             {:token_rejected, "plex.tv rejected the configured Plex token"},
             {:timeout, ":timeout"},
-            {{:server_ids, {:plex_tv_status, 503}}, "{:server\\_ids, {:plex\\_tv\\_status, 503}}"}
+            {{:server_shares, {:plex_tv_status, 503}},
+             "{:server\\_shares, {:plex\\_tv\\_status, 503}}"}
           ] do
         assert :ok = Discord.notify({:health_check_failed, :plex_signin, reason})
         assert_receive {:posted, %{"embeds" => [embed]}}

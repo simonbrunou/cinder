@@ -4,10 +4,33 @@ defmodule CinderWeb.PlexAuthControllerTest do
   import Mox
   import Cinder.AccountsFixtures
 
+  alias Cinder.Accounts.PlexAuthMock
   alias Cinder.Accounts.User
   alias Cinder.Repo
 
   setup :verify_on_exit!
+
+  # config/test.exs: the Plex media server's token, owned by the account with plex.tv id 1.
+  @owner_token "test-key"
+  @owner_id 1
+
+  # The gate after the signing-in account: the owner's account, then the server's share list,
+  # both read with the owner's token. Mox runs `account/2` expectations in order, so this goes
+  # after the signing-in account's.
+  defp expect_owner do
+    expect(PlexAuthMock, :account, fn @owner_token, [] ->
+      {:ok, %{id: @owner_id, email: "owner@example.com", username: "owner"}}
+    end)
+  end
+
+  defp expect_shared(share_ids) do
+    expect_owner()
+    expect(PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
+
+    expect(PlexAuthMock, :server_share_ids, fn @owner_token, "machine-1", [] ->
+      {:ok, share_ids}
+    end)
+  end
 
   describe "GET /auth/plex" do
     test "puts the pin id in the session and redirects to app.plex.tv", %{conn: conn} do
@@ -84,11 +107,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
         {:ok, %{id: 555, email: "newplex@example.com", username: "newplex"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
-
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
-        {:ok, ["machine-1"]}
-      end)
+      expect_shared([555])
 
       conn =
         conn
@@ -119,11 +138,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
         {:ok, %{id: 777, email: "admin-plex@example.com", username: "the-admin"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
-
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
-        {:ok, ["machine-1"]}
-      end)
+      expect_shared([777])
 
       conn =
         conn
@@ -146,11 +161,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
         {:ok, %{id: 778, email: "member@example.com", username: "member"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
-
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
-        {:ok, ["machine-1"]}
-      end)
+      expect_shared([778])
 
       conn =
         conn
@@ -177,7 +188,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
       assert redirected_to(conn) == ~p"/users/log-in"
     end
 
-    test "SECURITY: rejects an account whose resource_ids don't include the configured server", %{
+    test "SECURITY: rejects an account that is neither the owner nor on the share list", %{
       conn: conn
     } do
       # With no admin, registration refuses on its own (:admin_required), and this test would
@@ -191,11 +202,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
         {:ok, %{id: 666, email: "outsider@example.com", username: "outsider"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
-
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
-        {:ok, ["some-other-machine"]}
-      end)
+      expect_shared([665, 667])
 
       conn =
         conn
@@ -209,9 +216,8 @@ defmodule CinderWeb.PlexAuthControllerTest do
       assert Repo.aggregate(User, :count) == count_before
     end
 
-    # resource_ids/1 now returns every device on the account, so the match on the machine id
-    # is the whole gate: an id that only resembles it lets nobody in.
-    test "SECURITY: rejects an account whose resource ids only resemble the server's", %{
+    # The share list holds ids next to the account's, never its own: an exact match is the gate.
+    test "SECURITY: rejects an account whose id only resembles one on the share list", %{
       conn: conn
     } do
       _admin = admin_fixture()
@@ -223,11 +229,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
         {:ok, %{id: 667, email: "near-miss@example.com", username: "near-miss"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
-
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
-        {:ok, ["MACHINE-1", "machine-10", "machine-1 ", "xmachine-1"]}
-      end)
+      expect_shared([666, 668, 6670, -667])
 
       conn =
         conn
@@ -262,11 +264,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
         {:ok, %{id: 9001, email: "linkee@example.com", username: "linkee"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
-
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
-        {:ok, ["machine-1"]}
-      end)
+      expect_shared([9001])
 
       conn =
         conn
@@ -295,11 +293,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
         {:ok, %{id: 9100, email: "admin-link@example.com", username: "the-admin"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
-
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
-        {:ok, ["machine-1"]}
-      end)
+      expect_shared([9100])
 
       conn =
         conn
@@ -348,11 +342,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
         {:ok, %{id: 9002, email: "outsider2@example.com", username: "outsider2"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
-
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
-        {:ok, ["some-other-machine"]}
-      end)
+      expect_shared([9003])
 
       conn =
         conn
@@ -364,6 +354,138 @@ defmodule CinderWeb.PlexAuthControllerTest do
       assert redirected_to(conn) == ~p"/users/settings"
       assert Phoenix.Flash.get(conn.assigns.flash, :error)
       refute Repo.reload!(user).plex_id
+    end
+
+    test "the server owner's account signs in without the share list being read", %{conn: conn} do
+      _admin = admin_fixture()
+
+      expect(PlexAuthMock, :check_pin, fn 105 -> {:ok, "owner-sign-in-token"} end)
+
+      expect(PlexAuthMock, :account, fn "owner-sign-in-token", [] ->
+        {:ok, %{id: @owner_id, email: "owner-member@example.com", username: "owner"}}
+      end)
+
+      # verify_on_exit! fails the test on a server_machine_id or server_share_ids call.
+      expect_owner()
+
+      conn =
+        conn
+        |> init_test_session(%{})
+        |> put_session(:plex_pin_id, 105)
+        |> get(~p"/auth/plex/callback")
+
+      assert get_session(conn, :user_token)
+      assert redirected_to(conn) == ~p"/"
+      assert Repo.get_by(User, plex_id: @owner_id)
+    end
+
+    test "with :link intent, the server owner's account links without the share list being read",
+         %{conn: conn} do
+      user = user_fixture()
+
+      expect(PlexAuthMock, :check_pin, fn 106 -> {:ok, "owner-link-token"} end)
+
+      expect(PlexAuthMock, :account, fn "owner-link-token", [] ->
+        {:ok, %{id: @owner_id, email: "owner-link@example.com", username: "owner"}}
+      end)
+
+      expect_owner()
+
+      conn =
+        conn
+        |> log_in_user(user)
+        |> put_session(:plex_pin_id, 106)
+        |> put_session(:plex_intent, :link)
+        |> get(~p"/auth/plex/callback")
+
+      assert redirected_to(conn) == ~p"/users/settings"
+      assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "linked"
+      assert Repo.reload!(user).plex_id == @owner_id
+    end
+
+    # Decision 2 on #1212: an owner account or share list Cinder cannot read refuses, as an
+    # unreadable /identity does.
+    test "an unreadable owner account or share list refuses the sign-in", %{conn: conn} do
+      _admin = admin_fixture()
+      count_before = Repo.aggregate(User, :count)
+
+      failures = [
+        fn ->
+          expect(PlexAuthMock, :account, fn @owner_token, [] ->
+            {:error, {:plex_tv_status, 401}}
+          end)
+        end,
+        fn ->
+          expect_owner()
+          expect(PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
+
+          expect(PlexAuthMock, :server_share_ids, fn @owner_token, "machine-1", [] ->
+            {:error, {:plex_tv_status, 503}}
+          end)
+        end
+      ]
+
+      for {fail, pin} <- Enum.with_index(failures, 110) do
+        expect(PlexAuthMock, :check_pin, fn ^pin -> {:ok, "shared-token"} end)
+
+        expect(PlexAuthMock, :account, fn "shared-token", [] ->
+          {:ok, %{id: 4242, email: "shared@example.com", username: "shared"}}
+        end)
+
+        fail.()
+
+        conn =
+          conn
+          |> init_test_session(%{})
+          |> put_session(:plex_pin_id, pin)
+          |> get(~p"/auth/plex/callback")
+
+        refute get_session(conn, :user_token)
+        assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Plex sign-in failed"
+        assert redirected_to(conn) == ~p"/users/log-in"
+        assert Repo.aggregate(User, :count) == count_before
+      end
+    end
+
+    test "with :link intent, an unreadable owner account or share list does not link", %{
+      conn: conn
+    } do
+      user = user_fixture()
+
+      failures = [
+        fn ->
+          expect(PlexAuthMock, :account, fn @owner_token, [] -> {:error, :timeout} end)
+        end,
+        fn ->
+          expect_owner()
+          expect(PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
+
+          expect(PlexAuthMock, :server_share_ids, fn @owner_token, "machine-1", [] ->
+            {:error, :unexpected_response}
+          end)
+        end
+      ]
+
+      for {fail, pin} <- Enum.with_index(failures, 120) do
+        expect(PlexAuthMock, :check_pin, fn ^pin -> {:ok, "shared-link-token"} end)
+
+        expect(PlexAuthMock, :account, fn "shared-link-token", [] ->
+          {:ok, %{id: 4243, email: "shared-link@example.com", username: "shared"}}
+        end)
+
+        fail.()
+
+        conn =
+          conn
+          |> log_in_user(user)
+          |> put_session(:plex_pin_id, pin)
+          |> put_session(:plex_intent, :link)
+          |> get(~p"/auth/plex/callback")
+
+        assert redirected_to(conn) == ~p"/users/settings"
+        assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Could not link"
+        refute Repo.reload!(user).plex_id
+      end
     end
 
     # SECURITY regression (the exact hole this rework closes): the Plex account's email matches
@@ -381,11 +503,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
         {:ok, %{id: 5555, email: "admin-collision@example.com", username: "attacker"}}
       end)
 
-      expect(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn [] -> {:ok, "machine-1"} end)
-
-      expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, [] ->
-        {:ok, ["machine-1"]}
-      end)
+      expect_shared([5555])
 
       conn =
         conn

@@ -39,7 +39,9 @@ defmodule CinderWeb.PlexAuthRefusalNoticeTest do
     do: user_fixture(attrs) |> Ecto.Changeset.change(plex_id: plex_id) |> Repo.update!()
 
   # Mocks for one callback that plex.tv answers up to `step`, which refuses. `times` callbacks
-  # each get the same answers.
+  # each get the same answers. After the signing-in account, the gate reads the owner's account
+  # with the configured token (`test-key`, account 1), so one `account/2` expectation answers
+  # both tokens.
   defp expect_refusal_at(step, plex_account, times \\ 1) do
     expect(PlexAuthMock, :check_pin, times, fn 1 -> {:ok, "token"} end)
 
@@ -49,24 +51,34 @@ defmodule CinderWeb.PlexAuthRefusalNoticeTest do
           {:error, {:plex_tv_status, 503}}
         end)
 
+      :owner_account ->
+        expect(PlexAuthMock, :account, times * 2, fn
+          "token", [] -> {:ok, plex_account}
+          "test-key", [] -> {:error, {:plex_tv_status, 503}}
+        end)
+
       _later ->
-        expect(PlexAuthMock, :account, times, fn "token", [] -> {:ok, plex_account} end)
-        expect_server_steps(step, times)
+        expect(PlexAuthMock, :account, times * 2, fn
+          "token", [] -> {:ok, plex_account}
+          "test-key", [] -> {:ok, %{id: 1, email: "owner@example.com", username: "owner"}}
+        end)
+
+        expect_server_steps(step, plex_account, times)
     end
   end
 
-  defp expect_server_steps(:server_machine_id, times),
+  defp expect_server_steps(:server_machine_id, _plex_account, times),
     do:
       expect(PlexAuthMock, :server_machine_id, times, fn [] -> {:error, :unexpected_response} end)
 
-  defp expect_server_steps(step, times) do
+  defp expect_server_steps(step, %{id: id}, times) do
     expect(PlexAuthMock, :server_machine_id, times, fn [] -> {:ok, "machine-1"} end)
 
-    expect(PlexAuthMock, :resource_ids, times, fn "token", [] ->
+    expect(PlexAuthMock, :server_share_ids, times, fn "test-key", "machine-1", [] ->
       case step do
-        :server_ids -> {:error, {:plex_tv_status, 500}}
-        :server_access -> {:ok, ["another-server"]}
-        :account_write -> {:ok, ["machine-1"]}
+        :server_shares -> {:error, {:plex_tv_status, 500}}
+        :server_access -> {:ok, [id + 1]}
+        :account_write -> {:ok, [id]}
       end
     end)
   end
@@ -116,8 +128,9 @@ defmodule CinderWeb.PlexAuthRefusalNoticeTest do
   describe ":login, a Plex account a user has linked" do
     # A username plex.tv reports as a number makes the account write's changeset fail.
     for {step, username} <- [
+          owner_account: "member",
           server_machine_id: "member",
-          server_ids: "member",
+          server_shares: "member",
           server_access: "member",
           account_write: 12_345
         ] do
@@ -207,7 +220,7 @@ defmodule CinderWeb.PlexAuthRefusalNoticeTest do
   end
 
   describe ":link" do
-    for step <- [:account, :server_access] do
+    for step <- [:account, :owner_account, :server_shares, :server_access] do
       test "refused at #{step} sends one notice naming the signed-in user", %{conn: conn} do
         user = user_fixture()
         expect_refusal_at(unquote(step), account(50))
@@ -309,7 +322,7 @@ defmodule CinderWeb.PlexAuthRefusalNoticeTest do
       login_callback(conn)
       assert_one_notice(user, :server_access)
 
-      expect_refusal_at(:server_ids, account(63))
+      expect_refusal_at(:server_shares, account(63))
       login_callback(conn)
       refute_notice()
     end

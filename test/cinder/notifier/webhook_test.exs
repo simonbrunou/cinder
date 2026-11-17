@@ -87,13 +87,13 @@ defmodule Cinder.Notifier.WebhookTest do
     configure(url: @url)
     expect_post()
 
-    assert :ok = Webhook.notify({:health_check_failed, :plex_signin, :server_not_listed})
+    assert :ok = Webhook.notify({:health_check_failed, :plex_signin, :token_rejected})
     assert_receive {:posted, body, _headers}
 
     assert body == %{
              "event" => "health_check_failed",
              "name" => "plex_signin",
-             "reason" => "server_not_listed"
+             "reason" => "token_rejected"
            }
 
     assert :ok =

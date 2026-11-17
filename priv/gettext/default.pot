@@ -7409,17 +7409,7 @@ msgstr ""
 
 #: lib/cinder_web/domain_labels.ex
 #, elixir-autogen, elixir-format
-msgid "Checks that plex.tv lists the household server for the owner's Plex token. It does not try a sign-in or show what a shared user sees."
-msgstr ""
-
-#: lib/cinder_web/domain_labels.ex
-#, elixir-autogen, elixir-format
 msgid "Plex sign-in (owner account)"
-msgstr ""
-
-#: lib/cinder_web/components/core_components.ex
-#, elixir-autogen, elixir-format
-msgid "plex.tv does not list the household server for this Plex token"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex
@@ -7563,3 +7553,8 @@ msgid "%{count} additional monitored work was not imported; after cutover, monit
 msgid_plural "%{count} additional monitored works were not imported; after cutover, monitor their eBooks per author or request their audiobooks."
 msgstr[0] ""
 msgstr[1] ""
+
+#: lib/cinder_web/domain_labels.ex
+#, elixir-autogen, elixir-format
+msgid "Checks that plex.tv returns the owner's account and who the household server is shared with, for the owner's Plex token. It does not try a sign-in or show what a shared user sees."
+msgstr ""

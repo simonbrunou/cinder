@@ -83,14 +83,16 @@ defmodule Cinder.Health do
       names_adapter: true
     },
     # The media-server row asks the local Plex server, which kept answering while plex.tv stopped
-    # listing it for every account (#1204). Sign-in reads plex.tv's list, so it gets its own row.
+    # listing it for every account (#1204). Sign-in reads the owner's account and the server's
+    # share list on plex.tv, so it gets its own row.
     %Target{
       id: "plex_signin",
       group: :media_server,
       label: "Plex sign-in (owner account)",
       help:
-        "Checks that plex.tv lists the household server for the owner's Plex token. It does not " <>
-          "try a sign-in or show what a shared user sees.",
+        "Checks that plex.tv returns the owner's account and who the household server is " <>
+          "shared with, for the owner's Plex token. It does not try a sign-in or show what a " <>
+          "shared user sees.",
       probe: {:module, Cinder.Accounts.PlexAuth.SignInProbe},
       dashboard: :configured
     },

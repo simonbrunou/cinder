@@ -79,101 +79,254 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
     assert {:ok, %{id: 8, email: nil, username: "managed"}} = HTTP.account("user-token", [])
   end
 
-  test "resource_ids/2 sends the token and keeps every resource, players included" do
-    Req.Test.stub(Cinder.PlexTvStub, fn conn ->
-      assert conn.request_path == "/api/v2/resources"
-      assert Plug.Conn.get_req_header(conn, "x-plex-token") == ["user-token"]
+  # The shape plex.tv answered on prod on 2026-11-17 (every value replaced): XML whatever the
+  # `accept` header asks for, one `SharedServer` per account the server is shared with.
+  defp shared_server(attributes) do
+    defaults = [
+      id: "11111111",
+      username: "friend",
+      email: "friend@example.com",
+      accessToken: "shared-access-token",
+      name: "friend",
+      acceptedAt: "1700000000",
+      invitedAt: "1700000000",
+      allowSync: "1",
+      allowCameraUpload: "0",
+      allowChannels: "0",
+      allowTuners: "0",
+      allowSubtitleAdmin: "0",
+      owned: "0",
+      allLibraries: "1",
+      filterAll: "",
+      filterMovies: "",
+      filterMusic: "",
+      filterPhotos: "",
+      filterTelevision: ""
+    ]
 
-      conn
-      |> Plug.Conn.put_resp_content_type("application/json")
-      |> Req.Test.json([
-        %{"provides" => "server", "clientIdentifier" => "server-1"},
-        %{"provides" => "player", "clientIdentifier" => "player-1"},
-        %{"provides" => "server,client", "clientIdentifier" => "server-2"}
-      ])
-    end)
+    attrs =
+      defaults
+      |> Keyword.merge(attributes)
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+      |> Enum.map_join(" ", fn {key, value} -> ~s(#{key}="#{value}") end)
 
-    assert {:ok, ["server-1", "player-1", "server-2"]} = HTTP.resource_ids("user-token", [])
+    """
+    <SharedServer #{attrs}>
+      <Section id="222222222" key="1" title="Movies" type="movie" shared="1"/>
+      <Section id="222222223" key="2" title="TV Shows" type="show" shared="1"/>
+    </SharedServer>
+    """
   end
 
-  # On 2026-11-05 plex.tv listed Plex Media Server as `provides: "controller"` for the owner
-  # and every shared user alike, which locked every account out of Plex sign-in.
-  test "resource_ids/2 keeps a Plex Media Server whatever its provides says" do
-    Req.Test.stub(Cinder.PlexTvStub, fn conn ->
-      conn
-      |> Plug.Conn.put_resp_content_type("application/json")
-      |> Req.Test.json([
-        %{
-          "provides" => "controller",
-          "product" => "Plex Media Server",
-          "clientIdentifier" => "server-1"
-        },
-        %{"provides" => "player", "product" => "Plex Web", "clientIdentifier" => "player-1"},
-        %{"product" => "Plex for Roku", "clientIdentifier" => "roku-1"},
-        %{"product" => "Plex Media Server", "clientIdentifier" => "server-2"}
-      ])
-    end)
-
-    assert {:ok, ["server-1", "player-1", "roku-1", "server-2"]} =
-             HTTP.resource_ids("user-token", [])
+  defp share_list(servers) do
+    """
+    <?xml version="1.0" encoding="UTF-8"?>
+    <MediaContainer friendlyName="myPlex" identifier="com.plexapp.plugins.myplex" \
+    machineIdentifier="machine-1" size="#{length(servers)}">
+    #{Enum.join(servers)}</MediaContainer>
+    """
   end
 
-  # plex.tv documents none of these labels, and `provides` changed twice on 2026-11-05: the
-  # caller's match on the server's machine id is the whole gate, so no label filters an id out.
-  test "resource_ids/2 returns every id in list order, whatever product, provides or owned say" do
+  defp stub_share_list(body, status \\ 200) do
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
       conn
-      |> Plug.Conn.put_resp_content_type("application/json")
-      |> Req.Test.json([
-        %{"provides" => "controller", "clientIdentifier" => "controller-1"},
-        %{"provides" => "player", "product" => "Plex for LG", "clientIdentifier" => "player-1"},
-        %{"product" => "Plexamp", "clientIdentifier" => "no-provides-1"},
-        %{"clientIdentifier" => "bare-1"},
-        %{"provides" => "controller", "product" => "Plex Web", "clientIdentifier" => "web-1"},
-        # A shared user's copy of the household server is not theirs.
-        %{"product" => "Plex Media Server", "owned" => false, "clientIdentifier" => "shared-1"},
-        %{"product" => "Plex Media Server", "owned" => true, "clientIdentifier" => "owned-1"}
-      ])
+      |> Plug.Conn.put_resp_content_type("application/xml")
+      |> Plug.Conn.send_resp(status, body)
     end)
-
-    assert {:ok,
-            [
-              "controller-1",
-              "player-1",
-              "no-provides-1",
-              "bare-1",
-              "web-1",
-              "shared-1",
-              "owned-1"
-            ]} =
-             HTTP.resource_ids("user-token", [])
   end
 
-  test "resource_ids/2 drops a resource whose clientIdentifier is not a non-empty string" do
-    Req.Test.stub(Cinder.PlexTvStub, fn conn ->
-      conn
-      |> Plug.Conn.put_resp_content_type("application/json")
-      |> Req.Test.json([
-        %{"product" => "Plex Media Server", "clientIdentifier" => nil},
-        %{"product" => "Plex Media Server", "provides" => "server"},
-        %{"product" => "Plex Media Server", "clientIdentifier" => ""},
-        %{"product" => "Plex Media Server", "clientIdentifier" => 42},
-        "not-a-resource",
-        %{"product" => "Plex Media Server", "clientIdentifier" => "server-1"}
+  test "server_share_ids/3 asks plex.tv with the owner token and returns each userID in order" do
+    body =
+      share_list([
+        shared_server(userID: "333333333"),
+        shared_server(userID: "12345678"),
+        shared_server(userID: "444444444")
       ])
+
+    Req.Test.stub(Cinder.PlexTvStub, fn conn ->
+      assert conn.method == "GET"
+      assert conn.host == "plex.tv"
+      assert conn.request_path == "/api/servers/machine-1/shared_servers"
+      assert Plug.Conn.get_req_header(conn, "x-plex-token") == ["owner-token"]
+      assert Plug.Conn.get_req_header(conn, "accept") == ["application/xml"]
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/xml")
+      |> Plug.Conn.send_resp(200, body)
     end)
 
-    assert {:ok, ["server-1"]} = HTTP.resource_ids("user-token", [])
+    assert HTTP.server_share_ids("owner-token", "machine-1", []) ==
+             {:ok, [333_333_333, 12_345_678, 444_444_444]}
   end
 
-  test "resource_ids/2 returns {:error, :unexpected_response} for a body that is not a list" do
+  test "server_share_ids/3 returns an empty list for a server shared with nobody" do
+    stub_share_list(share_list([]))
+    assert HTTP.server_share_ids("owner-token", "machine-1", []) == {:ok, []}
+
+    stub_share_list(~s(<?xml version="1.0" encoding="UTF-8"?>\n<MediaContainer size="0"/>\n))
+    assert HTTP.server_share_ids("owner-token", "machine-1", []) == {:ok, []}
+  end
+
+  test "server_share_ids/3 returns the status of a non-2xx answer as an error" do
+    for status <- [401, 403, 404, 500] do
+      stub_share_list(share_list([shared_server(userID: "333333333")]), status)
+
+      assert HTTP.server_share_ids("owner-token", "machine-1", []) ==
+               {:error, {:plex_tv_status, status}},
+             "status #{status}"
+    end
+  end
+
+  test "server_share_ids/3 keeps a share by its userID alone, whatever acceptedAt or owned say" do
+    stub_share_list(
+      share_list([
+        shared_server(userID: "333333333", acceptedAt: "0"),
+        shared_server(userID: "444444444", acceptedAt: nil, owned: "1")
+      ])
+    )
+
+    assert HTTP.server_share_ids("owner-token", "machine-1", []) ==
+             {:ok, [333_333_333, 444_444_444]}
+  end
+
+  # A renamed attribute or element must not read as a server shared with nobody: it refuses at
+  # the share-list step, where the health check sees it.
+  test "server_share_ids/3 refuses a list holding a share whose userID is not a positive integer" do
+    for user_id <- [nil, "", "0", "-5", "+6", " 7", "8x", "1e3", "9999999999999999999"] do
+      stub_share_list(
+        share_list([shared_server(userID: "333333333"), shared_server(userID: user_id)])
+      )
+
+      assert HTTP.server_share_ids("owner-token", "machine-1", []) ==
+               {:error, :unexpected_response},
+             "userID #{inspect(user_id)}"
+    end
+
+    # A renamed attribute.
+    stub_share_list(share_list([shared_server(userID: nil, userId: "333333333")]))
+
+    assert HTTP.server_share_ids("owner-token", "machine-1", []) ==
+             {:error, :unexpected_response}
+
+    # A size that counts only the valid share does not hide the other one.
+    stub_share_list("""
+    <MediaContainer size="1"><SharedServer userID="5"/><SharedServer userId="6"/></MediaContainer>
+    """)
+
+    assert HTTP.server_share_ids("owner-token", "machine-1", []) ==
+             {:error, :unexpected_response}
+  end
+
+  test "server_share_ids/3 refuses a root size that is not the number of shares" do
+    for size <- ["0", "2", "x", "", "-1"] do
+      stub_share_list("""
+      <MediaContainer size="#{size}"><SharedServer userID="333333333"/></MediaContainer>
+      """)
+
+      assert HTTP.server_share_ids("owner-token", "machine-1", []) ==
+               {:error, :unexpected_response},
+             "size #{inspect(size)}"
+    end
+
+    # A renamed element leaves the count short of the size.
+    stub_share_list(
+      share_list([shared_server(userID: "333333333")])
+      |> String.replace("SharedServer", "Share")
+    )
+
+    assert HTTP.server_share_ids("owner-token", "machine-1", []) ==
+             {:error, :unexpected_response}
+  end
+
+  # Without a size, a renamed SharedServer element would read as a list shared with nobody.
+  test "server_share_ids/3 refuses a root without a size" do
+    for body <- [
+          ~s(<MediaContainer><SharedServer userID="333333333"/></MediaContainer>),
+          ~s(<MediaContainer><Share userID="333333333"/></MediaContainer>),
+          ~s(<MediaContainer/>)
+        ] do
+      stub_share_list(body)
+
+      assert HTTP.server_share_ids("owner-token", "machine-1", []) ==
+               {:error, :unexpected_response},
+             "body #{inspect(body)}"
+    end
+  end
+
+  test "server_share_ids/3 reads only a SharedServer directly under the MediaContainer root" do
+    stub_share_list("""
+    <MediaContainer size="1">
+      <Other><SharedServer userID="555555555"/></Other>
+      <SharedServer userID="333333333"><SharedServer userID="666666666"/></SharedServer>
+    </MediaContainer>
+    """)
+
+    assert HTTP.server_share_ids("owner-token", "machine-1", []) == {:ok, [333_333_333]}
+  end
+
+  test "server_share_ids/3 returns {:error, :unexpected_response} for a body that is not a share list" do
+    for body <- [
+          "",
+          "not xml",
+          ~s(<Shares><SharedServer userID="333333333"/></Shares>),
+          ~s(<Shares size="0"/>),
+          ~s(<MediaContainer><SharedServer userID="333333333"></MediaContainer>),
+          ~s(<MediaContainer size="0"/><MediaContainer size="0"/>)
+        ] do
+      stub_share_list(body)
+
+      assert HTTP.server_share_ids("owner-token", "machine-1", []) ==
+               {:error, :unexpected_response},
+             "body #{inspect(body)}"
+    end
+
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
-      conn
-      |> Plug.Conn.put_resp_content_type("application/json")
-      |> Req.Test.json(%{"clientIdentifier" => "server-1"})
+      Req.Test.json(conn, %{"MediaContainer" => %{"SharedServer" => [%{"userID" => 333_333_333}]}})
     end)
 
-    assert {:error, :unexpected_response} = HTTP.resource_ids("user-token", [])
+    assert HTTP.server_share_ids("owner-token", "machine-1", []) ==
+             {:error, :unexpected_response}
+  end
+
+  test "server_share_ids/3 refuses a body that declares an entity" do
+    body = """
+    <?xml version="1.0"?>
+    <!DOCTYPE MediaContainer [<!ENTITY id "333333333">]>
+    <MediaContainer size="2"><SharedServer userID="&id;"/><SharedServer userID="444444444"/>\
+    </MediaContainer>
+    """
+
+    # Positive control: xmerl's defaults expand the entity into the id.
+    collect = fn
+      {:startElement, _uri, ~c"SharedServer", _qname, [{_, _, ~c"userID", id}]}, _loc, ids ->
+        [List.to_string(id) | ids]
+
+      _event, _loc, ids ->
+        ids
+    end
+
+    assert {:ok, ["444444444", "333333333"], _rest} =
+             :xmerl_sax_parser.stream(body, event_fun: collect, event_state: [])
+
+    stub_share_list(body)
+
+    assert HTTP.server_share_ids("owner-token", "machine-1", []) ==
+             {:error, :unexpected_response}
+  end
+
+  test "server_share_ids/3 puts the machine id in the path as one encoded segment" do
+    test_pid = self()
+
+    Req.Test.stub(Cinder.PlexTvStub, fn conn ->
+      send(test_pid, {:path, conn.request_path, conn.query_string})
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/xml")
+      |> Plug.Conn.send_resp(200, share_list([]))
+    end)
+
+    assert HTTP.server_share_ids("owner-token", "../v2/user?x=1#y", []) == {:ok, []}
+    assert_received {:path, "/api/servers/..%2Fv2%2Fuser%3Fx%3D1%23y/shared_servers", ""}
   end
 
   test "server_machine_id/1 hits the configured local server's /identity" do
@@ -232,8 +385,8 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
                connect_options: [timeout: 5_000]
              }
 
-      HTTP.resource_ids("user-token", [])
-      assert_receive {:request, "/api/v2/resources", ^options}
+      HTTP.server_share_ids("owner-token", "machine-1", [])
+      assert_receive {:request, "/api/servers/machine-1/shared_servers", ^options}
 
       HTTP.server_machine_id([])
       assert_receive {:request, "/identity", options}
@@ -246,8 +399,8 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
       HTTP.account("user-token", timeouts: :probe)
       assert_receive {:request, "/api/v2/user", ^probe}
 
-      HTTP.resource_ids("user-token", timeouts: :probe)
-      assert_receive {:request, "/api/v2/resources", ^probe}
+      HTTP.server_share_ids("owner-token", "machine-1", timeouts: :probe)
+      assert_receive {:request, "/api/servers/machine-1/shared_servers", ^probe}
 
       HTTP.server_machine_id(timeouts: :probe)
       assert_receive {:request, "/identity", ^probe}

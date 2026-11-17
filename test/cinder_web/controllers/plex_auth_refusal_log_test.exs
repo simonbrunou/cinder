@@ -16,35 +16,31 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
   @token "secret-token-123"
   @email "secret-person@example.com"
   @username "secret-username"
-  @resource_token "secret-resource-token"
-  # Two entries shaped like plex.tv's /api/v2/resources answer, neither the household server.
-  @resources [
-    %{
-      "name" => "secret-server-name",
-      "clientIdentifier" => "other-server",
-      "accessToken" => @resource_token,
-      "publicAddress" => "203.0.113.9",
-      "connections" => [
-        %{"address" => "203.0.113.9", "uri" => "https://203-0-113-9.abc.plex.direct:32400"}
-      ]
-    },
-    %{
-      "name" => "secret-player-name",
-      "clientIdentifier" => "other-player",
-      "accessToken" => @resource_token,
-      "publicAddress" => "203.0.113.9",
-      "connections" => []
-    }
-  ]
+  @share_token "secret-share-token"
+  # The owner's token: config/test.exs gives it to the Plex media server.
+  @owner_token "test-key"
+  # A share list shaped like plex.tv's answer, holding another account than the one signing in.
+  @share_list """
+  <?xml version="1.0" encoding="UTF-8"?>
+  <MediaContainer friendlyName="myPlex" machineIdentifier="machine-1" size="2">
+  <SharedServer id="11111111" username="secret-friend-name" email="secret-friend@example.com" \
+  userID="333333333" accessToken="#{@share_token}" name="secret-friend-name" acceptedAt="1700000000">
+    <Section id="222222222" key="1" title="secret-section-title" type="movie" shared="1"/>
+  </SharedServer>
+  <SharedServer id="11111112" username="secret-friend-name" email="secret-friend@example.com" \
+  userID="444444444" accessToken="#{@share_token}" name="secret-friend-name" acceptedAt="1700000000">
+  </SharedServer>
+  </MediaContainer>
+  """
   @secrets [
     @token,
+    @owner_token,
     @email,
     @username,
-    @resource_token,
-    "203.0.113.9",
-    "plex.direct",
-    "secret-server-name",
-    "secret-player-name"
+    @share_token,
+    "secret-friend",
+    "secret-section-title",
+    "333333333"
   ]
 
   defp account(id, overrides \\ %{}),
@@ -58,8 +54,18 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
   defp expect_server(result \\ {:ok, "machine-1"}),
     do: expect(PlexAuthMock, :server_machine_id, fn [] -> result end)
 
-  defp expect_resources(result),
-    do: expect(PlexAuthMock, :resource_ids, fn @token, [] -> result end)
+  defp expect_owner(result \\ {:ok, %{id: 1, email: "owner@example.com", username: "owner"}}),
+    do: expect(PlexAuthMock, :account, fn @owner_token, [] -> result end)
+
+  defp expect_shares(result),
+    do: expect(PlexAuthMock, :server_share_ids, fn @owner_token, "machine-1", [] -> result end)
+
+  # The gate for an account that is not the owner's: the owner's account, /identity, the list.
+  defp expect_gate(shares_result) do
+    expect_owner()
+    expect_server()
+    expect_shares(shares_result)
+  end
 
   defp login_callback(conn) do
     with_log(fn ->
@@ -162,6 +168,7 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
     test "step=server_machine_id when the local server's id cannot be read", %{conn: conn} do
       expect_pin()
       expect_account({:ok, account(601)})
+      expect_owner()
       expect_server({:error, :not_configured})
 
       {_conn, log} = login_callback(conn)
@@ -172,25 +179,38 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
       )
     end
 
-    test "step=server_ids when plex.tv's resource list cannot be read", %{conn: conn} do
+    test "step=owner_account when the server owner's account cannot be read", %{conn: conn} do
       expect_pin()
-      expect_account({:ok, account(602)})
-      expect_server()
-      expect_resources({:error, :unexpected_response})
+      expect_account({:ok, account(607)})
+      expect_owner({:error, {:plex_tv_status, 401}})
 
       {_conn, log} = login_callback(conn)
 
       assert_one_refusal(
         log,
-        "plex_signin refused intent=login step=server_ids reason=unexpected_response"
+        "plex_signin refused intent=login step=owner_account reason={plex_tv_status,401}"
       )
     end
 
-    test "step=server_access names the plex.tv id and how many ids the list held", %{conn: conn} do
+    test "step=server_shares when the server's share list cannot be read", %{conn: conn} do
+      expect_pin()
+      expect_account({:ok, account(602)})
+      expect_gate({:error, :unexpected_response})
+
+      {_conn, log} = login_callback(conn)
+
+      assert_one_refusal(
+        log,
+        "plex_signin refused intent=login step=server_shares reason=unexpected_response"
+      )
+    end
+
+    test "step=server_access names the plex.tv id and how many ids the share list held", %{
+      conn: conn
+    } do
       expect_pin()
       expect_account({:ok, account(666)})
-      expect_server()
-      expect_resources({:ok, ["other-1", "other-2"]})
+      expect_gate({:ok, [665, 667]})
 
       {conn, log} = login_callback(conn)
 
@@ -198,7 +218,7 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
 
       assert_one_refusal(
         log,
-        "plex_signin refused intent=login step=server_access plex_id=666 resources=2 reason=forbidden"
+        "plex_signin refused intent=login step=server_access plex_id=666 shares=2 reason=forbidden"
       )
     end
 
@@ -208,8 +228,7 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
       admin_fixture() |> Ecto.Changeset.change(plex_id: 603) |> Repo.update!()
       expect_pin()
       expect_account({:ok, account(603)})
-      expect_server()
-      expect_resources({:ok, ["machine-1"]})
+      expect_gate({:ok, [603]})
 
       {conn, log} = login_callback(conn)
 
@@ -225,8 +244,7 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
       _admin = admin_fixture()
       expect_pin()
       expect_account({:ok, account(604, %{email: nil})})
-      expect_server()
-      expect_resources({:ok, ["machine-1"]})
+      expect_gate({:ok, [604]})
 
       {conn, log} = login_callback(conn)
 
@@ -243,8 +261,7 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
       _owner = user_fixture(email: @email)
       expect_pin()
       expect_account({:ok, account(605)})
-      expect_server()
-      expect_resources({:ok, ["machine-1"]})
+      expect_gate({:ok, [605]})
 
       {_conn, log} = login_callback(conn)
 
@@ -297,17 +314,18 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
       )
     end
 
-    test "step=server_access names the plex.tv id and how many ids the list held", %{conn: conn} do
+    test "step=server_access names the plex.tv id and how many ids the share list held", %{
+      conn: conn
+    } do
       expect_pin()
       expect_account({:ok, account(9002)})
-      expect_server()
-      expect_resources({:ok, ["some-other-machine"]})
+      expect_gate({:ok, [9003]})
 
       {_conn, log} = link_callback(conn, user_fixture())
 
       assert_one_refusal(
         log,
-        "plex_signin refused intent=link step=server_access plex_id=9002 resources=1 reason=forbidden"
+        "plex_signin refused intent=link step=server_access plex_id=9002 shares=1 reason=forbidden"
       )
     end
 
@@ -315,8 +333,7 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
       user_fixture() |> Ecto.Changeset.change(plex_id: 606) |> Repo.update!()
       expect_pin()
       expect_account({:ok, account(606)})
-      expect_server()
-      expect_resources({:ok, ["machine-1"]})
+      expect_gate({:ok, [606]})
 
       {conn, log} = link_callback(conn, user_fixture())
 
@@ -330,7 +347,7 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
   end
 
   describe "no refusal line holds a secret" do
-    test "the failing Plex branches with a token, an email, a username and a resources body", %{
+    test "the failing Plex branches with a token, an email, a username and a share list body", %{
       conn: conn
     } do
       _admin = admin_fixture()
@@ -344,7 +361,7 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
       end
     end
 
-    test "PlexAuth.HTTP refusing on the resources plex.tv returns", %{conn: conn} do
+    test "PlexAuth.HTTP refusing on the share list plex.tv returns", %{conn: conn} do
       _admin = admin_fixture()
       # A raw row, so PlexAuth.client_identifier/0 finds one and never saves through
       # Cinder.Settings.put/2, which reloads every settings-backed env key.
@@ -356,13 +373,16 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
 
       stub_with(PlexAuthMock, Cinder.Accounts.PlexAuth.HTTP)
 
-      for {label, resources_response, expected} <- [
-            {"forbidden", {200, @resources},
-             "intent=login step=server_access plex_id=4242 resources=2 reason=forbidden"},
-            {"5xx", {500, @resources}, "intent=login step=server_ids reason={plex_tv_status,500}"}
+      for {label, shares_response, expected} <- [
+            {"forbidden", {200, @share_list},
+             "intent=login step=server_access plex_id=4242 shares=2 reason=forbidden"},
+            {"5xx", {500, @share_list},
+             "intent=login step=server_shares reason={plex_tv_status,500}"},
+            {"not a share list", {200, "<Other>#{@share_list}</Other>"},
+             "intent=login step=server_shares reason=unexpected_response"}
           ] do
         expect_pin()
-        stub_plex_tv(resources_response)
+        stub_plex_tv(shares_response)
 
         {_conn, log} = login_callback(conn)
 
@@ -373,8 +393,8 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
   end
 
   # Each case sets its mocks, then runs one request whose refusal it checks. The token, the email
-  # and the username reach every step after check_pin/1, and the resources body sits in the
-  # reasons of the resource-list cases.
+  # and the username reach every step after check_pin/1, and the share list body sits in the
+  # reasons of the share-list cases.
   defp secret_cases do
     [
       {"account error with a response body",
@@ -398,63 +418,69 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
        fn ->
          expect_pin()
          expect_account({:ok, account(701)})
-         expect_server({:error, {:unexpected_body, @resources}})
+         expect_owner()
+         expect_server({:error, {:unexpected_body, @share_list}})
        end, &login_callback/1},
-      {"server_ids error with a response body",
+      {"owner_account error with a response body",
+       fn ->
+         expect_pin()
+         expect_account({:ok, account(709)})
+
+         expect_owner(
+           {:error,
+            %Req.Response{
+              status: 401,
+              body: %{"authToken" => @owner_token, "email" => @email, "username" => @username}
+            }}
+         )
+       end, &login_callback/1},
+      {"server_shares error with a response body",
        fn ->
          expect_pin()
          expect_account({:ok, account(702)})
-         expect_server()
-         expect_resources({:error, %Req.Response{status: 500, body: @resources}})
+         expect_gate({:error, %Req.Response{status: 500, body: @share_list}})
        end, &login_callback/1},
-      {"server_ids error holding the body",
+      {"server_shares error holding the body",
        fn ->
          expect_pin()
          expect_account({:ok, account(703)})
-         expect_server()
-         expect_resources({:error, {:unexpected_body, @resources}})
+         expect_gate({:error, {:unexpected_body, @share_list}})
        end, &login_callback/1},
       {"server_access",
        fn ->
          expect_pin()
          expect_account({:ok, account(704)})
-         expect_server()
-         expect_resources({:ok, ["other-server", "other-player"]})
+         expect_gate({:ok, [333_333_333, 444_444_444]})
        end, &login_callback/1},
       {"account_write admin_password_required",
        fn ->
          expect_pin()
          expect_account({:ok, account(707)})
-         expect_server()
-         expect_resources({:ok, ["machine-1"]})
+         expect_gate({:ok, [707]})
        end, &login_callback/1},
       {"account_write no_email",
        fn ->
          expect_pin()
          expect_account({:ok, account(705, %{email: nil})})
-         expect_server()
-         expect_resources({:ok, ["machine-1"]})
+         expect_gate({:ok, [705]})
        end, &login_callback/1},
       {"account_write changeset",
        fn ->
          expect_pin()
          expect_account({:ok, account(706)})
-         expect_server()
-         expect_resources({:ok, ["machine-1"]})
+         expect_gate({:ok, [706]})
        end, &login_callback/1},
       {"link server_access",
        fn ->
          expect_pin()
          expect_account({:ok, account(708)})
-         expect_server()
-         expect_resources({:ok, ["other-server"]})
+         expect_gate({:ok, [333_333_333]})
        end, &link_callback(&1, user_fixture())},
       {"link account_write changeset",
        fn ->
          expect_pin()
          expect_account({:ok, account(707)})
-         expect_server()
-         expect_resources({:ok, ["machine-1"]})
+         expect_gate({:ok, [707]})
        end, &link_callback(&1, user_fixture())},
       {"link logged_out", fn -> expect_pin() end,
        fn conn ->
@@ -469,20 +495,26 @@ defmodule CinderWeb.PlexAuthRefusalLogTest do
     ]
   end
 
-  # plex.tv's account and resources endpoints and the local server's /identity, through the
-  # Req.Test plug config/test.exs gives PlexAuth.HTTP.
-  defp stub_plex_tv({resources_status, resources_body}) do
+  # plex.tv's account and share-list endpoints and the local server's /identity, through the
+  # Req.Test plug config/test.exs gives PlexAuth.HTTP. The owner's token reads account 1, any
+  # other token account 4242.
+  defp stub_plex_tv({shares_status, shares_body}) do
     Req.Test.stub(Cinder.PlexTvStub, fn conn ->
       case conn.request_path do
         "/api/v2/user" ->
-          Req.Test.json(conn, %{"id" => 4242, "email" => @email, "username" => @username})
+          Req.Test.json(conn, plex_tv_account(Plug.Conn.get_req_header(conn, "x-plex-token")))
 
-        "/api/v2/resources" ->
-          conn |> Plug.Conn.put_status(resources_status) |> Req.Test.json(resources_body)
+        "/api/servers/machine-1/shared_servers" ->
+          conn
+          |> Plug.Conn.put_resp_content_type("application/xml")
+          |> Plug.Conn.send_resp(shares_status, shares_body)
 
         "/identity" ->
           Req.Test.json(conn, %{"MediaContainer" => %{"machineIdentifier" => "machine-1"}})
       end
     end)
   end
+
+  defp plex_tv_account([@owner_token]), do: %{"id" => 1, "email" => nil, "username" => "owner"}
+  defp plex_tv_account(_token), do: %{"id" => 4242, "email" => @email, "username" => @username}
 end

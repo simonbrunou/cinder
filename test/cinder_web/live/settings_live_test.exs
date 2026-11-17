@@ -414,10 +414,12 @@ defmodule CinderWeb.SettingsLiveTest do
       {:ok, "machine-1"}
     end)
 
-    expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn "test-key", _opts -> {:ok, []} end)
+    expect(Cinder.Accounts.PlexAuthMock, :server_share_ids, fn "test-key", "machine-1", _opts ->
+      {:error, {:plex_tv_status, 401}}
+    end)
 
-    expect(Cinder.Accounts.PlexAuthMock, :resource_ids, fn "test-key", _opts ->
-      {:ok, ["machine-1"]}
+    expect(Cinder.Accounts.PlexAuthMock, :server_share_ids, fn "test-key", "machine-1", _opts ->
+      {:ok, [7]}
     end)
 
     {:ok, lv, _html} = live(conn, ~p"/settings")
@@ -427,7 +429,7 @@ defmodule CinderWeb.SettingsLiveTest do
 
     assert has_element?(
              lv,
-             ~s|#settings-group-media_server .badge-error[title="plex.tv does not list the household server for this Plex token"]|
+             ~s|#settings-group-media_server .badge-error[title="plex.tv rejected the Plex token"]|
            )
 
     lv |> element(button) |> render_click()

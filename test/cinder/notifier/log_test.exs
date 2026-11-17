@@ -43,11 +43,11 @@ defmodule Cinder.Notifier.LogTest do
   test "the health check events name the target and the reason" do
     log =
       capture_log(fn ->
-        assert :ok = Log.notify({:health_check_failed, :plex_signin, :server_not_listed})
+        assert :ok = Log.notify({:health_check_failed, :plex_signin, :token_rejected})
         assert :ok = Log.notify({:health_check_recovered, :plex_signin})
       end)
 
-    assert log =~ "[notifier] health check failed: plex_signin (:server_not_listed)"
+    assert log =~ "[notifier] health check failed: plex_signin (:token_rejected)"
     assert log =~ "[notifier] health check recovered: plex_signin"
     refute log =~ "[notifier] event:"
   end

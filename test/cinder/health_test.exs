@@ -44,7 +44,7 @@ defmodule Cinder.HealthTest do
     stub(Cinder.Accounts.PlexAuthMock, :account, fn _token, _opts -> {:ok, %{id: 1}} end)
     stub(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn _opts -> {:ok, "machine-1"} end)
 
-    stub(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, _opts -> {:ok, ["machine-1"]} end)
+    stub(Cinder.Accounts.PlexAuthMock, :server_share_ids, fn _token, _id, _opts -> {:ok, []} end)
   end
 
   defp row(rows, id), do: Enum.find(rows, &(&1.id == id))
@@ -524,8 +524,9 @@ defmodule Cinder.HealthTest do
       # Only the Plex sign-in row carries help text.
       assert for(%{help: help} = row <- rows, help, do: {row.id, help}) == [
                {"plex_signin",
-                "Checks that plex.tv lists the household server for the owner's Plex token. " <>
-                  "It does not try a sign-in or show what a shared user sees."}
+                "Checks that plex.tv returns the owner's account and who the household server " <>
+                  "is shared with, for the owner's Plex token. It does not try a sign-in or " <>
+                  "show what a shared user sees."}
              ]
 
       assert Enum.map(rows, &Map.delete(&1, :help)) == [
@@ -600,9 +601,12 @@ defmodule Cinder.HealthTest do
 
     test "the Plex sign-in row shows the probe's result, and only while Plex is configured" do
       stub_check_all_services()
-      stub(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, _opts -> {:ok, []} end)
 
-      assert row(Health.check_all(), "plex_signin").status == {:error, :server_not_listed}
+      stub(Cinder.Accounts.PlexAuthMock, :server_share_ids, fn _token, _id, _opts ->
+        {:error, {:plex_tv_status, 401}}
+      end)
+
+      assert row(Health.check_all(), "plex_signin").status == {:error, :token_rejected}
 
       for blank <- [[token: ""], [token: "test-key", url: ""]] do
         Cinder.ConfigCase.put_config(Cinder.Library.MediaServer.Plex, blank)

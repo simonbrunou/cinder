@@ -164,7 +164,7 @@ defmodule CinderWeb.PlexAuthController do
   # plex.tv returned the account, so a refusal from here on concerns a known Plex identity: when a
   # user has it linked, the admins hear of it (`notify_linked_user/3`).
   defp log_in_account(conn, token, account) do
-    with :ok <- authorize_server_access(token, account),
+    with :ok <- authorize_server_access(account),
          {:ok, user} <-
            SignInRefusal.at(:account_write, Accounts.login_or_register_plex_user(account)) do
       Accounts.store_plex_token(user, token)
@@ -191,7 +191,7 @@ defmodule CinderWeb.PlexAuthController do
   # each one tells the admins, naming that user.
   defp link_account(conn, token, user) do
     with {:ok, account} <- SignInRefusal.at(:account, PlexAuth.impl().account(token, [])),
-         :ok <- authorize_server_access(token, account),
+         :ok <- authorize_server_access(account),
          {:ok, linked} <-
            SignInRefusal.at(:account_write, Accounts.link_plex_to_user(user, account)) do
       Accounts.store_plex_token(linked, token)
@@ -222,18 +222,19 @@ defmodule CinderWeb.PlexAuthController do
 
   defp login_failure(_reason), do: gettext("Plex sign-in failed. Please try again.")
 
-  # The gate is `PlexAuth.server_access/2`, which the `plex_signin` health check calls too. Its
-  # refusal keeps the step's name; a `:server_access` one also logs the account's plex.tv id and
-  # how many ids the list held, never the list.
-  defp authorize_server_access(token, account) do
-    case PlexAuth.server_access(token) do
+  # The gate is `PlexAuth.server_access/2`: the owner's account or the server's share list, both
+  # read with the owner's token, never the signing-in account's. Its refusal keeps the step's
+  # name; a `:server_access` one also logs the account's plex.tv id and how many ids the share
+  # list held, never the list.
+  defp authorize_server_access(account) do
+    case PlexAuth.server_access(plex_id(account)) do
       :ok ->
         :ok
 
       {:error, {:server_access, {:forbidden, count}}} ->
         SignInRefusal.refusal(:server_access, :forbidden,
           plex_id: plex_id(account),
-          resources: count
+          shares: count
         )
 
       {:error, {step, reason}} ->

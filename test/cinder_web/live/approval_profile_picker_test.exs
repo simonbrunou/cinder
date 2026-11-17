@@ -32,7 +32,7 @@ defmodule CinderWeb.ApprovalProfilePickerTest do
     stub(Cinder.Accounts.PlexAuthMock, :account, fn _token, _opts -> {:ok, %{id: 1}} end)
     stub(Cinder.Accounts.PlexAuthMock, :server_machine_id, fn _opts -> {:ok, "machine-1"} end)
 
-    stub(Cinder.Accounts.PlexAuthMock, :resource_ids, fn _token, _opts -> {:ok, ["machine-1"]} end)
+    stub(Cinder.Accounts.PlexAuthMock, :server_share_ids, fn _token, _id, _opts -> {:ok, []} end)
 
     for {name, kind} <- [
           {"Ebooks A", :ebook},
