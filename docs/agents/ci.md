@@ -169,14 +169,15 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   `Cinder.Library.Filesystem.DiskBoundedTest` "run_rooted's sync_parent timeout is reported
   distinctly from a malformed helper, and the OS process is killed" asserts the elapsed time
   under 5 s past its 1 s bound instead of 2 s, since its window times two helper spawns and two
-  kills. Both spawns run a `/bin/sh` stub found on `PATH` as `python3`, because Python's start
-  missed the 1 s bound in each of them on the runner (#1024).
+  kills. Every helper spawn of `DiskBoundedTest` runs a `/bin/sh` stub found on `PATH` as
+  `python3`. The module's "stub process never wrote its pid file" failures at the 1 s bound on
+  the runner most likely came from a Python start that missed that bound (#1024, #1372).
   `Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest` serves every helper spawn from a `/bin/sh`
-  stub found on `PATH` as `python3`, because on the runner Python's start missed the 1 s bound in
-  its `hold` and before its `seal` stub's pid write (#1043). After a 3260 ms run on `main`
-  (run 1040, #1274), its "seal/1 still times out when the helper emits data faster than any poll
-  tick" asserts the elapsed time under 5 s past its 1 s bound instead of 2 s, and so does the
-  `DiskBoundedTest` test it mirrors, "run_rooted still times out when the helper emits data
+  stub found on `PATH` as `python3`, because on the runner Python's start most likely missed the
+  1 s bound in its `hold` and before its `seal` stub's pid write (#1043). After a 3260 ms run on
+  `main` (run 1040, #1274), its "seal/1 still times out when the helper emits data faster than
+  any poll tick" asserts the elapsed time under 5 s past its 1 s bound instead of 2 s, and so does
+  the `DiskBoundedTest` test it mirrors, "run_rooted still times out when the helper emits data
   faster than any poll tick". Each test's emitter writes forever, so a deadline its output
   starves still fails at the 15 s test timeout. After a 6425 ms run on PR #1086
   (run 676, #1091), `Cinder.BoundedCommandTest` "run/4 with :check a check that halts kills the

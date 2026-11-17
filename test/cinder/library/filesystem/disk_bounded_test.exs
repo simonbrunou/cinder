@@ -11,17 +11,19 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
   alias Cinder.Library.Filesystem.Disk
 
   @env_keys [
-    :rooted_filesystem_helper,
     :disk_subprocess_timeout_ms,
     :movies_library_path,
     :tv_library_path
   ]
 
   # Wide enough for a stub to start on a loaded CI runner (#636): at 150 ms the bound sometimes
-  # killed a helper before it had written its pid file. The stubs sleep 3 s before writing their
-  # marker, so a helper the bound failed to kill is still alive while `process_gone?/1` polls; one
-  # that outlives the poll has written its marker by the time `process_gone?/1` returns true. The
-  # elapsed ceilings and `process_gone?/1` carry the proof; the marker refute is a backstop.
+  # killed a Python helper before it had written its pid file. Even at 1 s, a Python start that
+  # missed the bound is the likely cause of the runner's later "stub process never wrote its pid
+  # file" failures (#1024, #1372), so every stub is a `/bin/sh` script. The stubs sleep 3 s
+  # before writing their marker, so a helper the bound failed to kill is still alive while
+  # `process_gone?/1` polls; one that outlives the poll has written its marker by the time
+  # `process_gone?/1` returns true. The elapsed ceilings and `process_gone?/1` carry the proof;
+  # the marker refute is a backstop.
   @bound_ms 1_000
   @marker_wait_ms 2_500
 
@@ -49,7 +51,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     root = library_root!(tmp)
     pidfile = Path.join(tmp, "mkdir.pid")
     marker = Path.join(tmp, "mkdir_survived")
-    hanging_helper!(tmp, pidfile, marker)
+    fake_python3!(tmp, mkdir: hanging(pidfile, marker))
     Application.put_env(:cinder, :disk_subprocess_timeout_ms, @bound_ms)
 
     path = Path.join(root, "workspace")
@@ -81,7 +83,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
   } do
     root = library_root!(tmp)
     pidfile = Path.join(tmp, "spam.pid")
-    spam_helper!(tmp, pidfile)
+    fake_python3!(tmp, mkdir: spamming(pidfile))
     Application.put_env(:cinder, :disk_subprocess_timeout_ms, @bound_ms)
 
     path = Path.join(root, "workspace")
@@ -163,8 +165,8 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
   # branch used to call `close_rooted_port/1`, which only ran `Port.close/1` — that stops
   # further Erlang-side messages but does nothing to a `python3` child stuck in a blocking
   # syscall before it ever reaches its own `sys.stdin.buffer.read()` shutdown wait. Proven the
-  # same way #510 proved it for three other modules: a helper that outlives the configured bound
-  # and then writes a marker must never get to, because the real OS process was killed.
+  # same way #510 proved it for three other modules: a `hold` stub that outlives the configured
+  # bound and then writes a marker must never get to, because the real OS process was killed.
   @tag :tmp_dir
   test "close_rooted_port's timeout branch kills the OS process, not merely abandons it", %{
     tmp_dir: tmp
@@ -172,7 +174,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     root = library_root!(tmp)
     pidfile = Path.join(tmp, "hold.pid")
     marker = Path.join(tmp, "hold_survived")
-    hanging_helper!(tmp, pidfile, marker)
+    fake_python3!(tmp, hold: hanging(pidfile, marker))
     Application.put_env(:cinder, :disk_subprocess_timeout_ms, @bound_ms)
 
     path = Path.join(root, "subtitle.srt")
@@ -205,7 +207,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     root = library_root!(tmp)
     pidfile = Path.join(tmp, "sync_parent.pid")
     marker = Path.join(tmp, "sync_parent_survived")
-    fake_python3!(tmp, pidfile, marker)
+    fake_python3!(tmp, hold: working_hold(), sync_parent: hanging(pidfile, marker))
     Application.put_env(:cinder, :disk_subprocess_timeout_ms, @bound_ms)
 
     path = Path.join(root, "subtitle.srt")
@@ -243,62 +245,27 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     root
   end
 
-  # A rooted helper stub that writes its own pid, sleeps past the configured bound, then writes
-  # `marker` and exits — it never emits the real helper's JSON result line, so
-  # `open_rooted_bound/4` and `run_rooted/2` both hang on it exactly like a wedged mount's
-  # blocking syscall would (`rooted_helper` is a Python script path passed as `python3`'s own
-  # first argument, matching `Cinder.Library.Filesystem.DiskRootedTest`'s "abort_helper.py"
-  # convention, which likewise ignores its operation argv entirely).
-  defp hanging_helper!(tmp, pidfile, marker) do
-    helper = Path.join(tmp, "hanging_helper.py")
-
-    File.write!(helper, """
-    import os
-    import time
-
-    with open(#{inspect(pidfile)}, "w") as f:
-        f.write(str(os.getpid()))
-
-    time.sleep(3)
-
-    with open(#{inspect(marker)}, "w") as f:
-        f.write("")
-    """)
-
-    Application.put_env(:cinder, :rooted_filesystem_helper, helper)
-  end
-
-  # A `/bin/sh` script first on `PATH` as `python3`, so both of `Disk.write/2`'s spawns skip
-  # Python's startup: on the loaded runner it missed the 1 s bound in each of them (#1024), and a
-  # `/bin/sh` start costs about a sixteenth of a Python one. `Disk` passes the helper path first,
-  # which the script ignores, and it dispatches on the operation like the real `rooted_fs.py`.
-  # `hold` opens the target read-write on fd 3 and emits it, so `Disk.write/2` writes and fsyncs
-  # through `/proc/<pid>/fd/3`, then waits on stdin with a builtin loop that forks no child.
-  # `sync_parent`, the call this test times out, writes its own pid, sleeps past the bound, then
-  # writes `marker`, never emitting the real helper's JSON result line. Any other operation fails
-  # and never reaches the real `python3`, so another caller that lands in the window shows up.
-  defp fake_python3!(tmp, pidfile, marker) do
+  # A `/bin/sh` script first on `PATH` as `python3`, so no spawn waits on Python's start, the
+  # likely cause of the runner's missed pid writes at the 1 s bound (#1024, #1372).
+  # `run_rooted/2` and `open_rooted_bound/4` both resolve `python3` on `PATH` at call time and
+  # pass the configured helper path first, which the script ignores; it dispatches on the
+  # operation in its second argument like the real `rooted_fs.py`. `operations` maps each
+  # operation the test expects to the shell body that serves it. Any other operation fails and
+  # never reaches the real `python3`, so another caller that lands in the window shows up.
+  defp fake_python3!(tmp, operations) do
     bin_dir = Path.join(tmp, "bin")
     File.mkdir_p!(bin_dir)
     path = Path.join(bin_dir, "python3")
 
+    branches = Enum.map_join(operations, fn {operation, body} -> "#{operation})\n#{body};;\n" end)
+
     File.write!(path, """
     #!/bin/sh
     case "$2" in
-      hold)
-        exec 3<>"$3/$4"
-        echo '{"ok":{"fd":3}}'
-        while read -r line; do :; done
-        ;;
-      sync_parent)
-        echo $$ > #{shell_quote(pidfile)}
-        sleep 3
-        touch #{shell_quote(marker)}
-        ;;
-      *)
-        echo "fake python3: unexpected operation $2" >&2
-        exit 1
-        ;;
+    #{branches}*)
+    echo "fake python3: unexpected operation $2" >&2
+    exit 1
+    ;;
     esac
     """)
 
@@ -306,25 +273,37 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
     System.put_env("PATH", bin_dir <> ":" <> System.get_env("PATH"))
   end
 
-  # Emits stdout continuously, as fast as CPython can write, so a fixed poll-tick supervisor
-  # (rather than an absolute deadline) would have its `after` clause perpetually reset by
-  # incoming `:data` messages and never fire at all.
-  defp spam_helper!(tmp, pidfile) do
-    helper = Path.join(tmp, "spam_helper.py")
+  # Writes its own pid, sleeps past the bound, then writes `marker`, never emitting the real
+  # helper's JSON result line, so `run_rooted/2` and `open_rooted_bound/4` both hang on it like
+  # they would on a wedged mount's blocking syscall. Only a stub the bound failed to kill gets to
+  # write `marker`.
+  defp hanging(pidfile, marker) do
+    """
+    echo $$ > #{shell_quote(pidfile)}
+    sleep 3
+    touch #{shell_quote(marker)}
+    """
+  end
 
-    File.write!(helper, """
-    import os
-    import sys
+  # Writes its own pid, then emits stdout with builtins as fast as the shell can, so a fixed poll
+  # tick (rather than an absolute deadline) would have its `after` clause reset by every `:data`
+  # message and never fire.
+  defp spamming(pidfile) do
+    """
+    echo $$ > #{shell_quote(pidfile)}
+    while :; do printf spam; done
+    """
+  end
 
-    with open(#{inspect(pidfile)}, "w") as f:
-        f.write(str(os.getpid()))
-
-    while True:
-        sys.stdout.write("spam")
-        sys.stdout.flush()
-    """)
-
-    Application.put_env(:cinder, :rooted_filesystem_helper, helper)
+  # A working `hold`, for `Disk.write/2`, which holds the target before its `sync_parent`. It
+  # opens `<root>/<relative>` read-write on fd 3 and emits it, so `Disk.write/2` writes and fsyncs
+  # through `/proc/<pid>/fd/3`, then waits on stdin with a builtin loop that forks no child.
+  defp working_hold do
+    """
+    exec 3<>"$3/$4"
+    echo '{"ok":{"fd":3}}'
+    while read -r line; do :; done
+    """
   end
 
   # Prepends a fake `name` executable to `PATH` so `System.find_executable/1` resolves it before
