@@ -4,6 +4,7 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrDeadlineTest do
   use ExUnit.Case, async: false
 
   alias Cinder.Acquisition.Indexer.Prowlarr
+  alias Cinder.Test.BoundedRequestTrace
 
   # Sends `:answer` to the stub 10 s after it reports in, unless the stub died first.
   defp answer_unless_killed do
@@ -19,43 +20,6 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrDeadlineTest do
     after
       10_000 -> :ok
     end
-  end
-
-  # Traces each call the test process makes into `bounded_request/2` or `/3`, and returns the
-  # tracer. Only remote calls match, so the default deadline that `/2` passes on to `/3` inside
-  # `HTTPPolicy` adds no message. A process that traces itself gets no trace messages, so a
-  # supervised tracer forwards each one to the test; `deliver_traces/1` waits for them.
-  defp trace_bounded_request do
-    Code.ensure_loaded!(Cinder.HTTPPolicy)
-    test = self()
-    tracer = start_supervised!({Task, fn -> forward_to(test) end}, id: make_ref())
-
-    for arity <- [2, 3] do
-      mfa = {Cinder.HTTPPolicy, :bounded_request, arity}
-      assert 1 == :erlang.trace_pattern(mfa, true, [])
-      on_exit(fn -> :erlang.trace_pattern(mfa, false, []) end)
-    end
-
-    assert 1 == :erlang.trace(test, true, [:call, {:tracer, tracer}])
-    tracer
-  end
-
-  defp forward_to(test) do
-    receive do
-      message -> send(test, message)
-    end
-
-    forward_to(test)
-  end
-
-  # Returns once every trace message of the calls made so far sits in the test's mailbox:
-  # `trace_delivered/1` waits until the tracer has them, and the tracer forwards the sync message
-  # after them.
-  defp deliver_traces(tracer) do
-    ref = :erlang.trace_delivered(self())
-    assert_receive {:trace_delivered, _pid, ^ref}, 5_000
-    send(tracer, {:traces_forwarded, ref})
-    assert_receive {:traces_forwarded, ^ref}, 5_000
   end
 
   test "a search ends at the receive_timeout the configured req_options set" do
@@ -90,7 +54,7 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrDeadlineTest do
       end
     end)
 
-    tracer = trace_bounded_request()
+    tracer = BoundedRequestTrace.start()
 
     searches = [
       {"search/1", fn -> Prowlarr.search("tt0000001") end, 1},
@@ -106,7 +70,7 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrDeadlineTest do
 
     for {name, search, requests} <- searches do
       assert search.() == {:ok, []}, name
-      deliver_traces(tracer)
+      BoundedRequestTrace.deliver(tracer)
 
       for _request <- 1..requests do
         assert_received {:trace, _pid, :call,
@@ -120,7 +84,7 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrDeadlineTest do
     end
 
     assert :ok = Prowlarr.health()
-    deliver_traces(tracer)
+    BoundedRequestTrace.deliver(tracer)
 
     assert_received {:trace, _pid, :call,
                      {Cinder.HTTPPolicy, :bounded_request, [_request, _max_bytes]}}
