@@ -7,11 +7,10 @@ defmodule Cinder.Subtitles do
   """
 
   require Logger
-  alias Cinder.Acquisition.Language
   alias Cinder.Catalog.{Episode, Movie, Series}
   alias Cinder.Library.Sidecars
   alias Cinder.Subtitles.{Fetcher, Manifest, Moviehash, OwnTrack, SidecarTransaction}
-  alias Cinder.Subtitles.{Srt, TrackProbe, TrackRejection}
+  alias Cinder.Subtitles.{Srt, TrackProbe, TrackRejection, WantedLanguage}
   alias Cinder.Subtitles.Sync.{Timing, Worker}
 
   # Book roots must never authorize subtitle sidecar reads, writes or deletes.
@@ -85,11 +84,7 @@ defmodule Cinder.Subtitles do
 
   @doc "The ordinary media-server sidecar path: `video.lang.srt`."
   @spec sidecar_path(String.t(), String.t()) :: String.t()
-  def sidecar_path(video_path, language) do
-    dir = Path.dirname(video_path)
-    base = Path.basename(video_path, Path.extname(video_path))
-    Path.join(dir, "#{base}.#{language}.srt")
-  end
+  defdelegate sidecar_path(video_path, language), to: WantedLanguage
 
   @doc "Compatibility wrapper for direct movie-context callers."
   @spec fetch_missing(map(), String.t()) :: :ok | :quota_exceeded
@@ -436,15 +431,14 @@ defmodule Cinder.Subtitles do
   defp local_source(video_path, language, moviehash, target, exists?, held, cache) do
     {tracks, cache} = subtitle_tracks(video_path, moviehash, cache)
 
-    # Language.raw_track_satisfies?/2, not exact equality against the raw track code: a "cn"
-    # (Cantonese) request must still accept a generically-tagged "chi"/"zho" track (#573), the
-    # same forward-tolerance rule Cinder.Subtitles.Sync.Reference.select/4 uses. An unambiguous
-    # match ("cn"/"yue", "zh"/"cmn") is preferred over a generic-alias one ("chi"/"zho", tolerated
-    # by both) - the ambiguous track might genuinely be the other language (#573 review).
+    # A tolerated track counts too: a "cn" (Cantonese) request must still accept a
+    # generically-tagged "chi"/"zho" track (#573), as Cinder.Subtitles.Sync.Reference.select/4
+    # does. An exact match ("cn"/"yue", "zh"/"cmn") is preferred over a tolerated one - the
+    # ambiguous track might genuinely be the other language (#573 review).
     candidates =
       tracks
-      |> Enum.filter(&(Language.raw_track_satisfies?(language, &1.language) and not &1.forced?))
-      |> Enum.sort_by(&if(Language.exact_track?(language, &1.language), do: 0, else: 1))
+      |> Enum.filter(&(WantedLanguage.track(language, &1.language) != nil and not &1.forced?))
+      |> Enum.sort_by(&if(WantedLanguage.track(language, &1.language) == :exact, do: 0, else: 1))
 
     # Try every matching candidate in preference order, not just the best one - an unextractable
     # exact track must not give up before trying a usable, merely-ambiguous one (#575), mirroring
@@ -609,13 +603,13 @@ defmodule Cinder.Subtitles do
     {sidecars, cache} = srt_sidecars(video_path, cache)
 
     candidates =
-      Enum.reject(sidecars, fn {path, _language, _flags} -> same_path?(path, target) end)
+      Enum.reject(sidecars, fn {path, _flags} -> same_path?(path, target) end)
 
     copy =
       candidates
-      |> Enum.filter(&in_language?(&1, language))
-      |> Enum.sort_by(fn {_path, _language, flags} -> flags != [] end)
-      |> Enum.find_value(fn {path, _language, _flags} ->
+      |> Enum.filter(fn {path, _flags} -> WantedLanguage.sidecar?(language, path) end)
+      |> Enum.sort_by(fn {_path, flags} -> flags != [] end)
+      |> Enum.find_value(fn {path, _flags} ->
         case timed_sidecar(path) do
           {:ok, content} -> content
           :error -> nil
@@ -627,23 +621,6 @@ defmodule Cinder.Subtitles do
 
   defp same_path?(a, b), do: Path.expand(a) == Path.expand(b)
 
-  # The language match the copy and the translation source share (#1309). The wanted code is free
-  # text, so its part before the first `-` or `_` is normalized to the ISO 639-1 code that
-  # `Sidecars.language/1` reads, which ignores a subtag too: wanted `fra` or `pt-br` takes
-  # `M.fre.srt` or `M.pt-PT.srt`. A sidecar whose name holds no language reads as `und`, which no
-  # wanted language normalizes to unless it is `und` itself. A generic Chinese `chi` or `zho` file
-  # reads as `zh`, yet a wanted Cantonese `cn` takes it too, as it takes such an embedded track
-  # (`Language.raw_track_satisfies?/2`), while it still refuses an explicit `zh` file (#1343).
-  defp in_language?({path, source_language, _flags}, language) do
-    [base | _subtag] = String.split(language, ["-", "_"], parts: 2)
-
-    Language.normalize(base) == source_language or
-      tolerated?(base, Sidecars.written_language(path))
-  end
-
-  defp tolerated?(_base, nil), do: false
-  defp tolerated?(base, code), do: Language.raw_track_satisfies?(base, code)
-
   # The first sidecar in listing order that is in another language and reads, passes the timing
   # check and parses (#1270). One in the wanted language is left out: the copy passed it over, and
   # translating it would write it into its own language with origin `translated`. The pick is made
@@ -651,8 +628,8 @@ defmodule Cinder.Subtitles do
   # in.
   defp translation_sidecar(video_path, language, candidates, cache) do
     candidates
-    |> Enum.reject(&in_language?(&1, language))
-    |> Enum.reduce_while({nil, cache}, fn {path, _language, _flags}, {nil, cache} ->
+    |> Enum.reject(fn {path, _flags} -> WantedLanguage.sidecar?(language, path) end)
+    |> Enum.reduce_while({nil, cache}, fn {path, _flags}, {nil, cache} ->
       case sidecar_srt(video_path, path, cache) do
         {{:ok, srt}, cache} -> {:halt, {{:translate, srt}, cache}}
         {:none, cache} -> {:cont, {nil, cache}}
@@ -682,10 +659,10 @@ defmodule Cinder.Subtitles do
   # audio does not carry.
   defp srt_sidecars(video_path, %{sidecars: :unknown} = cache) do
     sidecars =
-      for {path, language} <- Sidecars.srt_files(video_path),
-          flags = Sidecars.flags(path),
+      for {path, _language} <- Sidecars.srt_files(video_path),
+          flags = WantedLanguage.name_flags(path),
           "forced" not in flags,
-          do: {path, language, flags}
+          do: {path, flags}
 
     {sidecars, %{cache | sidecars: sidecars}}
   end

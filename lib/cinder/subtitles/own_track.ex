@@ -9,7 +9,7 @@ defmodule Cinder.Subtitles.OwnTrack do
   and songs tracks. A track that is not for the hearing impaired is preferred, then the longest.
   """
 
-  alias Cinder.Acquisition.Language
+  alias Cinder.Subtitles.WantedLanguage
 
   @min_cues 200
 
@@ -28,8 +28,11 @@ defmodule Cinder.Subtitles.OwnTrack do
 
   def wanted?(criteria, language) do
     case Map.get(criteria, :embedded_subtitles) do
-      codes when is_list(codes) -> Enum.any?(codes, &Language.exact_track?(language, &1))
-      _unknown -> false
+      codes when is_list(codes) ->
+        Enum.any?(codes, &(WantedLanguage.track(language, &1) == :exact))
+
+      _unknown ->
+        false
     end
   end
 
@@ -38,7 +41,7 @@ defmodule Cinder.Subtitles.OwnTrack do
   def select(tracks, language) do
     tracks
     |> Enum.filter(fn track ->
-      Language.exact_track?(language, track.language) and not track.forced? and
+      WantedLanguage.track(language, track.language) == :exact and not track.forced? and
         Map.get(track, :packet_count, 0) >= @min_cues
     end)
     |> Enum.sort_by(fn track ->

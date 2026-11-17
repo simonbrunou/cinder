@@ -10,13 +10,13 @@ defmodule Cinder.SubtitlesTest do
 
   alias Cinder.ConfigCase
   alias Cinder.Library.Filesystem.Disk
-  alias Cinder.Library.Sidecars
   alias Cinder.Subtitles
   alias Cinder.Subtitles.Manifest
   alias Cinder.Subtitles.Moviehash
   alias Cinder.Subtitles.Sync.Worker
   alias Cinder.Subtitles.TrackProbe
   alias Cinder.Subtitles.TrackRejection
+  alias Cinder.Subtitles.WantedLanguage
   alias Cinder.Test.DiskTask
 
   @moduletag :tmp_dir
@@ -1604,6 +1604,26 @@ defmodule Cinder.SubtitlesTest do
       refute File.exists?(Subtitles.sidecar_path(video, "fr"))
     end
 
+    # #1343: a generic Chinese file reads as `zh`, yet it is Cantonese enough for the copy, so the
+    # translation source for `cn` leaves it out too.
+    test "does not translate M.chi.srt into Cantonese once the copy could not read it", %{
+      video: video
+    } do
+      ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "cn")
+      chi = Path.join(Path.dirname(video), "M.chi.srt")
+      put!(chi, @srt)
+      stub_reads_of(chi, [{:error, :eio}, :disk])
+      stub_default_track(video, :none)
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub_translate()
+
+      assert effects(%{imdb_id: "tt1"}, video) == [:probe]
+      assert_received {:read, ^chi}
+      refute_received {:read, ^chi}
+      refute_received {:translate, _language}
+      refute File.exists?(Subtitles.sidecar_path(video, "cn"))
+    end
+
     # The source picked for French is in German, so German never takes it: before #1270 the fetch
     # kept one source for every wanted language and translated German into German.
     test "never translates M.deu.srt into German after translating it into French", %{
@@ -1653,13 +1673,13 @@ defmodule Cinder.SubtitlesTest do
       assert File.read!(Subtitles.sidecar_path(video, "fr")) == @srt
     end
 
-    # `M.eo.srt` reads as `und`, since Esperanto is no language `Sidecars.language/1` knows, so
-    # only the target's own exclusion keeps it out. It is listed here because it appeared after the
-    # fetch found the target missing.
+    # `M.eo.srt` reads as `und`, since Esperanto is no language `WantedLanguage.name_language/1`
+    # knows, so only the target's own exclusion keeps it out. It is listed here because it appeared
+    # after the fetch found the target missing.
     test "never translates the target that appeared after it was found missing", %{video: video} do
       ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "eo")
       target = Subtitles.sidecar_path(video, "eo")
-      assert Sidecars.language(target) == "und"
+      assert WantedLanguage.name_language(target) == "und"
       appear_on_listing(target, @srt)
       stub_default_track(video, :none)
       stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
@@ -1674,31 +1694,13 @@ defmodule Cinder.SubtitlesTest do
     # #1309: the copy matched the wanted code to the code read from the file's name character for
     # character, so a file in the wanted language whose name holds a regional tag, or a wanted code
     # in another form than the one read, was translated into its own language. The copy keeps the
-    # wanted code as typed in the target's name.
+    # wanted code as typed in the target's name. `Cinder.Subtitles.WantedLanguageTest` holds every
+    # wanted code against every sidecar name; these rows show the copy asks it.
     for {wanted, name} <- [
-          {"fr", "M.fr-FR.srt"},
-          {"fr", "M.fr_FR.srt"},
           {"fra", "M.fre.srt"},
-          {"fra", "M.fr.srt"},
-          {"fre", "M.fr-CA.srt"},
-          {"french", "M.fre.srt"},
-          {"pt-br", "M.pt-br.sdh.srt"},
-          {"pt-br", "M.pt.srt"},
-          {"pt-br", "M.pt-PT.srt"},
-          {"pt-br", "M.pt-BR.srt"},
-          {"pt_BR", "M.pt-BR.srt"},
-          {"zh-hant", "M.zh.srt"},
+          {"pt_BR", "M.pt-PT.srt"},
           # #1343: a generic Chinese file reads as `zh`, and a wanted Cantonese `cn` takes it too.
-          {"zh", "M.chi.srt"},
-          {"zh", "M.zho.srt"},
-          {"cn", "M.chi.srt"},
-          {"cn", "M.zho.srt"},
-          {"cn", "M.chi-TW.srt"},
-          {"cn", "M.zho_HK.srt"},
-          {"yue", "M.chi.srt"},
-          {"cantonese", "M.zho.srt"},
-          # A library copy named `.cn.srt` still counts as Cantonese.
-          {"yue", "M.cn.srt"}
+          {"cn", "M.chi-TW.srt"}
         ] do
       test "copies a lone #{name} for wanted #{wanted} without translating it", %{video: video} do
         ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: unquote(wanted))
@@ -1719,10 +1721,6 @@ defmodule Cinder.SubtitlesTest do
     # Chinese stays a translation source for Cantonese, and a Cantonese file one for Chinese.
     for {wanted, name} <- [
           {"cn", "M.zh.srt"},
-          {"cn", "M.cmn.srt"},
-          {"cn", "M.chinese.srt"},
-          {"yue", "M.zh.srt"},
-          {"zh", "M.yue.srt"},
           {"zh", "M.cn.srt"}
         ] do
       test "translates a lone #{name} into wanted #{wanted}", %{video: video} do
@@ -2408,6 +2406,43 @@ defmodule Cinder.SubtitlesTest do
              "1\n00:00:01,000 --> 00:00:02,000\nCantonese SRT\n\n"
 
     assert %{tracks: %{"cn" => %{origin: "embedded"}}} = Manifest.read(video)
+  end
+
+  # #573: Mandarin's own `cmn` is no Cantonese track, exact or tolerated, so it is never extracted
+  # for `cn`; a `yue` track in the same place is.
+  for {code, extracted?} <- [{"cmn", false}, {"yue", true}] do
+    test "a wanted cn (Cantonese) #{if extracted?, do: "extracts", else: "never extracts"} a lone #{code} track",
+         %{video: video} do
+      Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "cn")
+      Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+      test_pid = self()
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+      stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+        {:ok, [%{index: 2, language: unquote(code), default?: false, forced?: false}]}
+      end)
+
+      stub(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 2 ->
+        send(test_pid, :extracted)
+        {:ok, "1\n00:00:01,000 --> 00:00:02,000\nCantonese SRT\n\n"}
+      end)
+
+      log =
+        capture_log(fn ->
+          assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+        end)
+
+      refute log =~ "crashed"
+
+      if unquote(extracted?) do
+        assert_received :extracted
+        assert %{tracks: %{"cn" => %{origin: "embedded"}}} = Manifest.read(video)
+      else
+        refute_received :extracted
+        refute File.exists?(Subtitles.sidecar_path(video, "cn"))
+      end
+    end
   end
 
   test "an unextractable exact track falls through to a usable ambiguous track, not translation (#575)",

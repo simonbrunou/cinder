@@ -127,7 +127,7 @@ defmodule Cinder.Acquisition.Language do
   The ISO 639-1 code a registry code or tag name reads as, through the same pinned map as
   `normalize/1`, or `nil` for a value the registry does not know: `"fre"` and `"french"` read as
   `"fr"`, `"chi"` as `"zh"`. Unlike `normalize/1` it does not trim, so `" fr"` is `nil`.
-  `Cinder.Library.Sidecars` reads a subtitle file's language token through it (#1343).
+  `Cinder.Subtitles.WantedLanguage` reads a subtitle file's language token through it (#1343).
   """
   def lookup(code) when is_binary(code), do: Map.get(@language_aliases, String.downcase(code))
 

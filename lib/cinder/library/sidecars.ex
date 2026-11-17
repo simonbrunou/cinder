@@ -7,122 +7,23 @@ defmodule Cinder.Library.Sidecars do
   """
   require Logger
 
-  alias Cinder.Acquisition.Language
   alias Cinder.Library.BoundedWalk
   alias Cinder.Library.Filesystem
   alias Cinder.Library.Filesystem.RenameIdentity
   alias Cinder.Library.PathPolicy
   alias Cinder.Library.SidecarQuarantine
   alias Cinder.Settings
+  alias Cinder.Subtitles.WantedLanguage
 
   require Filesystem
 
   @sub_exts ~w(.srt .ass .ssa .sub .vtt)
-  @flags ~w(forced sdh cc hi)
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
-
-  # `hi` is both the hearing-impaired flag and ISO-639-1 Hindi. Read it as a flag when the name
-  # carries another language, and as the language when it carries none — otherwise `Movie.hi.srt`
-  # is unnameable, since Hindi has no other ISO-639-1 spelling (issue #201). `sdh` is the
-  # unambiguous hearing-impaired token and stays a flag always, so preferring the language reading
-  # in the conflict loses nothing.
-  @ambiguous_flags ~w(hi)
-
-  @doc """
-  ISO code from a sidecar filename; flags stripped; unknown/absent -> "und". A language with a
-  region or script subtag reads as its base language: `fr-FR` reads as `fr`. A code or tag name
-  reads as `Cinder.Acquisition.Language.normalize/1` gives it, so the generic Chinese `chi` and
-  `zho` read as `zh` (#1343).
-  """
-  def language(filename), do: filename |> classify() |> elem(0)
-
-  @doc """
-  Flags (`forced`, `sdh`, `cc`, `hi`) from the trailing run of flag and language tokens of a
-  sidecar filename, in name order; a `hi` that `language/1` reads as Hindi is not one.
-  """
-  def flags(filename), do: filename |> classify() |> elem(1)
-
-  @doc """
-  The language code as the filename writes it, downcased and without its region or script
-  subtag, or `nil` when `language/1` reads `und`: `M.chi-TW.srt` gives `"chi"`. A fetch matches
-  it against a wanted code with `Cinder.Acquisition.Language.raw_track_satisfies?/2`, which lets
-  a wanted Cantonese `cn` take a generic Chinese `chi` or `zho` file that `language/1` reads as
-  `zh` (#1343).
-  """
-  def written_language(filename), do: filename |> classify() |> elem(2)
-
-  # One decision for both readings, so a `hi` consumed as the language can't ALSO be re-emitted as
-  # a flag by link/2 — which would name a Hindi sidecar `<stem>.hi.hi.srt`.
-  defp classify(filename) do
-    tokens =
-      filename
-      |> Path.basename()
-      |> Path.rootname()
-      |> String.split(".")
-      |> Enum.map(&String.downcase/1)
-
-    flags = trailing_flags(tokens)
-
-    case resolve(tokens, @flags) do
-      nil -> ambiguous_reading(tokens, flags)
-      {language, code} -> {language, flags, code}
-    end
-  end
-
-  # A flag word is a flag only in the name's trailing run of flag and language tokens, which the
-  # first token that is neither ends (#1087). Before it, the word belongs to the title or a release
-  # tag: `Forced.Entry.1983…fr.srt` and `Hi.Mom.2021…fr.srt` are full French subtitles, and
-  # `Movie.1960.CC…en.srt` carries the Criterion Collection's tag. The language reading needs no
-  # such limit: the last non-flag token lies inside the run whenever it is a language.
-  defp trailing_flags(tokens) do
-    tokens
-    |> Enum.reverse()
-    |> Enum.take_while(&(&1 in @flags or read_token(&1) != nil))
-    |> Enum.filter(&(&1 in @flags))
-    |> Enum.reverse()
-  end
-
-  # Nothing resolved with every flag stripped, so retry letting the ambiguous ones be languages.
-  # The retry finds a language only when the last token that is not `forced`, `sdh` or `cc` is a
-  # `hi`, i.e. exactly the shadowed case. Only those flags follow that `hi`, so it sits in the
-  # trailing run and `flags` holds it.
-  defp ambiguous_reading(tokens, flags) do
-    case resolve(tokens, @flags -- @ambiguous_flags) do
-      nil -> {"und", flags, nil}
-      {language, code} -> {language, flags -- @ambiguous_flags, code}
-    end
-  end
-
-  defp resolve(tokens, strip) do
-    case tokens |> Enum.reject(&(&1 in strip)) |> List.last() do
-      nil -> nil
-      token -> read_token(token)
-    end
-  end
-
-  # `{language, code}`: the language the token reads as, and the code it writes for it.
-  defp read_token(token), do: code_reading(token) || regional_language(token)
-
-  defp code_reading(code) do
-    case Language.lookup(code) do
-      nil -> nil
-      language -> {language, code}
-    end
-  end
-
-  # A language with one region or script subtag, joined by `-` or `_` (`fr-FR`, `pt_BR`,
-  # `es-419`, `zh-Hant`), reads as its base language (#1309). The subtag is 2 letters, 3 digits
-  # or 4 letters, so a release tag such as `x264-GRP` or `WEB-DL` stays no language.
-  defp regional_language(token) do
-    case Regex.run(~r/\A([^-_]+)[-_](?:[a-z]{2}|[0-9]{3}|[a-z]{4})\z/, token) do
-      [_token, base] -> code_reading(base)
-      nil -> nil
-    end
-  end
 
   @doc """
   Sidecar files belonging to `source_video` (stem match, or any sub when the folder holds one
-  video).
+  video), each as `{path, language}`: the language its name carries
+  (`Cinder.Subtitles.WantedLanguage.name_language/1`).
 
   Its reads run under `Cinder.Library.BoundedWalk`'s deadline, keyed by the deepest source root
   holding the video's folder (#944). A listing past the deadline, or one the guard refuses, answers
@@ -155,7 +56,7 @@ defmodule Cinder.Library.Sidecars do
         lone_video? or
           String.starts_with?(String.downcase(Path.basename(p)), String.downcase(stem) <> ".")
       end)
-      |> Enum.map(fn p -> {p, language(p)} end)
+      |> Enum.map(fn p -> {p, WantedLanguage.name_language(p)} end)
     else
       _ -> []
     end
@@ -179,22 +80,16 @@ defmodule Cinder.Library.Sidecars do
   def link(source_video, dest_video), do: link_listed(files(source_video), dest_video)
 
   @doc """
-  `link/2` for sidecars `files/1` already listed: places each `{path, language}` next to
-  `dest_video` (best-effort) and returns the paths it placed.
+  `link/2` for sidecars `files/1` already listed: places each listed path next to `dest_video`
+  (best-effort), under the name `Cinder.Subtitles.WantedLanguage.placed_path/2` gives it, and
+  returns the paths it placed.
   """
   def link_listed(sidecars, dest_video) do
-    dest_stem = Path.rootname(dest_video)
-
-    for {path, lang} <- sidecars,
-        dest = dest_dir_name(dest_stem, path, lang),
+    for {path, _language} <- sidecars,
+        dest = WantedLanguage.placed_path(path, dest_video),
         do_link(path, dest) == :ok do
       dest
     end
-  end
-
-  defp dest_dir_name(dest_stem, src_path, lang) do
-    flag = src_path |> flags() |> Enum.map_join(&".#{&1}")
-    "#{dest_stem}.#{lang}#{flag}#{String.downcase(Path.extname(src_path))}"
   end
 
   defp do_link(src, dest) do

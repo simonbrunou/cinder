@@ -1,7 +1,7 @@
 defmodule Cinder.Subtitles.Sync.Reference do
   @moduledoc false
 
-  alias Cinder.Acquisition.Language
+  alias Cinder.Subtitles.WantedLanguage
 
   def resolver(nil, _video_path), do: &audio/1
 
@@ -13,20 +13,20 @@ defmodule Cinder.Subtitles.Sync.Reference do
   end
 
   defp select(media_info, video_path, tracks, language) do
-    # Language.raw_track_satisfies?/2 — a track's RAW (un-normalized) code against the forward
-    # tolerance list — not equality-after-normalize: a "cn" (Cantonese) target must still accept
-    # a generically-tagged "chi"/"zho" track, while correctly excluding an explicitly Mandarin
-    # "cmn" one (#519, #573). Cinder.Library.MediaInfo.Ffprobe.subtitle_language/1 reports the raw
-    # code for exactly this reason — never canonicalize &1.language before this comparison.
+    # WantedLanguage.track/2 reads a track's RAW (un-normalized) code, not equality after
+    # normalizing: a wanted "cn" (Cantonese) must still accept a generically-tagged "chi"/"zho"
+    # track, while correctly excluding an explicitly Mandarin "cmn" one (#519, #573).
+    # Cinder.Library.MediaInfo.Ffprobe.subtitle_language/1 reports the raw code for exactly this
+    # reason: never canonicalize &1.language before this comparison.
     tracks
-    |> Enum.filter(&Language.raw_track_satisfies?(language, &1.language))
+    |> Enum.filter(&(WantedLanguage.track(language, &1.language) != nil))
     |> Enum.reject(&Map.get(&1, :forced?, false))
     # An unambiguous match (an explicit "cn"/"yue" or "zh"/"cmn" tag) beats a generic-alias one
     # ("chi"/"zho", tolerated by both) regardless of packet count - the ambiguous track might
     # genuinely be the other language (#573 review). Packet count still breaks ties within the
     # same exactness tier.
     |> Enum.sort_by(
-      &{if(Language.exact_track?(language, &1.language), do: 0, else: 1),
+      &{if(WantedLanguage.track(language, &1.language) == :exact, do: 0, else: 1),
        -Map.get(&1, :packet_count, 0)}
     )
     |> Enum.find_value({:audio, nil}, fn track ->

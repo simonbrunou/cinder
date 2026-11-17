@@ -706,6 +706,31 @@ defmodule Cinder.Subtitles.SyncTest do
     assert [%{method: "embedded", status: :corrected}] = Sync.analyze_video(video)
   end
 
+  # A lone `cmn` track is neither an exact nor a tolerated Cantonese track, so the audio is the
+  # reference and the track is never extracted (#573).
+  test "a wanted cn (Cantonese) with only a Mandarin cmn track syncs against the audio",
+       %{video: video} do
+    path = managed_srt!(video, "cn")
+    original = File.read!(path)
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok, [%{index: 2, language: "cmn", forced?: false, default?: true, packet_count: 999}]}
+    end)
+
+    stub(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 2 ->
+      {:ok, subtitle(".srt")}
+    end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn reference, input, output ->
+      assert File.read!(reference) == File.read!(video)
+      assert File.read!(input) == original
+      File.write!(output, original)
+      {:review, %{reason: :low_confidence, score: 1.0, offset_ms: 0, rate: 1.0}}
+    end)
+
+    assert [%{method: "audio", status: :review}] = Sync.analyze_video(video)
+  end
+
   test "a cn (Cantonese) target prefers an unambiguous yue track over a louder generic chi track (#573)",
        %{video: video} do
     managed_srt!(video, "cn")

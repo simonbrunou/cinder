@@ -332,6 +332,11 @@ _Avoid_: conflict, race loss
 A subtitle file stored next to its video, named after it (`Movie.en.srt`).
 _Avoid_: subtitle file, external subtitle
 
+**Wanted language**:
+A subtitle language code the household set in Settings, trimmed and downcased but otherwise as
+typed (`fr`, `fra`, `pt-br`, `cn`), which also names the sidecar a fetch writes for it.
+_Avoid_: subtitle language (on its own), target language
+
 **Managed sidecar**:
 A sidecar Cinder wrote or adopted and records in the video's hidden subtitle manifest, so Cinder may
 rewrite it.
