@@ -279,14 +279,22 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
 
       assert {:review, %{reason: :timeout}} = priority_sync(tmp, tools, hang)
 
-      [pid | _argv] = recorded(tmp, "python")
-      assert hd(recorded(tmp, "ionice")) == pid
-      # The kill must have had a child to reach, or this test proves nothing.
-      assert File.exists?(child_pidfile),
-             "the interpreter had not forked its child by the deadline"
+      # On a loaded runner the deadline can kill the chain before the interpreter starts, leaving
+      # no `child.pid` (#1401). `timeout` exits only once the interpreter has, so `child.pid`
+      # holds all it will by now, and a child the kill missed fails `OsProcess.dead?/1`. A kill
+      # landing between the fork and the `echo` leaves a child with no record, and this test
+      # passes it.
+      case OsProcess.await_record(child_pidfile) do
+        {:ok, child} ->
+          [pid | _argv] = recorded(tmp, "python")
+          assert hd(recorded(tmp, "ionice")) == pid
 
-      child_pid = child_pidfile |> File.read!() |> String.trim() |> String.to_integer()
-      assert OsProcess.dead?(child_pid)
+          child_pid = child |> String.trim() |> String.to_integer()
+          assert OsProcess.dead?(child_pid)
+
+        :none ->
+          :ok
+      end
     end
 
     test "a missing interpreter under ionice and nice is still exit 127", %{

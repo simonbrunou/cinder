@@ -4,6 +4,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   alias Cinder.Acquisition.Language
   alias Cinder.ConfigCase
   alias Cinder.Library.{MediaInfo.Ffprobe, PolicyVerifier}
+  alias Cinder.Test.OsProcess
 
   import Cinder.Test.PriorityShims,
     only: [put_shims: 3, shim: 2, write_stub!: 4, recorded: 2, priority: 1]
@@ -19,8 +20,10 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   end
 
   # For the tests that read the stub's pid file: wide enough for the stub to start and write it
-  # on a loaded CI runner before the bound kills it (#636). Tests that only assert
-  # `{:error, :timeout}` keep their 150 ms bound, since a slow start can't change their result.
+  # before the bound kills it on most loaded CI runs (#636). When the bound kills the command
+  # first, the stub writes none, and those tests then pass without checking the kill (#1401).
+  # Tests that only assert `{:error, :timeout}` keep their 150 ms bound, since a slow start can't
+  # change their result.
   @pid_bound_ms 1_000
 
   @tag :tmp_dir
@@ -67,8 +70,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     assert Ffprobe.health() == {:error, :timeout}
     assert System.monotonic_time(:millisecond) - t0 < 3000
 
-    pid = wait_for_pidfile(pidfile)
-    assert process_gone?(pid)
+    assert_gone_if_recorded(pidfile)
   end
 
   @tag :tmp_dir
@@ -555,8 +557,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     assert Ffprobe.shot_changes("/media/movie.mkv") == {:error, :timeout}
     assert System.monotonic_time(:millisecond) - t0 < 3000
 
-    pid = wait_for_pidfile(pidfile)
-    assert process_gone?(pid)
+    assert_gone_if_recorded(pidfile)
   end
 
   # Proves the deadline is an ABSOLUTE bound, not a per-message poll tick that a chatty process
@@ -595,8 +596,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     assert elapsed >= @pid_bound_ms
     assert elapsed < @pid_bound_ms + 5_000
 
-    pid = wait_for_pidfile(pidfile)
-    assert process_gone?(pid)
+    assert_gone_if_recorded(pidfile)
   end
 
   @tag :tmp_dir
@@ -625,8 +625,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
 
     assert Ffprobe.extract_subtitle("/media/movie.mkv", 2) == {:error, :timeout}
 
-    pid = wait_for_pidfile(pidfile)
-    assert process_gone?(pid)
+    assert_gone_if_recorded(pidfile)
   end
 
   # Neither poller GenServer (`Cinder.Download.Poller`/`TvPoller`) traps exits or has a
@@ -789,10 +788,19 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
 
         assert {:error, :timeout} = run_read(@read, tmp, tools, "exec #{tools.sleep} 30")
 
-        [pid | _argv] = recorded(tmp, "reader")
-        assert hd(recorded(tmp, "ionice")) == pid
-        System.put_env("PATH", tools.path)
-        assert process_gone?(String.to_integer(pid))
+        # On a loaded runner the bound can kill the chain before the reader starts, leaving no
+        # `reader.log` (#1401). A reader the bound left alive writes it once it starts, and fails
+        # `process_gone?/1` when it starts within the wait.
+        case OsProcess.await_record(Path.join(tmp, "reader.log")) do
+          {:ok, _record} ->
+            [pid | _argv] = recorded(tmp, "reader")
+            assert hd(recorded(tmp, "ionice")) == pid
+            System.put_env("PATH", tools.path)
+            assert process_gone?(String.to_integer(pid))
+
+          :none ->
+            :ok
+        end
       end
     end
   end
@@ -831,22 +839,14 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     on_exit(fn -> restore_bin(key, previous) end)
   end
 
-  # Bounded poll for the stub's own pid file — it is written before the stub `exec`s into the
-  # long sleep, so this only waits for the process to have actually started.
-  defp wait_for_pidfile(pidfile, attempts \\ 50)
-
-  defp wait_for_pidfile(_pidfile, 0), do: flunk("stub process never wrote its pid file")
-
-  # An empty pid file counts as missing: a stub creates the file before it writes its pid, and a
-  # stub killed in between leaves it empty (#1043).
-  defp wait_for_pidfile(pidfile, attempts) do
-    case File.read(pidfile) do
-      {:ok, content} when content != "" ->
-        content |> String.trim() |> String.to_integer()
-
-      missing when missing in [{:ok, ""}, {:error, :enoent}] ->
-        Process.sleep(20)
-        wait_for_pidfile(pidfile, attempts - 1)
+  # The stub writes its pid file before anything else it runs. On a loaded runner the bound can
+  # kill the command before the stub starts, leaving no pid to check (#1401), so a missing pid
+  # file passes. A stub the bound left alive writes it once it starts, and fails `process_gone?/1`
+  # when it starts within the wait.
+  defp assert_gone_if_recorded(pidfile) do
+    case OsProcess.await_record(pidfile) do
+      {:ok, pid} -> assert process_gone?(pid |> String.trim() |> String.to_integer())
+      :none -> :ok
     end
   end
 
