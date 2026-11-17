@@ -29,8 +29,9 @@ Read the matching doc before you act:
   issue, opening a PR, or cutting a release.
 - The `writing-for-agents` skill, then [workflow.md](docs/agents/workflow.md) "Agent docs":
   before your first edit to `AGENTS.md` or a `docs/agents/` file.
-- "Tool claims" in [workflow.md](docs/agents/workflow.md): before writing what a tool prints or
-  does, in any doc, moduledoc, comment or changelog fragment.
+- "Tool claims" in [workflow.md](docs/agents/workflow.md): before writing what a tool or
+  Cinder's own code prints or does, in any doc, moduledoc, comment, test name or changelog
+  fragment.
 - [CI](docs/agents/ci.md): before editing `.forgejo/workflows/`, reading a red CI run, re-running
   CI, or merging.
 - [Subtitle sync](docs/agents/subtitle-sync.md): before changing `Cinder.Subtitles.Sync`, its

@@ -77,8 +77,14 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
 
 ## Tool claims
 
-These bind a sentence in any doc, moduledoc, comment or changelog fragment.
+These bind a sentence in any doc, moduledoc, comment, test name or changelog fragment.
 
+- A sentence about what Cinder's own code does holds for each case that code tells apart: each
+  book kind or plan, each kind of configured value, and each cap the path applies. Read the code
+  for those cases before you write "every" or "drops". A test name says only what its body
+  checks. On #803 (PR #1388) one review round found three such sentences: a moduledoc claim
+  true for the e-book plan only, "every ISBN probe" where a search probes at most three, and a
+  test name that promised a comparison its body never made.
 - A sentence about what a tool prints or does (an abort line, a flag's effect, a retry) holds on
   every path in the tool's source that reaches it, not only on the case its help text or your
   first run shows. Read that source first (`elixir -e 'IO.puts(:code.lib_dir(:mix))'` prints
@@ -93,6 +99,15 @@ These bind a sentence in any doc, moduledoc, comment or changelog fragment.
   `proxy-ioprio` option gives its threads the reader's I/O priority. The third re-check found
   that `nice -n 10` adds 10 to the caller's niceness: 31 minutes from the first finding to the
   last fix.
+- A change that narrows or renames what a feature covers (one book kind, one source) reaches
+  each sentence a user reads about that feature. Search its user-facing words by their stem, not
+  only the module name, in `lib/cinder_web`, `priv/gettext/default.pot` and `docs/`. Fix each
+  sentence that now promises the wider scope, and read the HEEx for each control a doc names. On
+  #813 (PR #1402) a search for the module name alone missed an adoption note and two docs that
+  sent audiobook works to the e-book-only policy and named controls `/books/:id` does not have:
+  three review rounds, about 16 minutes from the first finding to the last fix. There `monitor`
+  also finds "Monitor an individual work's e-book or audiobook target", which "author policy"
+  and "monitoring policy" miss.
 
 ## Worktrees
 
