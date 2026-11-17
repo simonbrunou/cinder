@@ -121,9 +121,23 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
      three other causes of a red test: **Shared state**, **CI runs the suite as root** and
      **Line cap**. When the test touches the diff, the failure is the diff's to fix. When one of
      those three causes fits, handle it as that bullet says. Either way, the failure is not a
-     flake, so skip the re-run.
+     flake, so skip the re-run. On a PR, also check whether `main` already fixed the test, as
+     the second bullet below says.
      - On a PR, the diff is the PR's own. A red on `origin/main`'s head on the same test is no
        reason to skip the re-run, since the re-run tells a flake from **Broken `main`**.
+     - On a PR, check whether `main` already fixed the failing test. Run `git fetch origin` and
+       `git fetch origin refs/pull/<n>/head`, which sets `FETCH_HEAD` to the PR's pushed head,
+       since your checkout can sit on another commit. Then run
+       `B=$(git merge-base FETCH_HEAD origin/main)`,
+       `git log --oneline ${B:?}..origin/main -- <test file>` and
+       `git log --oneline -i --grep=<module name's last segment> ${B:?}..origin/main`, such as
+       `--grep=DiskBoundedTest`, which also lists a fix outside the test file. `${B:?}` stops
+       the command when a failed fetch left `B` empty. Read the message of each commit they
+       list. When one fixes that test and `origin/main`'s head passes it (**Broken `main`** says
+       how to read a pass), the PR's tree lacks the fix and a re-run can fail the same way: skip
+       the re-run and merge `origin/main`, as "Re-running CI" says for a red that a commit on
+       `main` fixes. `DiskBoundedTest` failed on #1406 (for #1340), cut before #1405 fixed it,
+       and `TestAtBaseScriptTest` on #1364 (for #780) and #1365 (for #773), cut before #1366.
      - On a red test of `origin/main`'s head, the head's run can be the first one to test several
        merges ("Re-running CI"), so the diff is `git diff --name-only <last green sha> <head sha>`.
        The last green sha is the first commit that `git rev-list --first-parent <head sha>^`
@@ -363,7 +377,7 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   commit ([workflow.md](workflow.md) "Releasing" step 3). Find the run id as "Reading a run" says,
   then list the run's jobs with
   `curl ... "$API/actions/runs/<run id>/jobs" | jq -c '.[] | {id, name, status, attempt}'`.
-- A red job at `attempt` 1 gets the re-run. A red test gets it only when it passes both checks
+- A red job at `attempt` 1 gets the re-run. A red test gets it only when it passes the checks
   of step 1 of **Flake** ("Judging a red run"), and a **Test-file warning** never does, since the
   same tree prints the same warning. The call is
   `curl -s -X POST -H "Authorization: token $FJ_TOKEN" "$API/actions/jobs/<job id>/rerun"`,

@@ -94,6 +94,15 @@
   removed and added, then the failed tests of a kill or the errors of a run with no result. On
   #702 a hand-written loop chained `diff && run_suite` and ran no mutant, and #1230, #1250 and
   #1254 each wrote a loop by hand.
+- When the code computes a value that a message or a return reports, such as an elapsed time or
+  a count, the mutant list holds mutants that report a wrong value, such as a constant and `0`,
+  besides one that drops the value. The test pins the value, or bounds it on both sides where it
+  varies: for an elapsed time, a floor the test sets up and a ceiling from clock reads around
+  the call. A `Process.sleep/1` inside the timed span sets that floor. It waits for no process,
+  so the usage rules' advice against sleeping to wait for one (`deps/phoenix/usage-rules`)
+  does not apply. On #1404 (for #1361) the test matched only the elapsed time's digits: a
+  Standards review found a constant surviving and a re-check found `0` surviving, 23 minutes
+  from the first finding to the last fix.
 - Run the branch's new tests, or a throwaway test, against the merge base's code with
   `scripts/test-at-base <merge base> <changed lib file>... -- <mix test.unchecked argument>...`:
   the red run before a fix, and the runs that prove a changelog sentence about what Cinder did
@@ -205,6 +214,18 @@
   separator at the end of one line and at the start of the next; a marker that skips one item
   gets a line with two items, in one span and in two. On #1373 (`doc_names_test.exs`) a Spec
   review and two re-check rounds found these one at a time: about 24 minutes from the first
+  finding to the last fix.
+- When an adapter parses an external service's body into a list that admits or refuses someone,
+  give it, before review, one fixture per name it reads (root, element, attribute or key) with
+  that name changed. For an entry's element, attribute or key, change it in a body holding only that
+  entry and in one holding it beside valid entries, the count matching the valid ones only. Add
+  one per count the body states, such as a `size` attribute, with it missing or wrong. Each
+  fixture expects the adapter's refusal, such as `{:error, :unexpected_response}`: a dropped
+  entry reads as someone refused, and the caller acts on it. On #1407 (for #1212) the plex.tv
+  share list's parser returned fewer shares instead of refusing for a renamed element or
+  attribute, then for a renamed element under a root without `size`, then for a share whose
+  attribute read `userId` beside valid ones. A Spec review and two re-check rounds found these
+  one at a time, and a third found the parser's comment wrong: about 25 minutes from the first
   finding to the last fix.
 - The fence run is the alias's compile, format and Credo gates with the repo-wide fences:
   `mix test test/code_health_test.exs test/code_health` (under 30 s). Before a branch's first
