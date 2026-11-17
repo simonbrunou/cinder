@@ -119,9 +119,9 @@ through the choke-points.
 Code outside `lib/cinder/catalog/` reaches most of the catalog through `Cinder.Catalog`, which
 only delegates. Some modules it names directly: every movie status write is a `MovieLifecycle`
 verb, a caller announcing a change after its own commit uses `Events`' announcements, and
-modules with an interface of their own (`Attention`, `AnimeResolver`, `Genres`,
-`Grabs.get_grab_file/1`, ...) have no facade name. Inside the catalog, a concept module calls
-the modules it needs directly and never the facade.
+modules with an interface of their own (`Attention`, `AnimeResolver`, `EpisodeNumbering`,
+`Genres`, `Grabs.get_grab_file/1`, ...) have no facade name. Inside the catalog, a concept module
+calls the modules it needs directly and never the facade.
 `test/code_health_test.exs` fences that the facade only delegates and that nothing under
 `lib/cinder/catalog/` calls it. A new catalog function goes in the concept that owns it; it gets
 a `defdelegate` in the facade only when a caller outside the catalog needs it.

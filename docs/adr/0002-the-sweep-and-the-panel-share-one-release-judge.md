@@ -75,7 +75,7 @@ episode, the season's release naming that code, or its whole-season pack, is mar
 sweep (`Cinder.Acquisition.best_upgrade_releases/4`) grabs it. The cost: while the mapping stands,
 neither a release naming that code nor the season's whole-season pack is grabbed for the season.
 An `:inferred` mapping, or a vetted one naming only the code's native episode, keeps the native
-reading. This extends the anime rule (`AnimeResolver.strip_shadowed_canonical/1`, #156), which
+reading. This extends the anime rule (`EpisodeNumbering.resolve/4`'s shadowing, #156), which
 covers vetted scene mappings only, to aired ones. The import can't catch this case instead: it
 matches a grab's files only against that grab's own episodes.
 
@@ -84,7 +84,7 @@ Since #987 a saved season offset also retires the native code of every episode i
 the native code for that same episode, the season's release naming that episode's native code, or
 its whole-season pack, gets the same mark. On the anime path and
 in the standard bridge, the retired code resolves only through a vetted mapping that names it, or
-to no episode, never through an `:inferred` one (`AnimeResolver.strip_retired_canonical/2`). The
+to no episode, never through an `:inferred` one (`EpisodeNumbering.resolve/4`). The
 panel tells the operator to save an offset when releases number the show's seasons with a fixed
 shift from TMDB, so a release carrying a shifted episode's native code more likely names another
 episode, and a missed grab costs less than a wrong file. A `:manual` mapping retires nothing: a

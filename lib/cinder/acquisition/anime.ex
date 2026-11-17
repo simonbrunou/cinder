@@ -3,7 +3,7 @@ defmodule Cinder.Acquisition.Anime do
 
   alias Cinder.Acquisition
   alias Cinder.Acquisition.{AnimeParser, AnimePreferences, Release, ReleaseJudge, Scorer}
-  alias Cinder.Catalog.{AnimeResolver, Episode, TitleAlias}
+  alias Cinder.Catalog.{AnimeResolver, Episode, EpisodeNumbering, TitleAlias}
   alias Cinder.Download.Intent
 
   @anime_category 5070
@@ -518,18 +518,6 @@ defmodule Cinder.Acquisition.Anime do
 
   defp resolve_release(_release, _context, _wanted_ids), do: []
 
-  @doc """
-  Resolves one parsed episode coordinate through the same persisted-coordinate bridge used by
-  Anime selection. Standard TV uses this when a series has alternate-season scene coordinates.
-  """
-  def resolve_episode_coordinate(scheme, value, mappings) do
-    matching = mappings_for_value(mappings, scheme, value)
-    resolver_mappings = Enum.map(matching, &resolver_mapping/1)
-    identities = Enum.map(matching, & &1.identity)
-
-    AnimeResolver.resolve(identities, resolver_mappings)
-  end
-
   defp resolve_values([], _mappings, evidence), do: {:ok, Enum.reverse(evidence)}
 
   defp resolve_values([coordinate | rest], mappings, evidence) do
@@ -567,21 +555,17 @@ defmodule Cinder.Acquisition.Anime do
           matching_scope_title?(Map.get(mapping, :scope_title), scope_title)
       end)
 
-    resolve_matching_mappings(matching)
+    AnimeResolver.resolve_mappings(matching)
   end
 
   defp resolve_coordinate(%{source: source, namespace: namespace}, _mappings)
        when is_binary(source) or is_binary(namespace),
        do: :error
 
+  # An unscoped coordinate reads through the search's one numbering, bridge included. A scoped one
+  # (above) matches its own provider namespace exactly, with no bridge.
   defp resolve_coordinate(coordinate, mappings) do
-    resolve_episode_coordinate(coordinate.scheme, coordinate.canonical_value, mappings)
-  end
-
-  defp resolve_matching_mappings(matching) do
-    resolver_mappings = Enum.map(matching, &resolver_mapping/1)
-    identities = Enum.map(matching, & &1.identity)
-    AnimeResolver.resolve(identities, resolver_mappings)
+    EpisodeNumbering.resolve(:anime, coordinate.scheme, coordinate.canonical_value, mappings)
   end
 
   defp put_coordinate_scope(value, %{
@@ -594,34 +578,6 @@ defmodule Cinder.Acquisition.Anime do
   end
 
   defp put_coordinate_scope(value, _coordinate), do: value
-
-  # The scheme-bridging rule (which persisted schemes a parsed value also matches) lives once in
-  # `AnimeResolver.bridged_schemes/1`. `AnimeResolver.strip_shadowed_canonical/1` then lets a
-  # vetted scene coordinate win over the coincidental native code of a *different* episode that
-  # shares the same SxxEyy string (issue #156); an auto-derived `:inferred` scene coordinate leaves
-  # the native canonical in place, so ordinary resolution is unchanged.
-  # `AnimeResolver.strip_retired_canonical/2` drops the native code of an episode a saved season
-  # offset moved to another season (#987).
-  defp mappings_for_value(mappings, scheme, value) do
-    schemes = [scheme | AnimeResolver.bridged_schemes(scheme)]
-
-    mappings
-    |> Enum.filter(
-      &(Map.get(&1.identity, :scheme) in schemes and
-          Map.get(&1.identity, :canonical_value) == value)
-    )
-    |> AnimeResolver.strip_shadowed_canonical()
-    |> AnimeResolver.strip_retired_canonical(mappings)
-  end
-
-  defp resolver_mapping(mapping) do
-    %{
-      coordinate: mapping.identity,
-      episode_ids: mapping.episode_ids,
-      precedence: mapping.precedence,
-      evidence: mapping.evidence
-    }
-  end
 
   defp select_immediately(candidates, wanted_ids, opts),
     do: candidates |> assignments(wanted_ids, opts) |> selection_result(nil)
@@ -900,7 +856,7 @@ defmodule Cinder.Acquisition.Anime do
   @doc "Returns the bounded scene-coordinate seasons covering the wanted episode IDs."
   def scene_seasons(context, wanted_ids) do
     wanted = MapSet.new(wanted_ids)
-    bridged = AnimeResolver.bridged_schemes("standard")
+    bridged = EpisodeNumbering.bridged_schemes(:anime)
 
     context.mappings
     |> Enum.filter(fn mapping ->
@@ -930,7 +886,7 @@ defmodule Cinder.Acquisition.Anime do
   end
 
   # The code of the season's earliest wanted episode under `scheme`. A native code that a saved
-  # season offset retired (`AnimeResolver.retired_canonical?/2`) names no episode (#987), so the
+  # season offset retired (`EpisodeNumbering.queryable_code?/2`) names no episode (#987), so the
   # "standard" slot skips it, judged against every mapping of the series (#1257).
   defp earliest_coordinate(context, wanted_ids, season_number, scheme) do
     episode_positions =
@@ -946,7 +902,7 @@ defmodule Cinder.Acquisition.Anime do
           @max_coordinate_codepoints
         ) and
         Enum.any?(mapping.episode_ids, &Map.has_key?(episode_positions, &1)) and
-        not retired_canonical?(mapping, context.mappings)
+        EpisodeNumbering.queryable_code?(mapping, context.mappings)
     end)
     |> Enum.min_by(
       fn mapping ->
@@ -966,11 +922,6 @@ defmodule Cinder.Acquisition.Anime do
       nil -> nil
       mapping -> mapping.identity.canonical_value
     end
-  end
-
-  defp retired_canonical?(mapping, mappings) do
-    AnimeResolver.canonical_native?(mapping) and
-      AnimeResolver.retired_canonical?(mapping, mappings)
   end
 
   defp wanted_seasons(context, wanted_ids) do

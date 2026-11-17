@@ -883,6 +883,39 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert Enum.sort(receive_queries(:search_tv_season, 2)) == [1, 2]
   end
 
+  # The anime bridge reaches scene codes only (`EpisodeNumbering.bridged_schemes/1`), so a
+  # TVDB-aired coordinate adds no alt-season query (#1411).
+  test "a persisted TVDB-aired coordinate adds no id-scoped alt-season query" do
+    episodes = for n <- 1..38, do: %{id: n, season_number: 1, episode_number: n}
+
+    aired_mappings = for n <- 29..38, do: mapping("aired", Episode.code(2, n - 28), [n])
+
+    context = %{
+      kind: :series,
+      title: "Frieren",
+      year: 2023,
+      tvdb_id: 209_867,
+      aliases: [],
+      episodes: episodes,
+      mappings: aired_mappings
+    }
+
+    test_pid = self()
+
+    stub(IndexerMock, :search_tv, fn 209_867, "Frieren", season ->
+      send(test_pid, {:aired_tv_season, season})
+      {:ok, []}
+    end)
+
+    stub(IndexerMock, :search_tv_query, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, [], false} =
+             Anime.search_episodes(IndexerMock, context, Enum.to_list(29..38), [])
+
+    assert receive_queries(:aired_tv_season, 1) == [1]
+    refute_received {:aired_tv_season, _season}
+  end
+
   defp movie_context(aliases) do
     %{
       kind: :movie,
@@ -935,9 +968,9 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
   # neither the panel nor the upgrade sweep names it in the season's free-text coordinate query,
   # while the season's absolute and scene queries still go out, even from the `:inferred` codes a
   # TMDB sync writes. A manual mapping naming an episode's own native code keeps that code
-  # (`AnimeResolver.retired_canonical?/2`). Each case lists its episodes as `{id, season, episode}`,
-  # its mappings, the wanted ids, the free-text queries after the title query and the season
-  # queries.
+  # (`EpisodeNumbering.queryable_code?/2`). Each case lists its episodes as
+  # `{id, season, episode}`, its mappings, the wanted ids, the free-text queries after the title
+  # query and the season queries.
   for {label, episodes, mappings, wanted, queries, seasons} <- [
         {"an offset from season 3", [{31, 3, 1}],
          [{:canonical, "S03E01", 31}, {:absolute, "25", 31}, {:offset, "S04E01", 31}], [31],

@@ -6,7 +6,7 @@ defmodule Cinder.Download.Intent do
   import Ecto.Changeset
 
   alias Cinder.Acquisition.AnimePreferences
-  alias Cinder.Catalog.{AnimeResolver, TitleAlias}
+  alias Cinder.Catalog.{EpisodeNumbering, TitleAlias}
   alias Cinder.Util
 
   @max_parser_aliases 7
@@ -436,7 +436,7 @@ defmodule Cinder.Download.Intent do
          identity,
          %{"scheme" => scheme, "canonical_value" => canonical_value}
        ) do
-    identity["scheme"] in [scheme | AnimeResolver.bridged_schemes(scheme)] and
+    identity["scheme"] in EpisodeNumbering.grab_schemes(:anime, scheme) and
       identity["canonical_value"] == canonical_value
   end
 

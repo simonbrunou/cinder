@@ -503,7 +503,22 @@ defmodule Cinder.Download.IntentTest do
 
     assert {:ok, %Grab{} = grab} = Download.grab_episodes(assignment.release, [episode.id])
     assert grab.mapping_snapshot == assignment.mapping_snapshot
+
+    # The anime bridge reaches scene codes only (`EpisodeNumbering.grab_schemes/2`): the same
+    # snapshot with its scene mapping turned into a TVDB-aired one reserves nothing (#1411).
+    aired_snapshot = scene_to_aired(assignment.mapping_snapshot)
+    refute aired_snapshot == assignment.mapping_snapshot
+    refute Intent.valid_mapping_snapshot?(aired_snapshot, :episode, [episode.id])
   end
+
+  defp scene_to_aired(%{"scheme" => "scene"} = map),
+    do: map |> Map.put("scheme", "aired") |> scene_to_aired()
+
+  defp scene_to_aired(map) when is_map(map) and not is_struct(map),
+    do: Map.new(map, fn {key, value} -> {key, scene_to_aired(value)} end)
+
+  defp scene_to_aired(list) when is_list(list), do: Enum.map(list, &scene_to_aired/1)
+  defp scene_to_aired(value), do: value
 
   test "snapshot ownership conflict leaves the remote download fenced for cleanup" do
     fixture = anime_reservation_fixture()

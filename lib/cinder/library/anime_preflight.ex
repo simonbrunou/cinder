@@ -2,7 +2,7 @@ defmodule Cinder.Library.AnimePreflight do
   @moduledoc "Pure, exhaustive anime file-to-episode preflight."
 
   alias Cinder.Acquisition.AnimeParser
-  alias Cinder.Catalog.{AnimeResolver, TitleAlias}
+  alias Cinder.Catalog.{AnimeResolver, EpisodeNumbering, TitleAlias}
   alias Cinder.Download.Intent
 
   # Conservative, never-guess sample/preview token (issue #125): word-boundary/dot/dash/
@@ -249,7 +249,9 @@ defmodule Cinder.Library.AnimePreflight do
 
   # A title-scoped coordinate carries the selected provider namespace and must match it exactly;
   # unlike ordinary SxxEyy parsing, it never uses the standard-to-scene bridge or precedence across
-  # other namespaces. Unscoped coordinates retain the existing A6 bridge behavior.
+  # other namespaces. Unscoped coordinates retain the existing A6 bridge behavior, and the import
+  # reads them as the grab froze them (`EpisodeNumbering.grab_schemes/2`): no shadowing and no
+  # retirement, unlike the search (ADR 0002).
   defp matches_value?(mapping, %{
          scheme: scheme,
          canonical_value: value,
@@ -271,7 +273,7 @@ defmodule Cinder.Library.AnimePreflight do
 
   defp matches_value?(mapping, %{scheme: scheme, canonical_value: value}) do
     identity = mapping["identity"]
-    schemes = [scheme | AnimeResolver.bridged_schemes(scheme)]
+    schemes = EpisodeNumbering.grab_schemes(:anime, scheme)
 
     identity["scheme"] in schemes and identity["canonical_value"] == value
   end

@@ -1224,6 +1224,21 @@ defmodule Cinder.Library.AnimePreflightTest do
       assert assignment_map(result.assignments) == expected
     end
 
+    # The anime bridge reaches scene codes only (`EpisodeNumbering.grab_schemes/2`), so the same
+    # files against TVDB-aired coordinates match no episode (#1411).
+    test "S02E01..E10 files match no TVDB-aired coordinate of an anime grab" do
+      fixture =
+        Map.update!(frieren_scene_fixture(1..10), "mappings", fn mappings ->
+          Enum.map(mappings, fn mapping ->
+            update_in(mapping["identity"], &%{&1 | "source" => "tvdb", "scheme" => "aired"})
+          end)
+        end)
+
+      assert {:needs_mapping, result} = run_fixture(fixture)
+      assert result.issue["reason"] == "unresolved_file"
+      assert length(result.issue["relative_paths"]) == 10
+    end
+
     test "one unmatched file among the batch still holds the whole grab" do
       extra_file = %{
         "relative_path" => "junk.mkv",

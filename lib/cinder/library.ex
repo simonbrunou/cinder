@@ -16,7 +16,7 @@ defmodule Cinder.Library do
   alias Cinder.Acquisition
   alias Cinder.Acquisition.{Language, Parser}
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, GrabFile, Movie, Series}
+  alias Cinder.Catalog.{Episode, EpisodeNumbering, Grab, GrabFile, Movie, Series}
 
   alias Cinder.Library.{
     AnimeInventory,
@@ -36,7 +36,6 @@ defmodule Cinder.Library do
   alias Cinder.Settings
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
-  @standard_tv_bridged_schemes ~w(scene aired)
 
   # The video library kinds Cinder manages. `Cinder.LibraryKind` is the full library-kind registry;
   # per-kind video derivations (Plex sections, size bands, release policy, reconciler, disk
@@ -715,7 +714,7 @@ defmodule Cinder.Library do
 
   defp bridged_coordinate_scheme(%Episode{episode_coordinates: coordinates}, parsed)
        when is_list(coordinates) do
-    Enum.find(@standard_tv_bridged_schemes, fn scheme ->
+    Enum.find(EpisodeNumbering.bridged_schemes(:standard), fn scheme ->
       Enum.any?(coordinates, fn coordinate ->
         coordinate.scheme == scheme and
           Enum.any?(

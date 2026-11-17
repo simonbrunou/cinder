@@ -102,6 +102,15 @@ vetted mapping naming that code. A `:manual` mapping retires nothing, since a fo
 file's name and says nothing about what the native code names.
 _Avoid_: operator-reviewed mapping, operator-vetted mapping
 
+**Episode numbering**:
+How a search reads an episode code as an episode of the series: through the native code, the
+alternate numberings bridged onto it (scene and TVDB-aired codes for a standard series, scene
+codes for an anime one) and the **vetted mappings** that take a code from its native episode or
+retire it. The standard and anime searches share one reading. The imports and the reservation
+read a code with no vetted mapping taking or retiring it: an anime grab's code as its snapshot
+froze it, a standard grab's file against its episodes' current codes.
+_Avoid_: episode resolution, coordinate resolution
+
 ### Downloads
 
 **In-flight download**:
