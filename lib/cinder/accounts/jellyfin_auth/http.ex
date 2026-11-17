@@ -75,7 +75,7 @@ defmodule Cinder.Accounts.JellyfinAuth.HTTP do
 
   defp request(url, options) do
     [
-      base_url: url,
+      base_url: HTTPPolicy.without_fragment(url),
       receive_timeout: 15_000,
       pool_timeout: 5_000,
       connect_options: [timeout: 5_000],

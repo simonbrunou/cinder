@@ -179,7 +179,7 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
     config = Application.get_env(:cinder, __MODULE__, [])
 
     [
-      base_url: url,
+      base_url: HTTPPolicy.without_fragment(url),
       receive_timeout: 5_000,
       connect_options: [timeout: 5_000],
       retry: false,
