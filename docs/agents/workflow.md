@@ -85,6 +85,14 @@ These bind a sentence in any doc, moduledoc, comment, test name or changelog fra
   checks. On #803 (PR #1388) one review round found three such sentences: a moduledoc claim
   true for the e-book plan only, "every ISBN probe" where a search probes at most three, and a
   test name that promised a comparison its body never made.
+- A sentence that names a role several modules play, such as "the import" or "a search", holds
+  for each module playing it and each input form it takes. Before you write it, list the modules
+  with `rg` for the function the sentence names and its callers, and the input forms each caller's
+  clauses tell apart, then name the narrower set or the exception in the sentence. On #1411
+  (PR #1422) "the import reads a code as the grab froze it" was false for the standard import,
+  which reads its episodes' current codes, and "a search reads a code through `resolve/4`" and its
+  import twin were false for a scoped code. A Standards review and a re-check found them, about 15
+  minutes from the first finding to the last fix.
 - A sentence about what a tool prints or does (an abort line, a flag's effect, a retry) holds on
   every path in the tool's source that reaches it, not only on the case its help text or your
   first run shows. Read that source first (`elixir -e 'IO.puts(:code.lib_dir(:mix))'` prints
