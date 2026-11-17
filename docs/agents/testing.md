@@ -125,6 +125,13 @@
   `EpisodeNumbering` at the anime import, the reservation and `Anime.scene_seasons/2` survived
   their test files while every mutant inside the module was killed. A Spec review found them,
   and the fix took a test commit and a second mutation run.
+- A table test built with `for` whose answers can be `false` or `nil` binds each row's whole
+  cell and filters on it: `cell = {input, f(input)}, cell != {input, expected}`. A bare
+  `answer = f(input)` clause is itself a filter, so every row whose answer is `false` or `nil`
+  drops out unchecked. On #1415 (PR #1436) the `sidecar?/2` table bound only the answer. One
+  mutant compared all of wanted `pt-br` with a name's language, so it refused `M.pt.srt`. That
+  row dropped out, the mutant survived `scripts/mutation-check`, and it took a test rewrite and
+  a second mutation run.
 - Run the branch's new tests, or a throwaway test, against the merge base's code with
   `scripts/test-at-base <merge base> <changed lib file>... -- <mix test.unchecked argument>...`:
   the red run before a fix, and the runs that prove a changelog sentence about what Cinder did
