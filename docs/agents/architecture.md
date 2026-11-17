@@ -120,8 +120,8 @@ Code outside `lib/cinder/catalog/` reaches most of the catalog through `Cinder.C
 only delegates. Some modules it names directly: every movie status write is a `MovieLifecycle`
 verb, a caller announcing a change after its own commit uses `Events`' announcements, and
 modules with an interface of their own (`Attention`, `AnimeResolver`, `Genres`,
-`Grabs.get_grab_file/1`, ...) have no facade name. Whether the facade stays is #829. Inside the
-catalog, a concept module calls the modules it needs directly and never the facade.
+`Grabs.get_grab_file/1`, ...) have no facade name. Inside the catalog, a concept module calls
+the modules it needs directly and never the facade.
 `test/code_health_test.exs` fences that the facade only delegates and that nothing under
 `lib/cinder/catalog/` calls it. A new catalog function goes in the concept that owns it; it gets
 a `defdelegate` in the facade only when a caller outside the catalog needs it.
@@ -154,6 +154,16 @@ a `defdelegate` in the facade only when a caller outside the catalog needs it.
     written inside it. Series creation, `MetadataRefresh` and `SceneNumbering` call it, and it
     calls none of them (`test/code_health/series_identity_sync_calls_test.exs`).
   - `SceneNumbering`: the operator's alternate-season pickers.
+
+The facade stays, and callers keep going through it (the maintainer's decision on #829):
+
+- It is a plain delegate list under the fences above. What it costs is one lookup per name to
+  find the owning concept, and one more `defdelegate` per catalog function an outside caller
+  needs.
+- Retiring it means re-pointing about 1,650 calls in 145 files under `lib/` and `test/` (counted
+  on 2026-11-17). That diff conflicts with any open branch that edits a line holding one of those
+  calls, and it changes no behaviour.
+- It keeps the Phoenix convention of one public name for a context.
 
 ## Imports go through the staged import
 

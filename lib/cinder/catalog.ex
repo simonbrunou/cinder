@@ -11,6 +11,12 @@ defmodule Cinder.Catalog do
   through `Cinder.Catalog.Events`, and modules with an interface of their own (such as
   `Cinder.Catalog.Attention`) are called as they are. The concept map, kernel included, is in
   `docs/agents/architecture.md` ("The catalog is split by concept").
+
+  The facade stays, and callers outside the catalog keep calling it (#829). It costs a lookup
+  per name, while re-pointing every caller is a large diff that conflicts with open branches
+  editing those calls and changes no behaviour. It also keeps the Phoenix convention of one
+  public name for a context. That section of `docs/agents/architecture.md` gives the reasons in
+  full.
   """
 
   alias Cinder.Catalog.{
