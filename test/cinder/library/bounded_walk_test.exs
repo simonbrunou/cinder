@@ -172,9 +172,16 @@ defmodule Cinder.Library.BoundedWalkTest do
       assert_receive {:caller, caller}
       assert_receive {:walking, _walk}
       ref = Process.monitor(caller)
-      send(owner, :close)
-      assert_receive {:DOWN, ^ref, :process, ^caller, {:shutdown, :closed}}
-      _ = :sys.get_state(guard)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(owner, :close)
+          assert_receive {:DOWN, ^ref, :process, ^caller, {:shutdown, :closed}}
+          _ = :sys.get_state(guard)
+        end)
+
+      # #1361: the warning names the reason the guard's monitor on the caller gave.
+      assert log =~ "(the caller's monitor reported {:shutdown, :closed})"
 
       assert {:error, :timeout} = run(guard, "/downloads", spy_walk())
       refute_received :spy_walked
@@ -185,6 +192,7 @@ defmodule Cinder.Library.BoundedWalkTest do
 
       assert log =~ ~s(directory walk under "/downloads")
       assert log =~ "its caller exited before reporting it past its deadline"
+      assert log =~ "(the caller's monitor reported :killed)"
     end
 
     test "is admitted again under its root once it returns by itself", %{guard: guard} do
@@ -219,12 +227,40 @@ defmodule Cinder.Library.BoundedWalkTest do
       assert_received :spy_walked
     end
 
+    test "names :noproc in its warning when its caller had exited before its task reached the " <>
+           "guard (#1361)",
+         %{guard: guard} do
+      test = self()
+      walk = stuck_walk()
+      relay = start_caller(fn -> relay(guard, [], test) end)
+
+      caller =
+        start_caller(fn ->
+          BoundedWalk.run("/downloads", walk, server: relay, timeout_ms: @deadline)
+        end)
+
+      assert_receive :start_held
+      kill(caller)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(relay, :let_start)
+          assert_receive {:walking, _hung}
+          :sys.get_state(guard)
+        end)
+
+      assert log =~ "its caller exited before reporting it past its deadline"
+      assert log =~ "(the caller's monitor reported :noproc)"
+      assert {:error, :timeout} = run(guard, "/downloads", spy_walk())
+      refute_received :spy_walked
+    end
+
     test "is not warned about when its caller reported it stuck before its task reached the " <>
            "guard, and that caller then exits",
          %{guard: guard} do
       test = self()
       walk = stuck_walk()
-      relay = start_caller(fn -> relay(guard, []) end)
+      relay = start_caller(fn -> relay(guard, [], test) end)
 
       caller =
         start_caller(fn ->
@@ -501,19 +537,21 @@ defmodule Cinder.Library.BoundedWalkTest do
   end
 
   # Stands in for `guard` and passes each call on to it, which replies to the caller directly,
-  # except a walk task's `{:started, ...}`: that waits until the relay is sent `:let_start`.
-  defp relay(guard, held) do
+  # except a walk task's `{:started, ...}`: that waits until the relay is sent `:let_start`, and the
+  # relay tells `test` it holds one with `:start_held`.
+  defp relay(guard, held, test) do
     receive do
       {:"$gen_call", _from, {:started, _root, _caller, _task}} = call ->
-        relay(guard, [call | held])
+        send(test, :start_held)
+        relay(guard, [call | held], test)
 
       :let_start ->
         Enum.each(held, &send(guard, &1))
-        relay(guard, [])
+        relay(guard, [], test)
 
       call ->
         send(guard, call)
-        relay(guard, held)
+        relay(guard, held, test)
     end
   end
 

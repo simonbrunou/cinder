@@ -22,7 +22,8 @@ defmodule Cinder.Library.BoundedWalk do
   since no caller is left to report the deadline (#1168). A page's scan exits that way when the
   page is closed or reloaded: `start_async` links it to the LiveView. So a reload no longer starts
   one more walk on a wedged mount, at a cost: a healthy walk whose page closes mid-walk counts as
-  stuck until it finishes, and the guard logs a warning for it.
+  stuck until it finishes, and the guard logs a warning for it that names the reason its monitor
+  on the caller reported (#1361).
 
   A refused walk never starts. The cap gates admissions: walks already running when the first one
   crosses its deadline can still end up stuck, at most one more per caller walking at that moment.
@@ -212,24 +213,26 @@ defmodule Cinder.Library.BoundedWalk do
   end
 
   @impl true
-  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
+  def handle_info({:DOWN, ref, :process, pid, reason}, state) do
     case Enum.find(state.walks, fn {_task, walk} -> walk.caller == ref end) do
-      {task, walk} -> {:noreply, orphan(state, task, walk.root)}
+      {task, walk} -> {:noreply, orphan(state, task, walk.root, reason)}
       nil -> {:noreply, forget(state, pid)}
     end
   end
 
   # The walk's caller exited before it reported the walk stuck, so nobody will: the walk counts as
   # stuck now, healthy or not, until it returns (#1168). A task that already exited without
-  # returning, such as a killed one, is not counted: its own `:DOWN` is on its way.
-  defp orphan(state, task, root) do
+  # returning, such as a killed one, is not counted: its own `:DOWN` is on its way. The warning
+  # names `reason`, the caller's exit reason, or `:noproc` when the caller had exited before the
+  # guard monitored it (#1361).
+  defp orphan(state, task, root, reason) do
     state = %{state | walks: Map.delete(state.walks, task)}
 
     if Process.alive?(task) do
       Logger.warning(
         "directory walk under #{inspect(root)} still runs, but its caller exited before " <>
-          "reporting it past its deadline; a mount may be wedged. New walks under it fail " <>
-          "until it returns."
+          "reporting it past its deadline (the caller's monitor reported #{inspect(reason)}); " <>
+          "a mount may be wedged. New walks under it fail until it returns."
       )
 
       put_in(state.stuck[task], root)

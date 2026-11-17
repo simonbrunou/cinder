@@ -8,6 +8,9 @@ defmodule Cinder.BoundedWalkHelpers do
 
   alias Cinder.Library.BoundedWalk
 
+  # `hang_walk/1` stores here, in the walk's process dictionary, when it sent `{:walking, pid}`.
+  @walking_since {__MODULE__, :walking_since}
+
   @doc """
   Hangs the calling process, a walk, the way a read on a wedged mount does: reports
   `{:walking, pid}` to `test`, then waits until sent `:release` or until `test` ends. Returns
@@ -15,6 +18,7 @@ defmodule Cinder.BoundedWalkHelpers do
   """
   def hang_walk(test) do
     ref = Process.monitor(test)
+    Process.put(@walking_since, System.monotonic_time(:millisecond))
     send(test, {:walking, self()})
 
     receive do
@@ -77,16 +81,57 @@ defmodule Cinder.BoundedWalkHelpers do
   A LiveView that stops on its own socket's close waits up to 5 s for its async tasks in a test
   (`await_asyncs_on_graceful_shutdown`), never in production: this one stops at once, as in
   production.
+
+  The scan is the head of the walk's `$callers`. When it exits with another reason, or had
+  already exited before the page closed, the helper fails at once with a message saying so (#1361).
+  The second message says whether the LiveView was still alive then, and how long after `walk`
+  sent `{:walking, walk}`, in a walk `hang_walk/1` holds.
   """
   def close_page_during_walk(live_view, walk) do
     {:dictionary, dictionary} = Process.info(walk, :dictionary)
     [scan | _callers] = Keyword.fetch!(dictionary, :"$callers")
     ref = Process.monitor(scan)
+    # What the helper saw when it monitored the scan, for the message on `:noproc`.
+    seen = %{live_view_alive?: Process.alive?(live_view), at: System.monotonic_time(:millisecond)}
     Process.flag(:trap_exit, true)
     Process.exit(live_view, {:shutdown, :closed})
-    assert_receive {:DOWN, ^ref, :process, ^scan, {:shutdown, :closed}}
+    assert_receive {:DOWN, ^ref, :process, ^scan, reason}
+    # Also on a failure, so the guard's warning about the scan lands in the test's captured log.
     _ = :sys.get_state(BoundedWalk)
-    :ok
+
+    case reason do
+      {:shutdown, :closed} ->
+        :ok
+
+      :noproc ->
+        flunk(scan_gone_message(scan, live_view, seen, walk, dictionary))
+
+      other ->
+        flunk(
+          "close_page_during_walk/2: the scan #{inspect(scan)} exited with #{inspect(other)}, " <>
+            "not {:shutdown, :closed}, when the page closed."
+        )
+    end
+  end
+
+  # The scan was gone when the helper monitored it, before the helper stopped the LiveView.
+  defp scan_gone_message(scan, live_view, seen, walk, dictionary) do
+    live_view_state = if seen.live_view_alive?, do: "was still alive", else: "had already exited"
+
+    since =
+      case List.keyfind(dictionary, @walking_since, 0) do
+        {_key, sent_at} ->
+          ", #{seen.at - sent_at} ms after the walk sent " <>
+            "{:walking, #{inspect(walk)}}"
+
+        nil ->
+          ""
+      end
+
+    "close_page_during_walk/2: the scan #{inspect(scan)} had already exited before the page " <>
+      "closed (its monitor answered :noproc). The LiveView #{inspect(live_view)} " <>
+      "#{live_view_state} at that point#{since}. The guard's warning in the log, when logged, " <>
+      "names the reason its own monitor on the scan reported."
   end
 
   @doc """
