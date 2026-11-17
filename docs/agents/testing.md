@@ -103,6 +103,13 @@
   does not apply. On #1404 (for #1361) the test matched only the elapsed time's digits: a
   Standards review found a constant surviving and a re-check found `0` surviving, 23 minutes
   from the first finding to the last fix.
+- When a change gives callers an argument that picks a rule set, such as a kind atom or a mode,
+  the mutant list sets each call site to each other value the argument takes, besides the
+  mutants of the module behind it. A mutant inside the module leaves a caller that passes the
+  wrong value untested. On #1411 (PR #1422), the mutants passing `:standard` to
+  `EpisodeNumbering` at the anime import, the reservation and `Anime.scene_seasons/2` survived
+  their test files while every mutant inside the module was killed. A Spec review found them,
+  and the fix took a test commit and a second mutation run.
 - Run the branch's new tests, or a throwaway test, against the merge base's code with
   `scripts/test-at-base <merge base> <changed lib file>... -- <mix test.unchecked argument>...`:
   the red run before a fix, and the runs that prove a changelog sentence about what Cinder did
