@@ -77,8 +77,12 @@ write.
   unreported 45 minutes after you started it has hung: `task_cancel` it and start a fresh one.
 - Read a red job's log before rerunning it. When a check is red on code your diff does not touch,
   read what the repo's docs say about red runs, and tell the orchestrator when it looks
-  repo-wide. Send to the orchestrator with `t3_thread_send` and mode `steer`, so the message
-  reaches its running turn.
+  repo-wide.
+- Send each message to the orchestrator (a red check, a CI window, an issue number) with
+  `t3_thread_send` and mode `steer`, so it reaches the orchestrator's running turn. When `steer`
+  fails with `thread_not_sendable`, send the message again with mode `auto`, which starts an
+  idle thread, steers a running turn or queues. On #1412 the orchestrator had no running turn,
+  and `auto` started one.
 - When the orchestrator asks you to hold pushes and reruns until a stated time, hold them. When
   another repo's CI load keeps your job over its time budget, ask the orchestrator for such a
   window.
