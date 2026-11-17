@@ -382,6 +382,12 @@
   The cases in this bullet and the one above took a review and two re-check rounds, about
   47 minutes from the first finding to the last fix. `test/code_health/req_stub_sleep_test.exs`
   fails a sleep in a `Req.Test` stub's `fn`; its header names forms it skips.
+- A test that a request ends at its `receive_timeout` sends it to `Cinder.Test.SilentServer`, a
+  127.0.0.1 socket that never answers, through `req_options` that set `retry: false` and no
+  plug. The `Req.Test` plug never applies `receive_timeout`: a stub that answered 500 ms late
+  under a 100 ms `receive_timeout` still returned `{:ok, _}`. Req's default retry turned a
+  100 ms timeout against the socket into 7.4 s. PR #1428 (for #1414) added the helper for
+  `prowlarr_deadline_test.exs` and `libre_translate_test.exs`, which show the elapsed bound.
 - A test that polls until a timer fires (a shrunk `ownership_timeout`, a lease, a TTL) runs
   `mix test.unchecked --repeat-until-failure 1000 <file>:<line>` before review. Each repeat runs
   the whole selection, so name the test's line. A poll that lands as the timer fires fails in a
