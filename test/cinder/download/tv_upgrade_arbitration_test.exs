@@ -550,7 +550,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
   # #291: the declined release's subtitles must not be hardlinked next to the file the episode
   # KEPT, but they belong at dest wherever the file there IS the release's: the fall-through
   # placement, and the release's own video (#822). The stage's outcome tells them apart, and
-  # `StagedImport.after_commit/4` links nothing for a `:kept` stage (#784).
+  # `StagedImport.place_video/5` links nothing for a `:kept` stage (#784).
   describe "sidecars on a declined keep" do
     @tag :tmp_dir
     test "the fall-through placement takes the release's subtitles", %{tmp_dir: tmp} do

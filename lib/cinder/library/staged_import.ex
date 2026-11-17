@@ -5,10 +5,10 @@ defmodule Cinder.Library.StagedImport do
   goes through it.
 
   A stager (`Cinder.Library`, `Cinder.Library.EbookImport`, `Cinder.Library.AudiobookImport`)
-  builds the handle with `new/0`, `place/5`, `after_commit/4` and `put_record/2`. Everyone else
-  treats it as opaque: they pass it to `commit/2` with their Catalog or Books write, or abandon it
-  with `rollback/1`. The one value a caller reads is the stager's **record** (`record/1`), the
-  payload in its writer's own argument shape.
+  builds the handle with `new/0`, `place/5` (`place_video/5` for a video), `after_commit/3` and
+  `put_record/2`. Everyone else treats it as opaque: they pass it to `commit/2` with their Catalog
+  or Books write, or abandon it with `rollback/1`. The one value a caller reads is the stager's
+  **record** (`record/1`), the payload in its writer's own argument shape.
 
   ## Commit
 
@@ -48,12 +48,12 @@ defmodule Cinder.Library.StagedImport do
            dest: String.t(),
            outcome: StageEngine.outcome(),
            effect: effect() | nil,
-           link_sidecars_from: String.t() | nil
+           sidecars: [{String.t(), String.t()}]
          }
 
   @typedoc """
-  What a staged file's commit runs, besides linking the download's sidecars. The list is the
-  sidecar languages the stager recorded for the file.
+  What a staged file's commit runs, besides linking the release's sidecars (`place_video/5`). The
+  list is the sidecar languages the stager recorded for the file.
   """
   @type effect ::
           {:movie, Cinder.Catalog.Movie.t(), [String.t()] | nil}
@@ -108,36 +108,66 @@ defmodule Cinder.Library.StagedImport do
   @spec place(t(), String.t(), String.t(), String.t(), keyword()) ::
           {:ok, t(), StageEngine.outcome()} | {:error, term()}
   def place(%__MODULE__{} = staged, source, dest, root, opts) do
-    on_collision = Keyword.get(opts, :on_collision, :keep)
-    extensions = Keyword.fetch!(opts, :extensions)
-
-    with {:ok, id, outcome} <- StageEngine.stage(source, dest, root, on_collision, extensions) do
-      stage = %{id: id, dest: dest, outcome: outcome, effect: nil, link_sidecars_from: nil}
-      {:ok, %{staged | stages: staged.stages ++ [stage]}, outcome}
+    with {:ok, staged, outcome, _sidecars} <-
+           stage(staged, source, dest, root, opts, fn _ -> nil end) do
+      {:ok, staged, outcome}
     end
   end
 
   @doc """
-  Registers what committing the file staged at `dest` runs: `effect` (see `t:effect/0`), and with
-  `link_sidecars_from: source` a hardlink of `source`'s sidecar subtitles next to `dest`, made
-  first. A stage that kept another file at `dest` (`:kept`) links none: those subtitles were
-  timed for `source`, not for the file that stayed (#784). The first registration for a `dest`
-  wins. A staged file with none commits silently, as every book does.
-  """
-  @spec after_commit(t(), String.t(), effect() | nil, keyword()) :: t()
-  def after_commit(%__MODULE__{} = staged, dest, effect, opts \\ []) do
-    from = Keyword.get(opts, :link_sidecars_from)
+  `place/5` for a video, which also settles the release's sidecar subtitles: with
+  `sidecars: true` (the release came in a folder), the ones `Cinder.Library.Sidecars.files/1`
+  lists next to `source`.
 
+  The listing runs once, here. The commit links each of those files next to `dest` that
+  `Cinder.Library.Sidecars.link_listed/2` can (a hardlink, or a copy where the filesystem refuses
+  one), and no other, before the stage's effect. The fourth element returns their languages, each
+  once, for the stager to record. A sidecar added to the release after this call is neither
+  linked nor recorded.
+
+  The fourth element is `nil` when the stage takes no release sidecars: without
+  `sidecars: true`, and on `:kept`, since those subtitles were timed for `source`, not for the
+  file that stayed at `dest` (#784). A folder with no sidecars returns `[]`.
+  """
+  @spec place_video(t(), String.t(), String.t(), String.t(), keyword()) ::
+          {:ok, t(), StageEngine.outcome(), [String.t()] | nil} | {:error, term()}
+  def place_video(%__MODULE__{} = staged, source, dest, root, opts) do
+    list_sidecars = fn
+      :kept -> nil
+      _outcome -> if Keyword.get(opts, :sidecars, false), do: Sidecars.files(source)
+    end
+
+    with {:ok, staged, outcome, sidecars} <-
+           stage(staged, source, dest, root, opts, list_sidecars) do
+      {:ok, staged, outcome, sidecar_languages(sidecars)}
+    end
+  end
+
+  defp stage(staged, source, dest, root, opts, list_sidecars) do
+    on_collision = Keyword.get(opts, :on_collision, :keep)
+    extensions = Keyword.fetch!(opts, :extensions)
+
+    with {:ok, id, outcome} <- StageEngine.stage(source, dest, root, on_collision, extensions) do
+      sidecars = list_sidecars.(outcome)
+      stage = %{id: id, dest: dest, outcome: outcome, effect: nil, sidecars: sidecars || []}
+      {:ok, %{staged | stages: staged.stages ++ [stage]}, outcome, sidecars}
+    end
+  end
+
+  defp sidecar_languages(nil), do: nil
+  defp sidecar_languages(sidecars), do: Sidecars.languages(sidecars)
+
+  @doc """
+  Registers `effect` (see `t:effect/0`) as what committing the file staged at `dest` runs, after
+  the sidecar links `place_video/5` settled. The first registration for a `dest` wins. A staged
+  file with neither commits silently, as every book does.
+  """
+  @spec after_commit(t(), String.t(), effect() | nil) :: t()
+  def after_commit(%__MODULE__{} = staged, dest, effect) do
     stages =
       Enum.map(staged.stages, fn
-        %{dest: ^dest, effect: nil, link_sidecars_from: nil, outcome: :kept} = stage ->
-          %{stage | effect: effect}
-
-        %{dest: ^dest, effect: nil, link_sidecars_from: nil} = stage ->
-          %{stage | effect: effect, link_sidecars_from: from}
-
-        stage ->
-          stage
+        %{dest: ^dest, effect: nil} = stage -> %{stage | effect: effect}
+        stage -> stage
       end)
 
     %{staged | stages: stages}
@@ -194,15 +224,11 @@ defmodule Cinder.Library.StagedImport do
     stage.id |> StageEngine.rollback() |> log_pending("rollback", stage)
   end
 
-  defp run_effects(%{effect: nil, link_sidecars_from: nil}), do: :ok
+  defp run_effects(%{effect: nil, sidecars: []}), do: :ok
 
   defp run_effects(stage) do
     if match?({:claimed, _row}, ImportStage.claim_effects(stage.id)) do
-      placed =
-        if stage.link_sidecars_from,
-          do: Sidecars.link(stage.link_sidecars_from, stage.dest),
-          else: []
-
+      placed = Sidecars.link_listed(stage.sidecars, stage.dest)
       run_effect(stage.effect, stage.dest, placed)
     end
 

@@ -151,41 +151,47 @@ defmodule Cinder.Library.ImportedQuality do
   `dest:` with `outcome`, when `incoming` is the download's `capture/3`.
 
   The incoming quality belongs only to bytes that landed (`:placed`, `:replaced`), with the
-  sidecar languages of `sidecars_from:` (the download file, when it came in a folder), or to a
-  forced re-import of the very same file (`forced?: true`, a manual re-import after a crash).
-  Otherwise the row keeps what it recorded, or, when its quality is unrecorded, adopts the file it
-  found, with the sidecars already at `dest` (issue #128). A `:kept` file logs that the download
-  was not an upgrade.
+  `release_sidecars:` languages, or to a forced re-import of the very same file (`forced?: true`,
+  a manual re-import after a crash). Otherwise the row keeps what it recorded, or, when its
+  quality is unrecorded, adopts the file it found, with the sidecars already at `dest`
+  (issue #128). A `:kept` file logs that the download was not an upgrade.
+
+  `release_sidecars:` is the fourth element of `Cinder.Library.StagedImport.place_video/5`: the
+  languages of the release's sidecars the commit links next to `dest` (`[]` for a release folder
+  with none), or `nil` when the stage takes no release sidecars at all. That call settles which
+  outcome links them, so a `:kept` stage never has any.
 
   On `:same_file` the file at `dest` is the download's own video, and the commit links the
-  sidecars of `sidecars_from:` next to it. So wherever that outcome records the incoming quality,
-  forced or adopted, its sidecar list is the languages already at `dest` followed by those of
-  `sidecars_from:`, each once (issue #822). A forced re-import without `sidecars_from:` records
-  the incoming quality as it is.
+  release's sidecars next to it. So wherever that outcome records the incoming quality, forced or
+  adopted, its sidecar list is the languages already at `dest` followed by `release_sidecars:`,
+  each once (issue #822). A forced re-import with `release_sidecars: nil` records the incoming
+  quality as it is. A recorded row that is not forced keeps its own list, though the commit still
+  links the release's sidecars.
   """
   @spec for_outcome(t(), :placed | :replaced | :same_file | :kept, row(), keyword()) :: t()
   def for_outcome(%__MODULE__{} = incoming, outcome, _record, opts)
       when outcome in [:placed, :replaced] do
-    case Keyword.get(opts, :sidecars_from) do
+    case Keyword.get(opts, :release_sidecars) do
       nil -> incoming
-      source -> %{incoming | sidecar_subtitles: sidecar_languages([source])}
+      languages -> %{incoming | sidecar_subtitles: languages}
     end
   end
 
   def for_outcome(%__MODULE__{} = incoming, :same_file, record, opts) do
-    source = Keyword.get(opts, :sidecars_from)
-    videos = Enum.reject([Keyword.fetch!(opts, :dest), source], &is_nil/1)
+    release = Keyword.get(opts, :release_sidecars)
+    dest = Keyword.fetch!(opts, :dest)
+    with_release = fn -> Enum.uniq(sidecar_languages([dest]) ++ (release || [])) end
 
-    case {Keyword.get(opts, :forced?, false), source} do
+    case {Keyword.get(opts, :forced?, false), release} do
       {true, nil} -> incoming
-      {true, _source} -> %{incoming | sidecar_subtitles: sidecar_languages(videos)}
-      {false, _source} -> existing(record, incoming, videos)
+      {true, _release} -> %{incoming | sidecar_subtitles: with_release.()}
+      {false, _release} -> existing(record, incoming, with_release)
     end
   end
 
   def for_outcome(%__MODULE__{} = incoming, :kept, record, opts) do
     dest = Keyword.fetch!(opts, :dest)
-    kept = existing(record, incoming, [dest])
+    kept = existing(record, incoming, fn -> sidecar_languages([dest]) end)
 
     Logger.warning(
       "kept existing #{inspect(kept.resolution)} file at #{dest}; new release not an upgrade"
@@ -230,18 +236,19 @@ defmodule Cinder.Library.ImportedQuality do
     %{primary | sidecar_subtitles: sidecars}
   end
 
-  # An unrecorded row adopts the incoming quality, with the sidecars next to each of `videos`.
-  defp existing(record, incoming, videos) do
+  # An unrecorded row adopts the incoming quality, with the sidecar languages `sidecars` lists. A
+  # recorded row lists none, so its import walks no folder for them.
+  defp existing(record, incoming, sidecars) do
     recorded = of(record)
 
     if unrecorded?(recorded),
-      do: %{incoming | sidecar_subtitles: sidecar_languages(videos)},
+      do: %{incoming | sidecar_subtitles: sidecars.()},
       else: recorded
   end
 
   # The languages of the sidecars next to each of `videos`, in order, each once.
   defp sidecar_languages(videos),
-    do: videos |> Enum.flat_map(&Sidecars.files/1) |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+    do: videos |> Enum.flat_map(&Sidecars.files/1) |> Sidecars.languages()
 
   @doc """
   `record`'s imported quality with its languages read again from its library files: each file

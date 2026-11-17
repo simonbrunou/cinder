@@ -147,22 +147,21 @@ defmodule Cinder.Library do
 
     with {:ok, dest} <- safe_destination(dest, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, staged, outcome} <-
-           StagedImport.place(staged, source.path, dest, root,
+         {:ok, staged, outcome, release_sidecars} <-
+           StagedImport.place_video(staged, source.path, dest, root,
              on_collision: context.on_collision,
-             extensions: @video_exts
+             extensions: @video_exts,
+             sidecars: context.folder?
            ) do
       quality =
         ImportedQuality.for_outcome(context.quality, outcome, movie,
           dest: dest,
           forced?: context.forced?,
-          sidecars_from: if(context.folder?, do: source.path)
+          release_sidecars: release_sidecars
         )
 
       staged =
-        StagedImport.after_commit(staged, dest, {effect, movie, quality.sidecar_subtitles},
-          link_sidecars_from: if(context.folder?, do: source.path)
-        )
+        StagedImport.after_commit(staged, dest, {effect, movie, quality.sidecar_subtitles})
 
       {:ok, staged, %{dest: dest, quality: quality}}
     end
@@ -363,7 +362,7 @@ defmodule Cinder.Library do
       if placed?(stage.outcome) do
         {:ok,
          staged
-         |> register_episode_effect([episode], stage, folder?)
+         |> register_episode_effect([episode], stage)
          |> StagedImport.put_record(stage.dest)}
       else
         StagedImport.rollback(staged)
@@ -880,7 +879,7 @@ defmodule Cinder.Library do
 
   # The decline stages with the download's own `folder?`, so the release's sidecars go wherever the
   # file at `dest` is the release's: the fall-through placement (#291) and `:same_file` (#822). A
-  # `:kept` stage links none of them (`StagedImport.after_commit/4`, #784): hardlinking the DECLINED
+  # `:kept` stage links none of them (`StagedImport.place_video/5`, #784): hardlinking the DECLINED
   # release's subtitles next to the file the episode KEPT is the same lie as recording its quality.
   defp fresh_keep_stage(staged, ep, source, download) do
     decline = fn _new_quality -> false end
@@ -898,7 +897,7 @@ defmodule Cinder.Library do
              decline
            ) do
       kept = %{stage | quality: ImportedQuality.declined(stage.quality, stage.outcome, ep)}
-      {:ok, register_episode_effect(staged, [ep], kept, download.folder?), kept}
+      {:ok, register_episode_effect(staged, [ep], kept), kept}
     end
   end
 
@@ -923,18 +922,17 @@ defmodule Cinder.Library do
              collision,
              upgrade_fun
            ) do
-      {:ok, register_episode_effect(staged, episodes, stage, download.folder?), stage}
+      {:ok, register_episode_effect(staged, episodes, stage), stage}
     end
   end
 
-  # Committing an episode file scans the TV library and fetches one subtitle for the file; a
-  # folder download also hardlinks its sidecars next to it first.
-  defp register_episode_effect(staged, episodes, stage, folder?) do
+  # Committing an episode file scans the TV library and fetches one subtitle for the file, after
+  # the sidecar links `StagedImport.place_video/5` settled for a folder download.
+  defp register_episode_effect(staged, episodes, stage) do
     StagedImport.after_commit(
       staged,
       stage.dest,
-      {:episodes, episodes, stage.quality.sidecar_subtitles},
-      link_sidecars_from: if(folder?, do: stage.source)
+      {:episodes, episodes, stage.quality.sidecar_subtitles}
     )
   end
 
@@ -965,19 +963,20 @@ defmodule Cinder.Library do
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          forced? = collision == :force,
          on_collision = if(forced? or upgrade_fun.(new_q), do: :replace, else: :keep),
-         {:ok, staged, outcome} <-
-           StagedImport.place(staged, source, dest, root,
+         {:ok, staged, outcome, release_sidecars} <-
+           StagedImport.place_video(staged, source, dest, root,
              on_collision: on_collision,
-             extensions: @video_exts
+             extensions: @video_exts,
+             sidecars: download.folder?
            ) do
       quality =
         ImportedQuality.for_outcome(new_q, outcome, ep,
           dest: dest,
           forced?: forced?,
-          sidecars_from: if(download.folder?, do: source)
+          release_sidecars: release_sidecars
         )
 
-      {:ok, staged, %{dest: dest, quality: quality, outcome: outcome, source: source}}
+      {:ok, staged, %{dest: dest, quality: quality, outcome: outcome}}
     end
   end
 

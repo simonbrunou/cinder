@@ -109,6 +109,11 @@ defmodule Cinder.Library.StagedImportTest do
     StagedImport.place(staged, source, dest, root, opts)
   end
 
+  defp place_video(source, dest, root, opts \\ []) do
+    opts = Keyword.put_new(opts, :extensions, @video)
+    StagedImport.place_video(StagedImport.new(), source, dest, root, opts)
+  end
+
   # The writer every catalog write is: one transaction that marks the ids committed.
   defp record_all(_record, ids), do: Repo.transaction(fn -> ImportStage.mark_committed!(ids) end)
 
@@ -426,14 +431,67 @@ defmodule Cinder.Library.StagedImportTest do
       File.mkdir_p!(Path.dirname(dest))
       counter = scan_counter()
 
-      {:ok, staged, :placed} = place(source, dest, library)
-
-      staged =
-        StagedImport.after_commit(staged, dest, {:movie, movie(), []}, link_sidecars_from: source)
+      {:ok, staged, :placed, ["en"]} = place_video(source, dest, library, sidecars: true)
+      staged = StagedImport.after_commit(staged, dest, {:movie, movie(), []})
 
       assert {:ok, :ok} = StagedImport.commit(staged, &record_all/2)
       assert scans(counter) == 1
       assert File.read!(Path.rootname(dest) <> ".en.srt") == "subtitle"
+    end
+
+    test "a video placed without sidecars: true lists and links none", %{
+      downloads: downloads,
+      library: library
+    } do
+      {source, dest} = files(downloads, library, "NoSidecars")
+      File.write!(Path.rootname(source) <> ".en.srt", "subtitle")
+      counter = scan_counter()
+
+      {:ok, staged, :placed, nil} = place_video(source, dest, library)
+      staged = StagedImport.after_commit(staged, dest, {:movie, movie(), []})
+
+      assert {:ok, :ok} = StagedImport.commit(staged, &record_all/2)
+      assert scans(counter) == 1
+      refute File.exists?(Path.rootname(dest) <> ".en.srt")
+    end
+
+    # The commit links the files `place_video/5` listed, not the folder as it is at commit time.
+    test "links the sidecars listed at placement, not ones added after it", %{
+      downloads: downloads,
+      library: library
+    } do
+      {source, dest} = files(downloads, library, "Listed")
+      File.write!(Path.rootname(source) <> ".en.srt", "subtitle")
+      counter = scan_counter()
+
+      {:ok, staged, :placed, ["en"]} = place_video(source, dest, library, sidecars: true)
+      File.write!(Path.rootname(source) <> ".de.srt", "late")
+      staged = StagedImport.after_commit(staged, dest, {:movie, movie(), []})
+
+      assert {:ok, :ok} = StagedImport.commit(staged, &record_all/2)
+      assert scans(counter) == 1
+      assert File.read!(Path.rootname(dest) <> ".en.srt") == "subtitle"
+      refute File.exists?(Path.rootname(dest) <> ".de.srt")
+    end
+
+    # #1343: a generic Chinese sidecar was recorded as Cantonese `cn`.
+    test "returns a generic Chinese sidecar's language as zh", %{
+      downloads: downloads,
+      library: library
+    } do
+      {source, dest} = files(downloads, library, "Chinese")
+      File.write!(Path.rootname(source) <> ".chi.srt", "subtitle")
+      assert {:ok, staged, :placed, ["zh"]} = place_video(source, dest, library, sidecars: true)
+      StagedImport.rollback(staged)
+    end
+
+    test "a folder with no sidecars returns an empty list, not nil", %{
+      downloads: downloads,
+      library: library
+    } do
+      {source, dest} = files(downloads, library, "Empty")
+      assert {:ok, staged, :placed, []} = place_video(source, dest, library, sidecars: true)
+      StagedImport.rollback(staged)
     end
 
     test "a staged file that kept another file links none of the source's sidecars (#784)", %{
@@ -444,10 +502,8 @@ defmodule Cinder.Library.StagedImportTest do
       File.write!(Path.rootname(source) <> ".en.srt", "subtitle")
       counter = scan_counter()
 
-      {:ok, staged, :kept} = place(source, dest, library)
-
-      staged =
-        StagedImport.after_commit(staged, dest, {:movie, movie(), []}, link_sidecars_from: source)
+      {:ok, staged, :kept, nil} = place_video(source, dest, library, sidecars: true)
+      staged = StagedImport.after_commit(staged, dest, {:movie, movie(), []})
 
       assert {:ok, :ok} = StagedImport.commit(staged, &record_all/2)
       assert scans(counter) == 1

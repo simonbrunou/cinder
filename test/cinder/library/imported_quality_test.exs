@@ -20,14 +20,10 @@ defmodule Cinder.Library.ImportedQualityTest do
   defp real_disk(%{tmp_dir: tmp}) do
     downloads = Path.join(tmp, "downloads")
     movies = Path.join(tmp, "movies")
-    source = Path.join([downloads, "Movie.2020.2160p.WEB-GRP", "Movie.2020.2160p.WEB-GRP.mkv"])
     dest = Path.join([movies, "Movie (2020)", "Movie (2020).mkv"])
-
-    for {video, language} <- [{source, "fr"}, {dest, "en"}] do
-      File.mkdir_p!(Path.dirname(video))
-      File.write!(video, "video")
-      File.write!(Path.rootname(video) <> ".#{language}.srt", "1")
-    end
+    File.mkdir_p!(Path.dirname(dest))
+    File.write!(dest, "video")
+    File.write!(Path.rootname(dest) <> ".en.srt", "1")
 
     ConfigCase.put_env(
       filesystem: Cinder.Library.Filesystem.Disk,
@@ -37,7 +33,7 @@ defmodule Cinder.Library.ImportedQualityTest do
       tv_library_path: Path.join(tmp, "tv")
     )
 
-    %{downloads: downloads, source: source, dest: dest}
+    %{downloads: downloads, dest: dest}
   end
 
   # The fence on "one module lists the imported fields": a column a schema gains without the
@@ -176,45 +172,48 @@ defmodule Cinder.Library.ImportedQualityTest do
       imported_sidecar_subtitles: ["fr"]
     }
 
-    # #1343: a generic Chinese sidecar was recorded as Cantonese `cn`.
-    test "a placed file records a download's generic Chinese sidecar as zh", ctx do
-      File.rm!(Path.rootname(ctx.source) <> ".fr.srt")
-      File.write!(Path.rootname(ctx.source) <> ".chi.srt", "1")
-
-      assert ImportedQuality.for_outcome(@incoming, :placed, @recorded,
-               dest: ctx.dest,
-               sidecars_from: ctx.source
-             ) == %{@incoming | sidecar_subtitles: ["zh"]}
-    end
-
-    test "a placed file records the incoming quality and its download's sidecars", ctx do
+    test "a placed file records the incoming quality and the release's sidecar languages", ctx do
       for outcome <- [:placed, :replaced] do
         assert ImportedQuality.for_outcome(@incoming, outcome, @recorded,
                  dest: ctx.dest,
-                 sidecars_from: ctx.source
+                 release_sidecars: ["fr"]
                ) == %{@incoming | sidecar_subtitles: ["fr"]}
+
+        # A release folder with no sidecars records none; the ones at `dest` are not the release's.
+        assert ImportedQuality.for_outcome(@incoming, outcome, @recorded,
+                 dest: ctx.dest,
+                 release_sidecars: []
+               ) == @incoming
 
         assert ImportedQuality.for_outcome(@incoming, outcome, @recorded, dest: ctx.dest) ==
                  @incoming
       end
     end
 
-    # Issue #822: the commit links the download's sidecars next to its own video, so the record
+    # Issue #822: the commit links the release's sidecars next to its own video, so the record
     # lists them with the ones already at `dest`.
     test "a forced re-import of the same file records the incoming quality and the sidecars",
          ctx do
       assert ImportedQuality.for_outcome(@incoming, :same_file, @recorded,
                dest: ctx.dest,
                forced?: true,
-               sidecars_from: ctx.source
+               release_sidecars: ["fr"]
              ) == %{@incoming | sidecar_subtitles: ["en", "fr"]}
+
+      # `[]` (a release folder with no sidecars) still lists the ones at `dest`; `nil` (no
+      # release sidecars at all) records the incoming quality as it is.
+      assert ImportedQuality.for_outcome(@incoming, :same_file, @recorded,
+               dest: ctx.dest,
+               forced?: true,
+               release_sidecars: []
+             ) == %{@incoming | sidecar_subtitles: ["en"]}
 
       assert ImportedQuality.for_outcome(@incoming, :same_file, @recorded,
                dest: ctx.dest,
                forced?: true
              ) == @incoming
 
-      # A first attempt that already linked the download's French sidecar lists it once. Sorted:
+      # A first attempt that already linked the release's French sidecar lists it once. Sorted:
       # the two at `dest` come in directory order.
       File.write!(Path.rootname(ctx.dest) <> ".fr.srt", "1")
 
@@ -222,7 +221,7 @@ defmodule Cinder.Library.ImportedQualityTest do
         ImportedQuality.for_outcome(@incoming, :same_file, @recorded,
           dest: ctx.dest,
           forced?: true,
-          sidecars_from: ctx.source
+          release_sidecars: ["fr"]
         )
 
       assert Enum.sort(quality.sidecar_subtitles) == ["en", "fr"]
@@ -230,7 +229,7 @@ defmodule Cinder.Library.ImportedQualityTest do
     end
 
     test "an untouched file keeps what its row recorded", ctx do
-      for opts <- [[dest: ctx.dest], [dest: ctx.dest, sidecars_from: ctx.source]] do
+      for opts <- [[dest: ctx.dest], [dest: ctx.dest, release_sidecars: ["fr"]]] do
         assert ImportedQuality.for_outcome(@incoming, :same_file, @recorded, opts) ==
                  ImportedQuality.of(@recorded)
       end
@@ -256,18 +255,13 @@ defmodule Cinder.Library.ImportedQualityTest do
       end
     end
 
-    # Issue #822: the same file is the download's own video, so its sidecars join the record. A kept
-    # file is another one, and the commit links none of them (#784).
-    @tag :capture_log
-    test "an unrecorded row adds the download's sidecars only when the file is the same", ctx do
-      unrecorded = %Movie{}
-      opts = [dest: ctx.dest, sidecars_from: ctx.source]
+    # Issue #822: the same file is the release's own video, so its sidecars join the record. A
+    # kept file is another one, and `StagedImport.place_video/5` lists none for it (#784).
+    test "an unrecorded row adds the release's sidecars when the file is the same", ctx do
+      opts = [dest: ctx.dest, release_sidecars: ["fr"]]
 
-      assert ImportedQuality.for_outcome(@incoming, :same_file, unrecorded, opts) ==
+      assert ImportedQuality.for_outcome(@incoming, :same_file, %Movie{}, opts) ==
                %{@incoming | sidecar_subtitles: ["en", "fr"]}
-
-      assert ImportedQuality.for_outcome(@incoming, :kept, unrecorded, opts) ==
-               %{@incoming | sidecar_subtitles: ["en"]}
     end
   end
 

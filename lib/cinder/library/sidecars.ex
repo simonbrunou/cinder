@@ -161,6 +161,9 @@ defmodule Cinder.Library.Sidecars do
     end
   end
 
+  @doc "The languages of sidecars `files/1` listed, in order, each once."
+  def languages(sidecars), do: sidecars |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+
   @doc "SRT sidecars belonging to `source_video`, for the translation source fallback."
   def srt_files(source_video) do
     Enum.filter(files(source_video), fn {path, _language} ->
@@ -173,10 +176,16 @@ defmodule Cinder.Library.Sidecars do
   language alone would not do: a flagged or non-SRT sidecar shares it with `<video>.<lang>.srt`
   (#918).
   """
-  def link(source_video, dest_video) do
+  def link(source_video, dest_video), do: link_listed(files(source_video), dest_video)
+
+  @doc """
+  `link/2` for sidecars `files/1` already listed: places each `{path, language}` next to
+  `dest_video` (best-effort) and returns the paths it placed.
+  """
+  def link_listed(sidecars, dest_video) do
     dest_stem = Path.rootname(dest_video)
 
-    for {path, lang} <- files(source_video),
+    for {path, lang} <- sidecars,
         dest = dest_dir_name(dest_stem, path, lang),
         do_link(path, dest) == :ok do
       dest
