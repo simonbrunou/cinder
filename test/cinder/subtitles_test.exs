@@ -308,6 +308,37 @@ defmodule Cinder.SubtitlesTest do
     assert File.read!(target) == "1\n00:00:01,000 --> 00:00:02,000\nHASH SRT\n\n"
   end
 
+  test "an ID result leaves an ID-matched sidecar already in place", %{video: video} do
+    target = Subtitles.sidecar_path(video, "fr")
+    old = "1\n00:00:01,000 --> 00:00:02,000\nOLD ID SRT\n\n"
+    put!(target, old)
+
+    put_manifest!(video, %{
+      video_moviehash: nil,
+      tracks: %{"fr" => %{origin: "opensubtitles_id", file: "M.fr.srt"}}
+    })
+
+    entry = Manifest.read(video).tracks["fr"]
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn %{languages: ["fr"]} ->
+      {:ok, [result(1, "fr")]}
+    end)
+
+    # A stub that reports and succeeds: the fetch rescues a raise, so `deny/3` would prove nothing.
+    stub(Cinder.Subtitles.ProviderMock, :download, fn file_id ->
+      send(self(), {:downloaded, file_id})
+      {:ok, "1\n00:00:01,000 --> 00:00:02,000\nNEW ID SRT\n\n"}
+    end)
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+
+    refute_received {:downloaded, _file_id}
+    assert File.read!(target) == old
+    assert Manifest.read(video).tracks["fr"] == entry
+  end
+
   test "a transient moviehash read failure preserves a verified sibling's provenance", %{
     video: video
   } do

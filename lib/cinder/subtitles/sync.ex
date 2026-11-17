@@ -6,7 +6,6 @@ defmodule Cinder.Subtitles.Sync do
   alias Cinder.Subtitles.{Manifest, Moviehash, SafeFile, SidecarTransaction}
   alias Cinder.Subtitles.Sync.{EngineWorkspace, Output, Record, Reference, Scope, Timing}
 
-  @managed_origins ~w(opensubtitles_hash opensubtitles_id own_track)
   # Bumped whenever the alignment an automatic pass would produce changes, so already-"aligned"
   # sidecars are restored from their originals and re-analyzed instead of being trusted forever.
   # 3: piecewise alignment, a subtitle reference the engine reads as subtitles, and framerate
@@ -30,25 +29,23 @@ defmodule Cinder.Subtitles.Sync do
   def discover(video_path) do
     state = Manifest.read(video_path)
 
-    sidecars = if state.tracks == %{}, do: [], else: Sidecars.files(video_path)
-    entries = Enum.group_by(state.tracks, fn {_language, track} -> Map.get(track, :file) end)
+    sidecars = if Manifest.empty?(state), do: [], else: Sidecars.files(video_path)
 
     sidecars
     |> Enum.flat_map(fn {sidecar_path, _read_language} ->
-      entries
-      |> Map.get(Path.basename(sidecar_path), [])
-      |> managed_item(video_path, sidecar_path)
+      managed_item(state, video_path, sidecar_path)
     end)
     |> Enum.sort_by(&{&1.language, &1.sidecar_path})
   end
 
-  defp managed_item([{language, track}], video_path, sidecar_path) do
-    if track.origin in @managed_origins && syncable_track?(track),
-      do: [item(video_path, sidecar_path, language, track)],
-      else: []
+  defp managed_item(state, video_path, sidecar_path) do
+    with {:ok, language} <- Manifest.language_for_file(state, Path.basename(sidecar_path)),
+         true <- Manifest.syncable?(state, language) do
+      [item(video_path, sidecar_path, language, Manifest.sync_item(state, language))]
+    else
+      _none -> []
+    end
   end
-
-  defp managed_item(_none_or_several, _video_path, _sidecar_path), do: []
 
   @doc "Returns discoverable sidecars for a server-side catalog scope."
   @spec items(:library | {:movie | :series | :season | :episode, pos_integer()}) :: [item()]
@@ -551,16 +548,6 @@ defmodule Cinder.Subtitles.Sync do
       current_hash == item.sync.applied_sha256
   end
 
-  defp syncable_track?(track) do
-    is_binary(Map.get(track, :file)) and is_binary(Map.get(track, :managed_sha256)) and
-      not Map.get(track, :file_invalid?, false) and
-      not Map.get(track, :managed_sha256_invalid?, false) and
-      not Map.get(track, :sync_invalid?, false) and
-      not Map.get(track, :replacement_cleanup_sync_invalid?, false) and
-      not Map.get(track, :reset_cleanup_sync_invalid?, false) and
-      not Map.get(track, :backup_tombstone_invalid?, false)
-  end
-
   defp verify_expected(_item, nil), do: :ok
 
   defp verify_expected(item, expected_sha256) when is_binary(expected_sha256) do
@@ -586,8 +573,9 @@ defmodule Cinder.Subtitles.Sync do
     end
   end
 
-  defp item(video_path, sidecar_path, language, track) do
-    %{
+  # `fields` is `Manifest.sync_item/2`'s answer for the language.
+  defp item(video_path, sidecar_path, language, fields) do
+    Map.merge(fields, %{
       id:
         Base.url_encode64(:crypto.hash(:sha256, video_path <> <<0>> <> sidecar_path),
           padding: false
@@ -595,20 +583,14 @@ defmodule Cinder.Subtitles.Sync do
       video_path: video_path,
       sidecar_path: sidecar_path,
       language: language,
-      origin: track.origin,
-      source_moviehash: Map.get(track, :source_moviehash),
-      managed_sha256: track.managed_sha256,
-      sync: Map.get(track, :sync),
-      review_reason: cleanup_review_reason(track, sidecar_path),
-      reset_cleanup_sync: Map.get(track, :reset_cleanup_sync),
-      backup_tombstone: Map.get(track, :backup_tombstone),
+      review_reason: cleanup_review_reason(fields.sync, sidecar_path),
       label:
         "#{Path.basename(video_path)} · #{language} #{String.upcase(String.trim_leading(Path.extname(sidecar_path), "."))}"
-    }
+    })
   end
 
-  defp cleanup_review_reason(track, sidecar_path) do
-    if is_nil(Map.get(track, :sync)) and SidecarTransaction.stranded_backup?(sidecar_path),
+  defp cleanup_review_reason(sync, sidecar_path) do
+    if is_nil(sync) and SidecarTransaction.stranded_backup?(sidecar_path),
       do: "replacement_cleanup_failed"
   end
 

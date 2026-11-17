@@ -195,7 +195,7 @@ defmodule Cinder.Subtitles do
 
     if OwnTrack.wanted?(criteria_base, language) and own_track_time?(criteria_base) and
          writable?(state, language, sidecar_exists?(target)) and
-         get_in(state, [:tracks, language, :sync, :method]) != "manual" do
+         not Manifest.manual_sync?(state, language) do
       {tracks, cache} = subtitle_tracks(video_path, moviehash, cache)
       enqueue = if Map.get(criteria_base, :fresh), do: :fresh, else: :background
       track = OwnTrack.select(tracks, language)
@@ -301,7 +301,7 @@ defmodule Cinder.Subtitles do
         {:ok, cache}
 
       match == :id and exists? and
-          (origin(state, language) == "opensubtitles_id" or
+          (Manifest.origin(state, language) == "opensubtitles_id" or
              keep_verified?(state, moviehash, language)) ->
         {:ok, cache}
 
@@ -381,8 +381,6 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  @sync_records [:sync, :sync_invalid?, :reset_cleanup_sync, :reset_cleanup_sync_invalid?]
-
   # Whether the fetch goes on with the target held, as before this check: it then gives way only to
   # an embedded track `ranked_ahead/2` lets through, whatever bytes it holds. An embedded sidecar
   # is checked on its own bytes, whether or not its entry records the file and track it came from:
@@ -392,15 +390,16 @@ defmodule Cinder.Subtitles do
   # player may mis-render, and the track stays in the video. Only the bytes Cinder wrote are
   # removed: a sidecar edited since, one that cannot be read and one that changed before the
   # removal stay held. So does one with a record that only `Cinder.Subtitles.Sync` writes
-  # (`@sync_records`). A manual one is the operator's retime, which the own-track path keeps too,
-  # and Sync never handles an embedded sidecar, so any such record there is unexplained and may
-  # name a backup. A backup tombstone and a replacement's cleanup journal come with a fetched
-  # replacement, so `SidecarTransaction.remove/3` keeps them.
+  # (`Manifest.sync_record?/2`). A manual one is the operator's retime, which the own-track path
+  # keeps too, and Sync never handles an embedded sidecar, so any such record there is unexplained
+  # and may name a backup. A backup tombstone and a replacement's cleanup journal come with a
+  # fetched replacement, so `SidecarTransaction.remove/3` keeps them. With no sync record,
+  # `Manifest.written?/3` matches only the digest Cinder recorded when it wrote the sidecar.
   defp kept?(video_path, kind, language, state, target) do
-    with %{origin: "embedded"} = track <- state.tracks[language],
-         false <- Enum.any?(@sync_records, &Map.has_key?(track, &1)),
+    with "embedded" <- Manifest.origin(state, language),
+         false <- Manifest.sync_record?(state, language),
          {:ok, content} <- read(target),
-         true <- sha256(content) == track[:managed_sha256],
+         true <- Manifest.written?(state, language, sha256(content)),
          {:error, reason} <- Timing.validate(content, Path.extname(target)) do
       remove_embedded(video_path, kind, language, target, content, reason)
     else
@@ -877,7 +876,6 @@ defmodule Cinder.Subtitles do
   defp tag(result, match), do: {match, result}
 
   defp writable?(state, language, exists?), do: not exists? or Manifest.managed?(state, language)
-  defp origin(state, language), do: get_in(state, [:tracks, language, :origin])
 
   defp sidecar_exists?(path) do
     with {:ok, path} <- safe_destination(path),
@@ -1027,34 +1025,14 @@ defmodule Cinder.Subtitles do
   # erasing that journal mid-recovery would strand the crash-recovery state it exists for.
   defp keep_registered?(state, moviehash, language, target) do
     keep_verified?(state, moviehash, language) or
-      active_cleanup_journal?(state, language) or
+      Manifest.cleanup_journal?(state, language) or
       unchanged_provider_track?(state, language, target)
   end
 
-  defp active_cleanup_journal?(state, language) do
-    not is_nil(get_in(state, [:tracks, language, :reset_cleanup_sync])) or
-      not is_nil(get_in(state, [:tracks, language, :replacement_cleanup_sync]))
-  end
-
+  # A sidecar that cannot be read (`nil`) never matches (`Manifest.written?/3`).
   defp unchanged_provider_track?(state, language, target) do
-    case get_in(state, [:tracks, language]) do
-      %{origin: origin, managed_sha256: managed_sha256} = track
-      when origin in ["opensubtitles_hash", "opensubtitles_id", "own_track"] and
-             is_binary(managed_sha256) ->
-        matches_recorded_bytes?(current_sidecar_sha256(target), managed_sha256, track)
-
-      _ ->
-        false
-    end
-  end
-
-  # A failed read (`nil`) must never count as a match: a track carrying no `sync` yet has no
-  # `sync.applied_sha256` either, and comparing two absent values would otherwise silently
-  # "prove" an unreadable sidecar unchanged.
-  defp matches_recorded_bytes?(nil, _managed_sha256, _track), do: false
-
-  defp matches_recorded_bytes?(current, managed_sha256, track) do
-    current == managed_sha256 or current == get_in(track, [:sync, :applied_sha256])
+    Manifest.sync_origin?(state, language) and
+      Manifest.written?(state, language, current_sidecar_sha256(target))
   end
 
   defp current_sidecar_sha256(target) do

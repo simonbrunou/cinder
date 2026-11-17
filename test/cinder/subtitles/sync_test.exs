@@ -520,6 +520,27 @@ defmodule Cinder.Subtitles.SyncTest do
              Manifest.sync(Manifest.read(video), "en")
   end
 
+  # The discovered item carries the tombstone `Manifest.sync_item/2` reads, which lets the first
+  # correction of a fresh sidecar take over the retired backup's container.
+  test "a first correction refills the retired backup the manifest records", %{video: video} do
+    path = managed_srt!(video)
+    original = File.read!(path)
+    corrected = shifted_subtitle(original)
+    backup = owned_backup!(video, path, "")
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, input, output ->
+      assert File.read!(input) == original
+      File.write!(output, corrected)
+      {:ok, %{score: 30.0, offset_ms: 1_000, rate: 1.0}}
+    end)
+
+    assert [%{status: :corrected}] = Sync.analyze_video(video)
+    assert File.read!(path) == corrected
+    assert File.read!(backup) == original
+  end
+
   test "version one automatic corrections are restored before bounded reanalysis", %{
     video: video
   } do

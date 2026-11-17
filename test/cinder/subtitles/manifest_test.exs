@@ -677,6 +677,246 @@ defmodule Cinder.Subtitles.ManifestTest do
     refute File.exists?(Manifest.path(video))
   end
 
+  @digest String.duplicate("d", 64)
+
+  describe "entry questions" do
+    @sync_origins ~w(opensubtitles_hash opensubtitles_id own_track)
+    @other_origins ~w(embedded translated release_sidecar)
+
+    test "origin/2 names the entry's origin, and nil for a language with no entry" do
+      state = decoded(%{"fr" => %{"origin" => "embedded"}})
+
+      assert Manifest.origin(state, "fr") == "embedded"
+      assert Manifest.origin(state, "en") == nil
+    end
+
+    test "empty?/1 tells a manifest with no entry" do
+      assert Manifest.empty?(decoded(%{}))
+      refute Manifest.empty?(decoded(%{"fr" => %{"origin" => "embedded"}}))
+    end
+
+    test "sync_origin?/2 holds for the three origins Sync handles only" do
+      for origin <- @sync_origins,
+          do: assert(Manifest.sync_origin?(decoded(%{"fr" => %{"origin" => origin}}), "fr"))
+
+      for origin <- @other_origins,
+          do: refute(Manifest.sync_origin?(decoded(%{"fr" => %{"origin" => origin}}), "fr"))
+
+      refute Manifest.sync_origin?(decoded(%{}), "fr")
+    end
+
+    test "syncable?/2 needs a sync origin, a recorded file and digest" do
+      for origin <- @sync_origins,
+          do: assert(Manifest.syncable?(decoded(%{"fr" => syncable_entry(origin)}), "fr"))
+
+      for origin <- @other_origins,
+          do: refute(Manifest.syncable?(decoded(%{"fr" => syncable_entry(origin)}), "fr"))
+
+      refute Manifest.syncable?(decoded(%{"fr" => Map.delete(syncable_entry(), "file")}), "fr")
+
+      refute Manifest.syncable?(
+               decoded(%{"fr" => Map.delete(syncable_entry(), "managed_sha256")}),
+               "fr"
+             )
+
+      refute Manifest.syncable?(decoded(%{}), "fr")
+    end
+
+    test "syncable?/2 keeps an entry whose records all decode" do
+      entry =
+        Map.merge(syncable_entry(), %{
+          "sync" => valid_sync(),
+          "replacement_cleanup_sync" => valid_sync(),
+          "reset_cleanup_sync" => valid_sync(),
+          "backup_tombstone" => %{"identity" => [1, 2, 3]}
+        })
+
+      assert Manifest.syncable?(decoded(%{"fr" => entry}), "fr")
+    end
+
+    test "syncable?/2 refuses a malformed file, digest or record, decoded or stored as a marker" do
+      malformed = [
+        file: %{"file" => "../M.fr.srt"},
+        file_marker: %{"file_invalid?" => true},
+        managed_sha256: %{"managed_sha256" => "not-a-digest"},
+        sync: %{"sync" => %{"status" => "made-up"}},
+        sync_marker: %{"sync_invalid?" => true},
+        replacement_cleanup_sync: %{"replacement_cleanup_sync" => %{"status" => "made-up"}},
+        replacement_cleanup_marker: %{"replacement_cleanup_sync_invalid?" => true},
+        reset_cleanup_sync: %{"reset_cleanup_sync" => %{"status" => "made-up"}},
+        reset_cleanup_marker: %{"reset_cleanup_sync_invalid?" => true},
+        backup_tombstone: %{"backup_tombstone" => %{"identity" => "made-up"}},
+        backup_tombstone_marker: %{"backup_tombstone_invalid?" => true}
+      ]
+
+      for {field, fields} <- malformed do
+        state = decoded(%{"fr" => Map.merge(syncable_entry(), fields)})
+        refute Manifest.syncable?(state, "fr"), "#{field} should make the entry unsyncable"
+      end
+    end
+
+    test "language_for_file/2 names the one entry that records a sidecar's base name" do
+      state =
+        decoded(%{
+          "fra" => syncable_entry(),
+          "en" => Map.put(syncable_entry(), "file", "M.en.srt"),
+          "de" => %{"origin" => "embedded"}
+        })
+
+      assert Manifest.language_for_file(state, "M.fr.srt") == {:ok, "fra"}
+      assert Manifest.language_for_file(state, "M.en.srt") == {:ok, "en"}
+      assert Manifest.language_for_file(state, "M.de.srt") == :error
+    end
+
+    test "language_for_file/2 names no entry when two record the same file" do
+      state = decoded(%{"fr" => syncable_entry(), "fra" => syncable_entry("own_track")})
+
+      assert Manifest.language_for_file(state, "M.fr.srt") == :error
+    end
+
+    test "language_for_file/2 never matches a file that did not decode" do
+      state = decoded(%{"fr" => Map.put(syncable_entry(), "file", "../M.fr.srt")})
+
+      assert Manifest.language_for_file(state, "../M.fr.srt") == :error
+      assert Manifest.language_for_file(state, "M.fr.srt") == :error
+    end
+
+    test "sync_item/2 gives the fields a Sync item carries, nil where the entry has none" do
+      tombstone = %{"identity" => [1, 2, 3]}
+
+      entry =
+        Map.merge(syncable_entry("own_track"), %{
+          "source_moviehash" => "hash",
+          "sync" => valid_sync(),
+          "reset_cleanup_sync" => valid_sync(),
+          "backup_tombstone" => tombstone
+        })
+
+      assert Manifest.sync_item(decoded(%{"fr" => entry}), "fr") == %{
+               origin: "own_track",
+               source_moviehash: "hash",
+               managed_sha256: @digest,
+               sync: valid_sync(),
+               reset_cleanup_sync: valid_sync(),
+               backup_tombstone: %{identity: [1, 2, 3]}
+             }
+
+      assert Manifest.sync_item(decoded(%{"fr" => syncable_entry()}), "fr") == %{
+               origin: "opensubtitles_hash",
+               source_moviehash: nil,
+               managed_sha256: @digest,
+               sync: nil,
+               reset_cleanup_sync: nil,
+               backup_tombstone: nil
+             }
+    end
+
+    test "manual_sync?/2 holds only for a decoded sync record of method manual" do
+      manual = %{valid_sync() | method: "manual"}
+
+      assert Manifest.manual_sync?(decoded(%{"fr" => entry_with("sync", manual)}), "fr")
+      refute Manifest.manual_sync?(decoded(%{"fr" => entry_with("sync", valid_sync())}), "fr")
+      refute Manifest.manual_sync?(decoded(%{"fr" => syncable_entry()}), "fr")
+      refute Manifest.manual_sync?(decoded(%{}), "fr")
+
+      malformed = Map.merge(manual, %{status: "made-up"})
+      refute Manifest.manual_sync?(decoded(%{"fr" => entry_with("sync", malformed)}), "fr")
+
+      # A pending reset journal names the method too, but is no sync record.
+      refute Manifest.manual_sync?(
+               decoded(%{"fr" => entry_with("reset_cleanup_sync", manual)}),
+               "fr"
+             )
+    end
+
+    test "sync_record?/2 holds for a sync record or a reset journal, malformed ones included" do
+      for {key, value} <- [
+            {"sync", valid_sync()},
+            {"sync", %{"status" => "made-up"}},
+            {"sync_invalid?", true},
+            {"reset_cleanup_sync", valid_sync()},
+            {"reset_cleanup_sync", %{"status" => "made-up"}},
+            {"reset_cleanup_sync_invalid?", true}
+          ] do
+        assert Manifest.sync_record?(decoded(%{"fr" => entry_with(key, value)}), "fr"),
+               "#{key} => #{inspect(value)} should count as a sync record"
+      end
+    end
+
+    test "sync_record?/2 leaves out the backup tombstone and the replacement journal" do
+      for {key, value} <- [
+            {"replacement_cleanup_sync", valid_sync()},
+            {"replacement_cleanup_sync", %{"status" => "made-up"}},
+            {"replacement_cleanup_sync_invalid?", true},
+            {"backup_tombstone", %{"identity" => [1, 2, 3]}},
+            {"backup_tombstone", %{"identity" => "made-up"}},
+            {"backup_tombstone_invalid?", true}
+          ] do
+        refute Manifest.sync_record?(decoded(%{"fr" => entry_with(key, value)}), "fr"),
+               "#{key} => #{inspect(value)} should not count as a sync record"
+      end
+
+      refute Manifest.sync_record?(decoded(%{"fr" => syncable_entry()}), "fr")
+      refute Manifest.sync_record?(decoded(%{}), "fr")
+    end
+
+    test "cleanup_journal?/2 holds for a decoded reset or replacement journal" do
+      for key <- ~w(reset_cleanup_sync replacement_cleanup_sync) do
+        assert Manifest.cleanup_journal?(decoded(%{"fr" => entry_with(key, valid_sync())}), "fr")
+
+        refute Manifest.cleanup_journal?(
+                 decoded(%{"fr" => entry_with(key, %{"status" => "made-up"})}),
+                 "fr"
+               ),
+               "a malformed #{key} decodes to no journal"
+      end
+
+      refute Manifest.cleanup_journal?(decoded(%{"fr" => entry_with("sync", valid_sync())}), "fr")
+      refute Manifest.cleanup_journal?(decoded(%{}), "fr")
+    end
+
+    test "written?/3 matches the recorded digest or the applied correction's digest" do
+      synced = entry_with("sync", valid_sync())
+      state = decoded(%{"fr" => synced})
+
+      assert Manifest.written?(state, "fr", @digest)
+      assert Manifest.written?(state, "fr", valid_sync().applied_sha256)
+      refute Manifest.written?(state, "fr", String.duplicate("c", 64))
+      refute Manifest.written?(state, "fr", nil)
+      refute Manifest.written?(state, "en", @digest)
+    end
+
+    test "written?/3 matches nothing without a recorded digest that decoded" do
+      applied = valid_sync().applied_sha256
+
+      for entry <- [
+            Map.delete(entry_with("sync", valid_sync()), "managed_sha256"),
+            Map.put(entry_with("sync", valid_sync()), "managed_sha256", "not-a-digest")
+          ] do
+        refute Manifest.written?(decoded(%{"fr" => entry}), "fr", applied)
+      end
+
+      # Without a sync record nothing but the digest matches, and nil never does.
+      refute Manifest.written?(decoded(%{"fr" => syncable_entry()}), "fr", nil)
+    end
+  end
+
+  defp syncable_entry(origin \\ "opensubtitles_hash"),
+    do: %{"origin" => origin, "file" => "M.fr.srt", "managed_sha256" => @digest}
+
+  defp entry_with(key, value), do: Map.put(syncable_entry(), key, value)
+
+  # The state `read/1` decodes from a manifest holding `tracks`.
+  defp decoded(tracks) do
+    expect(Cinder.Library.FilesystemMock, :read, fn "/lib/M/.M.mkv.cinder-subtitles.json" ->
+      {:ok, Jason.encode!(%{"video_moviehash" => "hash", "tracks" => tracks})}
+    end)
+
+    state = Manifest.read("/lib/M/M.mkv")
+    assert map_size(state.tracks) == map_size(tracks), "the manifest should decode"
+    state
+  end
+
   defp valid_sync do
     %{
       status: "aligned",

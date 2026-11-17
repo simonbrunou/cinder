@@ -12,6 +12,8 @@ defmodule Cinder.Subtitles.Manifest do
   # the moviehash of the file they came out of (`source_moviehash`); an embedded one also records
   # the index of the track it came from (`source_track`).
   @origins ~w(opensubtitles_hash opensubtitles_id own_track embedded translated release_sidecar)
+  # The origins `Cinder.Subtitles.Sync` handles (`sync_origin?/2`).
+  @sync_origins ~w(opensubtitles_hash opensubtitles_id own_track)
   @sync_statuses ~w(aligned review applying)
   # `native`: the timing rules on the video's own track, with no alignment to run.
   @sync_methods ~w(embedded audio native manual)
@@ -25,6 +27,12 @@ defmodule Cinder.Subtitles.Manifest do
     replacement_cleanup_sync replacement_cleanup_sync_invalid?
     reset_cleanup_sync reset_cleanup_sync_invalid?
     backup_tombstone backup_tombstone_invalid?
+  )a
+  # The flags `normalize_tracks/1` sets on a record that did not decode. A file or digest that
+  # did not decode leaves no `file` or `managed_sha256` field, which `syncable?/2` needs anyway.
+  @invalid_record_markers ~w(
+    sync_invalid? replacement_cleanup_sync_invalid? reset_cleanup_sync_invalid?
+    backup_tombstone_invalid?
   )a
 
   @spec path(String.t()) :: String.t()
@@ -421,6 +429,123 @@ defmodule Cinder.Subtitles.Manifest do
   @spec verified?(map(), String.t()) :: boolean()
   def verified?(state, language), do: origin(state, language) in ~w(opensubtitles_hash own_track)
 
+  @doc "The origin of `language`'s entry, or nil when the manifest has none."
+  @spec origin(map(), String.t()) :: String.t() | nil
+  def origin(state, language), do: get_in(state, [:tracks, language, :origin])
+
+  @doc "Whether the manifest has no entry at all."
+  @spec empty?(map()) :: boolean()
+  def empty?(state), do: state.tracks == %{}
+
+  @doc """
+  Whether `language`'s entry has an origin `Cinder.Subtitles.Sync` handles: an OpenSubtitles
+  download or the video's own track, as opposed to an embedded extraction, a translation or a
+  release sidecar.
+  """
+  @spec sync_origin?(map(), String.t()) :: boolean()
+  def sync_origin?(state, language), do: origin(state, language) in @sync_origins
+
+  @doc """
+  Whether `Cinder.Subtitles.Sync` may handle `language`'s entry: a `sync_origin?/2` entry that
+  records its sidecar file and the digest Cinder wrote, with no file, digest or record that failed
+  to decode: a file or digest that did not decode leaves no `file` or `managed_sha256` field, and a
+  record that did not decode leaves its `*_invalid?` marker.
+  """
+  @spec syncable?(map(), String.t()) :: boolean()
+  def syncable?(state, language) do
+    case entry(state, language) do
+      %{file: _file, managed_sha256: _digest} = entry ->
+        sync_origin?(state, language) and
+          not Enum.any?(@invalid_record_markers, &Map.has_key?(entry, &1))
+
+      _none ->
+        false
+    end
+  end
+
+  @doc """
+  The language of the one entry that records `basename` as its sidecar file, or `:error` when no
+  entry or several entries record it. The language is the entry's key, the wanted code a fetch
+  wrote it under. A file that did not decode is recorded by no entry.
+  """
+  @spec language_for_file(map(), String.t()) :: {:ok, String.t()} | :error
+  def language_for_file(state, basename) do
+    case for({language, %{file: ^basename}} <- state.tracks, do: language) do
+      [language] -> {:ok, language}
+      _none_or_several -> :error
+    end
+  end
+
+  @doc """
+  The fields of `language`'s entry that a `Cinder.Subtitles.Sync` item carries, each nil when the
+  entry has none. `Cinder.Subtitles.SidecarTransaction` owns the records among them and reads
+  them from the item.
+  """
+  @spec sync_item(map(), String.t()) :: %{
+          origin: String.t() | nil,
+          source_moviehash: String.t() | nil,
+          managed_sha256: String.t() | nil,
+          sync: map() | nil,
+          reset_cleanup_sync: map() | nil,
+          backup_tombstone: map() | nil
+        }
+  def sync_item(state, language) do
+    entry = entry(state, language) || %{}
+
+    Map.new(
+      ~w(origin source_moviehash managed_sha256 sync reset_cleanup_sync backup_tombstone)a,
+      &{&1, Map.get(entry, &1)}
+    )
+  end
+
+  @doc "Whether `language`'s sync record decoded and is the operator's manual retime."
+  @spec manual_sync?(map(), String.t()) :: boolean()
+  def manual_sync?(state, language),
+    do: match?(%{sync: %{method: "manual"}}, entry(state, language))
+
+  # The records only `Cinder.Subtitles.Sync` writes, decoded or not: a final or pending sync
+  # record and a reset's cleanup journal. A backup tombstone and a replacement's cleanup journal
+  # come with a fetched replacement, so they are left out on purpose.
+  @sync_records [:sync, :sync_invalid?, :reset_cleanup_sync, :reset_cleanup_sync_invalid?]
+
+  @doc """
+  Whether `language`'s entry holds a record that only `Cinder.Subtitles.Sync` writes, valid or
+  not: a sync record or a reset's cleanup journal. A backup tombstone or a replacement's cleanup
+  journal alone does not count: a fetched replacement writes them.
+  """
+  @spec sync_record?(map(), String.t()) :: boolean()
+  def sync_record?(state, language) do
+    entry = entry(state, language) || %{}
+    Enum.any?(@sync_records, &Map.has_key?(entry, &1))
+  end
+
+  @doc """
+  Whether `language`'s entry holds a reset's or a replacement's cleanup journal that decoded: a
+  recovery `Cinder.Subtitles.SidecarTransaction` has yet to finish.
+  """
+  @spec cleanup_journal?(map(), String.t()) :: boolean()
+  def cleanup_journal?(state, language) do
+    entry = entry(state, language) || %{}
+    is_map_key(entry, :reset_cleanup_sync) or is_map_key(entry, :replacement_cleanup_sync)
+  end
+
+  @doc """
+  Whether `sha256` names bytes Cinder last wrote for `language`: the digest it recorded, or the
+  `applied_sha256` of the entry's sync record. An entry without a recorded digest that decoded
+  matches nothing. A nil `sha256` (a sidecar that could not be read) never matches, since both
+  digests decode only as hex strings.
+  """
+  @spec written?(map(), String.t(), String.t() | nil) :: boolean()
+  def written?(state, language, sha256) do
+    case entry(state, language) do
+      %{managed_sha256: ^sha256} -> true
+      %{managed_sha256: _digest, sync: %{applied_sha256: ^sha256}} -> true
+      _other -> false
+    end
+  end
+
+  defp entry(state, language), do: Map.get(state.tracks, language)
+
   defp decode(json, video_path) do
     case decode_state(json) do
       {:ok, state} ->
@@ -699,6 +824,5 @@ defmodule Cinder.Subtitles.Manifest do
   defp valid_sha256?(value), do: is_binary(value) and Regex.match?(@sha256, value)
   defp value(map, key), do: Map.get(map, key, Map.get(map, Atom.to_string(key)))
 
-  defp origin(state, language), do: get_in(state, [:tracks, language, :origin])
   defp empty, do: %{video_moviehash: nil, tracks: %{}}
 end

@@ -158,6 +158,26 @@ defmodule Cinder.Library.BackfillTest do
 
         assert Manifest.read(video) == before
       end
+
+      # Only an entry Sync handles keeps its unchanged bytes registered (`Manifest.sync_origin?/2`).
+      for origin <- ~w(embedded translated) do
+        test "re-marks an entry of origin #{origin} whose sidecar holds the bytes Cinder wrote",
+             %{
+               tmp_dir: tmp
+             } do
+          video = available_movie(tmp)
+          put!(Subtitles.sidecar_path(video, "en"), @provider)
+          track = %{provider_track(sha256(@provider)) | "origin" => unquote(origin)}
+          put_tracks!(video, %{"en" => track})
+
+          assert :ok = Backfill.run(unquote(opts))
+
+          assert Manifest.read(video).tracks["en"] == %{
+                   origin: "release_sidecar",
+                   file: "M.en.srt"
+                 }
+        end
+      end
     end
   end
 
