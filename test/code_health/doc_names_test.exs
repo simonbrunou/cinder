@@ -188,11 +188,41 @@ defmodule Cinder.CodeHealth.DocNamesTest do
            ]
   end
 
+  test "exports resolve from a module's .beam, or from its loaded copy when it has no .beam" do
+    # Mix loads `Cinder.MixProject` from mix.exs, so the code path holds no `.beam` for it.
+    assert {~c"Elixir.Cinder.MixProject", [], true} in :code.all_available()
+
+    # `module_info/1` is in the exports chunk only, not in the Elixir debug info.
+    doc =
+      "Read `Cinder.Requests.module_info/1` and `Cinder.MixProject.project/0`, " <>
+        "not `Cinder.MixProject.nope/0`.\n"
+
+    assert dead_names([{"doc.md", :markdown, doc}]) == ["doc.md:1: `Cinder.MixProject.nope/0`"]
+  end
+
+  @tag :tmp_dir
+  test "a name fails when its module's .beam file cannot be read", %{tmp_dir: tmp_dir} do
+    # Loaded, so a read that fell back to the loaded copy's exports would resolve the name.
+    Code.ensure_loaded!(Cinder.Requests)
+    gone = tmp_dir |> Path.join("Elixir.Cinder.Requests.beam") |> String.to_charlist()
+
+    index = %{
+      suffixes: %{"Cinder.Requests" => [Cinder.Requests]},
+      paths: %{Cinder.Requests => gone}
+    }
+
+    doc = "Read `Cinder.Requests.create_request/2`.\n"
+
+    assert dead_names([{"doc.md", :markdown, doc}]) == []
+
+    assert dead_names([{"doc.md", :markdown, doc}], index) == [
+             "doc.md:1: `Cinder.Requests.create_request/2`"
+           ]
+  end
+
   # --- extraction
 
-  defp dead_names(sources) do
-    index = module_index()
-
+  defp dead_names(sources, index \\ module_index()) do
     for {path, kind, source} <- sources,
         ref <- refs(kind, source),
         not resolves?(ref, index),
@@ -367,16 +397,27 @@ defmodule Cinder.CodeHealth.DocNamesTest do
 
   # --- resolution
 
-  # Each suffix of every Elixir module name on the code path, to the modules that end in it.
+  # Each suffix of every Elixir module name on the code path, to the modules that end in it, and
+  # each module to the `.beam` path `:code.all_available/0` gives it. That one call finds every
+  # file, so resolving a name reads files and never waits on the code server (#1392).
   defp module_index do
-    for {charlist, _path, _loaded} <- :code.all_available(),
-        "Elixir." <> name <- [to_string(charlist)],
-        module = Module.concat([name]),
-        parts = String.split(name, "."),
-        suffix <- Enum.map(0..(length(parts) - 1), &(parts |> Enum.drop(&1) |> Enum.join("."))),
-        reduce: %{} do
-      acc -> Map.update(acc, suffix, [module], &[module | &1])
-    end
+    available =
+      for {charlist, path, _loaded} <- :code.all_available(),
+          "Elixir." <> name <- [to_string(charlist)],
+          do: {Module.concat([name]), name, path}
+
+    suffixes =
+      for {module, name, _path} <- available,
+          parts = String.split(name, "."),
+          suffix <- Enum.map(0..(length(parts) - 1), &(parts |> Enum.drop(&1) |> Enum.join("."))),
+          reduce: %{} do
+        acc -> Map.update(acc, suffix, [module], &[module | &1])
+      end
+
+    %{
+      suffixes: suffixes,
+      paths: Map.new(available, fn {module, _name, path} -> {module, path} end)
+    }
   end
 
   defp resolves?(%{kind: kind}, _index) when kind in [:unpaired, :shared_marker], do: false
@@ -387,49 +428,68 @@ defmodule Cinder.CodeHealth.DocNamesTest do
       else: File.exists?(path)
   end
 
-  defp resolves?(%{kind: :bare, enclosing: module} = ref, _index),
-    do: ref.arities != [] and Enum.all?(ref.arities, &defines?(module, ref.fun, &1))
+  defp resolves?(%{kind: :bare, enclosing: module} = ref, index),
+    do: ref.arities != [] and Enum.all?(ref.arities, &defines?(module, ref.fun, &1, index))
 
   defp resolves?(%{kind: :function, module: name} = ref, index) do
-    candidates = Map.get(index, name, [])
+    candidates = Map.get(index.suffixes, name, [])
 
     ref.arities != [] and
-      Enum.all?(ref.arities, fn arity -> Enum.any?(candidates, &defines?(&1, ref.fun, arity)) end)
+      Enum.all?(ref.arities, fn arity ->
+        Enum.any?(candidates, &defines?(&1, ref.fun, arity, index))
+      end)
   end
 
   # `String.to_atom/1`, since a function's name becomes an existing atom only once its module
-  # loads, which `definitions/1` does.
-  defp defines?(module, fun, arity), do: {String.to_atom(fun), arity} in definitions(module)
+  # loads or its `.beam` is read, and `definitions/2` reads it after this call.
+  defp defines?(module, fun, arity, index),
+    do: {String.to_atom(fun), arity} in definitions(module, index.paths)
 
-  defp definitions(module) do
-    key = {__MODULE__, module}
+  defp definitions(module, paths) do
+    path = Map.get(paths, module)
+    key = {__MODULE__, module, path}
 
     with nil <- Process.get(key) do
-      definitions = load_definitions(module)
+      definitions = read_definitions(module, path)
       Process.put(key, definitions)
       definitions
     end
   end
 
-  defp load_definitions(module) do
-    if is_atom(module) and Code.ensure_loaded?(module) do
-      callbacks =
-        if function_exported?(module, :behaviour_info, 1),
-          do: module.behaviour_info(:callbacks),
-          else: []
+  # A module's exports, behaviour callbacks and private definitions, read from its `.beam` file
+  # without loading it. A module with no `.beam` path, such as `Cinder.MixProject`, which Mix
+  # loads from `mix.exs`, is read through `module_info/1` when it is loaded, which asks the code
+  # server nothing.
+  defp read_definitions(module, [_ | _] = path) do
+    case File.read(path) do
+      {:ok, binary} ->
+        {:ok, {_, [exports: exports]}} = :beam_lib.chunks(binary, [:exports])
+        exports ++ callbacks(binary) ++ private_definitions(module, binary)
 
-      module.module_info(:exports) ++ callbacks ++ private_definitions(module)
-    else
-      []
+      {:error, _reason} ->
+        []
+    end
+  end
+
+  defp read_definitions(module, _no_path) do
+    if is_atom(module) and :erlang.module_loaded(module),
+      do: module.module_info(:exports),
+      else: []
+  end
+
+  # Each `@callback` and `@macrocallback`, named as `behaviour_info(:callbacks)` names them.
+  defp callbacks(binary) do
+    case Code.Typespec.fetch_callbacks(binary) do
+      {:ok, callbacks} -> for {key, _specs} <- callbacks, do: key
+      :error -> []
     end
   end
 
   # Every `def`, `defp`, `defmacro` and `defmacrop`, default arities included, from the Elixir
   # debug info in the module's .beam.
-  defp private_definitions(module) do
-    with path when is_list(path) <- :code.which(module),
-         {:ok, {_, [debug_info: {:debug_info_v1, backend, data}]}} <-
-           :beam_lib.chunks(path, [:debug_info]),
+  defp private_definitions(module, binary) do
+    with {:ok, {_, [debug_info: {:debug_info_v1, backend, data}]}} <-
+           :beam_lib.chunks(binary, [:debug_info]),
          {:ok, %{definitions: definitions}} <- backend.debug_info(:elixir_v1, module, data, []) do
       for {{name, arity}, _kind, _meta, _clauses} <- definitions, do: {name, arity}
     else

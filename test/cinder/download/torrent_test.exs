@@ -52,8 +52,20 @@ defmodule Cinder.Download.TorrentTest do
   end
 
   test "rejects an oversized byte-string length prefix without CPU amplification" do
-    task = Task.async(fn -> Torrent.infohash("d" <> String.duplicate("9", 500_000)) end)
-    assert {:error, :bad_torrent} = Task.await(task, 500)
+    # Counts the parse's work in reductions, which a loaded runner or a wait on the code server
+    # does not change, where a wall-clock bound failed on such a runner (#1392). The length guard
+    # rejects the prefix after a few digits. Without it, the same parse used over 800 million
+    # reductions on the dev host.
+    body = "d" <> String.duplicate("9", 500_000)
+    {:reductions, before} = Process.info(self(), :reductions)
+    result = Torrent.infohash(body)
+    {:reductions, after_parse} = Process.info(self(), :reductions)
+
+    assert {:error, :bad_torrent} = result
+    used = after_parse - before
+
+    assert used < 10_000,
+           "Torrent.infohash/1 used #{used} reductions on a 500,000-digit length prefix"
   end
 
   test "rejects a torrent whose info value is an integer" do

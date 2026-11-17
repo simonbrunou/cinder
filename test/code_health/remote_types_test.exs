@@ -8,10 +8,11 @@ defmodule Cinder.CodeHealth.RemoteTypesTest do
   # `@opaque`, remote types nested inside other types included. A remote type passes when its
   # module defines a `@type` or an `@opaque` of that name and arity. It fails when the module
   # defines none, when the type is a `@typep`, when the module's types cannot be read (no such
-  # module, or a `.beam` without debug info), and on a remote type whose module or name is not a
-  # literal atom. A `:cinder` module whose typespecs cannot be read fails too. Forms the check
-  # does not see include: typespecs in `.exs` files (tests, `scripts/`, `mix.exs`, `config/`),
-  # which leave no `.beam` in the app; and type names written in docs or comments (#850).
+  # module, a `.beam` file that cannot be read, or one without debug info), and on a remote type
+  # whose module or name is not a literal atom. A `:cinder` module whose typespecs cannot be read
+  # fails too. Forms the check does not see include: typespecs in `.exs` files (tests,
+  # `scripts/`, `mix.exs`, `config/`), which leave no `.beam` in the app; and type names written
+  # in docs or comments (#850).
   #
   # Not async: `compile/1` sets global compiler options, and an async module that restored them
   # while another compiled a fixture left that fixture without debug info (#830,
@@ -25,13 +26,15 @@ defmodule Cinder.CodeHealth.RemoteTypesTest do
     assert Cinder.Catalog.Movie in modules
     assert length(modules) > 300
 
-    beams =
-      for module <- modules do
-        {^module, binary, _path} = :code.get_object_code(module)
-        {module, binary}
-      end
+    # Read from the files, so the check loads no module and asks the code server nothing for a
+    # module with a `.beam` path (#1392).
+    ebin = Application.app_dir(:cinder, "ebin")
 
-    problems = problems(beams, &Code.Typespec.fetch_types/1)
+    beams =
+      for module <- modules,
+          do: {module, File.read!(Path.join(ebin, "#{module}.beam"))}
+
+    problems = problems(beams, beam_fetch())
 
     assert problems == [],
            "These typespecs name a remote type its module does not define as public:\n" <>
@@ -235,6 +238,34 @@ defmodule Cinder.CodeHealth.RemoteTypesTest do
       assert problem =~ "#{inspect(module)}: its typespecs cannot be read"
     end
 
+    test "passes a type of a preloaded module, which has no .beam path" do
+      assert {~c"erlang", :preloaded, true} in :code.all_available()
+
+      assert check("""
+             defmodule #{name(:preloaded)} do
+               @spec f() :: :erlang.timestamp()
+               def f, do: {0, 0, 0}
+             end
+             """) == []
+    end
+
+    @tag :tmp_dir
+    test "fails a type of a module whose .beam file cannot be read", %{tmp_dir: tmp_dir} do
+      beams =
+        compile("""
+        defmodule #{name(:vanished)} do
+          @spec f() :: Cinder.Catalog.Movie.t()
+          def f, do: nil
+        end
+        """)
+
+      gone = tmp_dir |> Path.join("Elixir.Cinder.Catalog.Movie.beam") |> String.to_charlist()
+
+      assert [problem] = problems(beams, beam_fetch(%{~c"Elixir.Cinder.Catalog.Movie" => gone}))
+      assert problem =~ "names Cinder.Catalog.Movie.t/0, but the types of Cinder.Catalog.Movie"
+      assert problem =~ "cannot be read"
+    end
+
     test "fails a remote type whose module or name is not a literal atom" do
       form = {:remote_type, 7, [{:var, 7, :M}, {:atom, 7, :t}, []]}
 
@@ -291,19 +322,43 @@ defmodule Cinder.CodeHealth.RemoteTypesTest do
     beams
   end
 
-  # `Code.Typespec.fetch_types/1` given a module reads its `.beam` on the code path, which a
-  # fixture compiled in memory lacks. So a fixture's types come from the binary `compile/1` kept,
-  # or from `overrides`, and an app module's from its `.beam`.
+  # A fixture compiled in memory has no `.beam` on the code path, so its types come from the
+  # binary `compile/1` kept, or from `overrides`. Any other module's come from `beam_fetch/0`.
   defp fixture_fetch(overrides \\ []) do
     overrides = Map.new(overrides)
+    from_beam = beam_fetch()
 
     fn module ->
       case Map.get(overrides, module) || Process.get({__MODULE__, module}) do
-        nil -> Code.Typespec.fetch_types(module)
+        nil -> from_beam.(module)
         binary -> Code.Typespec.fetch_types(binary)
       end
     end
   end
+
+  # Reads a module's types from the `.beam` file that one `:code.all_available/0` call names for
+  # it (`paths` maps a module's charlist name to that path), as `Code.Typespec.fetch_types/1`
+  # reads them from a module's binary. Given a module atom, `Code.Typespec.fetch_types/1` asks the
+  # code server for each module instead, which waited past ExUnit's timeout on a loaded CI runner
+  # (#1392). A module the code path gives an atom in place of a file path, such as preloaded
+  # `:erlang`, is still read that way. A module with no path, or whose file cannot be read, reads
+  # as `:error`.
+  defp beam_fetch(paths \\ beam_paths()),
+    do: &read_types(&1, Map.get(paths, Atom.to_charlist(&1)))
+
+  defp read_types(_module, [_ | _] = path) do
+    case File.read(path) do
+      {:ok, binary} -> Code.Typespec.fetch_types(binary)
+      {:error, _reason} -> :error
+    end
+  end
+
+  defp read_types(module, no_file) when is_atom(no_file) and no_file != nil,
+    do: Code.Typespec.fetch_types(module)
+
+  defp read_types(_module, _no_path), do: :error
+
+  defp beam_paths, do: Map.new(:code.all_available(), fn {name, path, _} -> {name, path} end)
 
   defp name(tag), do: "Cinder.CodeHealth.RemoteTypesTest.Fixture.#{Macro.camelize("#{tag}")}"
 
@@ -413,7 +468,7 @@ defmodule Cinder.CodeHealth.RemoteTypesTest do
     case types do
       %{^module => :error} ->
         "names #{ref}, but the types of #{inspect(module)} cannot be read " <>
-          "(no such module, or its .beam has no debug info)"
+          "(no such module, or its .beam cannot be read or has no debug info)"
 
       %{^module => %{{^name, ^arity} => kind}} when kind in [:type, :opaque] ->
         nil
