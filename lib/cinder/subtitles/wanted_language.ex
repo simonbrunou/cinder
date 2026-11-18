@@ -16,8 +16,8 @@ defmodule Cinder.Subtitles.WantedLanguage do
 
   The generic Chinese `chi` and `zho` count for Mandarin `zh` and for Cantonese `cn` alike, in a
   track code or a sidecar name (#573, #1343). A track tagged so is a weaker match than a track
-  with a code unique to the language (`:tolerated`, not `:exact`); a sidecar name has no such
-  rank. Mandarin's own `cmn` never counts for `cn`.
+  with a code unique to the language (`:tolerated`, not `:exact`); `sidecar?/2` gives a sidecar
+  name no such rank. Mandarin's own `cmn` never counts for `cn`.
 
   A sidecar's file name carries the language `name_language/1` reads, which names a release
   sidecar placed next to an imported video (`placed_path/2`): a generic Chinese `M.chi.srt` is
@@ -61,7 +61,7 @@ defmodule Cinder.Subtitles.WantedLanguage do
   @spec sidecar?(String.t(), Path.t()) :: boolean()
   def sidecar?(wanted, path) do
     [base | _subtag] = String.split(wanted, ["-", "_"], parts: 2)
-    {language, _flags, written} = classify(path)
+    {language, _flags, written, _subtag?} = classify(path)
 
     Language.normalize(base) == language or
       (is_binary(written) and Language.raw_track_satisfies?(base, written))
@@ -82,7 +82,7 @@ defmodule Cinder.Subtitles.WantedLanguage do
   """
   @spec placed_path(Path.t(), Path.t()) :: Path.t()
   def placed_path(path, dest_video) do
-    {language, flags, _written} = classify(path)
+    {language, flags, _written, _subtag?} = classify(path)
     flag = Enum.map_join(flags, &".#{&1}")
     "#{Path.rootname(dest_video)}.#{language}#{flag}#{String.downcase(Path.extname(path))}"
   end
@@ -104,10 +104,32 @@ defmodule Cinder.Subtitles.WantedLanguage do
   @spec name_flags(Path.t()) :: [String.t()]
   def name_flags(path), do: path |> classify() |> elem(1)
 
-  # `{language, flags, written}`: the language, the flags, and the language code as the name
-  # writes it, downcased and without its subtag, or `nil` when the language reads `und`. One
-  # decision for all three, so a `hi` consumed as the language can't ALSO be re-emitted as a flag
-  # by placed_path/2, which would name a Hindi sidecar `<stem>.hi.hi.srt`.
+  @doc """
+  How a sidecar's file name writes the language `name_language/1` reads, best first:
+
+  1. the code it reads as, which `placed_path/2` writes, with no subtag: `M.zh.srt`, `M.cn.srt`;
+  2. another code or a name for that language, with no subtag: `M.chi.srt`, `M.fre.srt`;
+  3. the language with a region or script subtag: `M.zh-Hans.srt`, `M.fr-FR.srt`, `M.chi-TW.srt`.
+
+  A name that carries no language ranks `1`. Case never changes the rank: `M.ZH.srt` ranks `1`.
+  `Cinder.Library.Sidecars.link_listed/2` tries the release sidecars that take one placed name
+  best-ranked first (#1416).
+  """
+  @spec name_rank(Path.t()) :: 1 | 2 | 3
+  def name_rank(path) do
+    case classify(path) do
+      {"und", _flags, _written, _subtag?} -> 1
+      {_language, _flags, _written, true} -> 3
+      {language, _flags, language, false} -> 1
+      {_language, _flags, _written, false} -> 2
+    end
+  end
+
+  # `{language, flags, written, subtag?}`: the language, the flags, the language code as the name
+  # writes it, downcased and without its subtag, or `nil` when the language reads `und`, and
+  # whether the name writes a subtag after that code. One decision for all of them, so a `hi`
+  # consumed as the language can't ALSO be re-emitted as a flag by placed_path/2, which would name
+  # a Hindi sidecar `<stem>.hi.hi.srt`.
   defp classify(path) do
     tokens =
       path
@@ -120,7 +142,7 @@ defmodule Cinder.Subtitles.WantedLanguage do
 
     case resolve(tokens, @flags) do
       nil -> ambiguous_reading(tokens, flags)
-      {language, code} -> {language, flags, code}
+      {language, code, subtag?} -> {language, flags, code, subtag?}
     end
   end
 
@@ -143,8 +165,8 @@ defmodule Cinder.Subtitles.WantedLanguage do
   # trailing run and `flags` holds it.
   defp ambiguous_reading(tokens, flags) do
     case resolve(tokens, @flags -- @ambiguous_flags) do
-      nil -> {"und", flags, nil}
-      {language, code} -> {language, flags -- @ambiguous_flags, code}
+      nil -> {"und", flags, nil, false}
+      {language, code, subtag?} -> {language, flags -- @ambiguous_flags, code, subtag?}
     end
   end
 
@@ -155,13 +177,14 @@ defmodule Cinder.Subtitles.WantedLanguage do
     end
   end
 
-  # `{language, code}`: the language the token reads as, and the code it writes for it.
-  defp read_token(token), do: code_reading(token) || regional_language(token)
+  # `{language, code, subtag?}`: the language the token reads as, the code it writes for it, and
+  # whether a subtag follows that code.
+  defp read_token(token), do: code_reading(token, false) || regional_language(token)
 
-  defp code_reading(code) do
+  defp code_reading(code, subtag?) do
     case Language.lookup(code) do
       nil -> nil
-      language -> {language, code}
+      language -> {language, code, subtag?}
     end
   end
 
@@ -170,7 +193,7 @@ defmodule Cinder.Subtitles.WantedLanguage do
   # or 4 letters, so a release tag such as `x264-GRP` or `WEB-DL` stays no language.
   defp regional_language(token) do
     case Regex.run(~r/\A([^-_]+)[-_](?:[a-z]{2}|[0-9]{3}|[a-z]{4})\z/, token) do
-      [_token, base] -> code_reading(base)
+      [_token, base] -> code_reading(base, true)
       nil -> nil
     end
   end

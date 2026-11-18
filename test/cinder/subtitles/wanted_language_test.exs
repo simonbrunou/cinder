@@ -361,6 +361,33 @@ defmodule Cinder.Subtitles.WantedLanguageTest do
     end
   end
 
+  # #1416: the rank `Sidecars.link_listed/2` keeps one of two sidecars that take one placed name by.
+  test "name_rank/1 ranks the placed code, then another code or name, then a subtag" do
+    for {name, rank} <- [
+          {"Rel.zh.srt", 1},
+          {"Rel.ZH.srt", 1},
+          {"Rel.cn.srt", 1},
+          {"Rel.yue.srt", 2},
+          {"Rel.fr.forced.srt", 1},
+          {"Rel.hi.srt", 1},
+          {"Rel.fr.hi.srt", 1},
+          {"Rel.chi.srt", 2},
+          {"Rel.zho.srt", 2},
+          {"Rel.fre.srt", 2},
+          {"Rel.french.srt", 2},
+          {"Rel.eng.forced.srt", 2},
+          {"Rel.zh-Hans.srt", 3},
+          {"Rel.fr-FR.srt", 3},
+          {"Rel.pt_BR.sdh.srt", 3},
+          {"Rel.chi-TW.srt", 3},
+          {"Rel.srt", 1},
+          {"Rel.foo.srt", 1},
+          {"Rel.eo.srt", 1}
+        ] do
+      assert {name, WantedLanguage.name_rank("/dl/Rel/" <> name)} == {name, rank}
+    end
+  end
+
   defp expected_track(code, exact, tolerated) do
     cond do
       code in exact -> :exact

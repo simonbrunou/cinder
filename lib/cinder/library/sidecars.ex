@@ -75,14 +75,65 @@ defmodule Cinder.Library.Sidecars do
   @doc """
   Places each of `sidecars`, as `files/1` lists them, next to `dest_video` (best-effort), under
   the name `Cinder.Subtitles.WantedLanguage.placed_path/2` gives it, and returns the paths it
-  placed. A language alone would not do: a flagged or non-SRT sidecar shares it with
-  `<video>.<lang>.srt` (#918).
+  placed, each once, in the order their names first appear in `sidecars`. A language alone would
+  not do: a flagged or non-SRT sidecar shares it with `<video>.<lang>.srt` (#918).
+
+  Sidecars that take one placed name, such as `M.zh.srt` and `M.chi.srt`, never both land, since
+  a link never replaces a file. So it tries them one at a time, best first, and keeps the first
+  that lands (#1416). Best means the lower `Cinder.Subtitles.WantedLanguage.name_rank/1`: the
+  name writes the placed code itself (`M.zh.srt`), then another code or a name for it
+  (`M.chi.srt`), then the language with a region or script subtag (`M.zh-Hans.srt`). Names that
+  carry no language share one rank. Within a rank, the source path that sorts first byte by byte
+  comes first: `M.zh-Hans.srt` before `M.zh-Hant.srt`, `M.en.SRT` before `M.en.srt`. Neither the
+  order of `sidecars` nor a setting changes the order it tries them in.
+
+  A link that fails logs `sidecar link rejected: <reason>` at warning level. After a failure
+  other than `:eexist`, the next sidecar is tried. `:eexist` means a file already holds the
+  placed name, so none of the rest is tried. When one sidecar of a group lands, each other one
+  gets an info line naming it, the kept sidecar and the placed name. When none lands, each one
+  left untried after `:eexist` gets an info line naming it and the placed name.
   """
   def link_listed(sidecars, dest_video) do
-    for {path, _language} <- sidecars,
-        dest = WantedLanguage.placed_path(path, dest_video),
-        do_link(path, dest) == :ok do
-      dest
+    named =
+      Enum.map(sidecars, fn {path, _language} ->
+        {WantedLanguage.placed_path(path, dest_video), path}
+      end)
+
+    groups = Enum.group_by(named, &elem(&1, 0), &elem(&1, 1))
+
+    named
+    |> Enum.map(&elem(&1, 0))
+    |> Enum.uniq()
+    |> Enum.flat_map(&link_group(&1, Map.fetch!(groups, &1)))
+  end
+
+  defp link_group(dest, paths) do
+    ranked = Enum.sort_by(paths, &{WantedLanguage.name_rank(&1), &1})
+
+    case link_first(ranked, dest) do
+      {:kept, kept} ->
+        for path <- List.delete(ranked, kept) do
+          Logger.info("sidecar not placed: #{path}, as #{kept} took its name #{dest}")
+        end
+
+        [dest]
+
+      {:taken, untried} ->
+        for path <- untried, do: Logger.info("sidecar not placed: #{path}, as #{dest} exists")
+        []
+
+      :none ->
+        []
+    end
+  end
+
+  defp link_first([], _dest), do: :none
+
+  defp link_first([path | rest], dest) do
+    case do_link(path, dest) do
+      :ok -> {:kept, path}
+      {:error, :eexist} -> {:taken, rest}
+      {:error, _reason} -> link_first(rest, dest)
     end
   end
 
@@ -94,9 +145,9 @@ defmodule Cinder.Library.Sidecars do
          :ok <- link_or_copy(src, dest) do
       :ok
     else
-      {:error, reason} ->
+      {:error, reason} = error ->
         Logger.warning("sidecar link rejected: #{inspect(reason)}")
-        :error
+        error
     end
   end
 

@@ -1,6 +1,6 @@
 defmodule Cinder.Library.SidecarsTest do
   use Cinder.DataCase, async: false
-  import Cinder.Test.BarrierFilesystem, only: [fail_in_order: 1]
+  import Cinder.Test.BarrierFilesystem, only: [fail_in_order: 1, fail_once: 1]
   import ExUnit.CaptureLog
   import Mox
   setup :verify_on_exit!
@@ -8,6 +8,7 @@ defmodule Cinder.Library.SidecarsTest do
   alias Cinder.Library.FilesystemMock
   alias Cinder.Library.SidecarQuarantine
   alias Cinder.Library.Sidecars
+  alias Cinder.Subtitles.WantedLanguage
   alias Cinder.Test.BarrierFilesystem
   alias Cinder.Test.DiskTask
   alias Cinder.Test.ForeignFile
@@ -256,10 +257,13 @@ defmodule Cinder.Library.SidecarsTest do
       :ok
     end
 
-    # #1343: a generic Chinese file now takes the name a file named as Chinese takes, so a
-    # download holding both places only one of them; the other's link finds the name taken.
+    # #1343: a generic Chinese file takes the name a file named as Chinese takes, so a download
+    # holding both places only one of them. #1416: it is the zh file, whatever the listing order,
+    # when its link succeeds.
     @tag :tmp_dir
-    test "link_listed/2 places one of a generic Chinese and a zh sidecar as zh", %{tmp_dir: tmp} do
+    test "link_listed/2 places the zh one of a generic Chinese and a zh sidecar as zh", %{
+      tmp_dir: tmp
+    } do
       %{release: release, movies: movies} = configure_real_roots(tmp)
       video = Path.join(release, "Movie.mkv")
       dest = Path.join(movies, "Movie/Movie.mkv")
@@ -274,9 +278,102 @@ defmodule Cinder.Library.SidecarsTest do
           assert Sidecars.link_listed(Sidecars.files(video), dest) == [zh_dest]
         end)
 
-      assert File.read!(zh_dest) in ["zh", "chi"]
+      assert File.read!(zh_dest) == "zh"
       assert File.ls!(Path.dirname(dest)) |> Enum.sort() == ["Movie.zh.srt"]
-      assert log =~ "sidecar link rejected: :eexist"
+      refute log =~ "sidecar link rejected"
+    end
+
+    # #1416: two sidecars of one release that take one placed name. The first of each row is kept
+    # over the second, in either list order, by `WantedLanguage.name_rank/1` and then byte order.
+    for {kept, other, placed} <- [
+          {"Movie.zh.srt", "Movie.chi.srt", ".zh.srt"},
+          {"Movie.chi.srt", "Movie.zh-Hans.srt", ".zh.srt"},
+          {"Movie.zh-Hans.srt", "Movie.zh-Hant.srt", ".zh.srt"},
+          {"Movie.fr.srt", "Movie.fre.srt", ".fr.srt"},
+          {"Movie.fr.srt", "Movie.fr-FR.srt", ".fr.srt"},
+          {"Movie.pt-BR.srt", "Movie.pt-PT.srt", ".pt.srt"},
+          {"Movie.en.forced.srt", "Movie.eng.forced.srt", ".en.forced.srt"},
+          {"Movie.en.SRT", "Movie.en.srt", ".en.srt"},
+          {"Movie.foo.srt", "Movie.srt", ".und.srt"}
+        ] do
+      @tag :tmp_dir
+      test "link_listed/2 keeps #{kept} over #{other} as <video>#{placed} in either list order",
+           %{
+             tmp_dir: tmp
+           } do
+        %{release: release, movies: movies} = configure_real_roots(tmp)
+        kept = Path.join(release, unquote(kept))
+        other = Path.join(release, unquote(other))
+        File.write!(kept, "kept")
+        File.write!(other, "other")
+        log_info()
+
+        for {order, sidecars} <- [kept_first: [kept, other], other_first: [other, kept]] do
+          dest = Path.join(movies, "#{order}/Movie.mkv")
+          placed = Path.rootname(dest) <> unquote(placed)
+          File.mkdir_p!(Path.dirname(dest))
+
+          log =
+            capture_log(fn -> assert Sidecars.link_listed(listed(sidecars), dest) == [placed] end)
+
+          assert {order, File.read!(placed)} == {order, "kept"}
+          assert {order, File.ls!(Path.dirname(dest))} == {order, [Path.basename(placed)]}
+          refute log =~ "sidecar link rejected"
+          assert log =~ "[info] sidecar not placed: #{other}, as #{kept} took its name #{placed}"
+        end
+      end
+    end
+
+    # #1416: the first link finds the placed name taken (`:eexist`), so no other sidecar of the
+    # group is tried.
+    @tag :tmp_dir
+    test "link_listed/2 tries no other sidecar of a group once the placed name exists", %{
+      tmp_dir: tmp
+    } do
+      %{release: release, movies: movies} = configure_real_roots(tmp)
+      chi = Path.join(release, "Movie.chi.srt")
+      zh = Path.join(release, "Movie.zh.srt")
+      File.write!(chi, "chi")
+      File.write!(zh, "zh")
+      log_info()
+
+      for {order, sidecars} <- [chi_first: [chi, zh], zh_first: [zh, chi]] do
+        dest = Path.join(movies, "#{order}/Movie.mkv")
+        zh_dest = Path.rootname(dest) <> ".zh.srt"
+        File.mkdir_p!(Path.dirname(dest))
+        File.write!(zh_dest, "manual")
+
+        log = capture_log(fn -> assert Sidecars.link_listed(listed(sidecars), dest) == [] end)
+
+        assert {order, Regex.scan(~r/sidecar link rejected: \S+/, log)} ==
+                 {order, [["sidecar link rejected: :eexist"]]}
+
+        assert log =~ "[info] sidecar not placed: #{chi}, as #{zh_dest} exists"
+        assert {order, File.read!(zh_dest)} == {order, "manual"}
+        assert {order, File.ls!(Path.dirname(dest))} == {order, ["Movie.zh.srt"]}
+      end
+    end
+
+    # #1416: a link that fails for another reason than `:eexist` hands the name to the next one.
+    @tag :tmp_dir
+    # It held before #1416 too, in both orders.
+    test "link_listed/2 places the next sidecar of a group when the first fails with :eio", %{
+      tmp_dir: tmp
+    } do
+      for %{order: order, placed: placed, zh_dest: zh_dest, log: log} <- link_with_failing_zh(tmp) do
+        assert {order, placed} == {order, [zh_dest]}
+        assert {order, log =~ "sidecar link rejected: :eio"} == {order, true}
+        assert {order, File.read!(zh_dest)} == {order, "chi"}
+      end
+    end
+
+    @tag :tmp_dir
+    test "link_listed/2 logs the sidecar that failed with :eio as not placed", %{tmp_dir: tmp} do
+      for %{order: order, chi: chi, zh: zh, zh_dest: zh_dest, log: log} <-
+            link_with_failing_zh(tmp) do
+        line = "[info] sidecar not placed: #{zh}, as #{chi} took its name #{zh_dest}"
+        assert {order, log =~ line} == {order, true}
+      end
     end
 
     @tag :tmp_dir
@@ -788,6 +885,43 @@ defmodule Cinder.Library.SidecarsTest do
       assert log =~ "sidecar link rejected: :unsafe_destination"
       refute File.exists?(Path.join(outside, "Movie.en.srt"))
     end
+  end
+
+  # The sidecars as `Sidecars.files/1` lists them, in the order given.
+  defp listed(paths), do: Enum.map(paths, &{&1, WantedLanguage.name_language(&1)})
+
+  # Links `Movie.chi.srt` and `Movie.zh.srt` in each list order, the zh file's link failing with
+  # `:eio` once, each order into its own destination folder.
+  defp link_with_failing_zh(tmp) do
+    %{release: release, movies: movies} = configure_real_roots(tmp)
+    chi = Path.join(release, "Movie.chi.srt")
+    zh = Path.join(release, "Movie.zh.srt")
+    File.write!(chi, "chi")
+    File.write!(zh, "zh")
+    log_info()
+
+    for {order, sidecars} <- [chi_first: [chi, zh], zh_first: [zh, chi]] do
+      dest = Path.join(movies, "#{order}/Movie.mkv")
+      File.mkdir_p!(Path.dirname(dest))
+      fail_once(%{operation: :ln, source_contains: zh, reason: :eio})
+
+      {placed, log} = with_log(fn -> Sidecars.link_listed(listed(sidecars), dest) end)
+
+      %{
+        order: order,
+        chi: chi,
+        zh: zh,
+        zh_dest: Path.rootname(dest) <> ".zh.srt",
+        placed: placed,
+        log: log
+      }
+    end
+  end
+
+  # `config/test.exs` logs warnings and up, so a test that reads an info line raises the level.
+  defp log_info do
+    Logger.configure(level: :info)
+    on_exit(fn -> Logger.configure(level: :warning) end)
   end
 
   defp configure_real_roots(tmp) do
