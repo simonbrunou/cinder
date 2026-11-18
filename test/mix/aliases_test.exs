@@ -17,9 +17,16 @@ defmodule Cinder.MixAliasesTest do
     aliases = mix_exs_def(:aliases)
 
     assert Macro.to_string(List.last(aliases[:test])) ==
-             ~S'&run_test_paths(["--warnings-as-errors" | &1])'
+             ~S'&run_suite(["--warnings-as-errors" | &1])'
 
     assert Macro.to_string(List.last(aliases[:"test.unchecked"])) == "&run_test_paths/1"
+  end
+
+  # #1473: the partitions get the alias's arguments, --warnings-as-errors included, and one
+  # process runs the path guard.
+  test "the test alias hands its arguments and CINDER_TEST_PARTITIONS to the partition runner" do
+    assert Macro.to_string(mix_exs_def(:run_suite)) ==
+             ~S'Cinder.TestPartitions.run(args, System.get_env("CINDER_TEST_PARTITIONS"), &run_test_paths/1)'
   end
 
   test "the path guard calls the ExUnit task itself" do

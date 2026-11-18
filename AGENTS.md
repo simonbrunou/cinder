@@ -10,6 +10,13 @@ Audiobookshelf.
 - `mix test` is the only green gate, locally and in CI. The alias runs
   `compile --warnings-as-errors`, `format --check-formatted`, `credo --strict`, then
   `test --warnings-as-errors`, which also fails on a compiler warning from a test file.
+- A bare `mix test` runs those gates once, then the suite in `CINDER_TEST_PARTITIONS` partitions
+  (default 4), each a process with its own database file and its own copy of the build folder.
+  It prints a failed partition's output last and exits non-zero, and `mix test.unchecked
+  --failed` then reads the failures manifest one process would have left.
+  `CINDER_TEST_PARTITIONS=1`, a path argument, or a switch outside the
+  pass-through list in `Cinder.TestPartitions` (`test/support/test_partitions.ex`) runs one
+  process.
 - Mix and Hex manage dependencies. The Elixir/OTP toolchain comes from the Nix flake dev shell;
   if `mix` is not on `PATH`, run `nix develop --command mix test`.
 - Before the first `mix` task in a fresh worktree, install its dependencies with

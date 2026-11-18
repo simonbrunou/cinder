@@ -102,8 +102,9 @@ write.
 - Run {{TEST}} and read its result line before you end the turn. Start a run that can outlast
   the 600 s cap of one foreground Bash call (a full cinder `mix test`, `docs/agents/testing.md`)
   with `run_in_background` and `timeout: 1800000`, call `t3_background_wait` with its task id,
-  then wait for the result line in foreground calls, each a loop bounded by round count as the
-  global CLAUDE.md's round-count bullet says. Other suites share the CPU, so re-run a timing
+  then wait for the run to exit in foreground calls, each a loop bounded by round count as the
+  global CLAUDE.md's round-count bullet says. A bare cinder `mix test` prints each passed
+  partition's `Result:` line while others still run, so a `Result:` line does not end the wait. Other suites share the CPU, so re-run a timing
   failure alone before treating it as yours.
 - A negative test (asserting nothing happened) starts from a state that would otherwise act,
   waits for async work, and gets a mutation check. Break the fix, see it go red, restore.

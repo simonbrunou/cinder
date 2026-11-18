@@ -81,7 +81,9 @@ jobs:
       - run: mix deps.get
 
       # `mix test` is the project alias: compile --warnings-as-errors,
-      # format --check-formatted, credo --strict, ecto create/migrate, test --warnings-as-errors.
+      # format --check-formatted, credo --strict, ecto create/migrate, test --warnings-as-errors,
+      # the last in CINDER_TEST_PARTITIONS partitions (default 4, Cinder.TestPartitions): a passed
+      # partition's output reaches stdout once it ends, a failed one's once every partition ended.
       #
       # #396: a flake sighting's failure detail is otherwise lost — a local `mix test --failed`
       # rerun can pass and clear the manifest before anyone captures the diff. `tee` keeps the
@@ -103,7 +105,11 @@ jobs:
         uses: https://data.forgejo.org/forgejo/upload-artifact@cb8afe72b42edc798abfb8fcb556cf660d894245 # v5
         with:
           name: mix-test-output
-          path: mix-test-output.log
+          # A partition's log reaches stdout once it ends, so on a cancelled or timed-out job
+          # the partitions still running left their output only in these files.
+          path: |
+            mix-test-output.log
+            _build/test-partitions/*.log
           retention-days: 14
 
   dependency-audit:

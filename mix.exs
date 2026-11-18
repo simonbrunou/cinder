@@ -154,7 +154,7 @@ defmodule Cinder.MixProject do
         "ecto.create --quiet",
         "ecto.migrate --quiet",
         # Fails the run on a compiler warning from a test file too (#855).
-        &run_test_paths(["--warnings-as-errors" | &1])
+        &run_suite(["--warnings-as-errors" | &1])
       ],
       # For red runs and mutation checks (docs/agents/testing.md): `test` without its compile,
       # format and Credo gates. It calls the ExUnit task itself, since a "test" entry here
@@ -168,6 +168,14 @@ defmodule Cinder.MixProject do
         "phx.digest"
       ]
     ]
+  end
+
+  # A bare `mix test` runs the suite in CINDER_TEST_PARTITIONS partitions (default 4), each a
+  # `mix test.unchecked` child with its own database file and build folder; a path argument, `1`,
+  # or a switch that cannot work across partitions runs one process here (#1473). The module is
+  # test/support code, which the alias's compile step has just built.
+  defp run_suite(args) do
+    Cinder.TestPartitions.run(args, System.get_env("CINDER_TEST_PARTITIONS"), &run_test_paths/1)
   end
 
   # Both test aliases end here. Mix's test task fails on given paths only when none of them

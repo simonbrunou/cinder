@@ -3,13 +3,11 @@ import Config
 # Only in tests, remove the complexity from the password hashing algorithm
 config :bcrypt_elixir, :log_rounds, 1
 
-# Configure your database
-#
-# The MIX_TEST_PARTITION environment variable can be used
-# to provide built-in test partitioning in CI environment.
-# Run `mix help test` for more information.
+# The file name ends in MIX_TEST_PARTITION's value, so each partition of a bare `mix test`, which
+# sets it, gets its own file: cinder_test1.db and so on, cinder_test.db when it is unset
+# (Cinder.TestPartitions, #1473).
 config :cinder, Cinder.Repo,
-  database: Path.expand("../cinder_test.db", __DIR__),
+  database: Path.expand("../cinder_test#{System.get_env("MIX_TEST_PARTITION")}.db", __DIR__),
   # pool_size: 1 serializes Sandbox checkouts onto one connection — SQLite is a single writer, and
   # busy_timeout can't rescue the deferred read-then-write snapshot conflicts the Sandbox wraps each
   # test in (see repo_concurrency_test.exs). NOTE: `default_transaction_mode: :immediate`

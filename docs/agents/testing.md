@@ -78,7 +78,8 @@
   a compiled file with a second module and names in its header the forms it misses.
 - Run a red run, a mutation check or a throwaway test with `mix test.unchecked`, which takes the
   same arguments as `mix test` (`<file>:<line>`, `--failed`, `--only`, `--seed`). It creates and
-  migrates the test database, then runs ExUnit without the `mix test` alias's gates: compile
+  migrates the test database, then runs ExUnit in one process, never in the partitions a bare
+  `mix test` starts (AGENTS.md "Commands"), and without the `mix test` alias's gates: compile
   warnings, the format check, `credo --strict` and test-file warnings. A mutant that leaves a
   variable or helper unused, trips the type checker or nests too deep for Credo still reaches
   the `Result:` line. Compiler warnings still print, and a failing test still exits non-zero.

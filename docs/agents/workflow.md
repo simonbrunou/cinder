@@ -35,9 +35,11 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
 
 ## Review
 
-- Every review sub-agent's prompt gives the author's full `mix test` result line, to trust as it
-  would green CI, and limits execution to a mutation check: revert the fix in the sub-agent's own
-  worktree, seeded as "Worktrees" below says, and run only that test file with
+- Every review sub-agent's prompt gives the author's full `mix test` result lines (a partitioned
+  run's summary lines and its closing `mix test: <n> of <n> partitions passed`, or a one-process
+  run's `Result:` line), to trust
+  as it would green CI, and limits execution to a mutation check: revert the fix in the
+  sub-agent's own worktree, seeded as "Worktrees" below says, and run only that test file with
   `mix test.unchecked <file>` ([testing.md](testing.md)). A reviewer told to check the author's
   claims checks them against that line and the diff, within the same one-file budget. A second
   full suite takes the CPU the host's agent threads share: on #959 a Spec reviewer re-ran the

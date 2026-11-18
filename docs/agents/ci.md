@@ -8,7 +8,10 @@
   `main` requires `* (pull_request)`. GitHub runs no CI: its only workflow is `release.yml`, on a
   tag ([workflow.md](workflow.md) "Releasing").
 - `test` runs the `mix test` alias with `MIX_ENV=test` and uploads its full output as the
-  `mix-test-output` artifact, kept 14 days.
+  `mix-test-output` artifact, kept 14 days. Once the gates pass, a partitioned run's output
+  holds each partition's log under a
+  `==> mix test: partition <n> of <count> exited <status>` line, the failed partitions last,
+  then one summary line per partition (AGENTS.md "Commands").
 - `container` builds the image, boots it, runs `Disk.exchange/2`'s `mv --exchange` fallback in
   the running node (`.github/scripts/mv_exchange_check.exs`, the only CI run of a real
   `mv --exchange`: the `test` job's coreutils lacks it), runs the Playwright browser smoke
@@ -107,8 +110,9 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   file the issue for `main`'s red run as AGENTS.md "Merge authority" says. The wait ends when
   `CI / test (push)` on `origin/main`'s head passes that test, whether a fix landed, a later push
   ran green or `main`'s own re-run went green. A `success` status shows that. So does a red job
-  whose log ("Reading a run") holds the suite's `Result:` line and no longer names the test among
-  its failures. A red job with no `Result:` line does not prove the test passed, so keep waiting.
+  whose log ("Reading a run") holds a `Result:` line for every partition (the one line of a
+  one-process run) and no longer names the test among its failures. A red job whose log lacks a
+  partition's `Result:` line does not prove the test passed, so keep waiting.
   Then merge `origin/main` into your branch and push ("Re-running CI").
 - **Flake.** A failure is a flake only when both hold: the failing test touches nothing in the
   diff, and the identical tree went green on CI (`git diff --stat <green sha> <red sha>` prints
