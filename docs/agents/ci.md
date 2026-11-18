@@ -26,10 +26,10 @@
   `sbrn-cinder`, `38333539-...` is `ci-runner` (the jobs API returns no runner name; after a
   re-registration, `GET /repos/simonbrunou/cinder/actions/runners` gives `sbrn-cinder`'s
   `uuid`). `sbrn-cinder` has no cache, so every `test` and `dependency-audit` job there misses
-  every `actions/cache` step (each prints the warning `Cache action is only supported on GHES
-  version >= 3.5`, which is expected) and compiles all dependencies, and `test` also installs
-  cmake from apt and downloads or builds the NIFs ("Dependency rebuild"). The runners are
-  described in homelab-stacks `docs/operations/runbooks/ct-125-ci-runner.md`.
+  every `actions/cache` step and compiles all dependencies. Each such step prints the warning
+  `Cache action is only supported on GHES version >= 3.5`, which is expected. `test` also
+  installs cmake from apt and downloads or builds the NIFs ("Dependency rebuild"). The runners
+  are described in homelab-stacks `docs/operations/runbooks/ct-125-ci-runner.md`.
 
 ## Browser scripts locally
 
@@ -356,8 +356,8 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   `ci-runner`, the `test` log shows the miss: the cmake install step runs only then. A green
   `test` job there saves the cache under its exact key, so a later run on `ci-runner` with the
   same `mix.lock`, OTP and Elixir restores the NIFs and rebuilds nothing, flag or not. A `test`
-  job on `sbrn-cinder` has no cache, so it always misses and runs the cmake step ("What runs"). To prove the fallback locally, put the same line in
-  `config/test.exs`, run
+  job on `sbrn-cinder` has no cache, so it always misses and runs the cmake step ("What runs").
+  To prove the fallback locally, put the same line in `config/test.exs`, run
   `MIX_BUILD_ROOT=$(mktemp -d) MIX_ENV=test mix deps.compile lazy_html exqlite --include-children`
   inside `nix develop`, which supplies `cmake`, then revert the line. A source build prints
   lazy_html's `-o .../priv/liblazy_html.so` link line and exqlite's `CC sqlite3_nif.o`, and a
