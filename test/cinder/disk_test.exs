@@ -3,6 +3,8 @@ defmodule Cinder.DiskTest do
   # (:movies_library_path / :tv_library_path), same reasoning as CinderWeb.SettingsLiveTest.
   use ExUnit.Case, async: false
 
+  import Cinder.PollerHelpers, only: [poll_until: 2]
+
   alias Cinder.Disk
   alias Cinder.Test.OsProcess
 
@@ -124,7 +126,7 @@ defmodule Cinder.DiskTest do
       Application.put_env(:cinder, :disk_probe_timeout, 500)
 
       first_probe = Task.async(fn -> Disk.stats(tmp) end)
-      assert eventually(fn -> File.exists?(pid_file) end)
+      poll_until(fn -> File.exists?(pid_file) end, timeout: 10_000)
 
       assert Disk.stats(tmp) == {:error, :probe_busy}
       assert Task.await(first_probe) == {:error, :timeout}
@@ -159,8 +161,11 @@ defmodule Cinder.DiskTest do
 
       kill_recorded_pids(pid_file)
       restore_env(saved)
+      # The recovered probe is meant to finish, so it gets a deadline a loaded runner cannot miss
+      # instead of the configured 2 s (docs/agents/testing.md). on_exit restores the saved value.
+      Application.put_env(:cinder, :disk_probe_timeout, 10_000)
 
-      assert eventually(fn -> match?({:ok, _stats}, Disk.stats(tmp)) end)
+      poll_until(fn -> match?({:ok, _stats}, Disk.stats(tmp)) end, timeout: 10_000)
     end
 
     # #976: a probe timeout kills the probe's whole process group, as `BoundedCommand` does, so a
@@ -597,17 +602,4 @@ defmodule Cinder.DiskTest do
 
     status == 0
   end
-
-  defp eventually(fun, attempts \\ 50)
-
-  defp eventually(fun, attempts) when attempts > 0 do
-    if fun.() do
-      true
-    else
-      Process.sleep(20)
-      eventually(fun, attempts - 1)
-    end
-  end
-
-  defp eventually(_fun, 0), do: false
 end

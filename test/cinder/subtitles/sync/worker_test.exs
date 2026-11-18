@@ -1,6 +1,7 @@
 defmodule Cinder.Subtitles.Sync.WorkerTest do
   use ExUnit.Case, async: false
 
+  import Cinder.PollerHelpers, only: [poll_until: 2]
   import ExUnit.CaptureLog
 
   alias Cinder.Subtitles.Sync.Worker
@@ -42,7 +43,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     send(first, :release)
     assert_receive {:started, "/library/b.mkv", second}
     send(second, :release)
-    assert_eventually(fn -> Worker.status().state == :idle end)
+    poll_until(fn -> Worker.status().state == :idle end, timeout: 10_000)
     assert Worker.status().counts.aligned == 2
     assert Worker.managed_video_paths(worker) == MapSet.new([a.video_path, b.video_path])
     assert Enum.find(Worker.status().recent, &(&1.label == "/library/a.mkv")).scopes == scopes
@@ -77,7 +78,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     refute second == first
     send(second, :release)
 
-    assert_eventually(fn -> Worker.status().state == :idle end)
+    poll_until(fn -> Worker.status().state == :idle end, timeout: 10_000)
     refute_receive {:started, "/library/current.mkv", _}, 100
     assert Worker.status().counts.aligned == 2
   end
@@ -116,7 +117,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
 
     enqueue = Task.async(fn -> Worker.enqueue_library(worker) end)
     assert_receive {:scan_started, :library, scanner}
-    assert {:ok, :ok} = Task.yield(enqueue, 100)
+    assert {:ok, :ok} = Task.yield(enqueue, 15_000)
     assert %{state: :idle} = Worker.status()
 
     send(scanner, :release)
@@ -130,7 +131,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
 
     assert :ok = Worker.enqueue_library(worker)
 
-    assert_eventually(fn -> Worker.status().counts.failed == 1 end)
+    poll_until(fn -> Worker.status().counts.failed == 1 end, timeout: 10_000)
     assert Process.alive?(worker)
     assert [%{status: :failed, reason: reason} | _] = Worker.status().recent
     assert inspect(reason) =~ "catalog unavailable"
@@ -144,7 +145,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
 
     assert :ok = Worker.enqueue_library(worker)
 
-    assert_eventually(fn -> Worker.status().counts.failed == 1 end)
+    poll_until(fn -> Worker.status().counts.failed == 1 end, timeout: 10_000)
     assert Process.alive?(worker)
     assert [%{status: :failed, reason: reason} | _] = Worker.status().recent
     assert inspect(reason) =~ "invalid_scan_result"
@@ -303,13 +304,13 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
 
     assert :ok = Worker.enqueue_library(worker)
     assert_receive {:started, "/library/backlog-1.mkv", first}
-    assert_eventually(fn -> Worker.status().queued == 49 end)
+    poll_until(fn -> Worker.status().queued == 49 end, timeout: 10_000)
 
     assert :ok = Worker.enqueue_series(7, worker)
     # Promotion never interrupts the in-flight unit.
     refute_receive {:started, "/library/backlog-40.mkv", _}, 100
     # Promotion moves the unit rather than duplicating it.
-    assert_eventually(fn -> Worker.status().queued == 49 end)
+    poll_until(fn -> Worker.status().queued == 49 end, timeout: 10_000)
 
     send(first, :release)
     assert_receive {:started, "/library/backlog-40.mkv", promoted}
@@ -353,7 +354,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert :ok = Worker.enqueue_library(worker)
     assert_receive {:started, "/library/head.mkv", first}
     # head is in flight; filler + target wait.
-    assert_eventually(fn -> Worker.status().queued == 6 end)
+    poll_until(fn -> Worker.status().queued == 6 end, timeout: 10_000)
 
     # Three explicit requests for the same video across two different scopes.
     assert :ok = Worker.enqueue_movie(3, worker)
@@ -361,14 +362,14 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert :ok = Worker.enqueue_episode(9, worker)
 
     # Promotion moves the unit between queues; it must never duplicate it.
-    assert_eventually(fn -> Worker.status().queued == 6 end)
+    poll_until(fn -> Worker.status().queued == 6 end, timeout: 10_000)
     Process.sleep(50)
     assert Worker.status().queued == 6
 
     # A later library scan must not re-add a path that is already waiting in the priority queue.
     # Without the `prioritized` guard in add_units/3 the same video would be analyzed twice.
     assert :ok = Worker.enqueue_library(worker)
-    assert_eventually(fn -> Worker.status().queued == 7 end)
+    poll_until(fn -> Worker.status().queued == 7 end, timeout: 10_000)
     Process.sleep(50)
     assert Worker.status().queued == 7
 
@@ -533,7 +534,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     # The scan raises rather than yielding units; the queue must not stay stranded behind it.
     send(scanner, :release_scan)
     assert_receive {:started, "/library/bg2.mkv", _}
-    assert_eventually(fn -> Worker.status().counts.failed == 1 end)
+    poll_until(fn -> Worker.status().counts.failed == 1 end, timeout: 10_000)
   end
 
   test "a second explicit request keeps its hold after the first one starts running" do
@@ -575,7 +576,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
 
     # First explicit request resolves immediately and lands in the priority queue.
     assert :ok = Worker.enqueue_movie(1, worker)
-    assert_eventually(fn -> Worker.status().queued == 1 end)
+    poll_until(fn -> Worker.status().queued == 1 end, timeout: 10_000)
 
     # Second explicit request's scan blocks, so its units do not exist yet.
     assert :ok = Worker.enqueue_series(2, worker)
@@ -792,9 +793,9 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert_receive {:started, "/library/blocker.mkv", first}
 
     assert :ok = Worker.enqueue_library(worker)
-    assert_eventually(fn -> Worker.status().queued == 1 end)
+    poll_until(fn -> Worker.status().queued == 1 end, timeout: 10_000)
     assert :ok = Worker.enqueue_episode(9, worker)
-    assert_eventually(fn -> Worker.status().queued == 2 end)
+    poll_until(fn -> Worker.status().queued == 2 end, timeout: 10_000)
 
     send(first, :release)
     assert_receive {:started, "/library/explicit.mkv", explicit}
@@ -885,18 +886,6 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     end
 
     start_supervised!({Worker, initial_scan: false, interval: :timer.hours(1), analyze: analyze})
-  end
-
-  defp assert_eventually(fun, attempts \\ 20)
-  defp assert_eventually(fun, 0), do: assert(fun.())
-
-  defp assert_eventually(fun, attempts) do
-    if fun.() do
-      :ok
-    else
-      Process.sleep(10)
-      assert_eventually(fun, attempts - 1)
-    end
   end
 
   # Background work is held by a wall-clock deadline armed when the worker handles the explicit

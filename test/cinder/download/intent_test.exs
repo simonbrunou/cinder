@@ -15,6 +15,7 @@ defmodule Cinder.Download.IntentTest do
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
+  import Cinder.PollerHelpers, only: [poll_until: 2]
 
   setup :set_mox_global
   setup :verify_on_exit!
@@ -1213,7 +1214,10 @@ defmodule Cinder.Download.IntentTest do
     assert_receive {:submission_lookup_blocked, lookup_pid}
     cancel = Task.async(fn -> MovieLifecycle.cancel(movie, actor) end)
 
-    assert eventually(fn -> Repo.get!(Cinder.Catalog.Movie, movie.id).status == :cancelled end)
+    poll_until(fn -> Repo.get!(Cinder.Catalog.Movie, movie.id).status == :cancelled end,
+      timeout: 10_000
+    )
+
     send(lookup_pid, :continue)
 
     assert {:ok, %Cinder.Catalog.Movie{status: :cancelled}} = Task.await(cancel)
@@ -1240,7 +1244,11 @@ defmodule Cinder.Download.IntentTest do
     submit = Task.async(fn -> Download.reconcile_intent(intent) end)
     assert_receive {:movie_remote_accepted, add_pid}
     cancel = Task.async(fn -> MovieLifecycle.cancel(movie, actor) end)
-    assert eventually(fn -> Repo.get!(Cinder.Catalog.Movie, movie.id).status == :cancelled end)
+
+    poll_until(fn -> Repo.get!(Cinder.Catalog.Movie, movie.id).status == :cancelled end,
+      timeout: 10_000
+    )
+
     send(add_pid, :return_remote)
 
     assert {:ok, :removed} = Task.await(submit)
@@ -1269,7 +1277,11 @@ defmodule Cinder.Download.IntentTest do
     submit = Task.async(fn -> Download.reconcile_intent(intent) end)
     assert_receive {:tv_remote_accepted, add_pid}
     cancel = Task.async(fn -> Catalog.cancel_series(series, actor) end)
-    assert eventually(fn -> Repo.get!(Cinder.Catalog.Episode, episode.id).monitored == false end)
+
+    poll_until(fn -> Repo.get!(Cinder.Catalog.Episode, episode.id).monitored == false end,
+      timeout: 10_000
+    )
+
     send(add_pid, :return_remote)
 
     assert {:ok, :removed} = Task.await(submit)
@@ -1810,17 +1822,5 @@ defmodule Cinder.Download.IntentTest do
 
     Enum.each(pids, &send(&1, :go))
     Enum.map(tasks, &Task.await/1)
-  end
-
-  defp eventually(fun, attempts \\ 100)
-  defp eventually(fun, 0), do: fun.()
-
-  defp eventually(fun, attempts) do
-    if fun.() do
-      true
-    else
-      Process.sleep(5)
-      eventually(fun, attempts - 1)
-    end
   end
 end

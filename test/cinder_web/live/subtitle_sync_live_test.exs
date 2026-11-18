@@ -3,6 +3,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
   import Cinder.AccountsFixtures
   import Cinder.CatalogFixtures
+  import Cinder.PollerHelpers, only: [poll_until: 2]
   import Cinder.Test.BarrierFilesystem, only: [fail_once: 1]
   import ExUnit.CaptureLog, only: [with_log: 1]
   import Phoenix.LiveViewTest
@@ -60,7 +61,10 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
       )
 
     assert :ok = Worker.enqueue_units([%{video_path: video, label: "Slow"}], worker)
-    assert_eventually(fn -> MapSet.member?(Worker.managed_video_paths(), video) end)
+
+    poll_until(fn -> MapSet.member?(Worker.managed_video_paths(), video) end,
+      timeout: DiskTask.timeout_ms()
+    )
 
     Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
 
@@ -259,7 +263,10 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
       )
 
     assert :ok = Worker.enqueue_after_download(video, :movies, worker)
-    assert_eventually(fn -> has_element?(view, "#subtitle-sync-item-#{item.id}") end)
+
+    poll_until(fn -> has_element?(view, "#subtitle-sync-item-#{item.id}") end,
+      timeout: DiskTask.timeout_ms()
+    )
   end
 
   test "admin previews/applies/resets by server ID and raw client paths are rejected", %{
@@ -446,7 +453,10 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     send(view.pid, {:subtitle_sync_status, status_with_results([result])})
 
-    assert_eventually(fn -> render(view) =~ "Aligned via manual" end)
+    poll_until(
+      fn -> has_element?(view, "#subtitle-sync-item-#{item.id}", "Aligned via manual") end,
+      timeout: DiskTask.timeout_ms()
+    )
   end
 
   test "historic worker results are ignored until an identical analysis runs again", %{
@@ -483,7 +493,11 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     assert render(view) =~ "Not analyzed"
 
     send(view.pid, {:subtitle_sync_status, status_with_results([result], historic_status)})
-    assert_eventually(fn -> render(view) =~ "Aligned via manual" end)
+
+    poll_until(
+      fn -> has_element?(view, "#subtitle-sync-item-#{item.id}", "Aligned via manual") end,
+      timeout: DiskTask.timeout_ms()
+    )
   end
 
   test "worker batches larger than recent history trigger an authoritative reload", %{
@@ -936,7 +950,10 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     assert_receive {:scanned, :library}
 
     assert :ok = Worker.enqueue_units([%{video_path: "/media/Movie.mkv", label: "Movie"}])
-    assert_eventually(fn -> render(view) =~ "manifest" end)
+
+    poll_until(fn -> has_element?(view, "#subtitle-sync-activity li", "manifest") end,
+      timeout: DiskTask.timeout_ms()
+    )
   end
 
   defp digest(content),
@@ -969,17 +986,5 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     [item] = Sync.items({:movie, movie.id})
     {movie, video, sidecar, item}
-  end
-
-  defp assert_eventually(fun, attempts \\ 30)
-  defp assert_eventually(fun, 0), do: assert(fun.())
-
-  defp assert_eventually(fun, attempts) do
-    if fun.() do
-      :ok
-    else
-      Process.sleep(10)
-      assert_eventually(fun, attempts - 1)
-    end
   end
 end

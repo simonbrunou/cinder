@@ -419,7 +419,7 @@ defmodule Cinder.Library.AdoptionTest do
         unrelated |> Ecto.Changeset.change(title: "Renamed") |> Repo.update!()
       end)
 
-    assert %Movie{title: "Renamed"} = Task.await(update_task, 200)
+    assert %Movie{title: "Renamed"} = Task.await(update_task, 15_000)
 
     send(adopt_task.pid, :continue)
     assert {:ok, %Movie{}, :created} = Task.await(adopt_task)
