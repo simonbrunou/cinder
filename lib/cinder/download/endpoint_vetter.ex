@@ -5,7 +5,7 @@ defmodule Cinder.Download.EndpointVetter do
 
   A `.torrent` can carry hundreds of thousands of distinct hostnames and a slow nameserver
   stalls every lookup, so the work done on Cinder's behalf is capped three ways: hosts are
-  deduplicated, only the first `max_hosts/0` unique ones are looked at (the rest are treated
+  deduplicated, only the first 50 unique ones are looked at (the rest are treated
   as forbidden), and all lookups run concurrently under ONE overall deadline — a host that
   has not resolved by then is dropped like any other forbidden host.
   """
@@ -15,12 +15,8 @@ defmodule Cinder.Download.EndpointVetter do
   @max_hosts 50
   @deadline_ms 8_000
 
-  @doc "Maximum number of unique hosts vetted per torrent/magnet."
-  @spec max_hosts() :: pos_integer()
-  def max_hosts, do: @max_hosts
-
   @doc """
-  Returns the `MapSet` of hosts out of the first `max_hosts/0` unique `hosts` that
+  Returns the `MapSet` of hosts out of the first 50 unique `hosts` that
   `HTTPPolicy.validate_untrusted_host/2` approves within `deadline` milliseconds.
   `resolver` is the injectable DNS resolver (`nil` = the real one).
   """

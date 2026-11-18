@@ -364,19 +364,6 @@ defmodule Cinder.Download do
     )
   end
 
-  @doc "Finds or submits the reserved remote job, then records its normal downloader ID."
-  def submit_intent(%Intent{} = intent), do: with_intent_lock(intent, &submit_valid_intent/1)
-
-  defp submit_valid_intent(%Intent{} = intent),
-    do: with_valid_episode_intent(intent, &do_submit_intent/1)
-
-  defp do_submit_intent(%Intent{status: :submitted, remote_id: id} = intent)
-       when is_binary(id),
-       do: {:ok, intent}
-
-  defp do_submit_intent(%Intent{status: :cleanup_pending}),
-    do: {:error, :cleanup_pending}
-
   defp do_submit_intent(%Intent{} = intent) do
     if retry_due?(intent), do: submit_due_intent(intent), else: {:error, :intent_backoff}
   end
@@ -420,21 +407,15 @@ defmodule Cinder.Download do
 
   defp do_reconcile_intent(%Intent{status: :cleanup_pending} = intent), do: do_cleanup(intent)
 
-  defp do_reconcile_intent(%Intent{} = intent),
-    do: with_valid_episode_intent(intent, &do_reconcile_valid_intent/1)
-
-  defp with_valid_episode_intent(%Intent{status: :cleanup_pending} = intent, fun),
-    do: fun.(intent)
-
-  defp with_valid_episode_intent(%Intent{kind: kind} = intent, fun)
+  defp do_reconcile_intent(%Intent{kind: kind} = intent)
        when kind in [:episode, :season_pack] do
     case Catalog.get_single_series_for_episode_ids(intent.episode_ids) do
-      {:ok, _series} -> fun.(intent)
+      {:ok, _series} -> do_reconcile_valid_intent(intent)
       {:error, reason} -> reject_invalid_episode_intent(intent, reason)
     end
   end
 
-  defp with_valid_episode_intent(%Intent{} = intent, fun), do: fun.(intent)
+  defp do_reconcile_intent(%Intent{} = intent), do: do_reconcile_valid_intent(intent)
 
   defp do_reconcile_valid_intent(%Intent{remote_id: nil} = intent) do
     with {:ok, submitted} <- do_submit_intent(intent), do: do_reconcile_intent(submitted)

@@ -200,28 +200,6 @@ defmodule Cinder.Download.IntentTest do
     assert_invalid_episode_intent_rejected([first.id, second.id], [first, second])
   end
 
-  test "direct incomplete episodic intent is rejected before submit client I/O" do
-    series = series_fixture(%{monitor_strategy: :all})
-    episode = episode_fixture(season_fixture(series))
-
-    assert_invalid_episode_intent_rejected(
-      [episode.id, -1],
-      [episode],
-      &Download.submit_intent/1
-    )
-  end
-
-  test "direct mixed-series intent is rejected before submit client I/O" do
-    first = episode_fixture(season_fixture(series_fixture(%{monitor_strategy: :all})))
-    second = episode_fixture(season_fixture(series_fixture(%{monitor_strategy: :all})))
-
-    assert_invalid_episode_intent_rejected(
-      [first.id, second.id],
-      [first, second],
-      &Download.submit_intent/1
-    )
-  end
-
   test "Standard movie and TV reservations and owners keep policy nil" do
     movie = movie_fixture(%{status: :no_match, media_profile: :standard})
 
@@ -748,7 +726,7 @@ defmodule Cinder.Download.IntentTest do
     assert Repo.aggregate(IntentEpisode, :count) == 2
   end
 
-  test "submit_intent serializes lookup through remote-id persistence" do
+  test "reconcile_intent lets one caller at a time look up the remote job" do
     movie = movie_fixture(%{status: :searching})
     {:ok, intent} = reserve_movie_intent(movie.id)
     parent = self()
@@ -760,9 +738,9 @@ defmodule Cinder.Download.IntentTest do
 
     stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-single"} end)
 
-    first = Task.async(fn -> Download.submit_intent(intent) end)
+    first = Task.async(fn -> Download.reconcile_intent(intent) end)
     assert_receive {:lookup, first_pid}
-    second = Task.async(fn -> Download.submit_intent(intent) end)
+    second = Task.async(fn -> Download.reconcile_intent(intent) end)
 
     second_lookup =
       receive do
@@ -773,10 +751,12 @@ defmodule Cinder.Download.IntentTest do
 
     send(first_pid, :continue)
     if second_lookup, do: send(second_lookup, :continue)
-    Task.await(first)
-    Task.await(second)
+    first_result = Task.await(first)
+    second_result = Task.await(second)
 
     assert second_lookup == nil
+    assert {:ok, %Movie{download_id: "hash-single"}} = first_result
+    assert second_result == {:error, :intent_completed}
   end
 
   test "permanent pre-submission errors release the intent and TV reservations" do
@@ -1407,20 +1387,39 @@ defmodule Cinder.Download.IntentTest do
     {:ok, intent} = reserve_movie_intent(movie.id)
     parent = self()
 
+    handler = {__MODULE__, make_ref()}
+    on_exit(fn -> :telemetry.detach(handler) end)
+
     expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> :not_found end)
-    expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-submitted"} end)
 
-    {pid, ref} =
-      spawn_monitor(fn ->
-        {:ok, submitted} = Download.submit_intent(intent)
-        send(parent, {:remote_stored, submitted.id})
-        Process.exit(self(), :kill)
-      end)
+    # The reconciling process dies right after its first intent write that follows `add`, the
+    # remote-id persistence, before it attaches the movie.
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      :ok =
+        :telemetry.attach(
+          handler,
+          [:cinder, :repo, :query],
+          fn _event, _measurements, metadata, config ->
+            if self() == config.pid and is_binary(metadata.query) and
+                 String.starts_with?(metadata.query, ~s(UPDATE "download_intents")) do
+              send(config.parent, :remote_stored)
+              Process.exit(self(), :kill)
+            end
+          end,
+          %{pid: self(), parent: parent}
+        )
 
-    assert_receive {:remote_stored, intent_id}
+      {:ok, "hash-submitted"}
+    end)
+
+    {pid, ref} = spawn_monitor(fn -> Download.reconcile_intent(intent) end)
+
+    assert_receive :remote_stored
     assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
-    submitted = Repo.get!(Intent, intent_id)
+    submitted = Repo.get!(Intent, intent.id)
     assert submitted.status == :submitted
+    assert submitted.remote_id == "hash-submitted"
+    assert Repo.get!(Cinder.Catalog.Movie, movie.id).download_id == nil
 
     assert {:ok, _movie} = Download.reconcile_intent(submitted)
     assert Repo.get!(Cinder.Catalog.Movie, movie.id).download_id == "hash-submitted"
@@ -1543,7 +1542,7 @@ defmodule Cinder.Download.IntentTest do
              Catalog.transition_episode(episode, %{file_path: "/library/Show.S01E01.mkv"})
 
     assert Catalog.episode_state(available) == :available
-    assert {:error, :stale_target} = Download.submit_intent(intent)
+    assert {:error, :stale_target} = Download.reconcile_intent(intent)
     assert Repo.all(Grab) == []
     refute Repo.get(Intent, intent.id)
     assert Repo.reload!(episode).grab_id == nil
@@ -1638,11 +1637,7 @@ defmodule Cinder.Download.IntentTest do
     end
   end
 
-  defp assert_invalid_episode_intent_rejected(
-         episode_ids,
-         episodes,
-         action \\ &Download.reconcile_intent/1
-       ) do
+  defp assert_invalid_episode_intent_rejected(episode_ids, episodes) do
     chosen = release("Direct.Invalid.Episodes")
 
     assert {:ok, intent} =
@@ -1666,7 +1661,7 @@ defmodule Cinder.Download.IntentTest do
       {:ok, "hash-invalid-episodic-intent"}
     end)
 
-    assert {:error, :episode_series_mismatch} = action.(Repo.reload!(intent))
+    assert {:error, :episode_series_mismatch} = Download.reconcile_intent(Repo.reload!(intent))
 
     assert Agent.get(calls, & &1) == 0
     refute Repo.get(Intent, intent.id)
