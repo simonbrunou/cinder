@@ -7,10 +7,13 @@ defmodule Cinder.Download.MoveOnImportTest do
   # The remove paths log on {:error,_}/raise; capture so output stays pristine.
   @moduletag :capture_log
 
+  alias Cinder.Books
+  alias Cinder.Books.BookGrab
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, GrabFile, Movie}
+  alias Cinder.ConfigCase
   alias Cinder.Download
-  alias Cinder.Download.{Intent, IntentEpisode, Poller, TvPoller}
+  alias Cinder.Download.{Intent, IntentEpisode, Poller, SourceRemoval, TvPoller}
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -65,6 +68,32 @@ defmodule Cinder.Download.MoveOnImportTest do
       send(parent, {:removed, id, opts})
       :ok
     end)
+  end
+
+  # Records each client removal with the cleanup intent its target held at that moment.
+  defp record_removals_with_intent(kind, target_id) do
+    parent = self()
+
+    stub(Cinder.Download.SabnzbdClientMock, :remove, fn id, _opts ->
+      send(parent, {:removed, id, Repo.get_by(Intent, kind: kind, target_id: target_id)})
+      :ok
+    end)
+  end
+
+  defp usenet_book_grab(download_id, content_path \\ nil) do
+    {:ok, work} =
+      Books.upsert_work(%{
+        title: "The Dispossessed",
+        identifier: %{
+          provider: "openlibrary",
+          kind: "work",
+          foreign_id: "OL#{System.unique_integer([:positive])}W"
+        }
+      })
+
+    {:ok, target} = Books.ensure_target(work, :ebook)
+    {:ok, grab} = Books.Grabs.create(target.id, download_id, :usenet, "The Dispossessed EPUB")
+    grab |> Ecto.Changeset.change(content_path: content_path) |> Repo.update!()
   end
 
   # A safe default so tests that don't care about the exact rm_rf call don't have to stub it
@@ -213,20 +242,20 @@ defmodule Cinder.Download.MoveOnImportTest do
     grab
   end
 
-  describe "Download.remove_after_import/3 (the client-remove side)" do
+  describe "SourceRemoval.remove_after_import/3 (the client-remove side)" do
     test "removes a usenet download with delete_files when the toggle is on" do
       enable()
       echo_remove(Cinder.Download.SabnzbdClientMock)
       stub_rm_rf()
 
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x", nil)
+      assert :ok = SourceRemoval.remove_after_import(:usenet, "nzo-x", nil)
       assert_receive {:removed, "nzo-x", opts}
       assert opts[:delete_files] == true
     end
 
     test "is a no-op when the toggle is off" do
       echo_remove(Cinder.Download.SabnzbdClientMock)
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x", nil)
+      assert :ok = SourceRemoval.remove_after_import(:usenet, "nzo-x", nil)
       refute_receive {:removed, _, _}
     end
 
@@ -235,27 +264,27 @@ defmodule Cinder.Download.MoveOnImportTest do
       echo_remove(Cinder.Download.SabnzbdClientMock)
       echo_remove(Cinder.Download.ClientMock)
 
-      assert :ok = Download.remove_after_import(:torrent, "hash-x", nil)
-      assert :ok = Download.remove_after_import(nil, "x", nil)
-      assert :ok = Download.remove_after_import(:usenet, nil, "/downloads/x")
-      assert :ok = Download.remove_after_import(:usenet, "", "/downloads/x")
+      assert :ok = SourceRemoval.remove_after_import(:torrent, "hash-x", nil)
+      assert :ok = SourceRemoval.remove_after_import(nil, "x", nil)
+      assert :ok = SourceRemoval.remove_after_import(:usenet, nil, "/downloads/x")
+      assert :ok = SourceRemoval.remove_after_import(:usenet, "", "/downloads/x")
       refute_receive {:removed, _, _}
     end
 
     test "a raising client cannot unwind the caller; still returns :ok" do
       enable()
       stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> raise "client down" end)
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x", nil)
+      assert :ok = SourceRemoval.remove_after_import(:usenet, "nzo-x", nil)
     end
 
     test "a client {:error,_} is swallowed; returns :ok" do
       enable()
       stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> {:error, :boom} end)
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x", nil)
+      assert :ok = SourceRemoval.remove_after_import(:usenet, "nzo-x", nil)
     end
   end
 
-  describe "Download.remove_after_import/3 (the source-delete side, issue #115)" do
+  describe "SourceRemoval.remove_after_import/3 (the source-delete side, issue #115)" do
     test "toggle on + usenet -> deletes the whole per-operation/unpack dir via rm_rf regardless of the client" do
       enable()
 
@@ -265,26 +294,25 @@ defmodule Cinder.Download.MoveOnImportTest do
       stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> {:error, :not_found} end)
       echo_rm_rf()
 
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x", "/downloads/cinder-abc123")
+      assert :ok = SourceRemoval.remove_after_import(:usenet, "nzo-x", "/downloads/cinder-abc123")
       assert_receive {:rm_rf, "/downloads/cinder-abc123"}
     end
 
+    # `best_effort_delete_source/1` catches every raise, so a stub that calls `flunk` would stay
+    # green when the delete ran: record each call and refute it instead.
     test "toggle off -> does not delete the source" do
-      stub(Cinder.Library.FilesystemMock, :rm_rf, fn _path ->
-        flunk("rm_rf should not be called when move_on_import is off")
-      end)
+      echo_rm_rf()
 
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x", "/downloads/cinder-abc123")
+      assert :ok = SourceRemoval.remove_after_import(:usenet, "nzo-x", "/downloads/cinder-abc123")
+      refute_received {:rm_rf, _}
     end
 
     test "torrent protocol never deletes the source (seeding preserved)" do
       enable()
+      echo_rm_rf()
 
-      stub(Cinder.Library.FilesystemMock, :rm_rf, fn _path ->
-        flunk("rm_rf should not be called for torrents")
-      end)
-
-      assert :ok = Download.remove_after_import(:torrent, "hash-x", "/downloads/movie.mkv")
+      assert :ok = SourceRemoval.remove_after_import(:torrent, "hash-x", "/downloads/movie.mkv")
+      refute_received {:rm_rf, _}
     end
 
     test "a missing/already-gone dir does not fail (rm_rf finds nothing)" do
@@ -292,7 +320,7 @@ defmodule Cinder.Download.MoveOnImportTest do
       echo_remove(Cinder.Download.SabnzbdClientMock)
       stub(Cinder.Library.FilesystemMock, :rm_rf, fn _path -> {:ok, []} end)
 
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x", "/downloads/cinder-gone")
+      assert :ok = SourceRemoval.remove_after_import(:usenet, "nzo-x", "/downloads/cinder-gone")
     end
 
     test "a real rm_rf error is swallowed; still returns :ok" do
@@ -300,7 +328,56 @@ defmodule Cinder.Download.MoveOnImportTest do
       echo_remove(Cinder.Download.SabnzbdClientMock)
       stub(Cinder.Library.FilesystemMock, :rm_rf, fn path -> {:error, :eacces, path} end)
 
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x", "/downloads/cinder-locked")
+      assert :ok = SourceRemoval.remove_after_import(:usenet, "nzo-x", "/downloads/cinder-locked")
+    end
+  end
+
+  # #1447 moved these functions out of `Cinder.Download` and kept their order: a fenced client
+  # removal runs only once its cleanup intent is recorded, and an imported book's grab goes before
+  # its payload.
+  describe "SourceRemoval: the fence comes before the removal" do
+    test "a fenced movie removal reaches the client once, after its cleanup intent is recorded" do
+      ConfigCase.put_env(:move_on_import, true)
+      stub_rm_rf()
+      movie = usenet_movie(97, "nzo-fenced")
+      record_removals_with_intent(:movie, movie.id)
+
+      assert :ok =
+               SourceRemoval.remove_after_import(:usenet, "nzo-fenced", "/downloads/M.mkv",
+                 fence: {:movie, movie}
+               )
+
+      assert_receive {:removed, "nzo-fenced",
+                      %Intent{status: :cleanup_pending, remote_id: "nzo-fenced"}}
+
+      refute_received {:removed, _, _}
+    end
+
+    test "a retired book grab reaches the client once, after its cleanup intent is recorded" do
+      grab = usenet_book_grab("nzo-book-fenced")
+      record_removals_with_intent(:book_target, grab.book_target_id)
+
+      assert :ok = SourceRemoval.retire_book_grab(grab)
+
+      assert_receive {:removed, "nzo-book-fenced",
+                      %Intent{status: :cleanup_pending, remote_id: "nzo-book-fenced"}}
+
+      refute_received {:removed, _, _}
+    end
+
+    test "an imported book's grab is deleted before its payload" do
+      ConfigCase.put_env(:move_on_import, true)
+      grab = usenet_book_grab("nzo-book-import", "/downloads/book-import")
+      stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> :ok end)
+      parent = self()
+
+      stub(Cinder.Library.FilesystemMock, :rm_rf, fn path ->
+        send(parent, {:rm_rf, path, Repo.get(BookGrab, grab.id)})
+        {:ok, [path]}
+      end)
+
+      assert :ok = SourceRemoval.release_imported_book_grab(grab)
+      assert_receive {:rm_rf, "/downloads/book-import", nil}
     end
   end
 
@@ -458,7 +535,7 @@ defmodule Cinder.Download.MoveOnImportTest do
       end)
 
       assert :ok =
-               Download.remove_after_import(:usenet, "nzo-old", "/downloads/M.mkv",
+               SourceRemoval.remove_after_import(:usenet, "nzo-old", "/downloads/M.mkv",
                  fence: {:movie, movie}
                )
 
@@ -742,7 +819,7 @@ defmodule Cinder.Download.MoveOnImportTest do
       }
 
       assert :ok =
-               Download.remove_after_import(:usenet, "nzo-old-ep", "/dl/Show.S01E05.mkv",
+               SourceRemoval.remove_after_import(:usenet, "nzo-old-ep", "/dl/Show.S01E05.mkv",
                  fence: {:episode, [e1.id], spec}
                )
 
@@ -892,7 +969,7 @@ defmodule Cinder.Download.MoveOnImportTest do
       end)
     end
 
-    # Client/payload removals are swallowed by `Download.best_effort_remove/2` and
+    # Client/payload removals are swallowed by `SourceRemoval.best_effort_remove/2` and
     # `best_effort_delete_source/1`, so a mock that raises can't prove a "keeps" test: record
     # every removal and refute the messages.
     defp record_removals(mock) do

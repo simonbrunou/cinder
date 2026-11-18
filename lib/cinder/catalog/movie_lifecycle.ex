@@ -41,6 +41,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
   alias Cinder.Download
   alias Cinder.Download.Progress
+  alias Cinder.Download.SourceRemoval
   alias Cinder.Download.Watch
   alias Cinder.GuardedWrite
   alias Cinder.Library
@@ -327,7 +328,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   end
 
   defp remove_source(movie, available) do
-    Download.remove_after_import(movie.download_protocol, movie.download_id, source(movie),
+    SourceRemoval.remove_after_import(movie.download_protocol, movie.download_id, source(movie),
       fence: {:movie, available}
     )
   end
@@ -374,7 +375,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
     |> drain_fence(:stale_release)
     |> tap(fn
       {:ok, _rejected} ->
-        Download.remove_after_import(movie.download_protocol, nil, source(movie))
+        SourceRemoval.remove_after_import(movie.download_protocol, nil, source(movie))
 
       _miss ->
         :ok
@@ -665,7 +666,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
   defp revert_upgrade(movie, reason) do
     code = Watch.reason_code(reason)
     blocked? = code == :blocked_content or proven_bad?(code)
-    remove_payload? = blocked? and Download.move_on_import_removal?(movie.download_protocol)
+    remove_payload? = blocked? and SourceRemoval.move_on_import_removal?(movie.download_protocol)
     attrs = Map.put(@drop_download, :status, :available)
 
     result =
@@ -678,7 +679,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
       # `movie.download_protocol`: `reverted` has cleared it. Only the payload is left to remove.
       if remove_payload?,
-        do: Download.remove_after_import(movie.download_protocol, nil, source(movie))
+        do: SourceRemoval.remove_after_import(movie.download_protocol, nil, source(movie))
 
       Logger.warning("movie #{movie.id} upgrade reverted to :available (#{inspect(reason)})")
       Notifier.notify({:movie_upgrade_failed, reverted, code})

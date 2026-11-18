@@ -26,7 +26,7 @@ defmodule Cinder.Library.AudiobookImport do
   """
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget}
-  alias Cinder.Download
+  alias Cinder.Download.SourceRemoval
   alias Cinder.Library.{AudiobookNaming, AudiobookSources, StagedImport}
   alias Cinder.Settings
 
@@ -151,15 +151,15 @@ defmodule Cinder.Library.AudiobookImport do
 
     case StagedImport.commit(staged, write) do
       {:ok, files} ->
-        Download.release_imported_book_grab(grab)
+        SourceRemoval.release_imported_book_grab(grab)
         {:ok, files}
 
       {:ok, files, []} ->
-        Download.release_imported_book_grab(grab)
+        SourceRemoval.release_imported_book_grab(grab)
         {:ok, files}
 
       {:ok, files, superseded_paths} ->
-        Download.release_imported_book_grab(grab)
+        SourceRemoval.release_imported_book_grab(grab)
         {:ok, files, superseded_paths}
 
       {:error, _reason} = error ->

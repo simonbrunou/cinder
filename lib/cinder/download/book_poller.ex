@@ -32,7 +32,7 @@ defmodule Cinder.Download.BookPoller do
   alias Cinder.Books.{BookGrab, BookTarget}
   alias Cinder.Disk
   alias Cinder.Download
-  alias Cinder.Download.Watch
+  alias Cinder.Download.{SourceRemoval, Watch}
   alias Cinder.Library
   alias Cinder.Library.{AudiobookImport, AudiobookServer, EbookImport, StagedImport}
   alias Cinder.Notifier
@@ -285,9 +285,9 @@ defmodule Cinder.Download.BookPoller do
   #
   # #398: the client removal used to be a bare best-effort call with the grab (its only durable
   # record of `download_id`/`download_protocol`) already deleted — a transient removal failure
-  # leaked the remote job forever. `Download.retire_book_grab/1` fences a durable cleanup intent
-  # and deletes the grab in one transaction, and degrades to a one-shot removal when a newer
-  # grab already owns the target (#536).
+  # leaked the remote job forever. `SourceRemoval.retire_book_grab/1` fences a durable cleanup
+  # intent and deletes the grab in one transaction, and degrades to a one-shot removal when a
+  # newer grab already owns the target (#536).
   defp fail_download(%BookGrab{} = grab, reason) do
     Logger.warning("book grab #{grab.id} download failed: #{inspect(reason)}")
 
@@ -299,7 +299,7 @@ defmodule Cinder.Download.BookPoller do
       grab.replace
     )
 
-    Download.retire_book_grab(grab)
+    SourceRemoval.retire_book_grab(grab)
   end
 
   # A deterministic fact about the payload (a blocked file) is not transient; every other
@@ -502,7 +502,8 @@ defmodule Cinder.Download.BookPoller do
   defp import_log_detail(%{path: path}), do: path
 
   # Post-commit, best-effort removal of a file "Find a better match" just replaced — mirrors
-  # `Download.remove_after_import/3`'s own "best-effort, after commit, log and continue" contract.
+  # `SourceRemoval.remove_after_import/3`'s own "best-effort, after commit, log and continue"
+  # contract.
   # A stale/already-gone path is not an error: `Library.delete_file/1` is idempotent on `:enoent`.
   defp unlink_superseded(path) do
     case Library.delete_file(path) do

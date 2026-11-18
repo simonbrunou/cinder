@@ -69,13 +69,14 @@ defmodule Cinder.Library.Deletion do
   end
 
   @doc """
-  Deletes a completed download's source after a successful `move_on_import` — the whole
-  per-operation directory the client delivered (e.g. an unpacked SABnzbd job folder), or the lone
-  file when there's no wrapper directory. Called from `Cinder.Download.remove_after_import/3`,
-  which gates this on the `move_on_import` setting and the usenet protocol; this function is
-  authoritative regardless of whether the download client still tracks the job — a client whose
-  history already evicted the job silently no-ops on its own remove call, so filesystem cleanup
-  here can't depend on that history surviving (issue #115).
+  Deletes a download's source — the whole per-operation directory the client delivered (e.g. an
+  unpacked SABnzbd job folder), or the lone file when there's no wrapper directory.
+  `Cinder.Download.SourceRemoval.best_effort_delete_source/1` calls it after an import, or after
+  a rejected, parked or reverted grab, once its callers checked the `move_on_import` setting and
+  the usenet protocol; `Cinder.Download.OrphanFolders.clear/3` calls it for each orphan folder it
+  clears. This function is authoritative regardless of whether the download client still tracks
+  the job — a client whose history already evicted the job silently no-ops on its own remove
+  call, so filesystem cleanup here can't depend on that history surviving (issue #115).
 
   Idempotent: a `nil`/blank path or an already-missing entry is `:ok`. Contained strictly to the
   **explicitly configured** import roots (`Settings.explicit_import_roots/0`) — never an inferred

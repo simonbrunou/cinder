@@ -10,7 +10,7 @@ defmodule Cinder.Catalog.BlockedReleases do
     * **Non-raising** (`block_release/2`, `block_series_release/3`, `block_unplaced_pack/2`):
       for the pollers' park paths, which run inside `isolate/2`, where a raise would re-fire
       every tick with nothing parked. A refused or raised insert is logged and swallowed, and
-      the call returns `:ok` (mirrors `Download.best_effort_remove/2`).
+      the call returns `:ok` (mirrors `Cinder.Download.SourceRemoval.best_effort_remove/2`).
     * **Strict** (`block_policy_mismatch/3`): for a caller inside a transaction whose other
       writes must not commit without the row, so it gets `{:error, changeset}` back.
 

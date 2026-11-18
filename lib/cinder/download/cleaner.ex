@@ -19,7 +19,7 @@ defmodule Cinder.Download.Cleaner do
   A completed **usenet** entry has nothing to seed, so it is removed once nothing owns it and the
   client reports it completed over an hour ago — but only while the "Remove download after a
   Usenet import" setting (`move_on_import`) is on, the same rule
-  `Cinder.Download.remove_after_import/4` applies.
+  `Cinder.Download.SourceRemoval.remove_after_import/4` applies.
 
   The ownership check and the removals run under the household import lock
   (`Cinder.Library.StagedImport.run/1`), so a sweep never removes a download whose import has
@@ -38,7 +38,7 @@ defmodule Cinder.Download.Cleaner do
   alias Cinder.Books.BookGrab
   alias Cinder.Catalog.{Grab, Movie}
   alias Cinder.Download
-  alias Cinder.Download.Intent
+  alias Cinder.Download.{Intent, SourceRemoval}
   alias Cinder.Library.StagedImport
   alias Cinder.Repo
 
@@ -184,7 +184,7 @@ defmodule Cinder.Download.Cleaner do
         "(operation #{entry.operation_key} has no owner)"
     )
 
-    Download.best_effort_remove(client, entry.id)
+    SourceRemoval.best_effort_remove(client, entry.id)
   end
 
   defp reapable?(%{state: state}, _protocol) when state in [:downloading, :error], do: true
@@ -198,7 +198,7 @@ defmodule Cinder.Download.Cleaner do
   # have completed more than `@usenet_grace_seconds` ago, per the client's own completion time; an
   # entry that reports none fails closed (kept).
   defp reapable?(%{state: :completed} = entry, protocol) do
-    (Download.move_on_import_removal?(protocol) and usenet_grace_elapsed?(entry)) or
+    (SourceRemoval.move_on_import_removal?(protocol) and usenet_grace_elapsed?(entry)) or
       reached?(Map.get(entry, :ratio), ratio_limit()) or
       reached?(Map.get(entry, :seeding_time), seed_time_limit_seconds())
   end

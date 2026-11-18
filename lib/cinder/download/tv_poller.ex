@@ -32,7 +32,7 @@ defmodule Cinder.Download.TvPoller do
   alias Cinder.{Acquisition, Catalog, Disk, Download, Library, Notifier, Settings}
   alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy, ReleaseJudge}
   alias Cinder.Catalog.{Episode, Grab, Grabs, MediaProfile}
-  alias Cinder.Download.Watch
+  alias Cinder.Download.{SourceRemoval, Watch}
   alias Cinder.HTTPPolicy
   alias Cinder.Library.StagedImport
   alias Cinder.Repo
@@ -216,7 +216,7 @@ defmodule Cinder.Download.TvPoller do
   defp reject_release(%Grab{} = grab, evidence) do
     case Catalog.reject_grab_release(grab, evidence) do
       {:ok, _deleted} ->
-        Download.remove_after_import(grab.download_protocol, nil, grab.content_path)
+        SourceRemoval.remove_after_import(grab.download_protocol, nil, grab.content_path)
 
       {:error, :stale_release} ->
         :ok
@@ -318,7 +318,10 @@ defmodule Cinder.Download.TvPoller do
       {:ok, :closed, _grab} ->
         remove_superseded_episode_files(grab.episodes)
 
-        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path,
+        SourceRemoval.remove_after_import(
+          grab.download_protocol,
+          grab.download_id,
+          grab.content_path,
           fence: episode_cleanup_fence(grab, imported_ids)
         )
 
@@ -426,7 +429,10 @@ defmodule Cinder.Download.TvPoller do
 
     case Catalog.close_grab(grab) do
       {:ok, :closed, _grab} ->
-        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path,
+        SourceRemoval.remove_after_import(
+          grab.download_protocol,
+          grab.download_id,
+          grab.content_path,
           fence: episode_cleanup_fence(grab, imported_ids)
         )
 
@@ -465,7 +471,10 @@ defmodule Cinder.Download.TvPoller do
       {:ok, _grab} ->
         remove_superseded_episode_files(grab.episodes)
 
-        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path,
+        SourceRemoval.remove_after_import(
+          grab.download_protocol,
+          grab.download_id,
+          grab.content_path,
           fence: episode_cleanup_fence(grab, imported_ids)
         )
 
@@ -480,8 +489,8 @@ defmodule Cinder.Download.TvPoller do
   # Shared by all three `#415` fence sites above. `nil` (no fence) when nothing survived to fence
   # — an empty `episode_ids` would crash `Download.fence_episode_cleanup/2`'s carrier insert on
   # `hd([])` (mirroring `Catalog.Grabs.fence_client_intent_ids/2`'s own empty-list guard); it
-  # degrades to `Download.remove_after_import/4`'s legacy one-shot removal instead, exactly like a
-  # genuine fence-vs-unrelated-intent mismatch.
+  # degrades to `SourceRemoval.remove_after_import/4`'s legacy one-shot removal instead, exactly
+  # like a genuine fence-vs-unrelated-intent mismatch.
   defp episode_cleanup_fence(_grab, []), do: nil
 
   defp episode_cleanup_fence(grab, episode_ids),
@@ -884,12 +893,12 @@ defmodule Cinder.Download.TvPoller do
     # the grab stays visible in /activity and the warning names why it won't finalize.
     #
     # A blocklisted release is never re-picked, so its download is dead weight: the grab's client
-    # job is fenced+removed in the same transaction as the grab delete
+    # job is fenced in the same transaction as the grab delete and removed after its commit
     # (`Grabs.park_grab_and_remove/1`), and its payload deleted afterwards — under the same
-    # `move_on_import` / usenet-only rule as `Download.remove_after_import/4`, so a torrent keeps
-    # seeding (#684). `:blocked_content` is the exception that already removed its job (and files)
-    # from any client. The other, non-blocklisted reasons only ever delete the grab.
-    remove_payload? = blocked? and Download.move_on_import_removal?(grab.download_protocol)
+    # `move_on_import` / usenet-only rule as `SourceRemoval.remove_after_import/4`, so a torrent
+    # keeps seeding (#684). `:blocked_content` is the exception that already removed its job (and
+    # files) from any client. The other, non-blocklisted reasons only ever delete the grab.
+    remove_payload? = blocked? and SourceRemoval.move_on_import_removal?(grab.download_protocol)
 
     park_result =
       if code == :blocked_content or remove_payload?,
@@ -899,10 +908,10 @@ defmodule Cinder.Download.TvPoller do
     case park_result do
       {:ok, _} ->
         # The client job is already fenced and removed above; only the payload is left, and
-        # `Download.remove_after_import/4` with no download id deletes exactly that. A
+        # `SourceRemoval.remove_after_import/4` with no download id deletes exactly that. A
         # non-blocklisted park may be re-picked, so its payload stays.
         if remove_payload?,
-          do: Download.remove_after_import(grab.download_protocol, nil, grab.content_path)
+          do: SourceRemoval.remove_after_import(grab.download_protocol, nil, grab.content_path)
 
         :telemetry.execute([:cinder, :park], %{count: 1}, %{kind: :episode, reason: code})
         Notifier.notify({:grab_failed, grab, code})

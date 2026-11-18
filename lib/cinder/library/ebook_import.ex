@@ -27,7 +27,7 @@ defmodule Cinder.Library.EbookImport do
   """
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget}
-  alias Cinder.Download
+  alias Cinder.Download.SourceRemoval
   alias Cinder.Library.{EbookNaming, EbookSources, StagedImport}
   alias Cinder.Settings
 
@@ -133,15 +133,15 @@ defmodule Cinder.Library.EbookImport do
 
     case StagedImport.commit(staged, write) do
       {:ok, file} ->
-        Download.release_imported_book_grab(grab)
+        SourceRemoval.release_imported_book_grab(grab)
         {:ok, file}
 
       {:ok, file, []} ->
-        Download.release_imported_book_grab(grab)
+        SourceRemoval.release_imported_book_grab(grab)
         {:ok, file}
 
       {:ok, file, superseded_paths} ->
-        Download.release_imported_book_grab(grab)
+        SourceRemoval.release_imported_book_grab(grab)
         {:ok, file, superseded_paths}
 
       {:error, _reason} = error ->

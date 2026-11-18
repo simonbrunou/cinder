@@ -139,8 +139,9 @@ defmodule Cinder.Download.CleanerTest do
       %{release_dir: release_dir, episode: episode}
     end
 
-    # `Download.best_effort_remove/2` swallows a Mox.UnexpectedCallError, so a missing `remove`
-    # expectation can't prove a "keeps" test: record every removal and refute it explicitly.
+    # `SourceRemoval.best_effort_remove/2` swallows a Mox.UnexpectedCallError, so a missing
+    # `remove` expectation can't prove a "keeps" test: record every removal and refute it
+    # explicitly.
     defp record_removals(mock) do
       parent = self()
 
