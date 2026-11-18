@@ -57,7 +57,8 @@ defmodule Cinder.Download.Client.Fetch do
 
     # `HTTPPolicy.bounded_request/2` makes a caller's `:receive_timeout` past 60 s each hop's
     # total deadline too: the torrent fetches of Transmission and qBittorrent set 90 s (#1410).
-    # NZBGet's fetch sets none and keeps 15 s per wait within a 60 s deadline.
+    # NZBGet's fetch sets none and SABnzbd's sets 15 s: both keep 15 s per wait within a 60 s
+    # deadline.
     case HTTPPolicy.bounded_request(request, Keyword.fetch!(opts, :max_bytes)) do
       {:ok, %{status: 200, body: bytes}} when is_binary(bytes) ->
         {:ok, bytes}

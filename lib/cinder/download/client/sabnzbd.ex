@@ -8,7 +8,7 @@ defmodule Cinder.Download.Client.Sabnzbd do
   a query param — no stateful login.
 
   `add/1` fetches the release's NZB itself — bounded, redirect-revalidated, through
-  `Cinder.HTTPPolicy` (mirroring the qBittorrent `.torrent`-URL fetch) — and hands
+  `Cinder.Download.Client.Fetch` (the fetch the torrent clients and NZBGet share) — and hands
   SABnzbd the bytes via `mode=addfile`, rather than `mode=addurl` (which would have
   SABnzbd resolve DNS and follow redirects for that URL itself, outside
   `HTTPPolicy`'s SSRF checks entirely). The returned `nzo_id` is the `download_id`
@@ -44,7 +44,6 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   @default_base_url "http://localhost:8080"
   @max_response_bytes 4 * 1024 * 1024
-  @max_redirects 5
   # ponytail: a season-pack NZB is still just segment/message-id references (no payload data),
   # so even a large batch stays well under this; raise it if a real one ever needs more.
   @max_nzb_bytes 20 * 1024 * 1024
@@ -61,102 +60,22 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   @impl true
   def add(%{download_url: url} = release, opts) when is_binary(url) do
-    source_origin = Map.get(release, :download_url_origin)
+    # Fetch the NZB ourselves instead of handing SABnzbd the raw URL via `addurl`, through the
+    # same checked fetch as the torrent clients and NZBGet.
+    fetch_opts = [
+      max_bytes: @max_nzb_bytes,
+      error_tag: :nzb_fetch_status,
+      receive_timeout: 15_000,
+      plug: config()[:fetch_plug],
+      resolver: config()[:url_resolver]
+    ]
 
-    with {:ok, bytes} <- fetch_nzb(url, source_origin, @max_redirects) do
+    with {:ok, bytes} <- Fetch.bytes(url, Map.get(release, :download_url_origin), fetch_opts) do
       add_file(bytes, release, opts)
     end
   end
 
   def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
-
-  # Fetch the NZB ourselves (bounded, redirect-revalidated) instead of handing SABnzbd the raw
-  # URL via `addurl` — mirrors `Cinder.Download.Client.QBittorrent`'s `.torrent`-URL fetch.
-  defp fetch_nzb(url, source_origin, hops) do
-    resolver = Keyword.get(config(), :url_resolver)
-
-    with {:ok, target} <- Fetch.download_url_target(url, source_origin, resolver) do
-      trust =
-        if HTTPPolicy.same_origin?(target.uri, source_origin),
-          do: {:source, source_origin},
-          else: :untrusted
-
-      request_nzb(target, trust, hops)
-    end
-  end
-
-  defp request_nzb(target, trust, hops) do
-    request =
-      target
-      |> HTTPPolicy.request_options(
-        receive_timeout: 15_000,
-        pool_timeout: 5_000,
-        connect_options: [timeout: 5_000],
-        retry: false,
-        redirect: false,
-        plug: fetch_plug()
-      )
-      |> Req.new()
-
-    case HTTPPolicy.bounded_request(request, @max_nzb_bytes) do
-      {:ok, %{status: 200, body: bytes}} when is_binary(bytes) ->
-        {:ok, bytes}
-
-      {:ok, %{status: status} = resp} when status in [301, 302, 303, 307, 308] ->
-        case Req.Response.get_header(resp, "location") do
-          [location | _] -> follow_redirect(target.uri, location, trust, hops)
-          [] -> {:error, {:nzb_fetch_status, status}}
-        end
-
-      {:ok, %{status: status}} ->
-        {:error, {:nzb_fetch_status, status}}
-
-      other ->
-        error(other)
-    end
-  end
-
-  defp follow_redirect(_url, _location, _trust, 0), do: {:error, :too_many_redirects}
-
-  defp follow_redirect(url, location, trust, hops) do
-    case resolve_redirect(url, location, trust) do
-      {:ok, next, next_trust} -> request_nzb(next, next_trust, hops - 1)
-      {:error, :unsupported_scheme} -> {:error, :unsupported_download_url}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp resolve_redirect(current, location, {:source, source_origin}) do
-    case HTTPPolicy.resolve_redirect(current, location, :same_origin) do
-      {:ok, next} ->
-        with {:ok, target} <- validate_url(next, source_origin),
-             do: {:ok, target, {:source, source_origin}}
-
-      {:error, :cross_origin_redirect} ->
-        resolve_untrusted_redirect(current, location)
-
-      error ->
-        error
-    end
-  end
-
-  defp resolve_redirect(current, location, :untrusted),
-    do: resolve_untrusted_redirect(current, location)
-
-  defp resolve_untrusted_redirect(current, location) do
-    case Keyword.get(config(), :url_resolver) do
-      resolver when is_function(resolver, 1) ->
-        with {:ok, next} <- HTTPPolicy.untrusted_redirect_target(current, location, resolver),
-             do: {:ok, next, :untrusted}
-
-      nil ->
-        with {:ok, next} <- HTTPPolicy.untrusted_redirect_target(current, location),
-             do: {:ok, next, :untrusted}
-    end
-  end
-
-  # In prod, no plug (real HTTP). In test, config can inject a Req.Test plug.
-  defp fetch_plug, do: Keyword.get(config(), :fetch_plug)
 
   defp add_file(bytes, release, opts) do
     params =
@@ -778,16 +697,6 @@ defmodule Cinder.Download.Client.Sabnzbd do
     do: Keyword.merge([apikey: Keyword.get(config, :api_key), output: "json"], params)
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
-
-  defp validate_url(url, source_origin) do
-    case Keyword.get(config(), :url_resolver) do
-      resolver when is_function(resolver, 1) ->
-        HTTPPolicy.source_request_target(url, source_origin, resolver)
-
-      nil ->
-        HTTPPolicy.source_request_target(url, source_origin)
-    end
-  end
 
   defp error({:ok, %{status: status}}), do: {:error, {:sabnzbd_status, status}}
   defp error({:error, reason}), do: {:error, reason}
