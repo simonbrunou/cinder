@@ -6,7 +6,8 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
 
   alias Cinder.Catalog.Episode
   alias Cinder.Library.{Backfill, Filesystem.Disk}
-  alias Cinder.Subtitles.{Manifest, Moviehash, SidecarTransaction, Sync}
+  alias Cinder.Subtitles.{Manifest, Moviehash, Sync}
+  alias Cinder.Subtitles.SidecarTransaction.Backup
   alias Mix.Tasks.Cinder.MediaInfo.Backfill, as: BackfillTask
 
   setup :verify_on_exit!
@@ -267,7 +268,7 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     # file's own identity as a tombstone so a later reset can prove it's discarding its own
     # immutable copy rather than an unrelated file — reproduce that here instead of a plain
     # `File.write!/2`.
-    assert {:ok, bound} = Disk.create_bound(SidecarTransaction.backup_path(sidecar), original)
+    assert {:ok, bound} = Disk.create_bound(Backup.path(sidecar), original)
     assert :ok = Manifest.put_backup_tombstone(video, "fr", bound.identity)
     assert :ok = Disk.close_bound(bound)
 

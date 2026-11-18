@@ -1711,7 +1711,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       tmp_dir: tmp
     } do
       %{path: path, backup: backup, duplicate: duplicate} = duplicate_tombstones!(video, tmp)
-      assert :ok = Manifest.clear_backup_tombstone(video, "en")
+      drop_recorded_tombstone!(video)
       current = File.read!(path)
 
       # Without a recorded tombstone nothing proves the duplicates are ours, so the original
@@ -2520,12 +2520,12 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(path) == original
       assert File.read!(backup) == ""
       assert Manifest.sync(Manifest.read(video), "en") != nil
-      assert Manifest.reset_cleanup_sync(Manifest.read(video), "en") != nil
+      assert reset_journal(video) != nil
 
       assert :ok = SidecarTransaction.reconcile(video, moviehash!(video))
       assert File.read!(path) == original
       assert File.read!(backup) == ""
-      assert Manifest.reset_cleanup_sync(Manifest.read(video), "en") == nil
+      assert reset_journal(video) == nil
       assert Manifest.sync(Manifest.read(video), "en") == nil
     end
 
@@ -2682,7 +2682,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
       assert File.read!(path) == corrected
       assert File.exists?(backup)
       assert Manifest.sync(Manifest.read(video), "en") == record
-      assert Manifest.reset_cleanup_sync(Manifest.read(video), "en") == record
+      assert reset_journal(video) == record
       refute log =~ "subtitle publication unacknowledged"
     end
   end
@@ -4245,7 +4245,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
 
   test "only the transaction writes the manifest's record, journal and tombstone fields" do
     writers =
-      ~r/Manifest\.(put_sync|clear_sync|begin_replacement_cleanup|clear_replacement_cleanup|begin_reset_cleanup|finish_reset_cleanup|put_backup_tombstone|clear_backup_tombstone)\(/
+      ~r/Manifest\.(put_sync|clear_sync|begin_replacement_cleanup|clear_replacement_cleanup|begin_reset_cleanup|finish_reset_cleanup|put_backup_tombstone)\(/
 
     offenders =
       "lib/**/*.ex"
@@ -4993,7 +4993,7 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
     assert File.read!(path) == original
     assert File.read!(backup) == ""
     assert Manifest.sync(Manifest.read(video), "en") == nil
-    assert Manifest.reset_cleanup_sync(Manifest.read(video), "en") == nil
+    assert reset_journal(video) == nil
   end
 
   # The one warning a recovery logs when its write published a correction, or restored the
@@ -5095,6 +5095,23 @@ defmodule Cinder.Subtitles.SidecarTransactionTest do
   # The on-disk name of a sidecar's immutable original: a persisted format, so spelled out here.
   defp backup(path),
     do: Path.join(Path.dirname(path), ".#{Path.basename(path)}.cinder-sync-original")
+
+  # The reset journal the manifest holds for the "en" track, nil when there is none.
+  defp reset_journal(video), do: Manifest.sync_item(Manifest.read(video), "en").reset_cleanup_sync
+
+  # Simulates a manifest whose "en" track holds no recorded backup tombstone, by deleting that
+  # field from the stored JSON. Nothing in `lib/` clears a recorded tombstone.
+  defp drop_recorded_tombstone!(video) do
+    manifest = Manifest.path(video)
+    stored = manifest |> File.read!() |> Jason.decode!()
+
+    File.write!(
+      manifest,
+      Jason.encode!(update_in(stored, ["tracks", "en"], &Map.delete(&1, "backup_tombstone")))
+    )
+
+    assert Manifest.backup_tombstone(Manifest.read(video), "en") == nil
+  end
 
   # Reproduces the production state behind issue #350: a corrected-then-reset track whose
   # manifest holds an owned backup tombstone with no record, while the logical backup path is a

@@ -2,6 +2,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
   use ExUnit.Case, async: false
 
   import Cinder.PollerHelpers, only: [poll_until: 2]
+  import Cinder.SyncWorkerHelpers, only: [cast_units: 2]
   import ExUnit.CaptureLog
 
   alias Cinder.Subtitles.Sync.Worker
@@ -33,7 +34,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     scopes = MapSet.new([{:movie, 1}])
     a = %{video_path: "/library/a.mkv", label: "A", scopes: scopes}
     b = %{video_path: "/library/b.mkv", label: "B"}
-    assert :ok = Worker.enqueue_units([a, a, b], worker)
+    assert :ok = cast_units([a, a, b], worker)
     assert_receive {:started, "/library/a.mkv", first}
     refute_receive {:started, "/library/b.mkv", _}, 100
 
@@ -66,11 +67,11 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
       )
 
     unit = %{video_path: "/library/current.mkv", label: "Current"}
-    assert :ok = Worker.enqueue_units([unit], worker)
+    assert :ok = cast_units([unit], worker)
     assert_receive {:started, "/library/current.mkv", first}
 
-    assert :ok = Worker.enqueue_units([unit, unit], worker)
-    assert :ok = Worker.enqueue_units([unit], worker)
+    assert :ok = cast_units([unit, unit], worker)
+    assert :ok = cast_units([unit], worker)
     assert Worker.status().queued == 1
 
     send(first, :release)
@@ -155,10 +156,10 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     owner = self()
     worker = start_blocking_worker(owner)
 
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
     assert_receive {:started, "/library/a.mkv", first}
 
-    assert :ok = Worker.enqueue_units([:invalid, %{label: "missing path"}], worker)
+    assert :ok = cast_units([:invalid, %{label: "missing path"}], worker)
 
     assert Process.alive?(worker)
 
@@ -166,7 +167,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
              Worker.status()
 
     # The queue still drains afterwards rather than being left wedged behind the junk.
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/b.mkv", label: "B"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/b.mkv", label: "B"}], worker)
     send(first, :release)
     assert_receive {:started, "/library/b.mkv", second}
     send(second, :release)
@@ -176,11 +177,11 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     owner = self()
     worker = start_blocking_worker(owner)
 
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
     assert_receive {:started, "/library/a.mkv", first}
 
-    assert :ok = Worker.enqueue_units(:not_a_list, worker)
-    assert :ok = Worker.enqueue_units([], worker)
+    assert :ok = cast_units(:not_a_list, worker)
+    assert :ok = cast_units([], worker)
 
     assert Process.alive?(worker)
     assert Worker.status().queued == 0
@@ -192,46 +193,19 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     owner = self()
     worker = start_blocking_worker(owner)
 
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
     assert_receive {:started, "/library/a.mkv", first}
 
     # An improper list reaches the traversal intact, so Enum-based validation crashes on its
     # tail: the valid prefix has to survive and only the junk tail be dropped.
     assert :ok =
-             Worker.enqueue_units([%{video_path: "/library/c.mkv", label: "C"} | :junk], worker)
+             cast_units([%{video_path: "/library/c.mkv", label: "C"} | :junk], worker)
 
     assert Process.alive?(worker)
     assert Worker.status().queued == 1
 
     send(first, :release)
     assert_receive {:started, "/library/c.mkv", second}
-    send(second, :release)
-  end
-
-  test "the enqueue cast path is fenced against malformed units too" do
-    owner = self()
-    worker = start_blocking_worker(owner)
-
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
-    assert_receive {:started, "/library/a.mkv", first}
-
-    # enqueue_after_download/2 casts, so a crash on this path is silent.
-    GenServer.cast(worker, {:enqueue_units, [:invalid, %{label: "missing path"}]})
-    GenServer.cast(worker, {:enqueue_units, :not_a_list})
-
-    GenServer.cast(
-      worker,
-      {:enqueue_units, [%{video_path: "/library/d.mkv", label: "D"} | :junk]}
-    )
-
-    # Flush the mailbox with a call, so a cast that took the worker down surfaces here.
-    assert :ok = Worker.enqueue_units([], worker)
-
-    assert Process.alive?(worker)
-    assert Worker.status().queued == 1
-
-    send(first, :release)
-    assert_receive {:started, "/library/d.mkv", second}
     send(second, :release)
   end
 
@@ -244,7 +218,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     log =
       capture_log(fn ->
         assert :ok =
-                 Worker.enqueue_units(
+                 cast_units(
                    junk ++ [%{video_path: "/library/a.mkv", label: "A"}],
                    worker
                  )
@@ -262,7 +236,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
 
     clean =
       capture_log(fn ->
-        assert :ok = Worker.enqueue_units([%{video_path: "/library/b.mkv", label: "B"}], worker)
+        assert :ok = cast_units([%{video_path: "/library/b.mkv", label: "B"}], worker)
       end)
 
     refute clean =~ "malformed subtitle sync units"
@@ -413,7 +387,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert_receive {:scan_started, scanner}
 
     # Background work arriving inside that window must not claim the idle slot.
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
     refute_receive {:started, "/library/bg.mkv", _}, 100
 
     send(scanner, :release_scan)
@@ -452,7 +426,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert :ok = Worker.enqueue_series(5, worker)
     assert_receive :scan_started
 
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
 
     assert_receive {:started, "/library/bg.mkv", _, started_at}
     assert_held_since(started_at, requested_at)
@@ -492,7 +466,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     requested_at = System.monotonic_time(:millisecond)
     assert :ok = Worker.enqueue_series(5, worker)
 
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
     assert_receive {:started, "/library/bg.mkv", _, started_at}
     # Prove the hold was actually applied to the pending scope, otherwise this test would pass
     # even if a pending explicit scope received no hold at all.
@@ -520,7 +494,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
         {Worker, initial_scan: false, interval: :timer.hours(1), scan: scan, analyze: analyze}
       )
 
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
     assert_receive {:started, "/library/bg.mkv", _}
 
     # Rendezvous with the scan so the hold is provably active before the background unit is
@@ -528,7 +502,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert :ok = Worker.enqueue_series(5, worker)
     assert_receive {:scan_started, scanner}
 
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg2.mkv", label: "BG2"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/bg2.mkv", label: "BG2"}], worker)
     refute_receive {:started, "/library/bg2.mkv", _}, 50
 
     # The scan raises rather than yielding units; the queue must not stay stranded behind it.
@@ -571,7 +545,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
          explicit_scan_hold: 5000}
       )
 
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
     assert_receive {:started, "/library/bg.mkv", blocker}
 
     # First explicit request resolves immediately and lands in the priority queue.
@@ -586,7 +560,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     send(blocker, :release)
     assert_receive {:started, "/library/first.mkv", first}
 
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg2.mkv", label: "BG2"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/bg2.mkv", label: "BG2"}], worker)
     send(first, :release)
     refute_receive {:started, "/library/bg2.mkv", _}, 50
 
@@ -627,7 +601,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     # First explicit request hangs, so its hold expires and background work proceeds.
     assert :ok = Worker.enqueue_movie(1, worker)
     assert_receive {:scan_started, 1}
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
     assert_receive {:started, "/library/bg.mkv", bg, _}
     send(bg, :release)
 
@@ -635,7 +609,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     # hold_explicitly/2 would decline to re-arm and this background unit would start immediately.
     requested_at = System.monotonic_time(:millisecond)
     assert :ok = Worker.enqueue_movie(2, worker)
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg2.mkv", label: "BG2"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/bg2.mkv", label: "BG2"}], worker)
 
     # That fresh hold is itself bounded, so background work still resumes.
     assert_receive {:started, "/library/bg2.mkv", bg2, started_at}
@@ -673,9 +647,9 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert :ok = Worker.enqueue_series(5, worker)
     assert_receive :explicit_scan_started
 
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
-    # enqueue_units/2 is a call that publishes before replying, so this is the held state itself
-    # rather than a window in which the unit might not have started yet.
+    assert :ok = cast_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    # cast_units/2 returns once the worker handled the cast and published, so this is the held
+    # state itself rather than a window in which the unit might not have started yet.
     assert %{state: :idle, queued: 1} = Worker.status()
 
     # Freeze the GenServer before expiry, queue the library cast first, then let the hold timer
@@ -715,7 +689,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert :ok = Worker.enqueue_series(5, worker)
     assert_receive {:scan_started, scanner}
 
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
     refute_receive {:started, "/library/bg.mkv", _}, 50
 
     send(scanner, :release_scan)
@@ -760,7 +734,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     Process.sleep(60)
     requested_at = System.monotonic_time(:millisecond)
     assert :ok = Worker.enqueue_movie(2, worker)
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/bg.mkv", label: "BG"}], worker)
 
     assert_receive {:started, "/library/bg.mkv", bg, started_at}
     assert_held_since(started_at, requested_at)
@@ -789,7 +763,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
       )
 
     blocker = %{video_path: "/library/blocker.mkv", label: "Blocker"}
-    assert :ok = Worker.enqueue_units([blocker], worker)
+    assert :ok = cast_units([blocker], worker)
     assert_receive {:started, "/library/blocker.mkv", first}
 
     assert :ok = Worker.enqueue_library(worker)
@@ -822,7 +796,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
 
     Worker.subscribe()
 
-    assert :ok = Worker.enqueue_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
+    assert :ok = cast_units([%{video_path: "/library/a.mkv", label: "A"}], worker)
     assert_receive {:started, "/library/a.mkv", task}
     send(task, :release)
 
@@ -859,7 +833,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     # them — the non-map raises there, before the counts fold is ever reached.
     scopes = MapSet.new([{:movie, 1}])
     unit = %{video_path: "/library/a.mkv", label: "A", scopes: scopes}
-    assert :ok = Worker.enqueue_units([unit], worker)
+    assert :ok = cast_units([unit], worker)
     assert_receive {:started, "/library/a.mkv", task}
     send(task, :release)
 

@@ -6,7 +6,8 @@ defmodule Cinder.Subtitles.SyncTest do
   import Mox
 
   alias Cinder.Library.Filesystem.Disk
-  alias Cinder.Subtitles.{Manifest, Moviehash, SidecarTransaction, Sync}
+  alias Cinder.Subtitles.{Manifest, Moviehash, Sync}
+  alias Cinder.Subtitles.SidecarTransaction.Backup
   alias Cinder.Test.DiskTask
 
   @moduletag :tmp_dir
@@ -266,7 +267,7 @@ defmodule Cinder.Subtitles.SyncTest do
     assert [%{status: :aligned}] = Sync.analyze_video(video)
     assert File.read!(path) == original
     assert File.stat!(path).mtime == before
-    refute File.exists?(SidecarTransaction.backup_path(path))
+    refute File.exists?(Backup.path(path))
   end
 
   # The video's own track is timed to this cut already: no engine run, only the timing rules, with
@@ -282,7 +283,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert [%{status: :corrected, method: "native"}] = Sync.analyze_video(video)
     assert File.read!(path) == String.replace(original, "00:00:02,000", "00:00:02,117")
-    assert File.read!(SidecarTransaction.backup_path(path)) == original
+    assert File.read!(Backup.path(path)) == original
     assert [%{status: :aligned, method: "native"}] = Sync.analyze_video(video)
   end
 
@@ -317,7 +318,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert [%{status: :corrected}] = Sync.analyze_video(video)
     assert File.read!(path) == String.replace(original, "00:00:02,000", "00:00:02,117")
-    assert File.read!(SidecarTransaction.backup_path(path)) == original
+    assert File.read!(Backup.path(path)) == original
   end
 
   # A sidecar downloaded before downloads were validated can break the stricter grammar the rules
@@ -436,7 +437,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert [%{status: :corrected, segments: 2, max_offset_ms: 40_000}] = Sync.analyze_video(video)
     assert File.read!(path) == corrected
-    assert File.read!(SidecarTransaction.backup_path(path)) == original
+    assert File.read!(Backup.path(path)) == original
 
     # Recorded, because `offset_ms: 0` alone would report a 40s tail correction as no correction.
     assert %{status: "aligned", offset_ms: 0, segments: 2, max_offset_ms: 40_000} =
@@ -469,7 +470,7 @@ defmodule Cinder.Subtitles.SyncTest do
     original = File.read!(path)
 
     assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
-    backup = SidecarTransaction.backup_path(path)
+    backup = Backup.path(path)
     assert File.read!(backup) == original
     assert File.read!(path) =~ "00:00:02,000"
 
@@ -577,16 +578,6 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert %{method: "audio", status: "aligned", version: 6} =
              Manifest.sync(Manifest.read(video), "en")
-  end
-
-  test "manual timestamp anchors apply the same affine correction", %{video: video} do
-    path = managed_srt!(video)
-    [item] = Sync.discover(video)
-
-    assert {:ok, :corrected, _} =
-             Sync.manual_from_anchors(item, [{1_000, 2_000}, {3_000, 6_000}])
-
-    assert File.read!(path) =~ "00:00:02,000 --> 00:00:04,000"
   end
 
   test "selects the broadest same-language embedded reference then falls back to audio", %{
@@ -842,7 +833,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert [%{status: :review}] = Sync.analyze_video(video)
     assert File.read!(path) == original
-    refute File.exists?(SidecarTransaction.backup_path(path))
+    refute File.exists?(Backup.path(path))
 
     assert %{status: "review", reason: "low_confidence"} =
              Manifest.sync(Manifest.read(video), "en")
@@ -882,7 +873,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert [%{status: :aligned}] = Sync.analyze_video(video)
     assert File.read!(path) == original
-    assert File.read!(SidecarTransaction.backup_path(path)) == ""
+    assert File.read!(Backup.path(path)) == ""
   end
 
   # Issue #1127: the restore's exchange put the original back, unacknowledged.
@@ -912,7 +903,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert [%{status: :aligned}] = result
     assert File.read!(path) == original
-    assert File.read!(SidecarTransaction.backup_path(path)) == ""
+    assert File.read!(Backup.path(path)) == ""
     assert log =~ "subtitle publication unacknowledged for #{path}"
   end
 
@@ -922,7 +913,7 @@ defmodule Cinder.Subtitles.SyncTest do
     assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
     corrected = File.read!(path)
     metadata = Manifest.sync(Manifest.read(video), "en")
-    backup = SidecarTransaction.backup_path(path)
+    backup = Backup.path(path)
     File.write!(backup, String.replace(subtitle(".srt"), "One", "Wrong"))
     File.write!(video, "x" <> String.duplicate("v", 131_071))
     stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
@@ -950,7 +941,7 @@ defmodule Cinder.Subtitles.SyncTest do
     original = File.read!(path)
     assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
     corrected = File.read!(path)
-    backup = SidecarTransaction.backup_path(path)
+    backup = Backup.path(path)
     metadata = Manifest.sync(Manifest.read(video), "en")
 
     fail_once(%{
@@ -970,7 +961,7 @@ defmodule Cinder.Subtitles.SyncTest do
     [item] = Sync.discover(video)
     assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
     corrected = File.read!(path)
-    backup = SidecarTransaction.backup_path(path)
+    backup = Backup.path(path)
     metadata = Manifest.sync(Manifest.read(video), "en")
     File.write!(video, "short")
 
@@ -1007,7 +998,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert [%{status: :failed}] = DiskTask.await(task)
     assert File.read!(outside) == subtitle(".srt")
-    refute File.exists?(SidecarTransaction.backup_path(path))
+    refute File.exists?(Backup.path(path))
 
     refute Enum.any?(File.ls!(Path.dirname(path)), fn name ->
              String.starts_with?(name, ".cinder-subtitle-sync-")
@@ -1070,7 +1061,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert [%{status: :failed, reason: :video_changed}] = Sync.analyze_video(video)
     assert File.read!(path) == original
-    refute File.exists?(SidecarTransaction.backup_path(path))
+    refute File.exists?(Backup.path(path))
     assert Manifest.sync(Manifest.read(video), "en") == nil
   end
 
@@ -1081,7 +1072,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert [%{status: :review, reason: "externally_modified"}] = Sync.analyze_video(video)
     assert File.read!(path) == external
-    refute File.exists?(SidecarTransaction.backup_path(path))
+    refute File.exists?(Backup.path(path))
   end
 
   test "legacy managed tracks without an acquisition digest are not rewrite-eligible", %{
@@ -1124,7 +1115,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert [%{status: :failed, reason: :invalid_engine_output}] = Sync.analyze_video(video)
     assert File.read!(path) == original
-    refute File.exists?(SidecarTransaction.backup_path(path))
+    refute File.exists?(Backup.path(path))
     assert Manifest.sync(Manifest.read(video), "en") == nil
   end
 
@@ -1157,7 +1148,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert [%{status: :failed, reason: :concurrent_change}] = DiskTask.await(task)
     assert File.read!(path) == external
-    refute File.exists?(SidecarTransaction.backup_path(path))
+    refute File.exists?(Backup.path(path))
     assert Manifest.sync(Manifest.read(video), "en") == nil
   end
 
@@ -1183,7 +1174,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert {:error, :externally_modified} = DiskTask.await(task)
     assert File.read!(path) == external
-    refute File.exists?(SidecarTransaction.backup_path(path))
+    refute File.exists?(Backup.path(path))
     assert Manifest.sync(Manifest.read(video), "en") == nil
   end
 
@@ -1238,13 +1229,13 @@ defmodule Cinder.Subtitles.SyncTest do
     path = managed_srt!(video)
     [item] = Sync.discover(video)
     assert {:ok, :corrected, _item} = Sync.manual(item, 1_000, 1.0)
-    original_backup = File.read!(SidecarTransaction.backup_path(path))
+    original_backup = File.read!(Backup.path(path))
     external = String.replace(subtitle(".srt"), "One", "Externally edited")
     File.write!(path, external)
 
     assert [%{status: :review, reason: "externally_modified"}] = Sync.analyze_video(video)
     assert File.read!(path) == external
-    assert File.read!(SidecarTransaction.backup_path(path)) == original_backup
+    assert File.read!(Backup.path(path)) == original_backup
 
     assert %{status: "review", reason: "externally_modified"} =
              Manifest.sync(Manifest.read(video), "en")
@@ -1269,7 +1260,7 @@ defmodule Cinder.Subtitles.SyncTest do
   end
 
   defp owned_backup!(video, sidecar, content, language \\ "en") do
-    backup = SidecarTransaction.backup_path(sidecar)
+    backup = Backup.path(sidecar)
     assert {:ok, bound} = Disk.create_bound(backup, content)
     assert :ok = Manifest.put_backup_tombstone(video, language, bound.identity)
     assert :ok = Disk.close_bound(bound)

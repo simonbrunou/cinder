@@ -88,11 +88,6 @@ defmodule Cinder.Subtitles.Sync.Worker do
     :ok
   end
 
-  @doc false
-  def enqueue_units(units, server \\ __MODULE__) do
-    GenServer.call(server, {:enqueue_units, units})
-  end
-
   @impl true
   def init(opts) do
     {:ok, task_supervisor} = Task.Supervisor.start_link()
@@ -130,10 +125,6 @@ defmodule Cinder.Subtitles.Sync.Worker do
   @impl true
   def handle_call(:managed_video_paths, _from, state) do
     {:reply, state.managed_video_paths, state}
-  end
-
-  def handle_call({:enqueue_units, units}, _from, state) do
-    {:reply, :ok, enqueue_valid_units(units, state)}
   end
 
   @impl true
@@ -231,8 +222,8 @@ defmodule Cinder.Subtitles.Sync.Worker do
   # Enqueued units are caller-supplied, so they are held to the same shape as scan-produced ones
   # (validate_scan_units/1). Dropping a malformed unit keeps the queue: raising here would take
   # the worker down and discard it until the next periodic scan. The scan path records its
-  # rejection as a failed unit; here the caller is answered with :ok either way, so the log is
-  # the only trace that something was thrown away.
+  # rejection as a failed unit; here the units arrive by cast, so the caller already has its :ok
+  # and the log is the only trace that something was thrown away.
   defp enqueue_valid_units(units, state, mode \\ :background) do
     {valid, dropped} = split_valid_units(units)
     log_dropped_units(dropped)

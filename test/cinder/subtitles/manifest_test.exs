@@ -100,12 +100,11 @@ defmodule Cinder.Subtitles.ManifestTest do
     assert %{"fr" => %{sync_invalid?: true}} = state.tracks
   end
 
-  test "stable?/3 needs a current hash and provisional?/3 invalidates an old hash" do
+  test "stable?/3 holds a hash-matched track only for the moviehash the manifest recorded" do
     state = %{video_moviehash: "old", tracks: %{"fr" => %{origin: "opensubtitles_hash"}}}
 
     assert Manifest.stable?(state, "old", "fr")
     refute Manifest.stable?(state, "new", "fr")
-    assert Manifest.provisional?(state, "new", "fr")
   end
 
   test "read/1 accepts a legacy track without sync metadata" do
@@ -203,10 +202,10 @@ defmodule Cinder.Subtitles.ManifestTest do
     assert Manifest.sync(Manifest.read(video), "fr") == sync
 
     assert :ok = Manifest.begin_reset_cleanup(video, "fr", sync)
-    assert Manifest.reset_cleanup_sync(Manifest.read(video), "fr") == sync
+    assert Manifest.sync_item(Manifest.read(video), "fr").reset_cleanup_sync == sync
     assert :ok = Manifest.finish_reset_cleanup(video, "fr")
     assert Manifest.sync(Manifest.read(video), "fr") == nil
-    assert Manifest.reset_cleanup_sync(Manifest.read(video), "fr") == nil
+    assert Manifest.sync_item(Manifest.read(video), "fr").reset_cleanup_sync == nil
 
     assert :ok = Manifest.put_sync(video, "fr", sync)
     assert :ok = Manifest.clear_sync(video, "fr")
@@ -365,9 +364,8 @@ defmodule Cinder.Subtitles.ManifestTest do
   } do
     video = configure_disk(tmp)
     sync = valid_sync()
-    # The four writers that only clear a field find nothing to clear.
-    clears =
-      ~w(clear_sync clear_replacement_cleanup finish_reset_cleanup_2 clear_backup_tombstone)a
+    # The three writers that only clear fields find nothing to clear.
+    clears = ~w(clear_sync clear_replacement_cleanup finish_reset_cleanup_2)a
 
     for manifest <- [
           Jason.encode!(%{video_moviehash: "hash", tracks: %{"en" => %{origin: "embedded"}}}),
@@ -931,7 +929,7 @@ defmodule Cinder.Subtitles.ManifestTest do
     }
   end
 
-  # The ten writers but `put/8`, each writing language "fr" of `video`.
+  # Every writer but `put/8` and `delete_track/3`, each writing language "fr" of `video`.
   defp writers(sync) do
     [
       put_sync: &Manifest.put_sync(&1, "fr", sync),
@@ -941,8 +939,7 @@ defmodule Cinder.Subtitles.ManifestTest do
       begin_reset_cleanup: &Manifest.begin_reset_cleanup(&1, "fr", sync),
       finish_reset_cleanup_3: &Manifest.finish_reset_cleanup(&1, "fr", sync),
       finish_reset_cleanup_2: &Manifest.finish_reset_cleanup(&1, "fr"),
-      put_backup_tombstone: &Manifest.put_backup_tombstone(&1, "fr", [1, 2, 3]),
-      clear_backup_tombstone: &Manifest.clear_backup_tombstone(&1, "fr")
+      put_backup_tombstone: &Manifest.put_backup_tombstone(&1, "fr", [1, 2, 3])
     ]
   end
 

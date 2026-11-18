@@ -4,6 +4,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
   import Cinder.AccountsFixtures
   import Cinder.CatalogFixtures
   import Cinder.PollerHelpers, only: [poll_until: 2]
+  import Cinder.SyncWorkerHelpers, only: [cast_units: 1, cast_units: 2]
   import Cinder.Test.BarrierFilesystem, only: [fail_once: 1]
   import ExUnit.CaptureLog, only: [with_log: 1]
   import Phoenix.LiveViewTest
@@ -11,7 +12,8 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
   alias Cinder.Catalog.{Episode, Season, Series}
   alias Cinder.Repo
   alias Cinder.Subtitles
-  alias Cinder.Subtitles.{Manifest, SidecarTransaction, Sync}
+  alias Cinder.Subtitles.{Manifest, Sync}
+  alias Cinder.Subtitles.SidecarTransaction.Backup
   alias Cinder.Subtitles.Sync.Worker
   alias Cinder.Test.DiskTask
 
@@ -60,7 +62,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
          analyze: fn ^video -> [%{status: :aligned, label: "Slow"}] end}
       )
 
-    assert :ok = Worker.enqueue_units([%{video_path: video, label: "Slow"}], worker)
+    assert :ok = cast_units([%{video_path: video, label: "Slow"}], worker)
 
     poll_until(fn -> MapSet.member?(Worker.managed_video_paths(), video) end,
       timeout: DiskTask.timeout_ms()
@@ -329,6 +331,39 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     refute render(view) =~ sidecar
   end
 
+  test "timestamp anchors preview and apply their affine correction", %{
+    conn: conn,
+    movies: movies
+  } do
+    {movie, _video, sidecar, item} = managed_movie!(movies, "Anchored")
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
+    view |> element("#subtitle-sync-item-#{item.id} button", "Adjust") |> render_click()
+
+    # The anchor fields render only once the anchors method is chosen.
+    view
+    |> form("#subtitle-sync-form", %{"adjustment" => %{"mode" => "anchors"}})
+    |> render_change()
+
+    # Sidecar 1 s lands at video 2 s and sidecar 3 s at video 6 s: no delay, rate 2.
+    params = %{
+      "adjustment" => %{
+        "mode" => "anchors",
+        "sidecar_1" => "1",
+        "video_1" => "2",
+        "sidecar_2" => "3",
+        "video_2" => "6"
+      }
+    }
+
+    view |> form("#subtitle-sync-form", params) |> render_change()
+    assert has_element?(view, "#subtitle-sync-preview", "Delay 0.000 s · rate 2.000000")
+
+    view |> form("#subtitle-sync-form", params) |> render_submit()
+
+    assert File.read!(sidecar) =~ "00:00:02,000 --> 00:00:04,000"
+  end
+
   # A fetch for wanted `fra` writes `Movie.fra.srt`, whose name reads as `fr` (#1344).
   test "lists and applies to a subtitle recorded under a wanted code its name does not read as",
        %{conn: conn, movies: movies} do
@@ -581,7 +616,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     movies: movies
   } do
     {movie, _video, sidecar, item} = managed_movie!(movies, "Quarantined")
-    File.write!(SidecarTransaction.backup_path(sidecar), "unproven backup")
+    File.write!(Backup.path(sidecar), "unproven backup")
 
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
     render_async(view)
@@ -850,7 +885,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
     corrected = File.read!(sidecar)
     metadata = Manifest.sync(Manifest.read(video), "en")
-    File.rm!(SidecarTransaction.backup_path(sidecar))
+    File.rm!(Backup.path(sidecar))
 
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
     render_async(view)
@@ -949,7 +984,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     view |> element("#enqueue-subtitle-library") |> render_click()
     assert_receive {:scanned, :library}
 
-    assert :ok = Worker.enqueue_units([%{video_path: "/media/Movie.mkv", label: "Movie"}])
+    assert :ok = cast_units([%{video_path: "/media/Movie.mkv", label: "Movie"}])
 
     poll_until(fn -> has_element?(view, "#subtitle-sync-activity li", "manifest") end,
       timeout: DiskTask.timeout_ms()

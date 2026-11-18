@@ -247,10 +247,6 @@ defmodule Cinder.Subtitles.Manifest do
   def clear_replacement_cleanup(video_path, language),
     do: drop_fields(video_path, language, [:replacement_cleanup_sync])
 
-  @spec reset_cleanup_sync(map(), String.t()) :: map() | nil
-  def reset_cleanup_sync(state, language),
-    do: get_in(state, [:tracks, language, :reset_cleanup_sync])
-
   @spec begin_reset_cleanup(String.t(), String.t(), map()) :: :ok | {:error, term()}
   def begin_reset_cleanup(video_path, language, sync) do
     with {:ok, state} <- load(video_path),
@@ -307,10 +303,6 @@ defmodule Cinder.Subtitles.Manifest do
       {:error, _reason} = error -> error
     end
   end
-
-  @spec clear_backup_tombstone(String.t(), String.t()) :: :ok | {:error, term()}
-  def clear_backup_tombstone(video_path, language),
-    do: drop_fields(video_path, language, [:backup_tombstone])
 
   @spec sync(map(), String.t()) :: map() | nil
   def sync(state, language), do: get_in(state, [:tracks, language, :sync])
@@ -415,10 +407,6 @@ defmodule Cinder.Subtitles.Manifest do
   end
 
   def embedded_track(_state, _moviehash, _language), do: nil
-
-  @spec provisional?(map(), String.t() | nil, String.t()) :: boolean()
-  def provisional?(state, moviehash, language),
-    do: managed?(state, language) and not stable?(state, moviehash, language)
 
   @spec managed?(map(), String.t()) :: boolean()
   def managed?(state, language), do: origin(state, language) in @origins

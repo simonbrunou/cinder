@@ -74,10 +74,6 @@ defmodule Cinder.Subtitles.SidecarTransaction do
   @spec restore_original(sidecar(), String.t()) :: :ok | {:error, term()}
   defdelegate restore_original(sidecar, moviehash), to: Recovery
 
-  @doc "Hidden immutable original adjacent to a corrected sidecar."
-  @spec backup_path(String.t()) :: String.t()
-  defdelegate backup_path(sidecar_path), to: Backup, as: :path
-
   @doc "Whether something other than a backup tombstone sits at the sidecar's backup path."
   @spec stranded_backup?(String.t()) :: boolean()
   def stranded_backup?(sidecar_path), do: sidecar_path |> Backup.path() |> Backup.active?()

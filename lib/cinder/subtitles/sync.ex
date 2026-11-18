@@ -162,7 +162,15 @@ defmodule Cinder.Subtitles.Sync do
 
   def fingerprint(_item), do: {:error, :unknown_item}
 
-  @doc "Applies a direct affine correction, always reusing the immutable original when present."
+  @doc """
+  Applies a direct affine correction, always reusing the immutable original when present.
+
+  With `expected_sha256`, it first checks that the sidecar still has those bytes, and answers
+  `{:error, :sidecar_changed}` when it does not. Its one caller in Cinder's own code,
+  `manual_in_scope/5`, passes on the fingerprint that the subtitle sync page's preview read. The
+  `nil` default, `manual/3`, skips that check and has no caller outside the tests, which call it
+  to apply a correction without a preview. It stays public for them.
+  """
   @spec manual(item(), integer(), number(), String.t() | nil) ::
           {:ok, :aligned | :corrected, item()} | {:error, term()}
   def manual(item, offset_ms, rate, expected_sha256 \\ nil)
@@ -237,14 +245,6 @@ defmodule Cinder.Subtitles.Sync do
   end
 
   defp find_scoped_item(scope, id), do: Enum.find(items(scope), &(&1.id == id))
-
-  @doc "Applies an affine correction derived from one or two sidecar→video timestamp anchors."
-  @spec manual_from_anchors(item(), [{integer(), integer()}]) ::
-          {:ok, :aligned | :corrected, item()} | {:error, term()}
-  def manual_from_anchors(item, anchors) do
-    with {:ok, {offset_ms, rate}} <- Timing.from_anchors(anchors),
-         do: manual(item, offset_ms, rate)
-  end
 
   @doc "Restores the immutable original and clears correction metadata."
   @spec reset(item()) :: :ok | {:error, term()}

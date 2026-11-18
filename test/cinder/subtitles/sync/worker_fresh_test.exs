@@ -1,5 +1,6 @@
 defmodule Cinder.Subtitles.Sync.WorkerFreshTest do
-  # DataCase: `enqueue_after_download/3` resolves the video's catalog unit first.
+  # DataCase: `enqueue_after_download/3` and `enqueue_in_background/3` resolve the video's
+  # catalog unit first.
   use Cinder.DataCase, async: false
 
   alias Cinder.Subtitles.Sync.Worker
@@ -27,12 +28,10 @@ defmodule Cinder.Subtitles.Sync.WorkerFreshTest do
         {Worker, initial_scan: false, interval: :timer.hours(1), analyze: analyze}
       )
 
-    library = [
-      %{video_path: "/library/a.mkv", label: "A"},
-      %{video_path: "/library/b.mkv", label: "B"}
-    ]
-
-    assert :ok = Worker.enqueue_units(library, worker)
+    # Routine library work, through the entry that a sidecar extracted from the video's own track
+    # uses outside a fresh download.
+    assert :ok = Worker.enqueue_in_background("/library/a.mkv", :movies, worker)
+    assert :ok = Worker.enqueue_in_background("/library/b.mkv", :movies, worker)
     assert_receive {:started, "/library/a.mkv", [shot_changes: :cached], first}
 
     assert :ok = Worker.enqueue_after_download("/library/fresh.mkv", :movies, worker)
