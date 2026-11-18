@@ -603,6 +603,43 @@ defmodule Cinder.Library.KeptFileSidecarsTest do
       assert hand_placed?(dest, "en")
     end
 
+    # #1419: a replay that is not forced over a recorded row records the sidecars the commit links,
+    # so its subtitle task marks the `fr` it placed. The row recorded an `en` that is not on disk:
+    # it drops out. A hand-placed `en` at the destination is listed first and stays unmanaged.
+    test "a movie replay over a recorded row manages the sidecar it links", %{
+      downloads: downloads,
+      movies: movies
+    } do
+      for {tmdb_id, users_en?, recorded} <- [{9192, false, ["fr"]}, {9193, true, ["en", "fr"]}] do
+        folder = release_folder(downloads, "Movie.2020.720p.WEB-GRP-#{tmdb_id}")
+        dest = release_video_at(folder_video(folder), movie_dest(movies, tmdb_id))
+        if users_en?, do: hand_placed!(dest, "en")
+
+        movie =
+          same_file_movie(tmdb_id, folder, %{
+            file_path: dest,
+            imported_resolution: "1080p",
+            imported_source: "BLURAY",
+            imported_size: 9 * @gb,
+            imported_sidecar_subtitles: ["en"]
+          })
+
+        expect_scan(:movies)
+
+        assert {:ok, staged} = Library.stage_movie(movie)
+        assert %{file_path: ^dest, quality: quality} = StagedImport.record(staged)
+        assert :ok = LibraryStubs.commit_staged(staged)
+
+        assert_receive {:scanned, :movies}
+        LibraryStubs.await_subtitle_tasks()
+        assert {quality.resolution, quality.sidecar_subtitles} == {"1080p", recorded}
+        assert managed?(dest, "fr")
+        refute managed?(dest, "en")
+        assert File.exists?(Path.rootname(dest) <> ".en.srt") == users_en?
+        if users_en?, do: assert(hand_placed?(dest, "en"))
+      end
+    end
+
     # The import's own subtitle task fetches right after the marking, so a hand-placed sidecar the
     # marking took over would be overwritten at once.
     test "the import's own subtitle fetch leaves a hand-placed sidecar's bytes unchanged", %{

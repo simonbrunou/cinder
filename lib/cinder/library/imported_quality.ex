@@ -154,7 +154,8 @@ defmodule Cinder.Library.ImportedQuality do
   `release_sidecars:` languages, or to a forced re-import of the very same file (`forced?: true`,
   a manual re-import after a crash). Otherwise the row keeps what it recorded, or, when its
   quality is unrecorded, adopts the file it found, with the sidecars already at `dest`
-  (issue #128). A `:kept` file logs that the download was not an upgrade.
+  (issue #128); the `:same_file` sidecar list below is the exception. A `:kept` file logs that
+  the download was not an upgrade.
 
   `release_sidecars:` is the fourth element of `Cinder.Library.StagedImport.place_video/5`: the
   languages of the release's sidecars the commit links next to `dest` (`[]` for a release folder
@@ -162,11 +163,12 @@ defmodule Cinder.Library.ImportedQuality do
   outcome links them, so a `:kept` stage never has any.
 
   On `:same_file` the file at `dest` is the download's own video, and the commit links the
-  release's sidecars next to it. So wherever that outcome records the incoming quality, forced or
-  adopted, its sidecar list is the languages already at `dest` followed by `release_sidecars:`,
-  each once (issue #822). A forced re-import with `release_sidecars: nil` records the incoming
-  quality as it is. A recorded row that is not forced keeps its own list, though the commit still
-  links the release's sidecars.
+  release's sidecars next to it. So whenever `release_sidecars:` is a list, `[]` included, the
+  sidecar list that outcome records is the languages already at `dest` followed by
+  `release_sidecars:`, each once, forced or not, over a recorded row or an unrecorded one
+  (issues #822, #1419). A recorded row that is not forced keeps its other fields. With
+  `release_sidecars: nil` a forced re-import records the incoming quality as it is, and a
+  recorded row that is not forced keeps what it recorded, list included.
   """
   @spec for_outcome(t(), :placed | :replaced | :same_file | :kept, row(), keyword()) :: t()
   def for_outcome(%__MODULE__{} = incoming, outcome, _record, opts)
@@ -185,7 +187,8 @@ defmodule Cinder.Library.ImportedQuality do
     case {Keyword.get(opts, :forced?, false), release} do
       {true, nil} -> incoming
       {true, _release} -> %{incoming | sidecar_subtitles: with_release.()}
-      {false, _release} -> existing(record, incoming, with_release)
+      {false, nil} -> existing(record, incoming, with_release)
+      {false, _release} -> %{held(record, incoming) | sidecar_subtitles: with_release.()}
     end
   end
 
@@ -237,13 +240,20 @@ defmodule Cinder.Library.ImportedQuality do
   end
 
   # An unrecorded row adopts the incoming quality, with the sidecar languages `sidecars` lists. A
-  # recorded row lists none, so its import walks no folder for them.
+  # recorded row keeps its own list, so this walks no folder for it.
   defp existing(record, incoming, sidecars) do
     recorded = of(record)
 
     if unrecorded?(recorded),
       do: %{incoming | sidecar_subtitles: sidecars.()},
       else: recorded
+  end
+
+  # The quality of a file the row already holds: the row's own, or the incoming one when the row's
+  # is unrecorded (issue #128).
+  defp held(record, incoming) do
+    recorded = of(record)
+    if unrecorded?(recorded), do: incoming, else: recorded
   end
 
   # The languages of the sidecars next to each of `videos`, in order, each once.

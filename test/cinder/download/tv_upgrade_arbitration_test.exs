@@ -19,6 +19,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
   alias Cinder.Download.TvPoller
   alias Cinder.Library.Upgrade
   alias Cinder.Repo
+  alias Cinder.Subtitles.Manifest
 
   setup :set_mox_global
 
@@ -635,9 +636,11 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     end
 
     # The same file under a recorded row that out-ranks the release: the subtitles still land, and
-    # the row keeps its recorded list, as a replay over a recorded row does on the other paths.
+    # the row keeps its recorded ranked fields while its list follows the sidecars the commit
+    # links, as a replay over a recorded row does on the other paths (#1419). The row's own `en`
+    # is not on disk and drops out.
     @tag :tmp_dir
-    test "a recorded keep of the release's own video takes them and keeps its list", %{
+    test "a recorded keep of the release's own video takes them into its list", %{
       tmp_dir: tmp
     } do
       title = "Show.S01.1080p.WEBDL-GRP"
@@ -668,8 +671,11 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
              ) == [title]
 
       assert imported.imported_size == 9_000_000_000
-      assert imported.imported_sidecar_subtitles == ["en"]
+      assert imported.imported_resolution == "1080p"
+      assert imported.imported_sidecar_subtitles == ["fr"]
       assert File.read!(Path.rootname(imported.file_path) <> ".fr.srt") == "1\n"
+      LibraryStubs.await_subtitle_tasks()
+      assert imported.file_path |> Manifest.read() |> Manifest.managed?("fr")
     end
   end
 

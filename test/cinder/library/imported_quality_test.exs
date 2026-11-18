@@ -228,11 +228,11 @@ defmodule Cinder.Library.ImportedQualityTest do
       assert %{quality | sidecar_subtitles: []} == @incoming
     end
 
+    # With no `release_sidecars:` (a single-file download) the commit links none, so the row
+    # keeps its whole recorded quality, sidecar list included.
     test "an untouched file keeps what its row recorded", ctx do
-      for opts <- [[dest: ctx.dest], [dest: ctx.dest, release_sidecars: ["fr"]]] do
-        assert ImportedQuality.for_outcome(@incoming, :same_file, @recorded, opts) ==
-                 ImportedQuality.of(@recorded)
-      end
+      assert ImportedQuality.for_outcome(@incoming, :same_file, @recorded, dest: ctx.dest) ==
+               ImportedQuality.of(@recorded)
 
       log =
         capture_log(fn ->
@@ -241,6 +241,19 @@ defmodule Cinder.Library.ImportedQualityTest do
         end)
 
       assert log =~ ~s(kept existing "1080p" file at #{ctx.dest})
+    end
+
+    # Issue #1419: the file is the release's own video and the commit links the release's
+    # sidecars next to it, so a recorded row that is not forced keeps its ranked and probed fields
+    # and lists the sidecars at `dest`, then the release's, as the forced re-import above does.
+    # The row's own `["fr"]` is not on disk and drops out.
+    test "an untouched file under a recorded row lists the sidecars the commit links", ctx do
+      for {release, sidecars} <- [{["de"], ["en", "de"]}, {["en"], ["en"]}, {[], ["en"]}] do
+        assert ImportedQuality.for_outcome(@incoming, :same_file, @recorded,
+                 dest: ctx.dest,
+                 release_sidecars: release
+               ) == %{ImportedQuality.of(@recorded) | sidecar_subtitles: sidecars}
+      end
     end
 
     # Issue #128: a row with an unrecorded quality adopts the file it found, sidecars included.
@@ -350,15 +363,23 @@ defmodule Cinder.Library.ImportedQualityTest do
   end
 
   # Issue #921: a row recorded before the media-info columns can hold a nil sidecar list, and a
-  # part whose library file stays gets that nil list from `for_outcome/4`.
+  # part whose library file is kept gets that nil list from `for_outcome/4`. A part whose library
+  # file is the release's own video lists the sidecars its commit links (#1419).
   describe "a stacked movie through Library.stage_movie/2" do
     @describetag :tmp_dir
     setup [:real_disk, :stacked_movie]
 
-    test "a row with no sidecar list keeps none when every part is the download's file", ctx do
+    # Issue #1419: every part is the release's own video, so the commit links the release's
+    # sidecars next to each, and each part's record lists them. Only the second part has one, so
+    # the merged list is its `fr`.
+    test "a row with no sidecar list takes the parts' lists when every part is the download's file",
+         ctx do
       assert {:ok, staged} = Library.stage_movie(ctx.row)
-      assert StagedImport.record(staged).quality == ImportedQuality.of(ctx.row)
-      StagedImport.rollback(staged)
+
+      assert StagedImport.record(staged).quality ==
+               %{ImportedQuality.of(ctx.row) | sidecar_subtitles: ["fr"]}
+
+      assert_imports(ctx.row, staged, ["fr"])
     end
 
     @tag :capture_log

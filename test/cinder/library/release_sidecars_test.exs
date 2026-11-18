@@ -6,13 +6,13 @@ defmodule Cinder.Library.ReleaseSidecarsTest do
   sidecars on disk next to the file once the commit ran:
 
   - `:placed` and `:replaced`: the release's sidecars, all linked.
-  - `:same_file`: the languages already next to the file, then the release's, linked. The
-    exception is a replay that is not forced over a recorded row: it keeps the row's own list
-    while the commit links the release's sidecars.
+  - `:same_file` from a release folder: the languages already next to the file, then the
+    release's, linked, forced or not, over a recorded row or an unrecorded one (#1419).
   - `:kept`: the row's own list. The commit links none of the release's sidecars (#784).
 
   A single-file release has no sidecars to link, so on a forced `:same_file` it records none,
-  even of the ones already next to the file.
+  even of the ones already next to the file, and on an unforced one over a recorded row the row
+  keeps its own list.
 
   Real temp directories throughout: what is under test is which subtitle files land on disk.
   """
@@ -23,7 +23,8 @@ defmodule Cinder.Library.ReleaseSidecarsTest do
   import Mox
 
   alias Cinder.{ConfigCase, Library, LibraryStubs}
-  alias Cinder.Library.{MediaServerMock, StagedImport}
+  alias Cinder.Library.{ImportedQuality, MediaServerMock, StagedImport}
+  alias Cinder.Subtitles.Manifest
 
   @moduletag :tmp_dir
   @gb 1_000_000_000
@@ -101,10 +102,11 @@ defmodule Cinder.Library.ReleaseSidecarsTest do
       assert sidecars_on_disk(dest) == ["en", "fr"]
     end
 
-    # The one cell where the record and the links differ, kept on purpose: a replay that is not
-    # forced keeps the row's recorded quality, sidecar list included, while the commit links the
-    # release's sidecars (`tv_upgrade_arbitration_test.exs` pins the same for a declined keep).
-    test "an unforced :same_file over a recorded row keeps its list and links the release's",
+    # #1419: a replay that is not forced keeps the row's recorded ranked and probed fields, and
+    # its list follows the sidecars the commit links, as on a forced one. The row's own `en` is
+    # not on disk and drops out (`tv_upgrade_arbitration_test.exs` pins the same for a declined
+    # keep).
+    test "an unforced :same_file over a recorded row records the release's sidecars it links",
          ctx do
       folder = release_folder(ctx.downloads, "#{@release}-14135")
       dest = release_video_at(folder_video(folder), movie_dest(ctx.movies, 14_135))
@@ -113,8 +115,29 @@ defmodule Cinder.Library.ReleaseSidecarsTest do
       quality = import_movie(movie, [])
 
       assert quality.resolution == "1080p"
-      assert quality.sidecar_subtitles == ["en"]
+      assert quality.size == 9 * @gb
+      assert quality.sidecar_subtitles == ["fr"]
       assert sidecars_on_disk(dest) == ["fr"]
+      # The subtitle task marks a listed language whose sidecar the commit placed (#918), so the
+      # commit's `fr` is Cinder's once the record lists it.
+      assert managed?(dest, "fr")
+    end
+
+    # Not forced, over a recorded row, from a single-file release: the commit links no sidecar, so
+    # the row keeps its whole recorded quality, list included (#1419 changed only the
+    # release-folder case).
+    test "an unforced :same_file from a single file over a recorded row keeps its list", ctx do
+      file = Path.join(ctx.downloads, "#{@release}-14162.mkv")
+      File.write!(file, "release")
+      File.write!(Path.join(ctx.downloads, "#{@release}-14162.fr.srt"), "1")
+      dest = release_video_at(file, movie_dest(ctx.movies, 14_162))
+      movie = movie_row(14_162, file, Map.put(@better, :file_path, dest))
+
+      quality = import_movie(movie, [])
+
+      assert quality == ImportedQuality.of(movie)
+      assert quality.sidecar_subtitles == ["en"]
+      assert sidecars_on_disk(dest) == []
     end
 
     test ":kept keeps the row's list and links none of the release's sidecars", ctx do
@@ -189,8 +212,9 @@ defmodule Cinder.Library.ReleaseSidecarsTest do
 
     # With no `file_path` the default `:force` collision falls back to `:adopt`: the release's own
     # video at the canonical path is an unforced `:same_file` over the recorded row, which keeps
-    # its list while the commit links the release's sidecars (as for a movie above).
-    test "an unforced :same_file over a recorded row keeps its list and links the release's",
+    # its ranked fields and records the release's sidecars the commit links (as for a movie
+    # above, #1419).
+    test "an unforced :same_file over a recorded row records the release's sidecars it links",
          ctx do
       folder = release_folder(ctx.downloads, "#{@episode_release}-14144")
       dest = release_video_at(folder_video(folder), episode_dest(ctx.tv, 14_144))
@@ -199,8 +223,10 @@ defmodule Cinder.Library.ReleaseSidecarsTest do
       assert {quality, true} = import_episode(folder, episode)
 
       assert quality.resolution == "1080p"
-      assert quality.sidecar_subtitles == ["en"]
+      assert quality.size == 9 * @gb
+      assert quality.sidecar_subtitles == ["fr"]
       assert sidecars_on_disk(dest) == ["fr"]
+      assert managed?(dest, "fr")
     end
 
     # With no `file_path` the default `:force` collision falls back to `:adopt`, which keeps the
@@ -442,6 +468,8 @@ defmodule Cinder.Library.ReleaseSidecarsTest do
     |> Enum.map(&(&1 |> String.replace_prefix(prefix, "") |> Path.rootname()))
     |> Enum.sort()
   end
+
+  defp managed?(video, language), do: video |> Manifest.read() |> Manifest.managed?(language)
 
   # The commit's media-server scan runs in this process; it is the proof the effects ran.
   defp expect_scan(kind) do
