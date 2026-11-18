@@ -2,7 +2,7 @@
 
 ## What runs
 
-- `.forgejo/workflows/ci.yml` runs on the Forgejo runner for every PR and every push to `main`.
+- `.forgejo/workflows/ci.yml` runs on the Forgejo runners for every PR and every push to `main`.
   It has three jobs, reported as commit statuses `CI / test`, `CI / container` and
   `CI / dependency-audit`, each suffixed `(pull_request)` or `(push)`. Branch protection on
   `main` requires `* (pull_request)`. GitHub runs no CI: its only workflow is `release.yml`, on a
@@ -18,7 +18,16 @@
   (`.github/scripts/browser_smoke.py`, `browser_lifecycle.py`), then scans the image with Trivy
   (HIGH and CRITICAL, unfixed CVEs and the CVEs listed in `.trivyignore` ignored).
 - `dependency-audit` runs `mix hex.audit` and `mix deps.audit`.
-- The runner is shared with other repositories, so a PR's jobs can queue behind their runs.
+- Two runners take the jobs. `ci-runner` on CT 125 is shared with other repositories, so a PR's
+  jobs can queue behind their runs, and it runs every `container` job (`runs-on: ubuntu-latest`).
+  `sbrn-cinder` on sbrn takes only this repository's `ubuntu-26.04` jobs (`test`,
+  `dependency-audit`), two at a time. Whichever runner asks first gets a waiting job. The job
+  log's first line, `Runner <uuid> ... received task`, says where it ran: `5369a862-...` is
+  `sbrn-cinder`, `38333539-...` is `ci-runner` (the jobs API returns no runner name).
+  `sbrn-cinder` has no cache, so every `test` job
+  there takes the cache-miss path: cmake from apt and the NIF downloads or builds
+  ("Dependency rebuild"). The runners are described in homelab-stacks
+  `docs/operations/runbooks/ct-125-ci-runner.md`.
 
 ## Browser scripts locally
 
