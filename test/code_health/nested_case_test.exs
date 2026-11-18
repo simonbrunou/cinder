@@ -31,7 +31,7 @@ defmodule Cinder.CodeHealth.NestedCaseTest do
     "lib/cinder/database_backup.ex" => 1,
     "lib/cinder/disk.ex" => 2,
     "lib/cinder/download.ex" => 1,
-    "lib/cinder/download/client/qbittorrent.ex" => 2,
+    "lib/cinder/download/client/qbittorrent.ex" => 1,
     "lib/cinder/download/client/sabnzbd.ex" => 7,
     "lib/cinder/download/orphan_folders.ex" => 1,
     "lib/cinder/download/torrent.ex" => 1,

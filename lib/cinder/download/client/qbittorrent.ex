@@ -36,7 +36,6 @@ defmodule Cinder.Download.Client.QBittorrent do
   @in_transit ~w(moving)
   @errored ~w(error missingFiles)
 
-  @max_redirects 5
   @max_torrent_bytes 10 * 1024 * 1024
   @max_response_bytes 4 * 1024 * 1024
   @minimum_webapi_version "2.8.3"
@@ -112,9 +111,20 @@ defmodule Cinder.Download.Client.QBittorrent do
   # upload the bytes to qBittorrent. decode_body: false keeps the bytes raw so
   # the infohash is over the exact on-the-wire content.
   defp add_torrent_url(%{download_url: url} = release, opts) do
-    source_origin = Map.get(release, :download_url_origin)
+    # 90 s, where the Web API calls default to 15 s: a link that Prowlarr proxies to a scraper
+    # site can wait on a FlareSolverr Cloudflare solve, whose maxTimeout Prowlarr sets to 60 s by
+    # default. The figure is each hop's receive_timeout, and `HTTPPolicy.bounded_request/2` makes
+    # it the hop's total deadline too (#1410, #1414).
+    fetch_opts = [
+      max_bytes: @max_torrent_bytes,
+      error_tag: :torrent_fetch_status,
+      allow_magnet: true,
+      receive_timeout: 90_000,
+      plug: fetch_plug(),
+      resolver: Keyword.get(config(), :url_resolver)
+    ]
 
-    case fetch_torrent(url, source_origin, @max_redirects) do
+    case Fetch.bytes(url, Map.get(release, :download_url_origin), fetch_opts) do
       {:ok, bytes} -> add_torrent_bytes(bytes, opts)
       # Magnet-only indexers answer their proxied downloadUrl with a 3xx to a
       # magnet: URI — route it through the magnet add path.
@@ -182,73 +192,6 @@ defmodule Cinder.Download.Client.QBittorrent do
 
       _ ->
         :ok
-    end
-  end
-
-  # Redirects are followed manually (redirect: false): Req's own redirect step
-  # merges the Location URI without a scheme check, so a 3xx to a magnet: URI
-  # makes Finch raise ArgumentError instead of returning {:error, _}.
-  defp fetch_torrent(url, source_origin, hops) do
-    resolver = Keyword.get(config(), :url_resolver)
-
-    with {:ok, target} <- Fetch.download_url_target(url, source_origin, resolver) do
-      trust =
-        if HTTPPolicy.same_origin?(target.uri, source_origin),
-          do: {:source, source_origin},
-          else: :untrusted
-
-      request_torrent(target, trust, hops)
-    end
-  end
-
-  defp request_torrent(target, trust, hops) do
-    # 90s, not the 15s the API calls use: this fetch rides Prowlarr proxying a scraper
-    # site, and a FlareSolverr Cloudflare solve alone budgets 60s (its maxTimeout). The figure is
-    # each hop's receive_timeout, and `HTTPPolicy.bounded_request/2` makes it the hop's total
-    # deadline too (#1410, #1414).
-    request =
-      target
-      |> HTTPPolicy.request_options(
-        receive_timeout: 90_000,
-        pool_timeout: 5_000,
-        connect_options: [timeout: 5_000],
-        retry: false,
-        redirect: false,
-        plug: fetch_plug()
-      )
-      |> Req.new()
-
-    case HTTPPolicy.bounded_request(request, @max_torrent_bytes) do
-      {:ok, %{status: 200, body: bytes}} when is_binary(bytes) ->
-        {:ok, bytes}
-
-      {:ok, %{status: status} = resp} when status in [301, 302, 303, 307, 308] ->
-        case Req.Response.get_header(resp, "location") do
-          [location | _] -> redirect(target.uri, location, trust, hops)
-          [] -> {:error, {:torrent_fetch_status, status}}
-        end
-
-      {:ok, %{status: status}} ->
-        {:error, {:torrent_fetch_status, status}}
-
-      other ->
-        error(other)
-    end
-  end
-
-  defp redirect(url, location, trust, hops) do
-    if Torrent.magnet?(location),
-      do: {:magnet, location},
-      else: follow_redirect(url, location, trust, hops)
-  end
-
-  defp follow_redirect(_url, _location, _trust, 0), do: {:error, :too_many_redirects}
-
-  defp follow_redirect(url, location, trust, hops) do
-    case resolve_redirect(url, location, trust) do
-      {:ok, next, next_trust} -> request_torrent(next, next_trust, hops - 1)
-      {:error, :unsupported_scheme} -> {:error, :unsupported_download_url}
-      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -652,45 +595,6 @@ defmodule Cinder.Download.Client.QBittorrent do
     do: HTTPPolicy.without_fragment(Keyword.get(config, :base_url, @default_base_url))
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
-
-  defp validate_url(url, source_origin) do
-    case Keyword.get(config(), :url_resolver) do
-      resolver when is_function(resolver, 1) ->
-        HTTPPolicy.source_request_target(url, source_origin, resolver)
-
-      nil ->
-        HTTPPolicy.source_request_target(url, source_origin)
-    end
-  end
-
-  defp resolve_redirect(current, location, {:source, source_origin}) do
-    case HTTPPolicy.resolve_redirect(current, location, :same_origin) do
-      {:ok, next} ->
-        with {:ok, target} <- validate_url(next, source_origin),
-             do: {:ok, target, {:source, source_origin}}
-
-      {:error, :cross_origin_redirect} ->
-        resolve_untrusted_redirect(current, location)
-
-      error ->
-        error
-    end
-  end
-
-  defp resolve_redirect(current, location, :untrusted),
-    do: resolve_untrusted_redirect(current, location)
-
-  defp resolve_untrusted_redirect(current, location) do
-    case Keyword.get(config(), :url_resolver) do
-      resolver when is_function(resolver, 1) ->
-        with {:ok, next} <- HTTPPolicy.untrusted_redirect_target(current, location, resolver),
-             do: {:ok, next, :untrusted}
-
-      nil ->
-        with {:ok, next} <- HTTPPolicy.untrusted_redirect_target(current, location),
-             do: {:ok, next, :untrusted}
-    end
-  end
 
   defp error({:ok, %{status: status}}), do: {:error, {:qbittorrent_status, status}}
   defp error({:error, reason}), do: {:error, reason}

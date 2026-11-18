@@ -942,6 +942,91 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              QBittorrent.add(%{download_url: "https://tracker.test/oversized.torrent"})
   end
 
+  # The login refuses, so the test ends before an upload, which `Req.Test`'s body parser caps at
+  # 8 MB. Reaching the login shows the fetch took all 10 MiB.
+  test "add/1 fetches a torrent of exactly the 10 MiB cap and goes on to log in" do
+    test_pid = self()
+    cap = 10 * 1024 * 1024
+    torrent = padded_torrent("d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee", cap)
+
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"93.184.216.34", "/big.torrent"} ->
+          Req.Test.text(conn, torrent)
+
+        {_, "/api/v2/auth/login"} ->
+          send(test_pid, :login)
+          Req.Test.text(conn, "Fails.")
+      end
+    end)
+
+    assert byte_size(torrent) == cap
+
+    assert {:error, :login_failed} =
+             QBittorrent.add(%{download_url: "https://tracker.test/big.torrent"})
+
+    assert_received :login
+  end
+
+  # A torrent whose `comment` pads it to `size` bytes. Keys stay in bencode's sorted order.
+  defp padded_torrent(infoval, size) do
+    shell = fn pad -> "d8:announce11:http://x/an7:comment#{pad}4:info#{infoval}e" end
+    pad_length = size - byte_size(shell.("0:"))
+    pad_length = pad_length - (byte_size(Integer.to_string(pad_length)) - 1)
+    shell.("#{pad_length}:" <> String.duplicate("x", pad_length))
+  end
+
+  test "add/1 still adds the magnet that a sixth redirect names" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"93.184.216.34", "/hop/5"} ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "magnet:?xt=urn:btih:#{@hash}&dn=Movie")
+          |> Plug.Conn.send_resp(302, "")
+
+        {"93.184.216.34", "/hop/" <> n} ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "/hop/#{String.to_integer(n) + 1}")
+          |> Plug.Conn.send_resp(302, "")
+
+        {_, "/api/v2/auth/login"} ->
+          login(conn)
+
+        {_, "/api/v2/torrents/add"} ->
+          Req.Test.text(conn, "Ok.")
+      end
+    end)
+
+    assert {:ok, "0123456789abcdef0123456789abcdef01234567"} =
+             QBittorrent.add(%{download_url: "https://tracker.test/hop/0"})
+  end
+
+  test "add/1 follows five http redirects and refuses a sixth without contacting qBittorrent" do
+    test_pid = self()
+
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"93.184.216.34", "/hop/" <> n} ->
+          send(test_pid, {:hop, String.to_integer(n)})
+
+          conn
+          |> Plug.Conn.put_resp_header("location", "/hop/#{String.to_integer(n) + 1}")
+          |> Plug.Conn.send_resp(302, "")
+
+        {_, path} ->
+          send(test_pid, {:qbit_request, path})
+          Plug.Conn.send_resp(conn, 500, "")
+      end
+    end)
+
+    assert {:error, :too_many_redirects} =
+             QBittorrent.add(%{download_url: "https://tracker.test/hop/0"})
+
+    for n <- 0..5, do: assert_received({:hop, ^n})
+    refute_received {:hop, _}
+    refute_received {:qbit_request, _}
+  end
+
   test "add/1 rejects an unsafe torrent URL before the request" do
     assert {:error, :forbidden_address} =
              QBittorrent.add(%{download_url: "http://127.0.0.1/private.torrent"})
