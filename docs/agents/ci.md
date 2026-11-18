@@ -198,8 +198,13 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
      push. A local `mix test` of that tree is not this green run (#916). It misses failures that
      happen only on CI (**CI runs the suite as root**). Its timing also says nothing about a
      wall-clock bound on the loaded runner.
-- **Wall-clock tests.** #637 (for #636) widened the subprocess bounds that raced process startup
-  on the runner to 1 s. `Cinder.HTTPPolicyTest` "cancels a request blocked before headers at the
+- **Wall-clock tests.** When a test's match on its result already tells the expected ending from
+  a competing deadline, put its elapsed bound well under that deadline, not at a guess at runner
+  lag. `libre_translate_test.exs`'s 5.2 s bound failed eight CI attempts on #1441, #1487 and
+  `main` 5c24752f (#1443) until #1504 raised it to 30 s ([testing.md](testing.md), the
+  `Cinder.Test.SilentServer` bullet).
+  #637 (for #636) widened the subprocess bounds that raced process startup on the runner to 1 s.
+  `Cinder.HTTPPolicyTest` "cancels a request blocked before headers at the
   wall-clock deadline" runs a 500 ms deadline. The test takes the request task's pid from
   `bounded_request/3`'s `[:cinder, :http, :request_task]` event. It asserts that task dead and
   accepts a missing `{:request_started, _}` from the stub. A runner slower than the deadline to

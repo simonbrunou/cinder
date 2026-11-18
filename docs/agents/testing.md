@@ -92,8 +92,9 @@
 - Run a list of one-edit mutants with `scripts/mutation-check <file> <mutants.json> <test>...`.
   Its header gives the JSON shape, the checks it makes before the first mutant runs, the
   verdicts and the exit codes. Read the lines it prints under each verdict: the lines the edit
-  removed and added, then the failed tests of a kill or the errors of a run with no result. On
-  #702 a hand-written loop chained `diff && run_suite` and ran no mutant, and #1230, #1250 and
+  removed and added, then the failed tests of a kill, each with the first line of its
+  assertion's message and the `code:` lines ExUnit prints, or the errors of a run with no result.
+  On #702 a hand-written loop chained `diff && run_suite` and ran no mutant, and #1230, #1250 and
   #1254 each wrote a loop by hand.
 - Mutation-check every negative assertion: break the guard it fences and watch the test go red.
   Pair a refute on a collection with a positive control that proves the collection is the right

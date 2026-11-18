@@ -76,6 +76,10 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
   body covers any doc an agent reads. On #1011 (for #992) the first draft of `ci.md` restated
   one rule in three sections and ended a wait on a condition no status shows, against the
   skill's "Pruning" and "Steps and completion criteria". Three review fix rounds followed.
+- Before you move a rule from agent memory or another outside source into the docs, search for
+  it with `rg -n <term> docs lib`, and point to the place that already says it. On #828 the
+  Standards review found the new profile-guard bullet repeating ADR 0004 item 5 and the health
+  paragraph repeating the `Cinder.Health` moduledoc.
 
 ## Tool claims
 
@@ -109,6 +113,11 @@ These bind a sentence in any doc, moduledoc, comment, test name or changelog fra
   `proxy-ioprio` option gives its threads the reader's I/O priority. The third re-check found
   that `nice -n 10` adds 10 to the caller's niceness: 31 minutes from the first finding to the
   last fix.
+- A sentence about an HTTP library's default timeout (Req, Finch, Mint) needs a run with
+  `retry: false`: a connect timeout against a host that drops connection attempts, such as
+  `192.0.2.1`, and a receive timeout against `Cinder.Test.SilentServer`. On #828 the first draft
+  copied a "Mint ~30 s connect default" from agent memory. The run timed out at 5.0 s, Finch's
+  `@default_connect_timeout 5_000`, and at 3.0 s with `connect_options: [timeout: 3_000]`.
 - A change that narrows or renames what a feature covers (one book kind, one source) reaches
   each sentence a user reads about that feature. Search its user-facing words by their stem, not
   only the module name, in `lib/cinder_web`, `priv/gettext/default.pot` and `docs/`. Fix each

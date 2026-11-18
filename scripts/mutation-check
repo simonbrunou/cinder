@@ -12,9 +12,12 @@ unchanged file as a control, which must pass at least one test. Then, for each m
 <file> after the last mutant, or when a SIGINT or SIGTERM stops the run. It prints one line per
 mutant with its verdict, then each line the edit removed (`-`) and added (`+`): an edit that
 matches the wrong text proves nothing, so read them. Under a killed mutant it then prints each
-failure's numbered header line from ExUnit (`failed: 1) test ...`). Under NO RESULT it prints
-the run's first 5 error lines, those that start with `error:` or `** (` after any blanks, or,
-when it has none, its last 5 non-blank lines (`output: ...`).
+failure's numbered header line from ExUnit (`failed: 1) test ...`). Under each header it prints,
+for each failure ExUnit reports there, its `Failure #N` line when the test failed more than once,
+its message's first line, such as `match (=) failed`, and its `code:` lines when ExUnit prints
+them: they tell which assertion of a test went red. Under NO RESULT it prints the run's first 5
+error lines, those that start with `error:` or `** (` after any blanks, or, when it has none, its
+last 5 non-blank lines (`output: ...`).
 
   killed     the run ends on a `Result:` line that ExUnit prints when a test failed
              (`N/M passed`) or a module's `setup_all` failed (`, N invalid`);
@@ -41,8 +44,18 @@ from pathlib import Path
 # `0 tests` when none ran; it appends `, N invalid` when a `setup_all` failed.
 KILLED = re.compile(r"^Result: (\d+/\d+ passed|.*, \d+ invalid)")
 PASSED = re.compile(r"^Result: \d+ passed")
-# ExUnit numbers each failure, a failed test or a failed `setup_all`: `  1) test name (Module)`.
-FAILURE = re.compile(r"^\s+\d+\) ")
+# ExUnit numbers each failed test or `setup_all` in a header whose number it pads to 3 columns,
+# `  1) test name (Module)` or `100) Module: failure on setup_all callback, ...`.
+FAILURE = re.compile(r"^(  \d| \d\d|\d{3,})\) .*( \(\S+\)|: failure on setup_all callback, .*)$")
+SETUP_ALL = re.compile(r"^\s*\d+\) \S+: failure on setup_all callback, ")
+# ExUnit indents the lines under a header by 5. A test's block opens with an optional
+# `Parameters: ...` line and the test's `file:line`; a `setup_all` block has neither. Each failure
+# in the block then opens with a `Failure #N` line when there are several, its message
+# (`match (=) failed`) and labels such as `code:` and `left:`, whose values go deeper.
+PARAMETERS = re.compile(r"^ {5}Parameters: ")
+SECTION = re.compile(r"^ {5}Failure #\d+$")
+TOP = re.compile(r"^ {5}\S")
+CODE = re.compile(r"^ {5}code:")
 ERROR = re.compile(r"^\s*(error:|\*\* \()")
 
 
@@ -74,10 +87,41 @@ def run_tests(tests):
     return run.returncode, (results[-1] if results else None), output
 
 
+def failures(output):
+    """Each header, then each failure's `Failure #N`, message and `code:` lines, indented."""
+    # `state` is None outside a block, else which of the block's lines comes next.
+    lines, state = [], None
+    for line in output:
+        if FAILURE.match(line):
+            lines.append(f"failed: {line.strip()}")
+            state = "message" if SETUP_ALL.match(line) else "meta"
+        elif state is None or not line.strip():
+            continue
+        elif not line.startswith("     "):
+            state = None  # a line ExUnit does not indent, such as `Result:`, ends the block
+        elif state == "meta":
+            if not PARAMETERS.match(line):
+                state = "message"  # the test's `file:line`
+        elif SECTION.match(line):
+            lines.append(f"  {line.strip()}")
+            state = "message"
+        elif state == "code" and not TOP.match(line):
+            lines.append(f"  {line[5:].rstrip()}")  # the code goes on, indented as ExUnit has it
+        elif state == "message":
+            lines.append(f"  {line.strip()}")
+            state = "body"
+        elif state == "body" and CODE.match(line):
+            lines.append(f"  {line.strip()}")
+            state = "code"
+        elif state == "code":
+            state = "done"
+    return lines
+
+
 def reasons(outcome, output):
     """The lines that say why: each failure's header for a kill, the errors for no result."""
     if outcome == "killed":
-        return [f"failed: {line.strip()}" for line in output if FAILURE.match(line)]
+        return failures(output)
     if outcome == "NO RESULT":
         errors = [line.strip() for line in output if ERROR.match(line)]
         lines = errors[:5] or [line for line in output if line.strip()][-5:]
