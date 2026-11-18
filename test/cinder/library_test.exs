@@ -983,7 +983,7 @@ defmodule Cinder.LibraryTest do
       {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/b.rar", 9_999}]}
     end)
 
-    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    # No mkdir_p / ln / scan expected: an unexpected mock call raises.
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
   end
 
@@ -996,8 +996,25 @@ defmodule Cinder.LibraryTest do
       {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/b.zip", 9_999}]}
     end)
 
-    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    # No mkdir_p / ln / scan expected: an unexpected mock call raises.
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
+  # A small video counts as a sample when a Unicode space delimits its token, so it is no
+  # feature candidate and the archive beside it, even a smaller one, still refuses the import.
+  for {label, space} <- [{"a no-break", "\u{a0}"}, {"an ideographic", "\u{3000}"}] do
+    test "a sample whose token follows #{label} space does not outweigh the archive (#1452)" do
+      movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+      expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+      expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+        {:ok, [{"/dl/X/X" <> unquote(space) <> "sample.mkv", 500}, {"/dl/X/b.zip", 400}]}
+      end)
+
+      # No lstat / mkdir_p / ln / scan expected: an unexpected mock call raises.
+      assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+    end
   end
 
   test "7z-packed movie fails explicitly instead of importing its sample (#499)" do
@@ -1009,7 +1026,7 @@ defmodule Cinder.LibraryTest do
       {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/b.7z", 9_999}]}
     end)
 
-    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    # No mkdir_p / ln / scan expected: an unexpected mock call raises.
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
   end
 
@@ -1022,7 +1039,7 @@ defmodule Cinder.LibraryTest do
       {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/b.7z.001", 9_999}, {"/dl/X/b.7z.002", 9_999}]}
     end)
 
-    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    # No mkdir_p / ln / scan expected: an unexpected mock call raises.
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
   end
 
@@ -1083,7 +1100,7 @@ defmodule Cinder.LibraryTest do
       {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/movie.zip", 9_999_999_999}]}
     end)
 
-    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    # No mkdir_p / ln / scan expected: an unexpected mock call raises.
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
   end
 
@@ -1096,7 +1113,7 @@ defmodule Cinder.LibraryTest do
       {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/" <> <<255>> <> ".7z.001", 9_999}]}
     end)
 
-    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    # No mkdir_p / ln / scan expected: an unexpected mock call raises.
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
   end
 
@@ -1113,7 +1130,7 @@ defmodule Cinder.LibraryTest do
       {:ok, [{"/dl/X/sample1.mkv", 1_000_000_000} | volumes]}
     end)
 
-    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    # No mkdir_p / ln / scan expected: an unexpected mock call raises.
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
   end
 
@@ -1126,7 +1143,7 @@ defmodule Cinder.LibraryTest do
       {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/b.zip.001", 9_999}, {"/dl/X/b.zip.002", 9_999}]}
     end)
 
-    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    # No mkdir_p / ln / scan expected: an unexpected mock call raises.
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
   end
 
@@ -1145,7 +1162,7 @@ defmodule Cinder.LibraryTest do
        ]}
     end)
 
-    # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    # No mkdir_p / ln / scan expected: an unexpected mock call raises.
     assert {:error, :unsupported_archive} = Library.stage_movie(movie)
   end
 
@@ -1527,6 +1544,26 @@ defmodule Cinder.LibraryTest do
       assert episode_dests(staged) == [
                {1, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E05.mkv"}
              ]
+    end
+
+    for {label, space} <- [{"a no-break", "\u{a0}"}, {"an ideographic", "\u{3000}"}] do
+      test "a larger sample whose token follows #{label} space loses its episode (#1452)" do
+        real = "/dl/Show.S01E05.1080p.WEB-GRP.mkv"
+        sample = "/dl/Show.S01E05" <> unquote(space) <> "sample.mkv"
+        stub_dir([{real, 60_000_000}, {sample, 90_000_000}])
+        stub_link_ok()
+        test_pid = self()
+
+        stub(Cinder.Library.FilesystemMock, :ln, fn src, _dest ->
+          send(test_pid, {:ln, src})
+          :ok
+        end)
+
+        assert {:ok, staged, []} = Library.stage_episodes("/dl", [ep(1, 5)])
+        assert [{1, _dest}] = episode_dests(staged)
+        assert_received {:ln, ^real}
+        refute_received {:ln, ^sample}
+      end
     end
 
     test "a sample naming an episode outside the grab still comes back unmatched" do
