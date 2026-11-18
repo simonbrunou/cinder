@@ -70,7 +70,8 @@ write.
 - Other threads merge while you work, and CI is one shared runner. Batch commits and push once
   per review round.
 - Wait for CI in the foreground with `forgejo.py ci` (the `forgejo-issues` skill), running it
-  again while it exits 3. A background process dies when your turn ends.
+  again while it exits 3. `ci` reports only to a call that is waiting, so a turn that ends first
+  leaves the thread without the result.
 - While a `delegate_task` you started has not reported, end your turn and wait for CI after the
   report: a delegate's report, or its failure, reaches you only when your turn ends. A nudge from
   the orchestrator in that time gets the same answer: end the turn again. A delegate still
@@ -98,8 +99,12 @@ write.
 
 ## Tests
 
-- Run {{TEST}} in the foreground. Other suites share the CPU, so re-run a timing failure alone
-  before treating it as yours.
+- Run {{TEST}} and read its result line before you end the turn. Start a run that can outlast
+  the 600 s cap of one foreground Bash call (a full cinder `mix test`, `docs/agents/testing.md`)
+  with `run_in_background` and `timeout: 1800000`, call `t3_background_wait` with its task id,
+  then wait for the result line in foreground calls, each a loop bounded by round count as the
+  global CLAUDE.md's round-count bullet says. Other suites share the CPU, so re-run a timing
+  failure alone before treating it as yours.
 - A negative test (asserting nothing happened) starts from a state that would otherwise act,
   waits for async work, and gets a mutation check. Break the fix, see it go red, restore.
 
