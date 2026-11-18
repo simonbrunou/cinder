@@ -2,7 +2,7 @@
 
 ## What runs
 
-- `.forgejo/workflows/ci.yml` runs on the Forgejo runner for every PR and every push to `main`.
+- `.forgejo/workflows/ci.yml` runs on the Forgejo runners for every PR and every push to `main`.
   It has three jobs, reported as commit statuses `CI / test`, `CI / container` and
   `CI / dependency-audit`, each suffixed `(pull_request)` or `(push)`. Branch protection on
   `main` requires `* (pull_request)`. GitHub runs no CI: its only workflow is `release.yml`, on a
@@ -18,7 +18,18 @@
   (`.github/scripts/browser_smoke.py`, `browser_lifecycle.py`), then scans the image with Trivy
   (HIGH and CRITICAL, unfixed CVEs and the CVEs listed in `.trivyignore` ignored).
 - `dependency-audit` runs `mix hex.audit` and `mix deps.audit`.
-- The runner is shared with other repositories, so a PR's jobs can queue behind their runs.
+- Two runners take the jobs. `ci-runner` on CT 125 is shared with other repositories, so a PR's
+  jobs can queue behind their runs, and it runs every `container` job (`runs-on: ubuntu-latest`).
+  `sbrn-cinder` on sbrn takes only this repository's `ubuntu-26.04` jobs (`test`,
+  `dependency-audit`), two at a time. Whichever runner asks first gets a waiting job. The job
+  log's first line, `Runner <uuid> ... received task`, says where it ran: `5369a862-...` is
+  `sbrn-cinder`, `38333539-...` is `ci-runner` (the jobs API returns no runner name; after a
+  re-registration, `GET /repos/simonbrunou/cinder/actions/runners` gives `sbrn-cinder`'s
+  `uuid`). `sbrn-cinder` has no cache, so every `test` and `dependency-audit` job there misses
+  every `actions/cache` step and compiles all dependencies. Each such step prints the warning
+  `Cache action is only supported on GHES version >= 3.5`, which is expected. `test` also
+  installs cmake from apt and downloads or builds the NIFs ("Dependency rebuild"). The runners
+  are described in homelab-stacks `docs/operations/runbooks/ct-125-ci-runner.md`.
 
 ## Browser scripts locally
 
@@ -341,11 +352,12 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   failure. The image build fetches Tailwind with `curl` for the same reason. To prove the NIF
   source-build fallback while the downloads work, put
   `config :elixir_make, :force_build, lazy_html: true, exqlite: true` in `config/test.exs` on a
-  run whose compiled-deps cache misses, then revert it before the merge (#885's run 347). The
-  `test` log shows the miss: the cmake install step runs only then. A green `test` job saves the
-  cache under its exact key, so a later run with the same `mix.lock`, OTP and Elixir restores the
-  NIFs and rebuilds nothing, flag or not. To prove the fallback locally, put the same line in
-  `config/test.exs`, run
+  run whose compiled-deps cache misses, then revert it before the merge (#885's run 347). On
+  `ci-runner`, the `test` log shows the miss: the cmake install step runs only then. A green
+  `test` job there saves the cache under its exact key, so a later run on `ci-runner` with the
+  same `mix.lock`, OTP and Elixir restores the NIFs and rebuilds nothing, flag or not. A `test`
+  job on `sbrn-cinder` has no cache, so it always misses and runs the cmake step ("What runs").
+  To prove the fallback locally, put the same line in `config/test.exs`, run
   `MIX_BUILD_ROOT=$(mktemp -d) MIX_ENV=test mix deps.compile lazy_html exqlite --include-children`
   inside `nix develop`, which supplies `cmake`, then revert the line. A source build prints
   lazy_html's `-o .../priv/liblazy_html.so` link line and exqlite's `CC sqlite3_nif.o`, and a
