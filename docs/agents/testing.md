@@ -95,6 +95,10 @@
   removed and added, then the failed tests of a kill or the errors of a run with no result. On
   #702 a hand-written loop chained `diff && run_suite` and ran no mutant, and #1230, #1250 and
   #1254 each wrote a loop by hand.
+- Mutation-check every negative assertion: break the guard it fences and watch the test go red.
+  Pair a refute on a collection with a positive control that proves the collection is the right
+  one and populated, and refute the stem, not a guessed inflection. After a rename that changes
+  how an identifier is built, re-run the check on every negative that names it.
 - A negative test of code that rescues every raise, such as `Subtitles.fetch_missing/3` (its
   `fetch_one/6`) or a poller's `poll/1` (`isolate/2` in `Cinder.Download.PollerSkeleton`), stubs
   the action to succeed and to send the test process a message, then runs `refute_received` on
@@ -195,6 +199,25 @@
 - The identity probes that verify a subtitle exchange close bounds on the same paths. Arm a close
   failure meant for after the exchange from a barrier, as `fail_close_after_exchange/4` in
   `Cinder.Test.SidecarTransactionCase` does.
+- A barrier armed with `phase: :before` also matches the operation's after-phase pause, so on an
+  operation that pauses on both sides (every one `BarrierFilesystem` pauses before, except
+  `chmod`, `mkdir_exclusive` and `open_bound`) the task pauses twice. Give it `once: true`, as
+  `use_barrier/1` in `Cinder.Test.SidecarTransactionCase` does, or the task waits on a second
+  release the test never sends.
+- In a mocked-filesystem test, an `lstat` stub that returns a `%File.Stat{}` sets
+  `type: :regular`: the struct defaults it to `nil`, which `Cinder.Library.StageEngine` refuses at
+  the destination as `{:unexpected_destination_type, nil}`. For a fresh import, use
+  `Cinder.LibraryStubs.stub_import_ok/1` or answer `lstat` with its `import_lstat/2`. For an
+  occupied destination, answer that path with `type: :regular` and fall back to `import_lstat/2`
+  for the rest. Match a staging candidate with `candidate_path?/1` or `candidate_marker/0`, never
+  the literal, and settle a staged import as a catalog writer does with `commit_staged/1`.
+- A test that reaches `Cinder.Subtitles.SidecarTransaction.replace/4`, such as a subtitle fetch
+  that commits its sidecar, needs a real library: its `AtomicFile` reads and stats the staged
+  and target files with `File` calls, which no `FilesystemMock` stub answers. Point the root
+  settings at `tmp_dir`, `stub_with(Cinder.Library.FilesystemMock, Disk)`, then re-stub only what
+  the test is about. `use Cinder.Test.SidecarTransactionCase` gives a `SidecarTransaction*Test`
+  module a `tmp_dir` library on the real `Disk` instead, set as the `:filesystem` itself rather
+  than through the mock.
 - Release a barrier inside the log capture whose output the test asserts: send `{ref, :continue}`
   from the `capture_log/1` or `with_log/1` function. The paused task logs as soon as it resumes,
   so on a slow runner a release before the capture prints the warning to the console and the

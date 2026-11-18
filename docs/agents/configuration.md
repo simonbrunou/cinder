@@ -13,13 +13,21 @@ service config value gets a setting definition in `Cinder.Settings.Registry`, ne
 
 A setting definition (`Cinder.Settings.Definition`) carries everything about one key: its shape,
 group, label, rejection message, env target and bootstrap fallback. A plain text, secret or
-positive-integer setting is one `field/3` entry plus its French msgstr after
-`mix gettext.extract --merge`. That entry renders in its group, validates, saves, overlays the
-env, joins `Cinder.Settings.env_keys/0` (which the test env snapshots derive from) and registers
-its strings in `CinderWeb.DomainLabels.known/0`. Edit `settings_components.ex` only when the
-setting needs custom rendering (`render: :custom`; the `/settings` page test fails until its input
-is named after its key), and `Cinder.Settings.Shape` only for a new shape. An overlay writer that
-assembles one env value from several keys finds each definition with `Registry.one!/1`, by target
+positive-integer setting is one `field/3` entry, its French msgstr after
+`mix gettext.extract --merge`, and its key in each literal list of
+`test/cinder/settings/definition_test.exs` that it belongs to: every key (`@keys`), the keys
+`save_form/1` can reject (`@validated`) and the secret keys. Those lists are written out by hand
+on purpose, as a truth independent of the registry. The `field/3` entry renders in its group,
+validates, saves, overlays the env, joins `Cinder.Settings.env_keys/0` (which the test env
+snapshots derive from) and registers its strings in `CinderWeb.DomainLabels.known/0`. Edit
+`settings_components.ex` only when the setting needs custom rendering (`render: :custom`; the
+`/settings` page test fails until its input is named after its key), and `Cinder.Settings.Shape`
+only for a new shape. A new shape that can reject a value also joins `Shape.validates?/1`:
+`Shape`'s own `@validated` list for an atom shape, the tag list of its first clause for a tagged
+tuple. `save_form/1` checks only a definition that `Definition.validated?/1` passes: one saved
+with the form (`save: :form` or `:always`) whose shape `validates?/1` accepts or that names a
+`check`. An overlay writer that assembles one env value from several keys finds each definition
+with `Registry.one!/1`, by target
 and slot, never by key. Code that reads a kind's library root calls
 `Cinder.Settings.configured_library_path/2` and never builds the env key itself. Code that reads
 a video kind's release rule (a size band, a preferred list, the upgrade cutoff) takes its env key
@@ -36,6 +44,11 @@ data a media server wrote, such as the season inventory, asks
 `Cinder.Settings.media_server_web_link/0`. Both pick through one private step that also names the
 bootstrap server when neither applies, so whenever the type names a server, the link names the
 same one.
+
+A new external service's `health/0` keeps the 3 s connect and receive timeouts the
+`Cinder.Health` moduledoc names: `receive_timeout: 3_000, connect_options: [timeout: 3_000]`. The
+connect `timeout` is the one to remember: without it, a request to a configured service URL
+connects through Req's Finch pool, which waits up to Finch's 5 s default.
 
 A registry-driven loader `Application.put_env`s stored values onto a one-time bootstrap snapshot
 at boot (a one-shot supervised child, after PubSub and before the poller) and on every save. So

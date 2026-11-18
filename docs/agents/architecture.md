@@ -22,6 +22,8 @@ Audiobookshelf, Booklore) is reached only through a behaviour, never directly fr
   `compile --warnings-as-errors`.
 - Req is the HTTP client. It belongs inside an adapter that implements one of these behaviours,
   not in a context module.
+- An adapter's `health/0` backs the `/settings` Test button; its timeout rule is in
+  [configuration.md](configuration.md).
 - Search indexers by IMDb id rather than free-text title. `Catalog.get_movie/1` carries
   `imdb_id` through for this.
 
@@ -280,6 +282,23 @@ new operator action is one classification entry, its guard, and a row in the mat
 The exception is a residual-files grab's per-file decisions: they render from
 `Grabs.unresolved_grab_files/1`, and `Cinder.Download.TvPoller` claims each file.
 
+## A profile reference has two guards
+
+A new table whose `profile_id` references `media_profiles` needs both halves in the same PR.
+[ADR 0004](../adr/0004-seams-the-2026-10-19-architecture-review-judged-sound.md) item 5 says
+what each one refuses.
+
+- An arm in the `media_profiles_references_integrity_update` trigger, the guard for a writer
+  that bypasses `Catalog`. A new migration drops and recreates the trigger, and its `down`
+  restores the previous body, as `20260825094500_add_book_requests.exs` does.
+  `Catalog.update_profile/2` refuses the change before the trigger sees it, so test the arm with
+  a raw `Repo.query!` update, as `Cinder.Requests.BookRequestTest` "re-kinding a profile a book
+  request points at aborts in the DB, not just the app" does.
+- A clause in `Cinder.Catalog.Profiles`' private `referenced?/1`.
+
+`book_author_policies.profile_id` has only the second half today: `referenced?/1` covers it, the
+trigger has no arm for it.
+
 ## The approval gate lives in the data model
 
 `Cinder.Requests` is the only path that creates a `:requested` movie or series row, or a book
@@ -319,6 +338,11 @@ itself.
 
 Download polling, import and the book/audiobook pollers run under the supervision tree, not in
 the request path. Crash recovery is a feature: prove it with a test.
+
+A poller's per-unit `isolate/2` (`Cinder.Download.PollerSkeleton`) only logs a raise: it counts
+no attempt and parks nothing, so a path that raises runs again on every tick. An error path a
+download poller reaches returns an error value instead, which that poller's failure handling
+ends, holds or counts against its retry budget (for an import failure, the three paths below).
 
 Every call a poller makes has a bound:
 
