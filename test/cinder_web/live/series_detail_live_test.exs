@@ -1142,12 +1142,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   test "shows audio badges and a condensed subtitle chip on a filed episode", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8200, title: "S", year: 2010})
 
-    season =
-      Repo.insert!(%Cinder.Catalog.Season{
-        series_id: series.id,
-        season_number: 1,
-        monitored: true
-      })
+    season = season_fixture(series)
 
     Repo.insert!(%Cinder.Catalog.Episode{
       season_id: season.id,
@@ -1172,12 +1167,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   test "caps audio badges and never renders one badge per subtitle track", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8206, title: "S", year: 2010})
 
-    season =
-      Repo.insert!(%Cinder.Catalog.Season{
-        series_id: series.id,
-        season_number: 1,
-        monitored: true
-      })
+    season = season_fixture(series)
 
     subtitles = Enum.map(1..30, &"l#{&1}")
 
@@ -1219,12 +1209,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
           original_language: "en"
         })
 
-      season =
-        Repo.insert!(%Cinder.Catalog.Season{
-          series_id: series.id,
-          season_number: 1,
-          monitored: true
-        })
+      season = season_fixture(series)
 
       episode =
         Repo.insert!(
@@ -1303,12 +1288,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
        %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8210, title: "S", year: 2010})
 
-    season =
-      Repo.insert!(%Cinder.Catalog.Season{
-        series_id: series.id,
-        season_number: 1,
-        monitored: true
-      })
+    season = season_fixture(series)
 
     # Available: has a file.
     Repo.insert!(%Cinder.Catalog.Episode{
@@ -1341,12 +1321,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   test "shows the subtitle chip on a filed episode with empty/untagged audio", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8204, title: "S", year: 2010})
 
-    season =
-      Repo.insert!(%Cinder.Catalog.Season{
-        series_id: series.id,
-        season_number: 1,
-        monitored: true
-      })
+    season = season_fixture(series)
 
     Repo.insert!(%Cinder.Catalog.Episode{
       season_id: season.id,
@@ -1368,12 +1343,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   test "no audio badges or subtitle chip on a filed episode with no media info", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8202, title: "S", year: 2010})
 
-    season =
-      Repo.insert!(%Cinder.Catalog.Season{
-        series_id: series.id,
-        season_number: 1,
-        monitored: true
-      })
+    season = season_fixture(series)
 
     Repo.insert!(%Cinder.Catalog.Episode{
       season_id: season.id,
@@ -1696,12 +1666,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   test "the per-episode Search button respects the sweep's air-date gate", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 9301, tvdb_id: 93, title: "Test Show"})
 
-    season =
-      Repo.insert!(%Cinder.Catalog.Season{
-        series_id: series.id,
-        season_number: 1,
-        monitored: true
-      })
+    season = season_fixture(series)
 
     aired = wanted_ep(season, 1, air_date: Date.add(Date.utc_today(), -1))
     future = wanted_ep(season, 2, air_date: Date.add(Date.utc_today(), 7))
@@ -1913,12 +1878,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
           scene_numbering_group_id: "operator-group"
         })
 
-      season =
-        Repo.insert!(%Cinder.Catalog.Season{
-          series_id: series.id,
-          season_number: 1,
-          monitored: true
-        })
+      season = season_fixture(series)
 
       today = Cinder.Settings.household_date()
 
@@ -2012,12 +1972,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       series =
         Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 9003, tvdb_id: 99, title: "Test Show"})
 
-      season =
-        Repo.insert!(%Cinder.Catalog.Season{
-          series_id: series.id,
-          season_number: 1,
-          monitored: true
-        })
+      season = season_fixture(series)
 
       today = Cinder.Settings.household_date()
 
@@ -2499,12 +2454,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
         localizations: %{"fr" => %{"title" => "Émission Test"}}
       })
 
-    season =
-      Repo.insert!(%Cinder.Catalog.Season{
-        series_id: series.id,
-        season_number: 1,
-        monitored: true
-      })
+    season = season_fixture(series)
 
     Repo.insert!(%Cinder.Catalog.Episode{
       season_id: season.id,
@@ -2539,12 +2489,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     attempts = Keyword.get(opts, :search_attempts, 0)
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 9001, tvdb_id: 99, title: "Test Show"})
 
-    season =
-      Repo.insert!(%Cinder.Catalog.Season{
-        series_id: series.id,
-        season_number: 1,
-        monitored: true
-      })
+    season = season_fixture(series)
 
     Repo.insert!(%Cinder.Catalog.Episode{
       season_id: season.id,
@@ -2580,12 +2525,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   defp series_with_episode_file_fixture(file_path) do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8001, title: "S", year: 2010})
 
-    season =
-      Repo.insert!(%Cinder.Catalog.Season{
-        series_id: series.id,
-        season_number: 1,
-        monitored: true
-      })
+    season = season_fixture(series)
 
     episode =
       Repo.insert!(%Cinder.Catalog.Episode{
@@ -2604,12 +2544,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   defp season_with_files_fixture(file_paths) do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8002, title: "S", year: 2010})
 
-    season =
-      Repo.insert!(%Cinder.Catalog.Season{
-        series_id: series.id,
-        season_number: 1,
-        monitored: true
-      })
+    season = season_fixture(series)
 
     file_paths
     |> Enum.with_index(1)
