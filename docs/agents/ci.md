@@ -75,22 +75,19 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   [issue-tracker.md](issue-tracker.md)) in one foreground Bash call with timeout 600000. Exit 3
   means still pending, so run it again. Exit 4 means no workflow ran for that commit: `ci.yml`
   runs on `pull_request` and on pushes to `main`, so a branch pushed before its PR exists gets
-  no run. The `forgejo-issues` skill's "PRs and CI" section lists every exit code.
-  `fj pr -R origin status <n> --wait` blocks until the whole run ends, which outlasts the Bash
-  cap once the shared runner queues jobs, and fails while a commit has no check yet. For one
+  no run. The `forgejo-issues` skill's "PRs and CI" section lists every exit code. For one
   SHA's raw statuses:
   `curl ... "$API/commits/<sha>/status" | jq '{state, statuses: [.statuses[] | {context, status}]}'`.
 - Job logs: `curl ... -o logs.zip "$API/actions/runs/<run id>/logs"` returns a zip with
   one `<job>-<task id>-attempt-<n>.log` per job. Find the run id from the head SHA with
   `curl ... "$API/actions/runs?head_sha=<full sha>" | jq '[.workflow_runs[] | select(.event == "<push or pull_request>")][0].id'`.
-  Pass the full 40-character SHA, which `git rev-parse <sha>` prints. A short one matches no run
-  and prints `null`. One SHA can carry both a `push` and a `pull_request` run, so name the event
-  you want in the `select`. Forgejo files the run of a push to an open PR as `pull_request_sync`
-  while its `event` field reads `pull_request`, so the `select` finds it and the URL's
-  `&event=pull_request` filter would not. A PR closed and reopened on the same SHA leaves several
-  runs of one event. The API lists runs newest first, so `[0]` is the newest. A status's
-  `target_url` (`/actions/runs/<n>/jobs/<m>`) carries the run's index in the repo, not the id the
-  logs endpoint needs.
+  `git rev-parse <sha>` prints the full SHA. One SHA can carry both a `push` and a
+  `pull_request` run, so name the event you want in the `select`. Forgejo files the run of a
+  push to an open PR as `pull_request_sync` while its `event` field reads `pull_request`, so the
+  `select` finds it and the URL's `&event=pull_request` filter would not. A PR closed and
+  reopened on the same SHA leaves several runs of one event. The API lists runs newest first, so
+  `[0]` is the newest. A status's `target_url` (`/actions/runs/<n>/jobs/<m>`) carries the run's
+  index in the repo, not the id the logs endpoint needs.
 - Grep a test log for `\d+\) test`, `Result:`, `FAIL:`, `FATAL`, `ERROR! Test suite aborted` and
   `warning:`, then delete it.
 
@@ -379,11 +376,11 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   `curl ... "$API/actions/runs/<run id>/jobs" | jq -c '.[] | {id, name, status, attempt}'`.
 - A red job at `attempt` 1 gets the re-run. A red test gets it only when it passes the checks
   of step 1 of **Flake** ("Judging a red run"), and a **Test-file warning** never does, since the
-  same tree prints the same warning. The call is
-  `curl -s -X POST -H "Authorization: token $FJ_TOKEN" "$API/actions/jobs/<job id>/rerun"`,
-  which answers 204. A job at `attempt` above 1 was re-run already, by you or by another agent
-  in a merge burst: wait on it while it reads `waiting` or `running`. A release PR's merge commit
-  re-runs each `cancelled` job at any `attempt` ([workflow.md](workflow.md) "Releasing" step 3).
+  same tree prints the same warning. The call is the job rerun POST of the `forgejo-issues`
+  skill's "PRs and CI" section, which answers 204. A job at `attempt` above 1 was re-run
+  already, by you or by another agent in a merge burst: wait on it while it reads `waiting` or
+  `running`. A release PR's merge commit re-runs each `cancelled` job at any `attempt`
+  ([workflow.md](workflow.md) "Releasing" step 3).
 - When the POST answers anything but 204 on a PR, push an empty commit instead
   (`git commit --allow-empty -m "ci: re-run after <test> flake"`, which a squash merge drops;
   `scripts/merge-pr` then stops until you pass `--body-from=<sha of the fix commit>`). In

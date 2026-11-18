@@ -67,10 +67,8 @@ prints. It is the API's `head.sha` that `scripts/merge-pr` reads. A local checko
 commits that were never pushed, or sit on `main` when you merge another thread's PR. Merge with
 `scripts/merge-pr <n>`. It checks the last two conditions on the pushed SHA, the `CHANGELOG.md`
 rule below, and the `code_health_test` line cap and the fences below on the merged tree, then
-merges pinned to that SHA. It cannot check the review. A squash appends `(#<n>)` to the PR title, so it refuses a title
-that already ends in another `(#N)`: name the issue in the squash body's `Closes #<issue>` instead.
-A squash of several non-merge commits stops until you pass `--body-from=<sha>` or
-`--body-file=<file>`, since the first commit's message can describe a diff the PR no longer has.
+merges pinned to that SHA. It cannot check the review. Its header lists each check and flag, and
+its squash stops (a title ending in another `(#N)`, several non-merge commits) print the fix.
 
 A branch behind `main` with no conflict merges as it is, with no sync and no CI re-run. The
 accepted risk is that two PRs that pass apart can break `main` together. After every merge, the
@@ -94,9 +92,8 @@ merging agent checks whether to wait for `main`'s CI run, which shows that break
    compile. The moduledoc of `Cinder.PushRepeatsPr`
    (`test/support/push_repeats_pr.ex`) lists what it reads, the differences this repo keeps on
    purpose, and what it cannot see.
-4. A newer push to `main` cancels the `ci.yml` run in progress, so in a burst of merges only the
-   newest `main` commit's run is sure to finish. Wait on the `CI / <job> (push)` statuses of
-   `main`'s head with
+4. Wait on the `CI / <job> (push)` statuses of `main`'s head ([ci.md](docs/agents/ci.md)
+   "Re-running CI" says why), with
 `python3 -I ~/.agents/skills/forgejo-issues/scripts/forgejo.py ci cinder --follow main`
 ([ci.md](docs/agents/ci.md) "Reading a run" says how to run it and where every exit code is
 listed). It follows `main` on the forge and ends only on its head. That head is your merge commit
@@ -104,22 +101,16 @@ or a newer one. Exit 0 means it is green. Any exit 1 is a red run, whether a job
 failed job reads `Has been cancelled`, which follow mode reports only while `main` still points
 at that commit. When the newest run is red, first re-run its red jobs as [ci.md](docs/agents/ci.md)
 "Re-running CI" says, which also names the reds that get no re-run. When the run is still red
-after that, search the open issues, since every agent that waited in the burst sees the same run.
-Unless one already covers that run, file one labelled `needs-triage` that names the failing job.
+after that, search the open issues. Unless one already covers that run, file one labelled
+`needs-triage` that names the failing job.
 
-The merge-tree check exits 1 in two cases, told apart by their output. A conflict prints
-`CONFLICT` lines on stdout. A SHA the clone lacks prints `<sha> - not something we can merge` on
-stderr instead. In that case, run `git fetch origin refs/pull/<n>/head` or correct the SHA, and
-check again. `scripts/merge-pr` fetches that ref and stops with `is not fetchable from origin`
-when the SHA is still missing, so its merge-tree step exits 1 only on a conflict, which it
-reports as `conflicts with origin/main`. On a conflict:
-
-1. Merge `origin/main` into the branch and resolve the conflict.
-2. Run `mix test`.
-3. Push, wait for CI on the new pushed SHA, and check all three conditions again on it.
-
-Do the same for a PR whose diff touches `CHANGELOG.md` even without a conflict, since a stale
-entry under `[Unreleased]` merges cleanly and turns `main` red.
+When you run the merge-tree check by hand, `not something we can merge` on stderr means the clone
+lacks the SHA: run `git fetch origin refs/pull/<n>/head` or correct the SHA, and check again.
+`CONFLICT` lines on stdout mean a conflict: merge `origin/main` into the branch, resolve it as
+[workflow.md](docs/agents/workflow.md) "Merge conflicts" says, run `mix test`, push and wait for
+CI. `scripts/merge-pr` stops on a conflict too, and on a diff that touches `CHANGELOG.md` while
+the branch lacks `origin/main`; each of those two stops prints the steps. Once CI is green on the
+new pushed SHA, check all three conditions again on it.
 
 A changelog fragment in the PR can go stale with no conflict too. Right before merging, after
 `git fetch origin`, run

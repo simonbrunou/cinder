@@ -120,10 +120,8 @@ These bind a sentence in any doc, moduledoc, comment, test name or changelog fra
 ## Worktrees
 
 - A fresh T3 worktree has no `deps/` or `_build/`. Run `scripts/seed-worktree` in it before any
-  `mix` task: it copies the main checkout's `deps/` and `_build/test`, runs `mix deps.get`, then
-  runs CI's two dependency audits.
-  After a failure, run it again: it keeps what is complete. On a branch cut before the script
-  existed, run `~/Projects/cinder/scripts/seed-worktree`. Its header says why it copies.
+  `mix` task, and again after a failure; its header says what it does. On a branch cut before
+  the script existed, run `~/Projects/cinder/scripts/seed-worktree`.
 - If a test then behaves like old code, run `MIX_ENV=test mix compile --force`.
 - The seed has only `_build/test`, and in the dev env a task recompiles every dependency first.
   `mix format`, `mix credo --strict`, `mix gettext.extract --merge` and `mix test.unchecked` run
@@ -133,13 +131,10 @@ These bind a sentence in any doc, moduledoc, comment, test name or changelog fra
 ## Merge conflicts
 
 - In `GLOSSARY.md`, keep every section from both sides.
-- In a `.po` file, take either side, run `MIX_ENV=test mix gettext.extract --merge`, then refill
-  the French msgstrs the other side had and clear any `#, fuzzy` flag the merge added to them.
-  `scripts/gettext-fill.exs` does both from the other side's copy of each catalog
-  (`default.po`, `errors.po`):
-  `git show <other side>:priv/gettext/fr/LC_MESSAGES/default.po > /tmp/other-default.po`, then
-  `MIX_ENV=test mix run --no-start scripts/gettext-fill.exs priv/gettext/fr/LC_MESSAGES/default.po /tmp/other-default.po`.
-  It lists the entries still left to translate by hand.
+- In a `.po` file, take either side, run `MIX_ENV=test mix gettext.extract --merge`, then run
+  `scripts/gettext-fill.exs` on each catalog (`default.po`, `errors.po`) with the other side's
+  copy of it, then translate by hand the entries it lists. Its header says which msgstrs it
+  refills and gives the commands.
 
 ## Releasing
 
@@ -158,9 +153,10 @@ itself is in [CONTRIBUTING.md](../../CONTRIBUTING.md) "Releasing (maintainers)".
    tag it: `git tag -a v<version> <sha> -m "Cinder <version>" && git push origin v<version>`.
    `origin` is Forgejo. On exit 1, run `git fetch origin`, then:
    - **Cancelled**: the exit 1 line says every failed context reads `Has been cancelled`, and
-     `origin/main` points at a later commit. A later merge cancelled the run. The line says to
-     wait on the new head; for the tag, re-run instead. Wait until `origin/main`'s head run has
-     finished, so the re-run cannot disturb the check its merging agent waits on:
+     `origin/main` points at a later commit ([ci.md](ci.md) "Re-running CI" says why that
+     cancels the run). The line says to wait on the new head; for the tag, re-run instead. Wait
+     until `origin/main`'s head run has finished, so the re-run cannot disturb the check its
+     merging agent waits on:
      `forgejo.py ci cinder --follow main` exits 0 or 1. Then find the merge commit's `push` run
      and list its jobs ([ci.md](ci.md) "Re-running CI"). POST a rerun for each job whose
      `status` reads `cancelled`, whatever its `attempt`, and leave the `success` ones. Then wait

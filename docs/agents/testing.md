@@ -197,10 +197,8 @@
   capture reads `""` (#969). `code_health_test.exs` fails on a release followed by a capture in
   the same block.
 - A new repo-wide fence, a test that scans the sources for a pattern, goes in its own file under
-  `test/code_health/`, not in `test/code_health_test.exs`. Threads add fences in parallel: #1003
-  and #1005 each added one there, and the second to merge needed a `main` merge, a full
-  `mix test` and a second CI run. `Cinder.CodeHealth.FenceFilesTest` fails when
-  `code_health_test.exs` gains a test.
+  `test/code_health/`, not in `test/code_health_test.exs`, whose test count
+  `Cinder.CodeHealth.FenceFilesTest` caps. Its header says why.
 - A fence matches the scanned language's syntax, not its lines or substrings. An Elixir fence
   walks the AST from `Code.string_to_quoted/1` (`code_health_test.exs`). A fence on which modules
   a module calls walks instead the Erlang abstract code in the module's `.beam` debug info, where

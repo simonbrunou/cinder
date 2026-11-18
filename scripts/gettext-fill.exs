@@ -3,11 +3,11 @@
 #
 #     MIX_ENV=test mix run --no-start scripts/gettext-fill.exs <target.po> <source.po>
 #
-# For every entry of <target.po> that is untranslated or flagged fuzzy, it copies the msgstr of
-# the entry with the same msgctxt, msgid and msgid_plural from <source.po>, when that one is
-# translated and not fuzzy, and drops the fuzzy flag. Then it rewrites <target.po> and lists the
-# entries still left to translate by hand. <source.po> is the copy from the side of the merge
-# you did not take, for example
+# For every entry of <target.po> that is not obsolete and is untranslated or flagged fuzzy, it
+# copies the msgstr of the entry with the same msgctxt, msgid and msgid_plural from <source.po>,
+# when that one is translated and not fuzzy, and drops the fuzzy flag. Then it rewrites
+# <target.po> and lists the entries still left to translate by hand. <source.po> is the copy
+# from the side of the merge you did not take, for example
 # `git show <other side>:priv/gettext/fr/LC_MESSAGES/default.po > /tmp/other-default.po`.
 
 defmodule GettextFill do
