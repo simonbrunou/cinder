@@ -783,6 +783,38 @@ defmodule Cinder.Acquisition.BookScorerTest do
       end
     end
 
+    # "chi"/"zho" are generic Chinese codes that `Parser.audio_codes/0` lists under both "zh" and
+    # "cn". A book request reads them as Chinese, the reading `Language.lookup/1` pins (#519, #1450).
+    test "a generic Chinese code accepts a CHINESE release and rejects a CANTONESE one", ctx do
+      # The CANTONESE fixture parses as tagged, so its rejection below is a language mismatch,
+      # not the untagged rule.
+      assert {:accept, %{language: "CANTONESE"}} =
+               BookScorer.evaluate(
+                 release(ctx, "Toni Morrison - Beloved [CANTONESE] ({fmt})"),
+                 @beloved,
+                 language: "yue"
+               )
+
+      for code <- ["chi", "zho"] do
+        assert match?(
+                 {:accept, %{language: "CHINESE"}},
+                 BookScorer.evaluate(
+                   release(ctx, "Toni Morrison - Beloved [CHINESE] ({fmt})"),
+                   @beloved,
+                   language: code
+                 )
+               ),
+               "#{code} did not match CHINESE"
+
+        assert BookScorer.evaluate(
+                 release(ctx, "Toni Morrison - Beloved [CANTONESE] ({fmt})"),
+                 @beloved,
+                 language: code
+               ) == {:reject, :language_mismatch},
+               "#{code} did not reject CANTONESE"
+      end
+    end
+
     test "a contradicting language is rejected", ctx do
       assert {:reject, :language_mismatch} =
                BookScorer.evaluate(

@@ -9,7 +9,6 @@ defmodule Cinder.Books.Work do
 
   schema "book_works" do
     field :title, :string
-    field :original_title, :string
     field :first_published_on, :date
     field :overview, :string
     field :contributors_incomplete, :boolean, default: false
@@ -26,7 +25,6 @@ defmodule Cinder.Books.Work do
     work
     |> cast(attrs, [
       :title,
-      :original_title,
       :first_published_on,
       :overview,
       :contributors_incomplete

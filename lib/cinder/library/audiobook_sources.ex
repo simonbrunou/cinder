@@ -25,10 +25,10 @@ defmodule Cinder.Library.AudiobookSources do
      reasons.
   2. **Candidate collection** — every `.m4b`/`.mp3` file is a candidate. A stray *other audio*
      file (`.m4a`/`.aac`/`.flac`/`.ogg`/`.wma`/`.wav`/`.aiff`/`.aif`/`.aifc`) alongside at least
-     one accepted candidate is never silently ignored: `safe_source/1`'s own extension
-     allow-list refuses it as `:unsafe_source`, the same reason an e-book import already uses
-     for "not one of the accepted formats" — no new rejection atom needed. `.nfo`/`.jpg`/`.txt`-
-     style non-audio padding stays invisible, as it already is for e-books.
+     one accepted candidate is never silently ignored: when such a set reaches
+     `collect_and_order/1`, it refuses the whole set as `:unsafe_source`. Beside an archive,
+     step 1 refuses it first. `.nfo`/`.jpg`/`.txt`-style non-audio padding stays invisible, as
+     it already is for e-books.
   3. **Format-magic verification** — an `ID3`/MPEG-frame-sync check for `.mp3`, an `ftyp` box
      check for `.m4b` — the same positive-identification discipline
      `EbookSources.verify_magic/2` already applies, needing no subprocess.
@@ -104,13 +104,6 @@ defmodule Cinder.Library.AudiobookSources do
   @doc "The file extensions an audiobook import accepts, most-preferred format first."
   @spec accepted_extensions() :: [String.t()]
   def accepted_extensions, do: @accepted_extensions
-
-  @doc """
-  The audiobook equivalent of `Cinder.Library.EbookSources.safe_source/1`, against the audiobook
-  extension allow-list.
-  """
-  @spec safe_source(String.t()) :: {:ok, String.t()} | {:error, term()}
-  def safe_source(path), do: Library.safe_source_file(path, @accepted_extensions)
 
   @doc """
   Vets the destination DIRECTORY of a track placement before it is created — the same
@@ -200,9 +193,8 @@ defmodule Cinder.Library.AudiobookSources do
 
     cond do
       accepted == [] -> {:error, :no_book_file}
-      # A stray unaccepted-format audio file is never silently dropped from the candidate set —
-      # `safe_source/1`'s allow-list refuses it, the same `:unsafe_source` an e-book import
-      # already reports for a file outside its own accepted formats.
+      # A stray unaccepted-format audio file is never silently dropped from the candidate set:
+      # `collect_and_order/1` refuses the whole set here as `:unsafe_source`.
       other_audio != [] -> {:error, :unsafe_source}
       # Refused before any probing/staging work starts — see the moduledoc's "Bounded probing"
       # section. Checked here, not inside `validate_and_order/1`, so an oversized set never

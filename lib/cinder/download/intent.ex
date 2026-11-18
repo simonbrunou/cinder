@@ -131,9 +131,6 @@ defmodule Cinder.Download.Intent do
   def valid_mapping_snapshot?(_snapshot, _kind, _episode_ids), do: false
 
   @doc false
-  def valid_parser_snapshot?(snapshot), do: valid_snapshot_version?(snapshot)
-
-  @doc false
   def valid_preflight_snapshot?(%{"reserved_episode_ids" => reserved_ids} = snapshot) do
     valid_mapping_snapshot?(snapshot, :episode, reserved_ids)
   end

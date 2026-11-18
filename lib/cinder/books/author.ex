@@ -9,7 +9,6 @@ defmodule Cinder.Books.Author do
 
   schema "book_authors" do
     field :name, :string
-    field :sort_name, :string
     field :disambiguation, :string
     has_many :identifiers, Identifier
     has_many :credits, Credit
@@ -19,7 +18,7 @@ defmodule Cinder.Books.Author do
 
   def changeset(author, attrs) do
     author
-    |> cast(attrs, [:name, :sort_name, :disambiguation])
+    |> cast(attrs, [:name, :disambiguation])
     |> validate_required([:name])
   end
 end

@@ -68,9 +68,6 @@ defmodule Cinder.Acquisition.AnimePreferences do
 
   def valid_snapshot?(_snapshot, _release_title), do: false
 
-  @doc "Whether positive Anime release evidence does not contradict the resolved policy."
-  def release_allowed?(release, policy), do: verdict(release, policy) == :ok
-
   @doc "Returns the Anime policy rejection reason used by the manual-search surface."
   def verdict(release, policy) do
     cond do

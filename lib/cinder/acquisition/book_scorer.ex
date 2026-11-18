@@ -84,6 +84,7 @@ defmodule Cinder.Acquisition.BookScorer do
   alias Cinder.Acquisition.BookKind
   alias Cinder.Acquisition.BookSearch.NormalizedWork
   alias Cinder.Acquisition.EbookRelease
+  alias Cinder.Acquisition.Language
   alias Cinder.Acquisition.Parser
   alias Cinder.Acquisition.TitleNoise
   alias Cinder.Books.TitleFold
@@ -190,10 +191,10 @@ defmodule Cinder.Acquisition.BookScorer do
   `:authors` (a list of display names — normally the work's credited authors); see `t:work/0`.
   `opts`:
 
-    * `:language` — an ISO code or release tag the release must match. A release with no parsed
-      language passes: an untagged book release is overwhelmingly English-language, and the same
-      reasoning `Cinder.Acquisition.Language` documents applies. An explicitly *different*
-      language is rejected.
+    * `:language` — an ISO code or release tag the release must match. A `MULTI` release passes.
+      A release with no parsed language passes an English request only: an untagged book release
+      is overwhelmingly English-language, the reasoning `Cinder.Acquisition.Language` documents.
+      An explicitly *different* language is rejected.
     * `:blocked_terms` — case-insensitive substrings that reject the release outright.
     * `:release_blocklist` — exact, case-insensitive release titles proven bad for this target
       (`Cinder.Books.blocked_release_titles/1`) — rejected `:blocklisted` before every other
@@ -663,9 +664,9 @@ defmodule Cinder.Acquisition.BookScorer do
 
   defp check_protocol(_release, _protocols), do: :ok
 
-  # No requested language ⇒ no gate. An untagged release passes a gate that IS set: a book release
-  # rarely marks its language at all, and the marker's absence is not evidence of a wrong one.
-  # A release tagged with a DIFFERENT language is rejected — that is a positive contradiction.
+  # No requested language ⇒ no gate. A MULTI release passes a gate that IS set; an untagged one
+  # passes it only for English (below). A release tagged with a DIFFERENT language is rejected —
+  # that is a positive contradiction.
   defp check_language(_release, nil), do: :ok
   defp check_language(%{language: "MULTI"}, _wanted), do: :ok
 
@@ -691,17 +692,12 @@ defmodule Cinder.Acquisition.BookScorer do
   # `edition.language` straight through hit `String.upcase/1`'s "ENG", which matches no tag the
   # parser emits — a correctly-tagged English release was rejected as the wrong language.
   #
-  # `Parser.audio_codes/0` is already the 639-1 -> [639-1, 639-2...] table the video path uses for
-  # the same normalization, so this reuses it rather than starting a second language table.
+  # `Language.lookup/1` reads all three through the registry's one reverse map, which pins the
+  # generic Chinese codes "chi"/"zho" to "zh" (#519). A code it does not know reads as its
+  # downcased form, upcased.
   defp tag_for(wanted) do
     wanted = wanted |> to_string() |> String.downcase()
-
-    canonical =
-      Enum.find_value(Parser.audio_codes(), wanted, fn {code, aliases} ->
-        if wanted == code or wanted in aliases, do: code
-      end)
-
-    Map.get(Parser.language_tags(), canonical, String.upcase(wanted))
+    Map.get(Parser.language_tags(), Language.lookup(wanted), String.upcase(wanted))
   end
 
   # A nil size passes the band: the indexer simply did not report one, and refusing every release
