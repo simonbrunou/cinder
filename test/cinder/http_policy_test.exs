@@ -199,6 +199,13 @@ defmodule Cinder.HTTPPolicyTest do
 
       assert target.uri == target.url
       assert target.connect_options == []
+
+      assert {:error, :forbidden_address} =
+               HTTPPolicy.source_request_target(
+                 "http://127.0.0.2/download/1",
+                 "http://127.0.0.1:9696",
+                 resolver
+               )
     end
   end
 
@@ -230,26 +237,6 @@ defmodule Cinder.HTTPPolicyTest do
     test "rejects an empty host" do
       resolver = fn _host -> flunk("an empty host must not use DNS") end
       assert {:error, :missing_host} = HTTPPolicy.validate_untrusted_host("", resolver)
-    end
-  end
-
-  describe "validate_source_url/3" do
-    test "allows a private URL only when it matches its recorded source origin" do
-      resolver = fn _host -> flunk("the configured source origin must not use DNS validation") end
-
-      assert {:ok, %URI{host: "127.0.0.1", port: 9696}} =
-               HTTPPolicy.validate_source_url(
-                 "http://127.0.0.1:9696/download/1",
-                 "http://127.0.0.1:9696",
-                 resolver
-               )
-
-      assert {:error, :forbidden_address} =
-               HTTPPolicy.validate_source_url(
-                 "http://127.0.0.2/download/1",
-                 "http://127.0.0.1:9696",
-                 resolver
-               )
     end
   end
 
@@ -310,13 +297,10 @@ defmodule Cinder.HTTPPolicyTest do
   end
 
   describe "out-of-range ports on a source URL or an untrusted redirect" do
-    test "validate_source_url/3 and source_request_target/3 refuse one on the source's own host" do
+    test "source_request_target/3 refuses one on the source's own host" do
       resolver = &refuse_dns/1
 
       for url <- ["https://indexer.example:65536/get", "https://indexer.example:70000/a b"] do
-        validated = HTTPPolicy.validate_source_url(url, "https://indexer.example", resolver)
-        assert validated == {:error, :invalid_port}, "#{url}: #{inspect(validated)}"
-
         target = HTTPPolicy.source_request_target(url, "https://indexer.example", resolver)
         assert target == {:error, :invalid_port}, "#{url}: #{inspect(target)}"
       end
@@ -520,21 +504,12 @@ defmodule Cinder.HTTPPolicyTest do
       end
     end
 
-    test "validate_source_url/3 and source_request_target/3 refuse such a host, and such a path off the source's origin" do
+    test "source_request_target/3 refuses such a host, and such a path off the source's origin" do
       for url <- [
             "https://\xff.example/x",
             URI.parse("https://\xff.example/x"),
             "https://other.example/a\xff"
           ] do
-        validated =
-          HTTPPolicy.validate_source_url(
-            url,
-            "https://public.example",
-            &refuse_invalid_host_dns/1
-          )
-
-        assert validated == {:error, :invalid_url}, "#{inspect(url)}: #{inspect(validated)}"
-
         target =
           HTTPPolicy.source_request_target(
             url,
@@ -546,15 +521,8 @@ defmodule Cinder.HTTPPolicyTest do
       end
     end
 
-    test "validate_source_url/3 and source_request_target/3 still accept such a path on the source's own origin" do
+    test "source_request_target/3 still accepts such a path on the source's own origin" do
       url = "https://public.example/a\xff"
-
-      assert {:ok, %URI{host: "public.example", path: "/a\xff"}} =
-               HTTPPolicy.validate_source_url(
-                 url,
-                 "https://public.example",
-                 &refuse_invalid_host_dns/1
-               )
 
       assert {:ok, %{uri: %URI{host: "public.example", path: "/a\xff"}, connect_options: []}} =
                HTTPPolicy.source_request_target(

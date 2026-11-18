@@ -4,10 +4,8 @@ defmodule Cinder.Library.AnimePreflight do
   alias Cinder.Acquisition.AnimeParser
   alias Cinder.Catalog.{AnimeResolver, EpisodeNumbering, TitleAlias}
   alias Cinder.Download.Intent
+  alias Cinder.Library.SampleName
 
-  # Conservative, never-guess sample/preview token (issue #125): word-boundary/dot/dash/
-  # underscore-delimited only — never a bare substring inside a word ("Sampler" is not a sample).
-  @sample_preview_token ~r/(?:^|[\s._\-\[\]()])(?:sample|preview)(?:$|[\s._\-\[\]()])/iu
   @sample_max_bytes 100 * 1024 * 1024
   @sample_max_ratio 0.10
 
@@ -149,13 +147,13 @@ defmodule Cinder.Library.AnimePreflight do
     end
   end
 
-  # Both the token and the size guard must hold. A full-size file that merely mentions "sample"
-  # in its name stays exactly as unresolved as before this existed — the rule only ever removes
-  # a file from consideration, never adds one.
+  # Both the token (`SampleName.token?/1`, #125) and the size guard must hold. A file that holds
+  # the token but fails both size checks goes on to ordinary resolution like any other file: this
+  # rule only ever removes a file from consideration, never adds one.
   defp sample_ignorable?(entry, largest_size) do
     size = entry.identity.size
 
-    Regex.match?(@sample_preview_token, Path.basename(entry.relative_path)) and
+    SampleName.token?(entry.relative_path) and
       (size <= @sample_max_bytes or size <= largest_size * @sample_max_ratio)
   end
 

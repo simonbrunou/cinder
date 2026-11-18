@@ -8,6 +8,7 @@ defmodule Cinder.Library.MovieSources do
   """
 
   alias Cinder.Library
+  alias Cinder.Library.SampleName
 
   # ZIP/7z alongside the existing RAR-set (#499): a folder carrying one of these container
   # formats can plausibly have the feature packed INSIDE it, and none of them are ever
@@ -94,18 +95,19 @@ defmodule Cinder.Library.MovieSources do
   defp real_feature_candidate?({path, size}, total_archive_size),
     do: size >= total_archive_size and not sample_name?(path, size)
 
-  # Token AND small size both required — mirrors AnimePreflight's own sample_ignorable?/2 rule
-  # (that one also weighs a size ratio against the largest sibling; this one doesn't need to,
-  # so the two stay separate predicates). A movie whose real title happens to contain
-  # "sample"/"preview" as a word is never penalized just for its name: only an actually-small
-  # file is ever excluded from feature-candidacy here. Shared with `EpisodeSources.pick/3`
-  # (TV per-episode dedupe), the one other caller with the identical token+size rule.
-  @sample_token ~r/(?:^|[\s._\-\[\]()])(?:sample|preview)(?:$|[\s._\-\[\]()])/i
+  # Token (`SampleName.token?/1`) AND small size both required. AnimePreflight's own
+  # sample_ignorable?/2 reads the same token and also weighs a size ratio against the largest
+  # sibling; this one doesn't need to, so the two size rules stay separate. A movie whose real
+  # title happens to contain "sample"/"preview" as a word is never penalized just for its name:
+  # this rule excludes only an actually-small file from feature-candidacy (a video smaller than
+  # the archive set is excluded by `real_feature_candidate?/2` whatever its name). Shared with
+  # `EpisodeSources` (TV per-episode dedupe) and `SeasonAdoption` (its candidate files), the
+  # other callers with the identical token+size rule.
   @sample_max_bytes 100 * 1024 * 1024
 
   @doc false
   def sample_name?(path, size),
-    do: size <= @sample_max_bytes and Regex.match?(@sample_token, Path.basename(path))
+    do: size <= @sample_max_bytes and SampleName.token?(path)
 
   defp stack_part(path) do
     stem = path |> Path.basename() |> Path.rootname()

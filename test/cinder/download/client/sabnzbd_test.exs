@@ -4,6 +4,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   import Cinder.ConfigCase
   import ExUnit.CaptureLog
 
+  alias Cinder.ConfigCase
   alias Cinder.Download.Client.Sabnzbd
 
   defp stub(fun), do: Req.Test.stub(Cinder.SabnzbdStub, fun)
@@ -524,20 +525,96 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end
   end
 
+  # Each `/hop/<n>` redirects to `/hop/<n + 1>`, and `/hop/<last>` redirects to `last_location`.
+  # Every request reports its host and path, so a test can tell the hops from a call to `/api`.
+  defp stub_redirect_hops(last, last_location) do
+    test_pid = self()
+
+    stub(fn conn ->
+      send(test_pid, {:request, conn.host, conn.request_path})
+
+      case conn.request_path do
+        "/hop/" <> n ->
+          conn
+          |> Plug.Conn.put_resp_header("location", hop_location(n, last, last_location))
+          |> Plug.Conn.send_resp(302, "")
+
+        "/api" ->
+          Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-hop"]})
+      end
+    end)
+  end
+
+  defp hop_location(n, last, last_location) do
+    case String.to_integer(n) do
+      ^last -> last_location
+      hop -> "/hop/#{hop + 1}"
+    end
+  end
+
+  defp hops(range), do: Enum.map(range, &{"93.184.216.34", "/hop/#{&1}"})
+
+  test "add/1 follows five http redirects and refuses a sixth without contacting SABnzbd" do
+    stub_redirect_hops(1_000, "/never")
+
+    assert {:error, :too_many_redirects} =
+             Sabnzbd.add(%{download_url: "https://indexer.example/hop/0"})
+
+    assert drain_requests() == hops(0..5)
+  end
+
+  test "add/1 refuses the magnet that a sixth redirect names without contacting SABnzbd" do
+    hash = "0123456789abcdef0123456789abcdef01234567"
+    stub_redirect_hops(5, "magnet:?xt=urn:btih:#{hash}&dn=Movie")
+
+    assert {:error, :unsupported_download_url} =
+             Sabnzbd.add(%{download_url: "https://indexer.example/hop/0"})
+
+    assert drain_requests() == hops(0..5)
+  end
+
+  test "add/1 refuses an NZB one byte over the 20 MiB cap without contacting SABnzbd" do
+    test_pid = self()
+
+    stub(fn conn ->
+      send(test_pid, {:request, conn.host, conn.request_path})
+      Req.Test.text(conn, String.duplicate("x", 20 * 1024 * 1024 + 1))
+    end)
+
+    assert {:error, :response_too_large} =
+             Sabnzbd.add(%{download_url: "https://indexer.example/big.nzb"})
+
+    assert drain_requests() == [{"93.184.216.34", "/big.nzb"}]
+  end
+
+  # `Req.Test` parses a multipart body of at most 8 MB, so SABnzbd's side here is a Req adapter
+  # function, which reads the posted body as it is.
+  test "add/1 fetches an NZB of exactly the 20 MiB cap and posts all of it to SABnzbd" do
+    test_pid = self()
+    nzb = String.duplicate("x", 20 * 1024 * 1024)
+
+    sabnzbd = fn request ->
+      body = request.body |> Enum.to_list() |> IO.iodata_to_binary()
+      send(test_pid, {:addfile, request.method, request.url.path, String.contains?(body, nzb)})
+
+      response =
+        Req.Response.new(status: 200, body: ~s({"nzo_ids": ["nzo-big"]}))
+        |> Req.Response.put_header("content-type", "application/json")
+
+      {request, response}
+    end
+
+    ConfigCase.put_config(Sabnzbd, req_options: [adapter: sabnzbd, retry: false])
+    stub(fn conn -> Req.Test.text(conn, nzb) end)
+
+    assert {:ok, "nzo-big"} = Sabnzbd.add(%{download_url: "https://indexer.example/big.nzb"})
+    assert_received {:addfile, :post, "/api", true}
+  end
+
   test "add/1 does not retry a transient failure (no duplicate downloads)" do
     # Re-enable Req's default retry for this test; the addfile path must override it to false.
     # Without the fix a 503 on the side-effecting POST would be retried up to 3×, re-queuing it.
-    prev = Application.get_env(:cinder, Sabnzbd)
-    on_exit(fn -> Application.put_env(:cinder, Sabnzbd, prev) end)
-
-    Application.put_env(:cinder, Sabnzbd,
-      base_url: "http://localhost:8080",
-      api_key: "test-key",
-      fetch_plug: {Req.Test, Cinder.SabnzbdStub},
-      url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
-      req_options: [plug: {Req.Test, Cinder.SabnzbdStub}]
-    )
-
+    ConfigCase.put_config(Sabnzbd, req_options: [plug: {Req.Test, Cinder.SabnzbdStub}])
     test_pid = self()
 
     stub(fn conn ->

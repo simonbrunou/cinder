@@ -508,36 +508,49 @@ defmodule Cinder.Library.AnimePreflightTest do
                result.decisions["files"]
     end
 
-    test "a sample alongside a main file is ignored, letting lone-file inference import the main file" do
-      fixture = %{
-        "snapshot_version" => 2,
-        "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
-        "mappings" => [],
-        "inventory" => [
-          %{
-            "relative_path" => "abc123.mkv",
-            "size" => 1_400_000_000,
-            "major_device" => 1,
-            "inode" => 200,
-            "mtime" => 100
-          },
-          %{
-            "relative_path" => "abc123.sample.mkv",
-            "size" => 40 * 1024 * 1024,
-            "major_device" => 1,
-            "inode" => 201,
-            "mtime" => 100
-          }
-        ],
-        "episodes" => [%{"id" => 101, "season_number" => 1, "episode_number" => 1}]
-      }
+    # A Unicode space delimits the token as a dot does (#1452). The last case is over 100 MiB and
+    # at most a tenth the size of the main file, so the size ratio alone lets it count.
+    for {label, sample, size} <- [
+          {"a dot", "abc123.sample.mkv", 40 * 1024 * 1024},
+          {"a no-break space (#1452)", "abc123\u{a0}sample.mkv", 40 * 1024 * 1024},
+          {"an ideographic space (#1452)", "abc123\u{3000}sample.mkv", 40 * 1024 * 1024},
+          {"an ideographic space, over 100 MiB (#1452)", "abc123\u{3000}sample.mkv",
+           120 * 1024 * 1024}
+        ] do
+      test "a sample whose token follows #{label} beside a main file is ignored, letting lone-file inference import the main file" do
+        sample = unquote(sample)
 
-      assert {:ok, result} = run_fixture(fixture)
-      assert assignment_map(result.assignments) == %{"abc123.mkv" => [101]}
+        fixture = %{
+          "snapshot_version" => 2,
+          "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
+          "mappings" => [],
+          "inventory" => [
+            %{
+              "relative_path" => "abc123.mkv",
+              "size" => 1_400_000_000,
+              "major_device" => 1,
+              "inode" => 200,
+              "mtime" => 100
+            },
+            %{
+              "relative_path" => sample,
+              "size" => unquote(size),
+              "major_device" => 1,
+              "inode" => 201,
+              "mtime" => 100
+            }
+          ],
+          "episodes" => [%{"id" => 101, "season_number" => 1, "episode_number" => 1}]
+        }
 
-      decisions = Map.new(result.decisions["files"], &{&1["relative_path"], &1})
-      assert decisions["abc123.sample.mkv"]["ignored"] == true
-      assert decisions["abc123.mkv"]["source"] == "release_inference"
+        assert {:ok, result} = run_fixture(fixture)
+        assert assignment_map(result.assignments) == %{"abc123.mkv" => [101]}
+
+        decisions = Map.new(result.decisions["files"], &{&1["relative_path"], &1})
+        assert decisions[sample]["ignored"] == true
+        assert decisions[sample]["evidence"]["resolution"] == "sample_ignored"
+        assert decisions["abc123.mkv"]["source"] == "release_inference"
+      end
     end
 
     test "a full-size file with a sample token, and a word-internal match, are both left unresolved" do

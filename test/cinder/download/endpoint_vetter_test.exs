@@ -4,6 +4,8 @@ defmodule Cinder.Download.EndpointVetterTest do
   alias Cinder.Download.{EndpointVetter, Torrent}
 
   @public {:ok, [{93, 184, 216, 34}]}
+  # The most unique hosts `EndpointVetter.allowed_hosts/3` looks at per torrent or magnet.
+  @host_cap 50
 
   defp counting_resolver(counter, reply) do
     fn host ->
@@ -21,10 +23,10 @@ defmodule Cinder.Download.EndpointVetterTest do
 
     allowed = EndpointVetter.allowed_hosts(hosts, resolver)
 
-    assert :counters.get(counter, 1) == EndpointVetter.max_hosts()
-    assert MapSet.size(allowed) == EndpointVetter.max_hosts()
+    assert :counters.get(counter, 1) == @host_cap
+    assert MapSet.size(allowed) == @host_cap
     assert MapSet.member?(allowed, "tracker1.example")
-    refute MapSet.member?(allowed, "tracker#{EndpointVetter.max_hosts() + 1}.example")
+    refute MapSet.member?(allowed, "tracker#{@host_cap + 1}.example")
   end
 
   test "resolves duplicates once" do
@@ -81,10 +83,10 @@ defmodule Cinder.Download.EndpointVetterTest do
     assert {:ok, clean} =
              Torrent.sanitize_magnet(magnet, &EndpointVetter.allowed_hosts(&1, resolver))
 
-    assert :counters.get(counter, 1) == EndpointVetter.max_hosts()
+    assert :counters.get(counter, 1) == @host_cap
 
     kept = clean |> URI.parse() |> Map.fetch!(:query) |> URI.query_decoder() |> Enum.to_list()
-    assert Enum.count(kept, fn {k, _} -> k == "tr" end) == EndpointVetter.max_hosts()
+    assert Enum.count(kept, fn {k, _} -> k == "tr" end) == @host_cap
     assert {"xt", "urn:btih:0123456789abcdef0123456789abcdef01234567"} in kept
   end
 end
