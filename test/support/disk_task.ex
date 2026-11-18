@@ -15,11 +15,11 @@ defmodule Cinder.Test.DiskTask do
   through Disk's own timeout, and it stays under ExUnit's 60 s per-test timeout.
 
   `test/code_health/disk_task_await_test.exs` holds both limits. It also fails a `Task.await` or
-  `Task.await_many` outside `catch_exit/1` in a test file that names `BarrierFilesystem` or
-  `Filesystem.Disk`, so such a file awaits every task here, including one that only writes the
-  database. `test/code_health/disk_barrier_wait_test.exs` fails an `assert_receive` of a
-  `{:filesystem_barrier, ...}` message in such a file whose timeout is not `timeout_ms/0`,
-  including one whose task reaches no subprocess before its pause.
+  `Task.await_many` outside `catch_exit/1` in a test file or a `test/support` module (this one
+  aside) that names `BarrierFilesystem` or `Filesystem.Disk`, so such a file awaits every task
+  here, including one that only writes the database. `test/code_health/disk_barrier_wait_test.exs`
+  fails an `assert_receive` of a `{:filesystem_barrier, ...}` message in such a file whose timeout
+  is not `timeout_ms/0`, including one whose task reaches no subprocess before its pause.
   """
 
   @margin_ms 10_000

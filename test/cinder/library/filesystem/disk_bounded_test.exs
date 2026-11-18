@@ -248,8 +248,8 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
   # A `/bin/sh` script first on `PATH` as `python3`, so no spawn waits on Python's start, the
   # likely cause of the runner's missed pid writes at the 1 s bound (#1024, #1372).
   # `run_rooted/2` and `open_rooted_bound/4` both resolve `python3` on `PATH` at call time and
-  # pass the configured helper path first, which the script ignores; it dispatches on the
-  # operation in its second argument like the real `rooted_fs.py`. `operations` maps each
+  # pass `-S` and the configured helper path first, which the script ignores; it dispatches on
+  # the operation in its third argument like the real `rooted_fs.py`. `operations` maps each
   # operation the test expects to the shell body that serves it. Any other operation fails and
   # never reaches the real `python3`, so another caller that lands in the window shows up.
   defp fake_python3!(tmp, operations) do
@@ -261,9 +261,9 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
 
     File.write!(path, """
     #!/bin/sh
-    case "$2" in
+    case "$3" in
     #{branches}*)
-    echo "fake python3: unexpected operation $2" >&2
+    echo "fake python3: unexpected operation $3" >&2
     exit 1
     ;;
     esac
@@ -300,7 +300,7 @@ defmodule Cinder.Library.Filesystem.DiskBoundedTest do
   # through `/proc/<pid>/fd/3`, then waits on stdin with a builtin loop that forks no child.
   defp working_hold do
     """
-    exec 3<>"$3/$4"
+    exec 3<>"$4/$5"
     echo '{"ok":{"fd":3}}'
     while read -r line; do :; done
     """

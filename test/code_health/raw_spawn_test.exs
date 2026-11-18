@@ -14,7 +14,7 @@ defmodule Cinder.CodeHealth.RawSpawnTest do
     "test/cinder/download/intent_test.exs" => 9,
     "test/cinder/library/staged_import_test.exs" => 2,
     "test/cinder/requests_test.exs" => 1,
-    "test/cinder/subtitles/sidecar_transaction_test.exs" => 1
+    "test/support/sidecar_transaction_case.ex" => 1
   }
 
   @spawns [:spawn, :spawn_link, :spawn_monitor]

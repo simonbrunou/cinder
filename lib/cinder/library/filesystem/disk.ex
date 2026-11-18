@@ -568,7 +568,7 @@ defmodule Cinder.Library.Filesystem.Disk do
   defp run_rooted(operation, args) do
     case BoundedCommand.run(
            "python3",
-           [rooted_helper(), operation | args],
+           rooted_argv(operation, args),
            subprocess_timeout_ms(),
            stderr_to_stdout: true
          ) do
@@ -619,8 +619,14 @@ defmodule Cinder.Library.Filesystem.Disk do
   defp rooted_reason(%{"reason" => reason}),
     do: Map.get(@posix_reasons, reason, {:rooted_error, reason})
 
-  # The launcher imports `rooted_fs.py` so its bytecode is cached; every operation starts a
-  # new helper process, and compiling the module on each start cost ~4.6 ms of ~28 (#707).
+  # Every operation starts a new helper process, so its start-up is paid per call. `-S` skips
+  # Python's `site` import, about 5 ms of a 27 ms start on the dev shell's python (#1474): the
+  # helper and its launcher import only the standard library, which `site` does not add to the
+  # path.
+  defp rooted_argv(operation, args), do: ["-S", rooted_helper(), operation | args]
+
+  # The launcher imports `rooted_fs.py` so its bytecode is cached; compiling the module on each
+  # start cost ~4.6 ms of ~28 (#707).
   defp rooted_helper do
     Application.get_env(
       :cinder,
@@ -640,7 +646,7 @@ defmodule Cinder.Library.Filesystem.Disk do
           :exit_status,
           :use_stdio,
           :stderr_to_stdout,
-          args: [rooted_helper(), "hold", root, relative, mode]
+          args: rooted_argv("hold", [root, relative, mode])
         ]
       )
 

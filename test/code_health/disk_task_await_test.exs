@@ -1,10 +1,10 @@
 defmodule Cinder.CodeHealth.DiskTaskAwaitTest do
   # Keeps `Cinder.Test.DiskTask`'s wait between the test-env Disk bound and ExUnit's per-test
-  # timeout, and makes a test file that names `BarrierFilesystem`, which delegates every
-  # operation to Disk, or `Filesystem.Disk` itself await each of its tasks through it. DiskTask's
-  # moduledoc says why (#1012). The walk skips an await inside `catch_exit/1`, which those files
-  # keep for a task the test already killed: the await returns as soon as its monitor reports
-  # that exit.
+  # timeout, and makes a test file or `test/support` module that names `BarrierFilesystem`, which
+  # delegates every operation to Disk, or `Filesystem.Disk` itself await each of its tasks
+  # through it. DiskTask's moduledoc says why (#1012). The walk skips an await inside
+  # `catch_exit/1`, which those files keep for a task the test already killed: the await returns
+  # as soon as its monitor reports that exit.
   use ExUnit.Case, async: true
 
   alias Cinder.Test.DiskTask
@@ -22,7 +22,7 @@ defmodule Cinder.CodeHealth.DiskTaskAwaitTest do
   test "a test file that reaches Disk awaits its tasks through DiskTask" do
     # This file names both markers, so it would keep the scan from ever coming back empty.
     scanned =
-      for path <- Path.wildcard("test/**/*_test.exs"),
+      for path <- scanned_paths(),
           path != Path.relative_to_cwd(__ENV__.file),
           source = File.read!(path),
           String.contains?(source, @reaches_disk),
@@ -60,6 +60,18 @@ defmodule Cinder.CodeHealth.DiskTaskAwaitTest do
     '''
 
     assert await_lines(source) == Enum.to_list(2..7)
+  end
+
+  test "the scan reads the helper modules under test/support as well as the test files" do
+    assert "test/support/sidecar_transaction_case.ex" in scanned_paths()
+  end
+
+  # The test files, and the helper modules under test/support, where a shared helper can await a
+  # task on behalf of several test files (`Cinder.Test.SidecarTransactionCase`, #1474). DiskTask's
+  # own file is left out: its `await/1` is the `Task.await` every other file goes through.
+  defp scanned_paths do
+    (Path.wildcard("test/**/*_test.exs") ++ Path.wildcard("test/support/**/*.ex")) --
+      ["test/support/disk_task.ex"]
   end
 
   # The lines of the `Task.await` and `Task.await_many` calls in the parsed source. A string's

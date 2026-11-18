@@ -247,7 +247,7 @@ mount above the library root.
 The helper reads mergerfs's config (`branches`, `inodecalc`) from `<mount>/.mergerfs`, which
 mergerfs refuses to open for reading. `mergerfs_control_xattr` opens it with `O_PATH` and reads
 through `/proc/self/fd/<n>` (#972). The `duplicate_tombstones!` shims in `disk_rooted_test.exs`
-and `sidecar_transaction_test.exs` splice in `Cinder.Test.MergerfsControl.python/3`, which
+and `Cinder.Test.SidecarTransactionCase` splice in `Cinder.Test.MergerfsControl.python/3`, which
 refuses the read open the same way. Both take `mount_root:`, the mount root their mount check
 reports; any value but `/` also leaves no control file to reach. `mergerfs_rename_shim!` has no
 control file, so its reads fail and its `hold` reports no union identity.

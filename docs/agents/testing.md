@@ -159,11 +159,13 @@
   message and of any other message its task sends after a Disk call. `Task.await/1`'s 5 s
   default, and the 15 s waits it replaced, failed a slow helper start as a `Task.await` exit
   (#1012). A barrier message comes only after the Disk calls the paused task ran first, so a 5 s
-  or 15 s wait fails the same start as a missing message (#1034). Two fences scan each file that
-  names `BarrierFilesystem` or `Filesystem.Disk`. `test/code_health/disk_task_await_test.exs`
-  fails a `Task.await` or `Task.await_many`, except one inside `catch_exit/1`, the form kept for
-  a task the test already killed. `test/code_health/disk_barrier_wait_test.exs` fails a barrier
-  `assert_receive` whose timeout is not `DiskTask.timeout_ms()`. It sees only barrier messages.
+  or 15 s wait fails the same start as a missing message (#1034). Two fences scan each test file
+  and each `test/support` module that names `BarrierFilesystem` or `Filesystem.Disk`.
+  `test/code_health/disk_task_await_test.exs` fails a `Task.await` or `Task.await_many`, except
+  one inside `catch_exit/1`, the form kept for a task the test already killed, and except in
+  `Cinder.Test.DiskTask` itself, whose `await/1` is the wrapper.
+  `test/code_health/disk_barrier_wait_test.exs` fails a barrier `assert_receive` whose timeout is
+  not `DiskTask.timeout_ms()`. It sees only barrier messages.
 - A migration test that runs on its own `Ecto.Repo` starts it with
   `Cinder.MigrationRepoHelpers.start_repo!/2`, which waits for the repo's one connection to open.
   A statement sent right after `start_supervised!/1` queues behind that open, and on a loaded
@@ -188,10 +190,11 @@
   not its optional `excludes`. A bound reports the path it was opened or created at as its
   source. Only a bound created outside the library roots reports its `/proc/<pid>/fd/<n>` path.
   A file's path contains its directory's, so a failure meant for a directory's close excludes
-  the files inside it, as `directory_close_failure/1` in `sidecar_transaction_test.exs` does.
+  the files inside it, as `directory_close_failure/1` in `Cinder.Test.SidecarTransactionCase`
+  does.
 - The identity probes that verify a subtitle exchange close bounds on the same paths. Arm a close
   failure meant for after the exchange from a barrier, as `fail_close_after_exchange/4` in
-  `sidecar_transaction_test.exs` does.
+  `Cinder.Test.SidecarTransactionCase` does.
 - Release a barrier inside the log capture whose output the test asserts: send `{ref, :continue}`
   from the `capture_log/1` or `with_log/1` function. The paused task logs as soon as it resumes,
   so on a slow runner a release before the capture prints the warning to the console and the

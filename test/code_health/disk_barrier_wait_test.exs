@@ -1,9 +1,10 @@
 defmodule Cinder.CodeHealth.DiskBarrierWaitTest do
-  # Makes a test file that names `BarrierFilesystem` or `Filesystem.Disk` pass
-  # `Cinder.Test.DiskTask.timeout_ms/0` to each `assert_receive` of a `{:filesystem_barrier, ...}`
-  # message, as `disk_task_await_test.exs` makes it await each task through DiskTask. DiskTask's
-  # moduledoc says why (#1034). The rule covers every barrier wait in such a file, including one
-  # whose task reaches no subprocess before its pause, so the fence needs no per-site judgment.
+  # Makes a test file or `test/support` module that names `BarrierFilesystem` or
+  # `Filesystem.Disk` pass `Cinder.Test.DiskTask.timeout_ms/0` to each `assert_receive` of a
+  # `{:filesystem_barrier, ...}` message, as `disk_task_await_test.exs` makes it await each task
+  # through DiskTask. DiskTask's moduledoc says why (#1034). The rule covers every barrier wait in
+  # such a file, including one whose task reaches no subprocess before its pause, so the fence
+  # needs no per-site judgment.
   use ExUnit.Case, async: true
 
   @reaches_disk ["BarrierFilesystem", "Filesystem.Disk"]
@@ -12,7 +13,7 @@ defmodule Cinder.CodeHealth.DiskBarrierWaitTest do
   test "a test file that reaches Disk waits for each barrier message past the Disk bound" do
     # This file names both markers, so it would keep the scan from ever coming back empty.
     scanned =
-      for path <- Path.wildcard("test/**/*_test.exs"),
+      for path <- scanned_paths(),
           path != Path.relative_to_cwd(__ENV__.file),
           source = File.read!(path),
           String.contains?(source, @reaches_disk),
@@ -59,6 +60,15 @@ defmodule Cinder.CodeHealth.DiskBarrierWaitTest do
 
     assert short_barrier_wait_lines(source) == Enum.to_list(3..6)
   end
+
+  test "the scan reads the helper modules under test/support as well as the test files" do
+    assert "test/support/sidecar_transaction_case.ex" in scanned_paths()
+  end
+
+  # The test files, and the helper modules under test/support, where a shared helper can wait for
+  # a barrier on behalf of several test files (`Cinder.Test.SidecarTransactionCase`, #1474).
+  defp scanned_paths,
+    do: Path.wildcard("test/**/*_test.exs") ++ Path.wildcard("test/support/**/*.ex")
 
   # The lines of the `assert_receive` calls whose pattern is a `{:filesystem_barrier, ...}` tuple
   # and whose timeout is not a `DiskTask.timeout_ms()` call. A string's contents are not code.

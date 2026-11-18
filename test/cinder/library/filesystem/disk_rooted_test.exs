@@ -188,6 +188,37 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
     refute File.exists?(path)
   end
 
+  # #1474: Python's `site` import cost about a fifth of each helper start on the dev shell's
+  # python, and the helper needs only the standard library. The probe refuses to run when `site`
+  # loaded, then runs the real helper in the same process, so a hold still hands back a
+  # descriptor of that process.
+  @tag :tmp_dir
+  test "every rooted helper starts without the site import", %{root: root, tmp: tmp} do
+    helper = Path.join(tmp, "no_site_probe.py")
+    real = Path.join(:code.priv_dir(:cinder), "rooted_fs_main.py")
+
+    File.write!(helper, """
+    import json
+    import runpy
+    import sys
+
+    if not sys.flags.no_site:
+        print(json.dumps({"error": {"operation": sys.argv[1], "phase": "pre_effect", "reason": "site_loaded"}}))
+        sys.exit(0)
+    sys.argv[0] = #{inspect(real)}
+    runpy.run_path(#{inspect(real)}, run_name="__main__")
+    """)
+
+    Application.put_env(:cinder, :rooted_filesystem_helper, helper)
+    created = Path.join(root, "created.srt")
+    renamed = Path.join(root, "renamed.srt")
+
+    assert {:ok, bound} = Disk.create_bound(created, "subtitle")
+    assert :ok = Disk.close_bound(bound)
+    assert :ok = Disk.rename(created, renamed)
+    assert File.read!(renamed) == "subtitle"
+  end
+
   @tag :tmp_dir
   test "a rooted hold reporting a committed effect stays committed", %{root: root, tmp: tmp} do
     helper = Path.join(tmp, "post_effect_hold.py")
