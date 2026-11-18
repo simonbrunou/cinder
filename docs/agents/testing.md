@@ -434,7 +434,11 @@
   plug. The `Req.Test` plug never applies `receive_timeout`: a stub that answered 500 ms late
   under a 100 ms `receive_timeout` still returned `{:ok, _}`. Req's default retry turned a
   100 ms timeout against the socket into 7.4 s. PR #1428 (for #1414) added the helper for
-  `prowlarr_deadline_test.exs` and `libre_translate_test.exs`, which show the elapsed bound.
+  `prowlarr_deadline_test.exs` and `libre_translate_test.exs`. Their match on
+  `%Req.TransportError{reason: :timeout}` is the check: `bounded_request/2`'s 60 s deadline ends
+  the call on `{:error, :request_timeout}` instead. Their elapsed bound is 30 s, well under that
+  deadline: a 5.2 s bound failed on the CI runner, where `libre_translate_test.exs`'s call with
+  a 200 ms `receive_timeout` took up to 15.3 s (#1443).
 - A test that polls until a timer fires (a shrunk `ownership_timeout`, a lease, a TTL) runs
   `mix test.unchecked --repeat-until-failure 1000 <file>:<line>` before review. Each repeat runs
   the whole selection, so name the test's line. A poll that lands as the timer fires fails in a

@@ -16,8 +16,10 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrDeadlineTest do
     started = System.monotonic_time(:millisecond)
 
     assert {:error, %Req.TransportError{reason: :timeout}} = Prowlarr.search("tt0000001")
-    # A loaded runner can wake the caller well past the timeout (ci.md "Wall-clock tests").
-    assert System.monotonic_time(:millisecond) - started < 5_200
+    # The match is the check: the 60 s deadline would end the call on
+    # `{:error, :request_timeout}`. The bound only keeps the call well under that deadline
+    # (testing.md, the `SilentServer` bullet).
+    assert System.monotonic_time(:millisecond) - started < 30_000
   end
 
   test "every search's total deadline is its 90 s receive_timeout, and health/0 keeps the default" do

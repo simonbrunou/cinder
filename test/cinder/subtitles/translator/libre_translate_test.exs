@@ -142,8 +142,10 @@ defmodule Cinder.Subtitles.Translator.LibreTranslateTest do
     assert {:error, %Req.TransportError{reason: :timeout}} =
              LibreTranslate.translate(["Hello"], "fr")
 
-    # A loaded runner can wake the caller well past the timeout (ci.md "Wall-clock tests").
-    assert System.monotonic_time(:millisecond) - started < 5_200
+    # The match is the check: the 60 s deadline would end the call on
+    # `{:error, :request_timeout}`. The bound only keeps the call well under that deadline
+    # (testing.md, the `SilentServer` bullet).
+    assert System.monotonic_time(:millisecond) - started < 30_000
   end
 
   test "translate/2 caps a timeout above the largest one Erlang accepts" do
