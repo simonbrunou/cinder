@@ -103,7 +103,7 @@ defmodule Cinder.Subtitles do
   @typedoc """
   The release sidecars an import hands its subtitle task: `languages:`, the sidecar languages it
   recorded next to the file, and `placed:`, the sidecar paths its commit placed there
-  (`Cinder.Library.Sidecars.link/2`). Either may be absent. Any other key, or a bare language
+  (`Cinder.Library.Sidecars.link_listed/2`). Either may be absent. Any other key, or a bare language
   list, raises in `fetch_after_import/4`; `fetch_now/4` logs it and skips the fetch.
   """
   @type release_sidecars :: [languages: [String.t()] | nil, placed: [String.t()]]

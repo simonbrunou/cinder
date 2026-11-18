@@ -426,7 +426,7 @@ defmodule Cinder.Library.KeptFileSidecarsTest do
     end
 
     # `:replaced`: the release's own `.en.srt` loses to the one already at the destination, which
-    # `Sidecars.link/2` never clobbers, yet the recorded list still names `en`.
+    # `Sidecars.link_listed/2` never clobbers, yet the recorded list still names `en`.
     test "an upgrade leaves a hand-placed sidecar at the destination unmanaged", %{
       downloads: downloads,
       movies: movies

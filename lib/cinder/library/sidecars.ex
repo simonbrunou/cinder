@@ -73,16 +73,10 @@ defmodule Cinder.Library.Sidecars do
   end
 
   @doc """
-  Places belonging sidecars next to `dest_video` (best-effort) and returns the paths it placed. A
-  language alone would not do: a flagged or non-SRT sidecar shares it with `<video>.<lang>.srt`
-  (#918).
-  """
-  def link(source_video, dest_video), do: link_listed(files(source_video), dest_video)
-
-  @doc """
-  `link/2` for sidecars `files/1` already listed: places each listed path next to `dest_video`
-  (best-effort), under the name `Cinder.Subtitles.WantedLanguage.placed_path/2` gives it, and
-  returns the paths it placed.
+  Places each of `sidecars`, as `files/1` lists them, next to `dest_video` (best-effort), under
+  the name `Cinder.Subtitles.WantedLanguage.placed_path/2` gives it, and returns the paths it
+  placed. A language alone would not do: a flagged or non-SRT sidecar shares it with
+  `<video>.<lang>.srt` (#918).
   """
   def link_listed(sidecars, dest_video) do
     for {path, _language} <- sidecars,

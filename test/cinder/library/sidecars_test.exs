@@ -86,7 +86,7 @@ defmodule Cinder.Library.SidecarsTest do
     assert Sidecars.srt_files(src) == [{srt, "en"}]
   end
 
-  test "link/2 hardlinks each sidecar next to the dest, renamed, returns the placed paths" do
+  test "link_listed/2 hardlinks each sidecar next to the dest, renamed, returns the placed paths" do
     dir = "/dl/Movie (2020)"
     src = "#{dir}/Movie (2020).mkv"
     dest = "/lib/Movie (2020)/Movie (2020).mkv"
@@ -101,13 +101,13 @@ defmodule Cinder.Library.SidecarsTest do
 
     expect(FilesystemMock, :ln, fn ^sub_src, ^sub_dest -> :ok end)
 
-    assert Sidecars.link(src, dest) == [sub_dest]
+    assert Sidecars.link_listed(Sidecars.files(src), dest) == [sub_dest]
     # #918 compares the placed paths with the canonical sidecar textually.
     assert sub_dest == Cinder.Subtitles.sidecar_path(dest, "en")
   end
 
   # #1309: a regional name was placed as `<dest stem>.und.srt`.
-  test "link/2 places a regional sidecar under its base language" do
+  test "link_listed/2 places a regional sidecar under its base language" do
     dir = "/dl/Movie (2020)"
     src = "#{dir}/Movie (2020).mkv"
     dest = "/lib/Movie (2020)/Movie (2020).mkv"
@@ -125,11 +125,11 @@ defmodule Cinder.Library.SidecarsTest do
     expect(FilesystemMock, :ln, fn ^french_src, ^french_dest -> :ok end)
     expect(FilesystemMock, :ln, fn ^portuguese_src, ^portuguese_dest -> :ok end)
 
-    assert Sidecars.link(src, dest) == [french_dest, portuguese_dest]
+    assert Sidecars.link_listed(Sidecars.files(src), dest) == [french_dest, portuguese_dest]
   end
 
   # #1343: a generic Chinese sidecar was placed as Cantonese `<dest stem>.cn.srt`.
-  test "link/2 places a generic Chinese sidecar as zh" do
+  test "link_listed/2 places a generic Chinese sidecar as zh" do
     dir = "/dl/Movie (2020)"
     src = "#{dir}/Movie (2020).mkv"
     dest = "/lib/Movie (2020)/Movie (2020).mkv"
@@ -140,7 +140,7 @@ defmodule Cinder.Library.SidecarsTest do
     expect(FilesystemMock, :find_files, fn ^dir -> {:ok, [{src, 900}, {chinese_src, 10}]} end)
     expect(FilesystemMock, :ln, fn ^chinese_src, ^chinese_dest -> :ok end)
 
-    assert Sidecars.link(src, dest) == [chinese_dest]
+    assert Sidecars.link_listed(Sidecars.files(src), dest) == [chinese_dest]
   end
 
   test "files/1 requires a separator boundary so an unpadded E10 sidecar isn't matched to E1" do
@@ -162,7 +162,7 @@ defmodule Cinder.Library.SidecarsTest do
     assert Sidecars.files(src) == [{"#{dir}/Show.S01E1.en.srt", "en"}]
   end
 
-  test "link/2 hardlinks and reports every distinct sidecar file of one language" do
+  test "link_listed/2 hardlinks and reports every distinct sidecar file of one language" do
     dir = "/dl/Movie (2020)"
     src = "#{dir}/Movie (2020).mkv"
     dest = "/lib/Movie (2020)/Movie (2020).mkv"
@@ -180,12 +180,12 @@ defmodule Cinder.Library.SidecarsTest do
     expect(FilesystemMock, :ln, fn ^sub1_src, ^sub1_dest -> :ok end)
     expect(FilesystemMock, :ln, fn ^sub2_src, ^sub2_dest -> :ok end)
 
-    assert Sidecars.link(src, dest) == [sub1_dest, sub2_dest]
+    assert Sidecars.link_listed(Sidecars.files(src), dest) == [sub1_dest, sub2_dest]
   end
 
   # Issue #201: `hi` read as the language must not also be re-emitted as a flag, or the Hindi
   # sidecar lands as `Movie (2020).hi.hi.srt`. The French-HI file beside it still keeps its flag.
-  test "link/2 doesn't duplicate hi when it was consumed as the language" do
+  test "link_listed/2 doesn't duplicate hi when it was consumed as the language" do
     dir = "/dl/Movie (2020)"
     src = "#{dir}/Movie (2020).mkv"
     dest = "/lib/Movie (2020)/Movie (2020).mkv"
@@ -203,7 +203,7 @@ defmodule Cinder.Library.SidecarsTest do
     expect(FilesystemMock, :ln, fn ^hindi_src, ^hindi_dest -> :ok end)
     expect(FilesystemMock, :ln, fn ^french_hi_src, ^french_hi_dest -> :ok end)
 
-    assert Sidecars.link(src, dest) == [hindi_dest, french_hi_dest]
+    assert Sidecars.link_listed(Sidecars.files(src), dest) == [hindi_dest, french_hi_dest]
   end
 
   # #1087: a flag word in the scene title reached the library name. The title's `Forced` named a
@@ -212,7 +212,7 @@ defmodule Cinder.Library.SidecarsTest do
         {"Forced.Entry.1983.1080p.BluRay.x264-GRP", "Forced Entry (1983)", "fr.srt"},
         {"Hi.Mom.2021.1080p.WEB-DL", "Hi Mom (2021)", "fr.hi.srt"}
       ] do
-    test "link/2 places #{release}.#{tail} as <dest stem>.#{tail}" do
+    test "link_listed/2 places #{release}.#{tail} as <dest stem>.#{tail}" do
       dir = "/dl/#{unquote(release)}"
       src = "#{dir}/#{unquote(release)}.mkv"
       dest = "/lib/#{unquote(library)}/#{unquote(library)}.mkv"
@@ -223,7 +223,7 @@ defmodule Cinder.Library.SidecarsTest do
       expect(FilesystemMock, :find_files, fn ^dir -> {:ok, [{src, 900}, {sub_src, 10}]} end)
       expect(FilesystemMock, :ln, fn ^sub_src, ^sub_dest -> :ok end)
 
-      assert Sidecars.link(src, dest) == [sub_dest]
+      assert Sidecars.link_listed(Sidecars.files(src), dest) == [sub_dest]
     end
   end
 
@@ -259,7 +259,7 @@ defmodule Cinder.Library.SidecarsTest do
     # #1343: a generic Chinese file now takes the name a file named as Chinese takes, so a
     # download holding both places only one of them; the other's link finds the name taken.
     @tag :tmp_dir
-    test "link/2 places one of a generic Chinese and a zh sidecar as zh", %{tmp_dir: tmp} do
+    test "link_listed/2 places one of a generic Chinese and a zh sidecar as zh", %{tmp_dir: tmp} do
       %{release: release, movies: movies} = configure_real_roots(tmp)
       video = Path.join(release, "Movie.mkv")
       dest = Path.join(movies, "Movie/Movie.mkv")
@@ -269,7 +269,10 @@ defmodule Cinder.Library.SidecarsTest do
       File.write!(Path.join(release, "Movie.chi.srt"), "chi")
       File.mkdir_p!(Path.dirname(dest))
 
-      log = capture_log(fn -> assert Sidecars.link(video, dest) == [zh_dest] end)
+      log =
+        capture_log(fn ->
+          assert Sidecars.link_listed(Sidecars.files(video), dest) == [zh_dest]
+        end)
 
       assert File.read!(zh_dest) in ["zh", "chi"]
       assert File.ls!(Path.dirname(dest)) |> Enum.sort() == ["Movie.zh.srt"]
@@ -290,7 +293,7 @@ defmodule Cinder.Library.SidecarsTest do
       File.mkdir_p!(Path.dirname(dest))
       fail_sidecar_links(sidecar)
 
-      assert Sidecars.link(video, dest) == [sidecar_dest]
+      assert Sidecars.link_listed(Sidecars.files(video), dest) == [sidecar_dest]
       assert File.read!(sidecar_dest) == "subtitle"
     end
 
@@ -310,7 +313,7 @@ defmodule Cinder.Library.SidecarsTest do
       # link fails too — the branch the :exdev test never reaches.
       fail_all_links(:eopnotsupp)
 
-      assert Sidecars.link(video, dest) == [sidecar_dest]
+      assert Sidecars.link_listed(Sidecars.files(video), dest) == [sidecar_dest]
       assert File.read!(sidecar_dest) == "subtitle"
       assert Path.wildcard(Path.join(Path.dirname(sidecar_dest), ".cinder-tmp-*")) == []
     end
@@ -330,7 +333,7 @@ defmodule Cinder.Library.SidecarsTest do
       # failed landing on a no-hardlink mount.
       File.write!(sidecar_dest, "manual")
 
-      log = capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+      log = capture_log(fn -> assert Sidecars.link_listed(Sidecars.files(video), dest) == [] end)
 
       assert log =~ "sidecar link rejected: :eexist"
 
@@ -358,7 +361,7 @@ defmodule Cinder.Library.SidecarsTest do
       # The destination did not exist before this call: `cp_exclusive` creates it, then a
       # write partway through the stream leaves only "a c" on disk — a truncated destination,
       # not a pre-existing one.
-      log = capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+      log = capture_log(fn -> assert Sidecars.link_listed(Sidecars.files(video), dest) == [] end)
       assert log =~ "sidecar link rejected: :enospc"
 
       # A failed landing never leaves a truncated .srt that a later retry would :eexist-skip
@@ -367,7 +370,7 @@ defmodule Cinder.Library.SidecarsTest do
       assert Path.wildcard(Path.join(Path.dirname(sidecar_dest), ".cinder-tmp-*")) == []
 
       Application.put_env(:cinder, :exclusive_copy_file_module, :file)
-      assert Sidecars.link(video, dest) == [sidecar_dest]
+      assert Sidecars.link_listed(Sidecars.files(video), dest) == [sidecar_dest]
       assert File.read!(sidecar_dest) == "a complete subtitle"
     end
 
@@ -390,7 +393,7 @@ defmodule Cinder.Library.SidecarsTest do
       # discarded — the exact window another writer could win.
       barrier(:rename, ".cinder-sidecar-quarantine-")
 
-      task = Task.async(fn -> Sidecars.link(video, dest) end)
+      task = Task.async(fn -> Sidecars.link_listed(Sidecars.files(video), dest) end)
       {pid, ref, _quarantine_path} = await_barrier(:rename)
 
       File.write!(sidecar_dest, "concurrent replacement")
@@ -437,7 +440,7 @@ defmodule Cinder.Library.SidecarsTest do
         %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :eio}
       ])
 
-      log = capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+      log = capture_log(fn -> assert Sidecars.link_listed(Sidecars.files(video), dest) == [] end)
       assert log =~ "sidecar link rejected: :enospc"
 
       # The truncated destination was reclaimed on a later attempt, not stranded at its
@@ -449,7 +452,7 @@ defmodule Cinder.Library.SidecarsTest do
                []
 
       Application.put_env(:cinder, :exclusive_copy_file_module, :file)
-      assert Sidecars.link(video, dest) == [sidecar_dest]
+      assert Sidecars.link_listed(Sidecars.files(video), dest) == [sidecar_dest]
       assert File.read!(sidecar_dest) == "a complete subtitle"
     end
 
@@ -482,7 +485,7 @@ defmodule Cinder.Library.SidecarsTest do
         )
       )
 
-      log = capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+      log = capture_log(fn -> assert Sidecars.link_listed(Sidecars.files(video), dest) == [] end)
       assert log =~ "sidecar link rejected: :enospc"
       assert log =~ "sidecar reclaim rejected for #{sidecar_dest}: :unsafe_destination"
 
@@ -517,7 +520,7 @@ defmodule Cinder.Library.SidecarsTest do
         %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :eio}
       ])
 
-      log = capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+      log = capture_log(fn -> assert Sidecars.link_listed(Sidecars.files(video), dest) == [] end)
       assert log =~ "sidecar reclaim identity check failed"
 
       refute File.exists?(sidecar_dest)
@@ -555,7 +558,7 @@ defmodule Cinder.Library.SidecarsTest do
         %{operation: :lstat, source_contains: ".cinder-sidecar-quarantine-", reason: :eio}
       ])
 
-      capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+      capture_log(fn -> assert Sidecars.link_listed(Sidecars.files(video), dest) == [] end)
 
       assert [quarantine] =
                Path.wildcard(
@@ -587,7 +590,7 @@ defmodule Cinder.Library.SidecarsTest do
       Application.put_env(:cinder, :exclusive_copy_file_module, TruncatingWriteFile)
       on_exit(fn -> Application.delete_env(:cinder, :exclusive_copy_file_module) end)
 
-      capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+      capture_log(fn -> assert Sidecars.link_listed(Sidecars.files(video), dest) == [] end)
 
       refute File.exists?(sidecar_dest)
       assert Repo.all(SidecarQuarantine) == []
@@ -615,7 +618,7 @@ defmodule Cinder.Library.SidecarsTest do
       on_exit(fn -> Application.delete_env(:cinder, :exclusive_copy_file_module) end)
       BarrierFilesystem.report_path_derived_inodes()
 
-      log = capture_log(fn -> assert Sidecars.link(video, dest) == [] end)
+      log = capture_log(fn -> assert Sidecars.link_listed(Sidecars.files(video), dest) == [] end)
       assert log =~ "sidecar link rejected: :enospc"
 
       assert log =~
@@ -640,7 +643,7 @@ defmodule Cinder.Library.SidecarsTest do
              ) == []
 
       Application.put_env(:cinder, :exclusive_copy_file_module, :file)
-      assert Sidecars.link(video, dest) == [sidecar_dest]
+      assert Sidecars.link_listed(Sidecars.files(video), dest) == [sidecar_dest]
       assert File.read!(sidecar_dest) == "a complete subtitle"
     end
 
@@ -665,7 +668,7 @@ defmodule Cinder.Library.SidecarsTest do
 
       barrier(:rename, ".cinder-sidecar-quarantine-")
 
-      task = Task.async(fn -> Sidecars.link(video, dest) end)
+      task = Task.async(fn -> Sidecars.link_listed(Sidecars.files(video), dest) end)
       {pid, ref, quarantine} = await_barrier(:rename)
 
       # Publish a different file over the quarantine name, so its identity genuinely no longer
@@ -702,7 +705,7 @@ defmodule Cinder.Library.SidecarsTest do
       fail_sidecar_links(sidecar)
       barrier(:cp, ".cinder-tmp-")
 
-      task = Task.async(fn -> Sidecars.link(video, dest) end)
+      task = Task.async(fn -> Sidecars.link_listed(Sidecars.files(video), dest) end)
       {pid, ref, _path} = await_barrier(:cp)
       File.write!(sidecar_dest, "manual")
 
@@ -747,7 +750,7 @@ defmodule Cinder.Library.SidecarsTest do
       File.mkdir_p!(Path.dirname(dest))
 
       barrier(:find_files, release)
-      task = Task.async(fn -> Sidecars.link(video, dest) end)
+      task = Task.async(fn -> Sidecars.link_listed(Sidecars.files(video), dest) end)
       {pid, ref, _path} = await_barrier(:find_files)
       File.rm!(sidecar)
       File.ln_s!(database, sidecar)
@@ -771,7 +774,7 @@ defmodule Cinder.Library.SidecarsTest do
       File.mkdir_p!(outside)
 
       barrier(:find_files, release)
-      task = Task.async(fn -> Sidecars.link(video, dest) end)
+      task = Task.async(fn -> Sidecars.link_listed(Sidecars.files(video), dest) end)
       {pid, ref, _path} = await_barrier(:find_files)
       File.rename!(parent, parent <> ".old")
       File.ln_s!(outside, parent)
