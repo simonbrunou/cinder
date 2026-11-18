@@ -178,8 +178,9 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   # POST (not GET) with a multipart body — SABnzbd's `addfile` API takes the NZB content itself
   # under the `name` field (the same key `addurl` overloads to carry a URL string instead).
-  # retry: false — this is side-effecting (SABnzbd queues the job); Req's default :safe_transient
-  # policy would otherwise retry up to 3× on a transient failure, re-queuing the same download.
+  # retry: false — this is side-effecting (SABnzbd queues the job), so a transient failure must not
+  # re-queue the same download. Req's default :safe_transient resends only a GET or HEAD, and
+  # `HTTPPolicy.bounded_request/2` sends a request that sets no `retry:` once (#1429).
   defp post_file(bytes, params) do
     config = config()
 

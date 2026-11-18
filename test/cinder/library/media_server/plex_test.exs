@@ -231,6 +231,22 @@ defmodule Cinder.Library.MediaServer.PlexTest do
     assert {:error, :not_configured} = Plex.list_seasons()
   end
 
+  # The test config's `req_options` set `retry: false`, so this test sets only the plug: Req would
+  # otherwise retry a GET that answers 503 three times, 1, 2 and 4 s apart (#1429).
+  test "scan/1 sends one request to a server that answers 503" do
+    test_pid = self()
+    put_config(req_options: [plug: {Req.Test, Cinder.PlexStub}])
+
+    Req.Test.stub(Cinder.PlexStub, fn conn ->
+      send(test_pid, {:request, conn.request_path})
+      Plug.Conn.send_resp(conn, 503, "")
+    end)
+
+    assert {:error, {:plex_status, 503}} = Plex.scan(:movies)
+    assert_received {:request, "/library/sections/1/refresh"}
+    refute_received {:request, _path}
+  end
+
   test "scan/1 surfaces a non-2xx status as an error" do
     Req.Test.stub(Cinder.PlexStub, fn conn ->
       conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")

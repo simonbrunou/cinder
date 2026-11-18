@@ -261,6 +261,12 @@ defmodule Cinder.HTTPPolicy do
   @doc """
   Runs a Req request with total-time and retained-response-body limits.
 
+  A request that sets no `retry:` option is sent once, whatever its method and whatever comes
+  back. Req's own default, `:safe_transient`, would send a GET or HEAD that gets a 408, 429, 500,
+  502, 503 or 504, or whose connection times out, is refused or closes, up to three more times,
+  1, 2 and 4 s apart when the server sends no `Retry-After` (#1429). A request that sets `retry:`
+  itself keeps that value.
+
   A request has two time budgets. Req's `receive_timeout` bounds each wait for the server's next
   chunk, and Finch applies it per chunk. The total deadline bounds the whole request and ends it
   with `{:error, :request_timeout}`. The deadline here is the longer of 60 s and the request's own
@@ -386,6 +392,7 @@ defmodule Cinder.HTTPPolicy do
     end
 
     request
+    |> Req.Request.put_new_option(:retry, false)
     |> Req.request(decode_body: false, into: into)
     |> finish_bounded_request(started_at, timeout_ms)
   end

@@ -1,6 +1,7 @@
 defmodule Cinder.Download.Client.SabnzbdTest do
   use ExUnit.Case, async: true
 
+  import Cinder.ConfigCase
   import ExUnit.CaptureLog
 
   alias Cinder.Download.Client.Sabnzbd
@@ -698,6 +699,22 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     stub_queue_then_history(%{"history" => %{"slots" => []}})
 
     assert {:error, :not_found} = Sabnzbd.status("nzo-1")
+  end
+
+  # The test config's `req_options` set `retry: false`, so this test sets only the plug: Req would
+  # otherwise retry a GET that answers 503 three times, 1, 2 and 4 s apart (#1429).
+  test "status/1 sends one request to a server that answers 503" do
+    test_pid = self()
+    put_config(Sabnzbd, req_options: [plug: {Req.Test, Cinder.SabnzbdStub}])
+
+    stub(fn conn ->
+      send(test_pid, {:request, conn.params["mode"]})
+      Plug.Conn.send_resp(conn, 503, "")
+    end)
+
+    assert {:error, {:sabnzbd_status, 503}} = Sabnzbd.status("nzo-1")
+    assert_received {:request, "queue"}
+    refute_received {:request, _mode}
   end
 
   test "status/1 propagates a bad API key instead of :not_found" do

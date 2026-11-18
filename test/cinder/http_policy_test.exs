@@ -728,6 +728,75 @@ defmodule Cinder.HTTPPolicyTest do
       end
     end
 
+    # Req's default `retry: :safe_transient` sends a GET that gets one of these statuses or transport
+    # errors three more times, 1, 2 and 4 s apart. A client builder that forgets `retry: false`
+    # would send four requests (#1429).
+    test "sends a GET that sets no retry: once, through /2 and /3, on each status and transport error Req's default retries" do
+      test = self()
+
+      Req.Test.stub(Cinder.HTTPPolicyNoRetryStub, fn conn ->
+        send(test, :no_retry_hit)
+
+        case conn.query_params["fail"] do
+          "status-" <> status -> Plug.Conn.send_resp(conn, String.to_integer(status), "")
+          reason -> Req.Test.transport_error(conn, String.to_existing_atom(reason))
+        end
+      end)
+
+      failures =
+        Enum.map([408, 429, 500, 502, 503, 504], &{"status-#{&1}", {:ok, %{status: &1}}}) ++
+          Enum.map(
+            [:timeout, :econnrefused, :closed],
+            &{"#{&1}", {:error, %Req.TransportError{reason: &1}}}
+          )
+
+      for {arity, run} <- [
+            {2, &HTTPPolicy.bounded_request(&1, 64)},
+            {3, &HTTPPolicy.bounded_request(&1, 64, 20_000)}
+          ],
+          {fail, expected} <- failures do
+        request =
+          Req.new(
+            url: "https://public.example/data",
+            params: [fail: fail],
+            plug: {Req.Test, Cinder.HTTPPolicyNoRetryStub}
+          )
+
+        refute Map.has_key?(request.options, :retry)
+
+        result =
+          case run.(request) do
+            {:ok, %Req.Response{status: status}} -> {:ok, %{status: status}}
+            other -> other
+          end
+
+        assert {arity, fail, result, hits(:no_retry_hit)} == {arity, fail, expected, 1}
+      end
+    end
+
+    test "keeps a retry: the request sets itself" do
+      test = self()
+
+      Req.Test.stub(Cinder.HTTPPolicyOwnRetryStub, fn conn ->
+        send(test, :own_retry_hit)
+        Plug.Conn.send_resp(conn, 503, "")
+      end)
+
+      request =
+        Req.new(
+          url: "https://public.example/data",
+          plug: {Req.Test, Cinder.HTTPPolicyOwnRetryStub},
+          retry: :transient,
+          retry_delay: fn _attempt -> 0 end
+        )
+
+      capture_log(fn ->
+        assert {:ok, %{status: 503}} = HTTPPolicy.bounded_request(request, 64)
+      end)
+
+      assert hits(:own_retry_hit) == 4
+    end
+
     test "stamps no progress from a process that runs no tick" do
       module = __MODULE__.IdleBeatTick
       on_exit(fn -> :persistent_term.erase({module, :progress}) end)
@@ -1110,6 +1179,16 @@ defmodule Cinder.HTTPPolicyTest do
   # concurrent async test's call is in `events` too: the caller in the metadata tells them apart.
   defp request_task_pids(events, caller) do
     for {_measurements, %{caller: ^caller, task_pid: task_pid}} <- events, do: task_pid
+  end
+
+  # How many `message`s the test process holds, taking each. The stub sends one per request from
+  # the request task, before that task sends the result, so every one is here once the call returns.
+  defp hits(message, count \\ 0) do
+    receive do
+      ^message -> hits(message, count + 1)
+    after
+      0 -> count
+    end
   end
 
   defp refuse_dns(host), do: flunk("an out-of-range port must not resolve #{host}")
