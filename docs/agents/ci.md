@@ -405,7 +405,8 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
 
 ## Merge conflicts and translations
 
-A branch syncs with `main` only on a conflict or a diff that touches `CHANGELOG.md` (AGENTS.md
-"Merge authority"), or on a red that `main` clears ("Re-running CI", **Broken `main`**). For a
-conflict in `priv/gettext`, follow [workflow.md](workflow.md) "Merge conflicts":
-`scripts/gettext-fill.exs` refills the French msgstrs from the side you did not take.
+A branch syncs with `main` only on a conflict, a diff that touches `CHANGELOG.md`, or a fence or
+the `code_health_test` line cap that `scripts/merge-pr` stops on (AGENTS.md "Merge authority"),
+or on a red that `main` clears ("Re-running CI", **Broken `main`**). For a conflict in
+`priv/gettext`, follow [workflow.md](workflow.md) "Merge conflicts": `scripts/gettext-fill.exs`
+refills the French msgstrs from the side you did not take.

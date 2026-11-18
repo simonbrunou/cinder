@@ -110,9 +110,9 @@ exceptions each own one table and nothing derived:
 
 A new exception is legitimate only when a plan calls it out. When it lands, add it to this list.
 
-The reason: SQLite runs WAL with `busy_timeout: 5000` in dev, test and runtime, so a web write
-racing the poller waits instead of failing with "database busy". That holds only while writes go
-through the choke-points.
+The reason: SQLite runs WAL with `busy_timeout: 5_000` (`config/config.exs`; `config/test.exs`
+raises it to `10_000`), so a web write racing the poller waits instead of failing with "database
+busy". That holds only while writes go through the choke-points.
 
 ## The catalog is split by concept
 

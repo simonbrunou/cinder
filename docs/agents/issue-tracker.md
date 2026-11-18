@@ -11,9 +11,11 @@ on an unknown label, sets labels in the same call that creates the issue, and re
 back. Name the repo on every `fj` command: T3 worktree branches have no upstream, so a bare
 `fj issue ...` fails with `no repo info specified`.
 
-- `fj issue <cmd> -R origin ...`. `-R` goes after the subcommand.
-- `fj -H git.sbrn.eu pr ...` and `fj -H git.sbrn.eu repo labels simonbrunou/cinder ...`. `-H`
-  goes before the subcommand.
+- `fj issue <cmd> -R origin ...`. `-R` may go before or after the subcommand.
+- `fj pr -R origin <cmd> ...`. `-R` goes before the subcommand: `fj pr <cmd> -R origin` fails
+  with `unexpected argument '-R'`.
+- `fj -H git.sbrn.eu pr view simonbrunou/cinder#<n>` and
+  `fj -H git.sbrn.eu repo labels simonbrunou/cinder ...` name the repo in the argument instead.
 
 `fj` (v0.7.0) has no JSON output. Its dependency commands (`fj issue depend list -R origin <n>`,
 `depend add`, `depend remove`, `fj issue block ...`) are new and only `list` has been tried, so
