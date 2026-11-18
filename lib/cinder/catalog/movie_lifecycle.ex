@@ -409,11 +409,6 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
   # --- failures ----------------------------------------------------------------------------------
 
-  # Retrying cannot help these, so they park (or revert an upgrade) on first sight.
-  # :unsupported_download_url is a download link the client can never fetch (an unknown scheme,
-  # or one `Cinder.HTTPPolicy` refuses from its text), :bad_torrent a malformed .torrent.
-  @permanent_search_errors [:unsupported_download_url, :bad_torrent]
-
   # The release itself is unusable. :wrong_audio_language is the MediaInfo check rejecting a
   # confirmed wrong-language file: its audio will not change, so re-importing cannot help, and a
   # Retry re-searches (a soft Original/Any pick may re-grab it, but Retry is manual, so no loop).
@@ -464,7 +459,9 @@ defmodule Cinder.Catalog.MovieLifecycle do
   def record_failure(%Movie{status: status} = movie, reason)
       when status in [:requested, :searching] do
     cond do
-      Watch.reason_code(reason) in @permanent_search_errors ->
+      # Retrying cannot help a submission the download client refused for good, so the movie
+      # parks on first sight, as a book target is held on the same list.
+      Watch.reason_code(reason) in Download.permanent_submission_errors() ->
         Logger.warning("movie #{movie.id} search failed permanently: #{inspect(reason)}")
         park(movie, :search_failed, reason)
 

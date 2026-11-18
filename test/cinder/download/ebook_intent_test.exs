@@ -133,7 +133,8 @@ defmodule Cinder.Download.EbookIntentTest do
 
       # The client parses the release and refuses it outright — a dead magnet, an unparseable
       # .torrent. `abandon_reserved/2` drops the reservation, and for a movie or an episode that
-      # is enough because the next search pass re-derives the work. Books have no search pass, so
+      # is enough because its poller's search pass records the failure or re-derives the work
+      # (`Cinder.Download.PermanentSubmissionErrorsTest`). Books have no search pass, so
       # a `:monitored` target with no grab and no intent is indistinguishable from one nobody has
       # picked a release for — and `reconcile_pending_intents/1`, which the poller runs every
       # tick, discards this return value, so the failure would be silent as well as permanent.

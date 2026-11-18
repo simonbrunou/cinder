@@ -1289,7 +1289,7 @@ defmodule Cinder.Download.IntentTest do
              Download.grab_episodes(release("Chosen.Show"), [episode.id])
   end
 
-  test "a definite add rejection releases movie and TV targets for another search" do
+  test "a definite add rejection drops the movie and TV reservations so new ones can be made" do
     movie = movie_fixture(%{status: :no_match})
     {:ok, movie_intent} = reserve_movie_intent(movie.id, release("Rejected.Movie"))
 

@@ -38,7 +38,9 @@ defmodule Cinder.Download do
 
   @doc """
   The submission errors that drop a reservation for good; a book target is also held on them
-  (`abandon_reserved/2`). `CinderWeb.LiveHelpers.book_hold_reason/1` words each one.
+  (`abandon_reserved/2`), and a movie in its search phase parks on them
+  (`Cinder.Catalog.MovieLifecycle.record_failure/2`). `CinderWeb.LiveHelpers.book_hold_reason/1`
+  words each one.
   """
   @spec permanent_submission_errors() :: [atom()]
   def permanent_submission_errors, do: @permanent_submission_errors
@@ -879,10 +881,13 @@ defmodule Cinder.Download do
 
   # A permanently rejected submission (a torrent the client cannot parse, a URL it refuses, a
   # release whose stored ciphertext no longer decrypts) drops the reservation and reports the
-  # reason to the caller.
+  # reason to the caller. A grab from the movie poller's search pass then parks the movie when it
+  # is still in the search pass (`MovieLifecycle.record_failure/2`), and one from the TV poller's
+  # spends a search attempt.
   #
-  # For a book that report is not enough, and the difference is the missing search sweep. A movie
-  # or episode left in its pre-grab state is re-derived by its poller's next search pass; a book
+  # For a book that report is not enough, and the difference is the missing search sweep.
+  # `reconcile_pending_intents/1` discards the report, and a movie or episode it leaves in its
+  # pre-grab state is re-derived by its poller's next search pass; a book
   # target has no such pass, so a deleted intent with no grab leaves a `:monitored` row that is
   # byte-identical to "nobody picked a release yet" — and `reconcile_pending_intents/1`, which the
   # book poller runs every tick, discards this return value, so the failure would be invisible as

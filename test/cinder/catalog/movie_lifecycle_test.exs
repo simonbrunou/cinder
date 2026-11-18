@@ -13,6 +13,7 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
   alias Cinder.Audit.AdminAudit
   alias Cinder.Catalog
   alias Cinder.Catalog.{Attention, BlockedRelease, Movie, MovieLifecycle}
+  alias Cinder.Download
   alias Cinder.Download.Intent
   alias Cinder.Library
   alias Cinder.Library.{StagedImport, Upgrade}
@@ -780,10 +781,10 @@ defmodule Cinder.Catalog.MovieLifecycleTest do
   end
 
   describe "record_failure/2 in the search phase" do
-    test "parks a permanent search error at once" do
+    test "parks each permanent submission error at once" do
       Cinder.TestNotifier.subscribe()
 
-      for reason <- [:bad_torrent, :unsupported_download_url] do
+      for reason <- Download.permanent_submission_errors() do
         movie = movie_fixture(%{status: :searching})
 
         {result, parks} =
