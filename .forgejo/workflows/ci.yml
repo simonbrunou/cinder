@@ -147,7 +147,86 @@ jobs:
       - run: mix hex.audit
       - run: mix deps.audit
 
+  # #1486: tells `container` whether a pull request changes a path of image-inputs.txt, the paths
+  # the image and that job read, since it left its base branch. A pull request that changes none
+  # skips `container`, which then reports `skipped`; branch protection counts that as passed. A
+  # push to main skips it too: Coolify builds main's image for prod, and trivy.yml builds and
+  # scans it every night. scripts/merge-pr accepts a pull request's `skipped` only when the PR,
+  # diffed against main, changes no listed path either, which covers a PR into another branch.
+  # The step fails on a list line it cannot read and on a git error, which turns the run red and
+  # skips `container` too: re-run the whole run.
+  # Cinder.PushRepeatsPr allows this job only in this exact form, decide step text included, and
+  # test/code_health/ci_image_inputs_step_test.exs runs the step's text on fixture repos.
+  image-inputs:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+    steps:
+      # Full history, for the merge base of the branch with origin/main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # With --no-renames git lists a rename as its deleted and its added path, so the answer rests
+      # on no rename detection. `:(literal)` keeps git from reading a list line as a pattern.
+      - id: decide
+        name: Decide whether the container job runs
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          case "$EVENT" in
+            pull_request) ;;
+            push)
+              echo "A push run builds no image: Coolify builds main's image for prod, so the container job skips"
+              echo build=false >>"$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            *)
+              echo "A $EVENT run: the container job runs"
+              echo build=true >>"$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          if [ ! -f image-inputs.txt ]; then
+            echo "::error::image-inputs.txt is missing"
+            exit 1
+          fi
+          specs=()
+          number=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            number=$((number + 1))
+            case "$line" in
+              '' | '#'*) continue ;;
+            esac
+            if ! [[ "$line" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] || [[ "/$line/" == */./* || "/$line/" == */../* ]]; then
+              echo "::error::image-inputs.txt:$number: '$line' is not a path this step reads (letters, digits, ., _, - and /, with no empty, . or .. part)"
+              exit 1
+            fi
+            specs+=(":(literal)$line")
+          done <image-inputs.txt
+          if [ "${#specs[@]}" = 0 ]; then
+            echo "::error::image-inputs.txt holds no path"
+            exit 1
+          fi
+          if ! changed=$(git diff --name-only --no-renames "origin/$BASE_REF...HEAD" -- "${specs[@]}"); then
+            echo "::error::git cannot diff origin/$BASE_REF...HEAD"
+            exit 1
+          fi
+          if [ -n "$changed" ]; then
+            echo "The branch changes these image inputs since it left origin/$BASE_REF, so the container job runs:"
+            printf '%s\n' "$changed"
+            echo build=true >>"$GITHUB_OUTPUT"
+          else
+            echo "The branch changes no path of image-inputs.txt since it left origin/$BASE_REF, so the container job skips"
+            echo build=false >>"$GITHUB_OUTPUT"
+          fi
+
   container:
+    needs: image-inputs
+    # Skips only on an explicit false, so a missing output builds.
+    if: needs.image-inputs.outputs.build != 'false'
     runs-on: ubuntu-latest
     env:
       # The job drives the runner CT's Docker daemon, shared by every job on the
@@ -165,7 +244,7 @@ jobs:
 
       # #1193: remove what earlier attempts of this run left behind, by name. The names
       # are this attempt's with its number swapped out. The image goes by tag, never by
-      # ID: a push run and a pull_request run of one SHA build the same image ID.
+      # ID: trivy.yml's run and a pull_request run of one tree build the same image ID.
       # `--force` would skip a missing name, but `image rm` still prints an error for it,
       # so the step checks first. `shell: bash` runs it with `-e`, so a failed `docker` call
       # fails the step, and `((...))` needs bash. test/code_health/ci_container_attempt_test.exs

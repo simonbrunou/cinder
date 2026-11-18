@@ -1,0 +1,30 @@
+# The paths a pull request must change for CI's `container` job to run on it (#1486). The
+# `image-inputs` job in .forgejo/workflows/ci.yml diffs the branch against the pull request's base
+# branch over these paths. A push to main runs no `container` job.
+# One path per line, a file or a folder relative to the repo root, in letters, digits, `.`, `_`,
+# `-` and `/`, with no glob. A line that starts with `#` and an empty line are skipped. A path that
+# does not exist yet still counts, so adding it builds.
+#
+# test/code_health/image_inputs_test.exs fails `mix test` when a Dockerfile COPY reads a path that
+# no line covers, or when a path of the block "The build and the job" is missing.
+# Cinder.ImageInputs (test/support/image_inputs.ex) says what it reads.
+
+# The build and the job: the Dockerfile, both files that can set what the build context drops, the
+# checkout rules, this list, the workflow, and the files the job reads besides the image.
+Dockerfile
+Dockerfile.dockerignore
+.dockerignore
+.gitattributes
+image-inputs.txt
+.forgejo/workflows/ci.yml
+.github/scripts
+.trivyignore
+
+# What the Dockerfile's COPY lines read.
+mix.exs
+mix.lock
+config
+priv
+lib
+assets
+rel

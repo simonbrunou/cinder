@@ -13,16 +13,21 @@ defmodule Cinder.PushRepeatsPr do
   it finds:
 
   - in a workflow anywhere under .forgejo/workflows/, subfolders included: no `push` or no
-    `pull_request` trigger, a `pull_request` filter, a `push` filter beyond `branches: [main]`,
-    a trigger other than those two, `schedule` and `workflow_dispatch`, and a job that calls a
-    reusable workflow (`jobs.<id>.uses`), whose steps this check cannot read;
+    `pull_request` trigger, unless every trigger is `schedule` or `workflow_dispatch`, so that
+    the workflow runs in neither run (trivy.yml), a `pull_request` filter, a `push` filter
+    beyond `branches: [main]`, a trigger other than those two, `schedule` and
+    `workflow_dispatch`, and a job that calls a reusable workflow (`jobs.<id>.uses`), whose
+    steps this check cannot read;
   - in a workflow under .github/workflows/, a trigger other than a push of tags. Forgejo reads
     those files only when .forgejo/workflows/ holds none, which this check reports too;
   - in a workflow, in any other YAML file under .forgejo/, in an action.yml or action.yaml
     anywhere and in a .github/workflows/ file: a symbolic link, whose target's name is all that
     git stores, a file that is not UTF-8 or that yamerl cannot read, more than one YAML
     document, a directive (`%YAML`, `%TAG` or a reserved one), a tag (`!!binary`, `!!str`, a
-    lone `!`), an anchor, an alias and a merge key (`<<`), which this check does not follow;
+    lone `!`), an anchor, an alias and a merge key (`<<`), which this check does not follow, a
+    key that a mapping holds twice, of which yamerl reads one, a plain key that yamerl reads as
+    a number, a boolean or null, which another spelling repeats (`1` and `0x1`), and a key that
+    is a collection;
   - in those files but the .github/workflows/ ones, as yamerl decodes them, so an escape such as
     `\x24` or a `!!binary` value counts: an `if` key (and an action's `pre-if` and `post-if`), a
     `${{ }}` expression in a key or a value, a step that uses actions/github-script, whose code
@@ -63,14 +68,36 @@ defmodule Cinder.PushRepeatsPr do
   6. The token as `${{ secrets.<token> }}` in the `password` input of a `docker/login-action@`
      step in .github/workflows/release.yml, while that file's only trigger is a push of tags. A
      merge to `main` pushes no tag.
+  7. The image-inputs gate (#1486), which lets a pull request skip the `container` job: the
+     `if: needs.image-inputs.outputs.build != 'false'` of the `container` job,
+     `${{ steps.decide.outputs.build }}` in the image-inputs job's `outputs.build`,
+     `${{ github.event_name }}` and `${{ github.base_ref }}` in its decide step's EVENT and
+     BASE_REF, and the runner's output file in that step's `run`, only as the target of `>>`. They
+     count only while the workflow has the shape `ci.yml` has: no workflow key but `name`, `on`,
+     `concurrency` and `jobs`; an image-inputs job of `runs-on`, that one output and two steps, a
+     checkout with `fetch-depth: 0` alone, then the decide step with only `id: decide`, a `name`,
+     `shell: bash`, those two variables and exactly `@decide_run` as its `run`; and a `container`
+     job that `needs: image-inputs`. Any other key could make the step run other code on one
+     event. With that text, the push run always skips `container`: Coolify builds `main`'s
+     image for prod and trivy.yml scans it nightly, so the push run repeats every PR job but
+     that one. A PR skips it when it changes no image input, and the check reads no PR diff for
+     that: `scripts/merge-pr` refuses to merge a skipped `container` job whose head changes a
+     listed path against its merge base with `origin/main`, which also catches a PR based on
+     another branch. That refusal covers every input only while the list does, so the check
+     also reports each problem `Cinder.ImageInputs` finds at the SHA: a path the build or the
+     job reads that image-inputs.txt misses, and a form its Dockerfile reader cannot read. A
+     second workflow in the gate's shape is a difference too.
 
   It cannot see code that branches on commit metadata (the push run checks out `main` at the
   merge commit, whose subject, SHA and parents differ from the pushed SHA's), what a third-party
   action (`uses: owner/repo@ref`) does with the event, code that the runner or its image runs in
   every step, a workflow or job `defaults` or `env` that makes the cmake step of 3 run other
   code, a YAML form outside the list above that yamerl and the runner's reader read apart, a
-  step that runs a Markdown file by its own name, and code that reads the event by a route the
-  list above leaves out. Such code passes.
+  step that runs a Markdown file by its own name, code that reads the event by a route the
+  list above leaves out, and whether the image of the merged tree builds, boots and passes its
+  scan: no run of the PR or of `main` builds it when the PR skipped `container` or the merge
+  holds a tree the PR's run did not test (Coolify's prod build and trivy.yml's nightly scan do).
+  Such code passes.
 
   Exit 0: no difference, so the push run repeats the PR run. Exit 1: it printed a difference, so
   wait on main's run. Exit 2: the arguments are wrong, git failed, the SHA is unknown, yamerl
@@ -118,6 +145,68 @@ defmodule Cinder.PushRepeatsPr do
   @trivy_comment_forms [
     Regex.compile!("(?<![A-Za-z0-9_])(?:" <> @token <> "|" <> @workspace <> ")(?![A-Za-z0-9_])")
   ]
+
+  # Rule 7. The step's text writes its answer to the runner's output file, whose name is built
+  # from parts like @runner_names so this file does not match itself.
+  @output_file "$" <> hd(@runner_names) <> "OUTPUT"
+  @gate_job "image-inputs"
+  @gate_if "needs.image-inputs.outputs.build != 'false'"
+  @gate_output "steps.decide.outputs.build"
+  @gate_env %{"EVENT" => "github.event_name", "BASE_REF" => "github.base_ref"}
+  @gate_workflow_keys ~w(concurrency jobs name on)
+  @decide_forms [Regex.compile!(Regex.escape(~s(>>"#{@output_file}")))]
+  @decide_run String.replace(
+                ~S"""
+                case "$EVENT" in
+                  pull_request) ;;
+                  push)
+                    echo "A push run builds no image: Coolify builds main's image for prod, so the container job skips"
+                    echo build=false >>"<OUTPUT>"
+                    exit 0
+                    ;;
+                  *)
+                    echo "A $EVENT run: the container job runs"
+                    echo build=true >>"<OUTPUT>"
+                    exit 0
+                    ;;
+                esac
+                if [ ! -f image-inputs.txt ]; then
+                  echo "::error::image-inputs.txt is missing"
+                  exit 1
+                fi
+                specs=()
+                number=0
+                while IFS= read -r line || [ -n "$line" ]; do
+                  number=$((number + 1))
+                  case "$line" in
+                    '' | '#'*) continue ;;
+                  esac
+                  if ! [[ "$line" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] || [[ "/$line/" == */./* || "/$line/" == */../* ]]; then
+                    echo "::error::image-inputs.txt:$number: '$line' is not a path this step reads (letters, digits, ., _, - and /, with no empty, . or .. part)"
+                    exit 1
+                  fi
+                  specs+=(":(literal)$line")
+                done <image-inputs.txt
+                if [ "${#specs[@]}" = 0 ]; then
+                  echo "::error::image-inputs.txt holds no path"
+                  exit 1
+                fi
+                if ! changed=$(git diff --name-only --no-renames "origin/$BASE_REF...HEAD" -- "${specs[@]}"); then
+                  echo "::error::git cannot diff origin/$BASE_REF...HEAD"
+                  exit 1
+                fi
+                if [ -n "$changed" ]; then
+                  echo "The branch changes these image inputs since it left origin/$BASE_REF, so the container job runs:"
+                  printf '%s\n' "$changed"
+                  echo build=true >>"<OUTPUT>"
+                else
+                  echo "The branch changes no path of image-inputs.txt since it left origin/$BASE_REF, so the container job skips"
+                  echo build=false >>"<OUTPUT>"
+                fi
+                """,
+                "<OUTPUT>",
+                @output_file
+              )
 
   @release ".github/workflows/release.yml"
   @release_password "${{ secrets." <> @token <> " }}"
@@ -217,10 +306,12 @@ defmodule Cinder.PushRepeatsPr do
     yaml_links = Enum.filter(links, &yaml_read?/1)
     yaml = files |> Enum.uniq() |> Enum.filter(&yaml_read?/1) |> Enum.reject(&(&1 in yaml_links))
 
-    {yaml_differences, allowed_lines} =
-      Enum.reduce(yaml, {[], %{}}, fn path, {differences, allowed} ->
-        {found, lines} = read_yaml(path, blob(top, commit, path))
-        {differences ++ found, Map.merge(allowed, lines)}
+    {yaml_differences, allowed_lines, gates} =
+      Enum.reduce(yaml, {[], %{}, []}, fn path, {differences, allowed, gates} ->
+        {found, lines, gate?} = read_yaml(path, blob(top, commit, path))
+
+        {differences ++ found, Map.merge(allowed, lines),
+         if(gate?, do: gates ++ [path], else: gates)}
       end)
 
     differences =
@@ -229,7 +320,8 @@ defmodule Cinder.PushRepeatsPr do
         link_problems(top, commit, entries, links) ++
         submodules(entries) ++
         if(workflows == [], do: [".forgejo/workflows/: no workflow file"], else: []) ++
-        yaml_differences ++ name_scan(top, commit, allowed_lines)
+        yaml_differences ++
+        gate_problems(top, commit, entries, gates) ++ name_scan(top, commit, allowed_lines)
 
     short = String.slice(commit, 0, 8)
 
@@ -323,6 +415,27 @@ defmodule Cinder.PushRepeatsPr do
     end
   end
 
+  # Rule 7: the gate is allowed once, and only while image-inputs.txt covers every path the image
+  # and the container job read, so that a pull request that skipped the job changed none.
+  defp gate_problems(_top, _commit, _entries, []), do: []
+
+  defp gate_problems(top, commit, entries, [_one]) do
+    regular = MapSet.new(for {mode, path} <- entries, mode in ["100644", "100755"], do: path)
+
+    read = fn path ->
+      if MapSet.member?(regular, path), do: {:ok, blob(top, commit, path)}, else: :error
+    end
+
+    for problem <- Cinder.ImageInputs.problems(entries, read),
+        do: problem <> "; a pull request can then skip the container job that main's run builds"
+  end
+
+  defp gate_problems(_top, _commit, _entries, paths),
+    do: [
+      "#{Enum.join(paths, ", ")}: #{length(paths)} workflows hold the image-inputs gate, " <>
+        "which the allowance covers once"
+    ]
+
   defp submodules(entries) do
     for {"160000", path} <- entries,
         do: "#{path}: a submodule, whose files this check cannot read"
@@ -357,10 +470,11 @@ defmodule Cinder.PushRepeatsPr do
             else: []
           )
 
-      {forms ++ rules(path, root), allowed_lines(path, text, root)}
+      gate? = workflow_path?(path) and not action?(path) and gate?(root)
+      {forms ++ rules(path, root, gate?), allowed_lines(path, text, root, gate?), gate?}
     else
-      false -> {["#{path}: not UTF-8 text, which this check cannot read"], %{}}
-      {:error, message} -> {["#{path}: not readable as YAML (#{message})"], %{}}
+      false -> {["#{path}: not UTF-8 text, which this check cannot read"], %{}, false}
+      {:error, message} -> {["#{path}: not readable as YAML (#{message})"], %{}, false}
     end
   end
 
@@ -388,6 +502,7 @@ defmodule Cinder.PushRepeatsPr do
   defp to_node({type, _module, _tag, pres, text}) when type in [:yamerl_str, :yamerl_binary],
     do: {:str, pres[:line], text}
 
+  defp to_node({:yamerl_int, _module, _tag, pres, value}), do: {:int, pres[:line], value}
   defp to_node({:yamerl_null, _module, _tag, pres}), do: {:null, pres[:line]}
   defp to_node(other), do: {:other, elem(other, 3)[:line]}
 
@@ -406,7 +521,77 @@ defmodule Cinder.PushRepeatsPr do
       end
     )
 
-    ref |> drain_tokens([]) |> Enum.flat_map(&token_problem(path, &1))
+    tokens = drain_tokens(ref, [])
+    Enum.flat_map(tokens, &token_problem(path, &1)) ++ duplicate_keys(path, tokens)
+  end
+
+  # yamerl keeps one value of a key a mapping holds twice, and a runner may read the other, so
+  # each repeat is a problem. A frame per open collection holds the keys seen so far and whether
+  # the next node is a key; a key that is itself a collection is a form this check does not read.
+  defp duplicate_keys(path, tokens) do
+    {_frames, problems} =
+      Enum.reduce(tokens, {[], []}, fn token, {frames, problems} ->
+        duplicate_step(path, token, frames, problems)
+      end)
+
+    Enum.reverse(problems)
+  end
+
+  defp duplicate_step(path, {:yamerl_collection_start, line, _, _, _, _}, frames, problems) do
+    case frames do
+      [%{key?: true} = top | rest] ->
+        problem = "#{path}:#{line}: a key that is a collection, which this check does not read"
+        {[%{seen: MapSet.new(), key?: false}, %{top | key?: false} | rest], [problem | problems]}
+
+      _ ->
+        {[%{seen: MapSet.new(), key?: false} | frames], problems}
+    end
+  end
+
+  defp duplicate_step(_path, {:yamerl_collection_end, _, _, _, _}, [_top | rest], problems),
+    do: {rest, problems}
+
+  defp duplicate_step(_path, {:yamerl_mapping_key, _, _}, [top | rest], problems),
+    do: {[%{top | key?: true} | rest], problems}
+
+  defp duplicate_step(
+         path,
+         {:yamerl_scalar, line, _, _, _, substyle, text},
+         [%{key?: true} = top | rest],
+         problems
+       ) do
+    key = to_string(text)
+
+    problems =
+      cond do
+        substyle == :plain and not text_key?(key) ->
+          [
+            "#{path}:#{line}: the key #{inspect(key)}, which yamerl reads as a number, a " <>
+              "boolean or null, so another spelling of it is the same key"
+            | problems
+          ]
+
+        MapSet.member?(top.seen, key) ->
+          [
+            "#{path}:#{line}: the key #{key} a second time in one mapping, of which yamerl reads one"
+            | problems
+          ]
+
+        true ->
+          problems
+      end
+
+    {[%{top | seen: MapSet.put(top.seen, key), key?: false} | rest], problems}
+  end
+
+  defp duplicate_step(_path, _token, frames, problems), do: {frames, problems}
+
+  # A plain key that yamerl reads back as the same text. `1` and `0x1`, or `true` and `True`,
+  # differ as text but are one key to yamerl, which then keeps one value.
+  defp text_key?(key) do
+    match?([^key], :yamerl_constr.string(key, [:str_node_as_binary]))
+  catch
+    _kind, _reason -> false
   end
 
   defp drain_tokens(ref, tokens) do
@@ -456,13 +641,10 @@ defmodule Cinder.PushRepeatsPr do
   defp tag_text({:non_specific, mark}), do: to_string(mark)
   defp tag_text(uri), do: to_string(uri)
 
-  defp rules(path, root) do
+  defp rules(path, root, gate?) do
     workflow = workflow_path?(path)
-
-    walked =
-      if full?(path),
-        do: walk(root, [], %Context{path: path, workflow?: workflow and not action?(path)}),
-        else: []
+    ctx = %Context{path: path, workflow?: workflow and not action?(path), gate?: gate?}
+    walked = if full?(path), do: walk(root, [], ctx), else: []
 
     walked ++
       if(workflow, do: trigger_problems(path, root) ++ reusable_jobs(path, root), else: []) ++
@@ -542,6 +724,12 @@ defmodule Cinder.PushRepeatsPr do
        when input in ["key", "restore-keys"],
        do: inner in @cache_keys and uses?(ctx.step, "actions/cache@")
 
+  defp allowed_expression?(@gate_output, ["jobs", @gate_job, "outputs", "build"], ctx),
+    do: ctx.gate?
+
+  defp allowed_expression?(inner, ["jobs", @gate_job, "steps", 1, "env", name], %{gate?: true}),
+    do: @gate_env[name] == inner
+
   defp allowed_expression?(inner, ["jobs", _job, "env", _name], _ctx), do: inner in @run_names
 
   defp allowed_expression?(inner, ["jobs", _job, "steps", _index, "env", _name], _ctx),
@@ -557,6 +745,7 @@ defmodule Cinder.PushRepeatsPr do
   defp allowed_expression?(_inner, _where, _ctx), do: false
 
   defp allowed_if?(_value, _where, %{workflow?: false}), do: false
+  defp allowed_if?({:str, _line, @gate_if}, ["jobs", "container"], ctx), do: ctx.gate?
 
   defp allowed_if?({:str, _line, text}, ["jobs", _job, "steps", _index], ctx) do
     case String.trim(text) do
@@ -578,6 +767,9 @@ defmodule Cinder.PushRepeatsPr do
 
   defp allowed_names?(_text, _where, %{workflow?: false}), do: false
 
+  defp allowed_names?(text, ["jobs", @gate_job, "steps", 1, "run"], %{gate?: true}),
+    do: not Regex.match?(@names, strip(text, @decide_forms))
+
   defp allowed_names?(text, ["jobs", _job, "steps", _index, "run"], ctx),
     do: trivy_db_step?(ctx.step) and not Regex.match?(@names, strip(text, @trivy_run_forms))
 
@@ -588,6 +780,41 @@ defmodule Cinder.PushRepeatsPr do
 
   defp strip(text, forms), do: Enum.reduce(forms, text, &Regex.replace(&1, &2, ""))
 
+  # Rule 7's shape: the workflow holds no key but @gate_workflow_keys; the image-inputs job holds
+  # only `runs-on`, its one output and two steps, a checkout of the full history and the decide
+  # step, whose keys, `env` and `run` are exactly ci.yml's; and the container job needs it and
+  # skips on its explicit false. Any other key could make a step run other code on one event.
+  defp gate?(root) do
+    job = get(get(root, "jobs"), @gate_job)
+    container = get(get(root, "jobs"), "container")
+
+    Enum.all?(keys(root), &(&1 in @gate_workflow_keys)) and
+      keys(job) == ["outputs", "runs-on", "steps"] and
+      match?(
+        {:map, _, [{{:str, _, "build"}, {:str, _, "${{ steps.decide.outputs.build }}"}}]},
+        get(job, "outputs")
+      ) and gate_steps?(steps_of(job)) and
+      match?({:str, _, @gate_job}, get(container, "needs")) and
+      match?({:str, _, @gate_if}, get(container, "if"))
+  end
+
+  defp gate_steps?([checkout, decide]) do
+    keys(checkout) == ["uses", "with"] and uses?(checkout, "actions/checkout@") and
+      match?({:map, _, [{{:str, _, "fetch-depth"}, {:int, _, 0}}]}, get(checkout, "with")) and
+      keys(decide) == ["env", "id", "name", "run", "shell"] and string(decide, "id") == "decide" and
+      string(decide, "shell") == "bash" and string(decide, "run") == @decide_run and
+      gate_env?(get(decide, "env"))
+  end
+
+  defp gate_steps?(_steps), do: false
+
+  defp gate_env?(env) do
+    keys(env) == env_names() and
+      Enum.all?(@gate_env, fn {name, inner} -> string(env, name) == "${{ #{inner} }}" end)
+  end
+
+  defp env_names, do: @gate_env |> Map.keys() |> Enum.sort()
+
   defp trigger_problems(path, root) do
     case triggers(get(root, "on")) do
       nil -> ["#{path}: no on: triggers"]
@@ -595,8 +822,12 @@ defmodule Cinder.PushRepeatsPr do
     end
   end
 
+  # A workflow whose every trigger is `schedule` or `workflow_dispatch` runs in neither run.
   defp missing_triggers(path, triggers) do
+    off_event? = triggers != %{} and Enum.all?(Map.keys(triggers), &(&1 in @other_triggers))
+
     for name <- ["push", "pull_request"],
+        not off_event?,
         not Map.has_key?(triggers, name),
         do: "#{path}: no #{name} trigger"
   end
@@ -656,11 +887,29 @@ defmodule Cinder.PushRepeatsPr do
   end
 
   # `%{{path, line} => forms}` for rule 5 in a workflow and rule 6 in release.yml.
-  defp allowed_lines(path, text, root) do
+  defp allowed_lines(path, text, root, gate?) do
     cond do
-      workflow_path?(path) and not action?(path) -> trivy_lines(path, text, root)
-      path == @release and tag_push_only?(root) -> release_lines(path, root)
-      true -> %{}
+      workflow_path?(path) and not action?(path) ->
+        Map.merge(trivy_lines(path, text, root), decide_lines(path, text, root, gate?))
+
+      path == @release and tag_push_only?(root) ->
+        release_lines(path, root)
+
+      true ->
+        %{}
+    end
+  end
+
+  # Rule 7: the decide step's lines, where the output file may stand in its one form.
+  defp decide_lines(_path, _text, _root, false), do: %{}
+
+  defp decide_lines(path, text, root, true) do
+    lines = String.split(text, "\n")
+    [_checkout, {:map, first, _pairs}] = root |> get("jobs") |> get(@gate_job) |> steps_of()
+
+    case key_column(lines, first) do
+      nil -> %{}
+      column -> put_lines(%{}, path, body_lines(lines, first, column), @decide_forms)
     end
   end
 

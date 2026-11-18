@@ -29,7 +29,11 @@ defmodule Cinder.MergePrScriptTest do
       fi
       code=200 ;;
     "GET /commits/"*"/status")
-      body='{"state":"success","statuses":[{"context":"CI / test (pull_request)","status":"success"}]}'
+      if [[ -e $STUB/status ]]; then
+        body=$(cat "$STUB/status")
+      else
+        body='{"state":"success","statuses":[{"context":"CI / test (pull_request)","status":"success"}]}'
+      fi
       code=200 ;;
     "POST /pulls/7/merge")
       code=$(head -n 1 "$STUB/posts")
@@ -252,5 +256,187 @@ defmodule Cinder.MergePrScriptTest do
            ]
 
     assert posts(ctx) == 2
+  end
+
+  describe "a skipped container job (#1486)" do
+    @gate_ci """
+    name: CI
+    jobs:
+      test:
+        runs-on: x
+      image-inputs:
+        runs-on: x
+      container:
+        needs: image-inputs
+        runs-on: x
+    """
+
+    @gate_files %{".forgejo/workflows/ci.yml" => @gate_ci, "image-inputs.txt" => "# x\nlib\n"}
+
+    test "passes when the head changes no listed path against origin/main", ctx do
+      gate_head!(ctx, %{})
+      statuses!(ctx, %{"container" => "skipped"})
+
+      {out, code} = run(ctx, ["--dry-run", "7"])
+
+      assert code == 0, out
+      assert out =~ "CI / container (pull_request): skipped\n"
+      assert out =~ "container: skipped, and the head changes no path of image-inputs.txt since "
+    end
+
+    test "stops when the head changes a listed path against origin/main", ctx do
+      gate_head!(ctx, %{"lib/a.ex" => "a\n"})
+      statuses!(ctx, %{"container" => "skipped"})
+
+      {out, code} = run(ctx, ["--dry-run", "7"])
+
+      assert code == 1, out
+      assert out =~ "it changes these paths of image-inputs.txt: lib/a.ex"
+      assert out =~ "Merge origin/main into the branch and push"
+    end
+
+    test "stops on a skipped job other than container", ctx do
+      for job <- ["test", "image-inputs"] do
+        gate_head!(ctx, %{})
+        statuses!(ctx, %{job => "skipped"})
+
+        {out, code} = run(ctx, ["--dry-run", "7"])
+
+        assert {job, code} == {job, 1}, out
+        assert out =~ "CI / #{job} (pull_request): skipped; only the container job may skip"
+      end
+    end
+
+    test "stops when the head has no image-inputs job, no list, or a list it cannot read", ctx do
+      for {files, message} <- [
+            {%{
+               ".forgejo/workflows/ci.yml" =>
+                 String.replace(@gate_ci, "  image-inputs:\n    runs-on: x\n", "")
+             }, "but its ci.yml has no image-inputs job"},
+            {%{"image-inputs.txt" => nil}, "which holds no image-inputs.txt"},
+            {%{"image-inputs.txt" => "lib\nlib/\n"}, "image-inputs.txt:2 at "},
+            {%{"image-inputs.txt" => "lib\n../x\n"}, "image-inputs.txt:2 at "},
+            {%{"image-inputs.txt" => "# none\n"}, "holds no path"}
+          ] do
+        gate_head!(ctx, files)
+        statuses!(ctx, %{"container" => "skipped"})
+
+        {out, code} = run(ctx, ["--dry-run", "7"])
+
+        assert {message, code} == {message, 1}, out
+        assert out =~ message
+      end
+    end
+
+    test "a 405 retry checks the skip again against the origin/main it read", ctx do
+      # The head adds lib/a.ex, then removes it: against the first origin/main it changes no
+      # listed path. main then takes the adding commit, so against the new merge base the head
+      # deletes lib/a.ex.
+      gate_head!(ctx, %{"lib/a.ex" => "a\n"})
+      adding = git!(ctx.work, ["rev-parse", "pr"])
+      git!(ctx.work, ["checkout", "-q", "pr"])
+      git!(ctx.work, ["rm", "-q", "lib/a.ex"])
+      commit!(ctx.work, "drop a")
+      head = git!(ctx.work, ["rev-parse", "HEAD"])
+      git!(ctx.work, ["push", "-q", "-f", "origin", "HEAD:refs/pull/7/head"])
+      File.write!(Path.join(ctx.stub, "head"), head)
+      git!(ctx.work, ["checkout", "-q", "main"])
+      statuses!(ctx, %{"container" => "skipped"})
+      File.write!(Path.join(ctx.stub, "posts"), "405\n200\n")
+
+      File.write!(Path.join(ctx.stub, "move"), """
+      cd '#{ctx.work}'
+      git -c user.name=f -c user.email=f@example.invalid merge -q --no-edit #{adding}
+      git push -q origin main
+      """)
+
+      {out, code} = run(ctx, ["--body-from=#{adding}", "7"])
+
+      assert code == 1, out
+      assert out =~ "container: skipped, and the head changes no path of image-inputs.txt since "
+      assert out =~ "it changes these paths of image-inputs.txt: lib/a.ex"
+      assert posts(ctx) == 1
+    end
+
+    test "checks the skip against the origin/main the merge-tree check read", ctx do
+      # Another thread's fetch moves origin/main to a commit that holds the head's adding commit
+      # right after the merge-tree check: against that origin/main the head deletes lib/a.ex.
+      gate_head!(ctx, %{"lib/a.ex" => "a\n"})
+      adding = git!(ctx.work, ["rev-parse", "pr"])
+      git!(ctx.work, ["checkout", "-q", "pr"])
+      git!(ctx.work, ["rm", "-q", "lib/a.ex"])
+      commit!(ctx.work, "drop a")
+      head = git!(ctx.work, ["rev-parse", "HEAD"])
+      git!(ctx.work, ["push", "-q", "-f", "origin", "HEAD:refs/pull/7/head"])
+      File.write!(Path.join(ctx.stub, "head"), head)
+      git!(ctx.work, ["checkout", "-q", "main"])
+      statuses!(ctx, %{"container" => "skipped"})
+
+      exe!(Path.join(ctx.bin, "git"), """
+      #!/usr/bin/env bash
+      real=#{System.find_executable("git")}
+      if [[ $1 == merge-tree ]]; then
+        "$real" "$@"
+        code=$?
+        "$real" update-ref refs/remotes/origin/main #{adding}
+        exit "$code"
+      fi
+      exec "$real" "$@"
+      """)
+
+      {out, code} = run(ctx, ["--dry-run", "--body-from=#{adding}", "7"])
+
+      assert code == 0, out
+      assert out =~ "container: skipped, and the head changes no path of image-inputs.txt since "
+      assert git!(ctx.work, ["rev-parse", "origin/main"]) == adding
+    end
+
+    test "reads a last list line with no newline", ctx do
+      gate_head!(ctx, %{"image-inputs.txt" => "b.txt", "lib/a.ex" => nil})
+      statuses!(ctx, %{"container" => "skipped"})
+
+      {out, code} = run(ctx, ["--dry-run", "7"])
+
+      assert code == 1, out
+      assert out =~ "it changes these paths of image-inputs.txt: b.txt"
+    end
+  end
+
+  # Rewrites the PR's one commit with the gate files and `files` laid over its tree (nil deletes a
+  # file), pushes it as the PR head and returns its SHA.
+  defp gate_head!(ctx, files) do
+    git!(ctx.work, ["checkout", "-q", "pr"])
+    git!(ctx.work, ["reset", "-q", "--hard", ctx.head])
+
+    for {path, body} <- Map.merge(@gate_files, files) do
+      full = Path.join(ctx.work, path)
+
+      if body == nil do
+        File.rm_rf!(full)
+      else
+        File.mkdir_p!(Path.dirname(full))
+        File.write!(full, body)
+      end
+    end
+
+    git!(ctx.work, ["add", "-A"])
+    git!(ctx.work, ["commit", "-q", "--amend", "--no-edit"])
+    head = git!(ctx.work, ["rev-parse", "HEAD"])
+    git!(ctx.work, ["push", "-q", "-f", "origin", "HEAD:refs/pull/7/head"])
+    File.write!(Path.join(ctx.stub, "head"), head)
+    git!(ctx.work, ["checkout", "-q", "main"])
+    head
+  end
+
+  # Serves the three jobs' statuses, each success unless `overrides` names it.
+  defp statuses!(ctx, overrides) do
+    statuses =
+      for job <- ["test", "image-inputs", "container"],
+          do: %{context: "CI / #{job} (pull_request)", status: Map.get(overrides, job, "success")}
+
+    File.write!(
+      Path.join(ctx.stub, "status"),
+      JSON.encode!(%{state: "success", statuses: statuses})
+    )
   end
 end

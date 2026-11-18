@@ -60,7 +60,8 @@ Agents may merge their own PR without asking once all three hold:
 
 - a code review ran on the diff (the `code-review` skill or the `pr-review-toolkit:code-reviewer`
   agent) and its real findings are fixed, nits aside (the global agent rules define a nit);
-- CI is green on the PR's pushed SHA;
+- CI is green on the PR's pushed SHA, where a `skipped` `CI / container (pull_request)` counts
+  once `scripts/merge-pr` accepts it;
 - the pushed SHA has no conflict with `origin/main`. Right before merging, run `git fetch origin`,
   then check that `git merge-tree --write-tree origin/main <pushed SHA>` exits 0.
 
@@ -90,13 +91,14 @@ merging agent checks whether to wait for `main`'s CI run, which shows that break
      the wait held the thread about 50 minutes.
 3. On the same hash, run
    `MIX_ENV=test mix run --no-start scripts/check-push-repeats-pr.exs <pushed SHA>`. The skip
-   holds only while the `push` run on `main` repeats the PR run's jobs and steps. The check reads
-   the workflows, actions and other tracked files at that SHA for a difference between the two
-   runs. Exit 0 means skip the wait. Any other exit means wait as step 4 says, even though the
-   hashes match. The check exits 1 after lines that name each difference. It exits 2 when it
-   cannot check: wrong arguments, a git failure, an unknown SHA, a YAML reader that cannot start,
-   an error of its own, or a run without `MIX_ENV=test`. Mix exits 1 when the code does not
-   compile. The moduledoc of `Cinder.PushRepeatsPr`
+   holds only while the `push` run on `main` repeats the PR run's jobs and steps, the
+   `container` job aside: the push run skips it ([ci.md](docs/agents/ci.md) "What runs"). The
+   check reads the workflows, actions and other tracked files at that SHA for a difference
+   between the two runs. Exit 0 means skip the wait. Any other exit means wait as step 4 says,
+   even though the hashes match. The check exits 1 after lines that name each difference. It
+   exits 2 when it cannot check: wrong arguments, a git failure, an unknown SHA, a YAML reader
+   that cannot start, an error of its own, or a run without `MIX_ENV=test`. Mix exits 1 when the
+   code does not compile. The moduledoc of `Cinder.PushRepeatsPr`
    (`test/support/push_repeats_pr.ex`) lists what it reads, the differences this repo keeps on
    purpose, and what it cannot see.
 4. Wait on the `CI / <job> (push)` statuses of `main`'s head ([ci.md](docs/agents/ci.md)

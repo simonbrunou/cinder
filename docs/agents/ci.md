@@ -3,10 +3,11 @@
 ## What runs
 
 - `.forgejo/workflows/ci.yml` runs on the Forgejo runners for every PR and every push to `main`.
-  It has three jobs, reported as commit statuses `CI / test`, `CI / container` and
-  `CI / dependency-audit`, each suffixed `(pull_request)` or `(push)`. Branch protection on
-  `main` requires `* (pull_request)`. GitHub runs no CI: its only workflow is `release.yml`, on a
-  tag ([workflow.md](workflow.md) "Releasing").
+  It has four jobs, reported as commit statuses `CI / test`, `CI / image-inputs`,
+  `CI / container` and `CI / dependency-audit`, each suffixed `(pull_request)` or `(push)`.
+  Branch protection on `main` requires `* (pull_request)`, and counts a `skipped` status as
+  passed (diversif#785 merged with four skipped jobs). GitHub runs no CI: its only workflow is
+  `release.yml`, on a tag ([workflow.md](workflow.md) "Releasing").
 - `test` runs the `mix test` alias with `MIX_ENV=test` and uploads its full output as the
   `mix-test-output` artifact, kept 14 days. Once the gates pass, a partitioned run's output
   holds each partition's log under a
@@ -17,6 +18,30 @@
   `mv --exchange`: the `test` job's coreutils lacks it), runs the Playwright browser smoke
   (`.github/scripts/browser_smoke.py`, `browser_lifecycle.py`), then scans the image with Trivy
   (HIGH and CRITICAL, unfixed CVEs and the CVEs listed in `.trivyignore` ignored).
+- `container` runs on a PR only when its branch changes a path of `image-inputs.txt` since it
+  left its base branch: the `image-inputs` job decides, and its log names the changed paths.
+  Otherwise the PR's `container` reports `skipped` ("Has been skipped"), and `scripts/merge-pr`
+  accepts that only when the head, diffed against `origin/main`, changes no listed path either.
+  A file the build or the job newly reads goes on that list:
+  `test/code_health/image_inputs_test.exs` fails on a Dockerfile `COPY` the list misses, and its
+  reader's moduledoc (`Cinder.ImageInputs`) says what it cannot see.
+- A push to `main` skips `container` too: Coolify builds `main`'s image for prod, and the
+  `ship-cinder-pr-on-forgejo` skill's "Verify the prod deploy" checks it. So no CI run boots or
+  browser-tests a merge whose tree no PR built, such as two PRs that each changed an image
+  input. Such a break shows first as a red deploy, or as a red `container` on the next PR that
+  changes an image input, whatever that PR's diff.
+- `.forgejo/workflows/trivy.yml` builds `main`'s image every night (cron `20 4 * * *`) and
+  scans it with the `container` job's Trivy steps, which
+  `test/code_health/trivy_workflow_test.exs` keeps the same. With the token and `$API` of
+  "Reading a run", start it on demand with
+  `curl ... -X POST -d '{"ref":"main","return_run_info":true}' "$API/actions/workflows/trivy.yml/dispatches"`
+  (a JSON `Content-Type` header), which answers 201 and the run's `id`. The run posts no commit
+  status, so `forgejo.py ci` cannot wait on it. Read the run's `status` with
+  `curl ... "$API/actions/runs/<id>" | jq .status`: it read `running` while the first dispatched
+  run (id 5659) ran and `success` once its scan passed. Its `conclusion` stays `null`. A run that
+  failed reads `failure`, and a cancelled one `cancelled`. The newest run,
+  scheduled or dispatched, is
+  `curl ... "$API/actions/runs?workflow_id=trivy.yml&page=1&limit=1" | jq '.workflow_runs[0] | {id, status}'`.
 - `dependency-audit` runs `mix hex.audit` and `mix deps.audit`.
 - Two runners take the jobs. `ci-runner` on CT 125 is shared with other repositories, so a PR's
   jobs can queue behind their runs, and it runs every `container` job (`runs-on: ubuntu-latest`).
@@ -252,16 +277,19 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   neither `_test.exs` nor `_helper.exs`, outside `test/support/`: rename or move it. After a
   compiler-warning abort, `mix test --failed` prints `There are no tests to run` and exits 0, so
   check the fix by running the file the warning names.
-- **Trivy DB outage.** A red `container` job whose "Download the Trivy vulnerability DB" step
-  fails on both repositories (`ghcr.io`, then `mirror.gcr.io`; #835, #841) is an upstream outage,
-  not the diff. Outages have lasted hours. Re-run once another run's `CI / container` went green
-  after the outage began; one successful download from your own machine proves nothing about the
-  runner.
-- **New advisory.** `dependency-audit` and `container` go red on every PR once an advisory is
-  published after `main`'s last green run, whatever the diff touches. `dependency-audit` goes
-  red the same way once a maintainer retires a Hex release that `mix.lock` holds. Read the CVE
-  lines, or the `Retired:` block of a retirement, in the job log: when they name dependencies
-  or base-image packages the PR does not change, the failure is baseline and blocks every merge
+- **Trivy DB outage.** A red `container` job or `trivy.yml` run whose "Download the Trivy
+  vulnerability DB" step fails on both repositories (`ghcr.io`, then `mirror.gcr.io`; #835, #841)
+  is an upstream outage, not the diff. Outages have lasted hours. Re-run once another run's
+  download step went green after the outage began; one successful download from your own machine
+  proves nothing about the runner.
+- **New advisory.** Once an advisory is published after `main`'s last green run, `dependency-audit`
+  goes red on every PR whatever the diff touches, and the Trivy scan on every run of it: each
+  nightly `trivy.yml` run and each PR `container` job, which runs on a PR that changes a path of
+  `image-inputs.txt`. `main`'s statuses stay green, since its push run scans nothing: read the
+  newest `trivy.yml` run, or start one, as "What runs" says. `dependency-audit` goes red the same
+  way once a maintainer retires a Hex release that `mix.lock` holds. Read the CVE lines, or the
+  `Retired:` block of a retirement, in the job log: when they name dependencies or base-image
+  packages the PR does not change, the failure is baseline and blocks every PR that runs the job
   until a fix PR lands. For a Hex package that `mix.exs` lists, Renovate writes that PR when a
   release within the package's `mix.exs` requirement, as Renovate reads it, fixes the advisory:
   its hourly run checks `mix.lock` against osv.dev and opens one PR per package, titled

@@ -1,2 +1,3 @@
-# CVEs the `container` job's Trivy scan accepts, read through trivy-action's `trivyignores`
-# input. docs/agents/ci.md "Venv advisory" says when a row comes here and what each entry holds.
+# CVEs the Trivy scans accept (ci.yml's `container` job and trivy.yml), read through
+# trivy-action's `trivyignores` input. docs/agents/ci.md "Venv advisory" says when a row comes
+# here and what each entry holds.

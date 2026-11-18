@@ -60,9 +60,10 @@ Work one focused change per branch off `main`, keep `mix test` green, and open a
 (`origin`, git.sbrn.eu/simonbrunou/cinder). GitHub is a push mirror of Forgejo, so PRs and issues
 go to Forgejo only.
 
-`main` is protected: a PR merges once the three jobs in `.forgejo/workflows/ci.yml` pass on it
-(`test`, `container`, `dependency-audit`). Renovate (`renovate.json`) opens the dependency-update
-PRs.
+`main` is protected: a PR merges once the jobs in `.forgejo/workflows/ci.yml` pass on it
+(`test`, `image-inputs`, `container`, `dependency-audit`), where `container` passes skipped on a
+PR that changes no path of `image-inputs.txt`. Renovate (`renovate.json`) opens the
+dependency-update PRs.
 
 ## Releasing (maintainers)
 

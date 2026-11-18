@@ -61,7 +61,71 @@ defmodule Cinder.PushRepeatsPrTest.Fixtures do
           if: always()
           uses: https://data.forgejo.org/forgejo/upload-artifact@v5
 
+    image-inputs:
+      runs-on: ubuntu-latest
+      outputs:
+        build: ${{ steps.decide.outputs.build }}
+      steps:
+        - uses: actions/checkout@v7
+          with:
+            fetch-depth: 0
+        - id: decide
+          name: Decide whether the container job runs
+          shell: bash
+          env:
+            EVENT: ${{ github.event_name }}
+            BASE_REF: ${{ github.base_ref }}
+          run: |
+            case "$EVENT" in
+              pull_request) ;;
+              push)
+                echo "A push run builds no image: Coolify builds main's image for prod, so the container job skips"
+                echo build=false >>"$#{@gh}OUTPUT"
+                exit 0
+                ;;
+              *)
+                echo "A $EVENT run: the container job runs"
+                echo build=true >>"$#{@gh}OUTPUT"
+                exit 0
+                ;;
+            esac
+            if [ ! -f image-inputs.txt ]; then
+              echo "::error::image-inputs.txt is missing"
+              exit 1
+            fi
+            specs=()
+            number=0
+            while IFS= read -r line || [ -n "$line" ]; do
+              number=$((number + 1))
+              case "$line" in
+                '' | '#'*) continue ;;
+              esac
+              if ! [[ "$line" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] || [[ "/$line/" == */./* || "/$line/" == */../* ]]; then
+                echo "::error::image-inputs.txt:$number: '$line' is not a path this step reads (letters, digits, ., _, - and /, with no empty, . or .. part)"
+                exit 1
+              fi
+              specs+=(":(literal)$line")
+            done <image-inputs.txt
+            if [ "${#specs[@]}" = 0 ]; then
+              echo "::error::image-inputs.txt holds no path"
+              exit 1
+            fi
+            if ! changed=$(git diff --name-only --no-renames "origin/$BASE_REF...HEAD" -- "${specs[@]}"); then
+              echo "::error::git cannot diff origin/$BASE_REF...HEAD"
+              exit 1
+            fi
+            if [ -n "$changed" ]; then
+              echo "The branch changes these image inputs since it left origin/$BASE_REF, so the container job runs:"
+              printf '%s\\n' "$changed"
+              echo build=true >>"$#{@gh}OUTPUT"
+            else
+              echo "The branch changes no path of image-inputs.txt since it left origin/$BASE_REF, so the container job skips"
+              echo build=false >>"$#{@gh}OUTPUT"
+            fi
+
     container:
+      needs: image-inputs
+      if: needs.image-inputs.outputs.build != 'false'
       runs-on: ubuntu-latest
       env:
         CINDER_IMAGE: cinder:ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -114,10 +178,18 @@ defmodule Cinder.PushRepeatsPrTest.Fixtures do
   def ci, do: @ci
   def release, do: @release
 
+  # The Dockerfile and image-inputs.txt that rule 7 reads, the list covering every path.
+  @dockerfile "FROM debian\nCOPY mix.exs ./\nCOPY lib lib\nCOPY rel rel\n"
+  @image_inputs Enum.join(Cinder.ImageInputs.fixed() ++ ~w(mix.exs lib rel), "\n") <> "\n"
+
+  def image_inputs, do: @image_inputs
+
   def base do
     %{
       ".forgejo/workflows/ci.yml" => @ci,
       ".github/workflows/release.yml" => @release,
+      "Dockerfile" => @dockerfile,
+      "image-inputs.txt" => @image_inputs,
       "AGENTS.md" => "Read $#{@gh}REF in prose.\n",
       "scripts/build.sh" => "mix compile\n"
     }
@@ -247,6 +319,22 @@ defmodule Cinder.PushRepeatsPrTest do
       end
     end
 
+    test "a workflow whose every trigger is schedule or workflow_dispatch, trivy.yml included" do
+      jobs = "jobs:\n  scan:\n    runs-on: x\n    steps:\n      - run: make scan\n"
+
+      for on <- [
+            "on: workflow_dispatch\n",
+            "on: [schedule, workflow_dispatch]\n",
+            "on:\n  schedule:\n    - cron: '0 3 * * *'\n"
+          ] do
+        assert_passes(%{".forgejo/workflows/scan.yml" => on <> jobs})
+      end
+
+      assert_passes(%{
+        ".forgejo/workflows/trivy.yml" => File.read!(".forgejo/workflows/trivy.yml")
+      })
+    end
+
     test "run from a subfolder of the repo" do
       assert_passes(%{}, from: "scripts")
     end
@@ -344,6 +432,21 @@ defmodule Cinder.PushRepeatsPrTest do
       )
     end
 
+    test "a workflow with an empty on:, or with schedule beside another trigger" do
+      for {on, problem} <- [
+            {"on: {}\n", "no push trigger"},
+            {"on: [schedule, push]\n", "no pull_request trigger"},
+            {"on: [workflow_dispatch, pull_request]\n", "no push trigger"},
+            {"on: [schedule, workflow_call]\n", "trigger workflow_call"},
+            {"on:\n  schedule:\n    - cron: x\n  workflow_run:\n", "trigger workflow_run"}
+          ] do
+        assert_reports(
+          %{".forgejo/workflows/scan.yml" => on <> "jobs: {}\n"},
+          ".forgejo/workflows/scan.yml: " <> problem
+        )
+      end
+    end
+
     test "a workflow with no on:" do
       assert_reports(
         %{@ci => ci_edit("on:\n  push:\n    branches: [main]\n  pull_request:\n", "")},
@@ -410,7 +513,10 @@ defmodule Cinder.PushRepeatsPrTest do
 
     test "if: always() on a job, or under a step's with:" do
       assert_reports(
-        %{@ci => ci_edit("  container:\n", "  container:\n    if: always()\n")},
+        %{
+          @ci =>
+            ci_edit("    if: needs.image-inputs.outputs.build != 'false'\n", "    if: always()\n")
+        },
         "jobs.container.if: an if: always()"
       )
 
@@ -675,6 +781,60 @@ defmodule Cinder.PushRepeatsPrTest do
       )
     end
 
+    # yamerl keeps the last value of a repeated key. With `on: push` first and `on: schedule`
+    # second, the workflow would pass as one that runs in neither run.
+    test "a key a mapping holds twice, at the root, in a step and in a flow mapping" do
+      scan = ".forgejo/workflows/scan.yml"
+      jobs = "jobs:\n  scan:\n    runs-on: x\n    steps:\n      - run: make\n"
+
+      for {first, second} <- [
+            {"on: push\n", "on: [schedule]\n"},
+            {"on: [schedule]\n", "on: push\n"}
+          ] do
+        assert_reports(
+          %{scan => first <> jobs <> second},
+          "#{scan}:7: the key on a second time in one mapping, of which yamerl reads one"
+        )
+      end
+
+      assert_reports(
+        %{@ci => ci_with("      - run: mix docs\n        run: mix credo\n")},
+        "#{@ci}:#{appended() + 1}: the key run a second time in one mapping"
+      )
+
+      assert_reports(
+        %{@ci => ci_with("      - {run: mix docs, run: mix credo}\n")},
+        "#{@ci}:#{appended()}: the key run a second time in one mapping"
+      )
+    end
+
+    # yamerl reads `1` and `0x1` as one key, as it does `~` and `null`, or `true` and `True`, and
+    # keeps one value, so the expression under the other would go unread.
+    test "a plain key that yamerl reads as a number, a boolean or null" do
+      for {first, second} <- [{"1", "0x1"}, {"~", "null"}, {"true", "True"}] do
+        file =
+          ci_with(
+            "      - run: mix docs\n        env:\n          #{first}: ${{ inputs.x }}\n          #{second}: x\n"
+          )
+
+        assert_reports(
+          %{@ci => file},
+          "#{@ci}:#{appended() + 2}: the key #{inspect(first)}, which yamerl reads as a number"
+        )
+      end
+    end
+
+    test "the same key in two mappings, which is no repeat" do
+      assert_passes(%{@ci => ci_with("      - run: mix docs\n      - run: mix credo\n")})
+    end
+
+    test "a key that is a collection" do
+      assert_reports(
+        %{@ci => ci_with("      - ? [run]\n        : mix docs\n")},
+        "#{@ci}:#{appended()}: a key that is a collection, which this check does not read"
+      )
+    end
+
     test "a directive: %YAML, %TAG or a reserved one" do
       for directive <- ["%YAML 1.2", "%TAG !e! tag:example.com,2000:", "%FOO bar"] do
         assert_reports(%{@ci => directive <> "\n---\n" <> ci()}, "#{@ci}:1: a directive")
@@ -773,7 +933,8 @@ defmodule Cinder.PushRepeatsPrTest do
              ".forgejo/workflows/a\\xFF.yml:#{appended() + 1}: jobs.container.steps[5].if: " <>
                "an if: github.event_name == 'push'\n"
 
-    refute output =~ twin
+    # The gate line names both files, each as itself; no line names the twin as its place.
+    refute output =~ twin <> ":"
   end
 
   describe "an allowed text at another key" do
@@ -871,11 +1032,12 @@ defmodule Cinder.PushRepeatsPrTest do
 
     test "another runner name, or a longer one, in the Trivy DB step" do
       for {old, new, line} <- [
-            {"          exit 1\n", "          echo $#{@gh}REF\n          exit 1\n",
-             "echo $#{@gh}REF"},
+            {"          fi\n          exit 1\n",
+             "          fi\n          echo $#{@gh}REF\n          exit 1\n", "echo $#{@gh}REF"},
             {"env -u #{@gh}TOKEN timeout", "env -u #{@gh}TOKEN_X timeout",
              "if env -u #{@gh}TOKEN_X timeout"},
-            {"          exit 1\n", "          ls $#{@gh}WORKSPACE/src\n          exit 1\n",
+            {"          fi\n          exit 1\n",
+             "          fi\n          ls $#{@gh}WORKSPACE/src\n          exit 1\n",
              "ls $#{@gh}WORKSPACE/src"}
           ] do
         assert_reports(%{@ci => ci_edit(old, new)}, [
@@ -892,10 +1054,12 @@ defmodule Cinder.PushRepeatsPrTest do
           "      -\n        name: Download the Trivy vulnerability DB\n        run: |\n"
         )
 
-      # Every line of the step and its comment that names one, and no decoded value.
+      # Every line of the step and its comment that names one, and no decoded value. The decide
+      # step's output lines stay allowed.
       expected =
         for {text, number} <- ci |> String.split("\n") |> Enum.with_index(1),
             text =~ @gh,
+            not (text =~ @gh <> "OUTPUT"),
             do:
               "#{@ci}:#{number}: names a runner variable or reads the event: #{String.trim(text)}"
 
@@ -954,6 +1118,133 @@ defmodule Cinder.PushRepeatsPrTest do
           ] do
         assert_reports(files, "names a runner variable or reads the event: " <> line)
       end
+    end
+  end
+
+  describe "the image-inputs gate (rule 7)" do
+    @gate_if "jobs.container.if: an if: needs.image-inputs.outputs.build != 'false'"
+    @output "$#{@gh}OUTPUT"
+
+    test "the fixture's two jobs are ci.yml's, so the base repo pins what CI runs" do
+      [real] = YamlElixir.read_all_from_string!(File.read!(@ci))
+      [fixture] = YamlElixir.read_all_from_string!(ci())
+
+      shape = fn workflow ->
+        jobs = workflow["jobs"]
+        [_checkout, decide] = jobs["image-inputs"]["steps"]
+
+        {Map.drop(jobs["image-inputs"], ["steps"]), decide,
+         Map.take(jobs["container"], ["needs", "if"])}
+      end
+
+      assert shape.(fixture) == shape.(real)
+    end
+
+    test "accepts a skipped container job when image-inputs.txt covers every image input, so the " <>
+           "PR that skipped it changed none" do
+      assert_passes(%{"test/cinder/a_test.exs" => "changed\n"})
+    end
+
+    test "reports it when the list misses an image input, so a PR could change it and skip the " <>
+           "job, whatever this PR changed" do
+      list = String.replace(image_inputs(), "rel\n", "")
+
+      for changed <- ["rel/env.sh.eex", "test/cinder/a_test.exs"] do
+        assert_reports(
+          %{"image-inputs.txt" => list, changed => "changed\n"},
+          "Dockerfile:4: reads rel from the build context, which no line of image-inputs.txt " <>
+            "covers; a pull request can then skip the container job that main's run builds"
+        )
+      end
+    end
+
+    test "reports each problem the image-inputs reader finds" do
+      for {files, fragment} <- [
+            {%{"Dockerfile" => nil}, "Dockerfile: no such file; a pull request can then skip"},
+            {%{"image-inputs.txt" => nil}, "image-inputs.txt: no such file"},
+            {%{"Dockerfile" => "COPY . .\n"}, "Dockerfile:1: a COPY source that reads the whole"},
+            {%{"rel" => {:link, "lib"}}, "rel has the symbolic link or submodule rel at"}
+          ] do
+        assert_reports(files, fragment)
+      end
+    end
+
+    test "reports the gate's if and expressions once its shape differs from ci.yml's" do
+      decide_env = "          BASE_REF: ${{ github.base_ref }}\n"
+      checkout = "        with:\n          fetch-depth: 0\n"
+
+      for edit <- [
+            {"so the container job skips\"\n              echo build=false",
+             "so the container job skips\"\n              echo build=true"},
+            {"        shell: bash\n        env:\n          EVENT",
+             "        shell: sh\n        env:\n          EVENT"},
+            {"        shell: bash\n        env:\n          EVENT",
+             "        shell: bash\n        working-directory: lib\n        env:\n          EVENT"},
+            {decide_env, decide_env <> "          BASH_ENV: x\n"},
+            {"EVENT: ${{ github.event_name }}", "EVENT: pull_request"},
+            {"  image-inputs:\n    runs-on: ubuntu-latest\n",
+             "  image-inputs:\n    runs-on: ubuntu-latest\n    env:\n      X: y\n"},
+            {"jobs:\n", "defaults:\n  run:\n    shell: sh\njobs:\n"},
+            {"jobs:\n", "env:\n  BASH_ENV: x\njobs:\n"},
+            {checkout, "        with:\n          fetch-depth: 1\n"},
+            {checkout, checkout <> "          ref: main\n"},
+            {"          fi\n\n  container:",
+             "          fi\n      - run: echo after\n\n  container:"},
+            {"build: ${{ steps.decide.outputs.build }}", "build: 'false'"},
+            {"  container:\n    needs: image-inputs\n", "  container:\n    needs: [test]\n"},
+            {"      - id: decide\n", "      - id: choose\n"},
+            {"      - uses: actions/checkout@v7\n        with:\n          fetch-depth: 0\n",
+             "      - uses: some/checkout@v7\n        with:\n          fetch-depth: 0\n"},
+            {"      - uses: actions/checkout@v7\n        with:\n          fetch-depth: 0\n",
+             "      - uses: actions/checkout@v7\n        name: Check out\n        with:\n" <>
+               "          fetch-depth: 0\n"}
+          ] do
+        {old, new} = edit
+        assert_reports(%{@ci => ci_edit(old, new)}, @gate_if)
+      end
+    end
+
+    test "reports the gate's expressions when the container job has no if" do
+      assert_reports(
+        %{@ci => ci_edit("    if: needs.image-inputs.outputs.build != 'false'\n", "")},
+        "jobs.image-inputs.outputs.build: an expression: ${{ steps.decide.outputs.build }}"
+      )
+    end
+
+    test "reports a container condition other than the explicit false" do
+      assert_reports(
+        %{@ci => ci_edit("build != 'false'", "build == 'true'")},
+        "jobs.container.if: an if: needs.image-inputs.outputs.build == 'true'"
+      )
+    end
+
+    test "reports the gate's texts at another key" do
+      for {old, new, fragment} <- [
+            {"    env:\n      MIX_ENV: test\n",
+             "    env:\n      MIX_ENV: test\n      BASE: ${{ github.base_ref }}\n",
+             "jobs.test.env.BASE: an expression: ${{ github.base_ref }}"},
+            {"    env:\n      MIX_ENV: test\n",
+             "    env:\n      MIX_ENV: test\n      BUILD: ${{ steps.decide.outputs.build }}\n",
+             "jobs.test.env.BUILD: an expression: ${{ steps.decide.outputs.build }}"},
+            {"  test:\n    runs-on: ubuntu-24.04\n",
+             "  test:\n    if: needs.image-inputs.outputs.build != 'false'\n    runs-on: ubuntu-24.04\n",
+             "jobs.test.if: an if"},
+            {"      - shell: bash\n        run: mix test",
+             "      - shell: bash\n        run: echo x >>\"#{@output}\" && mix test",
+             "jobs.test.steps[5].run: names a runner variable or reads the event"},
+            {"      - id: decide\n", "      # writes #{@gh}OUTPUT\n      - id: decide\n",
+             "names a runner variable or reads the event: # writes #{@gh}OUTPUT"}
+          ] do
+        assert_reports(%{@ci => ci_edit(old, new)}, fragment)
+      end
+    end
+
+    test "reports a second workflow that holds the gate" do
+      assert_reports(
+        %{".forgejo/workflows/again.yml" => ci()},
+        ".forgejo/workflows/again.yml, .forgejo/workflows/ci.yml: 2 workflows hold the " <>
+          "image-inputs gate, which the allowance covers once"
+      )
     end
   end
 

@@ -19,7 +19,10 @@
 #      a squash's PR title does not already end in another number, such as its issue's `(#n)`,
 #      since the squash appends the PR's own;
 #   2. CI is green on that SHA: every job of the head's .forgejo/workflows/ci.yml reports success
-#      as `<workflow> / <job> (pull_request)`, and the combined status is success;
+#      as `<workflow> / <job> (pull_request)`, and the combined status is success. The container
+#      job may report skipped instead (#1486), when the head's ci.yml has the image-inputs job and
+#      the head, diffed against its merge base with origin/main, changes no path of the head's
+#      image-inputs.txt;
 #   3. after `git fetch origin`, `git merge-tree --write-tree origin/main <sha>` exits 0;
 #   4. a diff that touches CHANGELOG.md already contains origin/main (merge it in and re-run CI
 #      first, since a stale [Unreleased] entry merges cleanly and turns main red);
@@ -143,11 +146,18 @@ contexts=$(git show "$sha:.forgejo/workflows/ci.yml" | awk '
 [[ -n $contexts ]] || fail "no jobs found in $sha:.forgejo/workflows/ci.yml"
 api GET "/commits/$sha/status"
 [[ $http_status == 200 ]] || fail "GET /commits/$sha/status answered $http_status"
+container_skipped=false
+inputs_job=false
 while IFS= read -r context; do
   status=$(jq -r --arg c "$context" '[.statuses[]? | select(.context == $c) | .status][0] // "missing"' <<<"$http_body")
   echo "$context: $status"
+  [[ $context == *" / image-inputs (pull_request)" ]] && inputs_job=true
   case $status in
     success) ;;
+    skipped)
+      [[ $context == *" / container (pull_request)" ]] || fail "CI is red on $sha ($context: skipped; only the container job may skip)"
+      container_skipped=true
+      ;;
     pending) fail "CI has not finished on $sha; wait with: python3 -I ~/.agents/skills/forgejo-issues/scripts/forgejo.py ci cinder $sha" ;;
     missing) fail "no '$context' status on $sha; while CI starts, wait with: python3 -I ~/.agents/skills/forgejo-issues/scripts/forgejo.py ci cinder $sha; once it has finished, the job reports under a name: key (see the comment above the contexts)" ;;
     *) fail "CI is red on $sha ($context: $status)" ;;
@@ -155,6 +165,43 @@ while IFS= read -r context; do
 done <<<"$contexts"
 combined=$(jq -r .state <<<"$http_body")
 [[ $combined == success ]] || fail "the combined status of $sha is $combined"
+
+# A skipped container job passes only when the image-inputs job that skips it passed, and the
+# head, diffed against its merge base with origin/main over image-inputs.txt as the head has it,
+# changes no listed path (check_skip, run with checks 3 to 5 against each origin/main they read).
+# The job diffed against the PR's base branch when CI ran, which for a PR retargeted to main from
+# another branch was not main. The list is read as the job's step reads it, and a line the step
+# would fail on stops here too.
+specs=()
+if [[ $container_skipped == true ]]; then
+  [[ $inputs_job == true ]] || fail "the container job is skipped on $sha, but its ci.yml has no image-inputs job"
+  list=$(git show "$sha:image-inputs.txt" 2>/dev/null) || fail "the container job is skipped on $sha, which holds no image-inputs.txt"
+  number=0
+  # The here-string ends in a newline, so read also reads a last line that has none.
+  while IFS= read -r line; do
+    number=$((number + 1))
+    case $line in
+      '' | '#'*) continue ;;
+    esac
+    if ! [[ $line =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] || [[ "/$line/" == */./* || "/$line/" == */../* ]]; then
+      fail "image-inputs.txt:$number at $sha: '$line' is not a path the image-inputs job reads"
+    fi
+    specs+=(":(literal)$line")
+  done <<<"$list"
+  [[ ${#specs[@]} -gt 0 ]] || fail "image-inputs.txt at $sha holds no path"
+fi
+
+# The skipped container job's diff, against the origin/main that check_against_main read.
+check_skip() {
+  [[ $container_skipped == true ]] || return 0
+  local inputs_base changed
+  inputs_base=$(git merge-base "$main_sha" "$sha") || fail "git finds no merge base of origin/main and $sha"
+  changed=$(git diff --name-only --no-renames "$inputs_base" "$sha" -- "${specs[@]}") ||
+    fail "git cannot diff $inputs_base and $sha"
+  [[ -z $changed ]] || fail "the container job is skipped on $sha, but against origin/main it changes these paths of image-inputs.txt: $(tr '\n' ' ' <<<"$changed")
+Merge origin/main into the branch and push, so that CI decides against main, then run this again."
+  echo "container: skipped, and the head changes no path of image-inputs.txt since $inputs_base"
+}
 
 # 3 to 5. The merged tree, against a freshly fetched origin/main. origin/main is read once per
 # round: T3 worktrees share origin/* refs, so another thread's fetch can move it mid-check.
@@ -195,6 +242,7 @@ check_against_main() {
 }
 
 check_against_main
+check_skip
 
 # 7. The fences on the merged tree. fences_tree is the merged tree they last passed on, so a 405
 # retry re-runs them only when origin/main moved to a different merged tree.
@@ -269,6 +317,7 @@ while :; do
       sleep 20
       fetch_head
       check_against_main
+      check_skip
       check_fences
       ;;
     409) fail "409: the branch moved after CI ran on $sha" ;;
