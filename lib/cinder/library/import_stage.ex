@@ -75,7 +75,6 @@ defmodule Cinder.Library.ImportStage do
   end
 
   def create(attrs), do: %__MODULE__{} |> changeset(attrs) |> Repo.insert()
-  def create!(attrs), do: %__MODULE__{} |> changeset(attrs) |> Repo.insert!()
   def update(stage, attrs), do: stage |> changeset(attrs) |> Repo.update()
   def update!(stage, attrs), do: stage |> changeset(attrs) |> Repo.update!()
   def list, do: Repo.all(__MODULE__)

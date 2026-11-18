@@ -49,10 +49,6 @@ defmodule Cinder.LibraryKind do
   @spec handlings(atom()) :: [atom()]
   def handlings(kind), do: fetch!(kind).handlings
 
-  @doc "Whether `kind` supports `handling`."
-  @spec handling?(atom(), atom()) :: boolean()
-  def handling?(kind, handling), do: handling in handlings(kind)
-
   @doc "The display label for `kind`."
   @spec label(atom()) :: String.t()
   def label(kind), do: fetch!(kind).label

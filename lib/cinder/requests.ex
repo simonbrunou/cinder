@@ -20,32 +20,6 @@ defmodule Cinder.Requests do
   def subscribe, do: Phoenix.PubSub.subscribe(Cinder.PubSub, @topic)
   defp broadcast(msg), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, msg)
 
-  def assign_profile(%Request{} = request, nil) do
-    request
-    |> Request.profile_changeset(%{proposed_profile_id: nil, proposed_media_profile: nil})
-    |> Repo.update()
-  end
-
-  def assign_profile(%Request{} = request, %Profile{id: id}) do
-    expected_kind = profile_kind(request)
-
-    case Catalog.get_profile(id) do
-      %Profile{kind: ^expected_kind} = profile ->
-        request
-        |> Request.profile_changeset(%{
-          proposed_profile_id: profile.id,
-          proposed_media_profile: profile.handling
-        })
-        |> Repo.update()
-
-      %Profile{} ->
-        {:error, :wrong_profile_kind}
-
-      nil ->
-        {:error, :unknown_profile}
-    end
-  end
-
   def list_pending do
     Repo.all(
       from r in Request, where: r.status == :pending, order_by: [asc: r.id], preload: [:user]

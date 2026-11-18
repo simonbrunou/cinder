@@ -90,13 +90,6 @@ defmodule Cinder.Requests.Request do
     end
   end
 
-  def profile_changeset(request, attrs) do
-    request
-    |> cast(attrs, [:proposed_media_profile, :proposed_profile_id])
-    |> foreign_key_constraint(:proposed_profile_id)
-    |> check_constraint(:proposed_profile_id, name: :requests_profile_integrity)
-  end
-
   def status_changeset(request, attrs) do
     request
     |> cast(attrs, [

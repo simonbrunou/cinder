@@ -6,18 +6,21 @@ defmodule Cinder.Library.ImportStageTest do
   defp journal(state, attrs) do
     key = Ecto.UUID.generate()
 
-    ImportStage.create!(
-      Map.merge(
-        %{
-          operation_key: key,
-          state: state,
-          root: "/tmp/cinder-test-library",
-          dest: "/tmp/cinder-test-library/M/M.mkv",
-          candidate: "/tmp/cinder-test-library/M/candidate-#{key}"
-        },
-        attrs
+    {:ok, stage} =
+      ImportStage.create(
+        Map.merge(
+          %{
+            operation_key: key,
+            state: state,
+            root: "/tmp/cinder-test-library",
+            dest: "/tmp/cinder-test-library/M/M.mkv",
+            candidate: "/tmp/cinder-test-library/M/candidate-#{key}"
+          },
+          attrs
+        )
       )
-    )
+
+    stage
   end
 
   test "operators can inspect and safely retry a quarantined rollback" do

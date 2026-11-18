@@ -34,24 +34,6 @@ defmodule Cinder.Library.BookArchive.RarTest do
     {:ok, tmp: tmp, dest: dest}
   end
 
-  defp remove_fake_unrar(fakebin, original_path) do
-    File.rm(Path.join(fakebin, "unrar"))
-    System.put_env("PATH", original_path || "")
-  end
-
-  describe "available?/0" do
-    test "true when unrar resolves on PATH", %{fakebin: fakebin, original_path: original_path} do
-      FakeUnrar.install(fakebin, original_path, "#!/bin/sh\nexit 0\n")
-      assert Rar.available?()
-    end
-
-    test "false when unrar is absent from PATH", %{fakebin: fakebin, original_path: original_path} do
-      remove_fake_unrar(fakebin, original_path)
-      System.put_env("PATH", fakebin)
-      refute Rar.available?()
-    end
-  end
-
   describe "extract/3 when unrar is absent" do
     test "refuses as :unsupported_archive, the same reason the feature is skipped for", %{
       fakebin: fakebin,

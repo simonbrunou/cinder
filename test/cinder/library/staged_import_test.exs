@@ -636,13 +636,14 @@ defmodule Cinder.Library.StagedImportTest do
         File.mkdir_p!(Path.dirname(dest))
         File.write!(candidate, "partial")
 
-        ImportStage.create!(%{
-          operation_key: operation_key,
-          state: :preparing,
-          root: library,
-          dest: dest,
-          candidate: candidate
-        })
+        {:ok, _stage} =
+          ImportStage.create(%{
+            operation_key: operation_key,
+            state: :preparing,
+            root: library,
+            dest: dest,
+            candidate: candidate
+          })
 
         hold =
           case unquote(lock) do
@@ -682,13 +683,14 @@ defmodule Cinder.Library.StagedImportTest do
       stale = Path.join(Path.dirname(dest), ".cinder-stage-#{operation_key}")
       File.write!(stale, "partial")
 
-      ImportStage.create!(%{
-        operation_key: operation_key,
-        state: :preparing,
-        root: library,
-        dest: dest,
-        candidate: stale
-      })
+      {:ok, _stage} =
+        ImportStage.create(%{
+          operation_key: operation_key,
+          state: :preparing,
+          root: library,
+          dest: dest,
+          candidate: stale
+        })
 
       assert :ok = StagedImport.reconcile()
       refute File.exists?(stale)
@@ -1156,8 +1158,8 @@ defmodule Cinder.Library.StagedImportTest do
       File.write!(backup, "original")
       backup_stat = File.lstat!(backup)
 
-      stage =
-        ImportStage.create!(%{
+      {:ok, stage} =
+        ImportStage.create(%{
           operation_key: Ecto.UUID.generate(),
           state: :prepared,
           root: library,
@@ -1195,8 +1197,8 @@ defmodule Cinder.Library.StagedImportTest do
       dest_stat = File.lstat!(dest)
       backup_stat = File.lstat!(backup)
 
-      stage =
-        ImportStage.create!(%{
+      {:ok, stage} =
+        ImportStage.create(%{
           operation_key: Ecto.UUID.generate(),
           state: :prepared,
           root: library,

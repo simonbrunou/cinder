@@ -6,7 +6,6 @@ defmodule Cinder.Catalog.ProfilesTest do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Movie, Profile, Series}
   alias Cinder.Download.Intent
-  alias Cinder.Requests
   alias Cinder.Requests.Request
   alias Ecto.Adapters.SQL
 
@@ -172,16 +171,6 @@ defmodule Cinder.Catalog.ProfilesTest do
       |> Series.create_changeset()
       |> Repo.insert!()
 
-    request =
-      %Request{}
-      |> Request.create_changeset(%{
-        user_id: user_fixture().id,
-        target_type: "movie",
-        target_id: 90_001,
-        status: :pending
-      })
-      |> Repo.insert!()
-
     movie_anime = profile!(:movies, :anime)
     tv_anime = profile!(:tv, :anime)
 
@@ -191,13 +180,7 @@ defmodule Cinder.Catalog.ProfilesTest do
     assert {:ok, assigned_series} = Catalog.assign_profile(series, tv_anime)
     assert {assigned_series.profile_id, assigned_series.media_profile} == {tv_anime.id, :anime}
 
-    assert {:ok, assigned_request} = Requests.assign_profile(request, movie_anime)
-
-    assert {assigned_request.proposed_profile_id, assigned_request.proposed_media_profile} ==
-             {movie_anime.id, :anime}
-
     assert {:error, :wrong_profile_kind} = Catalog.assign_profile(movie, tv_anime)
-    assert {:error, :wrong_profile_kind} = Requests.assign_profile(request, tv_anime)
     assert Repo.get!(Movie, movie.id).profile_id == movie_anime.id
   end
 

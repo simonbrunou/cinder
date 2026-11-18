@@ -19,7 +19,6 @@ defmodule Cinder.LibraryKindTest do
   test "book media kinds support only standard handling" do
     assert LibraryKind.handlings(:ebook) == [:standard]
     assert LibraryKind.handlings(:audiobook) == [:standard]
-    refute LibraryKind.handling?(:ebook, :anime)
   end
 
   test "labels cover every media kind" do

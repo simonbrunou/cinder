@@ -127,6 +127,24 @@ defmodule Cinder.RequestsTest do
     assert Catalog.get_movie_by_tmdb_id(@attrs.target_id) == nil
   end
 
+  test "a pending request records its named profile's id and handling, and refuses another kind's" do
+    user = user_fixture()
+    # A second Anime movie profile, so storing the kind's default Anime profile instead fails.
+    {:ok, anime} = Catalog.create_profile(%{name: "Anime 2", kind: :movies, handling: :anime})
+    tv_anime = Enum.find(Catalog.list_profiles(:tv), &(&1.handling == :anime))
+
+    assert {:error, :invalid_media_profile} =
+             Requests.create_request(user, Map.put(@attrs, :proposed_profile_id, tv_anime.id))
+
+    assert Requests.list_requests() == []
+
+    assert {:ok, %{status: :pending} = request} =
+             Requests.create_request(user, Map.put(@attrs, :proposed_profile_id, anime.id))
+
+    request = Repo.reload!(request)
+    assert {request.proposed_profile_id, request.proposed_media_profile} == {anime.id, :anime}
+  end
+
   test "approval atomically replaces an existing movie's named profile and handling" do
     user = user_fixture()
     admin = admin_fixture()

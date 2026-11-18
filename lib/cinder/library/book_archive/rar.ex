@@ -83,10 +83,6 @@ defmodule Cinder.Library.BookArchive.Rar do
   # password-blocked process is killed rather than left occupying a poller tick indefinitely.
   @max_duration_ms 60_000
 
-  @doc "Whether `unrar` is on `PATH`, checked fresh — never cached, never compile-time."
-  @spec available?() :: boolean()
-  def available?, do: not is_nil(unrar_bin())
-
   @doc """
   Extracts `archive_path` into `dest_dir` (already created, already trusted). `{:error,
   :unsupported_archive}` when `unrar` is absent — the same exact reason this whole extraction
