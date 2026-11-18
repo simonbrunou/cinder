@@ -929,7 +929,10 @@ are pruned automatically.
 - **Archive and disc movie releases are not imported.** RAR volumes and `BDMV`/`VIDEO_TS`/ISO
   releases park with an explicit unsupported-format reason. Supporting them safely requires an
   explicit, health-checked extraction or remux runtime and a deterministic main-feature policy;
-  Cinder will not guess a title or silently choose the largest playlist. Multi-file movies are
+  Cinder will not guess a title or silently choose the largest playlist. With the fake-download
+  check on (the default) and its default lists, a disc release that also holds a blocked file such
+  as an `.exe`, and no file in a video format Cinder imports, no archive and no parity file, fails
+  that check and is handled as a fake download. Multi-file movies are
   accepted only when every video forms one unambiguous, contiguous stack named with
   `CD`/`disc`/`disk`/`part` plus `1..N`.
 - **Book/audiobook RAR archives need `unrar` on `PATH`, which the shipped image does not

@@ -36,8 +36,13 @@ defmodule Cinder.Download.ContentPolicy do
   of any kind can arrive packed. A configured `media_extensions` replaces all of it (below). The
   default media of each kind:
 
-  - `:video`, a movie or a TV grab (anime included): the video containers, `.iso`/`.img` and a
-    DVD rip's `.vob`/`.ifo`/`.bup`.
+  - `:video`, a movie or a TV grab (anime included): every container the movie, episode and anime
+    importers accept (`Cinder.Library.video_extensions/0`, so `.mkv`, `.mp4`, `.avi`, `.m4v`,
+    `.mov`, `.wmv` and `.ts` today). No importer accepts `.iso`, `.img`, `.m2ts`, a VIDEO_TS
+    folder's `.vob`/`.ifo`/`.bup`, `.webm` or `.mpg`, so none of them is media. A disc rip whose
+    blocked file sits beside no other media, archive or parity file is then blocked like any
+    other fake. The movie importer refuses an `.iso`, VIDEO_TS or BDMV rip as an unsupported
+    disc whatever this check decides (#1448).
   - `:book`, an e-book or an audiobook grab: every format a book importer publishes
     (`Cinder.Acquisition.BookKind.accepted_formats/1`, so `.epub`, `.azw3`, `.mobi`, `.m4b` and
     `.mp3` today). The two book kinds share one set, so an e-book download whose only media is
@@ -70,17 +75,12 @@ defmodule Cinder.Download.ContentPolicy do
   # (.rar/.zip/.7z/.par2) — `.zipx` is here because no media release ships one.
   @default_blocked_extensions ~w(.lnk .exe .bat .cmd .com .scr .pif .msi .vbs .js .ps1 .zipx)
 
-  # Anything that could plausibly BE the media of each kind: one of these present means the
-  # download has real content and the blocked file is a companion, not the payload.
-  # .vob/.ifo/.bup are a VIDEO_TS DVD rip's ONLY content type — and the trackers still carrying
-  # DVD rips are exactly the ones that ship `.com`/`.exe` filler, so omitting them blocklists a
-  # whole class of legitimate release.
-  @video_extensions ~w(
-    .mkv .mp4 .avi .m4v .mov .wmv .ts .m2ts .mpg .mpeg .webm .flv .ogm .iso .img .vob .ifo .bup
-  )
-
-  # Every format a book importer publishes, read from `BookKind` rather than listed here so it
-  # cannot drift from what `EbookSources` and `AudiobookSources` accept.
+  # The default media of each kind, besides the archive set: one of these present means the
+  # download has real content and the blocked file is a companion, not the payload. Video is
+  # `Library.video_extensions/0`, read at call time, and books are every format a book importer
+  # publishes, read from `BookKind`. Each is read from the importers' own list, so it cannot
+  # drift from what they accept (#1448). So by default `.webm`, `.mpg`, `.m2ts`, `.iso`, `.img`
+  # and a VIDEO_TS folder's `.vob`/`.ifo`/`.bup`, which no importer accepts, are no media.
   @book_extensions for kind <- BookKind.all(),
                        format <- BookKind.accepted_formats(kind),
                        do: ".#{format}"
@@ -88,10 +88,7 @@ defmodule Cinder.Download.ContentPolicy do
   # The archive/parity set a release of any kind arrives in before unpacking.
   @archive_extensions ~w(.rar .zip .7z .par2 .tar .gz .001)
 
-  @default_media_extensions %{
-    video: @video_extensions ++ @archive_extensions,
-    book: @book_extensions ++ @archive_extensions
-  }
+  @kinds [:video, :book]
 
   @typedoc """
   What a download is for: `:video` for a movie or a TV grab, `:book` for an e-book or an
@@ -114,11 +111,14 @@ defmodule Cinder.Download.ContentPolicy do
   list replaces the default of every kind whole.
   """
   @spec media_extensions(kind()) :: [String.t()]
-  def media_extensions(kind) when is_map_key(@default_media_extensions, kind) do
+  def media_extensions(kind) when kind in @kinds do
     config()
-    |> Keyword.get_lazy(:media_extensions, fn -> Map.fetch!(@default_media_extensions, kind) end)
+    |> Keyword.get_lazy(:media_extensions, fn -> default_media_extensions(kind) end)
     |> downcase()
   end
+
+  defp default_media_extensions(:video), do: Library.video_extensions() ++ @archive_extensions
+  defp default_media_extensions(:book), do: @book_extensions ++ @archive_extensions
 
   @doc """
   `{:blocked, detail}` when `filenames` carries a blocked extension **and** nothing that could be

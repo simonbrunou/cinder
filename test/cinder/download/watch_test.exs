@@ -311,6 +311,23 @@ defmodule Cinder.Download.WatchTest do
                {:blocked_content, "download contains setup.exe"}
     end
 
+    # #1448: by default, a container or disc rip no importer accepts is no media either.
+    test "a movie holding only a .webm and Codec.exe is blocked content while downloading" do
+      status({:ok, %{state: :downloading, progress: 0.5, speed: 1_000}})
+      files(["X.2020.1080p.webm", "Codec.exe"])
+
+      assert Watch.check(download(Movie), track()) ==
+               {:blocked_content, "download contains Codec.exe"}
+    end
+
+    test "a TV grab holding only a VIDEO_TS rip and RARBG.com is blocked content while downloading" do
+      status({:ok, %{state: :downloading, progress: 0.5, speed: 1_000}})
+      files(["VIDEO_TS/VTS_01_1.VOB", "VIDEO_TS/VIDEO_TS.IFO", "RARBG.com"])
+
+      assert Watch.check(download(Grab), track()) ==
+               {:blocked_content, "download contains RARBG.com"}
+    end
+
     test "a book grab whose only media is an .mkv is blocked content while downloading" do
       status({:ok, %{state: :downloading, progress: 0.5, speed: 1_000}})
       files(["x.mkv", "setup.exe"])

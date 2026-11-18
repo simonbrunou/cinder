@@ -167,6 +167,118 @@ defmodule Cinder.LibraryTest do
     defp restore_env(key, value), do: Application.put_env(:cinder, key, value)
   end
 
+  # #1448: the default video media list of `Cinder.Download.ContentPolicy` holds only the
+  # extensions the importers accept (`video_extensions/0`), so these containers and disc entries
+  # left it. That is safe only while the movie, episode and anime importers refuse each of them,
+  # in a folder and as a single file. The `.mkv` control after each table shows the same tree
+  # stubs let a kept container through.
+  describe "the containers outside video_extensions/0" do
+    @refused_containers ~w(.m2ts .mpg .mpeg .webm .flv .ogm .iso .img .vob .ifo .bup)
+
+    setup do
+      Cinder.ConfigCase.put_env(
+        path_policy: Cinder.Library.PathPolicy,
+        import_roots: ["/downloads"]
+      )
+    end
+
+    test "are none of the containers the importers accept" do
+      assert Enum.filter(@refused_containers, &(&1 in Library.video_extensions())) == []
+    end
+
+    test "leave a folder with an executable beside them nothing to import" do
+      results =
+        Map.new(@refused_containers, fn ext ->
+          virtual_release(%{"/downloads/X" => ["X.2020.1080p#{ext}", "Codec.exe"]})
+          {ext, import_results("/downloads/X")}
+        end)
+
+      expected =
+        Map.new(@refused_containers, fn ext ->
+          movie =
+            if ext == ".iso", do: {:error, :unsupported_disc}, else: {:error, :no_video_file}
+
+          {ext, {movie, {:ok, [], []}, {:ok, %{files: [], folder?: true}}}}
+        end)
+
+      assert results == expected
+
+      virtual_release(%{"/downloads/X" => ["X.2020.1080p.mkv", "Codec.exe"]})
+
+      assert {:ok, %{files: [%{relative_path: "X.2020.1080p.mkv"}]}} =
+               Library.inventory_anime_videos("/downloads/X")
+    end
+
+    test "leave a DVD rip's VIDEO_TS folder nothing to import" do
+      virtual_release(%{
+        "/downloads/X" => ["VIDEO_TS", "Codec.exe"],
+        "/downloads/X/VIDEO_TS" => ["VTS_01_1.VOB", "VIDEO_TS.IFO", "VIDEO_TS.BUP"]
+      })
+
+      assert import_results("/downloads/X") ==
+               {{:error, :unsupported_disc}, {:ok, [], []}, {:ok, %{files: [], folder?: true}}}
+    end
+
+    test "are refused as a single-file download" do
+      results =
+        Map.new(@refused_containers, fn ext ->
+          virtual_release(%{"/downloads" => ["X.2020.1080p#{ext}"]})
+          {ext, import_results("/downloads/X.2020.1080p#{ext}")}
+        end)
+
+      expected =
+        Map.new(@refused_containers, fn ext ->
+          movie =
+            if ext == ".iso", do: {:error, :unsupported_disc}, else: {:error, :unsafe_source}
+
+          {ext, {movie, {:error, :unsafe_source}, {:error, :unsafe_source}}}
+        end)
+
+      assert results == expected
+
+      virtual_release(%{"/downloads" => ["X.2020.1080p.mkv"]})
+
+      assert {:ok, %{files: [%{relative_path: "X.2020.1080p.mkv"}], folder?: false}} =
+               Library.inventory_anime_videos("/downloads/X.2020.1080p.mkv")
+    end
+
+    # What the movie, episode and anime importers make of the download at `path`. The episode
+    # import's staged import reads as the rows it recorded.
+    defp import_results(path) do
+      episodes =
+        case Library.stage_episodes(path, [ep(7, 1)]) do
+          {:ok, staged, unmatched} -> {:ok, StagedImport.record(staged), unmatched}
+          error -> error
+        end
+
+      {Library.stage_movie(%Movie{title: "X", year: 2020, file_path: path}), episodes,
+       Library.inventory_anime_videos(path)}
+    end
+
+    # Stubs a tree under `/downloads` from `%{dir => names}`: `/downloads/X` and each listed name
+    # that is a key of the map are directories, and every other listed name is a 10-byte file.
+    defp virtual_release(listings) do
+      entries =
+        for {dir, names} <- listings, name <- names, do: Path.join(dir, name)
+
+      stats =
+        entries
+        |> Enum.with_index(30)
+        |> Map.new(fn {path, inode} ->
+          stat =
+            if Map.has_key?(listings, path),
+              do: dir_stat(inode),
+              else: file_stat(inode, 10, {{2026, 7, 13}, {12, 1, 0}})
+
+          {path, stat}
+        end)
+        |> Map.merge(%{"/" => dir_stat(1), "/downloads" => dir_stat(2)})
+        |> Map.put_new("/downloads/X", dir_stat(3))
+
+      stub_virtual_tree(stats, listings)
+    end
+  end
+
   describe "stage_anime_episodes/2" do
     setup do
       saved_path_policy = Application.get_env(:cinder, :path_policy)

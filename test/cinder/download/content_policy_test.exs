@@ -7,14 +7,19 @@ defmodule Cinder.Download.ContentPolicyTest do
 
   alias Cinder.Acquisition.BookKind
   alias Cinder.Download.ContentPolicy
+  alias Cinder.Library
 
   @kinds [:video, :book]
 
   # The default video containers, listed here rather than read from the module so a container
   # dropped from the default fails a test.
-  @video_containers ~w(
-    .mkv .mp4 .avi .m4v .mov .wmv .ts .m2ts .mpg .mpeg .webm .flv .ogm .iso .img .vob .ifo .bup
-  )
+  @video_containers ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
+
+  # Video containers and disc entries no importer accepts (#1448). `Cinder.LibraryTest`, "the
+  # containers outside video_extensions/0", shows each is refused at import.
+  @refused_containers ~w(.m2ts .mpg .mpeg .webm .flv .ogm .iso .img .vob .ifo .bup)
+
+  @archives ~w(.rar .zip .7z .par2 .tar .gz .001)
 
   describe "check/2" do
     test "blocks a shortcut payload and names the offending file" do
@@ -88,8 +93,33 @@ defmodule Cinder.Download.ContentPolicyTest do
       end
     end
 
+    # #1448: the default video media list holds only the extensions the importers accept (#780's
+    # rule), so a container or disc entry they refuse no longer counts as media beside a blocked
+    # file.
+    test "a video container or disc entry the importers refuse does not shield an executable" do
+      results =
+        Map.new(@refused_containers, fn ext ->
+          {ext, ContentPolicy.check(["X.2020.1080p/X.2020.1080p#{ext}", "Codec.exe"], :video)}
+        end)
+
+      assert results ==
+               Map.new(@refused_containers, &{&1, {:blocked, "download contains Codec.exe"}})
+    end
+
+    test "blocks a VIDEO_TS DVD rip that carries an executable, since no importer takes a disc" do
+      assert ContentPolicy.check(
+               [
+                 "VIDEO_TS/VTS_01_1.VOB",
+                 "VIDEO_TS/VIDEO_TS.IFO",
+                 "VIDEO_TS/VIDEO_TS.BUP",
+                 "RARBG.com"
+               ],
+               :video
+             ) == {:blocked, "download contains RARBG.com"}
+    end
+
     test "a video container does not shield an executable in a book download" do
-      for container <- @video_containers do
+      for container <- @video_containers ++ @refused_containers do
         assert match?({:blocked, _}, ContentPolicy.check(["x#{container}", "setup.exe"], :book)),
                "#{container} shielded the executable in a book download"
       end
@@ -155,21 +185,8 @@ defmodule Cinder.Download.ContentPolicyTest do
       assert {:blocked, _} = ContentPolicy.check(["x.mkv:setup.exe"], :book)
     end
 
-    test "passes a VIDEO_TS DVD rip, whose only content type is .vob/.ifo" do
-      assert :ok =
-               ContentPolicy.check(
-                 [
-                   "VIDEO_TS/VTS_01_1.VOB",
-                   "VIDEO_TS/VIDEO_TS.IFO",
-                   "VIDEO_TS/VIDEO_TS.BUP",
-                   "RARBG.com"
-                 ],
-                 :video
-               )
-    end
-
     test "passes an archive-packed release carrying a blocked companion, for every kind" do
-      for kind <- @kinds, archive <- ~w(.rar .zip .7z .par2 .tar .gz .001) do
+      for kind <- @kinds, archive <- @archives do
         assert ContentPolicy.check(
                  ["Release/release#{archive}", "Release/Downloaded.from.somewhere.exe"],
                  kind
@@ -236,7 +253,10 @@ defmodule Cinder.Download.ContentPolicyTest do
     end
 
     test "rejects a kind it has no media set for" do
-      assert_raise FunctionClauseError, fn -> ContentPolicy.check(["x.mkv"], :music) end
+      # Built at run time: the compiler's type check reads `:music` as a kind the guard refuses
+      # and warns, which fails `mix test`.
+      kind = String.to_atom("music")
+      assert_raise FunctionClauseError, fn -> ContentPolicy.check(["x.mkv"], kind) end
     end
 
     test "the detail is sanitized — the filename is remote and gets logged and persisted" do
@@ -263,12 +283,12 @@ defmodule Cinder.Download.ContentPolicyTest do
   end
 
   describe "media_extensions/1" do
-    test "holds the video containers and the archives for :video" do
-      media = ContentPolicy.media_extensions(:video)
+    # #1448: the video half is read from the importers' own list, so the two cannot disagree.
+    test "is exactly what the importers accept plus the archives for :video" do
+      assert Enum.sort(ContentPolicy.media_extensions(:video)) ==
+               Enum.sort(Library.video_extensions() ++ @archives)
 
-      assert Enum.all?(@video_containers, &(&1 in media))
-      assert ".rar" in media
-      refute Enum.any?(accepted_book_formats(), &(".#{&1}" in media))
+      assert Enum.sort(Library.video_extensions()) == Enum.sort(@video_containers)
     end
 
     test "holds every accepted book format and the archives for :book" do
