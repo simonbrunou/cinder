@@ -102,16 +102,6 @@ defmodule Cinder.Acquisition.Anime do
   end
 
   @doc """
-  What the anime sweep would grab from `releases` already in hand: the release judge's pick over
-  them, as `best_episodes/4` takes it from a search.
-  """
-  def select_episodes(releases, context, wanted_ids, opts \\ []) do
-    releases
-    |> ReleaseJudge.judge({:anime_episodes, context, wanted_ids}, opts)
-    |> ReleaseJudge.pick()
-  end
-
-  @doc """
   The stable-ID cover the anime sweep runs over the release judge's `kept`: the releases
   `episode_verdict/2` accepts cover
   `wanted_ids` (`Cinder.Acquisition.Scorer.select_for_ids/3`), each assignment frozen with its

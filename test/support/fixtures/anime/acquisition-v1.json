@@ -90,7 +90,7 @@
     {
       "id": "role-protocol-language-filters",
       "context": {
-        "title": "Show", "year": 2020,
+        "title": "Show", "year": 2020, "tvdb_id": 99,
         "episodes": [{"id": 11, "season_number": 1, "episode_number": 1}, {"id": 12, "season_number": 1, "episode_number": 2}, {"id": 13, "season_number": 1, "episode_number": 3}],
         "mappings": [
           {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1", "precedence": "manual", "episode_ids": [11]},
@@ -102,7 +102,7 @@
       "wanted_episode_ids": [11, 12, 13],
       "opts": {"protocols": ["torrent"], "preferred_language": "french", "original_language": "ja"},
       "candidates": [
-        {"title": "[Group] Show OVA 1 [1080p]", "size": 2000000000, "download_url": "ova", "protocol": "torrent"},
+        {"title": "[Group] Show OVA 1 FRENCH [1080p]", "size": 2000000000, "download_url": "ova", "protocol": "torrent", "tvdb_id": 99},
         {"title": "[Group] Show - 1 NCOP [1080p]", "size": 2000000000, "download_url": "extra", "protocol": "torrent"},
         {"title": "[Group] Show - 1 [1080p]", "size": 2000000000, "download_url": "wrong-protocol", "protocol": "usenet"},
         {"title": "[Group] Show - 2 [1080p]", "size": 2000000000, "download_url": "wrong-language", "protocol": "torrent"},

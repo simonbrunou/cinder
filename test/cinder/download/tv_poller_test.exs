@@ -8,7 +8,9 @@ defmodule Cinder.Download.TvPollerTest do
   # test output stays pristine (they print on failure).
   @moduletag :capture_log
 
-  alias Cinder.Acquisition.{Anime, AnimePreferences, Release}
+  import Cinder.IndexerStubs, only: [anime_sweep_pick: 4]
+
+  alias Cinder.Acquisition.{AnimePreferences, Release}
   alias Cinder.Catalog
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, GrabFile, Identity, Season, Series}
   alias Cinder.Download
@@ -1596,7 +1598,7 @@ defmodule Cinder.Download.TvPollerTest do
     {:ok, policy} = AnimePreferences.resolve(series, Cinder.Settings.anime_defaults())
 
     assert {:ok, %{assignments: [assignment]}} =
-             Anime.select_episodes(
+             anime_sweep_pick(
                [candidate],
                context,
                Enum.map(episodes, & &1.id),

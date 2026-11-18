@@ -2,9 +2,10 @@ defmodule Cinder.Download.IntentTest do
   use Cinder.DataCase, async: false
 
   import Mox
+  import Cinder.IndexerStubs, only: [anime_sweep_pick: 4]
 
-  alias Cinder.Acquisition.{Anime, Release}
   alias Cinder.Acquisition.Indexer.Prowlarr
+  alias Cinder.Acquisition.Release
   alias Cinder.Catalog
   alias Cinder.Catalog.{Grab, Movie, MovieLifecycle}
   alias Cinder.ConfigCase
@@ -472,7 +473,7 @@ defmodule Cinder.Download.IntentTest do
     }
 
     assert {:ok, %{assignments: [assignment]}} =
-             Anime.select_episodes([candidate], context, [episode.id], [])
+             anime_sweep_pick([candidate], context, [episode.id], [])
 
     assert Intent.valid_mapping_snapshot?(assignment.mapping_snapshot, :episode, [episode.id])
 
@@ -1597,7 +1598,7 @@ defmodule Cinder.Download.IntentTest do
     }
 
     assert {:ok, %{assignments: [assignment]}} =
-             Anime.select_episodes([candidate], context, [first.id, second.id], [])
+             anime_sweep_pick([candidate], context, [first.id, second.id], [])
 
     %{
       series: series,

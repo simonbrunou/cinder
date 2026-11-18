@@ -6,8 +6,9 @@ defmodule Cinder.CatalogSeriesTest do
 
   import Mox
   import Cinder.CatalogFixtures
+  import Cinder.IndexerStubs, only: [anime_sweep_pick: 4]
 
-  alias Cinder.Acquisition.{Anime, Release, ReleaseJudge}
+  alias Cinder.Acquisition.{Release, ReleaseJudge}
   alias Cinder.Catalog
   alias Cinder.Catalog.Episode
   alias Cinder.Catalog.Identity
@@ -751,7 +752,7 @@ defmodule Cinder.CatalogSeriesTest do
       candidate = Release.new(%{title: "[Group] Show S00E00 [1080p]", download_url: "anime-0"})
 
       assert {:ok, %{assignments: [%{release: release}]}} =
-               Anime.select_episodes(
+               anime_sweep_pick(
                  [candidate],
                  context,
                  [episode_zero.id, other_special.id],
@@ -818,7 +819,7 @@ defmodule Cinder.CatalogSeriesTest do
       candidate = Release.new(%{title: "[Group] Arc - 01 [1080p]", download_url: "arc"})
 
       assert {:ok, %{assignments: [%{release: release}]}} =
-               Anime.select_episodes([candidate], context, [episode.id], [])
+               anime_sweep_pick([candidate], context, [episode.id], [])
 
       assert {:ok, _} = Catalog.delete_manual_alias(series, alias_record.id)
       expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
@@ -845,16 +846,18 @@ defmodule Cinder.CatalogSeriesTest do
         episode =
           episode_fixture(season_fixture(series, %{season_number: 3}), %{episode_number: 1})
 
+        # The indexer reports the series' TVDB id: the search drops this name otherwise (#699).
         candidate =
           Release.new(%{
             title: "[smol] Monogatari Series Second Season S03E01 [1080p]",
-            download_url: "native-code"
+            download_url: "native-code",
+            tvdb_id: 99
           })
 
         context = Catalog.anime_series_acquisition_context(series)
 
         assert {:ok, %{assignments: [%{release: release}]}} =
-                 Anime.select_episodes([candidate], context, [episode.id], [])
+                 anime_sweep_pick([candidate], context, [episode.id], [])
 
         case unquote(mapping) do
           :offset ->
@@ -908,16 +911,18 @@ defmodule Cinder.CatalogSeriesTest do
         other =
           episode_fixture(season_fixture(series, %{season_number: 4}), %{episode_number: 1})
 
+        # The indexer reports the series' TVDB id: the search drops this name otherwise (#699).
         candidate =
           Release.new(%{
             title: "[smol] Monogatari Series Second Season S03E01 [1080p]",
-            download_url: "native-code"
+            download_url: "native-code",
+            tvdb_id: 99
           })
 
         context = Catalog.anime_series_acquisition_context(series)
 
         assert {:ok, %{assignments: [%{release: release}]}} =
-                 Anime.select_episodes([candidate], context, [shifted.id], [])
+                 anime_sweep_pick([candidate], context, [shifted.id], [])
 
         assert {:ok, _} = Catalog.save_scene_offset_coordinates(series, 3, 1)
 
@@ -954,7 +959,7 @@ defmodule Cinder.CatalogSeriesTest do
       candidate = Release.new(%{title: "[Group] Show S00E00 [1080p]", download_url: "profile"})
 
       assert {:ok, %{assignments: [%{release: release}]}} =
-               Anime.select_episodes([candidate], context, [episode.id], [])
+               anime_sweep_pick([candidate], context, [episode.id], [])
 
       series
       |> Ecto.Changeset.change(media_profile: :standard)
@@ -1017,7 +1022,7 @@ defmodule Cinder.CatalogSeriesTest do
         Release.new(%{title: "[Group] Show S00E00 [1080p]", download_url: "existing-anime"})
 
       assert {:ok, %{assignments: [%{release: valid_release}]}} =
-               Anime.select_episodes([candidate], context, [special.id], [])
+               anime_sweep_pick([candidate], context, [special.id], [])
 
       assert {:ok, _intent} =
                Cinder.Download.reserve_intent(%{

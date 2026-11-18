@@ -1,7 +1,9 @@
 defmodule Cinder.Library.AnimePreflightTest do
   use ExUnit.Case, async: true
 
-  alias Cinder.Acquisition.{Anime, Release}
+  import Cinder.IndexerStubs, only: [anime_sweep_pick: 4]
+
+  alias Cinder.Acquisition.Release
   alias Cinder.Catalog.{Episode, TitleAlias}
   alias Cinder.Download.Intent
   alias Cinder.Library.AnimePreflight
@@ -765,7 +767,7 @@ defmodule Cinder.Library.AnimePreflightTest do
         })
 
       assert {:ok, %{assignments: [%{episode_ids: ^wanted_ids, mapping_snapshot: snapshot}]}} =
-               Anime.select_episodes([release], context, wanted_ids, [])
+               anime_sweep_pick([release], context, wanted_ids, [])
 
       inventory =
         files
@@ -855,7 +857,7 @@ defmodule Cinder.Library.AnimePreflightTest do
       })
 
     assert {:ok, %{assignments: [%{episode_ids: [11], mapping_snapshot: snapshot}]}} =
-             Anime.select_episodes([release], context, [11], [])
+             anime_sweep_pick([release], context, [11], [])
 
     assert snapshot["parser_context"]["year"] == 2016
 

@@ -2,8 +2,9 @@ defmodule Cinder.Acquisition.ReleaseJudgeAnimeTest do
   use ExUnit.Case, async: true
 
   import Cinder.AnimeFixtures, only: [neutral_anime_policy: 1]
+  import Cinder.IndexerStubs, only: [anime_sweep_pick: 4]
 
-  alias Cinder.Acquisition.{Anime, Release, ReleaseJudge}
+  alias Cinder.Acquisition.{Release, ReleaseJudge}
 
   @gb 1_000_000_000
   @now ~U[2026-07-13 12:00:00Z]
@@ -457,7 +458,7 @@ defmodule Cinder.Acquisition.ReleaseJudgeAnimeTest do
         taken? =
           match?(
             {:ok, %{assignments: [_ | _]}},
-            Anime.select_episodes([release], @series, @wanted, opts)
+            anime_sweep_pick([release], @series, @wanted, opts)
           )
 
         assert row(judged, release.title).verdict == :ok == taken?, release.title

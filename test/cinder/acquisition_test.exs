@@ -1370,21 +1370,7 @@ defmodule Cinder.AcquisitionTest do
     end
   end
 
-  describe "best_releases/4 (TV)" do
-    test "composes search_tv, parse, title-match, and set-cover scoring (release ⇒ coverage)" do
-      # Patterns confirm the series' tvdb_id, title, and season number are passed through.
-      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "The Office", 1 ->
-        {:ok,
-         [
-           raw_tv("The.Office.US.S01E01.1080p.WEB-DL-GRP"),
-           raw_tv("The.Office.US.S01E02.1080p.WEB-DL-GRP")
-         ]}
-      end)
-
-      assert {:ok, chosen} = Acquisition.best_releases(series(), 1, [1, 2])
-      assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() == [[1], [2]]
-    end
-
+  describe "best_upgrade_releases/4" do
     # #924: the upgrade sweep's season list has no bridge, but the series' mappings still keep it
     # from reading natively a release a vetted mapping assigns to another season.
     test "drops a native release a vetted mapping in `mappings:` assigns to another season" do
@@ -1396,8 +1382,10 @@ defmodule Cinder.AcquisitionTest do
         vetted("scene", "S02E05", [133], :curated)
       ]
 
-      assert :no_match = Acquisition.best_releases(series(), 2, [5], mappings: mappings)
-      assert {:ok, [{%Release{episodes: [5]}, [5]}]} = Acquisition.best_releases(series(), 2, [5])
+      assert :no_match = Acquisition.best_upgrade_releases(series(), 2, [5], mappings: mappings)
+
+      assert {:ok, [{%Release{episodes: [5]}, [5]}]} =
+               Acquisition.best_upgrade_releases(series(), 2, [5])
     end
 
     # #987: a saved season offset gives native S02E05 the curated code S03E05, so the upgrade
@@ -1406,7 +1394,38 @@ defmodule Cinder.AcquisitionTest do
       stub_seasons(%{2 => [raw_tv("The.Office.S02E05.1080p.WEB-DL-GRP")]})
       mappings = [canonical("S02E05", 205), offset("S03E05", [205])]
 
-      assert :no_match = Acquisition.best_releases(series(), 2, [5], mappings: mappings)
+      assert :no_match = Acquisition.best_upgrade_releases(series(), 2, [5], mappings: mappings)
+    end
+  end
+
+  # The TV sweep's pick for one season (`Cinder.Download.TvPoller`): `Acquisition.judge_season/3`,
+  # then `ReleaseJudge.pick/1`. `opts[:episode_count]` is the season's episode count, which
+  # `judge_season/3` passes to the cover as `pack_episode_count`; the rest is the household policy.
+  defp pick_season(series, season_number, wanted_numbers, opts \\ []) do
+    {episode_count, opts} = Keyword.pop(opts, :episode_count, 30)
+
+    context =
+      season_context(series: series, season_number: season_number, episode_count: episode_count)
+
+    with {:ok, judged} <- Acquisition.judge_season(context, wanted_numbers, opts),
+         do: ReleaseJudge.pick(judged)
+  end
+
+  describe "the TV sweep's season pick" do
+    test "composes search_tv, parse, title-match, and set-cover scoring (release ⇒ coverage)" do
+      # Patterns confirm the series' tvdb_id, title, and season number are passed through. The
+      # other series' free-text E03 is the one release the title match alone keeps out of the cover.
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "The Office", 1 ->
+        {:ok,
+         [
+           raw_tv("The.Office.US.S01E01.1080p.WEB-DL-GRP"),
+           raw_tv("The.Office.US.S01E02.1080p.WEB-DL-GRP"),
+           raw_tv("Parks.and.Recreation.S01E03.1080p.WEB-DL-GRP", query_origins: [:free_text])
+         ]}
+      end)
+
+      assert {:ok, chosen} = pick_season(series(), 1, [1, 2, 3])
+      assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() == [[1], [2]]
     end
 
     test "the cover takes confirmed-FRENCH singles over an untagged pack the season keeps" do
@@ -1422,7 +1441,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, chosen} =
-               Acquisition.best_releases(series(), 1, [1, 2],
+               pick_season(series(), 1, [1, 2],
                  preferred_language: "original",
                  original_language: "fr"
                )
@@ -1442,7 +1461,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{%Release{language: "FRENCH"}, [1]}, {%Release{language: nil}, [2]}]} =
-               Acquisition.best_releases(series(), 1, [1, 2],
+               pick_season(series(), 1, [1, 2],
                  preferred_language: "original",
                  original_language: "fr"
                )
@@ -1457,9 +1476,9 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{%Release{episodes: nil}, [19, 20, 21, 22]}]} =
-               Acquisition.best_releases(series(), 3, [19, 20, 21, 22],
+               pick_season(series(), 3, [19, 20, 21, 22],
                  max_size: 4 * @gb,
-                 pack_episode_count: 22
+                 episode_count: 22
                )
     end
 
@@ -1478,9 +1497,9 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, chosen} =
-               Acquisition.best_releases(series(), 3, [19, 20, 21, 22],
+               pick_season(series(), 3, [19, 20, 21, 22],
                  max_size: 4 * @gb,
-                 pack_episode_count: 22
+                 episode_count: 22
                )
 
       assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() ==
@@ -1500,9 +1519,9 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, chosen} =
-               Acquisition.best_releases(series(), 3, [19, 20, 21, 22],
+               pick_season(series(), 3, [19, 20, 21, 22],
                  max_size: 4 * @gb,
-                 pack_episode_count: 22
+                 episode_count: 22
                )
 
       assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() == [[19], [20]]
@@ -1513,7 +1532,7 @@ defmodule Cinder.AcquisitionTest do
         {:ok, [raw_tv("Parks.and.Recreation.S01E01.1080p.WEB-DL-GRP")]}
       end)
 
-      assert :no_match = Acquisition.best_releases(series(tvdb_id: nil), 1, [1])
+      assert :no_match = pick_season(series(tvdb_id: nil), 1, [1])
     end
 
     test "rejects a spinoff that carries the wanted series title as an inner token run" do
@@ -1528,7 +1547,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert :no_match =
-               Acquisition.best_releases(
+               pick_season(
                  series(title: "Puella Magi Madoka Magica"),
                  1,
                  [2]
@@ -1549,7 +1568,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
-               Acquisition.best_releases(series(title: "Money Heist", year: 2017), 1, [1])
+               pick_season(series(title: "Money Heist", year: 2017), 1, [1])
     end
 
     test "rejects a release carrying a conflicting TVDB identity" do
@@ -1564,7 +1583,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert :no_match =
-               Acquisition.best_releases(series(title: "The Office", year: 2005), 1, [1])
+               pick_season(series(title: "The Office", year: 2005), 1, [1])
     end
 
     test "a numeric title is token-anchored: a year in another show's name can't match" do
@@ -1574,7 +1593,7 @@ defmodule Cinder.AcquisitionTest do
         {:ok, [raw_tv("Other.Show.2024.S01E05.1080p.WEB-DL-GRP")]}
       end)
 
-      assert :no_match = Acquisition.best_releases(series(tvdb_id: nil, title: "24"), 1, [5])
+      assert :no_match = pick_season(series(tvdb_id: nil, title: "24"), 1, [5])
     end
 
     test "an all-numeric title still matches its own releases" do
@@ -1583,7 +1602,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{%Release{episodes: [5]}, [5]}]} =
-               Acquisition.best_releases(series(tvdb_id: nil, title: "24"), 1, [5])
+               pick_season(series(tvdb_id: nil, title: "24"), 1, [5])
     end
 
     test "a tag-prefixed release name still matches a short title (token, not prefix, anchor)" do
@@ -1592,7 +1611,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{%Release{episodes: [5]}, [5]}]} =
-               Acquisition.best_releases(series(tvdb_id: nil, title: "24"), 1, [5])
+               pick_season(series(tvdb_id: nil, title: "24"), 1, [5])
     end
 
     test "rejects an unverified yearless pack for a known-year same-named series" do
@@ -1609,7 +1628,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert :no_match =
-               Acquisition.best_releases(
+               pick_season(
                  series(tvdb_id: 281_535, title: "Forever", year: 2014),
                  1,
                  [1]
@@ -1633,7 +1652,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, chosen} =
-               Acquisition.best_releases(series(title: "Charmed", year: 1998), 1, [1, 2, 3, 4])
+               pick_season(series(title: "Charmed", year: 1998), 1, [1, 2, 3, 4])
 
       assert chosen |> Enum.map(fn {r, _cov} -> r.title end) |> Enum.sort() == [
                "Charmed.1997.S01E03.1080p.WEB-DL-GRP",
@@ -1654,7 +1673,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
-               Acquisition.best_releases(
+               pick_season(
                  series(tvdb_id: 281_535, title: "1923", year: 2022),
                  1,
                  [1]
@@ -1670,7 +1689,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
-               Acquisition.best_releases(
+               pick_season(
                  series(tvdb_id: nil, title: "1923", year: 2022),
                  1,
                  [1]
@@ -1708,7 +1727,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
-               Acquisition.best_releases(series(tvdb_id: nil, title: "1883"), 1, [1])
+               pick_season(series(tvdb_id: nil, title: "1883"), 1, [1])
     end
 
     test "a title embedded inside another token is rejected ('Dark' vs 'Darkwing.Duck')" do
@@ -1716,7 +1735,7 @@ defmodule Cinder.AcquisitionTest do
         {:ok, [raw_tv("Darkwing.Duck.S01E05.1080p.WEB-DL-GRP")]}
       end)
 
-      assert :no_match = Acquisition.best_releases(series(tvdb_id: nil, title: "Dark"), 1, [5])
+      assert :no_match = pick_season(series(tvdb_id: nil, title: "Dark"), 1, [5])
     end
 
     test "a title that folds to nothing (non-Latin) fails closed instead of matching everything" do
@@ -1726,7 +1745,7 @@ defmodule Cinder.AcquisitionTest do
         {:ok, [raw_tv("Random.Show.S01E05.1080p.WEB-DL-GRP")]}
       end)
 
-      assert :no_match = Acquisition.best_releases(series(tvdb_id: nil, title: "Дом"), 1, [5])
+      assert :no_match = pick_season(series(tvdb_id: nil, title: "Дом"), 1, [5])
     end
 
     test "a non-decomposable letter is transliterated, not stripped mid-token ('Æon Flux')" do
@@ -1736,7 +1755,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
-               Acquisition.best_releases(series(tvdb_id: nil, title: "Æon Flux"), 1, [1])
+               pick_season(series(tvdb_id: nil, title: "Æon Flux"), 1, [1])
     end
 
     test "an '&' in a mostly-non-Latin title can't inflate the needle past the fail-closed guard" do
@@ -1747,7 +1766,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert :no_match =
-               Acquisition.best_releases(series(tvdb_id: nil, title: "Дом & Сад"), 1, [5])
+               pick_season(series(tvdb_id: nil, title: "Дом & Сад"), 1, [5])
     end
 
     test "title-match folds diacritics so an ASCII-ized release still matches" do
@@ -1756,7 +1775,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
-               Acquisition.best_releases(series(tvdb_id: nil, title: "Pokémon"), 1, [1])
+               pick_season(series(tvdb_id: nil, title: "Pokémon"), 1, [1])
     end
 
     test "title-match equates '&' and 'and' so scene names match ampersand titles" do
@@ -1765,7 +1784,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
-               Acquisition.best_releases(series(tvdb_id: nil, title: "Law & Order"), 1, [1])
+               pick_season(series(tvdb_id: nil, title: "Law & Order"), 1, [1])
     end
 
     test "drops releases whose protocol has no configured client before scoring" do
@@ -1778,18 +1797,18 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{%Release{protocol: :torrent, episodes: [2]}, [2]}]} =
-               Acquisition.best_releases(series(), 1, [1, 2], protocols: [:torrent])
+               pick_season(series(), 1, [1, 2], protocols: [:torrent])
     end
 
     test ":no_match when nothing survives; indexer error passes through" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _, _, _ -> {:ok, []} end)
-      assert :no_match = Acquisition.best_releases(series(), 1, [1])
+      assert :no_match = pick_season(series(), 1, [1])
 
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _, _, _ -> {:error, :timeout} end)
-      assert {:error, :timeout} = Acquisition.best_releases(series(), 1, [1])
+      assert {:error, :timeout} = pick_season(series(), 1, [1])
     end
 
-    test "best_releases filters episodes by language: french pick covers only FRENCH/MULTI episodes" do
+    test "the season pick filters episodes by language: french pick covers only FRENCH/MULTI episodes" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "The Office", 1 ->
         {:ok,
          [
@@ -1799,7 +1818,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, chosen} =
-               Acquisition.best_releases(series(), 1, [1, 2],
+               pick_season(series(), 1, [1, 2],
                  preferred_language: "french",
                  original_language: "en"
                )
@@ -1808,9 +1827,9 @@ defmodule Cinder.AcquisitionTest do
       assert chosen |> Enum.flat_map(fn {_r, cov} -> cov end) |> Enum.sort() == [1]
     end
 
-    test "best_releases with original pick falls back when a title-word collision tags every episode" do
-      # Same soft-default fallback as the movie path: every episode is tagged ITALIAN by the
-      # release name, nothing satisfies original/en, so it covers via the unfiltered candidates.
+    test "the season pick under original falls back when every episode carries another audio tag" do
+      # Same soft-default fallback as the movie path: every episode is tagged ITALIAN, nothing
+      # satisfies original/en, so it covers via the unfiltered candidates.
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "The Office", 1 ->
         {:ok,
          [
@@ -1820,7 +1839,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, chosen} =
-               Acquisition.best_releases(series(), 1, [1, 2],
+               pick_season(series(), 1, [1, 2],
                  preferred_language: "original",
                  original_language: "en"
                )
@@ -1828,7 +1847,7 @@ defmodule Cinder.AcquisitionTest do
       assert chosen |> Enum.flat_map(fn {_r, cov} -> cov end) |> Enum.sort() == [1, 2]
     end
 
-    test "best_releases returns :no_match when no episode has a satisfying release" do
+    test "the season pick returns :no_match when no episode has a satisfying release" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "The Office", 1 ->
         {:ok,
          [
@@ -1838,7 +1857,7 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert :no_match =
-               Acquisition.best_releases(series(), 1, [1, 2],
+               pick_season(series(), 1, [1, 2],
                  preferred_language: "french",
                  original_language: "en"
                )

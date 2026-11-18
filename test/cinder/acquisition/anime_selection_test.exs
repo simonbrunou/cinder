@@ -3,6 +3,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
   import Mox
   import Cinder.AnimeFixtures, only: [neutral_anime_policy: 1]
+  import Cinder.IndexerStubs, only: [anime_sweep_pick: 4]
 
   alias Cinder.Acquisition
   alias Cinder.Acquisition.Anime
@@ -32,7 +33,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
   test "satisfies every versioned stable-ID selection case", %{cases: cases} do
     for selection_case <- cases do
       result =
-        Anime.select_episodes(
+        anime_sweep_pick(
           Enum.map(selection_case["candidates"], &release_from_fixture/1),
           context_from_fixture(selection_case["context"]),
           selection_case["wanted_episode_ids"],
@@ -48,10 +49,10 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     release = Release.new(raw("[Group] Show S01E01 [1080p]", "single"))
 
     assert {:ok, %{assignments: [%{episode_ids: [11]}], waiting: nil}} =
-             Anime.select_episodes([release], context, [11], [])
+             anime_sweep_pick([release], context, [11], [])
 
     assert {:ok, %{assignments: [%{episode_ids: [11]}], waiting: nil}} =
-             Anime.select_episodes([release], context, [11], anime_policy: policy([]))
+             anime_sweep_pick([release], context, [11], anime_policy: policy([]))
   end
 
   test "episodic preference keeps a trailing group parsed by the standard release parser" do
@@ -59,7 +60,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     release = Release.new(raw("Show - 1 [1080p]-Trusted", "single"))
 
     assert {:ok, %{assignments: [%{release: selected}], waiting: nil}} =
-             Anime.select_episodes([release], context, [1],
+             anime_sweep_pick([release], context, [1],
                anime_policy: policy(preferred_groups: ["trusted"])
              )
 
@@ -74,7 +75,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
     release = Release.new(raw("Alias 8 - 1 [1080p]", "eighth-alias"))
 
-    assert :no_match = Anime.select_episodes([release], context, [1], [])
+    assert :no_match = anime_sweep_pick([release], context, [1], [])
   end
 
   test "generated parser titles use the durable Unicode codepoint bound" do
@@ -91,7 +92,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert length(String.to_charlist(combining_title)) == 201
 
     assert {:ok, %{assignments: [assignment]}} =
-             Anime.select_episodes([release], context, [1], [])
+             anime_sweep_pick([release], context, [1], [])
 
     assert assignment.mapping_snapshot["parser_context"]["title"] == "Short Title"
     refute combining_title in assignment.mapping_snapshot["parser_context"]["aliases"]
@@ -106,10 +107,12 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       |> Map.put(:title, canonical_title)
       |> Map.put(:aliases, [%{title: "Foo", kind: :alternative, precedence: :manual}])
 
-    release = Release.new(raw("#{canonical_title} [1080p]", "over-limit-canonical-prefix"))
+    # The indexer reports the series' TVDB id, so the search hands the name to the judge (#699).
+    release =
+      Release.new(raw("#{canonical_title} [1080p]", "over-limit-canonical-prefix", tvdb_id: 99))
 
     assert length(String.codepoints(canonical_title)) == 201
-    assert :no_match = Anime.select_episodes([release], context, [2], [])
+    assert :no_match = anime_sweep_pick([release], context, [2], [])
 
     assert [%Release{mapping_snapshot: nil, resolved_episode_ids: nil}] =
              Anime.episode_candidates([release], context, [2])
@@ -129,7 +132,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     release = Release.new(raw("Foo 2 - 1 [1080p]", "longer-canonical"))
 
     assert {:ok, %{assignments: [assignment]}} =
-             Anime.select_episodes([release], context, [1], [])
+             anime_sweep_pick([release], context, [1], [])
 
     assert assignment.mapping_snapshot["parser_context"]["title"] == "Foo 2"
     assert assignment.mapping_snapshot["parser_context"]["blocked_titles"] == ["Foo"]
@@ -177,7 +180,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       release = Release.new(raw("Show S01E01 [#{metadata}] [1080p]", metadata))
 
       assert {:ok, %{assignments: [%{mapping_snapshot: snapshot}]}} =
-               Anime.select_episodes([release], context, [11], [])
+               anime_sweep_pick([release], context, [11], [])
 
       assert Intent.valid_mapping_snapshot?(snapshot, :episode, [11])
 
@@ -216,7 +219,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       release =
         Release.new(raw("Show #{malformed} OVA 1#{suffix}", "malformed-typed-special"))
 
-      assert :no_match = Anime.select_episodes([release], context, [11], [])
+      assert :no_match = anime_sweep_pick([release], context, [11], [])
 
       assert [%Release{mapping_snapshot: nil, resolved_episode_ids: nil}] =
                Anime.episode_candidates([release], context, [11])
@@ -234,7 +237,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
         ] do
       release = Release.new(raw(title, title))
 
-      assert :no_match = Anime.select_episodes([release], context, [1, 2, 3], [])
+      assert :no_match = anime_sweep_pick([release], context, [1, 2, 3], [])
 
       assert [%Release{mapping_snapshot: nil, resolved_episode_ids: nil}] =
                Anime.episode_candidates([release], context, [1, 2, 3])
@@ -299,7 +302,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert length(String.codepoints(normalized_scope)) == 101
 
     assert {:ok, %{assignments: [assignment]}} =
-             Anime.select_episodes([release], context, [17], [])
+             anime_sweep_pick([release], context, [17], [])
 
     assert [scene_title] = assignment.mapping_snapshot["parser_context"]["scene_titles"]
     assert scene_title["title"] == normalized_scope
@@ -332,15 +335,15 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     safe = Release.new(raw("Show - 1 [720p]", "valid-lower-ranked-snapshot"))
 
     assert length(String.codepoints(over_limit_scope)) == 201
-    assert :no_match = Anime.select_episodes([release], context, [11], [])
+    assert :no_match = anime_sweep_pick([release], context, [11], [])
 
     assert {:ok, %{assignments: [%{release: selected}]}} =
-             Anime.select_episodes([safe], context, [11], [])
+             anime_sweep_pick([safe], context, [11], [])
 
     assert selected.download_url == "valid-lower-ranked-snapshot"
 
     assert {:ok, %{assignments: [%{release: selected}]}} =
-             Anime.select_episodes([release, safe], context, [11], [])
+             anime_sweep_pick([release, safe], context, [11], [])
 
     assert selected.download_url == "valid-lower-ranked-snapshot"
 
@@ -374,16 +377,16 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       now: now
     ]
 
-    assert :no_match = Anime.select_episodes([unsafe_delayed], context, [11], selection_opts)
-    assert :no_match = Anime.select_episodes([unsafe_bridge], context, [11, 12], selection_opts)
+    assert :no_match = anime_sweep_pick([unsafe_delayed], context, [11], selection_opts)
+    assert :no_match = anime_sweep_pick([unsafe_bridge], context, [11, 12], selection_opts)
 
     assert {:waiting_for_preferred_group, %{episode_ids: [11], retry_at: retry_at}} =
-             Anime.select_episodes([safe_delayed], context, [11], selection_opts)
+             anime_sweep_pick([safe_delayed], context, [11], selection_opts)
 
     assert retry_at == DateTime.add(now, 3600, :second)
 
     assert {:waiting_for_preferred_group, %{episode_ids: [11], retry_at: ^retry_at}} =
-             Anime.select_episodes(
+             anime_sweep_pick(
                [unsafe_bridge, safe_delayed],
                context,
                [11, 12],
@@ -391,7 +394,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
              )
 
     assert {:waiting_for_preferred_group, %{episode_ids: [11], retry_at: ^retry_at}} =
-             Anime.select_episodes(
+             anime_sweep_pick(
                [unsafe_preferred, safe_delayed],
                context,
                [11],
@@ -422,11 +425,11 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       )
     end
 
-    assert :no_match = Anime.select_episodes([id_release.(nil)], context, [11], [])
-    assert :no_match = Anime.select_episodes([id_release.(77)], context, [11], [])
+    assert :no_match = anime_sweep_pick([id_release.(nil)], context, [11], [])
+    assert :no_match = anime_sweep_pick([id_release.(77)], context, [11], [])
 
     assert {:ok, %{assignments: [assignment]}} =
-             Anime.select_episodes([id_release.(99)], context, [11], [])
+             anime_sweep_pick([id_release.(99)], context, [11], [])
 
     assert assignment.episode_ids == [11]
     assert assignment.mapping_snapshot["parser_context"]["allow_unscoped_standard"] == true
@@ -436,7 +439,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     year_release = Release.new(raw("Show (2020) S01E01 [1080p]", "title-year"))
 
     assert {:ok, %{assignments: [%{episode_ids: [11]}]}} =
-             Anime.select_episodes([year_release], year_context, [11], [])
+             anime_sweep_pick([year_release], year_context, [11], [])
   end
 
   test "overlap components report only IDs not covered by an eligible release" do
@@ -458,7 +461,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
               assignments: [%{episode_ids: [1]}],
               waiting: %{episode_ids: episode_ids, retry_at: ~U[2026-07-14 12:00:00Z]}
             }} =
-             Anime.select_episodes([preferred, delayed], context, Enum.to_list(1..12),
+             anime_sweep_pick([preferred, delayed], context, Enum.to_list(1..12),
                anime_policy: policy(preferred_groups: ["trusted"], group_fallback_delay: 86_400),
                now: now
              )
@@ -484,7 +487,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     release = Release.new(raw("[Group] Show S01E01-S01E02 [1080p]", "standard-pack"))
 
     assert {:ok, %{assignments: [assignment]}} =
-             Anime.select_episodes([release], context, [11, 12], [])
+             anime_sweep_pick([release], context, [11, 12], [])
 
     snapshot = assignment.mapping_snapshot
 
@@ -537,7 +540,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       Release.new(raw("[Group] Show S01E01-E02 H.264 10-bit 24fps 2ch [1080p]", "metadata-pack"))
 
     assert {:ok, %{assignments: [%{episode_ids: [11, 12]}]}} =
-             Anime.select_episodes([metadata_release], context, [11, 12], [])
+             anime_sweep_pick([metadata_release], context, [11, 12], [])
 
     for {title, url} <- [
           {"[Group] Show S01E02-S01E01 [1080p]", "descending-standard-pack"},
@@ -556,7 +559,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
           {"[Group] Show S01E01-E02 2chE03 [1080p]", "channels-standard-pack"}
         ] do
       malformed = Release.new(raw(title, url))
-      assert :no_match = Anime.select_episodes([malformed], context, [11, 12], [])
+      assert :no_match = anime_sweep_pick([malformed], context, [11, 12], [])
 
       assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
                Anime.episode_candidates([malformed], context, [11, 12])
@@ -567,7 +570,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
           {"[Group] Show S01E01-S1000E01 [1080p]", "over-width-standard-tail"}
         ] do
       malformed = Release.new(raw(title, url))
-      assert :no_match = Anime.select_episodes([malformed], context, [11], [])
+      assert :no_match = anime_sweep_pick([malformed], context, [11], [])
 
       assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
                Anime.episode_candidates([malformed], context, [11])
@@ -591,11 +594,11 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     release = Release.new(raw("[Group] Frieren S02E01 [1080p]", "scene-release"))
 
     assert {:ok, %{assignments: [%{episode_ids: [29]}]}} =
-             Anime.select_episodes([release], context, [29], [])
+             anime_sweep_pick([release], context, [29], [])
 
     context_without_group = %{context | mappings: Enum.take(context.mappings, 1)}
 
-    assert :no_match = Anime.select_episodes([release], context_without_group, [29], [])
+    assert :no_match = anime_sweep_pick([release], context_without_group, [29], [])
   end
 
   test "a selected scene-group arc title scopes a bare number to that arc (issue #312)" do
@@ -634,7 +637,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     release = Release.new(raw("[DB] Koyomimonogatari - 05 [1080p]", "issue-312"))
 
     assert {:ok, %{assignments: [assignment]}} =
-             Anime.select_episodes([release], context, [17], [])
+             anime_sweep_pick([release], context, [17], [])
 
     scoped_coordinate = %{
       scheme: "scene",
@@ -738,7 +741,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     incomplete_batch =
       Release.new(raw("[DB] Koyomimonogatari - 04-05 [1080p]", "issue-312-gap"))
 
-    assert :no_match = Anime.select_episodes([incomplete_batch], context, [17], [])
+    assert :no_match = anime_sweep_pick([incomplete_batch], context, [17], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
              Anime.episode_candidates([incomplete_batch], context, [17])
@@ -774,7 +777,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
     release = Release.new(raw("[DB] Arc A 01-02 [1080p]", "cross-scope-range"))
 
-    assert :no_match = Anime.select_episodes([release], context, [1, 2], [])
+    assert :no_match = anime_sweep_pick([release], context, [1, 2], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
              Anime.episode_candidates([release], context, [1, 2])
@@ -797,7 +800,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
           {"[DB] Arc A 01-02−03 [1080p]", "unicode-minus-chained-range"}
         ] do
       malformed = Release.new(raw(title, url))
-      assert :no_match = Anime.select_episodes([malformed], safe_context, [1, 2], [])
+      assert :no_match = anime_sweep_pick([malformed], safe_context, [1, 2], [])
 
       assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
                Anime.episode_candidates([malformed], safe_context, [1, 2])
@@ -817,13 +820,13 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     malicious =
       Release.new(raw("[DB] Arc A 01-02-S11E03 [1080p]", "cross-scope-tail"))
 
-    assert :no_match = Anime.select_episodes([malicious], malicious_context, [3], [])
+    assert :no_match = anime_sweep_pick([malicious], malicious_context, [3], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
              Anime.episode_candidates([malicious], malicious_context, [3])
 
     assert {:ok, %{assignments: [%{release: selected}]}} =
-             Anime.select_episodes([release], safe_context, [1, 2], [])
+             anime_sweep_pick([release], safe_context, [1, 2], [])
 
     assert Intent.valid_mapping_snapshot?(selected.mapping_snapshot, :season_pack, [1, 2])
 
@@ -886,7 +889,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     }
 
     unsafe = Release.new(raw("[DB] Foo 2 - 05 [1080p]", "capped-scoped-prefix"))
-    assert :no_match = Anime.select_episodes([unsafe], context, [2, 3, 4, 5], [])
+    assert :no_match = anime_sweep_pick([unsafe], context, [2, 3, 4, 5], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
              Anime.episode_candidates([unsafe], context, [2, 3, 4, 5])
@@ -894,7 +897,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     safe = Release.new(raw("[DB] Show - 05 [1080p]", "safe-capped-context"))
 
     assert {:ok, %{assignments: [%{episode_ids: [5], release: selected}]}} =
-             Anime.select_episodes([safe], context, [2, 3, 4, 5], [])
+             anime_sweep_pick([safe], context, [2, 3, 4, 5], [])
 
     parser_context = selected.mapping_snapshot["parser_context"]
     refute "Foo" in parser_context["aliases"]
@@ -940,7 +943,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     }
 
     unsafe = Release.new(raw("[DB] #{long_title} [1080p]", "over-limit-prefix"))
-    assert :no_match = Anime.select_episodes([unsafe], context, [2], [])
+    assert :no_match = anime_sweep_pick([unsafe], context, [2], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
              Anime.episode_candidates([unsafe], context, [2])
@@ -961,7 +964,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       kind: :series,
       title: "Foo",
       year: 2020,
-      tvdb_id: nil,
+      tvdb_id: 99,
       aliases: aliases,
       scene_titles: [],
       episodes: Enum.map(2..5, &episode(&1, 0, &1)),
@@ -975,15 +978,18 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     }
 
     unsafe = Release.new(raw("[DB] Foo 2 - 05 [1080p]", "capped-canonical-prefix"))
-    assert :no_match = Anime.select_episodes([unsafe], context, [2, 3, 4, 5], [])
+    assert :no_match = anime_sweep_pick([unsafe], context, [2, 3, 4, 5], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
              Anime.episode_candidates([unsafe], context, [2, 3, 4, 5])
 
+    # The indexer reports the series' TVDB id, so the search hands the name to the judge (#699).
     unsafe_standard =
-      Release.new(raw("[DB] Foo - The Arc S01E02 [1080p]", "blocked-standard-prefix"))
+      Release.new(
+        raw("[DB] Foo - The Arc S01E02 [1080p]", "blocked-standard-prefix", tvdb_id: 99)
+      )
 
-    assert :no_match = Anime.select_episodes([unsafe_standard], context, [2], [])
+    assert :no_match = anime_sweep_pick([unsafe_standard], context, [2], [])
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
              Anime.episode_candidates([unsafe_standard], context, [2])
@@ -991,7 +997,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     safe = Release.new(raw("[DB] A1 - 05 [1080p]", "safe-canonical-blocker-context"))
 
     assert {:ok, %{assignments: [%{episode_ids: [5], release: selected}]}} =
-             Anime.select_episodes([safe], context, [2, 3, 4, 5], [])
+             anime_sweep_pick([safe], context, [2, 3, 4, 5], [])
 
     assert selected.mapping_snapshot["version"] == 3
     assert selected.mapping_snapshot["parser_context"]["blocked_titles"] == ["Foo"]
@@ -1079,7 +1085,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     release = Release.new(raw("[DB] Foo 2 - 05 [1080p]", "scoped-prefix"))
 
     assert {:ok, %{assignments: [%{episode_ids: [5], release: selected}], waiting: nil}} =
-             Anime.select_episodes([release], context, [5], [])
+             anime_sweep_pick([release], context, [5], [])
 
     assert selected.coordinates == [%{scheme: "absolute", values: ["5"]}]
     assert Intent.valid_mapping_snapshot?(selected.mapping_snapshot, :episode, [5])
@@ -1128,7 +1134,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     release = Release.new(raw("[DB] Foo Arc - 05 [1080p]", "normalized-scene-scope"))
 
     assert {:ok, %{assignments: [%{episode_ids: [17]}], waiting: nil}} =
-             Anime.select_episodes([release], context, [17], [])
+             anime_sweep_pick([release], context, [17], [])
 
     assert [%{resolved_episode_ids: [17], mapping_snapshot: snapshot}] =
              Anime.episode_candidates([release], context, [17])
@@ -1153,7 +1159,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     release = Release.new(raw("[Group] Show S01E05 [1080p]", "conflict"))
 
     assert {:ok, %{assignments: [%{episode_ids: [5]}]}} =
-             Anime.select_episodes([release], context, [5], [])
+             anime_sweep_pick([release], context, [5], [])
   end
 
   test "an operator-reviewed (:curated) scene coordinate wins over the coincidental native code of a different episode (issue #156)" do
@@ -1174,11 +1180,14 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       ]
     }
 
+    # The indexer reports the series' TVDB id: the search drops this name otherwise (#699).
     release =
-      Release.new(raw("[smol] Monogatari Series Second Season S04E05 [1080p]", "issue-156"))
+      Release.new(
+        raw("[smol] Monogatari Series Second Season S04E05 [1080p]", "issue-156", tvdb_id: 99)
+      )
 
     assert {:ok, %{assignments: [%{episode_ids: [5]}]}} =
-             Anime.select_episodes([release], context, [5], [])
+             anime_sweep_pick([release], context, [5], [])
   end
 
   # #987: the operator's season offset gives native S03E01 (id 301) the curated scene code S04E01,
@@ -1203,24 +1212,30 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
         ]
       }
 
-      native = Release.new(raw("[smol] Monogatari Series Second Season S03E01 [1080p]", "native"))
+      # The indexer reports the series' TVDB id: the search drops this name otherwise (#699).
+      native =
+        Release.new(
+          raw("[smol] Monogatari Series Second Season S03E01 [1080p]", "native", tvdb_id: 99)
+        )
 
       case unquote(s03e01_ids) do
         nil ->
-          assert :no_match = Anime.select_episodes([native], context, [301], [])
+          assert :no_match = anime_sweep_pick([native], context, [301], [])
 
         ids ->
           assert {:ok, %{assignments: [%{episode_ids: ^ids}]}} =
-                   Anime.select_episodes([native], context, [301], [])
+                   anime_sweep_pick([native], context, [301], [])
       end
 
       shifted =
         Release.new(
-          raw("[smol] Monogatari Series Second Season #{unquote(value)} [1080p]", "shifted")
+          raw("[smol] Monogatari Series Second Season #{unquote(value)} [1080p]", "shifted",
+            tvdb_id: 99
+          )
         )
 
       assert {:ok, %{assignments: [%{episode_ids: [301]}]}} =
-               Anime.select_episodes([shifted], context, [301], [])
+               anime_sweep_pick([shifted], context, [301], [])
     end
   end
 
@@ -1242,10 +1257,14 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
         ]
       }
 
-      native = Release.new(raw("[smol] Monogatari Series Second Season S03E01 [1080p]", "native"))
+      # The indexer reports the series' TVDB id: the search drops this name otherwise (#699).
+      native =
+        Release.new(
+          raw("[smol] Monogatari Series Second Season S03E01 [1080p]", "native", tvdb_id: 99)
+        )
 
       assert {:ok, %{assignments: [%{episode_ids: [301]}]}} =
-               Anime.select_episodes([native], context, [301], [])
+               anime_sweep_pick([native], context, [301], [])
     end
   end
 
@@ -1271,15 +1290,19 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
         ]
       }
 
-      native = Release.new(raw("[smol] Monogatari Series Second Season S03E01 [1080p]", "native"))
+      # The indexer reports the series' TVDB id: the search drops this name otherwise (#699).
+      native =
+        Release.new(
+          raw("[smol] Monogatari Series Second Season S03E01 [1080p]", "native", tvdb_id: 99)
+        )
 
       case unquote(ids) do
         nil ->
-          assert :no_match = Anime.select_episodes([native], context, [201, 301], [])
+          assert :no_match = anime_sweep_pick([native], context, [201, 301], [])
 
         ids ->
           assert {:ok, %{assignments: [%{episode_ids: ^ids}]}} =
-                   Anime.select_episodes([native], context, [201, 301], [])
+                   anime_sweep_pick([native], context, [201, 301], [])
       end
     end
   end
@@ -1295,7 +1318,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       )
 
     assert {:ok, %{assignments: [%{release: selected}]}} =
-             Anime.select_episodes(
+             anime_sweep_pick(
                [release],
                absolute_context(1..1),
                [1],
@@ -1432,7 +1455,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     policy = policy(blocked_groups: ["badgroup"])
 
     assert {:ok, %{assignments: [assignment], waiting: nil}} =
-             Anime.select_episodes(
+             anime_sweep_pick(
                [blocked, preferred],
                context,
                [11, 12],
@@ -1542,7 +1565,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     policy = policy(required_audio_languages: ["ja"])
 
     assert {:ok, %{assignments: [%{release: selected}]}} =
-             Anime.select_episodes(
+             anime_sweep_pick(
                [
                  preference_release(cases, "dub-only"),
                  preference_release(cases, "unknown-undated")
@@ -1562,7 +1585,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     context = preference_context()
 
     assert :no_match =
-             Anime.select_episodes(
+             anime_sweep_pick(
                [release],
                context,
                [11, 12],
@@ -1570,7 +1593,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
              )
 
     assert {:ok, %{assignments: [_]}} =
-             Anime.select_episodes(
+             anime_sweep_pick(
                [release],
                context,
                [11, 12],
@@ -1585,7 +1608,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     opts = [anime_policy: policy, now: ~U[2026-07-13 13:00:00Z]]
 
     assert {:ok, %{assignments: [%{release: selected}]}} =
-             Anime.select_episodes(
+             anime_sweep_pick(
                [
                  preference_release(cases, "episode-fallback"),
                  preference_release(cases, "episode-preferred")
@@ -1606,7 +1629,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
     assert {:waiting_for_preferred_group,
             %{episode_ids: [11, 12], retry_at: ~U[2026-07-13 13:00:00Z]}} =
-             Anime.select_episodes(
+             anime_sweep_pick(
                [release],
                preference_context(),
                [11, 12],
@@ -1615,7 +1638,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
              )
 
     assert {:ok, %{assignments: [_], waiting: nil}} =
-             Anime.select_episodes(
+             anime_sweep_pick(
                [release],
                preference_context(),
                [11, 12],
@@ -1632,7 +1655,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     policy = policy(preferred_groups: ["subsplease"])
     opts = [anime_policy: policy]
 
-    assert :no_match = Anime.select_episodes([release], context, [11, 12], opts)
+    assert :no_match = anime_sweep_pick([release], context, [11, 12], opts)
 
     assert [manual] = Anime.episode_candidates([release], context, [11, 12])
     assert manual.resolved_episode_ids == [11, 12]
@@ -1645,7 +1668,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
         published_at: "bad"
     }
 
-    assert :no_match = Anime.select_episodes([invalid], context, [11, 12], opts)
+    assert :no_match = anime_sweep_pick([invalid], context, [11, 12], opts)
 
     assert [%Release{title: title}] =
              Anime.episode_candidates([invalid], context, [11, 12])
