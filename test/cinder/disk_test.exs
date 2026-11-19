@@ -5,6 +5,7 @@ defmodule Cinder.DiskTest do
 
   import Cinder.PollerHelpers, only: [poll_until: 2]
 
+  alias Cinder.ConfigCase
   alias Cinder.Disk
   alias Cinder.Test.OsProcess
 
@@ -49,92 +50,56 @@ defmodule Cinder.DiskTest do
 
     @tag :tmp_dir
     test "returns a timeout error when the df probe stops responding", %{tmp_dir: tmp} do
-      saved =
-        Map.new([:disk_probe_timeout, :disk_df_bin], fn key ->
-          {key, Application.get_env(:cinder, key)}
-        end)
-
-      on_exit(fn ->
-        Enum.each(saved, fn
-          {key, nil} -> Application.delete_env(:cinder, key)
-          {key, value} -> Application.put_env(:cinder, key, value)
-        end)
-      end)
-
-      hanging_df = Path.join(tmp, "hanging-df")
       pid_file = Path.join(tmp, "hanging-df.pid")
+      on_exit(fn -> kill_recorded_pids(pid_file) end)
 
-      File.write!(
-        hanging_df,
-        "#!/bin/sh\nprintf '%s' \"$$\" > '#{pid_file}'\nexec sleep 10\n"
+      ConfigCase.put_env(
+        disk_df_bin: write_pid_recording_stub(tmp, "hanging-df", pid_file),
+        disk_probe_timeout: 100
       )
 
-      File.chmod!(hanging_df, 0o755)
-      Application.put_env(:cinder, :disk_df_bin, hanging_df)
-      Application.put_env(:cinder, :disk_probe_timeout, 100)
-
       assert Disk.stats(tmp) == {:error, :timeout}
-      assert File.exists?(pid_file)
-
-      {_output, status} =
-        System.cmd(
-          "/bin/sh",
-          ["-c", ~S|kill -0 "$1"|, "kill", String.trim(File.read!(pid_file))],
-          stderr_to_stdout: true
-        )
-
-      assert status != 0
+      assert_dead_if_recorded(pid_file)
     end
 
     @tag :tmp_dir
     test "bounds directory validation inside the probe subprocess", %{tmp_dir: tmp} do
-      saved = save_env([:disk_probe_timeout, :disk_probe_shell])
-      shell = Path.join(tmp, "hanging-shell")
       pid_file = Path.join(tmp, "hanging-shell.pid")
+      on_exit(fn -> kill_recorded_pids(pid_file) end)
 
-      File.write!(shell, "#!/bin/sh\nprintf '%s' \"$$\" > '#{pid_file}'\nexec sleep 10\n")
-      File.chmod!(shell, 0o755)
-
-      on_exit(fn ->
-        kill_recorded_pids(pid_file)
-        restore_env(saved)
-      end)
-
-      Application.put_env(:cinder, :disk_probe_shell, shell)
-      Application.put_env(:cinder, :disk_probe_timeout, 100)
+      ConfigCase.put_env(
+        disk_probe_shell: write_pid_recording_stub(tmp, "hanging-shell", pid_file),
+        disk_probe_timeout: 100
+      )
 
       assert Disk.stats(tmp) == {:error, :timeout}
-      assert File.exists?(pid_file)
-      refute process_alive?(File.read!(pid_file))
+      assert_dead_if_recorded(pid_file)
     end
 
     @tag :tmp_dir
     test "rejects concurrent probes instead of queueing deadlines", %{tmp_dir: tmp} do
-      saved = save_env([:disk_probe_timeout, :disk_df_bin])
-      hanging_df = Path.join(tmp, "busy-df")
       pid_file = Path.join(tmp, "busy-df.pid")
+      on_exit(fn -> kill_recorded_pids(pid_file) end)
 
-      File.write!(hanging_df, "#!/bin/sh\nprintf '%s' \"$$\" > '#{pid_file}'\nexec sleep 10\n")
-      File.chmod!(hanging_df, 0o755)
-
-      on_exit(fn ->
-        kill_recorded_pids(pid_file)
-        restore_env(saved)
-      end)
-
-      Application.put_env(:cinder, :disk_df_bin, hanging_df)
-      Application.put_env(:cinder, :disk_probe_timeout, 500)
+      # The first probe must still be running when the second arrives, so it gets a deadline a
+      # loaded runner cannot miss before its stub records: a shorter one can kill the stub before
+      # it writes its pid (#1489). The test then ends that probe by killing its stub.
+      ConfigCase.put_env(
+        disk_df_bin: write_pid_recording_stub(tmp, "busy-df", pid_file),
+        disk_probe_timeout: 10_000
+      )
 
       first_probe = Task.async(fn -> Disk.stats(tmp) end)
-      poll_until(fn -> File.exists?(pid_file) end, timeout: 10_000)
+      poll_until(fn -> match?({:ok, <<_, _::binary>>}, File.read(pid_file)) end, timeout: 10_000)
 
-      assert Disk.stats(tmp) == {:error, :probe_busy}
-      assert Task.await(first_probe) == {:error, :timeout}
+      assert_refused_at_once(tmp, {:error, :probe_busy})
+
+      kill_recorded_pids(pid_file)
+      assert Task.await(first_probe) == {:error, {:df_exit, 137}}
     end
 
     @tag :tmp_dir
     test "rejects new probes while a timed-out process is still draining", %{tmp_dir: tmp} do
-      saved = save_env([:disk_probe_timeout, :disk_df_bin, :disk_probe_killer])
       hanging_df = Path.join(tmp, "unkillable-df")
       pid_file = Path.join(tmp, "unkillable-df.pids")
       invocation_file = Path.join(tmp, "unkillable-df.invocations")
@@ -145,44 +110,50 @@ defmodule Cinder.DiskTest do
       )
 
       File.chmod!(hanging_df, 0o755)
+      on_exit(fn -> kill_recorded_pids(pid_file) end)
 
-      on_exit(fn ->
-        kill_recorded_pids(pid_file)
-        restore_env(saved)
-      end)
-
-      Application.put_env(:cinder, :disk_df_bin, hanging_df)
-      Application.put_env(:cinder, :disk_probe_timeout, 100)
-      Application.put_env(:cinder, :disk_probe_killer, fn _pid -> :ok end)
+      ConfigCase.put_env(
+        disk_df_bin: hanging_df,
+        disk_probe_timeout: 100,
+        disk_probe_killer: fn _pid -> :ok end
+      )
 
       assert Disk.stats(tmp) == {:error, :timeout}
-      assert Disk.stats(tmp) == {:error, :probe_draining}
+      assert_refused_at_once(tmp, {:error, :probe_draining})
+
+      # The killer above leaves the stub alive, so it records once it starts, within this 10 s
+      # poll. The pid line comes first, so `kill_recorded_pids/1` below finds it.
+      poll_until(fn -> match?({:ok, <<_, _::binary>>}, File.read(invocation_file)) end,
+        timeout: 10_000
+      )
+
       assert File.read!(invocation_file) == "x"
 
       kill_recorded_pids(pid_file)
-      restore_env(saved)
-      # The recovered probe is meant to finish, so it gets a deadline a loaded runner cannot miss
-      # instead of the configured 2 s (docs/agents/testing.md). on_exit restores the saved value.
-      Application.put_env(:cinder, :disk_probe_timeout, 10_000)
+      # The recovered probe runs the real `df` and killer, the defaults `Cinder.Disk.CommandProbe`
+      # reads, and is meant to finish, so it keeps the 10 s deadline `assert_refused_at_once/2`
+      # set, one a loaded runner cannot miss (docs/agents/testing.md).
+      Application.delete_env(:cinder, :disk_df_bin)
+      Application.delete_env(:cinder, :disk_probe_killer)
 
       poll_until(fn -> match?({:ok, _stats}, Disk.stats(tmp)) end, timeout: 10_000)
     end
 
     # #976: a probe timeout kills the probe's whole process group, as `BoundedCommand` does, so a
-    # process the fake `df` forked dies with it. The child sleeps 10 s, longer than the 500 ms
-    # timeout, the 100 ms reap wait and `OsProcess.dead?/1`'s 1 s poll together, so it is dead
-    # there only if the kill reached it. A non-interactive shell has no job control, so the child
-    # stays in the probe's group.
+    # process the fake `df` forked dies with it. A non-interactive shell has no job control, so
+    # the child stays in the probe's group. The child records its own pid, so a kill that missed
+    # it leaves it alive to record even when the kill lands before the fake `df` gets further; a
+    # child the kill reached before it recorded leaves no record, and the test passes it. The child
+    # then sleeps 10 s, well past the 500 ms timeout, the 100 ms reap wait and the waits of
+    # `OsProcess.await_record/1` and `OsProcess.dead?/1` on an idle host.
     @tag :tmp_dir
     test "kills what the df probe forked when it times out", %{tmp_dir: tmp} do
-      saved = save_env([:disk_probe_timeout, :disk_df_bin])
       child_pid_file = Path.join(tmp, "forking-df.child")
       probe_pid_file = Path.join(tmp, "forking-df.pid")
 
       forking_df =
         write_fake_df(tmp, "forking-df", """
-        sleep 10 &
-        echo $! > '#{child_pid_file}.tmp' && mv '#{child_pid_file}.tmp' '#{child_pid_file}'
+        /bin/sh -c 'echo $$ > "$1.tmp" && mv "$1.tmp" "$1" && exec sleep 10' child '#{child_pid_file}' &
         echo $$ > '#{probe_pid_file}.tmp' && mv '#{probe_pid_file}.tmp' '#{probe_pid_file}'
         exec sleep 30
         """)
@@ -190,25 +161,16 @@ defmodule Cinder.DiskTest do
       on_exit(fn ->
         kill_recorded_pids(child_pid_file)
         kill_recorded_pids(probe_pid_file)
-        restore_env(saved)
       end)
 
-      Application.put_env(:cinder, :disk_df_bin, forking_df)
-      Application.put_env(:cinder, :disk_probe_timeout, 500)
+      ConfigCase.put_env(disk_df_bin: forking_df, disk_probe_timeout: 500)
 
       assert Disk.stats(tmp) == {:error, :timeout}
-
-      # The kill must have had a child to reach, or this test proves nothing.
-      assert File.exists?(child_pid_file), "the fake df had not forked its child by the timeout"
-      child_pid = child_pid_file |> File.read!() |> String.trim() |> String.to_integer()
-      assert OsProcess.dead?(child_pid)
+      assert_dead_if_recorded(child_pid_file)
     end
 
     @tag :tmp_dir
     test "parses a POSIX row whose filesystem and mountpoint contain spaces", %{tmp_dir: tmp} do
-      saved = save_env([:disk_df_bin])
-      on_exit(fn -> restore_env(saved) end)
-
       df =
         write_fake_df(
           tmp,
@@ -217,7 +179,7 @@ defmodule Cinder.DiskTest do
             "'/dev/with 123 1000 250 750 25% /mnt/with space'"
         )
 
-      Application.put_env(:cinder, :disk_df_bin, df)
+      ConfigCase.put_env(:disk_df_bin, df)
 
       assert Disk.stats(tmp) ==
                {:ok, %{free_bytes: 750 * 1024, total_bytes: 1_000 * 1024}}
@@ -225,9 +187,6 @@ defmodule Cinder.DiskTest do
 
     @tag :tmp_dir
     test "clamps negative available blocks to zero", %{tmp_dir: tmp} do
-      saved = save_env([:disk_df_bin])
-      on_exit(fn -> restore_env(saved) end)
-
       df =
         write_fake_df(
           tmp,
@@ -236,18 +195,14 @@ defmodule Cinder.DiskTest do
             "'/dev/disk 1000 1100 -100 110% /mnt'"
         )
 
-      Application.put_env(:cinder, :disk_df_bin, df)
+      ConfigCase.put_env(:disk_df_bin, df)
 
       assert Disk.stats(tmp) == {:ok, %{free_bytes: 0, total_bytes: 1_000 * 1024}}
     end
 
     @tag :tmp_dir
     test "returns unreadable for malformed df output", %{tmp_dir: tmp} do
-      saved = save_env([:disk_df_bin])
-      on_exit(fn -> restore_env(saved) end)
-
-      Application.put_env(
-        :cinder,
+      ConfigCase.put_env(
         :disk_df_bin,
         write_fake_df(tmp, "malformed-df", "printf '%s\\n' 'not df output'")
       )
@@ -257,14 +212,7 @@ defmodule Cinder.DiskTest do
 
     @tag :tmp_dir
     test "returns the df exit status", %{tmp_dir: tmp} do
-      saved = save_env([:disk_df_bin])
-      on_exit(fn -> restore_env(saved) end)
-
-      Application.put_env(
-        :cinder,
-        :disk_df_bin,
-        write_fake_df(tmp, "failed-df", "exit 42")
-      )
+      ConfigCase.put_env(:disk_df_bin, write_fake_df(tmp, "failed-df", "exit 42"))
 
       assert Disk.stats(tmp) == {:error, {:df_exit, 42}}
     end
@@ -565,8 +513,6 @@ defmodule Cinder.DiskTest do
     :ok
   end
 
-  defp save_env(keys), do: Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
-
   defp write_fake_df(tmp, name, body) do
     path = Path.join(tmp, name)
     File.write!(path, "#!/bin/sh\n#{body}\n")
@@ -574,11 +520,19 @@ defmodule Cinder.DiskTest do
     path
   end
 
-  defp restore_env(saved) do
-    Enum.each(saved, fn
-      {key, nil} -> Application.delete_env(:cinder, key)
-      {key, value} -> Application.put_env(:cinder, key, value)
-    end)
+  # A stub that writes its pid to `pid_file` first, then hangs, for a fake `df` or probe shell.
+  defp write_pid_recording_stub(tmp, name, pid_file),
+    do: write_fake_df(tmp, name, "printf '%s' \"$$\" > '#{pid_file}'\nexec sleep 10")
+
+  # A refusal the probe owner answers from its state, run under a 10 s deadline so a slow
+  # runner cannot turn it into a timeout, with an elapsed bound well under that deadline, not a
+  # guess at runner lag (docs/agents/testing.md, docs/agents/ci.md "Wall-clock tests").
+  defp assert_refused_at_once(tmp, refusal) do
+    ConfigCase.put_env(:disk_probe_timeout, 10_000)
+    started = System.monotonic_time(:millisecond)
+
+    assert Disk.stats(tmp) == refusal
+    assert System.monotonic_time(:millisecond) - started < 5_000
   end
 
   defp kill_recorded_pids(pid_file) do
@@ -592,14 +546,14 @@ defmodule Cinder.DiskTest do
     end
   end
 
-  defp process_alive?(pid) do
-    {_output, status} =
-      System.cmd(
-        "/bin/sh",
-        ["-c", ~S|kill -0 "$1" 2>/dev/null|, "kill", String.trim(pid)],
-        stderr_to_stdout: true
-      )
-
-    status == 0
+  # A loaded runner can start the fake `df` or shell past the probe's deadline, so the kill can
+  # land before the stub writes its pid file (#1489), and a missing record passes. A stub the
+  # timeout left alive writes it once it starts. When that record appears within
+  # `OsProcess.await_record/1`'s wait, `OsProcess.dead?/1` fails on the live process.
+  defp assert_dead_if_recorded(pid_file) do
+    case OsProcess.await_record(pid_file) do
+      {:ok, pid} -> assert OsProcess.dead?(pid |> String.trim() |> String.to_integer())
+      :none -> :ok
+    end
   end
 end

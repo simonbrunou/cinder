@@ -1,8 +1,8 @@
 defmodule Cinder.Test.OsProcessTest do
-  # `await_record/1` is how the kill tests of `Cinder.Library.MediaInfo.FfprobeTest` and
-  # `Cinder.Subtitles.Sync.FfsubsyncTest` tell a stub that never started from one that recorded
-  # (#1401). No subprocess writes a record here: a test writes the file itself, or writes no
-  # record.
+  # `await_record/1` is how the kill tests of `Cinder.DiskTest`,
+  # `Cinder.Library.MediaInfo.FfprobeTest` and `Cinder.Subtitles.Sync.FfsubsyncTest` tell a stub
+  # that left no record from one that recorded (#1401). No subprocess writes a record here: a test
+  # writes the file itself, or writes no record.
   use ExUnit.Case, async: true
 
   alias Cinder.Test.OsProcess
