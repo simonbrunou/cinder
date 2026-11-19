@@ -285,13 +285,20 @@
 - The fence run is the alias's compile, format and Credo gates with the repo-wide fences:
   `mix test test/code_health_test.exs test/code_health` (under 30 s). Before a branch's first
   full `mix test`, do the fence run with each test file the branch added or changed appended.
-  Once its gates pass, a full run takes 9 to 12 minutes on the dev host, often past the 600 s
-  cap of one foreground Bash call, so start it in Claude Code with `run_in_background` and
-  `timeout: 1800000`. A background call stops at its `timeout`: on #913 a run cut off at 600000
-  cost about 20 minutes to the green rerun. On #1205 it ended red on a new test's
-  `assert {:error, :unexpected_response} = HTTP.server_machine_id(), message`, which
+  A full `mix test` ends with its slowest partition, and the dev host's load lengthens it. On
+  #1473, at a load average of 11 to 24 on its 16 CPUs, a 4-partition run of `mix test.unchecked`
+  took 375 s, without the gates and before #1498 split its slowest module. On #1503 two full runs,
+  gates included, started at a load of 61 and 64 and took 625 s and 755 s. Both ran past the
+  600 s cap of one foreground Bash call, so start a full run in Claude Code with
+  `run_in_background` and `timeout: 1800000`. A background call stops at its `timeout`: on #913
+  a run cut off at 600000 cost about 20 minutes to the green rerun. On #1205 it ended red on a
+  new test's `assert {:error, :unexpected_response} = HTTP.server_machine_id(), message`, which
   `test/code_health/assert_match_message_test.exs` rejects: 8 minutes for what the fence run
-  reports in 16 s.
+  reports in 16 s. At load 61 and 64 the two #1503 runs also failed seven tests the branch did
+  not touch, on time limits and lost database connections, and each passed when run again outside
+  the full suite (#1456, #1510 to #1512). After a full run that failed tests,
+  `mix test.unchecked --failed` runs only those tests again; [ci.md](ci.md) "Flake" says when a
+  failure counts as a flake.
 - Once a full `mix test` passed on the branch, a review fix commit needs no second full suite
   before its push when each file it changes fits one of the three cases below. Do the fence run
   with the test files each case adds. CI runs the full suite on the push, which runs every file
