@@ -86,8 +86,18 @@ defmodule Cinder.BoundedWalkHelpers do
   already exited before the page closed, the helper fails at once with a message saying so (#1361).
   The second message says whether the LiveView was still alive then, and how long after `walk`
   sent `{:walking, walk}`, in a walk `hang_walk/1` holds.
+
+  The helper waits `:timeout_ms` for the scan's `:DOWN`, by default ExUnit's
+  `assert_receive_timeout`. Past it, it fails with a message saying whether the LiveView had
+  exited and, when the scan is still alive, its status, current stacktrace and mailbox length
+  (#1463).
   """
-  def close_page_during_walk(live_view, walk) do
+  def close_page_during_walk(live_view, walk, opts \\ []) do
+    timeout_ms =
+      Keyword.get_lazy(opts, :timeout_ms, fn ->
+        Application.fetch_env!(:ex_unit, :assert_receive_timeout)
+      end)
+
     {:dictionary, dictionary} = Process.info(walk, :dictionary)
     [scan | _callers] = Keyword.fetch!(dictionary, :"$callers")
     ref = Process.monitor(scan)
@@ -95,8 +105,16 @@ defmodule Cinder.BoundedWalkHelpers do
     seen = %{live_view_alive?: Process.alive?(live_view), at: System.monotonic_time(:millisecond)}
     Process.flag(:trap_exit, true)
     Process.exit(live_view, {:shutdown, :closed})
-    assert_receive {:DOWN, ^ref, :process, ^scan, reason}
-    # Also on a failure, so the guard's warning about the scan lands in the test's captured log.
+
+    reason =
+      receive do
+        {:DOWN, ^ref, :process, ^scan, reason} -> reason
+      after
+        timeout_ms -> flunk(scan_stuck_message(scan, live_view, timeout_ms))
+      end
+
+    # Also before the failures below, so the guard's warning about the scan lands in the test's
+    # captured log.
     _ = :sys.get_state(BoundedWalk)
 
     case reason do
@@ -112,6 +130,22 @@ defmodule Cinder.BoundedWalkHelpers do
             "not {:shutdown, :closed}, when the page closed."
         )
     end
+  end
+
+  # The scan's `:DOWN` had not arrived `timeout_ms` after the helper sent the LiveView its exit.
+  defp scan_stuck_message(scan, live_view, timeout_ms) do
+    scan_state =
+      case Process.info(scan, [:status, :current_stacktrace, :message_queue_len]) do
+        nil -> "had exited by then, its :DOWN not yet received"
+        info -> "is alive, #{inspect(info)}"
+      end
+
+    live_view_state = if Process.alive?(live_view), do: "is still alive", else: "had exited"
+
+    "close_page_during_walk/2: no :DOWN for the scan #{inspect(scan)} arrived within " <>
+      "#{timeout_ms} ms after the helper sent the LiveView exit {:shutdown, :closed}. " <>
+      "The scan #{scan_state}. " <>
+      "The LiveView #{inspect(live_view)} #{live_view_state}."
   end
 
   # The scan was gone when the helper monitored it, before the helper stopped the LiveView.

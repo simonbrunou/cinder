@@ -4,6 +4,9 @@ defmodule Cinder.BoundedWalkHelpersTest do
   use ExUnit.Case, async: true
 
   import Cinder.BoundedWalkHelpers
+  import ExUnit.CaptureLog, only: [with_log: 1]
+
+  require Logger
 
   @delay_ms 20
 
@@ -17,11 +20,40 @@ defmodule Cinder.BoundedWalkHelpersTest do
     end
 
     test "fails at once, naming the reason, when the scan exits with another reason" do
-      %{page: page, walk: walk} = page_scan_walk(:exits_on_close)
+      %{page: page, scan: scan, walk: walk} = page_scan_walk(:exits_on_close)
 
-      error = assert_raise ExUnit.AssertionError, fn -> close_page_during_walk(page, walk) end
+      {error, log} =
+        with_log(fn ->
+          Logger.error("capture control (#1463)")
+          assert_raise ExUnit.AssertionError, fn -> close_page_during_walk(page, walk) end
+        end)
 
-      assert error.message =~ "exited with :page_closed_badly, not {:shutdown, :closed}"
+      # The scan's exit logs no crash report, so its `:DOWN` waits on no `:logger` call (#1463).
+      assert log =~ "capture control (#1463)"
+      refute log =~ inspect(scan)
+
+      assert error.message =~
+               "exited with {:shutdown, :page_closed_badly}, not {:shutdown, :closed}"
+    end
+
+    test "fails after its timeout, naming where the scan waits, when the scan outlives the page " <>
+           "(#1463)" do
+      %{page: page, scan: scan, walk: walk} = page_scan_walk(:outlives_close)
+
+      error =
+        assert_raise ExUnit.AssertionError, fn ->
+          close_page_during_walk(page, walk, timeout_ms: @delay_ms)
+        end
+
+      assert error.message =~
+               "no :DOWN for the scan #{inspect(scan)} arrived within #{@delay_ms} ms after " <>
+                 "the helper sent the LiveView exit {:shutdown, :closed}. The scan is alive, " <>
+                 "[status: :"
+
+      # Before or after the scan takes the page's exit, it waits in `scan/2`.
+      assert error.message =~ "current_stacktrace: [{Cinder.BoundedWalkHelpersTest, :scan, 2,"
+      assert error.message =~ ~r/message_queue_len: \d+\]/
+      assert error.message =~ "The LiveView #{inspect(page)} had exited"
     end
 
     test "says the scan exited before the page closed, with the page still alive, when the " <>
@@ -67,7 +99,8 @@ defmodule Cinder.BoundedWalkHelpersTest do
   # `Cinder.Library.BoundedWalk.run/3` starts from the scan does, and is not linked to the scan,
   # as that walk is not. `link` says how the scan hangs off the page: `:linked`, a task the page
   # starts linked, as `start_async` does; `:unlinked`, a task of the test's, so the scan can die
-  # alone; `:exits_on_close`, linked, but exiting with `:page_closed_badly` when the page stops.
+  # alone; `:exits_on_close`, linked, but exiting with `{:shutdown, :page_closed_badly}` when the
+  # page stops; `:outlives_close`, linked, but trapping the page's exit and staying alive.
   defp page_scan_walk(link) do
     test = self()
     page = start_supervised!({Task, fn -> page(link, test) end}, id: make_ref())
@@ -106,12 +139,20 @@ defmodule Cinder.BoundedWalkHelpersTest do
     Process.sleep(:infinity)
   end
 
-  defp scan(:exits_on_close, test) do
+  # `:exits_on_close` exits with `{:shutdown, _}`, which `Task.Supervised` raises again without
+  # logging a crash report: the scan's exit then makes no `:logger` call before its `:DOWN`
+  # (#1463). `:outlives_close` stays until the test ends.
+  defp scan(link, test) when link in [:exits_on_close, :outlives_close] do
+    test_ref = Process.monitor(test)
     Process.flag(:trap_exit, true)
     send(test, {:scan, self()})
 
     receive do
-      {:EXIT, _page, _reason} -> exit(:page_closed_badly)
+      {:EXIT, _page, _reason} when link == :exits_on_close ->
+        exit({:shutdown, :page_closed_badly})
+
+      {:EXIT, _page, _reason} ->
+        receive do: ({:DOWN, ^test_ref, :process, _pid, _reason} -> :ok)
     end
   end
 
