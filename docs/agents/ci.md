@@ -292,6 +292,13 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   each grow a file near the cap pass apart and break `main` together, so count the lines of every
   touched lib file on the merged tree before merging (`scripts/merge-pr` does). On a red, split
   the file as the test's failure message says.
+  When `scripts/merge-pr` stops with
+  `FAIL: <file> has <n> lines on the merged tree, over the <cap> cap`, the file passes the cap
+  on the branch and crosses it only once merged with `origin/main`. Take the steps AGENTS.md
+  "Merge authority" gives for a fence stop. At the step that fixes the line, split the file
+  instead, and run `mix test` until it passes. The merge of `origin/main` comes first because
+  `code_health_test` then counts the file as the merge holds it. On the branch alone, that test
+  stays green whether the split is enough or not.
 - **Test-file warning.** A red `test` job whose `Result:` line counts no failure and is followed
   by `ERROR! Test suite aborted after successful execution due to warnings` failed on a warning
   that the alias's `test --warnings-as-errors` makes fatal. Above the `Result:` line, either a
@@ -482,8 +489,10 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
 
 ## Merge conflicts and translations
 
-A branch syncs with `main` only on a conflict, a diff that touches `CHANGELOG.md`, or a fence or
-the `code_health_test` line cap that `scripts/merge-pr` stops on (AGENTS.md "Merge authority"),
-or on a red that `main` clears ("Re-running CI", **Broken `main`**). For a conflict in
+A branch syncs with `main` only in five cases. AGENTS.md "Merge authority" gives the steps for a
+conflict and for a fence that `scripts/merge-pr` stops on. `scripts/merge-pr` prints them when
+it stops on a diff that touches `CHANGELOG.md` while the branch lacks `origin/main`.
+"Judging a red run" gives them for a `scripts/merge-pr` stop on the `code_health_test` line cap
+(**Line cap**) and for a red that `main` clears (**Broken `main`**). For a conflict in
 `priv/gettext`, follow [workflow.md](workflow.md) "Merge conflicts": `scripts/gettext-fill.exs`
 refills the French msgstrs from the side you did not take.
