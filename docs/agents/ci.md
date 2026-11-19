@@ -489,10 +489,12 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
 
 ## Merge conflicts and translations
 
-A branch syncs with `main` only in five cases. AGENTS.md "Merge authority" gives the steps for a
+A branch syncs with `main` only in six cases. AGENTS.md "Merge authority" gives the steps for a
 conflict and for a fence that `scripts/merge-pr` stops on. `scripts/merge-pr` prints them when
-it stops on a diff that touches `CHANGELOG.md` while the branch lacks `origin/main`.
-"Judging a red run" gives them for a `scripts/merge-pr` stop on the `code_health_test` line cap
-(**Line cap**) and for a red that `main` clears (**Broken `main`**). For a conflict in
-`priv/gettext`, follow [workflow.md](workflow.md) "Merge conflicts": `scripts/gettext-fill.exs`
-refills the French msgstrs from the side you did not take.
+it stops on a diff that touches `CHANGELOG.md` while the branch lacks `origin/main`. It prints
+them too when the `container` job is skipped and the head, diffed against `origin/main`, changes
+a path of `image-inputs.txt` ("What runs"). "Judging a red run" gives them for a
+`scripts/merge-pr` stop on the `code_health_test` line cap (**Line cap**). For a red that `main`
+clears, "Re-running CI" gives them, and **Flake** and **Broken `main`** do for a red test. For a
+conflict in `priv/gettext`, follow [workflow.md](workflow.md) "Merge conflicts":
+`scripts/gettext-fill.exs` refills the French msgstrs from the side you did not take.
