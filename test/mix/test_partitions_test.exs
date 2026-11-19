@@ -1,6 +1,6 @@
 defmodule Cinder.TestPartitionsTest do
-  # The runner a bare `mix test` hands the suite to after its gates (#1473). Every test but the
-  # last describe passes a `:start` stub, so no test here starts a suite inside the suite.
+  # The runner a bare `mix test` hands the suite to after its gates (#1473). Every `run/4` test
+  # passes a `:start` stub, so no test here starts a suite inside the suite.
   use ExUnit.Case, async: true
 
   import ExUnit.CaptureIO
@@ -414,7 +414,8 @@ defmodule Cinder.TestPartitionsTest do
       File.write!(mix, """
       #!/bin/sh
       echo "args: $*"
-      echo "env: $MIX_ENV $MIX_TEST_PARTITION $MIX_BUILD_PATH"
+      echo "env: $MIX_ENV $MIX_TEST_PARTITION $MIX_BUILD_PATH $CINDER_TEST_HALT_ON_STDIN_EOF"
+      [ -p /dev/stdin ] && echo "stdin: a pipe"
       echo "to stderr" >&2
       exit 3
       """)
@@ -427,8 +428,81 @@ defmodule Cinder.TestPartitionsTest do
 
       assert File.read!(log) ==
                "args: test.unchecked --partitions 4 --seed 0\n" <>
-                 "env: test 2 #{partition.build}\n" <> "to stderr\n"
+                 "env: test 2 #{partition.build} 1\n" <> "stdin: a pipe\n" <> "to stderr\n"
     end
+  end
+
+  describe "halt_when_parent_exits/0" do
+    @describetag :tmp_dir
+
+    # The first two tests start a real `elixir` on this build's code, as `start/4` starts a
+    # partition. A slow boot on a loaded host takes seconds.
+    @boot_ms 60_000
+
+    # The child sleeps twice as long as the test waits for its exit, then exits 0 by itself, so a
+    # red run leaves no process behind for long.
+    test "a partition halts with status 3 once the run that started it closes its stdin", ctx do
+      {port, stdin} =
+        open_child!(ctx.tmp_dir, "1", """
+        {:ok, _} = Cinder.TestPartitions.halt_when_parent_exits()
+        IO.puts("ready \#{inspect(System.get_env("CINDER_TEST_HALT_ON_STDIN_EOF"))}")
+        Process.sleep(#{2 * @boot_ms})
+        """)
+
+      assert_receive {^port, {:data, {:eol, "ready nil"}}}, @boot_ms
+      :ok = File.close(stdin)
+      assert_receive {^port, {:data, {:eol, "exit 3"}}}, @boot_ms
+    end
+
+    test "outside a partition it returns :ignore and its caller still reads stdin", ctx do
+      {port, stdin} =
+        open_child!(ctx.tmp_dir, nil, """
+        IO.puts("ready \#{inspect(Cinder.TestPartitions.halt_when_parent_exits())}")
+        IO.puts("read \#{inspect(IO.binread(:user, :line))}")
+        """)
+
+      assert_receive {^port, {:data, {:eol, "ready :ignore"}}}, @boot_ms
+      IO.binwrite(stdin, "a line\n")
+      assert_receive {^port, {:data, {:eol, ~s(read "a line\\n")}}}, @boot_ms
+      assert_receive {^port, {:data, {:eol, "exit 0"}}}, @boot_ms
+    end
+
+    # The watcher is linked to the `mix test` task's process, so a watcher that crashed would
+    # have ended this run.
+    test "test_helper.exs called it in this run" do
+      result = TestPartitions.parent_watch()
+      assert result == :ignore or match?({:ok, pid} when is_pid(pid), result), inspect(result)
+    end
+  end
+
+  # Starts `elixir -e code` on this build's code through `sh`, with CINDER_TEST_HALT_ON_STDIN_EOF
+  # set to `halt_env` (unset when nil), and returns its port and its stdin. That stdin is a FIFO
+  # this process holds open for writing: closing the returned file ends it as the run's death
+  # ends a partition's stdin, and so does this process's exit. `sh` prints `exit <status>` once
+  # the child ended.
+  defp open_child!(dir, halt_env, code) do
+    fifo = Path.join(dir, "stdin")
+    {_, 0} = System.cmd("mkfifo", [fifo])
+    halt_env = if halt_env, do: String.to_charlist(halt_env), else: false
+
+    port =
+      Port.open({:spawn_executable, System.find_executable("sh")}, [
+        :binary,
+        line: 1024,
+        env: [{~c"CINDER_TEST_HALT_ON_STDIN_EOF", halt_env}],
+        args: [
+          "-c",
+          ~s("$0" -pa "$1" -e "$2" < "$3"; echo "exit $?"),
+          System.find_executable("elixir"),
+          Path.dirname(:code.which(TestPartitions)),
+          code,
+          fifo
+        ]
+      ])
+
+    # Returns once `sh` opened the FIFO for reading.
+    {:ok, stdin} = File.open(fifo, [:write, :binary])
+    {port, stdin}
   end
 
   # The pid partition 1 left in `room`, once it is there.

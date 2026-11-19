@@ -25,6 +25,14 @@ defmodule Cinder.TestPartitions do
   alone decides: a run that aborts on a test-file warning exits non-zero after a `Result:` line
   that counts no failure (docs/agents/ci.md "Test-file warning").
 
+  A partition's stdin is a pipe from the run that started it, which writes nothing to it.
+  `test/test_helper.exs` calls `halt_when_parent_exits/0`, so a partition halts with status 3
+  once that pipe reaches end of file, which happens when that run exits or is killed. Before, a
+  partition of a killed run ran on until its next write to its closed output, still using its
+  database file and build folder, which the next run deletes and copies again (#1488). A
+  partition still in `ecto.create`, `ecto.migrate` or the app start halts once it reaches the
+  helper.
+
   Each partition writes ExUnit's failures manifest into its own build folder. `merge_failures!/2`
   folds them back into the build folder's own, so `mix test.unchecked --failed` after a
   partitioned run reads the manifest one process would have left.
@@ -62,6 +70,9 @@ defmodule Cinder.TestPartitions do
     trace: :boolean,
     warnings_as_errors: :boolean
   ]
+
+  @halt_env "CINDER_TEST_HALT_ON_STDIN_EOF"
+  @halt_status 3
 
   @manifest_name ".mix_test_failures"
   @manifest_vsn 1
@@ -104,7 +115,8 @@ defmodule Cinder.TestPartitions do
     env = [
       {"MIX_ENV", "test"},
       {"MIX_TEST_PARTITION", Integer.to_string(partition.n)},
-      {"MIX_BUILD_PATH", partition.build}
+      {"MIX_BUILD_PATH", partition.build},
+      {@halt_env, "1"}
     ]
 
     {_, status} =
@@ -116,6 +128,41 @@ defmodule Cinder.TestPartitions do
 
     status
   end
+
+  @doc """
+  When `#{@halt_env}` is `1`, as `start/4` sets it for each partition, starts a process linked
+  to the caller that halts this VM with status 3 once stdin reaches end of file, and returns
+  `{:ok, pid}`; it raises instead when this VM has no `:user` process to read stdin through.
+  Otherwise it starts nothing and returns `:ignore`, since a one-process run's stdin can be
+  `/dev/null`. Either way it unsets `#{@halt_env}` first, so a `mix` a test starts does not
+  inherit it, and it records what it returned for `parent_watch/0` unless it raised.
+
+  `test/test_helper.exs` calls it from the `mix test` task's process, which then waits for the
+  suite to end. The watcher is linked to that process rather than supervised: it lives as long
+  as the run, and a crash in it ends the run instead of leaving the partition unwatched.
+  """
+  @spec halt_when_parent_exits() :: {:ok, pid()} | :ignore
+  def halt_when_parent_exits do
+    partition? = System.get_env(@halt_env) == "1"
+    System.delete_env(@halt_env)
+
+    result =
+      if partition? do
+        user = Process.whereis(:user) || raise "mix test: no :user process to read stdin through"
+        Task.start_link(fn -> halt_at_eof(user) end)
+      else
+        :ignore
+      end
+
+    :persistent_term.put({__MODULE__, :parent_watch}, result)
+    result
+  end
+
+  @doc """
+  What `halt_when_parent_exits/0` returned in this VM, or `nil` when no call recorded a result.
+  """
+  @spec parent_watch() :: {:ok, pid()} | :ignore | nil
+  def parent_watch, do: :persistent_term.get({__MODULE__, :parent_watch}, nil)
 
   @doc """
   Writes into `base` the failures manifest a single run would have left: `base`'s entries, less
@@ -151,6 +198,17 @@ defmodule Cinder.TestPartitions do
 
     File.mkdir_p!(Path.dirname(base))
     File.write!(base, :erlang.term_to_binary({@manifest_vsn, merged}))
+  end
+
+  # Reads through the pid, not the name: `ExUnit.CaptureIO.capture_io(:user, ...)` registers
+  # another process as `:user` while it runs (`ExUnit.CaptureServer`). A read error halts too,
+  # rather than leave the partition running with nothing watching its stdin.
+  defp halt_at_eof(user) do
+    case IO.binread(user, :line) do
+      :eof -> System.halt(@halt_status)
+      {:error, _reason} -> System.halt(@halt_status)
+      _line -> halt_at_eof(user)
+    end
   end
 
   defp count!(nil), do: @default_count

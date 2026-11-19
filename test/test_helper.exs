@@ -1,3 +1,6 @@
+# A partition of a bare `mix test` halts once the run that started it exits or is killed (#1488).
+Cinder.TestPartitions.halt_when_parent_exits()
+
 # A positive wait only costs time when the test is already failing, so the default is generous:
 # on the 3-core Forgejo CI runner a message a test waits for can take over a second (#636).
 ExUnit.start(assert_receive_timeout: 5_000)
