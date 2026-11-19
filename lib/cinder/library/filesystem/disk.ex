@@ -4,6 +4,46 @@ defmodule Cinder.Library.Filesystem.Disk do
   `ln/2` is a hardlink (`Cinder.RawFile.ln/2`); when the library and downloads live on
   different filesystems the hardlink fails with `:exdev` and `Cinder.Library`
   falls back to an exclusive, bounded streaming copy instead.
+
+  ## One helper process per rooted operation
+
+  On a path under a library root, some functions here call the rooted helper, by default
+  `python3 priv/rooted_fs_main.py`, and every call to it is a new process. `run_rooted/2` starts
+  one that does the work in the helper, for `mkdir_exclusive/2`, `mkdir_exclusive_near/3`,
+  `chmod/2`, `rm/1`, `rmdir/1`, `reconcile_duplicate_containers/2`, and `exchange/2`, `rename/2`
+  and `rename_exclusive/2` when both paths sit under a root. `open_rooted_bound/4` starts one
+  that only opens the file and holds its descriptor, for `read/1`, `write/2`, `create_bound/2`,
+  `write_exclusive/2`, `moviehash_data/1`, `open_bound/2` without `:write`, and
+  `backing_identity/1`, which also accepts a path under an import root. Cinder then reads and
+  writes through that descriptor itself. Once the hold, the write and the file sync succeed,
+  `write/2`, `create_bound/2` and `write_exclusive/2` start a second, `sync_parent`, through
+  `run_rooted/2`. A path outside the roots never starts the helper, nor does any other function
+  here, such as `ln/2`, `cp/2`, `mkdir_p/1`, `rm_rf/1`, `ls/1` or `read_prefix/2`.
+
+  The maintainer decided on #1497 (2026-11-18) to keep one process per operation rather than a
+  long-lived helper per caller or a batch call for the read-only checks. Their reasons:
+
+  - Each operation checks `openat2` with `RESOLVE_BENEATH` again. Whenever the helper needs a
+    root, it opens it from `/` through `open_root` in `priv/rooted_fs.py`, and no descriptor
+    carries over to the next operation. A long-lived helper keeps that check only if it opens the
+    root again for each request.
+  - The held descriptor of `open_rooted_bound/4` stays simple: it lives as long as its process.
+    Cinder reads and writes it through `/proc/<os_pid>/fd/<fd>`. `close_rooted_port/1` sends
+    `SIGKILL` to the helper's process group and pid, then closes the port. When the Elixir process
+    that opened the port exits, the port closes. A helper already waiting on its input then reads
+    the end of it, closes the descriptor and exits; one that has not reached that wait yet is not
+    killed by the exit. A long-lived helper would hold the descriptors of several callers, each
+    needing its own close request and its own cleanup when its caller dies.
+  - #590's timeout stays simple. `subprocess_timeout_ms/0` bounds each `run_rooted/2` call, and
+    for a hold the wait for the helper's first output, not the reads and writes through the
+    descriptor after it. A call that passes it kills its own process and no other operation's.
+    In a long-lived helper, one request stuck on a wedged mount would hold up the requests behind
+    it, and the kill that ends it would close every descriptor it holds. A batch call would put
+    its checks under one timeout and one process.
+
+  The cost is one python start per operation, which #1497 reports at 20 to 30 ms on sbrn. The
+  decision judged a subtitle correction's starts, about 1 s on prod by its estimate, acceptable.
+  For #1474, PR #1498 split the sidecar transaction tests so test partitions spread their starts.
   """
   @behaviour Cinder.Library.Filesystem
 
@@ -619,7 +659,8 @@ defmodule Cinder.Library.Filesystem.Disk do
   defp rooted_reason(%{"reason" => reason}),
     do: Map.get(@posix_reasons, reason, {:rooted_error, reason})
 
-  # Every operation starts a new helper process, so its start-up is paid per call. `-S` skips
+  # Every operation starts a new helper process, so its start-up is paid per call (the moduledoc
+  # says why it stays one process per operation, #1497). `-S` skips
   # Python's `site` import, about 5 ms of a 27 ms start on the dev shell's python (#1474): the
   # helper and its launcher import only the standard library, which `site` does not add to the
   # path.
