@@ -19,11 +19,11 @@
   put a year after a blocked title. The new year reading then let a name with another alias's
   words before any year read as the series' own episode, where only the series' own year did
   before. The release-parser review found it, and the fix took about 20 minutes.
-  Write that done-when down before the first full `mix test`, one line per requirement or clause
-  with the test that covers it. Put the list in the PR body and paste it into the Spec reviewer's
-  brief. On #986 and #950 such a clause reached the Spec review untested (about 1.5 and
-  10 minutes to fix), and #1207 lost 8 minutes to an untested "as today" clause and a false
-  changelog sentence.
+  Write that done-when down before the first full `mix test` (the first fence run on a docs-only
+  branch, below), one line per requirement or clause with the test that covers it. Put the list in
+  the PR body and paste it into the Spec reviewer's brief. On #986 and #950 such a clause reached
+  the Spec review untested (about 1.5 and 10 minutes to fix), and #1207 lost 8 minutes to an
+  untested "as today" clause and a false changelog sentence.
   When a run, a throwaway one included, shows a path on which a Desired-behavior requirement still
   fails, that path gets its own done-when line and its fix in the same PR. On #1290 a failed close
   of the staged file still dropped the new removal line. The fragment named that path as an
@@ -285,7 +285,15 @@
 - The fence run is the alias's compile, format and Credo gates with the repo-wide fences:
   `mix test test/code_health_test.exs test/code_health` (under 30 s). Before a branch's first
   full `mix test`, do the fence run with each test file the branch added or changed appended.
-  A full `mix test` ends with its slowest partition, and the dev host's load lengthens it. On
+- A docs-only branch does the fence run before its first push, in place of a full `mix test`. Each
+  file it changes fits the first case of the review-fix bullet below; despite the term, that case
+  also takes in scripts, workflows and `.agents/skills/` files. Append the test files that case
+  adds for each changed file. CI's full run on the PR's pushed SHA then meets a done-when that asks
+  for `mix test`, and `scripts/merge-pr` merges only once that run is green. A review fix commit or
+  a merge of `origin/main` that leaves the branch docs-only takes the same fence run before its
+  push. A changed file that case sends to the full suite, or any other changed file, makes the
+  branch owe a full `mix test` before its next push. The maintainer decided this on #1469.
+- A full `mix test` ends with its slowest partition, and the dev host's load lengthens it. On
   #1473, at a load average of 11 to 24 on its 16 CPUs, a 4-partition run of `mix test.unchecked`
   took 375 s, without the gates and before #1498 split its slowest module. On #1503 two full runs,
   gates included, started at a load of 61 and 64 and took 625 s and 755 s. Both ran past the
@@ -339,7 +347,8 @@
 - A review fix commit runs the full `mix test` when it changes any other file, or one of these:
   a file under `docs/audits/` or `specs/` (`books_b0_contract_test.exs` reads them), a file
   that a `test/support/` file reads, the doc text of a module that a `doctest` names, a gettext
-  catalog. A merge of `origin/main` (AGENTS.md "Merge authority") and a release run it too.
+  catalog. A merge of `origin/main` (AGENTS.md "Merge authority") into a branch that is not
+  docs-only, and a release, run it too.
 - A new UI string fails `translations_complete_test` until you run
   `MIX_ENV=test mix gettext.extract --merge` and write its French msgstr in
   `priv/gettext/fr/LC_MESSAGES/default.po`. When an existing msgid is close enough, the merge

@@ -37,13 +37,14 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
 
 - Every review sub-agent's prompt gives the author's full `mix test` result lines (a partitioned
   run's summary lines and its closing `mix test: <n> of <n> partitions passed`, or a one-process
-  run's `Result:` line), to trust
-  as it would green CI, and limits execution to a mutation check: revert the fix in the
-  sub-agent's own worktree, seeded as "Worktrees" below says, and run only that test file with
-  `mix test.unchecked <file>` ([testing.md](testing.md)). A reviewer told to check the author's
-  claims checks them against that line and the diff, within the same one-file budget. A second
-  full suite takes the CPU the host's agent threads share: on #959 a Spec reviewer re-ran the
-  full suite in a copy of the worktree and took 12 minutes.
+  run's `Result:` line), to trust as it would green CI. On a docs-only branch
+  ([testing.md](testing.md)) it gives the fence run's `Result:` line instead and says CI runs the
+  full suite on the PR's push. The prompt also limits execution to a mutation check: revert the
+  fix in the sub-agent's own worktree, seeded as "Worktrees" below says, and run only that test
+  file with `mix test.unchecked <file>` ([testing.md](testing.md)). A reviewer told to check the
+  author's claims checks them against that line and the diff, within the same one-file budget. A
+  second full suite takes the CPU the host's agent threads share: on #959 a Spec reviewer re-ran
+  the full suite in a copy of the worktree and took 12 minutes.
 - Paste the bullet above into each reviewer's brief before you start the reviewer. Briefs written
   from the `code-review` skill alone let reviewers run tests or a mutation in the author's
   checkout on #884, #960, #1004 and #939.

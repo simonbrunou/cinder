@@ -7,7 +7,9 @@ Audiobookshelf.
 
 ## Commands
 
-- `mix test` is the only green gate, locally and in CI. The alias runs
+- `mix test` is the only green gate. CI runs it on each push to a PR and to `main`, and you run it
+  before a branch's first push. Wherever these docs ask for a local `mix test`, a docs-only branch
+  does the fence run instead ([testing.md](docs/agents/testing.md)). The alias runs
   `compile --warnings-as-errors`, `format --check-formatted`, `credo --strict`, then
   `test --warnings-as-errors`, which also fails on a compiler warning from a test file.
 - A bare `mix test` runs those gates once, then the suite in `CINDER_TEST_PARTITIONS` partitions

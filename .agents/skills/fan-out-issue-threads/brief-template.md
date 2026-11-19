@@ -11,7 +11,7 @@ otherwise delete that section. Send everything below the rule as the thread's fi
 | --- | --- | --- |
 | `{{DOCS}}` | the topic doc `AGENTS.md` names for the change | `docs/agents/testing.md` and `docs/agents/deploy.md` |
 | `{{SETUP}}` | Seed the worktree as `docs/agents/workflow.md` "Worktrees" says | `nix develop -c bun install --frozen-lockfile` |
-| `{{TEST}}` | `mix test` | `nix develop -c bun run test` |
+| `{{TEST}}` | `mix test` (on a docs-only branch, the fence run in `docs/agents/testing.md`) | `nix develop -c bun run test` |
 | `{{SHIP}}` | Ship with the `ship-cinder-pr-on-forgejo` skill, and merge with `scripts/merge-pr <n>`. A user-visible change adds a `changelog.d/` fragment (AGENTS.md "Changelog"). | Open the PR, wait for its CI and merge it as the `forgejo-issues` skill's "PRs and CI" section says, the body written with the `pr` skill. |
 | `{{CI_RULES}}` | delete the bullet | Run `scripts/wait-e2e-slot.sh` before each push, merge to `main` or rerun, as `docs/agents/testing.md` says. |
 | `{{DEPLOY}}` | the ship skill's deploy check | `scripts/smoke-prod.sh <new main sha>` |
